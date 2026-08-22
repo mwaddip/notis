@@ -15,7 +15,8 @@ import {
   getBlockCurrent,
   NodeError,
   isPost,
-  type StumpResponse,
+  isStump,
+  isPruned,
 } from '../src/http.js';
 import type { BoxRef } from '../src/tx/render.js';
 
@@ -34,7 +35,7 @@ describe('prune', () => {
     await mesh?.teardown();
   });
 
-  it('row b-prune: author prune reads StumpJson, non-author prune → 403', async () => {
+  it('row b-prune: author prune reads StumpJson, replies read PrunedJson, non-author prune → 403', async () => {
     mesh = await createMesh({ fileIndex: FILE_INDEX, nodeCount: 3 });
     const miner = mesh.nodes[0]!;
 
@@ -62,13 +63,13 @@ describe('prune', () => {
     // ---- alice posts a thread with two replies ----
     const aliceK = (await getKarma(miner, alice.publicKeyHex))!;
     const thread = buildThreadTx(alice, karmaBoxes(aliceK), 'prune root', aliceK.height);
-    const threadRes = await postPost(miner, thread.json);
+    const threadRes = await postPost(miner, thread.json, thread.content);
 
     const reply1 = buildReplyTx(alice, [thread.outputs[0]!], 'reply 1', threadRes.postId, aliceK.height);
-    const reply1Res = await postPost(miner, reply1.json);
+    const reply1Res = await postPost(miner, reply1.json, reply1.content);
 
     const reply2 = buildReplyTx(alice, [reply1.outputs[0]!], 'reply 2', threadRes.postId, aliceK.height);
-    const reply2Res = await postPost(miner, reply2.json);
+    const reply2Res = await postPost(miner, reply2.json, reply2.content);
 
     await confirm(
       async () => {
@@ -87,7 +88,7 @@ describe('prune', () => {
     await confirm(
       async () => {
         const p = await getPost(miner, threadRes.postId);
-        return p !== null && 'kind' in p && (p as StumpResponse).kind === 'stump';
+        return p !== null && isStump(p);
       },
       miner, mesh.miningSecret,
     );
@@ -97,8 +98,11 @@ describe('prune', () => {
     for (const node of mesh.nodes) {
       const rootPost = await getPost(node, threadRes.postId);
       expect(rootPost).not.toBeNull();
-      expect('kind' in rootPost!).toBe(true);
-      expect((rootPost as StumpResponse).kind).toBe('stump');
+      expect(isStump(rootPost!)).toBe(true);
+      if (isStump(rootPost!)) {
+        expect(rootPost.kind).toBe('stump');
+        expect(rootPost.compactedAtBlockHeight).toBeGreaterThan(0);
+      }
     }
 
     // ---- the block carries the prune entry ----
@@ -112,20 +116,34 @@ describe('prune', () => {
       expect(tree.pruneEntries.length).toBeGreaterThanOrEqual(1);
     }
 
-    // ---- pruned replies: pin what the node returns ----
+    // ---- pruned replies: kind 'pruned' with rootPostHash and compactedAtBlockHeight ----
+    const minerRoot = await getPost(miner, threadRes.postId);
+    expect(isStump(minerRoot!)).toBe(true);
+    const rootHeight = isStump(minerRoot!) ? minerRoot.compactedAtBlockHeight : -1;
+
     for (const node of mesh.nodes) {
       const r1 = await getPost(node, reply1Res.postId);
+      expect(r1).not.toBeNull();
+      expect(isPruned(r1!)).toBe(true);
+      if (isPruned(r1!)) {
+        expect(r1.rootPostHash).toBe(threadRes.postId);
+        expect(r1.compactedAtBlockHeight).toBe(rootHeight);
+      }
+
       const r2 = await getPost(node, reply2Res.postId);
-      // pin: pruned replies return null (404)
-      expect(r1).toBeNull();
-      expect(r2).toBeNull();
+      expect(r2).not.toBeNull();
+      expect(isPruned(r2!)).toBe(true);
+      if (isPruned(r2!)) {
+        expect(r2.rootPostHash).toBe(threadRes.postId);
+        expect(r2.compactedAtBlockHeight).toBe(rootHeight);
+      }
     }
 
     // ---- non-author prune → 403 ----
     // bob creates a thread, alice tries to prune it
     const bobK = (await getKarma(miner, bob.publicKeyHex))!;
     const bobThread = buildThreadTx(bob, karmaBoxes(bobK), 'bob thread', bobK.height);
-    const bobThreadRes = await postPost(miner, bobThread.json);
+    const bobThreadRes = await postPost(miner, bobThread.json, bobThread.content);
 
     await confirm(
       async () => {

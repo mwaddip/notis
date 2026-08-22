@@ -116,6 +116,7 @@ export interface StumpResponse {
   author: string;
   replyCount: number;
   upvoteCount: number;
+  compactedAtBlockHeight: number;
 }
 
 export interface PrunedResponse {
