@@ -698,10 +698,12 @@ non-empty array, **no output is a `genesis_proof` box**, no duplicate inputs,
 **no content check, because the transaction carries no content** — and **the encoded
 transaction is at most `MAX_TX_BYTES`**. That is the whole list.
 
-> ⚠ **AHEAD OF CODE — 2026-08-22.** The post arm exists in the tree under the old name —
-> `verifyTxStructure` calls `verifyPostFieldDomains(tx.post)` over a body-bearing `Post`
-> (`verify.ts`, measured 2026-08-22); the commit form lands with the content-in-the-DAG unit
-> (validation). The list above omitted the arm until 2026-08-22.
+> ⚠ **AHEAD OF CODE — 2026-08-22.** The post arm exists in the tree under the old names —
+> `verifyTxStructure` calls `verifyPostFieldDomains`, `verifyParentRefsCount`, `verifyContentLimits`
+> and `verifyContentCharacters` over a body-bearing `tx.post` (`verify.ts`, measured 2026-08-22), so
+> today the transaction check does read content; the commit form — domains and refs count only —
+> lands with the content-in-the-DAG unit (validation). The list above omitted the arm until
+> 2026-08-22.
 
 **It does not check `likeTarget`**, and this contract wrongly said it did until
 2026-08-09 — see the correction under `verifyOrderingBlockStructure` below. The
