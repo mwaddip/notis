@@ -7,6 +7,8 @@ import {
   POST_TYPE,
 } from '../src/post.js';
 import type { PostCommit } from '../src/post.js';
+import { ByteWriter } from '@dagsocial/wire';
+import { writeLpUtf8, writeBytesNOrThrow, writeArr, writeHexNOrThrow, writeVlqU } from '../src/codec.js';
 import { computeTxId } from '../src/utxo.js';
 import type { UtxoTransaction } from '../src/utxo.js';
 import {
@@ -224,6 +226,58 @@ describe('canonical field encoding (M-1)', () => {
     expect(Buffer.from(pre).toString('hex')).toBe(GOLDEN_PREIMAGE);
     //  32 contentHash, 32 author, 1 + 32 refs, 1 version, 1 type
     expect(pre.length).toBe(32 + 32 + 33 + 1 + 1);
+  });
+
+  it('step 2: the OLD postFields/golden bytes are reproducible from the retired layout', () => {
+    // TYPES_INTERFACE → Re-pinning a frozen vector when a preimage changes,
+    // step 2: restore lpUtf8(content) in slot 1 and reproduce the known-good
+    // bytes. A hand-derivation that cannot reproduce the old output is wrong,
+    // and this is the only step that can tell you so BEFORE trusting the new
+    // bytes. Kept as a test so the derivation is auditable.
+    const OLD_GOLDEN_PREIMAGE =
+      '1b' +                                                     // vlqU(27) — lpUtf8 content length
+      '646167736f6369616c20676f6c64656e20766563746f7220e29c93' + // utf8 content bytes
+      '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f' + // b32 author
+      '01' +                                                     // arr count = 1
+      '1111111111111111111111111111111111111111111111111111111111111111' + // b32 ref
+      '01' +                                                     // vlqU protocolVersion
+      '00';                                                      // enum8 type = regular
+
+    // Reproduce using the corpus's frozen byte literals and the retired slot-1 writer.
+    const w = new ByteWriter();
+    writeLpUtf8(w, 'dagsocial golden vector ✓');
+    writeBytesNOrThrow(w, GOLDEN_AUTHOR, 32);
+    writeArr(w, [GOLDEN_REF], (ww, ref) => writeHexNOrThrow(ww, ref, 32));
+    writeVlqU(w, 1);
+    POST_TYPE.write(w, 'regular');
+    expect(Buffer.from(w.toBytes()).toString('hex')).toBe(OLD_GOLDEN_PREIMAGE);
+
+    // Slots 2–5 are byte-identical between old and new — only slot 1 changed.
+    const oldTail = OLD_GOLDEN_PREIMAGE.slice(2 + 54); // skip lpUtf8(27 bytes)
+    const newTail = GOLDEN_PREIMAGE.slice(64);          // skip b32(32 bytes)
+    expect(newTail).toBe(oldTail);
+  });
+
+  it('computeContentHash: preimage bytes are POST_CONTENT_DOMAIN ‖ utf8(content)', () => {
+    // The hash cannot be hand-derived; the preimage can and must be.
+    const DOMAIN_HEX = '646167736f6369616c2f706f73742d636f6e74656e742f31';
+    const CONTENT_UTF8_HEX = '646167736f6369616c20676f6c64656e20766563746f7220e29c93';
+    const PREIMAGE_HEX = DOMAIN_HEX + CONTENT_UTF8_HEX;
+    const EXPECTED_DIGEST = '9745d058b1dbd844c81b91384cad9bbcff0896560987f64c50e4e924477c5569';
+
+    // Verify the preimage literal matches the production domain and content.
+    expect(Buffer.from(DOMAIN_HEX, 'hex').toString()).toBe('dagsocial/post-content/1');
+    expect(Buffer.from(CONTENT_UTF8_HEX, 'hex').toString()).toBe('dagsocial golden vector ✓');
+
+    // The digest from Node's blake2b512 over the preimage literal.
+    const digest = createHash('blake2b512')
+      .update(Buffer.from(PREIMAGE_HEX, 'hex'))
+      .digest().subarray(0, 32).toString('hex');
+    expect(digest).toBe(EXPECTED_DIGEST);
+
+    // And it matches the production function.
+    expect(Buffer.from(computeContentHash('dagsocial golden vector ✓')).toString('hex'))
+      .toBe(EXPECTED_DIGEST);
   });
 
   it('an id crosses the preimage as 32 RAW bytes, not as 64 hex characters', () => {

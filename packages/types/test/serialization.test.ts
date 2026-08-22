@@ -805,5 +805,31 @@ describe('positional serialization', () => {
       padded.set(bytes);
       expect(() => decodeTxPacket(padded)).toThrow(CodecError);
     });
+
+    it('⛔ the golden harness cannot carry txPacket composites — pinned here', () => {
+      // The TX struct codec is private to `serialization.ts`, so the harness
+      // in `structs.ts` cannot compose the packet. The vectors below are the
+      // pinned equivalent.
+      //
+      // Non-post packet: encodeTx(makeTx) ‖ opt-absent.
+      const nonPostTx = makeTx();
+      const nonPostPkt = encodeTxPacket(nonPostTx);
+      const nonPostTxBytes = encodeTx(nonPostTx);
+      expect(nonPostPkt.length).toBe(nonPostTxBytes.length + 1);
+      expect(nonPostPkt[nonPostPkt.length - 1]).toBe(0x00);
+
+      // Post-bearing packet: encodeTx(tx) ‖ opt-present ‖ lpUtf8(content).
+      const postTx: UtxoTransaction = { ...makeTx(), post: makePostCommit() };
+      const content = 'Hello, DAGsocial!';
+      const postPkt = encodeTxPacket(postTx, content);
+      const postTxBytes = encodeTx(postTx);
+      // The packet starts with the tx bytes and the body follows.
+      expect(hex(postPkt).startsWith(hex(postTxBytes))).toBe(true);
+      // The trailing opt is present (0x01) followed by lpUtf8(content).
+      expect(postPkt[postTxBytes.length]).toBe(0x01);
+      // Round-trip produces the same content.
+      const decoded = decodeTxPacket(postPkt);
+      expect(decoded.content).toBe(content);
+    });
   });
 });

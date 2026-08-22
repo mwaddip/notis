@@ -29,9 +29,11 @@ import {
   readBytesN,
   readHexN,
   readLp,
+  readLpUtf8,
   readOpt,
   readVlqU,
   readVlqU64,
+  writeLpUtf8,
 } from '../../src/codec.js';
 import { postFieldBytes, POST_TYPE, type PostCommit } from '../../src/post.js';
 import { serializePruneEntry, type PruneEntry } from '../../src/stump.js';
@@ -87,6 +89,22 @@ const postCommitFieldsCodec: ValueCodec<PostCommitFields> = {
       protocolVersion: readVlqU(r),
       type: POST_TYPE.read(r),
     };
+  },
+};
+
+// ---------------------------------------------------------------------------
+// postBody — what `encodePostBody` covers (TYPES_INTERFACE → Layout — Post body)
+// ---------------------------------------------------------------------------
+
+const postBodyCodec: ValueCodec<string> = {
+  parse(json: unknown): string {
+    return json as string;
+  },
+  write(w: ByteWriter, content: string): void {
+    writeLpUtf8(w, content);
+  },
+  read(r: ByteReader): string {
+    return readLpUtf8(r);
   },
 };
 
@@ -509,6 +527,7 @@ const orderingBlockCodec: ValueCodec<OrderingBlock> = {
 };
 
 registerStruct('postCommitFields', postCommitFieldsCodec);
+registerStruct('postBody', postBodyCodec);
 registerStruct('boxContent', boxContentCodec);
 registerStruct('pruneEntry', pruneEntryCodec);
 registerStruct('blockHeader', blockHeaderCodec);
