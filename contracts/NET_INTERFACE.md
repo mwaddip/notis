@@ -1119,7 +1119,7 @@ structure, PoW, and signatures.
 | `peerId()` | `() => string` | This node's libp2p peer ID |
 | `peers()` | `() => Peer[]` | Connected peers with metadata |
 | `getConnectedPeers()` | `() => string[]` | Peer IDs of currently connected peers |
-| `syncPhase()` | `() => 'idle' \| 'syncing' \| 'backfill' \| 'synced'` | The sync machine's phase (Sync State Machine); `'idle'` before `start()` and after `stop()`. `'backfill'` is **AHEAD OF CODE — 2026-08-22** (net) |
+| `syncPhase()` | `() => 'idle' \| 'syncing' \| 'backfill' \| 'synced'` | The sync machine's phase (Sync State Machine). `'idle'` means no sync has been needed: before `start()`, after `stop()`, and on a node that never met a peer ahead of it — a co-started mesh follows gossip at `'idle'` and never enters `'synced'`; only a node that fell behind passes through `'syncing'` → `'backfill'` → `'synced'`. A reader wanting "not behind" tests for `'syncing'`/`'backfill'` absent, not for `'synced'` present |
 
 ### Gossip
 
