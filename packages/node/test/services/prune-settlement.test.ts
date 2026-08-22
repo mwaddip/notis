@@ -1164,4 +1164,123 @@ describe('prune apply-then-revert (P2-D N3b, real settle path)', () => {
     expect(blockApply.applyOrderingBlock(pruneBlock)).toBe(true);
     expect(mempool.selectMempoolPrunes(32)).toHaveLength(1);
   });
+
+  // ⛔ NODE_INTERFACE → Invariants: once the prune block's journal is dropped
+  // below MAX_REORG_DEPTH, no dag_posts row and no journal row holds the
+  // subtree's content.
+  it('⛔ after journal purge, no dag_posts row and no journal row holds the pruned content', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+
+    const { MAX_REORG_DEPTH } = await import('@dagsocial/types');
+    const author = makeTestIdentity();
+    const root = await seedPostTx(author, 'deletion sentence root');
+    const rootId = root.postId;
+    const reply = await seedPostTx(author, 'deletion sentence reply', { parentRefs: [rootId] });
+    const replyId = reply.postId;
+
+    const blockApply = await importBlockApply();
+
+    // Height 1: confirm both posts.
+    const confirmBlock = await makeApplicableBlock({ utxoTxs: [root.tx, reply.tx] });
+    expect(blockApply.applyOrderingBlock(confirmBlock)).toBe(true);
+
+    // Height 2: prune the subtree.
+    const pruneBlock = await makeApplicableBlock({
+      height: 2,
+      pruneEntries: [makePruneEntry(rootId, [rootId, replyId], author)],
+    });
+    expect(blockApply.applyOrderingBlock(pruneBlock)).toBe(true);
+
+    // The rows are gone from dag_posts after prune.
+    const rawDb = db.getDb();
+    expect(rawDb.prepare('SELECT id FROM dag_posts WHERE id = ?').get(rootId)).toBeUndefined();
+    expect(rawDb.prepare('SELECT id FROM dag_posts WHERE id = ?').get(replyId)).toBeUndefined();
+
+    // The journal at height 2 still holds the deleted rows.
+    const journalStore = await import('../../src/store/journal.js');
+    const journal = journalStore.getBlockJournal(2);
+    expect(journal).not.toBeNull();
+    expect(journal!.deletedPosts.length).toBeGreaterThan(0);
+
+    // Mine enough blocks past MAX_REORG_DEPTH to purge the prune journal.
+    for (let h = 3; h <= 2 + MAX_REORG_DEPTH + 1; h++) {
+      const emptyBlock = await makeApplicableBlock({ height: h });
+      expect(blockApply.applyOrderingBlock(emptyBlock)).toBe(true);
+    }
+
+    // The prune journal is purged.
+    expect(journalStore.getBlockJournal(2)).toBeNull();
+
+    // No dag_posts row holds the content.
+    expect(rawDb.prepare('SELECT id FROM dag_posts WHERE id = ?').get(rootId)).toBeUndefined();
+    expect(rawDb.prepare('SELECT id FROM dag_posts WHERE id = ?').get(replyId)).toBeUndefined();
+
+    // No block_journal row holds the content either.
+    const allJournals = rawDb.prepare('SELECT journal_cbor FROM block_journal').all() as Array<{ journal_cbor: Buffer }>;
+    const { decode } = await import('cbor-x');
+    for (const row of allJournals) {
+      const j = decode(row.journal_cbor) as any;
+      if (j.deletedPosts) {
+        for (const dp of j.deletedPosts) {
+          expect(dp.id).not.toBe(rootId);
+          expect(dp.id).not.toBe(replyId);
+        }
+      }
+    }
+  });
+
+  // ⛔ A reverted prune restores rows and parent refs and removes the stump;
+  // re-applying the same block re-deletes.
+  it('⛔ revert restores post rows + parent refs and removes stump; re-apply re-deletes', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+
+    const author = makeTestIdentity();
+    const root = await seedPostTx(author, 'reorg post root');
+    const rootId = root.postId;
+    const reply = await seedPostTx(author, 'reorg post reply', { parentRefs: [rootId] });
+    const replyId = reply.postId;
+
+    const blockApply = await importBlockApply();
+    const forkResolution = await importForkResolution();
+    const posts = await import('../../src/store/posts.js');
+    const stumps = await import('../../src/store/stumps.js');
+
+    // Height 1: confirm.
+    const confirmBlock = await makeApplicableBlock({ utxoTxs: [root.tx, reply.tx] });
+    expect(blockApply.applyOrderingBlock(confirmBlock)).toBe(true);
+    expect(posts.isLivePost(posts.getPost(rootId))).toBe(true);
+    expect(posts.isLivePost(posts.getPost(replyId))).toBe(true);
+
+    // Height 2: prune.
+    const pruneBlock = await makeApplicableBlock({
+      height: 2,
+      pruneEntries: [makePruneEntry(rootId, [rootId, replyId], author)],
+    });
+    expect(blockApply.applyOrderingBlock(pruneBlock)).toBe(true);
+
+    // After prune: dag_posts rows gone, stump present, reply is a tombstone.
+    const rootAfterPrune = posts.getPost(rootId);
+    expect(rootAfterPrune).not.toBeNull();
+    expect('rootPostHash' in rootAfterPrune!).toBe(true);
+    const replyAfterPrune = posts.getPost(replyId);
+    expect(replyAfterPrune).not.toBeNull();
+    expect((replyAfterPrune as any).kind).toBe('pruned');
+    expect(stumps.getStump(rootId)).not.toBeNull();
+
+    // Revert: rows restored, stump removed.
+    forkResolution.revertBlock(2);
+    expect(posts.isLivePost(posts.getPost(rootId))).toBe(true);
+    expect(posts.isLivePost(posts.getPost(replyId))).toBe(true);
+    expect(posts.getParentRefs(replyId)).toEqual([rootId]);
+    expect(stumps.getStump(rootId)).toBeNull();
+
+    // Re-apply: rows re-deleted, stump re-inserted.
+    expect(blockApply.applyOrderingBlock(pruneBlock)).toBe(true);
+    const replyReApplied = posts.getPost(replyId);
+    expect(replyReApplied).not.toBeNull();
+    expect((replyReApplied as any).kind).toBe('pruned');
+    expect(stumps.getStump(rootId)).not.toBeNull();
+  });
 });
