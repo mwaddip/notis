@@ -584,7 +584,6 @@ export class NetNode {
   private peerPenalisedHandlers: Array<(peerId: string, kind: string, detail: string | null) => void> = [];
   // NET_INTERFACE → Sync Handler Registration: post body seams
   private postBodyProvider: ((postId: string) => string | null) | null = null;
-  private postBodyCommitmentProvider: ((postId: string) => Uint8Array | null) | null = null;
   private postBodyHandlers: Array<(postId: string, content: string, fromPeerId: string) => boolean> = [];
   private pendingBootstrapDials: Set<string> = new Set();
   private lastGetPeersSentMs: Map<string, number> = new Map();
@@ -1569,10 +1568,6 @@ export class NetNode {
 
   setMissingBodiesProvider(cb: (limit: number) => { id: string; contentHash: Uint8Array }[]): void {
     this.syncMachine?.setMissingBodiesProvider(cb);
-  }
-
-  setPostBodyCommitmentProvider(cb: (postId: string) => Uint8Array | null): void {
-    this.postBodyCommitmentProvider = cb;
   }
 
   onPostBody(cb: (postId: string, content: string, fromPeerId: string) => boolean): void {
