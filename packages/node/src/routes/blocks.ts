@@ -30,10 +30,10 @@ export interface BlocksDeps {
   getTotalCredits(): bigint;
   networkType: string;
   /**
-   * A per-network consensus value the client must reproduce is served by the
-   * node, never held as a client constant (NODE_INTERFACE §Status). The demo UI
-   * builds bond commits, and `utxo-engine` requires the window to equal
-   * `config.inviteProbationBlocks` exactly.
+   * Served because a per-network consensus value a client reproduces is served
+   * by the node, never held as a client constant (NODE_INTERFACE §Status). No
+   * client reads it today; the node's own reader is `block-creator`'s
+   * `getBondsSettlingAt`. No engine check compares it.
    */
   inviteProbationBlocks: number;
   /** `NetworkProfile.vouchCooldownBlocks` — the escrow floor a client reproduces. */
