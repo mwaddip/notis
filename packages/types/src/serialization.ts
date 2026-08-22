@@ -31,24 +31,28 @@
 import { ByteReader, ByteWriter } from '@dagsocial/wire';
 import {
   type StructCodec,
+  CodecError,
   arrByteLength,
   decodeStruct,
   encodeStruct,
+  firstDifference,
   lpByteLength,
   readArr,
   readBytesN,
   readHexN,
   readLp,
   readLpUtf8,
+  readOpt,
   readVlqU,
   writeArr,
   writeBytesNOrThrow,
   writeHexNOrThrow,
   writeLp,
   writeLpUtf8,
+  writeOpt,
   writeVlqU,
 } from './codec.js';
-import { postFieldBytes, readPostFields, type Post } from './post.js';
+import { postFieldBytes, readPostCommitFields, type PostCommit } from './post.js';
 import { readTxIdFields, writeTxIdFields, type UtxoTransaction } from './utxo.js';
 import { serializePruneEntry, type PruneEntry } from './stump.js';
 import type {
@@ -58,56 +62,124 @@ import type {
 } from './block.js';
 
 // ---------------------------------------------------------------------------
-// Post — TYPES_INTERFACE → Layout — Post, wire codec row
+// PostCommit — TYPES_INTERFACE → Layout — PostCommit, wire codec row
 // ---------------------------------------------------------------------------
 
 /**
  * Fields 1–5 — **exactly the `postFieldBytes` sequence, with nothing after it.**
  *
- * The wire form and the id-preimage form are now the same bytes. A post has no
+ * The wire form and the id-preimage form are the same bytes. A commit has no
  * signature of its own (the creating transaction is signed over its `TxId`) and
- * no nonce to vary, so the two-field tail that used to distinguish them has no
- * members left. `postFieldBytes` stays the normative statement of the layout in
- * `post.ts`; this codec exists for the read half.
+ * no body — the body travels apart (TYPES_INTERFACE → Layout — Post body).
+ * `postFieldBytes` stays the normative statement of the layout in `post.ts`;
+ * this codec exists for the read half.
  *
  * ## Totality
  *
- * `content` (`lpUtf8`) and `protocolVersion` (`vlqU`) are total by sentinel.
- * `author` and every `parentRefs` entry are fixed-width (`b32`) and throw;
+ * `protocolVersion` (`vlqU`) is total by sentinel. `contentHash`, `author`
+ * and every `parentRefs` entry are fixed-width (`b32`) and throw;
  * `type` (`enum8`) sentinels to 0xff, refused at decode as invalid-tag
- * (TYPES_INTERFACE → Canonical field encoding). All three have their domain
- * established by `verifyPostFieldDomains` (`@dagsocial/validation`) — `b32`
+ * (TYPES_INTERFACE → Canonical field encoding). All have their domain
+ * established by `verifyPostCommitDomains` (`@dagsocial/validation`) — `b32`
  * stays unreachable because its writers throw, `enum8` because the membership
  * rule keeps the sentinel path closed.
  *
  * ⛔ **The throwing rows (`b32`) are reachable from `computeTxId`**, because
  * `txIdBytes` writes `postFieldBytes` for a post-bearing transaction. The
- * obligation `verifyPostFieldDomains` discharges therefore extends to every path
- * that hashes such a transaction — `validateTx` runs it before the id is taken,
- * and block apply's embedded-tx path is the call site TYPES_INTERFACE → Totality
- * books for the same reason it books the output fields.
+ * obligation `verifyPostCommitDomains` discharges therefore extends to every
+ * path that hashes such a transaction — `validateTx` runs it before the id
+ * is taken, and block apply's embedded-tx path is the call site
+ * TYPES_INTERFACE → Totality books for the same reason it books the output
+ * fields.
  */
-const POST: StructCodec<Post> = {
-  name: 'post',
-  // ⛔ **Both halves DELEGATE to `post.ts`, and neither restates the layout.**
-  // `postFieldBytes` is the normative writer and `readPostFields` its adjacent
-  // reader, and the same pair is reached from inside `txIdBytes`' `post` option —
-  // so a post's fields have one statement whether they arrive standalone or
-  // inside the transaction that creates them. Restating either half here would
-  // put two statements of one layout in two files, free to disagree with no
-  // compiler signal.
-  write(w, p) {
-    w.writeBytes(postFieldBytes(p));
+const POST_COMMIT: StructCodec<PostCommit> = {
+  name: 'postCommit',
+  write(w, c) {
+    w.writeBytes(postFieldBytes(c));
   },
-  read: readPostFields,
+  read: readPostCommitFields,
 };
 
-export function encodePost(post: Post): Uint8Array {
-  return encodeStruct(POST, post);
+export function encodePostCommit(commit: PostCommit): Uint8Array {
+  return encodeStruct(POST_COMMIT, commit);
 }
 
-export function decodePost(bytes: Uint8Array): Post {
-  return decodeStruct(POST, bytes);
+export function decodePostCommit(bytes: Uint8Array): PostCommit {
+  return decodeStruct(POST_COMMIT, bytes);
+}
+
+// ---------------------------------------------------------------------------
+// Post body — TYPES_INTERFACE → Layout — Post body
+// ---------------------------------------------------------------------------
+
+/**
+ * The body's standalone wire form: `lpUtf8(content)`.
+ *
+ * Keyed by the post id wherever it travels (the packet's transaction, the
+ * pull request's id list); **never hashed into anything** — the only binding
+ * is `computeContentHash(content) == commit.contentHash`, checked by
+ * `verifyPostBody` at every entry (VALIDATION_INTERFACE → verifyPostBody).
+ */
+const POST_BODY: StructCodec<string> = {
+  name: 'postBody',
+  write(w, content) {
+    writeLpUtf8(w, content);
+  },
+  read(r) {
+    return readLpUtf8(r);
+  },
+};
+
+export function encodePostBody(content: string): Uint8Array {
+  return encodeStruct(POST_BODY, content);
+}
+
+export function decodePostBody(bytes: Uint8Array): string {
+  return decodeStruct(POST_BODY, bytes);
+}
+
+// ---------------------------------------------------------------------------
+// Transaction packet — TYPES_INTERFACE → Layout — UtxoTransaction, packet codec
+// ---------------------------------------------------------------------------
+
+/**
+ * `encodeTx(tx)` ‖ `opt(lpUtf8(content))` — the gossip payload for every
+ * transaction (NET_INTERFACE → Gossip Topics).
+ *
+ * The body is outside `txIdBytes`, outside every id and every Merkle leaf;
+ * a transaction that carries no post pays the `opt` absence tag, one byte,
+ * on the wire only.
+ *
+ * ⛔ **The biconditional (`tx.post` present ⟺ `content` present) is NOT a
+ * property of these bytes.** The codec encodes what it is given; the rule is
+ * stated and enforced where packets enter (NET_INTERFACE → Gossip Topics,
+ * NODE_INTERFACE → Post transactions).
+ *
+ * `decodeTxPacket` keeps the boundary discipline the struct decoder has:
+ * trailing bytes reject, and re-encoding the decoded value reproduces the
+ * input byte-for-byte.
+ */
+export function encodeTxPacket(tx: UtxoTransaction, content?: string): Uint8Array {
+  const w = new ByteWriter();
+  TX.write(w, tx);
+  writeOpt(w, content, writeLpUtf8);
+  return w.toBytes();
+}
+
+export interface TxPacket {
+  tx: UtxoTransaction;
+  content?: string;
+}
+
+export function decodeTxPacket(bytes: Uint8Array): TxPacket {
+  const r = new ByteReader(bytes);
+  const tx = TX.read(r);
+  const content = readOpt(r, readLpUtf8) ?? undefined;
+  if (!r.isExhausted) throw new CodecError('txPacket', 'trailing-bytes');
+  const reEncoded = encodeTxPacket(tx, content);
+  const diff = firstDifference(bytes, reEncoded);
+  if (diff !== -1) throw new CodecError('txPacket', 'non-canonical');
+  return { tx, content };
 }
 
 // ---------------------------------------------------------------------------

@@ -96,6 +96,8 @@ describe('block journal (store choke-point recording)', () => {
       'appliedUtxoTxs',
       'blockHeight',
       'confirmedSubBlockIds',
+      'deletedPosts',
+      'insertedStumps',
       'likeRecordDeletions',
       'likeRecordInsertions',
       'mutations',

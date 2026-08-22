@@ -7,13 +7,13 @@ const MIGRATIONS = [
   // Posts DAG
   `CREATE TABLE IF NOT EXISTS dag_posts (
     id TEXT PRIMARY KEY,
-    content TEXT NOT NULL,
+    content_hash TEXT NOT NULL,       -- hex of the 32-byte content commitment
+    content TEXT,                     -- NULL = placeholder (structure known, body not held)
     author BLOB NOT NULL,             -- 32-byte Ed25519 public key
     parent_refs TEXT NOT NULL,       -- JSON array of PostId strings
     protocol_version INTEGER NOT NULL,
     type TEXT NOT NULL DEFAULT 'regular',  -- PostType: 'regular' | 'profile'
-    raw_cbor BLOB NOT NULL,          -- Canonical CBOR bytes
-    status TEXT NOT NULL DEFAULT 'pending',  -- 'pending' | 'confirmed' | 'pruned'
+    status TEXT NOT NULL DEFAULT 'pending',  -- 'pending' | 'confirmed'
     block_height INTEGER,            -- NULL until confirmed
     block_index INTEGER              -- NULL until confirmed; committed position in block
   )`,

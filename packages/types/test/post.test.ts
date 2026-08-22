@@ -2,9 +2,13 @@ import { describe, it, expect } from 'vitest';
 import { createHash } from 'crypto';
 import {
   computePostId,
+  computeContentHash,
   postFieldBytes,
   POST_TYPE,
 } from '../src/post.js';
+import type { PostCommit } from '../src/post.js';
+import { ByteWriter } from '@dagsocial/wire';
+import { writeLpUtf8, writeBytesNOrThrow, writeArr, writeHexNOrThrow, writeVlqU } from '../src/codec.js';
 import { computeTxId } from '../src/utxo.js';
 import type { UtxoTransaction } from '../src/utxo.js';
 import {
@@ -33,8 +37,8 @@ import {
 } from '../src/constants.js';
 import type { Post } from '../src/post.js';
 
-const post: Post = {
-  content: 'hello world',
+const commit: PostCommit = {
+  contentHash: computeContentHash('hello world'),
   author: new Uint8Array(32).fill(0x11),
   parentRefs: [],
   protocolVersion: 2,
@@ -50,14 +54,9 @@ describe('post identity', () => {
   });
 
   it('⛔ takes no Post at all — the id is a function of the transaction only', () => {
-    // The whole of option (C). Two posts with byte-identical payloads get
-    // different ids iff their creating transactions differ, and identical ids
-    // iff the transaction is the same one — so the payload cannot influence it.
-    const other: Post = { ...post, content: 'completely different' };
-    expect(postFieldBytes(post)).not.toEqual(postFieldBytes(other));
-    // Same (txId, index) → same id, regardless of which post is "at" it.
+    const other: PostCommit = { ...commit, contentHash: computeContentHash('completely different') };
+    expect(postFieldBytes(commit)).not.toEqual(postFieldBytes(other));
     expect(computePostId(TX_A, 0)).toBe(computePostId(TX_A, 0));
-    // Different transaction → different id.
     expect(computePostId(TX_A, 0)).not.toBe(computePostId(TX_B, 0));
   });
 
@@ -107,48 +106,38 @@ describe('post identity', () => {
   });
 
   it('the payload reaches the id THROUGH the transaction — the chain, end to end', () => {
-    // ⛔ Assert the mechanism, not only the outcome. `postFieldBytes` is inside
-    // the `computeTxId` preimage, so a distinct payload gives a distinct txId,
-    // which gives a distinct post id. If `post` were ever dropped from
-    // `txIdBytes`, the two txIds would collide and this fails.
     const base: UtxoTransaction = {
       inputs: ['01'.repeat(32)],
       outputs: [],
       signatures: {},
       protocolVersion: 1,
     };
-    const txWithPost: UtxoTransaction = { ...base, post };
-    const txWithOther: UtxoTransaction = { ...base, post: { ...post, content: 'other' } };
+    const txWithPost: UtxoTransaction = { ...base, post: commit };
+    const txWithOther: UtxoTransaction = { ...base, post: { ...commit, contentHash: computeContentHash('other') } };
 
     expect(computeTxId(txWithPost)).not.toBe(computeTxId(txWithOther));
     expect(computePostId(computeTxId(txWithPost), 0))
       .not.toBe(computePostId(computeTxId(txWithOther), 0));
 
-    // Presence is distinguishable from absence — `opt()`'s tag.
     expect(computeTxId(txWithPost)).not.toBe(computeTxId(base));
   });
 
   it('two byte-identical payloads in one block get DIFFERENT ids (spec §7)', () => {
-    // The property PoW used to buy with `challenge` + `powNonce`, now bought by
-    // construction: the same author posting the same content twice must spend
-    // different karma boxes, so the transactions differ in `inputs` alone.
-    const identical: Post = { ...post };
+    const identical: PostCommit = { ...commit };
     const tx1: UtxoTransaction = {
       inputs: ['01'.repeat(32)], outputs: [], signatures: {}, protocolVersion: 1, post: identical,
     };
     const tx2: UtxoTransaction = {
       inputs: ['02'.repeat(32)], outputs: [], signatures: {}, protocolVersion: 1, post: identical,
     };
-    expect(postFieldBytes(tx1.post!)).toEqual(postFieldBytes(tx2.post!)); // payloads identical
+    expect(postFieldBytes(tx1.post!)).toEqual(postFieldBytes(tx2.post!));
     expect(computePostId(computeTxId(tx1), 0))
-      .not.toBe(computePostId(computeTxId(tx2), 0));                      // ids are not
+      .not.toBe(computePostId(computeTxId(tx2), 0));
   });
 
-  it('post with parentRefs encodes differently', () => {
-    // A ref is `b32`, so it must be 64 lowercase hex characters to have an
-    // encoding at all — see the domain tests below.
-    const withRefs = { ...post, parentRefs: ['a1'.repeat(32)] };
-    expect(postFieldBytes(post)).not.toEqual(postFieldBytes(withRefs));
+  it('commit with parentRefs encodes differently', () => {
+    const withRefs = { ...commit, parentRefs: ['a1'.repeat(32)] };
+    expect(postFieldBytes(commit)).not.toEqual(postFieldBytes(withRefs));
   });
 });
 
@@ -182,8 +171,8 @@ function legacyPostId(p: Post): string {
  * collide two transactions, which is strictly worse than colliding two ids —
  * so these tests are more load-bearing than before, not less.
  */
-function payload(p: Post): string {
-  return Buffer.from(postFieldBytes(p)).toString('hex');
+function payload(c: PostCommit): string {
+  return Buffer.from(postFieldBytes(c)).toString('hex');
 }
 
 /**
@@ -210,8 +199,8 @@ for (let i = 0; i < 32; i++) GOLDEN_AUTHOR[i] = i;
 /** A well-formed `b32` parent ref: 64 lowercase hex characters. */
 const GOLDEN_REF = '11'.repeat(32);
 
-const GOLDEN_POST: Post = {
-  content: 'dagsocial golden vector ✓',
+const GOLDEN_COMMIT: PostCommit = {
+  contentHash: computeContentHash('dagsocial golden vector ✓'),
   author: GOLDEN_AUTHOR,
   parentRefs: [GOLDEN_REF],
   protocolVersion: 1,
@@ -220,12 +209,11 @@ const GOLDEN_POST: Post = {
 
 /**
  * The exact preimage bytes, frozen — and the same bytes `test/golden/post.json`
- * carries as `post/golden`. Stronger than a hash: a hash says "something moved",
- * these say *which byte*.
+ * carries as `postCommit/golden`. Stronger than a hash: a hash says "something
+ * moved", these say *which byte*.
  */
 const GOLDEN_PREIMAGE =
-  '1b' +                                                     // vlqU(27) content length
-  '646167736f6369616c20676f6c64656e20766563746f7220e29c93' + // utf8 content
+  '9745d058b1dbd844c81b91384cad9bbcff0896560987f64c50e4e924477c5569' + // b32 contentHash
   '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f' + // b32 author
   '01' +                                                     // arr count = 1
   '1111111111111111111111111111111111111111111111111111111111111111' + // b32 ref, RAW
@@ -234,10 +222,62 @@ const GOLDEN_PREIMAGE =
 
 describe('canonical field encoding (M-1)', () => {
   it('golden vector: preimage is the exact positional layout', () => {
-    const pre = postFieldBytes(GOLDEN_POST);
+    const pre = postFieldBytes(GOLDEN_COMMIT);
     expect(Buffer.from(pre).toString('hex')).toBe(GOLDEN_PREIMAGE);
-    //  1 + 27 content, 32 author, 1 + 32 refs, 1 version, 1 type
-    expect(pre.length).toBe(28 + 32 + 33 + 1 + 1);
+    //  32 contentHash, 32 author, 1 + 32 refs, 1 version, 1 type
+    expect(pre.length).toBe(32 + 32 + 33 + 1 + 1);
+  });
+
+  it('step 2: the OLD postFields/golden bytes are reproducible from the retired layout', () => {
+    // TYPES_INTERFACE → Re-pinning a frozen vector when a preimage changes,
+    // step 2: restore lpUtf8(content) in slot 1 and reproduce the known-good
+    // bytes. A hand-derivation that cannot reproduce the old output is wrong,
+    // and this is the only step that can tell you so BEFORE trusting the new
+    // bytes. Kept as a test so the derivation is auditable.
+    const OLD_GOLDEN_PREIMAGE =
+      '1b' +                                                     // vlqU(27) — lpUtf8 content length
+      '646167736f6369616c20676f6c64656e20766563746f7220e29c93' + // utf8 content bytes
+      '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f' + // b32 author
+      '01' +                                                     // arr count = 1
+      '1111111111111111111111111111111111111111111111111111111111111111' + // b32 ref
+      '01' +                                                     // vlqU protocolVersion
+      '00';                                                      // enum8 type = regular
+
+    // Reproduce using the corpus's frozen byte literals and the retired slot-1 writer.
+    const w = new ByteWriter();
+    writeLpUtf8(w, 'dagsocial golden vector ✓');
+    writeBytesNOrThrow(w, GOLDEN_AUTHOR, 32);
+    writeArr(w, [GOLDEN_REF], (ww, ref) => writeHexNOrThrow(ww, ref, 32));
+    writeVlqU(w, 1);
+    POST_TYPE.write(w, 'regular');
+    expect(Buffer.from(w.toBytes()).toString('hex')).toBe(OLD_GOLDEN_PREIMAGE);
+
+    // Slots 2–5 are byte-identical between old and new — only slot 1 changed.
+    const oldTail = OLD_GOLDEN_PREIMAGE.slice(2 + 54); // skip lpUtf8(27 bytes)
+    const newTail = GOLDEN_PREIMAGE.slice(64);          // skip b32(32 bytes)
+    expect(newTail).toBe(oldTail);
+  });
+
+  it('computeContentHash: preimage bytes are POST_CONTENT_DOMAIN ‖ utf8(content)', () => {
+    // The hash cannot be hand-derived; the preimage can and must be.
+    const DOMAIN_HEX = '646167736f6369616c2f706f73742d636f6e74656e742f31';
+    const CONTENT_UTF8_HEX = '646167736f6369616c20676f6c64656e20766563746f7220e29c93';
+    const PREIMAGE_HEX = DOMAIN_HEX + CONTENT_UTF8_HEX;
+    const EXPECTED_DIGEST = '9745d058b1dbd844c81b91384cad9bbcff0896560987f64c50e4e924477c5569';
+
+    // Verify the preimage literal matches the production domain and content.
+    expect(Buffer.from(DOMAIN_HEX, 'hex').toString()).toBe('dagsocial/post-content/1');
+    expect(Buffer.from(CONTENT_UTF8_HEX, 'hex').toString()).toBe('dagsocial golden vector ✓');
+
+    // The digest from Node's blake2b512 over the preimage literal.
+    const digest = createHash('blake2b512')
+      .update(Buffer.from(PREIMAGE_HEX, 'hex'))
+      .digest().subarray(0, 32).toString('hex');
+    expect(digest).toBe(EXPECTED_DIGEST);
+
+    // And it matches the production function.
+    expect(Buffer.from(computeContentHash('dagsocial golden vector ✓')).toString('hex'))
+      .toBe(EXPECTED_DIGEST);
   });
 
   it('an id crosses the preimage as 32 RAW bytes, not as 64 hex characters', () => {
@@ -246,8 +286,8 @@ describe('canonical field encoding (M-1)', () => {
     // not the 68 that a length-prefixed hex text would (`u32LE(64) ‖
     // utf8(hex)`). Asserted as a length delta rather than against a constant so
     // it stays true if the fixture's other fields change.
-    const withRef = postFieldBytes(GOLDEN_POST);
-    const without = postFieldBytes({ ...GOLDEN_POST, parentRefs: [] });
+    const withRef = postFieldBytes(GOLDEN_COMMIT);
+    const without = postFieldBytes({ ...GOLDEN_COMMIT, parentRefs: [] });
     expect(withRef.length - without.length).toBe(32);
     // And the raw bytes really are in there — not their hex text.
     expect(Buffer.from(withRef).toString('hex')).toContain('11'.repeat(32));
@@ -263,61 +303,43 @@ describe('canonical field encoding (M-1)', () => {
     // encoding). `protocolVersion` is the sole VLQ field, so a two-VLQ
     // concatenation collision (the M-1 defect class) is structurally absent.
     // Distinct versions encode distinctly.
-    const a: Post = { ...GOLDEN_POST, protocolVersion: 5 };
-    const b: Post = { ...GOLDEN_POST, protocolVersion: 52 };
+    const a = { ...GOLDEN_COMMIT, protocolVersion: 5 };
+    const b = { ...GOLDEN_COMMIT, protocolVersion: 52 };
     expect(payload(a)).not.toBe(payload(b));
   });
 
   it('a parentRef outside the b32 domain has NO encoding — the ambiguity is unconstructible', () => {
-    // Restates "parentRef boundaries are unambiguous". That test compared
-    // `['ab','cd']` against `['abcd']` and proved the *length prefix* kept them
-    // apart. Under `arr(refs, b32)` neither input exists: a ref that is not
-    // exactly 64 lowercase hex characters has no encoding, so the collision is
-    // prevented one layer earlier, by the domain rather than by a delimiter.
-    // A fixed-width writer cannot pad or truncate to close the gap — that would
-    // map a malformed ref onto a well-formed post's encoding.
-    const split: Post = { ...GOLDEN_POST, parentRefs: ['ab', 'cd'] };
-    const joined: Post = { ...GOLDEN_POST, parentRefs: ['abcd'] };
+    const split = { ...GOLDEN_COMMIT, parentRefs: ['ab', 'cd'] };
+    const joined = { ...GOLDEN_COMMIT, parentRefs: ['abcd'] };
     expect(() => payload(split)).toThrow(/64 lowercase hex chars/);
     expect(() => payload(joined)).toThrow(/64 lowercase hex chars/);
-    // Vacuity check: the pair really did collide under the old concatenation,
-    // which is what makes "unconstructible" an improvement and not a dodge.
-    expect(legacyPostId(split)).toBe(legacyPostId(joined));
-    // Uppercase hex is out of domain too: 'AB…' and 'ab…' decode to identical
-    // bytes, so admitting both would make the boundary non-injective.
-    expect(() => payload({ ...GOLDEN_POST, parentRefs: ['AB'.repeat(32)] }))
+    // Vacuity check: the pair collides under the old undelimited concatenation.
+    const legacySplit: Post = { content: '', author: GOLDEN_COMMIT.author, parentRefs: ['ab', 'cd'], protocolVersion: 1, type: 'regular' };
+    const legacyJoined: Post = { content: '', author: GOLDEN_COMMIT.author, parentRefs: ['abcd'], protocolVersion: 1, type: 'regular' };
+    expect(legacyPostId(legacySplit)).toBe(legacyPostId(legacyJoined));
+    expect(() => payload({ ...GOLDEN_COMMIT, parentRefs: ['AB'.repeat(32)] }))
       .toThrow(/64 lowercase hex chars/);
   });
 
-  it('the content/parentRefs boundary is unambiguous — the one leg still earned by a prefix', () => {
-    // Restates "the content/author boundary is unambiguous". `author` and every
-    // ref are fixed-width now, so their boundaries are
-    // structural and nothing can test them. `content` is the sole remaining
-    // variable-length field, so it is the only place where the M-1 argument is
-    // still load-bearing: without its length prefix, moving a ref's text into
-    // the content would produce the same byte stream.
-    const a: Post = { ...GOLDEN_POST, content: 'ab', parentRefs: [GOLDEN_REF] };
-    const b: Post = { ...GOLDEN_POST, content: `ab${GOLDEN_REF}`, parentRefs: [] };
+  it('contentHash and parentRefs boundaries are structural — both fixed-width', () => {
+    // All three of the first three fields are `b32` or `arr(b32)`, so
+    // boundaries are structural and nothing can collide them. The only
+    // variable-width field is `protocolVersion` (vlqU), and the ref array's
+    // count prefix separates presence from absence.
+    const a = { ...GOLDEN_COMMIT, parentRefs: [GOLDEN_REF] };
+    const b = { ...GOLDEN_COMMIT, parentRefs: [] };
     expect(payload(a)).not.toBe(payload(b));
-    // …and the count prefix seals the other direction: same content, ref
-    // present versus absent.
-    const c: Post = { ...GOLDEN_POST, content: 'ab', parentRefs: [] };
-    expect(payload(a)).not.toBe(payload(c));
   });
 
   it('an empty parentRef is unrepresentable, and absence is still distinguishable', () => {
-    // Under a length-prefixed text encoding `''` is a legal ref — `LP(utf8(''))`
-    // is four zero bytes — and only the explicit count separates `[]` from
-    // `['']`. `b32` removes the input instead of distinguishing it: an empty
-    // ref has no encoding at all.
-    const none: Post = { ...GOLDEN_POST, parentRefs: [] };
-    const empty: Post = { ...GOLDEN_POST, parentRefs: [''] };
+    const none = { ...GOLDEN_COMMIT, parentRefs: [] as string[] };
+    const empty = { ...GOLDEN_COMMIT, parentRefs: [''] };
     expect(() => payload(empty)).toThrow(/64 lowercase hex chars/);
-    // Vacuity check: both append nothing under the undelimited concatenation
-    // `legacyPostId` models.
-    expect(legacyPostId(none)).toBe(legacyPostId(empty));
-    // The count prefix still does its job for the in-domain pair.
-    expect(payload(none)).not.toBe(payload({ ...GOLDEN_POST, parentRefs: [GOLDEN_REF] }));
+    // Vacuity check: both append nothing under the old undelimited concatenation.
+    const legacyNone: Post = { content: '', author: GOLDEN_COMMIT.author, parentRefs: [], protocolVersion: 1, type: 'regular' };
+    const legacyEmpty: Post = { content: '', author: GOLDEN_COMMIT.author, parentRefs: [''], protocolVersion: 1, type: 'regular' };
+    expect(legacyPostId(legacyNone)).toBe(legacyPostId(legacyEmpty));
+    expect(payload(none)).not.toBe(payload({ ...GOLDEN_COMMIT, parentRefs: [GOLDEN_REF] }));
   });
 
   it('the post id is domain-tagged — it cannot collide with a box or tx id', () => {
@@ -335,20 +357,20 @@ describe('canonical field encoding (M-1)', () => {
 
   it('never throws on out-of-domain protocolVersion (validation no-panic contract)', () => {
     for (const bad of [NaN, Infinity, -Infinity, -1, 1.5, 2 ** 64, Number.MAX_SAFE_INTEGER + 1]) {
-      expect(() => payload({ ...GOLDEN_POST, protocolVersion: bad })).not.toThrow();
+      expect(() => payload({ ...GOLDEN_COMMIT, protocolVersion: bad })).not.toThrow();
     }
   });
 
   it('an out-of-domain protocolVersion cannot impersonate a valid one', () => {
-    const valid = payload({ ...GOLDEN_POST, protocolVersion: 0 });
+    const valid = payload({ ...GOLDEN_COMMIT, protocolVersion: 0 });
     for (const bad of [NaN, Infinity, -1, 1.5]) {
-      expect(payload({ ...GOLDEN_POST, protocolVersion: bad })).not.toBe(valid);
+      expect(payload({ ...GOLDEN_COMMIT, protocolVersion: bad })).not.toBe(valid);
     }
   });
 
   it('type distinguishes regular from profile', () => {
-    const reg = payload({ ...GOLDEN_POST, type: 'regular' });
-    const prof = payload({ ...GOLDEN_POST, type: 'profile' });
+    const reg = payload({ ...GOLDEN_COMMIT, type: 'regular' });
+    const prof = payload({ ...GOLDEN_COMMIT, type: 'profile' });
     expect(reg).not.toBe(prof);
   });
 

@@ -38,12 +38,20 @@ key IS the identity.
 ### Post
 
 ```
-Post {
-  content: string              // 1–MAX_CONTENT_BYTES UTF-8
+PostCommit {                   // rides the creating transaction (tx.post) — consensus
+  contentHash: Uint8Array(32)  // blake2b512(POST_CONTENT_DOMAIN || utf8(content)).subarray(0, 32)
   author: UserId               // 32-byte Ed25519 public key (Uint8Array)
   parentRefs: PostId[]         // 0–MAX_PARENT_REFS
   protocolVersion: number      // 1
   type: PostType               // 'regular' | 'profile' — enum8 on the wire
+}
+
+Post {                         // the DAG's object — never in a block
+  content: string              // 1–MAX_CONTENT_BYTES UTF-8; computeContentHash(content) == commit.contentHash
+  author: UserId               // the commit's four, verbatim
+  parentRefs: PostId[]
+  protocolVersion: number
+  type: PostType
 }
 
 PostId = blake2b512(POST_ID_DOMAIN || utf8(txId) || u32BE(index))
@@ -52,6 +60,14 @@ PostId = blake2b512(POST_ID_DOMAIN || utf8(txId) || u32BE(index))
 
 `PostId` is a hex string. `author` is binary (Uint8Array) — hex on the HTTP
 wire, raw bytes in CBOR.
+
+**A block commits the `PostCommit` — structure and content hash — never the body.** The body
+travels beside its transaction as a packet (→ Layout — UtxoTransaction, the packet codec) and
+by id on pull, and lives only in the DAG; `contentHash` is the one binding between them.
+
+> ⚠ **AHEAD OF CODE — 2026-08-22.** The `PostCommit`/`Post` split, `POST_CONTENT_DOMAIN`,
+> `computeContentHash` and the packet codec land with the content-in-the-DAG unit (types first).
+> Until it lands `tx.post` is a `Post` and the body is inside the transaction.
 
 ⛔ **A post's identity is PROVENANCE-DERIVED, exactly as a box's is.** A post is
 created by a transaction (→ "Post transactions" below), and no two posts can share
@@ -79,9 +95,9 @@ ordering inverts, and `public/index.html`'s mirror has to change with it.
 
 ### Canonical field encoding (M-1 — injective, protocol-breaking)
 
-**The normative byte layout is Serialization → "Layout — Post".** This section states the
+**The normative byte layout is Serialization → "Layout — PostCommit".** This section states the
 properties that layout must have and does not restate it. `POST_ID_DOMAIN` is
-`utf8("dagsocial/post-id/1")`.
+`utf8("dagsocial/post-id/1")`; `POST_CONTENT_DOMAIN` is `utf8("dagsocial/post-content/1")`.
 
 `postFieldBytes` is **injective**: every variable-length field is length-prefixed and the
 ref array carries an explicit count, so no two distinct posts share a `postFieldBytes`.
@@ -123,11 +139,11 @@ and reproduced by the UI mirror; it is the cross-implementation anchor.
 
 ### Post typing and profiles
 
-`Post.type` is the discriminator: `PostType = 'regular' | 'profile'`, an `enum8` over the
-closed table `POST_TYPE = { regular: 0, profile: 1 }` (→ Layout — Post). The closed set is
-the point — every future post kind is a deliberate protocol decision, never a client
-convention. Consensus checks membership (`verifyPostFieldDomains`) and reads nothing else
-from it; there is no content sniffing anywhere.
+`PostCommit.type` (and the DAG `Post` it names) is the discriminator: `PostType = 'regular' |
+'profile'`, an `enum8` over the closed table `POST_TYPE = { regular: 0, profile: 1 }` (→ Layout
+— PostCommit). The closed set is the point — every future post kind is a deliberate protocol
+decision, never a client convention. Consensus checks membership (`verifyPostCommitDomains`)
+and reads nothing else from it; there is no content sniffing anywhere.
 
 **A profile is one post, bound to its author.** A `type: 'profile'` post's `content`
 (≤ `MAX_CONTENT_BYTES`) is a structured document clients interpret — consensus records it
@@ -144,7 +160,8 @@ username's concern; avatars and polls are not post types.
 
 | Export | Signature | Description |
 |--------|-----------|-------------|
-| `postFieldBytes(post)` | `(Post) => Uint8Array` | The canonical length-prefixed encoding (see above). The post's **payload inside its creating transaction**, so it enters that transaction's `TxId`. |
+| `computeContentHash(content)` | `(string) => Uint8Array(32)` | `blake2b512(POST_CONTENT_DOMAIN ‖ utf8(content)).subarray(0,32)` — the body's commitment, `PostCommit.contentHash`. Hash-side tag, never on the wire. **AHEAD OF CODE — 2026-08-22** (types) |
+| `postFieldBytes(commit)` | `(PostCommit) => Uint8Array` | The canonical length-prefixed encoding (see above). The commit is the post's **payload inside its creating transaction**, so it enters that transaction's `TxId`; the body never does. |
 | `computePostId(txId, index)` | `(TxId, number) => PostId` | `blake2b512(POST_ID_DOMAIN \|\| utf8(txId) \|\| u32BE(index)).subarray(0,32).toString('hex')` — **provenance-derived**, taking no `Post` at all |
 
 ⛔ **`computePostId` takes two arguments and neither is a `Post`.** That is the point, and it
@@ -174,7 +191,9 @@ provenance since Spec G, and nobody reads that as a box being less verifiable �
 moved from the content to the transaction, where it is *stronger*, because the transaction is
 signed and its inputs cannot be reused. A post is now in that same position. What verifies a
 post is the transaction that created it: its `TxId` is checked byte-for-byte against
-`computeTxId`, the payload is inside that preimage, and the signer is the author.
+`computeTxId`, the commit — structure and `contentHash` — is inside that preimage, and the
+signer is the author. The body is verified against the commit by `computeContentHash`, by
+whoever holds the transaction.
 
 Three consequences, each of which reads as a loss only if this rule is not stated:
 
@@ -183,9 +202,12 @@ Three consequences, each of which reads as a loss only if this rule is not state
 - **Parent refs are checked for EXISTENCE, not by hash recomputation.** A `verifyParentHash`
   that decoded the parent and re-derived its id was checking a claim the parent's own bytes
   can no longer make.
-- **A bare-post-by-id fetch has no verifiable answer**, which is why no such wire message
-  exists (`NET_INTERFACE` → Gossip Topics; codes 10/11 reserved). Anything that returns a
-  post must return the transaction that created it.
+- **A bare-post-by-id fetch is verifiable only by a node that already holds the creating
+  transaction** — the commitment is in it — and that is the only node that asks: the body
+  pull (`NET_INTERFACE` → ModifierRequest, `MODIFIER_POST_BODY`) is made for placeholder rows,
+  which exist only once the transaction applied. A node holding no transaction for an id has
+  nothing to check a body against and does not ask. Codes 10/11 stay retired: they returned
+  posts as objects in their own right, which is what cannot be verified.
 
 **`StoredPost.id` is the store's statement of the binding.** It is written when the creating
 transaction applies and carried on every read; a reader takes it rather than deriving it,
@@ -965,7 +987,7 @@ UtxoTransaction {
   preimages?: Record<string, Uint8Array>   // boxId → hash preimage — encoded and hashed, read by nothing
   protocolVersion: number                  // 1
   likeTarget?: PostId                      // Present ⟺ this tx is a like (P2-D) — see below
-  post?: Post                              // Present ⟺ this tx creates a post — see below
+  post?: PostCommit                        // Present ⟺ this tx creates a post — see below; the body rides the PACKET, not the tx
 }
 
 TxId = blake2b512( TX_ID_DOMAIN ‖ txIdBytes )[0:32]
@@ -983,11 +1005,13 @@ saying otherwise. Both optional fields carry `opt()`'s **0/1 presence tag**, not
 an in-band ASCII marker; the `like:` / `post:` marker scheme this section used to
 describe was never implemented for either field.
 
-**`post`** carries the post's payload inside the transaction that creates it, on
-the same pattern `likeTarget` set: an optional field whose presence is
-biconditional with a rule. It takes `opt()`'s presence tag followed by
-`postFieldBytes(post)`, appended **only when present**, after `likeTarget`'s
-contribution. **The two are mutually exclusive in practice** — a transaction is a
+**`post`** carries the post's **commit** — structure and `contentHash`, never the body —
+inside the transaction that creates it, on the same pattern `likeTarget` set: an optional
+field whose presence is biconditional with a rule. It takes `opt()`'s presence tag followed
+by `postFieldBytes(commit)`, appended **only when present**, after `likeTarget`'s
+contribution. The body is bound to the transaction by `contentHash` alone; on gossip it rides
+beside the transaction's bytes as the packet's trailing `opt` (→ Layout — UtxoTransaction,
+the packet codec), outside `txIdBytes` and outside every id. **The two are mutually exclusive in practice** — a transaction is a
 like or a post, never both — but the encoding does not rely on that: each carries
 its own tag, so the tail stays unambiguous however the fields combine.
 
@@ -1451,16 +1475,18 @@ it avoids. Throwing writers are named `…OrThrow` so the exception is visible a
 > is hashed as UTF-8 text and the signature covers those bytes. One third of the pin is a real
 > behavioural change.
 
-### Layout — Post
+### Layout — PostCommit
 
 The struct is five fields; there is no `powNonce`, `challenge`, `signature` or `timestamp`
 in it at all (§Post identity — identity is provenance-derived, authentication is the
 creating transaction's signature; on-chain time is block height, and a post's display time
-is its confirming block's `createdAt`, NODE_INTERFACE → Posts).
+is its confirming block's `createdAt`, NODE_INTERFACE → Posts) — and there is no `content`:
+the commit carries the body's hash, the body itself travels and is stored apart (→ Layout —
+Post body).
 
 | # | Field | Encoding |
 |---|---|---|
-| 1 | `content` | `lpUtf8` |
+| 1 | `contentHash` | `b32` (bytes writer) — `computeContentHash(content)` |
 | 2 | `author` | `b32` (bytes writer) |
 | 3 | `parentRefs` | `arr(refs, b32)` (hex writer) |
 | 4 | `protocolVersion` | `vlqU` |
@@ -1468,11 +1494,34 @@ is its confirming block's `createdAt`, NODE_INTERFACE → Posts).
 
 - `postFieldBytes` is these five fields in this order, and is the post's **payload inside its
   creating transaction** — it enters that transaction's `TxId` (§Canonical field encoding).
-- Wire codec `encodePost` **delegates**: `write` is one `writeBytes(postFieldBytes(p))` and
-  `read` is the adjacent `readPostFields`, so the standalone wire form and the in-transaction
-  payload are the same bytes with one statement of the layout.
+  Slot 1 is fixed-width, so the layout stays self-delimiting and injective.
+- Wire codec `encodePostCommit` **delegates**: `write` is one `writeBytes(postFieldBytes(c))`
+  and `read` is the adjacent `readPostCommitFields`, so the standalone wire form and the
+  in-transaction payload are the same bytes with one statement of the layout.
 
-The encoding is positional and injective (audit M-1); the frozen golden vectors are the
+> ⚠ **AHEAD OF CODE — 2026-08-22.** Slot 1 is `lpUtf8(content)` in the tree; the commit layout
+> lands with the content-in-the-DAG unit (types). **Every post-bearing `TxId` moves with it** —
+> and with them the ids of those transactions' output boxes and the post ids derived from them;
+> **a transaction with no post is unchanged**, because `opt`'s absent tag is the same byte either
+> way. Re-pin by the method under "Re-pinning a frozen vector when a preimage changes", and
+> state the survivor set: every non-post id survives, no post-bearing id does.
+
+### Layout — Post body
+
+The body's standalone wire form — a pull response's element, and the packet's trailing field:
+
+| # | Field | Encoding |
+|---|---|---|
+| 1 | `content` | `lpUtf8` — 1–`MAX_CONTENT_BYTES` UTF-8 bytes |
+
+- Wire codec `encodePostBody(content)` / `decodePostBody(bytes)`. Keyed by the post id wherever
+  it travels (the packet's transaction, the pull request's id list); **never hashed into
+  anything** — the only binding is `computeContentHash(content) == commit.contentHash`, checked
+  by `verifyPostBody` at every entry (VALIDATION_INTERFACE → verifyPostBody).
+- `encodePost` / `decodePost` (the body-bearing struct's codec) are deleted with the split:
+  nothing stores or ships a `Post` as one struct.
+
+The encodings are positional and injective (audit M-1); the frozen golden vectors are the
 cross-implementation anchor, reproduced by the demo-UI mirror.
 
 ### Layout — Stump / PruneEntry
@@ -1827,6 +1876,18 @@ existing behaviour there; for `signatures` it is new, because they were never ha
 
 **Wire codec** (`encodeTx`): `txIdBytes` ‖ `arr(signatures sorted, b32(pubkey) ‖ b64(sig))`.
 
+**Packet codec** (`encodeTxPacket(tx, content?)`): `encodeTx(tx)` ‖ `opt(lpUtf8(content))` —
+the gossip payload of `/dagsocial/tx/1` for **every** transaction (NET_INTERFACE → Gossip
+Topics). The body is outside `txIdBytes`, outside every id and every Merkle leaf; a
+transaction that carries no post pays the `opt` absence tag, one byte, on the wire only.
+`decodeTxPacket(bytes) → { tx, content? }`. **`tx.post` present ⟺ `content` present** — the
+rule is stated and enforced where packets enter (NET_INTERFACE → Gossip Topics,
+NODE_INTERFACE → Post transactions); the codec itself encodes whatever it is given, so the
+biconditional is a check, not a property of the bytes.
+
+> ⚠ **AHEAD OF CODE — 2026-08-22.** The packet codec lands with the content-in-the-DAG unit
+> (types); the gossip payload in the tree is `encodeTx` alone.
+
 > ## ✅ RESOLVED — the layout is implemented. Closed 2026-08-17.
 >
 > **`encodeTx` is positional and reaches `writeTxIdFields`**, so the wire form and the `TxId`
@@ -2150,8 +2211,12 @@ which is now exported as `canonicalBoxBytes` — see "Canonical encoding" under 
 | Export | Signature | Description |
 |--------|-----------|-------------|
 | ~~`serializeTx(tx)`~~ | — | ⚠ **DELETED (G3b) — and the description was never true.** It was built on cbor-x's default `encode`, which is neither of the two encoders that matter, so its bytes were consumed by no identity path. Transaction identity comes from `computeTxId`. Doubly wrong: the function is gone *and* "canonical CBOR encode for tx identity" never described it |
-| `encodePost(post)` | `(Post) => Uint8Array` | Positional — see Layout — Post |
-| `decodePost(bytes)` | `(Uint8Array) => Post` | Inverse of `encodePost` |
+| `encodePostCommit(commit)` | `(PostCommit) => Uint8Array` | Positional — see Layout — PostCommit. **AHEAD OF CODE — 2026-08-22** (types); `encodePost`/`decodePost` are deleted with the split |
+| `decodePostCommit(bytes)` | `(Uint8Array) => PostCommit` | Inverse of `encodePostCommit` |
+| `encodePostBody(content)` | `(string) => Uint8Array` | `lpUtf8(content)` — see Layout — Post body. **AHEAD OF CODE — 2026-08-22** (types) |
+| `decodePostBody(bytes)` | `(Uint8Array) => string` | Inverse of `encodePostBody` |
+| `encodeTxPacket(tx, content?)` | `(UtxoTransaction, string?) => Uint8Array` | `encodeTx(tx)` ‖ `opt(lpUtf8(content))` — the gossip payload; see Layout — UtxoTransaction, the packet codec. **AHEAD OF CODE — 2026-08-22** (types) |
+| `decodeTxPacket(bytes)` | `(Uint8Array) => { tx: UtxoTransaction; content?: string }` | Inverse of `encodeTxPacket` |
 | `encodeHeader(h)` | `(BlockHeader) => Uint8Array` | Positional — the input to `blockHash` / `computePowHash`. See Layout — Block |
 | `decodeHeader(bytes)` | `(Uint8Array) => BlockHeader` | Inverse of `encodeHeader` |
 | `encodeUtxoTxTree(t)` | `(UtxoTxTree) => Uint8Array` | Positional (body section) — see Layout — Block |
@@ -2469,9 +2534,9 @@ ruled (user, 2026-08-19): **28 days**, 40320 at the nominal 60-second block.
 
 ### Domain tags are network-agnostic — deliberately
 
-The six id-derivation domain tags — `BOX_ID_DOMAIN`, `TX_ID_DOMAIN`, `MINT_ID_DOMAIN`,
-`IDENTITY_KEY_DOMAIN`, `POST_ID_DOMAIN`, `PRUNE_ENTRY_ID_DOMAIN` — **do not carry the network,
-and must not be changed to.** No derivation function takes a network argument, and this package holds no
+The seven derivation domain tags — `BOX_ID_DOMAIN`, `TX_ID_DOMAIN`, `MINT_ID_DOMAIN`,
+`IDENTITY_KEY_DOMAIN`, `POST_ID_DOMAIN`, `PRUNE_ENTRY_ID_DOMAIN`, `POST_CONTENT_DOMAIN` — **do
+not carry the network, and must not be changed to.** No derivation function takes a network argument, and this package holds no
 module-level network state.
 
 This was proposed and **rejected on 2026-08-06**. Recorded here because the proposal is
@@ -2835,5 +2900,9 @@ above it.
 - Box `value` is `bigint` integer base units (uniform across box types), `< BOX_VALUE_BOUND`
   so it CBOR-encodes as a uint64 (`0x1b`); no float math anywhere in consensus
   value arithmetic
-- Post identity includes PoW nonce; signing hash excludes it
+- Post identity is provenance-derived — `computePostId(txId, index)`; the body enters consensus
+  only as `PostCommit.contentHash` inside the creating transaction's preimage, and a body is
+  verified against that commitment, never against the id
+  > ✅ **RESOLVED 2026-08-22** — this line read "Post identity includes PoW nonce; signing hash
+  > excludes it", a pre-08-15 claim: there is no post PoW and no signing hash (§Post identity)
 - `UserId` IS the 32-byte Ed25519 public key — no hashing, no separate account concept

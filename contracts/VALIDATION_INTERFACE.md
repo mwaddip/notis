@@ -481,6 +481,32 @@ of its Unicode data version. Pure stateless check, applied unconditionally to al
 post content; covered by a test asserting the ranges match the pinned version and
 that the verdict does not consult runtime category data.
 
+### verifyPostBody
+
+```
+verifyPostBody(content: unknown, contentHash: Uint8Array): { valid: boolean; error?: string }
+```
+
+**The one check a body passes at every entry** — the packet's trailing field at the gossip
+topic validator, a pull response's element, and `POST /posts`' `content` — and the only place
+the content rules run: `content` is a string; `verifyContentLimits`; `verifyContentCharacters`;
+`computeContentHash(content)` equals `contentHash` byte-for-byte (`TYPES_INTERFACE` → Hashing
+functions). The commitment is read from the transaction the caller already holds
+(`tx.post.contentHash`); a caller with no transaction has nothing to verify against and does
+not call this.
+
+⛔ **No transaction check reads content, and no body check reads a transaction beyond its
+commitment.** `MAX_CONTENT_BYTES` and the character table are body rules; `verifyTxStructure`'s
+post arm checks the commit's domains and never a body, because the transaction carries none
+(`TYPES_INTERFACE` → Layout — PostCommit). A content limit enforced inside a transaction check
+would be enforcing it on a field that does not exist there.
+
+Total on adversarial input, like every function here — a non-string `content`, a
+wrong-width `contentHash`, a body over the limit are each `{ valid: false }` with the reason.
+
+> ⚠ **AHEAD OF CODE — 2026-08-22.** Lands with the content-in-the-DAG unit (validation, after
+> types). In the tree the content limits run inside `verifyPost` over a body-bearing `Post`.
+
 ---
 
 ## Structural Validation
@@ -518,19 +544,29 @@ stands where a future non-decoder caller would land, and that failure would be s
 beside it** — a defensive check with no comment reads as a live one, and the next reader reasons
 about a path that cannot happen.
 
-### verifyPostFieldDomains
+### verifyPostCommitDomains
 
 ```
-verifyPostFieldDomains(post: unknown): { valid: boolean; error?: string }
+verifyPostCommitDomains(commit: unknown): { valid: boolean; error?: string }
 ```
 
-The **field-domain pin** (Phase 1c, `5c0bf71`). Carries the type checks
-`isSignablePost` has always made, plus the domain rules `postFieldBytes` relies on:
+The **field-domain pin** (Phase 1c, `5c0bf71`) over the transaction's post payload, the
+`PostCommit` (TYPES_INTERFACE → Layout — PostCommit). Carries the type checks `isSignablePost`
+has always made, plus the domain rules `postFieldBytes` relies on:
 
+- `contentHash` is a `Uint8Array` of **exactly 32 bytes** — the `b32` writer in slot 1
 - `author` is a `Uint8Array` of **exactly 32 bytes**
-- every `parentRefs` entry matches `/^[0-9a-f]{64}$/` — 64 **lowercase** hex
+- every `parentRefs` entry matches `/^[0-9a-f]{64}$/` — 64 **lowercase** hex, and there are at
+  most `MAX_PARENT_REFS` of them
+- `protocolVersion` is a safe unsigned integer (`isU64Safe`)
 - `type` is a member of the `POST_TYPE` table — `'regular' | 'profile'`
   (TYPES_INTERFACE → Post typing and profiles)
+
+It reads **no content** — the commit carries none; the body's rules are `verifyPostBody`'s.
+
+> ⚠ **AHEAD OF CODE — 2026-08-22.** The name, the `contentHash` width and the refs count land
+> with the content-in-the-DAG unit (validation). In the tree the function is
+> `verifyPostFieldDomains` over a body-bearing `Post`.
 
 **Why lowercase is load-bearing, not stylistic.** `'AB…'` and `'ab…'` hex-decode
 to the same 32 bytes. Accepting both would make the hex→bytes conversion at the
@@ -634,11 +670,13 @@ rejection, and Phase 1e's teeth demonstration asserts exact labels.
 
 Total on adversarial input, like every function here.
 
-**There is no sub-block to structurally verify.** A post's structural checks —
-`verifyPostFieldDomains` and the content limits — live in the post-bearing
-transaction's validation, where `verifyTxStructure` runs.
+**There is no sub-block to structurally verify.** A post commit's structural checks —
+`verifyPostCommitDomains` — live in the post-bearing transaction's validation, where
+`verifyTxStructure` runs. The body's checks — `verifyPostBody` — run wherever a body enters a
+node (the packet validator, a pull response, `POST /posts`) and never inside a transaction
+check (→ verifyPostBody).
 
-⚠ **`verifyPostFieldDomains` is still needed** — the post payload is
+⚠ **`verifyPostCommitDomains` is still needed** — the post payload is
 still attacker-supplied bytes reaching an encoder, and the no-panic contract
 (M-5/M-6) is unchanged.
 
@@ -655,8 +693,17 @@ verifyTxStructure(tx: UtxoTransaction): { valid: boolean; error?: string }
 
 Checks: `tx` is an object, `inputs` is a non-empty array, `outputs` is a
 non-empty array, **no output is a `genesis_proof` box**, no duplicate inputs,
-`protocolVersion` is a number, and **the encoded transaction is at most
-`MAX_TX_BYTES`**. That is the whole list.
+`protocolVersion` is a number, **when `post` is present, `verifyPostCommitDomains(tx.post)`**
+— the commit's domain established before `postFieldBytes` can run inside `computeTxId`, and
+**no content check, because the transaction carries no content** — and **the encoded
+transaction is at most `MAX_TX_BYTES`**. That is the whole list.
+
+> ⚠ **AHEAD OF CODE — 2026-08-22.** The post arm exists in the tree under the old names —
+> `verifyTxStructure` calls `verifyPostFieldDomains`, `verifyParentRefsCount`, `verifyContentLimits`
+> and `verifyContentCharacters` over a body-bearing `tx.post` (`verify.ts`, measured 2026-08-22), so
+> today the transaction check does read content; the commit form — domains and refs count only —
+> lands with the content-in-the-DAG unit (validation). The list above omitted the arm until
+> 2026-08-22.
 
 **It does not check `likeTarget`**, and this contract wrongly said it did until
 2026-08-09 — see the correction under `verifyOrderingBlockStructure` below. The
@@ -1003,11 +1050,13 @@ Validation runs in order of increasing cost. A post failing phase N is
 rejected before phase N+1 executes.
 
 **Phase 1 — Structural (cheapest):**
-- Post deserializes without error
-- Field domains (`verifyPostFieldDomains`)
+- The transaction (and its packet) deserializes without error
+- Commit field domains (`verifyPostCommitDomains`) — `contentHash` width, `author` width,
+  refs hex and count within [0, MAX_PARENT_REFS], `type` in the table
 - `protocolVersion` is supported
-- `content` within [1, MAX_CONTENT_BYTES] UTF-8 bytes
-- `parentRefs.length` within [0, MAX_PARENT_REFS]
+- The body, wherever it enters (`verifyPostBody`): `content` within [1, MAX_CONTENT_BYTES]
+  UTF-8 bytes, no category-C characters, and `computeContentHash(content)` equals the
+  commit's `contentHash`
 
 **Phase 2 — Cryptographic (cheap):**
 - The creating transaction's signature over its `TxId` verifies (node's
@@ -1019,7 +1068,8 @@ rejected before phase N+1 executes.
 - No duplicate post in local DAG (idempotent — treated as no-op, not error)
 
 **Phase 4 — Content (variable cost, deferrable):**
-- `verifyContentCharacters(content)` passes (no Unicode category C except \n)
+- `verifyContentCharacters(content)` is not here: it runs inside `verifyPostBody` at every
+  body entry (Phase 1), because a body that fails it must never be stored or relayed
 - Content-specific validation (future: homoglyph detection, media checks)
 
 Queries serve the DAG tip. Phase completion gates nothing a reader can observe.
@@ -1035,12 +1085,15 @@ Queries serve the DAG tip. Phase completion gates nothing a reader can observe.
 
 ```
 Stage 1 (@dagsocial/net — topic validators, before mesh forwarding)
-  ├── tx topic     → verifyTxStructure
+  ├── tx topic     → decodeTxPacket → verifyTxStructure → the packet biconditional
+  │                  (tx.post present ⟺ content present) → verifyPostBody(content, tx.post.contentHash)
+  ├── body pull    → verifyPostBody over each returned body, against the row's commitment
   └── block topic  → verifyOrderingBlockStructure (+ chain-link / PoW pre-filters)
 
 Stage 2 (@dagsocial/node — after receipt)
   ├── onTx         → validateTx (authorization, transitions, conservation — NODE_INTERFACE)
-  ├── POST /posts  → verifyPost (field domains, content, refs, version, karma)
+  ├── POST /posts  → verifyPostBody over `content`, then verifyPost over the commit
+  │                  (field domains, refs, version, karma)
   ├── Fork resolution (resolveFork — a received block that extends nothing)
   │     └── verifyHeaderChain over the peer's segment, before any work is
   │           compared or any block fetched (NODE_INTERFACE → Fork choice
@@ -1105,6 +1158,10 @@ own.
   Validate with `Number.isInteger` (not a loose `typeof === 'number'`, which
   admits `NaN` and floats)
 - Content limits measured in UTF-8 bytes, not characters
+- A body check (`verifyPostBody`) never runs inside a transaction check, and a transaction
+  check never reads content — the transaction carries a commit, the body travels apart
+  (TYPES_INTERFACE → Layout — PostCommit, Layout — Post body)
+  > ⚠ **AHEAD OF CODE — 2026-08-22.** Lands with the content-in-the-DAG unit (validation)
 - All functions are synchronous — no Promises, no callbacks
 - Protocol version `PROTOCOL_VERSION` from `@dagsocial/types`
 - Ordering-block hashing is over the **header**. The PoW preimage

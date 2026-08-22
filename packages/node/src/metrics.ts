@@ -12,14 +12,16 @@ let postsValidatedTotal = 0;
 let powVerificationsTotal = 0;
 let powVerificationFailuresTotal = 0;
 let httpRequestsTotal = 0;
+let postBodiesPulledTotal = 0;
 
 export function noteTip(height: number): void {
   dagTipHeight = height;
 }
 
-export function notePostReceived(): void {
+export function notePostReceived(via: 'packet' | 'pull' = 'packet'): void {
   postsReceivedTotal++;
   lastPostReceivedAt = Date.now();
+  if (via === 'pull') postBodiesPulledTotal++;
 }
 
 export function notePostValidated(): void {
@@ -64,6 +66,7 @@ export function getCounters(): {
   powVerificationsTotal: number;
   powVerificationFailuresTotal: number;
   httpRequestsTotal: number;
+  postBodiesPulledTotal: number;
 } {
   return {
     postsReceivedTotal,
@@ -71,6 +74,7 @@ export function getCounters(): {
     powVerificationsTotal,
     powVerificationFailuresTotal,
     httpRequestsTotal,
+    postBodiesPulledTotal,
   };
 }
 

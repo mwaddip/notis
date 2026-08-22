@@ -14,6 +14,7 @@ import {
   verifyParentRefsCount,
   verifyTxStructure,
   verifyOrderingBlockStructure,
+  verifyPostBody,
 } from '@dagsocial/validation';
 import { LazySyncStore, NetNode } from '../src/node.js';
 import type { NetConfig, NetValidators } from '../src/types.js';
@@ -75,6 +76,7 @@ const validators: NetValidators = {
   verifyParentRefsCount,
   verifyTxStructure,
   verifyOrderingBlockStructure,
+  verifyPostBody,
 };
 
 /** A store wired to serve exactly these blocks by height. */

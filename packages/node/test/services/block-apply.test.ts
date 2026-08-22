@@ -9,7 +9,7 @@ import {
 import {
   computePostId,
   computeTxId,
-  encodePost,
+  computeContentHash,
   encodeOrderingBlock,
   decodeOrderingBlock,
   PROTOCOL_VERSION,
@@ -24,6 +24,7 @@ import {
 import { verifyOrderingBlockPoW } from '@dagsocial/validation';
 import type {
   Post,
+  PostCommit,
   KarmaBox,
   CreditBox,
   VouchBox,
@@ -54,6 +55,7 @@ import {
   makeKarmaBox,
   makeLikeTx,
   makePost,
+  makePostCommit,
   makePruneEntry,
   makeTestConfig,
   makeTestIdentity,
@@ -113,11 +115,7 @@ async function importBlockCreator(): Promise<BlockCreatorModule> {
 }
 
 async function importPosts() {
-  return (await import('../../src/store/posts.js')) as {
-    insertPost: (postId: string, post: Post, rawCbor: Uint8Array) => void;
-    confirmPost: (postId: string, blockHeight: number, blockIndex: number) => void;
-    getPost: (id: string) => StoredPost | Stump | null;
-  };
+  return await import('../../src/store/posts.js');
 }
 
 async function importMempoolFresh() {
@@ -274,11 +272,10 @@ describe('block-apply journal recording', () => {
 
     const author = makeTestIdentity();
 
-    const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, 'journal test post');
-    const { encodePost } = await import('@dagsocial/types');
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'journal test post');
 
     const posts = await importPosts();
-    posts.insertPost(postId, post, encodePost(post));
+    posts.insertPost(postId, commit, content);
 
     const mempool = await importMempoolFresh();
     mempool.insertUtxoTx(postTx, 1000);
@@ -312,9 +309,9 @@ describe('block-apply journal recording', () => {
 
     const author = makeTestIdentity();
 
-    const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, 'utxo journal test');
-    const { encodePost, computeTxId } = await import('@dagsocial/types');
-    posts.insertPost(postId, post, encodePost(post));
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'utxo journal test');
+    const { computeTxId } = await import('@dagsocial/types');
+    posts.insertPost(postId, commit, content);
 
     // Insert post transaction
     mempool.insertUtxoTx(postTx, 1000);
@@ -1171,10 +1168,10 @@ describe('block-apply embedded tx re-validation', () => {
     // N2b: likes need confirmed live targets — real posts, confirmed by this
     // same block (topology at §8b precedes the tx loop at §11).
     const author = makeTestIdentity();
-    const { post: postA, tx: postATx, postId: postAId } = await seedPostTx(author, 'valid-txs target a');
-    const { post: postB, tx: postBTx, postId: postBId } = await seedPostTx(author, 'valid-txs target b');
-    posts.insertPost(postAId, postA, encodePost(postA));
-    posts.insertPost(postBId, postB, encodePost(postB));
+    const { commit: commitA, tx: postATx, postId: postAId, content: contentA } = await seedPostTx(author, 'valid-txs target a');
+    const { commit: commitB, tx: postBTx, postId: postBId, content: contentB } = await seedPostTx(author, 'valid-txs target b');
+    posts.insertPost(postAId, commitA, contentA);
+    posts.insertPost(postBId, commitB, contentB);
     mempool.insertUtxoTx(postATx, 1000);
     mempool.insertUtxoTx(postBTx, 1000);
 
@@ -1228,10 +1225,10 @@ describe('block-apply embedded tx re-validation', () => {
     // N2b: likes need confirmed live targets — two real posts, confirmed by
     // the same block that carries the chained likes.
     const author = makeTestIdentity();
-    const { post: postA, tx: postATx, postId: postAId } = await seedPostTx(author, 'defer-retry target a');
-    const { post: postB, tx: postBTx, postId: postBId } = await seedPostTx(author, 'defer-retry target b');
-    posts.insertPost(postAId, postA, encodePost(postA));
-    posts.insertPost(postBId, postB, encodePost(postB));
+    const { commit: commitA, tx: postATx, postId: postAId, content: contentA } = await seedPostTx(author, 'defer-retry target a');
+    const { commit: commitB, tx: postBTx, postId: postBId, content: contentB } = await seedPostTx(author, 'defer-retry target b');
+    posts.insertPost(postAId, commitA, contentA);
+    posts.insertPost(postBId, commitB, contentB);
     mempool.insertUtxoTx(postATx, 1000);
     mempool.insertUtxoTx(postBTx, 1000);
 
@@ -1752,7 +1749,7 @@ describe('block-apply mint provenance', () => {
       const { getKarmaPoolBox } = await import('../../src/store/utxo.js');
       const poolBefore = getKarmaPoolBox()!.value;
 
-      const post = makePost(stale.userId, 'stale post');
+      const staleCommit = makePostCommit(stale.userId, 'stale post');
       const postTx: UtxoTransaction = {
         inputs: [karmaBox.id!],
         outputs: [
@@ -1761,7 +1758,7 @@ describe('block-apply mint provenance', () => {
         ],
         signatures: {},
         protocolVersion: PROTOCOL_VERSION,
-        post,
+        post: staleCommit,
       };
       signTransaction(postTx, stale.privateKey, hex(stale.userId));
       mempool.insertUtxoTx(postTx, 1000);
@@ -2028,7 +2025,7 @@ describe('block-apply H-3 sub-block authorship and prune binding', () => {
     // `block_topology`'s author comes from `tx.post.author` now, so a fixture
     // that seeded the post and asserted an id would be testing its own
     // arithmetic — the binding under attack here is the one apply derives.
-    const { post, tx: postTx, postId } = await seedPostTx(author, 'victim post');
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'victim post');
 
     const blockApply = await importBlockApply();
 
@@ -2058,7 +2055,7 @@ describe('block-apply H-3 sub-block authorship and prune binding', () => {
     const posts = await importPosts();
     const stored = posts.getPost(postId);
     expect(stored).not.toBeNull();
-    expect((stored as Post).content).toBe('victim post');
+    expect(posts.isLivePost(stored)).toBe(true);
 
     const { getStump } = (await import('../../src/store/stumps.js')) as {
       getStump: (id: string) => unknown;
@@ -2071,10 +2068,10 @@ describe('block-apply H-3 sub-block authorship and prune binding', () => {
     db.initDb(':memory:');
 
     const author = makeTestIdentity();
-    const { post, tx: postTx, postId } = await seedPostTx(author, 'victim post');
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'victim post');
 
     const posts = await importPosts();
-    posts.insertPost(postId, post, encodePost(post));
+    posts.insertPost(postId, commit, content);
 
     const blockApply = await importBlockApply();
     const confirmBlock = await makeApplicableBlock({
@@ -2107,10 +2104,10 @@ describe('block-apply H-3 sub-block authorship and prune binding', () => {
     // it, so block_topology has no author for it and it is not prunable. Held
     // locally and unconfirmed is exactly the state a gossip-only post is in.
     const author = makeTestIdentity();
-    const { post, tx: postTx, postId } = await seedPostTx(author, 'unconfirmed post');
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'unconfirmed post');
 
     const posts = await importPosts();
-    posts.insertPost(postId, post, encodePost(post));
+    posts.insertPost(postId, commit, content);
 
     const { getTopologyAuthor } = (await import('../../src/store/topology.js')) as {
       getTopologyAuthor: (postId: string) => string | null;
@@ -2133,10 +2130,10 @@ describe('block-apply H-3 sub-block authorship and prune binding', () => {
     db.initDb(':memory:');
 
     const author = makeTestIdentity();
-    const { post, tx: postTx, postId } = await seedPostTx(author, 'confirmed post');
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'confirmed post');
 
     const posts = await importPosts();
-    posts.insertPost(postId, post, encodePost(post));
+    posts.insertPost(postId, commit, content);
 
     const blockApply = await importBlockApply();
     expect(
@@ -2246,11 +2243,11 @@ describe('block-apply H-3 sub-block authorship and prune binding', () => {
 
     const author = makeTestIdentity();
     const parentA = 'a1'.repeat(32);
-    const { post, tx: postTx, postId } = await seedPostTx(author, 'child post', { parentRefs: [parentA] },
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'child post', { parentRefs: [parentA] },
     );
 
     const posts = await importPosts();
-    posts.insertPost(postId, post, encodePost(post));
+    posts.insertPost(postId, commit, content);
 
     const blockApply = await importBlockApply();
     const block = await makeApplicableBlock({ utxoTxs: [postTx] });
@@ -2299,10 +2296,10 @@ describe('block-apply funnel totality', () => {
    */
   async function confirmedPost(): Promise<{ postId: string; author: TestIdentity }> {
     const author = makeTestIdentity();
-    const { post, tx: postTx, postId } = await seedPostTx(author, 'victim post');
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'victim post');
 
     const posts = await importPosts();
-    posts.insertPost(postId, post, encodePost(post));
+    posts.insertPost(postId, commit, content);
 
     const blockApply = await importBlockApply();
     const confirmBlock = await makeApplicableBlock({ utxoTxs: [postTx] });

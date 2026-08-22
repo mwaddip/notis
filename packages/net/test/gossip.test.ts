@@ -7,11 +7,13 @@ import {
   verifyParentRefsCount,
   verifyTxStructure,
   verifyOrderingBlockStructure,
+  verifyPostBody,
 } from '@dagsocial/validation';
 import {
   generateKeyPair,
-  encodeTx,
-  decodeTx,
+  encodeTxPacket,
+  decodeTxPacket,
+  computeContentHash,
   ReaderError,
   encodeOrderingBlock,
   decodeOrderingBlock,
@@ -19,7 +21,7 @@ import {
   ORDERING_BLOCK_POW_TARGET_FLOOR,
 } from '@dagsocial/types';
 import type {
-  Post, UtxoTransaction, OrderingBlock, BlockHeader, UtxoTxTree,
+  PostCommit, UtxoTransaction, OrderingBlock, BlockHeader, UtxoTxTree,
 } from '@dagsocial/types';
 import { TopicValidatorResult } from '@libp2p/interface';
 import { subscribeTopics, TOPICS } from '../src/gossip.js';
@@ -41,6 +43,7 @@ const validators: NetValidators = {
   verifyParentRefsCount,
   verifyTxStructure,
   verifyOrderingBlockStructure,
+  verifyPostBody,
 };
 
 function makeConfig(): NetConfig {
@@ -270,18 +273,20 @@ describe('tx topic validator — the post membership gate', () => {
   let keyPair: ReturnType<typeof generateKeyPair>;
   let authorHex: string;
   let postTx: UtxoTransaction;
+  let postContent: string;
   let plainTx: UtxoTransaction;
 
-  const basePost = (author: Uint8Array, over: Partial<Post> = {}): Post => ({
-    content: 'gossip relay-gate fixture',
+  const DEFAULT_CONTENT = 'gossip relay-gate fixture';
+
+  const baseCommit = (author: Uint8Array, content: string = DEFAULT_CONTENT): PostCommit => ({
+    contentHash: computeContentHash(content),
     author,
     parentRefs: [],
     protocolVersion: 1,
     type: 'regular' as const,
-    ...over,
   });
 
-  const txWith = (post?: Post): UtxoTransaction => ({
+  const txWith = (post?: PostCommit): UtxoTransaction => ({
     inputs: ['aa'.repeat(32)],
     outputs: [{ boxType: 'karma', value: 10n, createdAtBlock: 0, owner: new Uint8Array(32).fill(1) } as never],
     signatures: {},
@@ -292,22 +297,23 @@ describe('tx topic validator — the post membership gate', () => {
   beforeAll(() => {
     keyPair = generateKeyPair();
     authorHex = Buffer.from(keyPair.publicKey).toString('hex');
-    postTx = txWith(basePost(keyPair.publicKey));
+    postTx = txWith(baseCommit(keyPair.publicKey));
+    postContent = DEFAULT_CONTENT;
     plainTx = txWith();
   });
 
-  const validateTx = (tx: UtxoTransaction, members: Set<string>) => {
+  const validatePacket = (tx: UtxoTransaction, content: string | undefined, members: Set<string>) => {
     const { topicValidators, peerMgr, penaltySpy } = makeHarness(members);
     const validate = topicValidators.get(TOPICS.tx)!;
     const peer = newPeer(peerMgr);
-    const result = validate(peer, { data: encodeTx(tx) });
+    const result = validate(peer, { data: encodeTxPacket(tx, content) });
     return { result, peer, peerMgr, penaltySpy };
   };
 
   // --- cell 1: a known author is admitted -----------------------------------
 
   it('accepts a post from an author IN the karma set, with zero penalties', () => {
-    const { result, peer, peerMgr, penaltySpy } = validateTx(postTx, new Set([authorHex]));
+    const { result, peer, peerMgr, penaltySpy } = validatePacket(postTx, postContent, new Set([authorHex]));
     expect(result).toBe(TopicValidatorResult.Accept);
     expect(penaltySpy).not.toHaveBeenCalled();
     expect(peerMgr.getPeerMetadata(peer.id)!.penaltyCount).toBe(0);
@@ -316,9 +322,7 @@ describe('tx topic validator — the post membership gate', () => {
   // --- cell 2: an unknown author is dropped ---------------------------------
 
   it('rejects the SAME post when its author is not in the set', () => {
-    // Byte-identical message, one difference: set membership. So the verdict
-    // cannot be coming from anything about the transaction itself.
-    const { result, peer, penaltySpy } = validateTx(postTx, new Set());
+    const { result, peer, penaltySpy } = validatePacket(postTx, postContent, new Set());
     expect(result).toBe(TopicValidatorResult.Reject);
     expect(penaltySpy).toHaveBeenCalledWith(
       'misbehavior', peer.id, 100, 'post author holds no karma',
@@ -326,70 +330,56 @@ describe('tx topic validator — the post membership gate', () => {
   });
 
   it('rejects a post whose author is in the set under a DIFFERENT spelling', () => {
-    // Uppercase hex names the same 32 bytes but is not the same string, and the
-    // set is keyed on the lowercase `toString('hex')` output every producer
-    // writes. A gate that lowercased its input would silently widen membership.
-    const { result } = validateTx(postTx, new Set([authorHex.toUpperCase()]));
+    const { result } = validatePacket(postTx, postContent, new Set([authorHex.toUpperCase()]));
     expect(result).toBe(TopicValidatorResult.Reject);
   });
 
   // --- cell 3 and 4: the set is LIVE, not captured ---------------------------
 
   it('admits an author ADDED after the validator was registered', () => {
-    // ⛔ The mutation case. `subscribeTopics` closes over the set object, so a
-    // gate that copied it — or that was wired to a constant — would keep
-    // rejecting here. This is what proves `addKarmaMember` reaches the drop path.
     const members = new Set<string>();
     const { topicValidators, peerMgr } = makeHarness(members);
     const validate = topicValidators.get(TOPICS.tx)!;
+    const packetData = encodeTxPacket(postTx, postContent);
 
-    expect(validate(newPeer(peerMgr), { data: encodeTx(postTx) }))
+    expect(validate(newPeer(peerMgr), { data: packetData }))
       .toBe(TopicValidatorResult.Reject);
 
-    members.add(authorHex);   // what NetNode.addKarmaMember does
+    members.add(authorHex);
 
-    expect(validate(newPeer(peerMgr), { data: encodeTx(postTx) }))
+    expect(validate(newPeer(peerMgr), { data: packetData }))
       .toBe(TopicValidatorResult.Accept);
   });
 
   it('drops an author REMOVED after the validator was registered', () => {
-    // The other direction — an identity whose karma fell to zero. Together with
-    // the case above this pins the gate to the live set in both directions,
-    // which neither cell can do alone.
     const members = new Set<string>([authorHex]);
     const { topicValidators, peerMgr } = makeHarness(members);
     const validate = topicValidators.get(TOPICS.tx)!;
+    const packetData = encodeTxPacket(postTx, postContent);
 
-    expect(validate(newPeer(peerMgr), { data: encodeTx(postTx) }))
+    expect(validate(newPeer(peerMgr), { data: packetData }))
       .toBe(TopicValidatorResult.Accept);
 
-    members.delete(authorHex);   // what NetNode.removeKarmaMember does
+    members.delete(authorHex);
 
-    expect(validate(newPeer(peerMgr), { data: encodeTx(postTx) }))
+    expect(validate(newPeer(peerMgr), { data: packetData }))
       .toBe(TopicValidatorResult.Reject);
   });
 
   // --- the biconditional's other half ---------------------------------------
 
   it('a transaction with NO post is not gated by membership at all', () => {
-    // Both sides asserted against the same empty set: the post is rejected, the
-    // plain transaction is not. A gate that ran on every transaction would stop
-    // every like, invite and vouch from a member with no karma box — which is a
-    // different rule from the one being implemented.
     const empty = new Set<string>();
-    expect(validateTx(postTx, empty).result).toBe(TopicValidatorResult.Reject);
-    expect(validateTx(plainTx, empty).result).toBe(TopicValidatorResult.Accept);
+    expect(validatePacket(postTx, postContent, empty).result).toBe(TopicValidatorResult.Reject);
+    expect(validatePacket(plainTx, undefined, empty).result).toBe(TopicValidatorResult.Accept);
   });
 
   // --- structure still gates, ahead of membership ---------------------------
 
-  it('rejects an over-long post before consulting the set', () => {
-    // `verifyTxStructure` runs first, so a member's malformed post is still
-    // dropped — the membership check is an addition to the structural gate, not
-    // a replacement for it. The set holds the author, so only structure can be
-    // the cause.
-    const tx = txWith(basePost(keyPair.publicKey, { content: 'x'.repeat(301) }));
-    const { result, peer, penaltySpy } = validateTx(tx, new Set([authorHex]));
+  it('rejects an over-long body before consulting the set', () => {
+    const longContent = 'x'.repeat(301);
+    const tx = txWith(baseCommit(keyPair.publicKey, longContent));
+    const { result, peer, penaltySpy } = validatePacket(tx, longContent, new Set([authorHex]));
     expect(result).toBe(TopicValidatorResult.Reject);
     expect(penaltySpy).toHaveBeenCalledWith(
       'misbehavior', peer.id, 100, expect.stringContaining('Content'),
@@ -397,31 +387,15 @@ describe('tx topic validator — the post membership gate', () => {
   });
 
   it('a 31-byte author has no encoding, so the gate is never handed one', () => {
-    // ⛔ The gate hex-encodes `tx.post.author` to key the membership set, and
-    // what keeps that safe is the CODEC, not the structural check.
-    //
-    // `author` is `b32`, whose wire domain *is* its encodable domain, so the
-    // writer throws rather than padding or truncating — padding a 31-byte author
-    // to 32 would map it onto a well-formed post's encoding (TYPES_INTERFACE →
-    // Totality). A value that cannot be written cannot be read: no byte string
-    // decodes to a post whose author is not exactly 32 bytes.
-    //
-    // Both of net's paths are therefore closed before the gate. Inbound, the tx
-    // topic validator's only input is `decodeTx(msg.data)`; outbound,
-    // `broadcastTx` encodes and never validates. The validator is never called
-    // on an object net did not decode.
-    const tx = txWith(basePost(new Uint8Array(31).fill(4)));
-    expect(() => encodeTx(tx)).toThrow(/32 bytes/);
+    const tx = txWith(baseCommit(new Uint8Array(31).fill(4)));
+    expect(() => encodeTxPacket(tx, 'test')).toThrow(/32 bytes/);
 
-    // The other half, asserted rather than assumed: what the decoder does hand
-    // the gate is always 32 bytes, which is the precondition the hex-encode
-    // rests on.
-    expect(decodeTx(encodeTx(postTx)).post!.author.length).toBe(32);
+    expect(decodeTxPacket(encodeTxPacket(postTx, postContent)).tx.post!.author.length).toBe(32);
   });
 
   it('rejects an unsupported protocol version', () => {
-    const tx = { ...txWith(basePost(keyPair.publicKey)), protocolVersion: 99 };
-    const { result, peer, penaltySpy } = validateTx(tx, new Set([authorHex]));
+    const tx = { ...txWith(baseCommit(keyPair.publicKey)), protocolVersion: 99 };
+    const { result, peer, penaltySpy } = validatePacket(tx, postContent, new Set([authorHex]));
     expect(result).toBe(TopicValidatorResult.Reject);
     expect(penaltySpy).toHaveBeenCalledWith(
       'misbehavior', peer.id, 100, 'unsupported protocol version',
@@ -429,10 +403,64 @@ describe('tx topic validator — the post membership gate', () => {
   });
 
   it('there is no sub-block topic to subscribe to', () => {
-    // Tracked reservation guard (NET_INTERFACE → Gossip Topics).
     const { topicValidators } = makeHarness(new Set([authorHex]));
     expect([...topicValidators.keys()].sort()).toEqual([TOPICS.orderingBlock, TOPICS.tx].sort());
     expect(topicValidators.has('/dagsocial/subblock/1')).toBe(false);
+  });
+
+  // --- packet biconditional and body verification ---
+
+  it('rejects a post without a body (biconditional)', () => {
+    // tx.post present, content absent → misbehaviour
+    const { result, peer, penaltySpy } = validatePacket(postTx, undefined, new Set([authorHex]));
+    expect(result).toBe(TopicValidatorResult.Reject);
+    expect(penaltySpy).toHaveBeenCalledWith(
+      'misbehavior', peer.id, 100, 'post without body',
+    );
+  });
+
+  it('rejects a body without a post (biconditional)', () => {
+    // tx.post absent, content present → misbehaviour
+    const { result, peer, penaltySpy } = validatePacket(plainTx, 'orphan body', new Set());
+    expect(result).toBe(TopicValidatorResult.Reject);
+    expect(penaltySpy).toHaveBeenCalledWith(
+      'misbehavior', peer.id, 100, 'body without post',
+    );
+  });
+
+  it('rejects a body that fails verifyPostBody (hash mismatch)', () => {
+    const { result, peer, penaltySpy } = validatePacket(postTx, 'wrong content', new Set([authorHex]));
+    expect(result).toBe(TopicValidatorResult.Reject);
+    expect(penaltySpy).toHaveBeenCalledWith(
+      'misbehavior', peer.id, 100, expect.stringContaining('hash'),
+    );
+  });
+
+  it('a non-post packet delivers content === undefined', () => {
+    const seen: Array<{ content: string | undefined }> = [];
+    const { topicValidators, peerMgr } = makeHarness(new Set());
+    const validate = topicValidators.get(TOPICS.tx)!;
+    const peer = newPeer(peerMgr);
+    const result = validate(peer, { data: encodeTxPacket(plainTx) });
+    expect(result).toBe(TopicValidatorResult.Accept);
+  });
+
+  it('structure failure fires before body failure', () => {
+    // A tx that fails both structure (bad parentRefs count) and would also fail
+    // body — only the structure error is reported.
+    const badCommit: PostCommit = {
+      contentHash: computeContentHash('test'),
+      author: keyPair.publicKey,
+      parentRefs: ['aa'.repeat(32), 'bb'.repeat(32)],
+      protocolVersion: 1,
+      type: 'regular' as const,
+    };
+    const tx = txWith(badCommit);
+    const { result, peer, penaltySpy } = validatePacket(tx, 'wrong content', new Set([authorHex]));
+    expect(result).toBe(TopicValidatorResult.Reject);
+    expect(penaltySpy).toHaveBeenCalledWith(
+      'misbehavior', peer.id, 100, expect.stringContaining('parent ref'),
+    );
   });
 });
 
@@ -459,7 +487,7 @@ const RELAY_PEER = 'peer-that-relayed-it';
 
 function makeDispatchHarness(handlers: {
   onOrderingBlock?: (block: OrderingBlock, fromPeerId: string) => void;
-  onTx?: (tx: unknown, fromPeerId: string) => void;
+  onTx?: (tx: unknown, content: string | undefined, fromPeerId: string) => void;
 } = {}) {
   let listener: GossipListener | null = null;
   const stub = {
@@ -615,9 +643,9 @@ describe('gossip dispatch listener', () => {
       protocolVersion: 1,
     };
     const seen: string[] = [];
-    const { deliver } = makeDispatchHarness({ onTx: (_tx, from) => seen.push(from) });
+    const { deliver } = makeDispatchHarness({ onTx: (_tx, _content, from) => seen.push(from) });
 
-    deliver(TOPICS.tx, encodeTx(plainTx));
+    deliver(TOPICS.tx, encodeTxPacket(plainTx));
 
     expect(seen).toEqual([RELAY_PEER]);
   });
@@ -630,9 +658,9 @@ describe('gossip dispatch listener', () => {
       protocolVersion: 1,
     };
     const seen: string[] = [];
-    const { deliver } = makeDispatchHarness({ onTx: (_tx, from) => seen.push(from) });
+    const { deliver } = makeDispatchHarness({ onTx: (_tx, _content, from) => seen.push(from) });
 
-    deliver(TOPICS.tx, encodeTx(plainTx), null);
+    deliver(TOPICS.tx, encodeTxPacket(plainTx), null);
 
     expect(seen).toEqual(['']);
   });

@@ -70,3 +70,7 @@ export function getStump(stumpId: string): Stump | null {
     .get(stumpId) as StumpRow | undefined;
   return row ? rowToStump(row) : null;
 }
+
+export function deleteStump(stumpId: string): void {
+  getDb().prepare('DELETE FROM dag_stumps WHERE id = ?').run(stumpId);
+}

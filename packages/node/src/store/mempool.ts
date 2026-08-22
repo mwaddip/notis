@@ -1,5 +1,6 @@
 import { getDb } from './db.js';
 import { getBox } from './utxo.js';
+import { deletePendingPost } from './posts.js';
 import { config } from '../config.js';
 import { ClientError } from '../services/client-error.js';
 import { materializeOutput } from '../services/utxo-engine.js';
@@ -16,6 +17,7 @@ import {
   encodeTx,
   decodeTx,
   computeTxId,
+  computePostId,
   computePruneEntryId,
   utxoTxTreeByteLength,
 } from '@dagsocial/types';
@@ -730,6 +732,14 @@ export function removeUtxoTxEntry(txId: string): number {
 
 export function purgeExpired(currentHeight: number): number {
   const db = getDb();
+  // NODE_INTERFACE → Post transactions — the pending-row rule: an unconfirmed
+  // post entry's DAG row dies with its pool row.
+  const expiring = db.prepare(
+    "SELECT tx_id FROM mempool WHERE expires_at_height < ? AND entry_type = 'utxo_tx' AND tx_id IS NOT NULL",
+  ).all(currentHeight) as Array<{ tx_id: string }>;
+  for (const { tx_id } of expiring) {
+    deletePendingPost(computePostId(tx_id, 0));
+  }
   const result = db.prepare(
     'DELETE FROM mempool WHERE expires_at_height < ?',
   ).run(currentHeight);
@@ -738,6 +748,13 @@ export function purgeExpired(currentHeight: number): number {
 
 export function removeEntry(rowid: number): void {
   const db = getDb();
+  // NODE_INTERFACE → Post transactions — the pending-row rule.
+  const row = db.prepare(
+    "SELECT tx_id FROM mempool WHERE rowid = ? AND entry_type = 'utxo_tx' AND tx_id IS NOT NULL",
+  ).get(rowid) as { tx_id: string } | undefined;
+  if (row) {
+    deletePendingPost(computePostId(row.tx_id, 0));
+  }
   db.prepare('DELETE FROM mempool WHERE rowid = ?').run(rowid);
 }
 

@@ -17,7 +17,7 @@ import { castVouch, initiateUnvouch } from './services/vouch.js';
 import { createInvite } from './services/invites.js';
 import { executePrune } from './services/stump-engine.js';
 import { readFileSync } from 'fs';
-import { encodePost } from '@dagsocial/types';
+import { isLivePost } from './store/posts.js';
 import { getDb } from './store/db.js';
 import { validateTx } from './services/utxo-engine.js';
 import { admitTx } from './services/admit-tx.js';
@@ -80,14 +80,13 @@ export function createApp(config: Config): express.Express {
     if (!postId) return next();
 
     const result = store.getPost(postId);
-    if (!result || !('content' in result)) return next();
+    if (!isLivePost(result) || result.content === null) return next();
 
-    const post = result as import('@dagsocial/types').Post;
-    const authorHex = Buffer.from(post.author).toString('hex');
+    const authorHex = Buffer.from(result.author).toString('hex');
     const shortAuthor = authorHex.slice(0, 12);
-    const descRaw = post.content.length > 200
-      ? post.content.slice(0, 197).replace(/\s+\S*$/, '') + '...'
-      : post.content;
+    const descRaw = result.content.length > 200
+      ? result.content.slice(0, 197).replace(/\s+\S*$/, '') + '...'
+      : result.content;
     const desc = descRaw.replace(/\s+/g, ' ').replace(/"/g, '&quot;').trim();
 
     const publicBase = config.publicUrl.replace(/\/$/, '');
@@ -115,19 +114,16 @@ export function createApp(config: Config): express.Express {
   app.get('/preview/:id', (req, res) => {
     const postId = req.params['id']!;
     const result = store.getPost(postId);
-    if (!result || !('content' in result)) {
+    if (!isLivePost(result) || result.content === null) {
       res.status(404).type('html').send('<!DOCTYPE html><html><body><p>Post not found.</p></body></html>');
       return;
     }
 
-    const post = result as import('@dagsocial/types').Post;
-    const authorHex = Buffer.from(post.author).toString('hex');
+    const authorHex = Buffer.from(result.author).toString('hex');
     const shortAuthor = authorHex.slice(0, 12);
-    // Truncate content to ~200 chars for og:description. Collapse whitespace
-    // (newlines break HTML attribute parsing) and escape for HTML.
-    const descRaw = post.content.length > 200
-      ? post.content.slice(0, 197).replace(/\s+\S*$/, '') + '...'
-      : post.content;
+    const descRaw = result.content.length > 200
+      ? result.content.slice(0, 197).replace(/\s+\S*$/, '') + '...'
+      : result.content;
     const desc = descRaw.replace(/\s+/g, ' ').replace(/"/g, '&quot;').trim();
 
     // Build absolute URL for og:url (Telegram requires absolute URLs).
@@ -202,7 +198,6 @@ export function createApp(config: Config): express.Express {
     '/posts',
     postRoutes({
       verifyPost,
-      encodePost,
       insertPost: store.insertPost,
       getPost: store.getPost,
       queryPosts: store.queryPosts,
@@ -220,6 +215,7 @@ export function createApp(config: Config): express.Express {
       validateTx: (tx, currentBlockHeight) =>
         validateTx(utxoEngineDeps, tx, currentBlockHeight),
       getBox: store.getBoxWithPending,
+      runInTransaction: (fn: () => void) => getDb().transaction(fn)(),
     }),
   );
 

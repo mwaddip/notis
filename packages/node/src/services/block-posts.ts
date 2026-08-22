@@ -1,11 +1,11 @@
 import { computePostId, decodeTx } from '@dagsocial/types';
-import type { OrderingBlock, Post, PostId, TxId } from '@dagsocial/types';
+import type { OrderingBlock, PostCommit, PostId, TxId } from '@dagsocial/types';
 
 /** One post a block creates, with the transaction identity that names it. */
 export interface BlockPost {
   postId: PostId;
   txId: TxId;
-  post: Post;
+  post: PostCommit;
 }
 
 /**

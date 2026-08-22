@@ -1045,52 +1045,39 @@ describe('mempool store', () => {
      * (TYPES_INTERFACE → Layout — UtxoTransaction). ⚠ **A signature cannot pad**
      * — `b64` is fixed-width, so a padded one has no encoding.
      */
-    async function txOfEncodedSize(byteLength: number) {
-      const { encodeTx, PROTOCOL_VERSION } = await import('@dagsocial/types');
-      const build = (inputs: number, content: string) => ({
-        inputs: Array.from({ length: inputs }, (_, i) =>
+    async function txOverMaxSize() {
+      const { encodeTx, computeContentHash, PROTOCOL_VERSION, MAX_TX_BYTES } = await import('@dagsocial/types');
+      let inputs = 0;
+      const build = (n: number) => ({
+        inputs: Array.from({ length: n }, (_, i) =>
           i.toString(16).padStart(64, '0'),
         ),
         outputs: [],
         signatures: {},
         protocolVersion: PROTOCOL_VERSION,
         post: {
-          content,
+          contentHash: computeContentHash('size-test'),
           author: new Uint8Array(32).fill(0x33),
           parentRefs: [],
           protocolVersion: PROTOCOL_VERSION,
           type: 'regular',
         },
       });
-      let inputs = 0;
-      while (encodeTx(build(inputs + 1, '') as any).length <= byteLength) inputs++;
-      let content = '';
-      while (encodeTx(build(inputs, content) as any).length < byteLength) content += 'a';
-      const tx = build(inputs, content);
-      expect(encodeTx(tx as any).length).toBe(byteLength);
-      return tx;
+      while (encodeTx(build(inputs + 1) as any).length <= MAX_TX_BYTES) inputs++;
+      return { over: build(inputs + 1), at: build(inputs) };
     }
 
     it('refuses a transaction over MAX_TX_BYTES at admission', async () => {
-      const { MAX_TX_BYTES } = await import('@dagsocial/types');
       const mem = await importMempoolFresh();
 
-      // ⛔ The assertion is that ADMISSION refuses it. "No block contains it"
-      // also holds because block structure validation rejects such a block, so
-      // a test aimed there would pass for a reason this check does not provide.
-      const over = await txOfEncodedSize(MAX_TX_BYTES + 1);
+      const { over, at } = await txOverMaxSize();
       expect(() => mem.insertUtxoTx(over as any, 1000)).toThrow(
         (mem as any).TxTooLargeError,
       );
       expect(() => mem.insertUtxoTx(over as any, 1000)).toThrow(/above the .* limit/i);
 
-      // …and it is not in the pool, so nothing downstream can draw it into a
-      // block this node would then refuse.
       expect(mem.getPendingEntries(10)).toHaveLength(0);
 
-      // Control at the bound itself: one byte decides it, not the shape of the
-      // fixture.
-      const at = await txOfEncodedSize(MAX_TX_BYTES);
       expect(() => mem.insertUtxoTx(at as any, 1000)).not.toThrow();
       expect(mem.getPendingEntries(10)).toHaveLength(1);
     });

@@ -6,12 +6,10 @@ import {
   readArr,
   readBytesN,
   readHexN,
-  readLpUtf8,
   readVlqU,
   writeArr,
   writeBytesNOrThrow,
   writeHexNOrThrow,
-  writeLpUtf8,
   writeVlqU,
 } from './codec.js';
 import type { UserId } from './identity.js';
@@ -23,6 +21,25 @@ export type PostType = 'regular' | 'profile';
 
 export const POST_TYPE = enum8<PostType>('postType', { regular: 0, profile: 1 });
 
+/**
+ * The consensus struct — rides the creating transaction (`tx.post`).
+ *
+ * `contentHash` is the body's 32-byte commitment; the body itself travels
+ * apart as a packet and lives only in the DAG (TYPES_INTERFACE → Post,
+ * Layout — PostCommit).
+ */
+export interface PostCommit {
+  contentHash: Uint8Array;      // 32 bytes — computeContentHash(content)
+  author: UserId;               // 32-byte Ed25519 public key
+  parentRefs: PostId[];         // 0–MAX_PARENT_REFS
+  protocolVersion: number;
+  type: PostType;               // enum8 — TYPES_INTERFACE → Post typing and profiles
+}
+
+/**
+ * The DAG's object — never in a block. The body itself, with the commit's
+ * four remaining fields verbatim.
+ */
 export interface Post {
   content: string;              // 1–MAX_CONTENT_BYTES UTF-8
   author: UserId;               // 32-byte Ed25519 public key
@@ -35,24 +52,19 @@ export interface Post {
 // Canonical field encoding — TYPES_INTERFACE → Canonical field encoding
 // ---------------------------------------------------------------------------
 //
-// `postFieldBytes` is **injective**: every variable-length field is
-// length-prefixed and the ref array carries an explicit count, so no two
-// distinct posts share one encoding. Numeric fields are encoded, never
-// stringified — an undelimited `String(n)` concatenation collides, since
-// (a=5, b=23) and (52, 3) both yield …"5""23"… == …"52""3"…, one encoding for
-// two posts. That is the defect audit M-1 closed, and injectivity is the
-// property every later dialect change has had to preserve; the tests pin that
-// exact pair to distinct encodings.
+// `postFieldBytes` is **injective**: every field is fixed-width, counted or
+// length-prefixed, so no two distinct commits share one encoding. Numeric
+// fields are encoded, never stringified — an undelimited `String(n)`
+// concatenation collides, since (a=5, b=23) and (52, 3) both yield
+// …"5""23"… == …"52""3"…, one encoding for two posts. That is the defect
+// audit M-1 closed, and injectivity is the property every later dialect
+// change has had to preserve.
 //
 // ⛔ Injectivity is required here even though the post id no longer reads these
 // bytes (TYPES_INTERFACE → Canonical field encoding). They are the post's
 // payload inside its creating transaction, so they enter that transaction's
 // `TxId` — a non-injective encoding would collide two transactions, which is
 // strictly worse than colliding two ids.
-//
-// One encoding language throughout: integers are VLQ rather than fixed-width
-// little-endian, and a `b32` field carries the 32 raw bytes it names rather than
-// the UTF-8 of its hex text.
 //
 // ⚠ **`computePostId` below takes the OTHER form deliberately** — a standalone
 // derivation hashes a txId as hex text, where a positional layout decodes it
@@ -74,10 +86,30 @@ const encoder = new TextEncoder();
 const POST_ID_DOMAIN = encoder.encode('dagsocial/post-id/1');
 
 /**
- * The canonical, injective field encoding — `postFieldBytes` in
- * TYPES_INTERFACE.md → Layout — Post:
+ * Domain separator for the content hash — TYPES_INTERFACE → Hashing functions.
+ * Hash-side only, never on the wire.
+ */
+const POST_CONTENT_DOMAIN = encoder.encode('dagsocial/post-content/1');
+
+/**
+ * The body's 32-byte commitment:
+ *   blake2b512(POST_CONTENT_DOMAIN ‖ utf8(content))[0:32]
  *
- *   | 1 | content         | lpUtf8         |
+ * TYPES_INTERFACE → Hashing functions. Hash-side tag, never on the wire.
+ */
+export function computeContentHash(content: string): Uint8Array {
+  return new Uint8Array(createHash('blake2b512')
+    .update(POST_CONTENT_DOMAIN)
+    .update(encoder.encode(content))
+    .digest()
+    .subarray(0, 32));
+}
+
+/**
+ * The canonical, injective field encoding — `postFieldBytes` in
+ * TYPES_INTERFACE.md → Layout — PostCommit:
+ *
+ *   | 1 | contentHash     | b32   (bytes)  |
  *   | 2 | author          | b32   (bytes)  |
  *   | 3 | parentRefs      | arr(refs, b32) |
  *   | 4 | protocolVersion | vlqU           |
@@ -96,58 +128,60 @@ const POST_ID_DOMAIN = encoder.encode('dagsocial/post-id/1');
  *
  * Split, deliberately (TYPES_INTERFACE → Totality):
  *
- * - `lpUtf8`, `vlqU` are **total**. `vlqU`'s sentinel guards
- *   `protocolVersion` alone, and an out-of-domain version encodes to a value
- *   the strict-equality version check refuses — the sentinel never reaches a
- *   rule as a meaning. Audits M-5/M-6, and the property the no-panic contract
- *   in `@dagsocial/validation` rests on.
- * - `b32` — `author`, every `parentRefs` entry — **throws**. A fixed-width
- *   field's wire domain *is* its encodable domain, so it has no unreachable
- *   sentinel; padding or truncating a 31-byte author to 32 would map it onto a
- *   **well-formed post's** encoding, a consensus-level collision strictly worse
- *   than the panic it avoids.
+ * - `vlqU` is **total**. `vlqU`'s sentinel guards `protocolVersion` alone,
+ *   and an out-of-domain version encodes to a value the strict-equality
+ *   version check refuses — the sentinel never reaches a rule as a meaning.
+ *   Audits M-5/M-6, and the property the no-panic contract in
+ *   `@dagsocial/validation` rests on.
+ * - `b32` — `contentHash`, `author`, every `parentRefs` entry — **throws**.
+ *   A fixed-width field's wire domain *is* its encodable domain, so it has
+ *   no unreachable sentinel; padding or truncating a 31-byte value to 32
+ *   would map it onto a **well-formed commit's** encoding, a consensus-level
+ *   collision strictly worse than the panic it avoids.
  * - `enum8` — `type` — **total** at byte width: an off-table value takes
  *   the reserved 0xff sentinel, refused at decode as invalid-tag
- *   (TYPES_INTERFACE → Canonical field encoding). `verifyPostFieldDomains`'
+ *   (TYPES_INTERFACE → Canonical field encoding). `verifyPostCommitDomains`'
  *   membership rule keeps the sentinel path unreachable, so two malformed
- *   posts cannot share an encoding.
+ *   commits cannot share an encoding.
  *
- * The non-total fields (`b32`) therefore have their domain established upstream:
- * `verifyPostFieldDomains` in `@dagsocial/validation` pins `author` at 32 bytes
- * and every ref at 64 **lowercase** hex characters, and `verifyTxStructure`
- * calls it for a post-bearing transaction. Lowercase is load-bearing:
- * `'AB…'` and `'ab…'` decode to identical bytes, so accepting both would make
- * this encoding non-injective at the hex boundary.
+ * The non-total fields (`b32`) therefore have their domain established
+ * upstream: `verifyPostCommitDomains` in `@dagsocial/validation` pins
+ * `contentHash` and `author` at 32 bytes and every ref at 64 **lowercase**
+ * hex characters, and `verifyTxStructure` calls it for a post-bearing
+ * transaction. Lowercase is load-bearing: `'AB…'` and `'ab…'` decode to
+ * identical bytes, so accepting both would make this encoding non-injective
+ * at the hex boundary.
  */
-export function postFieldBytes(post: Post): Uint8Array {
+export function postFieldBytes(commit: PostCommit): Uint8Array {
   const w = new ByteWriter();
-  writeLpUtf8(w, post.content);
-  writeBytesNOrThrow(w, post.author, 32);
-  writeArr(w, post.parentRefs, (ww, ref) => writeHexNOrThrow(ww, ref, 32));
-  writeVlqU(w, post.protocolVersion);
-  POST_TYPE.write(w, post.type);
+  writeBytesNOrThrow(w, commit.contentHash, 32);
+  writeBytesNOrThrow(w, commit.author, 32);
+  writeArr(w, commit.parentRefs, (ww, ref) => writeHexNOrThrow(ww, ref, 32));
+  writeVlqU(w, commit.protocolVersion);
+  POST_TYPE.write(w, commit.type);
   return w.toBytes();
 }
 
 /**
- * The inverse of `postFieldBytes` — read a post's fields back out of a stream.
+ * The inverse of `postFieldBytes` — read a commit's fields back from a stream.
  *
- * **Deliberately adjacent to the writer**, and that placement is the point: field
- * order is normative and a reader that walks it differently is a consensus
- * divergence with no compiler signal, so the two sit where a reviewer reads them
- * as one table. This is the same pairing rule `boxRecordBytes` /
- * `boxRecordFromBytes` follow (TYPES_INTERFACE → Layout — Boxes).
+ * **Deliberately adjacent to the writer**, and that placement is the point:
+ * field order is normative and a reader that walks it differently is a
+ * consensus divergence with no compiler signal, so the two sit where a
+ * reviewer reads them as one table. This is the same pairing rule
+ * `boxRecordBytes` / `boxRecordFromBytes` follow (TYPES_INTERFACE → Layout —
+ * Boxes).
  *
- * **It takes a reader rather than a byte array, because it is read INLINE.** A
- * post's fields are the tail of `txIdBytes`' `post` option and the whole of
- * `encodePost`, so the same reader serves both and neither has to hold a second
- * statement of the layout. The boundary check belongs to whichever `decodeStruct`
- * encloses it — `decodePost` at the top level, `decodeTx` when the post rides a
- * transaction.
+ * **It takes a reader rather than a byte array, because it is read INLINE.**
+ * A commit's fields are the tail of `txIdBytes`' `post` option and the whole
+ * of `encodePostCommit`, so the same reader serves both and neither has to
+ * hold a second statement of the layout. The boundary check belongs to
+ * whichever `decodeStruct` encloses it — `decodePostCommit` at the top level,
+ * `decodeTx` when the commit rides a transaction.
  */
-export function readPostFields(r: ByteReader): Post {
+export function readPostCommitFields(r: ByteReader): PostCommit {
   return {
-    content: readLpUtf8(r),
+    contentHash: readBytesN(r, 32),
     author: readBytesN(r, 32),
     parentRefs: readArr(r, (rr) => readHexN(rr, 32)),
     protocolVersion: readVlqU(r),
@@ -187,4 +221,3 @@ export function computePostId(txId: TxId, index: number): PostId {
     .subarray(0, 32)
     .toString('hex');
 }
-

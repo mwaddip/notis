@@ -85,11 +85,7 @@ async function importSettlePruneUtxo() {
 }
 
 async function importJournal() {
-  const mod = await import('../../src/store/journal.js');
-  return mod as {
-    beginBlockJournal: (height: number) => void;
-    finishBlockJournal: () => BlockJournal;
-  };
+  return await import('../../src/store/journal.js');
 }
 
 /**
@@ -855,9 +851,7 @@ describe('prune settlement stump insert (P2-F F1)', () => {
   }
 
   async function importPostsStore() {
-    return (await import('../../src/store/posts.js')) as {
-      getPost: (id: string) => Post | Stump | null;
-    };
+    return await import('../../src/store/posts.js');
   }
 
   async function importOrderingStore() {
@@ -870,9 +864,9 @@ describe('prune settlement stump insert (P2-F F1)', () => {
   // ARCHITECTURE → "Prune lifecycle" step 7): a node holding no DAG content for
   // the subtree records the same stump at settlement, every field derived from
   // the verified entry or the carrying block's height. An unconditional insert
-  // would satisfy this only incidentally — `pruneSubtree` returns silently on
-  // zero rows — so the assertion is written against the obligation rather than
-  // against any one implementation of it.
+  // would satisfy this only incidentally — `deletePostRows` returns an empty
+  // array on zero rows — so the assertion is written against the obligation
+  // rather than against any one implementation of it.
   it('records the stump at settlement on a node holding no DAG content', async () => {
     const db = await importDb();
     db.initDb(':memory:');
@@ -893,12 +887,10 @@ describe('prune settlement stump insert (P2-F F1)', () => {
     });
     expect(blockApply.applyOrderingBlock(confirmBlock)).toBe(true);
 
-    // The content arrived with the block that confirmed it — the transaction
-    // carries the payload, so applying it stores the post.
     const posts = await importPostsStore();
     const beforePrune = posts.getPost(rootId);
     expect(beforePrune).not.toBeNull();
-    expect((beforePrune as Post).content).toBe('prune root');
+    expect(posts.isLivePost(beforePrune)).toBe(true);
 
     // Height 2 settles the prune.
     const pruneBlock = await makeApplicableBlock({
@@ -959,23 +951,9 @@ describe('prune settlement stump insert (P2-F F1)', () => {
     expect(stump!.replyCount).toBe(1);
   });
 
-  // The discriminating case for P2-F F1: the stump insert is structural —
-  // not behind the content prune. With pruneSubtree forced to throw, the
-  // block still applies (content-prune failure stays non-fatal) AND the
-  // stump row exists. Before the change (insertStump after pruneSubtree
-  // inside one try/catch) the throw skipped the insert: the block applied
-  // with the stump silently missing.
-  it('records the stump even when pruneSubtree throws (structural independence)', async () => {
-    vi.doMock('../../src/store/posts.js', async (importOriginal) => {
-      const orig = await importOriginal<typeof import('../../src/store/posts.js')>();
-      return {
-        ...orig,
-        pruneSubtree: (): void => {
-          throw new Error('forced pruneSubtree failure (test seam)');
-        },
-      };
-    });
-
+  // Prune settlement journals both the stump insert and the deleted rows,
+  // so a reverted prune restores exactly.
+  it('journals the stump and the deleted rows at prune settlement', async () => {
     const db = await importDb();
     db.initDb(':memory:');
 
@@ -1000,6 +978,12 @@ describe('prune settlement stump insert (P2-F F1)', () => {
     const stump = getStump(rootId);
     expect(stump).not.toBeNull();
     expect(stump!.compactedAtBlockHeight).toBe(2);
+
+    const journalMod = await importJournal();
+    const journal = journalMod.getBlockJournal(2);
+    expect(journal).not.toBeNull();
+    expect(journal!.insertedStumps).toHaveLength(1);
+    expect(journal!.insertedStumps[0]!.rootPostHash).toBe(rootId);
   });
 });
 
@@ -1175,5 +1159,129 @@ describe('prune apply-then-revert (P2-D N3b, real settle path)', () => {
     });
     expect(blockApply.applyOrderingBlock(pruneBlock)).toBe(true);
     expect(mempool.selectMempoolPrunes(32)).toHaveLength(1);
+  });
+
+  // ⛔ NODE_INTERFACE → Invariants: once the prune block's journal is dropped
+  // below MAX_REORG_DEPTH, no dag_posts row and no journal row holds the
+  // subtree's content.
+  it('⛔ after journal purge, no dag_posts row and no journal row holds the pruned content', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+
+    const { MAX_REORG_DEPTH } = await import('@dagsocial/types');
+    const author = makeTestIdentity();
+    const root = await seedPostTx(author, 'deletion sentence root');
+    const rootId = root.postId;
+    const reply = await seedPostTx(author, 'deletion sentence reply', { parentRefs: [rootId] });
+    const replyId = reply.postId;
+
+    const blockApply = await importBlockApply();
+
+    // Height 1: confirm both posts.
+    const confirmBlock = await makeApplicableBlock({ utxoTxs: [root.tx, reply.tx] });
+    expect(blockApply.applyOrderingBlock(confirmBlock)).toBe(true);
+
+    // Height 2: prune the subtree.
+    const pruneBlock = await makeApplicableBlock({
+      height: 2,
+      pruneEntries: [makePruneEntry(rootId, [rootId, replyId], author)],
+    });
+    expect(blockApply.applyOrderingBlock(pruneBlock)).toBe(true);
+
+    // The rows are gone from dag_posts after prune.
+    const rawDb = db.getDb();
+    expect(rawDb.prepare('SELECT id FROM dag_posts WHERE id = ?').get(rootId)).toBeUndefined();
+    expect(rawDb.prepare('SELECT id FROM dag_posts WHERE id = ?').get(replyId)).toBeUndefined();
+
+    // The journal at height 2 still holds the deleted rows.
+    const journalStore = await import('../../src/store/journal.js');
+    const journal = journalStore.getBlockJournal(2);
+    expect(journal).not.toBeNull();
+    expect(journal!.deletedPosts.length).toBeGreaterThan(0);
+
+    // Mine enough blocks past MAX_REORG_DEPTH to purge the prune journal.
+    for (let h = 3; h <= 2 + MAX_REORG_DEPTH + 1; h++) {
+      const emptyBlock = await makeApplicableBlock({ height: h });
+      expect(blockApply.applyOrderingBlock(emptyBlock)).toBe(true);
+    }
+
+    // The prune journal is purged.
+    expect(journalStore.getBlockJournal(2)).toBeNull();
+
+    // No dag_posts row holds the content.
+    expect(rawDb.prepare('SELECT id FROM dag_posts WHERE id = ?').get(rootId)).toBeUndefined();
+    expect(rawDb.prepare('SELECT id FROM dag_posts WHERE id = ?').get(replyId)).toBeUndefined();
+
+    // No block_journal row holds the content — neither the ids nor the literal
+    // content bytes survive in any remaining journal_cbor blob.
+    const rootContent = Buffer.from('deletion sentence root');
+    const replyContent = Buffer.from('deletion sentence reply');
+    const allJournals = rawDb.prepare('SELECT journal_cbor FROM block_journal').all() as Array<{ journal_cbor: Buffer }>;
+    const { decode } = await import('cbor-x');
+    for (const row of allJournals) {
+      const j = decode(row.journal_cbor) as any;
+      if (j.deletedPosts) {
+        for (const dp of j.deletedPosts) {
+          expect(dp.id).not.toBe(rootId);
+          expect(dp.id).not.toBe(replyId);
+        }
+      }
+      expect(row.journal_cbor.includes(rootContent)).toBe(false);
+      expect(row.journal_cbor.includes(replyContent)).toBe(false);
+    }
+  });
+
+  // ⛔ A reverted prune restores rows and parent refs and removes the stump;
+  // re-applying the same block re-deletes.
+  it('⛔ revert restores post rows + parent refs and removes stump; re-apply re-deletes', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+
+    const author = makeTestIdentity();
+    const root = await seedPostTx(author, 'reorg post root');
+    const rootId = root.postId;
+    const reply = await seedPostTx(author, 'reorg post reply', { parentRefs: [rootId] });
+    const replyId = reply.postId;
+
+    const blockApply = await importBlockApply();
+    const forkResolution = await importForkResolution();
+    const posts = await import('../../src/store/posts.js');
+    const stumps = await import('../../src/store/stumps.js');
+
+    // Height 1: confirm.
+    const confirmBlock = await makeApplicableBlock({ utxoTxs: [root.tx, reply.tx] });
+    expect(blockApply.applyOrderingBlock(confirmBlock)).toBe(true);
+    expect(posts.isLivePost(posts.getPost(rootId))).toBe(true);
+    expect(posts.isLivePost(posts.getPost(replyId))).toBe(true);
+
+    // Height 2: prune.
+    const pruneBlock = await makeApplicableBlock({
+      height: 2,
+      pruneEntries: [makePruneEntry(rootId, [rootId, replyId], author)],
+    });
+    expect(blockApply.applyOrderingBlock(pruneBlock)).toBe(true);
+
+    // After prune: dag_posts rows gone, stump present, reply is a tombstone.
+    const rootAfterPrune = posts.getPost(rootId);
+    expect(rootAfterPrune).not.toBeNull();
+    expect('rootPostHash' in rootAfterPrune!).toBe(true);
+    const replyAfterPrune = posts.getPost(replyId);
+    expect(replyAfterPrune).not.toBeNull();
+    expect((replyAfterPrune as any).kind).toBe('pruned');
+    expect(stumps.getStump(rootId)).not.toBeNull();
+
+    // Revert: rows restored, stump removed.
+    forkResolution.revertBlock(2);
+    expect(posts.isLivePost(posts.getPost(rootId))).toBe(true);
+    expect(posts.isLivePost(posts.getPost(replyId))).toBe(true);
+    expect(posts.getParentRefs(replyId)).toEqual([rootId]);
+    expect(stumps.getStump(rootId)).toBeNull();
+
+    // Re-apply: rows re-deleted, stump re-inserted.
+    expect(blockApply.applyOrderingBlock(pruneBlock)).toBe(true);
+    const replyReApplied = posts.getPost(replyId);
+    expect(replyReApplied).not.toBeNull();
+    expect((replyReApplied as any).kind).toBe('pruned');
+    expect(stumps.getStump(rootId)).not.toBeNull();
   });
 });

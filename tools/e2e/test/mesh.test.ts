@@ -105,7 +105,7 @@ describe('mesh', () => {
       'hello mesh',
       aliceK.height,
     );
-    const threadRes = await postPost(miner, thread.json);
+    const threadRes = await postPost(miner, thread.json, thread.content);
 
     const reply = buildReplyTx(
       alice,
@@ -114,7 +114,7 @@ describe('mesh', () => {
       threadRes.postId,
       aliceK.height,
     );
-    const replyRes = await postPost(miner, reply.json);
+    const replyRes = await postPost(miner, reply.json, reply.content);
 
     await confirm(
       async () => {

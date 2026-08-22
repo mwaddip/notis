@@ -1,12 +1,12 @@
-import { uid, fixturePostId } from '../helpers.js';
+import { uid, fixturePostId, makePostCommit } from '../helpers.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type Database from 'better-sqlite3';
 import { randomBytes } from 'node:crypto';
+import { computeContentHash } from '@dagsocial/types';
+import type { PostCommit, Stump } from '@dagsocial/types';
 
 function hex(u: Uint8Array): string { return Buffer.from(u).toString('hex'); }
-import type { Post, Stump } from '@dagsocial/types';
 
-// Module-level state in db.ts requires reset between tests.
 async function importDbFresh() {
   const mod = await import('../../src/store/db.js');
   return mod as {
@@ -16,9 +16,6 @@ async function importDbFresh() {
   };
 }
 
-// No hand-written shape: the module's own type is the contract. A duplicate
-// declaration here drifts silently from the real signatures — this one had
-// `queryPosts({ author })` as `string` while production takes `Uint8Array`.
 async function importPostsFresh() {
   return import('../../src/store/posts.js');
 }
@@ -27,34 +24,30 @@ async function importStumpsFresh() {
   const mod = await import('../../src/store/stumps.js');
   return mod as {
     insertStump: (stump: Stump) => void;
+    deleteStump: (id: string) => void;
   };
 }
 
-async function importTypesPosts() {
-  const mod = await import('@dagsocial/types');
-  return mod as {
-    computePostId: (txId: string, index: number) => string;
-    PROTOCOL_VERSION: number;
-  };
+async function importTopology() {
+  return import('../../src/store/topology.js');
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function bytes(n: number): Uint8Array {
-  return new Uint8Array(randomBytes(n));
-}
-
-function makePost(overrides: Partial<Post> = {}): Post {
-  return {
-    content: 'Hello, world!',
+function makeCommit(overrides: Partial<PostCommit> & { content?: string } = {}): { commit: PostCommit; content: string } {
+  const content = overrides.content ?? 'Hello, world!';
+  const { content: _, ...rest } = overrides;
+  const commit: PostCommit = {
+    contentHash: computeContentHash(content),
     author: uid('alice123'),
     parentRefs: [],
     protocolVersion: 1,
     type: 'regular',
-    ...overrides,
+    ...rest,
   };
+  return { commit, content };
 }
 
 function makeStump(overrides: Partial<Stump>): Stump {
@@ -82,45 +75,81 @@ describe('posts store', () => {
     vi.resetModules();
   });
 
-  // 1. insertPost + getPost round-trip
-  it('insertPost + getPost round-trip (all fields including Uint8Array via CBOR)', async () => {
+  it('insertPost + getPost round-trip with body', async () => {
     const { initDb } = await importDbFresh();
-    const { insertPost, getPost } = await importPostsFresh();
+    const { insertPost, getPost, isLivePost } = await importPostsFresh();
 
     initDb(':memory:');
 
-    const post = makePost({
-      content: 'round-trip test',
-      parentRefs: [],
-    });
-    const rawCbor = new Uint8Array([10, 20, 30]);
+    const { commit, content } = makeCommit({ content: 'round-trip test' });
+    const postId = fixturePostId(commit);
 
-    insertPost(fixturePostId(post), post, rawCbor);
+    insertPost(postId, commit, content);
 
-    const { computePostId } = await importTypesPosts();
-    const id = fixturePostId(post);
-
-    const result = getPost(id);
-    expect(result).not.toBeNull();
-
-    // Should be a Post (not a Stump)
-    const retrieved = result as Post;
-    expect(retrieved.content).toBe('round-trip test');
-    expect(retrieved.author).toEqual(uid('alice123'));
-    expect(retrieved.parentRefs).toEqual([]);
-    expect(retrieved.protocolVersion).toBe(1);
-    expect(retrieved.type).toBe('regular');
-    // `Post` has exactly five fields (TYPES_INTERFACE → Layout — Post), all
-    // five asserted above; the store adds `id`, `status`, `blockHeight` and
-    // `blockIndex`, which are row columns and not part of the post. Asserting
-    // the whole key set is what makes this a round-trip rather than a sample:
-    // a field that stopped surviving CBOR would otherwise pass unnoticed.
-    expect(Object.keys(retrieved).sort()).toEqual(
-      ['author', 'blockHeight', 'blockIndex', 'content', 'id', 'parentRefs', 'protocolVersion', 'status', 'type'],
+    const result = getPost(postId);
+    if (!isLivePost(result)) throw new Error('expected StoredPost');
+    expect(result.content).toBe('round-trip test');
+    expect(result.contentHash).toBe(hex(commit.contentHash));
+    expect(result.author).toEqual(uid('alice123'));
+    expect(result.parentRefs).toEqual([]);
+    expect(result.protocolVersion).toBe(1);
+    expect(result.type).toBe('regular');
+    expect(result.status).toBe('pending');
+    expect(Object.keys(result).sort()).toEqual(
+      ['author', 'blockHeight', 'blockIndex', 'content', 'contentHash', 'id', 'parentRefs', 'protocolVersion', 'status', 'type'],
     );
   });
 
-  // 2. getPost returns null for unknown id
+  it('insertPost with null body creates a placeholder', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertPost, getPost, isLivePost } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    const { commit } = makeCommit({ content: 'placeholder test' });
+    const postId = fixturePostId(commit);
+
+    insertPost(postId, commit, null);
+
+    const result = getPost(postId);
+    expect(result).not.toBeNull();
+    expect(isLivePost(result)).toBe(true);
+
+    const retrieved = result as any;
+    expect(retrieved.content).toBeNull();
+    expect(retrieved.contentHash).toBe(hex(commit.contentHash));
+    expect(retrieved.status).toBe('pending');
+  });
+
+  it('setPostBody fills a placeholder', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertPost, setPostBody, getPost } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    const { commit, content } = makeCommit({ content: 'backfill me' });
+    const postId = fixturePostId(commit);
+
+    insertPost(postId, commit, null);
+    expect((getPost(postId) as any).content).toBeNull();
+
+    const filled = setPostBody(postId, content);
+    expect(filled).toBe(true);
+
+    expect((getPost(postId) as any).content).toBe('backfill me');
+
+    // Second call is a no-op
+    expect(setPostBody(postId, content)).toBe(false);
+  });
+
+  it('setPostBody returns false for nonexistent id', async () => {
+    const { initDb } = await importDbFresh();
+    const { setPostBody } = await importPostsFresh();
+
+    initDb(':memory:');
+    expect(setPostBody('nonexistent', 'body')).toBe(false);
+  });
+
   it('getPost returns null for unknown id', async () => {
     const { initDb } = await importDbFresh();
     const { getPost } = await importPostsFresh();
@@ -131,73 +160,121 @@ describe('posts store', () => {
     expect(result).toBeNull();
   });
 
-  // 3. getPost returns Stump when post pruned and stump exists
-  it('getPost returns Stump when post pruned and stump exists', async () => {
+  it('getPost returns Stump for a stump id', async () => {
     const { initDb } = await importDbFresh();
-    const { insertPost, getPost, pruneSubtree } = await importPostsFresh();
+    const { getPost } = await importPostsFresh();
     const { insertStump } = await importStumpsFresh();
-    const { computePostId } = await importTypesPosts();
 
     initDb(':memory:');
 
-    const post = makePost({ content: 'will be pruned' });
-    const rawCbor = bytes(16);
-    insertPost(fixturePostId(post), post, rawCbor);
-
-    const postId = fixturePostId(post);
-
-    // Verify it's a Post first
-    expect(getPost(postId)).not.toBeNull();
-
+    const stumpId = 'a1'.repeat(32);
     const stump = makeStump({
-      rootPostHash: postId,
-      authorId: post.author,
-      replyCount: 3,
-      upvoteCount: 7,
-      compactedAtBlockHeight: 5,
+      rootPostHash: stumpId,
+      replyCount: 5,
+      upvoteCount: 10,
+      compactedAtBlockHeight: 7,
     });
-
-    pruneSubtree(postId);
     insertStump(stump);
 
-    const result = getPost(postId);
+    const result = getPost(stumpId);
     expect(result).not.toBeNull();
-
-    // Should now be a Stump, not a Post
     const retrieved = result as Stump;
-    expect(retrieved.rootPostHash).toBe(postId);
-    expect(retrieved.authorId).toEqual(post.author);
-    expect(retrieved.replyCount).toBe(3);
-    expect(retrieved.upvoteCount).toBe(7);
-    expect(retrieved.compactedAtBlockHeight).toBe(5);
+    expect(retrieved.rootPostHash).toBe(stumpId);
+    expect(retrieved.replyCount).toBe(5);
   });
 
-  // 4. queryPosts with author filter
+  it('getPost returns PrunedTombstone for a pruned descendant', async () => {
+    const { initDb, getDb } = await importDbFresh();
+    const { getPost, insertPost, confirmPost } = await importPostsFresh();
+    const { insertStump } = await importStumpsFresh();
+    const { insertBlockTopology } = await importTopology();
+
+    initDb(':memory:');
+
+    // Set up a root and a child in topology
+    const { commit: rootCommit } = makeCommit({ content: 'root' });
+    const rootId = fixturePostId(rootCommit);
+    const { commit: childCommit } = makeCommit({ content: 'child', parentRefs: [rootId] });
+    const childId = fixturePostId(childCommit);
+
+    // Insert both posts so topology can be built
+    insertPost(rootId, rootCommit, 'root');
+    insertPost(childId, childCommit, 'child');
+    confirmPost(rootId, 1, 0);
+    confirmPost(childId, 1, 1);
+
+    // Insert topology rows
+    insertBlockTopology(rootId, [], hex(rootCommit.author), 1);
+    insertBlockTopology(childId, [rootId], hex(childCommit.author), 1);
+
+    // Now delete the posts and insert a stump for the root
+    getDb().prepare('DELETE FROM dag_parent_refs WHERE post_id IN (?, ?)').run(rootId, childId);
+    getDb().prepare('DELETE FROM dag_posts WHERE id IN (?, ?)').run(rootId, childId);
+    insertStump(makeStump({ rootPostHash: rootId, compactedAtBlockHeight: 5 }));
+
+    // Root id → stump
+    const rootResult = getPost(rootId);
+    expect(rootResult).not.toBeNull();
+    expect('rootPostHash' in rootResult!).toBe(true);
+
+    // Child id → PrunedTombstone
+    const childResult = getPost(childId) as any;
+    expect(childResult).not.toBeNull();
+    expect(childResult.kind).toBe('pruned');
+    expect(childResult.id).toBe(childId);
+    expect(childResult.rootPostHash).toBe(rootId);
+    expect(childResult.compactedAtBlockHeight).toBe(5);
+  });
+
+  it('getMissingBodies returns placeholders newest first', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertPost, confirmPost, getMissingBodies } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    const { commit: c1 } = makeCommit({ content: 'first' });
+    const id1 = fixturePostId(c1);
+    const { commit: c2 } = makeCommit({ content: 'second' });
+    const id2 = fixturePostId(c2);
+    const { commit: c3 } = makeCommit({ content: 'third with body' });
+    const id3 = fixturePostId(c3);
+
+    insertPost(id1, c1, null);
+    insertPost(id2, c2, null);
+    insertPost(id3, c3, 'third with body');
+
+    confirmPost(id1, 1, 0);
+    confirmPost(id2, 2, 0);
+    confirmPost(id3, 3, 0);
+
+    const missing = getMissingBodies(10);
+    expect(missing).toHaveLength(2);
+    // Newest first: id2 at height 2, id1 at height 1
+    expect(missing[0]!.id).toBe(id2);
+    expect(missing[1]!.id).toBe(id1);
+    expect(missing[0]!.contentHash).toBe(hex(c2.contentHash));
+  });
+
   it('queryPosts with author filter', async () => {
     const { initDb } = await importDbFresh();
     const { insertPost, queryPosts } = await importPostsFresh();
 
     initDb(':memory:');
 
-    const alicePost = makePost({ author: uid('alice'), content: 'alice post' });
-    const bobPost = makePost({ author: uid('bob'), content: 'bob post' });
+    const { commit: aliceCommit, content: aliceContent } = makeCommit({ content: 'alice post', author: uid('alice') });
+    const { commit: bobCommit, content: bobContent } = makeCommit({ content: 'bob post', author: uid('bob') });
 
-    insertPost(fixturePostId(alicePost), alicePost, bytes(8));
-    insertPost(fixturePostId(bobPost), bobPost, bytes(8));
+    insertPost(fixturePostId(aliceCommit), aliceCommit, aliceContent);
+    insertPost(fixturePostId(bobCommit), bobCommit, bobContent);
 
     const aliceResults = queryPosts({ author: uid('alice') });
     expect(aliceResults).toHaveLength(1);
     expect(aliceResults[0]!.content).toBe('alice post');
 
-    const bobResults = queryPosts({ author: uid('bob') });
-    expect(bobResults).toHaveLength(1);
-    expect(bobResults[0]!.content).toBe('bob post');
-
     const allResults = queryPosts({});
     expect(allResults).toHaveLength(2);
   });
 
-  // 5. queryPosts with limit/offset pagination
   it('queryPosts with limit/offset pagination', async () => {
     const { initDb } = await importDbFresh();
     const { insertPost, queryPosts } = await importPostsFresh();
@@ -205,95 +282,61 @@ describe('posts store', () => {
     initDb(':memory:');
 
     for (let i = 0; i < 5; i++) {
-      const post = makePost({ content: `post-${i}` });
-      insertPost(fixturePostId(post), post, bytes(8));
+      const { commit, content } = makeCommit({ content: `post-${i}` });
+      insertPost(fixturePostId(commit), commit, content);
     }
 
-    // Default limit=50, offset=0 — should return all 5
     const all = queryPosts({});
     expect(all).toHaveLength(5);
 
-    // Limit 2, offset 0 — newest 2
     const page1 = queryPosts({ limit: 2, offset: 0 });
     expect(page1).toHaveLength(2);
-    expect(page1[0]!.content).toBe('post-4'); // newest first
+    expect(page1[0]!.content).toBe('post-4');
     expect(page1[1]!.content).toBe('post-3');
 
-    // Limit 2, offset 2 — next 2
     const page2 = queryPosts({ limit: 2, offset: 2 });
     expect(page2).toHaveLength(2);
     expect(page2[0]!.content).toBe('post-2');
     expect(page2[1]!.content).toBe('post-1');
 
-    // Limit 2, offset 4 — last 1
     const page3 = queryPosts({ limit: 2, offset: 4 });
     expect(page3).toHaveLength(1);
     expect(page3[0]!.content).toBe('post-0');
   });
 
-  // 5b. queryPosts orders pending above confirmed, confirmed by committed position
   it('queryPosts: pending above confirmed, confirmed by (block_height, block_index)', async () => {
     const { initDb } = await importDbFresh();
     const { insertPost, confirmPost, queryPosts } = await importPostsFresh();
 
     initDb(':memory:');
 
-    // Two confirmed posts at different positions in block 10
-    const early = makePost({ content: 'early' });
-    const late = makePost({ content: 'late' });
-    insertPost(fixturePostId(early), early, bytes(8));
-    insertPost(fixturePostId(late), late, bytes(8));
+    const { commit: early, content: earlyContent } = makeCommit({ content: 'early' });
+    const { commit: late, content: lateContent } = makeCommit({ content: 'late' });
+    insertPost(fixturePostId(early), early, earlyContent);
+    insertPost(fixturePostId(late), late, lateContent);
     confirmPost(fixturePostId(early), 10, 0);
     confirmPost(fixturePostId(late), 10, 1);
 
-    // One pending post
-    const pend = makePost({ content: 'pending' });
-    insertPost(fixturePostId(pend), pend, bytes(8));
+    const { commit: pend, content: pendContent } = makeCommit({ content: 'pending' });
+    insertPost(fixturePostId(pend), pend, pendContent);
 
     const all = queryPosts({});
     expect(all).toHaveLength(3);
-    // Pending first
     expect(all[0]!.content).toBe('pending');
-    // Then confirmed newest-first: block_index 1 before 0
     expect(all[1]!.content).toBe('late');
     expect(all[2]!.content).toBe('early');
   });
 
-  // 6. queryPosts excludes pruned posts
-  it('queryPosts excludes pruned posts', async () => {
-    const { initDb } = await importDbFresh();
-    const { insertPost, queryPosts, pruneSubtree } = await importPostsFresh();
-    const { insertStump } = await importStumpsFresh();
-    const { computePostId } = await importTypesPosts();
-
-    initDb(':memory:');
-
-    const post = makePost({ content: 'doomed' });
-    insertPost(fixturePostId(post), post, bytes(8));
-
-    // Before pruning, query returns the post
-    expect(queryPosts({})).toHaveLength(1);
-
-    const postId = fixturePostId(post);
-    const stump = makeStump({ rootPostHash: postId });
-    pruneSubtree(postId);
-    insertStump(stump);
-
-    // After pruning, query excludes the pruned post
-    const results = queryPosts({});
-    expect(results).toHaveLength(0);
-  });
-
-  // 7. getPendingPosts returns oldest first
   it('getPendingPosts returns oldest first', async () => {
     const { initDb } = await importDbFresh();
     const { insertPost, getPendingPosts } = await importPostsFresh();
 
     initDb(':memory:');
 
-    insertPost(fixturePostId(makePost({ content: 'oldest' })), makePost({ content: 'oldest' }), bytes(8));
-    insertPost(fixturePostId(makePost({ content: 'middle' })), makePost({ content: 'middle' }), bytes(8));
-    insertPost(fixturePostId(makePost({ content: 'newest' })), makePost({ content: 'newest' }), bytes(8));
+    for (const label of ['oldest', 'middle', 'newest']) {
+      const { commit, content } = makeCommit({ content: label });
+      insertPost(fixturePostId(commit), commit, content);
+    }
 
     const pending = getPendingPosts(10);
     expect(pending).toHaveLength(3);
@@ -302,26 +345,40 @@ describe('posts store', () => {
     expect(pending[2]!.content).toBe('newest');
   });
 
-  // 8. confirmPost updates status, blockHeight and blockIndex
+  it('getPendingPosts respects the limit parameter', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertPost, getPendingPosts } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    for (let i = 0; i < 5; i++) {
+      const { commit, content } = makeCommit({ content: `pending-${i}` });
+      insertPost(fixturePostId(commit), commit, content);
+    }
+
+    const limited = getPendingPosts(3);
+    expect(limited).toHaveLength(3);
+    expect(limited[0]!.content).toBe('pending-0');
+    expect(limited[1]!.content).toBe('pending-1');
+    expect(limited[2]!.content).toBe('pending-2');
+  });
+
   it('confirmPost updates status, blockHeight and blockIndex', async () => {
     const { initDb, getDb } = await importDbFresh();
     const { insertPost, confirmPost, getPendingPosts } = await importPostsFresh();
 
     initDb(':memory:');
 
-    const post = makePost({ content: 'confirm me' });
-    insertPost(fixturePostId(post), post, bytes(8));
-    const postId = fixturePostId(post);
+    const { commit, content } = makeCommit({ content: 'confirm me' });
+    const postId = fixturePostId(commit);
+    insertPost(postId, commit, content);
 
-    // Still pending before confirm
     expect(getPendingPosts(10)).toHaveLength(1);
 
     confirmPost(postId, 42, 3);
 
-    // No longer pending after confirm
     expect(getPendingPosts(10)).toHaveLength(0);
 
-    // Verify in DB directly
     const row = getDb()
       .prepare('SELECT status, block_height, block_index FROM dag_posts WHERE id = ?')
       .get(postId) as { status: string; block_height: number; block_index: number } | undefined;
@@ -331,231 +388,158 @@ describe('posts store', () => {
     expect(row!.block_index).toBe(3);
   });
 
-  // 9. getParentRefs returns array of parent IDs
   it('getParentRefs returns array of parent IDs', async () => {
     const { initDb } = await importDbFresh();
     const { insertPost, getParentRefs } = await importPostsFresh();
-    const { computePostId } = await importTypesPosts();
 
     initDb(':memory:');
 
-    // A ref is `b32` now, so `'parent1'` has no encoding — the placeholders had
-    // to become real 64-hex ids. The *count* deliberately still exceeds
-    // `MAX_PARENT_REFS`: the cap is the verifier's, not the store's, and the
-    // store's list machinery (`dag_parent_refs`, `getSubtree`'s UNION/DISTINCT)
-    // is kept for now, so pinning that it round-trips a list in order is still
-    // pinning live behaviour. One ref could not catch a truncation or a reorder.
     const refs3 = ['a1'.repeat(32), 'b2'.repeat(32), 'c3'.repeat(32)];
-    const post = makePost({ parentRefs: refs3 });
-    insertPost(fixturePostId(post), post, bytes(8));
-    const postId = fixturePostId(post);
+    const { commit, content } = makeCommit({ parentRefs: refs3 });
+    insertPost(fixturePostId(commit), commit, content);
 
-    const refs = getParentRefs(postId);
+    const refs = getParentRefs(fixturePostId(commit));
     expect(refs).toEqual(refs3);
   });
 
-  // 10. getSubtree returns all descendants (multi-level)
   it('getSubtree returns all descendants (multi-level)', async () => {
     const { initDb } = await importDbFresh();
     const { insertPost, getSubtree } = await importPostsFresh();
-    const { computePostId } = await importTypesPosts();
 
     initDb(':memory:');
 
-    // Root post
-    const root = makePost({ content: 'root', parentRefs: [] });
-    insertPost(fixturePostId(root), root, bytes(8));
-    const rootId = fixturePostId(root);
+    const { commit: rootCommit, content: rootContent } = makeCommit({ content: 'root', parentRefs: [] });
+    const rootId = fixturePostId(rootCommit);
+    insertPost(rootId, rootCommit, rootContent);
 
-    // Child of root
-    const child = makePost({
-      content: 'child',
-      parentRefs: [rootId],
-    });
-    insertPost(fixturePostId(child), child, bytes(8));
-    const childId = fixturePostId(child);
+    const { commit: childCommit, content: childContent } = makeCommit({ content: 'child', parentRefs: [rootId] });
+    const childId = fixturePostId(childCommit);
+    insertPost(childId, childCommit, childContent);
 
-    // Grandchild of root (child of child)
-    const grandchild = makePost({
-      content: 'grandchild',
-      parentRefs: [childId],
-    });
-    insertPost(fixturePostId(grandchild), grandchild, bytes(8));
+    const { commit: gcCommit, content: gcContent } = makeCommit({ content: 'grandchild', parentRefs: [childId] });
+    insertPost(fixturePostId(gcCommit), gcCommit, gcContent);
 
     const subtree = getSubtree(rootId);
     expect(subtree).toHaveLength(2);
-
     const contents = subtree.map((p) => p.content).sort();
     expect(contents).toEqual(['child', 'grandchild']);
   });
 
-  // 11. pruneSubtree marks posts as pruned
-  it('pruneSubtree marks posts as pruned, inserts stump', async () => {
+  it('deletePostRows deletes rows and returns them for the journal', async () => {
     const { initDb, getDb } = await importDbFresh();
-    const { insertPost, getPost, pruneSubtree } = await importPostsFresh();
-    const { insertStump } = await importStumpsFresh();
-    const { computePostId } = await importTypesPosts();
+    const { insertPost, confirmPost, deletePostRows, getPost } = await importPostsFresh();
 
     initDb(':memory:');
 
-    const post = makePost({ content: 'prune me' });
-    insertPost(fixturePostId(post), post, bytes(8));
-    const postId = fixturePostId(post);
+    const { commit: c1, content: content1 } = makeCommit({ content: 'root' });
+    const id1 = fixturePostId(c1);
+    const { commit: c2, content: content2 } = makeCommit({ content: 'child', parentRefs: [id1] });
+    const id2 = fixturePostId(c2);
 
-    const stump = makeStump({
-      rootPostHash: postId,
-      replyCount: 0,
-      upvoteCount: 0,
-      compactedAtBlockHeight: 99,
-    });
+    insertPost(id1, c1, content1);
+    insertPost(id2, c2, content2);
+    confirmPost(id1, 1, 0);
+    confirmPost(id2, 1, 1);
 
-    pruneSubtree(postId);
-    insertStump(stump);
+    const deleted = deletePostRows([id1, id2]);
+    expect(deleted).toHaveLength(2);
+    expect(deleted[0]!.id).toBe(id1);
+    expect(deleted[0]!.content).toBe('root');
+    expect(deleted[1]!.id).toBe(id2);
+    expect(deleted[1]!.parentRefs).toEqual([id1]);
 
-    // Post row is marked as pruned
-    const postRow = getDb()
-      .prepare('SELECT status FROM dag_posts WHERE id = ?')
-      .get(postId) as { status: string } | undefined;
-    expect(postRow).toBeDefined();
-    expect(postRow!.status).toBe('pruned');
+    // Rows are gone
+    expect(getPost(id1)).toBeNull();
+    expect(getPost(id2)).toBeNull();
 
-    // getPost returns the Stump
-    const result = getPost(postId) as Stump;
-    expect(result.rootPostHash).toBe(postId);
-    expect(result.compactedAtBlockHeight).toBe(99);
+    // Parent refs are gone
+    const refs = getDb()
+      .prepare('SELECT * FROM dag_parent_refs WHERE post_id IN (?, ?)')
+      .all(id1, id2);
+    expect(refs).toHaveLength(0);
   });
 
-  // 12. pruneSubtree correctly handles nested replies
-  it('pruneSubtree correctly handles nested replies', async () => {
-    const { initDb, getDb } = await importDbFresh();
-    const { insertPost, getPost, pruneSubtree } = await importPostsFresh();
-    const { insertStump } = await importStumpsFresh();
-    const { computePostId } = await importTypesPosts();
-
-    initDb(':memory:');
-
-    // Build chain: root -> child -> grandchild
-    const root = makePost({ content: 'root', parentRefs: [] });
-    insertPost(fixturePostId(root), root, bytes(8));
-    const rootId = fixturePostId(root);
-
-    const child = makePost({ content: 'child', parentRefs: [rootId] });
-    insertPost(fixturePostId(child), child, bytes(8));
-    const childId = fixturePostId(child);
-
-    const grandchild = makePost({ content: 'grandchild', parentRefs: [childId] });
-    insertPost(fixturePostId(grandchild), grandchild, bytes(8));
-    const grandchildId = fixturePostId(grandchild);
-
-    const stump = makeStump({
-      rootPostHash: rootId,
-      replyCount: 2,
-      upvoteCount: 5,
-    });
-
-    pruneSubtree(rootId);
-    insertStump(stump);
-
-    // All three posts are marked as pruned
-    for (const id of [rootId, childId, grandchildId]) {
-      const row = getDb()
-        .prepare('SELECT status FROM dag_posts WHERE id = ?')
-        .get(id) as { status: string } | undefined;
-      expect(row).toBeDefined();
-      expect(row!.status).toBe('pruned');
-    }
-
-    // getPost on root returns Stump
-    const result = getPost(rootId) as Stump;
-    expect(result.replyCount).toBe(2);
-    expect(result.upvoteCount).toBe(5);
-  });
-
-  // 13. getPost returns a stump when queried by stump id (rootPostHash) directly
-  it('getPost returns a stump when queried by stump id directly', async () => {
+  it('restorePostRows restores deleted rows', async () => {
     const { initDb } = await importDbFresh();
-    const { insertPost, getPost, pruneSubtree } = await importPostsFresh();
-    const { insertStump } = await importStumpsFresh();
-    const { computePostId } = await importTypesPosts();
+    const { insertPost, confirmPost, deletePostRows, restorePostRows, getPost, isLivePost } = await importPostsFresh();
 
     initDb(':memory:');
 
-    const post = makePost({ content: 'stump-direct' });
-    insertPost(fixturePostId(post), post, bytes(8));
-    const postId = fixturePostId(post);
+    const { commit, content } = makeCommit({ content: 'restore me' });
+    const postId = fixturePostId(commit);
 
-    const stump = makeStump({
-      rootPostHash: postId,
-      replyCount: 5,
-      upvoteCount: 10,
-      compactedAtBlockHeight: 7,
-    });
+    insertPost(postId, commit, content);
+    confirmPost(postId, 1, 0);
 
-    pruneSubtree(postId);
-    insertStump(stump);
+    const deleted = deletePostRows([postId]);
+    expect(getPost(postId)).toBeNull();
 
-    // Stump ID is its rootPostHash
-    const stumpId = stump.rootPostHash;
-
-    // Query by stump id directly
-    const result = getPost(stumpId);
-    expect(result).not.toBeNull();
-
-    const retrieved = result as Stump;
-    expect(retrieved.rootPostHash).toBe(postId);
-    expect(retrieved.replyCount).toBe(5);
-    expect(retrieved.upvoteCount).toBe(10);
-
-    // Query by post id also returns the Stump
-    const byPostId = getPost(postId);
-    expect(byPostId).not.toBeNull();
-    const byPostIdStump = byPostId as Stump;
-    expect(byPostIdStump.rootPostHash).toBe(postId);
+    restorePostRows(deleted);
+    const restored = getPost(postId);
+    expect(isLivePost(restored)).toBe(true);
+    expect((restored as any).content).toBe('restore me');
+    expect((restored as any).status).toBe('confirmed');
+    expect((restored as any).blockHeight).toBe(1);
   });
 
-  // 14. getPendingPosts respects the limit parameter
-  it('getPendingPosts respects the limit parameter', async () => {
+  it('deletePendingPost removes a pending row', async () => {
     const { initDb } = await importDbFresh();
-    const { insertPost, getPendingPosts } = await importPostsFresh();
+    const { insertPost, deletePendingPost, getPost } = await importPostsFresh();
 
     initDb(':memory:');
 
-    for (let i = 0; i < 5; i++) {
-      insertPost(fixturePostId(makePost({ content: `pending-${i}` })), makePost({ content: `pending-${i}` }), bytes(8));
-    }
+    const { commit, content } = makeCommit({ content: 'will be deleted' });
+    const postId = fixturePostId(commit);
 
-    const limited = getPendingPosts(3);
-    expect(limited).toHaveLength(3);
-    // Oldest first
-    expect(limited[0]!.content).toBe('pending-0');
-    expect(limited[1]!.content).toBe('pending-1');
-    expect(limited[2]!.content).toBe('pending-2');
+    insertPost(postId, commit, content);
+    expect(getPost(postId)).not.toBeNull();
+
+    deletePendingPost(postId);
+    expect(getPost(postId)).toBeNull();
   });
 
-  // 16. insertPost stores under the id it is given
+  it('deletePendingPost does not delete a confirmed row', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertPost, confirmPost, deletePendingPost, getPost } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    const { commit, content } = makeCommit({ content: 'confirmed' });
+    const postId = fixturePostId(commit);
+
+    insertPost(postId, commit, content);
+    confirmPost(postId, 1, 0);
+
+    deletePendingPost(postId);
+    expect(getPost(postId)).not.toBeNull();
+  });
+
   it('insertPost stores under the id it is given', async () => {
     const { initDb, getDb } = await importDbFresh();
     const { insertPost } = await importPostsFresh();
 
     initDb(':memory:');
 
-    const post: Post = {
-      content: 'fresh post',
-      author: new Uint8Array(32).fill(9),
-      parentRefs: [],
-      protocolVersion: 1,
-      type: 'regular',
-    };
-    // ⛔ The id is a PARAMETER, not something the store derives. A post id comes
-    // from the creating transaction's provenance (TYPES_INTERFACE → Hashing
-    // functions), which the store never sees, so `insertPost` takes the id its
-    // caller derived.
-    const postId = fixturePostId(post);
-    insertPost(postId, post, new Uint8Array([4, 5, 6]));
+    const { commit, content } = makeCommit({ content: 'fresh post', author: new Uint8Array(32).fill(9) });
+    const postId = fixturePostId(commit);
+    insertPost(postId, commit, content);
 
     const row = getDb()
       .prepare('SELECT content FROM dag_posts WHERE id = ?')
       .get(postId) as any;
     expect(row.content).toBe('fresh post');
+  });
+
+  it('isLivePost discriminates correctly', async () => {
+    const { isLivePost } = await importPostsFresh();
+
+    expect(isLivePost(null)).toBe(false);
+    expect(isLivePost({ rootPostHash: 'abc', authorId: new Uint8Array(32), replyCount: 0, upvoteCount: 0, protocolVersion: 1, compactedAtBlockHeight: 1 })).toBe(false);
+    expect(isLivePost({ kind: 'pruned' as const, id: 'x', author: '00', rootPostHash: 'y', compactedAtBlockHeight: 1 })).toBe(false);
+    expect(isLivePost({
+      id: 'x', content: null, contentHash: '00', author: new Uint8Array(32),
+      parentRefs: [], protocolVersion: 1, type: 'regular' as const,
+      status: 'pending' as const, blockHeight: null, blockIndex: null,
+    })).toBe(true);
   });
 });

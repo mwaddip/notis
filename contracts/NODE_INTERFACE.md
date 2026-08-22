@@ -121,10 +121,14 @@ are hex-encoded.
 
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
-| `POST` | `/posts` | `{ tx: UtxoTransaction }` — client-built, client-signed post tx, `tx.post` set ("Post transactions" below) | `{ postId, status: "pending", expiresAtHeight, txId }` (200) | 400 if `tx` or `tx.post` is missing or malformed, the payload fails verification, the transaction fails `validateTx`, or the first input is not a karma box owned by `post.author` |
-| `GET` | `/posts/:id` | — | `PostJson` or `StumpJson` (both below), **plus `confirmedAuthor`** | 404 |
-| `GET` | `/posts/:id/thread` | — | `{ post, ancestors, descendants }` — full thread context; `post` is `PostJson` or `StumpJson` | 404 |
-| `GET` | `/posts` | `?author=hex&limit=50&offset=0` | PostJson[] (same shape, live only, no stumps; ordering below) | — |
+| `POST` | `/posts` | `{ tx: UtxoTransaction, content: string }` — client-built, client-signed post tx with `tx.post` (the `PostCommit`) set, and the body beside it ("Post transactions" below) | `{ postId, status: "pending", expiresAtHeight, txId }` (200) | 400 if `tx`, `tx.post` or `content` is missing or malformed, `content` fails `verifyPostBody` against `tx.post.contentHash` (reason named), the commit fails verification, the transaction fails `validateTx`, or the first input is not a karma box owned by `post.author` |
+| `GET` | `/posts/:id` | — | `PostJson`, `StumpJson` or `PrunedJson` (all below), **plus `confirmedAuthor`** | 404 only for an id the node has never heard of ("Resolution order for a post id") |
+| `GET` | `/posts/:id/thread` | — | `{ post, ancestors, descendants }` — full thread context; `post` is `PostJson`, `StumpJson` or `PrunedJson` | 404 as above |
+| `GET` | `/posts` | `?author=hex&limit=50&offset=0` | PostJson[] (same shape, live only — placeholders included, no stumps, no tombstones; ordering below) | — |
+
+> ⚠ **AHEAD OF CODE — 2026-08-22.** `content` beside `tx`, `PrunedJson`, the placeholder and the
+> 404 rule land with the content-in-the-DAG unit (node). In the tree `POST /posts` takes `{ tx }`
+> with the body inside `tx.post`, and a pruned reply answers 404.
 
 **PostJson shape.** The post's own fields, hex where they are bytes, plus what the node knows
 about it:
@@ -132,12 +136,13 @@ about it:
 ```
 PostJson = {
   id: postId,                  // 64-hex
-  content: string,
+  content: string | null,      // null = placeholder: structure known from the transaction, body not yet held
+  contentHash: hex,            // the commit's 32-byte content commitment — an indexer verifies a body it holds elsewhere against it
   author: hex(authorId),       // 32-byte Ed25519 key as hex
   parentRefs: postId[],
   protocolVersion: number,
-  type: PostType,              // TYPES_INTERFACE → Layout — Post
-  status: PostStatus,          // 'pending' | 'confirmed' | 'pruned' — Store Interface → Posts DAG
+  type: PostType,              // TYPES_INTERFACE → Layout — PostCommit
+  status: PostStatus,          // 'pending' | 'confirmed' — Store Interface → Posts DAG; a pruned post has no row and no PostJson
   blockHeight: number | null,  // the three node-local columns — "PostJson time and order" below
   blockIndex: number | null,
   blockCreatedAt: number | null,
@@ -151,8 +156,8 @@ author from `block_topology`, hex, or `null` until an applied block confirms the
 distinct field from `author` on purpose — `author` is the DAG's, content a node may hold, may have
 pruned, or may never have received, while `confirmedAuthor` is derived from block data alone and
 is identical on every node — and it is **the only key a like may earmark karma to** ("Karma
-transition rules"). A stump carries it too: topology survives pruning. `GET /posts/:id/thread`
-and the listing do not carry it.
+transition rules"). A stump carries it too, and so does the tombstone: topology survives pruning.
+`GET /posts/:id/thread` and the listing do not carry it.
 
 **PostJson time and order (decided 2026-08-20).** A post has no timestamp
 (TYPES_INTERFACE → Layout — Post). `PostJson` carries the post's `type` with the rest of its
@@ -184,6 +189,50 @@ StumpJson = {
 `GET /posts/:id/thread` on a stump returns
 `{ post: StumpJson, ancestors: [], descendants: [] }`. The feed listing
 (`GET /posts`) remains live-posts-only — no stumps, unchanged.
+
+**PrunedJson shape — the tombstone (decided 2026-08-22).** A pruned **descendant** has no DAG
+row, but the node still knows it: `block_topology` keeps every confirmed post's id, parent
+refs and author (a reverted-and-reapplied prune re-verifies the entry's id set against it),
+and the root's `dag_stumps` row dates the prune. So a descendant's id answers a positive
+statement an indexer can overwrite with, never an absence:
+
+```
+PrunedJson = {
+  kind: 'pruned',
+  id: postId,                       // the descendant's own id (64-hex)
+  author: hex(authorId),            // from block_topology — the consensus-recorded author
+  rootPostHash: postId,             // the stump this id was pruned under
+  compactedAtBlockHeight: number    // the stump's
+}
+```
+
+`GET /posts/:id/thread` on a tombstone returns `{ post: PrunedJson, ancestors: [],
+descendants: [] }`, the stump's form. Clients discriminate the three shapes on `kind`: absent →
+`PostJson`, `'stump'`, `'pruned'`.
+
+#### Resolution order for a post id
+
+`getPost` — and through it every read route — resolves an id in this order, and the order is
+the rule:
+
+1. a `dag_posts` row → `StoredPost` — `content` a string (held) or `null` (**placeholder**:
+   the transaction applied, the body has not arrived — Store Interface → Posts DAG, "Backfill
+   after sync")
+2. else a `dag_stumps` row by id → `Stump` (a pruned root)
+3. else a `block_topology` row whose `parent_refs` chain reaches a `dag_stumps` id → the
+   `PrunedTombstone` above (a pruned descendant)
+4. else `null` → 404: an id the node has never heard of
+
+**A placeholder is a live post.** It is confirmed structure: a like credits its topology author,
+a reply resolves it as a parent, the listing and threads show it with `content: null`. Clients
+render "not yet available", not an error. **Liveness is the typed guard `isLivePost` (a
+`dag_posts` row, body or not), never `'content' in x`** — a placeholder has the key and a
+`null`; every site that must distinguish a post from a stump or tombstone narrows through the
+guard (Post transactions → the placeholder rules).
+
+> ⚠ **AHEAD OF CODE — 2026-08-22.** `PrunedJson`, the resolution order and `isLivePost` land
+> with the content-in-the-DAG unit (node). In the tree a pruned descendant answers 404 and the
+> six liveness sites test `'content' in`.
 
 **Implemented 2026-08-08** (`stumpToJson`, beside `postToJson`). What it
 replaced: the raw `Stump` went out as-is, so `res.json` serialized `authorId`
@@ -232,7 +281,7 @@ schedule. One like per `(liker, post)`, forever, costing exactly `LIKE_KARMA_COS
 **Like flow:**
 
 1. Extract `likeTarget` from the tx; reject if absent or not 64-hex
-2. Verify the target post exists and is live (not pruned)
+2. Verify the target post exists and is live (not pruned; a placeholder is live — `isLivePost`)
 3. Verify not already liked: like-record `(liker, targetPostId)` absent AND
    `hasPendingLike` over the mempool gate metadata
 4. `validateTx` — the engine enforces the biconditional like shape **both ways** (§validateTx
@@ -385,7 +434,20 @@ invites, vouches, credits, prune).
    subtree's like-records (journalled, so a reverted prune restores them),
    insert the Stump derived from the verified entry
    (**unconditional** — a node holding no DAG content records the same
-   stump), then prune DAG content when present.
+   stump; the insert is journalled, so a reverted prune removes it), then
+   **delete** the subtree's `dag_posts` and `dag_parent_refs` rows **by the
+   entry's `subtreePostIds`** — the consensus set just verified — never by a
+   local DAG walk; ids with no local row are simply absent. Every deleted row
+   (skeleton, body, status, height, index, parent refs) is captured into the
+   block's journal as a side-record **before** deletion (Block Journal →
+   `deletedPosts`), so a reverted prune restores it exactly; below
+   `MAX_REORG_DEPTH` the journal is dropped and the node holds no byte of the
+   subtree's content anywhere (ARCHITECTURE → Subtree pruning).
+
+   > ⚠ **AHEAD OF CODE — 2026-08-22.** Row deletion, the journalled rows and the
+   > journalled stump land with the content-in-the-DAG unit (node). In the tree
+   > `pruneSubtree` flips `dag_posts.status` to `'pruned'` and the stump insert is
+   > not journalled (→ Stumps).
    **The stump's `upvoteCount` is the like tally of the pruned subtree**: the
    count of like-records the deletion removed, the root's likes included
    (`replyCount` counts replies, so it excludes the root). Like-records derive
@@ -1307,6 +1369,18 @@ There is **no other legal bond or invite shape**. In particular:
   receives karma and when it falls to zero — it is not a decay or settlement
   concern, so it is not on any hot path.
 
+  > ✅ **RESOLVED 2026-08-22 — closed by the content-in-the-DAG unit (node).** `index.ts` seeds
+  > the set at startup with `getKarmaOwners()` (every identity holding an unspent karma box) and
+  > registers a store hook (`registerKarmaMembershipHook`) that `insertBox` / `consumeBox` /
+  > `deleteBox` / `unconsumeBox` fire on exactly the two transitions — an owner's first unspent
+  > karma box and its last — so apply and revert move the set alike.
+  >
+  > **The record — this was VIOLATED, verified 2026-08-22:** node owned the set and never wrote it;
+  > no caller of net's `setKarmaMembers` / `addKarmaMember` / `removeKarmaMember` existed in
+  > `packages/node/src`, so the set was empty from the day the gate landed and every relayed post was
+  > rejected at the topic validator — posts reached other nodes only inside blocks. Found by the e2e
+  > packet chapter, the first test that needed a relayed post's body.
+
   **Measured 2026-08-15:** Ed25519 verify **73.2 µs**, one `blake2b512`
   **2.08 µs**, `Set.has()` **0.023 µs**. The relay path goes 75.3 → 73.8 µs,
   **2 % cheaper** than with PoW, because the signature outweighs the PoW check
@@ -1317,6 +1391,34 @@ There is **no other legal bond or invite shape**. In particular:
 - **Stateful admission is strictly stronger than PoW was.** PoW proved someone
   burned a millisecond; a post transaction proves its author holds the karma and
   really locked it. That is why the two removals are one unit and not two.
+- **The transaction carries the commit; the body travels beside it; the packet is the unit.**
+  `tx.post` is a `PostCommit` — `contentHash`, `author`, `parentRefs`, `protocolVersion`,
+  `type` (TYPES_INTERFACE → Layout — PostCommit); the body reaches a node only in the same
+  message as its transaction: `POST /posts { tx, content }` locally, the gossip packet from a
+  peer (NET_INTERFACE → Gossip Topics). Both are validated together (`verifyPostBody(content,
+  tx.post.contentHash)`, then the commit and the transaction) and **admitted together in one
+  store transaction — the mempool entry and the DAG's pending row with the body — or refused
+  together.** A producer therefore holds every body it mines by construction: a bodiless post
+  transaction never enters a pool. A relayed post is visible on the receiving node as a pending
+  row from admission, as it is on its origin node.
+- **The pending row is the mempool entry's DAG shadow — it exists iff the transaction is in the
+  pool, or the post is confirmed.** `purgeExpired` and eviction of an unconfirmed post entry
+  delete its pending row; `removeUtxoTxEntry` at confirmation does not (apply confirms the row);
+  a reverted block's re-inserted transactions find their rows returned to pending by
+  `unconfirmPost`, body intact.
+- **A post applied without its packet is a placeholder.** Block application inserts a row from
+  the commit with `content = NULL` when none exists, confirms it, and the body is backfilled by
+  id (Store Interface → Posts DAG, "Backfill after sync"). The placeholder rules: a like on it
+  is valid and credits the topology author; a reply to it is valid; `executePrune` on the root
+  of a subtree holding placeholders proceeds — prune needs topology, not bodies. `isLivePost`
+  is the guard at every site that distinguishes a post from a stump or tombstone ("Resolution
+  order for a post id"); a tombstone parent is `Parent post not found`, as the null is today;
+  a reply to a stump stays valid (ARCHITECTURE → Post structure: refs may name stumps).
+
+  > ⚠ **AHEAD OF CODE — 2026-08-22.** The three bullets above land with the content-in-the-DAG
+  > unit (node, after types, validation and net). In the tree the body is inside `tx.post`, a
+  > relayed post gets no row until its block, `createPost` inserts the row before admission
+  > (a `MempoolFullError` leaves an orphan row), and no mempool exit deletes a pending row.
 
 ### Bond transition rules
 
@@ -2147,7 +2249,9 @@ unassigned config *is* a server-role node: it applies blocks and builds no templ
 1. Store block in `block_ordering` table
 2. Broadcast ordering block to peers
 3. Confirm the block's posts (`confirmPost` with height and committed position, ids from
-   its post transactions)
+   its post transactions); a post with no row — its packet never reached this node — is
+   first inserted from its commit as a placeholder (`insertPost(postId, commit, null)`), and
+   its body is backfilled by id (Store Interface → Posts DAG, "Backfill after sync")
 4. Apply UTXO transactions — the settlement, as the last entry in `utxoTxIds`,
    applies here like every other, and its outputs are where the coinbase's
    credits, the protocol-box successors and every pool-touching effect land.
@@ -2319,7 +2423,8 @@ had to be carried and compared).
 shape, validated by the engine):
 
 1. Re-checks at apply: target confirmed and **live** at this height (likes on pruned
-   posts rejected by stated rule); author resolved from **`block_topology`**, never
+   posts rejected by stated rule; a placeholder — body not held — **is** live, `isLivePost`
+   decides); author resolved from **`block_topology`**, never
    `dag_posts.author`; like-record `(liker, targetPostId)` absent — else the tx is
    invalid and the block is rejected
 2. Writes the like-record via `insertLikeRecord` (journalled side-record)
@@ -2390,27 +2495,51 @@ Fresh schema — no Phase 1 migration.
 
 | Function | Signature |
 |----------|-----------|
-| `insertPost(postId, post, rawCbor)` | `(PostId, Post, Uint8Array) => void` — status = pending; the id comes from the creating transaction |
-| `getPost(id)` | `(string) => StoredPost \| Stump \| null` |
-| `getPostRaw(id)` | `(string) => Uint8Array \| null` — raw CBOR for hash verification |
-| `queryPosts({ author?, limit, offset })` | `(QueryOpts) => StoredPost[]` — live only, newest first in committed order; pending above confirmed, by arrival |
+| `insertPost(postId, commit, content)` | `(PostId, PostCommit, string \| null) => void` — status = pending when admitted with its packet, the body present; `null` when block application inserts a placeholder from the commit; the id comes from the creating transaction |
+| `setPostBody(postId, content)` | `(string, string) => boolean` — fills a placeholder's body after the caller verified it against the row's `content_hash` (`verifyPostBody`); `false` if no row or the body is already held (no-op) |
+| `getPost(id)` | `(string) => StoredPost \| Stump \| PrunedTombstone \| null` — "Resolution order for a post id" |
+| `getMissingBodies(limit)` | `(number) => { id, contentHash }[]` — rows with `content IS NULL`, newest first (`block_height` desc, `block_index` desc); the backfill list |
+| `queryPosts({ author?, limit, offset })` | `(QueryOpts) => StoredPost[]` — live rows, placeholders included, newest first in committed order; pending above confirmed, by arrival |
 | `getPendingPosts(limit)` | `(number) => StoredPost[]` — oldest first, by arrival |
 | `confirmPost(postId, blockHeight, blockIndex)` | `(string, number, number) => void` — height and committed position |
-| `unconfirmPost(subBlockId)` | `(string) => void` — for fork rollbacks; clears height and position |
+| `unconfirmPost(subBlockId)` | `(string) => void` — for fork rollbacks; clears height and position, keeps the body |
+| `deletePendingPost(postId)` | `(string) => void` — the pending row of a post transaction that left the pool unconfirmed (Post transactions → the pending-row rule) |
+| `deletePostRows(ids)` | `(string[]) => DeletedPostRow[]` — prune settlement: deletes the `dag_posts` and `dag_parent_refs` rows for the given ids and returns every deleted row for the journal; ids with no row are skipped |
+| `restorePostRows(rows)` | `(DeletedPostRow[]) => void` — the inverse, from the journal |
+| `getPrunedTombstone(id)` | `(string) => PrunedTombstone \| null` — step 3 of the resolution order: a `block_topology` row whose parent chain reaches a stump |
 | `getParentRefs(postId)` | `(string) => PostId[]` |
 | `getAncestors(postId)` | `(string) => StoredPost[]` — walk up parent chain, genesis → parent |
 | `getSubtree(postId)` | `(string) => StoredPost[]` — all descendants (recursive CTE) |
 
-> **`StoredPost` is `Post` plus a required `status: PostStatus`**
-> (`'pending' | 'confirmed' | 'pruned'`), exported from `store/posts.ts` and re-exported from
-> `store/index.ts`. It exists because **`status` is node-local state and must not enter `Post`** —
-> `Post` is the consensus type and travels on the wire.
+> **`StoredPost` is the DAG `Post` with `content: string | null`, `contentHash`, and a required
+> `status: PostStatus`** (`'pending' | 'confirmed'` — a pruned post has no row), exported from
+> `store/posts.ts` and re-exported from `store/index.ts`. It exists because **`status` is
+> node-local state and must not enter `Post`** — `Post` is the DAG type, `PostCommit` the
+> consensus type that travels on the wire.
 >
 > ⚠ **The field is required, not optional, and that is the whole mechanism.** While `postToJson`
 > declared `Post & { status?: string }`, a bare `Post` type-checked and `?? 'unknown'` read as a
 > verdict rather than an absence — every response served `"unknown"` and nothing complained. A
 > required field makes a caller with no status fail to compile instead.
-| `pruneSubtree(rootPostId)` | `(string) => void` — mark subtree as pruned |
+
+**`dag_posts` columns:** `id`, `content_hash` (hex, NOT NULL), `content` (**nullable** — `NULL` is
+the placeholder), `author`, `parent_refs`, `protocol_version`, `type`, `status`, `block_height`,
+`block_index`. There is no `raw_cbor`: a body is stored only after `verifyPostBody` accepted it
+against `content_hash`, so the column is the authority and nothing re-verifies it. `getPostRaw`
+and `pruneSubtree` are deleted with the split.
+
+**Backfill after sync.** A placeholder's body is pulled by id (NET_INTERFACE → Sync State
+Machine, `requestPostBodies`): in the `backfill` phase net drives it from `getMissingBodies`;
+once `synced`, the node drives it from its block-applied hook for every placeholder it creates
+— the block's relaying peer first, then other connected peers — on a per-id schedule **in
+block height: the first request at creation, retries after 1, 2, 4, … blocks, capped at 256**,
+so an unserved body costs a bounded trickle and never a loop. A received body is verified and
+stored through `setPostBody`; `emitPostReceived(postId, peerId, via: 'pull')`.
+
+> ⚠ **AHEAD OF CODE — 2026-08-22.** The nullable body, `content_hash`, the new store functions,
+> the deletions and the backfill driver land with the content-in-the-DAG unit (node). In the tree
+> `content` is `NOT NULL`, `raw_cbor` exists, `getPost` returns `StoredPost | Stump | null`, and
+> `pruneSubtree` marks rather than deletes.
 
 ### Like-records (P2-D — replaces `dag_likes`)
 
@@ -2884,8 +3013,17 @@ BlockJournal {
   likeRecordDeletions: Array<{ targetPostId: string, likerId: UserId,
     appliedAtBlock: number }>      // inverse: restoreLikeRecord — a reverted prune
                                    // restores the subtree's like-records exactly (P2-D)
+  deletedPosts: DeletedPostRow[]   // prune settlement's deleted dag_posts rows, bodies and
+                                   // parent refs included — inverse: restorePostRows; the
+                                   // only place a pruned body survives, and only until this
+                                   // journal is purged (ARCHITECTURE → Subtree pruning)
+  insertedStumps: Stump[]          // prune settlement's stump rows — inverse: deleteStump
 }
 ```
+
+> ⚠ **AHEAD OF CODE — 2026-08-22.** `deletedPosts` and `insertedStumps` land with the
+> content-in-the-DAG unit (node); in the tree the prune marks rows and the stump insert is not
+> journalled.
 
 **One log, not parallel arrays (Spec G phase B).** `mutations` is a
 discriminated union over **every committed entity**, not a box-only log with
@@ -2975,11 +3113,14 @@ are derived state"). Because the insert is unconditional at settlement and
 every apply path goes through the one funnel, a settled prune without its
 stump row cannot arise on a fresh chain; there is no repair or pull path.
 
-⚠ **Known gap (recorded, not fixed here):** stump inserts are not
-journalled, so `revertBlock` does not remove them — a reorged-away prune
-leaves its stump row (and `getPost` keeps resolving it) until the entry
-settles again on the winning branch. Belongs to the journalling work
-sequenced with P2-D4.
+**The insert is journalled** (Block Journal → `insertedStumps`), so `revertBlock` removes the
+stump of a reorged-away prune with the rows it restores; the entry re-enters the mempool and
+writes the stump again when it re-settles.
+
+> ⚠ **AHEAD OF CODE — 2026-08-22.** Lands with the content-in-the-DAG unit (node). In the tree
+> stump inserts are not journalled, so `revertBlock` does not remove them — a reorged-away
+> prune leaves its stump row (and `getPost` keeps resolving it) until the entry settles again
+> on the winning branch.
 
 ### AVL+ State Root
 
@@ -3637,6 +3778,7 @@ below) and two `NetNode` reads (`getConnectedPeers()`, `syncPhase()` — NET_INT
   "peers_connected": 8,
   "last_post_received_ms_ago": 234,
   "syncing": false,
+  "sync_phase": "synced",
   "uptime_seconds": 84200,
   "apiVersion": "1.0",
   "journalEventsVersion": "1.0"
@@ -3648,7 +3790,8 @@ below) and two `NetNode` reads (`getConnectedPeers()`, `syncPhase()` — NET_INT
 | `dag_tip_height` | the applied chain tip — the height of the last block `applyOrderingBlock` applied, or the tip a reorg left | pushed at every successful apply and at the end of a reorg (`noteTip(height)`); `0` before the first |
 | `peers_connected` | `net.getConnectedPeers().length` — Active peers | read at request time |
 | `last_post_received_ms_ago` | milliseconds since the last `post_received` journal event, any source; **`null`** until the first | the `emitPostReceived` wrapper stamps the time |
-| `syncing` | `net.syncPhase() === 'syncing'` | read at request time |
+| `syncing` | `net.syncPhase()` is `'syncing'` or `'backfill'` — the chain is not yet usable as current | read at request time |
+| `sync_phase` | `net.syncPhase()` verbatim — `'idle' \| 'syncing' \| 'backfill' \| 'synced'` (NET_INTERFACE → Sync State Machine). **AHEAD OF CODE — 2026-08-22** (node; `'backfill'` is net's) | read at request time |
 | `uptime_seconds` | seconds since process start | — |
 | `apiVersion`, `journalEventsVersion` | `"1.0"` | static |
 
@@ -3660,6 +3803,7 @@ below) and two `NetNode` reads (`getConnectedPeers()`, `syncPhase()` — NET_INT
   "counters": {
     "posts_received_total": 5432,
     "posts_validated_total": 5430,
+    "post_bodies_pulled_total": 17,
     "pow_verifications_total": 6100,
     "pow_verification_failures_total": 2,
     "http_requests_total": 12000
@@ -3671,6 +3815,7 @@ below) and two `NetNode` reads (`getConnectedPeers()`, `syncPhase()` — NET_INT
 |---|---|
 | `posts_received_total` | `post_received` journal events, any source (JOURNAL_EVENTS → post_received) |
 | `posts_validated_total` | `post_validated` journal events |
+| `post_bodies_pulled_total` | `post_received` journal events whose `via` is `"pull"` — bodies backfilled by id (JOURNAL_EVENTS → post_received). **AHEAD OF CODE — 2026-08-22** (node) |
 | `pow_verifications_total` | every `verifyOrderingBlockPoW` the node runs on **received** work — net's relay check (through the validators object node supplies to `NetNode`) and block application's — never the miner's check of its own template |
 | `pow_verification_failures_total` | those of the above that returned `false` |
 | `http_requests_total` | every request the **public** app receives (an express middleware ahead of the routes); the admin app's own requests are not counted |
@@ -3807,8 +3952,12 @@ not fail the API request.
 
 ### Relay handlers (mempool-based)
 
-- **`onTx(tx)`**: validates (read-only, `validateTx`) → inserts into mempool via
-  `insertUtxoTx`
+- **`onTx(tx, content, fromPeerId)`**: validates (read-only, `validateTx`) → inserts into
+  mempool via `admitTx`; for a post transaction the packet's body — already verified against
+  `tx.post.contentHash` by net's topic validator — is stored as the pending row in the same
+  store transaction as the admission (Post transactions → the packet is the unit), and
+  `emitPostReceived(postId, fromPeerId, via: 'packet')` fires. **AHEAD OF CODE — 2026-08-22**
+  (node): in the tree the handler admits the transaction and inserts no row
 - **`onOrderingBlock(block, fromPeerId)`**: structure / PoW pre-filters (net) →
   `handleOrderingBlock` — already held → no-op; extends our tip or height 0 →
   `applyOrderingBlock` → confirms posts → removes confirmed entries from mempool;
@@ -4159,10 +4308,18 @@ phase; NET_INTERFACE is authoritative for that side.
 
 ## Invariants
 - Secret keys never in API responses
-- `raw_cbor` is the canonical authority for post content; parsed columns are
-  derivative
+- A body is stored only after `verifyPostBody` accepted it against the row's `content_hash`;
+  `content` is the authority and `NULL` is the placeholder — there is no second copy of a body
+  anywhere in the store
 - `post.id` is computed server-side — client-submitted IDs are ignored
-- Content length limit enforced at API boundary
+- Content rules (`verifyPostBody`) are enforced at every body entry — packet, pull response,
+  `POST /posts` — and in no transaction check
+- A pending row exists iff its transaction is in the pool, or the post is confirmed
+- Once a prune block's journal is dropped below `MAX_REORG_DEPTH`, no `dag_posts` row and no
+  journal row holds the subtree's content (ARCHITECTURE → Subtree pruning)
+  > ⚠ **AHEAD OF CODE — 2026-08-22.** The four bullets above land with the content-in-the-DAG
+  > unit (node); until then `raw_cbor` is the stored authority, content limits run inside
+  > `verifyPost`, and a pruned row stays, marked
 - Protocol version checked at verification
 - Consumers call the Store interface, never the backend directly
 - UTXO transactions are atomic — all boxes consumed/created in one commit

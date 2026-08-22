@@ -1,6 +1,7 @@
 import { getDb } from './db.js';
 import { encode, decode } from 'cbor-x';
-import type { AnyBox, UserId } from '@dagsocial/types';
+import type { AnyBox, Stump, UserId } from '@dagsocial/types';
+import type { DeletedPostRow } from './posts.js';
 // Type-only: erased at compile time, so this does not create a runtime cycle
 // with identity-records.ts, which imports the recording hook below.
 import type { IdentityRecord } from './identity-records.js';
@@ -76,6 +77,8 @@ export interface BlockJournal {
     likerId: UserId;
     appliedAtBlock: number;
   }>;
+  deletedPosts: DeletedPostRow[];
+  insertedStumps: Stump[];
 }
 
 // ---------------------------------------------------------------------------
@@ -130,6 +133,8 @@ export function beginBlockJournal(height: number): void {
     appliedUtxoTxs: [],
     likeRecordInsertions: [],
     likeRecordDeletions: [],
+    deletedPosts: [],
+    insertedStumps: [],
   };
   openKarmaSupplyDelta = 0n;
 }
@@ -284,6 +289,16 @@ export function recordConfirmedSubBlocks(ids: string[]): void {
 export function recordAppliedUtxoTx(txId: string, txCbor: Uint8Array): void {
   if (openJournal === null) return;
   openJournal.appliedUtxoTxs.push({ txId, txCbor });
+}
+
+export function recordDeletedPosts(rows: DeletedPostRow[]): void {
+  if (openJournal === null) return;
+  openJournal.deletedPosts.push(...rows);
+}
+
+export function recordInsertedStump(stump: Stump): void {
+  if (openJournal === null) return;
+  openJournal.insertedStumps.push(stump);
 }
 
 

@@ -2,6 +2,7 @@ import { computeTxId, MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import {
   getPost,
+  isLivePost,
   hasLikeRecord,
   hasPendingLike,
 } from '../store/index.js';
@@ -55,9 +56,8 @@ export function castLike(
   if (!post) {
     throw new ClientError(`Post not found: ${likeTarget}`);
   }
-  // A stump has no `content`; a live Post always does. Discriminate on that,
-  // never on a field no Stump carries either way — such a test cannot fire.
-  if (!('content' in post)) {
+  // NODE_INTERFACE → Karma transition rules: a like targets a live post only.
+  if (!isLivePost(post)) {
     throw new ClientError('Cannot like a pruned post');
   }
 

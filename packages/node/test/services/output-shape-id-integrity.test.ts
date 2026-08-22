@@ -22,11 +22,12 @@ import {
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,
 } from '@dagsocial/types';
-import type { AnyBox, KarmaBox, CreditBox, Post, UtxoTransaction } from '@dagsocial/types';
+import type { AnyBox, KarmaBox, CreditBox, PostCommit, UtxoTransaction } from '@dagsocial/types';
 import Database from 'better-sqlite3';
 import {
   fixtureProvenance,
   makePost,
+  makePostCommit,
   makeTestIdentity,
   seedAsOneTx,
   seedProvenance,
@@ -131,7 +132,7 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
   // `post` rides here rather than at the call sites because a `PostLockBox`
   // output without it fails the engine's post biconditional (NODE_INTERFACE →
   // Post transactions).
-  function signedTx(inputs: string[], outputs: unknown[], post?: Post): UtxoTransaction {
+  function signedTx(inputs: string[], outputs: unknown[], post?: PostCommit): UtxoTransaction {
     const tx: UtxoTransaction = {
       inputs,
       outputs: outputs as UtxoTransaction['outputs'],
@@ -226,7 +227,7 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
     const tx = signedTx(
       [karma.id!],
       [karmaChange(100n - POST_LOCK_THREAD_COST), lock],
-      makePost(ownerPubKey, 'honest lock payload'),
+      makePostCommit(ownerPubKey, 'honest lock payload'),
     );
     const r = validateTx(deps, tx, 10);
     expect(r.valid, r.error).toBe(true);

@@ -58,7 +58,8 @@ import {
   consumeBox,
   confirmPost,
   insertPost,
-  pruneSubtree,
+  deletePostRows,
+  isLivePost,
   getCurrentHeight,
   createOrderingBlock as storeCreateOrderingBlock,
   getOrderingBlock,
@@ -90,6 +91,8 @@ import {
   abortBlockJournal,
   recordConfirmedSubBlocks,
   recordAppliedUtxoTx,
+  recordDeletedPosts,
+  recordInsertedStump,
   insertBlockJournal,
   purgeOldJournals,
 } from '../store/journal.js';
@@ -101,7 +104,6 @@ import type { RecordPut } from '../state/avl-prover.js';
 import {
   encodeTx,
   decodeTx,
-  encodePost,
   MAX_REORG_DEPTH,
   GENESIS_PREV_BLOCK_HASH,
   PROTOCOL_VERSION,
@@ -660,24 +662,17 @@ function applyMutationPhase(
   // destination are named in one operation (MINING_INTERFACE → Coinbase
   // Application).
 
-  // 7. Store and confirm the posts this block creates.
+  // 7. Confirm the posts this block creates; insert a placeholder for any absent row.
   //
-  // ⛔ **There is no claim to verify here, and that is the point** (audit H-3).
-  // The block carries the post itself inside its creating transaction, so a node
-  // syncing from ordering blocks alone holds the content and the author's
-  // signature over the `TxId` — it verifies authorship rather than recording a
-  // `SubBlockEntry`'s assertion of it on trust. A producer cannot graft a
-  // victim's post under its own root or claim its authorship, because it cannot
-  // produce the victim's signature over a transaction spending the victim's
-  // karma.
-  //
-  // A post absent locally is simply inserted: the body is right here. There is no
-  // placeholder state and nothing for a content sweep to resolve.
+  // A row already present (pending, from the packet) is confirmed as-is. A row
+  // absent — the packet never reached this node — is inserted from the commit
+  // with content = NULL (the placeholder). The body is backfilled by id
+  // (NODE_INTERFACE → Store Interface → Posts DAG, "Backfill after sync").
   for (let idx = 0; idx < blockPosts.length; idx++) {
     const { postId, post } = blockPosts[idx]!;
     if (!getPost(postId)) {
       try {
-        insertPost(postId, post, encodePost(post));
+        insertPost(postId, post, null);
         emitPostIndexed(postId, post.parentRefs.length);
       } catch (err) {
         console.warn(`Failed to store post ${postId}: ${String(err)}`);
@@ -843,28 +838,22 @@ function applyMutationPhase(
       return false;
     }
 
-    // 6. Insert the Stump, then prune DAG content (when present)
-    //
-    // The stump is derived state — a projection of this verified entry — and
-    // recording it is part of settlement: a node holding no DAG content for
-    // the subtree records the same stump (NODE_INTERFACE "Stumps are derived
-    // state"). Unconditional by construction: it must not sit behind any
-    // content-dependent guard, so it runs before and outside the content
-    // prune's try/catch.
-    insertStump({
+    // 6. Insert the Stump (journalled), then delete the subtree's DAG rows
+    // (journalled). NODE_INTERFACE → Pruning: the stump is unconditional, the
+    // deletion is by the entry's subtreePostIds — never a local DAG walk.
+    const stump = {
       rootPostHash: entry.rootPostHash,
       authorId: entry.authorId,
-      replyCount: entry.subtreePostIds.length - 1, // exclude root
+      replyCount: entry.subtreePostIds.length - 1,
       upvoteCount: likeTally,
       protocolVersion: PROTOCOL_VERSION,
       compactedAtBlockHeight: height,
-    });
-    try {
-      pruneSubtree(entry.rootPostHash);
-    } catch (err) {
-      console.warn(`Failed to prune DAG subtree for ${entry.rootPostHash}: ${String(err)}`);
-      // Non-fatal — DAG content may not be present
-    }
+    };
+    insertStump(stump);
+    recordInsertedStump(stump);
+
+    const deleted = deletePostRows(entry.subtreePostIds);
+    recordDeletedPosts(deleted);
   }
 
   // 8d. Remove confirmed prune entries from the local mempool — the prune-row
@@ -1152,13 +1141,11 @@ function applyMutationPhase(
           );
           return false;
         }
-        // Live at this height: likes on pruned posts are rejected by stated
-        // rule — without it, dropping like-records at prune would reopen
-        // duplicate likes on stumps. A pruned root comes back as a Stump
-        // (no `content` field); a pruned non-root comes back as null (its
-        // stump lookup misses); so anything but a Post rejects.
+        // NODE_INTERFACE → Karma transition rules: a like targets a live post
+        // only — a placeholder is live (credits the topology author). A stump,
+        // tombstone, or null rejects.
         const target = getPost(targetPostId);
-        if (target === null || !('content' in target)) {
+        if (!isLivePost(target)) {
           console.warn(
             `Rejected block height=${height}: like tx ${item.txId} targets ` +
             `pruned or unknown post ${targetPostId}`,

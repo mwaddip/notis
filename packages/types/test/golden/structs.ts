@@ -33,8 +33,9 @@ import {
   readOpt,
   readVlqU,
   readVlqU64,
+  writeLpUtf8,
 } from '../../src/codec.js';
-import { postFieldBytes, POST_TYPE, type Post } from '../../src/post.js';
+import { postFieldBytes, POST_TYPE, type PostCommit } from '../../src/post.js';
 import { serializePruneEntry, type PruneEntry } from '../../src/stump.js';
 import { canonicalBoxBytes, type BoxCandidate } from '../../src/utxo.js';
 import {
@@ -50,25 +51,23 @@ import type {
 import { hex, registerStruct, type ValueCodec } from './harness.js';
 
 // ---------------------------------------------------------------------------
-// postFields — what `postFieldBytes` covers
+// postCommitFields — what `postFieldBytes` covers
 // ---------------------------------------------------------------------------
 
 /**
- * The five fields the post preimage encodes — every field a `Post` has.
+ * The five fields the commit preimage encodes — every field a `PostCommit` has.
  *
- * `PostFields` is now exactly `Post`, and the alias is kept rather than collapsed
- * because the corpus's subject is the **preimage**, not the struct: if a field is
- * ever added to `Post` that the encoder skips, this is where that divergence has
- * to be spelled out, and a vector silently claiming coverage of it is the failure
- * the separate name exists to prevent.
+ * The separate name exists so the corpus's subject is the **preimage**: if a
+ * field is ever added to `PostCommit` that the encoder skips, this is where
+ * that divergence has to be spelled out.
  */
-export type PostFields = Post;
+export type PostCommitFields = PostCommit;
 
-const postFieldsCodec: ValueCodec<PostFields> = {
-  parse(json: unknown): PostFields {
+const postCommitFieldsCodec: ValueCodec<PostCommitFields> = {
+  parse(json: unknown): PostCommitFields {
     const j = json as Record<string, unknown>;
     return {
-      content: j.content as string,
+      contentHash: hex(j.contentHash as string),
       author: hex(j.author as string),
       parentRefs: j.parentRefs as string[],
       protocolVersion: j.protocolVersion as number,
@@ -77,19 +76,35 @@ const postFieldsCodec: ValueCodec<PostFields> = {
   },
 
   // Production writer.
-  write(w: ByteWriter, p: PostFields): void {
-    w.writeBytes(postFieldBytes(p));
+  write(w: ByteWriter, c: PostCommitFields): void {
+    w.writeBytes(postFieldBytes(c));
   },
 
-  // Independent reader — TYPES_INTERFACE → Layout — Post, in order.
-  read(r: ByteReader): PostFields {
+  // Independent reader — TYPES_INTERFACE → Layout — PostCommit, in order.
+  read(r: ByteReader): PostCommitFields {
     return {
-      content: readLpUtf8(r),
+      contentHash: readBytesN(r, 32),
       author: readBytesN(r, 32),
       parentRefs: readArr(r, (rr) => readHexN(rr, 32)),
       protocolVersion: readVlqU(r),
       type: POST_TYPE.read(r),
     };
+  },
+};
+
+// ---------------------------------------------------------------------------
+// postBody — what `encodePostBody` covers (TYPES_INTERFACE → Layout — Post body)
+// ---------------------------------------------------------------------------
+
+const postBodyCodec: ValueCodec<string> = {
+  parse(json: unknown): string {
+    return json as string;
+  },
+  write(w: ByteWriter, content: string): void {
+    writeLpUtf8(w, content);
+  },
+  read(r: ByteReader): string {
+    return readLpUtf8(r);
   },
 };
 
@@ -476,8 +491,8 @@ const utxoTxTreeCodec: ValueCodec<UtxoTxTree> = {
   },
 };
 
-// `encodePost` is now exactly `postFieldBytes`, so the `postFields` vectors pin
-// the wire post too.
+// `encodePostCommit` is exactly `postFieldBytes`, so the `postCommitFields`
+// vectors pin the wire codec too.
 
 const orderingBlockCodec: ValueCodec<OrderingBlock> = {
   parse(json: unknown): OrderingBlock {
@@ -511,7 +526,8 @@ const orderingBlockCodec: ValueCodec<OrderingBlock> = {
   },
 };
 
-registerStruct('postFields', postFieldsCodec);
+registerStruct('postCommitFields', postCommitFieldsCodec);
+registerStruct('postBody', postBodyCodec);
 registerStruct('boxContent', boxContentCodec);
 registerStruct('pruneEntry', pruneEntryCodec);
 registerStruct('blockHeader', blockHeaderCodec);

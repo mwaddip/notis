@@ -102,11 +102,7 @@ async function importBlockCreatorRoots() {
 }
 
 async function importPosts() {
-  return (await import('../../src/store/posts.js')) as {
-    insertPost: (postId: string, post: Post, rawCbor: Uint8Array) => void;
-    confirmPost: (postId: string, blockHeight: number, blockIndex: number) => void;
-    getPost: (id: string) => StoredPost | Stump | null;
-  };
+  return await import('../../src/store/posts.js');
 }
 
 async function importMempoolFresh() {
@@ -307,10 +303,10 @@ describe('extendsOurTip', () => {
 
     const author = makeTestIdentity();
 
-    const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, 'genesis');
-    const { encodePost } = await import('@dagsocial/types');
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'genesis');
+
     const posts = await importPosts();
-    posts.insertPost(postId, post, encodePost(post));
+    posts.insertPost(postId, commit, content);
 
     const mempool = await importMempoolFresh();
     mempool.insertUtxoTx(postTx, 1000);
@@ -321,8 +317,8 @@ describe('extendsOurTip', () => {
     expect(block1).not.toBeNull();
 
     // Create a second block that chains from block 1
-    const { post: post2, tx: post2Tx, postId: postId2 } = await seedPostTx(author, 'block 2');
-    posts.insertPost(postId2, post2, encodePost(post2));
+    const { commit: commit2, tx: post2Tx, postId: postId2, content: content2 } = await seedPostTx(author, 'block 2');
+    posts.insertPost(postId2, commit2, content2);
     mempool.insertUtxoTx(post2Tx, 1000);
 
     const block2 = await mineNextBlock(bc);
@@ -355,10 +351,10 @@ describe('extendsOurTip', () => {
 
     const author = makeTestIdentity();
 
-    const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, 'genesis');
-    const { encodePost } = await import('@dagsocial/types');
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'genesis');
+
     const posts = await importPosts();
-    posts.insertPost(postId, post, encodePost(post));
+    posts.insertPost(postId, commit, content);
 
     const mempool = await importMempoolFresh();
     mempool.insertUtxoTx(postTx, 1000);
@@ -433,7 +429,7 @@ describe('findForkPoint', () => {
 
     const author = makeTestIdentity();
 
-    const { encodePost } = await import('@dagsocial/types');
+
     const posts = await importPosts();
     const mempool = await importMempoolFresh();
     const bc = await importBlockCreator();
@@ -441,8 +437,8 @@ describe('findForkPoint', () => {
 
     // Build chain: block 1, block 2, block 3
     for (let i = 0; i < 3; i++) {
-      const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, `block ${i + 1}`);
-      posts.insertPost(postId, post, encodePost(post));
+      const { commit, tx: postTx, postId, content } = await seedPostTx(author, `block ${i + 1}`);
+      posts.insertPost(postId, commit, content);
       mempool.insertUtxoTx(postTx, 1000);
       await mineNextBlock(bc);
     }
@@ -496,15 +492,15 @@ describe('findForkPoint', () => {
 
     const author = makeTestIdentity();
 
-    const { encodePost } = await import('@dagsocial/types');
+
     const posts = await importPosts();
     const mempool = await importMempoolFresh();
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
 
     // Build chain: block 1 only
-    const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, 'genesis');
-    posts.insertPost(postId, post, encodePost(post));
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'genesis');
+    posts.insertPost(postId, commit, content);
     mempool.insertUtxoTx(postTx, 1000);
     await mineNextBlock(bc);
 
@@ -541,7 +537,7 @@ describe('findForkPoint', () => {
     // Build a deep chain (more than MAX_REORG_DEPTH) via block-creator
     const author = makeTestIdentity();
 
-    const { encodePost } = await import('@dagsocial/types');
+
     const posts = await importPosts();
     const mempool = await importMempoolFresh();
     const bc = await importBlockCreator();
@@ -550,8 +546,8 @@ describe('findForkPoint', () => {
     const chainLength = MAX_REORG_DEPTH + 5;
 
     for (let i = 0; i < chainLength; i++) {
-      const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, `deep ${i}`);
-      posts.insertPost(postId, post, encodePost(post));
+      const { commit, tx: postTx, postId, content } = await seedPostTx(author, `deep ${i}`);
+      posts.insertPost(postId, commit, content);
       mempool.insertUtxoTx(postTx, 1000);
       await mineNextBlock(bc);
     }
@@ -599,7 +595,7 @@ describe('findForkPoint', () => {
     db.initDb(':memory:');
 
     const author = makeTestIdentity();
-    const { encodePost } = await import('@dagsocial/types');
+
     const posts = await importPosts();
     const mempool = await importMempoolFresh();
     const bc = await importBlockCreator();
@@ -622,8 +618,8 @@ describe('findForkPoint', () => {
     });
 
     for (let i = 0; i < MAX_REORG_DEPTH; i++) {
-      const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, `bound ${i}`);
-      posts.insertPost(postId, post, encodePost(post));
+      const { commit, tx: postTx, postId, content } = await seedPostTx(author, `bound ${i}`);
+      posts.insertPost(postId, commit, content);
       mempool.insertUtxoTx(postTx, 1000);
       await mineNextBlock(bc);
     }
@@ -635,8 +631,8 @@ describe('findForkPoint', () => {
 
     // One block further, the walk is truncated by the depth bound before it
     // reaches the bottom, and the answer goes back to "no common ancestor".
-    const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, 'one past the bound');
-    posts.insertPost(postId, post, encodePost(post));
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'one past the bound');
+    posts.insertPost(postId, commit, content);
     mempool.insertUtxoTx(postTx, 1000);
     await mineNextBlock(bc);
 
@@ -657,7 +653,7 @@ describe('findForkPoint', () => {
     db.initDb(':memory:');
 
     const author = makeTestIdentity();
-    const { encodePost } = await import('@dagsocial/types');
+
     const posts = await importPosts();
     const mempool = await importMempoolFresh();
     const bc = await importBlockCreator();
@@ -665,8 +661,8 @@ describe('findForkPoint', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     for (let i = 0; i < 2; i++) {
-      const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, `poison control ${i}`);
-      posts.insertPost(postId, post, encodePost(post));
+      const { commit, tx: postTx, postId, content } = await seedPostTx(author, `poison control ${i}`);
+      posts.insertPost(postId, commit, content);
       mempool.insertUtxoTx(postTx, 1000);
       await mineNextBlock(bc);
     }
@@ -717,15 +713,15 @@ describe('findForkPoint', () => {
     db.initDb(':memory:');
 
     const author = makeTestIdentity();
-    const { encodePost } = await import('@dagsocial/types');
+
     const posts = await importPosts();
     const mempool = await importMempoolFresh();
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
 
     for (let i = 0; i < 3; i++) {
-      const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, `batch block ${i + 1}`);
-      posts.insertPost(postId, post, encodePost(post));
+      const { commit, tx: postTx, postId, content } = await seedPostTx(author, `batch block ${i + 1}`);
+      posts.insertPost(postId, commit, content);
       mempool.insertUtxoTx(postTx, 1000);
       await mineNextBlock(bc);
     }
@@ -1224,10 +1220,10 @@ describe('revertBlock', () => {
 
     const author = makeTestIdentity();
 
-    const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, 'unconfirm me');
-    const { encodePost } = await import('@dagsocial/types');
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'unconfirm me');
+
     const posts = await importPosts();
-    posts.insertPost(postId, post, encodePost(post));
+    posts.insertPost(postId, commit, content);
 
     const mempool = await importMempoolFresh();
     mempool.insertUtxoTx(postTx, 1000);
@@ -1277,9 +1273,9 @@ describe('revertBlock', () => {
 
     const author = makeTestIdentity();
 
-    const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, 'utxo revert test');
-    const { encodePost } = await import('@dagsocial/types');
-    posts.insertPost(postId, post, encodePost(post));
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'utxo revert test');
+
+    posts.insertPost(postId, commit, content);
 
     // Insert post transaction
     mempool.insertUtxoTx(postTx, 1000);
@@ -1494,7 +1490,7 @@ describe('reorg', () => {
 
     const author = makeTestIdentity();
 
-    const { encodePost } = await import('@dagsocial/types');
+
     const posts = await importPosts();
     const mempool = await importMempoolFresh();
     const bc = await importBlockCreator();
@@ -1502,8 +1498,8 @@ describe('reorg', () => {
 
     // Build 3 blocks
     for (let i = 0; i < 3; i++) {
-      const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, `reorg test ${i}`);
-      posts.insertPost(postId, post, encodePost(post));
+      const { commit, tx: postTx, postId, content } = await seedPostTx(author, `reorg test ${i}`);
+      posts.insertPost(postId, commit, content);
       mempool.insertUtxoTx(postTx, 1000);
       await mineNextBlock(bc);
     }
@@ -1543,15 +1539,15 @@ describe('reorg', () => {
     const db = await importDb();
     db.initDb(':memory:');
 
-    const { encodePost } = await import('@dagsocial/types');
+
     const posts = await importPosts();
     const utxo = await importUtxo();
     const mempool = await importMempoolFresh();
     const bc = await importBlockCreator();
     const author = makeTestIdentity();
 
-    const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, 'reorg re-insert conflict');
-    posts.insertPost(postId, post, encodePost(post));
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'reorg re-insert conflict');
+    posts.insertPost(postId, commit, content);
     mempool.insertUtxoTx(postTx, 1000);
 
     const karmaBox = makeKarmaBox(100n, author.userId, 0);
@@ -1596,7 +1592,7 @@ describe('reorg', () => {
 
     const author = makeTestIdentity();
 
-    const { encodePost } = await import('@dagsocial/types');
+
     const posts = await importPosts();
     const mempool = await importMempoolFresh();
     const bc = await importBlockCreator();
@@ -1604,8 +1600,8 @@ describe('reorg', () => {
 
     // Build 2 blocks
     for (let i = 0; i < 2; i++) {
-      const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, `chain a ${i}`);
-      posts.insertPost(postId, post, encodePost(post));
+      const { commit, tx: postTx, postId, content } = await seedPostTx(author, `chain a ${i}`);
+      posts.insertPost(postId, commit, content);
       mempool.insertUtxoTx(postTx, 1000);
       await mineNextBlock(bc);
     }
@@ -1642,7 +1638,7 @@ describe('reorg', () => {
 
     const author = makeTestIdentity();
 
-    const { encodePost } = await import('@dagsocial/types');
+
     const posts = await importPosts();
     const mempool = await importMempoolFresh();
     const bc = await importBlockCreator();
@@ -1650,8 +1646,8 @@ describe('reorg', () => {
 
     // Build 3 blocks
     for (let i = 0; i < 3; i++) {
-      const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, `original ${i}`);
-      posts.insertPost(postId, post, encodePost(post));
+      const { commit, tx: postTx, postId, content } = await seedPostTx(author, `original ${i}`);
+      posts.insertPost(postId, commit, content);
       mempool.insertUtxoTx(postTx, 1000);
       await mineNextBlock(bc);
     }
@@ -1709,7 +1705,7 @@ describe('reorg', () => {
 
       const author = makeTestIdentity();
 
-      const { encodePost } = await import('@dagsocial/types');
+  
       const posts = await importPosts();
       const mempool = await importMempoolFresh();
       const bc = await importBlockCreator();
@@ -1718,8 +1714,8 @@ describe('reorg', () => {
       // Two blocks, one post transaction each. Each insert sits alone in the pool
       // (cap 1) and is consumed by its block, so building the chain is fine.
       for (let i = 0; i < 2; i++) {
-        const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, `full pool ${i}`);
-        posts.insertPost(postId, post, encodePost(post));
+        const { commit, tx: postTx, postId, content } = await seedPostTx(author, `full pool ${i}`);
+        posts.insertPost(postId, commit, content);
         mempool.insertUtxoTx(postTx, 1000);
         await mineNextBlock(bc);
       }
@@ -1756,15 +1752,15 @@ describe('reorg', () => {
 
     const author = makeTestIdentity();
 
-    const { encodePost } = await import('@dagsocial/types');
+
     const posts = await importPosts();
     const mempool = await importMempoolFresh();
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
 
     for (let i = 0; i < 2; i++) {
-      const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, `room in pool ${i}`);
-      posts.insertPost(postId, post, encodePost(post));
+      const { commit, tx: postTx, postId, content } = await seedPostTx(author, `room in pool ${i}`);
+      posts.insertPost(postId, commit, content);
       mempool.insertUtxoTx(postTx, 1000);
       await mineNextBlock(bc);
     }

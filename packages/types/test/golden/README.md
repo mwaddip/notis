@@ -19,7 +19,7 @@ Normative source for the layouts: `contracts/TYPES_INTERFACE.md` → Serializati
 | `primitives.json` | One group per row of the Primitives table, at its boundaries |
 | `probe.json` | Struct-level vectors for the probe struct, plus struct-level rejections |
 | `reject.json` | Byte strings the boundary check must refuse |
-| `post.json` | `postFieldBytes` — the post payload inside its creating transaction's `TxId` preimage |
+| `post.json` | `postFieldBytes` — the PostCommit payload inside its creating transaction's `TxId` preimage; `encodePostBody` — the body's standalone wire form (`lpUtf8`), never hashed into anything |
 | `boxes.json` | `canonicalBoxBytes` — box identity, one vector per box type (asserted by `golden.test.ts`), both roles of `like_accrual`, both states of `genesis_proof.payload`, and `emission` and `fee` at zero value AND zero height, which is the format's three-byte floor |
 | `prune.json` | `serializePruneEntry` — the prune Merkle leaf preimage |
 | `block.json` | The block header, the one body tree and the ordering-block framing |
@@ -51,8 +51,12 @@ which is what makes the leaf preimage and the wire encoding the same bytes rathe
 than merely parallel ones.
 
 The leaf domains `'subblock'` and `'coinbase'` are tracked reservations
-(TYPES_INTERFACE → Tracked reservations). `encodePost` is exactly
-`postFieldBytes`, so the `postFields` vectors pin the wire post too.
+(TYPES_INTERFACE → Tracked reservations). `encodePostCommit` is exactly
+`postFieldBytes`, so the `postCommitFields` vectors pin the wire codec too.
+
+`encodeTxPacket` (`encodeTx(tx)` ‖ `opt(lpUtf8(content))`) is pinned in
+`test/serialization.test.ts` rather than in a golden JSON file, because the TX
+struct codec is private to `serialization.ts` and the harness cannot compose it.
 
 ⛔ **No reject vector may be pinned at "the next free tag."** `boxes.json` probes
 an unassigned box type at the literal **255**, which `enum8` reserves as its
@@ -147,7 +151,8 @@ A bare string names a leaf codec; the object forms compose, so `{"arr": {"opt": 
 | `probe` | `Probe` | object — see `probe.ts` |
 | `boxContent`, `pruneEntry` | the struct | object — every `value` is a **decimal string** (u64) |
 | `powNonceTail` | `number` | JSON number — the nonce, not the bytes |
-| `powPreimage` | `PostFields` + `powNonce` | object — `postFields`' form with one more key |
+| `postCommitFields` | `PostCommit` | object — `contentHash` as hex |
+| `postBody` | `string` | JSON string — the body's standalone wire form |
 
 `{"$special": "NaN" \| "Infinity" \| "-Infinity" \| "undefined"}` expresses the values JSON has no
 literal for. For a wrong *type*, write the raw JSON value and set `"raw": true`.

@@ -8,8 +8,8 @@ import {
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   ED25519_SPKI_PREFIX,
 } from '@dagsocial/types';
-import { encodeHeader, encodeTx, utxoTxTreeByteLength } from '@dagsocial/types';
-import type { Post, BlockHeader, OrderingBlock, UtxoTransaction } from '@dagsocial/types';
+import { encodeHeader, encodeTx, utxoTxTreeByteLength, computeContentHash } from '@dagsocial/types';
+import type { BlockHeader, OrderingBlock, UtxoTransaction } from '@dagsocial/types';
 import { isDisallowedContentCodepoint } from './content-charset.js';
 
 // ---------------------------------------------------------------------------
@@ -149,73 +149,52 @@ function isBytesOfLength(v: unknown, n: number): v is Uint8Array {
 }
 
 /**
- * The domain of every field `postFieldBytes` encodes.
+ * The field-domain pin over the transaction's `PostCommit` payload
+ * (VALIDATION_INTERFACE → verifyPostCommitDomains).
  *
- * ⛔ **Its caller moved and its precondition got WIDER.** A post is the payload of
- * the transaction that creates it, so `postFieldBytes` is now inside the
- * `computeTxId` preimage — this guard is what keeps a throwing writer unreachable
- * on the path that derives a *transaction* id, not just a post id. It runs on the
- * post-bearing transaction, where `verifyTxStructure` already runs.
+ * `postFieldBytes` sits inside the `computeTxId` preimage, so this guard
+ * keeps its throwing writers unreachable on the transaction-id path.
+ * `verifyTxStructure` calls it before anything takes the transaction's id.
  *
- * **Type checks** (audit M-5/M-6): a malformed post must not throw inside
- * `@dagsocial/types`. A non-array `parentRefs` throws in `.map`, an absent
- * `author` throws on `.length`, an `author` that is not a byte view
- * overruns the preimage buffer, and a symbol in `content` / `parentRefs` /
- * `protocolVersion` throws in `TextEncoder.encode` / `String()`.
+ * **Width checks** (TYPES_INTERFACE → Layout — PostCommit): `contentHash`
+ * and `author` are `b32` (exactly 32 bytes each); `parentRefs` is
+ * `arr(refs, b32)` with at most `MAX_PARENT_REFS` entries. Fixed-width
+ * writers throw on a wrong width (`writeBytesNOrThrow`,
+ * `writeHexNOrThrow`), and this guard establishes the domain before they
+ * are reached. `protocolVersion` uses `isU64Safe` to keep the `vlqU`
+ * sentinel path closed. `type` must be a member of `POST_TYPE`.
  *
- * The numerics use `isU64Safe`, not a loose `typeof === 'number'`. A loose
- * check admits `NaN` / `Infinity` / negative / fractional values, which the
- * canonical encoder in `@dagsocial/types` has to absorb by writing an all-ones
- * sentinel to stay panic-free — and two such malformed posts then share an
- * encoding. Rejecting them here keeps that sentinel path out of reach for
- * anything that passes this guard.
+ * It reads no content — the commit carries none; the body's rules are
+ * `verifyPostBody`'s.
  *
- * **Width checks** (TYPES_INTERFACE → Layout — Post): `author` is `b32` and
- * `parentRefs` is `arr(refs, b32)`. A fixed-width writer has no
- * unreachable sentinel — its wire domain *is* its encodable domain — so padding
- * or truncating a 31-byte `author` would map it onto a well-formed post's
- * encoding, a consensus-level collision strictly worse than the panic it
- * avoids. `post.ts` therefore throws (`writeBytesNOrThrow`,
- * `writeHexNOrThrow`), and this guard is what establishes the domain before
- * that writer is reached, keeping the throw unreachable rather than latent.
- *
- * No well-formed post is affected: `author` is a 32-byte Ed25519 public key (a
- * 31-byte one cannot verify a signature), every `parentRef` is a `computePostId`
- * output, `type` is a member of `POST_TYPE`, and `protocolVersion` must
- * equal `PROTOCOL_VERSION` to pass Stage 1 at all.
+ * Total on adversarial input, like every function here.
  */
-export function verifyPostFieldDomains(post: Post): { valid: boolean; error?: string } {
-  if (!isObject(post)) return { valid: false, error: 'Post is not an object' };
-  if (typeof post.content !== 'string') {
-    return { valid: false, error: 'Post content must be a string' };
+export function verifyPostCommitDomains(commit: unknown): { valid: boolean; error?: string } {
+  if (!isObject(commit)) return { valid: false, error: 'Post is not an object' };
+  if (!isBytesOfLength(commit.contentHash, 32)) {
+    return { valid: false, error: 'Post contentHash must be exactly 32 bytes' };
   }
-  if (!isBytes(post.author) || post.author.length !== 32) {
+  if (!isBytesOfLength(commit.author, 32)) {
     return { valid: false, error: 'Post author must be exactly 32 bytes' };
   }
-  if (!Array.isArray(post.parentRefs)) {
+  if (!Array.isArray(commit.parentRefs)) {
     return { valid: false, error: 'Post parentRefs must be an array' };
   }
-  for (const ref of post.parentRefs) {
+  for (const ref of commit.parentRefs) {
     if (typeof ref !== 'string' || !POST_ID_HEX.test(ref)) {
       return { valid: false, error: 'Post parentRef must be 64 lowercase hex characters' };
     }
   }
-  if (!isU64Safe(post.protocolVersion)) {
+  if (commit.parentRefs.length > MAX_PARENT_REFS) {
+    return { valid: false, error: `Too many parent refs (max ${MAX_PARENT_REFS})` };
+  }
+  if (!isU64Safe(commit.protocolVersion)) {
     return { valid: false, error: 'Post protocolVersion must be a non-negative safe integer' };
   }
-  if (post.type !== 'regular' && post.type !== 'profile') {
+  if (commit.type !== 'regular' && commit.type !== 'profile') {
     return { valid: false, error: 'Post type must be a member of POST_TYPE' };
   }
   return { valid: true };
-}
-
-/**
- * The same predicate as a type guard, for the call sites that want narrowing
- * rather than a message. One implementation, two shapes — a second copy of the
- * domain rule is exactly the mirror `VALIDATION_INTERFACE` warns about.
- */
-function isSignablePost(post: unknown): post is Post {
-  return verifyPostFieldDomains(post as Post).valid;
 }
 
 // ---------------------------------------------------------------------------
@@ -558,6 +537,36 @@ export function verifyParentRefsCount(refs: string[]): { valid: boolean; error?:
 }
 
 // ---------------------------------------------------------------------------
+// verifyPostBody — VALIDATION_INTERFACE → verifyPostBody
+// ---------------------------------------------------------------------------
+
+export function verifyPostBody(
+  content: unknown,
+  contentHash: Uint8Array,
+): { valid: boolean; error?: string } {
+  if (typeof content !== 'string') {
+    return { valid: false, error: 'Post content must be a string' };
+  }
+  const limits = verifyContentLimits(content);
+  if (!limits.valid) return limits;
+  const chars = verifyContentCharacters(content);
+  if (!chars.valid) return chars;
+  if (!isBytesOfLength(contentHash, 32)) {
+    return { valid: false, error: 'contentHash must be exactly 32 bytes' };
+  }
+  const expected = computeContentHash(content);
+  if (expected.length !== contentHash.length) {
+    return { valid: false, error: 'Content hash mismatch' };
+  }
+  for (let i = 0; i < expected.length; i++) {
+    if (expected[i] !== contentHash[i]) {
+      return { valid: false, error: 'Content hash mismatch' };
+    }
+  }
+  return { valid: true };
+}
+
+// ---------------------------------------------------------------------------
 // verifyTxStructure
 // ---------------------------------------------------------------------------
 
@@ -594,30 +603,13 @@ export function verifyTxStructure(tx: UtxoTransaction): { valid: boolean; error?
   if (typeof tx.protocolVersion !== 'number') {
     return { valid: false, error: 'Transaction missing protocolVersion' };
   }
-  // ⛔ The post payload's domain, checked HERE because this is the structural
-  // gate that runs before anything takes the transaction's id, and
-  // `postFieldBytes` sits inside the `computeTxId` preimage. `author` and every
-  // `parentRef` feed fixed-width throwing writers, so without this pin a
-  // malformed post reaching `computeTxId` is a panic rather than a verdict — the
-  // no-panic contract (M-5/M-6), inherited by the transaction path.
-  //
-  // The *consensus* half of the biconditional — `post` present ⟺ the tx locks
-  // POST_LOCK_{THREAD,REPLY}_COST into a PostLockBox and conserves value — is
-  // stateful and belongs to node's UTXO engine, as the like carve does.
-  //
-  // ⚠ `verifyPostFieldDomains` runs FIRST and the order is load-bearing: it is
-  // the only one of the four that starts with `isObject`, so a `post` of `null`
-  // reaches a property read in any other order. After it returns valid, `content`
-  // is a string and `parentRefs` an array by construction.
+  // The commit's domains — the structural gate before `computeTxId` reaches
+  // `postFieldBytes` (VALIDATION_INTERFACE → verifyPostCommitDomains). The
+  // transaction carries the commit, never the body; content checks belong to
+  // `verifyPostBody`, which runs wherever a body enters a node.
   if (tx.post !== undefined) {
-    const domains = verifyPostFieldDomains(tx.post);
+    const domains = verifyPostCommitDomains(tx.post);
     if (!domains.valid) return domains;
-    const refs = verifyParentRefsCount(tx.post.parentRefs);
-    if (!refs.valid) return refs;
-    const limits = verifyContentLimits(tx.post.content);
-    if (!limits.valid) return limits;
-    const chars = verifyContentCharacters(tx.post.content);
-    if (!chars.valid) return chars;
   }
   // The weight bound, last and after every shape check above
   // (VALIDATION_INTERFACE → The size bound measures `encodeTx`, and runs last).

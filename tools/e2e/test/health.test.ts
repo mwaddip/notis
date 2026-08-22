@@ -20,6 +20,7 @@ const HEALTH_KEYS = [
   'dag_tip_height',
   'peers_connected',
   'last_post_received_ms_ago',
+  'sync_phase',
   'syncing',
   'uptime_seconds',
   'apiVersion',
@@ -31,6 +32,7 @@ const COUNTER_KEYS = [
   'posts_validated_total',
   'pow_verifications_total',
   'pow_verification_failures_total',
+  'post_bodies_pulled_total',
   'http_requests_total',
 ] as const;
 
@@ -77,6 +79,7 @@ describe('health', () => {
       // H2: measure the mesh topology — bootstrap-first may be a star
       expect(peersConnected).toBeGreaterThanOrEqual(1);
 
+      expect(['idle', 'synced']).toContain(h['sync_phase']);
       expect(h['syncing']).toBe(false);
       expect(h['last_post_received_ms_ago']).toBeNull();
       expect(typeof h['uptime_seconds']).toBe('number');
@@ -133,7 +136,7 @@ describe('health', () => {
     // when validateTx succeeds — on devnet the block carrying the post
     // arrives before the standalone gossip tx, its inputs are consumed, and
     // the relay handler returns early at :189 without emitting.
-    await Promise.all(mesh.nodes.map((n) => postPost(n, thread.json)));
+    await Promise.all(mesh.nodes.map((n) => postPost(n, thread.json, thread.content)));
 
     await confirm(
       async () => {

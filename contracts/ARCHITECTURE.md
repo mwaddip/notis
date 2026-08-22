@@ -271,22 +271,39 @@ closure of `parentRefs` that trace back to this root.
 #### Post structure
 
 ```
-Post {
-  content: string              // 1–MAX_CONTENT_BYTES UTF-8
+PostCommit {                   // rides the creating transaction — consensus
+  contentHash: Uint8Array(32)  // blake2b512(POST_CONTENT_DOMAIN ‖ utf8(content))[0:32]
   author: UserId               // 32 raw bytes — see the representation rule below
   parentRefs: PostId[]         // 0–MAX_PARENT_REFS per post
   protocolVersion: number
   type: PostType               // 'regular' | 'profile' — TYPES_INTERFACE → Post typing
 }
 
+Post {                         // lives in the DAG — never in a block
+  content: string              // 1–MAX_CONTENT_BYTES UTF-8; hashes to the commit's contentHash
+  author, parentRefs, protocolVersion, type — the commit's four, verbatim
+}
+
 PostId = computePostId(txId, index) — provenance-derived from the creating
-transaction; the post's own fields do not enter its id (TYPES_INTERFACE →
+transaction; neither struct's fields enter its id (TYPES_INTERFACE →
 Post identity). There is no post signature and no post PoW — authorship is
-the creating transaction's signature.
+the creating transaction's signature, and a body is bound to its post by the
+commitment alone.
 ```
 
+**A block commits a post's structure and its content commitment, never its content.** The
+transaction carries the `PostCommit`; the body travels beside it as a packet on gossip and by
+id on pull (NET_INTERFACE → Gossip Topics, Sync State Machine), and lives only in the DAG. A
+node that applies a post transaction without having seen its packet holds a **placeholder** —
+structure, no body — until backfill fills it (NODE_INTERFACE → Store Interface → Posts DAG).
+
+> ⚠ **AHEAD OF CODE — 2026-08-22.** The `PostCommit`/`Post` split, `POST_CONTENT_DOMAIN`, the
+> packet and the body pull land with the content-in-the-DAG unit (types → validation → net →
+> node → e2e). Until it lands the transaction carries the body as `post?: Post` and no body
+> transport exists.
+
 > **The byte-exact layout is specified in `TYPES_INTERFACE.md` (Serialization → "Layout —
-> Post") and nowhere else.** Every field is length-prefixed and the ref array carries an
+> PostCommit" and "Layout — Post body") and nowhere else.** Every field is length-prefixed and the ref array carries an
 > explicit count (audit M-1); the id's domain tag keeps a post id from ever colliding with a
 > box or tx id derived from the same provenance. **Do not restate the formula here.** This document previously
 > carried it twice, in two different field orders, both in the pre-M-1 unprefixed form — a
@@ -328,10 +345,17 @@ the transaction's signature, and ordered by the block that includes it.
 
 The root author may prune their entire subtree at any time. Pruning:
 
-1. Removes the root post and all descendant posts from the indexable DAG
+1. **Deletes** the root post and all descendant posts from the DAG — rows and bodies, by the
+   entry's `subtreePostIds`; not a status flip, not a read filter
 2. Cascades to all replies — a reply exists only in the context of its root
-3. Replaces the entire subtree with a **stump** (see §3)
+3. Replaces the entire subtree with a **stump** (see §3): the root's id lives on as the stump;
+   a descendant's id answers only a tombstone derived from `block_topology` and that stump
+   (NODE_INTERFACE → Resolution order for a post id)
 4. Is authorized by a signed prune transaction from the root author's key
+
+> ⚠ **AHEAD OF CODE — 2026-08-22.** Deletion, the journalled undo records and the descendant
+> tombstone land with the content-in-the-DAG unit (node). Until it lands the node marks the
+> subtree's rows `'pruned'` and hides them on read.
 
 The prune is authorized **solely** by the root author's Ed25519 signature
 over `(rootPostHash, subtreeMerkleRoot)`. The signature travels in the block
@@ -348,7 +372,12 @@ content.
 Pruning is irreversible. Once content is pruned, it cannot be recovered.
 What propagates is the PruneEntry inside the ordering block that settles
 it — never the original content, and not the stump either: each node
-derives its own stump from the verified entry at settlement (§3).
+derives its own stump from the verified entry at settlement (§3). Within
+`MAX_REORG_DEPTH` the deleted rows exist only as undo records in the prune
+block's journal — never served, never relayed — so a reverted prune restores
+them exactly; once that journal is dropped, **a node holds no byte of the
+subtree's content anywhere**: no DAG row, no journal row, and the blocks
+carry only content commitments (§Invariants → Content sovereignty).
 
 Future stump triggers beyond author deletion (storage pruning for lean nodes)
 will use their own authorization paths but produce the same stump data structure.
@@ -779,7 +808,9 @@ Stump {
    go to the pool; the subtree's like-records are deleted (journalled)
 7. The simplified Stump is inserted, derived from the verified entry —
    unconditionally, so a node holding no DAG content records the same
-   stump — then DAG content is pruned when present
+   stump — then the subtree's DAG rows, bodies included, are deleted by the
+   entry's `subtreePostIds`, each captured into the block's journal first so
+   a reverted prune restores them exactly (NODE_INTERFACE → Pruning)
 
 No validator attestation is needed — the author's signature authorizes the
 prune, and the settlement is deterministically computable from UTXO state.
@@ -1367,8 +1398,10 @@ before multi-node operation rather than after it.
    settlement grants the invitee's starting karma from the pool (§Invite System)
 3. **Account creation:** The granted karma box and the invitee's identity record
    are the account — there is no claim transaction
-4. **Posting:** User builds a post transaction — the content rides the transaction
-   and the karma post-lock prices it → mempool (`utxo_tx`)
+4. **Posting:** User builds a post packet — the transaction carries the `PostCommit`
+   (structure and content commitment) and the karma post-lock prices it; the body
+   rides beside it, outside every id → mempool (`utxo_tx`) and the DAG's pending row,
+   admitted together or refused together
 5. **Liking:** User spends karma → like transaction → mempool (standalone)
 6. **Ordering:** Block creator pulls from mempool (FIFO), assembles the body
    (UTXO txs + prune entries), appends the settlement transaction, mines PoW,
@@ -1378,22 +1411,31 @@ before multi-node operation rather than after it.
    author's carry box, pays authors and the pool, and emits carry successors;
    post-lock vesting evaluated (§Likes)
 8. **Pruning:** Author signs prune intent → stump constructed with deterministic
-   karma deltas → committed in ordering block → DAG compacted
+   karma deltas → committed in ordering block → the subtree's DAG rows deleted
+   (journalled), the stump written
 9. **Vouch escrow:** An unvouched stake waits in a `VouchEscrowBox`; the first
    block at or past `releaseAtBlock` returns it to the voucher through its
    settlement transaction — no client action claims it
-10. **Net:** libp2p gossips ordering blocks and UTXO transactions.
-   Stage 1 (stateless) validation via `@dagsocial/validation` runs before
-   forwarding. Stage 2 (stateful) validation runs in the node after receipt.
-   Relay handlers insert into mempool — state applied at block application.
+10. **Net:** libp2p gossips ordering blocks and transaction packets (transaction +
+   body). Stage 1 (stateless) validation via `@dagsocial/validation` runs before
+   forwarding — for a post packet that includes the body against its commitment.
+   Stage 2 (stateful) validation runs in the node after receipt. Relay handlers
+   insert into mempool, a post's body into the DAG as a pending row — state
+   applied at block application.
+11. **Backfill:** a node that applies a post transaction without having seen its
+   packet holds a placeholder — structure, no body — and pulls the body by id:
+   from its sync peer in the `backfill` phase, from the relaying peer afterwards
+   (NET_INTERFACE → Sync State Machine)
 
 ---
 
 ### Wire Format
 
 Stream messages are framed: `[magic:4][version:1][code:VLQ][length:VLQ][checksum:4][body]`. Gossip
-bodies are positional — ordering blocks through `decodeOrderingBlock`, UTXO transactions through
-`decodeTx` (`net/src/gossip.ts`). A stump never travels: it is a local projection with no wire
+bodies are positional — ordering blocks through `decodeOrderingBlock`, transaction packets through
+`decodeTxPacket` (`net/src/gossip.ts`): the transaction's own bytes, then the post body as an `opt`
+that is present ⟺ the transaction carries a `PostCommit` (NET_INTERFACE → Gossip Topics). A stump
+never travels: it is a local projection with no wire
 form (`NODE_INTERFACE` → "Stumps are derived state"; `TYPES_INTERFACE` → Layout — Stump /
 PruneEntry). The normative per-struct layouts live in `TYPES_INTERFACE.md` → Serialization,
 not here. Wire-codec types (ByteReader, ByteWriter, VLQ) live in `@dagsocial/wire`.
@@ -1786,6 +1828,13 @@ forever. A node rejects objects with an unsupported protocol version.
 - Pruning is irreversible
 - The author's signature is the only prune authorization there is — a prune
   has no `trigger` field and no other cause (ruled 2026-08-19)
+- A block commits a post's structure (`PostCommit`) and its content commitment, never its
+  content; the body lives only in the DAG
+  > ⚠ **AHEAD OF CODE — 2026-08-22.** Lands with the content-in-the-DAG unit
+- Pruning deletes: once the prune block's journal is dropped below `MAX_REORG_DEPTH`, a node
+  holds no byte of the subtree's content — no DAG row, no journal row; within that depth the
+  rows exist only as undo records, never served
+  > ⚠ **AHEAD OF CODE — 2026-08-22.** Lands with the content-in-the-DAG unit (node)
 
 ### Identity
 
@@ -2291,7 +2340,13 @@ around it.
 **`NODE_INTERFACE.md → Store Interface` is authoritative for the schema — do not derive
 table names from this section.** Single SQLite database, single WAL, single connection.
 Post topology lives in `block_topology`; there are no sub-block tables and no sub-block
-mempool rows. `peers` backs `@dagsocial/net`'s PeerDb across restarts.
+mempool rows. `peers` backs `@dagsocial/net`'s PeerDb across restarts. `dag_posts` is the
+DAG: structure from the transaction, `content` nullable — `NULL` is a placeholder awaiting
+backfill — and a pruned post has no row (NODE_INTERFACE → Store Interface → Posts DAG).
+
+> ⚠ **AHEAD OF CODE — 2026-08-22.** The nullable body and row deletion land with the
+> content-in-the-DAG unit (node); until then `content` is `NOT NULL` and a pruned row stays,
+> marked.
 
 ---
 

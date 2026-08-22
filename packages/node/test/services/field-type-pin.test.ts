@@ -48,6 +48,7 @@ import {
   makeApplicableBlock,
   makeKarmaBox,
   makePost,
+  makePostCommit,
   makeTestIdentity,
   seedAsOneTx,
   seedProvenance,
@@ -559,7 +560,7 @@ describe('field-type pin', () => {
         ] as unknown as UtxoTransaction['outputs'],
         signatures: {},
         protocolVersion: 1,
-        post: makePost(attacker.userId, 'poison carrier'),
+        post: makePostCommit(attacker.userId, 'poison carrier'),
       };
       const hash = Buffer.from(computeTxId(tx), 'hex');
       tx.signatures[Buffer.from(attacker.userId).toString('hex')] = new Uint8Array(
@@ -646,7 +647,7 @@ describe('field-type pin', () => {
         // An honest lock carries its post: `post` present ⟺ exactly one
         // `PostLockBox` at the cost for that post's shape (NODE_INTERFACE →
         // Post transactions).
-        post: makePost(author.userId, 'honest control'),
+        post: makePostCommit(author.userId, 'honest control'),
       };
       const hash = Buffer.from(computeTxId(tx), 'hex');
       tx.signatures[Buffer.from(author.userId).toString('hex')] = new Uint8Array(

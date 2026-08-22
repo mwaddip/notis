@@ -25,7 +25,7 @@ import {
   writeVlqU64OrThrow,
 } from './codec.js';
 import type { UserId } from './identity.js';
-import { postFieldBytes, readPostFields, type Post, type PostId } from './post.js';
+import { postFieldBytes, readPostCommitFields, type PostCommit, type PostId } from './post.js';
 
 // ---------------------------------------------------------------------------
 // Box identity
@@ -1103,12 +1103,13 @@ export interface UtxoTransaction {
   likeTarget?: PostId;
   /**
    * Present ⟺ this transaction creates a post (NODE_INTERFACE → Post
-   * transactions), carrying the post's payload inside the transaction that locks
-   * its karma. Same pattern `likeTarget` set: an optional field whose presence is
+   * transactions), carrying the commit — structure and `contentHash` — inside the
+   * transaction that locks its karma. The body rides the packet, not the tx.
+   * Same pattern `likeTarget` set: an optional field whose presence is
    * biconditional with a rule.
    *
-   * ⛔ **This is what makes the post id derivable.** `postFieldBytes(post)` sits
-   * inside the `computeTxId` preimage, so a transaction carrying a distinct post
+   * ⛔ **This is what makes the post id derivable.** `postFieldBytes(commit)` sits
+   * inside the `computeTxId` preimage, so a transaction carrying a distinct commit
    * has a distinct id and `computePostId(txId, index)` inherits that uniqueness.
    * It also puts the payload under the author's signature, so a relay cannot
    * rewrite the post any more than it can re-point a like.
@@ -1118,7 +1119,7 @@ export interface UtxoTransaction {
    * and conserves value — is consensus validation and lives in node's UTXO
    * engine.
    */
-  post?: Post;
+  post?: PostCommit;
 }
 
 /**
@@ -1204,7 +1205,7 @@ export function readTxIdFields(r: ByteReader): Omit<UtxoTransaction, 'signatures
     outputs: readArr(r, readBoxContentFields),
     protocolVersion: readVlqU(r),
     likeTarget: readOpt(r, (rr) => readHexN(rr, 32)) ?? undefined,
-    post: readOpt(r, readPostFields) ?? undefined,
+    post: readOpt(r, readPostCommitFields) ?? undefined,
   };
 }
 

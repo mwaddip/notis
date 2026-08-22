@@ -9,22 +9,22 @@ import {
 import {
   computePostId,
   computePruneEntryId,
-  encodePost,
+  computeContentHash,
   leafHash,
   buildMerkleRoot,
   hexToBuf,
   PROTOCOL_VERSION,
 } from '@dagsocial/types';
-import type { Post, PruneIntent, PruneEntry } from '@dagsocial/types';
+import type { Post, PostCommit, PruneIntent, PruneEntry } from '@dagsocial/types';
 
 import {
   initDb,
   closeDb,
   getDb,
   insertPost,
+  deletePostRows,
   getPost as storeGetPost,
   insertStump,
-  pruneSubtree,
 } from '../../src/store/index.js';
 import { executePrune } from '../../src/services/stump-engine.js';
 
@@ -57,9 +57,15 @@ function makePost(
 
 /** Insert a post and return its computed ID. */
 function insertTestPost(post: Post): string {
-  const postId = fixturePostId(post);
-  const rawCbor = encodePost(post);
-  insertPost(fixturePostId(post), post, rawCbor);
+  const commit: PostCommit = {
+    contentHash: computeContentHash(post.content),
+    author: post.author,
+    parentRefs: post.parentRefs,
+    protocolVersion: post.protocolVersion,
+    type: post.type,
+  };
+  const postId = fixturePostId(commit);
+  insertPost(postId, commit, post.content);
   return postId;
 }
 
@@ -336,9 +342,9 @@ describe('stump-engine', () => {
     const rootId = insertTestPost(rootPost);
     insertTestPost(makePost('Reply', authorId, [rootId]));
 
-    // Build the intent while the subtree is live, then settle the prune
-    // exactly as block-apply settlement step 6 does: insertStump, then
-    // pruneSubtree. Re-submitting the same intent is the realistic re-prune.
+    // Build the intent while the subtree is live, then settle as block-apply
+    // does: insertStump, then deletePostRows.
+    const replyId = insertTestPost(makePost('Reply2', authorId, [rootId]));
     const intent = signPruneIntent(rootId, authorId, authorPrivKey);
     insertStump({
       rootPostHash: rootId,
@@ -348,7 +354,7 @@ describe('stump-engine', () => {
       protocolVersion: PROTOCOL_VERSION,
       compactedAtBlockHeight: 7,
     });
-    pruneSubtree(rootId);
+    deletePostRows([rootId]);
 
     let thrown: (Error & { statusCode?: number }) | null = null;
     try {
@@ -375,7 +381,7 @@ describe('stump-engine', () => {
       protocolVersion: PROTOCOL_VERSION,
       compactedAtBlockHeight: 7,
     });
-    pruneSubtree(rootA);
+    deletePostRows([rootA]);
 
     // Root B stays live — its prune must pass the already-pruned gate.
     const rootB = insertTestPost(makePost('Root B', authorId, []));

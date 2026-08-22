@@ -18,7 +18,6 @@ import {
   computeBoxId,
   computePostId,
   computeTxId,
-  encodePost,
   selectBoxes,
   PROTOCOL_VERSION,
   MAX_BLOCK_BODY_BYTES,

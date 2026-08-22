@@ -8,6 +8,7 @@ import {
   verifyParentRefsCount,
   verifyTxStructure,
   verifyOrderingBlockStructure,
+  verifyPostBody,
 } from '@dagsocial/validation';
 import { NetNode } from '../src/node.js';
 import { buildHandshakeFrame } from '../src/handshake.js';
@@ -37,6 +38,7 @@ const validators: NetValidators = {
   verifyParentRefsCount,
   verifyTxStructure,
   verifyOrderingBlockStructure,
+  verifyPostBody,
 };
 
 function makeConfig(): NetConfig {

@@ -20,7 +20,7 @@ export interface ModifierResponse {
 }
 
 export interface SyncState {
-  phase: 'idle' | 'syncing' | 'synced';
+  phase: 'idle' | 'syncing' | 'backfill' | 'synced';
   syncPeerId: string | null;
   stalledPeers: Set<string>;
   downloadedHeight: number;

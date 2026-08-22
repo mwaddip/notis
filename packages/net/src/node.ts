@@ -9,7 +9,7 @@ import { multiaddr } from '@multiformats/multiaddr';
 
 import type { Libp2p } from 'libp2p';
 import type { OrderingBlock, UtxoTransaction, BlockHeader } from '@dagsocial/types';
-import { PROTOCOL_VERSION, decodeOrderingBlock, encodeOrderingBlock } from '@dagsocial/types';
+import { PROTOCOL_VERSION, decodeOrderingBlock, encodeOrderingBlock, decodePostBody, encodePostBody } from '@dagsocial/types';
 import { blockHash } from '@dagsocial/validation';
 import { ReaderError } from '@dagsocial/wire';
 import type {
@@ -34,11 +34,15 @@ import {
   decodeGetBlocks,
   encodeBlocks,
   encodeHeaders,
+  encodeModifierRequest,
+  decodeModifierRequest,
+  encodeModifierResponse,
+  decodeModifierResponse,
 } from './sync-codec.js';
 import { encodeServableOrderingBlock } from './serve-encode.js';
 import { isBogusAddress } from './bogus-addr.js';
 import { readStreamBounded } from './util.js';
-import { MAX_CHAIN_RESPONSE_ITEMS, MAX_SERVE_BODY_BYTES, MAX_STREAM_BYTES } from './msg-guards.js';
+import { MAX_CHAIN_RESPONSE_ITEMS, MAX_INV_IDS, MAX_SERVE_BODY_BYTES, MAX_STREAM_BYTES } from './msg-guards.js';
 import { PeerDb, type PeerStorage } from './peerdb.js';
 import { SyncMachine } from './sync-machine.js';
 import type { SyncStore } from './sync-machine.js';
@@ -56,10 +60,14 @@ import {
   MSG_PEERS,
   MSG_GET_HEADERS,
   MSG_GET_BLOCKS,
+  MSG_MODIFIER_REQUEST,
+  MSG_MODIFIER_RESPONSE,
+  MODIFIER_POST_BODY,
 } from './types.js';
+import type { ModifierRequest, ModifierResponse } from './sync-types.js';
 
 type OrderingBlockCallback = (block: OrderingBlock, fromPeerId: string) => void;
-type TxCallback = (tx: UtxoTransaction, fromPeerId: string) => void;
+type TxCallback = (tx: UtxoTransaction, content: string | undefined, fromPeerId: string) => void;
 type BlocksHandlerFn = (block: OrderingBlock, fromPeerId: string) => boolean;
 
 /**
@@ -370,6 +378,35 @@ export function serveBlocksResponse(
 }
 
 // ---------------------------------------------------------------------------
+// Post body serve (MODIFIER_POST_BODY 103 — NET_INTERFACE → ModifierRequest)
+//
+// Served on the request's own stream, never relayed. Module-level and exported
+// so the tests drive the same code the stream handler calls.
+// ---------------------------------------------------------------------------
+
+/** Frame a `ModifierResponse` (5) for post bodies: the bodies we hold, byte-bounded. */
+export function servePostBodiesResponse(
+  magic: number,
+  req: ModifierRequest,
+  provider: (id: string) => string | null,
+): Uint8Array {
+  const modifiers: { id: string; data: Uint8Array }[] = [];
+  let bodyBytes = 0;
+
+  for (const id of req.ids) {
+    const content = provider(id);
+    if (content === null) continue;
+    const data = encodePostBody(content);
+    if (modifiers.length > 0 && bodyBytes + data.length > MAX_SERVE_BODY_BYTES) break;
+    bodyBytes += data.length;
+    modifiers.push({ id, data });
+  }
+
+  const resp: ModifierResponse = { typeId: req.typeId, modifiers };
+  return encodeModifierResponse(magic, resp);
+}
+
+// ---------------------------------------------------------------------------
 // Peer exchange (GetPeers / Peers — NET_INTERFACE → Peer Discovery)
 //
 // The serve, intake, and cadence decisions live in module-level functions so
@@ -545,6 +582,9 @@ export class NetNode {
   private peerActiveHandlers: Array<(peerId: string, direction: 'inbound' | 'outbound') => void> = [];
   private peerDisconnectedHandlers: Array<(peerId: string, reason: string) => void> = [];
   private peerPenalisedHandlers: Array<(peerId: string, kind: string, detail: string | null) => void> = [];
+  // NET_INTERFACE → Sync Handler Registration: post body seams
+  private postBodyProvider: ((postId: string) => string | null) | null = null;
+  private postBodyHandlers: Array<(postId: string, content: string, fromPeerId: string) => boolean> = [];
   private pendingBootstrapDials: Set<string> = new Set();
   private lastGetPeersSentMs: Map<string, number> = new Map();
 
@@ -640,6 +680,21 @@ export class NetNode {
       }
     });
 
+    // Wire post body seams — delegates read at call time, order-independent
+    this.syncMachine.setOnPostBody((postId, content, fromPeerId) => {
+      for (const cb of this.postBodyHandlers) {
+        try {
+          if (cb(postId, content, fromPeerId)) return true;
+        } catch (err) {
+          console.warn(`[net] onPostBody handler error: ${String(err)}`);
+        }
+      }
+      return false;
+    });
+    this.syncMachine.setPullPostBodies(
+      (entries, peerId) => this.requestPostBodies(entries, peerId));
+    this.syncMachine.setGetConnectedPeers(() => this.getConnectedPeers());
+
     // Create OutboundManager
     this.outboundMgr = new OutboundManager(this.config, this.peerDb);
 
@@ -712,7 +767,7 @@ export class NetNode {
       onOrderingBlock: (block, fromPeerId) => {
         for (const cb of this.orderingBlockHandlers) cb(block, fromPeerId);
       },
-      onTx: (tx, fromPeerId) => { for (const cb of this.txHandlers) cb(tx, fromPeerId); },
+      onTx: (tx, content, fromPeerId) => { for (const cb of this.txHandlers) cb(tx, content, fromPeerId); },
     };
 
     await subscribeTopics(
@@ -1118,6 +1173,46 @@ export class NetNode {
           return;
         }
 
+        // ModifierRequest for post bodies (type 103) — served on this stream,
+        // never relayed (NET_INTERFACE → Local-Serve-Before-Relay). Type 101
+        // (ordering blocks) falls through to the sync machine.
+        if (code === MSG_MODIFIER_REQUEST) {
+          const req = decodeModifierRequest(body);
+          if (!req) {
+            console.warn(`[net] malformed ModifierRequest from ${peerId}, dropping`);
+            this.peerMgr.recordPenaltyKind(
+              PenaltyKind.ProtocolViolation,
+              peerId,
+              'malformed ModifierRequest',
+            );
+            await replyEmpty();
+            return;
+          }
+          if (req.ids.length > MAX_INV_IDS) {
+            console.warn(`[net] ModifierRequest ids from ${peerId} exceeds ${MAX_INV_IDS} (got ${req.ids.length})`);
+            this.peerMgr.recordPenaltyKind(
+              PenaltyKind.ProtocolViolation,
+              peerId,
+              `ModifierRequest ids exceeds ${MAX_INV_IDS}`,
+            );
+            await replyEmpty();
+            return;
+          }
+          if (req.typeId === MODIFIER_POST_BODY) {
+            const provider = this.postBodyProvider;
+            if (!provider) {
+              await replyEmpty();
+              return;
+            }
+            const response = servePostBodiesResponse(magic, req, provider);
+            await stream.sink([response]);
+            return;
+          }
+          // Type 101 and others → sync machine
+          this.syncMachine?.handleMessage(peerId, code, body);
+          return;
+        }
+
         // Dispatch to sync machine for all other message types
         console.log(`[net] sync handler: received code=${code} body_len=${body.length} from ${peerId}`);
         // Its own span, for the same reason. `handleMessage` decodes the body
@@ -1290,9 +1385,9 @@ export class NetNode {
     await broadcastOrderingBlock(asGossip(this.libp2p), block);
   }
 
-  async broadcastTx(tx: UtxoTransaction): Promise<void> {
+  async broadcastTx(tx: UtxoTransaction, content?: string): Promise<void> {
     if (!this.libp2p) return;
-    await broadcastTx(asGossip(this.libp2p), tx);
+    await broadcastTx(asGossip(this.libp2p), tx, content);
   }
 
   // -----------------------------------------------------------------------
@@ -1316,7 +1411,7 @@ export class NetNode {
   }
 
   /** NET_INTERFACE → API → Node Lifecycle. */
-  syncPhase(): 'idle' | 'syncing' | 'synced' {
+  syncPhase(): 'idle' | 'syncing' | 'backfill' | 'synced' {
     return this.syncMachine?.getState().phase ?? 'idle';
   }
 
@@ -1461,6 +1556,77 @@ export class NetNode {
   setHeadersHandler(getBlock: (height: number) => OrderingBlock | null): void {
     this.syncStore.setOrderingBlockFn((h) => getBlock(h));
     this.headersProvider = getBlock;
+  }
+
+  // -----------------------------------------------------------------------
+  // Post body seams — NET_INTERFACE → Sync Handler Registration
+  // -----------------------------------------------------------------------
+
+  setPostBodyProvider(cb: (postId: string) => string | null): void {
+    this.postBodyProvider = cb;
+  }
+
+  setMissingBodiesProvider(cb: (limit: number) => { id: string; contentHash: Uint8Array }[]): void {
+    this.syncMachine?.setMissingBodiesProvider(cb);
+  }
+
+  onPostBody(cb: (postId: string, content: string, fromPeerId: string) => boolean): void {
+    this.postBodyHandlers.push(cb);
+  }
+
+  async requestPostBodies(
+    ids: { id: string; contentHash: Uint8Array }[],
+    peerId: string,
+  ): Promise<{ id: string; content: string }[]> {
+    if (!this.libp2p) throw new Error('NetNode not started');
+    const peer = this.libp2p.getPeers().find(p => p.toString() === peerId);
+    if (!peer) throw new Error(`Peer ${peerId} not connected`);
+
+    const commitments = new Map<string, Uint8Array>();
+    for (const entry of ids) commitments.set(entry.id, entry.contentHash);
+
+    const req: import('./sync-types.js').ModifierRequest = {
+      typeId: MODIFIER_POST_BODY,
+      ids: ids.map(e => e.id),
+    };
+    const magic = this.config.magic;
+    let stream: import('@libp2p/interface').Stream | undefined;
+    try {
+      stream = await this.libp2p.dialProtocol(peer, SYNC_PROTOCOL, {
+        signal: AbortSignal.timeout(this.config.syncRequestTimeoutMs),
+      });
+      await stream.sink([encodeModifierRequest(magic, req)]);
+      const raw = await readStreamBounded(stream.source);
+      if (raw === null || raw.length === 0) return [];
+      const frame = decodeFrame(magic, raw);
+      if (frame.code !== MSG_MODIFIER_RESPONSE) return [];
+      const resp = decodeModifierResponse(frame.body);
+      if (!resp || resp.typeId !== MODIFIER_POST_BODY) return [];
+
+      const results: { id: string; content: string }[] = [];
+      for (const mod of resp.modifiers) {
+        const commitment = commitments.get(mod.id);
+        if (!commitment) continue;
+        let content: string;
+        try {
+          content = decodePostBody(mod.data);
+        } catch {
+          this.peerMgr.recordPenalty('misbehavior', peerId, 100,
+            `post body decode failed for ${mod.id}`);
+          continue;
+        }
+        const vr = this.validators.verifyPostBody(content, commitment);
+        if (!vr.valid) {
+          this.peerMgr.recordPenalty('misbehavior', peerId, 100,
+            `post body commitment mismatch for ${mod.id}`);
+          continue;
+        }
+        results.push({ id: mod.id, content });
+      }
+      return results;
+    } finally {
+      if (stream) await stream.close();
+    }
   }
 
   // Expose for node to register storage-backed handler

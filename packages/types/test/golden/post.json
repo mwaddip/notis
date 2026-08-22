@@ -1,25 +1,25 @@
 {
   "$schema": "./README.md",
-  "$description": "Struct-level golden vectors for postFieldBytes — the post payload inside its creating transaction's TxId preimage (TYPES_INTERFACE -> Layout - Post). The encode direction runs the production writer; the decode direction runs an independent reader written from the layout table, so a vector also proves the preimage is self-delimiting and canonical. A post id is NOT derived from these bytes — it comes from the creating transaction.",
+  "$description": "Struct-level golden vectors for postFieldBytes — the PostCommit payload inside its creating transaction's TxId preimage (TYPES_INTERFACE -> Layout - PostCommit). The encode direction runs the production writer; the decode direction runs an independent reader written from the layout table, so a vector also proves the preimage is self-delimiting and canonical. A post id is NOT derived from these bytes — it comes from the creating transaction.",
   "vectors": [
     {
-      "name": "post/minimal",
-      "codec": "postFields",
+      "name": "postCommit/minimal",
+      "codec": "postCommitFields",
       "value": {
-        "content": "",
+        "contentHash": "0000000000000000000000000000000000000000000000000000000000000000",
         "author": "0000000000000000000000000000000000000000000000000000000000000000",
         "parentRefs": [],
         "protocolVersion": 0,
         "type": "regular"
       },
-      "bytes": "000000000000000000000000000000000000000000000000000000000000000000000000",
-      "note": "36 bytes: 1 + 0 content, 32 author, 1 count, 1 version, 1 type. The struct's own shape, with every field at its zero value — so the byte COUNT is what this pins, and nothing else can. Content and protocolVersion sit below their protocol minimums; the ENCODER has no such rule, and putting one here would make this file a second statement of a validation rule."
+      "bytes": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "note": "67 bytes: 32 contentHash, 32 author, 1 count, 1 version, 1 type. Every field at its zero value. contentHash is zeroed, not a real hash; protocolVersion sits below its protocol minimum — the ENCODER has no such rules."
     },
     {
-      "name": "post/golden",
-      "codec": "postFields",
+      "name": "postCommit/golden",
+      "codec": "postCommitFields",
       "value": {
-        "content": "dagsocial golden vector ✓",
+        "contentHash": "9745d058b1dbd844c81b91384cad9bbcff0896560987f64c50e4e924477c5569",
         "author": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
         "parentRefs": [
           "1111111111111111111111111111111111111111111111111111111111111111"
@@ -27,40 +27,40 @@
         "protocolVersion": 1,
         "type": "regular"
       },
-      "bytes": "1b646167736f6369616c20676f6c64656e20766563746f7220e29c93000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f0111111111111111111111111111111111111111111111111111111111111111110100",
-      "note": "95 bytes, and THE cross-implementation anchor: the demo UI's hand-written mirror is asserted byte-identical to it. Adjacent fields hold distinct non-zero values (author 00..1f, ref 11..), because a transposition of two same-width fields is invisible at zeros."
+      "bytes": "9745d058b1dbd844c81b91384cad9bbcff0896560987f64c50e4e924477c5569000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f0111111111111111111111111111111111111111111111111111111111111111110100",
+      "note": "99 bytes, and THE cross-implementation anchor. contentHash is computeContentHash('dagsocial golden vector ✓'). Adjacent fields hold distinct non-zero values (contentHash from content, author 00..1f, ref 11..), because a transposition of two same-width fields is invisible at zeros."
     },
     {
-      "name": "post/no-refs",
-      "codec": "postFields",
+      "name": "postCommit/no-refs",
+      "codec": "postCommitFields",
       "value": {
-        "content": "dagsocial golden vector ✓",
+        "contentHash": "9745d058b1dbd844c81b91384cad9bbcff0896560987f64c50e4e924477c5569",
         "author": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
         "parentRefs": [],
         "protocolVersion": 1,
         "type": "regular"
       },
-      "bytes": "1b646167736f6369616c20676f6c64656e20766563746f7220e29c93000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f000100",
-      "note": "post/golden with the ref removed: exactly 32 bytes shorter. A ref costs the 32 raw bytes it names and nothing else — no length prefix, no second hexing — so the delta is the ref itself."
+      "bytes": "9745d058b1dbd844c81b91384cad9bbcff0896560987f64c50e4e924477c5569000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f000100",
+      "note": "postCommit/golden with the ref removed: exactly 32 bytes shorter. A ref costs the 32 raw bytes it names and nothing else."
     },
     {
-      "name": "post/wide-numerics",
-      "codec": "postFields",
+      "name": "postCommit/wide-numerics",
+      "codec": "postCommitFields",
       "value": {
-        "content": "x",
+        "contentHash": "50e56e6bf756c33474cf419a860e0bd2287462b9eae0004f19c281a5791f6da0",
         "author": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
         "parentRefs": [],
         "protocolVersion": 9007199254740991,
         "type": "regular"
       },
-      "bytes": "0178ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffff0f00",
-      "note": "protocolVersion at MAX_SAFE_INTEGER — eight bytes, the top of the encodable number domain. One byte more and readVlqU raises vlq-overflow, which is exactly what keeps the ten-byte all-ones sentinel from ever decoding back into a plausible value. type is enum8, fixed at one byte."
+      "bytes": "50e56e6bf756c33474cf419a860e0bd2287462b9eae0004f19c281a5791f6da0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00ffffffffffffff0f00",
+      "note": "contentHash is computeContentHash('x'). protocolVersion at MAX_SAFE_INTEGER — eight bytes, the top of the encodable number domain. type is enum8, fixed at one byte."
     },
     {
-      "name": "post/multibyte-content",
-      "codec": "postFields",
+      "name": "postCommit/multibyte-content",
+      "codec": "postCommitFields",
       "value": {
-        "content": "héllo 日本 😀",
+        "contentHash": "5f5a14d56a2edea0b8b555cc8e50688680c48f85ffdce5d6cb84c3bc8b2a4a2b",
         "author": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
         "parentRefs": [
           "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
@@ -69,45 +69,66 @@
         "protocolVersion": 1,
         "type": "profile"
       },
-      "bytes": "1268c3a96c6c6f20e697a5e69cac20f09f9880000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f02ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00000000000000000000000000000000000000000000000000000000000000000101",
-      "note": "lpUtf8 counts BYTES, not characters: 11 characters encode as 0x12 = 18 bytes. Two refs so the array's count byte is not stuck at 0 or 1 (the ENCODER has no cap — MAX_PARENT_REFS is a validation rule, and putting it inside the writer would be a guard added to compensate for a domain, which the format forbids). type is 'profile' (tag 1) — exercises the non-zero tag."
+      "bytes": "5f5a14d56a2edea0b8b555cc8e50688680c48f85ffdce5d6cb84c3bc8b2a4a2b000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f02ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00000000000000000000000000000000000000000000000000000000000000000101",
+      "note": "contentHash is computeContentHash('héllo 日本 😀'). Two refs so the array's count byte is not stuck at 0 or 1 (the ENCODER has no cap — MAX_PARENT_REFS is a validation rule). type is 'profile' (tag 1) — exercises the non-zero tag."
+    },
+    {
+      "name": "postBody/empty",
+      "codec": "postBody",
+      "value": "",
+      "bytes": "00",
+      "note": "lpUtf8 of an empty string: a single zero-byte length prefix. The body's standalone wire form, never hashed into anything."
+    },
+    {
+      "name": "postBody/golden",
+      "codec": "postBody",
+      "value": "dagsocial golden vector ✓",
+      "bytes": "1b646167736f6369616c20676f6c64656e20766563746f7220e29c93",
+      "note": "lpUtf8(content): vlqU(27) followed by 27 UTF-8 bytes. This is the body whose computeContentHash produces the postCommit/golden vector's contentHash."
+    },
+    {
+      "name": "postBody/multibyte",
+      "codec": "postBody",
+      "value": "héllo 日本 😀",
+      "bytes": "1268c3a96c6c6f20e697a5e69cac20f09f9880",
+      "note": "lpUtf8 counts BYTES, not characters: 11 characters encode as 0x12 = 18 bytes."
     }
   ],
   "rejects": [
     {
-      "name": "post/non-minimal-content-length",
-      "codec": "postFields",
-      "bytes": "80000000000000000000000000000000000000000000000000000000000000000000000000",
+      "name": "postCommit/non-minimal-protocolVersion",
+      "codec": "postCommitFields",
+      "bytes": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000800000",
       "failure": "non-canonical",
-      "note": "post/minimal with the content length written as the padded `80 00` instead of `00`. Decodes to a byte-identical value, so steps 1 and 2 both pass and only the re-encode compare separates it."
+      "note": "postCommit/minimal with protocolVersion written as the padded VLQ `80 00` instead of `00`. Decodes to a byte-identical value, so steps 1 and 2 pass and only the re-encode compare separates it."
     },
     {
-      "name": "post/trailing-byte",
-      "codec": "postFields",
-      "bytes": "000000000000000000000000000000000000000000000000000000000000000000000000ff",
+      "name": "postCommit/trailing-byte",
+      "codec": "postCommitFields",
+      "bytes": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ff",
       "failure": "trailing-bytes",
-      "note": "post/minimal with one byte appended. The struct is fully satisfied before the input runs out — step 2."
+      "note": "postCommit/minimal with one byte appended. The struct is fully satisfied before the input runs out — step 2."
     },
     {
-      "name": "post/truncated-author",
-      "codec": "postFields",
+      "name": "postCommit/truncated-contentHash",
+      "codec": "postCommitFields",
       "bytes": "0000000000000000000000000000000000000000",
       "code": "truncated",
-      "note": "Empty content and then 19 of the author's 32 bytes. Wire's own rejection, not a boundary-check one: a fixed-width read that runs off the end."
+      "note": "Only 20 of contentHash's 32 bytes. Wire's own rejection: a fixed-width read that runs off the end."
     },
     {
-      "name": "post/unknown-type-tag",
-      "codec": "postFields",
-      "bytes": "000000000000000000000000000000000000000000000000000000000000000000000002",
+      "name": "postCommit/unknown-type-tag",
+      "codec": "postCommitFields",
+      "bytes": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002",
       "code": "invalid-tag",
-      "note": "post/minimal with the type byte set to 0x02 — an unassigned tag. enum8 refuses an unknown tag rather than decoding it to a neighbour."
+      "note": "postCommit/minimal with the type byte set to 0x02 — an unassigned tag. enum8 refuses an unknown tag rather than decoding it to a neighbour."
     },
     {
-      "name": "post/type-sentinel",
-      "codec": "postFields",
-      "bytes": "0000000000000000000000000000000000000000000000000000000000000000000000ff",
+      "name": "postCommit/type-sentinel",
+      "codec": "postCommitFields",
+      "bytes": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ff",
       "code": "invalid-tag",
-      "note": "post/minimal with the type byte set to 0xff — the encode-side sentinel. It must not decode back into a value, so the sentinel is unreachable from a well-formed post."
+      "note": "postCommit/minimal with the type byte set to 0xff — the encode-side sentinel. It must not decode back into a value, so the sentinel is unreachable from a well-formed commit."
     }
   ]
 }

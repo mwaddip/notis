@@ -12,7 +12,7 @@ import {
 } from '@dagsocial/types';
 import { effectiveKarma } from './decay.js';
 import type { DecayCfg } from './decay.js';
-import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, PostLockBox, Post } from '@dagsocial/types';
+import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, PostLockBox, PostCommit } from '@dagsocial/types';
 
 // `computeTxId` has exactly one implementation and it is types'. This engine
 // must never grow a local copy: the id it returns is both the hash
@@ -22,7 +22,7 @@ import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, Bon
 // same `Encoder` options, same strip rule, same domain tag, all by hand
 // (NODE_INTERFACE → "Box Identity and Mint Provenance").
 
-import { ed25519PublicKeyToKeyObject, verifyPostFieldDomains, verifyProtocolVersion } from '@dagsocial/validation';
+import { ed25519PublicKeyToKeyObject, verifyPostCommitDomains, verifyProtocolVersion } from '@dagsocial/validation';
 // Type-only: erased at compile time, so the engine gains no runtime edge into
 // the store module graph. Same seam `DecayDeps` uses for the same record.
 import type { IdentityRecord } from '../store/identity-records.js';
@@ -211,7 +211,7 @@ function checkTransitions(
   outputs: AnyBoxCandidate[],
   deps: UtxoEngineDeps,
   likeTarget: string | undefined,
-  post: Post | undefined,
+  post: PostCommit | undefined,
   currentBlockHeight: number,
 ): { valid: boolean; error?: string } {
   // ⛔ **THE MARKER'S CONVERSE, AND IT HAS NO PREDECESSOR** (NODE_INTERFACE →
@@ -1080,13 +1080,13 @@ export function checkTxEnvelope(tx: unknown): UtxoResult {
   // attacker-supplied payload reaches those writers before any transition arm
   // runs. Same obligation as `likeTarget` above, one field deeper.
   //
-  // `verifyPostFieldDomains` is the single statement of that domain, shared with
+  // `verifyPostCommitDomains` is the single statement of that domain, shared with
   // the gossip gate and the verifier — a narrower re-check written here would be
   // a second spelling of one rule, which is the fork surface this engine rejects
   // everywhere else. Whether the payload is *permitted* (the post biconditional,
   // author owns the karma) is the transition arms' business, not the envelope's.
   if (tx.post !== undefined) {
-    const domains = verifyPostFieldDomains(tx.post as Post);
+    const domains = verifyPostCommitDomains(tx.post);
     if (!domains.valid) {
       return { valid: false, error: `Invalid tx envelope: ${domains.error}` };
     }

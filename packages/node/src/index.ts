@@ -1,5 +1,5 @@
 import { loadConfig } from './config.js';
-import { initDb, closeDb } from './store/db.js';
+import { initDb, getDb, closeDb } from './store/db.js';
 import { seedGenesisState } from './services/genesis-state.js';
 import { startBlockCreator, stopBlockCreator, setDagServiceForMiner } from './services/block-creator.js';
 import { createApp, createAdminApp } from './server.js';
@@ -36,16 +36,23 @@ import {
   getTopologyAuthorBytes,
   getIdentityRecord,
   getPost,
+  isLivePost,
   insertPost,
+  setPostBody,
+  getMissingBodies,
   getBox,
   getCurrentHeight,
   MempoolFullError,
   PendingSpendConflictError,
   getOrderingBlock,
   peerStorage,
+  getKarmaOwners,
+  registerKarmaMembershipHook,
 } from './store/index.js';
 import { MEMPOOL_EXPIRY_BLOCKS, computePostId } from '@dagsocial/types';
 import type { OrderingBlock } from '@dagsocial/types';
+import { initBackfill, registerPlaceholder, onBlockApplied } from './services/backfill.js';
+import { verifyPostBody } from '@dagsocial/validation';
 
 const config = loadConfig();
 const startTime = Date.now();
@@ -123,6 +130,14 @@ const net = new NetNode(
 );
 setNet(net);
 
+// 2a. Karma membership — seed from the store, then hook the choke points
+// (NODE_INTERFACE → Post transactions, the relay-gate bullet).
+net.setKarmaMembers(getKarmaOwners());
+registerKarmaMembershipHook({
+  onGain: (ownerHex) => net.addKarmaMember(ownerHex),
+  onLoss: (ownerHex) => net.removeKarmaMember(ownerHex),
+});
+
 // DagService — owns canonical branch population and DAG reorg logic
 const dagService = new DagService();
 setDagServiceForMiner(dagService);
@@ -141,7 +156,7 @@ net.onOrderingBlock((block, fromPeerId) => {
   }
 });
 
-net.onTx((tx, fromPeerId) => {
+net.onTx((tx, content, fromPeerId) => {
   const deps = {
     getBox,
       insertBox: () => {},
@@ -188,24 +203,25 @@ net.onTx((tx, fromPeerId) => {
     }
     return;
   }
-  const validationDurationMs = performance.now() - validationStart;
-  if (tx.post && result.txId) {
-    const postId = computePostId(result.txId, 0);
-    emitPostReceived(postId, fromPeerId);
-    emitPostValidated(postId, validationDurationMs);
-  }
   const expiresAtHeight = currentHeight + MEMPOOL_EXPIRY_BLOCKS;
   try {
-    admitTx(tx, expiresAtHeight);
+    // NODE_INTERFACE → Post transactions — the packet is the unit: admitTx and
+    // the pending row in one store transaction for a post, or admitTx alone.
+    const db = getDb();
+    db.transaction(() => {
+      admitTx(tx, expiresAtHeight);
+      if (tx.post && result.txId) {
+        const postId = computePostId(result.txId, 0);
+        insertPost(postId, tx.post, content ?? null);
+        emitPostReceived(postId, fromPeerId, 'packet');
+        emitPostValidated(postId, performance.now() - validationStart);
+      }
+    })();
   } catch (err) {
     if (err instanceof MempoolFullError) {
       console.warn(`Relayed tx dropped, mempool full: ${result.txId}`);
       return;
     }
-    // A peer's transaction spending a box one of ours already spends is the
-    // pool declining an entry, not this node failing. Dropping it is the whole
-    // response: whichever side confirms first settles the box, and a throw here
-    // would escape into net's gossip handler.
     if (err instanceof PendingSpendConflictError) {
       console.warn(`Relayed tx dropped, input spent by a pending entry: ${result.txId}`);
       return;
@@ -223,6 +239,36 @@ net.setBlocksHandler(pullBlocksHandler(net, dagService));
 // handshake and query as a peer's fault inside `net`'s contained catches.
 const guardedGetOrderingBlock = guardStoreRead(getOrderingBlock);
 net.setHeadersHandler(guardedGetOrderingBlock);
+
+// NODE_INTERFACE → Backfill after sync: four seams the net layer reads bodies through.
+net.setPostBodyProvider((id: string) => {
+  const result = getPost(id);
+  if (!isLivePost(result)) return null;
+  return result.content;
+});
+
+net.setMissingBodiesProvider((limit: number) =>
+  getMissingBodies(limit).map(r => ({ id: r.id, contentHash: Buffer.from(r.contentHash, 'hex') })),
+);
+
+net.onPostBody((id: string, content: string, peerId: string) => {
+  const result = getPost(id);
+  if (!isLivePost(result)) return false;
+  const contentHash = Buffer.from(result.contentHash, 'hex');
+  const check = verifyPostBody(content, contentHash);
+  if (!check.valid) return false;
+  const stored = setPostBody(id, content);
+  if (stored) {
+    emitPostReceived(id, peerId, 'pull');
+  }
+  return stored;
+});
+
+initBackfill({
+  requestPostBodies: (wanted, peerId) => net.requestPostBodies(wanted.map(w => ({ id: w.id, contentHash: Buffer.from(w.contentHash, 'hex') })), peerId),
+  getConnectedPeers: () => net.getConnectedPeers(),
+  setPostBody,
+});
 
 // 4. Start net
 //

@@ -7,8 +7,10 @@ import {
   KARMA_DECAY_INTERVAL_BLOCKS,
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,
+  computeContentHash,
 } from '@dagsocial/types';
-import type { Post, Stump } from '@dagsocial/types';
+import type { PostCommit, Stump } from '@dagsocial/types';
+import type { StoredPost, PrunedTombstone } from '../../src/store/posts.js';
 import { verifyPost } from '../../src/services/verifier.js';
 import type { VerifierDeps } from '../../src/services/verifier.js';
 
@@ -17,17 +19,9 @@ import type { VerifierDeps } from '../../src/services/verifier.js';
 // ---------------------------------------------------------------------------
 
 interface MockStore {
-  // Byte-keyed, because the store they stand in for compares BLOBs by
-  // value. A plain `Map` keyed on a `Uint8Array` compares by reference, so a
-  // lookup with an equal-but-distinct array misses. `karmaBoxes` reaches the
-  // same property by hex-keying.
   identities: ByteKeyedMap<{ userId: Uint8Array; publicKey: Uint8Array; createdAt: number }>;
   karmaBoxes: Map<string, { value: bigint }[]>;
-  // Typed as what the dep must return, not `unknown`. Nothing is ever put
-  // in it — `getPost` returns null throughout these suites — but a mock
-  // whose value type cannot satisfy the interface is a mock that would
-  // not compile the day a test starts using it.
-  posts: Map<string, Post | Stump>;
+  posts: Map<string, StoredPost | Stump | PrunedTombstone>;
 }
 
 function createMockDeps(store: MockStore): VerifierDeps {
@@ -59,19 +53,15 @@ function makeStore(): MockStore {
 describe('verifier', () => {
   let userId: Uint8Array;
 
-  // A real Ed25519 public key, because `author` is a 32-byte fixed-width field
-  // and `verifyPostFieldDomains` runs first (VALIDATION_INTERFACE →
-  // verifyPostFieldDomains). The private half is not generated: nothing here
-  // signs anything.
   {
     const { publicKey } = generateKeyPairSync('ed25519');
     const pubDer = publicKey.export({ type: 'spki', format: 'der' }) as Buffer;
     userId = new Uint8Array(pubDer.slice(pubDer.length - 32));
   }
 
-  function makePost(overrides: Partial<Post> = {}): Post {
+  function makeCommit(overrides: Partial<PostCommit> = {}): PostCommit {
     return {
-      content: 'hello',
+      contentHash: computeContentHash('hello'),
       author: userId,
       parentRefs: [],
       protocolVersion: PROTOCOL_VERSION,
@@ -80,68 +70,70 @@ describe('verifier', () => {
     };
   }
 
-  it('rejects post with unsupported protocol version', () => {
+  it('rejects commit with unsupported protocol version', () => {
     const store = makeStore();
-    const post = makePost({ protocolVersion: 99 });
+    const commit = makeCommit({ protocolVersion: 99 });
     const deps = createMockDeps(store);
-    const result = verifyPost(deps, post);
+    const result = verifyPost(deps, commit);
     expect(result.valid).toBe(false);
     expect(result.error).toBe('Unsupported protocol version');
   });
 
-  it('rejects post with content exceeding max length', () => {
-    const store = makeStore();
-    const longContent = 'x'.repeat(301);
-    const post = makePost({ content: longContent });
-    const deps = createMockDeps(store);
-    const result = verifyPost(deps, post);
-    expect(result.valid).toBe(false);
-    expect(result.error).toBe('Content exceeds max length');
-  });
-
-  it('rejects post with empty content', () => {
-    const store = makeStore();
-    const post = makePost({ content: '' });
-    const deps = createMockDeps(store);
-    const result = verifyPost(deps, post);
-    expect(result.valid).toBe(false);
-    expect(result.error).toBe('Content is empty');
-  });
-
-  it('accepts a payload carrying no signature and no proof of work', () => {
-    // ⛔ The POSITIVE half of the removal. Every other case here rejects, so a
-    // reintroduced signature or PoW gate would leave them all green — this is
-    // the one that fails if one comes back, and it asserts `valid` rather than
-    // an absent error string so a new gate cannot pass it by rejecting for a
-    // reason no case names.
+  it('⛔ accepts a commit with no signature and no proof of work', () => {
     const store = makeStore();
     store.karmaBoxes.set(Buffer.from(userId).toString('hex'), [{ value: 100n }]);
-    const post = makePost();
-    expect(Object.keys(post).sort()).toEqual(
-      ['author', 'content', 'parentRefs', 'protocolVersion', 'type'],
+    const commit = makeCommit();
+    expect(Object.keys(commit).sort()).toEqual(
+      ['author', 'contentHash', 'parentRefs', 'protocolVersion', 'type'],
     );
 
-    const result = verifyPost(createMockDeps(store), post);
+    const result = verifyPost(createMockDeps(store), commit);
     expect(result).toEqual({ valid: true });
   });
 
   it('rejects a parent ref no stored post answers to', () => {
-    // The check that replaced parent-hash recomputation: a post id is
-    // provenance-derived, so the store's record is the only statement of it and
-    // existence is what stays checkable (NODE_INTERFACE → Post transactions).
     const store = makeStore();
     store.karmaBoxes.set(Buffer.from(userId).toString('hex'), [{ value: 100n }]);
     const missing = 'ab'.repeat(32);
-    const result = verifyPost(createMockDeps(store), makePost({ parentRefs: [missing] }));
+    const result = verifyPost(createMockDeps(store), makeCommit({ parentRefs: [missing] }));
     expect(result.valid).toBe(false);
     expect(result.error).toBe(`Parent post not found: ${missing}`);
   });
 
+  it('accepts a parent ref that names a stump', () => {
+    const store = makeStore();
+    store.karmaBoxes.set(Buffer.from(userId).toString('hex'), [{ value: 100n }]);
+    const stumpId = 'cd'.repeat(32);
+    store.posts.set(stumpId, {
+      rootPostHash: stumpId,
+      authorId: userId,
+      replyCount: 0,
+      upvoteCount: 0,
+      protocolVersion: PROTOCOL_VERSION,
+      compactedAtBlockHeight: 5,
+    });
+    const result = verifyPost(createMockDeps(store), makeCommit({ parentRefs: [stumpId] }));
+    expect(result).toEqual({ valid: true });
+  });
+
+  it('rejects a parent ref that names a tombstone', () => {
+    const store = makeStore();
+    store.karmaBoxes.set(Buffer.from(userId).toString('hex'), [{ value: 100n }]);
+    const tombId = 'ef'.repeat(32);
+    store.posts.set(tombId, {
+      kind: 'pruned',
+      id: tombId,
+      author: Buffer.from(userId).toString('hex'),
+      rootPostHash: 'aa'.repeat(32),
+      compactedAtBlockHeight: 3,
+    });
+    const result = verifyPost(createMockDeps(store), makeCommit({ parentRefs: [tombId] }));
+    expect(result.valid).toBe(false);
+    expect(result.error).toBe(`Parent post not found: ${tombId}`);
+  });
+
   it('rejects an author holding no karma', () => {
-    // The early, friendlier half of the lock. The enforcement point is the
-    // engine's post biconditional, which a block re-validates — this rejects
-    // before a doomed transaction is ever built.
-    const result = verifyPost(createMockDeps(makeStore()), makePost());
+    const result = verifyPost(createMockDeps(makeStore()), makeCommit());
     expect(result.valid).toBe(false);
     expect(result.error).toBe('No karma box found');
   });

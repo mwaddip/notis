@@ -1,5 +1,6 @@
 import {
   makePost,
+  makePostCommit,
   seedAsOneTx,
   seedProvenance,
   type Stored,
@@ -31,7 +32,7 @@ import type {
   KarmaBox,
   LikeAccrualBox,
   BondBox,
-  Post,
+  PostCommit,
   PostLockBox,
   VouchBox,
   AnyBoxCandidate,
@@ -211,7 +212,7 @@ describe('validateAndApplyTx', () => {
     pubKey: Uint8Array,
     protocolVersion = 1,
     likeTarget?: string,
-    post?: Post,
+    post?: PostCommit,
   ): UtxoTransaction {
     const hexKey = Buffer.from(pubKey).toString('hex');
     const tx: UtxoTransaction = {
@@ -950,7 +951,7 @@ describe('validateAndApplyTx', () => {
         ownerPubKey,
         1,
         undefined,
-        makePost(ownerPubKey, 'conserving lock payload'),
+        makePostCommit(ownerPubKey, 'conserving lock payload'),
       );
       const result = validateAndApplyTx(deps, tx, 10);
 

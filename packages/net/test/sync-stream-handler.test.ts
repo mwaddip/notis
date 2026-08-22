@@ -6,9 +6,11 @@ import {
   verifyParentRefsCount,
   verifyTxStructure,
   verifyOrderingBlockStructure,
+  verifyPostBody,
 } from '@dagsocial/validation';
 import {
   PROTOCOL_VERSION,
+  decodePostBody,
 } from '@dagsocial/types';
 import type { BlockHeader, OrderingBlock, Post } from '@dagsocial/types';
 import { NetNode } from '../src/node.js';
@@ -18,13 +20,17 @@ import {
   decodeHeaders,
   encodeGetBlocks,
   encodeGetHeaders,
+  encodeModifierRequest,
+  decodeModifierResponse,
 } from '../src/sync-codec.js';
 import {
   MSG_BLOCKS,
   MSG_GET_BLOCKS,
   MSG_GET_HEADERS,
   MSG_HEADERS,
+  MSG_MODIFIER_RESPONSE,
   MSG_SYNC_INFO,
+  MODIFIER_POST_BODY,
   PeerState,
 } from '../src/types.js';
 import type { NetConfig, NetValidators } from '../src/types.js';
@@ -52,6 +58,7 @@ const validators: NetValidators = {
   verifyParentRefsCount,
   verifyTxStructure,
   verifyOrderingBlockStructure,
+  verifyPostBody,
 };
 
 function makeConfig(): NetConfig {
@@ -87,6 +94,7 @@ type StreamHandler = (arg: {
 function makeHandlerHarness(opts: {
   headersHandler?: (height: number) => OrderingBlock | null;
   syncMachine?: { handleMessage: (p: string, c: number, b: Uint8Array) => void };
+  postBodyProvider?: (id: string) => string | null;
   active?: boolean;
 } = {}) {
   const net = new NetNode(makeConfig(), validators);
@@ -117,6 +125,7 @@ function makeHandlerHarness(opts: {
 
   if (opts.headersHandler) net.setHeadersHandler(opts.headersHandler);
   if (opts.syncMachine) internals.syncMachine = opts.syncMachine;
+  if (opts.postBodyProvider) net.setPostBodyProvider(opts.postBodyProvider);
 
   // The stub is passed in, not read off the instance: the registrars take the
   // libp2p node as a parameter. It is also assigned above, for the paths that
@@ -397,5 +406,71 @@ describe('sync stream handler — the outer span', () => {
     expect(isEmptyReply(written)).toBe(true);
     expect(warnSpy).not.toHaveBeenCalled();
     warnSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MODIFIER_POST_BODY (103) — served on the request's own stream
+//
+// A ModifierRequest of type 103 is answered on the stream it arrived on
+// (NET_INTERFACE → ModifierRequest; Local-Serve-Before-Relay).
+// ---------------------------------------------------------------------------
+
+describe('sync stream handler — post body serve (code 103)', () => {
+  const POST_ID = 'aa'.repeat(32);
+  const CONTENT = 'test post body';
+
+  it('serves bodies on the request stream and the requester reads them', async () => {
+    const { send } = makeHandlerHarness({
+      postBodyProvider: (id) => id === POST_ID ? CONTENT : null,
+    });
+
+    const req = encodeModifierRequest(MAGIC, { typeId: MODIFIER_POST_BODY, ids: [POST_ID] });
+    const written = await send(req);
+
+    expect(written).toHaveLength(1);
+    expect(written[0]!.length).toBeGreaterThan(0);
+    const frame = decodeFrame(MAGIC, written[0]!);
+    expect(frame.code).toBe(MSG_MODIFIER_RESPONSE);
+    const resp = decodeModifierResponse(frame.body)!;
+    expect(resp.typeId).toBe(MODIFIER_POST_BODY);
+    expect(resp.modifiers).toHaveLength(1);
+    expect(resp.modifiers[0]!.id).toBe(POST_ID);
+    expect(decodePostBody(resp.modifiers[0]!.data)).toBe(CONTENT);
+  });
+
+  it('omits ids the provider does not hold', async () => {
+    const { send } = makeHandlerHarness({
+      postBodyProvider: () => null,
+    });
+
+    const req = encodeModifierRequest(MAGIC, { typeId: MODIFIER_POST_BODY, ids: [POST_ID] });
+    const written = await send(req);
+
+    expect(written).toHaveLength(1);
+    const frame = decodeFrame(MAGIC, written[0]!);
+    const resp = decodeModifierResponse(frame.body)!;
+    expect(resp.modifiers).toHaveLength(0);
+  });
+
+  it('answers empty when no provider is registered', async () => {
+    const { send } = makeHandlerHarness();
+
+    const req = encodeModifierRequest(MAGIC, { typeId: MODIFIER_POST_BODY, ids: [POST_ID] });
+    const written = await send(req);
+
+    expect(isEmptyReply(written)).toBe(true);
+  });
+
+  it('passes type 101 through to the sync machine', async () => {
+    const dispatched: number[] = [];
+    const { send } = makeHandlerHarness({
+      syncMachine: { handleMessage: (_p, code) => { dispatched.push(code); } },
+    });
+
+    const req = encodeModifierRequest(MAGIC, { typeId: 101, ids: [POST_ID] });
+    await send(req);
+
+    expect(dispatched).toEqual([4]);
   });
 });

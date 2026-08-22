@@ -6,6 +6,7 @@ import {
   MSG_MODIFIER_REQUEST,
   MSG_MODIFIER_RESPONSE,
   MODIFIER_ORDERING_BLOCK,
+  BACKFILL_BATCH_IDS,
 } from './types.js';
 import { isHeight, MAX_INV_IDS, MAX_SERVE_BODY_BYTES } from './msg-guards.js';
 import type { SyncInfo, Inv, ModifierRequest, ModifierResponse, SyncState } from './sync-types.js';
@@ -139,6 +140,13 @@ export class SyncMachine {
   private readonly magic: number;
 
   private onSyncedCallbacks: Array<() => void> = [];
+
+  // NET_INTERFACE → Sync Handler Registration: post body seams
+  private onPostBodyCallback: ((postId: string, content: string, fromPeerId: string) => boolean) | null = null;
+  private missingBodiesProvider: ((limit: number) => { id: string; contentHash: Uint8Array }[]) | null = null;
+  private pullPostBodiesFn: ((entries: { id: string; contentHash: Uint8Array }[], peerId: string) => Promise<{ id: string; content: string }[]>) | null = null;
+  private getConnectedPeersFn: (() => string[]) | null = null;
+  private backfillAskedPeers = new Set<string>();
 
   // -----------------------------------------------------------------------
   // Biased event queues
@@ -360,6 +368,22 @@ export class SyncMachine {
     this.onSyncedCallbacks.push(cb);
   }
 
+  setOnPostBody(cb: (postId: string, content: string, fromPeerId: string) => boolean): void {
+    this.onPostBodyCallback = cb;
+  }
+
+  setMissingBodiesProvider(cb: (limit: number) => { id: string; contentHash: Uint8Array }[]): void {
+    this.missingBodiesProvider = cb;
+  }
+
+  setPullPostBodies(cb: (entries: { id: string; contentHash: Uint8Array }[], peerId: string) => Promise<{ id: string; content: string }[]>): void {
+    this.pullPostBodiesFn = cb;
+  }
+
+  setGetConnectedPeers(cb: () => string[]): void {
+    this.getConnectedPeersFn = cb;
+  }
+
   // -----------------------------------------------------------------------
   // Public events (called by the node layer)
   // -----------------------------------------------------------------------
@@ -484,7 +508,7 @@ export class SyncMachine {
   onTimerTick(): void {
     const now = Date.now();
 
-    if (this.state.phase === 'syncing') {
+    if (this.state.phase === 'syncing' || this.state.phase === 'backfill') {
       if (
         now - this.lastProgressMs > STALL_TIMEOUT_MS &&
         this.state.syncPeerId
@@ -612,7 +636,7 @@ export class SyncMachine {
       // The sync conversation died with the peer — a response that crosses the
       // disconnect in flight is dropped without penalty by response binding.
       this.outstanding.clear();
-      if (this.state.phase === 'syncing' || this.state.phase === 'synced') {
+      if (this.state.phase === 'syncing' || this.state.phase === 'backfill' || this.state.phase === 'synced') {
         this.state.phase = 'idle';
       }
     }
@@ -642,14 +666,7 @@ export class SyncMachine {
     } else if (info.tipHeight < ourHeight) {
       this.servePeer(peerId, info.tipHeight);
     } else if (info.tipHeight === ourHeight && this.state.phase === 'syncing') {
-      this.state.phase = 'synced';
-      this.state.stalledPeers.clear();
-      // Fire sync-complete callbacks
-      for (const cb of this.onSyncedCallbacks) {
-        try { cb(); } catch (err) {
-          console.warn(`[sync-machine] onSynced callback error: ${String(err)}`);
-        }
-      }
+      this.enterBackfill();
     }
   }
 
@@ -737,8 +754,13 @@ export class SyncMachine {
    * included, so an oversized block still moves rather than wedging sync.
    */
   private handleModifierRequestMsg(peerId: string, req: ModifierRequest): void {
-    if (req.typeId !== MODIFIER_ORDERING_BLOCK) return;
+    if (req.typeId === MODIFIER_ORDERING_BLOCK) {
+      this.serveOrderingBlocks(peerId, req);
+    }
+  }
 
+  // NET_INTERFACE → ModifierRequest: ordering blocks served from the chain
+  private serveOrderingBlocks(peerId: string, req: ModifierRequest): void {
     const heightOf = this.blockIdIndex();
     const modifiers: { id: string; data: Uint8Array }[] = [];
     let bodyBytes = 0;
@@ -771,11 +793,13 @@ export class SyncMachine {
    * unanswered ids stay outstanding for a later response.
    */
   private handleModifierResponseMsg(peerId: string, resp: ModifierResponse): void {
-    if (resp.modifiers.length === 0) return;
-    // We only ever request ordering blocks, so a response of any other type
-    // answers nothing and must not consume outstanding ids.
-    if (resp.typeId !== MODIFIER_ORDERING_BLOCK) return;
+    if (resp.typeId === MODIFIER_ORDERING_BLOCK) {
+      if (resp.modifiers.length === 0) return;
+      this.receiveOrderingBlocks(peerId, resp);
+    }
+  }
 
+  private receiveOrderingBlocks(peerId: string, resp: ModifierResponse): void {
     const requested = this.outstanding.get(peerId);
     if (!requested || requested.size === 0) return;
 
@@ -852,6 +876,94 @@ export class SyncMachine {
   }
 
   // -----------------------------------------------------------------------
+  // Backfill — NET_INTERFACE → Sync State Machine
+  // -----------------------------------------------------------------------
+
+  private enterBackfill(): void {
+    this.state.phase = 'backfill';
+    this.backfillAskedPeers.clear();
+    this.lastProgressMs = Date.now();
+    this.requestBackfillBatch();
+  }
+
+  private requestBackfillBatch(): void {
+    const provider = this.missingBodiesProvider;
+    if (!provider) {
+      this.enterSynced();
+      return;
+    }
+    const entries = provider(BACKFILL_BATCH_IDS);
+    if (entries.length === 0) {
+      this.enterSynced();
+      return;
+    }
+
+    const peerId = this.state.syncPeerId;
+    if (!peerId) {
+      this.enterSynced();
+      return;
+    }
+
+    const pull = this.pullPostBodiesFn;
+    if (!pull) {
+      this.enterSynced();
+      return;
+    }
+
+    this.backfillAskedPeers.add(peerId);
+    const wantedIds = new Set(entries.map(e => e.id));
+
+    pull(entries, peerId).then(bodies => {
+      if (this.state.phase !== 'backfill') return;
+      if (this.state.syncPeerId !== peerId) return;
+
+      for (const { id, content } of bodies) {
+        if (!wantedIds.has(id)) continue;
+        wantedIds.delete(id);
+        const isProgress = this.onPostBodyCallback?.(id, content, peerId) ?? false;
+        if (isProgress) this.lastProgressMs = Date.now();
+      }
+
+      if (wantedIds.size > 0) {
+        this.backfillRotateToNextPeer();
+      } else {
+        this.requestBackfillBatch();
+      }
+    }).catch(err => {
+      console.warn(`[sync-machine] backfill pull failed for ${peerId}: ${String(err)}`);
+      if (this.state.phase === 'backfill') this.backfillRotateToNextPeer();
+    });
+  }
+
+  private backfillRotateToNextPeer(): void {
+    if (this.state.phase !== 'backfill') return;
+
+    const connected = this.getConnectedPeersFn?.() ?? [];
+    const next = connected.find(p =>
+      !this.backfillAskedPeers.has(p) && !this.state.stalledPeers.has(p));
+
+    if (!next) {
+      this.enterSynced();
+      return;
+    }
+
+    this.state.syncPeerId = next;
+    this.backfillAskedPeers.add(next);
+    this.lastProgressMs = Date.now();
+    this.requestBackfillBatch();
+  }
+
+  private enterSynced(): void {
+    this.state.phase = 'synced';
+    this.state.stalledPeers.clear();
+    for (const cb of this.onSyncedCallbacks) {
+      try { cb(); } catch (err) {
+        console.warn(`[sync-machine] onSynced callback error: ${String(err)}`);
+      }
+    }
+  }
+
+  // -----------------------------------------------------------------------
   // Internal — helpers
   // -----------------------------------------------------------------------
 
@@ -884,10 +996,12 @@ export class SyncMachine {
       this.state.stalledPeers.add(this.state.syncPeerId);
     }
     this.state.syncPeerId = null;
-    this.state.phase = 'idle';
-    // Rotation ends the sync conversation: outstanding ids are void. A late
-    // response that crosses the rotation is dropped without penalty by
-    // response binding.
     this.outstanding.clear();
+
+    if (this.state.phase === 'backfill') {
+      this.backfillRotateToNextPeer();
+    } else {
+      this.state.phase = 'idle';
+    }
   }
 }

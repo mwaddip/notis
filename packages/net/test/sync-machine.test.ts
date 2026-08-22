@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { encode } from 'cbor-x';
+import { computeContentHash } from '@dagsocial/types';
 import { SyncMachine } from '../src/sync-machine.js';
 import type { SyncStore } from '../src/sync-machine.js';
 import {
@@ -13,7 +14,7 @@ import type { NetConfig } from '../src/types.js';
 import { MAX_INV_IDS, MAX_SERVE_BODY_BYTES } from '../src/msg-guards.js';
 import { decodeFrame } from '../src/frame.js';
 import { decodeModifierResponse } from '../src/sync-codec.js';
-import type { SyncInfo, Inv, ModifierRequest } from '../src/sync-types.js';
+import type { SyncInfo, Inv, ModifierRequest, ModifierResponse } from '../src/sync-types.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -869,6 +870,299 @@ describe('SyncMachine', () => {
       machine.flush();
 
       expect(sent.length).toBe(0);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Post body modifier (103) — serve and receive
+  //
+  // Retargeted: the serve arm moved to the stream handler
+  // (servePostBodiesResponse in node.ts, tested in sync-stream-handler.test.ts).
+  // The receive arm (receivePostBodies) is deleted: bodies arrive through
+  // pullPostBodies on the request's own stream, not unsolicited via the
+  // machine's outstanding set. The backfill tests below cover delivery
+  // through the pull function.
+  // -----------------------------------------------------------------------
+
+  // -----------------------------------------------------------------------
+  // Backfill phase — NET_INTERFACE → Sync State Machine
+  // -----------------------------------------------------------------------
+
+  describe('backfill', () => {
+    const CONTENT_A = 'body-a';
+    const HASH_A = computeContentHash(CONTENT_A);
+    const ID_A = 'cc'.repeat(32);
+
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 25));
+
+    // The machine's backfill batch is served by the pullPostBodies delegate
+    // wired here (NET_INTERFACE → Sync State Machine, Backfill);
+    // verification lives inside requestPostBodies (node.ts).
+    function makeBackfillMachine(opts: {
+      peerHeight?: number;
+      missingBodies?: { id: string; contentHash: Uint8Array }[];
+      persistentMissing?: boolean;
+      onBody?: (id: string, content: string, peer: string) => boolean;
+      connectedPeers?: string[];
+      bodyStore?: Map<string, string>;
+    } = {}) {
+      let height = 0;
+      const sent: SentMessage[] = [];
+      const machine = new SyncMachine(
+        testConfig,
+        stubStore({ chainHeight: () => height }),
+        (peerId, data) => sent.push({ peerId, data }),
+      );
+      machine.start();
+
+      const syncedFired: number[] = [];
+      machine.onSynced(() => { syncedFired.push(1); });
+
+      const bodyStore = opts.bodyStore ?? new Map<string, string>();
+
+      const remaining = new Set((opts.missingBodies ?? []).map(e => e.id));
+      if (opts.missingBodies !== undefined) {
+        if (opts.persistentMissing) {
+          machine.setMissingBodiesProvider((limit) =>
+            opts.missingBodies!.filter(e => remaining.has(e.id)).slice(0, limit));
+        } else {
+          let called = false;
+          machine.setMissingBodiesProvider((limit) => {
+            if (called) return [];
+            called = true;
+            return opts.missingBodies!.slice(0, limit);
+          });
+        }
+      }
+
+      machine.setPullPostBodies(async (entries, _peerId) => {
+        const results: { id: string; content: string }[] = [];
+        for (const e of entries) {
+          const content = bodyStore.get(e.id);
+          if (content !== undefined) results.push({ id: e.id, content });
+        }
+        return results;
+      });
+      const userOnBody = opts.onBody;
+      machine.setOnPostBody((id, content, peer) => {
+        remaining.delete(id);
+        return userOnBody ? userOnBody(id, content, peer) : true;
+      });
+      if (opts.connectedPeers) {
+        machine.setGetConnectedPeers(() => opts.connectedPeers!);
+      }
+
+      const peerHeight = opts.peerHeight ?? 100;
+      machine.onPeerActive('sync-peer', peerHeight);
+      machine.flush();
+      expect(machine.getState().phase).toBe('syncing');
+
+      height = peerHeight;
+      return { machine, sent, syncedFired, setHeight: (h: number) => { height = h; }, bodyStore };
+    }
+
+    it('tip reached → backfill (provider has bodies)', async () => {
+      const { machine, bodyStore } = makeBackfillMachine({
+        missingBodies: [{ id: ID_A, contentHash: HASH_A }],
+      });
+      bodyStore.set(ID_A, CONTENT_A);
+
+      machine.handleMessage('sync-peer', MSG_SYNC_INFO, new Uint8Array(
+        encode({ tipHeight: 100, tipBlockId: 'abc', anchors: [] }),
+      ));
+      machine.flush();
+
+      expect(machine.getState().phase).toBe('backfill');
+      await settle();
+      expect(machine.getState().phase).toBe('synced');
+      machine.stop();
+    });
+
+    it('provider empty → synced immediately', () => {
+      const { machine, syncedFired } = makeBackfillMachine({
+        missingBodies: [],
+      });
+
+      machine.handleMessage('sync-peer', MSG_SYNC_INFO, new Uint8Array(
+        encode({ tipHeight: 100, tipBlockId: 'abc', anchors: [] }),
+      ));
+      machine.flush();
+
+      expect(machine.getState().phase).toBe('synced');
+      expect(syncedFired).toHaveLength(1);
+      machine.stop();
+    });
+
+    it('no provider set → passes straight through to synced', () => {
+      let height = 0;
+      const machine = new SyncMachine(
+        testConfig,
+        stubStore({ chainHeight: () => height }),
+        () => {},
+      );
+      machine.start();
+
+      let synced = 0;
+      machine.onSynced(() => { synced++; });
+
+      machine.onPeerActive('peer1', 50);
+      machine.flush();
+      height = 50;
+
+      machine.handleMessage('peer1', MSG_SYNC_INFO, new Uint8Array(
+        encode({ tipHeight: 50, tipBlockId: 'abc', anchors: [] }),
+      ));
+      machine.flush();
+
+      expect(machine.getState().phase).toBe('synced');
+      expect(synced).toBe(1);
+      machine.stop();
+    });
+
+    it('a stored body is progress', async () => {
+      const delivered: string[] = [];
+      const { machine, bodyStore } = makeBackfillMachine({
+        missingBodies: [{ id: ID_A, contentHash: HASH_A }],
+        onBody: (id, _c, _p) => { delivered.push(id); return true; },
+      });
+      bodyStore.set(ID_A, CONTENT_A);
+
+      machine.handleMessage('sync-peer', MSG_SYNC_INFO, new Uint8Array(
+        encode({ tipHeight: 100, tipBlockId: 'abc', anchors: [] }),
+      ));
+      machine.flush();
+      expect(machine.getState().phase).toBe('backfill');
+
+      await settle();
+
+      expect(delivered).toEqual([ID_A]);
+      expect(machine.getState().phase).toBe('synced');
+      machine.stop();
+    });
+
+    it('syncPhase reports backfill', () => {
+      const { machine } = makeBackfillMachine({
+        missingBodies: [{ id: ID_A, contentHash: HASH_A }],
+      });
+
+      machine.handleMessage('sync-peer', MSG_SYNC_INFO, new Uint8Array(
+        encode({ tipHeight: 100, tipBlockId: 'abc', anchors: [] }),
+      ));
+      machine.flush();
+
+      expect(machine.getState().phase).toBe('backfill');
+      machine.stop();
+    });
+
+    // --- liveness: omission, rotation, exhaustion ---
+
+    it('a peer that omits an id → the id is re-asked of the next peer', async () => {
+      const ID_B = 'dd'.repeat(32);
+      const CONTENT_B = 'body-b';
+      const HASH_B = computeContentHash(CONTENT_B);
+
+      const pullCalls: { peerId: string; ids: string[] }[] = [];
+      const { machine, bodyStore } = makeBackfillMachine({
+        missingBodies: [
+          { id: ID_A, contentHash: HASH_A },
+          { id: ID_B, contentHash: HASH_B },
+        ],
+        persistentMissing: true,
+        connectedPeers: ['sync-peer', 'peer2'],
+      });
+      // sync-peer has ID_A but not ID_B
+      bodyStore.set(ID_A, CONTENT_A);
+      // Override the pull to track calls
+      machine.setPullPostBodies(async (entries, peerId) => {
+        pullCalls.push({ peerId, ids: entries.map(e => e.id) });
+        const results: { id: string; content: string }[] = [];
+        for (const e of entries) {
+          const c = bodyStore.get(e.id);
+          if (c !== undefined) results.push({ id: e.id, content: c });
+        }
+        return results;
+      });
+
+      machine.handleMessage('sync-peer', MSG_SYNC_INFO, new Uint8Array(
+        encode({ tipHeight: 100, tipBlockId: 'abc', anchors: [] }),
+      ));
+      machine.flush();
+      expect(machine.getState().phase).toBe('backfill');
+
+      await settle();
+
+      // sync-peer was asked first; peer2 was asked after the omission
+      expect(pullCalls.some(c => c.peerId === 'peer2')).toBe(true);
+      machine.stop();
+    });
+
+    it('60 s without a stored body → rotation', () => {
+      const { machine } = makeBackfillMachine({
+        missingBodies: [{ id: ID_A, contentHash: HASH_A }],
+        persistentMissing: true,
+        connectedPeers: ['sync-peer', 'peer2'],
+      });
+
+      machine.handleMessage('sync-peer', MSG_SYNC_INFO, new Uint8Array(
+        encode({ tipHeight: 100, tipBlockId: 'abc', anchors: [] }),
+      ));
+      machine.flush();
+      expect(machine.getState().phase).toBe('backfill');
+      expect(machine.getState().syncPeerId).toBe('sync-peer');
+
+      // Advance the stall clock past 60s
+      (machine as any).lastProgressMs = Date.now() - 61_000;
+      machine.onTimerTick();
+
+      // Stall rotation should have moved to peer2 or entered synced
+      expect(machine.getState().syncPeerId).not.toBe('sync-peer');
+      machine.stop();
+    });
+
+    it('every connected peer exhausted → synced, onSyncComplete fires', async () => {
+      // Pull returns empty — peer has no bodies. Only one connected peer.
+      const { machine, syncedFired } = makeBackfillMachine({
+        missingBodies: [{ id: ID_A, contentHash: HASH_A }],
+        persistentMissing: true,
+        connectedPeers: ['sync-peer'],
+      });
+      // bodyStore has no entries → pull returns empty
+
+      machine.handleMessage('sync-peer', MSG_SYNC_INFO, new Uint8Array(
+        encode({ tipHeight: 100, tipBlockId: 'abc', anchors: [] }),
+      ));
+      machine.flush();
+      expect(machine.getState().phase).toBe('backfill');
+
+      await settle();
+
+      expect(machine.getState().phase).toBe('synced');
+      expect(syncedFired).toHaveLength(1);
+      machine.stop();
+    });
+
+    it('provider empties mid-batch → synced without waiting for exhaustion', async () => {
+      const delivered: string[] = [];
+      const { machine, syncedFired, bodyStore } = makeBackfillMachine({
+        missingBodies: [{ id: ID_A, contentHash: HASH_A }],
+        persistentMissing: true,
+        onBody: (id, _c, _p) => { delivered.push(id); return true; },
+        connectedPeers: ['sync-peer', 'peer2'],
+      });
+      bodyStore.set(ID_A, CONTENT_A);
+
+      machine.handleMessage('sync-peer', MSG_SYNC_INFO, new Uint8Array(
+        encode({ tipHeight: 100, tipBlockId: 'abc', anchors: [] }),
+      ));
+      machine.flush();
+      expect(machine.getState().phase).toBe('backfill');
+
+      await settle();
+
+      expect(delivered).toEqual([ID_A]);
+      expect(machine.getState().phase).toBe('synced');
+      expect(syncedFired).toHaveLength(1);
+      machine.stop();
     });
   });
 
