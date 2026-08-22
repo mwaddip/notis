@@ -7,6 +7,7 @@ import {
 import type { PruneEntry, PruneIntent } from '@dagsocial/types';
 import {
   getPost,
+  isLivePost,
   getSubtree,
   getCurrentHeight,
   insertMempoolPrune,
@@ -39,11 +40,8 @@ export function executePrune(intent: PruneIntent): PruneEntry {
     throw Object.assign(new Error('Post not found'), { statusCode: 404 });
   }
 
-  // 2. Check not already pruned. A stump has no `content`; a live Post always
-  // does — and the check narrows `Post | Stump` to `Post` for the steps below.
-  // (Do not test `'subtreeMerkleRoot' in` — that field lives on
-  // PruneIntent/PruneEntry, never on Stump, so the check can never fire.)
-  if (!('content' in post)) {
+  // NODE_INTERFACE → Pruning: executePrune on a stump or tombstone → 400.
+  if (!isLivePost(post)) {
     throw Object.assign(new Error('Post already pruned'), { statusCode: 400 });
   }
 

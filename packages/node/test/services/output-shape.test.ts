@@ -35,13 +35,14 @@ import type {
   AnyBoxCandidate,
   KarmaBox,
   CreditBox,
-  Post,
+  PostCommit,
   UtxoTransaction,
 } from '@dagsocial/types';
 import Database from 'better-sqlite3';
 import {
   fixtureProvenance,
   makePost,
+  makePostCommit,
   seedProvenance,
   type Stored,
   FIXTURE_BOND_KARMA,
@@ -384,7 +385,7 @@ describe('validateTx output shape (integration)', () => {
   // output without it fails the engine's post biconditional (NODE_INTERFACE →
   // Post transactions) — a second deviation in any fixture whose subject is the
   // output schema.
-  function signedTx(inputs: string[], outputs: unknown[], post?: Post): UtxoTransaction {
+  function signedTx(inputs: string[], outputs: unknown[], post?: PostCommit): UtxoTransaction {
     const tx: UtxoTransaction = {
       inputs,
       outputs: outputs as UtxoTransaction['outputs'],
@@ -471,7 +472,7 @@ describe('validateTx output shape (integration)', () => {
       signedTx(
         [karma.id!],
         [karmaChange(100n - POST_LOCK_THREAD_COST), lock],
-        makePost(ownerPubKey, 'honest lock payload'),
+        makePostCommit(ownerPubKey, 'honest lock payload'),
       ),
       10,
     );
@@ -556,7 +557,7 @@ describe('validateTx output shape (integration)', () => {
     const tx = signedTx(
       [karma.id!],
       [karmaChange(100n - POST_LOCK_THREAD_COST), lock],
-      makePost(ownerPubKey, 'lock payload'),
+      makePostCommit(ownerPubKey, 'lock payload'),
     );
     // The key is removed AFTER signing: `originalValue` is `vlqU64` in the
     // box-id preimage, so a box without it has no encoding and `signedTx` would

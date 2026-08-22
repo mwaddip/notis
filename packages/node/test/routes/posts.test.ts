@@ -4,13 +4,13 @@ import {
   seedProvenance,
   signTransaction,
   txToJson,
-  uid, fixturePostId } from '../helpers.js';
+  uid, fixturePostId, makePostCommit } from '../helpers.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import express from 'express';
 import http from 'http';
 import { createHash, generateKeyPairSync, createPrivateKey } from 'crypto';
 import { initDb, closeDb, getDb } from '../../src/store/db.js';
-import { insertPost, getPost, getPostRaw, queryPosts, getAncestors, getSubtree } from '../../src/store/posts.js';
+import { insertPost, getPost, queryPosts, getAncestors, getSubtree, deletePostRows } from '../../src/store/posts.js';
 import { getCurrentHeight, getBlockCreatedAt } from '../../src/store/ordering.js';
 import {
   getKarmaBox,
@@ -26,8 +26,8 @@ import { insertUtxoTx, getPendingEntries } from '../../src/store/mempool.js';
 import { verifyPost } from '../../src/services/verifier.js';
 import { validateTx } from '../../src/services/utxo-engine.js';
 import {
-  encodePost,
   generateKeyPair,
+  computeContentHash,
   PROTOCOL_VERSION,
   computeBoxId,
   computePostId,
@@ -41,7 +41,7 @@ import type {
   AnyBox,
   CandidateOf,
   KarmaBox,
-  Post,
+  PostCommit,
   PostLockBox,
   UtxoTransaction,
 } from '@dagsocial/types';
@@ -68,9 +68,7 @@ async function request(
     const deps = {
       insertPost,
       getPost,
-      getPostRaw,
       queryPosts,
-      encodePost,
       verifyPost: overrides?.verifyPost ?? verifyPost,
       getKarmaBoxes,
       getIdentityRecord: storeGetIdentityRecord,
@@ -91,6 +89,7 @@ async function request(
       getTopologyAuthor: () => null,
       getCurrentHeight,
       admitTx: insertUtxoTx,
+      runInTransaction: (fn: () => void) => db.transaction(fn)(),
       validateTx: (tx: UtxoTransaction, height: number) => {
         return validateTx(
           {
@@ -107,11 +106,6 @@ async function request(
               db.prepare('UPDATE utxo_boxes SET spent_at_block = ? WHERE id = ?').run(atBlock, id);
             },
             getKarmaBox: (owner: Uint8Array) => getKarmaBox(owner),
-            // The three the hand-written deps object had fallen behind on.
-            // Unreached by the karma-lock path this suite exercises, which is
-            // why it stayed green — but an incomplete deps object throws the
-            // moment a rule starts consulting one of them, and these wire to
-            // the same store functions production does.
             getIdentityRecord: (identityId: Uint8Array) =>
               storeGetIdentityRecord(identityId),
             getKarmaValue: (owner: Uint8Array) =>
@@ -119,8 +113,6 @@ async function request(
             hasActiveVouchEscrow: (voucherId: Uint8Array) =>
               hasActiveVouchEscrow(voucherId),
             vouchCooldownBlocks: 2,
-            // No like reaches this router, so the marker's author pin has
-            // nothing to resolve — stated rather than stubbed silently.
             inviteBondMin: config.inviteBondMin,
             inviteBondMax: config.inviteBondMax,
             decayCfg: {
@@ -138,7 +130,7 @@ async function request(
           height,
         );
       },
-	      getBox: (id: string): AnyBox | null => {
+      getBox: (id: string): AnyBox | null => {
         const box = storeGetBox(id);
         if (!box) return null;
         const r = db.prepare('SELECT spent_at_block FROM utxo_boxes WHERE id = ?').get(id) as { spent_at_block: number | null } | undefined;
@@ -197,7 +189,7 @@ describe('posts routes', () => {
     expect(res.status).toBe(400);
   });
 
-  it('POST /posts with an invalid hex author returns 400', async () => {
+  it('POST /posts with an invalid hex contentHash returns 400', async () => {
     const res = await request('/', 'POST', {
       tx: {
         inputs: ['11'.repeat(32)],
@@ -205,20 +197,19 @@ describe('posts routes', () => {
         signatures: {},
         protocolVersion: 1,
         post: {
-          content: 'test',
-          author: 'not-hex!!@@',
+          contentHash: 'not-hex!!@@',
+          author: '00'.repeat(32),
           parentRefs: [],
           protocolVersion: 1,
           type: 'regular',
         },
       },
+      content: 'test',
     });
     expect(res.status).toBe(400);
   });
 
   it('POST /posts with a transaction carrying no post returns 400', async () => {
-    // The biconditional's request-shape half: a bare transaction is not a post
-    // submission, and the route says so rather than inventing an empty payload.
     const res = await request('/', 'POST', {
       tx: {
         inputs: ['11'.repeat(32)],
@@ -226,6 +217,7 @@ describe('posts routes', () => {
         signatures: {},
         protocolVersion: 1,
       },
+      content: 'test',
     });
     expect(res.status).toBe(400);
   });
@@ -244,9 +236,6 @@ describe('posts routes', () => {
       type: 'pkcs8',
     });
 
-    // Setup: identity
-
-    // Setup: karma box
     const karmaBox = seedProvenance<KarmaBox>({
       boxType: 'karma',
       value: 100n,
@@ -256,10 +245,6 @@ describe('posts routes', () => {
     const karmaBoxId = karmaBox.id;
     insertBox({ ...karmaBox, id: karmaBoxId });
 
-    // Setup: challenge
-    const challengeBytes = new Uint8Array(Buffer.from('cc'.repeat(32), 'hex'));
-
-    // Build karma-lock tx
     const newKarma = seedProvenance<KarmaBox>({
       boxType: 'karma',
       value: 100n - POST_LOCK_THREAD_COST,
@@ -268,11 +253,6 @@ describe('posts routes', () => {
     }, 1);
     const newKarmaId = newKarma.id;
 
-    // ⛔ The lock names NO post. `targetPostId` is gone from `PostLockBox`
-    // because a post's id comes from the transaction that creates the lock — the
-    // field would have to be known before the `TxId` that produces it
-    // (TYPES_INTERFACE → PostLockBox). The lock's target is the post riding the
-    // same transaction, and the store indexes it at apply.
     const postLockBox: CandidateOf<PostLockBox> = {
       boxType: 'post_lock',
       value: POST_LOCK_THREAD_COST,
@@ -281,12 +261,13 @@ describe('posts routes', () => {
       owner: userId,
     };
 
-    const post = {
-      content: 'hello mempool',
-      author: userIdHex,
-      parentRefs: [] as string[],
+    const content = 'hello mempool';
+    const commit: PostCommit = {
+      contentHash: computeContentHash(content),
+      author: userId,
+      parentRefs: [],
       protocolVersion: PROTOCOL_VERSION,
-      type: 'regular' as const,
+      type: 'regular',
     };
 
     const postTx: UtxoTransaction = {
@@ -294,14 +275,22 @@ describe('posts routes', () => {
       outputs: [newKarma, postLockBox],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
-      post: { ...post, author: userId },
+      post: commit,
     };
     signTransaction(postTx, privKeyObj, userIdHex);
-    const txJson = { ...txToJson(postTx), post };
+
+    const postJson = {
+      contentHash: Buffer.from(commit.contentHash).toString('hex'),
+      author: userIdHex,
+      parentRefs: [],
+      protocolVersion: PROTOCOL_VERSION,
+      type: 'regular',
+    };
+    const txJson = { ...txToJson(postTx), post: postJson };
 
     const mockVerify = () => ({ valid: true as const });
 
-    const res = await request('/', 'POST', { tx: txJson },
+    const res = await request('/', 'POST', { tx: txJson, content },
       { verifyPost: mockVerify as typeof verifyPost });
 
     expect(res.status).toBe(200);
@@ -311,15 +300,11 @@ describe('posts routes', () => {
     expect(body.status).toBe('pending');
     expect(typeof body.expiresAtHeight).toBe('number');
 
-    // ⛔ ONE mempool entry, not two. The `batchId` that regrouped a post and its
-    // lock is gone with the pair — asserting the COUNT is what catches a
-    // reintroduced second insert.
     const entries = getPendingEntries(100);
     expect(entries).toHaveLength(1);
     expect(entries[0]!.entryType).toBe('utxo_tx');
     expect(entries[0]!.expiresAtHeight).toBe(body.expiresAtHeight);
 
-    // …and the id the route reports is the one the transaction gives it.
     expect(body.postId).toBe(computePostId(body.txId as string, 0));
   });
 
@@ -339,12 +324,7 @@ describe('posts routes', () => {
   });
 
   // -----------------------------------------------------------------------
-  // Stumps over HTTP (NODE_INTERFACE → Posts, "Stump JSON shape").
-  //
-  // The service-level shape is pinned in feed-service.test.ts; these run the
-  // response through `res.json`, which is where the defect actually showed:
-  // the raw `Stump` went out with `authorId` — a Uint8Array — serialized
-  // index-keyed as {"0":…,"1":…,…,"31":…}.
+  // Stumps over HTTP
   // -----------------------------------------------------------------------
 
   describe('GET on a pruned root', () => {
@@ -358,43 +338,27 @@ describe('posts routes', () => {
     let prunedRootId: string;
 
     beforeAll(async () => {
-      const { pruneSubtree } = await import('../../src/store/posts.js');
       const { insertStump } = await import('../../src/store/stumps.js');
       const keys = generateKeyPairSync('ed25519');
       stumpAuthor = rawPublicKey(keys.publicKey);
 
-      const root: Post = {
-        content: 'doomed root',
-        author: stumpAuthor,
-        parentRefs: [],
-        protocolVersion: PROTOCOL_VERSION,
-        type: 'regular',
-      };
-      const { computePostId } = await import('@dagsocial/types');
-      prunedRootId = fixturePostId(root);
-      insertPost(fixturePostId(root), root, encodePost(root));
+      const commit = makePostCommit(stumpAuthor, 'doomed root');
+      prunedRootId = fixturePostId(commit);
+      insertPost(prunedRootId, commit, 'doomed root');
       insertStump({ rootPostHash: prunedRootId, authorId: stumpAuthor, ...stumpScalars });
-      pruneSubtree(prunedRootId);
+      deletePostRows([prunedRootId]);
     });
 
     it('GET /posts/:id answers 200 with the exact StumpJson', async () => {
       const res = await request(`/${prunedRootId}`, 'GET');
-      // A stump is renderable tombstone data, not an absence — never a 404.
       expect(res.status).toBe(200);
       expect(res.data).toEqual({
         kind: 'stump',
         id: prunedRootId,
         author: Buffer.from(stumpAuthor).toString('hex'),
-        // ⛔ **A SECOND author field, and the two are different questions.**
-        // `author` is the DAG's — content this node may have pruned — while
-        // `confirmedAuthor` comes from `block_topology` and is what a like's
-        // marker must name (ARCHITECTURE → Likes). `null` here because this
-        // fixture seeds no topology row; on a confirmed post the two agree, and
-        // where they do not it is a placeholder row carrying a zeroed `author`.
         confirmedAuthor: null,
         ...stumpScalars,
       });
-      // The regression this closes: a 64-hex string, not an index-keyed object.
       const body = res.data as Record<string, unknown>;
       expect(typeof body['author']).toBe('string');
       expect(body['author']).toMatch(/^[0-9a-f]{64}$/);
@@ -418,15 +382,11 @@ describe('posts routes', () => {
     });
 
     it('GET /posts stays live-only — the stump never appears in the feed', async () => {
-      // Verified rather than assumed: `queryPosts` selects
-      // `FROM dag_posts WHERE status != 'pruned'` and maps every row through
-      // `rowToPost`, so it reads no stump table at all.
       const res = await request('/', 'GET');
       expect(res.status).toBe(200);
       const feed = res.data as Array<Record<string, unknown>>;
       expect(feed.some((p) => p['id'] === prunedRootId)).toBe(false);
       expect(feed.some((p) => p['kind'] === 'stump')).toBe(false);
-      expect(feed.every((p) => 'content' in p)).toBe(true);
     });
   });
 });

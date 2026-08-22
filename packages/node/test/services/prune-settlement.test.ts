@@ -1216,7 +1216,10 @@ describe('prune apply-then-revert (P2-D N3b, real settle path)', () => {
     expect(rawDb.prepare('SELECT id FROM dag_posts WHERE id = ?').get(rootId)).toBeUndefined();
     expect(rawDb.prepare('SELECT id FROM dag_posts WHERE id = ?').get(replyId)).toBeUndefined();
 
-    // No block_journal row holds the content either.
+    // No block_journal row holds the content — neither the ids nor the literal
+    // content bytes survive in any remaining journal_cbor blob.
+    const rootContent = Buffer.from('deletion sentence root');
+    const replyContent = Buffer.from('deletion sentence reply');
     const allJournals = rawDb.prepare('SELECT journal_cbor FROM block_journal').all() as Array<{ journal_cbor: Buffer }>;
     const { decode } = await import('cbor-x');
     for (const row of allJournals) {
@@ -1227,6 +1230,8 @@ describe('prune apply-then-revert (P2-D N3b, real settle path)', () => {
           expect(dp.id).not.toBe(replyId);
         }
       }
+      expect(row.journal_cbor.includes(rootContent)).toBe(false);
+      expect(row.journal_cbor.includes(replyContent)).toBe(false);
     }
   });
 
