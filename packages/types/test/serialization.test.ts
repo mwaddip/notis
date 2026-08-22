@@ -22,6 +22,10 @@ import { CodecError } from '../src/codec.js';
 import {
   encodePostCommit,
   decodePostCommit,
+  encodePostBody,
+  decodePostBody,
+  encodeTxPacket,
+  decodeTxPacket,
   encodeHeader,
   decodeHeader,
   encodeUtxoTxTree,
@@ -722,6 +726,84 @@ describe('positional serialization', () => {
       const preimage = postFieldBytes(post);
       expect(hex(wire)).toBe(hex(preimage));
       expect(wire.length).toBe(preimage.length);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Post body — TYPES_INTERFACE → Layout — Post body
+  // -------------------------------------------------------------------------
+
+  describe('post body codec', () => {
+    it('round-trips content as lpUtf8', () => {
+      const content = 'Hello, DAGsocial!';
+      expect(decodePostBody(encodePostBody(content))).toBe(content);
+    });
+
+    it('round-trips empty content', () => {
+      expect(decodePostBody(encodePostBody(''))).toBe('');
+    });
+
+    it('round-trips multibyte content', () => {
+      const content = 'héllo 日本 😀';
+      expect(decodePostBody(encodePostBody(content))).toBe(content);
+    });
+
+    it('rejects trailing bytes', () => {
+      const bytes = encodePostBody('hello');
+      const padded = new Uint8Array(bytes.length + 1);
+      padded.set(bytes);
+      expect(() => decodePostBody(padded)).toThrow(CodecError);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Transaction packet — TYPES_INTERFACE → Layout — UtxoTransaction, packet
+  // -------------------------------------------------------------------------
+
+  describe('transaction packet codec', () => {
+    it('post tx with a body round-trips', () => {
+      const tx: UtxoTransaction = { ...makeTx(), post: makePostCommit() };
+      const content = 'Hello, DAGsocial!';
+      const packet = decodeTxPacket(encodeTxPacket(tx, content));
+      expect(packet.tx).toEqual(tx);
+      expect(packet.content).toBe(content);
+    });
+
+    it('body is absent from txIdBytes — one TxId across two bodies', () => {
+      // The body is outside `txIdBytes`, so two packets with the same tx but
+      // different bodies produce the same TxId.
+      const tx: UtxoTransaction = { ...makeTx(), post: makePostCommit() };
+      const pktA = encodeTxPacket(tx, 'body A');
+      const pktB = encodeTxPacket(tx, 'body B');
+      // Packets differ (different body).
+      expect(hex(pktA)).not.toBe(hex(pktB));
+      // TxId is the same (body is not in the preimage).
+      const { tx: txA } = decodeTxPacket(pktA);
+      const { tx: txB } = decodeTxPacket(pktB);
+      expect(computeTxId(txA)).toBe(computeTxId(txB));
+    });
+
+    it('non-post tx packet is encodeTx(tx) followed by opt-absent (0x00)', () => {
+      const tx = makeTx();
+      const pktBytes = encodeTxPacket(tx);
+      const txBytes = encodeTx(tx);
+      // The packet is the tx bytes + one 0x00 byte (opt absent tag).
+      expect(pktBytes.length).toBe(txBytes.length + 1);
+      expect(hex(pktBytes)).toBe(hex(txBytes) + '00');
+    });
+
+    it('non-post tx packet round-trips with content undefined', () => {
+      const tx = makeTx();
+      const packet = decodeTxPacket(encodeTxPacket(tx));
+      expect(packet.tx).toEqual(tx);
+      expect(packet.content).toBeUndefined();
+    });
+
+    it('rejects trailing bytes', () => {
+      const bytes = encodeTxPacket(makeTx());
+      const padded = new Uint8Array(bytes.length + 1);
+      padded.set(bytes);
+      expect(() => decodeTxPacket(padded)).toThrow(CodecError);
     });
   });
 });

@@ -212,6 +212,10 @@ export { ByteReader, ByteWriter, ReaderError } from '@dagsocial/wire';
 export {
   encodePostCommit,
   decodePostCommit,
+  encodePostBody,
+  decodePostBody,
+  encodeTxPacket,
+  decodeTxPacket,
   encodeHeader,
   decodeHeader,
   encodeUtxoTxTree,
@@ -222,3 +226,4 @@ export {
   encodeTx,
   decodeTx,
 } from './serialization.js';
+export type { TxPacket } from './serialization.js';

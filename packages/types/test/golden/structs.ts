@@ -29,7 +29,6 @@ import {
   readBytesN,
   readHexN,
   readLp,
-
   readOpt,
   readVlqU,
   readVlqU64,

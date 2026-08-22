@@ -31,21 +31,25 @@
 import { ByteReader, ByteWriter } from '@dagsocial/wire';
 import {
   type StructCodec,
+  CodecError,
   arrByteLength,
   decodeStruct,
   encodeStruct,
+  firstDifference,
   lpByteLength,
   readArr,
   readBytesN,
   readHexN,
   readLp,
   readLpUtf8,
+  readOpt,
   readVlqU,
   writeArr,
   writeBytesNOrThrow,
   writeHexNOrThrow,
   writeLp,
   writeLpUtf8,
+  writeOpt,
   writeVlqU,
 } from './codec.js';
 import { postFieldBytes, readPostCommitFields, type PostCommit } from './post.js';
@@ -79,6 +83,14 @@ import type {
  * established by `verifyPostCommitDomains` (`@dagsocial/validation`) — `b32`
  * stays unreachable because its writers throw, `enum8` because the membership
  * rule keeps the sentinel path closed.
+ *
+ * ⛔ **The throwing rows (`b32`) are reachable from `computeTxId`**, because
+ * `txIdBytes` writes `postFieldBytes` for a post-bearing transaction. The
+ * obligation `verifyPostCommitDomains` discharges therefore extends to every
+ * path that hashes such a transaction — `validateTx` runs it before the id
+ * is taken, and block apply's embedded-tx path is the call site
+ * TYPES_INTERFACE → Totality books for the same reason it books the output
+ * fields.
  */
 const POST_COMMIT: StructCodec<PostCommit> = {
   name: 'postCommit',
@@ -94,6 +106,80 @@ export function encodePostCommit(commit: PostCommit): Uint8Array {
 
 export function decodePostCommit(bytes: Uint8Array): PostCommit {
   return decodeStruct(POST_COMMIT, bytes);
+}
+
+// ---------------------------------------------------------------------------
+// Post body — TYPES_INTERFACE → Layout — Post body
+// ---------------------------------------------------------------------------
+
+/**
+ * The body's standalone wire form: `lpUtf8(content)`.
+ *
+ * Keyed by the post id wherever it travels (the packet's transaction, the
+ * pull request's id list); **never hashed into anything** — the only binding
+ * is `computeContentHash(content) == commit.contentHash`, checked by
+ * `verifyPostBody` at every entry (VALIDATION_INTERFACE → verifyPostBody).
+ */
+const POST_BODY: StructCodec<string> = {
+  name: 'postBody',
+  write(w, content) {
+    writeLpUtf8(w, content);
+  },
+  read(r) {
+    return readLpUtf8(r);
+  },
+};
+
+export function encodePostBody(content: string): Uint8Array {
+  return encodeStruct(POST_BODY, content);
+}
+
+export function decodePostBody(bytes: Uint8Array): string {
+  return decodeStruct(POST_BODY, bytes);
+}
+
+// ---------------------------------------------------------------------------
+// Transaction packet — TYPES_INTERFACE → Layout — UtxoTransaction, packet codec
+// ---------------------------------------------------------------------------
+
+/**
+ * `encodeTx(tx)` ‖ `opt(lpUtf8(content))` — the gossip payload for every
+ * transaction (NET_INTERFACE → Gossip Topics).
+ *
+ * The body is outside `txIdBytes`, outside every id and every Merkle leaf;
+ * a transaction that carries no post pays the `opt` absence tag, one byte,
+ * on the wire only.
+ *
+ * ⛔ **The biconditional (`tx.post` present ⟺ `content` present) is NOT a
+ * property of these bytes.** The codec encodes what it is given; the rule is
+ * stated and enforced where packets enter (NET_INTERFACE → Gossip Topics,
+ * NODE_INTERFACE → Post transactions).
+ *
+ * `decodeTxPacket` keeps the boundary discipline the struct decoder has:
+ * trailing bytes reject, and re-encoding the decoded value reproduces the
+ * input byte-for-byte.
+ */
+export function encodeTxPacket(tx: UtxoTransaction, content?: string): Uint8Array {
+  const w = new ByteWriter();
+  TX.write(w, tx);
+  writeOpt(w, content, writeLpUtf8);
+  return w.toBytes();
+}
+
+export interface TxPacket {
+  tx: UtxoTransaction;
+  content?: string;
+}
+
+export function decodeTxPacket(bytes: Uint8Array): TxPacket {
+  const r = new ByteReader(bytes);
+  const tx = TX.read(r);
+  const content = readOpt(r, readLpUtf8) ?? undefined;
+  if (!r.isExhausted) throw new CodecError('txPacket', 'trailing-bytes');
+  const reEncoded = encodeTxPacket(tx, content);
+  const diff = firstDifference(bytes, reEncoded);
+  if (diff !== -1) throw new CodecError('txPacket', 'non-canonical');
+  return { tx, content };
 }
 
 // ---------------------------------------------------------------------------
