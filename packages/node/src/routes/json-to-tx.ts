@@ -1,5 +1,5 @@
 import { BOX_VALUE_BOUND, PROTOCOL_VERSION } from '@dagsocial/types';
-import type { AnyBox, Post, PostType, UtxoTransaction } from '@dagsocial/types';
+import type { AnyBox, PostCommit, PostType, UtxoTransaction } from '@dagsocial/types';
 import { ClientError } from '../services/client-error.js';
 
 /**
@@ -89,7 +89,7 @@ export function jsonToTx(raw: Record<string, unknown>): UtxoTransaction {
   // inside the signed bytes. `author` is the one binary field — hex on the wire,
   // raw bytes in the preimage — and `verifyTxStructure` owns its 32-byte shape
   // check, as `castLike` owns `likeTarget`'s.
-  const post = raw.post === undefined ? undefined : jsonToPost(raw.post);
+  const post = raw.post === undefined ? undefined : jsonToPostCommit(raw.post);
 
   return {
     inputs: (raw.inputs ?? []) as string[],
@@ -109,11 +109,18 @@ export function jsonToTx(raw: Record<string, unknown>): UtxoTransaction {
  * be a claim with nothing behind it. The service derives it after the
  * transaction validates.
  */
-function jsonToPost(raw: unknown): Post {
+function jsonToPostCommit(raw: unknown): PostCommit {
   if (typeof raw !== 'object' || raw === null) {
     throw new ClientError('post must be an object');
   }
   const p = raw as Record<string, unknown>;
+  if (typeof p.contentHash !== 'string') {
+    throw new ClientError('post contentHash must be a hex string');
+  }
+  const contentHash = hexToBytes(p.contentHash);
+  if (contentHash.length !== 32) {
+    throw new ClientError('post contentHash must be 32 bytes (64 hex chars)');
+  }
   if (typeof p.author !== 'string') {
     throw new ClientError('post author must be a hex string');
   }
@@ -122,7 +129,7 @@ function jsonToPost(raw: unknown): Post {
     throw new ClientError('post author must be 32 bytes (64 hex chars) — Ed25519 public key');
   }
   return {
-    content: p.content as string,
+    contentHash,
     author,
     parentRefs: (p.parentRefs ?? []) as string[],
     protocolVersion: (p.protocolVersion as number) ?? PROTOCOL_VERSION,

@@ -278,6 +278,35 @@ describe('posts store', () => {
     expect(allResults).toHaveLength(2);
   });
 
+  it('queryPosts with limit/offset pagination', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertPost, queryPosts } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    for (let i = 0; i < 5; i++) {
+      const { commit, content } = makeCommit({ content: `post-${i}` });
+      insertPost(fixturePostId(commit), commit, content);
+    }
+
+    const all = queryPosts({});
+    expect(all).toHaveLength(5);
+
+    const page1 = queryPosts({ limit: 2, offset: 0 });
+    expect(page1).toHaveLength(2);
+    expect(page1[0]!.content).toBe('post-4');
+    expect(page1[1]!.content).toBe('post-3');
+
+    const page2 = queryPosts({ limit: 2, offset: 2 });
+    expect(page2).toHaveLength(2);
+    expect(page2[0]!.content).toBe('post-2');
+    expect(page2[1]!.content).toBe('post-1');
+
+    const page3 = queryPosts({ limit: 2, offset: 4 });
+    expect(page3).toHaveLength(1);
+    expect(page3[0]!.content).toBe('post-0');
+  });
+
   it('queryPosts: pending above confirmed, confirmed by (block_height, block_index)', async () => {
     const { initDb } = await importDbFresh();
     const { insertPost, confirmPost, queryPosts } = await importPostsFresh();
@@ -317,6 +346,24 @@ describe('posts store', () => {
     expect(pending[0]!.content).toBe('oldest');
     expect(pending[1]!.content).toBe('middle');
     expect(pending[2]!.content).toBe('newest');
+  });
+
+  it('getPendingPosts respects the limit parameter', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertPost, getPendingPosts } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    for (let i = 0; i < 5; i++) {
+      const { commit, content } = makeCommit({ content: `pending-${i}` });
+      insertPost(fixturePostId(commit), commit, content);
+    }
+
+    const limited = getPendingPosts(3);
+    expect(limited).toHaveLength(3);
+    expect(limited[0]!.content).toBe('pending-0');
+    expect(limited[1]!.content).toBe('pending-1');
+    expect(limited[2]!.content).toBe('pending-2');
   });
 
   it('confirmPost updates status, blockHeight and blockIndex', async () => {

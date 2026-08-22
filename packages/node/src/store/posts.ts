@@ -195,10 +195,9 @@ export function getPrunedTombstone(id: string): PrunedTombstone | null {
     if (!row) return null;
 
     const parents: string[] = JSON.parse(row.parent_refs);
-    if (parents.length === 0) return null;
-
     const parentId = parents[0];
-    // Check if the parent is a stump
+    if (!parentId) return null;
+
     const stump = db
       .prepare('SELECT compacted_at_block_height FROM dag_stumps WHERE id = ?')
       .get(parentId) as { compacted_at_block_height: number } | undefined;
@@ -212,7 +211,6 @@ export function getPrunedTombstone(id: string): PrunedTombstone | null {
       };
     }
 
-    // Check if the parent is a stump itself (the id IS the root)
     const parentStump = db
       .prepare('SELECT compacted_at_block_height FROM dag_stumps WHERE root_post_hash = ?')
       .get(parentId) as { compacted_at_block_height: number } | undefined;
