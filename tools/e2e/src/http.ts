@@ -48,8 +48,10 @@ export async function postInvite(
 export async function postPost(
   node: NodeProcess,
   txJson: Record<string, unknown>,
+  content?: string,
 ): Promise<{ postId: string; status: string; txId: string; expiresAtHeight: number }> {
-  const data = await jsonPost(node, '/posts', { tx: txJson });
+  const body = content !== undefined ? { tx: txJson, content } : { tx: txJson };
+  const data = await jsonPost(node, '/posts', body);
   return data as { postId: string; status: string; txId: string; expiresAtHeight: number };
 }
 
@@ -97,7 +99,8 @@ export async function getCredits(
 
 export interface PostResponse {
   id: string;
-  content: string;
+  content: string | null;
+  contentHash: string;
   author: string;
   parentRefs: string[];
   status: string;
@@ -115,15 +118,33 @@ export interface StumpResponse {
   upvoteCount: number;
 }
 
-export function isPost(p: PostResponse | StumpResponse): p is PostResponse {
+export interface PrunedResponse {
+  kind: 'pruned';
+  id: string;
+  author: string;
+  rootPostHash: string;
+  compactedAtBlockHeight: number;
+}
+
+export type GetPostResponse = PostResponse | StumpResponse | PrunedResponse;
+
+export function isPost(p: GetPostResponse): p is PostResponse {
   return !('kind' in p);
+}
+
+export function isStump(p: GetPostResponse): p is StumpResponse {
+  return 'kind' in p && p.kind === 'stump';
+}
+
+export function isPruned(p: GetPostResponse): p is PrunedResponse {
+  return 'kind' in p && p.kind === 'pruned';
 }
 
 export async function getPost(
   node: NodeProcess,
   postId: string,
-): Promise<PostResponse | StumpResponse | null> {
-  return jsonGet(node, `/posts/${postId}`) as Promise<PostResponse | StumpResponse | null>;
+): Promise<GetPostResponse | null> {
+  return jsonGet(node, `/posts/${postId}`) as Promise<GetPostResponse | null>;
 }
 
 export async function getBlock(

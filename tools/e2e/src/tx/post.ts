@@ -1,5 +1,6 @@
 import {
   selectBoxes,
+  computeContentHash,
   PROTOCOL_VERSION,
   POST_LOCK_THREAD_COST,
   POST_LOCK_REPLY_COST,
@@ -8,12 +9,16 @@ import type { UtxoTransaction } from '@dagsocial/types';
 import type { Identity } from '../identities.js';
 import { signAndRender, type BoxRef, type BuiltTx } from './render.js';
 
+export interface PostTx extends BuiltTx {
+  readonly content: string;
+}
+
 export function buildThreadTx(
   author: Identity,
   boxes: BoxRef[],
   content: string,
   height: number,
-): BuiltTx {
+): PostTx {
   return buildPostTx(author, boxes, content, [], POST_LOCK_THREAD_COST, height);
 }
 
@@ -23,7 +28,7 @@ export function buildReplyTx(
   content: string,
   parentPostId: string,
   height: number,
-): BuiltTx {
+): PostTx {
   return buildPostTx(author, boxes, content, [parentPostId], POST_LOCK_REPLY_COST, height);
 }
 
@@ -34,7 +39,7 @@ function buildPostTx(
   parentRefs: string[],
   lockCost: bigint,
   height: number,
-): BuiltTx {
+): PostTx {
   const sorted = [...boxes].sort((a, b) => (b.value > a.value ? 1 : b.value < a.value ? -1 : 0));
   const selected = selectBoxes(sorted, lockCost);
   const selectedTotal = selected.reduce((sum, b) => sum + b.value, 0n);
@@ -56,7 +61,7 @@ function buildPostTx(
     signatures: {},
     protocolVersion: PROTOCOL_VERSION,
     post: {
-      content,
+      contentHash: computeContentHash(content),
       author: owner,
       parentRefs,
       protocolVersion: PROTOCOL_VERSION,
@@ -64,5 +69,5 @@ function buildPostTx(
     },
   };
 
-  return signAndRender(author, tx);
+  return { ...signAndRender(author, tx), content };
 }

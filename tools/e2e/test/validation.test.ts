@@ -59,7 +59,7 @@ describe('validation', () => {
     sigs[sigKeys[0]!] = '00'.repeat(64);
     forgedJson['signatures'] = sigs;
     try {
-      await postPost(node1!, forgedJson);
+      await postPost(node1!, forgedJson, thread.content);
       expect.fail('forged signature should have been rejected');
     } catch (err) {
       expect(err).toBeInstanceOf(NodeError);
@@ -83,8 +83,8 @@ describe('validation', () => {
     const tx2 = buildThreadTx(alice, boxes, 'double spend B', aliceK2.height);
 
     const results = await Promise.allSettled([
-      postPost(node1!, tx1.json),
-      postPost(node2!, tx2.json),
+      postPost(node1!, tx1.json, tx1.content),
+      postPost(node2!, tx2.json, tx2.content),
     ]);
 
     const submitted: string[] = [];
