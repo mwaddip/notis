@@ -8,6 +8,7 @@ import {
   MSG_MODIFIER_RESPONSE,
   MODIFIER_ORDERING_BLOCK,
   MODIFIER_POST_BODY,
+  BACKFILL_BATCH_IDS,
 } from './types.js';
 import { isHeight, MAX_INV_IDS, MAX_SERVE_BODY_BYTES } from './msg-guards.js';
 import type { SyncInfo, Inv, ModifierRequest, ModifierResponse, SyncState } from './sync-types.js';
@@ -518,7 +519,7 @@ export class SyncMachine {
   onTimerTick(): void {
     const now = Date.now();
 
-    if (this.state.phase === 'syncing') {
+    if (this.state.phase === 'syncing' || this.state.phase === 'backfill') {
       if (
         now - this.lastProgressMs > STALL_TIMEOUT_MS &&
         this.state.syncPeerId
@@ -646,7 +647,7 @@ export class SyncMachine {
       // The sync conversation died with the peer — a response that crosses the
       // disconnect in flight is dropped without penalty by response binding.
       this.outstanding.clear();
-      if (this.state.phase === 'syncing' || this.state.phase === 'synced') {
+      if (this.state.phase === 'syncing' || this.state.phase === 'backfill' || this.state.phase === 'synced') {
         this.state.phase = 'idle';
       }
     }
@@ -676,14 +677,7 @@ export class SyncMachine {
     } else if (info.tipHeight < ourHeight) {
       this.servePeer(peerId, info.tipHeight);
     } else if (info.tipHeight === ourHeight && this.state.phase === 'syncing') {
-      this.state.phase = 'synced';
-      this.state.stalledPeers.clear();
-      // Fire sync-complete callbacks
-      for (const cb of this.onSyncedCallbacks) {
-        try { cb(); } catch (err) {
-          console.warn(`[sync-machine] onSynced callback error: ${String(err)}`);
-        }
-      }
+      this.enterBackfill();
     }
   }
 
@@ -850,7 +844,12 @@ export class SyncMachine {
 
     const blocks: unknown[] = [];
     for (const mod of resp.modifiers) {
+      // Unsolicited and already-consumed ids are dropped; a duplicate id
+      // within one response processes once (the first occurrence consumes it).
       if (!requested.has(mod.id)) continue;
+      // An empty payload answers nothing — the id stays outstanding so a
+      // later response can still deliver it; a peer abusing this makes no
+      // progress and stalls out.
       if (mod.data.length === 0) continue;
       requested.delete(mod.id);
       blocks.push(mod.data);
@@ -862,6 +861,10 @@ export class SyncMachine {
     this.store.appendBlocks(blocks, peerId);
     const newHeight = this.store.chainHeight();
 
+    // Stall progress = chain height (audit M-10): the stall clock advances
+    // only when applying a response strictly increased the chain — junk and
+    // already-known blocks leave it untouched, so a peer feeding non-advancing
+    // responses is rotated away within one stall window.
     if (newHeight > heightBefore) {
       this.lastProgressMs = Date.now();
     }
@@ -886,6 +889,8 @@ export class SyncMachine {
     if (!commitmentProvider || !verifier || !deliver) return;
 
     for (const mod of resp.modifiers) {
+      // Unrequested and already-consumed ids dropped; an empty payload leaves
+      // the id outstanding.
       if (!requested.has(mod.id)) continue;
       if (mod.data.length === 0) continue;
       requested.delete(mod.id);
@@ -907,12 +912,19 @@ export class SyncMachine {
         continue;
       }
 
+      // Progress = a body the node stored (onPostBody → true). A verified-but-
+      // unstored or dropped body leaves the stall clock untouched.
       const isProgress = deliver(mod.id, content, peerId);
       if (isProgress) {
         this.lastProgressMs = Date.now();
       }
     }
-    if (requested.size === 0) this.outstanding.delete(peerId);
+    if (requested.size === 0) {
+      this.outstanding.delete(peerId);
+      if (this.state.phase === 'backfill') {
+        this.requestBackfillBatch();
+      }
+    }
   }
 
   // -----------------------------------------------------------------------
@@ -947,6 +959,63 @@ export class SyncMachine {
     if (ids.length > 0) {
       const inv: Inv = { typeId: MODIFIER_ORDERING_BLOCK, ids };
       this.sendToPeer(peerId, encodeInv(this.magic, inv));
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Backfill — NET_INTERFACE → Sync State Machine
+  // -----------------------------------------------------------------------
+
+  private enterBackfill(): void {
+    this.state.phase = 'backfill';
+    this.lastProgressMs = Date.now();
+    this.requestBackfillBatch();
+  }
+
+  private requestBackfillBatch(): void {
+    const provider = this.missingBodiesProvider;
+    if (!provider) {
+      this.enterSynced();
+      return;
+    }
+    const entries = provider(BACKFILL_BATCH_IDS);
+    if (entries.length === 0) {
+      this.enterSynced();
+      return;
+    }
+
+    const peerId = this.state.syncPeerId;
+    if (!peerId) {
+      this.enterSynced();
+      return;
+    }
+
+    const ids = entries.map(e => e.id);
+    // Store commitments for verification on response
+    if (!this.postBodyCommitmentProvider) {
+      const commitMap = new Map<string, Uint8Array>();
+      for (const e of entries) commitMap.set(e.id, e.contentHash);
+      this.setPostBodyCommitmentProvider((id) => commitMap.get(id) ?? null);
+    }
+
+    let target = this.outstanding.get(peerId);
+    if (!target) {
+      target = new Set();
+      this.outstanding.set(peerId, target);
+    }
+    for (const id of ids) target.add(id);
+
+    const req: ModifierRequest = { typeId: MODIFIER_POST_BODY, ids };
+    this.sendToPeer(peerId, encodeModifierRequest(this.magic, req));
+  }
+
+  private enterSynced(): void {
+    this.state.phase = 'synced';
+    this.state.stalledPeers.clear();
+    for (const cb of this.onSyncedCallbacks) {
+      try { cb(); } catch (err) {
+        console.warn(`[sync-machine] onSynced callback error: ${String(err)}`);
+      }
     }
   }
 

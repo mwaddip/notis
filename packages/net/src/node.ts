@@ -1343,7 +1343,7 @@ export class NetNode {
   }
 
   /** NET_INTERFACE → API → Node Lifecycle. */
-  syncPhase(): 'idle' | 'syncing' | 'synced' {
+  syncPhase(): 'idle' | 'syncing' | 'backfill' | 'synced' {
     return this.syncMachine?.getState().phase ?? 'idle';
   }
 
