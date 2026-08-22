@@ -297,11 +297,6 @@ id on pull (NET_INTERFACE → Gossip Topics, Sync State Machine), and lives only
 node that applies a post transaction without having seen its packet holds a **placeholder** —
 structure, no body — until backfill fills it (NODE_INTERFACE → Store Interface → Posts DAG).
 
-> ⚠ **AHEAD OF CODE — 2026-08-22.** The `PostCommit`/`Post` split, `POST_CONTENT_DOMAIN`, the
-> packet and the body pull land with the content-in-the-DAG unit (types → validation → net →
-> node → e2e). Until it lands the transaction carries the body as `post?: Post` and no body
-> transport exists.
-
 > **The byte-exact layout is specified in `TYPES_INTERFACE.md` (Serialization → "Layout —
 > PostCommit" and "Layout — Post body") and nowhere else.** Every field is length-prefixed and the ref array carries an
 > explicit count (audit M-1); the id's domain tag keeps a post id from ever colliding with a
@@ -352,10 +347,6 @@ The root author may prune their entire subtree at any time. Pruning:
    a descendant's id answers only a tombstone derived from `block_topology` and that stump
    (NODE_INTERFACE → Resolution order for a post id)
 4. Is authorized by a signed prune transaction from the root author's key
-
-> ⚠ **AHEAD OF CODE — 2026-08-22.** Deletion, the journalled undo records and the descendant
-> tombstone land with the content-in-the-DAG unit (node). Until it lands the node marks the
-> subtree's rows `'pruned'` and hides them on read.
 
 The prune is authorized **solely** by the root author's Ed25519 signature
 over `(rootPostHash, subtreeMerkleRoot)`. The signature travels in the block
@@ -1830,11 +1821,9 @@ forever. A node rejects objects with an unsupported protocol version.
   has no `trigger` field and no other cause (ruled 2026-08-19)
 - A block commits a post's structure (`PostCommit`) and its content commitment, never its
   content; the body lives only in the DAG
-  > ⚠ **AHEAD OF CODE — 2026-08-22.** Lands with the content-in-the-DAG unit
 - Pruning deletes: once the prune block's journal is dropped below `MAX_REORG_DEPTH`, a node
   holds no byte of the subtree's content — no DAG row, no journal row; within that depth the
   rows exist only as undo records, never served
-  > ⚠ **AHEAD OF CODE — 2026-08-22.** Lands with the content-in-the-DAG unit (node)
 
 ### Identity
 
@@ -2343,10 +2332,6 @@ Post topology lives in `block_topology`; there are no sub-block tables and no su
 mempool rows. `peers` backs `@dagsocial/net`'s PeerDb across restarts. `dag_posts` is the
 DAG: structure from the transaction, `content` nullable — `NULL` is a placeholder awaiting
 backfill — and a pruned post has no row (NODE_INTERFACE → Store Interface → Posts DAG).
-
-> ⚠ **AHEAD OF CODE — 2026-08-22.** The nullable body and row deletion land with the
-> content-in-the-DAG unit (node); until then `content` is `NOT NULL` and a pruned row stays,
-> marked.
 
 ---
 

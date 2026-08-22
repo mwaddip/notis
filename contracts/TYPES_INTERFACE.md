@@ -65,10 +65,6 @@ wire, raw bytes in CBOR.
 travels beside its transaction as a packet (→ Layout — UtxoTransaction, the packet codec) and
 by id on pull, and lives only in the DAG; `contentHash` is the one binding between them.
 
-> ⚠ **AHEAD OF CODE — 2026-08-22.** The `PostCommit`/`Post` split, `POST_CONTENT_DOMAIN`,
-> `computeContentHash` and the packet codec land with the content-in-the-DAG unit (types first).
-> Until it lands `tx.post` is a `Post` and the body is inside the transaction.
-
 ⛔ **A post's identity is PROVENANCE-DERIVED, exactly as a box's is.** A post is
 created by a transaction (→ "Post transactions" below), and no two posts can share
 one — the creating transaction spends the author's karma box, so its inputs differ.
@@ -160,7 +156,7 @@ username's concern; avatars and polls are not post types.
 
 | Export | Signature | Description |
 |--------|-----------|-------------|
-| `computeContentHash(content)` | `(string) => Uint8Array(32)` | `blake2b512(POST_CONTENT_DOMAIN ‖ utf8(content)).subarray(0,32)` — the body's commitment, `PostCommit.contentHash`. Hash-side tag, never on the wire. **AHEAD OF CODE — 2026-08-22** (types) |
+| `computeContentHash(content)` | `(string) => Uint8Array(32)` | `blake2b512(POST_CONTENT_DOMAIN ‖ utf8(content)).subarray(0,32)` — the body's commitment, `PostCommit.contentHash`. Hash-side tag, never on the wire. |
 | `postFieldBytes(commit)` | `(PostCommit) => Uint8Array` | The canonical length-prefixed encoding (see above). The commit is the post's **payload inside its creating transaction**, so it enters that transaction's `TxId`; the body never does. |
 | `computePostId(txId, index)` | `(TxId, number) => PostId` | `blake2b512(POST_ID_DOMAIN \|\| utf8(txId) \|\| u32BE(index)).subarray(0,32).toString('hex')` — **provenance-derived**, taking no `Post` at all |
 
@@ -1499,13 +1495,6 @@ Post body).
   and `read` is the adjacent `readPostCommitFields`, so the standalone wire form and the
   in-transaction payload are the same bytes with one statement of the layout.
 
-> ⚠ **AHEAD OF CODE — 2026-08-22.** Slot 1 is `lpUtf8(content)` in the tree; the commit layout
-> lands with the content-in-the-DAG unit (types). **Every post-bearing `TxId` moves with it** —
-> and with them the ids of those transactions' output boxes and the post ids derived from them;
-> **a transaction with no post is unchanged**, because `opt`'s absent tag is the same byte either
-> way. Re-pin by the method under "Re-pinning a frozen vector when a preimage changes", and
-> state the survivor set: every non-post id survives, no post-bearing id does.
-
 ### Layout — Post body
 
 The body's standalone wire form — a pull response's element, and the packet's trailing field:
@@ -1518,8 +1507,8 @@ The body's standalone wire form — a pull response's element, and the packet's 
   it travels (the packet's transaction, the pull request's id list); **never hashed into
   anything** — the only binding is `computeContentHash(content) == commit.contentHash`, checked
   by `verifyPostBody` at every entry (VALIDATION_INTERFACE → verifyPostBody).
-- `encodePost` / `decodePost` (the body-bearing struct's codec) are deleted with the split:
-  nothing stores or ships a `Post` as one struct.
+- There is no `encodePost` / `decodePost`: nothing stores or ships a `Post` as one struct — the
+  commit has its codec, the body has its own.
 
 The encodings are positional and injective (audit M-1); the frozen golden vectors are the
 cross-implementation anchor, reproduced by the demo-UI mirror.
@@ -1885,9 +1874,6 @@ rule is stated and enforced where packets enter (NET_INTERFACE → Gossip Topics
 NODE_INTERFACE → Post transactions); the codec itself encodes whatever it is given, so the
 biconditional is a check, not a property of the bytes.
 
-> ⚠ **AHEAD OF CODE — 2026-08-22.** The packet codec lands with the content-in-the-DAG unit
-> (types); the gossip payload in the tree is `encodeTx` alone.
-
 > ## ✅ RESOLVED — the layout is implemented. Closed 2026-08-17.
 >
 > **`encodeTx` is positional and reaches `writeTxIdFields`**, so the wire form and the `TxId`
@@ -2211,11 +2197,11 @@ which is now exported as `canonicalBoxBytes` — see "Canonical encoding" under 
 | Export | Signature | Description |
 |--------|-----------|-------------|
 | ~~`serializeTx(tx)`~~ | — | ⚠ **DELETED (G3b) — and the description was never true.** It was built on cbor-x's default `encode`, which is neither of the two encoders that matter, so its bytes were consumed by no identity path. Transaction identity comes from `computeTxId`. Doubly wrong: the function is gone *and* "canonical CBOR encode for tx identity" never described it |
-| `encodePostCommit(commit)` | `(PostCommit) => Uint8Array` | Positional — see Layout — PostCommit. **AHEAD OF CODE — 2026-08-22** (types); `encodePost`/`decodePost` are deleted with the split |
+| `encodePostCommit(commit)` | `(PostCommit) => Uint8Array` | Positional — see Layout — PostCommit |
 | `decodePostCommit(bytes)` | `(Uint8Array) => PostCommit` | Inverse of `encodePostCommit` |
-| `encodePostBody(content)` | `(string) => Uint8Array` | `lpUtf8(content)` — see Layout — Post body. **AHEAD OF CODE — 2026-08-22** (types) |
+| `encodePostBody(content)` | `(string) => Uint8Array` | `lpUtf8(content)` — see Layout — Post body. |
 | `decodePostBody(bytes)` | `(Uint8Array) => string` | Inverse of `encodePostBody` |
-| `encodeTxPacket(tx, content?)` | `(UtxoTransaction, string?) => Uint8Array` | `encodeTx(tx)` ‖ `opt(lpUtf8(content))` — the gossip payload; see Layout — UtxoTransaction, the packet codec. **AHEAD OF CODE — 2026-08-22** (types) |
+| `encodeTxPacket(tx, content?)` | `(UtxoTransaction, string?) => Uint8Array` | `encodeTx(tx)` ‖ `opt(lpUtf8(content))` — the gossip payload; see Layout — UtxoTransaction, the packet codec. |
 | `decodeTxPacket(bytes)` | `(Uint8Array) => { tx: UtxoTransaction; content?: string }` | Inverse of `encodeTxPacket` |
 | `encodeHeader(h)` | `(BlockHeader) => Uint8Array` | Positional — the input to `blockHash` / `computePowHash`. See Layout — Block |
 | `decodeHeader(bytes)` | `(Uint8Array) => BlockHeader` | Inverse of `encodeHeader` |

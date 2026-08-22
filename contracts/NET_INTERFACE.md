@@ -221,10 +221,6 @@ is delivered whole to `onTx(tx, content, fromPeerId)`; a post's transaction and 
 never accepted apart. The body is outside every id, so a relay cannot re-point it without
 failing the commitment check at the next hop.
 
-> ⚠ **AHEAD OF CODE — 2026-08-22.** The packet payload and the validator's two body steps
-> land with the content-in-the-DAG unit (net, after types and validation). In the tree the
-> topic carries `encodeTx` alone and the body is inside the transaction.
-
 **Tracked reservation (remnant-bounded — TYPES_INTERFACE → tag rules, condition 3): the
 topic string `/dagsocial/subblock/1`.** Held by its live guard — `gossip.test.ts` asserts
 the topic has no validator — and it leaves with that guard.
@@ -429,9 +425,6 @@ accumulate-and-stop rule as blocks (`MAX_SERVE_BODY_BYTES`). Each returned body 
 by the requester against the commitment of the transaction it already holds
 (`verifyPostBody`) before it is stored; a mismatch is a misbehaviour penalty.
 
-> ⚠ **AHEAD OF CODE — 2026-08-22.** `103`, its serve arm and the local-only rule land with the
-> content-in-the-DAG unit (net).
-
 ### Sync Flow
 
 ```
@@ -514,10 +507,6 @@ pick_sync_peer() → sync_from_peer() → backfill() → synced()
   (NODE_INTERFACE → Store Interface → Posts DAG, "Backfill after sync"); net
   serves the request and returns the verified bodies to the caller, it runs no
   timer of its own for it.
-
-> ⚠ **AHEAD OF CODE — 2026-08-22.** The `backfill` phase, `BACKFILL_BATCH_IDS`, the
-> `setMissingBodiesProvider` / `onPostBody` seams and `requestPostBodies` land with the
-> content-in-the-DAG unit (net).
 
 ### Sync Integrity (audit M-10)
 
@@ -922,8 +911,7 @@ never both.
 
 > ⚠ **QUALIFIED — verified 2026-08-22.** The tree relays no request at all:
 > `handleModifierRequestMsg` (`sync-machine.ts`) serves blocks from the local store and omits the
-> ids it lacks, and the generic serve-or-relay helper (`handleModifierRequest`, `GossipDeps`) had no
-> production caller and is deleted with the content-in-the-DAG unit. The rule binds any relay that
+> ids it lacks, and no serve-or-relay helper exists in the package. The rule binds any relay that
 > is ever added; until one is, the serve half is the whole of it.
 
 **One modifier type never relays: `MODIFIER_POST_BODY` (103) is served locally or omitted.**
@@ -932,8 +920,6 @@ leaves the id out, and the requester asks another peer. Relaying a body request 
 query for a pruned or never-published body to every peer with nothing to terminate it, and
 the answer a relay could bring back is one the requester can just as well fetch itself from
 the peer that has it (→ ModifierRequest).
-
-> ⚠ **AHEAD OF CODE — 2026-08-22.** Lands with the content-in-the-DAG unit (net).
 
 ## Penalty Attribution
 
@@ -1126,14 +1112,14 @@ structure, PoW, and signatures.
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `broadcastOrderingBlock(b)` | `(OrderingBlock) => Promise<void>` | Gossip a newly created ordering block |
-| `broadcastTx(tx, content?)` | `(UtxoTransaction, string?) => Promise<void>` | Gossip a transaction **packet** — `encodeTxPacket(tx, content)`; a post's body travels in the same message (→ Gossip Topics). The caller passes `content` ⟺ `tx.post` is set. **AHEAD OF CODE — 2026-08-22** (net): the tree's signature takes the transaction alone |
+| `broadcastTx(tx, content?)` | `(UtxoTransaction, string?) => Promise<void>` | Gossip a transaction **packet** — `encodeTxPacket(tx, content)`; a post's body travels in the same message (→ Gossip Topics). The caller passes `content` ⟺ `tx.post` is set. |
 
 ### Inbound Processing
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `onOrderingBlock(callback)` | `((OrderingBlock, fromPeerId: string) => void) => void` | Register handler for inbound ordering blocks. `fromPeerId` is the peer that **relayed** the block to us, or `''` — see below |
-| `onTx(callback)` | `((UtxoTransaction, content: string \| undefined, fromPeerId: string) => void) => void` | Register handler for inbound transaction packets. `content` is the verified body when the transaction carries a post (the validator has already checked it against `tx.post.contentHash`), `undefined` otherwise; `fromPeerId` carries the same relayed-peer semantics as `onOrderingBlock`'s. **AHEAD OF CODE — 2026-08-22** (net): the tree's callback takes the transaction and the peer |
+| `onTx(callback)` | `((UtxoTransaction, content: string \| undefined, fromPeerId: string) => void) => void` | Register handler for inbound transaction packets. `content` is the verified body when the transaction carries a post (the validator has already checked it against `tx.post.contentHash`), `undefined` otherwise; `fromPeerId` carries the same relayed-peer semantics as `onOrderingBlock`'s. |
 
 ⚠ **`fromPeerId` is not guaranteed to be a peer id.** It is read defensively from the gossip event's
 `propagationSource`, which the gossipsub type declares required — and *required by the type* is not
@@ -1180,9 +1166,9 @@ offer.
 | `setBlocksHandler(cb)` | `((block: OrderingBlock, fromPeerId: string) => boolean) => void` | Handler for blocks received during sync. `fromPeerId` is the peer whose response carried the block. The return is the batch's **continue** signal — `true` for a block the handler applied or already held, `false` for one it rejected or one that extends nothing (node then resolves the fork with `fromPeerId` as counterparty) — and `appendBlocks` **stops the batch at the first `false`**: the blocks after it are chained to the one that did not apply. Progress is still measured by chain height (audit M-10), never by this return |
 | `setHeadersHandler(cb)` | `((height: number) => OrderingBlock \| null) => void` | Provider for `GetHeaders` / `GetBlocks` (codes 14, 16). Returns the whole block, not the header: one provider serves both responses — `Headers` reads `.header`, `Blocks` returns the block |
 | `onSyncComplete(cb)` | `(() => void) => void` | Fired on every entry into the `synced` phase |
-| `setPostBodyProvider(cb)` | `((postId: string) => string \| null) => void` | Provider for the `MODIFIER_POST_BODY` serve arm: the body this node holds for the id, or `null` — served locally or omitted, never relayed (→ Local-Serve-Before-Relay). **AHEAD OF CODE — 2026-08-22** (net) |
-| `setMissingBodiesProvider(cb)` | `((limit: number) => { id: string; contentHash: Uint8Array }[]) => void` | Provider the `backfill` phase reads: up to `limit` post ids whose rows hold no body, newest first, each with the commitment the body must hash to. An empty answer ends the phase. **AHEAD OF CODE — 2026-08-22** (net) |
-| `onPostBody(cb)` | `((postId: string, content: string, fromPeerId: string) => boolean) => void` | Delivery of a pulled body that verified against its commitment. The handler stores it and returns `true` (real progress for the stall clock) or `false` (row gone or already filled — no progress, no penalty). **AHEAD OF CODE — 2026-08-22** (net) |
+| `setPostBodyProvider(cb)` | `((postId: string) => string \| null) => void` | Provider for the `MODIFIER_POST_BODY` serve arm: the body this node holds for the id, or `null` — served locally or omitted, never relayed (→ Local-Serve-Before-Relay). |
+| `setMissingBodiesProvider(cb)` | `((limit: number) => { id: string; contentHash: Uint8Array }[]) => void` | Provider the `backfill` phase reads: up to `limit` post ids whose rows hold no body, newest first, each with the commitment the body must hash to. An empty answer ends the phase. |
+| `onPostBody(cb)` | `((postId: string, content: string, fromPeerId: string) => boolean) => void` | Delivery of a pulled body that verified against its commitment. The handler stores it and returns `true` (real progress for the stall clock) or `false` (row gone or already filled — no progress, no penalty). |
 | `onPeerActive(cb)` | `((peerId: string, direction: 'inbound' \| 'outbound') => void) => void` | Fired when a peer completes the handshake and becomes Active; `direction` is the connection's. |
 | `onPeerDisconnected(cb)` | `((peerId: string, reason: string) => void) => void` | Fired after a peer's disconnect is processed (`PeerManager.removePeer`). `reason` is always `''` — libp2p's `peer:disconnect` carries none; the parameter is the shape JOURNAL_EVENTS → peer_disconnected names. |
 | `onPeerPenalised(cb)` | `((peerId: string, kind: string, detail: string \| null) => void) => void` | Fired by `PeerManager` itself at its two penalty entries, `recordPenalty` and `recordPenaltyKind` — so every path that records a penalty reaches it, `gossip.ts`'s and `penalizePeer`'s included; `kind` is the `PenaltyType` / `PenaltyKind` string as recorded, `detail` the reason. |
@@ -1319,7 +1305,6 @@ import `NetworkProfile`, and reads no environment variable for them.
 - Post bodies are served by id from the local store to peers that ask, backfilled for every
   placeholder row in the `backfill` phase, and delivered to the node only after verifying
   against their commitment
-  > ⚠ **AHEAD OF CODE — 2026-08-22.** Lands with the content-in-the-DAG unit (net)
 - PeerDb populated from handshakes and Peers gossip; outbound manager
   maintaining peer count between minPeers and maxPeers
 
@@ -1341,8 +1326,6 @@ import `NetworkProfile`, and reads no environment variable for them.
 - A post body crosses the network only inside its transaction's packet or as a
   `MODIFIER_POST_BODY` answer — never as a message of its own, never hashed into an id
 - A body request is served locally or omitted — never relayed
-  > ⚠ **AHEAD OF CODE — 2026-08-22.** The three bullets above land with the content-in-the-DAG
-  > unit (net)
 - Ordering blocks are verified before application — a block extending an
   unknown chain may be buffered but never applied
 - UTXO transactions are verified against the local UTXO view — conflicting

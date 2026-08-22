@@ -504,9 +504,6 @@ would be enforcing it on a field that does not exist there.
 Total on adversarial input, like every function here — a non-string `content`, a
 wrong-width `contentHash`, a body over the limit are each `{ valid: false }` with the reason.
 
-> ⚠ **AHEAD OF CODE — 2026-08-22.** Lands with the content-in-the-DAG unit (validation, after
-> types). In the tree the content limits run inside `verifyPost` over a body-bearing `Post`.
-
 ---
 
 ## Structural Validation
@@ -563,10 +560,6 @@ has always made, plus the domain rules `postFieldBytes` relies on:
   (TYPES_INTERFACE → Post typing and profiles)
 
 It reads **no content** — the commit carries none; the body's rules are `verifyPostBody`'s.
-
-> ⚠ **AHEAD OF CODE — 2026-08-22.** The name, the `contentHash` width and the refs count land
-> with the content-in-the-DAG unit (validation). In the tree the function is
-> `verifyPostFieldDomains` over a body-bearing `Post`.
 
 **Why lowercase is load-bearing, not stylistic.** `'AB…'` and `'ab…'` hex-decode
 to the same 32 bytes. Accepting both would make the hex→bytes conversion at the
@@ -697,13 +690,6 @@ non-empty array, **no output is a `genesis_proof` box**, no duplicate inputs,
 — the commit's domain established before `postFieldBytes` can run inside `computeTxId`, and
 **no content check, because the transaction carries no content** — and **the encoded
 transaction is at most `MAX_TX_BYTES`**. That is the whole list.
-
-> ⚠ **AHEAD OF CODE — 2026-08-22.** The post arm exists in the tree under the old names —
-> `verifyTxStructure` calls `verifyPostFieldDomains`, `verifyParentRefsCount`, `verifyContentLimits`
-> and `verifyContentCharacters` over a body-bearing `tx.post` (`verify.ts`, measured 2026-08-22), so
-> today the transaction check does read content; the commit form — domains and refs count only —
-> lands with the content-in-the-DAG unit (validation). The list above omitted the arm until
-> 2026-08-22.
 
 **It does not check `likeTarget`**, and this contract wrongly said it did until
 2026-08-09 — see the correction under `verifyOrderingBlockStructure` below. The
@@ -1161,7 +1147,6 @@ own.
 - A body check (`verifyPostBody`) never runs inside a transaction check, and a transaction
   check never reads content — the transaction carries a commit, the body travels apart
   (TYPES_INTERFACE → Layout — PostCommit, Layout — Post body)
-  > ⚠ **AHEAD OF CODE — 2026-08-22.** Lands with the content-in-the-DAG unit (validation)
 - All functions are synchronous — no Promises, no callbacks
 - Protocol version `PROTOCOL_VERSION` from `@dagsocial/types`
 - Ordering-block hashing is over the **header**. The PoW preimage
