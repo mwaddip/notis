@@ -126,10 +126,6 @@ are hex-encoded.
 | `GET` | `/posts/:id/thread` | — | `{ post, ancestors, descendants }` — full thread context; `post` is `PostJson`, `StumpJson` or `PrunedJson` | 404 as above |
 | `GET` | `/posts` | `?author=hex&limit=50&offset=0` | PostJson[] (same shape, live only — placeholders included, no stumps, no tombstones; ordering below) | — |
 
-> ⚠ **AHEAD OF CODE — 2026-08-22.** `content` beside `tx`, `PrunedJson`, the placeholder and the
-> 404 rule land with the content-in-the-DAG unit (node). In the tree `POST /posts` takes `{ tx }`
-> with the body inside `tx.post`, and a pruned reply answers 404.
-
 **PostJson shape.** The post's own fields, hex where they are bytes, plus what the node knows
 about it:
 
@@ -229,10 +225,6 @@ render "not yet available", not an error. **Liveness is the typed guard `isLiveP
 `dag_posts` row, body or not), never `'content' in x`** — a placeholder has the key and a
 `null`; every site that must distinguish a post from a stump or tombstone narrows through the
 guard (Post transactions → the placeholder rules).
-
-> ⚠ **AHEAD OF CODE — 2026-08-22.** `PrunedJson`, the resolution order and `isLivePost` land
-> with the content-in-the-DAG unit (node). In the tree a pruned descendant answers 404 and the
-> six liveness sites test `'content' in`.
 
 **Implemented 2026-08-08** (`stumpToJson`, beside `postToJson`). What it
 replaced: the raw `Stump` went out as-is, so `res.json` serialized `authorId`
@@ -444,10 +436,6 @@ invites, vouches, credits, prune).
    `MAX_REORG_DEPTH` the journal is dropped and the node holds no byte of the
    subtree's content anywhere (ARCHITECTURE → Subtree pruning).
 
-   > ⚠ **AHEAD OF CODE — 2026-08-22.** Row deletion, the journalled rows and the
-   > journalled stump land with the content-in-the-DAG unit (node). In the tree
-   > `pruneSubtree` flips `dag_posts.status` to `'pruned'` and the stump insert is
-   > not journalled (→ Stumps).
    **The stump's `upvoteCount` is the like tally of the pruned subtree**: the
    count of like-records the deletion removed, the root's likes included
    (`replyCount` counts replies, so it excludes the root). Like-records derive
@@ -1369,7 +1357,7 @@ There is **no other legal bond or invite shape**. In particular:
   receives karma and when it falls to zero — it is not a decay or settlement
   concern, so it is not on any hot path.
 
-  > ✅ **RESOLVED 2026-08-22 — closed by the content-in-the-DAG unit (node).** `index.ts` seeds
+  > ✅ **RESOLVED 2026-08-22 — closed by PR #119 (`9945682`).** `index.ts` seeds
   > the set at startup with `getKarmaOwners()` (every identity holding an unspent karma box) and
   > registers a store hook (`registerKarmaMembershipHook`) that `insertBox` / `consumeBox` /
   > `deleteBox` / `unconsumeBox` fire on exactly the two transitions — an owner's first unspent
@@ -1414,11 +1402,6 @@ There is **no other legal bond or invite shape**. In particular:
   is the guard at every site that distinguishes a post from a stump or tombstone ("Resolution
   order for a post id"); a tombstone parent is `Parent post not found`, as the null is today;
   a reply to a stump stays valid (ARCHITECTURE → Post structure: refs may name stumps).
-
-  > ⚠ **AHEAD OF CODE — 2026-08-22.** The three bullets above land with the content-in-the-DAG
-  > unit (node, after types, validation and net). In the tree the body is inside `tx.post`, a
-  > relayed post gets no row until its block, `createPost` inserts the row before admission
-  > (a `MempoolFullError` leaves an orphan row), and no mempool exit deletes a pending row.
 
 ### Bond transition rules
 
@@ -2525,8 +2508,9 @@ Fresh schema — no Phase 1 migration.
 **`dag_posts` columns:** `id`, `content_hash` (hex, NOT NULL), `content` (**nullable** — `NULL` is
 the placeholder), `author`, `parent_refs`, `protocol_version`, `type`, `status`, `block_height`,
 `block_index`. There is no `raw_cbor`: a body is stored only after `verifyPostBody` accepted it
-against `content_hash`, so the column is the authority and nothing re-verifies it. `getPostRaw`
-and `pruneSubtree` are deleted with the split.
+against `content_hash`, so the column is the authority and nothing re-verifies it. There is no
+`getPostRaw` and no `pruneSubtree`: a body is read through `getPost`, a prune deletes through
+`deletePostRows`.
 
 **Backfill after sync.** A placeholder's body is pulled by id (NET_INTERFACE → Sync State
 Machine, `requestPostBodies`): in the `backfill` phase net drives it from `getMissingBodies`;
@@ -2535,11 +2519,6 @@ once `synced`, the node drives it from its block-applied hook for every placehol
 block height: the first request at creation, retries after 1, 2, 4, … blocks, capped at 256**,
 so an unserved body costs a bounded trickle and never a loop. A received body is verified and
 stored through `setPostBody`; `emitPostReceived(postId, peerId, via: 'pull')`.
-
-> ⚠ **AHEAD OF CODE — 2026-08-22.** The nullable body, `content_hash`, the new store functions,
-> the deletions and the backfill driver land with the content-in-the-DAG unit (node). In the tree
-> `content` is `NOT NULL`, `raw_cbor` exists, `getPost` returns `StoredPost | Stump | null`, and
-> `pruneSubtree` marks rather than deletes.
 
 ### Like-records (P2-D — replaces `dag_likes`)
 
@@ -3021,10 +3000,6 @@ BlockJournal {
 }
 ```
 
-> ⚠ **AHEAD OF CODE — 2026-08-22.** `deletedPosts` and `insertedStumps` land with the
-> content-in-the-DAG unit (node); in the tree the prune marks rows and the stump insert is not
-> journalled.
-
 **One log, not parallel arrays (Spec G phase B).** `mutations` is a
 discriminated union over **every committed entity**, not a box-only log with
 sibling arrays. That is deliberate and load-bearing: a committed entity that
@@ -3116,11 +3091,6 @@ stump row cannot arise on a fresh chain; there is no repair or pull path.
 **The insert is journalled** (Block Journal → `insertedStumps`), so `revertBlock` removes the
 stump of a reorged-away prune with the rows it restores; the entry re-enters the mempool and
 writes the stump again when it re-settles.
-
-> ⚠ **AHEAD OF CODE — 2026-08-22.** Lands with the content-in-the-DAG unit (node). In the tree
-> stump inserts are not journalled, so `revertBlock` does not remove them — a reorged-away
-> prune leaves its stump row (and `getPost` keeps resolving it) until the entry settles again
-> on the winning branch.
 
 ### AVL+ State Root
 
@@ -3791,7 +3761,7 @@ below) and two `NetNode` reads (`getConnectedPeers()`, `syncPhase()` — NET_INT
 | `peers_connected` | `net.getConnectedPeers().length` — Active peers | read at request time |
 | `last_post_received_ms_ago` | milliseconds since the last `post_received` journal event, any source; **`null`** until the first | the `emitPostReceived` wrapper stamps the time |
 | `syncing` | `net.syncPhase()` is `'syncing'` or `'backfill'` — the chain is not yet usable as current | read at request time |
-| `sync_phase` | `net.syncPhase()` verbatim — `'idle' \| 'syncing' \| 'backfill' \| 'synced'` (NET_INTERFACE → Sync State Machine). **AHEAD OF CODE — 2026-08-22** (node; `'backfill'` is net's) | read at request time |
+| `sync_phase` | `net.syncPhase()` verbatim — `'idle' \| 'syncing' \| 'backfill' \| 'synced'` (NET_INTERFACE → Sync State Machine). | read at request time |
 | `uptime_seconds` | seconds since process start | — |
 | `apiVersion`, `journalEventsVersion` | `"1.0"` | static |
 
@@ -3815,7 +3785,7 @@ below) and two `NetNode` reads (`getConnectedPeers()`, `syncPhase()` — NET_INT
 |---|---|
 | `posts_received_total` | `post_received` journal events, any source (JOURNAL_EVENTS → post_received) |
 | `posts_validated_total` | `post_validated` journal events |
-| `post_bodies_pulled_total` | `post_received` journal events whose `via` is `"pull"` — bodies backfilled by id (JOURNAL_EVENTS → post_received). **AHEAD OF CODE — 2026-08-22** (node) |
+| `post_bodies_pulled_total` | `post_received` journal events whose `via` is `"pull"` — bodies backfilled by id (JOURNAL_EVENTS → post_received). |
 | `pow_verifications_total` | every `verifyOrderingBlockPoW` the node runs on **received** work — net's relay check (through the validators object node supplies to `NetNode`) and block application's — never the miner's check of its own template |
 | `pow_verification_failures_total` | those of the above that returned `false` |
 | `http_requests_total` | every request the **public** app receives (an express middleware ahead of the routes); the admin app's own requests are not counted |
@@ -3956,8 +3926,7 @@ not fail the API request.
   mempool via `admitTx`; for a post transaction the packet's body — already verified against
   `tx.post.contentHash` by net's topic validator — is stored as the pending row in the same
   store transaction as the admission (Post transactions → the packet is the unit), and
-  `emitPostReceived(postId, fromPeerId, via: 'packet')` fires. **AHEAD OF CODE — 2026-08-22**
-  (node): in the tree the handler admits the transaction and inserts no row
+  `emitPostReceived(postId, fromPeerId, via: 'packet')` fires.
 - **`onOrderingBlock(block, fromPeerId)`**: structure / PoW pre-filters (net) →
   `handleOrderingBlock` — already held → no-op; extends our tip or height 0 →
   `applyOrderingBlock` → confirms posts → removes confirmed entries from mempool;
@@ -4317,9 +4286,6 @@ phase; NET_INTERFACE is authoritative for that side.
 - A pending row exists iff its transaction is in the pool, or the post is confirmed
 - Once a prune block's journal is dropped below `MAX_REORG_DEPTH`, no `dag_posts` row and no
   journal row holds the subtree's content (ARCHITECTURE → Subtree pruning)
-  > ⚠ **AHEAD OF CODE — 2026-08-22.** The four bullets above land with the content-in-the-DAG
-  > unit (node); until then `raw_cbor` is the stored authority, content limits run inside
-  > `verifyPost`, and a pruned row stays, marked
 - Protocol version checked at verification
 - Consumers call the Store interface, never the backend directly
 - UTXO transactions are atomic — all boxes consumed/created in one commit

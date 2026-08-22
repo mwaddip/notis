@@ -104,9 +104,6 @@ unvalidated payload (TYPES_INTERFACE → Totality), so an invalid arrival emits
 nothing. A post applied from a block without its body emits `post_indexed` for the
 placeholder row and `post_received` only when the body arrives.
 
-> ⚠ **AHEAD OF CODE — 2026-08-22.** `via` and the pull emission land with the content-in-the-DAG
-> unit (node). The event count stays fifteen: no new event, one new field.
-
 ### post_validated
 **Level:** INFO
 **Fields:** `post_id` (string), `validation_duration_ms` (number)
