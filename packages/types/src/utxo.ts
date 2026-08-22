@@ -845,7 +845,7 @@ export interface VouchEscrowBox extends BoxBase {
   boxType: 'vouch_escrow';
   value: bigint;              // Exactly what the consumed VouchBox held
   owner: Uint8Array;          // 32 raw bytes — the voucher; where the karma returns
-  releaseAtBlock: number;     // Unvouch height + VOUCH_COOLDOWN_BLOCKS
+  releaseAtBlock: number;     // Vouch cast height + vouchCooldownBlocks — NODE_INTERFACE → Status
 }
 
 // --- Like accrual ---
