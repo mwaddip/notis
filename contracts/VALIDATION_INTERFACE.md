@@ -1044,7 +1044,6 @@ rejected before phase N+1 executes.
 
 **Phase 3 — DAG integrity (moderate):**
 - Every `parentRefs[i]` exists in local DAG or unconfirmed pool
-- Parent linkage consistent with canonical branch at that depth
 - No duplicate post in local DAG (idempotent — treated as no-op, not error)
 
 **Phase 4 — Content (variable cost, deferrable):**

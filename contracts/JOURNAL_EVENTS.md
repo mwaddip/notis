@@ -4,9 +4,7 @@
 **Stability:** stable
 **Last verified against code:** 2026-08-22
 
-> ✅ **14 events are declared below and 14 are emitted.**
-> ⚠ **AHEAD OF CODE — 2026-08-22:** the code still emits a fifteenth, `dag_reorg`, from `services/dag-service.ts`; the unit deleting that module deletes the emitter and its `journal.ts` wrapper.
-> Every emitter is a
+> ✅ **14 events are declared below and 14 are emitted — re-derived 2026-08-22.** Every emitter is a
 > `journal.ts` wrapper around `emitEvent`, and an event is emitted when its wrapper is called from `src`.
 > The four that read `@dagsocial/net` — `peer_connected`, `peer_disconnected`, `peer_penalised`,
 > `sync_complete` — fire from the hooks `NetNode` exposes (NET_INTERFACE → API → Sync Handler

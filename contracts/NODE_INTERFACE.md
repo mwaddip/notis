@@ -3664,16 +3664,6 @@ the pinned root.
 
 ---
 
-> ⚠ **AHEAD OF CODE — 2026-08-22.** This contract holds no canonical-DAG view, no post scores and no
-> DAG fork choice: the block chain orders posts (`(block_height, block_index)`) and nothing ranks them
-> on the node. The code still holds `services/dag-service.ts` (`DagService` — `post_scores`,
-> `canonical_branch`, `dag_meta.dag_tip_hash` / `reorg_floor`, the `dag_reorg` event, the `dagService`
-> parameter through block application, reorg, the pull handler and the creator) — a per-block
-> ranker whose outputs nothing reads; the unit deletes it with its tables, its journal event and its
-> tests.
-
----
-
 ## Admin Listener
 
 A second Express server on `127.0.0.1:ADMIN_PORT` (default 3001). Never
