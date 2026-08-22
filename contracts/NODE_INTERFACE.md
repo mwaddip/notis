@@ -2989,7 +2989,7 @@ JournalMutation = BoxMutation | RecordMutation
 BlockJournal {
   blockHeight: number
   mutations: JournalMutation[]     // ordered, application order — state rollback + AVL feed
-  confirmedSubBlockIds: string[]   // inverse: unconfirmPost; also mempool re-insertion
+  confirmedSubBlockIds: string[]   // inverse: unconfirmPost — not a mempool key
   appliedUtxoTxs: Array<{ txId: string, txCbor: Uint8Array }>   // mempool re-insertion only
   likeRecordInsertions: Array<{ targetPostId: string, likerId: UserId }>
                                    // inverse: deleteLikeRecord (P2-D)
@@ -3067,7 +3067,10 @@ credits, protocol-box successors, invite grants, like markers and carry,
 decay replacements, prune refunds, fee-box consumption), post-lock vesting's
 transfer, like-record inserts and prune-time deletes (rows restored
 exactly), prune settlement, user txs, and **identity records**. Reorg
-re-insertion reads `appliedUtxoTxs` (txCbor) and `confirmedSubBlockIds`.
+re-insertion reads `appliedUtxoTxs` (txCbor) and the reverted blocks' prune
+entries (`utxoTxTree.pruneEntries`, returned by `revertBlock` — read before the
+block row is deleted), each re-inserted after `removeMempoolPrunes` so a copy
+already in the pool lands once; `confirmedSubBlockIds` is not a mempool key.
 
 Reverse order is what makes a record written **more than once in one block**
 revert correctly (activity bump then decay, at the same height): each inverse

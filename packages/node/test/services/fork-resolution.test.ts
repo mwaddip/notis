@@ -15,6 +15,8 @@ import {
   PROTOCOL_VERSION,
   ReaderError,
   MAX_BLOCK_BODY_BYTES,
+  MEMPOOL_EXPIRY_BLOCKS,
+  computePruneEntryId,
 } from '@dagsocial/types';
 import { blockHash, cumulativeWork, verifyHeaderChain } from '@dagsocial/validation';
 import type {
@@ -24,6 +26,7 @@ import type {
   Stump,
   UtxoTransaction,
   BlockHeader,
+  PruneEntry,
 } from '@dagsocial/types';
 import type { StoredPost } from '../../src/store/posts.js';
 import type { BlockJournal } from '../../src/store/journal.js';
@@ -39,7 +42,7 @@ import {
   makeTestIdentity,
   mineNextBlock,
   signHeader,
-  solveHeaderPow, fixturePostId, seedPostTx, fillerTx, activateProverOverStore } from '../helpers.js';
+  solveHeaderPow, fixturePostId, seedPostTx, fillerTx, activateProverOverStore, makePruneEntry } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Test config
@@ -1484,7 +1487,7 @@ describe('reorg', () => {
     vi.resetModules();
   });
 
-  it('reverts blocks and re-inserts txs/sub-blocks to mempool', async () => {
+  it('reverts blocks and re-inserts txs to mempool', async () => {
     const db = await importDb();
     db.initDb(':memory:');
 
@@ -1830,6 +1833,178 @@ describe('reorg', () => {
     forkResolution.reorg(0, chain);
     expect(ordering.getCurrentHeight()).toBe(3);
     for (const h of [1, 2, 3]) expect(ordering.getOrderingBlock(h)).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests — reorg prune re-insertion (MEMPOOL_INTERFACE → removeMempoolPrunes:
+// "and by `reorg` before it re-inserts the prune entries of reverted blocks").
+// ---------------------------------------------------------------------------
+
+describe('reorg — prune re-insertion', () => {
+  beforeEach(async () => { vi.resetModules(); });
+  afterEach(async () => {
+    try {
+      const bc = await importBlockCreator();
+      bc.stopBlockCreator();
+    } catch { /* not imported */ }
+    vi.resetModules();
+  });
+
+  // Shared setup: seed two posts, confirm in block 1, build a prune entry.
+  async function seedPrunableChain() {
+    const db = await importDb();
+    db.initDb(':memory:');
+
+    const author = makeTestIdentity();
+    const root = await seedPostTx(author, 'prune root');
+    const rootId = root.postId;
+    const reply = await seedPostTx(author, 'prune reply', { parentRefs: [rootId] });
+    const replyId = reply.postId;
+
+    const { applyOrderingBlock } = (await import(
+      '../../src/services/block-apply.js'
+    )) as unknown as { applyOrderingBlock: (b: OrderingBlock) => boolean };
+
+    // Block 1 confirms both post transactions.
+    const confirmBlock = await makeApplicableBlock({ utxoTxs: [root.tx, reply.tx] });
+    expect(applyOrderingBlock(confirmBlock)).toBe(true);
+
+    const pruneEntry = makePruneEntry(rootId, [rootId, replyId], author);
+    return { db, author, rootId, replyId, pruneEntry, applyOrderingBlock };
+  }
+
+  it('a reverted prune entry is re-inserted to the mempool', async () => {
+    const { db, pruneEntry, applyOrderingBlock } = await seedPrunableChain();
+
+    // Block 2 settles the prune.
+    const pruneBlock = await makeApplicableBlock({
+      height: 2,
+      pruneEntries: [pruneEntry],
+    });
+    expect(applyOrderingBlock(pruneBlock)).toBe(true);
+
+    // Pre-state: no prune row in the pool.
+    const { selectMempoolPrunes } = await import('../../src/store/mempool.js');
+    expect(selectMempoolPrunes(10)).toHaveLength(0);
+
+    // Revert block 2, apply nothing.
+    const forkResolution = await importForkResolution();
+    forkResolution.reorg(1, []);
+
+    // Exactly one prune row (MEMPOOL_INTERFACE → selectMempoolPrunes).
+    const pruneRows = selectMempoolPrunes(10);
+    expect(pruneRows).toHaveLength(1);
+    expect(pruneRows[0]!.entry.rootPostHash).toBe(pruneEntry.rootPostHash);
+    expect(pruneRows[0]!.entry.subtreePostIds).toEqual(pruneEntry.subtreePostIds);
+
+    // prune_entry_id and expires_at_height via raw SQL — the store API does
+    // not surface these columns (MEMPOOL_INTERFACE → Schema).
+    const row = db.getDb().prepare(
+      `SELECT prune_entry_id, expires_at_height FROM mempool WHERE entry_type = 'prune'`,
+    ).get() as { prune_entry_id: string; expires_at_height: number };
+    expect(row.prune_entry_id).toBe(computePruneEntryId(pruneEntry));
+    // forkHeight + newBlocks.length + MEMPOOL_EXPIRY_BLOCKS = 1 + 0 + MEMPOOL_EXPIRY_BLOCKS
+    expect(row.expires_at_height).toBe(1 + MEMPOOL_EXPIRY_BLOCKS);
+  });
+
+  // The removeMempoolPrunes call before re-insertion lands the entry ONCE when
+  // the pool already holds a copy (MEMPOOL_INTERFACE → removeMempoolPrunes).
+  it('removes the old row before re-inserting, so the entry lands once', async () => {
+    const { db, pruneEntry, applyOrderingBlock } = await seedPrunableChain();
+
+    const pruneBlock = await makeApplicableBlock({
+      height: 2,
+      pruneEntries: [pruneEntry],
+    });
+    expect(applyOrderingBlock(pruneBlock)).toBe(true);
+
+    // Pre-insert the same entry with a different expiry — the case the
+    // removeMempoolPrunes call in reorg handles.
+    const { insertMempoolPrune, selectMempoolPrunes } = await import(
+      '../../src/store/mempool.js'
+    );
+    const staleExpiry = 9999;
+    insertMempoolPrune(pruneEntry, staleExpiry);
+
+    const forkResolution = await importForkResolution();
+    forkResolution.reorg(1, []);
+
+    // Exactly one prune row for this entry id.
+    const entryId = computePruneEntryId(pruneEntry);
+    const rows = db.getDb().prepare(
+      `SELECT prune_entry_id, expires_at_height FROM mempool
+       WHERE entry_type = 'prune' AND prune_entry_id = ?`,
+    ).all(entryId) as Array<{ prune_entry_id: string; expires_at_height: number }>;
+    expect(rows).toHaveLength(1);
+    // The expiry is the reorg's, not the pre-inserted row's.
+    expect(rows[0]!.expires_at_height).toBe(1 + MEMPOOL_EXPIRY_BLOCKS);
+    expect(rows[0]!.expires_at_height).not.toBe(staleExpiry);
+
+    expect(selectMempoolPrunes(10)).toHaveLength(1);
+  });
+
+  // A prune settled below the fork point is not re-inserted — the bound is
+  // the fork height, not every prune in the chain.
+  it('a prune settled below the fork point stays settled', async () => {
+    const { pruneEntry, applyOrderingBlock } = await seedPrunableChain();
+
+    // Block 2 settles the prune (below the fork point for a height-2 revert).
+    const pruneBlock = await makeApplicableBlock({
+      height: 2,
+      pruneEntries: [pruneEntry],
+    });
+    expect(applyOrderingBlock(pruneBlock)).toBe(true);
+
+    // Block 3 carries no prune entry.
+    const emptyBlock = await makeApplicableBlock({ height: 3 });
+    expect(applyOrderingBlock(emptyBlock)).toBe(true);
+
+    const { selectMempoolPrunes } = await import('../../src/store/mempool.js');
+    expect(selectMempoolPrunes(10)).toHaveLength(0);
+
+    // Fork at height 2: revert only block 3, which carries no prune.
+    const forkResolution = await importForkResolution();
+    forkResolution.reorg(2, []);
+
+    expect(selectMempoolPrunes(10)).toHaveLength(0);
+  });
+
+  // With new blocks: the expiry reflects the new tip, not the fork point.
+  it('re-inserted entry expires at the new tip height plus MEMPOOL_EXPIRY_BLOCKS', async () => {
+    const { db, pruneEntry, applyOrderingBlock } = await seedPrunableChain();
+
+    // Build a competing block at height 2 (without the prune) BEFORE
+    // applying the prune block — the state root is computed against the
+    // state as it stands, so the competitor must be built while the state
+    // is at height 1.
+    const competitor = await makeApplicableBlock({ height: 2 });
+
+    // Apply the prune block at height 2 on the real chain.
+    const pruneBlock = await makeApplicableBlock({
+      height: 2,
+      pruneEntries: [pruneEntry],
+    });
+    expect(applyOrderingBlock(pruneBlock)).toBe(true);
+
+    const { selectMempoolPrunes } = await import('../../src/store/mempool.js');
+    expect(selectMempoolPrunes(10)).toHaveLength(0);
+
+    // Reorg: revert block 2 (carries the prune), apply the competitor.
+    const forkResolution = await importForkResolution();
+    forkResolution.reorg(1, [competitor]);
+
+    const ordering = await importOrdering();
+    expect(ordering.getCurrentHeight()).toBe(2);
+
+    const pruneRows = selectMempoolPrunes(10);
+    expect(pruneRows).toHaveLength(1);
+
+    // newTipHeight = forkHeight + newBlocks.length = 1 + 1 = 2
+    const row = db.getDb().prepare(
+      `SELECT expires_at_height FROM mempool WHERE entry_type = 'prune'`,
+    ).get() as { expires_at_height: number };
+    expect(row.expires_at_height).toBe(2 + MEMPOOL_EXPIRY_BLOCKS);
   });
 });
 
