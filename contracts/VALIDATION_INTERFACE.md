@@ -643,12 +643,10 @@ record for explorers. 1f constrains it *only* to what `vlqU` can encode faithful
 adds **no monotonicity rule and no skew window** — those are consensus rule additions, not encoding
 constraints, and this contract's "never add checks the reference lacks" applies. Note also that the
 reason Bitcoin and Ergo *do* bound their timestamps — difficulty adjustment, and the timewarp class —
-has no analogue here. ⚠ **Corrected 2026-08-09: this previously said "node derives the target from
-height, not time", which is not what the code does.** `expectedTarget(_height)`
-(`node/src/services/difficulty.ts`) **ignores its argument** and returns
-`config.orderingBlockPowTargetBits` — a constant, sourced from the network profile, with the height
-parameter reserved as the seam a real retarget will need. The conclusion is unchanged and in fact
-stronger: a constant target has no adjustment algorithm for a timestamp to attack. **Revisit this
+has no analogue here: `expectedTarget(_height)` (`node/src/services/difficulty.ts`) **ignores its
+argument** and returns `config.orderingBlockPowTargetBits` — a constant, sourced from the network
+profile, with the height parameter reserved as the seam a real retarget will need — and a constant
+target has no adjustment algorithm for a timestamp to attack. **Revisit this
 paragraph if a retarget is ever designed**, because that is the change that makes `createdAt` a
 consensus input rather than a record.
 
@@ -691,13 +689,11 @@ non-empty array, **no output is a `genesis_proof` box**, no duplicate inputs,
 **no content check, because the transaction carries no content** — and **the encoded
 transaction is at most `MAX_TX_BYTES`**. That is the whole list.
 
-**It does not check `likeTarget`**, and this contract wrongly said it did until
-2026-08-09 — see the correction under `verifyOrderingBlockStructure` below. The
-field *is* domain-pinned, just not here: node's `checkTxEnvelope` requires it to
-be 64 lowercase hex when present (`utxo-engine.ts`, `validateTx` step 0), which
-is what establishes the domain for the `opt(b32)` writer in `txIdBytes`. The
-claim was misplaced, not a missing check — but a contract that names the wrong
-layer is how a later reader deletes the real check as redundant.
+**It does not check `likeTarget`.** The field *is* domain-pinned, just not here: node's
+`checkTxEnvelope` requires it to be 64 lowercase hex when present (`utxo-engine.ts`,
+`validateTx` step 0), which is what establishes the domain for the `opt(b32)` writer in
+`txIdBytes`. A contract that names the wrong layer for a check is how a later reader deletes
+the real check as redundant — name the layer that holds it.
 
 Also does NOT check UTXO conservation, authorization, or the like
 biconditional (`likeTarget` ⟺ deficit) — those are Stage 2 (stateful) checks.
@@ -927,15 +923,13 @@ Every check is total: adversarial input yields `{ valid: false }`, never a
 throw. That is what lets the block-apply funnel treat this function as its
 gate (see `NODE_INTERFACE.md`, "Structure validation in the apply funnel").
 
-**Correction, 2026-08-09.** This description previously listed *"`hash` present and non-empty"*.
-There is no `hash` field on `BlockHeader` or `OrderingBlock` and this function has never checked
-one — grep-verified against the types and the implementation. Removed rather than implemented: the
-block hash is *derived* from the header by `blockHash`, never carried in it, and a self-reported
-hash field would be exactly the "trust the object's own claim" pattern this package exists to
-refuse. Recorded because it is the second contract-vs-code divergence found in this file during the
-wire-format bundle; the first (`verifyTxStructure` documented as checking `likeTarget`, which it does
-not) was **closed 2026-08-09** — see that function above. Both were found by reading the code beside
-the claim rather than by any sweep, which is the argument for the standing contract-vs-code audit.
+> ✅ **RESOLVED 2026-08-09 — two never-true claims in this file, both found by reading the code
+> beside the claim.** This description listed *"`hash` present and non-empty"*: no `hash` field
+> exists on `BlockHeader` or `OrderingBlock` and the function checks none — the block hash is
+> *derived* by `blockHash`, never carried, and a self-reported hash would be the "trust the
+> object's own claim" pattern this package refuses. `verifyTxStructure` was described as checking
+> `likeTarget`; it does not (the domain is node's `checkTxEnvelope`'s — see that function). Neither
+> was found by a sweep, which is the argument for the standing contract-vs-code audit.
 
 **The header-field checks in this function** (`prevBlockHash`, `utxoTxRoot`,
 `stateRoot`, `validatorId`, `height`, `protocolVersion`, `powNonce`, `powTargetBits`, `createdAt`) are
