@@ -412,9 +412,8 @@ describe('sync stream handler — the outer span', () => {
 // ---------------------------------------------------------------------------
 // MODIFIER_POST_BODY (103) — served on the request's own stream
 //
-// The old machine path (servePostBodies via sendToPeer) answered on a fresh
-// stream the requester never read. The fix serves the response on the same
-// stream the requester wrote to — the GetBlocks shape.
+// A ModifierRequest of type 103 is answered on the stream it arrived on
+// (NET_INTERFACE → ModifierRequest; Local-Serve-Before-Relay).
 // ---------------------------------------------------------------------------
 
 describe('sync stream handler — post body serve (code 103)', () => {

@@ -895,12 +895,9 @@ describe('SyncMachine', () => {
 
     const settle = () => new Promise((resolve) => setTimeout(resolve, 25));
 
-    /**
-     * Retargeted: the machine now calls pullPostBodies (async, same-stream)
-     * instead of sendToPeer + outstanding. The pull function is wired here;
-     * the old setPostBodyCommitmentProvider / setPostBodyVerifier / setOnMisbehavior
-     * seams are gone — verification lives inside requestPostBodies (node.ts).
-     */
+    // The machine's backfill batch is served by the pullPostBodies delegate
+    // wired here (NET_INTERFACE → Sync State Machine, Backfill);
+    // verification lives inside requestPostBodies (node.ts).
     function makeBackfillMachine(opts: {
       peerHeight?: number;
       missingBodies?: { id: string; contentHash: Uint8Array }[];
