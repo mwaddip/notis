@@ -3004,13 +3004,9 @@ BlockJournal {
   insertedStumps: Stump[]          // prune settlement's stump rows — inverse: deleteStump
 }
 ```
-> ⚠ **AHEAD OF CODE — 2026-08-22.** The code's names are `confirmedSubBlockIds`,
-> `recordConfirmedSubBlocks` and `unconfirmPost(subBlockId)`; the unit renames them to
-> `confirmedPostIds`, `recordConfirmedPosts` and `unconfirmPost(postId)` — the block commits post
-> ids, and no sub-block exists. The field names are the `journal_cbor` keys: the journal is the
-> node's local format, and a journal row written under the old key set is not decodable after
-> the rename — a fresh store, not a migration.
->
+The field names are the `journal_cbor` keys: the journal is the node's local format, with no
+migration path — a store written under a different key set is a different store.
+
 
 **One log, not parallel arrays (Spec G phase B).** `mutations` is a
 discriminated union over **every committed entity**, not a box-only log with

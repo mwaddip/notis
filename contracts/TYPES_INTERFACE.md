@@ -241,9 +241,9 @@ could be presented as `nodeHash(left,right)` for a forged inclusion proof
 > sound only while **every** leaf domain is a non-empty printable ASCII string, so that no
 > leaf preimage can ever begin with `0x00`. The **three** live domains are `stump`, `prune`,
 > `utxotx` — all printable, none a prefix of another, so the NUL delimiter suffices.
-> **Two retired domain strings are tracked reservations** (→ Tracked reservations, below the
-> boxType tag table): `subblock` and `coinbase`. Both are remnant-bounded, and `coinbase`'s
-> remnant is the live coinbase concept itself, so it holds while that concept does.
+> **One retired domain string is a tracked reservation** (→ Tracked reservations, below the
+> boxType tag table): `coinbase` — remnant-bounded by the live coinbase concept itself, so it holds
+> while that concept does. `subblock` is retired and free: no live identifier carries the word.
 >
 > ⛔ **A live/retired list restated in two places is the drift class this file names
 > everywhere else; there is one list and it is here.**
@@ -1218,8 +1218,8 @@ keep a prune leaf from colliding with a transaction leaf.
 Every block carries **one settlement transaction**, riding `utxoTxIds` / `utxoTxs` like any
 other (`ARCHITECTURE` → Block architecture, `NODE_INTERFACE` → the settlement transaction);
 coinbase outputs are **its outputs**, so no block-body field carries the reward. The
-`'coinbase'` and `'subblock'` leaf domains are retired — **§Merkle primitives holds the one
-live/retired list.**
+`'coinbase'` and `'subblock'` leaf domains are retired (`'coinbase'` reserved, `'subblock'` free) —
+**§Merkle primitives holds the one live/retired list.**
 
 ⚠ **The body layout is positional** (`arr(utxoTxIds, b32)` ‖ `arr(utxoTxs, lp)` ‖
 `arr(pruneEntries)`), and `utxoTxTreeByteLength` computes the same length a second way and
@@ -1646,7 +1646,6 @@ from this table — a use that reads every cell as an instruction rather than as
 > |---|---|
 > | tag `2` + boxType `'invite'` | §InviteBox record and its in-code citations; the tag-2 reject vectors; `node/store/db.ts`'s tag-order comment |
 > | boxType `'like'` | the live illegal-transition rule (`utxo-engine`'s like clause) and its reject vectors |
-> | leaf domain `'subblock'` | node's live-legacy identifiers (`confirmedSubBlockIds`, `recordConfirmedSubBlocks`, `unconfirmPost(subBlockId)`) |
 > | leaf domain `'coinbase'` | the live coinbase concept (`coinbase-split.ts`, `COINBASE_*` constants) — the string is permanently collision-prone while the concept lives |
 
 > ## ⛔ TAG 2 IS A TRACKED HOLE
