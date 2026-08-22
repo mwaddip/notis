@@ -6,23 +6,13 @@ import { makeApplicableBlock, seedPostTx, makeTestIdentity } from '../helpers.js
 
 // ---------------------------------------------------------------------------
 // A block's post ids come from its committed transactions — and so does the
-// journal that inverts them
+// journal that inverts them (NODE_INTERFACE → Block Journal)
 // ---------------------------------------------------------------------------
 //
-// ⛔ **This file replaces the `subBlockRefs` suite, and one of its two tests has
-// no successor.** That suite pinned two things:
-//
-//   1. that mempool EVICTION read the committed list rather than an uncommitted
-//      parallel one — gone with the mempool's sub-block entry type. A post now
-//      enters the pool as the transaction that creates it, and there is no
-//      second list a block could disagree with itself about;
-//   2. that the JOURNAL records exactly the ids the block committed to, so
-//      `revertBlock` un-confirms exactly what apply confirmed. **That survives
-//      unchanged in substance**, and is what this file pins.
-//
-// The forward pass and its inverse both read `postsOf`, so they cannot disagree
-// — which is the property, stated as one derivation rather than as two lists
-// that happen to match.
+// The journal records exactly the ids the block committed to, so `revertBlock`
+// un-confirms exactly what apply confirmed. The forward pass and its inverse
+// both read `postsOf`, so they cannot disagree — which is the property, stated
+// as one derivation rather than as two lists that happen to match.
 
 async function importDb() {
   return (await import('../../src/store/db.js')) as {
@@ -92,7 +82,7 @@ describe('post ids are derived from the block\'s committed transactions', () => 
     const journalStore = await importJournalStore();
     const journal = journalStore.getBlockJournal(1);
     expect(journal).not.toBeNull();
-    expect(journal!.confirmedSubBlockIds).toEqual([committed.postId]);
+    expect(journal!.confirmedPostIds).toEqual([committed.postId]);
 
     // The round trip closes. `revertBlock` is what a reorg replays, so this is
     // the inverse under test rather than a stand-in for it.
@@ -112,6 +102,6 @@ describe('post ids are derived from the block\'s committed transactions', () => 
     expect(blockApply.applyOrderingBlock(block)).toBe(true);
 
     const journalStore = await importJournalStore();
-    expect(journalStore.getBlockJournal(1)!.confirmedSubBlockIds).toEqual([]);
+    expect(journalStore.getBlockJournal(1)!.confirmedPostIds).toEqual([]);
   });
 });

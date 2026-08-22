@@ -13,17 +13,14 @@ export interface BlockPost {
  *
  * ⛔ **One derivation, used by the forward pass and by every inverse.** The
  * journal's rollback un-confirms exactly what apply confirmed, so both must read
- * the same list; a second derivation is free to disagree, which is what made the
- * uncommitted `subBlockRefs` an eviction *and* an injection primitive before the
- * committed list became the only source (audit H-3).
+ * the same list; a second derivation is free to disagree (audit H-3).
  *
  * ⛔ **The id comes from the transaction, never from the post.**
  * `computePostId(txId, index)` takes no `Post`, so a block cannot carry a post id
  * that disagrees with the transaction carrying it — there is no claim to check,
- * because there is no claim. That is what replaces `SubBlockEntry`'s
- * `{postId, parentRefs, author}` and is strictly stronger than it: a node holding
- * the block body holds the post itself plus the author's signature over the
- * `TxId`, so it can verify authorship rather than record it on trust.
+ * because there is no claim. A node holding the block body holds the post itself
+ * plus the author's signature over the `TxId`, so it can verify authorship rather
+ * than record it on trust.
  *
  * ⚠ **`txId` is the block's DECLARED id and callers must have checked it against
  * `computeTxId` first.** On the apply path that check is the embedded-tx loop's

@@ -196,11 +196,11 @@ describe('mining routes — auth', () => {
 });
 
 // ---------------------------------------------------------------------------
-// `subBlockRefs` is served from the committed entries
+// The template carries no sub-block fields (NODE_INTERFACE → Mining).
 // ---------------------------------------------------------------------------
 
-describe('mining routes — template subBlockRefs', () => {
-  it('serves subBlockRefs derived from the template\'s committed entries', async () => {
+describe('mining routes — the template carries no sub-block fields', () => {
+  it('subBlockRefs and subBlockEntries are absent from the template JSON', async () => {
     const committedId = 'aa'.repeat(32);
     const poisonId = 'bb'.repeat(32);
 

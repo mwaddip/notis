@@ -116,9 +116,9 @@ import {
  * What keeps the two kinds apart inside one root is the `leafHash` domain tag,
  * not their position: `'utxotx'` and `'prune'` are distinct and NUL-terminated,
  * so they are prefix-free and a prune leaf cannot be reread as a transaction
- * leaf. The retired `'subblock'` and `'coinbase'` domains are reachable from no
- * leaf here and stay reserved, never to be reused — a root is the one thing that
- * cannot be re-derived to settle an ambiguity later.
+ * leaf. The `'coinbase'` domain is a tracked reservation (TYPES_INTERFACE →
+ * Tracked reservations) — reachable from no leaf here and reserved while the
+ * coinbase concept lives.
  */
 export function computeUtxoTxRoot(tree: UtxoTxTree): string {
   const leaves: Uint8Array[] = [

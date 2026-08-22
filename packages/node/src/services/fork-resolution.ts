@@ -266,8 +266,8 @@ export function revertBlock(height: number): PruneEntry[] {
   }
 
   // 2. Side-record inverses
-  for (const subBlockId of journal.confirmedSubBlockIds) {
-    unconfirmPost(subBlockId);
+  for (const postId of journal.confirmedPostIds) {
+    unconfirmPost(postId);
   }
   // Like-record inverses. Order between the two arrays is immaterial:
   // a record cannot be both inserted and prune-deleted in one block — the
@@ -418,12 +418,9 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[], dagService
 
   // Phase 2: re-insert reverted txs to mempool.
   //
-  // ⛔ **A post rides its own transaction, so re-inserting the transactions
-  // re-inserts the posts.** The separate sub-block injection this loop used to do
-  // is gone with the mempool's second entry type — and with it the injection
-  // primitive that a list of ids the block never committed made reachable.
-  // `journal.confirmedSubBlockIds` survives for the *un-confirm* half of the
-  // rollback; it is not a mempool key.
+  // A post rides its own transaction, so re-inserting the transactions
+  // re-inserts the posts. `journal.confirmedPostIds` is the un-confirm half
+  // of the rollback and not a mempool key (NODE_INTERFACE → Block Journal).
   const newTipHeight = forkHeight + newBlocks.length;
   const mempoolExpiry = newTipHeight + MEMPOOL_EXPIRY_BLOCKS;
   for (const journal of revertedJournals) {
