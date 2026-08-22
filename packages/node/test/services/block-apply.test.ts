@@ -63,7 +63,7 @@ import {
   seedProvenance,
   signHeader,
   signTransaction,
-  solveHeaderPow, fixturePostId, seedPostTx, fillerTx,
+  fixturePostId, seedPostTx, fillerTx,
   coinbaseOf, withCoinbase } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
@@ -511,75 +511,81 @@ describe('block-apply journal recording', () => {
   });
 
   // -----------------------------------------------------------------------
-  // 9. Rejected block — coinbase value mismatch
+  // 9. Coinbase mismatch — the settlement's step-4 total check refuses a
+  // block whose coinbase pays less than the miner slice
+  // (NODE_INTERFACE → The settlement transaction).
   // -----------------------------------------------------------------------
 
-  it('block rejected for coinbase value mismatch leaves no journal', async () => {
+  it('block refused for coinbase value mismatch leaves no journal', async () => {
     const db = await importDb();
     db.initDb(':memory:');
-
     const blockApply = await importBlockApply();
 
-    // Genesis paying a zero coinbase when the emission schedule says 100.
-    //
-    // Every earlier check is made to pass so the block reaches the coinbase
-    // check on every run: the target is the scheduled one with a mined nonce,
-    // and the Merkle roots are computed rather than zeroed. With a header that
-    // failed PoW it was a coin flip whether PoW or the Merkle root did the
-    // rejecting, and the coinbase check went untested.
-    const { computeUtxoTxRoot } = await import(
-      '../../src/services/block-creator.js'
-    );
-    const { expectedTarget } = await import('../../src/services/difficulty.js');
-    const miner = makeTestIdentity();
-    const utxoTxTree = {
-      utxoTxIds: [],
-      utxoTxs: [],
-      pruneEntries: [],
-      coinbaseOutputs: [
-        // The scheduled maturity lock, so the value is the only thing wrong:
-        // a non-numeric `lockedUntilBlock` is now a structure rejection, which
-        // would reject this block before it reached the coinbase check.
-        {
-          value: 0n,
-          owner: new Uint8Array(32),
-          lockedUntilBlock: 1 + config.creditMinerRewardDelay,
-          isTreasury: false,
-        },
-      ],
-    };
-    const header = {
-      protocolVersion: PROTOCOL_VERSION,
-      height: 1,
-      prevBlockHash: '0000000000000000000000000000000000000000000000000000000000000000',
-      utxoTxRoot: computeUtxoTxRoot(utxoTxTree),
-      // EMPTY_STATE_ROOT, not a hand-written literal: `stateRoot` is hex(33) =
-      // 66 characters (VALIDATION_INTERFACE → `verifyHeaderFieldDomains`), so a
-      // hand-written 64-char 32-byte root rejects the block at the width gate,
-      // one gate EARLIER than the validator signature — reintroducing exactly
-      // the vacuity the comment below guards against, and the test would still
-      // pass.
-      stateRoot: EMPTY_STATE_ROOT,
-      validatorId: miner.userId,
-      powNonce: 0,
-      powTargetBits: expectedTarget(1),
-      createdAt: Date.now(),
-    } as BlockHeader;
-    header.powNonce = solveHeaderPow(header);
-    const block = {
-      header,
-      utxoTxTree,
-      // Signed: the coinbase check sits behind the validator-signature gate, so
-      // an unsigned block would reject at the gate and test nothing here.
-      validatorSignature: signHeader(header, miner.privateKey),
-    } as unknown as OrderingBlock;
+    // One credit less than the miner slice, lock unchanged — step 4's total
+    // check is the first thing that refuses it.
+    const block = await makeApplicableBlock({
+      settlement: (tx) => ({
+        ...tx,
+        outputs: tx.outputs.map((o) =>
+          o.boxType === 'credit' ? { ...o, value: o.value - 1n } : o,
+        ),
+      }),
+    });
 
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const result = blockApply.applyOrderingBlock(block);
+    const warnings = warn.mock.calls.map((c) => String(c[0]));
+    warn.mockRestore();
+
     expect(result).toBe(false);
+    expect(
+      warnings.some((w) => w.includes('coinbase value') && w.includes('miner slice')),
+      `expected coinbase-mismatch reason, got ${JSON.stringify(warnings)}`,
+    ).toBe(true);
 
     const journal = await importJournalStore();
-    const saved = journal.getBlockJournal(1);
-    expect(saved).toBeNull();
+    expect(journal.getBlockJournal(1)).toBeNull();
+    const ordering = await importOrdering();
+    expect(ordering.getCurrentHeight()).toBe(0);
+  });
+
+  it('control — the same block applies when the coinbase is correct', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const blockApply = await importBlockApply();
+
+    expect(blockApply.applyOrderingBlock(await makeApplicableBlock())).toBe(true);
+
+    const journal = await importJournalStore();
+    expect(journal.getBlockJournal(1)).not.toBeNull();
+    const ordering = await importOrdering();
+    expect(ordering.getCurrentHeight()).toBe(1);
+  });
+
+  // A zero-value coinbase satisfies conservation (step 5), which is why
+  // step 4 names it before the total (NODE_INTERFACE → The settlement
+  // transaction).
+  it('block refused for zero-value coinbase output', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const blockApply = await importBlockApply();
+    const miner = makeTestIdentity();
+
+    const block = await makeApplicableBlock({
+      miner,
+      settlement: withCoinbase([{ owner: miner.userId, value: 0n }]),
+    });
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = blockApply.applyOrderingBlock(block);
+    const warnings = warn.mock.calls.map((c) => String(c[0]));
+    warn.mockRestore();
+
+    expect(result).toBe(false);
+    expect(
+      warnings.some((w) => w.includes('zero-value coinbase output')),
+      `expected zero-value reason, got ${JSON.stringify(warnings)}`,
+    ).toBe(true);
   });
 
   // -----------------------------------------------------------------------
