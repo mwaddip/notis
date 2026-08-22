@@ -6,12 +6,8 @@ import {
   beforeEach,
   afterEach,
 } from 'vitest';
-import {
-  PROTOCOL_VERSION,
-  ORDERING_BLOCK_POW_TARGET_FLOOR,
-} from '@dagsocial/types';
-import type { OrderingBlock } from '@dagsocial/types';
 import type { ForkResolutionNet } from '../../src/services/fork-resolution.js';
+import { makeBlock } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Boundary pins that drive the real wiring — `pullBlocksHandler`,
@@ -19,28 +15,6 @@ import type { ForkResolutionNet } from '../../src/services/fork-resolution.js';
 // store whose tip row is poisoned (NODE_INTERFACE → Relay handlers / Sync
 // handlers).
 // ---------------------------------------------------------------------------
-
-function makeBlock(height: number, createdAt: number): OrderingBlock {
-  return {
-    header: {
-      protocolVersion: PROTOCOL_VERSION,
-      height,
-      prevBlockHash: '00'.repeat(32),
-      utxoTxRoot: '00'.repeat(32),
-      stateRoot: '00'.repeat(33),
-      validatorId: new Uint8Array(32),
-      powNonce: 0,
-      powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
-      createdAt,
-    },
-    utxoTxTree: {
-      utxoTxIds: ['77'.repeat(32)],
-      utxoTxs: [new Uint8Array(96)],
-      pruneEntries: [],
-    },
-    validatorSignature: new Uint8Array(64),
-  };
-}
 
 const stubNet: ForkResolutionNet = {
   getConnectedPeers: () => [],

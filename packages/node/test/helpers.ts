@@ -17,6 +17,7 @@ import {
   POST_LOCK_THREAD_COST,
   POST_LOCK_REPLY_COST,
   EMPTY_STATE_ROOT,
+  ORDERING_BLOCK_POW_TARGET_FLOOR,
 } from '@dagsocial/types';
 import { verifyOrderingBlockPoW, blockHash } from '@dagsocial/validation';
 import { materializeOutput } from '../src/services/utxo-engine.js';
@@ -1131,5 +1132,33 @@ export function withCoinbase(
         })),
       ],
     };
+  };
+}
+
+/**
+ * A raw block fixture whose header carries a given `createdAt`. A `createdAt`
+ * of `-1` is outside `vlqU`'s domain, so the row is written by
+ * `createOrderingBlock` but can never be read — the positional reader refuses
+ * it. Used by the fail-stop boundary pins.
+ */
+export function makeBlock(height: number, createdAt: number): OrderingBlock {
+  return {
+    header: {
+      protocolVersion: PROTOCOL_VERSION,
+      height,
+      prevBlockHash: '00'.repeat(32),
+      utxoTxRoot: '00'.repeat(32),
+      stateRoot: '00'.repeat(33),
+      validatorId: new Uint8Array(32),
+      powNonce: 0,
+      powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
+      createdAt,
+    },
+    utxoTxTree: {
+      utxoTxIds: ['77'.repeat(32)],
+      utxoTxs: [new Uint8Array(96)],
+      pruneEntries: [],
+    },
+    validatorSignature: new Uint8Array(64),
   };
 }
