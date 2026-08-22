@@ -12,9 +12,14 @@ import {
   emitServerShuttingDown,
   emitPostReceived,
   emitPostValidated,
+  emitPeerConnected,
+  emitPeerDisconnected,
+  emitPeerPenalised,
+  emitSyncComplete,
 } from './journal.js';
 import { NetNode } from '@dagsocial/net';
 import * as validation from '@dagsocial/validation';
+import { countedVerifyOrderingBlockPoW } from './metrics.js';
 import { validateTx } from './services/utxo-engine.js';
 import { admitTx } from './services/admit-tx.js';
 import { setNet } from './services/net-instance.js';
@@ -113,7 +118,7 @@ const net = new NetNode(
     penaltySafeIntervalMs: parseInt(process.env['PENALTY_SAFE_INTERVAL_MS'] ?? '120000', 10),
     syncRequestTimeoutMs: parseInt(process.env['SYNC_REQUEST_TIMEOUT_MS'] ?? '10000', 10),
   },
-  validation,
+  { ...validation, verifyOrderingBlockPoW: countedVerifyOrderingBlockPoW },
   peerStorage,
 );
 setNet(net);
@@ -250,7 +255,23 @@ enterDiscovery(config.bootstrapPeers.length);
 // net publishes no disconnect callback — but it must not depend on looking to
 // know one ever arrived, or a peer that came and went between two template
 // polls would leave the node believing it had never met anybody.
-net.onPeerActive((_peerId: string) => notePeerMet());
+net.onPeerActive((peerId: string, direction: 'inbound' | 'outbound') => {
+  notePeerMet();
+  emitPeerConnected(peerId, direction);
+});
+net.onPeerDisconnected((peerId: string, reason: string) => {
+  emitPeerDisconnected(peerId, reason);
+});
+net.onPeerPenalised((peerId: string, kind: string, detail: string | null) => {
+  emitPeerPenalised(peerId, kind, detail);
+});
+
+let lastSyncCompleteAt = startTime;
+net.onSyncComplete(() => {
+  const now = Date.now();
+  emitSyncComplete(getCurrentHeight(), now - lastSyncCompleteAt);
+  lastSyncCompleteAt = now;
+});
 
 // 5. Start block creator (miner only) and HTTP server
 if (config.nodeRole === 'miner') {
@@ -261,7 +282,10 @@ if (config.nodeRole === 'miner') {
 }
 
 const app = createApp(config);
-const adminServer = createAdminApp(config);
+const adminServer = createAdminApp(config, {
+  getConnectedPeers: () => net.getConnectedPeers(),
+  syncPhase: () => net.syncPhase(),
+});
 const server = app.listen(config.port, () => {
   // Read off the socket rather than named from config: `listen(port)` passes no
   // host, so the public API has no configured bind address — only the admin

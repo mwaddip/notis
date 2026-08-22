@@ -21,7 +21,8 @@ import { encodePost } from '@dagsocial/types';
 import { getDb } from './store/db.js';
 import { validateTx } from './services/utxo-engine.js';
 import { admitTx } from './services/admit-tx.js';
-import { createAdminRouter } from './routes/admin.js';
+import { createAdminRouter, type AdminDeps } from './routes/admin.js';
+import { noteHttpRequest } from './metrics.js';
 import { registerProofEndpoint } from './state/avl-endpoint.js';
 import { tryGetAvlProver } from './state/avl-prover.js';
 import type { Config } from './config.js';
@@ -31,9 +32,9 @@ import type { Server } from 'http';
 // createAdminApp
 // ---------------------------------------------------------------------------
 
-export function createAdminApp(config: Config): Server {
+export function createAdminApp(config: Config, deps: AdminDeps): Server {
   const adminApp = express();
-  adminApp.use(createAdminRouter());
+  adminApp.use(createAdminRouter(deps));
 
   // WARN if not loopback
   if (config.adminBindAddress !== '127.0.0.1' && config.adminBindAddress !== '::1') {
@@ -58,6 +59,12 @@ export function createApp(config: Config): express.Express {
   const app = express();
 
   // ---- Middleware ----
+
+  // NODE_INTERFACE → Admin Listener: every request the public app receives.
+  app.use((_req, _res, next) => {
+    noteHttpRequest();
+    next();
+  });
 
   app.use(express.json({ limit: '1mb' }));
 

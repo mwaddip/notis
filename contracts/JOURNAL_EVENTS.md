@@ -2,16 +2,15 @@
 
 **Version:** 1.0
 **Stability:** stable
-**Last verified against code:** 2026-08-20
+**Last verified against code:** 2026-08-22
 
-> ⚠ **PARTIAL — 15 events are declared below; 11 are emitted and 4 are NOT IMPLEMENTED. Re-derived
-> 2026-08-20.** Every emitter is a `journal.ts` wrapper around `emitEvent`, and an event is emitted
-> when its wrapper is called from `src`. **Emitted (11):** `server_starting`, `server_ready`,
-> `shutdown_signal_received`, `server_shutting_down`, `db_open_started`, `db_open_complete`,
-> `api_listening`, `post_received`, `post_validated`, `post_indexed`, `dag_reorg`. **Not implemented
-> (4):** `sync_complete`, `peer_connected`, `peer_disconnected`, `peer_penalised` — all four wait on
-> one `@dagsocial/net` passthrough, stated at their sections. "Stability: stable" refers to the
-> *format contract* for events that are emitted; it is not a claim that an event exists.
+> ✅ **15 events are declared below and 15 are emitted — re-derived 2026-08-22.** Every emitter is a
+> `journal.ts` wrapper around `emitEvent`, and an event is emitted when its wrapper is called from `src`.
+> The four that read `@dagsocial/net` — `peer_connected`, `peer_disconnected`, `peer_penalised`,
+> `sync_complete` — fire from the hooks `NetNode` exposes (NET_INTERFACE → API → Sync Handler
+> Registration), registered in `node/src/index.ts`. "Stability: stable" refers to the *format contract*.
+> `post_received` and `post_validated` are also counted (NODE_INTERFACE → Admin Listener — the `/stats`
+> counters count these events at their wrappers).
 
 > ⚠ **Two different things share the word "journal" and this document covers only one.**
 > **This file** = the JSON-line **observability event log**. **`BlockJournal` / `BoxMutation`**
@@ -124,10 +123,11 @@ a field.
 
 ## Peer Events
 
-> ⚠ **NOT IMPLEMENTED — verified 2026-08-20.** The three `journal.ts` wrappers exist and are called by
-> `test/journal.test.ts` alone: `NetNode` handles libp2p's `peer:connect` / `peer:disconnect`
-> internally and `penalizePeer` is its own method, none exposed to the node, so there is nothing for
-> them to hook. A `@dagsocial/net` passthrough comes first, then node wiring.
+The three fire from `NetNode`'s hooks — `onPeerActive(peerId, direction)`, `onPeerDisconnected(peerId,
+reason)`, `onPeerPenalised(peerId, kind, detail)` (NET_INTERFACE → API → Sync Handler Registration) —
+registered in `node/src/index.ts`. `reason` on a disconnect is always `''` (libp2p's `peer:disconnect`
+carries none). `peer_penalised` fires for every penalty path, `gossip.ts`'s included — the hook is at
+`PeerManager`'s two penalty entries.
 
 ### peer_connected
 **Level:** INFO
@@ -146,9 +146,12 @@ a field.
 
 ## Sync Events
 
-> ⚠ **NOT IMPLEMENTED — verified 2026-08-20.** No wrapper and no emitter. `SyncMachine.onSynced` is
-> public, but `NetNode` registers the callback internally and exposes no passthrough — the same
-> `@dagsocial/net` change the peer events wait on.
+Fires from `NetNode.onSyncComplete` (every entry into the `synced` phase) through the `emitSyncComplete`
+wrapper; `duration_ms` is measured since process start for the first and since the previous
+`sync_complete` after. ⚠ **The phase is entered only when a peer's `SyncInfo` reports `tipHeight ===
+ourHeight` while the machine is `syncing` (NET_INTERFACE → Sync State Machine)** — under continuous fast
+block production (devnet) the two may never coincide at an exchange, and the event then never fires; the
+wiring is not what decides it.
 
 ### sync_complete
 **Level:** INFO

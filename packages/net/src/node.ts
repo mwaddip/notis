@@ -542,7 +542,9 @@ export class NetNode {
    */
   private headersProvider: ((height: number) => OrderingBlock | null) | null = null;
   private syncCompleteHandlers: Array<() => void> = [];
-  private peerActiveHandlers: Array<(peerId: string) => void> = [];
+  private peerActiveHandlers: Array<(peerId: string, direction: 'inbound' | 'outbound') => void> = [];
+  private peerDisconnectedHandlers: Array<(peerId: string, reason: string) => void> = [];
+  private peerPenalisedHandlers: Array<(peerId: string, kind: string, detail: string | null) => void> = [];
   private pendingBootstrapDials: Set<string> = new Set();
   private lastGetPeersSentMs: Map<string, number> = new Map();
 
@@ -559,6 +561,13 @@ export class NetNode {
     this.peerMgr = new PeerManager(config, {
       onBan: (address) => this.peerDb?.ban(address),
       onUnban: (address) => this.peerDb?.unban(address),
+      onPenalty: (peerId, kind, detail) => {
+        for (const cb of this.peerPenalisedHandlers) {
+          try { cb(peerId, kind, detail); } catch (err) {
+            console.warn(`[net] peerPenalised handler error: ${String(err)}`);
+          }
+        }
+      },
     });
   }
 
@@ -684,6 +693,11 @@ export class NetNode {
       this.peerMgr.removePeer(peerId);
       this.lastGetPeersSentMs.delete(peerId);
       this.syncMachine?.onPeerDisconnect(peerId);
+      for (const cb of this.peerDisconnectedHandlers) {
+        try { cb(peerId, ''); } catch (err) {
+          console.warn(`[net] peerDisconnected handler error: ${String(err)}`);
+        }
+      }
     });
 
     // Log identify completion — confirms the connection was fully upgraded
@@ -812,8 +826,9 @@ export class NetNode {
             capabilities: result.peerCapabilities,
           });
           this.syncMachine?.onPeerActive(conn.remotePeer.toString(), result.peerHeight);
+          const dir = (conn.direction ?? 'outbound') as 'inbound' | 'outbound';
           for (const cb of this.peerActiveHandlers) {
-            try { cb(conn.remotePeer.toString()); } catch (err) {
+            try { cb(conn.remotePeer.toString(), dir); } catch (err) {
               console.warn(`[net] peerActive handler error: ${String(err)}`);
             }
           }
@@ -876,8 +891,9 @@ export class NetNode {
           // malformed input is banned permanently, an unsupported version is
           // only cooled down (see `handshakePenalty`).
           console.warn(`[net] inbound handshake from ${peerId} rejected: ${result.error}`);
+          const hsPenKind = handshakePenalty(result.rejection);
           this.peerMgr.recordPenaltyKind(
-            handshakePenalty(result.rejection),
+            hsPenKind,
             peerId,
             `handshake: ${result.error}`,
           );
@@ -901,8 +917,9 @@ export class NetNode {
 
         this.peerMgr.setPeerState(peerId, PeerState.Active);
         this.syncMachine?.onPeerActive(peerId, result.peerHeight);
+        const dir = (connection.direction ?? 'inbound') as 'inbound' | 'outbound';
         for (const cb of this.peerActiveHandlers) {
-          try { cb(peerId); } catch (err) {
+          try { cb(peerId, dir); } catch (err) {
             console.warn(`[net] peerActive handler error: ${String(err)}`);
           }
         }
@@ -1202,8 +1219,9 @@ export class NetNode {
       const result = validateHandshake(parseHandshakeBody(body), [PROTOCOL_VERSION]);
       if (!result.ok) {
         console.warn(`[net] outbound handshake with ${peerId} rejected: ${result.error}`);
+        const outHsPenKind = handshakePenalty(result.rejection);
         this.peerMgr.recordPenaltyKind(
-          handshakePenalty(result.rejection),
+          outHsPenKind,
           peerId,
           `handshake: ${result.error}`,
         );
@@ -1297,12 +1315,24 @@ export class NetNode {
     this.syncCompleteHandlers.push(cb);
   }
 
-  /**
-   * Register a callback that fires when a peer completes the handshake
-   * and becomes Active. The peer's ID is passed to the callback.
-   */
-  onPeerActive(cb: (peerId: string) => void): void {
+  /** NET_INTERFACE → API → Node Lifecycle. */
+  syncPhase(): 'idle' | 'syncing' | 'synced' {
+    return this.syncMachine?.getState().phase ?? 'idle';
+  }
+
+  /** NET_INTERFACE → Sync Handler Registration. */
+  onPeerActive(cb: (peerId: string, direction: 'inbound' | 'outbound') => void): void {
     this.peerActiveHandlers.push(cb);
+  }
+
+  /** NET_INTERFACE → Sync Handler Registration. */
+  onPeerDisconnected(cb: (peerId: string, reason: string) => void): void {
+    this.peerDisconnectedHandlers.push(cb);
+  }
+
+  /** NET_INTERFACE → Sync Handler Registration. */
+  onPeerPenalised(cb: (peerId: string, kind: string, detail: string | null) => void): void {
+    this.peerPenalisedHandlers.push(cb);
   }
 
   // -----------------------------------------------------------------------

@@ -96,6 +96,7 @@ import {
 import type { BlockJournal } from '../store/journal.js';
 import { tryGetAvlProver, applyBlockMutations, checkpointProver } from '../state/avl-prover.js';
 import { emitPostIndexed } from '../journal.js';
+import { countedVerifyOrderingBlockPoW, noteTip } from '../metrics.js';
 import type { RecordPut } from '../state/avl-prover.js';
 import {
   encodeTx,
@@ -228,8 +229,12 @@ export function applyOrderingBlock(block: OrderingBlock, dagService?: DagService
   //
   // Only once the write is committed. Nested inside `reorg`'s transaction this
   // block is not the tip yet, and a template derived there describes a chain a
-  // failed reorg rolls back; `reorg` rebuilds once, after its own commit.
-  if (!getDb().inTransaction) rebuildTemplate();
+  // failed reorg rolls back; `reorg` rebuilds once, after its own commit, and
+  // the tip metric moves with it (NODE_INTERFACE → Admin Listener).
+  if (!getDb().inTransaction) {
+    rebuildTemplate();
+    noteTip(block.header.height);
+  }
   return applied;
 }
 
@@ -308,7 +313,7 @@ function applyBlockBody(block: OrderingBlock, dagService?: DagService): boolean 
     abortBlockJournal();
     return false;
   }
-  if (!validation.verifyOrderingBlockPoW(block.header)) {
+  if (!countedVerifyOrderingBlockPoW(block.header)) {
     console.warn(`Rejected block height=${block.header.height}: PoW invalid`);
     abortBlockJournal();
     return false;

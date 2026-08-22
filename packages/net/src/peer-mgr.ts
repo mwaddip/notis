@@ -40,6 +40,7 @@ interface BanEntry {
 export interface PeerBanHooks {
   onBan?: (address: string) => void;
   onUnban?: (address: string) => void;
+  onPenalty?: (peerId: string, kind: string, detail: string | null) => void;
 }
 
 export class PeerManager {
@@ -124,10 +125,12 @@ export class PeerManager {
       this.peers.delete(peerId);
       this.metadata.delete(peerId);
       this.stalledPeers.delete(peerId);
+      this.hooks.onPenalty?.(peerId, type, reason);
       return;
     }
 
     this.accrueScoredPenalty(peerId, score, now);
+    this.hooks.onPenalty?.(peerId, type, reason);
   }
 
   /**
@@ -165,10 +168,12 @@ export class PeerManager {
         this.peers.delete(peerId);
         this.metadata.delete(peerId);
         this.stalledPeers.delete(peerId);
+        this.hooks.onPenalty?.(peerId, kind, reason);
         return;
       }
       case PenaltyKind.Transient: {
         this.accrueScoredPenalty(peerId, 50, now);
+        this.hooks.onPenalty?.(peerId, kind, reason);
         return;
       }
     }
