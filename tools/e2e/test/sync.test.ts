@@ -32,7 +32,7 @@ describe('sync', () => {
     await mesh?.teardown();
   });
 
-  it('row b-sync: late joiner syncs to height h, post confirmed as placeholder', async () => {
+  it('row b-sync: late joiner syncs and backfills post body', async () => {
     mesh = await createMesh({ fileIndex: FILE_INDEX, nodeCount: 3 });
     const miner = mesh.nodes[0]!;
 
@@ -90,6 +90,25 @@ describe('sync', () => {
     }
     expect(heightReached).toBe(true);
 
+    const backfillObserved = observedPhases.has('backfill');
+
+    // Mine a few blocks so the backfill driver's per-block hook fires
+    // on the late joiner after sync completes.
+    await mine(miner, mesh.miningSecret, 3);
+    await waitHeight([lateNode], (await getBlockCurrent(miner)).height);
+
+    // ---- wait for the body to arrive via backfill ----
+    const bodyDeadline = Date.now() + 15_000;
+    let bodyArrived = false;
+    while (Date.now() < bodyDeadline) {
+      const p = await getPost(lateNode, threadRes.postId);
+      if (p !== null && isPost(p) && p.content !== null) {
+        bodyArrived = true;
+        break;
+      }
+      await new Promise(r => setTimeout(r, 100));
+    }
+
     // ---- late joiner has all blocks with matching stateRoots ----
     for (let h = 1; h <= targetHeight; h++) {
       const b1 = await getBlock(miner, h);
@@ -101,11 +120,7 @@ describe('sync', () => {
       expect(hLate.stateRoot).toBe(h1.stateRoot);
     }
 
-    // ---- post on the late joiner: confirmed, correct contentHash ----
-    // FINDING: the backfill driver's requestPostBodies opens a new libp2p
-    // stream, but servePostBodies responds on the sync machine's internal
-    // stream — the body pull always returns empty. content stays null
-    // (placeholder). The structure and commitment are correct from the block.
+    // ---- post on the late joiner: confirmed with body and correct hash ----
     const expectedHash = Buffer.from(computeContentHash('synced post')).toString('hex');
 
     const latePost = await getPost(lateNode, threadRes.postId);
@@ -113,16 +128,20 @@ describe('sync', () => {
     expect(isPost(latePost!)).toBe(true);
     if (isPost(latePost!)) {
       expect(latePost.status).toBe('confirmed');
+      expect(latePost.content).toBe('synced post');
       expect(latePost.contentHash).toBe(expectedHash);
     }
 
-    // The miner has the body (it received it via HTTP)
-    const minerPost = await getPost(miner, threadRes.postId);
-    expect(minerPost).not.toBeNull();
-    expect(isPost(minerPost!)).toBe(true);
-    if (isPost(minerPost!)) {
-      expect(minerPost.content).toBe('synced post');
-      expect(minerPost.contentHash).toBe(expectedHash);
-    }
+    // backfill was observed OR synced was reached with the body present
+    expect(backfillObserved || bodyArrived).toBe(true);
+
+    // ---- post_bodies_pulled_total: >= 1 on the late node, 0 on the miner ----
+    const lateStats = await adminGet(lateNode, '/stats');
+    const lateCounters = lateStats['counters'] as Record<string, number>;
+    expect(lateCounters['post_bodies_pulled_total']).toBeGreaterThanOrEqual(1);
+
+    const minerStats = await adminGet(miner, '/stats');
+    const minerCounters = minerStats['counters'] as Record<string, number>;
+    expect(minerCounters['post_bodies_pulled_total']).toBe(0);
   });
 });

@@ -30,7 +30,7 @@ describe('packet', () => {
     await mesh?.teardown();
   });
 
-  it('row a: pending-with-content on origin, confirmed after block, mismatched body → 400', async () => {
+  it('row a: pending-with-content on every node, confirmed after block, mismatched body → 400', async () => {
     mesh = await createMesh({ fileIndex: FILE_INDEX, nodeCount: 3 });
     const miner = mesh.nodes[0]!;
 
@@ -56,19 +56,27 @@ describe('packet', () => {
     const threadRes = await postPost(miner, thread.json, thread.content);
     expect(threadRes.status).toBe('pending');
 
-    // ---- pending-with-content on the origin (miner) ----
-    // FINDING: gossip tx relay does not deliver post transactions to relay
-    // nodes — karmaMembers is never populated in the node, so the topic
-    // validator rejects every post with "post author holds no karma".
-    const minerPost = await getPost(miner, threadRes.postId);
-    expect(minerPost).not.toBeNull();
-    expect(isPost(minerPost!)).toBe(true);
-    if (isPost(minerPost!)) {
-      expect(minerPost.status).toBe('pending');
-      expect(minerPost.content).toBe('packet post');
+    // ---- pending-with-content on every node (origin + relay) before any block ----
+    for (const node of mesh.nodes) {
+      const deadline = Date.now() + 10_000;
+      let found = false;
+      while (Date.now() < deadline) {
+        const p = await getPost(node, threadRes.postId);
+        if (p !== null && isPost(p) && p.status === 'pending' && p.content !== null) {
+          expect(p.content).toBe('packet post');
+          found = true;
+          break;
+        }
+        await new Promise(r => setTimeout(r, 50));
+      }
+      if (!found) {
+        throw new Error(
+          `Post not pending-with-content on :${node.httpPort} within 10s`,
+        );
+      }
     }
 
-    // ---- mine a block, confirmed on the miner with content ----
+    // ---- mine a block, confirmed everywhere with content ----
     await confirm(
       async () => {
         const p = await getPost(miner, threadRes.postId);
@@ -78,26 +86,13 @@ describe('packet', () => {
     );
     await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
 
-    const confirmedMiner = await getPost(miner, threadRes.postId);
-    expect(confirmedMiner).not.toBeNull();
-    expect(isPost(confirmedMiner!)).toBe(true);
-    let minerContentHash = '';
-    if (isPost(confirmedMiner!)) {
-      expect(confirmedMiner.status).toBe('confirmed');
-      expect(confirmedMiner.content).toBe('packet post');
-      minerContentHash = confirmedMiner.contentHash;
-    }
-
-    // Non-miner nodes: confirmed as placeholders (content null) — the
-    // block carries PostCommit, not the body. Gossip relay and backfill
-    // are both broken (see REPORT findings).
-    for (const node of mesh.nodes.slice(1)) {
+    for (const node of mesh.nodes) {
       const p = await getPost(node, threadRes.postId);
       expect(p).not.toBeNull();
       expect(isPost(p!)).toBe(true);
       if (isPost(p!)) {
         expect(p.status).toBe('confirmed');
-        expect(p.contentHash).toBe(minerContentHash);
+        expect(p.content).toBe('packet post');
       }
     }
 
