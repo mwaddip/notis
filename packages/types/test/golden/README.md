@@ -153,7 +153,6 @@ A bare string names a leaf codec; the object forms compose, so `{"arr": {"opt": 
 | `powNonceTail` | `number` | JSON number — the nonce, not the bytes |
 | `postCommitFields` | `PostCommit` | object — `contentHash` as hex |
 | `postBody` | `string` | JSON string — the body's standalone wire form |
-| `powPreimage` | `PostCommitFields` + `powNonce` | object — `postCommitFields`' form with one more key |
 
 `{"$special": "NaN" \| "Infinity" \| "-Infinity" \| "undefined"}` expresses the values JSON has no
 literal for. For a wrong *type*, write the raw JSON value and set `"raw": true`.
