@@ -1,4 +1,3 @@
-import { encodePostBody, decodePostBody } from '@dagsocial/types';
 import type { NetConfig } from './types.js';
 import {
   MSG_HANDSHAKE,
@@ -7,7 +6,6 @@ import {
   MSG_MODIFIER_REQUEST,
   MSG_MODIFIER_RESPONSE,
   MODIFIER_ORDERING_BLOCK,
-  MODIFIER_POST_BODY,
   BACKFILL_BATCH_IDS,
 } from './types.js';
 import { isHeight, MAX_INV_IDS, MAX_SERVE_BODY_BYTES } from './msg-guards.js';
@@ -144,14 +142,11 @@ export class SyncMachine {
   private onSyncedCallbacks: Array<() => void> = [];
 
   // NET_INTERFACE → Sync Handler Registration: post body seams
-  private postBodyProvider: ((postId: string) => string | null) | null = null;
-  private postBodyCommitmentProvider: ((postId: string) => Uint8Array | null) | null = null;
-  private postBodyVerifier: ((content: unknown, contentHash: Uint8Array) => { valid: boolean; error?: string }) | null = null;
   private onPostBodyCallback: ((postId: string, content: string, fromPeerId: string) => boolean) | null = null;
   private missingBodiesProvider: ((limit: number) => { id: string; contentHash: Uint8Array }[]) | null = null;
+  private pullPostBodiesFn: ((entries: { id: string; contentHash: Uint8Array }[], peerId: string) => Promise<{ id: string; content: string }[]>) | null = null;
   private getConnectedPeersFn: (() => string[]) | null = null;
   private backfillAskedPeers = new Set<string>();
-  private onMisbehavior: (peerId: string, reason: string) => void = () => {};
 
   // -----------------------------------------------------------------------
   // Biased event queues
@@ -373,28 +368,16 @@ export class SyncMachine {
     this.onSyncedCallbacks.push(cb);
   }
 
-  setPostBodyProvider(cb: (postId: string) => string | null): void {
-    this.postBodyProvider = cb;
-  }
-
-  setPostBodyCommitmentProvider(cb: (postId: string) => Uint8Array | null): void {
-    this.postBodyCommitmentProvider = cb;
-  }
-
-  setPostBodyVerifier(cb: (content: unknown, contentHash: Uint8Array) => { valid: boolean; error?: string }): void {
-    this.postBodyVerifier = cb;
-  }
-
   setOnPostBody(cb: (postId: string, content: string, fromPeerId: string) => boolean): void {
     this.onPostBodyCallback = cb;
   }
 
-  setOnMisbehavior(cb: (peerId: string, reason: string) => void): void {
-    this.onMisbehavior = cb;
-  }
-
   setMissingBodiesProvider(cb: (limit: number) => { id: string; contentHash: Uint8Array }[]): void {
     this.missingBodiesProvider = cb;
+  }
+
+  setPullPostBodies(cb: (entries: { id: string; contentHash: Uint8Array }[], peerId: string) => Promise<{ id: string; content: string }[]>): void {
+    this.pullPostBodiesFn = cb;
   }
 
   setGetConnectedPeers(cb: () => string[]): void {
@@ -773,8 +756,6 @@ export class SyncMachine {
   private handleModifierRequestMsg(peerId: string, req: ModifierRequest): void {
     if (req.typeId === MODIFIER_ORDERING_BLOCK) {
       this.serveOrderingBlocks(peerId, req);
-    } else if (req.typeId === MODIFIER_POST_BODY) {
-      this.servePostBodies(peerId, req);
     }
   }
 
@@ -789,29 +770,6 @@ export class SyncMachine {
       if (height === undefined) continue;
       const data = this.store.serializeOrderingBlock(height);
       if (!data) continue;
-      if (modifiers.length > 0 && bodyBytes + data.length > MAX_SERVE_BODY_BYTES) break;
-      bodyBytes += data.length;
-      modifiers.push({ id, data });
-    }
-
-    if (modifiers.length > 0) {
-      const resp: ModifierResponse = { typeId: req.typeId, modifiers };
-      this.sendToPeer(peerId, encodeModifierResponse(this.magic, resp));
-    }
-  }
-
-  // NET_INTERFACE → ModifierRequest: post bodies served locally, never relayed
-  private servePostBodies(peerId: string, req: ModifierRequest): void {
-    const provider = this.postBodyProvider;
-    if (!provider) return;
-
-    const modifiers: { id: string; data: Uint8Array }[] = [];
-    let bodyBytes = 0;
-
-    for (const id of req.ids) {
-      const content = provider(id);
-      if (content === null) continue;
-      const data = encodePostBody(content);
       if (modifiers.length > 0 && bodyBytes + data.length > MAX_SERVE_BODY_BYTES) break;
       bodyBytes += data.length;
       modifiers.push({ id, data });
@@ -838,8 +796,6 @@ export class SyncMachine {
     if (resp.typeId === MODIFIER_ORDERING_BLOCK) {
       if (resp.modifiers.length === 0) return;
       this.receiveOrderingBlocks(peerId, resp);
-    } else if (resp.typeId === MODIFIER_POST_BODY) {
-      this.receivePostBodies(peerId, resp);
     }
   }
 
@@ -882,59 +838,6 @@ export class SyncMachine {
       this.state.stateAppliedHeight,
       newHeight,
     );
-  }
-
-  // NET_INTERFACE → ModifierResponse: post bodies verified against the commitment
-  private receivePostBodies(peerId: string, resp: ModifierResponse): void {
-    const requested = this.outstanding.get(peerId);
-    if (!requested || requested.size === 0) return;
-    const commitmentProvider = this.postBodyCommitmentProvider;
-    const verifier = this.postBodyVerifier;
-    const deliver = this.onPostBodyCallback;
-    if (!commitmentProvider || !verifier || !deliver) return;
-
-    for (const mod of resp.modifiers) {
-      // Unrequested and already-consumed ids dropped; an empty payload leaves
-      // the id outstanding.
-      if (!requested.has(mod.id)) continue;
-      if (mod.data.length === 0) continue;
-      requested.delete(mod.id);
-
-      let content: string;
-      try {
-        content = decodePostBody(mod.data);
-      } catch {
-        this.onMisbehavior(peerId, `post body decode failed for ${mod.id}`);
-        continue;
-      }
-
-      const commitment = commitmentProvider(mod.id);
-      if (!commitment) continue;
-
-      const vr = verifier(content, commitment);
-      if (!vr.valid) {
-        this.onMisbehavior(peerId, `post body commitment mismatch for ${mod.id}: ${vr.error ?? ''}`);
-        continue;
-      }
-
-      // Progress = a body the node stored (onPostBody → true). A verified-but-
-      // unstored or dropped body leaves the stall clock untouched.
-      const isProgress = deliver(mod.id, content, peerId);
-      if (isProgress) {
-        this.lastProgressMs = Date.now();
-      }
-    }
-    if (requested.size === 0) {
-      this.outstanding.delete(peerId);
-      if (this.state.phase === 'backfill') {
-        this.requestBackfillBatch();
-      }
-    } else if (this.state.phase === 'backfill') {
-      // Peer omitted some ids — try the next connected peer for the remaining
-      // set immediately rather than waiting for the 60 s stall.
-      this.outstanding.delete(peerId);
-      this.backfillRotateToNextPeer();
-    }
   }
 
   // -----------------------------------------------------------------------
@@ -1001,31 +904,35 @@ export class SyncMachine {
       return;
     }
 
+    const pull = this.pullPostBodiesFn;
+    if (!pull) {
+      this.enterSynced();
+      return;
+    }
+
     this.backfillAskedPeers.add(peerId);
-    this.sendBackfillRequest(peerId, entries);
-  }
+    const wantedIds = new Set(entries.map(e => e.id));
 
-  private sendBackfillRequest(
-    peerId: string,
-    entries: { id: string; contentHash: Uint8Array }[],
-  ): void {
-    const ids = entries.map(e => e.id);
+    pull(entries, peerId).then(bodies => {
+      if (this.state.phase !== 'backfill') return;
+      if (this.state.syncPeerId !== peerId) return;
 
-    if (!this.postBodyCommitmentProvider) {
-      const commitMap = new Map<string, Uint8Array>();
-      for (const e of entries) commitMap.set(e.id, e.contentHash);
-      this.setPostBodyCommitmentProvider((id) => commitMap.get(id) ?? null);
-    }
+      for (const { id, content } of bodies) {
+        if (!wantedIds.has(id)) continue;
+        wantedIds.delete(id);
+        const isProgress = this.onPostBodyCallback?.(id, content, peerId) ?? false;
+        if (isProgress) this.lastProgressMs = Date.now();
+      }
 
-    let target = this.outstanding.get(peerId);
-    if (!target) {
-      target = new Set();
-      this.outstanding.set(peerId, target);
-    }
-    for (const id of ids) target.add(id);
-
-    const req: ModifierRequest = { typeId: MODIFIER_POST_BODY, ids };
-    this.sendToPeer(peerId, encodeModifierRequest(this.magic, req));
+      if (wantedIds.size > 0) {
+        this.backfillRotateToNextPeer();
+      } else {
+        this.requestBackfillBatch();
+      }
+    }).catch(err => {
+      console.warn(`[sync-machine] backfill pull failed for ${peerId}: ${String(err)}`);
+      if (this.state.phase === 'backfill') this.backfillRotateToNextPeer();
+    });
   }
 
   private backfillRotateToNextPeer(): void {

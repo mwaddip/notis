@@ -9,7 +9,7 @@ import { multiaddr } from '@multiformats/multiaddr';
 
 import type { Libp2p } from 'libp2p';
 import type { OrderingBlock, UtxoTransaction, BlockHeader } from '@dagsocial/types';
-import { PROTOCOL_VERSION, decodeOrderingBlock, encodeOrderingBlock, decodePostBody } from '@dagsocial/types';
+import { PROTOCOL_VERSION, decodeOrderingBlock, encodeOrderingBlock, decodePostBody, encodePostBody } from '@dagsocial/types';
 import { blockHash } from '@dagsocial/validation';
 import { ReaderError } from '@dagsocial/wire';
 import type {
@@ -35,12 +35,14 @@ import {
   encodeBlocks,
   encodeHeaders,
   encodeModifierRequest,
+  decodeModifierRequest,
+  encodeModifierResponse,
   decodeModifierResponse,
 } from './sync-codec.js';
 import { encodeServableOrderingBlock } from './serve-encode.js';
 import { isBogusAddress } from './bogus-addr.js';
 import { readStreamBounded } from './util.js';
-import { MAX_CHAIN_RESPONSE_ITEMS, MAX_SERVE_BODY_BYTES, MAX_STREAM_BYTES } from './msg-guards.js';
+import { MAX_CHAIN_RESPONSE_ITEMS, MAX_INV_IDS, MAX_SERVE_BODY_BYTES, MAX_STREAM_BYTES } from './msg-guards.js';
 import { PeerDb, type PeerStorage } from './peerdb.js';
 import { SyncMachine } from './sync-machine.js';
 import type { SyncStore } from './sync-machine.js';
@@ -58,9 +60,11 @@ import {
   MSG_PEERS,
   MSG_GET_HEADERS,
   MSG_GET_BLOCKS,
+  MSG_MODIFIER_REQUEST,
   MSG_MODIFIER_RESPONSE,
   MODIFIER_POST_BODY,
 } from './types.js';
+import type { ModifierRequest, ModifierResponse } from './sync-types.js';
 
 type OrderingBlockCallback = (block: OrderingBlock, fromPeerId: string) => void;
 type TxCallback = (tx: UtxoTransaction, content: string | undefined, fromPeerId: string) => void;
@@ -374,6 +378,35 @@ export function serveBlocksResponse(
 }
 
 // ---------------------------------------------------------------------------
+// Post body serve (MODIFIER_POST_BODY 103 — NET_INTERFACE → ModifierRequest)
+//
+// Served on the request's own stream, never relayed. Module-level and exported
+// so the tests drive the same code the stream handler calls.
+// ---------------------------------------------------------------------------
+
+/** Frame a `ModifierResponse` (5) for post bodies: the bodies we hold, byte-bounded. */
+export function servePostBodiesResponse(
+  magic: number,
+  req: ModifierRequest,
+  provider: (id: string) => string | null,
+): Uint8Array {
+  const modifiers: { id: string; data: Uint8Array }[] = [];
+  let bodyBytes = 0;
+
+  for (const id of req.ids) {
+    const content = provider(id);
+    if (content === null) continue;
+    const data = encodePostBody(content);
+    if (modifiers.length > 0 && bodyBytes + data.length > MAX_SERVE_BODY_BYTES) break;
+    bodyBytes += data.length;
+    modifiers.push({ id, data });
+  }
+
+  const resp: ModifierResponse = { typeId: req.typeId, modifiers };
+  return encodeModifierResponse(magic, resp);
+}
+
+// ---------------------------------------------------------------------------
 // Peer exchange (GetPeers / Peers — NET_INTERFACE → Peer Discovery)
 //
 // The serve, intake, and cadence decisions live in module-level functions so
@@ -649,10 +682,6 @@ export class NetNode {
     });
 
     // Wire post body seams — delegates read at call time, order-independent
-    this.syncMachine.setPostBodyProvider((id) => this.postBodyProvider?.(id) ?? null);
-    this.syncMachine.setPostBodyCommitmentProvider((id) => this.postBodyCommitmentProvider?.(id) ?? null);
-    this.syncMachine.setPostBodyVerifier((content, hash) =>
-      this.validators.verifyPostBody(content, hash));
     this.syncMachine.setOnPostBody((postId, content, fromPeerId) => {
       for (const cb of this.postBodyHandlers) {
         try {
@@ -663,10 +692,9 @@ export class NetNode {
       }
       return false;
     });
+    this.syncMachine.setPullPostBodies(
+      (entries, peerId) => this.requestPostBodies(entries, peerId));
     this.syncMachine.setGetConnectedPeers(() => this.getConnectedPeers());
-    this.syncMachine.setOnMisbehavior((peerId, reason) => {
-      this.peerMgr.recordPenalty('misbehavior', peerId, 100, reason);
-    });
 
     // Create OutboundManager
     this.outboundMgr = new OutboundManager(this.config, this.peerDb);
@@ -1143,6 +1171,46 @@ export class NetNode {
         if (code === MSG_GET_BLOCKS) {
           await serveChainQuery(code, decodeGetBlocks(body), (request, ourHeight, getBlock) =>
             serveBlocksResponse(magic, request, ourHeight, getBlock));
+          return;
+        }
+
+        // ModifierRequest for post bodies (type 103) — served on this stream,
+        // never relayed (NET_INTERFACE → Local-Serve-Before-Relay). Type 101
+        // (ordering blocks) falls through to the sync machine.
+        if (code === MSG_MODIFIER_REQUEST) {
+          const req = decodeModifierRequest(body);
+          if (!req) {
+            console.warn(`[net] malformed ModifierRequest from ${peerId}, dropping`);
+            this.peerMgr.recordPenaltyKind(
+              PenaltyKind.ProtocolViolation,
+              peerId,
+              'malformed ModifierRequest',
+            );
+            await replyEmpty();
+            return;
+          }
+          if (req.ids.length > MAX_INV_IDS) {
+            console.warn(`[net] ModifierRequest ids from ${peerId} exceeds ${MAX_INV_IDS} (got ${req.ids.length})`);
+            this.peerMgr.recordPenaltyKind(
+              PenaltyKind.ProtocolViolation,
+              peerId,
+              `ModifierRequest ids exceeds ${MAX_INV_IDS}`,
+            );
+            await replyEmpty();
+            return;
+          }
+          if (req.typeId === MODIFIER_POST_BODY) {
+            const provider = this.postBodyProvider;
+            if (!provider) {
+              await replyEmpty();
+              return;
+            }
+            const response = servePostBodiesResponse(magic, req, provider);
+            await stream.sink([response]);
+            return;
+          }
+          // Type 101 and others → sync machine
+          this.syncMachine?.handleMessage(peerId, code, body);
           return;
         }
 
