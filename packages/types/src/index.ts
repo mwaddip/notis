@@ -73,8 +73,8 @@ export { leafHash, nodeHash, buildMerkleRoot, hexToBuf } from './merkle.js';
 //
 // `postFieldBytes` is a preimage layout other packages build against, and a
 // second statement of it is free to drift.
-export { postFieldBytes, computePostId, POST_TYPE } from './post.js';
-export type { Post, PostId, PostType } from './post.js';
+export { postFieldBytes, computePostId, computeContentHash, POST_TYPE } from './post.js';
+export type { PostCommit, Post, PostId, PostType } from './post.js';
 
 // UTXO
 //
@@ -210,8 +210,8 @@ export { ByteReader, ByteWriter, ReaderError } from '@dagsocial/wire';
 
 // Serialization
 export {
-  encodePost,
-  decodePost,
+  encodePostCommit,
+  decodePostCommit,
   encodeHeader,
   decodeHeader,
   encodeUtxoTxTree,

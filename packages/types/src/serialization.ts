@@ -48,7 +48,7 @@ import {
   writeLpUtf8,
   writeVlqU,
 } from './codec.js';
-import { postFieldBytes, readPostFields, type Post } from './post.js';
+import { postFieldBytes, readPostCommitFields, type PostCommit } from './post.js';
 import { readTxIdFields, writeTxIdFields, type UtxoTransaction } from './utxo.js';
 import { serializePruneEntry, type PruneEntry } from './stump.js';
 import type {
@@ -58,56 +58,42 @@ import type {
 } from './block.js';
 
 // ---------------------------------------------------------------------------
-// Post — TYPES_INTERFACE → Layout — Post, wire codec row
+// PostCommit — TYPES_INTERFACE → Layout — PostCommit, wire codec row
 // ---------------------------------------------------------------------------
 
 /**
  * Fields 1–5 — **exactly the `postFieldBytes` sequence, with nothing after it.**
  *
- * The wire form and the id-preimage form are now the same bytes. A post has no
+ * The wire form and the id-preimage form are the same bytes. A commit has no
  * signature of its own (the creating transaction is signed over its `TxId`) and
- * no nonce to vary, so the two-field tail that used to distinguish them has no
- * members left. `postFieldBytes` stays the normative statement of the layout in
- * `post.ts`; this codec exists for the read half.
+ * no body — the body travels apart (TYPES_INTERFACE → Layout — Post body).
+ * `postFieldBytes` stays the normative statement of the layout in `post.ts`;
+ * this codec exists for the read half.
  *
  * ## Totality
  *
- * `content` (`lpUtf8`) and `protocolVersion` (`vlqU`) are total by sentinel.
- * `author` and every `parentRefs` entry are fixed-width (`b32`) and throw;
+ * `protocolVersion` (`vlqU`) is total by sentinel. `contentHash`, `author`
+ * and every `parentRefs` entry are fixed-width (`b32`) and throw;
  * `type` (`enum8`) sentinels to 0xff, refused at decode as invalid-tag
- * (TYPES_INTERFACE → Canonical field encoding). All three have their domain
- * established by `verifyPostFieldDomains` (`@dagsocial/validation`) — `b32`
+ * (TYPES_INTERFACE → Canonical field encoding). All have their domain
+ * established by `verifyPostCommitDomains` (`@dagsocial/validation`) — `b32`
  * stays unreachable because its writers throw, `enum8` because the membership
  * rule keeps the sentinel path closed.
- *
- * ⛔ **The throwing rows (`b32`) are reachable from `computeTxId`**, because
- * `txIdBytes` writes `postFieldBytes` for a post-bearing transaction. The
- * obligation `verifyPostFieldDomains` discharges therefore extends to every path
- * that hashes such a transaction — `validateTx` runs it before the id is taken,
- * and block apply's embedded-tx path is the call site TYPES_INTERFACE → Totality
- * books for the same reason it books the output fields.
  */
-const POST: StructCodec<Post> = {
-  name: 'post',
-  // ⛔ **Both halves DELEGATE to `post.ts`, and neither restates the layout.**
-  // `postFieldBytes` is the normative writer and `readPostFields` its adjacent
-  // reader, and the same pair is reached from inside `txIdBytes`' `post` option —
-  // so a post's fields have one statement whether they arrive standalone or
-  // inside the transaction that creates them. Restating either half here would
-  // put two statements of one layout in two files, free to disagree with no
-  // compiler signal.
-  write(w, p) {
-    w.writeBytes(postFieldBytes(p));
+const POST_COMMIT: StructCodec<PostCommit> = {
+  name: 'postCommit',
+  write(w, c) {
+    w.writeBytes(postFieldBytes(c));
   },
-  read: readPostFields,
+  read: readPostCommitFields,
 };
 
-export function encodePost(post: Post): Uint8Array {
-  return encodeStruct(POST, post);
+export function encodePostCommit(commit: PostCommit): Uint8Array {
+  return encodeStruct(POST_COMMIT, commit);
 }
 
-export function decodePost(bytes: Uint8Array): Post {
-  return decodeStruct(POST, bytes);
+export function decodePostCommit(bytes: Uint8Array): PostCommit {
+  return decodeStruct(POST_COMMIT, bytes);
 }
 
 // ---------------------------------------------------------------------------

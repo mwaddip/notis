@@ -20,8 +20,8 @@ import { createHash } from 'crypto';
 import { ReaderError } from '@dagsocial/wire';
 import { CodecError } from '../src/codec.js';
 import {
-  encodePost,
-  decodePost,
+  encodePostCommit,
+  decodePostCommit,
   encodeHeader,
   decodeHeader,
   encodeUtxoTxTree,
@@ -31,7 +31,7 @@ import {
   encodeTx,
   decodeTx,
 } from '../src/serialization.js';
-import { postFieldBytes, type Post } from '../src/post.js';
+import { postFieldBytes, computeContentHash, type PostCommit } from '../src/post.js';
 import { computeTxId } from '../src/utxo.js';
 import type {
   BlockHeader,
@@ -49,12 +49,9 @@ const userB = new Uint8Array(32).fill(0x22);
 const validatorKey = new Uint8Array(32).fill(0x33);
 const sig64 = new Uint8Array(64).fill(0xcd);
 
-function makePost(): Post {
+function makePostCommit(): PostCommit {
   return {
-    content: 'Hello, DAGsocial!',
-    // Real 32-byte post ids, because `b32` gives an arbitrary string like
-    // `'ref1'` no encoding at all. A hex-text encoding would take any string
-    // faithfully and let a wrong fixture pass unnoticed.
+    contentHash: computeContentHash('Hello, DAGsocial!'),
     parentRefs: ['1a'.repeat(32), '2b'.repeat(32)],
     author: userA,
     protocolVersion: 2,
@@ -164,8 +161,8 @@ describe('positional serialization', () => {
   // -------------------------------------------------------------------------
 
   describe('round-trips', () => {
-    it('Post', () => {
-      expect(decodePost(encodePost(makePost()))).toEqual(makePost());
+    it('PostCommit', () => {
+      expect(decodePostCommit(encodePostCommit(makePostCommit()))).toEqual(makePostCommit());
     });
 
     it('BlockHeader', () => {
@@ -216,7 +213,7 @@ describe('positional serialization', () => {
         signatures: { ['3c'.repeat(32)]: sig64, ['4d'.repeat(32)]: new Uint8Array(64).fill(0xef) },
         protocolVersion: 1,
         likeTarget: 'ab'.repeat(32),
-        post: makePost(),
+        post: makePostCommit(),
       };
       expect(decodeTx(encodeTx(full))).toEqual(full);
     });
@@ -514,12 +511,12 @@ describe('positional serialization', () => {
       for (const [label, bytes] of [
         ['header', encodeHeader(makeBlockHeader())],
         ['utxoTxTree', encodeUtxoTxTree(makeUtxoTxTree())],
-        ['post', encodePost(makePost())],
+        ['post', encodePostCommit(makePostCommit())],
         ['orderingBlock', encodeOrderingBlock(makeOrderingBlock())],
       ] as [string, Uint8Array][]) {
         const decoder = {
           header: decodeHeader,
-          utxoTxTree: decodeUtxoTxTree, post: decodePost,
+          utxoTxTree: decodeUtxoTxTree, post: decodePostCommit,
           orderingBlock: decodeOrderingBlock,
         }[label]!;
         expect(failureOf(() => decoder(withTrailingByte(bytes))), label).toBe('trailing-bytes');
@@ -550,7 +547,7 @@ describe('positional serialization', () => {
       // The pre-migration version of this asserted a bare `toThrow()`, which
       // passes for any reason at all — including a `TypeError` from reading a
       // property of `undefined`. The class is the assertion.
-      for (const decoder of [decodePost, decodeHeader,
+      for (const decoder of [decodePostCommit, decodeHeader,
                              decodeUtxoTxTree, decodeOrderingBlock]) {
         expect(() => decoder(new Uint8Array([0xff, 0xfe, 0xfd]))).toThrow(ReaderError);
       }
@@ -649,29 +646,29 @@ describe('positional serialization', () => {
      * Consensus pin for the post encoding format.
      *
      * Four recorded values of this fixture's id — three earlier layouts and
-     * the current one. The test asserts the current (`POST_TX_ID`) and that the
+     * the current one. The test asserts the current (`POST_COMMIT_ID`) and that the
      * id matches none of the earlier three, so a silent revisit of any earlier
      * shape fails.
      */
     const PRE_T2B_ID = '586ff286a6309e50e07f429cff6bccb026ccf3d6e1b67b7036e654c8c2a487cc';
     const CBOR_ID = '9a1155ead5ddfb05d495a34df1f4be31482e2df4f9094925ba135b4679e0d114';
     const POSITIONAL_ID = '60ccc4811541897d5bfca53ccf1155ebe198efb16ee635fc9f181432ec90ba32';
-    /** Five-field post layout with enum8 type in slot 5. */
-    const POST_TX_ID = 'c9b8df33651e39890a403a732683910b32cafb2427ae3662c39365f5a9da2858';
+    /** Five-field postCommit layout: b32(contentHash) in slot 1. */
+    const POST_COMMIT_ID = '490d1ace6b3c46e4624aef5f811104ca393e59e6d51cd0daa521573364e499fb';
 
-    const PINNED_POST: Post = {
-      content: 'T2b consensus pin: sub-block shape',
+    const PINNED_COMMIT: PostCommit = {
+      contentHash: computeContentHash('T2b consensus pin: sub-block shape'),
       author: new Uint8Array(32).fill(7),
       parentRefs: [],
       protocolVersion: 1,
       type: 'regular' as const,
     };
 
-    it('Post: the five-field post layout pins to POST_TX_ID', () => {
+    it('Post: the five-field post layout pins to POST_COMMIT_ID', () => {
       // ⛔ Four recorded values of this fixture's id — three earlier layouts
       // and the current one. This pins the five-field post layout
       // (TYPES_INTERFACE → Layout — Post).
-      const bytes = encodePost(PINNED_POST);
+      const bytes = encodePostCommit(PINNED_COMMIT);
       // The key name cannot appear: there are no key names.
       expect(hex(bytes)).not.toContain(Buffer.from('likeBoxes', 'utf8').toString('hex'));
       expect(hex(bytes)).not.toContain(Buffer.from('subBlockId', 'utf8').toString('hex'));
@@ -679,7 +676,7 @@ describe('positional serialization', () => {
       expect(id).not.toBe(PRE_T2B_ID);
       expect(id).not.toBe(CBOR_ID);
       expect(id).not.toBe(POSITIONAL_ID);
-      expect(id).toBe(POST_TX_ID);
+      expect(id).toBe(POST_COMMIT_ID);
     });
 
     it('BlockHeader: nine fields, 140 positional bytes', () => {
@@ -716,12 +713,12 @@ describe('positional serialization', () => {
 
     it('Post: the wire codec IS the payload preimage, with no tail at all', () => {
       // ⛔ The two-field tail had exactly two members — `powNonce` and
-      // `signature` — and both died with post PoW. So `encodePost` and
+      // `signature` — and both died with post PoW. So `encodePostCommit` and
       // `postFieldBytes` are now the same bytes, and that is worth pinning
       // rather than assuming: the wire form and the preimage being one encoding
       // is what removes any chance of the two dialects drifting.
-      const post = makePost();
-      const wire = encodePost(post);
+      const post = makePostCommit();
+      const wire = encodePostCommit(post);
       const preimage = postFieldBytes(post);
       expect(hex(wire)).toBe(hex(preimage));
       expect(wire.length).toBe(preimage.length);
