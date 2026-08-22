@@ -36,6 +36,8 @@ import { putIdentityRecord, deleteIdentityRecord } from '../store/identity-recor
 import { tryGetAvlProver } from '../state/avl-prover.js';
 import { GENESIS_HEIGHT } from './genesis-state.js';
 import { applyOrderingBlock } from './block-apply.js';
+import { registerPlaceholder } from './backfill.js';
+import { getPlaceholdersAt } from '../store/index.js';
 import { noteTip } from '../metrics.js';
 import { rebuildTemplate } from './block-creator.js';
 import {
@@ -446,6 +448,9 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[], dagService
     if (!applyOrderingBlock(block, dagService)) {
       const hash = blockHash(block.header) ?? 'unhashable';
       throw new ReorgBlockRejectedError(block.header.height, hash);
+    }
+    for (const p of getPlaceholdersAt(block.header.height)) {
+      registerPlaceholder(p.id, p.contentHash, block.header.height, '');
     }
   }
     })();

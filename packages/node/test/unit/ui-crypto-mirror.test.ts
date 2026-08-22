@@ -33,14 +33,14 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {
   computePostId, postFieldBytes, computeBoxId, computeTxId,
-  computeCandidateBoxId, canonicalBoxBytes, BOX_VALUE_BOUND, MAX_PARENT_REFS,
+  computeCandidateBoxId, canonicalBoxBytes, computeContentHash, BOX_VALUE_BOUND, MAX_PARENT_REFS,
   PROTOCOL_VERSION, VOUCH_KARMA_AMOUNT, VOUCH_MIN_BALANCE, u32BE,
 } from '@dagsocial/types';
 import { jsonToTx } from '../../src/routes/json-to-tx.js';
 import { extractDeclaration as extractDeclarationFrom } from './extract-declaration.js';
 import type {
   CandidateOf,
-  Post, KarmaBox, CreditBox, GenesisProofBox, BondBox, PostLockBox, VouchBox,
+  Post, PostCommit, KarmaBox, CreditBox, GenesisProofBox, BondBox, PostLockBox, VouchBox,
   EmissionBox, TreasuryBox, FeeBox, KarmaPoolBox, LikeAccrualBox, VouchEscrowBox,
   AnyBox, UtxoTransaction,
 } from '@dagsocial/types';
@@ -58,26 +58,21 @@ for (let i = 0; i < 32; i++) GOLDEN_AUTHOR[i] = i;
 /** A well-formed `b32` parent ref: 64 lowercase hex characters. */
 const GOLDEN_REF = '11'.repeat(32);
 
-const GOLDEN_POST: Post = {
-  content: 'dagsocial golden vector ✓',
+const GOLDEN_POST: PostCommit = {
+  contentHash: computeContentHash('dagsocial golden vector ✓'),
   author: GOLDEN_AUTHOR,
   parentRefs: [GOLDEN_REF],
   protocolVersion: 1,
   type: 'regular',
 };
 
-/** The txId a post id is derived from. Any 64-hex value; this one is distinctive. */
 const GOLDEN_POST_TX_ID = '7f'.repeat(32);
 
-/**
- * The same payload as the page builds it: `author` is the identity's HEX, not
- * bytes. Both forms encode to the same 32 bytes (`b32Either`), and this is the
- * one that survives the page's own `JSON.stringify` → `jsonToTx` round trip.
- */
 const GOLDEN_POST_HEX_AUTHOR = {
   ...GOLDEN_POST,
+  contentHash: Buffer.from(GOLDEN_POST.contentHash).toString('hex'),
   author: Buffer.from(GOLDEN_AUTHOR).toString('hex'),
-} as unknown as Post;
+} as unknown as PostCommit;
 
 // ---------------------------------------------------------------------------
 // Golden box vectors — must stay identical to packages/types/test/utxo.test.ts
@@ -366,7 +361,7 @@ const BYTE_PRIMITIVES = [
 const MIRRORED_OTHER = [
   'buf2hex', 'hex2buf', 'concatUint8Arrays',
   'isEncodableVlqU', 'isEncodableVlqS',
-  'postFieldBytes', 'u32BE',
+  'postFieldBytes', 'computeContentHash', 'u32BE',
   'computePostId', 'canonicalBoxBytes', 'boxTypeFields',
   'computeBoxId', 'computeCandidateBoxId', 'computeTxId',
   'jsonBigint', 'effectiveKarma',
@@ -393,7 +388,7 @@ const MIRRORED_FUNCTIONS: readonly string[] =
 
 /** Consts the mirror lifts. A top-level one may itself construct bytes. */
 const MIRRORED_CONSTS = [
-  'POST_ID_DOMAIN', 'BOX_ID_DOMAIN', 'TX_ID_DOMAIN', 'VLQ_SENTINEL', 'U32_SENTINEL', 'BOX_TYPE_TAGS', 'POST_TYPE_TAGS',
+  'POST_CONTENT_DOMAIN', 'POST_ID_DOMAIN', 'BOX_ID_DOMAIN', 'TX_ID_DOMAIN', 'VLQ_SENTINEL', 'U32_SENTINEL', 'BOX_TYPE_TAGS', 'POST_TYPE_TAGS',
   'PROTOCOL_VERSION', 'VOUCH_KARMA_AMOUNT', 'VOUCH_MIN_BALANCE',
   'LIKE_KARMA_COST', 'POST_LOCK_THREAD_COST',
   'INVITE_BOND_DEFAULT',
@@ -404,7 +399,7 @@ const MIRRORED_CONSTS = [
 
 /** What `loadUiCrypto` hands back; must stay in step with `UiCrypto`. */
 const RETURNED = [
-  'postFieldBytes', 'computePostId', 'u32BE',
+  'postFieldBytes', 'computeContentHash', 'computePostId', 'u32BE',
   'vlqU', 'vlqS', 'vlqU64', 'lp', 'lpUtf8', 'arr', 'opt', 'boolByte', 'enum8Tag',
   'b32Bytes', 'b32Hex',
   'canonicalBoxBytes', 'computeBoxId', 'computeTxId', 'computeCandidateBoxId',
@@ -422,9 +417,10 @@ interface KarmaView { total: bigint; boxes: Array<{ boxId: string; value: bigint
 
 interface UiCrypto {
   postFieldBytes: (
-    content: string, author: Uint8Array | string, parentRefs: string[],
+    contentHash: Uint8Array | string, author: Uint8Array | string, parentRefs: string[],
     protocolVersion: number, type: string,
   ) => Uint8Array;
+  computeContentHash: (content: string) => Uint8Array;
   computePostId: (txId: string, index: number) => string;
   u32BE: (n: number) => Uint8Array;
   vlqU: (n: number) => Uint8Array;
@@ -464,7 +460,7 @@ interface UiCrypto {
   buildPostTx: (
     karmaBox: { total: bigint; boxes: Array<{ boxId: string; value: bigint }> },
     lockAmount: bigint,
-    post: Post,
+    commit: Record<string, unknown>,
     pubKeyHex: string,
   ) => UtxoTransaction;
   buildLikeTx: (
@@ -508,10 +504,9 @@ function loadUiCrypto(): UiCrypto {
 
 const ui = loadUiCrypto();
 
-/** The UI's payload encoder, called the way the page calls it. */
-function uiPayload(post: Post): Uint8Array {
+function uiPayload(commit: PostCommit): Uint8Array {
   return ui.postFieldBytes(
-    post.content, post.author, post.parentRefs, post.protocolVersion, post.type,
+    commit.contentHash, commit.author, commit.parentRefs, commit.protocolVersion, commit.type,
   );
 }
 
@@ -543,26 +538,20 @@ describe('demo UI ↔ @dagsocial/types encoding mirror (M-1)', () => {
   });
 
   it('the UI accepts a hex-string author identically', () => {
-    // The posting flow passes the identity's hex straight through.
     const asHex = ui.postFieldBytes(
-      GOLDEN_POST.content, Buffer.from(GOLDEN_POST.author).toString('hex'),
+      GOLDEN_POST.contentHash, Buffer.from(GOLDEN_POST.author).toString('hex'),
       GOLDEN_POST.parentRefs, GOLDEN_POST.protocolVersion, GOLDEN_POST.type,
     );
     expect(hexOf(asHex)).toBe(hexOf(postFieldBytes(GOLDEN_POST)));
   });
 
-  it('both implementations agree across a spread of posts', () => {
-    // Every variant is in-domain on both sides. A `parentRefs` entry is `b32`,
-    // so a short or empty ref has no encoding at all and belongs in the domain
-    // test below, where the throw is the assertion.
-    const variants: Post[] = [
-      { ...GOLDEN_POST, content: 'a', parentRefs: [] },
-      { ...GOLDEN_POST, content: '', parentRefs: [] },
-      { ...GOLDEN_POST, content: '🙂 multi-byte ✓ ünïcode', parentRefs: ['ab'.repeat(32)] },
+  it('both implementations agree across a spread of commits', () => {
+    const variants: PostCommit[] = [
+      { ...GOLDEN_POST, contentHash: computeContentHash('a'), parentRefs: [] },
+      { ...GOLDEN_POST, contentHash: computeContentHash(''), parentRefs: [] },
+      { ...GOLDEN_POST, contentHash: computeContentHash('🙂 multi-byte ✓ ünïcode'), parentRefs: ['ab'.repeat(32)] },
       { ...GOLDEN_POST, protocolVersion: 0 },
       { ...GOLDEN_POST, protocolVersion: 52, type: 'profile' as const },
-      // At the cap. The encoder itself has no opinion on the count — the cap is
-      // validation's — so this pins the count prefix, not the rule.
       {
         ...GOLDEN_POST,
         parentRefs: Array.from({ length: MAX_PARENT_REFS }, (_, i) => String(i).repeat(64)),
@@ -584,20 +573,24 @@ describe('demo UI ↔ @dagsocial/types encoding mirror (M-1)', () => {
     // needs a ref that actually contains letters to be non-vacuous.
     const MIXED_CASE_REF = 'ab'.repeat(32).toUpperCase();
     for (const bad of ['', 'ab', 'abcd', 'z'.repeat(64), MIXED_CASE_REF]) {
-      const post = { ...GOLDEN_POST, parentRefs: [bad] };
-      expect(() => postFieldBytes(post), `types accepted ${bad}`).toThrow();
-      expect(() => uiPayload(post), `ui accepted ${bad}`).toThrow();
+      const commit = { ...GOLDEN_POST, parentRefs: [bad] };
+      expect(() => postFieldBytes(commit), `types accepted ${bad}`).toThrow();
+      expect(() => uiPayload(commit), `ui accepted ${bad}`).toThrow();
     }
   });
 
   it('the M-1 collision pair is distinct in the UI too', () => {
-    // Slot 4 is the sole VLQ; slot 5 is a fixed-width enum8. Two posts
-    // differing only by type produce distinct encodings on both sides.
     const a = { ...GOLDEN_POST, type: 'regular' as const };
     const b = { ...GOLDEN_POST, type: 'profile' as const };
     expect(hexOf(uiPayload(a))).not.toBe(hexOf(uiPayload(b)));
     expect(hexOf(uiPayload(a))).toBe(hexOf(postFieldBytes(a)));
     expect(hexOf(uiPayload(b))).toBe(hexOf(postFieldBytes(b)));
+  });
+
+  it('computeContentHash in the UI is byte-identical to types', () => {
+    for (const content of ['hello', '', '🙂 multi-byte ✓ ünïcode', 'dagsocial golden vector ✓']) {
+      expect(hexOf(ui.computeContentHash(content))).toBe(hexOf(computeContentHash(content)));
+    }
   });
 
   it('the UI positional writers match the frozen byte forms', () => {

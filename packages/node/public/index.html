@@ -471,6 +471,7 @@ function concatUint8Arrays(arrays) {
 //    well-formed key's encoding — a consensus collision, strictly worse than
 //    the exception it would avoid.
 
+const POST_CONTENT_DOMAIN = encoder.encode('dagsocial/post-content/1');
 const POST_ID_DOMAIN = encoder.encode('dagsocial/post-id/1');
 
 /**
@@ -633,28 +634,16 @@ function enum8Tag(table, value) {
 const POST_TYPE_TAGS = { regular: 0, profile: 1 };
 
 /**
- * postFieldBytes — the canonical, injective encoding shared by the signing
- * hash, the PoW preimage, and the post id:
+ * postFieldBytes — the canonical, injective encoding of a PostCommit:
  *
- *   lpUtf8(content) ‖ b32(author) ‖ arr(parentRefs, b32)
+ *   b32(contentHash) ‖ b32(author) ‖ arr(parentRefs, b32)
  *     ‖ vlqU(protocolVersion) ‖ enum8(type)
  *
- * Field order IS the specification — reordering it is a consensus change with
- * no signal, so the calls below are laid out to be read line-by-line against
- * that table.
- *
- * ⛔ **These bytes are the post's payload inside its creating transaction** —
- * `txIdBytes` writes them as its `post` field, so they enter that transaction's
- * `TxId`. They are NOT the post id: a post's id comes from the transaction
- * (`computePostId(txId, index)`).
- *
- * **Injective** — TYPES_INTERFACE → Canonical field encoding. Every variable
- * field carries its own length or count, so no two distinct posts concatenate
- * to the same bytes; a parent ref crosses as the 32 raw bytes it names.
+ * TYPES_INTERFACE → Layout — PostCommit.
  */
-function postFieldBytes(content, authorBytes, parentRefs, protocolVersion, type) {
+function postFieldBytes(contentHash, authorBytes, parentRefs, protocolVersion, type) {
   return concatUint8Arrays([
-    lpUtf8(content),
+    b32Either(contentHash, 32),
     b32Either(authorBytes, 32),
     arr(parentRefs, (ref) => b32Hex(ref, 32)),
     vlqU(protocolVersion),
@@ -842,11 +831,8 @@ function computeTxId(tx) {
     arr(tx.outputs, (output) => canonicalBoxBytes(output)),
     vlqU(tx.protocolVersion),
     opt(tx.likeTarget, (target) => b32Hex(target, 32)),
-    // ⛔ The post payload, and this is what makes the post id derivable: a
-    // transaction carrying a distinct post has a distinct id, and
-    // `computePostId(txId, index)` inherits that uniqueness.
     opt(tx.post, (post) => postFieldBytes(
-      post.content,
+      post.contentHash,
       typeof post.author === 'string' ? hex2buf(post.author) : post.author,
       post.parentRefs,
       post.protocolVersion,
@@ -1321,6 +1307,12 @@ function u32BE(n) {
  * about totality: this runs on ids the page did not produce, and a hex decode
  * throws on a malformed one.
  */
+function computeContentHash(content) {
+  const contentBytes = encoder.encode(content);
+  const combined = concatUint8Arrays([POST_CONTENT_DOMAIN, contentBytes]);
+  return blake2b(combined, null, 64).slice(0, 32);
+}
+
 function computePostId(txId, index) {
   const combined = concatUint8Arrays([
     POST_ID_DOMAIN,
@@ -1619,19 +1611,20 @@ document.getElementById('postBtn').addEventListener('click', async () => {
       return;
     }
 
-    // 4. Build the post payload — no challenge, no nonce, no signature of its own
-    const post = {
-      content,
+    // 4. Build the PostCommit — contentHash is the body's commitment
+    const contentHash = buf2hex(computeContentHash(content));
+    const commit = {
+      contentHash,
       author: userId,
       parentRefs,
       protocolVersion: PROTOCOL_VERSION,
       type: 'regular',
     };
 
-    // 5. Build and sign ONE transaction carrying that payload
+    // 5. Build and sign ONE transaction carrying the commit
     setStatus('building post transaction...', 'busy');
     const pubKeyHex = buf2hex(pubKeyRaw);
-    const tx = buildPostTx(karmaBox, lockAmount, post, pubKeyHex);
+    const tx = buildPostTx(karmaBox, lockAmount, commit, pubKeyHex);
     const { txId, signature: txSig } = await signTxId(tx);
     tx.signatures[pubKeyHex] = txSig;
 
@@ -1641,11 +1634,11 @@ document.getElementById('postBtn').addEventListener('click', async () => {
     const postId = computePostId(txId, 0);
     console.log('[client] txId:', txId, 'postId:', postId);
 
-    // 7. Submit the one transaction
+    // 7. Submit the transaction with the body beside it
     setStatus('posting...', 'busy');
     const postRes = await fetch(API + '/posts', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tx }, jsonBigint),
+      body: JSON.stringify({ tx, content }, jsonBigint),
     });
     if (!postRes.ok) {
       const err = await postRes.json();
@@ -1917,9 +1910,32 @@ function formatRelativeTime(ts) {
 
 function renderPost(p, id, depth, highlighted = false) {
   const shortId = id.slice(0, 16);
+  const indent = depth * 20;
+  const hlClass = highlighted ? ' post-highlighted' : '';
+  const borderStyle = depth > 0 ? '2px solid var(--border)' : 'none';
+  const padLeft = depth > 0 ? '10px' : '12px';
+
+  if (p.kind === 'stump') {
+    return `
+      <div class="post${hlClass}" style="margin-left:${indent}px;border-left:${borderStyle};padding-left:${padLeft};opacity:0.5">
+        <div class="post-author">${esc(p.author.slice(0, 12))}...</div>
+        <div class="post-content" style="font-style:italic;color:var(--muted)">[pruned — ${p.replyCount} replies, ${p.upvoteCount} likes]</div>
+      </div>`;
+  }
+  if (p.kind === 'pruned') {
+    return `
+      <div class="post${hlClass}" style="margin-left:${indent}px;border-left:${borderStyle};padding-left:${padLeft};opacity:0.5">
+        <div class="post-author">${esc(p.author.slice(0, 12))}...</div>
+        <div class="post-content" style="font-style:italic;color:var(--muted)">[pruned]</div>
+      </div>`;
+  }
+
+  const contentHtml = p.content === null
+    ? '<span style="font-style:italic;color:var(--muted)">not yet available</span>'
+    : escWithBreaks(p.content);
+
   const liked = userId && p.likers && p.likers.includes(userId);
   const likeCount = typeof p.likeCount === 'number' ? p.likeCount : 0;
-  const indent = depth * 20;
   const isOwn = userId && p.author === userId;
   const deleteBtn = isOwn
     ? `<button class="like-btn delete-btn" data-post-id="${id}" style="color:var(--clay)">&#10005; Delete</button>`
@@ -1927,11 +1943,10 @@ function renderPost(p, id, depth, highlighted = false) {
   const { relative, absolute } = p.blockCreatedAt != null
     ? formatRelativeTime(p.blockCreatedAt)
     : { relative: 'pending', absolute: 'Not yet confirmed' };
-  const hlClass = highlighted ? ' post-highlighted' : '';
   return `
-    <div class="post${hlClass}" data-post-id="${id}" style="margin-left:${indent}px;border-left:${depth > 0 ? '2px solid var(--border)' : 'none'};padding-left:${depth > 0 ? '10px' : '12px'}">
+    <div class="post${hlClass}" data-post-id="${id}" style="margin-left:${indent}px;border-left:${borderStyle};padding-left:${padLeft}">
       <div class="post-author" style="cursor:pointer" onclick="event.stopPropagation();viewProfile('${esc(p.author)}')" title="View posts by this author">${esc(p.author.slice(0, 12))}...</div>
-      <div class="post-content">${escWithBreaks(p.content)}</div>
+      <div class="post-content">${contentHtml}</div>
       <div class="post-meta">
         <a class="permalink" onclick="event.stopPropagation();loadThread('${esc(id)}')" title="${esc(absolute)}">${esc(relative)}</a>
         <span>${p.parentRefs.length ? p.parentRefs.length + ' parent(s)' : 'genesis'}</span>
