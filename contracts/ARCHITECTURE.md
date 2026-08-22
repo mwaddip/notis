@@ -2185,19 +2185,17 @@ These invariants are adopted from production-grade Ergo Rust node practices:
 
 ### Package boundaries
 - **No dependencies above the package's abstraction level** — the storage
-  layer depends on DB bindings, hashing and the `@dagsocial/types` codecs it
-  stores through (`encodeTx` / `decodeTx`, `computeTxId`, `computePruneEntryId`).
-  It MUST NOT import the node's configuration, post content types as values,
-  networking code, or UI code. A local setting a store module enforces — the
-  mempool cap — reaches it from `index.ts` at startup through a setter the store
-  exports (`MEMPOOL_INTERFACE → Size cap — reject, never evict`), the way
-  `index.ts` wires the node's other seams (`setNet`, `setDagServiceForMiner`, the
-  karma-membership hook).
-  > ⚠ **AHEAD OF CODE — 2026-08-22.** `store/mempool.ts:4` imports `../config.js` for
-  > `config.maxMempoolEntries` (the capacity check's cap, `:215`); the unit replaces
-  > the import with the store's setter, called from `index.ts`, with the store's
-  > default equal to config's. The prohibitions already hold: post content types
-  > are `import type` only; no networking or UI import.
+  layer MUST NOT import the node's configuration, networking code, UI code, or
+  post content types as values (`import type` only). Beyond DB bindings and
+  hashing it imports the `@dagsocial/types` codecs it stores through
+  (`encodeTx` / `decodeTx`, `computeTxId`, `computePruneEntryId`) and node-local
+  pure helpers and error classes from `journal`, `karma-supply`,
+  `mint-provenance` and `services/` — functions and classes that carry no
+  configuration, I/O or state. Anything that does — a local setting, the net, an
+  engine — reaches a store module through a setter `index.ts` calls at startup,
+  as the mempool cap does (`MEMPOOL_INTERFACE → Size cap — reject, never evict`),
+  the way `index.ts` wires the node's other seams (`setNet`,
+  `setDagServiceForMiner`, the karma-membership hook).
 - **"Does NOT own" on every package** — each package explicitly lists what
   it is NOT responsible for. Prevents scope creep.
   > **True — all five packages carry it.** Note it lives in `packages/*/CLAUDE.md`, not in

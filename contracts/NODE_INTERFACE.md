@@ -2898,6 +2898,7 @@ block has confirmed. Idempotent insert (first block to confirm a postId wins);
 | `countPendingInvites(inviterId)` | `(string) => number` | SQL COUNT over gate metadata — unbounded (M-8) |
 | `hasPendingVouch(voucherId)` | `(string) => boolean` | SQL EXISTS over gate metadata (L-4) |
 | `removeEntry(rowid)` | `(number) => void` | Remove confirmed entry by rowid |
+| `setMempoolCap(n)` | `(number) => void` | Set the pool bound; `index.ts` calls it once at startup with `config.maxMempoolEntries` (`MEMPOOL_INTERFACE → setMempoolCap`) |
 
 All insert functions throw a typed `MempoolFullError` at `MAX_MEMPOOL_ENTRIES`
 (default 10000). Three callers, three behaviors: routes map it to 503; gossip

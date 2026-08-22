@@ -239,6 +239,19 @@ Batch cleanup happens through `removeEntry` per rowid.
 
 ---
 
+### setMempoolCap
+
+```
+setMempoolCap(n: number): void
+```
+
+Sets the pool bound `classCaps()` splits between the credit and karma classes
+(*Size cap — reject, never evict*; *Eviction, inside the credit class only*).
+`index.ts` calls it once at startup with the parsed `maxMempoolEntries`; the
+store starts at `DEFAULT_MAX_MEMPOOL_ENTRIES`, the constant `config.ts` imports
+for the setting's default. Throws on anything but a positive safe integer and
+leaves the bound unchanged.
+
 ## Lifecycle
 
 ```
@@ -457,9 +470,6 @@ The store starts at the same default the setting has (`DEFAULT_MAX_MEMPOOL_ENTRI
 10000, exported by the store and imported by `config.ts` for its default — one
 source), so a store opened without a node, as a test opens one, is bounded the way
 production is; `setMempoolCap` refuses anything but a positive integer.
-> ⚠ **AHEAD OF CODE — 2026-08-22.** The store reads `config.maxMempoolEntries` directly
-> today (`store/mempool.ts:215`); the setter, the exported default and the `index.ts`
-> call are the unit's.
 
 Three insert callers, three behaviors:
 
