@@ -1,10 +1,11 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import {
   generateKeyPair,
+  computeContentHash,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   PROTOCOL_VERSION,
 } from '@dagsocial/types';
-import type { Post, UtxoTransaction, OrderingBlock, BlockHeader } from '@dagsocial/types';
+import type { PostCommit, UtxoTransaction, OrderingBlock, BlockHeader } from '@dagsocial/types';
 import {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
@@ -12,6 +13,7 @@ import {
   verifyParentRefsCount,
   verifyTxStructure,
   verifyOrderingBlockStructure,
+  verifyPostBody,
 } from '@dagsocial/validation';
 import { createPrivateKey, sign } from 'crypto';
 import { NetNode } from '../src/node.js';
@@ -41,6 +43,7 @@ const validators: NetValidators = {
   verifyParentRefsCount,
   verifyTxStructure,
   verifyOrderingBlockStructure,
+  verifyPostBody,
 };
 
 // Generous timeout — libp2p needs time for peer discovery and connection negotiation
@@ -138,17 +141,17 @@ describe('Two-node integration', () => {
     // Wait for connection
     await new Promise((r) => setTimeout(r, 3000));
 
-    // Register handler on B
     let receivedTx: UtxoTransaction | null = null;
-    nodeB.onTx((tx) => {
+    let receivedContent: string | undefined;
+    nodeB.onTx((tx, content) => {
       receivedTx = tx;
+      receivedContent = content;
     });
 
-    // A post is a transaction, so it propagates on the tx topic. B's relay gate
-    // is membership, so B must know the author holds karma — mined PoW is gone.
     const kp = generateKeyPair();
-    const post: Post = {
-      content: 'hello from integration test',
+    const content = 'hello from integration test';
+    const commit: PostCommit = {
+      contentHash: computeContentHash(content),
       author: kp.publicKey,
       parentRefs: [],
       protocolVersion: 1,
@@ -159,17 +162,16 @@ describe('Two-node integration', () => {
       outputs: [{ boxType: 'karma', value: 10n, createdAtBlock: 0, owner: kp.publicKey } as never],
       signatures: {},
       protocolVersion: 1,
-      post,
+      post: commit,
     };
     nodeB.addKarmaMember(Buffer.from(kp.publicKey).toString('hex'));
 
-    await nodeA.broadcastTx(tx);
+    await nodeA.broadcastTx(tx, content);
 
-    // Wait for gossip propagation
     await new Promise((r) => setTimeout(r, 4000));
 
     expect(receivedTx).not.toBeNull();
-    expect(receivedTx!.post!.content).toBe('hello from integration test');
+    expect(receivedContent).toBe('hello from integration test');
   }, TIMEOUT);
 
   it('ordering block propagates from A to B', async () => {
@@ -234,23 +236,19 @@ describe('Two-node integration', () => {
       received = true;
     });
 
-    // Broadcast an invalid post transaction (empty content — fails
-    // ContentLimits). The fixture passes the structure gate's earlier clauses
-    // and dies at content, so the rejection fires for its intended reason.
-    //
-    // ⚠ **The author IS admitted to B's karma set, and that is load-bearing.**
-    // Without it this test would pass because membership dropped the message,
-    // not because content did — the vacuous version of itself.
+    // Empty content fails verifyPostBody (ContentLimits). The author IS in
+    // B's karma set so the rejection is from body verification, not membership.
     const author = new Uint8Array(32).fill(0xa1);
     nodeB.addKarmaMember(Buffer.from(author).toString('hex'));
 
+    const emptyContent = '';
     const invalidTx = {
       inputs: ['ba'.repeat(32)],
       outputs: [{ boxType: 'karma', value: 10n, createdAtBlock: 0, owner: author }],
       signatures: {},
       protocolVersion: 1,
       post: {
-        content: '',
+        contentHash: computeContentHash('placeholder'),
         author,
         parentRefs: [],
         protocolVersion: 1,
@@ -258,7 +256,7 @@ describe('Two-node integration', () => {
       },
     } as unknown as UtxoTransaction;
 
-    await nodeA.broadcastTx(invalidTx);
+    await nodeA.broadcastTx(invalidTx, emptyContent);
     await new Promise((r) => setTimeout(r, 4000));
 
     expect(received).toBe(false);

@@ -21,6 +21,14 @@ export const MSG_BLOCKS = 17;
 // ---------------------------------------------------------------------------
 
 export const MODIFIER_ORDERING_BLOCK = 101;
+// 102 retired (was sub-block), never reuse
+export const MODIFIER_POST_BODY = 103;
+
+// ---------------------------------------------------------------------------
+// Backfill
+// ---------------------------------------------------------------------------
+
+export const BACKFILL_BATCH_IDS = 100;
 
 // ---------------------------------------------------------------------------
 // Peer
@@ -151,6 +159,7 @@ export interface NetValidators {
   verifyParentRefsCount: (refs: string[]) => { valid: boolean; error?: string };
   verifyTxStructure: (tx: UtxoTransaction) => { valid: boolean; error?: string };
   verifyOrderingBlockStructure: (block: OrderingBlock) => { valid: boolean; error?: string };
+  verifyPostBody: (content: unknown, contentHash: Uint8Array) => { valid: boolean; error?: string };
 }
 
 // ---------------------------------------------------------------------------

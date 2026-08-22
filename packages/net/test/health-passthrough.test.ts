@@ -8,6 +8,7 @@ import {
   verifyParentRefsCount,
   verifyTxStructure,
   verifyOrderingBlockStructure,
+  verifyPostBody,
 } from '@dagsocial/validation';
 import { NetNode } from '../src/node.js';
 import { SyncMachine } from '../src/sync-machine.js';
@@ -26,6 +27,7 @@ const validators: NetValidators = {
   verifyParentRefsCount,
   verifyTxStructure,
   verifyOrderingBlockStructure,
+  verifyPostBody,
 };
 
 function makeConfig(): NetConfig {

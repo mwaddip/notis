@@ -7,6 +7,7 @@ import {
   verifyParentRefsCount,
   verifyTxStructure,
   verifyOrderingBlockStructure,
+  verifyPostBody,
 } from '@dagsocial/validation';
 import {
   NetNode,
@@ -236,6 +237,7 @@ describe('peerDbCap default (contract: soft cap 1000)', () => {
     verifyParentRefsCount,
     verifyTxStructure,
     verifyOrderingBlockStructure,
+    verifyPostBody,
   };
 
   // The fallback lives in NetNode.start(), so the test starts a real node.

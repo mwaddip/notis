@@ -13,6 +13,7 @@ import {
   verifyParentRefsCount,
   verifyTxStructure,
   verifyOrderingBlockStructure,
+  verifyPostBody,
 } from '@dagsocial/validation';
 import { encodeServableOrderingBlock } from '../src/serve-encode.js';
 import { LazySyncStore } from '../src/node.js';
@@ -44,6 +45,7 @@ const validators: NetValidators = {
   verifyParentRefsCount,
   verifyTxStructure,
   verifyOrderingBlockStructure,
+  verifyPostBody,
 };
 
 function makeHeader(overrides: Partial<BlockHeader> = {}): BlockHeader {

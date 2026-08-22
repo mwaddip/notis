@@ -1,10 +1,10 @@
 import {
   decodeOrderingBlock,
-  decodeTx,
+  decodeTxPacket,
   encodeOrderingBlock,
-  encodeTx,
+  encodeTxPacket,
 } from '@dagsocial/types';
-import type { OrderingBlock, UtxoTransaction } from '@dagsocial/types';
+import type { OrderingBlock, UtxoTransaction, TxPacket } from '@dagsocial/types';
 import { TopicValidatorResult } from '@libp2p/interface';
 import type { PubSub } from '@libp2p/interface';
 import type { GossipsubEvents } from '@chainsafe/libp2p-gossipsub';
@@ -67,7 +67,7 @@ export interface GossipHandlers {
    * dispatch below for why `msg.from` is the wrong value.
    */
   onOrderingBlock: (block: OrderingBlock, fromPeerId: string) => void;
-  onTx: (tx: UtxoTransaction, fromPeerId: string) => void;
+  onTx: (tx: UtxoTransaction, content: string | undefined, fromPeerId: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -127,32 +127,33 @@ export function subscribeTopics(
   gs.topicValidators.set(TOPICS.tx, (_peer, msg) => {
     try {
       const raw = new Uint8Array(msg.data);
-      const tx = decodeTx(raw);
+      const packet = decodeTxPacket(raw);
+      const { tx, content } = packet;
       const vr = validators.verifyTxStructure(tx);
       if (!vr.valid) {
-        // Bogus — well-formed message with invalid content.
         peerMgr.recordPenalty('misbehavior', _peer.toString(), 100, vr.error ?? 'invalid tx');
         return TopicValidatorResult.Reject;
       }
       if (!validators.verifyProtocolVersion(tx.protocolVersion)) {
-        // Bogus — well-formed message with unsupported version.
         peerMgr.recordPenalty('misbehavior', _peer.toString(), 100, 'unsupported protocol version');
         return TopicValidatorResult.Reject;
       }
-      // The post relay gate — see `KarmaMembers`. It runs only for a
-      // post-bearing transaction and only after `verifyTxStructure`.
-      //
-      // ⚠ What makes the hex-encode safe on THIS path is the decoder, not that
-      // check. `author` is `b32`, read as `readBytesN(r, 32)`, so `decodeTx`
-      // above cannot produce any other width — and it is the only producer of
-      // the object this closure sees. `verifyTxStructure`'s own 32-byte pin is
-      // depth rather than enforcement here; it is left in place because it is
-      // what a caller reaching this gate without a decode would land on, and
-      // that failure would otherwise be silent.
-      //
-      // ⚠ **Before any store read, and before the signature check**, which is the
-      // whole reason it is a set: an unfunded flood costs one hash lookup, not
-      // 73 µs of Ed25519 per message.
+      // NET_INTERFACE → Gossip Topics: tx.post present ⟺ content present
+      const hasPost = tx.post !== undefined;
+      const hasContent = content !== undefined;
+      if (hasPost !== hasContent) {
+        peerMgr.recordPenalty('misbehavior', _peer.toString(), 100,
+          hasPost ? 'post without body' : 'body without post');
+        return TopicValidatorResult.Reject;
+      }
+      if (hasPost && hasContent) {
+        const bv = validators.verifyPostBody(content, tx.post!.contentHash);
+        if (!bv.valid) {
+          peerMgr.recordPenalty('misbehavior', _peer.toString(), 100, bv.error ?? 'post body verification failed');
+          return TopicValidatorResult.Reject;
+        }
+      }
+      // The post relay gate — see `KarmaMembers`.
       if (tx.post !== undefined) {
         const author = Buffer.from(tx.post.author).toString('hex');
         if (!karmaMembers.has(author)) {
@@ -162,7 +163,6 @@ export function subscribeTopics(
       }
       return TopicValidatorResult.Accept;
     } catch (err) {
-      // Malformed — cannot even decode. Permanent ban.
       peerMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, _peer.toString(), `malformed tx: ${String(err)}`);
       return TopicValidatorResult.Reject;
     }
@@ -235,7 +235,7 @@ export function subscribeTopics(
     if (topic === TOPICS.orderingBlock) {
       deliver(decodeOrderingBlock, (block) => handlers.onOrderingBlock(block, relayPeerId));
     } else if (topic === TOPICS.tx) {
-      deliver(decodeTx, (tx) => handlers.onTx(tx, relayPeerId));
+      deliver(decodeTxPacket, (packet) => handlers.onTx(packet.tx, packet.content, relayPeerId));
     }
   });
 
@@ -253,8 +253,8 @@ export async function broadcastOrderingBlock(libp2p: Libp2pGossip, block: Orderi
   await libp2p.services.pubsub.publish(TOPICS.orderingBlock, data);
 }
 
-export async function broadcastTx(libp2p: Libp2pGossip, tx: UtxoTransaction): Promise<void> {
-  const data = encodeTx(tx);
+export async function broadcastTx(libp2p: Libp2pGossip, tx: UtxoTransaction, content?: string): Promise<void> {
+  const data = encodeTxPacket(tx, content);
   await libp2p.services.pubsub.publish(TOPICS.tx, data);
 }
 

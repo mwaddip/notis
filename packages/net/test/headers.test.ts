@@ -15,6 +15,7 @@ import {
   verifyParentRefsCount,
   verifyTxStructure,
   verifyOrderingBlockStructure,
+  verifyPostBody,
 } from '@dagsocial/validation';
 import { SYNC_PROTOCOL } from '../src/sync.js';
 import { NetNode, serveBlocksResponse, serveHeadersResponse } from '../src/node.js';
@@ -792,6 +793,7 @@ const registrationValidators: NetValidators = {
   verifyParentRefsCount,
   verifyTxStructure,
   verifyOrderingBlockStructure,
+  verifyPostBody,
 };
 
 describe('chain query protocol registration', () => {

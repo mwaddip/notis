@@ -59,7 +59,7 @@ import {
 } from './types.js';
 
 type OrderingBlockCallback = (block: OrderingBlock, fromPeerId: string) => void;
-type TxCallback = (tx: UtxoTransaction, fromPeerId: string) => void;
+type TxCallback = (tx: UtxoTransaction, content: string | undefined, fromPeerId: string) => void;
 type BlocksHandlerFn = (block: OrderingBlock, fromPeerId: string) => boolean;
 
 /**
@@ -712,7 +712,7 @@ export class NetNode {
       onOrderingBlock: (block, fromPeerId) => {
         for (const cb of this.orderingBlockHandlers) cb(block, fromPeerId);
       },
-      onTx: (tx, fromPeerId) => { for (const cb of this.txHandlers) cb(tx, fromPeerId); },
+      onTx: (tx, content, fromPeerId) => { for (const cb of this.txHandlers) cb(tx, content, fromPeerId); },
     };
 
     await subscribeTopics(
@@ -1290,9 +1290,9 @@ export class NetNode {
     await broadcastOrderingBlock(asGossip(this.libp2p), block);
   }
 
-  async broadcastTx(tx: UtxoTransaction): Promise<void> {
+  async broadcastTx(tx: UtxoTransaction, content?: string): Promise<void> {
     if (!this.libp2p) return;
-    await broadcastTx(asGossip(this.libp2p), tx);
+    await broadcastTx(asGossip(this.libp2p), tx, content);
   }
 
   // -----------------------------------------------------------------------

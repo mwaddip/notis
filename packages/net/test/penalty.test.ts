@@ -132,6 +132,7 @@ const stubValidators: NetValidators = {
   verifyParentRefsCount: () => ({ valid: true }),
   verifyTxStructure: () => ({ valid: true }),
   verifyOrderingBlockStructure: () => ({ valid: true }),
+  verifyPostBody: () => ({ valid: true }),
 };
 
 describe('NetNode.penalizePeer', () => {
