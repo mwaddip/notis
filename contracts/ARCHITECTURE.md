@@ -2194,8 +2194,8 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   configuration, I/O or state. Anything that does — a local setting, the net, an
   engine — reaches a store module through a setter `index.ts` calls at startup,
   as the mempool cap does (`MEMPOOL_INTERFACE → Size cap — reject, never evict`),
-  the way `index.ts` wires the node's other seams (`setNet`,
-  `setDagServiceForMiner`, the karma-membership hook).
+  the way `index.ts` wires the node's other seams (`setNet`, the
+  karma-membership hook, `setMempoolCap`).
 - **"Does NOT own" on every package** — each package explicitly lists what
   it is NOT responsible for. Prevents scope creep.
   > **True — all five packages carry it.** Note it lives in `packages/*/CLAUDE.md`, not in
