@@ -3136,37 +3136,49 @@ describe('verifyTxStructure — the transaction weight bound', () => {
   };
 
   /**
-   * A transaction whose encoded size exceeds `MAX_TX_BYTES`.
-   * With `PostCommit` the post payload is fixed-width, so we pack enough
-   * inputs to cross the limit.
+   * A transaction encoding to exactly `target` bytes.
+   *
+   * Inputs step by 32 bytes; the output's `value` (`vlqU64`, 1–9 bytes wide)
+   * closes the sub-32-byte gap. The solver picks the input count that lands
+   * below target by at most 8, then tries values at each VLQ width boundary
+   * to hit the exact byte count.
    */
-  const commit: PostCommit = {
-    contentHash: computeContentHash('size-test'),
-    author: new Uint8Array(32).fill(7),
-    parentRefs: [],
-    protocolVersion: 1,
-    type: 'regular' as const,
-  };
-  const buildTx = (inputCount: number): UtxoTransaction => ({
-    inputs: Array.from({ length: inputCount }, (_, i) => i.toString(16).padStart(64, '0')),
-    outputs: [karmaOut],
-    signatures: {},
-    protocolVersion: 1,
-    post: commit,
-  });
-  // Find the largest count that fits within the limit
-  let underCount = 1;
-  while (encodeTx(buildTx(underCount + 1)).length <= MAX_TX_BYTES) underCount++;
-  const atLimit = buildTx(underCount);
-  const overLimit = buildTx(underCount + 1);
+  const VLQ_BOUNDARIES: bigint[] = [0n, 128n, 16384n, 2097152n, 268435456n,
+    34359738368n, 4398046511104n, 562949953421312n, 72057594037927936n];
 
-  it('accepts a transaction encoding within MAX_TX_BYTES', () => {
-    expect(encodeTx(atLimit).length).toBeLessThanOrEqual(MAX_TX_BYTES);
+  const txOfEncodedSize = (target: number): UtxoTransaction => {
+    const sizeCommit: PostCommit = {
+      contentHash: computeContentHash('size-test'),
+      author: new Uint8Array(32).fill(7),
+      parentRefs: [],
+      protocolVersion: 1,
+      type: 'regular' as const,
+    };
+    const build = (n: number, value: bigint): UtxoTransaction => ({
+      inputs: Array.from({ length: n }, (_, i) => i.toString(16).padStart(64, '0')),
+      outputs: [{ ...karmaOut, value }],
+      signatures: {},
+      protocolVersion: 1,
+      post: sizeCommit,
+    });
+    for (let n = Math.ceil(target / 32); n >= 1; n--) {
+      for (const v of VLQ_BOUNDARIES) {
+        if (encodeTx(build(n, v)).length === target) return build(n, v);
+      }
+    }
+    throw new Error(`no transaction fixture of exactly ${target} bytes`);
+  };
+
+  const atLimit = txOfEncodedSize(MAX_TX_BYTES);
+  const overLimit = txOfEncodedSize(MAX_TX_BYTES + 1);
+
+  it('accepts a transaction encoding to exactly MAX_TX_BYTES', () => {
+    expect(encodeTx(atLimit).length).toBe(MAX_TX_BYTES);
     expect(verifyTxStructure(atLimit)).toEqual({ valid: true });
   });
 
-  it('rejects an over-limit transaction, and names the weight bound', () => {
-    expect(encodeTx(overLimit).length).toBeGreaterThan(MAX_TX_BYTES);
+  it('rejects one byte more, and names the weight bound', () => {
+    expect(encodeTx(overLimit).length).toBe(MAX_TX_BYTES + 1);
     expect(verifyTxStructure(overLimit)).toEqual({ valid: false, error: TOO_LARGE });
   });
 

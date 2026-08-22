@@ -9,7 +9,7 @@ import {
   ED25519_SPKI_PREFIX,
 } from '@dagsocial/types';
 import { encodeHeader, encodeTx, utxoTxTreeByteLength, computeContentHash } from '@dagsocial/types';
-import type { Post, BlockHeader, OrderingBlock, UtxoTransaction } from '@dagsocial/types';
+import type { BlockHeader, OrderingBlock, UtxoTransaction } from '@dagsocial/types';
 import { isDisallowedContentCodepoint } from './content-charset.js';
 
 // ---------------------------------------------------------------------------
@@ -149,40 +149,25 @@ function isBytesOfLength(v: unknown, n: number): v is Uint8Array {
 }
 
 /**
- * The domain of every field `postFieldBytes` encodes.
+ * The field-domain pin over the transaction's `PostCommit` payload
+ * (VALIDATION_INTERFACE → verifyPostCommitDomains).
  *
- * ⛔ **Its caller moved and its precondition got WIDER.** A post is the payload of
- * the transaction that creates it, so `postFieldBytes` is now inside the
- * `computeTxId` preimage — this guard is what keeps a throwing writer unreachable
- * on the path that derives a *transaction* id, not just a post id. It runs on the
- * post-bearing transaction, where `verifyTxStructure` already runs.
+ * `postFieldBytes` sits inside the `computeTxId` preimage, so this guard
+ * keeps its throwing writers unreachable on the transaction-id path.
+ * `verifyTxStructure` calls it before anything takes the transaction's id.
  *
- * **Type checks** (audit M-5/M-6): a malformed post must not throw inside
- * `@dagsocial/types`. A non-array `parentRefs` throws in `.map`, an absent
- * `author` throws on `.length`, an `author` that is not a byte view
- * overruns the preimage buffer, and a symbol in `content` / `parentRefs` /
- * `protocolVersion` throws in `TextEncoder.encode` / `String()`.
+ * **Width checks** (TYPES_INTERFACE → Layout — PostCommit): `contentHash`
+ * and `author` are `b32` (exactly 32 bytes each); `parentRefs` is
+ * `arr(refs, b32)` with at most `MAX_PARENT_REFS` entries. Fixed-width
+ * writers throw on a wrong width (`writeBytesNOrThrow`,
+ * `writeHexNOrThrow`), and this guard establishes the domain before they
+ * are reached. `protocolVersion` uses `isU64Safe` to keep the `vlqU`
+ * sentinel path closed. `type` must be a member of `POST_TYPE`.
  *
- * The numerics use `isU64Safe`, not a loose `typeof === 'number'`. A loose
- * check admits `NaN` / `Infinity` / negative / fractional values, which the
- * canonical encoder in `@dagsocial/types` has to absorb by writing an all-ones
- * sentinel to stay panic-free — and two such malformed posts then share an
- * encoding. Rejecting them here keeps that sentinel path out of reach for
- * anything that passes this guard.
+ * It reads no content — the commit carries none; the body's rules are
+ * `verifyPostBody`'s.
  *
- * **Width checks** (TYPES_INTERFACE → Layout — Post): `author` is `b32` and
- * `parentRefs` is `arr(refs, b32)`. A fixed-width writer has no
- * unreachable sentinel — its wire domain *is* its encodable domain — so padding
- * or truncating a 31-byte `author` would map it onto a well-formed post's
- * encoding, a consensus-level collision strictly worse than the panic it
- * avoids. `post.ts` therefore throws (`writeBytesNOrThrow`,
- * `writeHexNOrThrow`), and this guard is what establishes the domain before
- * that writer is reached, keeping the throw unreachable rather than latent.
- *
- * No well-formed post is affected: `author` is a 32-byte Ed25519 public key (a
- * 31-byte one cannot verify a signature), every `parentRef` is a `computePostId`
- * output, `type` is a member of `POST_TYPE`, and `protocolVersion` must
- * equal `PROTOCOL_VERSION` to pass Stage 1 at all.
+ * Total on adversarial input, like every function here.
  */
 export function verifyPostCommitDomains(commit: unknown): { valid: boolean; error?: string } {
   if (!isObject(commit)) return { valid: false, error: 'Post is not an object' };
