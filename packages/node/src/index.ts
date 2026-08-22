@@ -46,6 +46,8 @@ import {
   PendingSpendConflictError,
   getOrderingBlock,
   peerStorage,
+  getKarmaOwners,
+  registerKarmaMembershipHook,
 } from './store/index.js';
 import { MEMPOOL_EXPIRY_BLOCKS, computePostId } from '@dagsocial/types';
 import type { OrderingBlock } from '@dagsocial/types';
@@ -127,6 +129,14 @@ const net = new NetNode(
   peerStorage,
 );
 setNet(net);
+
+// 2a. Karma membership — seed from the store, then hook the choke points
+// (NODE_INTERFACE → Post transactions, the relay-gate bullet).
+net.setKarmaMembers(getKarmaOwners());
+registerKarmaMembershipHook({
+  onGain: (ownerHex) => net.addKarmaMember(ownerHex),
+  onLoss: (ownerHex) => net.removeKarmaMember(ownerHex),
+});
 
 // DagService — owns canonical branch population and DAG reorg logic
 const dagService = new DagService();

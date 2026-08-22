@@ -831,6 +831,62 @@ export function getPostLockBox(targetPostId: string): PostLockBox | null {
  * the record during block application, and a height invented outside a block
  * would not be a settled one.
  */
+// ---------------------------------------------------------------------------
+// Karma membership hook — registered by index.ts so the store stays net-agnostic
+// ---------------------------------------------------------------------------
+
+export type KarmaMembershipHook = {
+  onGain: (ownerHex: string) => void;
+  onLoss: (ownerHex: string) => void;
+};
+
+let membershipHook: KarmaMembershipHook | null = null;
+
+export function registerKarmaMembershipHook(hook: KarmaMembershipHook): void {
+  membershipHook = hook;
+}
+
+export function getKarmaOwners(): string[] {
+  return (
+    getDb()
+      .prepare(
+        `SELECT DISTINCT owner FROM utxo_boxes
+         WHERE box_type = 'karma' AND spent_at_block IS NULL AND owner IS NOT NULL`,
+      )
+      .all() as { owner: Buffer }[]
+  ).map(r => r.owner.toString('hex'));
+}
+
+function notifyMembershipIfNeeded(
+  ownerBuf: Buffer,
+  boxId: string | undefined,
+  direction: 'insert' | 'remove',
+): void {
+  if (!membershipHook) return;
+  const ownerHex = ownerBuf.toString('hex');
+  if (direction === 'insert') {
+    const others = (
+      getDb()
+        .prepare(
+          `SELECT COUNT(*) as cnt FROM utxo_boxes
+           WHERE box_type = 'karma' AND owner = ? AND spent_at_block IS NULL AND id != ?`,
+        )
+        .get(ownerBuf, boxId!) as { cnt: number }
+    ).cnt;
+    if (others === 0) membershipHook.onGain(ownerHex);
+  } else {
+    const remaining = (
+      getDb()
+        .prepare(
+          `SELECT COUNT(*) as cnt FROM utxo_boxes
+           WHERE box_type = 'karma' AND owner = ? AND spent_at_block IS NULL`,
+        )
+        .get(ownerBuf) as { cnt: number }
+    ).cnt;
+    if (remaining === 0) membershipHook.onLoss(ownerHex);
+  }
+}
+
 function bumpActivityClock(owner: Uint8Array): void {
   const height = openBlockJournalHeight();
   if (height === null) return;
@@ -1016,6 +1072,10 @@ export function insertBox(box: AnyBox, postLockTarget?: PostId): void {
   if (countsAsCirculatingKarma(box.boxType)) recordKarmaSupplyDelta(box.value);
 
   if (activityOwner !== null) bumpActivityClock(activityOwner);
+
+  if (box.boxType === 'karma' && owner !== null) {
+    notifyMembershipIfNeeded(owner, box.id!, 'insert');
+  }
 }
 
 /**
@@ -1063,10 +1123,10 @@ export function consumeBox(boxId: string, consumedAtBlock: number): void {
   const spent = getDb()
     .prepare(
       `UPDATE utxo_boxes SET spent_at_block = ? WHERE id = ? AND spent_at_block IS NULL
-       RETURNING box_type, value`,
+       RETURNING box_type, value, owner`,
     )
     .safeIntegers()
-    .get(consumedAtBlock, boxId) as { box_type: string; value: bigint } | undefined;
+    .get(consumedAtBlock, boxId) as { box_type: string; value: bigint; owner: Buffer | null } | undefined;
   if (spent === undefined) throw new BoxNotLiveError(boxId);
   recordBoxRemove(boxId);
 
@@ -1079,6 +1139,10 @@ export function consumeBox(boxId: string, consumedAtBlock: number): void {
   if (countsAsCirculatingKarma(spent.box_type as AnyBox['boxType'])) {
     recordKarmaSupplyDelta(-spent.value);
   }
+
+  if (spent.box_type === 'karma' && spent.owner !== null) {
+    notifyMembershipIfNeeded(spent.owner, undefined, 'remove');
+  }
 }
 
 /**
@@ -1086,7 +1150,15 @@ export function consumeBox(boxId: string, consumedAtBlock: number): void {
  * Fork-rollback inverse — never records to the block journal.
  */
 export function unconsumeBox(boxId: string): void {
-  getDb().prepare('UPDATE utxo_boxes SET spent_at_block = NULL WHERE id = ?').run(boxId);
+  const row = getDb()
+    .prepare(
+      `UPDATE utxo_boxes SET spent_at_block = NULL WHERE id = ?
+       RETURNING box_type, owner`,
+    )
+    .get(boxId) as { box_type: string; owner: Buffer | null } | undefined;
+  if (row?.box_type === 'karma' && row.owner !== null) {
+    notifyMembershipIfNeeded(row.owner, boxId, 'insert');
+  }
 }
 
 /**
@@ -1094,7 +1166,12 @@ export function unconsumeBox(boxId: string): void {
  * Fork-rollback inverse — never records to the block journal.
  */
 export function deleteBox(boxId: string): void {
-  getDb().prepare('DELETE FROM utxo_boxes WHERE id = ?').run(boxId);
+  const deleted = getDb()
+    .prepare('DELETE FROM utxo_boxes WHERE id = ? RETURNING box_type, owner')
+    .get(boxId) as { box_type: string; owner: Buffer | null } | undefined;
+  if (deleted?.box_type === 'karma' && deleted.owner !== null) {
+    notifyMembershipIfNeeded(deleted.owner, undefined, 'remove');
+  }
 }
 
 /**
