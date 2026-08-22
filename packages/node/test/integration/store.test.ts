@@ -67,13 +67,11 @@ describe('posts store (integration)', () => {
     const id = fixturePostId(commit);
     insertPost(id, commit, content);
     const retrieved = getPost(id);
-    expect(retrieved).not.toBeNull();
-    expect(isLivePost(retrieved)).toBe(true);
-    const p = retrieved as ReturnType<typeof getPost> & { content: string };
-    expect(p.content).toBe('integration round-trip');
-    expect(p.contentHash).toBe(hex(commit.contentHash));
-    expect(p.author).toEqual(uid('author-integration'));
-    expect(p.parentRefs).toEqual([]);
+    if (!isLivePost(retrieved)) throw new Error('expected StoredPost');
+    expect(retrieved.content).toBe('integration round-trip');
+    expect(retrieved.contentHash).toBe(hex(commit.contentHash));
+    expect(retrieved.author).toEqual(uid('author-integration'));
+    expect(retrieved.parentRefs).toEqual([]);
   });
 
   it('inserts a placeholder and backfills its body', () => {

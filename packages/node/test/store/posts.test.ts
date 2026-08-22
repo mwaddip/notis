@@ -87,18 +87,15 @@ describe('posts store', () => {
     insertPost(postId, commit, content);
 
     const result = getPost(postId);
-    expect(result).not.toBeNull();
-    expect(isLivePost(result)).toBe(true);
-
-    const retrieved = result as Awaited<ReturnType<typeof getPost>> & { content: string };
-    expect(retrieved.content).toBe('round-trip test');
-    expect(retrieved.contentHash).toBe(hex(commit.contentHash));
-    expect(retrieved.author).toEqual(uid('alice123'));
-    expect(retrieved.parentRefs).toEqual([]);
-    expect(retrieved.protocolVersion).toBe(1);
-    expect(retrieved.type).toBe('regular');
-    expect(retrieved.status).toBe('pending');
-    expect(Object.keys(retrieved).sort()).toEqual(
+    if (!isLivePost(result)) throw new Error('expected StoredPost');
+    expect(result.content).toBe('round-trip test');
+    expect(result.contentHash).toBe(hex(commit.contentHash));
+    expect(result.author).toEqual(uid('alice123'));
+    expect(result.parentRefs).toEqual([]);
+    expect(result.protocolVersion).toBe(1);
+    expect(result.type).toBe('regular');
+    expect(result.status).toBe('pending');
+    expect(Object.keys(result).sort()).toEqual(
       ['author', 'blockHeight', 'blockIndex', 'content', 'contentHash', 'id', 'parentRefs', 'protocolVersion', 'status', 'type'],
     );
   });

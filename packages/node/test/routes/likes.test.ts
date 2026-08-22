@@ -27,7 +27,8 @@ import {
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,
 } from '@dagsocial/types';
-import type { Post, KarmaBox, UtxoTransaction, AnyBox } from '@dagsocial/types';
+import type { PostCommit, KarmaBox, UtxoTransaction, AnyBox } from '@dagsocial/types';
+import { computeContentHash } from '@dagsocial/types';
 import { createRouter } from '../../src/routes/likes.js';
 import type { LikesDeps } from '../../src/routes/likes.js';
 import { ClientError } from '../../src/services/client-error.js';
@@ -181,15 +182,15 @@ describe('likes routes', () => {
     const authorId = authorKp.publicKey;
 
     // Create the target post
-    const post: Post = {
-      content: 'test post for likes',
+    const commit: PostCommit = {
+      contentHash: computeContentHash('test post for likes'),
       author: authorId,
       parentRefs: [],
       protocolVersion: PROTOCOL_VERSION,
       type: 'regular',
     };
-    postId = fixturePostId(post);
-    insertPost(fixturePostId(post), post, new Uint8Array(16));
+    postId = fixturePostId(commit);
+    insertPost(fixturePostId(commit), commit, 'test post for likes');
 
     // Create a liker with sufficient karma
     likerKp = generateKeyPair();

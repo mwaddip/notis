@@ -577,10 +577,9 @@ describe('per-block like settlement (P2-D N2b)', () => {
     // detected as the absence of `content` / the presence of `rootPostHash`.
     // ('subtreeMerkleRoot' does NOT exist on Stump — the N1 report's dead
     // discriminator; this assertion is against the live field set.)
-    const resolved = posts.getPost(postId) as Record<string, unknown>;
+    const resolved = posts.getPost(postId);
     expect(resolved).not.toBeNull();
-    expect('content' in resolved).toBe(false);
-    expect('rootPostHash' in resolved).toBe(true);
+    expect(posts.isStump(resolved)).toBe(true);
 
     const liker = makeTestIdentity();
     const box = makeKarmaBox(2n, liker.userId, 0);
@@ -686,8 +685,8 @@ describe('per-block like settlement (P2-D N2b)', () => {
 
     // All-or-nothing: the prune's own effects rolled back too.
     expect(ordering.getCurrentHeight()).toBe(1);
-    const live = posts.getPost(postId) as Record<string, unknown>;
-    expect('content' in live).toBe(true);
+    const live = posts.getPost(postId);
+    expect(posts.isLivePost(live)).toBe(true);
     expect(utxo.getBox(box.id!)).not.toBeNull();
   });
 

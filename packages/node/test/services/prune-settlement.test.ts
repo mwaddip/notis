@@ -85,11 +85,7 @@ async function importSettlePruneUtxo() {
 }
 
 async function importJournal() {
-  const mod = await import('../../src/store/journal.js');
-  return mod as {
-    beginBlockJournal: (height: number) => void;
-    finishBlockJournal: () => BlockJournal;
-  };
+  return await import('../../src/store/journal.js');
 }
 
 /**
