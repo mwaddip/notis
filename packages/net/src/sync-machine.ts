@@ -1,3 +1,4 @@
+import { encodePostBody, decodePostBody } from '@dagsocial/types';
 import type { NetConfig } from './types.js';
 import {
   MSG_HANDSHAKE,
@@ -6,6 +7,7 @@ import {
   MSG_MODIFIER_REQUEST,
   MSG_MODIFIER_RESPONSE,
   MODIFIER_ORDERING_BLOCK,
+  MODIFIER_POST_BODY,
 } from './types.js';
 import { isHeight, MAX_INV_IDS, MAX_SERVE_BODY_BYTES } from './msg-guards.js';
 import type { SyncInfo, Inv, ModifierRequest, ModifierResponse, SyncState } from './sync-types.js';
@@ -139,6 +141,14 @@ export class SyncMachine {
   private readonly magic: number;
 
   private onSyncedCallbacks: Array<() => void> = [];
+
+  // NET_INTERFACE → Sync Handler Registration: post body seams
+  private postBodyProvider: ((postId: string) => string | null) | null = null;
+  private postBodyCommitmentProvider: ((postId: string) => Uint8Array | null) | null = null;
+  private postBodyVerifier: ((content: unknown, contentHash: Uint8Array) => { valid: boolean; error?: string }) | null = null;
+  private onPostBodyCallback: ((postId: string, content: string, fromPeerId: string) => boolean) | null = null;
+  private missingBodiesProvider: ((limit: number) => { id: string; contentHash: Uint8Array }[]) | null = null;
+  private onMisbehavior: (peerId: string, reason: string) => void = () => {};
 
   // -----------------------------------------------------------------------
   // Biased event queues
@@ -358,6 +368,30 @@ export class SyncMachine {
    */
   onSynced(cb: () => void): void {
     this.onSyncedCallbacks.push(cb);
+  }
+
+  setPostBodyProvider(cb: (postId: string) => string | null): void {
+    this.postBodyProvider = cb;
+  }
+
+  setPostBodyCommitmentProvider(cb: (postId: string) => Uint8Array | null): void {
+    this.postBodyCommitmentProvider = cb;
+  }
+
+  setPostBodyVerifier(cb: (content: unknown, contentHash: Uint8Array) => { valid: boolean; error?: string }): void {
+    this.postBodyVerifier = cb;
+  }
+
+  setOnPostBody(cb: (postId: string, content: string, fromPeerId: string) => boolean): void {
+    this.onPostBodyCallback = cb;
+  }
+
+  setOnMisbehavior(cb: (peerId: string, reason: string) => void): void {
+    this.onMisbehavior = cb;
+  }
+
+  setMissingBodiesProvider(cb: (limit: number) => { id: string; contentHash: Uint8Array }[]): void {
+    this.missingBodiesProvider = cb;
   }
 
   // -----------------------------------------------------------------------
@@ -737,8 +771,15 @@ export class SyncMachine {
    * included, so an oversized block still moves rather than wedging sync.
    */
   private handleModifierRequestMsg(peerId: string, req: ModifierRequest): void {
-    if (req.typeId !== MODIFIER_ORDERING_BLOCK) return;
+    if (req.typeId === MODIFIER_ORDERING_BLOCK) {
+      this.serveOrderingBlocks(peerId, req);
+    } else if (req.typeId === MODIFIER_POST_BODY) {
+      this.servePostBodies(peerId, req);
+    }
+  }
 
+  // NET_INTERFACE → ModifierRequest: ordering blocks served from the chain
+  private serveOrderingBlocks(peerId: string, req: ModifierRequest): void {
     const heightOf = this.blockIdIndex();
     const modifiers: { id: string; data: Uint8Array }[] = [];
     let bodyBytes = 0;
@@ -748,6 +789,29 @@ export class SyncMachine {
       if (height === undefined) continue;
       const data = this.store.serializeOrderingBlock(height);
       if (!data) continue;
+      if (modifiers.length > 0 && bodyBytes + data.length > MAX_SERVE_BODY_BYTES) break;
+      bodyBytes += data.length;
+      modifiers.push({ id, data });
+    }
+
+    if (modifiers.length > 0) {
+      const resp: ModifierResponse = { typeId: req.typeId, modifiers };
+      this.sendToPeer(peerId, encodeModifierResponse(this.magic, resp));
+    }
+  }
+
+  // NET_INTERFACE → ModifierRequest: post bodies served locally, never relayed
+  private servePostBodies(peerId: string, req: ModifierRequest): void {
+    const provider = this.postBodyProvider;
+    if (!provider) return;
+
+    const modifiers: { id: string; data: Uint8Array }[] = [];
+    let bodyBytes = 0;
+
+    for (const id of req.ids) {
+      const content = provider(id);
+      if (content === null) continue;
+      const data = encodePostBody(content);
       if (modifiers.length > 0 && bodyBytes + data.length > MAX_SERVE_BODY_BYTES) break;
       bodyBytes += data.length;
       modifiers.push({ id, data });
@@ -772,21 +836,21 @@ export class SyncMachine {
    */
   private handleModifierResponseMsg(peerId: string, resp: ModifierResponse): void {
     if (resp.modifiers.length === 0) return;
-    // We only ever request ordering blocks, so a response of any other type
-    // answers nothing and must not consume outstanding ids.
-    if (resp.typeId !== MODIFIER_ORDERING_BLOCK) return;
 
+    if (resp.typeId === MODIFIER_ORDERING_BLOCK) {
+      this.receiveOrderingBlocks(peerId, resp);
+    } else if (resp.typeId === MODIFIER_POST_BODY) {
+      this.receivePostBodies(peerId, resp);
+    }
+  }
+
+  private receiveOrderingBlocks(peerId: string, resp: ModifierResponse): void {
     const requested = this.outstanding.get(peerId);
     if (!requested || requested.size === 0) return;
 
     const blocks: unknown[] = [];
     for (const mod of resp.modifiers) {
-      // Unsolicited and already-consumed ids are dropped; a duplicate id
-      // within one response processes once (the first occurrence consumes it).
       if (!requested.has(mod.id)) continue;
-      // An empty payload answers nothing — the id stays outstanding so a
-      // later response can still deliver it; a peer abusing this makes no
-      // progress and stalls out.
       if (mod.data.length === 0) continue;
       requested.delete(mod.id);
       blocks.push(mod.data);
@@ -798,10 +862,6 @@ export class SyncMachine {
     this.store.appendBlocks(blocks, peerId);
     const newHeight = this.store.chainHeight();
 
-    // Stall progress = chain height (audit M-10): the stall clock advances
-    // only when applying a response strictly increased the chain — junk and
-    // already-known blocks leave it untouched, so a peer feeding non-advancing
-    // responses is rotated away within one stall window.
     if (newHeight > heightBefore) {
       this.lastProgressMs = Date.now();
     }
@@ -814,6 +874,45 @@ export class SyncMachine {
       this.state.stateAppliedHeight,
       newHeight,
     );
+  }
+
+  // NET_INTERFACE → ModifierResponse: post bodies verified against the commitment
+  private receivePostBodies(peerId: string, resp: ModifierResponse): void {
+    const requested = this.outstanding.get(peerId);
+    if (!requested || requested.size === 0) return;
+    const commitmentProvider = this.postBodyCommitmentProvider;
+    const verifier = this.postBodyVerifier;
+    const deliver = this.onPostBodyCallback;
+    if (!commitmentProvider || !verifier || !deliver) return;
+
+    for (const mod of resp.modifiers) {
+      if (!requested.has(mod.id)) continue;
+      if (mod.data.length === 0) continue;
+      requested.delete(mod.id);
+
+      let content: string;
+      try {
+        content = decodePostBody(mod.data);
+      } catch {
+        this.onMisbehavior(peerId, `post body decode failed for ${mod.id}`);
+        continue;
+      }
+
+      const commitment = commitmentProvider(mod.id);
+      if (!commitment) continue;
+
+      const vr = verifier(content, commitment);
+      if (!vr.valid) {
+        this.onMisbehavior(peerId, `post body commitment mismatch for ${mod.id}: ${vr.error ?? ''}`);
+        continue;
+      }
+
+      const isProgress = deliver(mod.id, content, peerId);
+      if (isProgress) {
+        this.lastProgressMs = Date.now();
+      }
+    }
+    if (requested.size === 0) this.outstanding.delete(peerId);
   }
 
   // -----------------------------------------------------------------------

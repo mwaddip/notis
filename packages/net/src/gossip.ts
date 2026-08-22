@@ -4,7 +4,7 @@ import {
   encodeOrderingBlock,
   encodeTxPacket,
 } from '@dagsocial/types';
-import type { OrderingBlock, UtxoTransaction, TxPacket } from '@dagsocial/types';
+import type { OrderingBlock, UtxoTransaction } from '@dagsocial/types';
 import { TopicValidatorResult } from '@libp2p/interface';
 import type { PubSub } from '@libp2p/interface';
 import type { GossipsubEvents } from '@chainsafe/libp2p-gossipsub';
@@ -153,7 +153,20 @@ export function subscribeTopics(
           return TopicValidatorResult.Reject;
         }
       }
-      // The post relay gate — see `KarmaMembers`.
+      // The post relay gate — see `KarmaMembers`. It runs only for a
+      // post-bearing transaction and only after `verifyTxStructure`.
+      //
+      // ⚠ What makes the hex-encode safe on THIS path is the decoder, not that
+      // check. `author` is `b32`, read as `readBytesN(r, 32)`, so
+      // `decodeTxPacket` above cannot produce any other width — and it is the
+      // only producer of the object this closure sees. `verifyTxStructure`'s own
+      // 32-byte pin is depth rather than enforcement here; it is left in place
+      // because it is what a caller reaching this gate without a decode would
+      // land on, and that failure would otherwise be silent.
+      //
+      // ⚠ **Before any store read, and before the signature check**, which is the
+      // whole reason it is a set: an unfunded flood costs one hash lookup, not
+      // 73 µs of Ed25519 per message.
       if (tx.post !== undefined) {
         const author = Buffer.from(tx.post.author).toString('hex');
         if (!karmaMembers.has(author)) {

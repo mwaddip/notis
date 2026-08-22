@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { encode } from 'cbor-x';
+import { computeContentHash, encodePostBody, decodePostBody } from '@dagsocial/types';
+import { verifyPostBody } from '@dagsocial/validation';
 import { SyncMachine } from '../src/sync-machine.js';
 import type { SyncStore } from '../src/sync-machine.js';
 import {
@@ -13,7 +15,7 @@ import type { NetConfig } from '../src/types.js';
 import { MAX_INV_IDS, MAX_SERVE_BODY_BYTES } from '../src/msg-guards.js';
 import { decodeFrame } from '../src/frame.js';
 import { decodeModifierResponse } from '../src/sync-codec.js';
-import type { SyncInfo, Inv, ModifierRequest } from '../src/sync-types.js';
+import type { SyncInfo, Inv, ModifierRequest, ModifierResponse } from '../src/sync-types.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -869,6 +871,141 @@ describe('SyncMachine', () => {
       machine.flush();
 
       expect(sent.length).toBe(0);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // MODIFIER_POST_BODY (103) — serve and receive arms
+  // -----------------------------------------------------------------------
+
+  describe('post body modifier (103)', () => {
+
+    const CONTENT = 'test post body';
+    const CONTENT_HASH = computeContentHash(CONTENT);
+    const POST_ID = 'aa'.repeat(32);
+
+    function makeBodyMachine(opts: {
+      provider?: (id: string) => string | null;
+      commitmentProvider?: (id: string) => Uint8Array | null;
+      onBody?: (id: string, content: string, peer: string) => boolean;
+    } = {}) {
+      const sent: SentMessage[] = [];
+      const misbehaviors: { peerId: string; reason: string }[] = [];
+      const machine = new SyncMachine(
+        testConfig,
+        stubStore({ chainHeight: () => 0 }),
+        (peerId, data) => sent.push({ peerId, data }),
+      );
+      if (opts.provider) machine.setPostBodyProvider(opts.provider);
+      if (opts.commitmentProvider) machine.setPostBodyCommitmentProvider(opts.commitmentProvider);
+      machine.setPostBodyVerifier((c, h) => verifyPostBody(c, h));
+      if (opts.onBody) machine.setOnPostBody(opts.onBody);
+      machine.setOnMisbehavior((peerId, reason) => misbehaviors.push({ peerId, reason }));
+      return { machine, sent, misbehaviors };
+    }
+
+    // --- serve arm ---
+
+    it('serves a body from the provider', () => {
+      const { machine, sent } = makeBodyMachine({
+        provider: (id) => id === POST_ID ? CONTENT : null,
+      });
+
+      const req: ModifierRequest = { typeId: 103, ids: [POST_ID] };
+      machine.handleMessage('peer1', MSG_MODIFIER_REQUEST, new Uint8Array(encode(req)));
+      machine.flush();
+
+      expect(sent).toHaveLength(1);
+      const frame = decodeFrame(testConfig.magic, sent[0]!.data);
+      const resp = decodeModifierResponse(frame.body)!;
+      expect(resp.typeId).toBe(103);
+      expect(resp.modifiers).toHaveLength(1);
+      expect(resp.modifiers[0]!.id).toBe(POST_ID);
+      expect(decodePostBody(resp.modifiers[0]!.data)).toBe(CONTENT);
+    });
+
+    it('omits ids the provider does not hold', () => {
+      const { machine, sent } = makeBodyMachine({
+        provider: () => null,
+      });
+
+      const req: ModifierRequest = { typeId: 103, ids: [POST_ID] };
+      machine.handleMessage('peer1', MSG_MODIFIER_REQUEST, new Uint8Array(encode(req)));
+      machine.flush();
+
+      expect(sent).toHaveLength(0);
+    });
+
+    it('byte-bounds the response like ordering blocks', () => {
+      const bigContent = 'x'.repeat(200);
+      const { machine, sent } = makeBodyMachine({
+        provider: () => bigContent,
+      });
+
+      const ids = Array.from({ length: 100 }, (_, i) => `${'bb'.repeat(31)}${i.toString(16).padStart(2, '0')}`);
+      const req: ModifierRequest = { typeId: 103, ids };
+      machine.handleMessage('peer1', MSG_MODIFIER_REQUEST, new Uint8Array(encode(req)));
+      machine.flush();
+
+      expect(sent).toHaveLength(1);
+      const frame = decodeFrame(testConfig.magic, sent[0]!.data);
+      const resp = decodeModifierResponse(frame.body)!;
+      const totalBytes = resp.modifiers.reduce((s, m) => s + m.data.length, 0);
+      expect(totalBytes).toBeLessThanOrEqual(MAX_SERVE_BODY_BYTES + encodePostBody(bigContent).length);
+    });
+
+    // --- receive arm ---
+
+    it('delivers a verified body through onPostBody', () => {
+      const delivered: { id: string; content: string; peer: string }[] = [];
+      const { machine } = makeBodyMachine({
+        commitmentProvider: (id) => id === POST_ID ? CONTENT_HASH : null,
+        onBody: (id, content, peer) => { delivered.push({ id, content, peer }); return true; },
+      });
+
+      // Request the id first so it is outstanding
+      const outstanding = (machine as any).outstanding as Map<string, Set<string>>;
+      outstanding.set('peer1', new Set([POST_ID]));
+
+      const resp = { typeId: 103, modifiers: [{ id: POST_ID, data: encodePostBody(CONTENT) }] };
+      machine.handleMessage('peer1', MSG_MODIFIER_RESPONSE, new Uint8Array(encode(resp)));
+      machine.flush();
+
+      expect(delivered).toHaveLength(1);
+      expect(delivered[0]!.content).toBe(CONTENT);
+    });
+
+    it('penalises a body that fails its commitment', () => {
+      const { machine, misbehaviors } = makeBodyMachine({
+        commitmentProvider: () => CONTENT_HASH,
+        onBody: () => true,
+      });
+
+      const outstanding = (machine as any).outstanding as Map<string, Set<string>>;
+      outstanding.set('peer1', new Set([POST_ID]));
+
+      const wrongBody = encodePostBody('wrong content');
+      const resp = { typeId: 103, modifiers: [{ id: POST_ID, data: wrongBody }] };
+      machine.handleMessage('peer1', MSG_MODIFIER_RESPONSE, new Uint8Array(encode(resp)));
+      machine.flush();
+
+      expect(misbehaviors).toHaveLength(1);
+      expect(misbehaviors[0]!.reason).toContain('commitment mismatch');
+    });
+
+    it('ignores an unrequested id', () => {
+      const delivered: string[] = [];
+      const { machine } = makeBodyMachine({
+        commitmentProvider: () => CONTENT_HASH,
+        onBody: (id) => { delivered.push(id); return true; },
+      });
+
+      // No outstanding ids for peer1
+      const resp = { typeId: 103, modifiers: [{ id: POST_ID, data: encodePostBody(CONTENT) }] };
+      machine.handleMessage('peer1', MSG_MODIFIER_RESPONSE, new Uint8Array(encode(resp)));
+      machine.flush();
+
+      expect(delivered).toHaveLength(0);
     });
   });
 
