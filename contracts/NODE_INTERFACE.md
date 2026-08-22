@@ -656,10 +656,13 @@ defect. **It belongs to the supply set.**
 
 > ✅ **RESOLVED — `inviteProbationBlocks` is served. Verified 2026-08-11.** This read
 > `AHEAD OF CODE` until Phase 9. The node resolves it from the network profile in
-> `node/src/config.ts` and serves it from both `node/src/server.ts` and the status route in
-> `node/src/routes/blocks.ts`; the demo UI consumes it rather than holding a constant.
-> Confirmed against the running node as well — `notis.fun/testnet/api/status` returns
-> `inviteProbationBlocks`. A plain `number`, not a decimal string: unlike `totalKarma` /
+> `node/src/config.ts`, wires it into the blocks router from `node/src/server.ts`, and serves it
+> on `GET /status` (`node/src/routes/blocks.ts`). **No client reads it today** — the demo UI,
+> `tools/e2e` and `tools/faucet` hold neither a reader nor a probation constant; the node's own
+> reader is `block-creator`'s `getBondsSettlingAt`, which dates a settling bond's `invitedAt` as
+> `height − inviteProbationBlocks`, and no engine check compares it (`checkTransitions` is
+> height-free). Confirmed against the running node as well — `notis.fun/testnet/api/status`
+> returns `inviteProbationBlocks`. A plain `number`, not a decimal string: unlike `totalKarma` /
 > `totalCredits` it is not a `bigint` server-side.
 >
 > **Why a per-network value has to be served rather than known.** ⚠ **The instance below is
@@ -678,10 +681,9 @@ defect. **It belongs to the supply set.**
 > reproduce is served by the node, never held as a client constant.** A client constant is a second
 > source for a value `NETWORK_TYPE` is
 > supposed to select alone, and it fails silently — the UI has no way to learn it guessed wrong,
-> because the rejection arrives as a generic invalid-transition error.
->
-> The UI reads it with a `1000` default, matching the safe-failure direction of its existing
-> `networkType || 'mainnet'`.
+> because the rejection arrives as a generic invalid-transition error. A client that comes to read
+> it takes the served value with a default in the safe-failure direction, as the UI's existing
+> `networkType || 'mainnet'` does.
 
 > ✅ **`networkMode` → `networkType` landed in P2-A phase 4**, in the same commit as the demo
 > UI change because renaming a response field is a breaking API change. `totalKarma` and
