@@ -14,13 +14,14 @@ import {
   blockHash,
   computePowHash,
   isValidVouchTarget,
-  verifyPostFieldDomains,
+  verifyPostCommitDomains,
+  verifyPostBody,
   verifyHeaderFieldDomains,
   ed25519PublicKeyToKeyObject,
 } from '../src/verify.js';
 import { isDisallowedContentCodepoint, PINNED_UNICODE_VERSION } from '../src/content-charset.js';
-import { generateKeyPair, computePostId, computeTxId, postFieldBytes, EMPTY_STATE_ROOT, MAX_CONTENT_BYTES, MAX_PARENT_REFS, MAX_TX_BYTES, MAX_BLOCK_BODY_BYTES, ORDERING_BLOCK_POW_TARGET_FLOOR, PROTOCOL_VERSION, encodeHeader, encodeTx, encodeUtxoTxTree, utxoTxTreeByteLength, ByteWriter, writeHexNOrThrow, writeBytesNOrThrow, writeVlqU, writeLp } from '@dagsocial/types';
-import type { Post, PruneEntry, BlockHeader, OrderingBlock, UtxoTransaction, AnyBoxCandidate } from '@dagsocial/types';
+import { generateKeyPair, computePostId, computeTxId, computeContentHash, postFieldBytes, EMPTY_STATE_ROOT, MAX_CONTENT_BYTES, MAX_PARENT_REFS, MAX_TX_BYTES, MAX_BLOCK_BODY_BYTES, ORDERING_BLOCK_POW_TARGET_FLOOR, PROTOCOL_VERSION, encodeHeader, encodeTx, encodeUtxoTxTree, utxoTxTreeByteLength, ByteWriter, writeHexNOrThrow, writeBytesNOrThrow, writeVlqU, writeLp } from '@dagsocial/types';
+import type { Post, PostCommit, PruneEntry, BlockHeader, OrderingBlock, UtxoTransaction, AnyBoxCandidate } from '@dagsocial/types';
 
 /**
  * `blockHash` for a fixture the test has just built and asserts is in-domain.
@@ -1380,21 +1381,20 @@ describe('ordering-block hex domains — the pin has teeth', () => {
   // -------------------------------------------------------------------------
 
   describe('the parentRefs bound comes from MAX_PARENT_REFS', () => {
-    // ⛔ A post's refs ride inside the transaction that creates it, so
-    // `verifyTxStructure` is where the bound is enforced — the same
-    // `verifyParentRefsCount`, reading the same constant.
+    // ⛔ A post's refs ride inside the transaction that creates it. The count
+    // is now folded into `verifyPostCommitDomains`, called by `verifyTxStructure`.
 
     /** N distinct well-formed refs, so the count rule is the only thing under test. */
     const refs = (n: number): string[] =>
       Array.from({ length: n }, (_, i) => i.toString(16).padStart(2, '0').repeat(32));
 
-    const postTx = (parentRefs: string[]): UtxoTransaction => ({
+    const commitTxWithRefs = (parentRefs: string[]): UtxoTransaction => ({
       inputs: ['aa'.repeat(32)],
       outputs: [{ boxType: 'karma', value: 1n, owner: new Uint8Array(32) } as never],
       signatures: {},
       protocolVersion: 1,
       post: {
-        content: 'hello',
+        contentHash: computeContentHash('hello'),
         author: new Uint8Array(32).fill(7),
         parentRefs,
         protocolVersion: 1,
@@ -1403,32 +1403,84 @@ describe('ordering-block hex domains — the pin has teeth', () => {
     });
 
     it('accepts exactly MAX_PARENT_REFS refs', () => {
-      expect(verifyTxStructure(postTx(refs(MAX_PARENT_REFS)))).toEqual({ valid: true });
+      expect(verifyTxStructure(commitTxWithRefs(refs(MAX_PARENT_REFS)))).toEqual({ valid: true });
     });
 
     it('rejects one more than MAX_PARENT_REFS', () => {
-      const result = verifyTxStructure(postTx(refs(MAX_PARENT_REFS + 1)));
+      const result = verifyTxStructure(commitTxWithRefs(refs(MAX_PARENT_REFS + 1)));
       expect(result.valid).toBe(false);
       expect(result.error).toContain('Too many parent refs');
     });
 
-    // The point of the two above: they are written against the constant, so if
-    // `MAX_PARENT_REFS` moves the boundary moves with it and no edit is needed
-    // here. A literal in the source would leave this path pinned to the
-    // constant's old reading while the post path tracked the new one, and this
-    // test would not notice.
     it('tracks the constant rather than a literal', () => {
       const atBound = refs(MAX_PARENT_REFS);
       expect(atBound).toHaveLength(MAX_PARENT_REFS);
-      expect(verifyTxStructure(postTx(atBound)).valid).toBe(true);
-      expect(verifyTxStructure(postTx(refs(MAX_PARENT_REFS + 1))).valid).toBe(false);
+      expect(verifyTxStructure(commitTxWithRefs(atBound)).valid).toBe(true);
+      expect(verifyTxStructure(commitTxWithRefs(refs(MAX_PARENT_REFS + 1))).valid).toBe(false);
+    });
+
+    it('refs count over MAX_PARENT_REFS rejected by verifyPostCommitDomains', () => {
+      const overRefs = refs(MAX_PARENT_REFS + 1);
+      const result = verifyPostCommitDomains({
+        contentHash: computeContentHash('hello'),
+        author: new Uint8Array(32).fill(7),
+        parentRefs: overRefs,
+        protocolVersion: 1,
+        type: 'regular',
+      });
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('Too many parent refs');
     });
 
     it('a transaction with NO post skips the whole clause', () => {
-      // The biconditional's other half: the post checks must not fire on an
-      // ordinary transaction, or every like and invite would pay for them.
-      const { post: _post, ...noPost } = postTx([]);
+      const { post: _post, ...noPost } = commitTxWithRefs([]);
       expect(verifyTxStructure(noPost as UtxoTransaction)).toEqual({ valid: true });
+    });
+
+    it('a commit carrying stray content of 400 bytes passes verifyTxStructure', () => {
+      // The arm reads no content — the transaction carries none. This test
+      // asserts the retired content check is gone: a commit with a `content`
+      // key the arm ignores still passes.
+      const commit = {
+        contentHash: computeContentHash('hello'),
+        author: new Uint8Array(32).fill(7),
+        parentRefs: [] as string[],
+        protocolVersion: 1,
+        type: 'regular' as const,
+        content: 'x'.repeat(400),
+      };
+      const tx: UtxoTransaction = {
+        inputs: ['aa'.repeat(32)],
+        outputs: [{ boxType: 'karma', value: 1n, owner: new Uint8Array(32) } as never],
+        signatures: {},
+        protocolVersion: 1,
+        post: commit as any,
+      };
+      expect(verifyTxStructure(tx)).toEqual({ valid: true });
+    });
+
+    it('contentHash of 31 bytes rejected by verifyPostCommitDomains', () => {
+      const result = verifyPostCommitDomains({
+        contentHash: new Uint8Array(31),
+        author: new Uint8Array(32).fill(7),
+        parentRefs: [],
+        protocolVersion: 1,
+        type: 'regular',
+      });
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('contentHash must be exactly 32 bytes');
+    });
+
+    it('contentHash of 33 bytes rejected by verifyPostCommitDomains', () => {
+      const result = verifyPostCommitDomains({
+        contentHash: new Uint8Array(33),
+        author: new Uint8Array(32).fill(7),
+        parentRefs: [],
+        protocolVersion: 1,
+        type: 'regular',
+      });
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('contentHash must be exactly 32 bytes');
     });
   });
 
@@ -1860,8 +1912,8 @@ const MALFORMED: unknown[] = [
 describe('no-panic on malformed input (M-5)', () => {
   const kp = generateKeyPair();
 
-  const makeGoodPost = (): Post => ({
-    content: 'hello',
+  const makeGoodCommit = (): PostCommit => ({
+    contentHash: computeContentHash('hello'),
     author: kp.publicKey,
     parentRefs: [],
     protocolVersion: 1,
@@ -1881,7 +1933,7 @@ describe('no-panic on malformed input (M-5)', () => {
     ...over,
   });
 
-  const goodPost = makeGoodPost();
+  const goodCommit = makeGoodCommit();
   const goodInput = Buffer.from('pow input');
   const goodBlock: OrderingBlock = {
     header: makeHeader(),
@@ -1929,21 +1981,18 @@ describe('no-panic on malformed input (M-5)', () => {
     for (const bad of MALFORMED) {
       expect(() => verifyTxStructure(bad as any)).not.toThrow();
       expect(() => verifyTxStructure({ inputs: bad, outputs: bad, protocolVersion: 1 } as any)).not.toThrow();
-      // ⛔ The post payload, field by field. `post: null` is the sharpest
+      // ⛔ The post commit, field by field. `post: null` is the sharpest
       // case: a property read before `isObject` would throw, which is why
-      // `verifyPostFieldDomains` runs first inside the clause.
-      // The output is a whole karma box so the sweep reaches the post clause on
-      // its own terms: with an unencodable output every iteration would end at
-      // the weight bound's `encodeTx` catch instead.
+      // `verifyPostCommitDomains` runs first inside the clause.
       const withPost = (post: unknown) =>
         ({ inputs: ['aa'.repeat(32)], outputs: [{ boxType: 'karma', value: 1n, owner: new Uint8Array(32) }], signatures: {}, protocolVersion: 1, post });
       expect(() => verifyTxStructure(withPost(bad) as any)).not.toThrow();
       expect(() => verifyTxStructure(withPost(null) as any)).not.toThrow();
-      expect(() => verifyTxStructure(withPost({ ...goodPost, content: bad }) as any)).not.toThrow();
-      expect(() => verifyTxStructure(withPost({ ...goodPost, author: bad }) as any)).not.toThrow();
-      expect(() => verifyTxStructure(withPost({ ...goodPost, parentRefs: bad }) as any)).not.toThrow();
-      expect(() => verifyTxStructure(withPost({ ...goodPost, protocolVersion: bad }) as any)).not.toThrow();
-      expect(() => verifyTxStructure(withPost({ ...goodPost, type: bad }) as any)).not.toThrow();
+      expect(() => verifyTxStructure(withPost({ ...goodCommit, contentHash: bad }) as any)).not.toThrow();
+      expect(() => verifyTxStructure(withPost({ ...goodCommit, author: bad }) as any)).not.toThrow();
+      expect(() => verifyTxStructure(withPost({ ...goodCommit, parentRefs: bad }) as any)).not.toThrow();
+      expect(() => verifyTxStructure(withPost({ ...goodCommit, protocolVersion: bad }) as any)).not.toThrow();
+      expect(() => verifyTxStructure(withPost({ ...goodCommit, type: bad }) as any)).not.toThrow();
     }
   });
 
@@ -2052,13 +2101,13 @@ describe('no-panic on malformed input (M-5)', () => {
         protocolVersion: 1,
         post,
       });
-    expect(verifyTxStructure(tx({ ...goodPost, parentRefs: 'nope' }) as any).valid).toBe(false);
-    expect(verifyTxStructure(tx({ ...goodPost, parentRefs: [Symbol('x')] }) as any).valid).toBe(false);
-    expect(verifyTxStructure(tx({ ...goodPost, author: undefined }) as any).valid).toBe(false);
-    expect(verifyTxStructure(tx({ ...goodPost, author: 42 }) as any).valid).toBe(false);
-    expect(verifyTxStructure(tx({ ...goodPost, content: 42 }) as any).valid).toBe(false);
+    expect(verifyTxStructure(tx({ ...goodCommit, parentRefs: 'nope' }) as any).valid).toBe(false);
+    expect(verifyTxStructure(tx({ ...goodCommit, parentRefs: [Symbol('x')] }) as any).valid).toBe(false);
+    expect(verifyTxStructure(tx({ ...goodCommit, author: undefined }) as any).valid).toBe(false);
+    expect(verifyTxStructure(tx({ ...goodCommit, author: 42 }) as any).valid).toBe(false);
+    expect(verifyTxStructure(tx({ ...goodCommit, contentHash: 42 }) as any).valid).toBe(false);
     expect(verifyTxStructure(tx(null) as any).valid).toBe(false);
-    expect(verifyTxStructure(tx(goodPost) as any)).toEqual({ valid: true });
+    expect(verifyTxStructure(tx(goodCommit) as any)).toEqual({ valid: true });
   });
 
   it('rejects non-string content instead of throwing in Buffer.byteLength', () => {
@@ -2098,7 +2147,7 @@ describe('no-panic on malformed input (M-5)', () => {
     // `canonicalBoxBytes` inside the weight bound's `encodeTx`, so a box missing
     // `value` or `owner` is `Transaction is not encodable` and would make this
     // "happy path" assert the opposite of its name.
-    expect(verifyTxStructure({ inputs: ['aa'.repeat(32)], outputs: [{ boxType: 'karma', value: 5n, createdAtBlock: 0, owner: new Uint8Array(32) }], signatures: {}, protocolVersion: 1, post: goodPost })).toEqual({ valid: true });
+    expect(verifyTxStructure({ inputs: ['aa'.repeat(32)], outputs: [{ boxType: 'karma', value: 5n, createdAtBlock: 0, owner: new Uint8Array(32) }], signatures: {}, protocolVersion: 1, post: goodCommit })).toEqual({ valid: true });
     expect(verifyContentLimits('hello')).toEqual({ valid: true });
     expect(verifyContentCharacters('hello')).toEqual({ valid: true });
     expect(verifyParentRefsCount([])).toEqual({ valid: true });
@@ -2122,14 +2171,14 @@ describe('no-panic on malformed input (M-5)', () => {
 // ---------------------------------------------------------------------------
 
 describe('integer guard on protocolVersion and type membership (M-6)', () => {
-  // ⛔ `verifyPostFieldDomains` enforces the numeric domain on
+  // ⛔ `verifyPostCommitDomains` enforces the numeric domain on
   // `protocolVersion` and the membership domain on `type`, reached through
   // `verifyTxStructure`'s post clause, protecting the same encoder:
   // `postFieldBytes` is inside the `computeTxId` preimage.
 
-  /** A well-formed post payload — every field in domain. */
-  const goodPost = (over: Partial<Post> = {}): Post => ({
-    content: 'guard me',
+  /** A well-formed commit — every field in domain. */
+  const goodCommit = (over: Partial<PostCommit> = {}): PostCommit => ({
+    contentHash: computeContentHash('guard me'),
     author: new Uint8Array(32).fill(7),
     parentRefs: [],
     protocolVersion: 1,
@@ -2137,12 +2186,12 @@ describe('integer guard on protocolVersion and type membership (M-6)', () => {
     ...over,
   });
 
-  const postTx = (post: Post): UtxoTransaction => ({
+  const commitTx = (commit: PostCommit): UtxoTransaction => ({
     inputs: ['aa'.repeat(32)],
     outputs: [{ boxType: 'karma', value: 1n, owner: new Uint8Array(32) } as never],
     signatures: {},
     protocolVersion: 1,
-    post,
+    post: commit,
   });
 
   const OUT_OF_DOMAIN: Array<[string, number]> = [
@@ -2157,28 +2206,28 @@ describe('integer guard on protocolVersion and type membership (M-6)', () => {
   it.each(OUT_OF_DOMAIN)('rejects a %s protocolVersion without throwing', (_label, value) => {
     let result: { valid: boolean } | undefined;
     expect(() => {
-      result = verifyTxStructure(postTx(goodPost({ protocolVersion: value })));
+      result = verifyTxStructure(commitTx(goodCommit({ protocolVersion: value })));
     }).not.toThrow();
     expect(result!.valid).toBe(false);
   });
 
   it('rejects an off-table type', () => {
-    const result = verifyPostFieldDomains(goodPost({ type: 'poll' as any }));
+    const result = verifyPostCommitDomains(goodCommit({ type: 'poll' as any }));
     expect(result).toEqual({ valid: false, error: 'Post type must be a member of POST_TYPE' });
   });
 
   it('rejects a non-string type without throwing', () => {
     for (const bad of [42, null, undefined, true, Symbol('x')]) {
-      expect(() => verifyPostFieldDomains(goodPost({ type: bad as any }))).not.toThrow();
-      expect(verifyPostFieldDomains(goodPost({ type: bad as any })).valid).toBe(false);
+      expect(() => verifyPostCommitDomains(goodCommit({ type: bad as any }))).not.toThrow();
+      expect(verifyPostCommitDomains(goodCommit({ type: bad as any })).valid).toBe(false);
     }
   });
 
-  it('accepts a well-formed post (guard does not regress the happy path)', () => {
-    expect(verifyTxStructure(postTx(goodPost())).valid).toBe(true);
-    expect(verifyTxStructure(postTx(goodPost({ type: 'regular' as const }))).valid).toBe(true);
-    expect(verifyTxStructure(postTx(goodPost({ type: 'profile' as const }))).valid).toBe(true);
-    expect(verifyTxStructure(postTx(goodPost({ protocolVersion: 0 }))).valid).toBe(true);
+  it('accepts a well-formed commit (guard does not regress the happy path)', () => {
+    expect(verifyTxStructure(commitTx(goodCommit())).valid).toBe(true);
+    expect(verifyTxStructure(commitTx(goodCommit({ type: 'regular' as const }))).valid).toBe(true);
+    expect(verifyTxStructure(commitTx(goodCommit({ type: 'profile' as const }))).valid).toBe(true);
+    expect(verifyTxStructure(commitTx(goodCommit({ protocolVersion: 0 }))).valid).toBe(true);
   });
 });
 
@@ -2192,16 +2241,11 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
   const pubKeyObj = ed25519PublicKeyToKeyObject(kp.publicKey);
 
   /**
-   * A post signed over its own stated fields.
-   *
-   * ⚠ **A post has no signature of its own** — the creating transaction is
-   * signed over its `TxId` and the signer is the author. The helper keeps its
-   * name because what it builds is unchanged in the way that matters here: a
-   * post every field of which is in domain, which is the fixture the poison
-   * cases below are cut from.
+   * A well-formed commit — every field in domain. The `PostCommit` the
+   * transaction carries; the body's content travels apart.
    */
-  const signedPost = (over: Partial<Post> = {}): Post => ({
-    content: 'pin the domain',
+  const goodCommit = (over: Partial<PostCommit> = {}): PostCommit => ({
+    contentHash: computeContentHash('pin the domain'),
     author: kp.publicKey,
     parentRefs: [],
     protocolVersion: 1,
@@ -2209,13 +2253,13 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
     ...over,
   });
 
-  /** The post's carrier — the transaction whose `TxId` preimage contains it. */
-  const postTx = (post: Post): UtxoTransaction => ({
+  /** The commit's carrier — the transaction whose `TxId` preimage contains it. */
+  const commitTx = (commit: PostCommit): UtxoTransaction => ({
     inputs: ['aa'.repeat(32)],
     outputs: [{ boxType: 'karma', value: 1n, owner: new Uint8Array(32) } as never],
     signatures: {},
     protocolVersion: 1,
-    post,
+    post: commit,
   });
 
   /**
@@ -2224,9 +2268,9 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
    * successful encode is the same evidence a genuine signature used to be: the
    * twin a poisoned fixture is cut from is not itself broken.
    */
-  const payloadIsEncodable = (post: Post): boolean => {
+  const payloadIsEncodable = (commit: PostCommit): boolean => {
     try {
-      postFieldBytes(post);
+      postFieldBytes(commit);
       return true;
     } catch {
       return false;
@@ -2234,23 +2278,14 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
   };
 
   /**
-   * Build well-formed, sign, **then** poison — the only route to the domain
-   * check now that an out-of-domain post cannot be encoded, and so cannot be
-   * signed.
-   *
-   * Returns the honest twin alongside the poisoned post. The twin is not a
-   * convenience: "every prior check passed" is only evidence when it is
-   * asserted against an object that differs in exactly one field, and it is
-   * what stops a case from passing because the base fixture was broken.
-   *
-   * The twin encodes; the poisoned post does not. These tests assert the
-   * **domain** rule rejects before that encoder is reached.
+   * Build well-formed, **then** poison — the only route to the domain
+   * check now that an out-of-domain commit cannot be encoded.
    */
-  const signedThenPoisoned = (
+  const honestThenPoisoned = (
     over: Record<string, unknown>,
-  ): { honest: Post; post: Post } => {
-    const honest = signedPost();
-    return { honest, post: { ...honest, ...over } as Post };
+  ): { honest: PostCommit; commit: PostCommit } => {
+    const honest = goodCommit();
+    return { honest, commit: { ...honest, ...over } as PostCommit };
   };
 
   // -------------------------------------------------------------------------
@@ -2261,57 +2296,38 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
     // 64 characters, count within MAX_PARENT_REFS, a string — so it satisfies
     // `verifyParentRefsCount` and any bare `typeof ref === 'string'` guard.
     // Under `arr(refs, b32)` it has no encoding at all.
-    const { honest, post } = signedThenPoisoned({ parentRefs: ['z'.repeat(64)] });
+    const { honest, commit } = honestThenPoisoned({ parentRefs: ['z'.repeat(64)] });
 
-    // The builder is sound: the twin this post is cut from is in domain and
-    // encodable, so nothing below is passing on a broken fixture.
     expect(payloadIsEncodable(honest)).toBe(true);
-    expect(verifyPostFieldDomains(honest)).toEqual({ valid: true });
+    expect(verifyPostCommitDomains(honest)).toEqual({ valid: true });
 
-    // Everything Stage 1 checks besides the domain still says yes:
-    expect(verifyContentLimits(post.content)).toEqual({ valid: true });
-    expect(verifyContentCharacters(post.content)).toEqual({ valid: true });
-    expect(verifyParentRefsCount(post.parentRefs)).toEqual({ valid: true });
-    expect(verifyProtocolVersion(post.protocolVersion)).toBe(true);
-    // …and the encoder refuses it outright, naming the ref it choked on. This
-    // is the reason the pin must run first: there is no preimage to check
-    // anything else against.
-    expect(() => postFieldBytes(post)).toThrow(
+    expect(verifyParentRefsCount(commit.parentRefs)).toEqual({ valid: true });
+    expect(verifyProtocolVersion(commit.protocolVersion)).toBe(true);
+    expect(() => postFieldBytes(commit)).toThrow(
       'writeHexNOrThrow: expected 64 lowercase hex chars, got 64 chars',
     );
 
-    // The pin is the only thing that rejects it — at both entry points.
-    expect(verifyPostFieldDomains(post)).toEqual({
+    expect(verifyPostCommitDomains(commit)).toEqual({
       valid: false,
       error: 'Post parentRef must be 64 lowercase hex characters',
     });
-    expect(verifyTxStructure(postTx(post))).toEqual({
+    expect(verifyTxStructure(commitTx(commit))).toEqual({
       valid: false,
       error: 'Post parentRef must be 64 lowercase hex characters',
     });
-    // …and the honest twin passes the same gate, so the verdict is about the ref.
-    expect(verifyTxStructure(postTx(honest))).toEqual({ valid: true });
+    expect(verifyTxStructure(commitTx(honest))).toEqual({ valid: true });
   });
 
-  it('TEETH: `verifyTxStructure` gated nothing about a post before — now it gates gossip', () => {
-    // ⛔ `verifyTxStructure` gates gossip on the `tx` topic; it runs before
-    // anything hashes the payload. `computeTxId` reaches `postFieldBytes`,
-    // which throws on a 31-byte author.
-    const { honest, post } = signedThenPoisoned({ author: new Uint8Array(31).fill(4) });
+  it('TEETH: `verifyTxStructure` gated nothing about a commit before — now it gates gossip', () => {
+    const { honest, commit } = honestThenPoisoned({ author: new Uint8Array(31).fill(4) });
 
-    // Every check that does not look inside the post still passes: the
-    // transaction has inputs, outputs, a protocolVersion, and a post that is
-    // present and an object.
-    expect(verifyTxStructure(postTx(honest))).toEqual({ valid: true });
-    expect(verifyTxStructure(postTx(post))).toEqual({
+    expect(verifyTxStructure(commitTx(honest))).toEqual({ valid: true });
+    expect(verifyTxStructure(commitTx(commit))).toEqual({
       valid: false,
       error: 'Post author must be exactly 32 bytes',
     });
-    // It reaches that verdict WITHOUT encoding the post — which it could not do.
-    // This is the relay path, inside a topic validator whose catch arm bans the
-    // *forwarding* peer, so a throw here is the wrong penalty class.
-    expect(() => postFieldBytes(post)).toThrow('writeBytesNOrThrow: expected 32 bytes, got 31');
-    expect(() => verifyTxStructure(postTx(post))).not.toThrow();
+    expect(() => postFieldBytes(commit)).toThrow('writeBytesNOrThrow: expected 32 bytes, got 31');
+    expect(() => verifyTxStructure(commitTx(commit))).not.toThrow();
   });
 
   // -------------------------------------------------------------------------
@@ -2319,21 +2335,14 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
   // -------------------------------------------------------------------------
 
   it.each([0, 1, 31, 33, 64])('rejects a %i-byte author', (n) => {
-    const { honest, post } = signedThenPoisoned({ author: new Uint8Array(n).fill(4) });
-    // The twin differs in the author width and nothing else, and it is signed,
-    // genuine and accepted — so the verdict below is about the width.
+    const { honest, commit } = honestThenPoisoned({ author: new Uint8Array(n).fill(4) });
     expect(payloadIsEncodable(honest)).toBe(true);
-    expect(verifyPostFieldDomains(honest)).toEqual({ valid: true });
-    // `author` is the second rule in the chain, so this label also reports that
-    // `isObject` and the content-type rule passed.
-    expect(verifyPostFieldDomains(post)).toEqual({
+    expect(verifyPostCommitDomains(honest)).toEqual({ valid: true });
+    expect(verifyPostCommitDomains(commit)).toEqual({
       valid: false,
       error: 'Post author must be exactly 32 bytes',
     });
-    // …and the width in the writer's own message is this case's `n`, so the
-    // rejection is tied to the value the test is named for rather than to some
-    // other malformed field drifting into the fixture.
-    expect(() => postFieldBytes(post)).toThrow(`writeBytesNOrThrow: expected 32 bytes, got ${n}`);
+    expect(() => postFieldBytes(commit)).toThrow(`writeBytesNOrThrow: expected 32 bytes, got ${n}`);
   });
 
   it.each([
@@ -2344,108 +2353,161 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
     ['0x-prefixed', '0x' + 'a'.repeat(62), '64 chars'],
     ['64 chars of whitespace padding', ' '.repeat(2) + 'a'.repeat(62), '64 chars'],
   ])('rejects a parentRef that is %s', (_label, ref, seenByWriter) => {
-    const { honest, post } = signedThenPoisoned({ parentRefs: [ref] });
-    expect(verifyPostFieldDomains(honest)).toEqual({ valid: true });
-    expect(verifyPostFieldDomains(post)).toEqual({
+    const { honest, commit } = honestThenPoisoned({ parentRefs: [ref] });
+    expect(verifyPostCommitDomains(honest)).toEqual({ valid: true });
+    expect(verifyPostCommitDomains(commit)).toEqual({
       valid: false,
       error: 'Post parentRef must be 64 lowercase hex characters',
     });
-    expect(() => postFieldBytes(post)).toThrow(
+    expect(() => postFieldBytes(commit)).toThrow(
       `writeHexNOrThrow: expected 64 lowercase hex chars, got ${seenByWriter}`,
     );
   });
 
-  it('rejects a malformed ref in any position, not just the first', () => {
-    const good = 'ab'.repeat(32);
-    const { post } = signedThenPoisoned({ parentRefs: [good, good, 'z'.repeat(64)] });
+  it('rejects a malformed ref even when it is the only one', () => {
+    const { honest, commit } = honestThenPoisoned({ parentRefs: ['z'.repeat(64)] });
 
-    // The control: same three positions, all well-formed, accepted. So a check
-    // that only inspected `parentRefs[0]` would pass the poisoned post too —
-    // it is position 2 that has to be found.
-    expect(verifyPostFieldDomains({ ...post, parentRefs: [good, good, good] })).toEqual({
-      valid: true,
-    });
-    expect(verifyPostFieldDomains(post)).toEqual({
+    expect(verifyPostCommitDomains(honest)).toEqual({ valid: true });
+    expect(verifyPostCommitDomains(commit)).toEqual({
       valid: false,
       error: 'Post parentRef must be 64 lowercase hex characters',
     });
-    expect(() => postFieldBytes(post)).toThrow(
+    expect(() => postFieldBytes(commit)).toThrow(
       'writeHexNOrThrow: expected 64 lowercase hex chars, got 64 chars',
     );
-
-    // Three refs is over MAX_PARENT_REFS and that is deliberate: the count rule
-    // is `verifyParentRefsCount`'s and is *not* one of this function's, which
-    // is what lets a domain test reach a third position at all. Pinned so the
-    // separation is not "tidied away" by trimming the fixture to one ref.
-    expect(verifyParentRefsCount(post.parentRefs).valid).toBe(false);
   });
 
   // -------------------------------------------------------------------------
   // Honest paths do not move — the prediction, pinned
   // -------------------------------------------------------------------------
 
-  it('accepts a well-formed post: 32/32 bytes and real computePostId refs', () => {
-    // Every honest parentRef is a `computePostId` output, i.e. the hex string
-    // `.toString('hex')` produces — lowercase, 64 chars, by construction.
-    // A parent's id comes from the transaction that created it, so the honest
-    // ref is a `computePostId(txId, 0)` output — still lowercase 64-hex by
-    // construction, which is the property this pins.
-    const parentId = computePostId(computeTxId(postTx(signedPost({ content: 'parent' }))), 0);
+  it('accepts a well-formed commit: 32/32 bytes and real computePostId refs', () => {
+    const parentId = computePostId(computeTxId(commitTx(goodCommit({ contentHash: computeContentHash('parent') }))), 0);
     expect(parentId).toMatch(/^[0-9a-f]{64}$/);
 
-    const child = signedPost({ content: 'child', parentRefs: [parentId] });
-    expect(verifyPostFieldDomains(child)).toEqual({ valid: true });
-    expect(verifyTxStructure(postTx(child))).toEqual({ valid: true });
+    const child = goodCommit({ contentHash: computeContentHash('child'), parentRefs: [parentId] });
+    expect(verifyPostCommitDomains(child)).toEqual({ valid: true });
+    expect(verifyTxStructure(commitTx(child))).toEqual({ valid: true });
   });
 
   it('accepts the full MAX_PARENT_REFS-wide honest case', () => {
-    // Driven by the constant, not by a literal — the shape `refs(n)` on the
-    // ordering-block path already uses. A literal falsifies the test name the
-    // moment the constant moves, and it is the name that carries the property:
-    // whatever the bound is, a post sitting exactly on it is accepted by all
-    // three checks at once.
-    //
-    // Honest about what that proves at `MAX_PARENT_REFS = 1`: this is a one-ref
-    // post, so it does not discriminate "many refs" from "one ref" and largely
-    // overlaps the well-formed case above. What survives is the agreement of the
-    // three checks at the bound, plus a tripwire that self-adjusts if the bound
-    // moves up.
     const refs = Array.from({ length: MAX_PARENT_REFS }, (_, i) =>
-      computePostId(computeTxId(postTx(signedPost({ content: `parent ${i}` }))), 0),
+      computePostId(computeTxId(commitTx(goodCommit({ contentHash: computeContentHash(`parent ${i}`) }))), 0),
     );
     expect(refs).toHaveLength(MAX_PARENT_REFS);
     expect(new Set(refs).size).toBe(MAX_PARENT_REFS);
-    const post = signedPost({ parentRefs: refs });
-    expect(verifyParentRefsCount(post.parentRefs)).toEqual({ valid: true });
-    expect(verifyPostFieldDomains(post)).toEqual({ valid: true });
-    expect(verifyTxStructure(postTx(post))).toEqual({ valid: true });
+    const commit = goodCommit({ parentRefs: refs });
+    expect(verifyPostCommitDomains(commit)).toEqual({ valid: true });
+    expect(verifyTxStructure(commitTx(commit))).toEqual({ valid: true });
   });
 
   // -------------------------------------------------------------------------
   // Still total on adversarial input (M-5)
   // -------------------------------------------------------------------------
 
-  it('verifyPostFieldDomains survives every malformed argument', () => {
+  it('verifyPostCommitDomains survives every malformed argument', () => {
     for (const bad of MALFORMED) {
-      expect(() => verifyPostFieldDomains(bad as unknown as Post)).not.toThrow();
-      expect(verifyPostFieldDomains(bad as unknown as Post).valid).toBe(false);
-      const good = signedPost();
-      expect(() => verifyPostFieldDomains({ ...good, author: bad } as unknown as Post)).not.toThrow();
-      expect(() => verifyPostFieldDomains({ ...good, extraJunk: bad } as unknown as Post)).not.toThrow();
-      expect(() => verifyPostFieldDomains({ ...good, parentRefs: bad } as unknown as Post)).not.toThrow();
-      expect(() => verifyPostFieldDomains({ ...good, parentRefs: [bad] } as unknown as Post)).not.toThrow();
+      expect(() => verifyPostCommitDomains(bad as unknown)).not.toThrow();
+      expect(verifyPostCommitDomains(bad as unknown).valid).toBe(false);
+      const good = goodCommit();
+      expect(() => verifyPostCommitDomains({ ...good, author: bad } as unknown)).not.toThrow();
+      expect(() => verifyPostCommitDomains({ ...good, extraJunk: bad } as unknown)).not.toThrow();
+      expect(() => verifyPostCommitDomains({ ...good, parentRefs: bad } as unknown)).not.toThrow();
+      expect(() => verifyPostCommitDomains({ ...good, parentRefs: [bad] } as unknown)).not.toThrow();
     }
   });
 
-  it('verifyTxStructure stays total now that it reaches into the post', () => {
+  it('verifyTxStructure stays total now that it reaches into the commit', () => {
     for (const bad of MALFORMED) {
-      expect(() => verifyTxStructure(postTx(bad as unknown as Post))).not.toThrow();
+      expect(() => verifyTxStructure(commitTx(bad as unknown as PostCommit))).not.toThrow();
       // ⚠ `undefined` is the ABSENCE case and must stay valid — presence is
       // `!== undefined`, matching the `computeTxId` tail rule, so a transaction
       // with no post is an ordinary transaction and not a malformed one. Every
       // other malformed value is a present post and is rejected.
       const expected = bad === undefined;
-      expect(verifyTxStructure(postTx(bad as unknown as Post)).valid).toBe(expected);
+      expect(verifyTxStructure(commitTx(bad as unknown as PostCommit)).valid).toBe(expected);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// verifyPostBody — VALIDATION_INTERFACE → verifyPostBody
+// ---------------------------------------------------------------------------
+
+describe('verifyPostBody', () => {
+  const validContent = 'hello';
+  const validHash = computeContentHash(validContent);
+
+  it('accepts matching content and hash', () => {
+    expect(verifyPostBody(validContent, validHash)).toEqual({ valid: true });
+  });
+
+  it('rejects non-string content', () => {
+    for (const bad of [42, null, undefined, {}, [], true]) {
+      const result = verifyPostBody(bad, validHash);
+      expect(result.valid).toBe(false);
+      expect(result.error).toBe('Post content must be a string');
+    }
+  });
+
+  it('rejects empty content', () => {
+    const result = verifyPostBody('', computeContentHash(''));
+    expect(result.valid).toBe(false);
+    expect(result.error).toBe('Content is empty');
+  });
+
+  it('accepts exactly 300 UTF-8 bytes', () => {
+    const content = '€'.repeat(100); // 300 UTF-8 bytes
+    const hash = computeContentHash(content);
+    expect(verifyPostBody(content, hash)).toEqual({ valid: true });
+  });
+
+  it('rejects 301 UTF-8 bytes', () => {
+    const content = '€'.repeat(100) + 'x'; // 301 bytes
+    const hash = computeContentHash(content);
+    const result = verifyPostBody(content, hash);
+    expect(result.valid).toBe(false);
+    expect(result.error).toBe('Content exceeds max length');
+  });
+
+  it('rejects content with a category-C character', () => {
+    const content = 'hello​world'; // ZWSP
+    const hash = computeContentHash(content);
+    const result = verifyPostBody(content, hash);
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('disallowed characters');
+  });
+
+  it('rejects a hash mismatch', () => {
+    const wrongHash = new Uint8Array(32).fill(0);
+    const result = verifyPostBody(validContent, wrongHash);
+    expect(result.valid).toBe(false);
+    expect(result.error).toBe('Content hash mismatch');
+  });
+
+  it('rejects wrong-width contentHash (31 bytes)', () => {
+    const result = verifyPostBody(validContent, new Uint8Array(31));
+    expect(result.valid).toBe(false);
+    expect(result.error).toBe('contentHash must be exactly 32 bytes');
+  });
+
+  it('rejects wrong-width contentHash (33 bytes)', () => {
+    const result = verifyPostBody(validContent, new Uint8Array(33));
+    expect(result.valid).toBe(false);
+    expect(result.error).toBe('contentHash must be exactly 32 bytes');
+  });
+
+  it('agrees with computeContentHash from @dagsocial/types', () => {
+    const content = 'agreement test 🎉';
+    const hash = computeContentHash(content);
+    expect(verifyPostBody(content, hash)).toEqual({ valid: true });
+  });
+
+  it('total on adversarial input — never throws', () => {
+    for (const bad of [null, undefined, 42, {}, [], Symbol('x'), NaN]) {
+      expect(() => verifyPostBody(bad, validHash)).not.toThrow();
+      expect(() => verifyPostBody(validContent, bad as any)).not.toThrow();
+      expect(() => verifyPostBody(bad, bad as any)).not.toThrow();
     }
   });
 });
@@ -3073,62 +3135,38 @@ describe('verifyTxStructure — the transaction weight bound', () => {
     boxType: 'karma', value: 5n, createdAtBlock: 0, owner: new Uint8Array(32),
   };
 
-  /** What `lpUtf8` costs for `k` ASCII characters: its `vlqU` length prefix plus itself. */
-  const contentCost = (k: number): number => k + (k < 128 ? 1 : 2);
-
   /**
-   * A transaction encoding to exactly `target` bytes.
-   *
-   * ⛔ **No count can land on an arbitrary number.** Every input is `b32` — a
-   * fixed 32 bytes, whatever the id — and every signature is 96, so the counts
-   * move the size in steps and never between them (TYPES_INTERFACE → Layout —
-   * UtxoTransaction). The byte-granular field is the post's `lpUtf8(content)`,
-   * bounded at `MAX_CONTENT_BYTES`: the inputs carry the bulk and the content
-   * closes the last ≤ 300 bytes. Its own length prefix widens inside that range,
-   * so the length is solved against the measured base rather than derived, and
-   * dropping one whole input widens the remainder by 32 when no content length
-   * closes the gap.
+   * A transaction whose encoded size exceeds `MAX_TX_BYTES`.
+   * With `PostCommit` the post payload is fixed-width, so we pack enough
+   * inputs to cross the limit.
    */
-  const txOfEncodedSize = (target: number): UtxoTransaction => {
-    const build = (n: number, k: number): UtxoTransaction => ({
-      inputs: Array.from({ length: n }, (_, i) => i.toString(16).padStart(64, '0')),
-      outputs: [karmaOut],
-      signatures: {},
-      protocolVersion: 1,
-      post: {
-        content: 'a'.repeat(k),
-        author: new Uint8Array(32).fill(7),
-        parentRefs: [],
-        protocolVersion: 1,
-        type: 'regular' as const,
-      },
-    });
-    for (let n = Math.ceil(target / 32); n >= 0; n--) {
-      const withoutContent = encodeTx(build(n, 1)).length - contentCost(1);
-      const gap = target - withoutContent;
-      for (const k of [gap - 1, gap - 2]) {
-        if (k >= 1 && k <= MAX_CONTENT_BYTES && contentCost(k) === gap) return build(n, k);
-      }
-    }
-    throw new Error(`no transaction fixture of exactly ${target} bytes`);
+  const commit: PostCommit = {
+    contentHash: computeContentHash('size-test'),
+    author: new Uint8Array(32).fill(7),
+    parentRefs: [],
+    protocolVersion: 1,
+    type: 'regular' as const,
   };
+  const buildTx = (inputCount: number): UtxoTransaction => ({
+    inputs: Array.from({ length: inputCount }, (_, i) => i.toString(16).padStart(64, '0')),
+    outputs: [karmaOut],
+    signatures: {},
+    protocolVersion: 1,
+    post: commit,
+  });
+  // Find the largest count that fits within the limit
+  let underCount = 1;
+  while (encodeTx(buildTx(underCount + 1)).length <= MAX_TX_BYTES) underCount++;
+  const atLimit = buildTx(underCount);
+  const overLimit = buildTx(underCount + 1);
 
-  const atLimit = txOfEncodedSize(MAX_TX_BYTES);
-  /** The same transaction, one character longer in its post content. */
-  const overLimit: UtxoTransaction = {
-    ...atLimit,
-    post: { ...atLimit.post!, content: `${atLimit.post!.content}a` },
-  };
-
-  it('accepts a transaction encoding to exactly MAX_TX_BYTES', () => {
-    expect(encodeTx(atLimit).length).toBe(MAX_TX_BYTES);
+  it('accepts a transaction encoding within MAX_TX_BYTES', () => {
+    expect(encodeTx(atLimit).length).toBeLessThanOrEqual(MAX_TX_BYTES);
     expect(verifyTxStructure(atLimit)).toEqual({ valid: true });
   });
 
-  it('rejects one byte more, and names the weight bound', () => {
-    // One character apart from the fixture the test above asserts is valid, so
-    // no other rule can be credited with this rejection.
-    expect(encodeTx(overLimit).length).toBe(MAX_TX_BYTES + 1);
+  it('rejects an over-limit transaction, and names the weight bound', () => {
+    expect(encodeTx(overLimit).length).toBeGreaterThan(MAX_TX_BYTES);
     expect(verifyTxStructure(overLimit)).toEqual({ valid: false, error: TOO_LARGE });
   });
 
