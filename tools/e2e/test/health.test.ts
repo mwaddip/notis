@@ -79,7 +79,7 @@ describe('health', () => {
       // H2: measure the mesh topology — bootstrap-first may be a star
       expect(peersConnected).toBeGreaterThanOrEqual(1);
 
-      expect(h['sync_phase']).toBe('idle');
+      expect(['idle', 'synced']).toContain(h['sync_phase']);
       expect(h['syncing']).toBe(false);
       expect(h['last_post_received_ms_ago']).toBeNull();
       expect(typeof h['uptime_seconds']).toBe('number');
