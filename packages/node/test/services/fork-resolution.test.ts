@@ -167,7 +167,6 @@ async function importForkResolution() {
       block: OrderingBlock,
       net: ForkResolutionNet,
       fromPeerId: string,
-      dagService?: unknown,
     ) => Promise<void>;
   };
 }
@@ -190,7 +189,6 @@ async function importHandleBlock() {
       block: OrderingBlock,
       fromPeerId: string,
       net: ForkResolutionNet,
-      dagService?: unknown,
     ) => boolean;
   };
 }

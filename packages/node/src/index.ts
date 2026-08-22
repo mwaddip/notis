@@ -2,7 +2,7 @@ import { loadConfig } from './config.js';
 import { initDb, getDb, closeDb } from './store/db.js';
 import { setMempoolCap } from './store/mempool.js';
 import { seedGenesisState } from './services/genesis-state.js';
-import { startBlockCreator, stopBlockCreator, setDagServiceForMiner } from './services/block-creator.js';
+import { startBlockCreator, stopBlockCreator } from './services/block-creator.js';
 import { createApp, createAdminApp } from './server.js';
 import {
   initJournal,
@@ -26,7 +26,6 @@ import { admitTx } from './services/admit-tx.js';
 import { setNet } from './services/net-instance.js';
 import { enterDiscovery, notePeerMet } from './services/peer-readiness.js';
 import { createAvlProver } from './state/avl-prover.js';
-import { DagService } from './services/dag-service.js';
 import { handleOrderingBlock, pullBlocksHandler } from './services/handle-block.js';
 import { failStopIfCorruptChain, guardStoreRead } from './services/corrupt-state.js';
 import {
@@ -141,10 +140,6 @@ registerKarmaMembershipHook({
   onLoss: (ownerHex) => net.removeKarmaMember(ownerHex),
 });
 
-// DagService — owns canonical branch population and DAG reorg logic
-const dagService = new DagService();
-setDagServiceForMiner(dagService);
-
 // 3. Register Stage 2 handlers
 
 // Both gossip and pull converge on `handleOrderingBlock` (NODE_INTERFACE →
@@ -153,7 +148,7 @@ setDagServiceForMiner(dagService);
 // own `.catch(failStopIfCorruptChain)`.
 net.onOrderingBlock((block, fromPeerId) => {
   try {
-    handleOrderingBlock(block, fromPeerId, net, dagService);
+    handleOrderingBlock(block, fromPeerId, net);
   } catch (err) {
     failStopIfCorruptChain(err);
   }
@@ -234,7 +229,7 @@ net.onTx((tx, content, fromPeerId) => {
   console.log(`Relayed tx queued in mempool: ${result.txId}`);
 });
 
-net.setBlocksHandler(pullBlocksHandler(net, dagService));
+net.setBlocksHandler(pullBlocksHandler(net));
 
 // The provider `net` reads stored blocks through (NODE_INTERFACE → Sync
 // handlers). `guardStoreRead` wraps the read in `failStopIfCorruptChain`: a

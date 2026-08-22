@@ -161,24 +161,6 @@ const MIGRATIONS = [
     journal_cbor BLOB NOT NULL
   )`,
 
-  // dag_meta key-value metadata table
-  `CREATE TABLE IF NOT EXISTS dag_meta (
-    key   TEXT PRIMARY KEY,
-    value BLOB NOT NULL
-  )`,
-
-  // Canonical DAG branch — depth → post_id mapping for fork-choice view
-  `CREATE TABLE IF NOT EXISTS canonical_branch (
-    depth    INTEGER PRIMARY KEY,
-    post_id  TEXT NOT NULL
-  )`,
-
-  // Cumulative PoW scores per post for fork-choice rule
-  `CREATE TABLE IF NOT EXISTS post_scores (
-    post_id           TEXT PRIMARY KEY,
-    cumulative_score  INTEGER NOT NULL
-  )`,
-
   // Discovered peers — persistence behind net's PeerStorage seam (audit L-14).
   // Shaped to net's PeerRecord, keyed by multiaddr: PeerDb dedupes by address,
   // and a libp2p peerId is freely regenerable so it makes a worthless key.
@@ -285,20 +267,6 @@ function migrateMempoolTxColumns(database: Database.Database): void {
 }
 
 /**
- * Drop the two `dag_meta` counters `last_indexed_sequence` and
- * `last_validated_sequence`. Nothing writes them and nothing reads them; a
- * store carried over from a node that wrote them keeps the rows otherwise, and
- * a `dag_meta` key that survives its only writer reads as live state.
- */
-function migrateDropValidationCounters(database: Database.Database): void {
-  database
-    .prepare(
-      `DELETE FROM dag_meta WHERE key IN ('last_indexed_sequence', 'last_validated_sequence')`,
-    )
-    .run();
-}
-
-/**
  * Partial indexes over the mempool gate-metadata columns (audit M-8). Created
  * after the mempool migrations so they land on whichever CREATE TABLE ran last.
  * A database predating the gate columns fails loudly here at startup rather
@@ -391,7 +359,6 @@ export function initDb(path: string): void {
   migrateAvlTree(db);
   migrateBlockTopology(db);
   migrateMempoolTxColumns(db);
-  migrateDropValidationCounters(db);
   createMempoolGateIndexes(db);
 
   emitDbOpenComplete(Date.now() - startedAt);

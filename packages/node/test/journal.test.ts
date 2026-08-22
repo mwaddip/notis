@@ -188,15 +188,6 @@ describe('journal (initialized)', () => {
       expect(r!.parent_ref_count).toBe(1);
     });
 
-    it('emitDagReorg includes fork point and demoted count', async () => {
-      const { emitDagReorg } = await import('../src/journal.js');
-      emitDagReorg('fork123', 3, 'oldTip', 'newTip');
-      const r = lastRecord();
-      expect(r!.event).toBe('dag_reorg');
-      expect(r!.level).toBe('WARN');
-      expect(r!.fork_point).toBe('fork123');
-      expect(r!.demoted).toBe(3);
-    });
   });
 
   describe('peer events', () => {
@@ -247,7 +238,6 @@ describe('journal (initialized)', () => {
         emitPostReceived,
         emitPostValidated,
         emitPostIndexed,
-        emitDagReorg,
         emitPeerConnected,
         emitPeerDisconnected,
         emitPeerPenalised,
@@ -261,7 +251,6 @@ describe('journal (initialized)', () => {
         emitPostReceived('abc123', 'http');
         emitPostValidated('abc123', 2);
         emitPostIndexed('abc123', 5);
-        emitDagReorg('fork1', 2, 'old', 'new');
         emitPeerConnected('peer1', 'outbound');
         emitPeerDisconnected('peer1', 'timeout');
         emitPeerPenalised('peer1', 'invalid_pow', 'difficulty too low');

@@ -54,7 +54,7 @@ describe('pull-path boundary (real wiring)', () => {
       '../../src/services/handle-block.js'
     );
 
-    const handler = pullBlocksHandler(stubNet, undefined);
+    const handler = pullBlocksHandler(stubNet);
     expect(() => handler(makeBlock(2, 1000), 'peer1')).toThrow('process.exit');
     expect(exit).toHaveBeenCalledWith(1);
   });
@@ -70,7 +70,7 @@ describe('pull-path boundary (real wiring)', () => {
       '../../src/services/handle-block.js'
     );
 
-    const handler = pullBlocksHandler(stubNet, undefined);
+    const handler = pullBlocksHandler(stubNet);
     expect(handler(clean, 'peer1')).toBe(true);
   });
 });
