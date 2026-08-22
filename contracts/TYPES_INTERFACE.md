@@ -1500,9 +1500,11 @@ Post body).
   in-transaction payload are the same bytes with one statement of the layout.
 
 > ⚠ **AHEAD OF CODE — 2026-08-22.** Slot 1 is `lpUtf8(content)` in the tree; the commit layout
-> lands with the content-in-the-DAG unit (types). Every `TxId` moves with it — re-pin by the
-> method under "Re-pinning a frozen vector when a preimage changes", and state the survivor
-> count (it must be zero).
+> lands with the content-in-the-DAG unit (types). **Every post-bearing `TxId` moves with it** —
+> and with them the ids of those transactions' output boxes and the post ids derived from them;
+> **a transaction with no post is unchanged**, because `opt`'s absent tag is the same byte either
+> way. Re-pin by the method under "Re-pinning a frozen vector when a preimage changes", and
+> state the survivor set: every non-post id survives, no post-bearing id does.
 
 ### Layout — Post body
 
