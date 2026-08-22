@@ -305,12 +305,12 @@ export function confirmPost(postId: string, blockHeight: number, blockIndex: num
     .run(blockHeight, blockIndex, postId);
 }
 
-export function unconfirmPost(subBlockId: string): void {
+export function unconfirmPost(postId: string): void {
   getDb()
     .prepare(
       "UPDATE dag_posts SET status = 'pending', block_height = NULL, block_index = NULL WHERE id = ?",
     )
-    .run(subBlockId);
+    .run(postId);
 }
 
 export function deletePendingPost(postId: string): void {

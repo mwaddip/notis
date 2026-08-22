@@ -290,7 +290,7 @@ describe('block-creator', () => {
   // 2. Pending post transaction triggers block creation
   // -----------------------------------------------------------------------
 
-  it('pending sub-block triggers block creation', async () => {
+  it('pending post transaction triggers block creation', async () => {
     const db = await importDb();
     db.initDb(':memory:');
 
@@ -361,7 +361,7 @@ describe('block-creator', () => {
   // 4. Post confirmed after block creation
   // -----------------------------------------------------------------------
 
-  it('sub-block and post confirmed after block creation', async () => {
+  it('post confirmed after block creation', async () => {
     const db = await importDb();
     db.initDb(':memory:');
 
@@ -606,9 +606,8 @@ describe('block-creator', () => {
   // -----------------------------------------------------------------------
 
   it('computeUtxoTxRoot commits to the post author, via the transaction id', async () => {
-    // ⛔ The successor to the `computeSubBlockRoot` author test, and the binding
-    // is now TWO steps rather than one — which is why it is stronger. The root
-    // commits `utxoTxIds`; a `TxId` covers `postFieldBytes`, which contains the
+    // ⛔ The binding is TWO steps. The root commits `utxoTxIds`; a `TxId` covers
+    // `postFieldBytes` (TYPES_INTERFACE → Hashing functions), which contains the
     // author. So flipping the author moves the transaction id and therefore the
     // root, and a producer cannot rewrite authorship after mining without
     // producing a different block entirely.

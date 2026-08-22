@@ -419,7 +419,7 @@ describe('full-pipeline', () => {
   // 2. Post transaction + like tx confirmed together
   // -------------------------------------------------------------------------
 
-  it('sub-block and like tx confirmed together in one block', async () => {
+  it('post and like tx confirmed together in one block', async () => {
     const dbModule = await importDb();
     dbModule.initDb(':memory:');
     const db = dbModule.getDb();

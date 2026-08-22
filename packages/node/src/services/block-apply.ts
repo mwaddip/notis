@@ -89,7 +89,7 @@ import {
   beginBlockJournal,
   finishBlockJournal,
   abortBlockJournal,
-  recordConfirmedSubBlocks,
+  recordConfirmedPosts,
   recordAppliedUtxoTx,
   recordDeletedPosts,
   recordInsertedStump,
@@ -653,7 +653,7 @@ function applyMutationPhase(
   // per-post failures. Both read `postsOf`, so rollback un-confirms exactly what
   // apply confirmed.
   const blockPosts = postsOf(block);
-  recordConfirmedSubBlocks(postIdsOf(block));
+  recordConfirmedPosts(postIdsOf(block));
 
   // 7. The coinbase is applied with the rest of the settlement, at §11a — after
   // the body, because the fees it pays out are a property of what the body

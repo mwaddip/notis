@@ -992,7 +992,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
     journalStore.insertBlockJournal({
       blockHeight: 7,
       mutations: [],
-      confirmedSubBlockIds: [],
+      confirmedPostIds: [],
       appliedUtxoTxs: [],
       likeRecordInsertions: [{ targetPostId: likedPost, likerId: likerB.userId }],
       likeRecordDeletions: [

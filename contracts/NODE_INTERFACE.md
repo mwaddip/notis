@@ -2489,7 +2489,7 @@ Fresh schema — no Phase 1 migration.
 | `queryPosts({ author?, limit, offset })` | `(QueryOpts) => StoredPost[]` — live rows, placeholders included, newest first in committed order; pending above confirmed, by arrival |
 | `getPendingPosts(limit)` | `(number) => StoredPost[]` — oldest first, by arrival |
 | `confirmPost(postId, blockHeight, blockIndex)` | `(string, number, number) => void` — height and committed position |
-| `unconfirmPost(subBlockId)` | `(string) => void` — for fork rollbacks; clears height and position, keeps the body |
+| `unconfirmPost(postId)` | `(string) => void` — for fork rollbacks; clears height and position, keeps the body |
 | `deletePendingPost(postId)` | `(string) => void` — the pending row of a post transaction that left the pool unconfirmed (Post transactions → the pending-row rule) |
 | `deletePostRows(ids)` | `(string[]) => DeletedPostRow[]` — prune settlement: deletes the `dag_posts` and `dag_parent_refs` rows for the given ids and returns every deleted row for the journal; ids with no row are skipped |
 | `restorePostRows(rows)` | `(DeletedPostRow[]) => void` — the inverse, from the journal |
@@ -2990,7 +2990,7 @@ JournalMutation = BoxMutation | RecordMutation
 BlockJournal {
   blockHeight: number
   mutations: JournalMutation[]     // ordered, application order — state rollback + AVL feed
-  confirmedSubBlockIds: string[]   // inverse: unconfirmPost — not a mempool key
+  confirmedPostIds: string[]       // inverse: unconfirmPost — not a mempool key
   appliedUtxoTxs: Array<{ txId: string, txCbor: Uint8Array }>   // mempool re-insertion only
   likeRecordInsertions: Array<{ targetPostId: string, likerId: UserId }>
                                    // inverse: deleteLikeRecord (P2-D)
@@ -3004,6 +3004,9 @@ BlockJournal {
   insertedStumps: Stump[]          // prune settlement's stump rows — inverse: deleteStump
 }
 ```
+The field names are the `journal_cbor` keys: the journal is the node's local format, with no
+migration path — a store written under a different key set is a different store.
+
 
 **One log, not parallel arrays (Spec G phase B).** `mutations` is a
 discriminated union over **every committed entity**, not a box-only log with
@@ -3017,7 +3020,7 @@ the enforcement mechanism; do not replace it with a parallel
 `recordMutations: RecordMutation[]` array, which reinstates exactly the
 drift-by-omission shape P1 removed.
 
-The typed side-records below (`confirmedSubBlockIds`, `likeRecord*`, …) stay
+The typed side-records below (`confirmedPostIds`, `likeRecord*`, …) stay
 separate arrays because they are **not** in the `stateRoot` — they are node-local
 bookkeeping with an exact inverse. `kind: 'record'` is the first entry that is
 both journaled *and* committed, and that is the whole distinction.
@@ -3071,7 +3074,7 @@ exactly), prune settlement, user txs, and **identity records**. Reorg
 re-insertion reads `appliedUtxoTxs` (txCbor) and the reverted blocks' prune
 entries (`utxoTxTree.pruneEntries`, returned by `revertBlock` — read before the
 block row is deleted), each re-inserted after `removeMempoolPrunes` so a copy
-already in the pool lands once; `confirmedSubBlockIds` is not a mempool key.
+already in the pool lands once; `confirmedPostIds` is not a mempool key.
 
 Reverse order is what makes a record written **more than once in one block**
 revert correctly (activity bump then decay, at the same height): each inverse
@@ -4073,12 +4076,12 @@ That mattered because the field drove state mutation on two paths:
 - `removeSubBlockEntries(...)` → `DELETE FROM mempool WHERE entry_type = 'subblock' AND subblock_id
   IN (…)`, unguarded, committing with the accepted block — a mempool-eviction primitive that drops
   unconfirmed sub-blocks network-wide without confirming them.
-- the journal's `confirmedSubBlockIds`, replayed on reorg as `unconfirmPost(id)`.
+- the journal's `confirmedPostIds`, replayed on reorg as `unconfirmPost(id)`.
 
 The defect was an **asymmetry**: apply confirmed from the committed entry list while rollback
 un-confirmed from `subBlockRefs` (uncommitted) — the inverse keyed on a different list than the
 forward operation. Both directions now key on one list: the block's post ids, derived from its
-post-bearing transactions (`postIdsOf`) — recorded at apply (`recordConfirmedSubBlocks`) and
+post-bearing transactions (`postIdsOf`) — recorded at apply (`recordConfirmedPosts`) and
 replayed on reorg as `unconfirmPost(id)`.
 
 **Embedded transactions: a mismatch rejects the block** (register row C4).

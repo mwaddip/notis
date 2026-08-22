@@ -50,8 +50,8 @@ export const EMPTY_STATE_ROOT = '00'.repeat(33);
  * ⛔ **TWO LEAF CLASSES.** Every block carries one settlement transaction,
  * riding `utxoTxIds` / `utxoTxs` like any other, and coinbase outputs are
  * **its outputs** (`ARCHITECTURE` → Block architecture; TYPES_INTERFACE →
- * OrderingBlock). The leaf domains `'coinbase'` and `'subblock'` are tracked
- * reservations (TYPES_INTERFACE → Tracked reservations).
+ * OrderingBlock). The leaf domain `'coinbase'` is a tracked reservation
+ * (TYPES_INTERFACE → Tracked reservations).
  */
 export interface UtxoTxTree {
   utxoTxIds: TxId[];            // UTXO transactions — posts, likes and the settlement included

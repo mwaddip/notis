@@ -45,7 +45,7 @@ export interface RecordMutation {
  * enforcement this invariant has; a parallel array would reinstate exactly the
  * drift-by-omission shape the single log exists to remove.
  *
- * The typed side-records below (`confirmedSubBlockIds`, `likeRecord*`, …)
+ * The typed side-records below (`confirmedPostIds`, `likeRecord*`, ...)
  * stay separate arrays because they are **not** in the `stateRoot` — they are
  * node-local bookkeeping with an exact inverse. `kind: 'record'` is the first
  * entry that is both journaled *and* committed, and that is the whole
@@ -62,8 +62,8 @@ export interface BlockJournal {
   blockHeight: number;
   /** Ordered, application order — state rollback + AVL feed. */
   mutations: JournalMutation[];
-  /** Inverse: unconfirmPost; also mempool re-insertion. */
-  confirmedSubBlockIds: string[];
+  /** The post ids this block committed. Inverse: unconfirmPost (NODE_INTERFACE → Block Journal). */
+  confirmedPostIds: string[];
   /** Mempool re-insertion only. */
   appliedUtxoTxs: Array<{ txId: string; txCbor: Uint8Array }>;
   /** Inverse: deleteLikeRecord. */
@@ -129,7 +129,7 @@ export function beginBlockJournal(height: number): void {
   openJournal = {
     blockHeight: height,
     mutations: [],
-    confirmedSubBlockIds: [],
+    confirmedPostIds: [],
     appliedUtxoTxs: [],
     likeRecordInsertions: [],
     likeRecordDeletions: [],
@@ -276,13 +276,12 @@ export function recordLikeRecordDeletions(
 }
 
 /**
- * Record the block's confirmed sub-block refs — all refs, independent of
- * per-post confirm outcomes. Inverse: unconfirmPost; also mempool
- * re-insertion on reorg.
+ * Record the post ids this block committed (NODE_INTERFACE → Block Journal).
+ * Inverse: unconfirmPost.
  */
-export function recordConfirmedSubBlocks(ids: string[]): void {
+export function recordConfirmedPosts(ids: string[]): void {
   if (openJournal === null) return;
-  openJournal.confirmedSubBlockIds.push(...ids);
+  openJournal.confirmedPostIds.push(...ids);
 }
 
 /** Record an applied UTXO tx (mempool re-insertion on reorg only). */

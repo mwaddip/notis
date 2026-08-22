@@ -83,7 +83,7 @@ describe('block journal (store choke-point recording)', () => {
 
     expect(j.blockHeight).toBe(7);
     expect(j.mutations).toEqual([]);
-    expect(j.confirmedSubBlockIds).toEqual([]);
+    expect(j.confirmedPostIds).toEqual([]);
     expect(j.appliedUtxoTxs).toEqual([]);
     expect(j.likeRecordInsertions).toEqual([]);
     expect(j.likeRecordDeletions).toEqual([]);
@@ -95,7 +95,7 @@ describe('block journal (store choke-point recording)', () => {
     expect(Object.keys(j).sort()).toEqual([
       'appliedUtxoTxs',
       'blockHeight',
-      'confirmedSubBlockIds',
+      'confirmedPostIds',
       'deletedPosts',
       'insertedStumps',
       'likeRecordDeletions',

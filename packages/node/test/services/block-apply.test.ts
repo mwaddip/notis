@@ -263,10 +263,10 @@ describe('block-apply journal recording', () => {
   });
 
   // -----------------------------------------------------------------------
-  // 2. Post confirm records confirmedSubBlockIds in journal
+  // 2. Post confirm records confirmedPostIds in journal
   // -----------------------------------------------------------------------
 
-  it('post confirm records confirmedSubBlockIds in journal', async () => {
+  it('post confirm records confirmedPostIds in journal', async () => {
     const db = await importDb();
     db.initDb(':memory:');
 
@@ -291,7 +291,7 @@ describe('block-apply journal recording', () => {
     const journal = await importJournalStore();
     const saved = journal.getBlockJournal(1);
     expect(saved).not.toBeNull();
-    expect(saved!.confirmedSubBlockIds).toContain(postId);
+    expect(saved!.confirmedPostIds).toContain(postId);
   });
 
   // -----------------------------------------------------------------------
@@ -1999,10 +1999,10 @@ describe('block-apply consensus schedules', () => {
 });
 
 // ---------------------------------------------------------------------------
-// H-3: consensus-carried sub-block authorship + prune authorship binding
+// H-3: consensus-carried post authorship + prune authorship binding
 // ---------------------------------------------------------------------------
 
-describe('block-apply H-3 sub-block authorship and prune binding', () => {
+describe('block-apply H-3 post authorship and prune binding', () => {
   beforeEach(async () => {
     vi.resetModules();
   });
