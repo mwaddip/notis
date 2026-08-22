@@ -451,6 +451,16 @@ across all entry types. Every insert function checks the count and throws a
 typed `MempoolFullError` at the cap. An unbounded pool was a disk-DoS lever
 (trivially via `/faucet` flood).
 
+The cap is the node's `maxMempoolEntries` setting, handed to the store by `index.ts`
+at startup through `setMempoolCap(n)` — `store/mempool.ts` does not read `config`.
+The store starts at the same default the setting has (`DEFAULT_MAX_MEMPOOL_ENTRIES`,
+10000, exported by the store and imported by `config.ts` for its default — one
+source), so a store opened without a node, as a test opens one, is bounded the way
+production is; `setMempoolCap` refuses anything but a positive integer.
+> ⚠ **AHEAD OF CODE — 2026-08-22.** The store reads `config.maxMempoolEntries` directly
+> today (`store/mempool.ts:215`); the setter, the exported default and the `index.ts`
+> call are the unit's.
+
 Three insert callers, three behaviors:
 
 | Caller | At the cap |
