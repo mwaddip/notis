@@ -855,9 +855,7 @@ describe('prune settlement stump insert (P2-F F1)', () => {
   }
 
   async function importPostsStore() {
-    return (await import('../../src/store/posts.js')) as {
-      getPost: (id: string) => Post | Stump | null;
-    };
+    return await import('../../src/store/posts.js');
   }
 
   async function importOrderingStore() {
@@ -870,9 +868,9 @@ describe('prune settlement stump insert (P2-F F1)', () => {
   // ARCHITECTURE → "Prune lifecycle" step 7): a node holding no DAG content for
   // the subtree records the same stump at settlement, every field derived from
   // the verified entry or the carrying block's height. An unconditional insert
-  // would satisfy this only incidentally — `pruneSubtree` returns silently on
-  // zero rows — so the assertion is written against the obligation rather than
-  // against any one implementation of it.
+  // would satisfy this only incidentally — `deletePostRows` returns an empty
+  // array on zero rows — so the assertion is written against the obligation
+  // rather than against any one implementation of it.
   it('records the stump at settlement on a node holding no DAG content', async () => {
     const db = await importDb();
     db.initDb(':memory:');
@@ -893,12 +891,10 @@ describe('prune settlement stump insert (P2-F F1)', () => {
     });
     expect(blockApply.applyOrderingBlock(confirmBlock)).toBe(true);
 
-    // The content arrived with the block that confirmed it — the transaction
-    // carries the payload, so applying it stores the post.
     const posts = await importPostsStore();
     const beforePrune = posts.getPost(rootId);
     expect(beforePrune).not.toBeNull();
-    expect((beforePrune as Post).content).toBe('prune root');
+    expect(posts.isLivePost(beforePrune)).toBe(true);
 
     // Height 2 settles the prune.
     const pruneBlock = await makeApplicableBlock({
@@ -959,23 +955,9 @@ describe('prune settlement stump insert (P2-F F1)', () => {
     expect(stump!.replyCount).toBe(1);
   });
 
-  // The discriminating case for P2-F F1: the stump insert is structural —
-  // not behind the content prune. With pruneSubtree forced to throw, the
-  // block still applies (content-prune failure stays non-fatal) AND the
-  // stump row exists. Before the change (insertStump after pruneSubtree
-  // inside one try/catch) the throw skipped the insert: the block applied
-  // with the stump silently missing.
-  it('records the stump even when pruneSubtree throws (structural independence)', async () => {
-    vi.doMock('../../src/store/posts.js', async (importOriginal) => {
-      const orig = await importOriginal<typeof import('../../src/store/posts.js')>();
-      return {
-        ...orig,
-        pruneSubtree: (): void => {
-          throw new Error('forced pruneSubtree failure (test seam)');
-        },
-      };
-    });
-
+  // Prune settlement journals both the stump insert and the deleted rows,
+  // so a reverted prune restores exactly.
+  it('journals the stump and the deleted rows at prune settlement', async () => {
     const db = await importDb();
     db.initDb(':memory:');
 
@@ -1000,6 +982,12 @@ describe('prune settlement stump insert (P2-F F1)', () => {
     const stump = getStump(rootId);
     expect(stump).not.toBeNull();
     expect(stump!.compactedAtBlockHeight).toBe(2);
+
+    const journalMod = await importJournal();
+    const journal = journalMod.getBlockJournal(2);
+    expect(journal).not.toBeNull();
+    expect(journal!.insertedStumps).toHaveLength(1);
+    expect(journal!.insertedStumps[0]!.rootPostHash).toBe(rootId);
   });
 });
 

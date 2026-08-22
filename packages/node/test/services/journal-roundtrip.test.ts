@@ -10,7 +10,6 @@ import {
   computeBoxId,
   computePostId,
   computeTxId,
-  encodePost,
   POST_LOCK_REPLY_COST,
   PROTOCOL_VERSION,
   MAX_BLOCK_BODY_BYTES,
@@ -137,10 +136,7 @@ async function importAvl() {
 }
 
 async function importPosts() {
-  return (await import('../../src/store/posts.js')) as {
-    insertPost: (postId: string, post: Post, rawCbor: Uint8Array) => void;
-    getPost: (id: string) => StoredPost | Stump | null;
-  };
+  return await import('../../src/store/posts.js');
 }
 
 async function importMempool() {

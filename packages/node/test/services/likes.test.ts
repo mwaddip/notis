@@ -8,7 +8,7 @@ import {
   computeBoxId,
   computePostId,
   computeTxId,
-  encodePost,
+  computeContentHash,
   LIKE_KARMA_COST,
   MEMPOOL_EXPIRY_BLOCKS,
   PROTOCOL_VERSION,
@@ -74,15 +74,15 @@ function createKarmaBox(
 
 /** Create and insert a minimal test post. Returns the post ID. */
 function createTestPost(authorId: Uint8Array): string {
-  const post: Post = {
-    content: 'Test post',
+  const commit = {
+    contentHash: computeContentHash('Test post'),
     author: authorId,
-    parentRefs: [],
+    parentRefs: [] as string[],
     protocolVersion: PROTOCOL_VERSION,
-    type: 'regular',
+    type: 'regular' as const,
   };
-  const postId = fixturePostId(post);
-  insertPost(fixturePostId(post), post, encodePost(post));
+  const postId = fixturePostId(commit);
+  insertPost(postId, commit, 'Test post');
   return postId;
 }
 

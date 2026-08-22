@@ -32,7 +32,6 @@ import {
   computeTxId,
   PROTOCOL_VERSION,
   LIKE_KARMA_COST,
-  encodePost,
   computePostId,
   decodeTx,
   MAX_BLOCK_BODY_BYTES,
@@ -317,9 +316,9 @@ describe('full-pipeline', () => {
     const karmaBox = makeKarmaBox(100n, liker.userId, 0);
     utxo.insertBox(karmaBox);
 
-    const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, 'full-pipeline like test');
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'full-pipeline like test');
     const posts = await importPosts();
-    posts.insertPost(postId, post, encodePost(post));
+    posts.insertPost(postId, commit, content);
     // ⛔ **The target must be CONFIRMED before a like can be built, and that is
     // new.** The like's marker names the post's author, and the author is
     // knowable only from `block_topology` — which an applied block writes
@@ -329,7 +328,7 @@ describe('full-pipeline', () => {
     const topology = await import('../../src/store/topology.js');
     topology.insertBlockTopology(
       postId,
-      post.parentRefs ?? [],
+      commit.parentRefs ?? [],
       Buffer.from(author.userId).toString('hex'),
       1,
     );
@@ -434,16 +433,16 @@ describe('full-pipeline', () => {
     const karmaBox = makeKarmaBox(100n, liker.userId, 0);
     utxo.insertBox(karmaBox);
 
-    const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, 'multi-op test');
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'multi-op test');
     const posts = await importPosts();
-    posts.insertPost(postId, post, encodePost(post));
+    posts.insertPost(postId, commit, content);
     // ⛔ The target must be confirmed before a like can be built — the marker
     // names its author, and `block_topology` is the only source for that
     // (NODE_INTERFACE → Karma transition rules).
     const topology = await import('../../src/store/topology.js');
     topology.insertBlockTopology(
       postId,
-      post.parentRefs ?? [],
+      commit.parentRefs ?? [],
       Buffer.from(author.userId).toString('hex'),
       1,
     );

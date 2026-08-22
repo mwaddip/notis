@@ -16,6 +16,8 @@ import {
   unconsumeBox,
   deleteBox,
   unconfirmPost,
+  restorePostRows,
+  deleteStump,
   deleteLikeRecord,
   restoreLikeRecord,
   insertUtxoTx,
@@ -275,6 +277,13 @@ export function revertBlock(height: number): PruneEntry[] {
   }
   for (const del of journal.likeRecordDeletions) {
     restoreLikeRecord(del.targetPostId, del.likerId, del.appliedAtBlock);
+  }
+  // Prune inverses: restore deleted post rows, remove the stump.
+  if (journal.deletedPosts.length > 0) {
+    restorePostRows(journal.deletedPosts);
+  }
+  for (const stump of journal.insertedStumps) {
+    deleteStump(stump.rootPostHash);
   }
   // ⛔ **The vouch escrow needs no side-record and no inverse of its own.** It
   // is a box, so `insertBox`/`consumeBox` journal its creation and its spend as

@@ -103,11 +103,7 @@ async function importBlockCreator(): Promise<BlockCreatorModule> {
 }
 
 async function importPosts() {
-  return (await import('../../src/store/posts.js')) as {
-    insertPost: (postId: string, post: Post, rawCbor: Uint8Array) => void;
-    confirmPost: (postId: string, blockHeight: number, blockIndex: number) => void;
-    getPost: (id: string) => StoredPost | Stump | null;
-  };
+  return await import('../../src/store/posts.js');
 }
 
 async function importMempoolFresh() {
@@ -301,7 +297,7 @@ describe('block-creator', () => {
     // Set up identity
     const author = makeTestIdentity();
 
-    const { post, tx: postTx, postId } = await seedPostTx(author, 'hello world');
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'hello world');
 
     // The transaction IS the post's carrier: the pool holds one entry and the
     // block that takes it carries the payload (NODE_INTERFACE → Post
@@ -323,9 +319,9 @@ describe('block-creator', () => {
     const carried = postsOf(block!);
     expect(carried).toHaveLength(1);
     expect(carried[0]!.postId).toBe(postId);
-    expect(carried[0]!.post.parentRefs).toEqual(post.parentRefs);
+    expect(carried[0]!.post.parentRefs).toEqual(commit.parentRefs);
     expect(Buffer.from(carried[0]!.post.author).toString('hex'))
-      .toBe(Buffer.from(post.author).toString('hex'));
+      .toBe(Buffer.from(commit.author).toString('hex'));
   });
 
   // -----------------------------------------------------------------------
@@ -338,11 +334,11 @@ describe('block-creator', () => {
 
     const author = makeTestIdentity();
 
-    const { post, tx: postTx, postId } = await seedPostTx(author, 'post one');
-    const { encodePost } = await import('@dagsocial/types');
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'post one');
+
 
     const posts = await importPosts();
-    posts.insertPost(postId, post, encodePost(post));
+    posts.insertPost(postId, commit, content);
 
     const mempool = await importMempoolFresh();
     mempool.insertUtxoTx(postTx, 1000);
@@ -371,11 +367,11 @@ describe('block-creator', () => {
 
     const author = makeTestIdentity();
 
-    const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, 'confirm me');
-    const { encodePost } = await import('@dagsocial/types');
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'confirm me');
+
 
     const posts = await importPosts();
-    posts.insertPost(postId, post, encodePost(post));
+    posts.insertPost(postId, commit, content);
 
     const mempool = await importMempoolFresh();
     mempool.insertUtxoTx(postTx, 1000);
@@ -408,9 +404,9 @@ describe('block-creator', () => {
     const bc = await importBlockCreator();
 
     const author = makeTestIdentity();
-    const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, 'template shape');
-    const { encodePost } = await import('@dagsocial/types');
-    posts.insertPost(postId, post, encodePost(post));
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'template shape');
+
+    posts.insertPost(postId, commit, content);
     mempool.insertUtxoTx(postTx, 1000);
 
     const karmaBox = makeKarmaBox(100n, author.userId, 0);
@@ -469,11 +465,11 @@ describe('block-creator', () => {
 
     const author = makeTestIdentity();
 
-    const { encodePost } = await import('@dagsocial/types');
 
-    const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, 'height test');
+
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'height test');
     const posts = await importPosts();
-    posts.insertPost(postId, post, encodePost(post));
+    posts.insertPost(postId, commit, content);
 
     const mempool = await importMempoolFresh();
     mempool.insertUtxoTx(postTx, 1000);
@@ -489,8 +485,8 @@ describe('block-creator', () => {
     expect(ordering.getCurrentHeight()).toBe(1);
 
     // Second block
-    const { post: post2, tx: post2Tx, postId: postId2 } = await seedPostTx(author, 'height test 2');
-    posts.insertPost(postId2, post2, encodePost(post2));
+    const { commit: commit2, tx: post2Tx, postId: postId2, content: content2 } = await seedPostTx(author, 'height test 2');
+    posts.insertPost(postId2, commit2, content2);
     mempool.insertUtxoTx(post2Tx, 1000);
 
     await mineNextBlock(bc);
@@ -513,9 +509,9 @@ describe('block-creator', () => {
     const author = makeTestIdentity();
 
     // Create and insert a post
-    const { post: post, tx: postTx, postId: postId } = await seedPostTx(author, 'utxoTxIds test');
-    const { encodePost, computeTxId } = await import('@dagsocial/types');
-    posts.insertPost(postId, post, encodePost(post));
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'utxoTxIds test');
+    const { computeTxId } = await import('@dagsocial/types');
+    posts.insertPost(postId, commit, content);
 
     // Insert post transaction into mempool
     mempool.insertUtxoTx(postTx, 1000);

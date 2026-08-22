@@ -1,5 +1,5 @@
 import { loadConfig } from './config.js';
-import { initDb, closeDb } from './store/db.js';
+import { initDb, getDb, closeDb } from './store/db.js';
 import { seedGenesisState } from './services/genesis-state.js';
 import { startBlockCreator, stopBlockCreator, setDagServiceForMiner } from './services/block-creator.js';
 import { createApp, createAdminApp } from './server.js';
@@ -141,7 +141,7 @@ net.onOrderingBlock((block, fromPeerId) => {
   }
 });
 
-net.onTx((tx, fromPeerId) => {
+net.onTx((tx, content, fromPeerId) => {
   const deps = {
     getBox,
       insertBox: () => {},
@@ -188,24 +188,25 @@ net.onTx((tx, fromPeerId) => {
     }
     return;
   }
-  const validationDurationMs = performance.now() - validationStart;
-  if (tx.post && result.txId) {
-    const postId = computePostId(result.txId, 0);
-    emitPostReceived(postId, fromPeerId);
-    emitPostValidated(postId, validationDurationMs);
-  }
   const expiresAtHeight = currentHeight + MEMPOOL_EXPIRY_BLOCKS;
   try {
-    admitTx(tx, expiresAtHeight);
+    // NODE_INTERFACE → Post transactions — the packet is the unit: admitTx and
+    // the pending row in one store transaction for a post, or admitTx alone.
+    const db = getDb();
+    db.transaction(() => {
+      admitTx(tx, expiresAtHeight);
+      if (tx.post && result.txId) {
+        const postId = computePostId(result.txId, 0);
+        insertPost(postId, tx.post, content ?? null);
+        emitPostReceived(postId, fromPeerId);
+        emitPostValidated(postId, performance.now() - validationStart);
+      }
+    })();
   } catch (err) {
     if (err instanceof MempoolFullError) {
       console.warn(`Relayed tx dropped, mempool full: ${result.txId}`);
       return;
     }
-    // A peer's transaction spending a box one of ours already spends is the
-    // pool declining an entry, not this node failing. Dropping it is the whole
-    // response: whichever side confirms first settles the box, and a throw here
-    // would escape into net's gossip handler.
     if (err instanceof PendingSpendConflictError) {
       console.warn(`Relayed tx dropped, input spent by a pending entry: ${result.txId}`);
       return;

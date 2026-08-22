@@ -25,17 +25,17 @@ function insertPost(id: string, parentIds: string[]): void {
   const db = getDb();
   db.prepare(
     `INSERT OR REPLACE INTO dag_posts
-     (id, content, author, parent_refs,
-      protocol_version, type, raw_cbor, status)
+     (id, content_hash, content, author, parent_refs,
+      protocol_version, type, status)
      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
   ).run(
     id,
+    '00'.repeat(32),
     'test content',
     Buffer.alloc(32),
     JSON.stringify(parentIds),
     1,
     'regular',
-    Buffer.from([1, 2, 3]),
   );
 
   for (const pid of parentIds) {

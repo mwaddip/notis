@@ -79,7 +79,7 @@ describe('verifier', () => {
     expect(result.error).toBe('Unsupported protocol version');
   });
 
-  it('accepts a commit with no signature and no proof of work', () => {
+  it('⛔ accepts a commit with no signature and no proof of work', () => {
     const store = makeStore();
     store.karmaBoxes.set(Buffer.from(userId).toString('hex'), [{ value: 100n }]);
     const commit = makeCommit();

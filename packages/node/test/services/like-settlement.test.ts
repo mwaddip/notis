@@ -5,7 +5,6 @@ import {
   computeMintTxId,
   computeBoxId,
   canonicalBoxBytes,
-  encodePost,
   PROTOCOL_VERSION,
   LIKES_PER_KARMA_PAYOUT,
   POST_LOCK_REPLY_COST,
@@ -100,10 +99,7 @@ async function importUtxo() {
 }
 
 async function importPosts() {
-  return (await import('../../src/store/posts.js')) as {
-    insertPost: (postId: string, post: import('@dagsocial/types').Post, rawCbor: Uint8Array) => void;
-    getPost: (id: string) => unknown;
-  };
+  return await import('../../src/store/posts.js');
 }
 
 async function importLikeRecords() {
@@ -279,8 +275,8 @@ describe('per-block like settlement (P2-D N2b)', () => {
     const blockApply = await importBlockApply();
 
     const author = makeTestIdentity();
-    const { post, tx: postTx, postId } = await seedPostTx(author, 'arithmetic target');
-    posts.insertPost(postId, post, encodePost(post));
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'arithmetic target');
+    posts.insertPost(postId, commit, content);
 
     expect(blockApply.applyOrderingBlock(await confirmPostBlock(postTx))).toBe(true);
 
@@ -333,8 +329,8 @@ describe('per-block like settlement (P2-D N2b)', () => {
       const blockApply = await importBlockApply();
 
       const author = makeTestIdentity();
-      const { post, tx: postTx, postId } = await seedPostTx(author, 'grouping target');
-      posts.insertPost(postId, post, encodePost(post));
+      const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'grouping target');
+      posts.insertPost(postId, commit, content);
       expect(blockApply.applyOrderingBlock(await confirmPostBlock(postTx))).toBe(true);
 
       let nonce = 0;
@@ -387,8 +383,8 @@ describe('per-block like settlement (P2-D N2b)', () => {
     const b = await seedPostTx(authorB, 'author B target');
     const postAId = a.postId;
     const postBId = b.postId;
-    posts.insertPost(a.postId, a.post, encodePost(a.post));
-    posts.insertPost(b.postId, b.post, encodePost(b.post));
+    posts.insertPost(a.postId, a.commit, a.content);
+    posts.insertPost(b.postId, b.commit, b.content);
 
     expect(
       blockApply.applyOrderingBlock(
@@ -432,8 +428,8 @@ describe('per-block like settlement (P2-D N2b)', () => {
     const p2 = await seedPostTx(author, 'consolidation target 2');
     const post1Id = p1.postId;
     const post2Id = p2.postId;
-    posts.insertPost(p1.postId, p1.post, encodePost(p1.post));
-    posts.insertPost(p2.postId, p2.post, encodePost(p2.post));
+    posts.insertPost(p1.postId, p1.commit, p1.content);
+    posts.insertPost(p2.postId, p2.commit, p2.content);
 
     expect(
       blockApply.applyOrderingBlock(
@@ -487,8 +483,8 @@ describe('per-block like settlement (P2-D N2b)', () => {
     const blockApply = await importBlockApply();
 
     const author = makeTestIdentity();
-    const { post, tx: postTx, postId } = await seedPostTx(author, 'same-block dedup target');
-    posts.insertPost(postId, post, encodePost(post));
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'same-block dedup target');
+    posts.insertPost(postId, commit, content);
     expect(blockApply.applyOrderingBlock(await confirmPostBlock(postTx))).toBe(true);
 
     const liker = makeTestIdentity();
@@ -523,8 +519,8 @@ describe('per-block like settlement (P2-D N2b)', () => {
     const blockApply = await importBlockApply();
 
     const author = makeTestIdentity();
-    const { post, tx: postTx, postId } = await seedPostTx(author, 'cross-block dedup target');
-    posts.insertPost(postId, post, encodePost(post));
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'cross-block dedup target');
+    posts.insertPost(postId, commit, content);
     expect(blockApply.applyOrderingBlock(await confirmPostBlock(postTx))).toBe(true);
 
     const liker = makeTestIdentity();
@@ -564,8 +560,8 @@ describe('per-block like settlement (P2-D N2b)', () => {
     const blockApply = await importBlockApply();
 
     const author = makeTestIdentity();
-    const { post, tx: postTx, postId } = await seedPostTx(author, 'pruned target');
-    posts.insertPost(postId, post, encodePost(post));
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'pruned target');
+    posts.insertPost(postId, commit, content);
     expect(blockApply.applyOrderingBlock(await confirmPostBlock(postTx))).toBe(true);
 
     expect(
@@ -607,8 +603,8 @@ describe('per-block like settlement (P2-D N2b)', () => {
     const blockApply = await importBlockApply();
 
     const author = makeTestIdentity();
-    const { post, tx: postTx, postId } = await seedPostTx(author, 'spare signature target');
-    posts.insertPost(postId, post, encodePost(post));
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'spare signature target');
+    posts.insertPost(postId, commit, content);
     expect(blockApply.applyOrderingBlock(await confirmPostBlock(postTx))).toBe(true);
 
     const liker = makeTestIdentity();
@@ -669,8 +665,8 @@ describe('per-block like settlement (P2-D N2b)', () => {
     const blockApply = await importBlockApply();
 
     const author = makeTestIdentity();
-    const { post, tx: postTx, postId } = await seedPostTx(author, 'same-block exclusion target');
-    posts.insertPost(postId, post, encodePost(post));
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'same-block exclusion target');
+    posts.insertPost(postId, commit, content);
     expect(blockApply.applyOrderingBlock(await confirmPostBlock(postTx))).toBe(true);
 
     const liker = makeTestIdentity();
@@ -708,8 +704,8 @@ describe('per-block like settlement (P2-D N2b)', () => {
     const blockApply = await importBlockApply();
 
     const author = makeTestIdentity();
-    const { post, tx: postTx, postId } = await seedPostTx(author, 'vesting crossing target');
-    posts.insertPost(postId, post, encodePost(post));
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'vesting crossing target');
+    posts.insertPost(postId, commit, content);
 
     expect(blockApply.applyOrderingBlock(await confirmPostBlock(postTx))).toBe(true);
     // The lock the post transaction minted — a thread, so POST_LOCK_THREAD_COST.
@@ -767,10 +763,10 @@ describe('per-block like settlement (P2-D N2b)', () => {
     // A REPLY, because the lock's value is the cost for the post's shape and
     // this case needs one the likes can unlock ENTIRELY:
     // POST_LOCK_REPLY_COST unlocks in POST_LOCK_REPLY_COST × 10 likes.
-    const { post, tx: postTx, postId } = await seedPostTx(
+    const { commit, tx: postTx, postId, content } = await seedPostTx(
       author, 'full unlock target', { parentRefs: ['ab'.repeat(32)] },
     );
-    posts.insertPost(postId, post, encodePost(post));
+    posts.insertPost(postId, commit, content);
 
     expect(blockApply.applyOrderingBlock(await confirmPostBlock(postTx))).toBe(true);
     const lockBox = lockBoxOf(postTx);
@@ -805,8 +801,8 @@ describe('per-block like settlement (P2-D N2b)', () => {
     const blockApply = await importBlockApply();
 
     const author = makeTestIdentity();
-    const { post, tx: postTx, postId } = await seedPostTx(author, 'remainder pin target');
-    posts.insertPost(postId, post, encodePost(post));
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'remainder pin target');
+    posts.insertPost(postId, commit, content);
 
     expect(blockApply.applyOrderingBlock(await confirmPostBlock(postTx))).toBe(true);
 
@@ -853,8 +849,8 @@ describe('per-block like settlement (P2-D N2b)', () => {
     const records = await importRecords();
 
     const author = makeTestIdentity();
-    const { post, tx: postTx, postId } = await seedPostTx(author, 'round-trip carry target');
-    posts.insertPost(postId, post, encodePost(post));
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'round-trip carry target');
+    posts.insertPost(postId, commit, content);
     // Everything seeded before bootstrap so tree and DB agree from height 0.
     const likers = await seedLikers(4);
 
@@ -895,8 +891,8 @@ describe('per-block like settlement (P2-D N2b)', () => {
     const records = await importRecords();
 
     const author = makeTestIdentity();
-    const { post, tx: postTx, postId } = await seedPostTx(author, 'round-trip payout target');
-    posts.insertPost(postId, post, encodePost(post));
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'round-trip payout target');
+    posts.insertPost(postId, commit, content);
     const authorKarma = makeKarmaBox(100n, author.userId, 0, 999);
     utxo.insertBox(authorKarma);
     const likers = await seedLikers(5);
@@ -944,8 +940,8 @@ describe('per-block like settlement (P2-D N2b)', () => {
     const posts = await importPosts();
 
     const author = makeTestIdentity();
-    const { post, tx: postTx, postId } = await seedPostTx(author, 'round-trip vesting target');
-    posts.insertPost(postId, post, encodePost(post));
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'round-trip vesting target');
+    posts.insertPost(postId, commit, content);
     const likers = await seedLikers(POST_LOCK_UNLOCK_PER_LIKES);
 
     const handle = await activateProver();
@@ -1004,6 +1000,8 @@ describe('per-block like settlement (P2-D N2b)', () => {
         { targetPostId: prunedPost, likerId: likerA.userId, appliedAtBlock: 3 },
         { targetPostId: prunedPost, likerId: likerB.userId, appliedAtBlock: 5 },
       ],
+      deletedPosts: [],
+      insertedStumps: [],
     });
 
     forkResolution.revertBlock(7);

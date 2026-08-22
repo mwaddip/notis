@@ -99,7 +99,7 @@ describe('PostService', () => {
     expect(result.tx).toBe(tx);
   });
 
-  it('names the post from the transaction that creates it, not from the post', () => {
+  it('⛔ names the post from the transaction that creates it, not from the post', () => {
     const deps = mockDeps();
     const tx = makePostTx();
 
@@ -109,7 +109,7 @@ describe('PostService', () => {
     expect(result.postId).toBe(computePostId(computeTxId(tx), 0));
   });
 
-  it('two identical payloads on different inputs get different post ids', () => {
+  it('⛔ two identical payloads on different inputs get different post ids', () => {
     const commit = makeCommit();
     const first = makePostTx(commit);
     const second = makePostTx(commit, BOX_2);
@@ -189,7 +189,7 @@ describe('PostService', () => {
     expect(() => createPost(deps, tx, CONTENT)).toThrow('does not belong to post author');
   });
 
-  it('stores the post under the id the transaction gives it, and pools ONE entry', () => {
+  it('⛔ stores the post under the id the transaction gives it, and pools ONE entry', () => {
     const stored: Array<{ postId: string }> = [];
     let pooled = 0;
     const deps = mockDeps({

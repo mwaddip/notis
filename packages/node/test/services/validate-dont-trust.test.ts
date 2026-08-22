@@ -120,7 +120,7 @@ describe('validate-dont-trust', () => {
     expect(() => createPost(mockDeps(store), tx, CONTENT)).toThrow('Parent post not found');
   });
 
-  it('a parent ref cannot be checked by recomputing the parent id', () => {
+  it('⛔ a parent ref cannot be checked by recomputing the parent id', () => {
     const parent = makeStoredParent('b2'.repeat(32));
     expect(parent.id).toBe('b2'.repeat(32));
     const twin: StoredPost = { ...parent, id: 'c3'.repeat(32) };

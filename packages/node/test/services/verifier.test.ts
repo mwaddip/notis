@@ -83,7 +83,7 @@ describe('verifyPost', () => {
     userId = pubKeyRaw;
   }
 
-  it('valid commit passes all checks', { timeout: 60_000 }, () => {
+  it('valid commit passes all checks', () => {
     const store = makeStore();
     store.identities.set(userId, { userId, publicKey: pubKeyRaw, createdAt: Date.now() });
     store.karmaBoxes.set(Buffer.from(pubKeyRaw).toString('hex'), [
@@ -118,7 +118,7 @@ describe('verifyPost', () => {
     expect(result.error).toBe('Unsupported protocol version');
   });
 
-  it('rejects missing parent ref', { timeout: 60_000 }, () => {
+  it('rejects missing parent ref', () => {
     const store = makeStore();
     store.identities.set(userId, { userId, publicKey: pubKeyRaw, createdAt: Date.now() });
     store.karmaBoxes.set(Buffer.from(pubKeyRaw).toString('hex'), [
@@ -132,7 +132,7 @@ describe('verifyPost', () => {
     expect(result.error).toBe(`Parent post not found: ${ABSENT_PARENT}`);
   });
 
-  it('accepts a parent ref that names a live post', { timeout: 60_000 }, () => {
+  it('accepts a parent ref that names a live post', () => {
     const store = makeStore();
     store.identities.set(userId, { userId, publicKey: pubKeyRaw, createdAt: Date.now() });
     store.karmaBoxes.set(Buffer.from(pubKeyRaw).toString('hex'), [
@@ -150,7 +150,7 @@ describe('verifyPost', () => {
     expect(result.valid).toBe(true);
   });
 
-  it('accepts a parent ref that names a stump', { timeout: 60_000 }, () => {
+  it('accepts a parent ref that names a stump', () => {
     const store = makeStore();
     store.identities.set(userId, { userId, publicKey: pubKeyRaw, createdAt: Date.now() });
     store.karmaBoxes.set(Buffer.from(pubKeyRaw).toString('hex'), [
@@ -182,7 +182,7 @@ describe('verifyPost', () => {
     expect(result.error).toBe(`Parent post not found: ${tombId}`);
   });
 
-  it('rejects insufficient karma', { timeout: 60_000 }, () => {
+  it('rejects insufficient karma', () => {
     const store = makeStore();
     store.identities.set(userId, { userId, publicKey: pubKeyRaw, createdAt: Date.now() });
     store.karmaBoxes.set(Buffer.from(pubKeyRaw).toString('hex'), [{ value: 0n }]);
@@ -193,7 +193,7 @@ describe('verifyPost', () => {
     expect(result.error).toContain('Insufficient karma');
   });
 
-  it('valid commit with 0 parent refs passes', { timeout: 60_000 }, () => {
+  it('valid commit with 0 parent refs passes', () => {
     const store = makeStore();
     store.identities.set(userId, { userId, publicKey: pubKeyRaw, createdAt: Date.now() });
     store.karmaBoxes.set(Buffer.from(pubKeyRaw).toString('hex'), [
@@ -206,7 +206,7 @@ describe('verifyPost', () => {
     expect(result.error).toBeUndefined();
   });
 
-  it('accepts post when karma is split across multiple boxes', { timeout: 60_000 }, () => {
+  it('accepts post when karma is split across multiple boxes', () => {
     const store = makeStore();
     store.identities.set(userId, { userId, publicKey: pubKeyRaw, createdAt: Date.now() });
     store.karmaBoxes.set(Buffer.from(pubKeyRaw).toString('hex'), [
@@ -219,7 +219,7 @@ describe('verifyPost', () => {
     expect(result.valid).toBe(true);
   });
 
-  it('rejects post when combined karma across boxes is insufficient', { timeout: 60_000 }, () => {
+  it('rejects post when combined karma across boxes is insufficient', () => {
     const store = makeStore();
     store.identities.set(userId, { userId, publicKey: pubKeyRaw, createdAt: Date.now() });
     store.karmaBoxes.set(Buffer.from(pubKeyRaw).toString('hex'), [

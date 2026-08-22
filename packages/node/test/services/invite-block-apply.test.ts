@@ -41,7 +41,7 @@ import {
   seedAsOneTx,
   signTransaction,
   uid,
-  type TestIdentity, fixturePostId, fillerTx, seedPostTx, activateProverOverStore,
+  type TestIdentity, fixturePostId, fillerTx, seedPostTx, makePostCommit, activateProverOverStore,
   seedKarmaPoolBox, makeApplicableBlock,
   FIXTURE_BOND_KARMA,
 } from '../helpers.js';
@@ -51,7 +51,8 @@ const PROBATION = 3;
 
 /** One pre-seeded like: the post to publish, and the karma box that likes it. */
 interface LikeFixture {
-  post: ReturnType<typeof makePost>;
+  commit: import('@dagsocial/types').PostCommit;
+  content: string;
   postTx: UtxoTransaction;
   postId: string;
   liker: TestIdentity;
@@ -195,11 +196,11 @@ describe('the invite at block application', () => {
       const batch: LikeFixture[] = [];
       for (let i = 0; i < round.count; i++) {
         const nonce = round.nonceBase + i;
-        const { post, tx: postTx, postId } = await seedPostTx(invitee, `post ${nonce}`);
+        const { commit, tx: postTx, postId, content } = await seedPostTx(invitee, `post ${nonce}`);
         const liker = makeTestIdentity();
         const karma = makeKarmaBox(100n, liker.userId, 0, 500 + nonce);
         utxo.insertBox(karma);
-        batch.push({ post, postTx, postId, liker, karma });
+        batch.push({ commit, content, postTx, postId, liker, karma });
       }
       likeBatches.push(batch);
     }
@@ -329,7 +330,7 @@ describe('the invite at block application', () => {
     const grantedBox = utxo.getKarmaBoxes(invitee.userId);
     expect(grantedBox.length).toBe(1);
 
-    const post = makePost(invitee.userId, 'first post');
+    const postCommit = makePostCommit(invitee.userId, 'first post');
     const { POST_LOCK_THREAD_COST } = types;
     const postTx: UtxoTransaction = {
       inputs: [grantedBox[0]!.id!],
@@ -339,13 +340,13 @@ describe('the invite at block application', () => {
       ],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
-      post,
+      post: postCommit,
     };
     signTransaction(postTx, invitee.privateKey, Buffer.from(invitee.userId).toString('hex'));
 
     const postId = types.computePostId(types.computeTxId(postTx), 0);
     const posts = await import('../../src/store/posts.js');
-    posts.insertPost(postId, post, types.encodePost(post));
+    posts.insertPost(postId, postCommit, 'first post');
     mempool.insertUtxoTx(postTx, 1000);
     const postBlock = await mineOne();
     expect(postBlock).not.toBeNull();
@@ -754,8 +755,8 @@ describe('the invite at block application', () => {
     const mempool = await importMempool();
     const types = await import('@dagsocial/types');
 
-    for (const { post, postTx, postId, liker, karma } of batch) {
-      posts.insertPost(postId, post, types.encodePost(post));
+    for (const { commit, content, postTx, postId, liker, karma } of batch) {
+      posts.insertPost(postId, commit, content);
       mempool.insertUtxoTx(postTx, 1000);
       mempool.insertUtxoTx(makeLikeTx(liker, karma, postId, inviteeKey), 1000);
     }
