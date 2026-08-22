@@ -787,15 +787,16 @@ export function insertMempoolPrune(
 /**
  * One row's entry, or `null` when this node cannot read a blob it wrote.
  *
- * Isolated per row, and it decides two things at once. A sibling's failure must
- * not destroy a readable row — a bulk `map` after a bulk DELETE loses the
- * whole batch to one bad blob. And the unreadable row is dropped rather than
- * re-raised, because it sits in front of `drainMempoolPrunes`, the miner's
- * first read at every block interval: a row nobody can decode would otherwise
- * stop the node producing for as long as it stays, and this blob is local,
- * uncommitted, and re-issuable by its author. Loud, because a store that
- * returns something its own writer cannot have produced is a defect, not an
- * event.
+ * Isolated per row, and it decides two things at once. A sibling's failure
+ * must not destroy a readable row — `selectMempoolPrunes` iterates the batch
+ * and returns every decodable entry individually. And the unreadable row is
+ * dropped rather than re-raised, because it sits in front of
+ * `selectMempoolPrunes`, the creator's read-only pool scan
+ * (MEMPOOL_INTERFACE → selectMempoolPrunes): a row nobody can decode would
+ * otherwise stop the node producing for as long as it stays, and this blob
+ * is local, uncommitted, and re-issuable by its author. Loud, because a
+ * store that returns something its own writer cannot have produced is a
+ * defect, not an event.
  */
 function decodePruneRow(row: { rowid: number; prune_entry_cbor: Buffer }): PruneEntry | null {
   try {
