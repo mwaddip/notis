@@ -50,7 +50,7 @@ around it. The domain tag is **not** in the vector bytes; it is the caller's,
 which is what makes the leaf preimage and the wire encoding the same bytes rather
 than merely parallel ones.
 
-The leaf domains `'subblock'` and `'coinbase'` are tracked reservations
+The leaf domain `'coinbase'` is a tracked reservation
 (TYPES_INTERFACE → Tracked reservations). `encodePostCommit` is exactly
 `postFieldBytes`, so the `postCommitFields` vectors pin the wire codec too.
 

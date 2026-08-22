@@ -467,7 +467,7 @@ function parsePrune(j: Record<string, unknown>): PruneEntry {
 // where node hashes it directly and a conformance reader can check one leaf
 // without building a tree around it.
 //
-// The leaf domains `'subblock'` and `'coinbase'` are tracked reservations
+// The leaf domain `'coinbase'` is a tracked reservation
 // (TYPES_INTERFACE → Tracked reservations).
 
 const utxoTxTreeCodec: ValueCodec<UtxoTxTree> = {

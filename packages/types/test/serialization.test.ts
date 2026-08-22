@@ -81,8 +81,8 @@ function makeBlockHeader(): BlockHeader {
  * ⛔ **THREE SECTIONS.** Coinbase outputs are outputs of the block's settlement
  * transaction, so they arrive inside `utxoTxs` like every other transaction's and
  * reach `utxoTxRoot` under the `'utxotx'` leaf that transaction's id already gets
- * (`block.ts` → `UtxoTxTree`). The leaf domains `'coinbase'` and `'subblock'` are
- * tracked reservations (TYPES_INTERFACE → Tracked reservations).
+ * (`block.ts` → `UtxoTxTree`). The leaf domain `'coinbase'` is a tracked
+ * reservation (TYPES_INTERFACE → Tracked reservations).
  *
  * The fixture carries a prune entry because it is the **one element writer whose
  * width varies**, so a populated body exercises an element layout rather than

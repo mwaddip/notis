@@ -135,7 +135,7 @@ export type { PruneIntent, KarmaDelta, Stump, StumpId, PruneEntry } from './stum
 // exports for node to build a leaf from. The `leafHash` domain tag is the
 // caller's — see TYPES_INTERFACE → Layout — Merkle leaf preimages.
 //
-// The leaf domains `'subblock'` and `'coinbase'` are tracked reservations
+// The leaf domain `'coinbase'` is a tracked reservation
 // (TYPES_INTERFACE → Tracked reservations).
 export {
   EMPTY_STATE_ROOT,
