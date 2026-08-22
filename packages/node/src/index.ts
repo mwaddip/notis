@@ -251,12 +251,6 @@ net.setMissingBodiesProvider((limit: number) =>
   getMissingBodies(limit).map(r => ({ id: r.id, contentHash: Buffer.from(r.contentHash, 'hex') })),
 );
 
-net.setPostBodyCommitmentProvider((id: string) => {
-  const result = getPost(id);
-  if (!isLivePost(result)) return null;
-  return Buffer.from(result.contentHash, 'hex');
-});
-
 net.onPostBody((id: string, content: string, peerId: string) => {
   const result = getPost(id);
   if (!isLivePost(result)) return false;
