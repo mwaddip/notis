@@ -18,6 +18,7 @@ export {
   isLivePost,
   isStump,
   isPrunedTombstone,
+  getPlaceholdersAt,
 } from './posts.js';
 export type { PostStatus, StoredPost, PrunedTombstone, DeletedPostRow } from './posts.js';
 

@@ -249,6 +249,16 @@ export function getMissingBodies(limit: number): Array<{ id: string; contentHash
   return rows.map(r => ({ id: r.id, contentHash: r.content_hash }));
 }
 
+export function getPlaceholdersAt(height: number): Array<{ id: string; contentHash: string }> {
+  const rows = getDb()
+    .prepare(
+      `SELECT id, content_hash FROM dag_posts
+       WHERE block_height = ? AND content IS NULL`,
+    )
+    .all(height) as Array<{ id: string; content_hash: string }>;
+  return rows.map(r => ({ id: r.id, contentHash: r.content_hash }));
+}
+
 export function queryPosts(opts: {
   author?: Uint8Array;
   limit?: number;

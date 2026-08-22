@@ -36,6 +36,7 @@ import {
   getTopologyAuthorBytes,
   getIdentityRecord,
   getPost,
+  isLivePost,
   insertPost,
   setPostBody,
   getMissingBodies,
@@ -231,11 +232,9 @@ net.setHeadersHandler(guardedGetOrderingBlock);
 
 // NODE_INTERFACE → Backfill after sync: four seams the net layer reads bodies through.
 net.setPostBodyProvider((id: string) => {
-  const post = getPost(id);
-  if (post && 'content' in post && typeof (post as any).content === 'string') {
-    return (post as any).content;
-  }
-  return null;
+  const result = getPost(id);
+  if (!isLivePost(result)) return null;
+  return result.content;
 });
 
 net.setMissingBodiesProvider((limit: number) =>
@@ -243,17 +242,15 @@ net.setMissingBodiesProvider((limit: number) =>
 );
 
 net.setPostBodyCommitmentProvider((id: string) => {
-  const post = getPost(id);
-  if (post && 'contentHash' in post && typeof (post as any).contentHash === 'string') {
-    return Buffer.from((post as any).contentHash, 'hex');
-  }
-  return null;
+  const result = getPost(id);
+  if (!isLivePost(result)) return null;
+  return Buffer.from(result.contentHash, 'hex');
 });
 
 net.onPostBody((id: string, content: string, peerId: string) => {
-  const post = getPost(id);
-  if (!post || !('contentHash' in post)) return false;
-  const contentHash = Buffer.from((post as any).contentHash, 'hex');
+  const result = getPost(id);
+  if (!isLivePost(result)) return false;
+  const contentHash = Buffer.from(result.contentHash, 'hex');
   const check = verifyPostBody(content, contentHash);
   if (!check.valid) return false;
   const stored = setPostBody(id, content);
@@ -266,6 +263,7 @@ net.onPostBody((id: string, content: string, peerId: string) => {
 initBackfill({
   requestPostBodies: (wanted, peerId) => net.requestPostBodies(wanted.map(w => ({ id: w.id, contentHash: Buffer.from(w.contentHash, 'hex') })), peerId),
   getConnectedPeers: () => net.getConnectedPeers(),
+  setPostBody,
 });
 
 // 4. Start net

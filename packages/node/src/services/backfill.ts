@@ -1,4 +1,3 @@
-import { setPostBody } from '../store/posts.js';
 import { emitPostReceived } from '../journal.js';
 
 // ---------------------------------------------------------------------------
@@ -6,6 +5,9 @@ import { emitPostReceived } from '../journal.js';
 // after sync". Runs from the block-applied hook, never a timer. Requests
 // bodies on a per-id schedule in block height: at creation, then after 1, 2,
 // 4, … blocks, capped at 256 — so an unserved body costs a bounded trickle.
+//
+// `pending` is in-memory; after a restart it is empty and the sync machine's
+// `backfill` phase covers the rows (`getMissingBodies`).
 // ---------------------------------------------------------------------------
 
 interface BackfillEntry {
@@ -15,6 +17,7 @@ interface BackfillEntry {
   nextRetryHeight: number;
   retryInterval: number;
   fromPeerId: string;
+  attemptCount: number;
 }
 
 const MAX_RETRY_INTERVAL = 256;
@@ -24,6 +27,7 @@ const pending = new Map<string, BackfillEntry>();
 export interface BackfillDeps {
   requestPostBodies: (wanted: Array<{ id: string; contentHash: string }>, peerId: string) => Promise<Array<{ id: string; content: string }>>;
   getConnectedPeers: () => string[];
+  setPostBody: (postId: string, content: string) => boolean;
 }
 
 let deps: BackfillDeps | null = null;
@@ -41,7 +45,16 @@ export function registerPlaceholder(id: string, contentHash: string, height: num
     nextRetryHeight: height,
     retryInterval: 1,
     fromPeerId,
+    attemptCount: 0,
   });
+}
+
+function pickPeer(entry: BackfillEntry, connectedPeers: string[]): string | null {
+  if (entry.attemptCount === 0 && entry.fromPeerId && connectedPeers.includes(entry.fromPeerId)) {
+    return entry.fromPeerId;
+  }
+  if (connectedPeers.length === 0) return null;
+  return connectedPeers[entry.attemptCount % connectedPeers.length] ?? null;
 }
 
 export async function onBlockApplied(height: number): Promise<void> {
@@ -54,9 +67,11 @@ export async function onBlockApplied(height: number): Promise<void> {
   }
   if (due.length === 0) return;
 
+  const connectedPeers = deps.getConnectedPeers();
+
   const byPeer = new Map<string, BackfillEntry[]>();
   for (const entry of due) {
-    const peerId = entry.fromPeerId || deps.getConnectedPeers()[0] || '';
+    const peerId = pickPeer(entry, connectedPeers);
     if (!peerId) continue;
     let list = byPeer.get(peerId);
     if (!list) {
@@ -71,23 +86,28 @@ export async function onBlockApplied(height: number): Promise<void> {
     try {
       const bodies = await deps.requestPostBodies(wanted, peerId);
       for (const { id, content } of bodies) {
-        const stored = setPostBody(id, content);
+        const stored = deps.setPostBody(id, content);
         if (stored) {
           pending.delete(id);
           emitPostReceived(id, peerId, 'pull');
         }
       }
-    } catch {
-      // peer unavailable — entries stay pending for next height
+    } catch (err) {
+      console.warn(`Backfill request to ${peerId} failed: ${String(err)}`);
     }
 
     for (const entry of entries) {
       if (pending.has(entry.id)) {
+        entry.attemptCount++;
         entry.nextRetryHeight = height + entry.retryInterval;
         entry.retryInterval = Math.min(entry.retryInterval * 2, MAX_RETRY_INTERVAL);
       }
     }
   }
+}
+
+export function getPendingCount(): number {
+  return pending.size;
 }
 
 export function clearPending(): void {
