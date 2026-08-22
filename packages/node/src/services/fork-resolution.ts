@@ -49,7 +49,6 @@ import {
   ReorgBlockRejectedError,
 } from './corrupt-state.js';
 import { expectedTarget } from './difficulty.js';
-import type { DagService } from './dag-service.js';
 
 /**
  * The hash of a header from our own chain.
@@ -362,7 +361,7 @@ function reinsert(insert: () => void, label: string): void {
  * Reorg: revert our chain from currentHeight down to forkHeight+1,
  * then apply the competing chain forward.
  */
-export function reorg(forkHeight: number, newBlocks: OrderingBlock[], dagService?: DagService): void {
+export function reorg(forkHeight: number, newBlocks: OrderingBlock[]): void {
   // A failed reorg rolls the whole transaction back — DB and AVL storage rows
   // live in the same SQLite file — but SQLite rollback cannot reach the
   // prover's in-memory state: the per-block funnel restore only covers the
@@ -442,7 +441,7 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[], dagService
 
   // Phase 3: apply new chain
   for (const block of newBlocks) {
-    if (!applyOrderingBlock(block, dagService)) {
+    if (!applyOrderingBlock(block)) {
       const hash = blockHash(block.header) ?? 'unhashable';
       throw new ReorgBlockRejectedError(block.header.height, hash);
     }
@@ -503,7 +502,6 @@ export async function resolveFork(
   block: OrderingBlock,
   net: ForkResolutionNet,
   fromPeerId: string,
-  dagService?: DagService,
 ): Promise<void> {
   const currentHeight = getCurrentHeight();
 
@@ -657,7 +655,7 @@ export async function resolveFork(
     }
 
     // 11. The switch — nothing awaits between the re-read and this call.
-    reorg(forkHeight, newBlocks, dagService);
+    reorg(forkHeight, newBlocks);
     console.log(`Reorg complete: new tip at height=${forkHeight + n}`);
   } catch (err) {
     // 12. The mark — after the rollback, in its own write.

@@ -2308,10 +2308,8 @@ apply path runs**, never by a second implementation of the state transition:
    in-memory state.
 4. Use the computed digest as `header.stateRoot`, then mine.
 
-The speculative run passes **no `DagService`** (its canonical-branch updates
-are in-memory and would survive the rollback; they touch no UTXO box, so the
-digest is unaffected), and performs no block storage, no `clearTemplate`, no
-journal persistence, and no prover checkpoint.
+The speculative run performs no block storage, no `clearTemplate`, no journal
+persistence, and no prover checkpoint.
 
 **The speculation has three outcomes, not two** (P2-B phase 1c — the code
 returns them as a discriminated union so no caller can conflate them):
@@ -3443,40 +3441,6 @@ and `height` as *fields* and the state layer has no other way to know the
 height. Second rather than last, because a required parameter cannot follow the
 defaulted `recordPuts`.
 
-### dag_meta Table
-
-A key-value metadata table stored alongside post data. Used for schema
-versioning, migration sentinels, watermarks, and operational state.
-
-**Schema:**
-```sql
-CREATE TABLE dag_meta (
-    key   TEXT PRIMARY KEY,
-    value BLOB NOT NULL
-);
-```
-
-**Required keys and their invariants:**
-
-| Key | Value encoding | Invariant |
-|-----|---------------|-----------|
-| `dag_tip_hash` | 32 bytes | Updated atomically with every canonical DAG advance. |
-| `reorg_floor` | u32 LE | Height below which no reorg is accepted. |
-
-> ⚠ **There is no startup rebuild to contract for.** This section required
-> `last_validated_sequence` and `last_indexed_sequence`, and a startup line reading them "to
-> rebuild the in-memory DAG view". **No such rebuild exists** — `dag-service.ts` queries
-> `canonical_branch` per call, every `Map` and `Set` in it is local to a method, and nothing is
-> loaded at startup. The two keys were write-only `+1` counters with no reader and no reorg reset,
-> and their writer is deleted.
->
-> **Same phantom as the `dag_load_started` / `dag_load_complete` events**, which described the same
-> rebuild and were removed from `JOURNAL_EVENTS.md` for the same reason.
->
-> ⚠ **The two remaining keys are carried forward unverified.** Whether `dag_tip_hash` and
-> `reorg_floor` have writers and readers matching these invariants **was not re-derived** when the
-> watermarks were removed — do not read their presence here as confirmation.
-
 ### No store schema version, and none is owed
 
 **A node does not version its own database and does not refuse to start against an old one.**
@@ -3522,7 +3486,6 @@ the handler.
 |---------|---------------|--------------|
 | `post-service.ts` | Create, verify (sig, PoW, DAG linkage, content), store | Networking, block assembly |
 | `feed-service.ts` | Query posts, paginate, assemble feed/thread views | Post creation |
-| `dag-service.ts` | DAG fork resolution, canonical branch, reorg | Post creation, block assembly |
 | `verifier.ts` | Post verification (sig, PoW, DAG linkage, content) | Network relay |
 | `credits.ts` | Credit transfer validation and execution | UTXO engine internals |
 | `invites.ts` | Invite lifecycle (create, commit, claim, cancel) | Bond box internals |
@@ -3701,41 +3664,6 @@ deletes the empty tree's height-0 version before writing its own — and re-appl
 `currentHeight` of 0, which is the chain-link check's genesis branch. Verified end to end
 rather than reasoned about; `test/services/fork-resolution.test.ts` pins the round trip against
 the pinned root.
-
----
-
-## Canonical DAG (Best DAG as a View)
-
-**Design principle:** All posts from all branches are stored permanently.
-The canonical DAG is a view derived from cumulative PoW. Switching branches
-is a view update — posts are never deleted.
-
-**Tables:**
-```sql
-CREATE TABLE canonical_branch (
-    depth    INTEGER PRIMARY KEY,
-    post_id  TEXT NOT NULL
-);
-
-CREATE TABLE post_scores (
-    post_id           TEXT PRIMARY KEY,
-    cumulative_score  INTEGER NOT NULL
-);
-```
-
-**Fork-choice rule:** Strictly greater cumulative score wins. Equal score
-= no reorg (first-seen wins on ties). No timestamps or content hashes
-in fork resolution.
-
-**Atomic reorg:** Switching canonical branches updates both the in-memory
-DAG view and the `canonical_branch` table in a single transaction. If the
-store transaction fails, the in-memory view is rolled back.
-
-**Reorg floor:** If the node started from a snapshot at depth D, reorgs to
-depths < D are rejected (`dag_meta` stores the floor depth).
-
-**Reorg event:** Emit `dag_reorg` with `fork_point`, `demoted` count,
-`old_tip`, and `new_tip`.
 
 ---
 

@@ -4,7 +4,6 @@ import { getCurrentHeight, getOrderingBlock } from '../store/index.js';
 import { applyOrderingBlock } from './block-apply.js';
 import { extendsOurTip, resolveFork } from './fork-resolution.js';
 import type { ForkResolutionNet } from './fork-resolution.js';
-import type { DagService } from './dag-service.js';
 import { failStopIfCorruptChain } from './corrupt-state.js';
 import { onBlockApplied, registerPlaceholder } from './backfill.js';
 import { getPlaceholdersAt } from '../store/index.js';
@@ -24,7 +23,6 @@ export function handleOrderingBlock(
   block: OrderingBlock,
   fromPeerId: string,
   net: ForkResolutionNet,
-  dagService?: DagService,
 ): boolean {
   const existing = getOrderingBlock(block.header.height);
   if (existing && blockHash(existing.header) === blockHash(block.header)) {
@@ -33,7 +31,7 @@ export function handleOrderingBlock(
 
   const currentHeight = getCurrentHeight();
   if (currentHeight === 0 || extendsOurTip(block)) {
-    const applied = applyOrderingBlock(block, dagService);
+    const applied = applyOrderingBlock(block);
     if (applied) {
       const placeholders = getPlaceholdersAt(block.header.height);
       for (const p of placeholders) {
@@ -46,7 +44,7 @@ export function handleOrderingBlock(
     return applied;
   }
 
-  resolveFork(block, net, fromPeerId, dagService).catch(failStopIfCorruptChain);
+  resolveFork(block, net, fromPeerId).catch(failStopIfCorruptChain);
   return false;
 }
 
@@ -56,11 +54,10 @@ export function handleOrderingBlock(
  */
 export function pullBlocksHandler(
   net: ForkResolutionNet,
-  dagService?: DagService,
 ): (block: OrderingBlock, fromPeerId: string) => boolean {
   return (block, fromPeerId) => {
     try {
-      return handleOrderingBlock(block, fromPeerId, net, dagService);
+      return handleOrderingBlock(block, fromPeerId, net);
     } catch (err) {
       failStopIfCorruptChain(err);
     }

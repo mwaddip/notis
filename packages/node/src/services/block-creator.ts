@@ -148,7 +148,6 @@ let validatorPrivKey: KeyObject;
 let validatorId: Uint8Array;
 let currentTemplate: OrderingBlock | null = null;   // The block the miner solves
 let confirmedRowids: Set<number> = new Set();       // Mempool rowids included in current block
-let dagService: import('./dag-service.js').DagService | undefined;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -179,10 +178,6 @@ export function startBlockCreator(cfg: Config): void {
 export function stopBlockCreator(): void {
   clearTemplate();
   confirmedRowids = new Set();
-}
-
-export function setDagServiceForMiner(ds: import('./dag-service.js').DagService): void {
-  dagService = ds;
 }
 
 /**
@@ -696,7 +691,7 @@ function finalizeBlock(block: OrderingBlock): void {
   const minedRowids = confirmedRowids;
   let applied: boolean;
   try {
-    applied = applyOrderingBlock(block, dagService);
+    applied = applyOrderingBlock(block);
   } catch (err) {
     failStopIfCorruptChain(err);
   }

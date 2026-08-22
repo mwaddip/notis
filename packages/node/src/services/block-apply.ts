@@ -38,7 +38,6 @@ import {
 } from './settlement.js';
 import { postsOf, postIdsOf } from './block-posts.js';
 import { expectedTarget } from './difficulty.js';
-import { DagService } from './dag-service.js';
 import {
   applyTx,
   checkOutputShape,
@@ -152,7 +151,7 @@ class BlockRejected extends Error {}
  * and dies again. One cheaply-mined block would otherwise be a permanent,
  * self-reapplying kill for every node that receives it.
  */
-export function applyOrderingBlock(block: OrderingBlock, dagService?: DagService): boolean {
+export function applyOrderingBlock(block: OrderingBlock): boolean {
   // Structure first, before any field of `block` is read. Until this returns
   // valid, nothing about the object's shape is known: the fields below are
   // decoded CBOR from an untrusted producer, and `pruneEntries` in particular
@@ -183,7 +182,7 @@ export function applyOrderingBlock(block: OrderingBlock, dagService?: DagService
   let applied: boolean;
   try {
     applied = getDb().transaction(() => {
-      if (!applyBlockBody(block, dagService)) throw new BlockRejected();
+      if (!applyBlockBody(block)) throw new BlockRejected();
       return true;
     })();
   } catch (err) {
@@ -240,7 +239,7 @@ export function applyOrderingBlock(block: OrderingBlock, dagService?: DagService
   return applied;
 }
 
-function applyBlockBody(block: OrderingBlock, dagService?: DagService): boolean {
+function applyBlockBody(block: OrderingBlock): boolean {
   const currentHeight = getCurrentHeight();
 
   // Open the record-once journal: from here on the store mutation primitives
@@ -361,7 +360,7 @@ function applyBlockBody(block: OrderingBlock, dagService?: DagService): boolean 
   // explicitly passed height) by the block creator to obtain the post-block
   // stateRoot before mining (H-6). It never touches the journal lifecycle, so
   // its rejections are turned into an abort here.
-  if (!applyMutationPhase(block, block.header.height, dagService)) {
+  if (!applyMutationPhase(block, block.header.height)) {
     abortBlockJournal();
     return false;
   }
@@ -523,9 +522,7 @@ export type StateRootSpeculation =
  * mining, and the only way to know it without a second implementation of the
  * state transition is to run the block's own body. That happens here: the
  * mutation phase, verbatim, at the block's height, inside a SQLite transaction
- * that is always rolled back. No `DagService` (its canonical-branch updates
- * are in-memory and would survive the rollback; they touch no UTXO box, so the
- * digest is unaffected), no block storage, no `clearTemplate`, no journal
+ * that is always rolled back. No block storage, no `clearTemplate`, no journal
  * persistence, no prover checkpoint.
  *
  * SQLite rollback does not reach the prover's in-memory tree, so the digest is
@@ -565,7 +562,7 @@ export function computePostBlockStateRoot(
   try {
     getDb().transaction((): void => {
       beginBlockJournal(height);
-      if (!applyMutationPhase(block, height, undefined)) throw new BlockRejected();
+      if (!applyMutationPhase(block, height)) throw new BlockRejected();
       const { consumed, created, recordPuts } = proverFeedFromJournal(finishBlockJournal());
       // The digest rides out on the throw: nothing this run did may survive.
       throw new SpeculativeRollback(
@@ -633,7 +630,6 @@ export function computePostBlockStateRoot(
 function applyMutationPhase(
   block: OrderingBlock,
   height: number,
-  dagService?: DagService,
 ): boolean {
   // What each of this block's prune entries owes, in prune-entry order. Filled
   // by §5 and consumed by §11a — the settlement pays every leg.
@@ -685,41 +681,7 @@ function applyMutationPhase(
     }
   }
 
-  // 8. Compute DAG scores and evaluate canonical tip
-  if (dagService) {
-    let bestScore = 0;
-    let bestId: string | null = null;
-
-    for (const { postId, post } of blockPosts) {
-      let maxParent = 0;
-      for (const pid of post.parentRefs) {
-        const ps = dagService.getScore(pid);
-        if (ps !== null && ps > maxParent) {
-          maxParent = ps;
-        }
-      }
-      const score = maxParent + 1; // uniform weight: ownWork = 1
-      dagService.saveScore(postId, score);
-
-      if (score > bestScore) {
-        bestScore = score;
-        bestId = postId;
-      }
-    }
-
-    if (bestId !== null) {
-      try {
-        const plan = dagService.buildReorgPlan(bestId, bestScore);
-        if (plan) {
-          dagService.switchToBranch(plan);
-        }
-      } catch (err) {
-        console.error(`DagService reorg evaluation failed: ${String(err)}`);
-      }
-    }
-  }
-
-  // 8b. Populate block_topology from this block's post transactions.
+  // 8. Populate block_topology from this block's post transactions.
   // Consensus data only — this, not dag_posts.author, is the authority for prune
   // authorization, and it is derivable by any node holding the block body.
   for (const { postId, post } of blockPosts) {

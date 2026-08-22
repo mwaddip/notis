@@ -15,8 +15,6 @@ async function importFresh() {
 }
 
 const EXPECTED_TABLES = [
-  'canonical_branch',
-  'dag_meta',
   'dag_posts',
   'dag_parent_refs',
   'dag_stumps',
@@ -24,7 +22,6 @@ const EXPECTED_TABLES = [
   'mempool',
   'ordering_blocks',
   'block_journal',
-  'post_scores',
   'system_config',
   'utxo_boxes',
 ];

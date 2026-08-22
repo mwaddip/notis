@@ -125,8 +125,6 @@ export {
 
 export { loadAllPeers, putPeer, deletePeer, peerStorage } from './peers.js';
 
-export { metaGet, metaPut, metaDelete, metaHas } from './meta.js';
-
 export {
   getVouchBox,
   getVouchesForTarget,

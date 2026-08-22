@@ -107,13 +107,6 @@ export function emitPostIndexed(postId: string, parentRefCount: number): void {
   emitEvent({ event: 'post_indexed', level: 'INFO', post_id: postId, parent_ref_count: parentRefCount });
 }
 
-export function emitDagReorg(forkPoint: string, demoted: number, oldTip: string, newTip: string): void {
-  emitEvent({
-    event: 'dag_reorg', level: 'WARN',
-    fork_point: forkPoint, demoted, old_tip: oldTip, new_tip: newTip,
-  });
-}
-
 // ---------------------------------------------------------------------------
 // Convenience emitters for peer events (JOURNAL_EVENTS → Peer Events —
 // NOT IMPLEMENTED; wrappers ahead of wiring)

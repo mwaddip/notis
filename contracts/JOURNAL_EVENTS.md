@@ -4,7 +4,7 @@
 **Stability:** stable
 **Last verified against code:** 2026-08-22
 
-> ✅ **15 events are declared below and 15 are emitted — re-derived 2026-08-22.** Every emitter is a
+> ✅ **14 events are declared below and 14 are emitted — re-derived 2026-08-22.** Every emitter is a
 > `journal.ts` wrapper around `emitEvent`, and an event is emitted when its wrapper is called from `src`.
 > The four that read `@dagsocial/net` — `peer_connected`, `peer_disconnected`, `peer_penalised`,
 > `sync_complete` — fire from the hooks `NetNode` exposes (NET_INTERFACE → API → Sync Handler
@@ -119,12 +119,6 @@ not comparable.
 application for a post first stored there. Once per post. `parent_ref_count`
 is the post's own parent-ref count; DAG depth is a consumer's store walk, not
 a field.
-
-### dag_reorg
-**Level:** WARN
-**Fields:** `fork_point` (string), `demoted` (number), `old_tip` (string),
-  `new_tip` (string)
-**Emitted:** After canonical branch switch completes.
 
 ## Peer Events
 
