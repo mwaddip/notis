@@ -1369,13 +1369,17 @@ There is **no other legal bond or invite shape**. In particular:
   receives karma and when it falls to zero — it is not a decay or settlement
   concern, so it is not on any hot path.
 
-  > ⚠ **VIOLATED — verified 2026-08-22.** Node owns the set and never wrote it: no caller of
-  > net's `setKarmaMembers` / `addKarmaMember` / `removeKarmaMember` exists in `packages/node/src`
-  > (grep by the three names), so the set has been empty since the gate landed and every relayed
-  > post has been rejected at the topic validator — posts reached other nodes only inside blocks.
-  > Found by the e2e packet chapter of the content-in-the-DAG unit, which is the first to need a
-  > relayed post's body. The rule stands; the fix (seed at startup from the store, move it at the
-  > box choke point on the two events) lands in that unit (node).
+  > ✅ **RESOLVED 2026-08-22 — closed by the content-in-the-DAG unit (node).** `index.ts` seeds
+  > the set at startup with `getKarmaOwners()` (every identity holding an unspent karma box) and
+  > registers a store hook (`registerKarmaMembershipHook`) that `insertBox` / `consumeBox` /
+  > `deleteBox` / `unconsumeBox` fire on exactly the two transitions — an owner's first unspent
+  > karma box and its last — so apply and revert move the set alike.
+  >
+  > **The record — this was VIOLATED, verified 2026-08-22:** node owned the set and never wrote it;
+  > no caller of net's `setKarmaMembers` / `addKarmaMember` / `removeKarmaMember` existed in
+  > `packages/node/src`, so the set was empty from the day the gate landed and every relayed post was
+  > rejected at the topic validator — posts reached other nodes only inside blocks. Found by the e2e
+  > packet chapter, the first test that needed a relayed post's body.
 
   **Measured 2026-08-15:** Ed25519 verify **73.2 µs**, one `blake2b512`
   **2.08 µs**, `Set.has()` **0.023 µs**. The relay path goes 75.3 → 73.8 µs,
