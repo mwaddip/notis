@@ -93,11 +93,19 @@ Event-specific fields are additional top-level keys.
 ### post_received
 **Level:** INFO
 **Fields:** `post_id` (string), `source` (string: "local" or the relaying peer
-  id — which may be `''`, NET_INTERFACE → the `fromPeerId` caveat)
+  id — which may be `''`, NET_INTERFACE → the `fromPeerId` caveat; for a pulled body, the
+  serving peer), `via` (string: "packet" — the body arrived with its transaction, locally or
+  by gossip — or "pull" — a placeholder's body arrived by id, NODE_INTERFACE → Store Interface
+  → Posts DAG, "Backfill after sync")
 **Emitted:** Once an arriving post is nameable: its creating transaction has
-validated and `computePostId` can run. An id is not computable on an
+validated and `computePostId` can run — and, for `via: "pull"`, once the body verified
+against the row's commitment and was stored. An id is not computable on an
 unvalidated payload (TYPES_INTERFACE → Totality), so an invalid arrival emits
-nothing.
+nothing. A post applied from a block without its body emits `post_indexed` for the
+placeholder row and `post_received` only when the body arrives.
+
+> ⚠ **AHEAD OF CODE — 2026-08-22.** `via` and the pull emission land with the content-in-the-DAG
+> unit (node). The event count stays fifteen: no new event, one new field.
 
 ### post_validated
 **Level:** INFO
