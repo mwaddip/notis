@@ -65,6 +65,8 @@ wire, raw bytes in CBOR.
 travels beside its transaction as a packet (→ Layout — UtxoTransaction, the packet codec) and
 by id on pull, and lives only in the DAG; `contentHash` is the one binding between them.
 
+#### Post identity
+
 ⛔ **A post's identity is PROVENANCE-DERIVED, exactly as a box's is.** A post is
 created by a transaction (→ "Post transactions" below), and no two posts can share
 one — the creating transaction spends the author's karma box, so its inputs differ.
