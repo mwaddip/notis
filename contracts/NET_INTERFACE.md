@@ -493,7 +493,10 @@ pick_sync_peer() → sync_from_peer() → backfill() → synced()
   them from the sync peer in batches of **`BACKFILL_BATCH_IDS` = 100** (`ModifierRequest`,
   type 103). Every returned body is verified against its commitment and handed to the node
   (`onPostBody`); a stored body is **real progress**. Ids the peer omitted are re-asked of the
-  next peer on rotation. An empty provider answer ends the phase → `synced`.
+  next peer on rotation. **The phase ends** when the provider answers empty, **or when the
+  remaining ids have been asked of every connected peer without a stored body** — those
+  placeholders are left to the synced-phase pulls (the node's block-height schedule), so a body
+  nobody serves never keeps a node out of `synced`. Either exit → `synced`.
 - **Stall:** 60s without **real progress** (see Sync Integrity below) →
   rotate to different peer, mark current as stalled. On progress, clear
   stall set. The same rule, the same clock, in `backfill`.
