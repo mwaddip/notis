@@ -10,8 +10,8 @@ async function importDbFresh() {
 }
 
 describe('post_received via and post_bodies_pulled_total', () => {
-  beforeEach(() => vi.resetModules());
-  afterEach(() => vi.resetModules());
+  beforeEach(() => { vi.resetModules(); });
+  afterEach(() => { vi.resetModules(); });
 
   it('notePostReceived("pull") increments post_bodies_pulled_total; "packet" does not', async () => {
     const metrics = await import('../../src/metrics.js');
@@ -26,8 +26,8 @@ describe('post_received via and post_bodies_pulled_total', () => {
 });
 
 describe('/health shape', () => {
-  beforeEach(() => vi.resetModules());
-  afterEach(() => vi.resetModules());
+  beforeEach(() => { vi.resetModules(); });
+  afterEach(() => { vi.resetModules(); });
 
   it('syncing is true when sync_phase is backfill', async () => {
     const { createAdminRouter } = await import('../../src/routes/admin.js');

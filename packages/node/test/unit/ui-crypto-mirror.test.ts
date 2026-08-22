@@ -961,7 +961,7 @@ describe('demo UI ↔ @dagsocial/types box identity mirror (Spec G phase E)', ()
 
     for (const tx of [
       ui.buildLikeTx(karmaBox, targetPostId, pubKeyHex, LIKE_AUTHOR_HEX),
-      ui.buildPostTx(karmaBox, 5n, GOLDEN_POST_HEX_AUTHOR, pubKeyHex),
+      ui.buildPostTx(karmaBox, 5n, GOLDEN_POST_HEX_AUTHOR as unknown as Record<string, unknown>, pubKeyHex),
     ]) {
       const asTx = tx as unknown as Record<string, unknown>;
       const txId = computeTxId(jsonToTx(JSON.parse(JSON.stringify(asTx, ui.jsonBigint))));
@@ -987,7 +987,7 @@ describe('demo UI ↔ @dagsocial/types box identity mirror (Spec G phase E)', ()
     const confirmed = { boxId: 'a1'.repeat(32), value: 100n };
 
     const lock = ui.buildPostTx(
-      { total: 100n, boxes: [{ ...confirmed }] }, 5n, GOLDEN_POST_HEX_AUTHOR, pubKeyHex,
+      { total: 100n, boxes: [{ ...confirmed }] }, 5n, GOLDEN_POST_HEX_AUTHOR as unknown as Record<string, unknown>, pubKeyHex,
     );
     ui.recordPendingKarmaChange(lock as unknown as Record<string, unknown>);
 

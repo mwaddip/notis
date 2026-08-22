@@ -622,7 +622,7 @@ describe('block-creator', () => {
     // ids and opens no database.
     const a = makePostTx(author, 'same words');
     const b = makePostTx(other, 'same words');
-    expect(a.tx.post!.content).toBe(b.tx.post!.content);   // only the author differs
+    expect(Buffer.from(a.tx.post!.contentHash).toString('hex')).toBe(Buffer.from(b.tx.post!.contentHash).toString('hex'));   // only the author differs
 
     const treeOf = (txId: string) => ({
       utxoTxIds: [txId], utxoTxs: [new Uint8Array(1)],
