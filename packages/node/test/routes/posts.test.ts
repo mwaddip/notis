@@ -223,10 +223,10 @@ describe('posts routes', () => {
   });
 
   // -----------------------------------------------------------------------
-  // Success case: post -> mempool batch with karmaLockTx
+  // Success case: post transaction and content admitted as pending
   // -----------------------------------------------------------------------
 
-  it('POST /posts with valid post and karmaLockTx inserts batch into mempool', async () => {
+  it('POST /posts with valid post transaction and content is admitted as pending', async () => {
     const kp = generateKeyPair();
     const userId = kp.publicKey;
     const userIdHex = Buffer.from(userId).toString('hex');
