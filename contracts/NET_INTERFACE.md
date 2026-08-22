@@ -505,11 +505,12 @@ pick_sync_peer() → sync_from_peer() → backfill() → synced()
   Sync Integrity — request provenance); an Inv from any other peer, or
   while not syncing, is dropped without penalty. Placeholder rows created
   after `synced` — a gossiped block whose packet this node missed — are the
-  node's to pull: it calls `requestPostBodies(ids, peerId)` from its
-  block-applied hook, the relaying peer first, then other connected peers, on a
-  per-id schedule in block height (NODE_INTERFACE → Store Interface → Posts
-  DAG, "Backfill after sync"); net serves the request and delivers the answer,
-  it runs no timer of its own for it.
+  node's to pull: it calls `requestPostBodies(wanted, peerId)` — the ids with
+  their commitments — from its block-applied hook, the relaying peer first,
+  then other connected peers, on a per-id schedule in block height
+  (NODE_INTERFACE → Store Interface → Posts DAG, "Backfill after sync"); net
+  serves the request and returns the verified bodies to the caller, it runs no
+  timer of its own for it.
 
 > ⚠ **AHEAD OF CODE — 2026-08-22.** The `backfill` phase, `BACKFILL_BATCH_IDS`, the
 > `setMissingBodiesProvider` / `onPostBody` seams and `requestPostBodies` land with the
@@ -1147,7 +1148,7 @@ membership test is the thing standing between a relayed hint and a counterparty 
 |----------|-----------|-------------|
 | `requestHeaders(start, max, peerId)` | `(number, number, string) => Promise<BlockHeader[]>` | Request block headers for fork resolution (codes 14/15) |
 | `requestBlocks(start, end, peerId)` | `(number, number, string) => Promise<OrderingBlock[]>` | Request full blocks for reorg (codes 16/17) |
-| `requestPostBodies(ids, peerId)` | `(string[], string) => Promise<{ id: string; content: string }[]>` | Request post bodies by id from one peer (`ModifierRequest` type 103, codes 4/5). Answers carry only the ids the peer holds; each body is verified against the commitment the node supplies for that id before it is returned, a mismatch is penalised and dropped. Used by the `backfill` phase and by the node's placeholder pulls after `synced`. **AHEAD OF CODE — 2026-08-22** (net) |
+| `requestPostBodies(wanted, peerId)` | `({ id: string; contentHash: Uint8Array }[], string) => Promise<{ id: string; content: string }[]>` | Request post bodies by id from one peer (`ModifierRequest` type 103 on the sync stream, codes 4/5); the caller supplies each id's commitment. Answers carry only the ids the peer holds; each body is decoded and verified against its commitment before it is returned — a mismatch or an undecodable body is a misbehaviour penalty and is dropped — and **the verified bodies are returned to the caller, which stores them** (the node's placeholder pulls after `synced`); `onPostBody` is the `backfill` phase's delivery path, not this call's |
 
 ⚠ **Both chain queries THROW rather than return empty** on an unexpected frame
 code or a malformed body — a decoded-but-empty answer is a statement ("no blocks"),
@@ -1178,6 +1179,7 @@ offer.
 | `onSyncComplete(cb)` | `(() => void) => void` | Fired on every entry into the `synced` phase |
 | `setPostBodyProvider(cb)` | `((postId: string) => string \| null) => void` | Provider for the `MODIFIER_POST_BODY` serve arm: the body this node holds for the id, or `null` — served locally or omitted, never relayed (→ Local-Serve-Before-Relay). **AHEAD OF CODE — 2026-08-22** (net) |
 | `setMissingBodiesProvider(cb)` | `((limit: number) => { id: string; contentHash: Uint8Array }[]) => void` | Provider the `backfill` phase reads: up to `limit` post ids whose rows hold no body, newest first, each with the commitment the body must hash to. An empty answer ends the phase. **AHEAD OF CODE — 2026-08-22** (net) |
+| `setPostBodyCommitmentProvider(cb)` | `((postId: string) => Uint8Array \| null) => void` | Provider the `backfill` receive arm reads to verify an answered body: the commitment (`content_hash`) the node holds for the id, or `null` when it holds no row — such a body is dropped without penalty. The machine asks at receipt rather than caching the pairs it requested, so a body is always checked against the store's current commitment |
 | `onPostBody(cb)` | `((postId: string, content: string, fromPeerId: string) => boolean) => void` | Delivery of a pulled body that verified against its commitment. The handler stores it and returns `true` (real progress for the stall clock) or `false` (row gone or already filled — no progress, no penalty). **AHEAD OF CODE — 2026-08-22** (net) |
 | `onPeerActive(cb)` | `((peerId: string, direction: 'inbound' \| 'outbound') => void) => void` | Fired when a peer completes the handshake and becomes Active; `direction` is the connection's. |
 | `onPeerDisconnected(cb)` | `((peerId: string, reason: string) => void) => void` | Fired after a peer's disconnect is processed (`PeerManager.removePeer`). `reason` is always `''` — libp2p's `peer:disconnect` carries none; the parameter is the shape JOURNAL_EVENTS → peer_disconnected names. |
