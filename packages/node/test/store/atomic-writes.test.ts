@@ -1,16 +1,10 @@
-import { uid, fixturePostId } from '../helpers.js';
+import { uid, fixturePostId, makePostCommit } from '../helpers.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type Database from 'better-sqlite3';
-import { randomBytes } from 'node:crypto';
-import type { Post, Stump } from '@dagsocial/types';
+import { computeContentHash } from '@dagsocial/types';
+import type { PostCommit, Stump } from '@dagsocial/types';
 
-function bytes(n: number): Uint8Array {
-  return new Uint8Array(randomBytes(n));
-}
-
-// ---------------------------------------------------------------------------
-// Dynamic import helpers (reset module-level state between tests)
-// ---------------------------------------------------------------------------
+function hex(u: Uint8Array): string { return Buffer.from(u).toString('hex'); }
 
 async function importDbFresh() {
   const mod = await import('../../src/store/db.js');
@@ -22,40 +16,25 @@ async function importDbFresh() {
 }
 
 async function importPostsFresh() {
-  const mod = await import('../../src/store/posts.js');
-  return mod as {
-    insertPost: (postId: string, post: Post, rawCbor: Uint8Array) => void;
-    getPost: (id: string) => Post | Stump | null;
-    confirmPost: (postId: string, blockHeight: number, blockIndex: number) => void;
-    getParentRefs: (postId: string) => string[];
-    pruneSubtree: (rootPostId: string) => void;
-  };
+  return import('../../src/store/posts.js');
 }
 
 async function importStumpsFresh() {
-  const mod = await import('../../src/store/stumps.js');
-  return mod as {
-    insertStump: (stump: Stump) => void;
-  };
+  return import('../../src/store/stumps.js');
 }
 
-async function importTypesPosts() {
-  const mod = await import('@dagsocial/types');
-  return mod as {
-    computePostId: (txId: string, index: number) => string;
-    PROTOCOL_VERSION: number;
-  };
-}
-
-function makePost(overrides: Partial<Post> = {}): Post {
-  return {
-    content: 'atomic test post',
+function makeCommit(overrides: Partial<PostCommit> & { content?: string } = {}): { commit: PostCommit; content: string } {
+  const content = overrides.content ?? 'atomic test post';
+  const { content: _, ...rest } = overrides;
+  const commit: PostCommit = {
+    contentHash: computeContentHash(content),
     author: uid('tester'),
     parentRefs: [],
     protocolVersion: 1,
     type: 'regular',
-    ...overrides,
+    ...rest,
   };
+  return { commit, content };
 }
 
 function makeStump(overrides: Partial<Stump> = {}): Stump {
@@ -70,10 +49,6 @@ function makeStump(overrides: Partial<Stump> = {}): Stump {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 describe('atomic writes', () => {
   beforeEach(async () => {
     vi.resetModules();
@@ -83,31 +58,18 @@ describe('atomic writes', () => {
     vi.resetModules();
   });
 
-  // -----------------------------------------------------------------------
-  // insertPost atomicity
-  // -----------------------------------------------------------------------
-
   it('insertPost atomically writes dag_posts and dag_parent_refs', async () => {
     const { initDb, getDb } = await importDbFresh();
     const { insertPost, getParentRefs } = await importPostsFresh();
-    const { computePostId } = await importTypesPosts();
 
     initDb(':memory:');
 
-    // `b32` refs: `'parent-a'` has no encoding. The count still exceeds
-    // `MAX_PARENT_REFS` on purpose — what this test pins is that BOTH tables are
-    // written in one transaction, and a single ref cannot show a partial write.
-    const post = makePost({
-      content: 'post with refs',
-      parentRefs: ['a1'.repeat(32), 'b2'.repeat(32)],
-    });
-    const rawCbor = new Uint8Array([1, 2, 3]);
+    const refs = ['a1'.repeat(32), 'b2'.repeat(32)];
+    const { commit, content } = makeCommit({ content: 'post with refs', parentRefs: refs });
+    const postId = fixturePostId(commit);
 
-    insertPost(fixturePostId(post), post, rawCbor);
+    insertPost(postId, commit, content);
 
-    const postId = fixturePostId(post);
-
-    // Both the post row and its parent refs must exist
     const db = getDb();
     const postRow = db.prepare('SELECT id FROM dag_posts WHERE id = ?').get(postId) as
       | { id: string }
@@ -115,41 +77,35 @@ describe('atomic writes', () => {
     expect(postRow).toBeDefined();
     expect(postRow!.id).toBe(postId);
 
-    const refs = getParentRefs(postId);
-    expect(refs).toEqual(['a1'.repeat(32), 'b2'.repeat(32)]);
+    expect(getParentRefs(postId)).toEqual(refs);
   });
 
   it('insertPost that throws inside transaction rolls back completely', async () => {
     const { initDb, getDb } = await importDbFresh();
-    const { computePostId } = await importTypesPosts();
 
     initDb(':memory:');
     const db = getDb();
 
-    const post = makePost({ content: 'should-not-exist' });
-    const postId = fixturePostId(post);
+    const { commit, content } = makeCommit({ content: 'should-not-exist' });
+    const postId = fixturePostId(commit);
 
-    // Simulate what a buggy multi-statement insert would look like without
-    // a transaction wrapper: manually BEGIN then force a throw within the
-    // transaction to verify the ROLLBACK behavior.
     db.exec('SAVEPOINT test_sp');
     try {
       db.prepare(
         `INSERT INTO dag_posts
-           (id, content, author, parent_refs,
-            protocol_version, type, raw_cbor, status)
+           (id, content_hash, content, author, parent_refs,
+            protocol_version, type, status)
          VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
       ).run(
         postId,
-        post.content,
-        Buffer.from(post.author),
-        JSON.stringify(post.parentRefs),
-        post.protocolVersion,
-        post.type,
-        Buffer.from(new Uint8Array([9])),
+        hex(commit.contentHash),
+        content,
+        Buffer.from(commit.author),
+        JSON.stringify(commit.parentRefs),
+        commit.protocolVersion,
+        commit.type,
       );
 
-      // Insert one parent ref, then throw before the second
       db.prepare(
         'INSERT OR IGNORE INTO dag_parent_refs (post_id, parent_id) VALUES (?, ?)',
       ).run(postId, 'ref-1');
@@ -160,7 +116,6 @@ describe('atomic writes', () => {
       db.exec('ROLLBACK TO test_sp');
     }
 
-    // Neither the post nor the partial ref should exist after rollback
     const postRow = db.prepare('SELECT id FROM dag_posts WHERE id = ?').get(postId);
     const refRow = db.prepare(
       'SELECT post_id FROM dag_parent_refs WHERE post_id = ?',
@@ -171,29 +126,28 @@ describe('atomic writes', () => {
 
   it('insertPost via db.transaction() that throws leaves no partial state', async () => {
     const { initDb, getDb } = await importDbFresh();
-    const { computePostId } = await importTypesPosts();
 
     initDb(':memory:');
     const db = getDb();
 
-    const post = makePost({ content: 'tx-rollback-test' });
-    const postId = fixturePostId(post);
+    const { commit, content } = makeCommit({ content: 'tx-rollback-test' });
+    const postId = fixturePostId(commit);
 
     expect(() => {
       db.transaction(() => {
         db.prepare(
           `INSERT INTO dag_posts
-             (id, content, author, parent_refs,
-              protocol_version, type, raw_cbor, status)
+             (id, content_hash, content, author, parent_refs,
+              protocol_version, type, status)
            VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
         ).run(
           postId,
-          post.content,
-          Buffer.from(post.author),
-          JSON.stringify(post.parentRefs),
-          post.protocolVersion,
-          post.type,
-          Buffer.from(new Uint8Array([1])),
+          hex(commit.contentHash),
+          content,
+          Buffer.from(commit.author),
+          JSON.stringify(commit.parentRefs),
+          commit.protocolVersion,
+          commit.type,
         );
 
         db.prepare(
@@ -204,7 +158,6 @@ describe('atomic writes', () => {
       })();
     }).toThrow('simulated crash');
 
-    // Nothing should be committed
     const postRow = db.prepare('SELECT id FROM dag_posts WHERE id = ?').get(postId);
     expect(postRow).toBeUndefined();
 
@@ -214,92 +167,37 @@ describe('atomic writes', () => {
     expect(refRow).toBeUndefined();
   });
 
-  // -----------------------------------------------------------------------
-  // pruneSubtree atomicity
-  // -----------------------------------------------------------------------
-
-  it('pruneSubtree atomically marks posts pruned', async () => {
+  it('deletePostRows + restorePostRows round-trip preserves all data', async () => {
     const { initDb, getDb } = await importDbFresh();
-    const { insertPost, pruneSubtree } = await importPostsFresh();
-    const { computePostId } = await importTypesPosts();
+    const { insertPost, confirmPost, deletePostRows, restorePostRows, getPost, isLivePost, getParentRefs } = await importPostsFresh();
 
     initDb(':memory:');
-    const db = getDb();
 
-    // Insert a root post
-    const post = makePost({ content: 'root for pruning', parentRefs: [] });
-    const rawCbor = new Uint8Array([5, 6, 7]);
-    insertPost(fixturePostId(post), post, rawCbor);
-    const postId = fixturePostId(post);
+    const { commit: rootCommit, content: rootContent } = makeCommit({ content: 'root' });
+    const rootId = fixturePostId(rootCommit);
+    const { commit: childCommit, content: childContent } = makeCommit({ content: 'child', parentRefs: [rootId] });
+    const childId = fixturePostId(childCommit);
 
-    // Verify it starts as pending
-    const before = db.prepare(
-      "SELECT status FROM dag_posts WHERE id = ? AND status = 'pending'",
-    ).get(postId) as { status: string } | undefined;
-    expect(before).toBeDefined();
+    insertPost(rootId, rootCommit, rootContent);
+    insertPost(childId, childCommit, childContent);
+    confirmPost(rootId, 1, 0);
+    confirmPost(childId, 1, 1);
 
-    // Prune it (only marks posts as pruned; stump inserted separately)
-    pruneSubtree(postId);
+    const deleted = deletePostRows([rootId, childId]);
+    expect(deleted).toHaveLength(2);
+    expect(getPost(rootId)).toBeNull();
+    expect(getPost(childId)).toBeNull();
 
-    // Insert the stump separately (done during block application)
-    const { insertStump } = await importStumpsFresh();
-    const stump = makeStump({ rootPostHash: postId });
-    insertStump(stump);
+    restorePostRows(deleted);
+    const restored = getPost(rootId);
+    expect(isLivePost(restored)).toBe(true);
+    expect((restored as any).content).toBe('root');
+    expect((restored as any).blockHeight).toBe(1);
 
-    // Post must be pruned
-    const afterPost = db.prepare("SELECT status FROM dag_posts WHERE id = ?").get(postId) as
-      | { status: string }
-      | undefined;
-    expect(afterPost).toBeDefined();
-    expect(afterPost!.status).toBe('pruned');
-
-    // Stump must exist (stored by rootPostHash)
-    const stumpRow = db.prepare('SELECT id FROM dag_stumps WHERE id = ?').get(postId) as
-      | { id: string }
-      | undefined;
-    expect(stumpRow).toBeDefined();
-    expect(stumpRow!.id).toBe(postId);
+    const childRestored = getPost(childId);
+    expect(isLivePost(childRestored)).toBe(true);
+    expect(getParentRefs(childId)).toEqual([rootId]);
   });
-
-  it('pruneSubtree rollback leaves post un-pruned and no orphaned stump', async () => {
-    const { initDb, getDb } = await importDbFresh();
-    const { insertPost } = await importPostsFresh();
-    const { computePostId } = await importTypesPosts();
-
-    initDb(':memory:');
-    const db = getDb();
-
-    const post = makePost({ content: 'should stay pending', parentRefs: [] });
-    const rawCbor = new Uint8Array([8, 9]);
-    insertPost(fixturePostId(post), post, rawCbor);
-    const postId = fixturePostId(post);
-
-    // Simulate a partial prune: mark the post pruned but throw before
-    // inserting the stump, then roll back.
-    db.exec('SAVEPOINT prune_sp');
-    try {
-      db.prepare("UPDATE dag_posts SET status = 'pruned' WHERE id = ?").run(postId);
-      throw new Error('simulated crash before stump insert');
-    } catch (e: unknown) {
-      if (e instanceof Error && e.message !== 'simulated crash before stump insert') throw e;
-      db.exec('ROLLBACK TO prune_sp');
-    }
-
-    // Post must still be pending
-    const postRow = db.prepare('SELECT status FROM dag_posts WHERE id = ?').get(postId) as
-      | { status: string }
-      | undefined;
-    expect(postRow).toBeDefined();
-    expect(postRow!.status).toBe('pending');
-
-    // Stump must NOT exist
-    const stumpRow = db.prepare('SELECT id FROM dag_stumps WHERE id = ?').get(postId);
-    expect(stumpRow).toBeUndefined();
-  });
-
-  // -----------------------------------------------------------------------
-  // confirmPost (single-table — included for completeness)
-  // -----------------------------------------------------------------------
 
   it('confirmPost updates status, block_height and block_index', async () => {
     const { initDb, getDb } = await importDbFresh();
@@ -308,10 +206,9 @@ describe('atomic writes', () => {
     initDb(':memory:');
     const db = getDb();
 
-    const post = makePost({ content: 'confirm me' });
-    const rawCbor = new Uint8Array([1]);
-    insertPost(fixturePostId(post), post, rawCbor);
-    const postId = fixturePostId(post);
+    const { commit, content } = makeCommit({ content: 'confirm me' });
+    const postId = fixturePostId(commit);
+    insertPost(postId, commit, content);
 
     confirmPost(postId, 42, 5);
 
@@ -326,19 +223,17 @@ describe('atomic writes', () => {
 
   it('unconfirmPost reverts status to pending and clears block_height and block_index', async () => {
     const { initDb, getDb } = await importDbFresh();
-    const { insertPost, confirmPost } = await importPostsFresh();
+    const { insertPost, confirmPost, unconfirmPost } = await importPostsFresh();
 
     initDb(':memory:');
     const db = getDb();
 
-    const post = makePost({ content: 'unconfirm me' });
-    const rawCbor = new Uint8Array([2]);
-    insertPost(fixturePostId(post), post, rawCbor);
-    const postId = fixturePostId(post);
+    const { commit, content } = makeCommit({ content: 'unconfirm me' });
+    const postId = fixturePostId(commit);
+    insertPost(postId, commit, content);
 
     confirmPost(postId, 7, 2);
-    const postsMod = await import('../../src/store/posts.js');
-    (postsMod as { unconfirmPost: (id: string) => void }).unconfirmPost(postId);
+    unconfirmPost(postId);
 
     const row = db.prepare(
       'SELECT status, block_height, block_index FROM dag_posts WHERE id = ?',
@@ -347,5 +242,22 @@ describe('atomic writes', () => {
     expect(row!.status).toBe('pending');
     expect(row!.block_height).toBeNull();
     expect(row!.block_index).toBeNull();
+  });
+
+  it('deletePendingPost atomically removes post and parent refs', async () => {
+    const { initDb, getDb } = await importDbFresh();
+    const { insertPost, deletePendingPost, getPost, getParentRefs } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    const refs = ['a1'.repeat(32)];
+    const { commit, content } = makeCommit({ content: 'will vanish', parentRefs: refs });
+    const postId = fixturePostId(commit);
+    insertPost(postId, commit, content);
+
+    deletePendingPost(postId);
+
+    expect(getPost(postId)).toBeNull();
+    expect(getParentRefs(postId)).toEqual([]);
   });
 });

@@ -1,5 +1,5 @@
 import { getDb } from './db.js';
-import type { Post, PostId, PostType, Stump } from '@dagsocial/types';
+import type { PostCommit, PostId, PostType, Stump } from '@dagsocial/types';
 
 // ---------------------------------------------------------------------------
 // Row shapes
@@ -7,12 +7,12 @@ import type { Post, PostId, PostType, Stump } from '@dagsocial/types';
 
 interface PostRow {
   id: string;
-  content: string;
-  author: Buffer;             // 32-byte Ed25519 public key
-  parent_refs: string;        // JSON array
+  content_hash: string;           // hex of 32-byte commitment
+  content: string | null;         // NULL = placeholder
+  author: Buffer;                 // 32-byte Ed25519 public key
+  parent_refs: string;            // JSON array
   protocol_version: number;
-  type: string;               // PostType stored as text
-  raw_cbor: Buffer;
+  type: string;                   // PostType stored as text
   status: string;
   block_height: number | null;
   block_index: number | null;
@@ -21,45 +21,62 @@ interface PostRow {
 interface StumpRow {
   id: string;
   root_post_hash: string;
-  author_id: Buffer;          // 32-byte Ed25519 public key
+  author_id: Buffer;              // 32-byte Ed25519 public key
   reply_count: number;
   upvote_count: number;
   protocol_version: number;
   compacted_at_block_height: number;
 }
 
+interface TopologyRow {
+  post_id: string;
+  parent_refs: string;            // JSON array
+  author: string;                 // hex
+  block_height: number;
+}
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
-/**
- * `dag_posts.status` — a post's local lifecycle. The column's whole domain:
- * every writer in this file sets one of these three and nothing else sets it.
- */
-export type PostStatus = 'pending' | 'confirmed' | 'pruned';
+export type PostStatus = 'pending' | 'confirmed';
 
-/**
- * A stored post: the consensus `Post` plus the local column a reader needs.
- *
- * `status` is deliberately NOT a field on `Post`. `Post` is the consensus type
- * — shared with `@dagsocial/types`, hashed into the post id, and written to the
- * wire — and whether *this* node has seen a block confirm the post is a fact
- * about this node, not about the post. Two nodes hold the same post at
- * different statuses.
- *
- * Required rather than optional, so a caller that has no status fails to
- * compile instead of reporting one it never had.
- *
- * ⛔ **`id` is carried, not derived.** A post's id comes from the transaction
- * that created it (`computePostId(txId, index)` takes no `Post`), so the stored
- * row is the only party that knows it. A reader that tried to recompute it from
- * the fields would be reaching for a function that cannot exist.
- */
-export interface StoredPost extends Post {
+export interface StoredPost {
   id: PostId;
+  content: string | null;
+  contentHash: string;            // hex
+  author: Uint8Array;
+  parentRefs: PostId[];
+  protocolVersion: number;
+  type: PostType;
   status: PostStatus;
   blockHeight: number | null;
   blockIndex: number | null;
+}
+
+export interface PrunedTombstone {
+  kind: 'pruned';
+  id: PostId;
+  author: string;                 // hex, from block_topology
+  rootPostHash: PostId;
+  compactedAtBlockHeight: number;
+}
+
+export interface DeletedPostRow {
+  id: PostId;
+  contentHash: string;
+  content: string | null;
+  author: Uint8Array;
+  parentRefs: PostId[];
+  protocolVersion: number;
+  type: PostType;
+  status: PostStatus;
+  blockHeight: number | null;
+  blockIndex: number | null;
+}
+
+export function isLivePost(x: StoredPost | Stump | PrunedTombstone | null): x is StoredPost {
+  return x !== null && 'status' in x && !('rootPostHash' in x) && !('kind' in x);
 }
 
 // ---------------------------------------------------------------------------
@@ -70,6 +87,7 @@ function rowToPost(row: PostRow): StoredPost {
   return {
     id: row.id,
     content: row.content,
+    contentHash: row.content_hash,
     author: new Uint8Array(row.author),
     parentRefs: JSON.parse(row.parent_refs) as string[],
     protocolVersion: row.protocol_version,
@@ -95,74 +113,57 @@ function rowToStump(row: StumpRow): Stump {
 // Public API
 // ---------------------------------------------------------------------------
 
-/**
- * Insert a new post into dag_posts with status='pending', and a row into
- * dag_parent_refs for each parentId in post.parentRefs.
- *
- * ⛔ **`postId` is a PARAMETER and is not derivable from `post`.** A post's id
- * comes from the transaction that created it — `computePostId(txId, index)` takes
- * no `Post` (TYPES_INTERFACE → Hashing functions) — so the caller, which holds
- * that transaction, is the only party that can name the row.
- *
- * All writes are wrapped in a single transaction so a crash leaves no orphaned
- * rows.
- */
-export function insertPost(postId: PostId, post: Post, rawCbor: Uint8Array): void {
+export function insertPost(postId: PostId, commit: PostCommit, content: string | null): void {
   const db = getDb();
+  const contentHash = Buffer.from(commit.contentHash).toString('hex');
 
   db.transaction(() => {
     db.prepare(
       `INSERT INTO dag_posts
-         (id, content, author, parent_refs,
-          protocol_version, type, raw_cbor, status)
+         (id, content_hash, content, author, parent_refs,
+          protocol_version, type, status)
        VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
     ).run(
       postId,
-      post.content,
-      Buffer.from(post.author),
-      JSON.stringify(post.parentRefs),
-      post.protocolVersion,
-      post.type,
-      Buffer.from(rawCbor),
+      contentHash,
+      content,
+      Buffer.from(commit.author),
+      JSON.stringify(commit.parentRefs),
+      commit.protocolVersion,
+      commit.type,
     );
 
     const insertRef = db.prepare(
       'INSERT OR IGNORE INTO dag_parent_refs (post_id, parent_id) VALUES (?, ?)',
     );
-    for (const parentId of post.parentRefs) {
+    for (const parentId of commit.parentRefs) {
       insertRef.run(postId, parentId);
     }
   })();
 }
 
-/**
- * Retrieve a post or stump by id.
- *
- * 1. Look in dag_posts first. If status != 'pruned', return the Post.
- * 2. If the post is pruned, look up the corresponding stump via root_post_hash.
- * 3. If not found in dag_posts at all, try dag_stumps by stump id directly.
- * 4. Return null if nothing matches.
- */
-export function getPost(id: string): StoredPost | Stump | null {
+export function setPostBody(postId: string, content: string): boolean {
+  const result = getDb()
+    .prepare(
+      `UPDATE dag_posts SET content = ? WHERE id = ? AND content IS NULL`,
+    )
+    .run(content, postId);
+  return result.changes > 0;
+}
+
+export function getPost(id: string): StoredPost | Stump | PrunedTombstone | null {
   const db = getDb();
 
-  // 1. Try dag_posts first
+  // 1. dag_posts row → StoredPost
   const postRow = db
     .prepare('SELECT * FROM dag_posts WHERE id = ?')
     .get(id) as PostRow | undefined;
 
   if (postRow) {
-    if (postRow.status !== 'pruned') {
-      return rowToPost(postRow);
-    }
-    // Post is pruned — look up the stump
-    const stumpRow = db
-      .prepare('SELECT * FROM dag_stumps WHERE root_post_hash = ?')
-      .get(id) as StumpRow | undefined;
-    return stumpRow ? rowToStump(stumpRow) : null;
+    return rowToPost(postRow);
   }
 
-  // 2. Not in dag_posts — try dag_stumps by id (direct stump lookup)
+  // 2. dag_stumps by id → Stump
   const stumpRow = db
     .prepare('SELECT * FROM dag_stumps WHERE id = ?')
     .get(id) as StumpRow | undefined;
@@ -170,35 +171,78 @@ export function getPost(id: string): StoredPost | Stump | null {
     return rowToStump(stumpRow);
   }
 
-  return null;
+  // 3. block_topology chain to a stump → PrunedTombstone
+  return getPrunedTombstone(id);
 }
 
-/**
- * Retrieve the raw CBOR bytes for a post by id from `dag_posts`.
- * Returns null if not found. Stumps have no wire form and are not
- * stored as bytes — this function queries posts only.
- */
-export function getPostRaw(id: string): Uint8Array | null {
+export function getPrunedTombstone(id: string): PrunedTombstone | null {
   const db = getDb();
 
-  const postRow = db
-    .prepare('SELECT raw_cbor FROM dag_posts WHERE id = ?')
-    .get(id) as { raw_cbor: Buffer } | undefined;
+  // NODE_INTERFACE → Resolution order step 3: walk parent_refs from block_topology
+  // until a dag_stumps id is found. The chain is bounded by confirmed topology depth.
+  const topoRow = db
+    .prepare('SELECT * FROM block_topology WHERE post_id = ?')
+    .get(id) as TopologyRow | undefined;
+  if (!topoRow) return null;
 
-  if (postRow) {
-    return new Uint8Array(postRow.raw_cbor);
+  let currentId = id;
+  const seen = new Set<string>();
+  while (true) {
+    seen.add(currentId);
+    const row = db
+      .prepare('SELECT * FROM block_topology WHERE post_id = ?')
+      .get(currentId) as TopologyRow | undefined;
+    if (!row) return null;
+
+    const parents: string[] = JSON.parse(row.parent_refs);
+    if (parents.length === 0) return null;
+
+    const parentId = parents[0];
+    // Check if the parent is a stump
+    const stump = db
+      .prepare('SELECT compacted_at_block_height FROM dag_stumps WHERE id = ?')
+      .get(parentId) as { compacted_at_block_height: number } | undefined;
+    if (stump) {
+      return {
+        kind: 'pruned',
+        id,
+        author: topoRow.author,
+        rootPostHash: parentId,
+        compactedAtBlockHeight: stump.compacted_at_block_height,
+      };
+    }
+
+    // Check if the parent is a stump itself (the id IS the root)
+    const parentStump = db
+      .prepare('SELECT compacted_at_block_height FROM dag_stumps WHERE root_post_hash = ?')
+      .get(parentId) as { compacted_at_block_height: number } | undefined;
+    if (parentStump) {
+      return {
+        kind: 'pruned',
+        id,
+        author: topoRow.author,
+        rootPostHash: parentId,
+        compactedAtBlockHeight: parentStump.compacted_at_block_height,
+      };
+    }
+
+    if (seen.has(parentId)) return null;
+    currentId = parentId;
   }
-
-  return null;
 }
 
-/**
- * Query live posts (status != 'pruned'), newest first.
- *
- * @param opts.author  Optional author filter.
- * @param opts.limit   Max rows to return (default 50).
- * @param opts.offset  Pagination offset (default 0).
- */
+export function getMissingBodies(limit: number): Array<{ id: string; contentHash: string }> {
+  const rows = getDb()
+    .prepare(
+      `SELECT id, content_hash FROM dag_posts
+       WHERE content IS NULL
+       ORDER BY block_height DESC, block_index DESC
+       LIMIT ?`,
+    )
+    .all(limit) as Array<{ id: string; content_hash: string }>;
+  return rows.map(r => ({ id: r.id, contentHash: r.content_hash }));
+}
+
 export function queryPosts(opts: {
   author?: Uint8Array;
   limit?: number;
@@ -208,11 +252,11 @@ export function queryPosts(opts: {
   const limit = opts.limit ?? 50;
   const offset = opts.offset ?? 0;
 
-  let sql = "SELECT * FROM dag_posts WHERE status != 'pruned'";
+  let sql = 'SELECT * FROM dag_posts';
   const params: unknown[] = [];
 
   if (opts.author) {
-    sql += ' AND author = ?';
+    sql += ' WHERE author = ?';
     params.push(Buffer.from(opts.author));
   }
 
@@ -227,9 +271,6 @@ export function queryPosts(opts: {
   return rows.map(rowToPost);
 }
 
-/**
- * Get pending (unconfirmed) posts, oldest first.
- */
 export function getPendingPosts(limit: number): StoredPost[] {
   const db = getDb();
   const rows = db
@@ -240,9 +281,6 @@ export function getPendingPosts(limit: number): StoredPost[] {
   return rows.map(rowToPost);
 }
 
-/**
- * Mark a post as confirmed at a given block height and position.
- */
 export function confirmPost(postId: string, blockHeight: number, blockIndex: number): void {
   getDb()
     .prepare(
@@ -251,10 +289,6 @@ export function confirmPost(postId: string, blockHeight: number, blockIndex: num
     .run(blockHeight, blockIndex, postId);
 }
 
-/**
- * Reverse a confirmPost by setting status back to 'pending'
- * and clearing block_height and block_index.
- */
 export function unconfirmPost(subBlockId: string): void {
   getDb()
     .prepare(
@@ -263,12 +297,82 @@ export function unconfirmPost(subBlockId: string): void {
     .run(subBlockId);
 }
 
-/**
- * Walk up dag_parent_refs from a post to collect all ancestors in a straight
- * line (follows the first parent at each step). Returns posts in order from
- * genesis → immediate parent of the target. The target post itself is NOT
- * included. Pruned posts are skipped (they break the chain).
- */
+export function deletePendingPost(postId: string): void {
+  const db = getDb();
+  db.transaction(() => {
+    db.prepare('DELETE FROM dag_parent_refs WHERE post_id = ?').run(postId);
+    db.prepare("DELETE FROM dag_posts WHERE id = ? AND status = 'pending'").run(postId);
+  })();
+}
+
+export function deletePostRows(ids: string[]): DeletedPostRow[] {
+  if (ids.length === 0) return [];
+  const db = getDb();
+  const deleted: DeletedPostRow[] = [];
+
+  const selectPost = db.prepare('SELECT * FROM dag_posts WHERE id = ?');
+  const deleteRefs = db.prepare('DELETE FROM dag_parent_refs WHERE post_id = ?');
+  const deletePost = db.prepare('DELETE FROM dag_posts WHERE id = ?');
+
+  for (const id of ids) {
+    const row = selectPost.get(id) as PostRow | undefined;
+    if (!row) continue;
+
+    const parentRefs = db
+      .prepare('SELECT parent_id FROM dag_parent_refs WHERE post_id = ?')
+      .all(id) as Array<{ parent_id: string }>;
+
+    deleted.push({
+      id: row.id,
+      contentHash: row.content_hash,
+      content: row.content,
+      author: new Uint8Array(row.author),
+      parentRefs: parentRefs.map(r => r.parent_id),
+      protocolVersion: row.protocol_version,
+      type: row.type as PostType,
+      status: row.status as PostStatus,
+      blockHeight: row.block_height,
+      blockIndex: row.block_index,
+    });
+
+    deleteRefs.run(id);
+    deletePost.run(id);
+  }
+
+  return deleted;
+}
+
+export function restorePostRows(rows: DeletedPostRow[]): void {
+  const db = getDb();
+  const insertPostStmt = db.prepare(
+    `INSERT INTO dag_posts
+       (id, content_hash, content, author, parent_refs,
+        protocol_version, type, status, block_height, block_index)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const insertRef = db.prepare(
+    'INSERT OR IGNORE INTO dag_parent_refs (post_id, parent_id) VALUES (?, ?)',
+  );
+
+  for (const row of rows) {
+    insertPostStmt.run(
+      row.id,
+      row.contentHash,
+      row.content,
+      Buffer.from(row.author),
+      JSON.stringify(row.parentRefs),
+      row.protocolVersion,
+      row.type,
+      row.status,
+      row.blockHeight,
+      row.blockIndex,
+    );
+    for (const parentId of row.parentRefs) {
+      insertRef.run(row.id, parentId);
+    }
+  }
+}
+
 export function getAncestors(postId: string): StoredPost[] {
   const db = getDb();
   const ancestors: StoredPost[] = [];
@@ -280,25 +384,21 @@ export function getAncestors(postId: string): StoredPost[] {
     const firstParent: string | undefined = parents[0];
     if (!firstParent) break;
 
-    // Follow the first parent for a deterministic linear chain
-    if (seen.has(firstParent)) break; // cycle detection
+    if (seen.has(firstParent)) break;
     seen.add(firstParent);
 
     const row = db
-      .prepare("SELECT * FROM dag_posts WHERE id = ? AND status != 'pruned'")
+      .prepare('SELECT * FROM dag_posts WHERE id = ?')
       .get(firstParent) as PostRow | undefined;
     if (!row) break;
 
-    ancestors.unshift(rowToPost(row)); // prepend so order is genesis → parent
+    ancestors.unshift(rowToPost(row));
     currentId = firstParent;
   }
 
   return ancestors;
 }
 
-/**
- * Return the parent IDs for a given post, in insertion order.
- */
 export function getParentRefs(postId: string): string[] {
   const rows = getDb()
     .prepare('SELECT parent_id FROM dag_parent_refs WHERE post_id = ?')
@@ -306,10 +406,6 @@ export function getParentRefs(postId: string): string[] {
   return rows.map((r) => r.parent_id);
 }
 
-/**
- * Return all descendant posts of the given root post, using a recursive CTE
- * over dag_parent_refs. The root post itself is NOT included in the result.
- */
 export function getSubtree(postId: string): StoredPost[] {
   const db = getDb();
   const rows = db
@@ -329,42 +425,4 @@ export function getSubtree(postId: string): StoredPost[] {
     )
     .all(postId) as PostRow[];
   return rows.map(rowToPost);
-}
-
-/**
- * Mark the entire reply subtree (including the root) as pruned.
- *
- * The Stump insertion is handled separately during block application.
- * This function only updates dag_posts status.
- */
-export function pruneSubtree(rootPostId: string): void {
-  const db = getDb();
-
-  // Collect all post IDs in the subtree (root + descendants)
-  const rows = db
-    .prepare(
-      `WITH RECURSIVE subtree AS (
-         SELECT id FROM dag_posts WHERE id = ?
-
-         UNION
-
-         SELECT dp.id FROM dag_posts dp
-         JOIN dag_parent_refs dpr ON dp.id = dpr.post_id
-         JOIN subtree s ON dpr.parent_id = s.id
-       )
-       SELECT id FROM subtree`,
-    )
-    .all(rootPostId) as Array<{ id: string }>;
-
-  if (rows.length === 0) return;
-
-  const markPruned = db.prepare(
-    "UPDATE dag_posts SET status = 'pruned' WHERE id = ?",
-  );
-
-  db.transaction(() => {
-    for (const { id } of rows) {
-      markPruned.run(id);
-    }
-  })();
 }

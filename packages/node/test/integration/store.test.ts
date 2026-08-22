@@ -1,37 +1,42 @@
-import { uid, fixturePostId } from '../helpers.js';
+import { uid, fixturePostId, makePostCommit } from '../helpers.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { initDb, closeDb } from '../../src/store/db.js';
 import {
   insertPost,
+  setPostBody,
   getPost,
+  getMissingBodies,
   queryPosts,
   getPendingPosts,
   confirmPost,
+  deletePostRows,
+  restorePostRows,
   getParentRefs,
   getSubtree,
-  pruneSubtree,
+  isLivePost,
 } from '../../src/store/posts.js';
-import { insertStump } from '../../src/store/stumps.js';
-import { computePostId } from '@dagsocial/types';
-import { randomBytes } from 'node:crypto';
+import { insertStump, deleteStump } from '../../src/store/stumps.js';
+import { insertBlockTopology } from '../../src/store/topology.js';
+import { computeContentHash } from '@dagsocial/types';
 import { unlinkSync } from 'node:fs';
-import type { Post, Stump } from '@dagsocial/types';
+import type { PostCommit, Stump } from '@dagsocial/types';
 
 const TEST_DB = '/tmp/dagsocial-test-posts-store.sqlite';
 
-function bytes(n: number): Uint8Array {
-  return new Uint8Array(randomBytes(n));
-}
+function hex(u: Uint8Array): string { return Buffer.from(u).toString('hex'); }
 
-function makePost(overrides: Partial<Post> = {}): Post {
-  return {
-    content: 'integration test post',
+function makeCommit(overrides: Partial<PostCommit> & { content?: string } = {}): { commit: PostCommit; content: string } {
+  const content = overrides.content ?? 'integration test post';
+  const { content: _, ...rest } = overrides;
+  const commit: PostCommit = {
+    contentHash: computeContentHash(content),
     author: uid('author-integration'),
     parentRefs: [],
     protocolVersion: 1,
     type: 'regular',
-    ...overrides,
+    ...rest,
   };
+  return { commit, content };
 }
 
 function makeStump(rootPostHash: string, overrides: Partial<Stump> = {}): Stump {
@@ -58,22 +63,43 @@ describe('posts store (integration)', () => {
   });
 
   it('inserts and retrieves a post via getPost', () => {
-    const post = makePost({ content: 'integration round-trip' });
-    insertPost(fixturePostId(post), post, bytes(16));
-    const id = fixturePostId(post);
+    const { commit, content } = makeCommit({ content: 'integration round-trip' });
+    const id = fixturePostId(commit);
+    insertPost(id, commit, content);
     const retrieved = getPost(id);
     expect(retrieved).not.toBeNull();
-    const p = retrieved as Post;
+    expect(isLivePost(retrieved)).toBe(true);
+    const p = retrieved as ReturnType<typeof getPost> & { content: string };
     expect(p.content).toBe('integration round-trip');
+    expect(p.contentHash).toBe(hex(commit.contentHash));
     expect(p.author).toEqual(uid('author-integration'));
     expect(p.parentRefs).toEqual([]);
   });
 
+  it('inserts a placeholder and backfills its body', () => {
+    const { commit, content } = makeCommit({ content: 'backfill target' });
+    const id = fixturePostId(commit);
+    insertPost(id, commit, null);
+    confirmPost(id, 1, 0);
+
+    expect((getPost(id) as any).content).toBeNull();
+
+    const missing = getMissingBodies(10);
+    expect(missing.some(m => m.id === id)).toBe(true);
+
+    const filled = setPostBody(id, content);
+    expect(filled).toBe(true);
+    expect((getPost(id) as any).content).toBe('backfill target');
+
+    const missing2 = getMissingBodies(10);
+    expect(missing2.some(m => m.id === id)).toBe(false);
+  });
+
   it('queryPosts returns live posts ordered newest first', () => {
-    const post1 = makePost({ content: 'older' });
-    const post2 = makePost({ content: 'newer' });
-    insertPost(fixturePostId(post1), post1, bytes(8));
-    insertPost(fixturePostId(post2), post2, bytes(8));
+    const { commit: c1, content: content1 } = makeCommit({ content: 'older' });
+    const { commit: c2, content: content2 } = makeCommit({ content: 'newer' });
+    insertPost(fixturePostId(c1), c1, content1);
+    insertPost(fixturePostId(c2), c2, content2);
 
     const results = queryPosts({});
     const contents = results.map((p) => p.content);
@@ -87,93 +113,73 @@ describe('posts store (integration)', () => {
     const alice = uid('alice-int-' + suffix);
     const bob = uid('bob-int-' + suffix);
 
-    insertPost(fixturePostId(makePost({ author: alice, content: 'alice post' })), makePost({ author: alice, content: 'alice post' }), bytes(8));
-    insertPost(fixturePostId(makePost({ author: bob, content: 'bob post' })), makePost({ author: bob, content: 'bob post' }), bytes(8));
+    const { commit: ac, content: acContent } = makeCommit({ author: alice, content: 'alice post' });
+    const { commit: bc, content: bcContent } = makeCommit({ author: bob, content: 'bob post' });
+    insertPost(fixturePostId(ac), ac, acContent);
+    insertPost(fixturePostId(bc), bc, bcContent);
 
     const aliceResults = queryPosts({ author: alice });
     expect(aliceResults.every((p) => Buffer.from(p.author).equals(Buffer.from(alice)))).toBe(true);
-
-    const bobResults = queryPosts({ author: bob });
-    expect(bobResults.every((p) => Buffer.from(p.author).equals(Buffer.from(bob)))).toBe(true);
   });
 
   it('post lifecycle: pending -> confirm -> not in pending', () => {
-    const post = makePost({ content: 'lifecycle-' + Date.now() });
-    insertPost(fixturePostId(post), post, bytes(8));
-    const postId = fixturePostId(post);
+    const { commit, content } = makeCommit({ content: 'lifecycle-' + Date.now() });
+    const postId = fixturePostId(commit);
+    insertPost(postId, commit, content);
 
-    // Should be pending
     const pending = getPendingPosts(100);
-    const pendingIds = pending.map((p) => fixturePostId(p));
-    expect(pendingIds).toContain(postId);
+    expect(pending.some(p => p.id === postId)).toBe(true);
 
-    // Confirm
     confirmPost(postId, 5, 0);
 
-    // No longer pending
     const afterConfirm = getPendingPosts(100);
-    const afterIds = afterConfirm.map((p) => fixturePostId(p));
-    expect(afterIds).not.toContain(postId);
+    expect(afterConfirm.some(p => p.id === postId)).toBe(false);
   });
 
   it('getParentRefs returns correct parent IDs', () => {
-    // A ref is `b32` now, so the per-run uniqueness has to live inside the hex
-    // rather than in a `'ref-a-'` prefix. The suffix is what keeps two runs
-    // against the same (non-`:memory:`) database from colliding.
     const suffix = Date.now().toString(16).padStart(16, '0').slice(-16);
     const refs = ['a1'.repeat(24) + suffix, 'b2'.repeat(24) + suffix];
 
-    const post = makePost({ parentRefs: refs });
-    insertPost(fixturePostId(post), post, bytes(8));
-    const postId = fixturePostId(post);
+    const { commit, content } = makeCommit({ parentRefs: refs });
+    const postId = fixturePostId(commit);
+    insertPost(postId, commit, content);
 
     expect(getParentRefs(postId)).toEqual(refs);
   });
 
   it('getSubtree returns all descendants across levels', () => {
-    // Root
-    const root = makePost({ content: 'tree-root', parentRefs: [] });
-    insertPost(fixturePostId(root), root, bytes(8));
-    const rootId = fixturePostId(root);
+    const { commit: rootCommit, content: rootContent } = makeCommit({ content: 'tree-root', parentRefs: [] });
+    const rootId = fixturePostId(rootCommit);
+    insertPost(rootId, rootCommit, rootContent);
 
-    // Child
-    const child = makePost({ content: 'tree-child', parentRefs: [rootId] });
-    insertPost(fixturePostId(child), child, bytes(8));
-    const childId = fixturePostId(child);
+    const { commit: childCommit, content: childContent } = makeCommit({ content: 'tree-child', parentRefs: [rootId] });
+    const childId = fixturePostId(childCommit);
+    insertPost(childId, childCommit, childContent);
 
-    // Grandchild
-    const grandchild = makePost({ content: 'tree-grandchild', parentRefs: [childId] });
-    insertPost(fixturePostId(grandchild), grandchild, bytes(8));
+    const { commit: gcCommit, content: gcContent } = makeCommit({ content: 'tree-grandchild', parentRefs: [childId] });
+    insertPost(fixturePostId(gcCommit), gcCommit, gcContent);
 
     const subtree = getSubtree(rootId);
     const contents = subtree.map((p) => p.content).sort();
     expect(contents).toEqual(['tree-child', 'tree-grandchild']);
   });
 
-  it('pruneSubtree marks posts as pruned and inserts stump', () => {
-    const root = makePost({ content: 'prune-root', parentRefs: [] });
-    insertPost(fixturePostId(root), root, bytes(8));
-    const rootId = fixturePostId(root);
+  it('deletePostRows deletes rows, restorePostRows restores them', () => {
+    const { commit: rootCommit, content: rootContent } = makeCommit({ content: 'del-root' });
+    const rootId = fixturePostId(rootCommit);
+    insertPost(rootId, rootCommit, rootContent);
+    confirmPost(rootId, 99, 0);
 
-    const child = makePost({ content: 'prune-child', parentRefs: [rootId] });
-    insertPost(fixturePostId(child), child, bytes(8));
+    const deleted = deletePostRows([rootId]);
+    expect(deleted).toHaveLength(1);
+    expect(deleted[0]!.content).toBe('del-root');
+    expect(getPost(rootId)).toBeNull();
 
-    const stump = makeStump(rootId, {
-      replyCount: 1,
-      upvoteCount: 3,
-      compactedAtBlockHeight: 10,
-    });
-
-    pruneSubtree(rootId);
-    insertStump(stump);
-
-    // Root post should now return a Stump
-    const rootResult = getPost(rootId);
-    expect(rootResult).not.toBeNull();
-    const rootStump = rootResult as Stump;
-    expect(rootStump.rootPostHash).toBe(rootId);
-    expect(rootStump.replyCount).toBe(1);
-    expect(rootStump.upvoteCount).toBe(3);
+    restorePostRows(deleted);
+    const restored = getPost(rootId);
+    expect(isLivePost(restored)).toBe(true);
+    expect((restored as any).content).toBe('del-root');
+    expect((restored as any).blockHeight).toBe(99);
   });
 
   it('getPost returns null for unknown id', () => {

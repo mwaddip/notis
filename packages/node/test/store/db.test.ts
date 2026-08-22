@@ -114,11 +114,12 @@ describe('db lifecycle', () => {
     const dagPostsCols = db.pragma('table_info(dag_posts)') as Array<{ name: string }>;
     const dagPostsNames = dagPostsCols.map((c) => c.name);
     expect(dagPostsNames).toContain('id');
+    expect(dagPostsNames).toContain('content_hash');
     expect(dagPostsNames).toContain('content');
     expect(dagPostsNames).toContain('parent_refs');
-    expect(dagPostsNames).toContain('raw_cbor');
     expect(dagPostsNames).toContain('status');
     expect(dagPostsNames).toContain('block_height');
+    expect(dagPostsNames).not.toContain('raw_cbor');
 
     // ordering_blocks — one blob column per body section, plus the header
     const orderCols = db.pragma('table_info(ordering_blocks)') as Array<{ name: string }>;

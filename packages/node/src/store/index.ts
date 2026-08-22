@@ -1,18 +1,23 @@
 export { initDb, getDb, closeDb } from './db.js';
 export {
   insertPost,
+  setPostBody,
   getPost,
-  getPostRaw,
+  getMissingBodies,
   queryPosts,
   getPendingPosts,
   confirmPost,
   unconfirmPost,
+  deletePendingPost,
+  deletePostRows,
+  restorePostRows,
+  getPrunedTombstone,
   getParentRefs,
   getAncestors,
   getSubtree,
-  pruneSubtree,
+  isLivePost,
 } from './posts.js';
-export type { PostStatus, StoredPost } from './posts.js';
+export type { PostStatus, StoredPost, PrunedTombstone, DeletedPostRow } from './posts.js';
 
 export {
   getBox,
@@ -73,6 +78,7 @@ export {
 export {
   insertStump,
   getStump,
+  deleteStump,
 } from './stumps.js';
 
 export {

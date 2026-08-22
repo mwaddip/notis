@@ -3,6 +3,7 @@ import {
   computeTxId,
   decodeTx,
   computePostId,
+  computeContentHash,
   postFieldBytes,
   computeBoxId,
   canonicalBoxBytes,
@@ -28,6 +29,7 @@ import type {
   BondBox,
   BoxId,
   Post,
+  PostCommit,
   KarmaBox,
   LikeAccrualBox,
   CreditBox,
@@ -108,6 +110,17 @@ export function makePost(authorId: Uint8Array, content = 'test post'): Post {
   };
 }
 
+export function makePostCommit(authorId: Uint8Array, content = 'test post', overrides: Partial<PostCommit> = {}): PostCommit {
+  return {
+    contentHash: computeContentHash(content),
+    author: authorId,
+    parentRefs: [],
+    protocolVersion: PROTOCOL_VERSION,
+    type: 'regular',
+    ...overrides,
+  };
+}
+
 /**
  * A post, the signed transaction that creates it, the id that transaction gives
  * it, and the karma box it spends — the only way to name a post now.
@@ -137,13 +150,18 @@ export function makePost(authorId: Uint8Array, content = 'test post'): Post {
 export function makePostTx(
   author: TestIdentity,
   content = 'test post',
-  overrides: Partial<Post> = {},
-): { post: Post; tx: UtxoTransaction; postId: string; karmaBox: KarmaBox } {
-  const post: Post = { ...makePost(author.userId, content), ...overrides };
+  overrides: Partial<PostCommit> = {},
+): { post: Post; commit: PostCommit; tx: UtxoTransaction; postId: string; karmaBox: KarmaBox; content: string } {
+  const commit: PostCommit = { ...makePostCommit(author.userId, content), ...overrides };
+  const post: Post = {
+    content,
+    author: commit.author,
+    parentRefs: commit.parentRefs,
+    protocolVersion: commit.protocolVersion,
+    type: commit.type,
+  };
   const lock =
-    post.parentRefs.length === 0 ? POST_LOCK_THREAD_COST : POST_LOCK_REPLY_COST;
-  // One karma above the lock, so the change output is non-zero and the
-  // conservation check is a real subtraction rather than an identity.
+    commit.parentRefs.length === 0 ? POST_LOCK_THREAD_COST : POST_LOCK_REPLY_COST;
   const karmaBox = makeKarmaBox(lock + 1n, author.userId, 0, fixtureNonce(content));
   const tx: UtxoTransaction = {
     inputs: [karmaBox.id!],
@@ -159,11 +177,11 @@ export function makePostTx(
     ],
     signatures: {},
     protocolVersion: PROTOCOL_VERSION,
-    post,
+    post: commit,
   };
   signTransaction(tx, author.privateKey, toHex(author.userId));
   const txId = computeTxId(tx);
-  return { post, tx, postId: computePostId(txId, 0), karmaBox };
+  return { post, commit, tx, postId: computePostId(txId, 0), karmaBox, content };
 }
 
 /**
@@ -179,8 +197,8 @@ export function makePostTx(
 export async function seedPostTx(
   author: TestIdentity,
   content = 'test post',
-  overrides: Partial<Post> = {},
-): Promise<{ post: Post; tx: UtxoTransaction; postId: string; karmaBox: KarmaBox }> {
+  overrides: Partial<PostCommit> = {},
+): Promise<{ post: Post; commit: PostCommit; tx: UtxoTransaction; postId: string; karmaBox: KarmaBox; content: string }> {
   const made = makePostTx(author, content, overrides);
   const { insertBox } = await import('../src/store/utxo.js');
   insertBox(made.karmaBox);
@@ -229,10 +247,10 @@ export function fillerTx(label: string): UtxoTransaction {
  * does — but a test asserting a *production* id must build the real transaction
  * (`makePostTx`), not call this.
  */
-export function fixturePostId(post: Post): string {
+export function fixturePostId(commit: PostCommit): string {
   const synthetic = createHash('blake2b512')
     .update(new TextEncoder().encode('dagsocial/test-fixture-post-tx/1'))
-    .update(postFieldBytes(post))
+    .update(postFieldBytes(commit))
     .digest()
     .subarray(0, 32)
     .toString('hex');
