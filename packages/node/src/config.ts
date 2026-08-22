@@ -9,6 +9,7 @@ import {
   profileFor,
 } from '@dagsocial/types';
 import type { NetworkProfile, NetworkType } from '@dagsocial/types';
+import { DEFAULT_MAX_MEMPOOL_ENTRIES } from './store/mempool.js';
 
 export interface Config {
   port: number;
@@ -120,7 +121,7 @@ export function loadConfig(): Readonly<Config> {
       process.env['BLOCK_BODY_BUDGET_BYTES'],
     ),
     maxMempoolEntries: parseInt(
-      process.env['MAX_MEMPOOL_ENTRIES'] ?? '10000',
+      process.env['MAX_MEMPOOL_ENTRIES'] ?? String(DEFAULT_MAX_MEMPOOL_ENTRIES),
       10,
     ),
     minFeeRatePerByte: parseFeeFloor(process.env['MIN_FEE_RATE_PER_BYTE']),

@@ -1,5 +1,6 @@
 import { loadConfig } from './config.js';
 import { initDb, getDb, closeDb } from './store/db.js';
+import { setMempoolCap } from './store/mempool.js';
 import { seedGenesisState } from './services/genesis-state.js';
 import { startBlockCreator, stopBlockCreator, setDagServiceForMiner } from './services/block-creator.js';
 import { createApp, createAdminApp } from './server.js';
@@ -63,6 +64,8 @@ emitServerStarting('1.0.0', config.networkType);
 
 // 1. Init DB
 initDb(config.dbPath);
+// MEMPOOL_INTERFACE → Size cap — reject, never evict
+setMempoolCap(config.maxMempoolEntries);
 
 // 1a. Initialize AVL prover
 //

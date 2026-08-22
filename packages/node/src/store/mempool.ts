@@ -1,7 +1,6 @@
 import { getDb } from './db.js';
 import { getBox } from './utxo.js';
 import { deletePendingPost } from './posts.js';
-import { config } from '../config.js';
 import { ClientError } from '../services/client-error.js';
 import { materializeOutput } from '../services/utxo-engine.js';
 import type {
@@ -200,6 +199,25 @@ function rowToEntry(row: MempoolRow): PoolEntry {
   };
 }
 
+// The one source of the default pool capacity. config.ts imports this
+// constant so the application layer's parse and the storage layer's bound
+// share one literal (ARCHITECTURE → Package boundaries).
+export const DEFAULT_MAX_MEMPOOL_ENTRIES = 10000;
+
+let maxEntries = DEFAULT_MAX_MEMPOOL_ENTRIES;
+
+/**
+ * Set the pool capacity. Called once at startup from `index.ts` with the
+ * parsed `config.maxMempoolEntries` (MEMPOOL_INTERFACE → Size cap — reject,
+ * never evict).
+ */
+export function setMempoolCap(n: number): void {
+  if (!Number.isSafeInteger(n) || n <= 0) {
+    throw new Error(`setMempoolCap: invalid capacity ${n}`);
+  }
+  maxEntries = n;
+}
+
 /**
  * The two class caps. Credit entries hold `MEMPOOL_CREDIT_SHARE_PCT` of the
  * bound and karma-side entries hold the remainder, so a credit flood cannot
@@ -212,7 +230,7 @@ function rowToEntry(row: MempoolRow): PoolEntry {
  * a bound nobody can reason about.
  */
 function classCaps(): { credit: number; karma: number } {
-  const cap = config.maxMempoolEntries;
+  const cap = maxEntries;
   const credit = Math.floor((cap * MEMPOOL_CREDIT_SHARE_PCT) / 100);
   return { credit, karma: cap - credit };
 }

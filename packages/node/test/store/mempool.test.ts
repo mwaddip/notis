@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { computeBoxId } from '@dagsocial/types';
+import { computeBoxId, MEMPOOL_CREDIT_SHARE_PCT } from '@dagsocial/types';
 import type Database from 'better-sqlite3';
 
 // Dynamic import pattern — fresh modules per test
@@ -823,19 +823,12 @@ describe('mempool store', () => {
   // -------------------------------------------------------------------------
 
   describe('size cap', () => {
-    const originalCap = process.env['MAX_MEMPOOL_ENTRIES'];
-
-    afterEach(() => {
-      if (originalCap === undefined) delete process.env['MAX_MEMPOOL_ENTRIES'];
-      else process.env['MAX_MEMPOOL_ENTRIES'] = originalCap;
-    });
-
     async function importCapped(cap: number) {
-      process.env['MAX_MEMPOOL_ENTRIES'] = String(cap);
       vi.resetModules();
       const dbMod = await import('../../src/store/db.js');
       dbMod.initDb(':memory:');
       const mem = await import('../../src/store/mempool.js');
+      mem.setMempoolCap(cap);
       return mem as any;
     }
 
@@ -916,22 +909,15 @@ describe('mempool store', () => {
   // -------------------------------------------------------------------------
 
   describe('credit-class eviction', () => {
-    const originalCap = process.env['MAX_MEMPOOL_ENTRIES'];
-
-    afterEach(() => {
-      if (originalCap === undefined) delete process.env['MAX_MEMPOOL_ENTRIES'];
-      else process.env['MAX_MEMPOOL_ENTRIES'] = originalCap;
-    });
-
     /** A capped pool with the seeded input boxes already in the UTXO store. */
     async function importCappedWithBoxes(cap: number, boxes: Record<string, unknown>[]) {
-      process.env['MAX_MEMPOOL_ENTRIES'] = String(cap);
       vi.resetModules();
       const dbMod = await import('../../src/store/db.js');
       dbMod.initDb(':memory:');
       const utxo = await import('../../src/store/utxo.js');
       for (const box of boxes) utxo.insertBox(box as never);
       const mem = await import('../../src/store/mempool.js');
+      mem.setMempoolCap(cap);
       return mem as any;
     }
 
@@ -1023,6 +1009,55 @@ describe('mempool store', () => {
       vi.resetModules();
       const { config } = await import('../../src/config.js');
       expect(config.maxMempoolEntries).toBe(10000);
+      const { DEFAULT_MAX_MEMPOOL_ENTRIES } = await import('../../src/store/mempool.js');
+      expect(config.maxMempoolEntries).toBe(DEFAULT_MAX_MEMPOOL_ENTRIES);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // setMempoolCap pins (MEMPOOL_INTERFACE → Size cap — reject, never evict)
+  // -------------------------------------------------------------------------
+
+  describe('setMempoolCap', () => {
+    const CAP = 3;
+    // Karma-side entries hold the remainder of the bound after the credit
+    // share (MEMPOOL_INTERFACE → Eviction, inside the credit class only);
+    // the setter is what the bound is.
+    const KARMA_SLOTS = CAP - Math.floor((CAP * MEMPOOL_CREDIT_SHARE_PCT) / 100);
+
+    it('the setter bounds the pool', async () => {
+      vi.resetModules();
+      const dbMod = await import('../../src/store/db.js');
+      dbMod.initDb(':memory:');
+      const mem = await import('../../src/store/mempool.js');
+      mem.setMempoolCap(CAP);
+
+      for (let i = 0; i < KARMA_SLOTS; i++) {
+        expect(() => mem.insertUtxoTx(txWithInput(`cap_${i}`) as any, 100)).not.toThrow();
+      }
+      expect(() => mem.insertUtxoTx(txWithInput('cap_over') as any, 100)).toThrow(
+        mem.MempoolFullError,
+      );
+    });
+
+    it('rejects 0, negative, fractional, and NaN without changing the cap', async () => {
+      vi.resetModules();
+      const dbMod = await import('../../src/store/db.js');
+      dbMod.initDb(':memory:');
+      const mem = await import('../../src/store/mempool.js');
+      mem.setMempoolCap(CAP);
+
+      expect(() => mem.setMempoolCap(0)).toThrow('invalid capacity');
+      expect(() => mem.setMempoolCap(-1)).toThrow('invalid capacity');
+      expect(() => mem.setMempoolCap(1.5)).toThrow('invalid capacity');
+      expect(() => mem.setMempoolCap(NaN)).toThrow('invalid capacity');
+
+      for (let i = 0; i < KARMA_SLOTS; i++) {
+        expect(() => mem.insertUtxoTx(txWithInput(`surv_${i}`) as any, 100)).not.toThrow();
+      }
+      expect(() => mem.insertUtxoTx(txWithInput('surv_over') as any, 100)).toThrow(
+        mem.MempoolFullError,
+      );
     });
   });
 
