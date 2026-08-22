@@ -149,6 +149,8 @@ export class SyncMachine {
   private postBodyVerifier: ((content: unknown, contentHash: Uint8Array) => { valid: boolean; error?: string }) | null = null;
   private onPostBodyCallback: ((postId: string, content: string, fromPeerId: string) => boolean) | null = null;
   private missingBodiesProvider: ((limit: number) => { id: string; contentHash: Uint8Array }[]) | null = null;
+  private getConnectedPeersFn: (() => string[]) | null = null;
+  private backfillAskedPeers = new Set<string>();
   private onMisbehavior: (peerId: string, reason: string) => void = () => {};
 
   // -----------------------------------------------------------------------
@@ -393,6 +395,10 @@ export class SyncMachine {
 
   setMissingBodiesProvider(cb: (limit: number) => { id: string; contentHash: Uint8Array }[]): void {
     this.missingBodiesProvider = cb;
+  }
+
+  setGetConnectedPeers(cb: () => string[]): void {
+    this.getConnectedPeersFn = cb;
   }
 
   // -----------------------------------------------------------------------
@@ -829,9 +835,8 @@ export class SyncMachine {
    * unanswered ids stay outstanding for a later response.
    */
   private handleModifierResponseMsg(peerId: string, resp: ModifierResponse): void {
-    if (resp.modifiers.length === 0) return;
-
     if (resp.typeId === MODIFIER_ORDERING_BLOCK) {
+      if (resp.modifiers.length === 0) return;
       this.receiveOrderingBlocks(peerId, resp);
     } else if (resp.typeId === MODIFIER_POST_BODY) {
       this.receivePostBodies(peerId, resp);
@@ -924,6 +929,11 @@ export class SyncMachine {
       if (this.state.phase === 'backfill') {
         this.requestBackfillBatch();
       }
+    } else if (this.state.phase === 'backfill') {
+      // Peer omitted some ids — try the next connected peer for the remaining
+      // set immediately rather than waiting for the 60 s stall.
+      this.outstanding.delete(peerId);
+      this.backfillRotateToNextPeer();
     }
   }
 
@@ -968,6 +978,7 @@ export class SyncMachine {
 
   private enterBackfill(): void {
     this.state.phase = 'backfill';
+    this.backfillAskedPeers.clear();
     this.lastProgressMs = Date.now();
     this.requestBackfillBatch();
   }
@@ -990,8 +1001,16 @@ export class SyncMachine {
       return;
     }
 
+    this.backfillAskedPeers.add(peerId);
+    this.sendBackfillRequest(peerId, entries);
+  }
+
+  private sendBackfillRequest(
+    peerId: string,
+    entries: { id: string; contentHash: Uint8Array }[],
+  ): void {
     const ids = entries.map(e => e.id);
-    // Store commitments for verification on response
+
     if (!this.postBodyCommitmentProvider) {
       const commitMap = new Map<string, Uint8Array>();
       for (const e of entries) commitMap.set(e.id, e.contentHash);
@@ -1007,6 +1026,24 @@ export class SyncMachine {
 
     const req: ModifierRequest = { typeId: MODIFIER_POST_BODY, ids };
     this.sendToPeer(peerId, encodeModifierRequest(this.magic, req));
+  }
+
+  private backfillRotateToNextPeer(): void {
+    if (this.state.phase !== 'backfill') return;
+
+    const connected = this.getConnectedPeersFn?.() ?? [];
+    const next = connected.find(p =>
+      !this.backfillAskedPeers.has(p) && !this.state.stalledPeers.has(p));
+
+    if (!next) {
+      this.enterSynced();
+      return;
+    }
+
+    this.state.syncPeerId = next;
+    this.backfillAskedPeers.add(next);
+    this.lastProgressMs = Date.now();
+    this.requestBackfillBatch();
   }
 
   private enterSynced(): void {
@@ -1052,10 +1089,12 @@ export class SyncMachine {
       this.state.stalledPeers.add(this.state.syncPeerId);
     }
     this.state.syncPeerId = null;
-    this.state.phase = 'idle';
-    // Rotation ends the sync conversation: outstanding ids are void. A late
-    // response that crosses the rotation is dropped without penalty by
-    // response binding.
     this.outstanding.clear();
+
+    if (this.state.phase === 'backfill') {
+      this.backfillRotateToNextPeer();
+    } else {
+      this.state.phase = 'idle';
+    }
   }
 }

@@ -663,6 +663,7 @@ export class NetNode {
       }
       return false;
     });
+    this.syncMachine.setGetConnectedPeers(() => this.getConnectedPeers());
     this.syncMachine.setOnMisbehavior((peerId, reason) => {
       this.peerMgr.recordPenalty('misbehavior', peerId, 100, reason);
     });

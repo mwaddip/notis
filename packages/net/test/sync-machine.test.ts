@@ -1021,7 +1021,9 @@ describe('SyncMachine', () => {
     function makeBackfillMachine(opts: {
       peerHeight?: number;
       missingBodies?: { id: string; contentHash: Uint8Array }[];
+      persistentMissing?: boolean;
       onBody?: (id: string, content: string, peer: string) => boolean;
+      connectedPeers?: string[];
     } = {}) {
       let height = 0;
       const sent: SentMessage[] = [];
@@ -1036,12 +1038,19 @@ describe('SyncMachine', () => {
       machine.onSynced(() => { syncedFired.push(1); });
 
       if (opts.missingBodies !== undefined) {
-        let called = false;
-        machine.setMissingBodiesProvider((limit) => {
-          if (called) return [];
-          called = true;
-          return opts.missingBodies!.slice(0, limit);
-        });
+        if (opts.persistentMissing) {
+          const remaining = new Set(opts.missingBodies.map(e => e.id));
+          machine.setMissingBodiesProvider((limit) =>
+            opts.missingBodies!.filter(e => remaining.has(e.id)).slice(0, limit));
+          machine.setOnPostBody((id) => { remaining.delete(id); return true; });
+        } else {
+          let called = false;
+          machine.setMissingBodiesProvider((limit) => {
+            if (called) return [];
+            called = true;
+            return opts.missingBodies!.slice(0, limit);
+          });
+        }
       }
       machine.setPostBodyCommitmentProvider((id) => {
         const entry = (opts.missingBodies ?? []).find(e => e.id === id);
@@ -1049,6 +1058,9 @@ describe('SyncMachine', () => {
       });
       machine.setPostBodyVerifier((c, h) => verifyPostBody(c, h));
       if (opts.onBody) machine.setOnPostBody(opts.onBody);
+      if (opts.connectedPeers) {
+        machine.setGetConnectedPeers(() => opts.connectedPeers!);
+      }
 
       const peerHeight = opts.peerHeight ?? 100;
       machine.onPeerActive('sync-peer', peerHeight);
@@ -1150,6 +1162,131 @@ describe('SyncMachine', () => {
       machine.flush();
 
       expect(machine.getState().phase).toBe('backfill');
+      machine.stop();
+    });
+
+    // --- liveness: omission, rotation, exhaustion ---
+
+    it('a peer that omits an id → the id is re-asked of the next peer', () => {
+      const ID_B = 'dd'.repeat(32);
+      const CONTENT_B = 'body-b';
+      const HASH_B = computeContentHash(CONTENT_B);
+
+      const { machine, sent } = makeBackfillMachine({
+        missingBodies: [
+          { id: ID_A, contentHash: HASH_A },
+          { id: ID_B, contentHash: HASH_B },
+        ],
+        persistentMissing: true,
+        connectedPeers: ['sync-peer', 'peer2'],
+      });
+
+      machine.handleMessage('sync-peer', MSG_SYNC_INFO, new Uint8Array(
+        encode({ tipHeight: 100, tipBlockId: 'abc', anchors: [] }),
+      ));
+      machine.flush();
+      expect(machine.getState().phase).toBe('backfill');
+
+      // Peer responds with only ID_A, omitting ID_B
+      const resp = { typeId: 103, modifiers: [{ id: ID_A, data: encodePostBody(CONTENT_A) }] };
+      machine.handleMessage('sync-peer', MSG_MODIFIER_RESPONSE, new Uint8Array(encode(resp)));
+      machine.flush();
+
+      // The machine should have rotated to peer2 and sent a request
+      const peer2Reqs = sent.filter(s => s.peerId === 'peer2');
+      expect(peer2Reqs.length).toBeGreaterThanOrEqual(1);
+      machine.stop();
+    });
+
+    it('60 s without a stored body → rotation', () => {
+      const { machine } = makeBackfillMachine({
+        missingBodies: [{ id: ID_A, contentHash: HASH_A }],
+        persistentMissing: true,
+        connectedPeers: ['sync-peer', 'peer2'],
+      });
+
+      machine.handleMessage('sync-peer', MSG_SYNC_INFO, new Uint8Array(
+        encode({ tipHeight: 100, tipBlockId: 'abc', anchors: [] }),
+      ));
+      machine.flush();
+      expect(machine.getState().phase).toBe('backfill');
+      expect(machine.getState().syncPeerId).toBe('sync-peer');
+
+      // Advance the stall clock past 60s
+      (machine as any).lastProgressMs = Date.now() - 61_000;
+      machine.onTimerTick();
+
+      // Stall rotation should have moved to peer2 or entered synced
+      expect(machine.getState().syncPeerId).not.toBe('sync-peer');
+      machine.stop();
+    });
+
+    it('every connected peer exhausted → synced, onSyncComplete fires', () => {
+      const { machine, syncedFired } = makeBackfillMachine({
+        missingBodies: [{ id: ID_A, contentHash: HASH_A }],
+        persistentMissing: true,
+        connectedPeers: ['sync-peer'],
+      });
+
+      machine.handleMessage('sync-peer', MSG_SYNC_INFO, new Uint8Array(
+        encode({ tipHeight: 100, tipBlockId: 'abc', anchors: [] }),
+      ));
+      machine.flush();
+      expect(machine.getState().phase).toBe('backfill');
+
+      // Respond with nothing — peer omits all ids
+      const emptyResp = { typeId: 103, modifiers: [] as { id: string; data: Uint8Array }[] };
+      machine.handleMessage('sync-peer', MSG_MODIFIER_RESPONSE, new Uint8Array(encode(emptyResp)));
+      machine.flush();
+
+      // sync-peer is the only connected peer and it was asked — exhaustion
+      expect(machine.getState().phase).toBe('synced');
+      expect(syncedFired).toHaveLength(1);
+      machine.stop();
+    });
+
+    it('provider empties mid-batch → synced without waiting for exhaustion', () => {
+      const delivered: string[] = [];
+      const remaining = new Set([ID_A]);
+      const bodies = [{ id: ID_A, contentHash: HASH_A }];
+      const sent: SentMessage[] = [];
+      let height = 0;
+      const machine = new SyncMachine(
+        testConfig,
+        stubStore({ chainHeight: () => height }),
+        (peerId, data) => sent.push({ peerId, data }),
+      );
+      machine.start();
+
+      const syncedFired: number[] = [];
+      machine.onSynced(() => { syncedFired.push(1); });
+
+      machine.setMissingBodiesProvider((_limit) =>
+        bodies.filter(e => remaining.has(e.id)));
+      machine.setPostBodyCommitmentProvider((id) =>
+        bodies.find(e => e.id === id)?.contentHash ?? null);
+      machine.setPostBodyVerifier((c, h) => verifyPostBody(c, h));
+      machine.setOnPostBody((id) => { remaining.delete(id); delivered.push(id); return true; });
+      machine.setGetConnectedPeers(() => ['sync-peer', 'peer2']);
+
+      machine.onPeerActive('sync-peer', 100);
+      machine.flush();
+      height = 100;
+
+      machine.handleMessage('sync-peer', MSG_SYNC_INFO, new Uint8Array(
+        encode({ tipHeight: 100, tipBlockId: 'abc', anchors: [] }),
+      ));
+      machine.flush();
+      expect(machine.getState().phase).toBe('backfill');
+
+      // Peer delivers the body — provider now returns empty
+      const resp = { typeId: 103, modifiers: [{ id: ID_A, data: encodePostBody(CONTENT_A) }] };
+      machine.handleMessage('sync-peer', MSG_MODIFIER_RESPONSE, new Uint8Array(encode(resp)));
+      machine.flush();
+
+      expect(delivered).toEqual([ID_A]);
+      expect(machine.getState().phase).toBe('synced');
+      expect(syncedFired).toHaveLength(1);
       machine.stop();
     });
   });
