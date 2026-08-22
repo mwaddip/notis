@@ -420,10 +420,11 @@ Anchors at heights `[tipHeight, tipHeight - 16, tipHeight - 128, tipHeight - 512
 ```
 
 **`MODIFIER_POST_BODY` (103) is answered from the local store only — never relayed.** A peer
-that lacks a body omits the id from its response and the requester rotates peers; a block
-request relays because every peer is expected to hold the chain, a body request must not,
-because it would fan a request for a pruned or withheld body across the network with nothing
-to stop it (→ Local-Serve-Before-Relay). Responses are byte-bounded by the same
+that lacks a body omits the id from its response and the requester rotates peers. No modifier
+request is relayed in the tree (`handleModifierRequestMsg` serves blocks from the local store and
+omits what it lacks); the rule is stated for bodies because a relay, should one ever be added for
+blocks, must not extend to them — it would fan a request for a pruned or withheld body across the
+network with nothing to stop it (→ Local-Serve-Before-Relay). Responses are byte-bounded by the same
 accumulate-and-stop rule as blocks (`MAX_SERVE_BODY_BYTES`). Each returned body is verified
 by the requester against the commitment of the transaction it already holds
 (`verifyPostBody`) before it is stored; a mismatch is a misbehaviour penalty.
@@ -914,6 +915,12 @@ obligation and is as binding as the three ordering rules above it.
 Incoming content requests MUST check local storage before relaying to
 other peers. Serve and relay are mutually exclusive per request ID —
 never both.
+
+> ⚠ **QUALIFIED — verified 2026-08-22.** The tree relays no request at all:
+> `handleModifierRequestMsg` (`sync-machine.ts`) serves blocks from the local store and omits the
+> ids it lacks, and the generic serve-or-relay helper (`handleModifierRequest`, `GossipDeps`) had no
+> production caller and is deleted with the content-in-the-DAG unit. The rule binds any relay that
+> is ever added; until one is, the serve half is the whole of it.
 
 **One modifier type never relays: `MODIFIER_POST_BODY` (103) is served locally or omitted.**
 A body request names a post id; a peer that holds the body answers, a peer that does not
