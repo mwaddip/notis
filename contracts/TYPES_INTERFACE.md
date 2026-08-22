@@ -735,9 +735,6 @@ holds the obligation itself rather than a root it cannot interpret without repla
 ✅ **The pool is not involved, and no marker is needed.** The value moves from one box the voucher's
 own transaction consumes into another it creates, so both ends are named inside one transaction.
 
-⚠ **`releaseAtBlock` is committed state, and that is the point.** A node holding the `stateRoot`
-holds the obligation, rather than a root it cannot interpret without replaying every block.
-
 ### LikeAccrualBox
 
 **The only marker box in the design** (`ARCHITECTURE` → The conservation axiom, "the three
