@@ -2822,11 +2822,13 @@ needs a test.
 > unsound, and the requirement above is retired. Re-verified 2026-08-11.** The requirement
 > was the right fix for the tree it described; the mechanism itself does not survive scrutiny.
 >
-> ⚠ **The code has NOT been deleted.** `bootstrapAvlProver` still exists in
-> `node/src/state/avl-prover.ts`, and `store/identity-records.ts` still carries a note naming
-> it as a caller. This marker read "is being removed" — a *decision*, stated in the future
-> tense, which then never got a follow-up. **Superseded describes the requirement; it does not
-> describe the tree.** Deleting the function is open work.
+> ⚠ **The function is retained, not deleted.** `bootstrapAvlProver` lives in
+> `node/src/state/avl-prover.ts` with exactly one production caller, `seedGenesisState`, which feeds
+> the fixed genesis set — boxes and identity records, via `getAllIdentityRecords` — into the EMPTY
+> tree: the one full-set feed with no history to lose (AVL+ State Root → "AVL+ tree shape is
+> history-dependent"). `src/index.ts` has no rebuild-from-UTXO-set path. This marker read "is being
+> removed" — a *decision*, stated in the future tense, which then never got a follow-up.
+> **Superseded describes the requirement; it does not describe the tree.**
 >
 > - **Unreachable.** The trigger is `storage.version() === null`, and under
 >   `@ergots/avltree` 0.4.0 the `PersistentBatchAVLProver` constructor writes
