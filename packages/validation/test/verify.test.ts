@@ -657,7 +657,8 @@ describe('verifyOrderingBlockStructure', () => {
   // ⛔ There is one committed body, so the only presence case left is the tree
   // itself. `pruneEntries` moved inside it, and its `?.` is what makes a block
   // carrying no `utxoTxTree` a verdict rather than a TypeError — the failure
-  // direction `VALIDATION_INTERFACE`'s no-panic rule forbids.
+  // direction the no-panic rule forbids (VALIDATION_INTERFACE → Postconditions
+  // → "No-panic (M-5)").
   //
   // Post field domain pins are in `verifyTxStructure` (below): a post's fields
   // are pinned on the transaction that carries them, the same object that
@@ -1072,7 +1073,7 @@ describe('ordering-block hex domains — the pin has teeth', () => {
   ): OrderingBlock => {
     // The settlement is the default body, not an empty one: a fixture with no
     // transactions is refused by the count rule and would measure that instead
-    // of the poison it names (VALIDATION_INTERFACE → `utxoTxIds.length >= 1`).
+    // of the poison it names (VALIDATION_INTERFACE → verifyOrderingBlockStructure).
     const { utxoTxIds = [SETTLEMENT_ID], ...tree } = body;
     const solved = solve({
       protocolVersion: 1,
@@ -3278,7 +3279,7 @@ describe('verifyOrderingBlockStructure — the body and embedded-transaction bou
    * `pruneEntries` stays empty so the body's weight is the transactions and
    * their framing alone. The last of them is the settlement, which costs the
    * body nothing extra — it rides `utxoTxIds` / `utxoTxs` like any other
-   * transaction (TYPES_INTERFACE → OrderingBlock).
+   * transaction (TYPES_INTERFACE → Ordering block).
    */
   const makeBlock = (utxoTxs: Uint8Array[]): OrderingBlock => ({
     header: {

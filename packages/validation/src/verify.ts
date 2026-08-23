@@ -735,7 +735,7 @@ export function verifyOrderingBlockStructure(
   // exists to avoid. The other half is node's: every node derives a
   // byte-identical settlement from the same body (NODE_INTERFACE → Determinism
   // is this mechanism's whole risk), and the verifier checks the producer's
-  // against its own derivation (MINING_INTERFACE → the receipt checks survive).
+  // against its own derivation (MINING_INTERFACE → On block receipt).
   if (block.utxoTxTree.utxoTxIds.length === 0) {
     return { valid: false, error: 'Ordering block body carries no settlement transaction' };
   }
