@@ -33,7 +33,7 @@ export interface EmbeddedTx {
  *
  * Stateless, and sound without reading a single input: the transition table
  * admits only `credit → credit and/or fee`, so outputs drawn from that pair
- * imply credit inputs (NODE_INTERFACE → the credit transition rules). That is
+ * imply credit inputs (NODE_INTERFACE → Legal box transitions). That is
  * what lets the pool classify an entry at insert without a UTXO lookup.
  *
  * ⛔ **The length test is not defensive.** `[].every(…)` is `true`, and a

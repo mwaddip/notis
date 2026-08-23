@@ -458,7 +458,7 @@ describe('field-type pin', () => {
   describe('validateTx returns a verdict for an adversarial targetPostId (no-panic)', () => {
     /**
      * `PostLockBox` declares no `targetPostId` (TYPES_INTERFACE → Layout —
-     * PostLockBox: a transaction cannot name its own outputs' ids without
+     * Boxes: a transaction cannot name its own outputs' ids without
      * circularity), so the field is out of domain at any value. The property
      * under test is unchanged and is not about the field: an
      * attacker-supplied output must produce a VERDICT from `validateTx`, never
@@ -516,7 +516,8 @@ describe('field-type pin', () => {
   describe('wire ingress (block funnel)', () => {
     /**
      * ⛔ **THE OUTPUT-DOMAIN CHECK IS UNREACHABLE FROM THE BLOCK PATH, AND THAT
-     * IS THE FINDING** (VALIDATION_INTERFACE → What a decoder subsumes).
+     * IS THE FINDING** (VALIDATION_INTERFACE → What a decoder subsumes depends
+     * on the ENTRY PATH).
      *
      * An embedded transaction arrives as bytes and crosses `decodeTx`, which is
      * positional: it writes the layout's fields and reads them back, so it can

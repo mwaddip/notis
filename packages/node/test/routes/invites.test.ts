@@ -348,7 +348,7 @@ describe('invites routes', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // NODE_INTERFACE → Route error policy. These routes answer with the bare
+  // NODE_INTERFACE → "Route error policy". These routes answer with the bare
   // `{ error: <message> }` shape, so the assertions below read `error`.
   // ---------------------------------------------------------------------------
 

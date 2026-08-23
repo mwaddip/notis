@@ -7,7 +7,7 @@ import type { DeletedPostRow } from './posts.js';
 import type { IdentityRecord } from './identity-records.js';
 
 // ---------------------------------------------------------------------------
-// Journal types (node-owned — NODE_INTERFACE "Block Journal")
+// Journal types (node-owned — NODE_INTERFACE → Block Journal)
 // ---------------------------------------------------------------------------
 
 /** One primitive box mutation, in application order. */

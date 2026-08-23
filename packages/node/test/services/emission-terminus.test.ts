@@ -176,7 +176,7 @@ describe('credit emission terminates', () => {
     //
     // ⛔ **The coinbase is inside the settlement now**, which is the body's last
     // entry, so the assertion reads its outputs rather than a body field
-    // (TYPES_INTERFACE → OrderingBlock).
+    // (TYPES_INTERFACE → Ordering block).
     const block = await makeApplicableBlock({ height: TERMINUS_HEIGHT });
     expect(coinbaseOf(block)).toEqual([]);
 

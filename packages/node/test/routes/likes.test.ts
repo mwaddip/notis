@@ -247,7 +247,7 @@ describe('likes routes', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // NODE_INTERFACE → Route error policy — a service's intentional rejection
+  // NODE_INTERFACE → "Route error policy" — a service's intentional rejection
   // reaches the client; an unexpected error never does.
   // ---------------------------------------------------------------------------
 

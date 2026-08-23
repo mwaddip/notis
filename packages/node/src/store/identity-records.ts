@@ -131,8 +131,8 @@ export function getIdentityRecord(identityId: UserId): IdentityRecord | null {
  *
  * No production caller: the rebuild-from-store path it fed
  * (`bootstrapAvlProver` from `src/index.ts`) is unsound, because AVL+ tree
- * shape is history-dependent (NODE_INTERFACE → the SUPERSEDED note on
- * `bootstrapAvlProver`, 2026-08-07). The full-set read remains for the store's
+ * shape is history-dependent (NODE_INTERFACE → AVL+ State Root → "AVL+ tree
+ * shape is history-dependent"). The full-set read remains for the store's
  * own unit tests.
  *
  * The SQL `ORDER BY` is not the canonical order — the AVL key is a *hash* of

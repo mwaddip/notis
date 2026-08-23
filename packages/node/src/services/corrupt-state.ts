@@ -196,7 +196,7 @@ export class DivergedStateTreeError extends CorruptChainStateError {
 }
 
 /**
- * A block journal inside retention is absent (NODE_INTERFACE → Rollback).
+ * A block journal inside retention is absent (NODE_INTERFACE → "Rollback").
  *
  * `purgeOldJournals` deletes strictly below `tip − MAX_REORG_DEPTH`.
  * `findForkPoint`'s lowest non-genesis answer is `tip − MAX_REORG_DEPTH + 1`,

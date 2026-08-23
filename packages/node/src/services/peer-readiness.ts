@@ -40,9 +40,9 @@ const now = (): number => performance.now();
  * `net.start()`), so the empirical dial time is not what sizes this. **Shortening
  * net's re-dial cadence is what would let this shrink.**
  *
- * A node-local constant rather than a profile field: `ARCHITECTURE.md` → "The
- * per-network parameter set" scopes profiles to the timescale, difficulty and
- * genesis axes, and on a live network this never fires at all — peers exist, so
+ * A node-local constant rather than a profile field: ARCHITECTURE → "The
+ * per-network parameter set covers timescale, difficulty and genesis only"
+ * scopes profiles to those axes, and on a live network this never fires at all — peers exist, so
  * the peer clause answers first and the duration is never read.
  */
 export const DISCOVERY_WINDOW_MS = 45_000;

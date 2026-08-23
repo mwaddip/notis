@@ -29,7 +29,7 @@ export interface MiningDeps {
 /**
  * Bearer auth for every mining route. There is no unauthenticated mode: the
  * `?miner=` coinbase payout override is reachable only behind this check
- * (MINING_INTERFACE invariant 8, audit M-7).
+ * (MINING_INTERFACE → Invariants, item 8; audit M-7).
  */
 function authMiddleware(secret: string): import('express').RequestHandler {
   const expected = Buffer.from(`Bearer ${secret}`, 'utf8');
@@ -143,7 +143,7 @@ export function createRouter(deps: MiningDeps): Router {
       pruneEntries: tpl.utxoTxTree.pruneEntries,
       // ⛔ **The coinbase is an output of the settlement transaction**, the last
       // `utxoTxIds` entry, so the template reports no `coinbaseOutputs`
-      // (TYPES_INTERFACE → OrderingBlock). A miner hashes `powPreimage` and
+      // (TYPES_INTERFACE → Ordering block). A miner hashes `powPreimage` and
       // never reads the body.
       utxoTxIds: tpl.utxoTxTree.utxoTxIds,
       powPreimage: powPreimage.toString('hex'),

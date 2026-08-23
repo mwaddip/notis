@@ -18,8 +18,7 @@ export const BINARY_BOX_FIELDS = new Set([
   // ⚠ **`BondBox` alone.** These read `InviteBox, BondBox` until the invite
   // collapsed into one transaction and the type was deleted; a list of holders
   // has to be re-read every time one goes, so this names the survivor rather
-  // than carrying the set (TYPES_INTERFACE → a prose restatement decays while
-  // the assertion beside it stays green).
+  // than carrying the set (TYPES_INTERFACE → A fourth).
   'inviterId',        // BondBox
   'inviteePublicKey', // BondBox
   // VouchBox. A field missing from this list makes its box INEXPRESSIBLE over

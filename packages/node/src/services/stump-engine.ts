@@ -71,7 +71,7 @@ export function executePrune(intent: PruneIntent): PruneEntry {
     throw Object.assign(new Error('Invalid prune signature'), { statusCode: 403 });
   }
 
-  // NODE_INTERFACE → Prune flow step 2: a list whose length differs from its
+  // NODE_INTERFACE → Pruning, step 2: a list whose length differs from its
   // set size carries a repeat; the set compare alone admits it.
   if (intent.subtreePostIds.length !== new Set(intent.subtreePostIds).size) {
     throw Object.assign(
@@ -119,7 +119,7 @@ export function executePrune(intent: PruneIntent): PruneEntry {
 
   // 8. Enqueue in mempool. Nothing is broadcast at prune initiation: the prune
   // propagates inside the ordering block that carries the PruneEntry, and every
-  // node derives its own stump at settlement (NODE_INTERFACE "Stumps are
+  // node derives its own stump at settlement (NODE_INTERFACE → "Stumps are
   // derived state"). A gossiped stump is unverifiable by construction and the
   // table it would write is trusted by the read API and relay verifier, so no
   // stump crosses the network in either direction.

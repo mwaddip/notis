@@ -96,8 +96,8 @@ import {
 // Every leaf preimage is the committed struct's own wire bytes, supplied by
 // `@dagsocial/types` — `serializePruneEntry`, and a bare 32-byte id for
 // `utxotx`. Node states no
-// layout of its own here (TYPES_INTERFACE → "Merkle leaf preimages are the
-// struct's own wire bytes"): a second statement of a layout in a second package
+// layout of its own here (TYPES_INTERFACE → Layout — Merkle leaf preimages are
+// the struct's own wire bytes): a second statement of a layout in a second package
 // drifts with no compiler signal, and a consistent transposition round-trips
 // perfectly, so no round-trip test could see it. Only the `leafHash` domain tag
 // belongs to this side of the boundary — that is what makes an entry's wire form
@@ -108,7 +108,7 @@ import {
  * The block's one committed root.
  *
  * ⛔ **Leaf ORDER is normative and it is `UtxoTxTree`'s field order** — every
- * transaction, then every prune entry (TYPES_INTERFACE → OrderingBlock).
+ * transaction, then every prune entry (TYPES_INTERFACE → Ordering block).
  * Reordering is a consensus change with no compiler signal. The settlement is
  * the last `utxoTxIds` entry, so it is the last transaction leaf and its
  * position is committed here rather than stated anywhere else.
@@ -377,7 +377,7 @@ export function createOrderingBlock(): OrderingBlock | null {
     //    publish smaller blocks — while `MAX_BLOCK_BODY_BYTES` is consensus, so
     //    the clamp stands here as well as at load: `loadConfig` guards the
     //    environment, and this guards every `Config` assembled without it
-    //    (NODE_INTERFACE → the `BLOCK_BODY_BUDGET_BYTES` row). Nothing is
+    //    (NODE_INTERFACE → Configuration). Nothing is
     //    enforced here beyond the fill — an oversized block is refused by
     //    `verifyOrderingBlockStructure`, on this node and on every peer.
     const budget = Math.min(config.blockBodyBudgetBytes, MAX_BLOCK_BODY_BYTES);

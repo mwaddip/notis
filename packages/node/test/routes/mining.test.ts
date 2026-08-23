@@ -41,7 +41,7 @@ function makeTemplate(): OrderingBlock {
     utxoTxTree: {
       // The coinbase is an output of the settlement, which is the body's last
       // entry — so a template carries it in `utxoTxs` and reports no
-      // `coinbaseOutputs` (TYPES_INTERFACE → OrderingBlock).
+      // `coinbaseOutputs` (TYPES_INTERFACE → Ordering block).
       utxoTxIds: ['55'.repeat(32)],
       utxoTxs: [new Uint8Array(96).fill(0x55)],
       pruneEntries: [],

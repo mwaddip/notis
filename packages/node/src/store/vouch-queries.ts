@@ -54,7 +54,7 @@ export function getVouchesByVoucher(voucherId: Uint8Array): VouchBox[] {
 
 /**
  * Does this identity hold an active VouchBox for *any* target? One vouch at a
- * time is an ARCHITECTURE invariant; the pair-scoped predicate this replaces
+ * time is an invariant (ARCHITECTURE → Vouch boxes); the pair-scoped predicate this replaces
  * let a voucher hold many concurrent VouchBoxes by targeting different
  * identities (audit L-4).
  */

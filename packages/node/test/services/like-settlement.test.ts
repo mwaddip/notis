@@ -38,8 +38,8 @@ import {
 } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
-// P2-D N2b: per-block like settlement (NODE_INTERFACE "Per-block like
-// settlement"; ARCHITECTURE §Likes). The settlement is entirely derived —
+// P2-D N2b: per-block like settlement (NODE_INTERFACE → Per-block like
+// settlement; ARCHITECTURE → Likes). The settlement is entirely derived —
 // nothing rides in the block — so what these tests pin is the one shared
 // implementation both producer and verifier run:
 //

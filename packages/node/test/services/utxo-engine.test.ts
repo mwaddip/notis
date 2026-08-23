@@ -110,7 +110,7 @@ describe('validateAndApplyTx', () => {
   let ownerPubKey: Uint8Array;
   let ownerPrivKey: KeyObject;
   // Raw bytes, not hex: it is assigned `ownerPubKey` and every use feeds a
-  // `UserId` field. ARCHITECTURE's rule — typed `UserId` ⇒ raw bytes, typed
+  // `UserId` field. ARCHITECTURE → Public-key representation — typed `UserId` ⇒ raw bytes, typed
   // `string` ⇒ lowercase hex — makes the declaration the thing that was wrong.
   let ownerUserId: UserId;
 
@@ -682,7 +682,7 @@ describe('validateAndApplyTx', () => {
 
     it('rejects an invite naming a key that already holds an identity record', () => {
       // ⛔ Record existence is the test, never karma-box existence: the weaker
-      // reading prints karma (ARCHITECTURE → Invite creation).
+      // reading prints karma (ARCHITECTURE → The invite is ONE transaction).
       storePutIdentityRecord(inviteePubKey, {
         lastActivityBlock: 3,
         lastDecayBlock: 0,
@@ -1792,8 +1792,8 @@ describe('validateAndApplyTx', () => {
 
     // A transaction whose only output is a fee box is accepted and conserves.
     // The whole input becomes the fee, and there is no reason to make a
-    // donation to the miner inexpressible (NODE_INTERFACE → the credit
-    // transition row). `credit(X) → credit(0)` expresses no such thing: it is a
+    // donation to the miner inexpressible (NODE_INTERFACE → Legal box
+    // transitions). `credit(X) → credit(0)` expresses no such thing: it is a
     // whole-input deficit, and the case above refuses it.
     it('accepts a transaction whose only output is a fee box for the entire input', () => {
       const box = creditIn(1000n, 118);
@@ -1860,7 +1860,7 @@ describe('validateAndApplyTx', () => {
     // A second fee output carries no information and gives one economic fact
     // two encodings with different `utxoTxRoot` — the same "one block, one
     // encoding" the zero-value coinbase output is refused for
-    // (NODE_INTERFACE → the credit transition row).
+    // (NODE_INTERFACE → Legal box transitions).
     it('rejects a second fee output', () => {
       const box = creditIn(1000n, 140);
       const tx = buildSignedTx(
@@ -1887,7 +1887,7 @@ describe('validateAndApplyTx', () => {
       expect(result.error).not.toContain('non-conservation');
     });
 
-    // Zero fee means no box (NODE_INTERFACE → the credit transition row) — the
+    // Zero fee means no box (NODE_INTERFACE → Legal box transitions) — the
     // same rule the emission successor carries (TYPES_INTERFACE → EmissionBox).
     // A zero-value fee box conserves, so the transition arm is the only gate
     // that can refuse it, which the negative assertion below pins.
@@ -1906,8 +1906,8 @@ describe('validateAndApplyTx', () => {
 
     // `fee` is excluded by construction rather than by a clause naming it:
     // `KARMA_TRANSITION_TYPES` is an allowlist and the karma arm rejects any
-    // output outside it (NODE_INTERFACE → a FeeBox is reachable only from the
-    // credit row). A karma transaction holds no credits to pay with.
+    // output outside it (NODE_INTERFACE → "A FeeBox is reachable only from the
+    // credit row"). A karma transaction holds no credits to pay with.
     it('rejects a fee box on a karma-side transaction', () => {
       const karma = createAndInsertKarma(ownerPubKey, 100n, 143);
       const tx = buildSignedTx(

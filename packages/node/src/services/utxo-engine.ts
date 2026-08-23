@@ -102,8 +102,7 @@ export interface UtxoEngineDeps {
    * one, which is where "an invite may only name a key that is not already an
    * account" is enforced. **Existence is the whole test** — the record's
    * contents decide nothing here (NODE_INTERFACE → Legal box transitions;
-   * ARCHITECTURE → Invite creation argues why the weaker "never invited before"
-   * test prints karma).
+   * ARCHITECTURE → The invite is ONE transaction).
    *
    * ⚠ **This gate cannot see a sibling transaction in the same block.** The
    * settlement grants from the pool after every embedded transaction has
@@ -501,8 +500,8 @@ function checkTransitions(
           };
         }
       } else if (bondOutputs.length > 0) {
-        // karma → karma + bond — the whole invite (NODE_INTERFACE → the
-        // transition table). ⛔ **The bond IS the request**: the block's
+        // karma → karma + bond — the whole invite (NODE_INTERFACE → Legal box
+        // transitions). ⛔ **The bond IS the request**: the block's
         // settlement transaction emits the bond's OWN VALUE to the
         // `inviteePublicKey` of every bond the block creates, so the pairing is
         // structural — one bond, one grant — and no second box carries it.
@@ -601,7 +600,7 @@ function checkTransitions(
       // Zero or one, never two. A second fee output carries no information and
       // gives one economic fact two encodings with different `utxoTxRoot`,
       // which is the same "one block, one encoding" the zero-value coinbase
-      // output is refused for (NODE_INTERFACE → the credit transition row).
+      // output is refused for (NODE_INTERFACE → Legal box transitions).
       const feeOutputs = outputs.filter((o) => o.boxType === 'fee');
       if (feeOutputs.length > 1) {
         return {
@@ -753,7 +752,7 @@ const FIELD_TYPE_CHECK: Record<FieldType, { ok: (v: unknown) => boolean; expecte
    * here and a `post_lock` output carrying `targetPostId: 'hello'` clears step 5
    * and then makes `computeTxId` **throw** at `validateTx`'s last line — turning
    * an invalid transaction into an exception on an adversary-supplied value.
-   * `VALIDATION_INTERFACE`'s no-panic rule forbids exactly that.
+   * VALIDATION_INTERFACE → "No-panic" forbids exactly that.
    *
    * The width belongs here and not in the encoder: a throwing writer's domain is
    * established upstream (TYPES_INTERFACE → "Totality"), and adding a guard
@@ -1100,10 +1099,10 @@ export function checkTxEnvelope(tx: unknown): UtxoResult {
  *
  * `genesis_proof` is excluded **in the type**, not by an omitted entry: it is
  * written by genesis seeding alone and appears in no transaction, user or
- * settlement (NODE_INTERFACE → "Genesis proof boxes are never in a
- * transaction"). This is the node-side twin of the rule `validation` enforces at
- * the gossip gate (`VALIDATION_INTERFACE` → "A transaction may not create a
- * genesis_proof box"); node owns the input half of the same rule, in
+ * settlement (NODE_INTERFACE → Genesis proof boxes are never in a
+ * transaction). This is the node-side twin of the rule `validation` enforces at
+ * the gossip gate (VALIDATION_INTERFACE → `genesis_proof` may not be a
+ * transaction output); node owns the input half of the same rule, in
  * `AUTHORIZATION`.
  *
  * Written as an `Exclude` so the exclusion is deliberate and a *new* box type
@@ -1734,8 +1733,8 @@ export function validateTx(
   // ---- 4. All inputs must be the same box_type ----
   // No exceptions: every legal shape is single-type. The claim needs no bond
   // alongside its invite, because the karma it produces is minted rather than
-  // moved, and the cancel names no bond at all (NODE_INTERFACE → the transition
-  // table). `checkTransitions` relies on this — it reads `inputs[0]`'s type as
+  // moved, and the cancel names no bond at all (NODE_INTERFACE → Legal box
+  // transitions). `checkTransitions` relies on this — it reads `inputs[0]`'s type as
   // the type of all of them.
   const inputType = inputBoxes[0]!.boxType;
   for (const box of inputBoxes) {

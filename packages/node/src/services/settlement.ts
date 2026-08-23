@@ -459,7 +459,7 @@ function derive(
   // ⛔ **`nonActivity: true` on every settlement karma output.** The settlement
   // is a protocol effect, not a user-initiated action — received value must
   // not reset the recipient's activity clock (ARCHITECTURE → Karma decay →
-  // Clocks). The `insertBox` choke point gates on `nonActivity !== true`.
+  // "Clocks"). The `insertBox` choke point gates on `nonActivity !== true`.
   for (const invite of body.invites) {
     outputs.push({ boxType: 'karma', value: invite.amount, owner: invite.invitee, nonActivity: true, createdAtBlock: height });
   }
@@ -734,8 +734,7 @@ export function checkSettlement(
   // clause above pins a value, so this cannot fail on its own — and it is where
   // *"a block paying the whole income to its miner sums correctly against
   // nothing"* is refused, which is why the contract names it the enforcement
-  // point rather than a consequence (MINING_INTERFACE → the receipt checks
-  // survive).
+  // point rather than a consequence (MINING_INTERFACE → On block receipt).
   let totalIn = 0n;
   for (const id of settlement.inputs) {
     const box = deps.getBox(id);
@@ -807,8 +806,8 @@ function grantBytes(amount: bigint): number {
 /**
  * What one pooled transaction adds to the settlement, in bytes.
  *
- * ⚠ **`entryByteCost` must include this** (MEMPOOL_INTERFACE → the settlement
- * transaction replaces `coinbaseOutputs` here), or the accumulator stops being
+ * ⚠ **`entryByteCost` must include this** (MEMPOOL_INTERFACE → The fill budget
+ * is bytes), or the accumulator stops being
  * nearly right before the final exact measurement and *"the trim loop runs at
  * most once"* stops holding. A flat per-entry surcharge would over-reserve on the common
  * case and under-reserve on a block full of invites; under-reserving is the
@@ -832,8 +831,8 @@ export function settlementMarginalBytes(tx: UtxoTransaction): number {
     // reason a per-like surcharge does not compound. Each like adds one derived
     // input to the settlement; the payout it eventually joins is one output per
     // AUTHOR, however many likes they received, so an author's second like in a
-    // block costs an input and nothing more (ARCHITECTURE → the settlement's
-    // marker inputs are derived, not serialized).
+    // block costs an input and nothing more (NODE_INTERFACE → Its marker inputs
+    // are DERIVED).
     //
     // ⚠ **The carry box is not priced here and is bounded rather than ignored.**
     // At most one input and one output per credited author, which the marker

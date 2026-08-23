@@ -130,7 +130,7 @@ describe('ordering store', () => {
     // utxoTxTree
     //
     // `UtxoTxTree` has exactly three fields (TYPES_INTERFACE → Layout —
-    // UtxoTxTree) and all three are asserted, so this covers the whole struct
+    // Block) and all three are asserted, so this covers the whole struct
     // rather than a sample of it.
     //
     // Asserting a name the struct does not declare is the trap here: it reads

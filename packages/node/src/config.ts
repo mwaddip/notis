@@ -19,7 +19,7 @@ export interface Config {
   /**
    * The network this node is on. Class `network-identity` — the only environment
    * variable that may change a consensus parameter, and it changes every one of
-   * them together by selecting `profile` (ARCHITECTURE §Network Identity).
+   * them together by selecting `profile` (ARCHITECTURE → Network Identity).
    */
   networkType: NetworkType;
   /**
@@ -33,7 +33,7 @@ export interface Config {
   publicUrl: string;
   /**
    * Body bytes this node fills the blocks it **produces** to
-   * (NODE_INTERFACE → the `BLOCK_BODY_BUDGET_BYTES` row). Local, because a
+   * (NODE_INTERFACE → Configuration). Local, because a
    * miner may legitimately publish smaller blocks — but never above
    * `MAX_BLOCK_BODY_BYTES`, which is consensus and is checked in
    * `@dagsocial/validation`.
@@ -139,8 +139,8 @@ export function loadConfig(): Readonly<Config> {
     inviteBondMin: profile.inviteBondMin,
     inviteBondMax: profile.inviteBondMax,
     // Karma decay — per-network timescale from the profile, universal economics
-    // from the constants (ARCHITECTURE §Network Identity: "compress time, never
-    // economics"). None of these is readable from the environment.
+    // from the constants (ARCHITECTURE → Network Identity). None of these is
+    // readable from the environment.
     karmaStaleThresholdBlocks: profile.karmaStaleThresholdBlocks,
     karmaDecayIntervalBlocks: profile.karmaDecayIntervalBlocks,
     karmaDecayAmount: KARMA_DECAY_AMOUNT,
@@ -368,7 +368,7 @@ function assertFaucetPublicKeyWellFormed(cfg: Config): void {
  * A miner node serves the coinbase payout override (`?miner=`) over HTTP, so the
  * bearer secret is load-bearing — there is no unauthenticated mode. A miner
  * without a secret fails at startup rather than opening the endpoints
- * (MINING_INTERFACE invariant 8, audit M-7).
+ * (MINING_INTERFACE → Invariants, item 8; audit M-7).
  */
 function assertMiningAuthConfigured(cfg: Config): void {
   if (cfg.nodeRole !== 'miner') return;

@@ -244,7 +244,7 @@ describe('blocks routes', () => {
 
   // -------------------------------------------------------------------------
   // `totalKarma` is karma in existence and `liquidKarma` is karma its owner can
-  // spend now (NODE_INTERFACE → the `/status` row). One box per member of the
+  // spend now (NODE_INTERFACE → Status). One box per member of the
   // supply set, so a type added to `KARMA_SUPPLY_TYPES` without a fixture here
   // shows up as a sum that no longer matches rather than as silent
   // under-counting.

@@ -88,8 +88,8 @@ const PROBE_TX_ID = '0'.repeat(64);
  * The difference between a one-entry body and an empty one is exactly that
  * entry's own contribution, because every other term of the sum is unchanged.
  *
- * ⛔ **The settlement term is not optional** (MEMPOOL_INTERFACE → the settlement
- * transaction replaces `coinbaseOutputs` here). It rides in the same body and
+ * ⛔ **The settlement term is not optional** (MEMPOOL_INTERFACE → The fill budget
+ * is bytes). It rides in the same body and
  * grows with what the fill selected — a fee box adds one input to it, a bond one
  * output — so an entry priced by its own encoding alone leaves the accumulator
  * blind to a structure that grows with the very thing it is measuring, and
@@ -116,7 +116,8 @@ export function entryByteCost(cbor: Uint8Array): number {
  *
  * Two pooled transactions naming one box put both into one block, where the
  * first spends the box and the second cannot apply — the state a block is
- * invalid for carrying (NODE_INTERFACE → the apply funnel's block validity).
+ * invalid for carrying (NODE_INTERFACE → "A block is invalid if any embedded
+ * transaction does not apply").
  * Refusing at admission is what keeps this node from composing such a block.
  *
  * A `ClientError`, so the refusal reaches the submitter as its own message
@@ -135,8 +136,8 @@ export class PendingSpendConflictError extends ClientError {
  * Thrown by `insertUtxoTx` for a transaction above `MAX_TX_BYTES`.
  *
  * ⛔ **The bound is consensus and this node calls no function that checks it.**
- * `verifyTxStructure` is where the rule lives (VALIDATION_INTERFACE → the
- * transaction size bound), and node's only entry into that namespace is the
+ * `verifyTxStructure` is where the rule lives (VALIDATION_INTERFACE → The size
+ * bound measures `encodeTx`), and node's only entry into that namespace is the
  * whole object it hands `NetNode` — so the live call site is net's gossip
  * validator, and a transaction submitted to this node's own HTTP API reaches no
  * such check. Without this one it is admitted, drawn into a block by the
@@ -727,8 +728,8 @@ export function* iteratePendingEntries(
  * removed — 0 when the pool never held it, which is the ordinary case for a
  * block that arrived from a peer carrying work this node never saw.
  *
- * ⛔ **Keyed, never scanned** (MEMPOOL_INTERFACE → "Confirmed-entry cleanup is
- * bounded by the pool, not by a literal"). This is the whole of how a block
+ * ⛔ **Keyed, never scanned** (MEMPOOL_INTERFACE → Confirmed-entry cleanup
+ * reaches every row). This is the whole of how a block
  * arriving from a peer clears what it confirmed, so any bound that misses a row
  * leaves it pending: it holds a pool slot, the creator rebuilds it into a later
  * block, and apply refuses that block. Unbounding a scan is not the alternative

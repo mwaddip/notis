@@ -71,7 +71,7 @@ export interface RecordPut {
  * ⚠ **Exactly one production caller — `seedGenesisState` — and there must not
  * be a second.** AVL+ tree shape is history-dependent, so a tree rebuilt from a
  * full state set forks against one grown incrementally to the same content
- * (NODE_INTERFACE → the SUPERSEDED note, 2026-08-07) — which is why **AVL
+ * (NODE_INTERFACE → AVL+ State Root → "AVL+ tree shape is history-dependent") — which is why **AVL
  * storage must never be wiped independently of the chain**, and why a startup
  * rebuild is not a recovery path.
  *
@@ -256,7 +256,7 @@ function hexToBytes(hex: string): Uint8Array {
 
 /**
  * Lexicographic order over hex box ids — the canonical prover-feed order
- * (M-12; NODE_INTERFACE "AVL+ State Root"). Ids are fixed-width lowercase hex,
+ * (M-12; NODE_INTERFACE → AVL+ State Root). Ids are fixed-width lowercase hex,
  * so code-unit order is byte order over the underlying key.
  */
 function byHexBoxId(a: string, b: string): number {

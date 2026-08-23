@@ -281,8 +281,7 @@ function migrateMempoolTxColumns(database: Database.Database): void {
  * Block application removes each confirmed transaction through it; matching by
  * recomputed `TxId` over the pool instead measures 27 s per applied block
  * against a full pool where this measures 7.5 ms (2026-08-15). See
- * MEMPOOL_INTERFACE → "Confirmed-entry cleanup is bounded by the pool, not by a
- * literal".
+ * MEMPOOL_INTERFACE → Confirmed-entry cleanup reaches every row.
  *
  * `idx_mempool_fee_rate` is an **expression** index over the same division the
  * eviction query orders by, and it is the second one with a measured cost. Once

@@ -515,7 +515,7 @@ export type StateRootSpeculation =
 
 /**
  * The post-block AVL digest a candidate block's header must commit to as
- * `stateRoot` (H-6; NODE_INTERFACE "Post-block stateRoot"), as a
+ * `stateRoot` (H-6; NODE_INTERFACE → Post-block stateRoot), as a
  * `StateRootSpeculation`.
  *
  * PoW covers the header, so the producer has to know this digest *before*
@@ -614,7 +614,7 @@ export function computePostBlockStateRoot(
 
 /**
  * The block's state transition — everything between the header-dependent
- * validation and the commit (NODE_INTERFACE "Apply funnel: validation and
+ * validation and the commit (NODE_INTERFACE → "Apply funnel: validation and
  * mutation phases").
  *
  * Height is a parameter rather than `block.header.height` because the block
@@ -1080,7 +1080,7 @@ function applyMutationPhase(
         return false;
       }
 
-      // Like apply rules (NODE_INTERFACE "Per-block like settlement"):
+      // Like apply rules (NODE_INTERFACE → Per-block like settlement):
       // re-checked at apply — consensus, not gateway courtesy — and BEFORE
       // applyTx, so a failing like never mutates state. Any failure rejects
       // the whole block, like any other invalid embedded tx.
@@ -1192,8 +1192,7 @@ function applyMutationPhase(
       // Remove from the local mempool if present. This is the whole of the
       // cleanup for a block that arrived from a peer — a block this node mined
       // is cleaned by rowid in `finalizeBlock`, which reaches every included
-      // entry wherever it sits (MEMPOOL_INTERFACE → "Confirmed-entry cleanup is
-      // bounded by the pool, not by a literal").
+      // entry wherever it sits (MEMPOOL_INTERFACE → Confirmed-entry cleanup reaches every row).
       removeUtxoTxEntry(item.txId);
 
       // Box mutations are journaled by the store choke point; the tx itself
@@ -1205,8 +1204,8 @@ function applyMutationPhase(
       // No progress, so these inputs will never exist: the block commits in
       // `utxoTxIds` to a transaction its own `stateRoot` cannot reflect. Reject
       // it, like the two arms above — the block is invalid if any embedded
-      // transaction does not apply (NODE_INTERFACE → the apply funnel's block
-      // validity).
+      // transaction does not apply (NODE_INTERFACE → "A block is invalid if any
+      // embedded transaction does not apply").
       for (const item of remaining) {
         console.warn(
           `Rejected block height=${height}: embedded UTXO tx ${item.txId} ` +

@@ -47,7 +47,7 @@ export function castVouch(
     );
   }
 
-  // One vouch at a time, across all targets (ARCHITECTURE invariant, audit
+  // One vouch at a time, across all targets (ARCHITECTURE → Vouch boxes, audit
   // L-4). The pair-scoped check let a voucher hold many concurrent VouchBoxes
   // by simply picking different targets. The mempool arm closes the same hole
   // for a vouch that is submitted but not yet confirmed.

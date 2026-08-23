@@ -1093,7 +1093,7 @@ export function settlementOf(block: OrderingBlock): UtxoTransaction {
  * ⛔ **There is no `coinbaseOutputs` body field.** The miner's slice is paid by
  * the same transaction that spends the `EmissionBox` for it, so a test asking
  * "what did this block pay" reads the settlement (TYPES_INTERFACE →
- * OrderingBlock).
+ * Ordering block).
  */
 export function coinbaseOf(block: OrderingBlock): CreditBox[] {
   return settlementOf(block).outputs.filter(

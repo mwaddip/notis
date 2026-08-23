@@ -606,7 +606,8 @@ describe('validateTx step 0 — the envelope gate in place', () => {
 // returns is an object with the codec's own key set and the codec's own field
 // types — there is no `__proto__` key to rename, no `outputs: 'no'`, and no
 // arbitrary value to survive. What it CAN do is refuse, and that is what these
-// pin (VALIDATION_INTERFACE → What a decoder subsumes).
+// pin (VALIDATION_INTERFACE → What a decoder subsumes depends on the ENTRY
+// PATH).
 //
 // ⚠ **The gate is not thereby redundant.** It runs at `validateTx` step 0, where
 // the transaction came off the HTTP edge through `jsonToTx` and crossed no

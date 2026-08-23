@@ -910,7 +910,7 @@ describe('prune settlement stump insert (P2-F F1)', () => {
     expect(stump!.compactedAtBlockHeight).toBe(2); // the carrying block's height
   });
 
-  // NODE_INTERFACE → prune settlement step 6: upvoteCount is the like tally
+  // NODE_INTERFACE → Pruning, step 4: upvoteCount is the like tally
   // of the pruned subtree. This fixture seeds like-records on both the root
   // and a reply, so the count is non-zero and spans the whole subtree.
   it('stump upvoteCount equals the like-record count of the pruned subtree', async () => {

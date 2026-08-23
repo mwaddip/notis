@@ -12,7 +12,8 @@ import {
 
 /**
  * The fee box never reaches the prover (MINING_INTERFACE → Coinbase
- * Application; NODE_INTERFACE → the prover feed derivation).
+ * Application; NODE_INTERFACE → Block Journal → "One log, not parallel
+ * arrays").
  *
  * ⛔ **This is the one claim the whole fee-box design rests on, and a root
  * comparison cannot check it.** A fee box is created by a credit-side
