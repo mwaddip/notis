@@ -1707,11 +1707,11 @@ describe('computeMintTxId', () => {
     expect(computeMintTxId(1, bogus, shortSubject)).not.toBe(a);
   });
 
-  it('the subject is length-prefixed, so its encoding no longer has to be self-delimiting', () => {
-    // The old preimage appended `subject` raw, which is why
-    // NODE_INTERFACE → Reason and subject table carried a standing obligation: every per-reason
-    // encoding had to be fixed-length or self-delimiting, or two subjects under
-    // one reason could concatenate identically. `lp(subject)` discharges it.
+  it('the subject is length-prefixed, so its encoding need not be self-delimiting', () => {
+    // `computeMintTxId` writes `lp(subject)`, so two different subjects under
+    // the same reason produce distinct preimages regardless of their lengths
+    // (NODE_INTERFACE → The subject encoding rule). The per-reason encoding
+    // obligation binds the subject's internal structure, not its boundary.
     const one = computeMintTxId(1, 'genesis', new Uint8Array([1]));
     const two = computeMintTxId(1, 'genesis', new Uint8Array([1, 0]));
     expect(one).not.toBe(two);
