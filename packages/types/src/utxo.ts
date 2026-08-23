@@ -323,16 +323,13 @@ function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
       // for it — it simply has no decoding, which is the standing this reader
       // already gives an unassigned tag.
       //
-      // `invalid-tag` because `ReaderErrorCode` (owned by `@dagsocial/wire`) has
-      // no member for a domain refusal; it is the code `readLpUtf8` already
-      // uses for the same shape — a length-prefixed field whose *contents* are
-      // out of domain — and the one `CodecError` picks for "present and wrong,
-      // which is not truncation".
+      // Domain rule on a well-formed field (TYPES_INTERFACE → GenesisProofBox;
+      // WIRE_INTERFACE → ReaderError codes).
       if (payload.length > MAX_GENESIS_PROOF_PAYLOAD_BYTES) {
         throw new ReaderError(
           `readBoxContentFields: genesis_proof payload is ${payload.length} bytes, over ` +
             `MAX_GENESIS_PROOF_PAYLOAD_BYTES (${MAX_GENESIS_PROOF_PAYLOAD_BYTES})`,
-          'invalid-tag',
+          'out-of-domain',
         );
       }
       return { boxType, value: value as 0n, createdAtBlock, payload };

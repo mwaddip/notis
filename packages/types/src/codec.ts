@@ -170,27 +170,20 @@ export type CodecFailure =
   | 'reader-fault';
 
 /**
- * A boundary-check rejection.
+ * A boundary-check rejection (TYPES_INTERFACE → The boundary check).
  *
- * Extends `ReaderError` because the contract is "decode throws `ReaderError`;
- * every caller converts it to a verdict" (TYPES_INTERFACE → The boundary check,
- * step 4) — callers catch that class, and `NET_INTERFACE` → Peer Penalty System
- * routes it to `PenaltyKind.ProtocolViolation`.
- *
- * ⚠ `code` is `'invalid-tag'` because `ReaderErrorCode` — owned by
- * `@dagsocial/wire` — has no member meaning "well-formed but not canonical".
- * `'invalid-tag'` is the least-wrong of the eight: it already means "the bytes
- * were present and wrong, which is not truncation", and unlike `'truncated'`
- * and `'wrong-magic'` it carries no fallback semantics in `@dagsocial/net`.
- * The precise reason is on `failure`, which is what a caller should switch on.
- * Recorded for main: `ReaderErrorCode` wants a `'non-canonical'` member.
+ * `code` is `non-canonical` (WIRE_INTERFACE → ReaderError codes); `failure`
+ * names the step. Extends `ReaderError` because the contract is "decode throws
+ * `ReaderError`; every caller converts it to a verdict" (TYPES_INTERFACE → The
+ * boundary check, step 4) — callers catch that class, and `NET_INTERFACE` →
+ * Peer Penalty System routes it to `PenaltyKind.ProtocolViolation`.
  */
 export class CodecError extends ReaderError {
   constructor(
     message: string,
     public readonly failure: CodecFailure,
   ) {
-    super(message, 'invalid-tag');
+    super(message, 'non-canonical');
     this.name = 'CodecError';
   }
 }
@@ -491,7 +484,7 @@ export function readLpUtf8(r: ByteReader): string {
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   } catch {
-    throw new ReaderError('readLpUtf8: not valid UTF-8', 'invalid-tag');
+    throw new ReaderError('readLpUtf8: not valid UTF-8', 'out-of-domain');
   }
 }
 

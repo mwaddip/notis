@@ -20,6 +20,7 @@ import {
   readBytesN,
   readHexN,
   readLp,
+  readLpUtf8,
   readU8,
   readVlqU,
   writeArr,
@@ -34,6 +35,7 @@ import {
   writeVlqU,
   writeVlqU64OrThrow,
 } from '../src/codec.js';
+import { decodePostBody } from '../src/serialization.js';
 
 const bytes = (f: (w: ByteWriter) => void): Uint8Array => {
   const w = new ByteWriter();
@@ -290,6 +292,7 @@ describe('the boundary check', () => {
     }
     expect(err).toBeInstanceOf(CodecError);
     expect((err as CodecError).failure).toBe('trailing-bytes');
+    expect((err as CodecError).code).toBe('non-canonical');
     expect((err as Error).message).toMatch(/2 trailing byte\(s\) after 1/);
   });
 
@@ -385,6 +388,37 @@ describe('the boundary check', () => {
     for (const v of [0, 1, 127, 128, 16383, 16384, Number.MAX_SAFE_INTEGER]) {
       expect(decodeStruct(vlqUStruct, encodeStruct(vlqUStruct, v))).toBe(v);
     }
+  });
+});
+
+describe('readLpUtf8 rejects bytes that are not valid UTF-8', () => {
+  it('primitive: a lone 0xff is out-of-domain, not a boundary-check failure', () => {
+    const r = new ByteReader(Uint8Array.of(0x01, 0xff));
+    let thrown: unknown;
+    try {
+      readLpUtf8(r);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(ReaderError);
+    expect(thrown).not.toBeInstanceOf(CodecError);
+    expect((thrown as ReaderError).code).toBe('out-of-domain');
+  });
+
+  it('through decodePostBody: the reader ReaderError passes through unwrapped', () => {
+    const w = new ByteWriter();
+    writeLpUtf8(w, 'valid');
+    const valid = w.toBytes();
+    valid[1] = 0xff;
+    let thrown: unknown;
+    try {
+      decodePostBody(valid);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(ReaderError);
+    expect(thrown).not.toBeInstanceOf(CodecError);
+    expect((thrown as ReaderError).code).toBe('out-of-domain');
   });
 });
 
