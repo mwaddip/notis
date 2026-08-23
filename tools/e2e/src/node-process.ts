@@ -19,6 +19,7 @@ export interface NodeProcessOptions {
   dbPath: string;
   miningSecret: string;
   bootstrapPeers: string;
+  env?: Record<string, string>;
 }
 
 export interface NodeProcess {
@@ -52,6 +53,7 @@ export function spawnNode(opts: NodeProcessOptions): NodeProcess {
       MINING_SECRET: opts.miningSecret,
       LISTEN_ADDRS: `/ip4/127.0.0.1/tcp/${p2p}`,
       BOOTSTRAP_PEERS: opts.bootstrapPeers,
+      ...opts.env,
     },
   });
 

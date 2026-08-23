@@ -9,6 +9,7 @@ import { assertDistFresh } from './dist-freshness.js';
 export interface MeshOptions {
   fileIndex: number;
   nodeCount: number;
+  env?: Record<string, string>;
 }
 
 export interface Mesh {
@@ -37,6 +38,7 @@ export async function createMesh(opts: MeshOptions): Promise<Mesh> {
         dbPath: join(runDir, `node-${nextIndex}.db`),
         miningSecret,
         bootstrapPeers: nextIndex === 0 ? '' : bootstrapAddr,
+        env: opts.env,
       });
       nodes.push(node);
       nextIndex++;
@@ -58,6 +60,7 @@ export async function createMesh(opts: MeshOptions): Promise<Mesh> {
       dbPath: join(runDir, `node-${idx}.db`),
       miningSecret,
       bootstrapPeers: peers.join(','),
+      env: opts.env,
     });
     nodes.push(node);
     await waitForStatus(node);
