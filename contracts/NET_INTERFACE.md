@@ -506,7 +506,10 @@ pick_sync_peer() → sync_from_peer() → backfill() → synced()
   peer learned mid-sync is adopted the moment the current conversation ends — a bridging node
   that syncs the shorter chain first takes the longer one when it finishes, with no new event.
   While `syncing`, only the Switch rule below changes the sync peer; while `backfill`, only
-  backfill's own rotation does
+  backfill's own rotation does. Among candidates the pick prefers outbound peers, falling back
+  to inbound-only when no outbound candidate exists — eclipse resistance prefers the
+  connections we chose; the fallback keeps a node nobody dials syncing. A candidate is only
+  ever above our own height, switch targets included
 - **Sync:** send SyncInfo, process Inv → request headers, validate, append
   to chain, repeat. A batch that strictly advanced the chain sends the next SyncInfo to the
   sync peer immediately (it bypasses the per-peer floor; its bound is the advance itself), so
@@ -515,7 +518,9 @@ pick_sync_peer() → sync_from_peer() → backfill() → synced()
 - **Switch:** while `syncing`, if the retained-highest peer's height exceeds the current sync
   peer's retained height by more than 1, the machine switches to it. A switch is a rotation
   without a stall: outstanding cleared, progress clock reset, the old peer not marked stalled
-- **Backfill:** entered when the chain reaches the sync peer's tip. Ask the node for the
+- **Backfill:** entered by an inbound equal-height SyncInfo **from the current sync peer** —
+  equality reported by any other peer is not a caught-up signal for a conversation it is not
+  part of (the provenance stance Invs already have). Ask the node for the
   post ids whose rows hold no body (`setMissingBodiesProvider`), **newest first**, and request
   them from the sync peer in batches of **`BACKFILL_BATCH_IDS` = 100** (`ModifierRequest`,
   type 103). Every returned body is verified against its commitment and handed to the node
@@ -528,8 +533,10 @@ pick_sync_peer() → sync_from_peer() → backfill() → synced()
   rotate to different peer, mark current as stalled. On progress, clear
   stall set. The same rule, the same clock, in `backfill`.
 - **Peer rotation:** `stalledPeers: Set<PeerId>` — peers that failed to
-  produce progress. On stall, pick next outbound peer not in set. If all
-  stalled, clear set and retry.
+  produce progress. On stall the pick runs again with the stalled set excluded (the Pick
+  bullet's preference applies). A stall mark clears when that peer completes a new handshake
+  or reports a tip above ours, and the whole set clears at every entry into `synced`; with
+  every candidate stalled the machine sits `idle` until one of those clears fires.
 - **Synced:** periodic SyncInfo (30s) to the sync peer; the reply it earns (Serve Side, rule 1)
   is how new blocks are detected — a reply showing a taller tip re-enters `syncing` through
   the pick. An Inv is acted on only while syncing and only from the current sync peer (see
