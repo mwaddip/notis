@@ -83,6 +83,8 @@ const STALL_TIMEOUT_MS = 60_000;
 const MAX_OUTSTANDING_IDS = 4 * MAX_INV_IDS;
 /** Send SyncInfo to sync peer every 30 seconds while active. */
 const SYNCED_POLL_INTERVAL_MS = 30_000;
+/** NET_INTERFACE → Serve Side, "The reply is movement-gated": floor for no-movement replies. */
+const MIN_SYNCINFO_INTERVAL_MS = 15_000;
 /** Maximum data events in the queue before dropping oldest. */
 const MAX_DATA_QUEUE = 64;
 /**
@@ -126,6 +128,14 @@ export class SyncMachine {
 
   private lastProgressMs: number = 0;
   private lastSyncInfoMs: number = 0;
+
+  // NET_INTERFACE → Sync State Machine, Pick: retained peer heights
+  private peerHeights = new Map<string, number>();
+
+  // NET_INTERFACE → Serve Side, "The reply is movement-gated"
+  private lastSentTip = new Map<string, number>();
+  private lastReportedTip = new Map<string, number>();
+  private lastReplyMs = new Map<string, number>();
 
   /**
    * Outstanding requested modifier ids, keyed by the peer the request was sent
@@ -610,17 +620,13 @@ export class SyncMachine {
    * - If the peer is behind → serve them an Inv so they can catch up.
    */
   private handlePeerActive(peerId: string, peerHeight: number): void {
+    this.peerHeights.set(peerId, peerHeight);
+    this.state.stalledPeers.delete(peerId);
     const ourHeight = this.store.chainHeight();
-
-    if (peerHeight > ourHeight && (this.state.phase === 'idle' || this.state.phase === 'synced')) {
-      this.state.phase = 'syncing';
-      this.state.syncPeerId = peerId;
-      this.state.stalledPeers.delete(peerId);
-      this.lastProgressMs = Date.now();
-      this.sendSyncInfo(peerId);
-    } else if (peerHeight < ourHeight) {
+    if (peerHeight < ourHeight) {
       this.servePeer(peerId, peerHeight);
     }
+    this.pickSyncPeer();
   }
 
   /**
@@ -630,15 +636,19 @@ export class SyncMachine {
    * reset phase so the node can pick a new peer.
    */
   private handlePeerDisconnect(peerId: string): void {
+    this.peerHeights.delete(peerId);
+    this.lastSentTip.delete(peerId);
+    this.lastReportedTip.delete(peerId);
+    this.lastReplyMs.delete(peerId);
+
     if (this.state.syncPeerId === peerId) {
       this.state.stalledPeers.add(peerId);
       this.state.syncPeerId = null;
-      // The sync conversation died with the peer — a response that crosses the
-      // disconnect in flight is dropped without penalty by response binding.
       this.outstanding.clear();
       if (this.state.phase === 'syncing' || this.state.phase === 'backfill' || this.state.phase === 'synced') {
         this.state.phase = 'idle';
       }
+      this.pickSyncPeer();
     }
   }
 
@@ -656,18 +666,27 @@ export class SyncMachine {
   private handleSyncInfoMsg(peerId: string, info: SyncInfo): void {
     const ourHeight = this.store.chainHeight();
 
-    if (info.tipHeight > ourHeight) {
-      if (this.state.phase === 'idle' || this.state.phase === 'synced') {
-        this.state.phase = 'syncing';
-        this.state.syncPeerId = peerId;
-        this.state.stalledPeers.delete(peerId);
-        this.lastProgressMs = Date.now();
-      }
-    } else if (info.tipHeight < ourHeight) {
+    this.peerHeights.set(peerId, info.tipHeight);
+
+    // NET_INTERFACE → Serve Side, rule 1: reply to the sender
+    this.replySyncInfo(peerId, info.tipHeight);
+
+    // NET_INTERFACE → Serve Side, rule 2: behind sender earns Inv after the reply
+    if (info.tipHeight < ourHeight) {
       this.servePeer(peerId, info.tipHeight);
-    } else if (info.tipHeight === ourHeight && this.state.phase === 'syncing') {
-      this.enterBackfill();
     }
+
+    // NET_INTERFACE → Sync State Machine: equal height from sync peer → backfill
+    if (info.tipHeight === ourHeight && this.state.phase === 'syncing' &&
+        this.state.syncPeerId === peerId) {
+      this.enterBackfill();
+      return;
+    }
+
+    if (info.tipHeight > ourHeight) {
+      this.state.stalledPeers.delete(peerId);
+    }
+    this.pickSyncPeer();
   }
 
   /**
@@ -828,6 +847,10 @@ export class SyncMachine {
     // responses is rotated away within one stall window.
     if (newHeight > heightBefore) {
       this.lastProgressMs = Date.now();
+      // NET_INTERFACE → Sync State Machine, Sync: advancing batch sends next SyncInfo
+      if (this.state.syncPeerId) {
+        this.sendSyncInfo(this.state.syncPeerId);
+      }
     }
 
     this.state.downloadedHeight = Math.max(
@@ -961,15 +984,94 @@ export class SyncMachine {
         console.warn(`[sync-machine] onSynced callback error: ${String(err)}`);
       }
     }
+    // NET_INTERFACE → Sync State Machine, Pick: runs at every entry into synced
+    this.pickSyncPeer();
+  }
+
+  // -----------------------------------------------------------------------
+  // Internal — reply and pick
+  // -----------------------------------------------------------------------
+
+  /** NET_INTERFACE → Serve Side, "The reply is movement-gated". */
+  private replySyncInfo(peerId: string, theirTip: number): void {
+    const now = Date.now();
+    const ourTip = this.store.chainHeight();
+    const prevReported = this.lastReportedTip.get(peerId);
+    const prevSentTip = this.lastSentTip.get(peerId);
+
+    this.lastReportedTip.set(peerId, theirTip);
+
+    const theirMovement = prevReported === undefined || theirTip !== prevReported;
+    const ourMovement = prevSentTip === undefined || ourTip !== prevSentTip;
+
+    if (theirMovement || ourMovement) {
+      this.sendSyncInfo(peerId);
+      this.lastReplyMs.set(peerId, now);
+      return;
+    }
+
+    const lastReply = this.lastReplyMs.get(peerId) ?? 0;
+    if (now - lastReply >= MIN_SYNCINFO_INTERVAL_MS) {
+      this.sendSyncInfo(peerId);
+      this.lastReplyMs.set(peerId, now);
+    }
+  }
+
+  /** NET_INTERFACE → Sync State Machine, Pick / Switch. */
+  private pickSyncPeer(): void {
+    const ourHeight = this.store.chainHeight();
+
+    if (this.state.phase === 'syncing' && this.state.syncPeerId) {
+      const currentRetained = this.peerHeights.get(this.state.syncPeerId);
+      if (currentRetained === undefined) return;
+
+      let bestPeer: string | null = null;
+      let bestHeight = 0;
+      for (const [peer, height] of this.peerHeights) {
+        if (this.state.stalledPeers.has(peer)) continue;
+        if (height > bestHeight) {
+          bestHeight = height;
+          bestPeer = peer;
+        }
+      }
+
+      // NET_INTERFACE → Sync State Machine, Switch
+      if (bestPeer && bestPeer !== this.state.syncPeerId &&
+          bestHeight > currentRetained + 1) {
+        this.outstanding.clear();
+        this.lastProgressMs = Date.now();
+        this.state.syncPeerId = bestPeer;
+        this.state.stalledPeers.delete(bestPeer);
+        this.sendSyncInfo(bestPeer);
+      }
+      return;
+    }
+
+    if (this.state.phase === 'backfill') return;
+
+    let bestPeer: string | null = null;
+    let bestHeight = 0;
+    for (const [peer, height] of this.peerHeights) {
+      if (this.state.stalledPeers.has(peer)) continue;
+      if (height > ourHeight && height > bestHeight) {
+        bestHeight = height;
+        bestPeer = peer;
+      }
+    }
+
+    if (bestPeer) {
+      this.state.phase = 'syncing';
+      this.state.syncPeerId = bestPeer;
+      this.state.stalledPeers.delete(bestPeer);
+      this.lastProgressMs = Date.now();
+      this.sendSyncInfo(bestPeer);
+    }
   }
 
   // -----------------------------------------------------------------------
   // Internal — helpers
   // -----------------------------------------------------------------------
 
-  /**
-   * Send our current SyncInfo to a peer.
-   */
   private sendSyncInfo(peerId: string): void {
     const tipHeight = this.store.chainHeight();
     const tipBlockId = this.store.getOrderingBlockId(tipHeight) ?? '';
@@ -982,6 +1084,7 @@ export class SyncMachine {
 
     this.sendToPeer(peerId, encodeSyncInfo(this.magic, info));
     this.lastSyncInfoMs = Date.now();
+    this.lastSentTip.set(peerId, tipHeight);
   }
 
   /**
@@ -1002,6 +1105,7 @@ export class SyncMachine {
       this.backfillRotateToNextPeer();
     } else {
       this.state.phase = 'idle';
+      this.pickSyncPeer();
     }
   }
 }
