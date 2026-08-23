@@ -1004,6 +1004,33 @@ describe('mempool store', () => {
       expect(rows[0]!.tx_bytes).toBeLessThan(fatBytes);
     });
 
+    it('reads back a fee near 2^60 exactly, so the displacement verdict is correct', async () => {
+      const RESIDENT_FEE = (1n << 60n) - 1n;
+      const resident = seededCreditTx('resident_big', RESIDENT_FEE + 1n, 1n);
+      const mem = await importCappedWithBoxes(2, [resident.box]);
+
+      mem.insertUtxoTx(resident.tx as any, 100);
+
+      const db = (await import('../../src/store/db.js')).getDb();
+      const stored = db.prepare('SELECT tx_fee FROM mempool WHERE tx_fee IS NOT NULL')
+        .safeIntegers().get() as { tx_fee: bigint };
+      expect(stored.tx_fee).toBe(RESIDENT_FEE);
+
+      const arrivalFee = RESIDENT_FEE - 1n;
+      const arrival = seededCreditTx('arrival_big', arrivalFee + 1n, 1n);
+      (await import('../../src/store/utxo.js')).insertBox(arrival.box as never);
+
+      expect(() => mem.insertUtxoTx(arrival.tx as any, 100)).toThrow(mem.MempoolFullError);
+
+      const arrivalWins = seededCreditTx('arrival_wins', RESIDENT_FEE + 2n, 1n);
+      (await import('../../src/store/utxo.js')).insertBox(arrivalWins.box as never);
+      mem.insertUtxoTx(arrivalWins.tx as any, 100);
+      expect(mem.getPendingEntries(100)).toHaveLength(1);
+      const remaining = db.prepare('SELECT tx_fee FROM mempool WHERE tx_fee IS NOT NULL')
+        .safeIntegers().get() as { tx_fee: bigint };
+      expect(remaining.tx_fee).toBe(RESIDENT_FEE + 1n);
+    });
+
     it('defaults to 10000 entries when MAX_MEMPOOL_ENTRIES is unset', async () => {
       delete process.env['MAX_MEMPOOL_ENTRIES'];
       vi.resetModules();

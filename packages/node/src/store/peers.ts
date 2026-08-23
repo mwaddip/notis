@@ -1,5 +1,6 @@
 import { getDb } from './db.js';
 import type { PeerRecord, PeerStorage } from '@dagsocial/net';
+import { MAX_CAPABILITY_CODE } from '@dagsocial/net';
 
 /**
  * Persistence behind net's PeerStorage seam (audit L-14): the peers table
@@ -33,8 +34,11 @@ export function loadAllPeers(): PeerRecord[] {
     let capabilities: number[];
     try {
       const parsed: unknown = JSON.parse(r.capabilities);
-      if (!Array.isArray(parsed) || !parsed.every((c) => Number.isInteger(c))) {
-        throw new Error('not an integer array');
+      // NET_INTERFACE → Peers (code 9)
+      if (!Array.isArray(parsed) || !parsed.every(
+        (c) => Number.isInteger(c) && c >= 0 && c <= MAX_CAPABILITY_CODE,
+      )) {
+        throw new Error('not a bounded integer array');
       }
       capabilities = parsed as number[];
     } catch (err) {

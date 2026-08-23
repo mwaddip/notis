@@ -286,14 +286,15 @@ function classCount(db: ReturnType<typeof getDb>, poolClass: PoolClass): number 
 function cheapestCreditEntry(
   db: ReturnType<typeof getDb>,
 ): { rowid: number; fee: bigint; bytes: number } | null {
+  // MEMPOOL_INTERFACE → Eviction, inside the credit class only
   const row = db.prepare(
     `SELECT rowid, tx_fee, tx_bytes FROM mempool
       WHERE entry_type = 'utxo_tx' AND tx_fee IS NOT NULL AND tx_bytes > 0
       ORDER BY CAST(tx_fee AS REAL) / tx_bytes ASC, rowid ASC
       LIMIT 1`,
-  ).get() as { rowid: number; tx_fee: number | bigint; tx_bytes: number } | undefined;
+  ).safeIntegers().get() as { rowid: bigint; tx_fee: bigint; tx_bytes: bigint } | undefined;
   if (!row) return null;
-  return { rowid: row.rowid, fee: BigInt(row.tx_fee), bytes: row.tx_bytes };
+  return { rowid: Number(row.rowid), fee: row.tx_fee, bytes: Number(row.tx_bytes) };
 }
 
 /**

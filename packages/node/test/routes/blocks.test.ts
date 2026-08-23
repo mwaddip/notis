@@ -208,6 +208,16 @@ describe('blocks routes', () => {
     expect(res.status).toBe(400);
   });
 
+  it('GET /blocks/:height with a value above safe integer returns 400', async () => {
+    const res = await request('/blocks/10000000000000000000');
+    expect(res.status).toBe(400);
+  });
+
+  it('GET /blocks/:height with a negative height returns 400', async () => {
+    const res = await request('/blocks/-1');
+    expect(res.status).toBe(400);
+  });
+
   it('GET /blocks/:height with unknown height returns 404', async () => {
     const res = await request('/blocks/99999');
     expect(res.status).toBe(404);
