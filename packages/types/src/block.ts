@@ -34,7 +34,7 @@ export const EMPTY_STATE_ROOT = '00'.repeat(33);
 // ---------------------------------------------------------------------------
 
 /**
- * **The block's one committed body** (TYPES_INTERFACE → OrderingBlock). Posts
+ * **The block's one committed body** (TYPES_INTERFACE → Ordering block). Posts
  * are transactions, so they ride `utxoTxIds` with everything else and there is no
  * second tree; `pruneEntries` live here because `utxoTxRoot` commits them.
  *
@@ -50,7 +50,7 @@ export const EMPTY_STATE_ROOT = '00'.repeat(33);
  * ⛔ **TWO LEAF CLASSES.** Every block carries one settlement transaction,
  * riding `utxoTxIds` / `utxoTxs` like any other, and coinbase outputs are
  * **its outputs** (`ARCHITECTURE` → Block architecture; TYPES_INTERFACE →
- * OrderingBlock). The leaf domain `'coinbase'` is a tracked reservation
+ * Ordering block). The leaf domain `'coinbase'` is a tracked reservation
  * (TYPES_INTERFACE → Tracked reservations).
  */
 export interface UtxoTxTree {

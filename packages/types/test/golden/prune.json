@@ -1,6 +1,6 @@
 {
   "$schema": "./README.md",
-  "$description": "Struct-level golden vectors for serializePruneEntry — the prune Merkle leaf preimage committed under utxoTxRoot (TYPES_INTERFACE -> Layout - Stump / PruneEntry). Every field is fixed-width, so every writer throws outside its domain rather than sentinelling.",
+  "$description": "Struct-level golden vectors for serializePruneEntry — the prune Merkle leaf preimage committed under utxoTxRoot (TYPES_INTERFACE → Layout — Stump / PruneEntry). Every field is fixed-width, so every writer throws outside its domain rather than sentinelling.",
   "vectors": [
     {
       "name": "prune/author-two-ids",

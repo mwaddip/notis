@@ -1192,7 +1192,7 @@ describe('emission, treasury, fee and karma_pool', () => {
  * `u32BE` is the mint `subject` encoder and `computePostId`'s index writer;
  * `computeCandidateBoxId`'s `index` and `computeMintTxId`'s `height` are `vlqU`.
  *
- * It is exported because `NODE_INTERFACE.md`'s reason/subject table gives the
+ * It is exported because NODE_INTERFACE → Reason and subject table gives the
  * `coinbase` and `genesis` mints a `u32BE` selector as their `subject`, and
  * subject bytes are the caller's; one implementation is what stops node
  * reimplementing it and drifting. So these tests pin a live, protocol-visible
@@ -1708,8 +1708,8 @@ describe('computeMintTxId', () => {
   });
 
   it('the subject is length-prefixed, so its encoding no longer has to be self-delimiting', () => {
-    // The old preimage appended `subject` raw, which is why NODE_INTERFACE's
-    // reason/subject table carried a standing obligation: every per-reason
+    // The old preimage appended `subject` raw, which is why
+    // NODE_INTERFACE → Reason and subject table carried a standing obligation: every per-reason
     // encoding had to be fixed-length or self-delimiting, or two subjects under
     // one reason could concatenate identically. `lp(subject)` discharges it.
     const one = computeMintTxId(1, 'genesis', new Uint8Array([1]));

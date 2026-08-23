@@ -569,7 +569,7 @@ export interface Enum8<T extends string> {
  * Build an `enum8` codec from a tag table.
  *
  * **Tags are never renumbered; retired values are remnant-bounded
- * reservations** (TYPES_INTERFACE → tag rules, condition 3). A renumber
+ * reservations** (TYPES_INTERFACE → Tracked reservations). A renumber
  * silently moves every id and `stateRoot` covering the tag, and these tags sit
  * inside id preimages.
  *
@@ -737,7 +737,7 @@ export function firstDifference(a: Uint8Array, b: Uint8Array): number {
  * **Two mint `subject` encodings are also `u32BE`, and subjects are the
  * caller's.** `coinbase` and `genesis` encode a `u32BE` selector
  * (`node/src/mint-provenance.ts`), `computeMintTxId` takes those bytes
- * opaquely, and `NODE_INTERFACE.md`'s reason/subject table is what mandates the
+ * opaquely, and NODE_INTERFACE → Reason and subject table is what mandates the
  * form. One exported implementation is what stops node reimplementing it and
  * drifting — a silent divergence would move mint txIds, and through them every
  * box id, with nothing to catch it.

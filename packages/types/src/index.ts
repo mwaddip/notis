@@ -133,7 +133,7 @@ export type { PruneIntent, KarmaDelta, Stump, StumpId, PruneEntry } from './stum
 // `serializePruneEntry` (above, with the stumps) is the one block element whose
 // wire bytes are also a Merkle leaf preimage, so it is the one this package
 // exports for node to build a leaf from. The `leafHash` domain tag is the
-// caller's — see TYPES_INTERFACE → Layout — Merkle leaf preimages.
+// caller's — see TYPES_INTERFACE → Layout — Merkle leaf preimages are the struct's own wire bytes.
 //
 // The leaf domain `'coinbase'` is a tracked reservation
 // (TYPES_INTERFACE → Tracked reservations).

@@ -1,6 +1,6 @@
 {
   "$schema": "./README.md",
-  "$description": "Struct-level golden vectors for postFieldBytes — the PostCommit payload inside its creating transaction's TxId preimage (TYPES_INTERFACE -> Layout - PostCommit). The encode direction runs the production writer; the decode direction runs an independent reader written from the layout table, so a vector also proves the preimage is self-delimiting and canonical. A post id is NOT derived from these bytes — it comes from the creating transaction.",
+  "$description": "Struct-level golden vectors for postFieldBytes — the PostCommit payload inside its creating transaction's TxId preimage (TYPES_INTERFACE → Layout — PostCommit). The encode direction runs the production writer; the decode direction runs an independent reader written from the layout table, so a vector also proves the preimage is self-delimiting and canonical. A post id is NOT derived from these bytes — it comes from the creating transaction.",
   "vectors": [
     {
       "name": "postCommit/minimal",

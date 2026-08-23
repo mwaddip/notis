@@ -186,7 +186,7 @@ function payload(c: PostCommit): string {
  *
  * The fixture carries exactly **one** parent ref, because `MAX_PARENT_REFS` is
  * 1, and the ref is raw bytes rather than hex text, because `parentRefs` is
- * `arr(refs, b32)` (TYPES_INTERFACE → Layout — Post).
+ * `arr(refs, b32)` (TYPES_INTERFACE → Layout — PostCommit).
  *
  * Adjacent fields carry **distinct non-zero values** — `author` is `00..1f`,
  * the ref is `11…`, `protocolVersion` is 1 and `type` is `'regular'` (tag 0)

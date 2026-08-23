@@ -15,7 +15,7 @@ import {
 } from '../src/index.js';
 import type { NetworkType, NetworkProfile } from '../src/index.js';
 
-// The full contract field set — TYPES_INTERFACE §Network profiles. Guards both
+// The full contract field set — TYPES_INTERFACE → Network profiles. Guards both
 // directions: a missing field and an added one (per-network creep is how a devnet
 // test stops catching a mainnet bug).
 const REQUIRED_PROFILE_FIELDS = [
