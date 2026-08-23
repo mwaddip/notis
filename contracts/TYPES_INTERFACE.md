@@ -832,9 +832,6 @@ bytes are well formed and the value is outside the field's domain — the code `
 length-prefixed field whose contents are not UTF-8, and the one `@dagsocial/net` gives a height
 outside the advertisable range.
 
-> ⚠ **AHEAD OF CODE — 2026-08-23.** The reader raises `invalid-tag` here and in `readLpUtf8`; the unit
-> adding `out-of-domain` to `ReaderErrorCode` retargets both.
-
 ### EmissionBox
 
 ```
@@ -1335,10 +1332,6 @@ failed in a way that is not a `ReaderError`), `trailing-bytes` (step 2), `unenco
 outside its table, a well-formed value outside the field's domain (`out-of-domain`) — passes through
 unwrapped. The class separates "not a canonical encoding" from "the reader refused"; the code
 separates both from wire's own refusals, so a caller switching on `code` never has to know the class.
-
-> ⚠ **AHEAD OF CODE — 2026-08-23.** `CodecError` passes `invalid-tag`, and the readers that refuse a
-> well-formed value (`readLpUtf8`, the genesis-proof payload bound) raise `invalid-tag`; the unit that
-> adds `non-canonical` and `out-of-domain` to `ReaderErrorCode` retargets them.
 
 ### Primitives
 

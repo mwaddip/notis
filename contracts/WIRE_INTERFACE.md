@@ -131,10 +131,6 @@ codec's range — raises this class with a code from this table, so a caller swi
 one set of meanings; `non-canonical` and `out-of-domain` are defined here for that reason, though
 nothing in this package raises them.
 
-> ⚠ **AHEAD OF CODE — 2026-08-23.** `ReaderErrorCode` has eight members; `non-canonical` and
-> `out-of-domain` are the ninth and tenth. Until they land, `CodecError` and the domain-refusing readers
-> in `@dagsocial/types` and `@dagsocial/net` raise `invalid-tag`.
-
 The distinction is load-bearing rather than cosmetic. `@dagsocial/net`
 decides what to do with a failed frame from the code: a checksum mismatch
 or an unsupported version is rejected outright, never retried down
