@@ -2,7 +2,7 @@
 
 **Component:** `@dagsocial/node` (store subsystem)
 **Protocol version:** 1
-**Last updated:** 2026-08-19
+**Last updated:** 2026-08-24
 
 ## Scope
 
@@ -492,6 +492,11 @@ The pool is capped **per class**. Credit entries occupy at most
 rest. When the credit class is full, an arriving transaction bidding above its
 cheapest resident **displaces** that resident; one bidding below is rejected.
 The karma-side class rejects at its cap and never evicts.
+
+⚠ **The cheapest resident's bid is read back as a `bigint` at the row
+boundary.** `tx_fee` spans the box-value domain (TYPES_INTERFACE → Box value
+domain), and a plain integer read rounds silently above 2⁵³ — the displacement
+comparison would then weigh a fee no transaction carries.
 
 **Fee-ordered eviction over a single pool would be worse than none.** Every
 karma-side operation bids zero — posts, likes, invites, vouches — so paying
