@@ -2,7 +2,7 @@
 
 **Component:** `@dagsocial/validation`
 **Protocol version:** 1
-**Last updated:** 2026-08-13
+**Last updated:** 2026-08-23
 
 ## Scope
 
@@ -17,58 +17,38 @@ Exports from `packages/validation/src/index.ts`.
 
 ## PoW Verification
 
-### powTarget / meetsPowTarget
+### meetsPowTarget
 
 ```
-powTarget(targetBits: number): Uint8Array | null
 meetsPowTarget(hash: Uint8Array, target: Uint8Array): boolean
 ```
 
-The single PoW admission rule. `powTarget` expands a target-bits count into the **inclusive** 32-byte
-maximum acceptable digest; `meetsPowTarget` answers `hash <= target`, both read big-endian. Every PoW
-question in the repo — the verifier's and every solver's — is this pair and nothing else.
+The comparator half of the PoW admission rule: `hash <= target`, both read big-endian, byte by byte
+over `target.length`. The admission rule is **`meetsPowTarget(hash, orderingPowTarget(bits))`** — every
+PoW question in the repo, the verifier's and every solver's, is that composition and nothing else. The
+expansion half is `orderingPowTarget` below.
+
+A `hash` shorter than `target` is refused rather than zero-extended: a digest that cannot be compared
+over the target's full width does not meet it. The comparison iterates `target.length`, so the target's
+width is part of the admission rule and **this function cannot detect a wrong one** — the third clause
+of `orderingPowTarget`'s rule is what fixes the width at 32 bytes.
+
+Neither function throws, on any input. A `null` target — `orderingPowTarget` refusing its input — is the
+caller's `false`: no digest can satisfy it.
 
 A *solver* that holds no predicate and asks the verifier instead — `node/test/helpers.ts`'s
 `solveHeaderPow` is the example — inherits this rule with no edit and is the shape to prefer. **"PoW
 solvers" and "PoW predicates" are different enumerations**; only the second should ever be counted
 when asking how many places implement this rule.
 
-`powTarget` returns `null` for a `targetBits` that is not a safe integer in `[0, 256]`. A caller reads
-`null` as "no digest can satisfy this" and answers `false`. Neither function throws, on any input.
+**Why a pair rather than one function.** The expansion is the half a retarget changes; the comparison
+never does. Splitting them is what lets a schedule change without touching the admission rule. The
+comparison is byte-wise rather than `BigInt` because a solver runs it once per nonce.
 
-**Inclusive, not exclusive.** The exclusive threshold `2^(256 − targetBits)` is `2^256` at
-`targetBits = 0` and is not representable in 32 bytes. The inclusive `2^(256 − targetBits) − 1` is
-`0xff × 32` at one end and `0x00 × 32` at the other, so both extremes are ordinary values and the
-domain needs no special case.
-
-**Why a pair rather than one function.** The expansion is the half that changes when difficulty stops
-being a whole number of bits; the comparison never does. Splitting them is what lets a retarget replace
-the schedule without touching the admission rule — difficulty-retarget spec, Unit 2. `meetsPowTarget`
-is unchanged by that retarget and is shared by both expansions; `orderingPowTarget` below is the
-half that moved.
-
-> ⚠ **AHEAD OF CODE, and its premise INVERTED when post PoW was removed.** This read *"once
-> `orderingPowTarget` lands, this function serves post PoW alone"*. There is no post PoW, so
-> **`powTarget` today serves ordering-block PoW and nothing else** — the opposite consumer from
-> the one this marker anticipated.
->
-> ⛔ **The consequence belongs to the scaled-pow-target unit and changes its scope.** Once
-> `orderingPowTarget` lands, ordering headers stop calling `powTarget`, and it has **no consumer
-> left at all** — it becomes dead rather than narrowed, and should be deleted rather than kept
-> for a caller that no longer exists. **`meetsPowTarget` survives**: it is the comparator both
-> expansions share, and `orderingPowTarget` needs it.
->
-> The two expansions remain non-interchangeable and share a type; passing a 1/256-bit value to
-> `powTarget` is refused only because it exceeds 256.
-
-**Solvers hoist the expansion.** `powTarget` depends only on `targetBits`, so a solver derives it once
-per template and calls `meetsPowTarget` per nonce. Deriving it inside the loop allocates once per hash.
-
-**Two consumers cannot import this package and mirror it instead** — `public/index.html` (served
-statically, no bundler) and `scripts/miner.mjs` (standalone by decision: it depends on `node:crypto`
-alone and runs on a machine that does not build the workspace). Each is held by a test that extracts
-the declaration **by name** and cross-checks it against this package. A mirror that stops finding its
-declaration fails, which is the property it exists for.
+> ⚠ **AHEAD OF CODE — 2026-08-23.** `packages/validation/src/index.ts` still exports `powTarget`, the
+> whole-bit expansion `2^(256 − n) − 1` over `[0, 256]`, which no verifier, solver or mirror calls. The
+> validation unit on this branch deletes it; the whole-bit regression under `orderingPowTarget` then
+> holds against a test-local rendering of that expansion rather than a src export.
 
 ### orderingPowTarget
 
@@ -77,7 +57,11 @@ orderingPowTarget(scaledBits: number): Uint8Array | null
 ```
 
 Ordering-block difficulty in units of **1/256 of a bit**, so a target between two whole bits is
-expressible. Post PoW is **not** in these units and never retargets — it keeps `powTarget` above.
+expressible. The expansion half of the admission rule; `meetsPowTarget` above is the comparator.
+
+**Solvers hoist the expansion.** `orderingPowTarget` depends only on `scaledBits`, so a solver derives
+it once per template and calls `meetsPowTarget` per nonce. Deriving it inside the loop allocates once
+per hash.
 
 **The rule is a triple, and all three clauses are consensus.** The predicate pins the target's *value*
 and pins neither its domain nor its width; an implementation can satisfy it exactly and still fork.
@@ -98,13 +82,17 @@ and pins neither its domain nor its width; an implementation can satisfy it exac
 *floor*, and the predicate is what pins that. "The target is an exact integer root" is a paraphrase
 that misleads whoever implements this.
 
-**Inclusive, as `powTarget` is**, and for the same reason plus one more: `target + 1` is exactly `R`,
-which is what keeps the work quotient below exact at every whole bit.
+**Inclusive, not exclusive.** The exclusive threshold `R` is `2^256` at `scaledBits = 0` and is not
+representable in 32 bytes; the inclusive `R − 1` is `0xff × 32` at one end and `0x00 × 32` at the
+other, so both extremes are ordinary values and the domain needs no special case. And `target + 1` is
+exactly `R`, which is what keeps the work quotient below exact at every whole bit.
 
-**At every whole bit the two functions agree byte for byte** — `orderingPowTarget(256n)` equals
-`powTarget(n)` for all `n` in `[0, 256]`, because `2^(65536 − 256n)` is a perfect 256th power and the
-fractional machinery contributes nothing. This is a theorem, and it is also the regression that detects
-a wrong scale before anything else is evaluated.
+**At every whole bit the target is the whole-bit expansion `2^(256 − n) − 1`** — `orderingPowTarget(256n)`
+is `n` leading zero bits then ones, for all `n` in `[0, 256]`, because `2^(65536 − 256n)` is a perfect
+256th power and the fractional machinery contributes nothing. This is a theorem, and it is also the
+regression that detects a wrong scale before anything else is evaluated: `ordering-pow-target.test.ts`
+holds every whole bit against an independent byte-fill rendering of that expansion, which shares no
+arithmetic with the fixed-point path.
 
 **`R(256n + f) = R(f) >> n`.** The function is 256 base values and a shift, by
 `⌊⌊y⌋/m⌋ = ⌊y/m⌋`. This is what makes an exhaustive check affordable: verifying the 256 base values
@@ -147,16 +135,18 @@ the unqualified form is false above 63358, which is 247 bits against a measured 
 
 #### Mirrors
 
-The split runs through callers, not packages. **`scripts/miner.mjs` mirrors this function**, since it
-expands `header.powTargetBits` off a mining template; **`public/index.html` keeps mirroring
-`powTarget`**, because the page performs post PoW only and no header PoW. After this lands the package
-exports two functions of type `(number) => Uint8Array | null` that mean different things, and
-`powTarget` refusing anything above 256 is the only place the denominations distinguish themselves.
+**`scripts/miner.mjs` mirrors this function and `meetsPowTarget`**: it expands `header.powTargetBits`
+off a mining template and is standalone by decision — `node:crypto` and nothing else, so the machine
+that mines needs no build step (`MINING_INTERFACE` → Miner Script). It cannot import this package, so
+`node/test/unit/miner-mirror.test.ts` holds the copy to it by extracting both declarations **by name**
+and comparing them against this package's — the expansion on every admitted input; a mirror that
+stops finding its declaration fails, which is the property the test exists for. `public/index.html` performs no PoW and
+mirrors nothing from this section.
 
 ### blockWork / cumulativeWork
 
 ```
-blockWork(targetBits: number): bigint | null
+blockWork(scaledBits: number): bigint | null
 cumulativeWork(headers: BlockHeader[]): bigint
 ```
 
@@ -173,12 +163,10 @@ is precisely `R`, which at `scaledBits = 256n` is `2^(256 − n)`, so the quotie
 remainder. An *exclusive* target would floor to one less at every integer target — which is detectable,
 and the regression that detects it is the agreement check against `1n << bits` across the whole domain.
 
-⚠ **`blockWork` is the one part of this change that fails SILENTLY, and it is the opposite of every
-other part.** Its signature does not change and its domain *widens*, so every old-denomination value
-stays legal rather than becoming `null`: `blockWork(12)` goes from `4096` to `1`. No throw, no `null`,
-no type error — just a plausible number and a chain whose cumulative work is ~1 per block. Contrast
-`scripts/miner.mjs`, which throws on an unmigrated template because `powTarget` refuses anything above
-256. **Every caller must move in the same change**, and nothing in the type system will say otherwise.
+⚠ **A whole-bit count passed by mistake fails SILENTLY.** The domain `[0, 65536]` contains every
+whole-bit value, so `blockWork(12)` is `1` — twelve 1/256-bit steps — not `null` and not a throw: a
+plausible number, and a chain summed in the wrong unit carries ~1 work per block. Nothing in the type
+system distinguishes the two denominations; the unit is the caller's to get right.
 
 ⚠ **Work resolves only on `[2305, 63357]`** — every step inside that band moves it, and 1816 steps at
 each end do not. Beneath 2180 a 1/256-bit step can buy zero additional work, so a chain running there
@@ -205,7 +193,7 @@ rather than re-derived. `cumulativeWork` **skips** such a header rather than thr
 reaches it from the wire, where `powTargetBits` is any `number`, and refusing a whole comparison over
 one bad member would hand a peer a way to void a fork-choice decision.
 
-**This lives here and not in `@dagsocial/types` because it depends on `powTarget`**, and the
+**This lives here and not in `@dagsocial/types` because it depends on `orderingPowTarget`**, and the
 dependency runs `validation → types`. Work accounting is a PoW question, which is this package's
 remit; its former home next to `BlockHeader` was proximity, not ownership.
 
@@ -250,10 +238,10 @@ why it is stated with its date and its runtime.
 headers and answers the second. They share only `blockWork`, and neither is a copy of the other — an
 enumeration of "what computes work" that greps this function's callers will not reach `net`.
 
-**Totality is arithmetic, not a validity rule.** Past 256 bits `powTarget` returns `null`, so no digest
-can satisfy such a target and no work can have been done on that header — zero *is* its expected-hash
-count. Nothing rejects a block for exceeding the bound; the consensus minimum is
-`ORDERING_BLOCK_POW_TARGET_FLOOR`, checked at apply.
+**Totality is arithmetic, not a validity rule.** Past `65536` — 256 whole bits — `orderingPowTarget`
+returns `null`, so no digest can satisfy such a target and no work can have been done on that header —
+zero *is* its expected-hash count. Nothing rejects a block for exceeding the bound; the consensus
+minimum is `ORDERING_BLOCK_POW_TARGET_FLOOR`, checked at apply.
 
 **Totality is required, not convenient.** The headers reach fork choice from `net`'s `requestHeaders`
 through the positional codec, which checks each element's byte span — **and that is a shape check, not
@@ -290,8 +278,8 @@ verifyOrderingBlockPoW(header: BlockHeader): boolean
 
 Computes the PoW preimage via `computePowHash(header)`, encodes `header.powNonce`
 as u64 LE, hashes `preimage || nonceBytes` with blake2b512, takes the first 32
-bytes, and answers `meetsPowTarget(hash, powTarget(header.powTargetBits))` —
-`false` when `powTarget` returns `null`.
+bytes, and answers `meetsPowTarget(hash, orderingPowTarget(header.powTargetBits))` —
+`false` when `orderingPowTarget` returns `null`.
 Guards its inputs (M-5 / M-6): returns `false` — never throws — if the
 header is not encodable, or if `powNonce` / `powTargetBits` is not a
 non-negative safe integer.

@@ -2,7 +2,7 @@
 
 **Component:** `@dagsocial/types`
 **Protocol version:** 1
-**Last updated:** 2026-08-13
+**Last updated:** 2026-08-23
 
 ## Scope
 
@@ -1267,7 +1267,7 @@ apply-time algorithm. Nothing epoch-shaped may return to the block structure.
 ### cumulativeWork — not this package's
 
 `cumulativeWork` and `MAX_SATISFIABLE_TARGET_BITS` are **no longer exported here.** Work accounting is
-derived from `powTarget`, and the dependency runs `validation → types`, so it cannot be computed in
+derived from `orderingPowTarget`, and the dependency runs `validation → types`, so it cannot be computed in
 this package at all.
 
 **`VALIDATION_INTERFACE → blockWork / cumulativeWork` is the rule.** This section deliberately states
