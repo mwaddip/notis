@@ -28,10 +28,11 @@ over `target.length`. The admission rule is **`meetsPowTarget(hash, orderingPowT
 PoW question in the repo, the verifier's and every solver's, is that composition and nothing else. The
 expansion half is `orderingPowTarget` below.
 
-A `hash` shorter than `target` is refused rather than zero-extended: a digest that cannot be compared
-over the target's full width does not meet it. The comparison iterates `target.length`, so the target's
-width is part of the admission rule and **this function cannot detect a wrong one** — the third clause
-of `orderingPowTarget`'s rule is what fixes the width at 32 bytes.
+`hash` is never zero-extended. A `hash` shorter than `target` is compared byte by byte while it has
+bytes and is refused the moment it runs out still equal — so a short `hash` meets the target only if
+every digest extending it would. The comparison iterates `target.length`, so the target's width is part
+of the admission rule and **this function cannot detect a wrong one** — the third clause of
+`orderingPowTarget`'s rule is what fixes the width at 32 bytes.
 
 Neither function throws, on any input. A `null` target — `orderingPowTarget` refusing its input — is the
 caller's `false`: no digest can satisfy it.
@@ -44,11 +45,6 @@ when asking how many places implement this rule.
 **Why a pair rather than one function.** The expansion is the half a retarget changes; the comparison
 never does. Splitting them is what lets a schedule change without touching the admission rule. The
 comparison is byte-wise rather than `BigInt` because a solver runs it once per nonce.
-
-> ⚠ **AHEAD OF CODE — 2026-08-23.** `packages/validation/src/index.ts` still exports `powTarget`, the
-> whole-bit expansion `2^(256 − n) − 1` over `[0, 256]`, which no verifier, solver or mirror calls. The
-> validation unit on this branch deletes it; the whole-bit regression under `orderingPowTarget` then
-> holds against a test-local rendering of that expansion rather than a src export.
 
 ### orderingPowTarget
 
