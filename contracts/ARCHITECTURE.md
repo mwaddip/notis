@@ -2057,7 +2057,7 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   signature-verification function answers with a value or a typed error. A decoded
   value entering a typed field is **range-checked, never `as`-cast**, and nothing
   allocates on an attacker-chosen length.
-  > ✅ **Two of the three limbs hold, and the third is unmeasured.**
+  > ✅ **All three limbs hold — the third measured 2026-08-23.**
   > - *Allocation.* `readArray` bounds on `MAX_ARRAY_LENGTH` **and** on the bytes remaining
   >   before allocating (`wire/src/reader.ts`), and `cumulativeWork` skips any `powTargetBits`
   >   outside `orderingPowTarget`'s domain (`VALIDATION_INTERFACE → blockWork / cumulativeWork`).
@@ -2065,10 +2065,15 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   > - *Casts.* The sync decode boundary shape-checks every field and never throws; malformed
   >   CBOR collapses to `null` and the returned object is rebuilt from checked fields only
   >   (`net/src/sync-codec.ts`).
-  > - ⚠ *Throws — **UNMEASURED**.* The claim behind this limb named "an unguarded throwing step
-  >   between the Stage-1 pipeline's documented calls" without pinning a file, and it cannot be
-  >   relocated from that description. **Unknown, not holding** — re-derive before relying on
-  >   either answer.
+  > - ✅ *Throws — measured 2026-08-23.* The claim behind this limb named "an unguarded throwing
+  >   step between the Stage-1 pipeline's documented calls": the gossip topic validators
+  >   (`NET_INTERFACE → Stage 1 (net package, stateless)`, `net/src/gossip.ts`). Each validator
+  >   runs its whole sequence — decode, structure, protocol version, then PoW for an ordering
+  >   block or the packet rule, body and membership for a transaction — inside one `try`; a throw
+  >   anywhere is caught, penalised as `ProtocolViolation` and the message Rejected, and the
+  >   deliver arm catches the re-decode and the handler separately. No step between the
+  >   documented calls throws unguarded. This measures the pipeline the claim named; the sync
+  >   decode boundary is the *Casts* limb's.
   >
   > **The clause says `as`-cast rather than "truncating cast", and the difference is the
   > whole point.** A TypeScript `as` does not truncate: it erases at compile time and asserts a

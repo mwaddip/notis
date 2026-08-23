@@ -2,7 +2,7 @@
 
 **Component:** `@dagsocial/node`
 **Protocol version:** 1
-**Last updated:** 2026-08-19
+**Last updated:** 2026-08-23
 
 ## Scope
 
@@ -3941,13 +3941,13 @@ same relocation already applied to the PoW target (M-2), coinbase maturity
 > *does* change the hash, and therefore fails PoW and signature checks — the gap
 > is the body.)
 >
-> **It is not confined to transit.** `createOrderingBlock`
-> (`node/src/store/ordering.ts:45`) re-encodes from the *parsed struct*, so
-> retained junk is written into `subblock_tree_cbor` on disk and re-propagated
-> when the block is served. Two honest nodes can therefore hold byte-different
-> blobs for the same block at the same height, with no way to tell which is
-> canonical, and an attacker can inflate stored bytes with payload that
-> validates.
+> **It is not confined to transit.** `createOrderingBlock` (then at
+> `node/src/store/ordering.ts:45`) re-encodes from the *parsed struct*, so
+> retained junk is written into `subblock_tree_cbor` — a column the table then
+> carried — on disk and re-propagated when the block is served. Two honest
+> nodes can therefore hold byte-different blobs for the same block at the same
+> height, with no way to tell which is canonical, and an attacker can inflate
+> stored bytes with payload that validates.
 >
 > **This is exactly the property the tx envelope gate closed one layer up** —
 > see "Transaction envelope shape": the key set is closed *because*
