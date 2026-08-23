@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { powTarget, meetsPowTarget } from '../src/index.js';
+import { meetsPowTarget } from '../src/index.js';
+import { wholeBitTarget } from './helpers.js';
 
 /**
- * The bit-walk form of the same admission rule, copied verbatim from `verify.ts`
- * at 695eb5d and kept as a differential oracle for `powTarget` /
- * `meetsPowTarget` (VALIDATION_INTERFACE → powTarget / meetsPowTarget).
+ * The bit-walk form of the admission rule, copied verbatim from `verify.ts`
+ * at 695eb5d and kept as a differential oracle for `meetsPowTarget`
+ * (VALIDATION_INTERFACE → meetsPowTarget).
  *
  * ⚠ **An oracle, not a second implementation to be maintained.** It is true only
  * while targets are whole bits. Anything that makes a target finer than one bit
@@ -49,12 +50,14 @@ function digestWithLeadingZeros(n: number, rand: () => number): Uint8Array {
 }
 
 function newMeets(hash: Uint8Array, targetBits: number): boolean {
-  const target = powTarget(targetBits);
+  const target = wholeBitTarget(targetBits);
   if (target === null) return false;
   return meetsPowTarget(hash, target);
 }
 
-describe('powTarget / meetsPowTarget — equivalence with the bit walk', () => {
+// VALIDATION_INTERFACE → meetsPowTarget: the comparator against the 695eb5d
+// bit walk at whole bits and at exact boundaries.
+describe('meetsPowTarget — equivalence with the bit walk', () => {
   it('agrees on the three edges', () => {
     const zero = new Uint8Array(32);
     const ones = new Uint8Array(32).fill(0xff);
@@ -96,18 +99,4 @@ describe('powTarget / meetsPowTarget — equivalence with the bit walk', () => {
     }
   });
 
-  it('refuses a targetBits outside the integer domain', () => {
-    for (const bad of [NaN, Infinity, -Infinity, -1, 1.5, 2 ** 60]) {
-      expect(powTarget(bad)).toBeNull();
-    }
-  });
-
-  it('the target is the documented shape', () => {
-    // 12 bits: one whole zero byte, then the top four bits of the next byte zero.
-    const c = powTarget(12)!;
-    expect(c[0]).toBe(0x00);
-    expect(c[1]).toBe(0x0f);
-    expect(c[2]).toBe(0xff);
-    expect(c.length).toBe(32);
-  });
 });

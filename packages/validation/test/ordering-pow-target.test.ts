@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
   orderingPowTarget,
-  powTarget,
   meetsPowTarget,
   blockWork,
   cumulativeWork,
 } from '../src/index.js';
+import { wholeBitTarget } from './helpers.js';
 
 /** The 32-byte big-endian target as an integer. */
 function asInt(t: Uint8Array): bigint {
@@ -61,9 +61,12 @@ describe('orderingPowTarget', () => {
     expect(meetsPowTarget(digest, target.slice(30))).toBe(true); // the defect, pinned
   });
 
-  it('reproduces powTarget byte for byte at every whole bit', () => {
+  // VALIDATION_INTERFACE → orderingPowTarget: the whole-bit expansion
+  // `2^(256 − n) − 1`, checked against a byte-fill rendering that shares no
+  // arithmetic with the fixed-point path.
+  it('is the whole-bit expansion at every whole bit', () => {
     for (let n = 0; n <= 256; n++) {
-      expect(orderingPowTarget(256 * n)).toEqual(powTarget(n));
+      expect(orderingPowTarget(256 * n)).toEqual(wholeBitTarget(n));
     }
   });
 

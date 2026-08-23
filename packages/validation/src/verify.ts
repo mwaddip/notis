@@ -301,28 +301,6 @@ export function verifyHeaderFieldDomains(header: unknown): { valid: boolean; err
 // ---------------------------------------------------------------------------
 
 /**
- * The inclusive maximum acceptable PoW digest for `targetBits`, big-endian, 32
- * bytes. `null` for a target outside `[0, 256]`, which a caller reads as "no
- * digest can satisfy this" and answers `false`.
- *
- * VALIDATION_INTERFACE → powTarget / meetsPowTarget. Inclusive
- * (`2^(256−targetBits) − 1`) rather than the exclusive threshold, because the
- * exclusive form is `2^256` at `targetBits = 0` and does not fit the digest
- * width; the inclusive form makes both extremes ordinary values.
- */
-export function powTarget(targetBits: number): Uint8Array | null {
-  if (!Number.isSafeInteger(targetBits) || targetBits < 0 || targetBits > 256) return null;
-  const target = new Uint8Array(32).fill(0xff);
-  const wholeBytes = targetBits >> 3;
-  for (let i = 0; i < wholeBytes; i++) target[i] = 0x00;
-  // A non-zero remainder means `targetBits` is not a multiple of 8, so it is at
-  // most 255 and `wholeBytes` at most 31: the partial byte is always in range.
-  const remainderBits = targetBits & 7;
-  if (remainderBits !== 0) target[wholeBytes] = 0xff >> remainderBits;
-  return target;
-}
-
-/**
  * `2^(-f/256)` factored by the bits of `f`, as `floor(2^320 · 2^(-(2^j)/256))`.
  * `[7]` is `floor(2^320/√2)` and each lower index halves the exponent.
  *
@@ -356,8 +334,7 @@ const ORDERING_TARGET_PRECISION = 320n;
  *
  * VALIDATION_INTERFACE → orderingPowTarget. `scaledBits` is in units of 1/256
  * of a bit, so the target is `R - 1` for the unique `R` with
- * `R^256 ≤ 2^(65536 - scaledBits) < (R+1)^256`. Post PoW is not in these units
- * and uses `powTarget`.
+ * `R^256 ≤ 2^(65536 - scaledBits) < (R+1)^256`.
  */
 export function orderingPowTarget(scaledBits: number): Uint8Array | null {
   if (!Number.isSafeInteger(scaledBits) || scaledBits < 0 || scaledBits > 65536) return null;
@@ -379,14 +356,11 @@ export function orderingPowTarget(scaledBits: number): Uint8Array | null {
 }
 
 /**
- * True iff `hash` is at or below `target`, both read big-endian.
+ * The comparator half of the PoW admission rule: `hash <= target`, both read
+ * big-endian, byte by byte over `target.length`.
  *
- * VALIDATION_INTERFACE → powTarget / meetsPowTarget: the single PoW admission
- * rule in the repo — the verifier and every solver answer this question and no
- * other. Byte-wise rather than BigInt because a solver runs it once per nonce.
- *
- * A `hash` shorter than `target` is refused rather than zero-extended: a digest
- * that cannot be compared over the target's full width does not meet it.
+ * VALIDATION_INTERFACE → meetsPowTarget. Byte-wise rather than BigInt because
+ * a solver runs it once per nonce.
  */
 export function meetsPowTarget(hash: Uint8Array, target: Uint8Array): boolean {
   for (let i = 0; i < target.length; i++) {

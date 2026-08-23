@@ -2133,8 +2133,8 @@ describe('no-panic on malformed input (M-5)', () => {
     expect(verifyOrderingBlockPoW(makeHeader({ powNonce: -1 }))).toBe(false);
     expect(verifyOrderingBlockPoW(makeHeader({ powNonce: 1.5 }))).toBe(false);
     expect(verifyOrderingBlockPoW(makeHeader({ powTargetBits: NaN }))).toBe(false);
-    // Wider than the digest — `powTarget` answers `null` rather than a target
-    // no digest can be compared against.
+    // Wider than the digest — `orderingPowTarget` answers `null` rather than
+    // a target no digest can be compared against.
     expect(verifyOrderingBlockPoW(makeHeader({ powTargetBits: 1_000_000 }))).toBe(false);
     expect(verifyBlockChainLink(null as any, goodBlock)).toBe(false);
     expect(verifyBlockChainLink(goodBlock, null as any)).toBe(false);
