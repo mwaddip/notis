@@ -83,8 +83,11 @@ function sendInv(machine: SyncMachine, peerId: string, inv: Inv): void {
 }
 
 /** Call onPeerActive and flush the event loop. */
-function peerActive(machine: SyncMachine, peerId: string, peerHeight: number): void {
-  machine.onPeerActive(peerId, peerHeight);
+function peerActive(
+  machine: SyncMachine, peerId: string, peerHeight: number,
+  direction: 'inbound' | 'outbound' = 'outbound',
+): void {
+  machine.onPeerActive(peerId, peerHeight, direction);
   machine.flush();
 }
 
@@ -2122,6 +2125,111 @@ describe('SyncMachine', () => {
 
       // No SyncInfo — height did not advance
       expect(sent.length).toBe(0);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Switch guard — NET_INTERFACE → Sync State Machine, Pick
+  // -----------------------------------------------------------------------
+
+  describe('switch guard (go2 item 1)', () => {
+    it('does not switch to a candidate below our height', () => {
+      let height = 0;
+      const { machine } = makeMachine({
+        store: {
+          chainHeight: () => height,
+          getOrderingBlockId: () => null,
+          getAnchors: () => [],
+        },
+      });
+
+      // Start syncing from peerA at 100
+      peerActive(machine, 'peerA', 100);
+      expect(machine.getState().syncPeerId).toBe('peerA');
+
+      // We advance past peerA's lagging retained height
+      height = 150;
+
+      // peerB at 120 — taller than peerA (120 > 100+1) but below us (120 < 150)
+      peerActive(machine, 'peerB', 120);
+      expect(machine.getState().syncPeerId).toBe('peerA');
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Negative backfill — NET_INTERFACE → Sync State Machine, Backfill
+  // -----------------------------------------------------------------------
+
+  describe('negative backfill (go2 item 3)', () => {
+    it('a third peer reporting equal height does not enter backfill', () => {
+      const { machine } = makeMachine({
+        store: {
+          chainHeight: () => 100,
+          getOrderingBlockId: () => 'abc',
+          getAnchors: () => [],
+        },
+      });
+
+      peerActive(machine, 'peerA', 200);
+      expect(machine.getState().phase).toBe('syncing');
+      expect(machine.getState().syncPeerId).toBe('peerA');
+
+      // NET_INTERFACE → Sync State Machine, Backfill: only the sync peer's equal triggers it
+      sendSyncInfo(machine, 'peerX', {
+        tipHeight: 100,
+        tipBlockId: 'abc',
+        anchors: [],
+      });
+
+      expect(machine.getState().phase).toBe('syncing');
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Outbound preference — NET_INTERFACE → Sync State Machine, Pick
+  // -----------------------------------------------------------------------
+
+  describe('outbound preference (go2 item 4)', () => {
+    it('outbound +2 beats inbound +50 at pick', () => {
+      let height = 0;
+      const { machine } = makeMachine({
+        store: {
+          chainHeight: () => height,
+          getOrderingBlockId: () => 'abc',
+          getAnchors: () => [],
+        },
+      });
+
+      // Sync from a temporary peer and reach synced
+      peerActive(machine, 'tmp', 10, 'outbound');
+      height = 10;
+      sendSyncInfo(machine, 'tmp', { tipHeight: 10, tipBlockId: 'abc', anchors: [] });
+      expect(machine.getState().phase).toBe('synced');
+
+      // While synced, register both candidates above us
+      peerActive(machine, 'inPeer', 50, 'inbound');
+      // inPeer triggers pickSyncPeer at synced → enters syncing
+      expect(machine.getState().syncPeerId).toBe('inPeer');
+
+      // Disconnect inPeer → idle → pick with remaining peers
+      peerDisconnect(machine, 'inPeer');
+
+      // Re-register both: outbound at +2, inbound at +50
+      peerActive(machine, 'outPeer', 12, 'outbound');
+      expect(machine.getState().syncPeerId).toBe('outPeer');
+
+      peerActive(machine, 'inPeer2', 50, 'inbound');
+      // bestCandidate prefers outPeer (outbound at 12 > 10) over inPeer2 (inbound at 50 > 10)
+      // Switch: bestCandidate returns outPeer, which IS syncPeerId → no switch
+      expect(machine.getState().syncPeerId).toBe('outPeer');
+    });
+
+    it('inbound-only set still syncs', () => {
+      const { machine } = makeMachine({ store: { chainHeight: () => 0 } });
+
+      peerActive(machine, 'inPeer1', 100, 'inbound');
+      expect(machine.getState().phase).toBe('syncing');
+      expect(machine.getState().syncPeerId).toBe('inPeer1');
     });
   });
 });

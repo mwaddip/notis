@@ -54,7 +54,7 @@ export interface SyncStore {
 
 /** Control events — unbounded channel, never dropped. */
 type ControlEvent =
-  | { type: 'peer-active'; peerId: string; peerHeight: number }
+  | { type: 'peer-active'; peerId: string; peerHeight: number; direction: 'inbound' | 'outbound' }
   | { type: 'peer-disconnect'; peerId: string }
   | { type: 'sync-info'; peerId: string; info: SyncInfo };
 
@@ -129,13 +129,14 @@ export class SyncMachine {
   private lastProgressMs: number = 0;
   private lastSyncInfoMs: number = 0;
 
-  // NET_INTERFACE → Sync State Machine, Pick: retained peer heights
+  // NET_INTERFACE → Sync State Machine, Pick: retained peer heights and direction
   private peerHeights = new Map<string, number>();
+  private peerDirections = new Map<string, 'inbound' | 'outbound'>();
 
   // NET_INTERFACE → Serve Side, "The reply is movement-gated"
   private lastSentTip = new Map<string, number>();
   private lastReportedTip = new Map<string, number>();
-  private lastReplyMs = new Map<string, number>();
+  private lastSentMs = new Map<string, number>();
 
   /**
    * Outstanding requested modifier ids, keyed by the peer the request was sent
@@ -407,12 +408,12 @@ export class SyncMachine {
    *
    * Enqueues a control event — the event loop processes it with top priority.
    */
-  onPeerActive(peerId: string, peerHeight: number): void {
+  onPeerActive(peerId: string, peerHeight: number, direction: 'inbound' | 'outbound' = 'outbound'): void {
     if (!isHeight(peerHeight)) {
       this.rejectMessage(peerId, MSG_HANDSHAKE, `advertised height out of range: ${String(peerHeight)}`);
       return;
     }
-    this.pushControl({ type: 'peer-active', peerId, peerHeight });
+    this.pushControl({ type: 'peer-active', peerId, peerHeight, direction });
   }
 
   /**
@@ -553,7 +554,7 @@ export class SyncMachine {
   private handleControlEvent(event: ControlEvent): void {
     switch (event.type) {
       case 'peer-active':
-        this.handlePeerActive(event.peerId, event.peerHeight);
+        this.handlePeerActive(event.peerId, event.peerHeight, event.direction);
         break;
       case 'peer-disconnect':
         this.handlePeerDisconnect(event.peerId);
@@ -619,8 +620,9 @@ export class SyncMachine {
    * - If the peer is ahead and we're idle → enter syncing phase.
    * - If the peer is behind → serve them an Inv so they can catch up.
    */
-  private handlePeerActive(peerId: string, peerHeight: number): void {
+  private handlePeerActive(peerId: string, peerHeight: number, direction: 'inbound' | 'outbound'): void {
     this.peerHeights.set(peerId, peerHeight);
+    this.peerDirections.set(peerId, direction);
     this.state.stalledPeers.delete(peerId);
     const ourHeight = this.store.chainHeight();
     if (peerHeight < ourHeight) {
@@ -637,13 +639,15 @@ export class SyncMachine {
    */
   private handlePeerDisconnect(peerId: string): void {
     this.peerHeights.delete(peerId);
+    this.peerDirections.delete(peerId);
     this.lastSentTip.delete(peerId);
     this.lastReportedTip.delete(peerId);
-    this.lastReplyMs.delete(peerId);
+    this.lastSentMs.delete(peerId);
 
     if (this.state.syncPeerId === peerId) {
       this.state.stalledPeers.add(peerId);
       this.state.syncPeerId = null;
+      // NET_INTERFACE → Sync Integrity → "Response binding"
       this.outstanding.clear();
       if (this.state.phase === 'syncing' || this.state.phase === 'backfill' || this.state.phase === 'synced') {
         this.state.phase = 'idle';
@@ -994,7 +998,6 @@ export class SyncMachine {
 
   /** NET_INTERFACE → Serve Side, "The reply is movement-gated". */
   private replySyncInfo(peerId: string, theirTip: number): void {
-    const now = Date.now();
     const ourTip = this.store.chainHeight();
     const prevReported = this.lastReportedTip.get(peerId);
     const prevSentTip = this.lastSentTip.get(peerId);
@@ -1006,18 +1009,21 @@ export class SyncMachine {
 
     if (theirMovement || ourMovement) {
       this.sendSyncInfo(peerId);
-      this.lastReplyMs.set(peerId, now);
       return;
     }
 
-    const lastReply = this.lastReplyMs.get(peerId) ?? 0;
-    if (now - lastReply >= MIN_SYNCINFO_INTERVAL_MS) {
+    const lastSent = this.lastSentMs.get(peerId) ?? 0;
+    if (Date.now() - lastSent >= MIN_SYNCINFO_INTERVAL_MS) {
       this.sendSyncInfo(peerId);
-      this.lastReplyMs.set(peerId, now);
     }
   }
 
-  /** NET_INTERFACE → Sync State Machine, Pick / Switch. */
+  /**
+   * NET_INTERFACE → Sync State Machine, Pick / Switch.
+   *
+   * Two-pass outbound preference: outbound candidates first, the full set
+   * only when no outbound candidate exists.
+   */
   private pickSyncPeer(): void {
     const ourHeight = this.store.chainHeight();
 
@@ -1025,47 +1031,47 @@ export class SyncMachine {
       const currentRetained = this.peerHeights.get(this.state.syncPeerId);
       if (currentRetained === undefined) return;
 
-      let bestPeer: string | null = null;
-      let bestHeight = 0;
-      for (const [peer, height] of this.peerHeights) {
-        if (this.state.stalledPeers.has(peer)) continue;
-        if (height > bestHeight) {
-          bestHeight = height;
-          bestPeer = peer;
-        }
-      }
+      const best = this.bestCandidate(ourHeight);
 
       // NET_INTERFACE → Sync State Machine, Switch
-      if (bestPeer && bestPeer !== this.state.syncPeerId &&
-          bestHeight > currentRetained + 1) {
+      if (best && best.peer !== this.state.syncPeerId &&
+          best.height > ourHeight && best.height > currentRetained + 1) {
         this.outstanding.clear();
         this.lastProgressMs = Date.now();
-        this.state.syncPeerId = bestPeer;
-        this.state.stalledPeers.delete(bestPeer);
-        this.sendSyncInfo(bestPeer);
+        this.state.syncPeerId = best.peer;
+        this.sendSyncInfo(best.peer);
       }
       return;
     }
 
     if (this.state.phase === 'backfill') return;
 
-    let bestPeer: string | null = null;
-    let bestHeight = 0;
+    const best = this.bestCandidate(ourHeight);
+
+    if (best) {
+      this.state.phase = 'syncing';
+      this.state.syncPeerId = best.peer;
+      this.lastProgressMs = Date.now();
+      this.sendSyncInfo(best.peer);
+    }
+  }
+
+  /** Outbound-preferred best candidate above `minHeight`, stalled excluded. */
+  private bestCandidate(minHeight: number): { peer: string; height: number } | null {
+    let outBest: { peer: string; height: number } | null = null;
+    let anyBest: { peer: string; height: number } | null = null;
     for (const [peer, height] of this.peerHeights) {
       if (this.state.stalledPeers.has(peer)) continue;
-      if (height > ourHeight && height > bestHeight) {
-        bestHeight = height;
-        bestPeer = peer;
+      if (height <= minHeight) continue;
+      const dir = this.peerDirections.get(peer);
+      if (dir === 'outbound' && (!outBest || height > outBest.height)) {
+        outBest = { peer, height };
+      }
+      if (!anyBest || height > anyBest.height) {
+        anyBest = { peer, height };
       }
     }
-
-    if (bestPeer) {
-      this.state.phase = 'syncing';
-      this.state.syncPeerId = bestPeer;
-      this.state.stalledPeers.delete(bestPeer);
-      this.lastProgressMs = Date.now();
-      this.sendSyncInfo(bestPeer);
-    }
+    return outBest ?? anyBest;
   }
 
   // -----------------------------------------------------------------------
@@ -1083,8 +1089,10 @@ export class SyncMachine {
     };
 
     this.sendToPeer(peerId, encodeSyncInfo(this.magic, info));
-    this.lastSyncInfoMs = Date.now();
+    const now = Date.now();
+    this.lastSyncInfoMs = now;
     this.lastSentTip.set(peerId, tipHeight);
+    this.lastSentMs.set(peerId, now);
   }
 
   /**
