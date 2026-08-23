@@ -74,8 +74,7 @@ setMempoolCap(config.maxMempoolEntries);
 // AVL+ State Root → "AVL+ tree shape is history-dependent"). Such a rebuild is
 // unsound: AVL+ tree shape is history-dependent, so a tree rebuilt by
 // re-inserting a set forks against one grown incrementally to the same content.
-// Nor
-// would a rebuild be reachable — under @ergots/avltree 0.4.0 the
+// Nor would a rebuild be reachable — under @ergots/avltree 0.4.0 the
 // PersistentBatchAVLProver constructor writes the empty-tree version to empty
 // storage and throws if `version()` is still null after, so an
 // empty-storage trigger is statically false. The sound restart path is the

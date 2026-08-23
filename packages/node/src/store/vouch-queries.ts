@@ -54,9 +54,9 @@ export function getVouchesByVoucher(voucherId: Uint8Array): VouchBox[] {
 
 /**
  * Does this identity hold an active VouchBox for *any* target? One vouch at a
- * time is an invariant (ARCHITECTURE → Vouch boxes); the pair-scoped predicate this replaces
- * let a voucher hold many concurrent VouchBoxes by targeting different
- * identities (audit L-4).
+ * time is an invariant (ARCHITECTURE → Vouch boxes; audit L-4). The predicate
+ * is identity-scoped, so a voucher cannot hold concurrent VouchBoxes by
+ * targeting different identities.
  */
 export function hasAnyActiveVouch(voucherId: Uint8Array): boolean {
   const db = getDb();
