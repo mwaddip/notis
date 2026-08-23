@@ -764,9 +764,9 @@ const FIELD_TYPE_CHECK: Record<FieldType, { ok: (v: unknown) => boolean; expecte
     ok: (v) => typeof v === 'string' && HEX64.test(v),
     expected: '64 lowercase hex characters',
   },
-  // Never -0: it is JSON- and CBOR-reachable and breaks byte round-trips —
-  // cbor-x encodes -0 as a float where the store's JSON round-trip returns
-  // integer 0. (`Number.isSafeInteger(-0)` and `-0 >= 0` both hold, so the
+  // Never -0: `JSON.parse('-0')` is `-0` and `jsonToTx` passes values
+  // through. The positional readers (`readVlqU`) cannot produce -0.
+  // (`Number.isSafeInteger(-0)` and `-0 >= 0` both hold, so the
   // `Object.is` guard is load-bearing.)
   uint: {
     ok: (v) =>
@@ -788,9 +788,9 @@ const FIELD_TYPE_CHECK: Record<FieldType, { ok: (v: unknown) => boolean; expecte
 
 /**
  * Total description of a rejected value for error messages. Never throws,
- * unlike `String(v)`, which invokes a caller-controlled `toString`. Decoded
- * CBOR/JSON only produces plain data, but the totality of `validateTx` should
- * not depend on that.
+ * unlike `String(v)`, which invokes a caller-controlled `toString`.
+ * `JSON.parse` and the positional decoders only produce plain data, but the
+ * totality of `validateTx` should not depend on that.
  */
 function describeValue(v: unknown): string {
   if (v === null) return 'null';
@@ -851,13 +851,12 @@ const ENVELOPE_ALLOWED: ReadonlySet<string> = new Set<string>([
  * `likeTarget` would pass a hasOwn-based gate and still drive `computeTxId`
  * and the conservation carve-out off the inherited value.
  *
- * Measured (2026-08-08), correcting the contracted rationale: cbor-x does NOT
- * set the prototype from a `__proto__` map key — it renames the key to
- * `__proto_` on decode, leaving `Object.prototype` intact. So the CBOR path
- * lands in the closed-key-set reject below, and `JSON.parse` (Express's body
- * parser) likewise defines `__proto__` as an own key rather than assigning it.
- * Both clauses stay anyway: they close the class structurally instead of
- * resting on a decoder's internal sanitizing staying the way it is today.
+ * `JSON.parse` (Express's body parser) defines `__proto__` as an own key
+ * rather than assigning the prototype, and `jsonToTx` copies no unknown key
+ * into the transaction it builds. The positional decoders (`decodeTx`,
+ * `decodeTxPacket`) carry no key names — the reader's layout determines the
+ * fields. Both clauses close the class structurally instead of resting on a
+ * decoder's internal sanitizing staying the way it is today.
  */
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   if (typeof v !== 'object' || v === null || Array.isArray(v)) return false;
@@ -909,8 +908,9 @@ function checkHexKeyedByteMap(
  * The outer twin of `checkOutputShape`: that check pins what is INSIDE
  * `tx.outputs`, this one pins that `tx` has the four fields at all and that
  * every one of them is the type its readers assume. Both exist for the same
- * reason — the transaction is attacker-controlled structure arriving over HTTP
- * JSON, gossip CBOR, and block-embedded CBOR — and the envelope is the half
+ * reason — the transaction is attacker-controlled structure arriving through
+ * `jsonToTx` (HTTP JSON) and the positional decoders on the gossip and
+ * block-embedded paths — and the envelope is the half
  * nothing else checks. Measured without this gate: `inputs: null` throws at
  * step 1's `.length`, `inputs: 5` at `new Set(5)`, `inputs: [{}]` at the SQLite
  * bind inside `getBox`, `outputs: null` inside `checkOutputShape` itself, a
@@ -922,7 +922,7 @@ function checkHexKeyedByteMap(
  * 500 or, through the block funnel, a whole-block rejection logged as an
  * unexpected failure.
  *
- * **Total**: returns `{valid: false}` and never throws for any decoded-CBOR
+ * **Total**: returns `{valid: false}` and never throws for any decoded
  * value. Error strings quote input through `describeValue`, never bare
  * `String(v)` — which would invoke a caller-controlled `toString`.
  *
@@ -1225,8 +1225,9 @@ const PROTOCOL_OUTPUT_TYPES: ReadonlySet<string> = new Set<string>(
  * Output shape — the closed per-boxType schema (field-type pin,
  * NODE_INTERFACE → "Output shape").
  *
- * Outputs are attacker-controlled structure (HTTP JSON via `jsonToTx`, gossip
- * and block-embedded CBOR). The committed encoders are positional —
+ * Outputs are attacker-controlled structure (HTTP JSON via `jsonToTx` /
+ * `convertBox`, and the positional box decoders on the gossip and block
+ * paths). The committed encoders are positional —
  * `canonicalBoxBytes` (the id preimage) and `serializeBox` (the AVL leaf, so
  * the `stateRoot`) each write the fields their layout declares and nothing
  * else — so a stray key is unrepresentable in the bytes. It still reaches
@@ -1830,8 +1831,9 @@ export function validateTx(
  */
 export function materializeOutput(box: AnyBoxCandidate, txId: string, index: number): AnyBox {
   // The destructure still names all three keys even though `AnyBoxCandidate`
-  // declares none of them: outputs are decoded from attacker-supplied CBOR, so
-  // the runtime shape is not bound by the type.
+  // declares none of them: outputs arrive through `jsonToTx`'s `convertBox`
+  // (HTTP JSON) and the positional decoders, so the runtime shape is not
+  // bound by the type.
   const { id: _id, txId: _txId, index: _index, ...candidate } = box as AnyBox;
   const withProvenance = { ...candidate, txId, index } as AnyBox;
   return { ...withProvenance, id: computeBoxId(withProvenance) } as AnyBox;
