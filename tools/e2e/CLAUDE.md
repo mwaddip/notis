@@ -93,8 +93,8 @@ and removes the dir — on failure too.
 
 ## Cost, measured
 
-The full suite — eight chapter files, meshes of 2–4 spawned nodes each — runs in **22–28 s** on the
-machine it was written on (2026-08-21; every run of the unit's per-commit gate fell in that range).
+The full suite — nine chapter files, meshes of 1–4 spawned nodes each — runs in **19–28 s** on the
+machine it was written on (2026-08-23; every run of the unit's per-commit gate fell in that range).
 A chapter that pushes the suite well past that needs a reason stated in its commit: this number is
 what every `pnpm -r test` in the gate pays.
 
