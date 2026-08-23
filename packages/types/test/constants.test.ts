@@ -52,12 +52,6 @@ describe('PoW difficulty constants', () => {
     expect(ORDERING_BLOCK_POW_TARGET_FLOOR).toBeGreaterThan(2180);
   });
 
-  // Every value the floor admits is outside powTarget's [0, 256] domain, so an
-  // unmigrated miner throws instead of mining at 1/256 the intended difficulty.
-  it('puts the floor above the integer-bit domain', () => {
-    expect(ORDERING_BLOCK_POW_TARGET_FLOOR).toBeGreaterThan(256);
-  });
-
   // Both constants are difficulties in the same units, so the seed may not sit
   // under the floor that bounds it.
   it('seeds the chain at or above its own floor', () => {
