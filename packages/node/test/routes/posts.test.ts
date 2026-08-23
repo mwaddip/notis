@@ -324,7 +324,7 @@ describe('posts routes', () => {
   });
 
   // -----------------------------------------------------------------------
-  // Integer bounds on limit and offset (NODE_INTERFACE → HTTP API, Posts)
+  // Integer bounds on limit and offset (NODE_INTERFACE → Posts)
   // -----------------------------------------------------------------------
 
   it('GET /posts?limit=-1 returns 400', async () => {

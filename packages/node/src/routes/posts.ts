@@ -93,7 +93,7 @@ export function createRouter(deps: PostsDeps): Router {
     res.json({ ...result, confirmedAuthor: deps.getTopologyAuthor(id) });
   });
 
-  // GET /posts — NODE_INTERFACE → HTTP API, Posts table
+  // GET /posts — NODE_INTERFACE → Posts
   router.get('/', (req, res) => {
     const rawLimit = req.query['limit'] as string | undefined;
     const rawOffset = req.query['offset'] as string | undefined;

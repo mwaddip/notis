@@ -107,7 +107,7 @@ export function createRouter(deps: BlocksDeps): Router {
     });
   });
 
-  // GET /blocks/:height — NODE_INTERFACE → Blocks table
+  // GET /blocks/:height — NODE_INTERFACE → Blocks
   router.get('/blocks/:height', (req, res) => {
     const height = parseInt(req.params['height']!, 10);
     if (!Number.isSafeInteger(height) || height < 0) {
