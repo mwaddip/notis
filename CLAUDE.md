@@ -92,18 +92,36 @@ can check it against the tree.
 ## Comment style
 
 **Cite the CONTRACT.** A comment either states the rule as it stands now, or names the contract section
-that states it — `TYPES_INTERFACE → Layout — Stump`.
+that states it — `TYPES_INTERFACE → Layout — Stump / PruneEntry`.
 
 ⛔ **`contracts/` is the only citable directory.** A comment pointing anywhere else in this repo may be
 pointing at nothing: `.gitignore` excludes whole directories of working material, so a citation that
 resolves on the author's machine can resolve nowhere for everyone else. A measurement worth keeping
 belongs in the contract, not behind a pointer.
 
-**Never cite a phase.** A bare `Phase N` resolves to nothing anywhere.
+**A citation is `<CONTRACT> → <name>`, and the name is one of exactly two things:**
 
-**Cite a contract section by its PROSE NAME, never by a phase-tagged parenthetical.** Some headings
-embed their own tags — `### Bond transition rules (P2-B phase 1)`. The prose name is what a reader
-greps and what survives; the parenthetical is the half a reconciliation will rewrite.
+1. **A heading's prose name** — the heading text up to its first ` — `, `, `, `: `, `; ` or ` (`, any
+   leading ⛔ / ⚠ / ✅ mark dropped. Case is free; the words and their spacing are not. So
+   `### Bond transition rules (P2-B phase 1)` is cited as `Bond transition rules` (never the
+   phase-tagged parenthetical — that is the half a reconciliation rewrites), `### Box value domain —
+   [0, 2⁶³), stated here and cited everywhere else` as `Box value domain`, and `### Ordering block` as
+   `Ordering block`, never as the type name `OrderingBlock`. The whole heading is always an acceptable
+   name; **the prose name must be unique in its contract**, and where it is not (`Layout` heads seven
+   `### Layout — …` headings) the whole heading is required — `TYPES_INTERFACE → Layout — Boxes`. Never
+   a heading's tail, never a truncation of it.
+2. **A bold lead, in quotes** — the `**bold sentence**` that opens a rule inside a section, cited as
+   `NODE_INTERFACE → "Reach is the live argument, not the halt"`, or after its heading:
+   `NET_INTERFACE → Handshake → "Ban policy"`. Quotes say *a lead*; a bare name says *a heading*.
+
+⛔ **Never cite a marker** — `AHEAD OF CODE`, `RESOLVED`, `SUPERSEDED`, or anything carrying a date,
+heading or lead. Markers are retired by design, so a citation to one expires with it; cite the rule the
+marker is about, under the name it will keep. **Never cite a phase** — a bare `Phase N` resolves to
+nothing anywhere.
+
+**Grep before citing, paste what you find** — `grep -n '^#\|\*\*' contracts/<FILE>.md`. A
+plausible-sounding name is the defect this rule exists for: a citation is a pin, and a pin that matches
+no heading and no lead points at nothing.
 
 **Never narrate replaced code.** How a function used to behave is not a fact about the current tree. No
 reader has to reason about code that is gone, and a narrated history is a second claim that decays
