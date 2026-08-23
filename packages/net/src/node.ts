@@ -881,8 +881,8 @@ export class NetNode {
             protocolVersion: PROTOCOL_VERSION,
             capabilities: result.peerCapabilities,
           });
-          this.syncMachine?.onPeerActive(conn.remotePeer.toString(), result.peerHeight);
           const dir = (conn.direction ?? 'outbound') as 'inbound' | 'outbound';
+          this.syncMachine?.onPeerActive(conn.remotePeer.toString(), result.peerHeight, dir);
           for (const cb of this.peerActiveHandlers) {
             try { cb(conn.remotePeer.toString(), dir); } catch (err) {
               console.warn(`[net] peerActive handler error: ${String(err)}`);
@@ -972,8 +972,8 @@ export class NetNode {
         });
 
         this.peerMgr.setPeerState(peerId, PeerState.Active);
-        this.syncMachine?.onPeerActive(peerId, result.peerHeight);
         const dir = (connection.direction ?? 'inbound') as 'inbound' | 'outbound';
+        this.syncMachine?.onPeerActive(peerId, result.peerHeight, dir);
         for (const cb of this.peerActiveHandlers) {
           try { cb(peerId, dir); } catch (err) {
             console.warn(`[net] peerActive handler error: ${String(err)}`);
