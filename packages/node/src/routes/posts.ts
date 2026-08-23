@@ -93,16 +93,24 @@ export function createRouter(deps: PostsDeps): Router {
     res.json({ ...result, confirmedAuthor: deps.getTopologyAuthor(id) });
   });
 
-  // GET /posts
+  // GET /posts — NODE_INTERFACE → Posts
   router.get('/', (req, res) => {
-    const limit = Math.min(
-      parseInt((req.query['limit'] as string) ?? '50', 10),
-      100,
-    );
-    const offset = parseInt(
-      (req.query['offset'] as string) ?? '0',
-      10,
-    );
+    const rawLimit = req.query['limit'] as string | undefined;
+    const rawOffset = req.query['offset'] as string | undefined;
+
+    const parsedLimit = rawLimit !== undefined ? parseInt(rawLimit, 10) : 50;
+    if (rawLimit !== undefined && (!Number.isSafeInteger(parsedLimit) || parsedLimit < 0)) {
+      res.status(400).json({ error: 'limit must be a non-negative safe integer' });
+      return;
+    }
+    const parsedOffset = rawOffset !== undefined ? parseInt(rawOffset, 10) : 0;
+    if (rawOffset !== undefined && (!Number.isSafeInteger(parsedOffset) || parsedOffset < 0)) {
+      res.status(400).json({ error: 'offset must be a non-negative safe integer' });
+      return;
+    }
+
+    const limit = Math.min(parsedLimit, 100);
+    const offset = parsedOffset;
     const authorHex = req.query['author'] as string | undefined;
     const author = authorHex ? new Uint8Array(Buffer.from(authorHex, 'hex')) : undefined;
 

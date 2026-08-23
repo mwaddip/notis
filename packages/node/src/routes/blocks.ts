@@ -107,10 +107,10 @@ export function createRouter(deps: BlocksDeps): Router {
     });
   });
 
-  // GET /blocks/:height — retrieve an ordering block by height
+  // GET /blocks/:height — NODE_INTERFACE → Blocks
   router.get('/blocks/:height', (req, res) => {
     const height = parseInt(req.params['height']!, 10);
-    if (isNaN(height)) {
+    if (!Number.isSafeInteger(height) || height < 0) {
       res.status(400).json({ error: 'Invalid height' });
       return;
     }

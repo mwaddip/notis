@@ -2,7 +2,7 @@
 
 **Component:** `@dagsocial/node`
 **Protocol version:** 1
-**Last updated:** 2026-08-23
+**Last updated:** 2026-08-24
 
 ## Scope
 
@@ -124,7 +124,7 @@ are hex-encoded.
 | `POST` | `/posts` | `{ tx: UtxoTransaction, content: string }` — client-built, client-signed post tx with `tx.post` (the `PostCommit`) set, and the body beside it ("Post transactions" below) | `{ postId, status: "pending", expiresAtHeight, txId }` (200) | 400 if `tx`, `tx.post` or `content` is missing or malformed, `content` fails `verifyPostBody` against `tx.post.contentHash` (reason named), the commit fails verification, the transaction fails `validateTx`, or the first input is not a karma box owned by `post.author` |
 | `GET` | `/posts/:id` | — | `PostJson`, `StumpJson` or `PrunedJson` (all below), **plus `confirmedAuthor`** | 404 only for an id the node has never heard of ("Resolution order for a post id") |
 | `GET` | `/posts/:id/thread` | — | `{ post, ancestors, descendants }` — full thread context; `post` is `PostJson`, `StumpJson` or `PrunedJson` | 404 as above |
-| `GET` | `/posts` | `?author=hex&limit=50&offset=0` | PostJson[] (same shape, live only — placeholders included, no stumps, no tombstones; ordering below) | — |
+| `GET` | `/posts` | `?author=hex&limit=50&offset=0` — `limit` defaults to 50 and clamps to 100, `offset` defaults to 0 | PostJson[] (same shape, live only — placeholders included, no stumps, no tombstones; ordering below) | 400 if a present `limit` or `offset` does not parse as a non-negative safe integer |
 
 **PostJson shape.** The post's own fields, hex where they are bytes, plus what the node knows
 about it:
@@ -514,7 +514,7 @@ nothing.
 
 | Method | Path | Response | Errors |
 |--------|------|----------|--------|
-| `GET` | `/blocks/:height` | OrderingBlock object (JSON with hex fields) | 400 if NaN, 404 |
+| `GET` | `/blocks/:height` | OrderingBlock object (JSON with hex fields) | 400 unless `:height` parses as a non-negative safe integer, 404 |
 | `GET` | `/blocks/current` | `{ height, hash }` — **`hash` is nullable** | — |
 
 **`hash` is `string | null`** (Phase 1f). It is `blockHash` of the stored tip

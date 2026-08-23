@@ -324,6 +324,41 @@ describe('posts routes', () => {
   });
 
   // -----------------------------------------------------------------------
+  // Integer bounds on limit and offset (NODE_INTERFACE → Posts)
+  // -----------------------------------------------------------------------
+
+  it('GET /posts?limit=-1 returns 400', async () => {
+    const res = await request('/?limit=-1', 'GET');
+    expect(res.status).toBe(400);
+  });
+
+  it('GET /posts?limit=abc returns 400', async () => {
+    const res = await request('/?limit=abc', 'GET');
+    expect(res.status).toBe(400);
+  });
+
+  it('GET /posts?offset=10000000000000000000 returns 400', async () => {
+    const res = await request('/?offset=10000000000000000000', 'GET');
+    expect(res.status).toBe(400);
+  });
+
+  it('GET /posts?limit=200 clamps to 100 and returns 200', async () => {
+    const res = await request('/?limit=200', 'GET');
+    expect(res.status).toBe(200);
+  });
+
+  it('GET /posts?limit=0 returns 200 with an empty array', async () => {
+    const res = await request('/?limit=0', 'GET');
+    expect(res.status).toBe(200);
+    expect(res.data).toEqual([]);
+  });
+
+  it('GET /posts with no params returns 200', async () => {
+    const res = await request('/', 'GET');
+    expect(res.status).toBe(200);
+  });
+
+  // -----------------------------------------------------------------------
   // Stumps over HTTP
   // -----------------------------------------------------------------------
 
