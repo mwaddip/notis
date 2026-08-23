@@ -221,13 +221,12 @@ function heightPairCodec<T>(
       const a = readVlqU(r);
       const b = readVlqU(r);
       if (!isHeight(a) || !isHeight(b)) {
-        // `'invalid-tag'` for the reason `CodecError` gives it (types →
-        // CodecError): `ReaderErrorCode` has no member for "well-formed but out
-        // of range", and this is the one of the eight that carries no fallback
-        // semantics elsewhere in this package.
+        // Well-formed VLQ heights outside the advertisable range —
+        // WIRE_INTERFACE → ReaderError codes, `out-of-domain`; the bound
+        // and its ban policy: NET_INTERFACE → Validation (and untrusted-input safety).
         throw new ReaderError(
           `${name}: ${a}/${b} is outside the advertisable height range`,
-          'invalid-tag',
+          'out-of-domain',
         );
       }
       return { [first]: a, [second]: b } as T;
@@ -235,12 +234,12 @@ function heightPairCodec<T>(
   };
 }
 
-const getHeadersCodec = heightPairCodec<GetHeadersMsg>('getHeaders', [
+export const getHeadersCodec = heightPairCodec<GetHeadersMsg>('getHeaders', [
   'startHeight',
   'maxCount',
 ]);
 
-const getBlocksCodec = heightPairCodec<GetBlocksMsg>('getBlocks', [
+export const getBlocksCodec = heightPairCodec<GetBlocksMsg>('getBlocks', [
   'startHeight',
   'endHeight',
 ]);

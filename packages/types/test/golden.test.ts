@@ -122,8 +122,8 @@ function runRejects(file: string, rejects: RejectVector[]): void {
           expect(thrown).toBeInstanceOf(CodecError);
           expect((thrown as CodecError).failure).toBe(r.failure);
         } else {
-          // Wire's own rejection — and specifically NOT a boundary-check one,
-          // or the vector is testing something other than what it claims.
+          // A ReaderError that is not a CodecError — wire's own rejection
+          // or a per-struct reader's domain refusal, not a boundary check.
           expect(thrown).not.toBeInstanceOf(CodecError);
           expect((thrown as ReaderError).code).toBe(r.code);
         }

@@ -6,6 +6,9 @@ import {
   ByteWriter,
   writeVlqU,
   encodeOrderingBlock,
+  decodeStruct,
+  ReaderError,
+  CodecError,
 } from '@dagsocial/types';
 import {
   blockHash,
@@ -32,6 +35,8 @@ import {
   encodeGetBlocks,
   encodeGetHeaders,
   encodeHeaders,
+  getHeadersCodec,
+  getBlocksCodec,
 } from '../src/sync-codec.js';
 import { decodeFrame } from '../src/frame.js';
 import { MAX_CHAIN_RESPONSE_ITEMS, MAX_SERVE_BODY_BYTES } from '../src/msg-guards.js';
@@ -260,6 +265,21 @@ describe('chain query request encode/decode', () => {
     writeVlqU(w, 200_000_000); // > MAX_ADVERTISED_HEIGHT
     expect(decodeGetHeaders(w.toBytes())).toBeNull();
     expect(decodeGetBlocks(w.toBytes())).toBeNull();
+
+    // The refusal is `out-of-domain`, not a `CodecError` — the heights are
+    // well formed; the domain rule is net's, not the boundary check's.
+    const bytes = w.toBytes();
+    let caught: unknown;
+    try { decodeStruct(getHeadersCodec, bytes); } catch (e) { caught = e; }
+    expect(caught).toBeInstanceOf(ReaderError);
+    expect(caught).not.toBeInstanceOf(CodecError);
+    expect((caught as ReaderError).code).toBe('out-of-domain');
+
+    caught = undefined;
+    try { decodeStruct(getBlocksCodec, bytes); } catch (e) { caught = e; }
+    expect(caught).toBeInstanceOf(ReaderError);
+    expect(caught).not.toBeInstanceOf(CodecError);
+    expect((caught as ReaderError).code).toBe('out-of-domain');
   });
 
   it('rejects a truncated, over-long or non-minimal body', () => {

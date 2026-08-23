@@ -65,14 +65,12 @@ describe('serializeBox', () => {
     // number literally, and must — a corpus deriving its input from the code
     // under test checks nothing.
     //
-    // ⚠ **`not.toBeInstanceOf(CodecError)` is the assertion the code cannot
-    // make.** Two bytes under an *assigned* tag are a complete box at value 0 —
-    // the format's floor — so they parse and throw further in, and `CodecError`
-    // extends `ReaderError` carrying `code: 'invalid-tag'` whatever its
-    // `failure` is (`types/src/codec.ts:193`, the same code `enum8` gives an
-    // unknown tag). So the code alone cannot tell "this tag has no decoding"
-    // from "this tag decodes, into something else"; only the class separates
-    // them.
+    // A tag outside the table is refused by `enum8` with `invalid-tag`; a tag
+    // that decodes into another arm and fails the boundary check is a
+    // `CodecError` carrying `non-canonical` (TYPES_INTERFACE → The boundary
+    // check; WIRE_INTERFACE → ReaderError codes). The code separates the two,
+    // and `not.toBeInstanceOf(CodecError)` is a second pin of the same fact,
+    // not the only one.
     const FIRST_UNASSIGNED_BOX_TAG = Math.max(...Object.values(BOX_TYPE_TAGS)) + 1;
     const bytes = new Uint8Array([FIRST_UNASSIGNED_BOX_TAG, 0x00]); // + a value byte
     let thrown: unknown;

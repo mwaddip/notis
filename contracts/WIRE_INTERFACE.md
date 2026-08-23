@@ -122,6 +122,14 @@ which is diagnostic text and may be reworded at any time.
 | `vlq-overflow` | A VLQ exceeded the safe-integer range or the byte cap. |
 | `array-too-large` | A length prefix exceeded `MAX_ARRAY_LENGTH`. |
 | `position-limit-exceeded` | A read passed a caller-imposed position limit. |
+| `non-canonical` | The bytes decoded, but are not the canonical encoding of what they decoded to — trailing bytes after the schema, a non-minimal VLQ, a decoded value with no encoding, or a per-struct reader that failed in a way that is not a `ReaderError` (no canonical encoding takes that path). Raised only by `@dagsocial/types`' boundary check, as a `CodecError` whose `failure` names the step (TYPES_INTERFACE → The boundary check). No reader in this package raises it. |
+| `out-of-domain` | The bytes are well formed and decode, but the value is outside the field's domain — a length-prefixed payload over its bound, `lpUtf8` bytes that are not UTF-8, a height outside the advertisable range. Raised by per-struct readers above this package (`@dagsocial/types`, `@dagsocial/net`). No reader in this package raises it. |
+
+The union is the one taxonomy every `ReaderError` in the tree carries. A reader above this package
+that refuses bytes for a reason of its own — the boundary check, a field's domain rule, a message
+codec's range — raises this class with a code from this table, so a caller switching on `code` sees
+one set of meanings; `non-canonical` and `out-of-domain` are defined here for that reason, though
+nothing in this package raises them.
 
 The distinction is load-bearing rather than cosmetic. `@dagsocial/net`
 decides what to do with a failed frame from the code: a checksum mismatch
@@ -491,6 +499,8 @@ type ReaderErrorCode =
   | 'vlq-overflow'           // VLQ exceeded 10 bytes or safe integer range
   | 'array-too-large'        // Array length > MAX_ARRAY_LENGTH
   | 'position-limit-exceeded' // Position advanced beyond position limit
+  | 'non-canonical'          // Decoded, but not the canonical encoding of the value — types' boundary check (CodecError)
+  | 'out-of-domain'          // Well formed, but the value is outside the field's domain — readers above wire
 ```
 
 See "ReaderError codes (audit L-15)" above for the normative meanings.

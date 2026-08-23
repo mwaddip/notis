@@ -949,17 +949,10 @@ describe('genesis_proof', () => {
     const decoded = boxRecordFromBytes(boxRecordBytes(makeProofCandidate(atBound), FIXTURE_TX_ID, 0));
     expect((decoded.candidate as CandidateOf<GenesisProofBox>).payload).toEqual(atBound);
 
-    // ⚠ **The CLASS is the assertion, not the code.** `CodecError` extends
-    // `ReaderError` and hands its constructor `'invalid-tag'` whatever its
-    // `failure` is (`codec.ts`), so the code cannot separate a domain refusal
-    // this arm makes from a boundary-check failure on the same bytes — only
-    // `not.toBeInstanceOf(CodecError)` does. The unassigned-tag loop in
-    // `boxRecordFromBytes` and `golden.test.ts`' reject runner split them the
-    // same way.
-    //
-    // `readLpUtf8` is the precedent for the code itself: a domain refusal on
-    // the contents of a length-prefixed field, where `ReaderErrorCode` offers
-    // nothing narrower than "present and wrong, which is not truncation".
+    // The code names the refusal: `out-of-domain` for a well-formed value
+    // outside its domain, `non-canonical` for a boundary-check failure,
+    // `invalid-tag` for a tag outside its table (WIRE_INTERFACE → ReaderError
+    // codes).
     let thrown: unknown;
     try {
       boxRecordFromBytes(boxRecordBytes(makeProofCandidate(overBound), FIXTURE_TX_ID, 0));
@@ -968,7 +961,7 @@ describe('genesis_proof', () => {
     }
     expect(thrown).toBeInstanceOf(ReaderError);
     expect(thrown).not.toBeInstanceOf(CodecError);
-    expect((thrown as ReaderError).code).toBe('invalid-tag');
+    expect((thrown as ReaderError).code).toBe('out-of-domain');
   });
 
   it('still ENCODES an over-bound payload — the refusal is one-way', () => {
@@ -1598,14 +1591,10 @@ describe('boxRecordFromBytes', () => {
     // (TYPES_INTERFACE → Layout — Boxes, "A reject vector must not be pinned to
     // the next free tag").
     //
-    // ⚠ **`not.toBeInstanceOf(CodecError)` is half the assertion.** An
-    // *assigned* tag swapped in here throws too — on the fields it then
-    // misreads — and `CodecError` extends `ReaderError` carrying
-    // `code: 'invalid-tag'` whatever its `failure` is, so the code alone cannot
-    // tell "this tag has no decoding" from "this tag decodes, into something
-    // else, and the boundary check caught the remainder". Only the class
-    // separates them. `golden.test.ts`' reject runner splits the two the same
-    // way.
+    // The code separates them: an unassigned tag carries `invalid-tag`; an
+    // assigned tag swapped in here decodes into another arm and fails the
+    // boundary check as `non-canonical` — a `CodecError` the class assertion
+    // also catches (WIRE_INTERFACE → ReaderError codes).
     //
     // ⛔ **The table has a HOLE as well as a top, and both have to be
     // unreadable.** ⛔ **Tag 2 is reserved and never reassigned**

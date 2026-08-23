@@ -152,14 +152,14 @@
       "name": "utf8/invalid-continuation",
       "codec": "lpUtf8",
       "bytes": "01ff",
-      "code": "invalid-tag",
+      "code": "out-of-domain",
       "note": "0xff starts no UTF-8 sequence. A non-fatal decoder would substitute U+FFFD, mapping two distinct byte strings onto one string — decoded lossily, then re-encoded to different bytes."
     },
     {
       "name": "utf8/truncated-sequence",
       "codec": "lpUtf8",
       "bytes": "02e697",
-      "code": "invalid-tag",
+      "code": "out-of-domain",
       "note": "The first two bytes of a 3-byte sequence, with a length prefix that says the field ends there. The bytes are all present — it is the sequence that is incomplete — so this is a decode fault, not a short read."
     }
   ]

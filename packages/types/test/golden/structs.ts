@@ -311,7 +311,7 @@ const boxContentCodec: ValueCodec<BoxContent> = {
           throw new ReaderError(
             `boxContent: genesis_proof payload is ${payload.length} bytes, over ` +
               `MAX_GENESIS_PROOF_PAYLOAD_BYTES (${MAX_GENESIS_PROOF_PAYLOAD_BYTES})`,
-            'invalid-tag',
+            'out-of-domain',
           );
         }
         return { boxType, value, createdAtBlock, payload };

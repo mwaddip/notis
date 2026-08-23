@@ -182,8 +182,8 @@ Exactly one of:
 
 - **`failure`** — a `CodecError.failure` from the boundary check: `non-canonical`,
   `trailing-bytes`, `unencodable`, `reader-fault`.
-- **`code`** — a `ReaderError.code` raised by `@dagsocial/wire` itself: `truncated`, `invalid-tag`,
-  `vlq-overflow`, `array-too-large`.
+- **`code`** — a `ReaderError` that is not a `CodecError`: wire's own (`truncated`, `invalid-tag`,
+  `vlq-overflow`, `array-too-large`) or a per-struct reader's `out-of-domain`.
 
 The distinction is asserted, not decorative: a `code` vector additionally asserts the error is
 **not** a `CodecError`, so a vector cannot quietly start passing for a different reason than it

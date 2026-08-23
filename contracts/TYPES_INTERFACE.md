@@ -827,10 +827,10 @@ is **no decoding**. Reading the bound as an encode rule as well would make `cano
 partial in a new field, which §Totality permits only where a sentinel would collide with a
 well-formed value — and here it would not, because nothing decodes the bytes back.
 
-The rejection is a `ReaderError` with code `invalid-tag`. `ReaderErrorCode` is `@dagsocial/wire`'s
-and has no member for a domain refusal; `readLpUtf8` already uses `invalid-tag` for the same shape —
-a length-prefixed field whose *contents* are out of domain — and `CodecError` states the general
-argument for the choice.
+The rejection is a `ReaderError` with code `out-of-domain` (WIRE_INTERFACE → ReaderError codes): the
+bytes are well formed and the value is outside the field's domain — the code `readLpUtf8` gives a
+length-prefixed field whose contents are not UTF-8, and the one `@dagsocial/net` gives a height
+outside the advertisable range.
 
 ### EmissionBox
 
@@ -1324,6 +1324,14 @@ callers must remember to invoke is the shape that produced this defect class in 
 4. **Callers convert `ReaderError` into a verdict.** The codec signals by throwing; the no-panic
    invariant is discharged at each boundary. Node's apply funnel catches explicitly and returns
    `false` rather than relying on its outer totality handler.
+
+**The rejection is a `CodecError`** — a `ReaderError` whose `code` is `non-canonical` (WIRE_INTERFACE →
+ReaderError codes) and whose `failure` names the step: `reader-fault` (step 1 — the per-struct reader
+failed in a way that is not a `ReaderError`), `trailing-bytes` (step 2), `unencodable` and
+`non-canonical` (step 3). A `ReaderError` the per-struct reader raises itself — a short read, a tag
+outside its table, a well-formed value outside the field's domain (`out-of-domain`) — passes through
+unwrapped. The class separates "not a canonical encoding" from "the reader refused"; the code
+separates both from wire's own refusals, so a caller switching on `code` never has to know the class.
 
 ### Primitives
 
