@@ -237,6 +237,10 @@ net.setBlocksHandler(pullBlocksHandler(net));
 const guardedGetOrderingBlock = guardStoreRead(getOrderingBlock);
 net.setHeadersHandler(guardedGetOrderingBlock);
 
+// The tip height net advertises in handshakes and SyncInfo — the store's
+// MAX(height), unwrapped: it decodes no row (NODE_INTERFACE → Sync handlers).
+net.setChainHeightProvider(getCurrentHeight);
+
 // NODE_INTERFACE → "Backfill after sync": four seams the net layer reads bodies through.
 net.setPostBodyProvider((id: string) => {
   const result = getPost(id);

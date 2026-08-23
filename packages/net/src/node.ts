@@ -147,6 +147,7 @@ export function decodeHandshakePayload(magic: number, data: Uint8Array): Handsha
 export class LazySyncStore implements SyncStore {
   private _getOrderingBlock: ((height: number) => unknown | null) | null = null;
   private _blocksHandler: BlocksHandlerFn | null = null;
+  private _chainHeightProvider: (() => number) | null = null;
 
   /** Validators reach this class for one reason: `serializeOrderingBlock` serves a stored row. */
   constructor(private readonly validators: NetValidators) {}
@@ -157,6 +158,10 @@ export class LazySyncStore implements SyncStore {
 
   setBlocksHandler(fn: BlocksHandlerFn): void {
     this._blocksHandler = fn;
+  }
+
+  setChainHeightProvider(fn: () => number): void {
+    this._chainHeightProvider = fn;
   }
 
   getOrderingBlock(height: number): unknown | null {
@@ -203,11 +208,7 @@ export class LazySyncStore implements SyncStore {
   }
 
   chainHeight(): number {
-    if (!this._getOrderingBlock) return 0;
-    // Walk up from 1 until we find a gap
-    let h = 1;
-    while (this._getOrderingBlock(h)) h++;
-    return h - 1;
+    return this._chainHeightProvider?.() ?? 0;
   }
 
   getAnchors(): { height: number; blockId: string }[] {
@@ -1556,6 +1557,13 @@ export class NetNode {
   setHeadersHandler(getBlock: (height: number) => OrderingBlock | null): void {
     this.syncStore.setOrderingBlockFn((h) => getBlock(h));
     this.headersProvider = getBlock;
+  }
+
+  /**
+   * NET_INTERFACE → Sync Handler Registration
+   */
+  setChainHeightProvider(cb: () => number): void {
+    this.syncStore.setChainHeightProvider(cb);
   }
 
   // -----------------------------------------------------------------------

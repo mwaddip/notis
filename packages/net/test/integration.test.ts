@@ -280,6 +280,7 @@ describe('Two-node integration', () => {
       expect(r.valid, `fixture block h=${block.header.height}: ${r.error}`).toBe(true);
     }
     nodeA.setHeadersHandler((h) => chain.get(h) ?? null);
+    nodeA.setChainHeightProvider(() => 3);
     await nodeA.start();
 
     const multiaddrs = nodeA.libp2pNode?.getMultiaddrs() ?? [];
@@ -297,16 +298,12 @@ describe('Two-node integration', () => {
 
     expect(headers.map((h) => h.height)).toEqual([3, 2, 1]);
 
-    // Late binding, over the wire and on a node that is already serving: the
-    // handler reads the provider per request, so replacing it takes effect
-    // without re-registering anything (NET_INTERFACE → Sync Handler
-    // Registration: "a later call replaces the delegate").
-    //
-    // The replacement still answers a contiguous chain from height 1. Serving
-    // only height 2 would report a chain height of 0 — chainHeight() walks up
-    // from 1 through this same provider and stops at the first gap — and the
-    // empty result would be measuring that clamp instead of the swap.
+    // Late binding: replacing the provider takes effect without re-registering
+    // anything (NET_INTERFACE → Sync Handler Registration → "Handler setters
+    // are order-independent"). The fixture keeps them consistent as a node's
+    // store does by construction.
     nodeA.setHeadersHandler((h) => (h <= 2 ? chain.get(h) ?? null : null));
+    nodeA.setChainHeightProvider(() => 2);
     const afterSwap = await nodeB.requestHeaders(3, 3, nodeA.peerId());
 
     expect(afterSwap.map((h) => h.height)).toEqual([2, 1]);

@@ -11,8 +11,9 @@ import {
   verifyPostBody,
 } from '@dagsocial/validation';
 import { NetNode } from '../src/node.js';
-import { buildHandshakeFrame } from '../src/handshake.js';
+import { buildHandshakeFrame, parseHandshakeBody, validateHandshake } from '../src/handshake.js';
 import type { HandshakeResult } from '../src/handshake.js';
+import { decodeFrame } from '../src/frame.js';
 import { PeerState } from '../src/types.js';
 import type { NetConfig, NetValidators } from '../src/types.js';
 import type { PeerManager } from '../src/peer-mgr.js';
@@ -70,6 +71,8 @@ type StreamHandler = (arg: {
  */
 function makeHandshakeHarness(opts: {
   headersHandler?: (height: number) => OrderingBlock | null;
+  chainHeight?: number;
+  chainHeightProvider?: () => number;
   sinkThrows?: boolean;
 } = {}) {
   const net = new NetNode(makeConfig(), validators);
@@ -96,9 +99,12 @@ function makeHandshakeHarness(opts: {
     connectedAt: Date.now(),
   });
 
-  // Public door. Sets the block provider, and — the point of the option —
-  // wires `chainHeight()` to node's callback through it.
   if (opts.headersHandler) net.setHeadersHandler(opts.headersHandler);
+  if (opts.chainHeightProvider) net.setChainHeightProvider(opts.chainHeightProvider);
+  else if (opts.chainHeight !== undefined) {
+    const h = opts.chainHeight;
+    net.setChainHeightProvider(() => h);
+  }
 
   // The stub is passed in, not read off the instance: the registrars take the
   // libp2p node as a parameter. It is also assigned above, for the paths that
@@ -255,13 +261,13 @@ describe('inbound handshake handler — the outer span', () => {
 
 describe('inbound handshake handler — our own reply', () => {
   it('attributes a throwing store callback to the store, not to the handshake', async () => {
-    // `buildOurHandshake` reads `chainHeight()`, which walks node's registered
-    // block callback. Folded into the outer catch it would read as a handshake
-    // failure, sending whoever read the log to the wrong subsystem.
+    // `buildOurHandshake` reads `chainHeight()` via the height provider.
+    // Folded into the outer catch it would read as a handshake failure,
+    // sending whoever read the log to the wrong subsystem.
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { send } = makeHandshakeHarness({
-      headersHandler: () => {
+      chainHeightProvider: () => {
         throw new Error('store exploded');
       },
     });
@@ -281,8 +287,7 @@ describe('inbound handshake handler — our own reply', () => {
   });
 
   it('answers a good handshake with our own frame, and marks the peer Active', async () => {
-    // Positive control: the extra span did not break the reply.
-    const { send, peerMgr, peerId } = makeHandshakeHarness({ headersHandler: () => null });
+    const { send, peerMgr, peerId } = makeHandshakeHarness({ chainHeight: 0 });
 
     const written = await send(validHandshakeFrame());
 
@@ -294,7 +299,7 @@ describe('inbound handshake handler — our own reply', () => {
   it('names a sink failure on the reply as a handler failure, not a store one', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const { send } = makeHandshakeHarness({ headersHandler: () => null, sinkThrows: true });
+    const { send } = makeHandshakeHarness({ chainHeight: 0, sinkThrows: true });
 
     await send(validHandshakeFrame());
 
@@ -305,5 +310,18 @@ describe('inbound handshake handler — our own reply', () => {
     expect(errSpy).not.toHaveBeenCalled();
     warnSpy.mockRestore();
     errSpy.mockRestore();
+  });
+
+  it('carries the height provider value in the reply chainHeight field', async () => {
+    const { send } = makeHandshakeHarness({ chainHeight: 55 });
+
+    const written = await send(validHandshakeFrame());
+
+    expect(written).toHaveLength(1);
+    const frame = decodeFrame(MAGIC, written[0]!);
+    const raw = parseHandshakeBody(frame.body);
+    const result = validateHandshake(raw, [PROTOCOL_VERSION]);
+    expect(result.ok).toBe(true);
+    expect(result.peerHeight).toBe(55);
   });
 });

@@ -83,6 +83,9 @@ const validators: NetValidators = {
 function storeServing(blocks: Map<number, unknown>): LazySyncStore {
   const store = new LazySyncStore(validators);
   store.setOrderingBlockFn((h) => blocks.get(h) ?? null);
+  let max = 0;
+  for (const h of blocks.keys()) if (h > max) max = h;
+  store.setChainHeightProvider(() => max);
   return store;
 }
 
@@ -254,6 +257,42 @@ describe('NetNode.setHeadersHandler wiring', () => {
 
     expect(store.getOrderingBlockId(7)).toBe(blockHash(header));
     expect(store.getOrderingBlockId(8)).toBeNull();
+  });
+});
+
+describe('setChainHeightProvider wiring', () => {
+  it('chainHeight reads the height provider, not the headers provider', () => {
+    const store = new LazySyncStore(validators);
+    let headersProviderCalls = 0;
+    let heightProviderCalls = 0;
+    store.setOrderingBlockFn((h) => { headersProviderCalls++; return h <= 5 ? {} : null; });
+    store.setChainHeightProvider(() => { heightProviderCalls++; return 42; });
+
+    const result = store.chainHeight();
+
+    expect(result).toBe(42);
+    expect(heightProviderCalls).toBe(1);
+    expect(headersProviderCalls).toBe(0);
+  });
+
+  it('returns 0 when no height provider is set', () => {
+    const store = new LazySyncStore(validators);
+    expect(store.chainHeight()).toBe(0);
+  });
+
+  it('a later setChainHeightProvider replaces the delegate', () => {
+    const store = new LazySyncStore(validators);
+    store.setChainHeightProvider(() => 10);
+    expect(store.chainHeight()).toBe(10);
+    store.setChainHeightProvider(() => 99);
+    expect(store.chainHeight()).toBe(99);
+  });
+
+  it('NetNode.setChainHeightProvider forwards to the sync store', () => {
+    const net = new NetNode(config, validators);
+    net.setChainHeightProvider(() => 77);
+    const store = (net as unknown as { syncStore: LazySyncStore }).syncStore;
+    expect(store.chainHeight()).toBe(77);
   });
 });
 
