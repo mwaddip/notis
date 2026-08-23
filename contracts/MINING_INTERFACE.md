@@ -2,7 +2,7 @@
 
 **Component:** `@dagsocial/node` (mining subsystem)
 **Protocol version:** 2
-**Last updated:** 2026-08-13
+**Last updated:** 2026-08-23
 
 ## Scope
 
@@ -114,8 +114,8 @@ verifyOrderingBlockPoW(header: BlockHeader): boolean
    (no-panic — returns `false`, never throws)
 2. `preimage = computePowHash(header)` (as above)
 3. `hash = blake2b512(preimage || encodeLE64(header.powNonce)).subarray(0, 32)`
-4. `meetsPowTarget(hash, powTarget(header.powTargetBits))` — the shared admission rule
-   (`VALIDATION_INTERFACE § powTarget / meetsPowTarget`), not a local bit count
+4. `meetsPowTarget(hash, orderingPowTarget(header.powTargetBits))` — the shared admission rule
+   (`VALIDATION_INTERFACE → meetsPowTarget`, `→ orderingPowTarget`), not a local bit count
 
 ## Difficulty Schedule
 
@@ -580,7 +580,7 @@ script; deployed via `scripts/dagsocial-miner.service`):
    count** — that unboundedness is what lets the node withhold for as long as *The
    peer-readiness gate* requires without any miner-side change
 2. Loop: `nonce++`, `hash = blake2b512(hex2buf(powPreimage) || encodeLE64(nonce))`,
-   test with its **own mirrored copy** of `meetsPowTarget` against a `powTarget` hoisted
+   test with its **own mirrored copy** of `meetsPowTarget` against an `orderingPowTarget` hoisted
    out of the loop. The script stays standalone — `node:crypto` only, no build step, because
    the machine that mines is not required to build the workspace — so agreement with
    `@dagsocial/validation` is enforced by a mirror test that extracts both declarations by

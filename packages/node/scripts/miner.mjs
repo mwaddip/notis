@@ -23,8 +23,7 @@ const DUTY_WINDOW_MS = 1000;
 // `@dagsocial/validation` — VALIDATION_INTERFACE → orderingPowTarget → Mirrors.
 //
 // It expands a header target, so the half it mirrors is `orderingPowTarget`, in
-// units of 1/256 of a bit. `public/index.html` mirrors `powTarget` instead: that
-// page performs post PoW only, which is fixed difficulty in whole bits.
+// units of 1/256 of a bit.
 // ---------------------------------------------------------------------------
 
 function encodeLE64(n) {

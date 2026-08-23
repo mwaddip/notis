@@ -253,7 +253,7 @@ export const MEMPOOL_CREDIT_SHARE_PCT = 50;
 export const MIN_FEE_RATE_PER_BYTE = 0n;
 
 // Ordering block PoW — difficulty in units of 1/256 of a bit, domain [0, 65536]
-// (VALIDATION_INTERFACE → orderingPowTarget). Post PoW is not in these units.
+// (VALIDATION_INTERFACE → orderingPowTarget).
 //
 // 5984/256 = 23.375 bits — 23 + 3/8, which these units carry exactly — or ≈10.88M
 // hashes, a 60s solve at one core's measured rate. No whole bit expresses that

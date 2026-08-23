@@ -1,7 +1,7 @@
 # DAGsocial Architecture
 
 **Protocol version:** 1
-**Last updated:** 2026-08-13
+**Last updated:** 2026-08-23
 
 ## Status markers — the convention for every contract in this directory
 
@@ -2060,7 +2060,7 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   > ✅ **Two of the three limbs hold, and the third is unmeasured.**
   > - *Allocation.* `readArray` bounds on `MAX_ARRAY_LENGTH` **and** on the bytes remaining
   >   before allocating (`wire/src/reader.ts`), and `cumulativeWork` skips any `powTargetBits`
-  >   outside `powTarget`'s domain (`VALIDATION_INTERFACE → blockWork / cumulativeWork`).
+  >   outside `orderingPowTarget`'s domain (`VALIDATION_INTERFACE → blockWork / cumulativeWork`).
   >   Neither allocates on attacker-chosen input.
   > - *Casts.* The sync decode boundary shape-checks every field and never throws; malformed
   >   CBOR collapses to `null` and the returned object is rebuilt from checked fields only

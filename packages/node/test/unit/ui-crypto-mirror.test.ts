@@ -4,7 +4,7 @@ import { fixturePostId } from '../helpers.js';
  * byte-identically to `@dagsocial/types` — TYPES_INTERFACE → Canonical field
  * encoding, Layout — Post, Layout — Boxes, Layout — UtxoTransaction.
  *
- * The demo UI (`public/index.html`) mines PoW, signs, and computes post, box and
+ * The demo UI (`public/index.html`) signs and computes post, box and
  * transaction ids in the browser; the node verifies all three. If the two
  * encodings drift, every post and every transaction minted from the UI is
  * rejected — and no unit test in either package would notice, because neither
@@ -1661,9 +1661,8 @@ describe('demo UI byte-construction completeness audit', () => {
   });
 
   it('the mirror still names the payload encoder and the index writer', () => {
-    // ⛔ The successors to the PoW tail/hash/predicate row. These four names are
-    // what the post path now depends on, and a mirror that stopped extracting
-    // one of them would silently stop comparing it.
+    // These four names are what the post path depends on, and a mirror that
+    // stopped extracting one of them would silently stop comparing it.
     for (const name of ['postFieldBytes', 'computePostId', 'u32BE', 'buildPostTx']) {
       expect(MIRRORED_FUNCTIONS).toContain(name);
       expect(RETURNED as readonly string[]).toContain(name);
