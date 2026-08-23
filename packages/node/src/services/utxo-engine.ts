@@ -1830,10 +1830,10 @@ export function validateTx(
  * block path cannot derive different ids for the same transaction.
  */
 export function materializeOutput(box: AnyBoxCandidate, txId: string, index: number): AnyBox {
-  // The destructure still names all three keys even though `AnyBoxCandidate`
-  // declares none of them: outputs arrive through `jsonToTx`'s `convertBox`
-  // (HTTP JSON) and the positional decoders, so the runtime shape is not
-  // bound by the type.
+  // The destructure strips the three provenance keys from a JSON-built
+  // candidate that may carry them (`convertBox` copies whatever the client
+  // sent, so the runtime shape is not bound by the type); a positionally
+  // decoded candidate has none — the reader's layout determines the fields.
   const { id: _id, txId: _txId, index: _index, ...candidate } = box as AnyBox;
   const withProvenance = { ...candidate, txId, index } as AnyBox;
   return { ...withProvenance, id: computeBoxId(withProvenance) } as AnyBox;
