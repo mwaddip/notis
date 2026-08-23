@@ -93,7 +93,7 @@ Event-specific fields are additional top-level keys.
 ### post_received
 **Level:** INFO
 **Fields:** `post_id` (string), `source` (string: "local" or the relaying peer
-  id — which may be `''`, NET_INTERFACE → the `fromPeerId` caveat; for a pulled body, the
+  id — which may be `''`, NET_INTERFACE → "fromPeerId is not guaranteed to be a peer id"; for a pulled body, the
   serving peer), `via` (string: "packet" — the body arrived with its transaction, locally or
   by gossip — or "pull" — a placeholder's body arrived by id, NODE_INTERFACE → Store Interface
   → Posts DAG, "Backfill after sync")
