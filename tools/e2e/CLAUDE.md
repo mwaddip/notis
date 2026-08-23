@@ -112,8 +112,9 @@ what every `pnpm -r test` in the gate pays.
 - ⛔ **`pnpm --filter`, never `pnpm -r`** — the tree is shared, and `-r` compiles a sibling's
   uncommitted work into `dist/`. ⚠ **`git status --short packages/` before building**, and say what
   the tree held: a sibling's uncommitted edit rides into the `dist` this suite spawns.
-- **Comments cite `contracts/` only, by prose heading** — grep `^#` in the contract before citing;
-  never a phase tag, never this file, never the spec. Present tense; no narration of what code used to do.
+- **Comments cite `contracts/` only, in the form the root `CLAUDE.md → Comment style` fixes** — a heading's
+  prose name, or a bold lead in quotes; grep the contract before citing and paste what you find. Never a
+  marker, never a phase tag, never this file, never the spec. Present tense; no narration of what code used to do.
 - **Commits:** `git add <explicit paths>` and `git commit -m "…" -- <the same paths>` (pathspec LAST);
   `git show --stat HEAD` after each; `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>` trailer;
   title `type(scope): plain summary` naming the subject; body ≤ ~800 chars describing what the change

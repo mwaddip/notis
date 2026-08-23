@@ -151,7 +151,7 @@ pruning the old is optional hygiene. The type field is what keeps structured con
 unambiguous: a `regular` post whose text looks like a profile document is just text.
 
 Usernames are not a post type — they leave the post model for the UTXO ledger
-(ARCHITECTURE → Usernames) — and `display_name` is a profile-document field or the
+(ARCHITECTURE → Username claims) — and `display_name` is a profile-document field or the
 username's concern; avatars and polls are not post types.
 
 ### Hashing functions
@@ -2149,7 +2149,6 @@ Naming follows the positional format's `...Bytes` family (`txIdBytes`, `boxConte
 
 **The delegation is byte-identical by construction** — same writers, same order — so it is not
 itself a consensus change. The consensus change is node's: the two leaf preimages stop being JSON.
-See `NODE_INTERFACE` → C7.
 
 ### Sizing without encoding
 

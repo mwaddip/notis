@@ -174,8 +174,8 @@ describe('stateRoot verification (P3 acceptance)', () => {
     const blockApply = await importBlockApply();
     const preDigest = digestHex(handle);
 
-    // The producer's no-prover fallback (NODE_INTERFACE: "A producer with no
-    // prover initialized writes EMPTY_STATE_ROOT"). A verifier that does have
+    // The producer's no-prover fallback (NODE_INTERFACE → Post-block
+    // stateRoot). A verifier that does have
     // one must reject it — the contract says so explicitly.
     const rootless = await makeApplicableBlock({ stateRoot: EMPTY_STATE_ROOT });
     expect(rootless.header.stateRoot).toBe(EMPTY_STATE_ROOT);

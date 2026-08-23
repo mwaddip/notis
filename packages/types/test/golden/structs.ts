@@ -459,7 +459,7 @@ function parsePrune(j: Record<string, unknown>): PruneEntry {
 }
 
 // ---------------------------------------------------------------------------
-// The element preimage — TYPES_INTERFACE → Layout — Merkle leaf preimages
+// The element preimage — TYPES_INTERFACE → Layout — Merkle leaf preimages are the struct's own wire bytes
 // ---------------------------------------------------------------------------
 //
 // `serializePruneEntry` is the one element preimage left under `utxoTxRoot` —

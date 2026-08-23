@@ -7,7 +7,7 @@ import {
 } from './journal.js';
 
 // ---------------------------------------------------------------------------
-// Like-records (NODE_INTERFACE "Like-records")
+// Like-records (NODE_INTERFACE → Like-records)
 //
 // `(liker, targetPostId)` pairs written ONLY at block application, never by
 // an HTTP route. Content-layer consensus state, the `block_topology` tier:

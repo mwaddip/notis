@@ -695,8 +695,8 @@ describe('block-creator', () => {
       // worst-case coinbase. The settlement's value depends on the fill, so it
       // cannot be built until the body is chosen; what the fill budgets against
       // is its baseline, and `entryByteCost` carries each entry's marginal
-      // growth on top (MEMPOOL_INTERFACE → the settlement replaces
-      // `coinbaseOutputs` here). These fillers add nothing to it — no fee box,
+      // growth on top (MEMPOOL_INTERFACE → The fill budget is bytes). These
+      // fillers add nothing to it — no fee box,
       // no bond — so the baseline is exact here.
       bc.startBlockCreator(testConfig);
       const full = bc.getCurrentTemplate();
@@ -861,7 +861,7 @@ describe('block-creator', () => {
         ...candidate,
         value: i === 0 ? out - share * BigInt(padding - 1) : share,
       }));
-      // Zero fee means no box (NODE_INTERFACE → the credit transition row).
+      // Zero fee means no box (NODE_INTERFACE → Legal box transitions).
       if (fee > 0n) {
         outputs.push({ boxType: 'fee' as const, value: fee,  createdAtBlock: 0,});
       }

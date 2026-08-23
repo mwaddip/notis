@@ -349,8 +349,8 @@ const KARMA_MINIMUM = 10n;
 const CREDIT_SCALE = 100000000n;
 
 /**
- * Effective karma — the one implementation (VALIDATION_INTERFACE → One
- * implementation per rule). Mirrors decay.ts:effectiveKarma.
+ * Effective karma — the one implementation (VALIDATION_INTERFACE → "One
+ * implementation per rule"). Mirrors decay.ts:effectiveKarma.
  */
 function effectiveKarma(faceTotal, lastActivityBlock, lastDecayBlock, height) {
   if (height <= KARMA_STALE_THRESHOLD_BLOCKS) return faceTotal;

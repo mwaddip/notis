@@ -291,8 +291,8 @@ describe('block creator vs a body its own mutation phase rejects', () => {
   });
 
   it('a creator with no prover still produces a block carrying EMPTY_STATE_ROOT', async () => {
-    // The contractual test-only fallback (NODE_INTERFACE "Post-block
-    // stateRoot"): no prover means nothing to speculate against, and the
+    // The contractual test-only fallback (NODE_INTERFACE → Post-block
+    // stateRoot): no prover means nothing to speculate against, and the
     // creator mines over EMPTY_STATE_ROOT rather than stalling. Discriminating
     // the fatal arm must not have collapsed this one into it.
     const db = await importDb();

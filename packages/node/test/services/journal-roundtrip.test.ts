@@ -51,7 +51,7 @@ import {
 
 // ---------------------------------------------------------------------------
 // Spec B P1 acceptance: per-mutation-class apply → revert → re-apply
-// round-trips (NODE_INTERFACE "Rollback (revertBlock)").
+// round-trips (NODE_INTERFACE → "Rollback").
 //
 // Every test drives a REAL block through applyOrderingBlock — the funnel — so
 // the journal under test is the one the store choke point recorded, never a

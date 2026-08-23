@@ -309,7 +309,7 @@ function pruneEntryByteLength(e: PruneEntry): number {
  *
  * **The block's one committed body.** Field order here is the same order
  * `computeUtxoTxRoot` lays its leaves in, and that order is normative
- * (TYPES_INTERFACE → OrderingBlock) — the wire form and the committed form walk
+ * (TYPES_INTERFACE → Ordering block) — the wire form and the committed form walk
  * the sections in step rather than each choosing for itself.
  *
  * ⛔ **THREE SECTIONS.** Coinbase outputs are outputs of the block's settlement

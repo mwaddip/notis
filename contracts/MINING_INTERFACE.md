@@ -336,8 +336,8 @@ that is the point of stating it income-shaped.
 ⛔ **`fees` is a sum over boxes, and resolves no inputs.** Every fee in the block is written
 down in it, so the total is a property of the body's own bytes. **Block application consumes
 the fee boxes in the block that created them**; the pair nets out of the prover feed, so they
-never reach the AVL tree and `stateRoot` is unaffected (NODE_INTERFACE → the prover feed
-derivation).
+never reach the AVL tree and `stateRoot` is unaffected (NODE_INTERFACE → Block Journal → "One log,
+not parallel arrays").
 
 ### On block creation (miner):
 1. Fill the body **first** — the fees and the actor count are properties of what was

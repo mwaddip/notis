@@ -437,9 +437,8 @@ export function boxRecordBytes(candidate: BoxCandidate, txId: TxId, index: numbe
  * **A writer without a reader is what lets a format drift.** Node's AVL store
  * holds these bytes and has to parse them back; a reader written over there
  * would put the box layout in two packages, and the two would be free to
- * disagree about field order with nothing to catch it — the defect
- * `NODE_INTERFACE`'s discriminator note records, arrived at from the other
- * direction. Every other wire struct in this repo is a pair; this one is too.
+ * disagree about field order with nothing to catch it
+ * (NODE_INTERFACE → Two entity kinds, from the other direction). Every other wire struct in this repo is a pair; this one is too.
  *
  * Goes through `decodeStruct`, so it carries the whole four-part boundary check
  * (TYPES_INTERFACE → The boundary check): schema projection, exhaustion, and
@@ -522,8 +521,8 @@ export function computeCandidateBoxId(candidate: BoxCandidate, txId: TxId, index
  * position would put ordering back into *identity*, which is the failure
  * class M-12 closed for the AVL feed.
  *
- * Subject bytes are the caller's, per `NODE_INTERFACE.md`'s reason/subject
- * table; this package never sees a postId.
+ * Subject bytes are the caller's (NODE_INTERFACE → Reason and subject table);
+ * this package never sees a postId.
  *
  * `genesis-committee` keys on the **member** — the raw 32-byte public key,
  * one karma box per `genesisCommitteeKeys` entry, drawn out of the karma
@@ -576,8 +575,8 @@ const MINT_REASON = enum8<MintReason>('mintReason', {
  * derivation path rather than two id schemes.
  *
  * `subject` bytes are the **caller's** to encode — this package does not know
- * what a postId or a voucher pair is; the per-reason encoding table belongs to
- * `NODE_INTERFACE.md`. It is **length-prefixed** here, and that is what makes
+ * what a postId or a voucher pair is (NODE_INTERFACE → Reason and subject
+ * table). It is **length-prefixed** here, and that is what makes
  * uniqueness *within* a reason structural, the same way the tag makes it
  * structural *across* reasons. Appended raw, two different subjects could
  * concatenate identically, and every per-reason subject encoding would have to
@@ -629,7 +628,7 @@ export function computeBoxId(box: Omit<BoxBase, 'id'>): BoxId {
 export interface BoxCandidate {
   // `'like'` and `'invite'` are tracked reservations (TYPES_INTERFACE →
   // Tracked reservations). Tag 2 is a tracked hole (TYPES_INTERFACE →
-  // tag rules); `BOX_TYPE_TAGS` leaves it out.
+  // Tracked reservations); `BOX_TYPE_TAGS` leaves it out.
   boxType: 'karma' | 'credit' | 'genesis_proof' | 'bond' | 'post_lock' | 'vouch'
     | 'emission' | 'treasury' | 'fee' | 'karma_pool' | 'like_accrual' | 'vouch_escrow';
   value: bigint;        // integer base units, uniform across box types; value < 2^64 is the `vlqU` wire domain
@@ -678,7 +677,7 @@ export interface BoxCandidate {
  *
  * `id` stays optional: producers build the candidate-plus-provenance object and
  * hash *it* to get the id, so the value is genuinely absent for one expression.
- * Every stored box has one — see the invariant in `TYPES_INTERFACE.md`.
+ * Every stored box has one (TYPES_INTERFACE → BoxId).
  */
 export interface BoxBase extends BoxCandidate {
   id?: BoxId;           // Computed via computeBoxId; absent only mid-construction
@@ -721,10 +720,9 @@ export interface CreditBox extends BoxBase {
  * The box that makes one network's genesis state differ from another's.
  *
  * **The type is barred from both transaction positions** (TYPES_INTERFACE →
- * GenesisProofBox), and neither half is this package's: the output rule is
- * `VALIDATION_INTERFACE`'s, because a candidate output is a whole box and
- * typing it reads nothing, and the input rule is `NODE_INTERFACE`'s, because
- * `tx.inputs` are box id strings and typing one requires the UTXO set.
+ * GenesisProofBox), and neither half is this package's (VALIDATION_INTERFACE →
+ * genesis_proof may not be a transaction output; NODE_INTERFACE → Genesis
+ * proof boxes are never in a transaction).
  *
  * `value` is `0n`: the box holds neither karma nor credits, so it never enters
  * supply accounting.
@@ -795,7 +793,7 @@ export interface BondBox extends BoxBase {
  *
  * ⚠ **Do not re-add it.** It looks obviously useful and it is unbuildable. Node
  * keeps the lock→post mapping as **derived state**, written at apply by every
- * node identically (NODE_INTERFACE → Post-lock vesting), which is the same shape
+ * node identically (NODE_INTERFACE → "post-lock vesting"), which is the same shape
  * P2-D used for like settlement.
  */
 export interface PostLockBox extends BoxBase {

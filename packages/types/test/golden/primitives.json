@@ -90,7 +90,7 @@
       "value": { "$special": "NaN" },
       "bytes": "ffffffffffffffffff01",
       "decode": false,
-      "note": "The all-ones u64 sentinel — unreachable from a valid `number` field, so a malformed value never collides with a well-formed one (TYPES_INTERFACE -> Totality)."
+      "note": "The all-ones u64 sentinel — unreachable from a valid `number` field, so a malformed value never collides with a well-formed one (TYPES_INTERFACE → Totality)."
     },
     {
       "name": "vlqU/sentinel-infinity",
@@ -248,7 +248,7 @@
       "codec": "vlqU64",
       "value": "18446744073709551615",
       "bytes": "ffffffffffffffffff01",
-      "note": "⚠ These are the sentinel's bytes, and here they are a LEGAL value. That is precisely why the bigint writer throws instead of sentinelling — TYPES_INTERFACE -> Totality."
+      "note": "⚠ These are the sentinel's bytes, and here they are a LEGAL value. That is precisely why the bigint writer throws instead of sentinelling — TYPES_INTERFACE → Totality."
     },
 
     {

@@ -429,7 +429,7 @@ describe('positional serialization', () => {
       // a missing one — shows up as a length delta, which is what makes "the
       // sections are these three, in this order" a measurement rather than an
       // inspection. Field order is also the normative LEAF order for
-      // `utxoTxRoot` (TYPES_INTERFACE → OrderingBlock).
+      // `utxoTxRoot` (TYPES_INTERFACE → Ordering block).
       //
       // ⛔ **The count is the whole of what this assertion is for**: a writer that
       // emitted a fourth section would be four bytes here, and a reader that
@@ -671,7 +671,7 @@ describe('positional serialization', () => {
     it('Post: the five-field post layout pins to POST_COMMIT_ID', () => {
       // ⛔ Four recorded values of this fixture's id — three earlier layouts
       // and the current one. This pins the five-field post layout
-      // (TYPES_INTERFACE → Layout — Post).
+      // (TYPES_INTERFACE → Layout — PostCommit).
       const bytes = encodePostCommit(PINNED_COMMIT);
       // The key name cannot appear: there are no key names.
       expect(hex(bytes)).not.toContain(Buffer.from('likeBoxes', 'utf8').toString('hex'));

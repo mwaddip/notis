@@ -186,7 +186,7 @@ export function getPost(id: string): StoredPost | Stump | PrunedTombstone | null
 export function getPrunedTombstone(id: string): PrunedTombstone | null {
   const db = getDb();
 
-  // NODE_INTERFACE → Resolution order step 3: walk parent_refs from block_topology
+  // NODE_INTERFACE → Resolution order for a post id, step 3: walk parent_refs from block_topology
   // until a dag_stumps id is found. The chain is bounded by confirmed topology depth.
   const topoRow = db
     .prepare('SELECT * FROM block_topology WHERE post_id = ?')

@@ -151,7 +151,7 @@ export class ByteReader {
     }
     // An element reader consumes at least one byte, so a count above the bytes
     // remaining cannot decode — WIRE_INTERFACE → "MAX_ARRAY_LENGTH bounds the
-    // count, not the memory".
+    // count; the bytes remaining bound the memory".
     if (length > this.remaining) {
       throw new ReaderError(
         `readArray: length ${length} exceeds ${this.remaining} byte(s) remaining`,

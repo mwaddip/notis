@@ -71,11 +71,10 @@ setMempoolCap(config.maxMempoolEntries);
 // Ahead of genesis seeding, which commits its boxes to this tree.
 //
 // There is deliberately no rebuild-from-UTXO-set path here (NODE_INTERFACE →
-// the SUPERSEDED note on `bootstrapAvlProver`, 2026-08-07). Such a rebuild is
+// AVL+ State Root → "AVL+ tree shape is history-dependent"). Such a rebuild is
 // unsound: AVL+ tree shape is history-dependent, so a tree rebuilt by
-// re-inserting a set forks against one grown incrementally to the same content;
-// the note carries the measurement behind that. Nor
-// would a rebuild be reachable — under @ergots/avltree 0.4.0 the
+// re-inserting a set forks against one grown incrementally to the same content.
+// Nor would a rebuild be reachable — under @ergots/avltree 0.4.0 the
 // PersistentBatchAVLProver constructor writes the empty-tree version to empty
 // storage and throws if `version()` is still null after, so an
 // empty-storage trigger is statically false. The sound restart path is the
@@ -108,7 +107,7 @@ try {
 }
 
 // 2. Create NetNode
-// The three discovery knobs are passed explicitly: NET_INTERFACE.md documents
+// The three discovery knobs are passed explicitly: NET_INTERFACE documents
 // their defaults as binding only when node supplies them — unset, net's
 // internal fallbacks silently govern instead.
 const net = new NetNode(
@@ -238,7 +237,7 @@ net.setBlocksHandler(pullBlocksHandler(net));
 const guardedGetOrderingBlock = guardStoreRead(getOrderingBlock);
 net.setHeadersHandler(guardedGetOrderingBlock);
 
-// NODE_INTERFACE → Backfill after sync: four seams the net layer reads bodies through.
+// NODE_INTERFACE → "Backfill after sync": four seams the net layer reads bodies through.
 net.setPostBodyProvider((id: string) => {
   const result = getPost(id);
   if (!isLivePost(result)) return null;

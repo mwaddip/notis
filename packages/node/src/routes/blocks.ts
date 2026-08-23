@@ -31,7 +31,7 @@ export interface BlocksDeps {
   networkType: string;
   /**
    * Served because a per-network consensus value a client reproduces is served
-   * by the node, never held as a client constant (NODE_INTERFACE §Status). No
+   * by the node, never held as a client constant (NODE_INTERFACE → Status). No
    * client reads it today; the node's own reader is `block-creator`'s
    * `getBondsSettlingAt`. No engine check compares it.
    */
@@ -71,7 +71,7 @@ function blockToJson(block: OrderingBlock): Record<string, unknown> {
       //
       // ⛔ **There is no `coinbaseOutputs` field.** The coinbase is an output of
       // the block's settlement transaction, which is the last `utxoTxIds` entry
-      // (TYPES_INTERFACE → OrderingBlock).
+      // (TYPES_INTERFACE → Ordering block).
       utxoTxs: [],
     },
     validatorSignature: Buffer.from(block.validatorSignature).toString('hex'),

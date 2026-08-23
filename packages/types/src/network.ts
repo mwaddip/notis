@@ -1,4 +1,4 @@
-// Network profiles — TYPES_INTERFACE §Network profiles, ARCHITECTURE §Network Identity.
+// Network profiles — TYPES_INTERFACE → Network profiles, ARCHITECTURE → Network Identity.
 //
 // A network is the pairing of a parameter profile with a genesis state, selected by the
 // single `NETWORK_TYPE` setting (class `network-identity`). Two operators who differ on it
@@ -137,7 +137,7 @@ export const KNOWN_FRAME_MAGICS: readonly number[] = Object.freeze([
 ]);
 
 // ⚠ PROVISIONAL VALUES — every number below is a placeholder pending the constants-pinning
-// session (TYPES_INTERFACE §Network profiles: "Do not read any number in this contract as
+// session (TYPES_INTERFACE → Network profiles → "Do not read any number in this contract as
 // decided"). Genesis committee keys are empty placeholders on all three networks until real
 // chains launch. **No field names the treasury**: it is a `TreasuryBox` that block application
 // alone moves, and no key can reach it (ARCHITECTURE → Treasury).

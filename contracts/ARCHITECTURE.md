@@ -110,7 +110,7 @@ transaction's signature, ordered by the block that includes it.
 > karma pool and the emission box, consumes the markers the block's user transactions emitted, and
 > emits every box the block's protocol effects create. ⛔ **`CoinbaseOutput` is not a block-body
 > concept** — coinbase outputs are outputs of this transaction; no body field and no
-> `utxoTxRoot` leaf class carries the reward (TYPES_INTERFACE → OrderingBlock).
+> `utxoTxRoot` leaf class carries the reward (TYPES_INTERFACE → Ordering block).
 >
 > **Why exactly one.** The pool's id changes every time it is spent, so two transactions naming it
 > conflict — and unlike an ordinary contended box **the loser is not deferred but permanently
@@ -441,8 +441,8 @@ values in boxes move only when a transaction touches the identity.
   so it never drops below `min(faceTotal, KARMA_MINIMUM)`, where
   `owedPeriods = floor((height − max(lastActivityBlock, lastDecayBlock)) / KARMA_DECAY_INTERVAL_BLOCKS)`.
   **One implementation** — the engine, the verifier and the demo UI call the
-  same exported valuation function (`VALIDATION_INTERFACE` → One
-  implementation per rule).
+  same exported valuation function (`VALIDATION_INTERFACE` → "One
+  implementation per rule").
 - **Sufficiency reads effective; conservation stays face.** A transaction's
   value-conservation equality is over face values, unconditionally; whether an
   identity *may* spend is judged against effective.
@@ -726,8 +726,8 @@ to verify box existence or absence without storing the full UTXO set.
   > which is what lets Ethereum reconstruct a state root from state. AVL+ buys
   > cheap batch proofs and gives that up. The false sentence above is what made
   > rebuilding the tree from `getUnspentBoxes()` look correct, and it shipped
-  > such a rebuild (now deleted — see NODE_INTERFACE → the `bootstrapAvlProver`
-  > SUPERSEDED note).
+  > such a rebuild (now deleted — see NODE_INTERFACE → "AVL+ tree shape is
+  > history-dependent").
   >
   > **Binding rule: no code may reconstruct the state tree from box contents
   > alone.** Consensus guarantees a shared *history*, which is what makes the
@@ -1234,7 +1234,7 @@ is byte-identical from creation to the block that consumes it.
 > (audit H-1).
 >
 > ✅ **The remainder of this section is verified against the code, 2026-08-20.** Responsibilities,
-> Selection, Rewards and Separation match `block-creator.ts`, `settlement.ts` and
+> Validator selection, Rewards and Separation match `block-creator.ts`, `settlement.ts` and
 > `MINING_INTERFACE → Emission Schedule`: the body is UTXO transactions and prune entries, the
 > reward is the settlement transaction's output from the emission box, selection is PoW alone, and
 > prune authorisation is the root author's signature.
@@ -1253,7 +1253,7 @@ material may also hold karma and author posts.
 Validators do **not** attest to stumps. The prune authorization is the root
 author's signature alone.
 
-### Selection
+### Validator selection
 
 Validator selection is purely PoW-based — no stake, no karma gating. Any node
 that solves the ordering block PoW puzzle may produce the next ordering block.
@@ -1527,7 +1527,7 @@ non-breaking and devnet for protocol-breaking testing). The third network is **n
 > .genesisStateRoot`, the height-0 AVL+ root, pinned per network and checked against the seeded state
 > at boot. `types/src/network.ts` carried the same sentence in code and moves with it.
 
-### Selection
+### Profile selection
 
 One setting, `NETWORK_TYPE`, class `network-identity`, names the whole profile. It is the
 only environment variable that may change a consensus parameter, and it does so by selecting
@@ -1540,7 +1540,7 @@ not be independently readable.
 > It is zero.** P2-A removed all ten consensus values from the environment (PR #8, `4670ae5`),
 > five to the profile and five to universal constants, verified 2026-08-07 that none is read
 > anywhere in `packages/node/src` (`NODE_INTERFACE §Configuration`). The guarantee is still
-> broken, but by a **bypass rather than a read** — see the note under §Network identity.
+> broken, but by a **bypass rather than a read** — see the note under §Network identity invariants.
 
 ### What varies per network, and what must not
 
@@ -1825,7 +1825,7 @@ forever. A node rejects objects with an unsupported protocol version.
   holds no byte of the subtree's content — no DAG row, no journal row; within that depth the
   rows exist only as undo records, never served
 
-### Identity
+### Identity invariants
 
 - An account comes into existence via first UTXO box appearance
 - An invite names one public key and is claimable only by it. There is no secret,
@@ -1888,8 +1888,9 @@ forever. A node rejects objects with an unsupported protocol version.
   > its `LikeAccrualBox` marker the same way. The like rule is a statement about **shape**,
   > enforced both ways in the engine's like arm: `likeTarget` present ⟺ exactly one accrual
   > marker of `LIKE_KARMA_COST` naming the target's author — and the pin must be tested,
-  > because a balanced marker announces nothing by itself (NODE_INTERFACE → the like accrual
-  > marker). Conservation is **enforced**: `checkValueConservation` per transaction, full
+  > because a balanced marker announces nothing by itself (NODE_INTERFACE → The like accrual
+  > marker is an exemption from the rule above). Conservation is **enforced**:
+  > `checkValueConservation` per transaction, full
   > re-validation at apply.
 - Box `value` and all value/amount arithmetic are `bigint` integer base units
   (`value < BOX_VALUE_BOUND`, TYPES_INTERFACE → "Box value domain"); **no float math in any consensus value path** — floats are
@@ -1953,7 +1954,7 @@ forever. A node rejects objects with an unsupported protocol version.
   had to be re-derived, and the storage guarantee it was chosen for would move
   with it.
 
-### Network identity
+### Network identity invariants
 
 > ⚠ **PARTIAL — corrected 2026-08-10, re-verified 2026-08-11. These four are NOT part of the 48 verified
 > above and carry no audit verdict.** Bullets 2, 3 and 4 hold today; bullet 1 does not, and
@@ -2043,7 +2044,8 @@ These invariants are adopted from production-grade Ergo Rust node practices:
 > first form and transferred on its second: while `createdAtBlock` was the decay clock, a
 > client-declared height was untenable and the field left the box protocol, the clock moving
 > into committed state. It returned as creator-declared content once the decay clock stopped
-> reading it (TYPES_INTERFACE → BoxCandidate) — Ergo's shape, with the obligation stated
+> reading it (TYPES_INTERFACE → "BoxCandidate is the base, CandidateOf<B> is the per-type
+> candidate") — Ergo's shape, with the obligation stated
 > rather than assumed: **every rule that derives from the field owes its own exact check**,
 > and the vouch cast window (NODE_INTERFACE → Vouch transition rules) is the first.
 > An invariant that is correct for Ergo and wrong here, kept because the

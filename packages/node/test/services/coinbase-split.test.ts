@@ -101,8 +101,8 @@ describe('splitCoinbase', () => {
   });
 
   // The treasury is taken per income TERM, never off the total, because storage
-  // rent becomes a third term that does not fund it (MINING_INTERFACE → the
-  // slice table). At 1000/200 both readings give 60 and the distinction is
+  // rent becomes a third term that does not fund it (MINING_INTERFACE → The
+  // slices). At 1000/200 both readings give 60 and the distinction is
   // invisible; these values are chosen so truncation separates them — 5% of 10
   // truncates to 0 twice, while 5% of 20 is 1.
   it('takes the treasury per term rather than off the total', () => {

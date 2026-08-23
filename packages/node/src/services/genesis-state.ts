@@ -92,13 +92,12 @@ function markGenesisCommitted(): void {
 /**
  * Seed the genesis state and commit it to the AVL+ tree, in one transaction.
  *
- * ⚠ **This is NOT the superseded rebuild-from-UTXO-set path** (`NODE_INTERFACE`
- * → the SUPERSEDED note on `bootstrapAvlProver`), and the difference is what
- * makes this sound rather than a rediscovery of the unsound one. That note
- * refuses re-inserting *an arbitrary set recovered from SQL into a tree that
- * already had history*: AVL+ shape is history-dependent, the history is exactly
- * what the recovery lost, and the rebuilt tree forks against the grown one. The
- * note carries the measurement behind that.
+ * ⚠ **This is NOT the unsound rebuild-from-UTXO-set path**, and the difference
+ * is what makes this sound rather than a rediscovery of the unsound one
+ * (NODE_INTERFACE → AVL+ State Root → "AVL+ tree shape is history-dependent").
+ * Re-inserting an arbitrary set recovered from SQL into a tree that already had
+ * history is unsound: AVL+ shape is history-dependent, the history is exactly
+ * what the recovery lost, and the rebuilt tree forks against the grown one.
  *
  * Genesis has no history to lose. The tree is **empty**, the input is a
  * **fixed, known set** — the proof box, the emission box and the karma supply

@@ -221,7 +221,7 @@ is delivered whole to `onTx(tx, content, fromPeerId)`; a post's transaction and 
 never accepted apart. The body is outside every id, so a relay cannot re-point it without
 failing the commitment check at the next hop.
 
-**Tracked reservation (remnant-bounded — TYPES_INTERFACE → tag rules, condition 3): the
+**Tracked reservation (remnant-bounded — TYPES_INTERFACE → Tracked reservations, condition 3): the
 topic string `/dagsocial/subblock/1`.** Held by its live guard — `gossip.test.ts` asserts
 the topic has no validator — and it leaves with that guard.
 

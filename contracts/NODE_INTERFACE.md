@@ -56,7 +56,7 @@ value path. Node-side obligations:
   **consensus**; the *same* function is both producer (block build) and verifier
   (`block-apply` recompute), so the leaf bytes cannot diverge between the two roles. What
   Phase 4 adds is that they cannot diverge from the **wire** encoding of the same struct
-  either — see `TYPES_INTERFACE` → "Merkle leaf preimages are the struct's own wire bytes".
+  either — see `TYPES_INTERFACE` → Layout — Merkle leaf preimages are the struct's own wire bytes.
 - **SQLite `.safeIntegers()`** on every `value`-column read and on `SUM(value)`
   (`getTotalKarma` / `getTotalCredits`) — without it better-sqlite3 returns a lossy
   `number` and loses precision above 2⁵³.
@@ -156,7 +156,7 @@ transition rules"). A stump carries it too, and so does the tombstone: topology 
 `GET /posts/:id/thread` and the listing do not carry it.
 
 **PostJson time and order (decided 2026-08-20).** A post has no timestamp
-(TYPES_INTERFACE → Layout — Post). `PostJson` carries the post's `type` with the rest of its
+(TYPES_INTERFACE → Layout — PostCommit). `PostJson` carries the post's `type` with the rest of its
 fields, plus three node-local columns: `blockHeight` and `blockIndex` — the confirming block
 and the post's committed position in it — and `blockCreatedAt`, the confirming block
 **header's** `createdAt`, joined from the store (`ordering_blocks.created_at` holds exactly
@@ -776,7 +776,8 @@ citation of a `validateTx` step in this repo:
 6. No output claims a height the chain has not reached:
    `createdAtBlock <= currentBlockHeight` for every output. One-directional —
    backdating an output is bounded only where a rule deriving from the field
-   imposes its own check (TYPES_INTERFACE → BoxCandidate; the vouch cast
+   imposes its own check (TYPES_INTERFACE → "BoxCandidate is the base, CandidateOf<B> is the
+   per-type candidate"; the vouch cast
    window under "Vouch transition rules" is one).
 7. Value conservation: `sum(input values) == sum(output values)` **across the
    transaction as a whole — one total per side, not per box type —
@@ -2016,7 +2017,7 @@ user transaction spends an escrow (`BLOCK_APPLICATION_ONLY`).
 
 ⛔ **`CoinbaseOutput` is not a block-body concept.** Coinbase outputs are outputs of this
 transaction; the block body has no `coinbaseOutputs` field and `utxoTxRoot` has no `'coinbase'`
-leaf class (TYPES_INTERFACE → OrderingBlock).
+leaf class (TYPES_INTERFACE → Ordering block).
 
 ⚠ **"Every protocol effect" admits exactly one exception: post-lock vesting.** A `PostLockBox`
 vests into its own owner's karma and a reduced lock — the pool is uninvolved, so it runs as a
@@ -2612,7 +2613,8 @@ reaches the tree. That sort is what makes this column safe to keep.
 
 Consensus reads its heights elsewhere — locks from `lockedUntilBlock`, bond
 probation and the decay clock both from the identity record below. During the migration window `createdAtBlock` is
-still a *box field* (`TYPES_INTERFACE.md` → Migration window) and `decay.ts`
+still a *box field* (`TYPES_INTERFACE` → "createdAtBlock is a box field, and it is
+CREATOR-DECLARED") and `decay.ts`
 still reads it, so the column does reach consensus transitively until phase D
 moves the clock. Closing that is exactly what phase D is for; phase G then
 deletes the field and leaves the column with no consensus reader at all.
@@ -2820,11 +2822,13 @@ needs a test.
 > unsound, and the requirement above is retired. Re-verified 2026-08-11.** The requirement
 > was the right fix for the tree it described; the mechanism itself does not survive scrutiny.
 >
-> ⚠ **The code has NOT been deleted.** `bootstrapAvlProver` still exists in
-> `node/src/state/avl-prover.ts`, and `store/identity-records.ts` still carries a note naming
-> it as a caller. This marker read "is being removed" — a *decision*, stated in the future
-> tense, which then never got a follow-up. **Superseded describes the requirement; it does not
-> describe the tree.** Deleting the function is open work.
+> ⚠ **The function is retained, not deleted.** `bootstrapAvlProver` lives in
+> `node/src/state/avl-prover.ts` with exactly one production caller, `seedGenesisState`, which feeds
+> the fixed genesis set — boxes and identity records, via `getAllIdentityRecords` — into the EMPTY
+> tree: the one full-set feed with no history to lose (AVL+ State Root → "AVL+ tree shape is
+> history-dependent"). `src/index.ts` has no rebuild-from-UTXO-set path. This marker read "is being
+> removed" — a *decision*, stated in the future tense, which then never got a follow-up.
+> **Superseded describes the requirement; it does not describe the tree.**
 >
 > - **Unreachable.** The trigger is `storage.version() === null`, and under
 >   `@ergots/avltree` 0.4.0 the `PersistentBatchAVLProver` constructor writes
@@ -3121,6 +3125,11 @@ also identity records (see "Two entity kinds" below).
   journal-derived (P1) — so a mismatch means genuine state divergence, not a
   representation difference. A rejected block leaves the prover restored by
   the funnel's single rollback point
+- ⛔ **AVL+ tree shape is history-dependent.** A tree rebuilt by re-inserting a full state set
+  forks against one grown incrementally to the same content, so AVL storage is never wiped
+  independently of the chain and a startup rebuild is not a recovery path. `bootstrapAvlProver`
+  has exactly one production caller, `seedGenesisState`, over the empty genesis tree — the one
+  case with no history to lose
 - ⛔ **A box block application SPENDS must already be in the tree, and THE TREE IS ASKED.**
   `applyBlockMutations` and `bootstrapAvlProver` read `performOneOperation`'s verdict at every
   operation that can refuse one — `Remove` of an absent key, `Insert` of a present one — and throw
@@ -4140,7 +4149,7 @@ block rolls back to a no-op.
 
 **Post authorship + prune authorship (H-3).** A post transaction carries the
 **whole post** in `utxoTxs` plus the author's signature over the `TxId`, so
-authorship is verified, not claimed (`TYPES_INTERFACE` → the H-3 property);
+authorship is verified, not claimed (`TYPES_INTERFACE` → "The H-3 property");
 there is no separate authorship entry for a producer to fill or a node to
 cross-check. Enforcement has two legs, both inside the `applyOrderingBlock`
 funnel:

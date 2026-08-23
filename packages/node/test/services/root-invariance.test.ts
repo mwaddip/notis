@@ -172,7 +172,7 @@ describe('Merkle leaf order and composition', () => {
     // The substantive property this file exists for after the collapse: the
     // settlement is a transaction, so it appears exactly once, as a `'utxotx'`
     // leaf in last position, and nothing about the coinbase it pays reaches the
-    // root separately (TYPES_INTERFACE → OrderingBlock).
+    // root separately (TYPES_INTERFACE → Ordering block).
     const settlementId = 'ef'.repeat(32);
     const withSettlement: UtxoTxTree = {
       ...utxoFixture,

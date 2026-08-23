@@ -2004,7 +2004,7 @@ describe('reorg — prune re-insertion', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests — reorg abort restores the AVL prover (NODE_INTERFACE
+// Tests — reorg abort restores the AVL prover (NODE_INTERFACE →
 // "Reorg-abort-safe"). SQLite rollback restores the DB and the AVL storage
 // rows, but not the prover's in-memory tree: without the reorg-level restore
 // it would end at fork-point + applied-prefix state.

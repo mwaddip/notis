@@ -823,7 +823,7 @@ aligns 1:1 with `utxoTxIds`, each element a byte view of at most
 > | Cover | Where | Strength |
 > |---|---|---|
 > | non-negative safe integer, **never `-0`** | `NODE_INTERFACE` → `validateTx`'s field-type table, `credit.lockedUntilBlock` | ⬆ `isU64Safe` **plus** `-0` |
-> | `== height + CREDIT_MINER_REWARD_DELAY` | `MINING_INTERFACE` → coinbase invariants | ⬆ an equality, not `≥ block.height` |
+> | `== height + CREDIT_MINER_REWARD_DELAY` | `MINING_INTERFACE` → Invariants | ⬆ an equality, not `≥ block.height` |
 >
 > ⛔ **THE CHECK FOLLOWED ITS SUBJECT, WHICH IS WHY IT LEAVES.** It lived here because
 > `coinbaseOutputs` was a **structural body field**. It is not one any more, so a rule about it is a

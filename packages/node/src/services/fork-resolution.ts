@@ -326,8 +326,8 @@ export function revertBlock(height: number): PruneEntry[] {
  * - `TxTooLargeError` — the transaction re-encodes above `MAX_TX_BYTES`. The
  *   reverted block carried it, so its bytes as they arrived were inside the
  *   bound; what the pool measures is this node's own re-encoding, and the two
- *   measures differ by design (VALIDATION_INTERFACE → the transaction size
- *   bound). A transaction only this node's encoder finds over-size is one no
+ *   measures differ by design (VALIDATION_INTERFACE → The size bound measures
+ *   `encodeTx`). A transaction only this node's encoder finds over-size is one no
  *   block it produces could carry anyway.
  *
  * ⛔ **The conflict gate is not opted out of here.** Admitting both would leave

@@ -1396,7 +1396,7 @@ describe('block-apply embedded tx re-validation', () => {
   // The vouch minimum-balance gate at the block path.
   //
   // `getKarmaValue` is a consensus input and MUST sum across boxes rather than
-  // read one (NODE_INTERFACE → Store): `getKarmaBox` is `LIMIT 1` with no
+  // read one (NODE_INTERFACE → Store Interface): `getKarmaBox` is `LIMIT 1` with no
   // `ORDER BY`, so a single-box read makes the verdict a function of SQLite's
   // physical row order — M-12's class. The unit suite exercises the gate only
   // through a test-local deps stub, so the *production* wiring is unpinned

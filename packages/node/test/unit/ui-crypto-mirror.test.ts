@@ -776,8 +776,8 @@ describe('demo UI ↔ @dagsocial/types box encoding mirror (positional)', () => 
   });
 
   it('the tag is what separates a bond from any other box, on both sides', () => {
-    // ⛔ **Tag 2 is a tracked hole** (TYPES_INTERFACE → boxType tag table,
-    // remnant-bounded), so this compares a bond against a box type
+    // ⛔ **Tag 2 is a tracked hole** (TYPES_INTERFACE → Tracked reservations),
+    // so this compares a bond against a box type
     // rather than against its neighbour. `enum8Tag` is the whole of what keeps
     // two leaves apart, and asserting it on the UI side is what stops an encoder
     // that dropped the tag from giving two boxes with the same parties one id.
@@ -1559,7 +1559,7 @@ describe('demo UI invite builder ↔ the id the node derives', () => {
   });
 
   it('the invite carries the shape consensus pins', () => {
-    // NODE_INTERFACE → the transition table's invite row: one karma + one bond,
+    // NODE_INTERFACE → Legal box transitions: one karma + one bond,
     // the bond holding a value inside the network's range and carrying the
     // karma input's owner as `inviterId`.
     const decoded = overTheWire(

@@ -182,7 +182,7 @@ describe('block funnel — the embedded-tx proof obligation', () => {
     // ⚠ **The gate is not thereby redundant**, and this is the half that keeps
     // it honest: it still answers on the HTTP edge, where `jsonToTx` builds the
     // object and no codec bounds it (VALIDATION_INTERFACE → What a decoder
-    // subsumes; node has both a store and an HTTP edge).
+    // subsumes depends on the ENTRY PATH; node has both a store and an HTTP edge).
     const db = await importDb();
     db.initDb(':memory:');
     const utxo = await importUtxo();
