@@ -436,16 +436,19 @@ Late Node (height 0)                      Synced Peer (height 200)
      │ peer ahead → pick as sync peer             │
      │── SyncInfo (height=0) ────────────────────►│
      │                                            │
-     │ peer sees us behind → compute continuation │
+     │ peer replies, then serves continuation     │
+     │◄── SyncInfo (height=200) ─────────────────│
      │◄── Inv (type=101, headers from h=1) ──────│
      │                                            │
      │── ModifierRequest (those ids) ────────────►│
      │◄── ModifierResponse (whole ordering       │
      │    blocks 1-200, byte-bounded) ───────────│
      │                                            │
-     │ validate + apply, build chain to h=200     │
+     │ validate + apply; each advancing batch     │
+     │ sends the next SyncInfo at once            │
      │── SyncInfo (height=200) ──────────────────►│
-     │ peer sees equal → no Inv needed            │
+     │◄── SyncInfo (height=200) ─────────────────│
+     │ equal, inbound → backfill begins           │
      │                                            │
      │ at tip → backfill: rows with no body       │
      │── ModifierRequest (type=103, ≤100 ids,     │
@@ -460,10 +463,28 @@ Late Node (height 0)                      Synced Peer (height 200)
 
 ### Serve Side (Peer Behind Us)
 
-When receiving a SyncInfo showing the peer is behind or at genesis:
-1. Compute continuation headers from their best known height + 1
-2. Cap at 400 headers
-3. Send Inv
+When receiving a SyncInfo:
+1. **Reply with our own SyncInfo, addressed to the sender** — whether the sender is behind,
+   equal or ahead, and whatever our own phase is: a node at tip that is not syncing from the
+   requester still answers. The reply is the only caught-up signal a peer syncing from us
+   receives — when it holds our whole chain the continuation below is empty and no Inv is
+   sent, so its `syncing → backfill` transition rides entirely on an inbound SyncInfo showing
+   equal height. ⛔ **Addressed to the sender, never to our own sync peer** — misaddressed,
+   the requester sits at our tip until its stall clock fires.
+2. If the sender is behind: compute continuation headers from their best known height + 1,
+   cap at 400 headers, send Inv.
+
+**The reply is movement-gated, so replying to replies terminates.** Beside each retained
+peer height the machine keeps the tip it last sent that peer and the tip that peer last
+reported. An inbound SyncInfo that shows movement — the sender's reported tip differs from
+their previous report, or our tip differs from what we last sent them — earns its reply
+immediately: this is what lets a two-second sync take its equal-height reply at once instead
+of waiting out a poll period. An inbound that shows **no** movement earns a reply at most
+once per `MIN_SYNCINFO_INTERVAL_MS` (= 15 000 ms, half the synced-phase poll); the suppressed
+reply is dropped, not queued. Two equal-height peers echoing each other therefore settle after
+one exchange and stay at one exchange per poll period — never an unbounded ping-pong. The
+send on *entering* `syncing` and the progress send (Sync bullet below) are not replies and
+are bounded by their own triggers: one per phase transition, one per advancing batch.
 
 An empty anchor list means a from-genesis peer — continuation starts at
 height 1. This bidirectional pattern ensures nodes serve peers behind them,
@@ -477,10 +498,23 @@ pick_sync_peer() → sync_from_peer() → backfill() → synced()
        └── stall/disconnect ──┴───────────────┘
 ```
 
-- **Pick:** handshake reveals peers ahead of us — pick the one with highest
-  chain height
+- **Pick:** the machine retains each Active peer's last advertised height — the handshake
+  `chainHeight` at peer-active, refreshed by every inbound `SyncInfo.tipHeight`, dropped at
+  disconnect — and picks the retained-highest peer above our own height, stalled peers
+  excluded. The pick runs at peer-active, at every inbound SyncInfo, and at every entry into
+  `idle` or `synced` (stall rotation, sync-peer disconnect, backfill's exits), so a taller
+  peer learned mid-sync is adopted the moment the current conversation ends — a bridging node
+  that syncs the shorter chain first takes the longer one when it finishes, with no new event.
+  While `syncing`, only the Switch rule below changes the sync peer; while `backfill`, only
+  backfill's own rotation does
 - **Sync:** send SyncInfo, process Inv → request headers, validate, append
-  to chain, repeat
+  to chain, repeat. A batch that strictly advanced the chain sends the next SyncInfo to the
+  sync peer immediately (it bypasses the per-peer floor; its bound is the advance itself), so
+  a chain longer than one Inv (`MAX_INV_IDS` = 400) syncs batch-on-batch instead of one batch
+  per poll interval
+- **Switch:** while `syncing`, if the retained-highest peer's height exceeds the current sync
+  peer's retained height by more than 1, the machine switches to it. A switch is a rotation
+  without a stall: outstanding cleared, progress clock reset, the old peer not marked stalled
 - **Backfill:** entered when the chain reaches the sync peer's tip. Ask the node for the
   post ids whose rows hold no body (`setMissingBodiesProvider`), **newest first**, and request
   them from the sync peer in batches of **`BACKFILL_BATCH_IDS` = 100** (`ModifierRequest`,
@@ -496,8 +530,9 @@ pick_sync_peer() → sync_from_peer() → backfill() → synced()
 - **Peer rotation:** `stalledPeers: Set<PeerId>` — peers that failed to
   produce progress. On stall, pick next outbound peer not in set. If all
   stalled, clear set and retry.
-- **Synced:** periodic SyncInfo (30s) to detect new blocks. An Inv is
-  acted on only while syncing and only from the current sync peer (see
+- **Synced:** periodic SyncInfo (30s) to the sync peer; the reply it earns (Serve Side, rule 1)
+  is how new blocks are detected — a reply showing a taller tip re-enters `syncing` through
+  the pick. An Inv is acted on only while syncing and only from the current sync peer (see
   Sync Integrity — request provenance); an Inv from any other peer, or
   while not syncing, is dropped without penalty. Placeholder rows created
   after `synced` — a gossiped block whose packet this node missed — are the
@@ -524,7 +559,7 @@ pick_sync_peer() → sync_from_peer() → backfill() → synced()
 - **Outstanding-set lifecycle.** Ids are added when a request is sent,
   removed as matching response modifiers are accepted, bounded by a fixed
   cap (new requests must not grow the set past it), and cleared on peer
-  rotation and on sync-peer disconnect. The framed sync path has no
+  rotation, on a mid-sync switch, and on sync-peer disconnect. The framed sync path has no
   per-request timer — stall rotation IS the request timeout.
 - **Stall progress = chain height.** The stall clock advances only when
   applying a response strictly increases `chainHeight` — never on mere
