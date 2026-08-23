@@ -25,7 +25,7 @@ export interface HandshakeMsg {
  * Why a handshake was refused.
  *
  * The two classes are treated differently on purpose (NET_INTERFACE → Handshake
- * → Ban policy):
+ * → "Ban policy"):
  *
  * - `malformed` — missing or wrong-typed fields, negative or over-bound heights.
  *   Nothing legitimate produces this, so the peer is adversarial and earns a
