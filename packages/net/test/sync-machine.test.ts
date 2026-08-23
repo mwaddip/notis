@@ -2132,7 +2132,7 @@ describe('SyncMachine', () => {
   // Switch guard — NET_INTERFACE → Sync State Machine, Pick
   // -----------------------------------------------------------------------
 
-  describe('switch guard (go2 item 1)', () => {
+  describe('switch guard', () => {
     it('does not switch to a candidate below our height', () => {
       let height = 0;
       const { machine } = makeMachine({
@@ -2160,7 +2160,7 @@ describe('SyncMachine', () => {
   // Negative backfill — NET_INTERFACE → Sync State Machine, Backfill
   // -----------------------------------------------------------------------
 
-  describe('negative backfill (go2 item 3)', () => {
+  describe('negative backfill entry', () => {
     it('a third peer reporting equal height does not enter backfill', () => {
       const { machine } = makeMachine({
         store: {
@@ -2189,7 +2189,7 @@ describe('SyncMachine', () => {
   // Outbound preference — NET_INTERFACE → Sync State Machine, Pick
   // -----------------------------------------------------------------------
 
-  describe('outbound preference (go2 item 4)', () => {
+  describe('outbound preference', () => {
     it('outbound +2 beats inbound +50 at pick', () => {
       let height = 0;
       const { machine } = makeMachine({
