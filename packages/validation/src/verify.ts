@@ -732,10 +732,11 @@ export function verifyOrderingBlockStructure(
   // rather than a count this function could take. Recognising a settlement in
   // any *other* position means recognising what it spends — the karma pool,
   // whose id needs the UTXO set, and that read is the one positional identity
-  // exists to avoid. The other half is node's: every node derives a
-  // byte-identical settlement from the same body (NODE_INTERFACE → Determinism
-  // is this mechanism's whole risk), and the verifier checks the producer's
-  // against its own derivation (MINING_INTERFACE → On block receipt).
+  // exists to avoid. The other half is node's: the verifier re-derives
+  // the settlement's deterministic legs from the body and checks the
+  // producer's against them — derived fields by value, producer-chosen
+  // fields by constraint (NODE_INTERFACE → Determinism is this
+  // mechanism's whole risk; MINING_INTERFACE → On block receipt).
   if (block.utxoTxTree.utxoTxIds.length === 0) {
     return { valid: false, error: 'Ordering block body carries no settlement transaction' };
   }
