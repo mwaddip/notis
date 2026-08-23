@@ -357,7 +357,10 @@ export function orderingPowTarget(scaledBits: number): Uint8Array | null {
 
 /**
  * The comparator half of the PoW admission rule: `hash <= target`, both read
- * big-endian, byte by byte over `target.length`.
+ * big-endian, byte by byte over `target.length`. A short `hash` is compared
+ * normally while it has bytes and refused the moment it runs out still equal —
+ * so it meets the target only if every digest extending it would. Never
+ * zero-extended.
  *
  * VALIDATION_INTERFACE → meetsPowTarget. Byte-wise rather than BigInt because
  * a solver runs it once per nonce.

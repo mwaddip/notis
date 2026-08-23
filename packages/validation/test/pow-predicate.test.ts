@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { meetsPowTarget } from '../src/index.js';
+import { meetsPowTarget, orderingPowTarget } from '../src/index.js';
 import { wholeBitTarget } from './helpers.js';
 
 /**
@@ -97,6 +97,20 @@ describe('meetsPowTarget — equivalence with the bit walk', () => {
       expect(newMeets(d, n)).toBe(true);
       expect(newMeets(d, n + 1)).toBe(false);
     }
+  });
+
+  // VALIDATION_INTERFACE → meetsPowTarget: a short hash is compared normally
+  // while it has bytes and refused the moment it runs out still equal.
+  it('refuses a short hash that equals the target prefix, accepts one strictly below', () => {
+    const target = orderingPowTarget(3072)!; // 00 0f ff…
+    const equalPrefix = target.slice(0, 31);
+    const fullEqual = new Uint8Array(32);
+    fullEqual.set(target);
+    expect(meetsPowTarget(fullEqual, target)).toBe(true);
+    expect(meetsPowTarget(equalPrefix, target)).toBe(false);
+
+    const below = new Uint8Array(31); // 31 zero bytes — strictly below at byte 0
+    expect(meetsPowTarget(below, target)).toBe(true);
   });
 
 });
