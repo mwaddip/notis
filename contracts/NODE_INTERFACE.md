@@ -1093,15 +1093,16 @@ tree collapse into clean rejections:
 > (`handleOrderingBlock`'s held check and `extendsOurTip`, then `applyOrderingBlock`'s chain-link
 > read), fork resolution (`findForkPoint`, `revertBlock`, `resolveFork`'s anchor and work walk), the
 > block creator's tip read, the two `/blocks` routes, and the provider handed to
-> `net.setHeadersHandler`, through which every handshake, every `SyncInfo` and every served chain
-> query decodes stored rows. Only apply's read passes through a catch that could promote anything;
+> `net.setHeadersHandler`, through which every `SyncInfo` (its tip id and anchors) and every served
+> chain query decodes stored rows — a handshake decodes none: its `chainHeight` is the
+> `setChainHeightProvider` read, `MAX(height)`. Only apply's read passes through a catch that could promote anything;
 > the store frame names the fault so that all of them raise one class — and **every outer frame is a
 > boundary**: the gossip and the pull registrations of `handleOrderingBlock` both wrap it in
 > `failStopIfCorruptChain` (Relay handlers; Sync handlers); the launched `resolveFork` promise carries
 > `.catch(failStopIfCorruptChain)`; `finalizeBlock` wraps the mined-block apply; `createOrderingBlock`
 > calls the boundary directly; and the provider handed to `setHeadersHandler` and the
 > `getOrderingBlock` the blocks routes are given wrap the store read, so a corrupt row met while
-> serving stops the node instead of failing every handshake and query as a peer's fault. A frame that
+> serving stops the node instead of failing every `SyncInfo` and query as a peer's fault. A frame that
 > merely contains — net's dispatch catches, Express's default 500 — is never the outer frame of a
 > store read.
 >
@@ -3852,7 +3853,7 @@ Stage 2 handlers for inbound gossip messages. Startup order:
 1. initDb()
 2. Create NetNode with config + validators
 3. Register Stage 2 handlers (onOrderingBlock, onTx)
-4. Register sync handlers (setBlocksHandler, setHeadersHandler) BEFORE net.start()
+4. Register sync handlers (setBlocksHandler, setHeadersHandler, setChainHeightProvider) BEFORE net.start()
 5. await net.start()          // connect to bootstrap, subscribe to topics
 6. startHttpServer()          // begin accepting API requests
 7. startBlockCreator()         // begin producing ordering blocks
@@ -4181,11 +4182,16 @@ funnel:
   gossip registration does — `net` contains a handler throw to one logged message, and that frame
   must never be the outer one for a corrupt-state error
 - **`setHeadersHandler(getBlock)`**: the provider `net` reads stored blocks through — headers for
-  fork resolution, bodies for served chain queries, the tip for every handshake and `SyncInfo`. The
+  fork resolution, bodies for served chain queries, the tip id and anchors for every `SyncInfo`. The
   provider node hands over wraps the store read in `failStopIfCorruptChain`: a stored row that will
   not decode stops the node ("What the funnel's totality catch is FOR") rather than failing every
-  handshake and query as the peer's fault inside `net`'s contained catches. The two `/blocks` routes
+  `SyncInfo` and query as the peer's fault inside `net`'s contained catches. The two `/blocks` routes
   are given the same wrapped read
+- **`setChainHeightProvider(getCurrentHeight)`**: the tip height `net` advertises and compares — the
+  store's `MAX(height)`, the same read the block creator and fork resolution take, handed over
+  unwrapped: it decodes no row, so there is nothing for `failStopIfCorruptChain` to promote. `net`
+  reads it once per handshake, `SyncInfo` and served chain query in place of a walk through the
+  headers provider (NET_INTERFACE → Sync Handler Registration)
 
 A block carries its posts whole in `utxoTxs`, so there is no content-sweep and
 no per-post serve path. `onPeerActive` is wired to peer-readiness
