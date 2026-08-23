@@ -93,6 +93,7 @@ type StreamHandler = (arg: {
  */
 function makeHandlerHarness(opts: {
   headersHandler?: (height: number) => OrderingBlock | null;
+  chainHeight?: number;
   syncMachine?: { handleMessage: (p: string, c: number, b: Uint8Array) => void };
   postBodyProvider?: (id: string) => string | null;
   active?: boolean;
@@ -124,6 +125,10 @@ function makeHandlerHarness(opts: {
   }
 
   if (opts.headersHandler) net.setHeadersHandler(opts.headersHandler);
+  if (opts.chainHeight !== undefined) {
+    const h = opts.chainHeight;
+    net.setChainHeightProvider(() => h);
+  }
   if (opts.syncMachine) internals.syncMachine = opts.syncMachine;
   if (opts.postBodyProvider) net.setPostBodyProvider(opts.postBodyProvider);
 
@@ -265,7 +270,7 @@ function chainProvider(n: number): (height: number) => OrderingBlock | null {
 
 describe('sync stream handler — the chain query arms', () => {
   it('serves GetHeaders as a framed Headers response', async () => {
-    const { send } = makeHandlerHarness({ headersHandler: chainProvider(3) });
+    const { send } = makeHandlerHarness({ headersHandler: chainProvider(3), chainHeight: 3 });
 
     const written = await send(encodeGetHeaders(MAGIC, { startHeight: 3, maxCount: 2 }));
 
@@ -276,7 +281,7 @@ describe('sync stream handler — the chain query arms', () => {
   });
 
   it('serves GetBlocks as a framed Blocks response', async () => {
-    const { send } = makeHandlerHarness({ headersHandler: chainProvider(3) });
+    const { send } = makeHandlerHarness({ headersHandler: chainProvider(3), chainHeight: 3 });
 
     const written = await send(encodeGetBlocks(MAGIC, { startHeight: 1, endHeight: 2 }));
 
@@ -302,7 +307,7 @@ describe('sync stream handler — the chain query arms', () => {
 
   it('answers and permanently bans on a malformed chain query body', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const { send, peerMgr, peerId } = makeHandlerHarness({ headersHandler: chainProvider(3) });
+    const { send, peerMgr, peerId } = makeHandlerHarness({ headersHandler: chainProvider(3), chainHeight: 3 });
 
     // A body that is not two heights — `0xff` opens a VLQ that never closes.
     // Unlike our own store failing, this is the peer's doing, and the arm
@@ -322,7 +327,7 @@ describe('sync stream handler — the chain query arms', () => {
   it('leaves a well-formed query unpenalised', async () => {
     // The control against an arm that bans everyone: the ban above must be the
     // malformed body's doing, not the code's.
-    const { send, peerMgr, peerId } = makeHandlerHarness({ headersHandler: chainProvider(3) });
+    const { send, peerMgr, peerId } = makeHandlerHarness({ headersHandler: chainProvider(3), chainHeight: 3 });
 
     await send(encodeGetHeaders(MAGIC, { startHeight: 3, maxCount: 2 }));
 
@@ -357,6 +362,7 @@ describe('sync stream handler — the chain query arms', () => {
     const dispatched: number[] = [];
     const harness = makeHandlerHarness({
       headersHandler: chainProvider(3),
+      chainHeight: 3,
       syncMachine: { handleMessage: (_p, code) => { dispatched.push(code); } },
     });
 

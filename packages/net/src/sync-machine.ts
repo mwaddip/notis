@@ -34,7 +34,7 @@ export interface SyncStore {
   getOrderingBlockHeader(height: number): unknown | null;
   /** Block ID (hash) for a given height, or null if not available. */
   getOrderingBlockId(height: number): string | null;
-  /** Current best-chain tip height. */
+  /** Current best-chain tip height — one provider call, O(1) (ARCHITECTURE → Correct and cheap are separate obligations). */
   chainHeight(): number;
   /** Anchors for sync (height + block ID pairs across the chain). */
   getAnchors(): { height: number; blockId: string }[];

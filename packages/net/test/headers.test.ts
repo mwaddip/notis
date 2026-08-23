@@ -183,16 +183,14 @@ function makeHeavyChain(n: number, payloadBytes: number): Map<number, OrderingBl
 }
 
 /**
- * Our own tip as the serve arms compute it.
- *
- * Both loops are clamped to it; `chainHeight()` walks up from 1 until it finds a
- * gap, so a store with a hole reports the height below it — mirrored here rather
- * than assumed.
+ * Our own tip as the serve arms receive it: what node hands over through
+ * setChainHeightProvider, the store's maximum height
+ * (NET_INTERFACE → Sync Handler Registration).
  */
 function tipOf(store: Map<number, OrderingBlock>): number {
-  let ourHeight = 0;
-  while (store.has(ourHeight + 1)) ourHeight++;
-  return ourHeight;
+  let max = 0;
+  for (const h of store.keys()) if (h > max) max = h;
+  return max;
 }
 
 /**
@@ -592,15 +590,15 @@ describe('serve: GetHeaders', () => {
     ).toEqual([]);
   });
 
-  it('stops at first gap in the chain', () => {
+  it('breaks at a hole below the tip', () => {
     const store = makeChain(2);
-    // Heights 4 and 5 exist above a gap at 3. `chainHeight()` walks up from 1
-    // and stops below the gap, so the serve loop never sees them.
+    // Heights 4 and 5 exist above a gap at 3. Tip is MAX(height)=5;
+    // `serveHeadersResponse` walks down from 5 and breaks at the gap.
     store.set(4, makeMockOrderingBlock(4, 'ff'.repeat(32)));
     store.set(5, makeMockOrderingBlock(5, 'ff'.repeat(32)));
 
     const headers = receiveHeaders(serveHeaders({ startHeight: 5, maxCount: 5 }, store), 5);
-    expect(headers!.map((h) => h.height)).toEqual([2, 1]);
+    expect(headers!.map((h) => h.height)).toEqual([5, 4]);
   });
 
   it('serves nothing for a maxCount of zero', () => {
@@ -645,10 +643,9 @@ describe('serve: GetBlocks', () => {
     store.set(3, makeMockOrderingBlock(3, 'ff'.repeat(32)));
     store.set(5, makeMockOrderingBlock(5, 'ff'.repeat(32)));
 
-    // `chainHeight()` is 1 (the gap at 2 stops the walk), and the serve loop is
-    // clamped to it — we do not serve blocks above a hole in our own chain.
+    // Tip is MAX(height)=5; the serve loop skips absent heights (continue).
     const blocks = receiveBlocks(serveBlocks({ startHeight: 1, endHeight: 5 }, store), 1, 5);
-    expect(blocks!.map((b) => b.header.height)).toEqual([1]);
+    expect(blocks!.map((b) => b.header.height)).toEqual([1, 3, 5]);
   });
 
   it('returns an empty list when no blocks are in range', () => {
