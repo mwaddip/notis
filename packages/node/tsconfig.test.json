@@ -24,8 +24,6 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "noEmit": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
     "paths": {
       "@dagsocial/*": ["../*/src/index.ts"]
     }
