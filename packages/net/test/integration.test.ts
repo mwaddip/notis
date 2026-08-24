@@ -15,7 +15,6 @@ import {
   verifyOrderingBlockStructure,
   verifyPostBody,
 } from '@dagsocial/validation';
-import { createPrivateKey, sign } from 'crypto';
 import { NetNode } from '../src/node.js';
 import type { NetConfig, NetValidators } from '../src/types.js';
 
