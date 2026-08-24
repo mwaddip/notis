@@ -370,6 +370,29 @@ The SPKI-envelope mechanics survive in the transaction signature path unchanged 
 32 raw bytes wrapped with the `302a300506032b6570032100` prefix, a `KeyObject` via
 `crypto.createPublicKey`, then `crypto.verify(null, …)`.
 
+### Acceptance criterion — the runtime's, and consensus-visible through one preimage
+
+**No verification site performs a scalar or point canonicality check of its own.** Every
+site — `verifyValidatorSignature` below, `validateTx`'s authorization check, the prune-entry
+author check at block application — builds a `KeyObject` and delegates accept/reject entirely
+to `crypto.verify(null, …)`: Ed25519 per RFC 8032 **as the runtime's OpenSSL implements it**.
+The criterion is therefore not a rule this repo states and enforces; it is a rule this repo
+inherits, and two nodes agree on it only while their runtimes do.
+
+**Measured 2026-08-06 on Node 22.19.0 / OpenSSL 3.0.17: both standard malleation forms are
+rejected** — a scalar raised by the group order (`S + L`) and the high-bit variant. Exactly
+those two forms were tested; non-canonical `R` encodings, small-order points, and
+cofactored-versus-cofactorless behaviour were not.
+
+**Why this section exists:** signature bytes are excluded from every hash preimage in the
+system except one. `serializePruneEntry` carries `authorSignature` as field 5, and those bytes
+are the `'prune'` Merkle leaf preimage under `utxoTxRoot` (`TYPES_INTERFACE → Layout — Merkle
+leaf preimages are the struct's own wire bytes`). A block carrying a prune entry whose
+signature one runtime accepts and another rejects splits the network — so a second
+implementation must match `crypto.verify`'s observed behaviour, not a stricter or looser
+reading of RFC 8032, and a runtime whose OpenSSL changes its acceptance set is a consensus
+event, not a dependency bump.
+
 ### verifyValidatorSignature
 
 ```
