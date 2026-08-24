@@ -447,11 +447,31 @@ received and applied.
 When an ordering block is received from gossip:
 
 1. Full validation (structure, chain-link, PoW, signature)
-2. For each `utxoTxId`: decode from mempool or reconstruct, call
-   `revalidateTxInContext` (liveness only), then `applyTx`
+2. For each `utxoTxId`: decode from mempool or reconstruct, **fully re-validate with
+   `validateTx`**, then `applyTx`
 3. Confirm the block's posts (ids from its post transactions)
 4. Remove confirmed entries from mempool — transactions by `tx_id`, prune entries by
    `prune_entry_id`
+
+⛔ **Step 2 is full re-validation, never a liveness-only re-check.** A permissionless block
+producer can embed a transaction that never passed pool entry or relay validation, so
+authorization, transitions and conservation must not be assumed of anything a block carries
+(NODE_INTERFACE → Block finalization).
+
+### What takes an entry out of the pool
+
+**Four mechanisms, and none of them re-checks a pooled entry's validity on a timer.**
+
+1. **Confirmation.** A transaction a block applies leaves by `tx_id`; a block this node mined is
+   swept by rowid in `finalizeBlock`, which reaches every included entry wherever it sits.
+2. **Expiry.** Every insert carries `expiresAtHeight = <insert height> + MEMPOOL_EXPIRY_BLOCKS`, and
+   the block build purges past it before selecting.
+3. **The cap.** The credit class evicts its lowest fee-rate row; the karma class rejects at the cap
+   and never evicts (→ Size cap).
+4. **A rejected body.** When the mutation phase refuses the body, the build evicts exactly the rows
+   that body included and reassembles (MINING_INTERFACE → Template and submit). **This is what
+   removes an entry that has gone invalid while its inputs are still live** — a liveness test cannot
+   see that class, and nothing else looks for it.
 
 ---
 

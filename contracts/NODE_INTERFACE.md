@@ -1263,21 +1263,6 @@ pin — honest bytes unmoved; txs that previously
 applied while carrying envelope garbage (junk `protocolVersion`, stray keys)
 become rejections. Covered by the standing fresh-chain gate.
 
-### revalidateTxInContext
-
-```
-revalidateTxInContext(deps, tx: UtxoTransaction, currentBlockHeight: number): UtxoResult
-```
-
-Lightweight liveness-only re-check (are inputs still unspent?). **Not sufficient
-for block application on its own** — a permissionless block producer can embed a
-tx that never passed pool entry or relay validation, so authorization, transitions,
-and conservation must NOT be assumed. Block finalization fully
-re-validates every embedded tx with `validateTx` (see Block finalization step 4).
-`revalidateTxInContext` remains available for the mempool's own staleness pruning,
-where the tx was already validated on entry — never as the sole gate on applying
-an untrusted, block-embedded tx.
-
 ### applyTx
 
 ```
@@ -1285,8 +1270,7 @@ applyTx(deps, tx: UtxoTransaction, outputsWithIds: AnyBox[], currentBlockHeight:
 ```
 
 Write-only. Consumes all input boxes and inserts all output boxes inside a
-SQLite transaction. Performs no validation — call `validateTx` or
-`revalidateTxInContext` first.
+SQLite transaction. Performs no validation — call `validateTx` first.
 
 ### validateAndApplyTx (convenience)
 
