@@ -532,6 +532,11 @@ lie this whole bundle exists to remove. A client seeing `null` learns something 
 **The node serves no faucet, and holds no key it could sign one with.** `POST /faucet` and
 `POST /credits/faucet` do not exist; both answer 404 on every network.
 
+⚠ **The demo UI's faucet buttons therefore depend on a proxy, not on the node.** They post to
+`/testnet/faucet/karma` and `/testnet/faucet/credits`, which the deployment maps to the faucet
+service's own port; the node's own origin has nothing to answer them with. A node served without
+that mapping renders the buttons and 404s them.
+
 A faucet is an **ordinary account** whose secret lives in a service outside the node. Genesis seeds
 that account's karma and credit boxes on the networks whose profile names a `faucetPublicKey`;
 mainnet's does not, so no faucet identity exists in mainnet state. **Absence of the field is the whole
