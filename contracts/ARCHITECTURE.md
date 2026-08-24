@@ -902,9 +902,10 @@ recorded like any post.
 There is no profile-root anchor, no typed child posts and no DAG walk. `display_name` is a
 profile-document field or the username's concern; avatars are not a post type.
 
-> **AHEAD OF CODE — a per-identity profile route/index is follow-on work.** The node serves
-> profile posts as ordinary posts; the latest-wins resolution above is a client/indexer
-> rule, and nothing in consensus depends on it.
+> ⛔ **The node does no profile resolution** (user, 2026-08-25). It serves profile posts as
+> ordinary posts and holds no per-identity profile route and no profile index. Latest-wins is
+> a client/indexer rule, nothing in consensus depends on it, and a node that resolved profiles
+> would be ranking rather than recording.
 
 ### Identity resolution
 
@@ -1311,7 +1312,7 @@ relied on. A mechanism that needs either brings its own parameter with its own r
 
 | Parameter | Description |
 |-----------|-------------|
-| `GENESIS_COMMITTEE_KEYS` | List of public keys in the genesis committee |
+| `genesisCommitteeKeys` | List of public keys in the genesis committee — a `NetworkProfile` field, with no `constants.ts` export beside it |
 | `GENESIS_KARMA_PER_MEMBER` | Initial karma per committee member |
 
 ---
@@ -1550,16 +1551,16 @@ not be independently readable.
 `ORDERING_BLOCK_POW_TARGET_BITS` · `KARMA_DECAY_INTERVAL_BLOCKS` ·
 `KARMA_STALE_THRESHOLD_BLOCKS` · `VOUCH_COOLDOWN_BLOCKS` · `INVITE_PROBATION_BLOCKS` ·
 `CREDIT_MINER_REWARD_DELAY` · `CREDIT_FIXED_RATE_BLOCKS` ·
-`CREDIT_EPOCH_BLOCKS` · `GENESIS_COMMITTEE_KEYS` · `GENESIS_KARMA_PER_MEMBER` ·
-`genesisProofPayload` · `genesisStateRoot` ·
-`inviteBondMin` · `inviteBondMax` · `faucetPublicKey`
+`CREDIT_EPOCH_BLOCKS` · `GENESIS_KARMA_PER_MEMBER` · `INVITE_BOND_MIN` · `INVITE_BOND_MAX` ·
+`genesisCommitteeKeys` · `genesisProofPayload` · `genesisStateRoot` · `faucetPublicKey`
 
-The last two are spelled as `NetworkProfile` fields because that is their **only** definition: every
-other name in the list is either a `constants.ts` export or a retired environment variable, and these
-two are neither. They are one fact stated twice — `genesisProofPayload` is the sole per-network input
-to the genesis box set, and `genesisStateRoot` is the height-0 AVL+ root over it. Both belong to the
-genesis axis this section already declares, so they add fields to a declared axis rather than opening
-a fourth.
+**Every name is spelled by its definition site, and the case says which one.** A `SCREAMING_CASE` name
+is a `constants.ts` export that a profile field reads; a `camelCase` name is a `NetworkProfile` field
+that no constant stands beside — the four at the end of the list. `genesisCommitteeKeys` and
+`faucetPublicKey` are field-only because one constant serves one value and each network names its own;
+`genesisProofPayload` and `genesisStateRoot` are one fact stated twice, the sole per-network input to
+the genesis box set and the height-0 AVL+ root over it. All four belong to the genesis axis this
+section already declares, so they add fields to a declared axis rather than opening a fourth.
 
 **Universal — every other constant, including consensus ones:** the format limits
 (`MAX_CONTENT_BYTES`, `MAX_PARENT_REFS`, `PROTOCOL_VERSION`, `AVL_KEY_LENGTH`) and **every
@@ -1989,10 +1990,12 @@ forever. A node rejects objects with an unsupported protocol version.
   > now `RESOLVED`.
   >
   > **Residue, and it is a different class.** `genesisCommitteeKeys` and `genesisKarmaPerMember`
-  > are read by `services/genesis-state.ts` to seed the committee; `GENESIS_COMMITTEE_KEYS` is
-  > empty on all three profiles, so that loop runs zero times — see §Genesis. The two profile
-  > fields nothing read (`bootstrapPeriodBlocks`, `genesisCreditsPerMember`) were removed
-  > 2026-08-21. A field nothing reads cannot diverge; it equally cannot be relied on.
+  > are read by `services/genesis-state.ts` to seed the committee; `genesisCommitteeKeys` is
+  > empty on all three profiles, so that loop runs zero times — see §Genesis. It is a profile
+  > field with no `constants.ts` export beside it, which is what a per-network parameter looks
+  > like when every network names its own value. The two profile fields nothing read
+  > (`bootstrapPeriodBlocks`, `genesisCreditsPerMember`) were removed 2026-08-21. A field nothing
+  > reads cannot diverge; it equally cannot be relied on.
   >
   > ⚠ **The lesson outlives the defect, so it stays: the count here read "three" for several
   > hours.** It was derived from `MINING_INTERFACE`'s configuration table, which holds *mining*
