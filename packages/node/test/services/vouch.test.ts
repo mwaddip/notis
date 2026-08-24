@@ -115,7 +115,6 @@ function seedVouchEscrow(owner: Uint8Array, releaseAtBlock: number): void {
 function vouchTxFor(
   voucherId: Uint8Array,
   targetId: Uint8Array,
-  _seed: number,
 ): UtxoTransaction {
   return {
     inputs: [],
@@ -420,7 +419,7 @@ describe('vouch service', () => {
       createVouchBox(voucherPubKey, targetPubKey, 5);
 
       const otherTarget = rawPublicKey(generateKeyPairSync('ed25519').publicKey);
-      const tx = vouchTxFor(voucherPubKey, otherTarget, 10);
+      const tx = vouchTxFor(voucherPubKey, otherTarget);
 
       expect(() => castVouch(deps, tx, 10)).toThrow(
         'Already vouching for an identity',
@@ -435,7 +434,7 @@ describe('vouch service', () => {
       expect(castVouch(deps, firstTx, 5).status).toBe('pending');
 
       const otherTarget = rawPublicKey(generateKeyPairSync('ed25519').publicKey);
-      const secondTx = vouchTxFor(voucherPubKey, otherTarget, 6);
+      const secondTx = vouchTxFor(voucherPubKey, otherTarget);
 
       expect(() => castVouch(deps, secondTx, 6)).toThrow('Vouch already pending');
     });

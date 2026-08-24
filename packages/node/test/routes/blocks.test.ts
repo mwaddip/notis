@@ -20,7 +20,7 @@ const TEST_DB = '/tmp/dagsocial-test-routes-blocks.sqlite';
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeBlock(height: number, _hash: string): OrderingBlock {
+function makeBlock(height: number): OrderingBlock {
   const baseHash = height === 1 ? '0'.repeat(64) : `block-${height - 1}`;
   return {
     header: {
@@ -165,7 +165,7 @@ describe('blocks routes', () => {
     //
     // Carried by the height-1 block rather than a second one on purpose — a
     // block at height 2 would move the tip `/blocks/current` asserts on.
-    createOrderingBlock(makeBlock(1, 'a'.repeat(64)));
+    createOrderingBlock(makeBlock(1));
   });
 
   afterAll(() => {
