@@ -6,7 +6,6 @@ import type {
   EmissionBox,
   KarmaPoolBox,
 } from '@dagsocial/types';
-import { getDb } from './db.js';
 import {
   insertBox,
   getKarmaBox,

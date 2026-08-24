@@ -52,8 +52,7 @@ import {
   registerKarmaMembershipHook,
 } from './store/index.js';
 import { MEMPOOL_EXPIRY_BLOCKS, computePostId } from '@dagsocial/types';
-import type { OrderingBlock } from '@dagsocial/types';
-import { initBackfill, registerPlaceholder, onBlockApplied } from './services/backfill.js';
+import { initBackfill } from './services/backfill.js';
 import { verifyPostBody } from '@dagsocial/validation';
 
 const config = loadConfig();

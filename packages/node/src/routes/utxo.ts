@@ -1,10 +1,4 @@
 import { Router, Response } from 'express';
-import {
-  selectBoxes,
-  computeTxId,
-  PROTOCOL_VERSION,
-  MEMPOOL_EXPIRY_BLOCKS,
-} from '@dagsocial/types';
 import type { KarmaBox, CreditBox, BondBox, UtxoTransaction } from '@dagsocial/types';
 import { sendCredits } from '../services/credits.js';
 import type { UtxoEngineDeps } from '../services/utxo-engine.js';

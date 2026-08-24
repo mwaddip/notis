@@ -27,7 +27,6 @@ import type {
   OrderingBlock,
   BlockHeader,
   UtxoTxTree,
-  Post,
   AnyBox,
   UtxoTransaction,
 } from '@dagsocial/types';
@@ -58,7 +57,7 @@ import {
 import { deriveKarmaDecay } from './decay.js';
 import { planPruneSettlement } from './settle-prune-utxo.js';
 import type { PruneEntry } from '@dagsocial/types';
-import type { DecayCfg, DecayDeps, DecayPlan } from './decay.js';
+import type { DecayDeps, DecayPlan } from './decay.js';
 import type { KarmaBox, VouchEscrowBox } from '@dagsocial/types';
 import { materializeOutput } from './utxo-engine.js';
 import {
@@ -76,8 +75,6 @@ import {
 import {
   getOrderingBlock,
   getCurrentHeight,
-  getDb,
-  getPost,
   getBox,
   getBondsInvitedAt,
   getEmissionBox,
