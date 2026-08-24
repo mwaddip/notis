@@ -5,11 +5,13 @@
 
 ## Status markers — the convention for every contract in this directory
 
-A contract section describes one of several different things, and until 2026-08-06 nothing
-distinguished them: text describing running code, text describing intended design, and text
-describing a mechanism that was documented and never built all read with identical authority.
-A repo-wide audit found **41 `never-true` claims against 25 genuine drift** — the dominant
-failure was not documentation falling behind code, it was documentation that was never true.
+A contract section describes one of several different things — text describing running code, text
+describing intended design, and text describing a mechanism that was documented and never built —
+and without a marker all three read with identical authority.
+
+> ⚠ **Measured 2026-08-06.** A repo-wide audit found **41 `never-true` claims against 25 genuine
+> drift**. The dominant failure is not documentation falling behind code; it is documentation that
+> was never true.
 
 **Every section that is not plainly describing running code MUST carry one of these**, and each one
 **carries the date it was last verified** — `> ⚠ VIOLATED — verified 2026-08-11` — so a reader can
@@ -316,8 +318,8 @@ content availability.
 
 #### Public-key representation — the rule, and where the boundary is
 
-**`UserId` is `Uint8Array` — 32 raw bytes — everywhere it appears as `UserId`.** This
-document previously said `hex(publicKey) — 64 chars`, which was never true of `Post.author`.
+**`UserId` is `Uint8Array` — 32 raw bytes — everywhere it appears as `UserId`**
+(`types/src/identity.ts`).
 
 A public key is rendered as a **hex `string`** in exactly one place, explicitly
 typed `string` rather than `UserId`: the `signatures` map keys. That is deliberate,
@@ -1791,11 +1793,11 @@ forever. A node rejects objects with an unsupported protocol version.
 ### Cryptographic
 
 - Hashing: `blake2b512` truncated to 32 bytes for all 32-byte outputs
-- Signatures: raw Ed25519 (64 bytes). **On the wire the encoding depends on the
-  carrier, and "base64" — as this line previously read — is the rarest of the three:**
-  raw bytes in the positional encodings (all consensus structures), **lowercase hex** at the HTTP
-  boundary (`json-to-tx.ts`) and in the demo UI, and base64 at exactly one endpoint
-  (`routes/utxo.ts`). Verification is `crypto.verify(null, …)` with a KeyObject in
+- Signatures: raw Ed25519 (64 bytes). **Two encodings carry a signature, and base64 is not one of
+  them:** raw bytes in the positional encodings (all consensus structures), and **lowercase hex**
+  at the HTTP boundary (`json-to-tx.ts`) and in the demo UI. base64 carries no signature anywhere —
+  it encodes the AVL proof blob (`state/avl-endpoint.ts`), and `base64url` the JWK key material the
+  node builds to verify with. Verification is `crypto.verify(null, …)` with a KeyObject in
   every case
   > ⚠ **Non-malleability is relied upon and stated nowhere.** Measured on node v22.19.0 /
   > openssl 3.0.17: `crypto.verify` rejects the classic `S + L` malleation and the

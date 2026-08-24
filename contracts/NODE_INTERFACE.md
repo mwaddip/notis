@@ -2559,7 +2559,7 @@ deterministic by replay, journalled with exact inverses, not in the `stateRoot`.
 | `getBox(boxId)` | `(string) => AnyBox \| null` |
 | `getUnspentBoxes()` | `() => AnyBox[]` — all unspent boxes (for AVL bootstrapping) |
 | `getKarmaBox(owner)` | `(Uint8Array) => KarmaBox \| null` — single box (backward compat) |
-| `getKarmaBoxes(owner)` | `(Uint8Array) => KarmaBox[]` — multi-box listing (full boxes, keyed on `id` — the contract previously said `{ boxId, value }[]`, which was never the implementation) |
+| `getKarmaBoxes(owner)` | `(Uint8Array) => KarmaBox[]` — multi-box listing: full boxes, keyed on `id` |
 | `getKarmaValue(owner)` | `(Uint8Array) => bigint` — **summed** value of every unspent karma box. **Consensus input** (the vouch minimum-balance gate), and the single implementation every validation path shares. It must sum, never read one box: `getKarmaBox` is `LIMIT 1` with no `ORDER BY`, so a single-box read makes the verdict a function of SQLite's physical row order — M-12's class. Kept as one store function rather than a closure per deps literal, because a consensus-critical read reproduced at each call site is the mirror pattern that produced `computeTxIdLocal` and the copied `u32BE` |
 | `getCreditBoxes(owner)` | `(Uint8Array) => CreditBox[]` — multi-box, `ORDER BY value DESC, id` — a total order, so element `[0]` is a deterministic read; there is deliberately **no single-box credit accessor** (an unordered `LIMIT 1` names an arbitrary row — M-12's class) |
 | `getBondFor(inviteePublicKey)` | `(UserId) => BondBox \| null` — the bond naming this key; the settlement path resolves through this |
@@ -3803,9 +3803,9 @@ All config via environment variables with defaults.
 | `local` | Genuinely a node's own choice — producer behaviour, resource ceilings | Free to vary |
 | `operational` | Paths, ports, keys, addresses | Free to vary |
 
-⚠ **Nine of these were undocumented until 2026-08-06, and five of those are `consensus`.** The
-convention exists because the absence of one is a live defect class: nothing marked which variables an
-operator may safely change, and four consensus parameters were environment-tunable.
+⚠ **An unclassed variable is the defect this convention exists for.** Nothing else in the tree states
+which variables an operator may safely change, so one left unclassed reads as freely tunable whatever
+its actual reach.
 
 > ✅ **RESOLVED — P2-A removed all ten from the environment** (PR #8, `4670ae5`). They did not
 > become better-documented environment variables; they stopped being configuration. **Five**
