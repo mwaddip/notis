@@ -44,9 +44,6 @@ importers:
       '@multiformats/multiaddr':
         specifier: ^12.0.0
         version: 12.5.1
-      cbor-x:
-        specifier: ^1.6.0
-        version: 1.6.4
       libp2p:
         specifier: ^1.0.0
         version: 1.9.4
