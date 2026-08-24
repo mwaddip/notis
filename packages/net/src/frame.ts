@@ -7,8 +7,8 @@ import {
 
 // The magics and the canonical set come from @dagsocial/types — wire owns the codec, not
 // network identity (NET_INTERFACE → Magic Bytes). Never re-declare KNOWN_FRAME_MAGICS as a
-// local literal: a magic missing from it is classified as not-a-frame, falls through to the
-// legacy raw-CBOR path, and permanently bans the peer.
+// local literal: a magic missing from it is classified as not-a-frame instead of wrong-magic
+// (both frame-tier, no penalty — the cost is the diagnosis, not the outcome).
 export { MAGIC_MAINNET, MAGIC_TESTNET, MAGIC_DEVNET, KNOWN_FRAME_MAGICS } from '@dagsocial/types';
 
 /** Create the standard blake2b256 hasher for frame checksums. */

@@ -52,8 +52,10 @@ export function readBoundedLpUtf8(r: ByteReader, maxBytes: number, name: string)
     throw new ReaderError(`${name}: ${len} bytes exceeds ${maxBytes}`, 'out-of-domain');
   }
   const bytes = r.readBytes(len);
-  const str = new TextDecoder().decode(bytes);
-  if (new TextEncoder().encode(str).length !== len) {
+  let str: string;
+  try {
+    str = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
     throw new ReaderError(`${name}: invalid UTF-8`, 'out-of-domain');
   }
   return str;
@@ -130,7 +132,7 @@ export function decodeSyncInfo(body: Uint8Array): SyncInfo | null {
 // u8(typeId) ‖ arr( hexN(id, 32) )
 //
 // typeId is u8 — the byte is the domain; unknown values decode and are dropped
-// by the handler (sync-machine.ts:695 — the Inv drop site; node.ts filters
+// by the handler (the sync machine's typeId filter; node.ts filters
 // ModifierRequest by typeId before dispatch). 1–MAX_INV_IDS ids; empty is
 // malformed (nonEmpty — no honest sender announces or requests nothing).
 // ---------------------------------------------------------------------------
@@ -246,7 +248,7 @@ export function decodeGetPeers(body: Uint8Array): GetPeersMsg | null {
 // arr( lpUtf8(address) ‖ lpUtf8(agentName) ‖ lpUtf8(nodeName)
 //      ‖ vlqU(protocolVersion) ‖ arr(vlqU(capability)) )
 //
-// 0–MAX_PEERS_ENTRIES peers; empty is legal (NET_INTERFACE → "Empty selection").
+// 0–MAX_PEERS_ENTRIES peers; empty is legal (NET_INTERFACE → Peers).
 // ---------------------------------------------------------------------------
 
 export const peersCodec: StructCodec<PeersMsg> = {
