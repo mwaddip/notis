@@ -44,13 +44,13 @@ describe('fork', () => {
     expect(tipA.hash).not.toBe(tipB.hash);
 
     // ---- C bridges A and B ----
-    // B listed first so C syncs from the longer chain before A
-    const nodeC = await mesh.addNode([p2pAddr(nodeB), p2pAddr(nodeA)]);
+    // A listed first — the pick targets B (retained-highest) regardless of connect order
+    const nodeC = await mesh.addNode([p2pAddr(nodeA), p2pAddr(nodeB)]);
 
-    // C connects to both. The sync machine processes the handshake and pulls
-    // blocks from B (more work). Mining 1 on B after the connection pushes a
-    // gossip block that triggers the sync round, and a second mine on C (once
-    // it has caught up) gossips to A, forcing A's reorg.
+    // C connects to both; the pick targets B (retained-highest, height not
+    // work). Mining 1 on B after the connection pushes a gossip block that
+    // triggers the sync round, and a second mine on C (once it has caught up)
+    // gossips to A, forcing A's reorg.
     await mine(nodeB, mesh.miningSecret, 1);
     await waitHeight([nodeC], 6, 60_000);
 
@@ -85,7 +85,8 @@ describe('fork', () => {
     expect(tipD.height).toBe(dTarget);
     expect(tipABeforeBridge.height).toBeGreaterThan(MAX_REORG_DEPTH);
 
-    // E bridges D and A — D listed first so E syncs the longer chain
+    // E bridges D and A — D listed first: syncing A's chain first strands
+    // E, because the A/D divergence is deeper than MAX_REORG_DEPTH
     const nodeE = await mesh.addNode([p2pAddr(nodeD), p2pAddr(nodeA)]);
     // Wait for E to sync — it joins the longer chain (D's)
     await waitHeight([nodeE], dTarget, 30_000);

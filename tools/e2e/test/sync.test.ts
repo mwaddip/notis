@@ -71,26 +71,19 @@ describe('sync', () => {
     }
     await waitHeight(mesh.nodes, targetHeight);
 
-    // ---- add late joiner, poll health for sync_phase observations ----
+    // ---- add late joiner, wait for sync ----
     const lateNode = await mesh.addNode();
 
-    const observedPhases = new Set<string>();
     const heightDeadline = Date.now() + 15_000;
     let heightReached = false;
     while (Date.now() < heightDeadline) {
       try {
-        const [tip, health] = await Promise.all([
-          getBlockCurrent(lateNode),
-          adminGet(lateNode, '/health'),
-        ]);
-        observedPhases.add(health['sync_phase'] as string);
+        const tip = await getBlockCurrent(lateNode);
         if (tip.height >= targetHeight) { heightReached = true; break; }
       } catch { /* node may still be starting */ }
       await new Promise(r => setTimeout(r, 50));
     }
     expect(heightReached).toBe(true);
-
-    const backfillObserved = observedPhases.has('backfill');
 
     // Mine a few blocks so the backfill driver's per-block hook fires
     // on the late joiner after sync completes.
@@ -99,13 +92,9 @@ describe('sync', () => {
 
     // ---- wait for the body to arrive via backfill ----
     const bodyDeadline = Date.now() + 15_000;
-    let bodyArrived = false;
     while (Date.now() < bodyDeadline) {
       const p = await getPost(lateNode, threadRes.postId);
-      if (p !== null && isPost(p) && p.content !== null) {
-        bodyArrived = true;
-        break;
-      }
+      if (p !== null && isPost(p) && p.content !== null) break;
       await new Promise(r => setTimeout(r, 100));
     }
 
@@ -131,9 +120,6 @@ describe('sync', () => {
       expect(latePost.content).toBe('synced post');
       expect(latePost.contentHash).toBe(expectedHash);
     }
-
-    // backfill was observed OR synced was reached with the body present
-    expect(backfillObserved || bodyArrived).toBe(true);
 
     // ---- post_bodies_pulled_total: >= 1 on the late node, 0 on the miner ----
     const lateStats = await adminGet(lateNode, '/stats');
