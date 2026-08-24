@@ -238,7 +238,7 @@ describe('ordering store', () => {
     expect(() => {
       db.prepare(
         `INSERT INTO ordering_blocks
-           (height, header_cbor, utxotx_tree_cbor,
+           (height, header_bytes, utxotx_tree_bytes,
             validator_signature, created_at, block_hash)
          VALUES (?, ?, ?, ?, ?, ?)`,
       ).run(2, Buffer.alloc(1), Buffer.alloc(1), Buffer.alloc(64), 0, hash);

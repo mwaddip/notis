@@ -28,7 +28,7 @@ time a UTXO box references their public key.
 | `generateKeyPair()` | `() => KeyPair` | Node `crypto.generateKeyPairSync('ed25519')`, strips SPKI DER wrapper to extract raw 32 key bytes |
 
 `UserId` is binary. On the HTTP API wire it is hex-encoded (64 hex chars).
-In CBOR it stays raw bytes. There is no `getUserId` hash function — the public
+In the positional codecs it stays raw bytes. There is no `getUserId` hash function — the public
 key IS the identity.
 
 ---
@@ -59,7 +59,7 @@ PostId = blake2b512(POST_ID_DOMAIN || utf8(txId) || u32BE(index))
 ```
 
 `PostId` is a hex string. `author` is binary (Uint8Array) — hex on the HTTP
-wire, raw bytes in CBOR.
+wire, raw bytes in the positional codecs.
 
 **A block commits the `PostCommit` — structure and content hash — never the body.** The body
 travels beside its transaction as a packet (→ Layout — UtxoTransaction, the packet codec) and
@@ -266,7 +266,8 @@ producer and verifier stay consistent automatically.
 
 ```
 BoxId = string  // hex, 32 bytes
-boxId = blake2b512( BOX_ID_DOMAIN ‖ canonicalCbor(candidate) ‖ txId ‖ u32BE(index) )[0:32]
+boxId = blake2b512( BOX_ID_DOMAIN ‖ boxRecordBytes(candidate, txId, index) )[0:32]
+boxRecordBytes = canonicalBoxBytes(candidate) ‖ b32(txId) ‖ vlqU(index)   // → Layout — Boxes
 ```
 
 Box identity derives from **creating-transaction provenance**, not from content alone
@@ -412,42 +413,39 @@ this way via `POST_ID_DOMAIN`; box ids previously had no tag.)
 
 #### Canonical encoding
 
-Exactly one encoder defines `canonicalCbor` for identity: the `cbor-x` `Encoder` in `utxo.ts`
-(`{ tagUint8Array: false, useRecords: false, mapsAsObjects: true }`), exported as
-`canonicalBoxBytes(candidate)` so tests and mirror implementations assert against the encoder
-that actually computes ids. Node's AVL value encoder (`state/serialize-box.ts`) is a
-**separate, tagged** encoding for tree values and is not interchangeable with it.
-`serialization.ts` must not export a third — it previously did, using cbor-x's *default*
-`encode`, which is neither. `computeTxId` hashes its outputs through `canonicalBoxBytes` for
-the same reason: one strip rule, so tx and box derivation cannot drift.
+Exactly one encoder defines the content bytes for identity: `canonicalBoxBytes(candidate)` in
+`utxo.ts` — the positional writer for the layout's `boxContentBytes` (→ Layout — Boxes): the
+shared prefix `enum8(boxType) ‖ vlqU64(value) ‖ vlqU(createdAtBlock)`, then the per-type tail
+(`writeBoxTypeFields`, whose field order is normative). Tests and mirror implementations assert
+against the encoder that actually computes ids. Node's AVL value (`state/serialize-box.ts`) is
+`boxRecordBytes` — the same content bytes with provenance appended — so the two encodings share
+the one content writer and cannot drift. `serialization.ts` exports no second box encoder;
+`computeTxId` hashes its outputs through `canonicalBoxBytes` for the same reason: one writer, so
+tx and box derivation cannot drift.
 
-⚠ **`canonicalBoxBytes` is cbor-x framing, NOT RFC 8949 canonical CBOR.** It emits the fixed
-two-byte map header (`b9 00NN`), not the minimal-length form (`a7`). The name invites the wrong
-assumption — a mirror written to the CBOR canonicalisation rules computes different ids. The
-demo UI already encodes this way; full bytes are pinned as golden vectors in
+⚠ **`canonicalBoxBytes` is a positional layout, not a self-describing format.** There are no
+keys, no map framing, and nothing to sort — a mirror reproduces the field table byte-for-byte.
+The demo UI already encodes this way; full bytes are pinned as golden vectors in
 `test/utxo.test.ts`.
 
 #### Key ordering is canonical (Spec G phase G3b)
 
-`canonicalBoxBytes` **imposes** a total key order — a lexicographic sort of the candidate's own
-keys — rather than inheriting the caller's insertion order. Node's `serializeBox` and the demo
-UI's mirror apply the identical rule.
+The positional layout is what enforces this now: **field order is fixed by the writer**
+(`canonicalBoxBytes`' shared prefix, then `writeBoxTypeFields`' per-type table), a producer's
+object never chooses it, and an extra key is unrepresentable because the encoder reads only the
+fields it declares. Node's `serializeBox` and the demo UI's mirror reproduce the identical
+layout.
 
-This retires contract hazards **1b and 1c** in `NODE_INTERFACE.md`. cbor-x emits map keys in JS
-insertion order, so before this a producer's field order was consensus-visible: the same box
-built two ways hashed to two ids, and `post_lock` genuinely diverged between its producer and
-`rowToBox`. The fix is at the single encode site, **not** at the diverging producer — a producer
-can no longer get key order wrong because it no longer chooses it, and the "make every producer
-match `rowToBox`" discipline is retired with it.
+This retires contract hazards **1b and 1c** in `NODE_INTERFACE.md` **by construction**: under
+cbor-x a producer's field order was consensus-visible (the same box built two ways hashed to two
+ids, and `post_lock` genuinely diverged between its producer and `rowToBox`); G3b first closed
+that with a `sortKeys` pass on both encoders, and the positional migration superseded the sort —
+a fixed layout has no key order to canonicalise, so `sortKeys` has no call site left. The
+guarantee sits at the single encode site, **not** at any producer.
 
-`Array.prototype.sort` with no comparator compares UTF-16 code units and is **not** locale-aware
-(that is `localeCompare`), so it is deterministic across platforms. Every box field name is
-ASCII, so the order is plain byte order. The sort is **shallow**: box fields are primitives,
-strings and `Uint8Array`s, and a nested object added later would need it applied recursively.
-
-> A mirror implementation that sorts differently — or not at all — computes different ids for
-> every box. This sits alongside the cbor-x-framing warning above as the second thing a mirror
-> must get right.
+> A mirror implementation that walks the fields in any other order computes different ids for
+> every box. This sits alongside the positional-layout warning above as the second thing a
+> mirror must get right.
 
 #### Value denomination (P0 — Spec B, 8-decimal BigInt)
 
@@ -484,10 +482,6 @@ minted rather than conjured.
 ⚠ **The golden corpus keeps its `2⁶⁴ − 1` vectors and they keep their meaning.** They pin the
 **encodable** domain, which is the writer's, and the corpus deliberately carries out-of-domain
 vectors. A vector proving a value encodes is not a claim that consensus accepts it.
-
-**The cbor-x argument still holds and is now incidental:** a bigint `< 2⁶⁴` encodes as a CBOR uint64
-(`0x1b` + 8 bytes); at or above it escalates to a tag-2 bignum, a different layout. `2⁶³` is inside
-that, so the uniform `0x1b` form is preserved by a bound chosen for a different reason.
 
 ⚠ **`2⁶³ − 1` is 9.2 × 10¹⁸ against supplies measured in thousands.** The ceiling is not an economic
 constraint and must not be described as one.
@@ -1206,7 +1200,7 @@ OrderingBlock {
 
 UtxoTxTree {
   utxoTxIds: TxId[]                  // UTXO transaction IDs (likes and POSTS included)
-  utxoTxs: Uint8Array[]              // CBOR-encoded UtxoTransactions, aligned with utxoTxIds
+  utxoTxs: Uint8Array[]              // encodeTx bytes (positional), aligned with utxoTxIds
   pruneEntries: PruneEntry[]         // prune entries committed in this block
 }
 ```
@@ -1472,8 +1466,8 @@ it avoids. Throwing writers are named `…OrThrow` so the exception is visible a
 > `content-sweep.ts`. The line numbers that stood here (`:148`, `:230`, `:92`) had every one moved,
 > which is why this paragraph names symbols instead. `content-sweep` was the sharpest site in the
 > tree — `verifyPostId` cold, zero prior checks, on a post whose decoder explicitly declines to
-> inspect the interior, and the sync path stays on `cbor-x` permanently, so **no codec phase would
-> ever have closed it.**
+> inspect the interior, and the sync path stayed on `cbor-x` through every codec phase, so **no
+> codec phase would ever have closed it.**
 >
 > **This is not merely tightening the already-unusable.** A post with a 64-character *non-hex*
 > `parentRef` passes the complete Stage-1 pipeline today, signature and PoW included, because the ref
@@ -2468,11 +2462,12 @@ take `magic` as a parameter and read no magic constant — the codec is magic-ag
 construction and does not own network identity.
 
 ⚠ **`KNOWN_FRAME_MAGICS` must be imported, never re-declared.** `net/src/node.ts` held it as
-a local literal until phase 3a. A magic missing from the set is classified as not-a-frame,
-falls through to the legacy raw-CBOR path, decodes as malformed, and **permanently bans the
-peer** — so a stale copy turns a routine cross-network misconnection into a ban. Note the set
-is consulted *only* for frames that fail the own-magic compare, so a stale copy does not
-break same-network peering; the damage is entirely cross-network.
+a local literal until phase 3a. A magic missing from the set is classified as `not-a-frame`
+instead of `wrong-magic` — both are frame-tier rejects (stream closed, no penalty,
+NET_INTERFACE → "Ban policy"), so a stale copy costs the classification, not a ban: a routine
+cross-network misconnection stops being recognisable as one. Note the set is consulted *only*
+for frames that fail the own-magic compare, so a stale copy does not break same-network
+peering; the damage is entirely cross-network.
 
 **`genesisProofPayload` is hex `string`, not `Uint8Array`, and the reason is immutability rather
 than style.** Every profile is an `Object.freeze`d literal, and freezing does not reach a typed
@@ -2844,11 +2839,11 @@ above it.
 - Must not import from `@dagsocial/node`, `@dagsocial/net`, or `@dagsocial/web`
 - Hash algorithm: `blake2b512` with `.subarray(0, 32)` for all 32-byte outputs
 - Base58 alphabet: Bitcoin-style (no `0OIl`)
-- CBOR is the canonical wire format; JSON for HTTP API
+- Positional binary is the canonical wire format; JSON for HTTP API
 - `protocolVersion` field present on all wire types
 - Secret keys never in any exported type or serialized output
 - Box identity is deterministic **and provenance-derived**:
-  `blake2b512(BOX_ID_DOMAIN ‖ canonicalCbor(candidate) ‖ txId ‖ u32BE(index)).subarray(0,32)`
+  `blake2b512(BOX_ID_DOMAIN ‖ boxRecordBytes(candidate, txId, index)).subarray(0,32)`
 - `computeBoxId` takes **one argument**. Any need for a second means the box is missing
   provenance, which the `BoxCandidate`/`BoxBase` split is there to prevent
 - `stored.id === computeBoxId(stored)` for every box in the UTXO set — no exceptions, no
@@ -2859,7 +2854,7 @@ above it.
   (`lockedUntilBlock`) or in committed per-identity state (`IdentityRecord.invitedAtBlock`,
   which is what dates a bond's probation) — never in an implicit creation stamp
 - Box `value` is `bigint` integer base units (uniform across box types), `< BOX_VALUE_BOUND`
-  so it CBOR-encodes as a uint64 (`0x1b`); no float math anywhere in consensus
+  (§Box value domain); no float math anywhere in consensus
   value arithmetic
 - Post identity is provenance-derived — `computePostId(txId, index)`; the body enters consensus
   only as `PostCommit.contentHash` inside the creating transaction's preimage, and a body is

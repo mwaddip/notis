@@ -126,35 +126,36 @@ export function registerProofEndpoint(app: Express, handle: AvlProverHandle): vo
         return;
       }
 
-      // Rollback to historical version
+      // NODE_INTERFACE → "The historical window restores under finally"
       handle.prover.rollback(version);
 
-      // Perform authenticated lookup (records directions for proof)
-      const lookupResult = handle.prover.performOneOperation({
-        tag: 'Lookup',
-        key: boxKey,
-      });
+      try {
+        const lookupResult = handle.prover.performOneOperation({
+          tag: 'Lookup',
+          key: boxKey,
+        });
 
-      // Generate proof from inner prover
-      const proof = handle.prover.prover.generateProof();
+        const proof = handle.prover.prover.generateProof();
 
-      // Restore current version
-      handle.prover.rollback(currentVersion);
+        const decoded: DecodedValue =
+          lookupResult.success && lookupResult.value
+            ? decodeValue(boxId, lookupResult.value)
+            : { kind: null, value: null };
 
-      // Decode whatever the key resolved to — box or identity record
-      const decoded: DecodedValue =
-        lookupResult.success && lookupResult.value
-          ? decodeValue(boxId, lookupResult.value)
-          : { kind: null, value: null };
-
-      res.json({
-        boxId,
-        atHeight: blockHeight,
-        stateRoot: Buffer.from(version).toString('hex'),
-        proof: Buffer.from(proof).toString('base64'),
-        kind: decoded.kind,
-        value: decoded.value,
-      });
+        res.json({
+          boxId,
+          atHeight: blockHeight,
+          stateRoot: Buffer.from(version).toString('hex'),
+          proof: Buffer.from(proof).toString('base64'),
+          kind: decoded.kind,
+          value: decoded.value,
+        });
+      } catch (err) {
+        console.error('Proof endpoint error:', err);
+        res.status(500).json({ error: 'internal error' });
+      } finally {
+        handle.prover.rollback(currentVersion);
+      }
     } catch (err) {
       console.error('Proof endpoint error:', err);
       res.status(500).json({ error: 'internal error' });

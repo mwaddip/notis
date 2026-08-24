@@ -43,7 +43,7 @@ const GATE_INDEX_NAMES = [
 const PRE_COLUMN_MEMPOOL = `CREATE TABLE mempool (
   rowid INTEGER PRIMARY KEY AUTOINCREMENT,
   entry_type TEXT NOT NULL CHECK(entry_type IN ('utxo_tx', 'prune')),
-  utxo_tx_cbor BLOB,
+  utxo_tx_bytes BLOB,
   prune_entry_cbor BLOB,
   expires_at_height INTEGER NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -57,7 +57,7 @@ const PRE_COLUMN_MEMPOOL = `CREATE TABLE mempool (
 const MISSING_ONE_MEMPOOL = `CREATE TABLE mempool (
   rowid INTEGER PRIMARY KEY AUTOINCREMENT,
   entry_type TEXT NOT NULL CHECK(entry_type IN ('utxo_tx', 'prune')),
-  utxo_tx_cbor BLOB,
+  utxo_tx_bytes BLOB,
   prune_entry_cbor BLOB,
   expires_at_height INTEGER NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),

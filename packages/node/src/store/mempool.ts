@@ -100,13 +100,13 @@ const PROBE_TX_ID = '0'.repeat(64);
  * resource it actually consumes. The block creator spends the same number
  * against the same budget.
  */
-export function entryByteCost(cbor: Uint8Array): number {
+export function entryByteCost(txBytes: Uint8Array): number {
   return (
     utxoTxTreeByteLength({
       utxoTxIds: [PROBE_TX_ID],
-      utxoTxs: [cbor],
+      utxoTxs: [txBytes],
       pruneEntries: [],
-    }) - EMPTY_BODY_BYTES + settlementMarginalBytes(decodeTx(cbor))
+    }) - EMPTY_BODY_BYTES + settlementMarginalBytes(decodeTx(txBytes))
   );
 }
 
@@ -177,7 +177,7 @@ export class TxTooLargeError extends ClientError {
 export interface PoolEntry {
   rowid: number;
   entryType: 'utxo_tx' | 'prune';
-  utxoTxCbor: Uint8Array | null;
+  utxoTxBytes: Uint8Array | null;
   expiresAtHeight: number;
   createdAt: string;
 }
@@ -185,7 +185,7 @@ export interface PoolEntry {
 interface MempoolRow {
   rowid: number;
   entry_type: string;
-  utxo_tx_cbor: Buffer | null;
+  utxo_tx_bytes: Buffer | null;
   expires_at_height: number;
   created_at: string;
 }
@@ -194,7 +194,7 @@ function rowToEntry(row: MempoolRow): PoolEntry {
   return {
     rowid: row.rowid,
     entryType: row.entry_type as 'utxo_tx' | 'prune',
-    utxoTxCbor: row.utxo_tx_cbor ? new Uint8Array(row.utxo_tx_cbor) : null,
+    utxoTxBytes: row.utxo_tx_bytes ? new Uint8Array(row.utxo_tx_bytes) : null,
     expiresAtHeight: row.expires_at_height,
     createdAt: row.created_at,
   };
@@ -435,14 +435,14 @@ export function insertUtxoTx(
   // Before the conflict gate: the size bound is a property of the transaction
   // alone, so it needs no pool state and settles the verdict without running
   // one query per input.
-  const cbor = encodeTx(tx);
-  if (cbor.length > MAX_TX_BYTES) throw new TxTooLargeError(cbor.length);
+  const encoded = encodeTx(tx);
+  if (encoded.length > MAX_TX_BYTES) throw new TxTooLargeError(encoded.length);
 
   // The class and the price, before the capacity gate that spends them. The
   // byte cost is what this entry would occupy in a block, not the bare encoding
   // — the budget is the resource being rationed.
   const fee = bidOf(tx);
-  const bytes = entryByteCost(cbor);
+  const bytes = entryByteCost(encoded);
   assertCapacity(db, fee === null ? 'karma' : 'credit', fee, bytes);
 
   const inputs = tx.inputs ?? [];
@@ -452,12 +452,12 @@ export function insertUtxoTx(
   const txId = computeTxId(tx);
   const meta = gateMetadata(tx);
   const result = db.prepare(
-    `INSERT INTO mempool (entry_type, utxo_tx_cbor, expires_at_height,
+    `INSERT INTO mempool (entry_type, utxo_tx_bytes, expires_at_height,
                           like_target, like_liker, invite_inviter, vouch_voucher,
                           tx_inputs, tx_output_ids, tx_id, tx_fee, tx_bytes)
      VALUES ('utxo_tx', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
-    Buffer.from(cbor),
+    Buffer.from(encoded),
     expiresAtHeight,
     meta.likeTarget,
     meta.likeLiker,
@@ -543,14 +543,14 @@ export function hasPendingSpend(boxIds: string[]): string | null {
 export function findPendingOutput(boxId: string): AnyBox | null {
   const db = getDb();
   const row = db.prepare(
-    `SELECT utxo_tx_cbor FROM mempool
+    `SELECT utxo_tx_bytes FROM mempool
       WHERE tx_output_ids IS NOT NULL
         AND EXISTS (SELECT 1 FROM json_each(mempool.tx_output_ids) WHERE value = ?)
       LIMIT 1`,
-  ).get(boxId) as { utxo_tx_cbor: Buffer } | undefined;
+  ).get(boxId) as { utxo_tx_bytes: Buffer } | undefined;
   if (!row) return null;
 
-  const tx = decodeTx(new Uint8Array(row.utxo_tx_cbor));
+  const tx = decodeTx(new Uint8Array(row.utxo_tx_bytes));
   const txId = computeTxId(tx);
   for (let i = 0; i < tx.outputs.length; i++) {
     const box = materializeOutput(tx.outputs[i]!, txId, i);
@@ -591,7 +591,7 @@ export function getBoxWithPending(boxId: string): AnyBox | null {
 export function getPendingEntries(limit: number, afterRowid = 0): PoolEntry[] {
   const db = getDb();
   const rows = db.prepare(
-    `SELECT rowid, entry_type, utxo_tx_cbor,
+    `SELECT rowid, entry_type, utxo_tx_bytes,
             expires_at_height, created_at
      FROM mempool
      WHERE rowid > ?
@@ -613,7 +613,7 @@ export function getPendingEntries(limit: number, afterRowid = 0): PoolEntry[] {
  */
 const PENDING_PAGE_SIZE = 256;
 
-const ENTRY_COLUMNS = `rowid, entry_type, utxo_tx_cbor,
+const ENTRY_COLUMNS = `rowid, entry_type, utxo_tx_bytes,
                        expires_at_height, created_at`;
 
 /**

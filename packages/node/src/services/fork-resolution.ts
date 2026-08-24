@@ -425,7 +425,7 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[]): void {
   for (const journal of revertedJournals) {
     // Re-insert UTXO txs
     for (const txRecord of journal.appliedUtxoTxs) {
-      const tx = decodeTx(txRecord.txCbor);
+      const tx = decodeTx(txRecord.txBytes);
       reinsert(() => insertUtxoTx(tx, mempoolExpiry), `tx ${txRecord.txId}`);
     }
   }

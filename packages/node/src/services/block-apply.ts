@@ -154,11 +154,11 @@ class BlockRejected extends Error {}
 export function applyOrderingBlock(block: OrderingBlock): boolean {
   // Structure first, before any field of `block` is read. Until this returns
   // valid, nothing about the object's shape is known: the fields below are
-  // decoded CBOR from an untrusted producer, and `pruneEntries` in particular
+  // decoded from an untrusted producer, and `pruneEntries` in particular
   // reaches `Buffer.from` and `createHash().update()` further down, which throw
   // on a number or a plain object. It runs in the funnel rather than in the
   // gossip topic validator alone, so the guarantee is path-independent: the
-  // pull-sync path CBOR-decodes straight into the apply handler, and a
+  // pull-sync path decodes straight into the apply handler, and a
   // validator-only check leaves it reachable with fields of arbitrary type.
   // Same shape as the PoW target (M-2), coinbase maturity (M-3), and the
   // validator signature (H-1).
@@ -719,7 +719,7 @@ function applyMutationPhase(
     // check and the only total one.
     const recordedAuthor =
       typeof entry.rootPostHash === 'string' ? getTopologyAuthor(entry.rootPostHash) : null;
-    // authorId is UserId (raw 32 bytes) at runtime — CBOR preserves the bytes.
+    // authorId is UserId (raw 32 bytes) at runtime — the positional codec preserves the bytes.
     const claimedAuthor =
       entry.authorId instanceof Uint8Array
         ? Buffer.from(entry.authorId).toString('hex')
@@ -901,10 +901,10 @@ function applyMutationPhase(
   let settlement: { txId: string; tx: UtxoTransaction; outputs: AnyBox[] } | null = null;
   for (let i = 0; i < block.utxoTxTree.utxoTxIds.length; i++) {
     const txId = block.utxoTxTree.utxoTxIds[i]!;
-    const txCbor = block.utxoTxTree.utxoTxs[i];
+    const txBytes = block.utxoTxTree.utxoTxs[i];
     const isSettlement = i === lastIndex;
 
-    if (!txCbor) {
+    if (!txBytes) {
       console.warn(
         `Rejected block height=${height}: embedded UTXO tx ${txId} carries no body`,
       );
@@ -913,7 +913,7 @@ function applyMutationPhase(
 
     let tx: UtxoTransaction;
     try {
-      tx = decodeTx(txCbor);
+      tx = decodeTx(txBytes);
     } catch (err) {
       console.warn(
         `Rejected block height=${height}: embedded UTXO tx ${txId} did not ` +

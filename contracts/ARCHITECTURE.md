@@ -710,7 +710,7 @@ to verify box existence or absence without storing the full UTXO set.
 - **Deterministic across the same mutation *history*, not across the same
   *content*.** Every node that applies the same blocks in the same order —
   and holds the same `AVL_KEY_LENGTH` — produces the identical stateRoot. Box
-  `value` serializes as a `bigint` (CBOR uint64), so the AVL leaf bytes are
+  `value` serializes through `vlqU64` in `boxRecordBytes`, so the AVL leaf bytes are
   stable across implementations (the demo UI mirrors the encoding).
 
   > ⚠ **This bullet used to read "every node computing the AVL+ over the same

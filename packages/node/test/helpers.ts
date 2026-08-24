@@ -975,7 +975,7 @@ export async function makeApplicableBlock(
   }
   const miner = opts.miner ?? makeTestIdentity();
   const embeddedTxs = opts.utxoTxs ?? [];
-  const txCbors = embeddedTxs.map((tx) => encodeTx(tx));
+  const txBytesList = embeddedTxs.map((tx) => encodeTx(tx));
 
   // The settlement this body requires, built the way the creator builds it — the
   // helper's contract is a block that passes every apply check, and every
@@ -983,7 +983,7 @@ export async function makeApplicableBlock(
   // body's LAST entry, which is the whole of how apply identifies it
   // (NODE_INTERFACE → It is the LAST entry in `utxoTxIds`).
   const built = buildBlockSettlement(
-    txCbors,
+    txBytesList,
     height,
     miner.userId,
     miner.userId,
@@ -1006,7 +1006,7 @@ export async function makeApplicableBlock(
   const settlementTx = opts.settlement ? opts.settlement(relocked) : relocked;
   const utxoTxTree = {
     utxoTxIds: [...embeddedTxs.map((tx) => computeTxId(tx)), computeTxId(settlementTx)],
-    utxoTxs: [...txCbors, encodeTx(settlementTx)],
+    utxoTxs: [...txBytesList, encodeTx(settlementTx)],
     pruneEntries: opts.pruneEntries ?? [],
   };
 
@@ -1176,7 +1176,7 @@ export function insertPoisonedBlock(
   const hash = blockHash(block.header);
   db.prepare(
     `INSERT INTO ordering_blocks
-       (height, header_cbor, utxotx_tree_cbor,
+       (height, header_bytes, utxotx_tree_bytes,
         validator_signature, created_at, block_hash)
      VALUES (?, ?, ?, ?, ?, ?)`,
   ).run(

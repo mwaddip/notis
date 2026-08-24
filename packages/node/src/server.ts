@@ -332,6 +332,7 @@ export function createApp(config: Config): express.Express {
     '/',
     blockRoutes({
       getOrderingBlock: guardStoreRead(store.getOrderingBlock),
+      getOrderingBlockHash: store.getOrderingBlockHash,
       getCurrentHeight: store.getCurrentHeight,
       getPostCount: () =>
         (

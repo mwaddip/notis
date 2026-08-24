@@ -23,8 +23,8 @@ Single SQLite table:
 CREATE TABLE mempool (
     rowid             INTEGER PRIMARY KEY AUTOINCREMENT,
     entry_type        TEXT NOT NULL CHECK (entry_type IN ('utxo_tx', 'prune')),
-    utxo_tx_cbor      BLOB,            -- encoded UtxoTransaction (null for non-utxo_tx)
-    prune_entry_cbor  BLOB,            -- encoded PruneEntry (null for non-prune)
+    utxo_tx_bytes     BLOB,            -- positional encodeTx bytes (null for non-utxo_tx)
+    prune_entry_cbor  BLOB,            -- cbor-x-encoded PruneEntry (null for non-prune)
     expires_at_height INTEGER NOT NULL, -- Block height after which entry is purged
     created_at        TEXT NOT NULL DEFAULT (datetime('now')),
     like_target TEXT, like_liker TEXT,          -- gate metadata (below)
@@ -63,16 +63,16 @@ existed carries `NULL`, matches no cleanup, and leaves by `purgeExpired`.
 interface PoolEntry {
   rowid: number;
   entryType: 'utxo_tx' | 'prune';
-  utxoTxCbor: Uint8Array | null;
+  utxoTxBytes: Uint8Array | null;
   expiresAtHeight: number;
   createdAt: string;
 }
 ```
 
 `PoolEntry` carries the `utxo_tx` payload only. A `prune` row appears in the
-listing with `utxoTxCbor: null`; its `prune_entry_cbor` is read by
+listing with `utxoTxBytes: null`; its `prune_entry_cbor` is read by
 `selectMempoolPrunes` straight from the row, so the DTO loads no blob that
-nothing consumes. The `utxo_tx` payload is decoded from CBOR on read by the
+nothing consumes. The `utxo_tx` payload is decoded (`decodeTx`) on read by the
 consumer (block creator or relay handler). The store does not decode payloads
 on read; on **insert** of a
 `utxo_tx` it walks the (already-decoded) transaction's outputs once to
@@ -102,7 +102,7 @@ Nullable, populated by `insertUtxoTx` from the transaction outputs, indexed
 insertUtxoTx(tx: UtxoTransaction, expiresAtHeight: number): number
 ```
 
-Encodes the UTXO transaction as CBOR and inserts a `utxo_tx` entry, populating
+Encodes the UTXO transaction (`encodeTx`) and inserts a `utxo_tx` entry, populating
 the gate-metadata columns from the transaction's outputs (see above). Returns
 the SQLite `rowid`. Throws `MempoolFullError` at the size cap, and
 **`TxTooLargeError` when the encoding exceeds `MAX_TX_BYTES`.**
@@ -357,7 +357,7 @@ while every test still passes and every block still validates, which is the fail
 as working software.
 
 **The budget is not spent in SQL, and that is deliberate.** A query can weigh
-`length(utxo_tx_cbor)` and nothing else — not the 32-byte `utxoTxIds` entry, not the `lp` prefix, not
+`length(utxo_tx_bytes)` and nothing else — not the 32-byte `utxoTxIds` entry, not the `lp` prefix, not
 the array count prefixes, not the reserve. Budgeting there would need a padding constant, which
 is the arbitrary number moved one level down where no test can see it.
 
@@ -553,12 +553,13 @@ preference and no validator enforces it — a miner who fills credits first
 forfeits the coinbase's inclusion bonus, which is what makes the order rational
 rather than a rule.
 
-### CBOR storage
+### Blob storage
 
-Entries are stored as CBOR blobs rather than parsed columns. This avoids
-double-parsing (CBOR on wire → JSON for SQLite → CBOR for broadcast) and
-keeps the mempool schema agnostic to entry structure. The block creator
-decodes CBOR when assembling blocks.
+Entries are stored as encoded blobs rather than parsed columns — a `utxo_tx`
+row holds positional `encodeTx` bytes, a `prune` row holds a cbor-x `PruneEntry`
+blob. This avoids double-parsing (decode off the wire → JSON for SQLite →
+re-encode for broadcast) and keeps the mempool schema agnostic to entry
+structure. The block creator decodes entries when assembling blocks.
 
 ### No separate tables
 
@@ -571,7 +572,7 @@ This gives unified FIFO ordering and simpler expiry.
 
 - All state mutations flow through the mempool — no direct `consumeBox` or
   `insertBox` calls in HTTP routes or relay handlers
-- Mempool entries are CBOR blobs — the store layer does not parse them
+- Mempool entries are encoded blobs — the store layer does not parse them
 - Expiry is checked at block assembly time, not on a background timer
 - Confirmed entries are removed by rowid after block finalization
 - FIFO ordering within the karma-side class; fee-rate ordering within the credit

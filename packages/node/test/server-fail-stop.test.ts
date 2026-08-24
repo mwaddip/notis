@@ -69,18 +69,24 @@ describe('server /blocks guardStoreRead wiring', () => {
     }
   });
 
-  it('GET /blocks/current on a poisoned tip fires process.exit(1)', async () => {
+  it('GET /blocks/current reads the stored block_hash and answers over a rotted row', async () => {
+    // NODE_INTERFACE → "Who reads the block_hash column, and who deliberately
+    // does not". The route reads the column, not the body, so a body-poisoned
+    // row at the tip answers instead of triggering the fail-stop.
     const exit = vi.spyOn(process, 'exit').mockImplementation((() => {
       throw new Error('process.exit');
     }) as never);
-    vi.spyOn(console, 'error').mockImplementation(() => {});
 
     const { baseUrl, close } = await startApp(makeBlock(1, -1), true);
     try {
-      // The mocked process.exit throws inside the handler; whether the client
-      // sees a 500 or a dropped socket is not the pin.
-      await fetch(`${baseUrl}/blocks/current`).catch(() => undefined);
-      expect(exit).toHaveBeenCalledWith(1);
+      const res = await fetch(`${baseUrl}/blocks/current`);
+      expect(res.status).toBe(200);
+      const body = await res.json() as { height: number; hash: string };
+      expect(body.height).toBe(1);
+      // `insertPoisonedBlock` writes `poisoned-${height}` when blockHash
+      // returns null for the unhashable header.
+      expect(body.hash).toBe('poisoned-1');
+      expect(exit).not.toHaveBeenCalled();
     } finally {
       close();
     }

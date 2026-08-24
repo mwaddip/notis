@@ -148,7 +148,7 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
   function pooledTxs(): UtxoTransaction[] {
     return getPendingEntries(1000)
       .filter((e) => e.entryType === 'utxo_tx')
-      .map((e) => decodeTx(e.utxoTxCbor!));
+      .map((e) => decodeTx(e.utxoTxBytes!));
   }
 
   it('pools a valid transfer and answers pending — the UTXO set does not move', () => {

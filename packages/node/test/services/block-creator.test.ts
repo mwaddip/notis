@@ -113,7 +113,7 @@ async function importMempoolFresh() {
     getPendingEntries: (limit: number) => Array<{
       rowid: number;
       entryType: string;
-      utxoTxCbor: Uint8Array | null;
+      utxoTxBytes: Uint8Array | null;
       expiresAtHeight: number;
       createdAt: string;
     }>;
@@ -789,7 +789,7 @@ describe('block-creator', () => {
         protocolVersion: PROTOCOL_VERSION,
       });
       const ins = db.getDb().prepare(
-        `INSERT INTO mempool (entry_type, utxo_tx_cbor, expires_at_height)
+        `INSERT INTO mempool (entry_type, utxo_tx_bytes, expires_at_height)
          VALUES ('utxo_tx', ?, 5000)`,
       );
       // Deep enough that the CONSENSUS cap binds before the pool runs out: a

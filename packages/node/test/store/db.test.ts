@@ -122,8 +122,8 @@ describe('db lifecycle', () => {
     const orderCols = db.pragma('table_info(ordering_blocks)') as Array<{ name: string }>;
     const orderNames = orderCols.map((c) => c.name);
     expect(orderNames).toContain('height');
-    expect(orderNames).toContain('header_cbor');
-    expect(orderNames).toContain('utxotx_tree_cbor');
+    expect(orderNames).toContain('header_bytes');
+    expect(orderNames).toContain('utxotx_tree_bytes');
     expect(orderNames).toContain('validator_signature');
     expect(orderNames).toContain('created_at');
     expect(orderNames).toContain('block_hash');

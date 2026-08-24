@@ -15,8 +15,8 @@ import { UnreadableStoredBlockError, UnhashableStoredHeaderError } from '../serv
 
 interface OrderingBlockRow {
   height: number;
-  header_cbor: Buffer;
-  utxotx_tree_cbor: Buffer;
+  header_bytes: Buffer;
+  utxotx_tree_bytes: Buffer;
   validator_signature: Buffer;
   created_at: number;
 }
@@ -47,8 +47,8 @@ interface OrderingBlockRow {
 function rowToOrderingBlock(row: OrderingBlockRow): OrderingBlock {
   try {
     return {
-      header: decodeHeader(new Uint8Array(row.header_cbor)),
-      utxoTxTree: decodeUtxoTxTree(new Uint8Array(row.utxotx_tree_cbor)),
+      header: decodeHeader(new Uint8Array(row.header_bytes)),
+      utxoTxTree: decodeUtxoTxTree(new Uint8Array(row.utxotx_tree_bytes)),
       validatorSignature: new Uint8Array(row.validator_signature),
     };
   } catch (err) {
@@ -113,7 +113,7 @@ export function createOrderingBlock(block: OrderingBlock): void {
 
   db.prepare(
     `INSERT INTO ordering_blocks
-       (height, header_cbor, utxotx_tree_cbor,
+       (height, header_bytes, utxotx_tree_bytes,
         validator_signature, created_at, block_hash)
      VALUES (?, ?, ?, ?, ?, ?)`,
   ).run(

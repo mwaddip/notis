@@ -260,7 +260,7 @@ describe('mempool store', () => {
 
     expect(entries).toHaveLength(1);
     expect(entries[0].entryType).toBe('utxo_tx');
-    expect(entries[0].utxoTxCbor).toBeInstanceOf(Uint8Array);
+    expect(entries[0].utxoTxBytes).toBeInstanceOf(Uint8Array);
     expect(entries[0].expiresAtHeight).toBe(200);
   });
 
@@ -352,8 +352,8 @@ describe('mempool store', () => {
     expect(types).toEqual(['prune', 'utxo_tx', 'prune']);
     // A prune row's blob is read by selectMempoolPrunes, not the DTO
     // (MEMPOOL_INTERFACE → PoolEntry).
-    expect(entries[0].utxoTxCbor).toBeNull();
-    expect(entries[1].utxoTxCbor).toBeInstanceOf(Uint8Array);
+    expect(entries[0].utxoTxBytes).toBeNull();
+    expect(entries[1].utxoTxBytes).toBeInstanceOf(Uint8Array);
   });
 
   it('getPendingEntries returns empty array when mempool is empty', async () => {
@@ -392,14 +392,14 @@ describe('mempool store', () => {
     expect(typeof entries[0].createdAt).toBe('string');
   });
 
-  it('utxo_tx entry carries utxoTxCbor as a Uint8Array', async () => {
+  it('utxo_tx entry carries utxoTxBytes as a Uint8Array', async () => {
     const { insertUtxoTx, getPendingEntries } = await importMempoolFresh();
     const tx = { inputs: [BOX_99], outputs: [], signatures: {}, protocolVersion: 1 };
     insertUtxoTx(tx as any, 300);
     const entries = getPendingEntries(10);
     expect(entries).toHaveLength(1);
     expect(entries[0].entryType).toBe('utxo_tx');
-    expect(entries[0].utxoTxCbor).toBeInstanceOf(Uint8Array);
+    expect(entries[0].utxoTxBytes).toBeInstanceOf(Uint8Array);
   });
 
   // -------------------------------------------------------------------------

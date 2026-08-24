@@ -140,6 +140,54 @@ describe('GET /api/v1/proof/:boxId', () => {
     expect(historical.body.value).toEqual({ lastActivityBlock: 7, lastDecayBlock: 3, invitedAtBlock: 0, lifetimeLikesReceived: '0' });
   });
 
+  // --- S4: the historical window restores under `finally` --------------------
+
+  it('restores the prover to the live digest after a throw in the historical window', async () => {
+    // NODE_INTERFACE → "The historical window restores under finally".
+    // A throw between rollback(version) and rollback(currentVersion) must not
+    // strand the shared prover at the historical digest.
+    const handle = createAvlProver(db);
+    applyBlockMutations(handle.prover, 2, [], [], [
+      { key: RECORD_KEY, record: { lastActivityBlock: 9, lastDecayBlock: 9, invitedAtBlock: 0, lifetimeLikesReceived: 0n } },
+    ]);
+    checkpointProver(handle, 2);
+
+    const liveDigest = Buffer.from(handle.prover.digest()!).toString('hex');
+
+    // Wrap performOneOperation to throw once on the historical path
+    const original = handle.prover.performOneOperation.bind(handle.prover);
+    let threw = false;
+    handle.prover.performOneOperation = (op: Parameters<typeof handle.prover.performOneOperation>[0]) => {
+      const historicalDigest = Buffer.from(handle.prover.digest()!).toString('hex');
+      if (historicalDigest !== liveDigest && !threw) {
+        threw = true;
+        throw new Error('injected failure in historical window');
+      }
+      return original(op);
+    };
+
+    const app2 = express();
+    app2.use(express.json());
+    registerProofEndpoint(app2, handle);
+
+    const res = await request(app2)
+      .get('/api/v1/proof/' + 'aa'.repeat(32) + '?atHeight=1')
+      .expect(500);
+    expect(res.body.error).toBe('internal error');
+    expect(threw).toBe(true);
+
+    // The prover must be back at the live digest
+    const afterDigest = Buffer.from(handle.prover.digest()!).toString('hex');
+    expect(afterDigest).toBe(liveDigest);
+
+    // A subsequent proof at the live tip must still work
+    handle.prover.performOneOperation = original;
+    const tipRes = await request(app2)
+      .get('/api/v1/proof/' + 'aa'.repeat(32))
+      .expect(200);
+    expect(tipRes.body.kind).toBe('box');
+  });
+
   it('returns 400 for invalid boxId length', async () => {
     await request(app)
       .get('/api/v1/proof/abc')

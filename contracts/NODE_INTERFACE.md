@@ -920,12 +920,15 @@ any of them (`genesis_proof` is never spent at all).
 ### Output shape — the closed per-boxType schema (field-type pin)
 
 Transaction outputs are attacker-controlled structure (HTTP JSON through
-`jsonToTx`, gossip and block-embedded CBOR), and two of their bytes-level
-consumers hash **whatever keys the object carries**: `canonicalBoxBytes` (the id
-preimage) strips only `id`/`txId`/`index`, and `serializeBox` (the AVL leaf, so
-the `stateRoot`) strips only `id`/`boxType`. Nothing between ingress and those
-encoders constrained the shape: transition rules filter on `boxType` and
-`checkOutputValues` reads `value`.
+`jsonToTx`, gossip and block-embedded positional decodes), and their bytes-level
+consumers assume the per-type field domains: `canonicalBoxBytes` (the id
+preimage) and `serializeBox` (the AVL leaf, so the `stateRoot`) write the
+declared field set for the output's `boxType`, where an out-of-domain value
+throws (`b32`, `vlqU64OrThrow`) or **collides on the sentinel** (`vlqU` —
+TYPES_INTERFACE → Totality), and the transition arms' `Buffer.from`/hash reads
+throw on a wrong type. Transition rules filter on `boxType` and
+`checkOutputValues` reads `value`; the schema is what stands between ingress
+and all of them.
 
 `validateTx` therefore rejects any output that does not match the **closed
 schema for its `boxType`**:
@@ -952,9 +955,9 @@ schema for its `boxType`**:
     empty state went with the commit transition, so `inviteePublicKey`'s length
     is no longer a transition-arm question and `bytes0or32` has no user.
   - Non-negative safe integer, and never `-0`: `lockedUntilBlock`
-    (credit, when present). `-0` is called out because it is JSON- and
-    CBOR-reachable and breaks byte round-trips: cbor-x encodes it as a float
-    where the store's JSON round-trip returns integer `0`.
+    (credit, when present). `-0` is called out because it is JSON-reachable
+    and breaks value round-trips: the positional writer encodes it as `0`, so
+    a re-decode returns integer `0` — two values, one byte string.
   - `string`: no box field carries one. `targetPostId` was the only entry and it
     is deleted with the field (TYPES_INTERFACE → PostLockBox) — the circularity,
     not a domain fix. Kept as a row because the *kind* is still part of the
@@ -986,7 +989,7 @@ is the same move at our one open edge.
 
 Placement: `validateTx`, so pool entry, gossip relay, and block finalization
 (which re-validates every embedded tx — step 5) all inherit it from the single
-site. A JSON-edge-only check would leave the CBOR paths open.
+site. A JSON-edge-only check would leave the gossip and block paths open.
 
 **Within `validateTx` the check runs at step 5** — before conservation,
 authorization, and transitions, as the first consumer of `tx.outputs`. Steps 6–9
@@ -1004,7 +1007,7 @@ root-asserting test passes unmodified).
 
 **Totality.** With the schema at step 5, `validateTx` returns
 `{valid: false}` and never throws for **any** contents of `tx.outputs` —
-arbitrary decoded CBOR/JSON values, missing fields, wrong types, `null`
+arbitrary decoded or JSON values, missing fields, wrong types, `null`
 entries, unknown or prototype-colliding `boxType`s — provided the tx envelope
 itself is structurally well-formed. Four live failure classes on the pre-pin
 tree collapse into clean rejections:
@@ -1165,11 +1168,11 @@ during it: **`protocolVersion` was validated nowhere** in the transaction path
 free malleability**, invisible to `computeTxId`.
 
 `checkTxEnvelope(tx: unknown): UtxoResult` — **exported** from the engine.
-**Total**: returns `{valid: false}` and never throws for any decoded-CBOR
+**Total**: returns `{valid: false}` and never throws for any decoded
 value (error strings quote input via the total `describeValue`, never bare
 `String(v)`). The envelope's key set is **closed** — an unknown key rejects.
 `computeTxId` hashes only the known fields, so an extra envelope key would
-otherwise be free malleability: two distinct CBOR byte strings carrying the
+otherwise be free malleability: two distinct transaction objects carrying the
 same txId.
 
 The checks:
@@ -1247,8 +1250,8 @@ Gossip needs no separate call: its intake reaches `validateTx`. (Today a
 malformed gossiped tx throws into `gossip.ts`'s topic-dispatch catch and is
 silently swallowed under a comment attributing it to decode failure; with the
 gate it becomes a logged rejection like any other.) `fork-resolution`'s
-mempool reinsert decodes CBOR the node itself produced from once-valid txs —
-outside the gate's call list, deliberately.
+mempool reinsert decodes `encodeTx` bytes the node itself produced from
+once-valid txs — outside the gate's call list, deliberately.
 
 **Consensus scope:** a validation tightening in the same class as the field-type
 pin — honest bytes unmoved; txs that previously
@@ -1860,11 +1863,11 @@ defect is in every site that strips, not the one that was reported.**
 
 #### The mirror test MUST cover every box type
 
-Not a representative one. The UI converts hex-string fields to bytes before
-encoding using a hardcoded `binaryFields` name list, which is a hand-maintained
+Not a representative one. The cbor-era UI converted hex-string fields to bytes
+before encoding using a hardcoded `binaryFields` name list — a hand-maintained
 copy of "which box fields are `Uint8Array` in types" — and it **omitted
-`VouchBox`'s `voucherId` and `targetId`**. A client-built vouch box would encode
-them as CBOR *text* (`7840` + 64 ASCII) where the node writes a *byte string*
+`VouchBox`'s `voucherId` and `targetId`**: a client-built vouch box encoded
+them as CBOR *text* (`7840` + 64 ASCII) where the node wrote a *byte string*
 (`5820` + 32 raw), giving a different box id. Latent only because the vouch flow
 POSTs to `/vouches` and never builds the box client-side.
 
@@ -2919,7 +2922,7 @@ Full semantics in `MEMPOOL_INTERFACE.md`.
 {
   rowid: number
   entryType: "utxo_tx" | "prune"
-  utxoTxCbor: Uint8Array | null
+  utxoTxBytes: Uint8Array | null
   expiresAtHeight: number
   createdAt: string
 }
@@ -2937,6 +2940,16 @@ See `MEMPOOL_INTERFACE.md` for the full mempool contract.
 | `getOrderingBlockHash(height)` | `(number) => string \| null` — the stored `block_hash` column, no row decode |
 | `getHeightByBlockHash(hash)` | `(string) => number \| null` — indexed point lookup on the same column |
 | `deleteOrderingBlock(height)` | `(number) => void` — for fork rollback |
+
+**Who reads the `block_hash` column, and who deliberately does not.**
+`getOrderingBlockHash` is the read behind net's providers, serving
+(`GET /blocks/current`) and the gossip dedup in `handleOrderingBlock` — each
+wants the insert-time hash and none needs the row decoded. The apply path's
+chain-link check and the block creator's previous-block hash **recompute from
+the decoded header instead, and must keep doing so**: the recompute is the
+corrupt-header tripwire (`UnhashableStoredHeaderError` — a column read returns
+the insert-time hash over a header row that has since rotted), and
+`verifyBlockChainLink` recomputes internally in any case.
 
 ### Refused headers
 
@@ -2998,7 +3011,7 @@ BlockJournal {
   blockHeight: number
   mutations: JournalMutation[]     // ordered, application order — state rollback + AVL feed
   confirmedPostIds: string[]       // inverse: unconfirmPost — not a mempool key
-  appliedUtxoTxs: Array<{ txId: string, txCbor: Uint8Array }>   // mempool re-insertion only
+  appliedUtxoTxs: Array<{ txId: string, txBytes: Uint8Array }>  // mempool re-insertion only
   likeRecordInsertions: Array<{ targetPostId: string, likerId: UserId }>
                                    // inverse: deleteLikeRecord (P2-D)
   likeRecordDeletions: Array<{ targetPostId: string, likerId: UserId,
@@ -3078,7 +3091,7 @@ credits, protocol-box successors, invite grants, like markers and carry,
 decay replacements, prune refunds, fee-box consumption), post-lock vesting's
 transfer, like-record inserts and prune-time deletes (rows restored
 exactly), prune settlement, user txs, and **identity records**. Reorg
-re-insertion reads `appliedUtxoTxs` (txCbor) and the reverted blocks' prune
+re-insertion reads `appliedUtxoTxs` (txBytes) and the reverted blocks' prune
 entries (`utxoTxTree.pruneEntries`, returned by `revertBlock` — read before the
 block row is deleted), each re-inserted after `removeMempoolPrunes` so a copy
 already in the pool lands once; `confirmedPostIds` is not a mempool key.
@@ -3258,44 +3271,44 @@ and renumbering an assigned one are different operations, and only the first is
 available.
 
 **1a. The AVL value carries provenance, and an absent key is not an
-`undefined` key.** `serializeBox` strips only `id` and `boxType` — `txId` and
-`index` stay in the value, and must, because "a box id is a total function of
-the stored box" is only *checkable from a proof* if the proof's value carries
-everything the derivation consumes. The AVL key already commits to them; the
-redundancy is what lets a light client verify honesty rather than trust it.
+`undefined` key.** `serializeBox` **is** `boxRecordBytes` — the content bytes
+(`enum8(boxType)` first) with `txId` and `index` appended (TYPES_INTERFACE →
+Layout — Boxes). The provenance stays in the value, and must, because "a box id
+is a total function of the stored box" is only *checkable from a proof* if the
+proof's value carries everything the derivation consumes. The AVL key already
+commits to them; the redundancy is what lets a light client verify honesty
+rather than trust it.
 
-> ⚠ That makes the box object's **exact key set** consensus-critical, and
-> cbor-x distinguishes an absent key from a present-but-`undefined` one. A key
-> set to `undefined` encodes as `f7` *and* increments the fixed two-byte map
-> header — measured: `{value, guard}` → `b90002…`, the same object plus
-> `txId: undefined, index: undefined` → `b90004…f7…f7`. So a box reconstructed
-> by `rowToBox` with explicit `undefined` provenance serializes to different
-> bytes than the same box built by a producer without those keys, and a node
-> that **restarts** and re-bootstraps its prover from `getUnspentBoxes` would
-> compute a different `stateRoot` than one that stayed up. A restart-triggered
-> consensus fork, from nothing but an object shape.
->
-> **Provenance keys are therefore assigned conditionally, never as explicit
-> `undefined`** — the discipline `rowToBox` already applies to `nonActivity` and
-> `lockedUntilBlock`. Box **ids** are not exposed to *this* hazard:
-> `canonicalBoxBytes` destructures `id`/`txId`/`index` away, so it is total
-> over both shapes. Only the AVL value is.
+> ✅ **The exact-key-set hazard is retired by the positional layout.** The
+> writer reads only the fields it declares — a present-but-`undefined` key is
+> unrepresentable, and `writeOpt` gives an absent optional exactly one encoding
+> (`serialize-box.ts` states this at `serializeBox`). The record of the
+> cbor-era hazard it replaces: cbor-x distinguished an absent key from a
+> present-but-`undefined` one — a key set to `undefined` encoded as `f7` *and*
+> incremented the fixed two-byte map header (measured: `{value, guard}` →
+> `b90002…`, the same object plus `txId: undefined, index: undefined` →
+> `b90004…f7…f7`) — so a box reconstructed by `rowToBox` with explicit
+> `undefined` provenance serialized to different bytes than the same box built
+> by a producer without those keys, and a node that **restarted** and
+> re-bootstrapped its prover from `getUnspentBoxes` would have computed a
+> different `stateRoot` than one that stayed up: a restart-triggered consensus
+> fork, from nothing but an object shape. Box **ids** were never exposed to the
+> hazard — `canonicalBoxBytes` reads no `id`, `txId` or `index` at all.
 
-**1b. Key ORDER is consensus-visible too — and is currently violated.** Found
-by the phase B1 session, verified and extended by main. Neither encoder
-canonicalises map key order: cbor-x emits keys in JS insertion order, so
-`{value, guard, owner}` and `{owner, value, guard}` produce different bytes.
-This is **wider than 1a** — it reaches `canonicalBoxBytes`, and therefore box
-**ids**, not only the AVL value. The contract already warns that
-`canonicalBoxBytes` is not RFC 8949 canonical CBOR; key order is the other half
-of what that non-canonicality costs.
+**1b. Key ORDER is consensus-visible too — and was violated when found.** Found
+by the phase B1 session, verified and extended by main; ✅ **resolved below**.
+Neither encoder then canonicalised map key order: cbor-x emitted keys in JS
+insertion order, so `{value, guard, owner}` and `{owner, value, guard}`
+produced different bytes. This was **wider than 1a** — it reached
+`canonicalBoxBytes`, and therefore box **ids**, not only the AVL value; key
+order was the other half of what cbor-x framing's non-canonicality cost.
 
-The implicit convention is that `rowToBox` mirrors each producer's field order.
-It holds for karma, credit, like, invite and bond — checked, including the demo
-UI, which builds client-side box types in `rowToBox`'s order. **It does not hold
-for `post_lock`:**
+The implicit convention was that `rowToBox` mirrors each producer's field
+order. It held for karma, credit, like, invite and bond — checked, including
+the demo UI, which built client-side box types in `rowToBox`'s order. **It did
+not hold for `post_lock`:**
 
-| Source | Order after `serializeBox` strips `id`/`boxType` |
+| Source | Order after `serializeBox` stripped `id`/`boxType` (cbor-era) |
 |--------|--------------------------------------------------|
 | `block-creator.ts` remainder box | `value, originalValue, createdAtBlock, owner, guard` |
 | `rowToBox` / demo UI | `value, createdAtBlock, originalValue, owner, guard` |
@@ -3353,30 +3366,28 @@ Measured: identical length, different bytes (`…6d6f726967696e616c56616c7565…
 > §Ordering Block Creator.
 
 **1c. Key order is attacker-controlled on transaction outputs.** Found by the
-phase C3 session, and it is 1b's hazard weaponised rather than accidental.
+phase C3 session — 1b's hazard weaponised rather than accidental.
 
-A transaction's outputs arrive as **client-supplied CBOR**, and `computeTxId`
-hashes them through `canonicalBoxBytes`, which strips `id`/`txId`/`index`. A
-client may therefore plant `txId` and `index` keys *at arbitrary positions* in
-an output's map **without changing the txId it signs** — the signature does not
-constrain what the signature does not cover.
+> ✅ **Retired by the positional layout, like 1b.** An output's key positions do
+> not exist on the wire or in any preimage: `canonicalBoxBytes` writes the
+> declared field table in its own order and reads no `id`/`txId`/`index`, so
+> there is no position for an attacker's planted key to survive into. The
+> record of the cbor-era hazard: outputs arrived as client-supplied CBOR maps,
+> a client could plant `txId` and `index` keys *at arbitrary positions*
+> **without changing the txId it signed** (the signature does not constrain
+> what it does not cover), and a node that materialised the output by assigning
+> provenance **in place** kept the attacker's positions where `rowToBox`
+> appends them last — different key order, different AVL value bytes, a
+> **restart-triggered `stateRoot` fork the attacker chose when to trigger**,
+> for the cost of reordering two keys in a transaction they were sending
+> anyway.
 
-If the node then materialised that output by assigning provenance **in place**,
-the keys would keep the attacker's chosen positions, while `rowToBox` appends
-them last. Different key order, different AVL value bytes, and therefore a
-**restart-triggered `stateRoot` fork that an attacker chooses when to trigger**,
-for the cost of reordering two keys in a transaction they were sending anyway.
-
-> **Every box materialised from decoded CBOR MUST have provenance stripped and
-> re-appended, never overwritten in place.** `materializeOutput` is the single
-> materialisation rule for transaction outputs and both the UTXO engine and the
-> apply path go through it — two rules would be two chances to get the position
-> wrong.
-
-Phase G's canonical key ordering subsumes this: once the encoder imposes an
-order, an attacker's key positions cannot survive into the value at all. Until
-then, strip-then-append is the guard, and it is the reason `materializeOutput`
-exists as a shared function rather than an inlined assignment.
+**`materializeOutput` remains the single materialisation rule for transaction
+outputs** — strip `id`/`txId`/`index`, then append the real provenance — and
+both the UTXO engine and the apply path go through it: the shape discipline
+keeps every materialised box one object shape regardless of what a decoded
+value carried, and one rule rather than two is one chance rather than two to
+get it wrong.
 
 **2. The proof endpoint must not throw on a record, and must say which kind it
 served.** `GET /api/v1/proof/:boxId` decodes whatever value the key resolves to;
@@ -3391,6 +3402,15 @@ a record as a box with every field `undefined` — treating committed state as a
 malformed box. That is strictly worse than the throw it replaced, because it
 fails silently and *with* a valid proof. `null` distinguishes an absent key (a
 valid exclusion proof) from "present, and not a box".
+
+**The historical window restores under `finally`.** Serving `atHeight` rolls
+the **shared** prover to a checkpoint (`rollback(version)`), performs the
+lookup, generates the proof, and rolls back to the live digest — and the
+restore is the part that must survive a throw: the prover is the one block
+application uses, so an unrestored historical digest makes the node reject
+every later block until restart. The lookup-and-proof window therefore runs in
+a `try` whose `finally` restores the live version; the `catch`'s 500 is the
+response, never the state.
 
 *(The route parameter is still named `boxId` while addressing two entity kinds.
 Renaming it is a public API change and deliberately not done here.)*
@@ -3911,8 +3931,9 @@ there rather than at any one entry point.
 read, `applyOrderingBlock` rejects the block unless
 `verifyOrderingBlockStructure(block)` (from `@dagsocial/validation`) returns
 valid. Previously this ran *only* in the gossip topic validator
-(`net/src/gossip.ts`), so the pull-sync path — which decodes CBOR and calls the
-apply handler directly — reached consensus code with fields of arbitrary type.
+(`net/src/gossip.ts`), so the pull-sync path — which decodes wire bytes and
+calls the apply handler directly — reached consensus code with fields of
+arbitrary type.
 Enforcing it in the funnel makes the guarantee path-independent, and is the
 same relocation already applied to the PoW target (M-2), coinbase maturity
 (M-3), and the validator signature (H-1).
@@ -4057,7 +4078,7 @@ multibyte `string`, explicit `false`) and empty `signatures`/`inputs`/`outputs`,
 `encodeTx` → `decodeTx` under cbor-x 1.6.4 with
 `computeTxId`, own-key set, prototypes and `instanceof Uint8Array` all unchanged. **The blind spot:
 that measurement covers the honest path only**, and it assumes a producer's bytes come from
-`encodeTx` — established by grepping the `utxo_tx_cbor` column rather than the function name, which
+`encodeTx` — established by grepping the `utxo_tx_cbor` column (its name then; `utxo_tx_bytes` today) rather than the function name, which
 has exactly one INSERT writer. Bytes an attacker crafts are what the arm is for.
 
 This also closes register row **C2** without touching any root preimage. `utxoTxRoot` commits the
@@ -4197,8 +4218,10 @@ funnel:
   fork resolution, bodies for served chain queries, the blocks a `ModifierResponse` serves. The
   provider node hands over wraps the store read in `failStopIfCorruptChain`: a stored row that will
   not decode stops the node ("What the funnel's totality catch is FOR") rather than failing every
-  served query and response as the peer's fault inside `net`'s contained catches. The two `/blocks` routes
-  are given the same wrapped read
+  served query and response as the peer's fault inside `net`'s contained catches. `GET /blocks/:height`
+  is given the same wrapped read; `GET /blocks/current` reads the `block_hash` column instead and
+  answers over a rotted row rather than halting ("Who reads the block_hash column, and who
+  deliberately does not")
 - **`setChainHeightProvider(getCurrentHeight)`**: the tip height `net` advertises and compares — the
   store's `MAX(height)`, the same read the block creator and fork resolution take, handed over
   unwrapped: it decodes no row, so there is nothing for `failStopIfCorruptChain` to promote. `net`

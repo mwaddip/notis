@@ -65,7 +65,7 @@ export interface BlockJournal {
   /** The post ids this block committed. Inverse: unconfirmPost (NODE_INTERFACE → Block Journal). */
   confirmedPostIds: string[];
   /** Mempool re-insertion only. */
-  appliedUtxoTxs: Array<{ txId: string; txCbor: Uint8Array }>;
+  appliedUtxoTxs: Array<{ txId: string; txBytes: Uint8Array }>;
   /** Inverse: deleteLikeRecord. */
   likeRecordInsertions: Array<{ targetPostId: string; likerId: UserId }>;
   /**
@@ -285,9 +285,9 @@ export function recordConfirmedPosts(ids: string[]): void {
 }
 
 /** Record an applied UTXO tx (mempool re-insertion on reorg only). */
-export function recordAppliedUtxoTx(txId: string, txCbor: Uint8Array): void {
+export function recordAppliedUtxoTx(txId: string, txBytes: Uint8Array): void {
   if (openJournal === null) return;
-  openJournal.appliedUtxoTxs.push({ txId, txCbor });
+  openJournal.appliedUtxoTxs.push({ txId, txBytes });
 }
 
 export function recordDeletedPosts(rows: DeletedPostRow[]): void {

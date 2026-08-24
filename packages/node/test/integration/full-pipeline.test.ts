@@ -123,7 +123,7 @@ async function importMempool() {
     getPendingEntries: (limit: number) => Array<{
       rowid: number;
       entryType: string;
-      utxoTxCbor: Uint8Array | null;
+      utxoTxBytes: Uint8Array | null;
     }>;
     removeEntry: (rowid: number) => void;
   };

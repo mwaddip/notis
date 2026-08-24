@@ -1,6 +1,6 @@
 import type { OrderingBlock } from '@dagsocial/types';
 import { blockHash } from '@dagsocial/validation';
-import { getCurrentHeight, getOrderingBlock } from '../store/index.js';
+import { getCurrentHeight, getOrderingBlockHash } from '../store/index.js';
 import { applyOrderingBlock } from './block-apply.js';
 import { extendsOurTip, resolveFork } from './fork-resolution.js';
 import type { ForkResolutionNet } from './fork-resolution.js';
@@ -24,8 +24,12 @@ export function handleOrderingBlock(
   fromPeerId: string,
   net: ForkResolutionNet,
 ): boolean {
-  const existing = getOrderingBlock(block.header.height);
-  if (existing && blockHash(existing.header) === blockHash(block.header)) {
+  // NODE_INTERFACE → "Who reads the block_hash column, and who deliberately
+  // does not". The null guard excludes a missing row (no block at this height)
+  // from matching an unhashable arriving header — a bare `===` would return
+  // "already held" for a null-null collision.
+  const existingHash = getOrderingBlockHash(block.header.height);
+  if (existingHash !== null && existingHash === blockHash(block.header)) {
     return true;
   }
 

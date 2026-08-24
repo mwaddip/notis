@@ -718,15 +718,12 @@ where a received-bytes measure would not be.
 the node stores and re-serves. Each check measures the bytes its own object actually costs; neither
 is the other's approximation.
 
-⛔ **It runs after every shape check, and the encode is total.** This package's no-panic rule
-(`Postconditions` — No-panic (M-5)) binds here as everywhere: `encodeTx` is `cbor-x` over a
-peer-supplied object, so it is called only once the shape checks have passed and its throw is turned
-into a rejection rather than allowed out. A size bound that panics on the input it exists to refuse
-would be worse than no bound.
-
-**Why not compute it arithmetically**, as `utxoTxTreeByteLength` does for the body: that tree is a
-positional struct whose terms are all knowable, while a transaction is `cbor-x`, so an arithmetic
-sizer would have to reimplement a third-party encoder's rules and would rot silently against it.
+⛔ **It runs after every shape check, and a residual throw is a rejection.** This package's
+no-panic rule (`Postconditions` — No-panic (M-5)) binds here as everywhere: `encodeTx` is the
+positional `TX` codec over a peer-supplied object, and its writers throw on out-of-domain fields —
+so it is called only once the shape checks have established those domains, and the encode sits in a
+`try` whose catch returns `Transaction is not encodable` rather than letting the throw out. A size
+bound that panics on the input it exists to refuse would be worse than no bound.
 
 #### `genesis_proof` may not be a transaction output
 
@@ -881,7 +878,7 @@ Also checks **`pruneEntries`**: an array, each entry an object with a 64-char
 `rootPostHash`, a `subtreePostIds` array of 64-char strings **with no repeated id**
 (length equals set size), a 32-byte
 `subtreeMerkleRoot`, a 32-byte `authorId`, and a 64-byte `authorSignature`. Byte-length fields must
-be `Uint8Array`, not merely length-bearing — a CBOR payload can put any type
+be `Uint8Array`, not merely length-bearing — an adversarial or hand-built object can put any type
 in any field, and the consumers of these fields call `Buffer.from(...)` and
 `createHash().update(...)`, which throw on a number or object. Structure
 validation is the layer that guarantees they never see one.
@@ -1117,7 +1114,7 @@ own.
   adversarial input — each returns `false` / `{ valid: false }` instead. Inputs
   arrive straight off the wire and may be wrongly typed or out of range
   (non-string `content`, non-array `parentRefs`, a public key or `validatorId`
-  that is not 32 bytes, a block header that is not CBOR-encodable, a nonce that
+  that is not 32 bytes, a block header outside the encodable domain, a nonce that
   is negative / `NaN` / float / beyond `u64`). Every such case is a clean
   rejection, never an exception. Guard the throwing operations
   (`Buffer.byteLength`, `createPublicKey`, `encodeHeader`,
