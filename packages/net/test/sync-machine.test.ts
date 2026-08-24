@@ -13,7 +13,7 @@ import {
 import type { NetConfig } from '../src/types.js';
 import { MAX_INV_IDS, MAX_SERVE_BODY_BYTES } from '../src/msg-guards.js';
 import { decodeFrame } from '../src/frame.js';
-import { decodeModifierResponse } from '../src/sync-codec.js';
+import { decodeSyncInfo, decodeModifierRequest, decodeModifierResponse } from '../src/sync-codec.js';
 import type { SyncInfo, Inv, ModifierRequest, ModifierResponse } from '../src/sync-types.js';
 
 // ---------------------------------------------------------------------------
@@ -24,8 +24,8 @@ function stubStore(overrides: Partial<SyncStore> = {}): SyncStore {
   return {
     getOrderingBlock: () => null,
     serializeOrderingBlock: () => null,
-    getOrderingBlockHeader: () => null,
     getOrderingBlockId: () => null,
+    heightByBlockId: () => null,
     chainHeight: () => 0,
     getAnchors: () => [],
     appendHeaders: () => {},
@@ -343,7 +343,7 @@ describe('SyncMachine', () => {
       const { machine, sent } = makeMachine({
         store: {
           chainHeight: () => 1,
-          getOrderingBlockId: (h: number) => (h === 1 ? 'id1' : null), // id1 is known
+          heightByBlockId: (id: string) => (id === 'id1' ? 1 : null),
         },
       });
       peerActive(machine, 'peer1', 100);
@@ -353,14 +353,13 @@ describe('SyncMachine', () => {
       sendInv(machine, 'peer1', inv);
 
       expect(sent.length).toBe(1);
-      // The encoded ModifierRequest should only contain id2
     });
 
     it('sends nothing when all IDs are already known', () => {
       const { machine, sent } = makeMachine({
         store: {
           chainHeight: () => 2,
-          getOrderingBlockId: (h: number) => `id${h}`, // id1 and id2 both known
+          heightByBlockId: (id: string) => (id === 'id1' ? 1 : id === 'id2' ? 2 : null),
         },
       });
       peerActive(machine, 'peer1', 100);
@@ -844,7 +843,7 @@ describe('SyncMachine', () => {
       const { machine, sent } = makeMachine({
         store: {
           chainHeight: () => 5,
-          getOrderingBlockId: (h: number) => `block_${h}`,
+          heightByBlockId: (id: string) => parseInt(id.replace('block_', ''), 10),
           getOrderingBlock: () => ({ header: { height: 3 } }),
           serializeOrderingBlock: () => new Uint8Array([1, 2, 3]),
         },
@@ -1427,14 +1426,14 @@ describe('SyncMachine', () => {
     // --- inbound arrays are capped on receipt -------------------------------
 
     it('drops an Inv over MAX_INV_IDS and penalizes the sender', () => {
-      const reads: number[] = [];
+      const lookups: string[] = [];
       const { machine, sent, violations } = makeReportingMachine({
         chainHeight: () => 10,
-        getOrderingBlockId: (h: number) => { reads.push(h); return `block_${h}`; },
+        heightByBlockId: (id: string) => { lookups.push(id); return null; },
       });
       peerActive(machine, 'attacker', 100);
       sent.length = 0;
-      reads.length = 0;
+      lookups.length = 0;
 
       machine.handleMessage(
         'attacker',
@@ -1444,7 +1443,7 @@ describe('SyncMachine', () => {
       machine.flush();
 
       expect(sent).toHaveLength(0);
-      expect(reads).toHaveLength(0);
+      expect(lookups).toHaveLength(0);
       expect(violations).toHaveLength(1);
       expect(violations[0]!.reason).toContain(`exceeds ${MAX_INV_IDS}`);
     });
@@ -1466,10 +1465,10 @@ describe('SyncMachine', () => {
     });
 
     it('drops a ModifierRequest over MAX_INV_IDS before the serve loop runs', () => {
-      const reads: number[] = [];
+      const lookups: string[] = [];
       const { machine, sent, violations } = makeReportingMachine({
         chainHeight: () => 10,
-        getOrderingBlockId: (h: number) => { reads.push(h); return `block_${h}`; },
+        heightByBlockId: (id: string) => { lookups.push(id); return 1; },
         serializeOrderingBlock: () => new Uint8Array([1]),
       });
 
@@ -1480,7 +1479,7 @@ describe('SyncMachine', () => {
       );
       machine.flush();
 
-      expect(reads).toHaveLength(0);
+      expect(lookups).toHaveLength(0);
       expect(sent).toHaveLength(0);
       expect(violations).toHaveLength(1);
       expect(violations[0]!.reason).toContain(`exceeds ${MAX_INV_IDS}`);
@@ -1524,54 +1523,82 @@ describe('SyncMachine', () => {
       expect(violations[0]!.reason).toContain(`exceeds ${MAX_INV_IDS}`);
     });
 
-    // --- serve work is O(chainHeight + ids), never O(ids × chainHeight) -----
+    // --- cost rule: k ids cost k point lookups, no index rebuild -----
+    //
+    // NET_INTERFACE → Sync Handler Registration: one id is one provider call,
+    // never a chain walk. These assertions pin the index rebuild dead.
 
-    it('scans the chain once per ModifierRequest, not once per id', () => {
-      const CHAIN_HEIGHT = 50;
-      const reads: number[] = [];
+    it('Inv: zero getOrderingBlockId calls, at most k heightByBlockId calls', () => {
+      const K = 5;
+      const idReads: number[] = [];
+      const lookups: string[] = [];
       const { machine, sent } = makeReportingMachine({
-        chainHeight: () => CHAIN_HEIGHT,
-        getOrderingBlockId: (h: number) => { reads.push(h); return `block_${h}`; },
-        serializeOrderingBlock: () => new Uint8Array([1, 2, 3]),
-      });
-
-      machine.handleMessage(
-        'peer1',
-        MSG_MODIFIER_REQUEST,
-        new Uint8Array(encode({ typeId: MODIFIER_ORDERING_BLOCK, ids: ids(MAX_INV_IDS) })),
-      );
-      machine.flush();
-
-      // One pass over heights 0..CHAIN_HEIGHT. Nesting the height scan inside
-      // the id loop reads ~MAX_INV_IDS × CHAIN_HEIGHT heights for this same
-      // message, which is what this count exists to catch.
-      expect(reads).toHaveLength(CHAIN_HEIGHT + 1);
-      expect(sent).toHaveLength(1);
-    });
-
-    it('scans the chain once per Inv, not once per announced id', () => {
-      const CHAIN_HEIGHT = 50;
-      const reads: number[] = [];
-      const { machine, sent } = makeReportingMachine({
-        chainHeight: () => CHAIN_HEIGHT,
-        getOrderingBlockId: (h: number) => { reads.push(h); return `block_${h}`; },
+        chainHeight: () => 50,
+        getOrderingBlockId: (h: number) => { idReads.push(h); return `block_${h}`; },
+        heightByBlockId: (id: string) => { lookups.push(id); return null; },
       });
       peerActive(machine, 'peer1', 1000);
       sent.length = 0;
-      reads.length = 0;
+      idReads.length = 0;
+      lookups.length = 0;
 
       machine.handleMessage(
         'peer1',
         MSG_INV,
         new Uint8Array(encode({
           typeId: MODIFIER_ORDERING_BLOCK,
-          ids: Array.from({ length: MAX_INV_IDS }, (_, i) => `unknown_${i}`),
+          ids: Array.from({ length: K }, (_, i) => `unknown_${i}`),
         })),
       );
       machine.flush();
 
-      expect(reads).toHaveLength(CHAIN_HEIGHT + 1);
+      expect(idReads).toHaveLength(0);
+      expect(lookups.length).toBeLessThanOrEqual(K);
       expect(sent).toHaveLength(1);
+    });
+
+    it('ModifierRequest: headers-provider calls only for blocks serialized', () => {
+      const K = 5;
+      const idReads: number[] = [];
+      const lookups: string[] = [];
+      let serializeCalls = 0;
+      const { machine, sent } = makeReportingMachine({
+        chainHeight: () => 50,
+        getOrderingBlockId: (h: number) => { idReads.push(h); return `block_${h}`; },
+        heightByBlockId: (id: string) => { lookups.push(id); return parseInt(id.replace('block_', ''), 10); },
+        serializeOrderingBlock: () => { serializeCalls++; return new Uint8Array([1, 2, 3]); },
+      });
+
+      machine.handleMessage(
+        'peer1',
+        MSG_MODIFIER_REQUEST,
+        new Uint8Array(encode({ typeId: MODIFIER_ORDERING_BLOCK, ids: ids(K) })),
+      );
+      machine.flush();
+
+      expect(idReads).toHaveLength(0);
+      expect(lookups).toHaveLength(K);
+      expect(serializeCalls).toBe(K);
+      expect(sent).toHaveLength(1);
+    });
+
+    it('ModifierRequest: unknown ids produce zero serialize calls', () => {
+      let serializeCalls = 0;
+      const { machine, sent } = makeReportingMachine({
+        chainHeight: () => 50,
+        heightByBlockId: () => null,
+        serializeOrderingBlock: () => { serializeCalls++; return new Uint8Array([1]); },
+      });
+
+      machine.handleMessage(
+        'peer1',
+        MSG_MODIFIER_REQUEST,
+        new Uint8Array(encode({ typeId: MODIFIER_ORDERING_BLOCK, ids: ids(5) })),
+      );
+      machine.flush();
+
+      expect(serializeCalls).toBe(0);
+      expect(sent).toHaveLength(0);
     });
 
     // --- served bodies stay inside the reader's byte cap --------------------
@@ -1587,7 +1614,7 @@ describe('SyncMachine', () => {
       const chunk = new Uint8Array(3 * 1024 * 1024); // two of these overflow 4 MiB
       const { machine, sent } = makeReportingMachine({
         chainHeight: () => 3,
-        getOrderingBlockId: (h: number) => `block_${h}`,
+        heightByBlockId: (id: string) => parseInt(id.replace('block_', ''), 10),
         serializeOrderingBlock: () => chunk,
       });
 
@@ -1602,11 +1629,10 @@ describe('SyncMachine', () => {
     });
 
     it('still serves a single block larger than the byte budget', () => {
-      // Otherwise an oversized block could never be handed over and sync wedges.
       const chunk = new Uint8Array(MAX_SERVE_BODY_BYTES + 1024);
       const { machine, sent } = makeReportingMachine({
         chainHeight: () => 1,
-        getOrderingBlockId: (h: number) => `block_${h}`,
+        heightByBlockId: (id: string) => parseInt(id.replace('block_', ''), 10),
         serializeOrderingBlock: () => chunk,
       });
 
@@ -1618,6 +1644,83 @@ describe('SyncMachine', () => {
       machine.flush();
 
       expect(servedModifierCount(sent)).toBe(1);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Unset-provider semantics (NET_INTERFACE → Sync Handler Registration)
+  // -----------------------------------------------------------------------
+
+  describe('unset-provider semantics', () => {
+    it('SyncInfo tip id is empty when id provider is unset', () => {
+      const { machine, sent } = makeMachine({
+        store: { chainHeight: () => 5, getOrderingBlockId: () => null },
+      });
+      peerActive(machine, 'peer1', 10);
+
+      const syncInfoMsg = sent.find(m => {
+        const { code } = decodeFrame(testConfig.magic!, m.data);
+        return code === MSG_SYNC_INFO;
+      });
+      expect(syncInfoMsg).toBeDefined();
+      const { body } = decodeFrame(testConfig.magic!, syncInfoMsg!.data);
+      const decoded = decodeSyncInfo(body);
+      expect(decoded).not.toBeNull();
+      expect(decoded!.tipBlockId).toBe('');
+    });
+
+    it('anchors are empty when id provider is unset', () => {
+      const { machine, sent } = makeMachine({
+        store: { chainHeight: () => 5, getOrderingBlockId: () => null, getAnchors: () => [] },
+      });
+      peerActive(machine, 'peer1', 10);
+
+      const syncInfoMsg = sent.find(m => {
+        const { code } = decodeFrame(testConfig.magic!, m.data);
+        return code === MSG_SYNC_INFO;
+      });
+      expect(syncInfoMsg).toBeDefined();
+      const { body } = decodeFrame(testConfig.magic!, syncInfoMsg!.data);
+      const decoded = decodeSyncInfo(body);
+      expect(decoded).not.toBeNull();
+      expect(decoded!.anchors).toEqual([]);
+    });
+
+    it('Inv ids are all unknown when heightByBlockId provider is unset', () => {
+      const { machine, sent } = makeMachine();
+      peerActive(machine, 'peer1', 100);
+      sent.length = 0;
+
+      machine.handleMessage(
+        'peer1',
+        MSG_INV,
+        new Uint8Array(encode({ typeId: MODIFIER_ORDERING_BLOCK, ids: ['a', 'b', 'c'] })),
+      );
+      machine.flush();
+
+      expect(sent).toHaveLength(1);
+      const { body } = decodeFrame(testConfig.magic!, sent[0]!.data);
+      const req = decodeModifierRequest(body);
+      expect(req).not.toBeNull();
+      expect(req!.ids).toEqual(['a', 'b', 'c']);
+    });
+
+    it('ModifierRequest serves nothing when heightByBlockId provider is unset', () => {
+      const { machine, sent } = makeMachine({
+        store: {
+          chainHeight: () => 10,
+          serializeOrderingBlock: () => new Uint8Array([1, 2, 3]),
+        },
+      });
+
+      machine.handleMessage(
+        'peer1',
+        MSG_MODIFIER_REQUEST,
+        new Uint8Array(encode({ typeId: MODIFIER_ORDERING_BLOCK, ids: ['a', 'b'] })),
+      );
+      machine.flush();
+
+      expect(sent).toHaveLength(0);
     });
   });
 

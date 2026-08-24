@@ -30,10 +30,10 @@ export interface SyncStore {
   getOrderingBlock(height: number): unknown | null;
   /** CBOR-serialized ordering block bytes for a given height, or null. */
   serializeOrderingBlock(height: number): Uint8Array | null;
-  /** Block header by height, or null if not available. */
-  getOrderingBlockHeader(height: number): unknown | null;
   /** Block ID (hash) for a given height, or null if not available. */
   getOrderingBlockId(height: number): string | null;
+  /** Height holding a block id, or null for an unknown id (NET_INTERFACE → Sync Handler Registration). */
+  heightByBlockId(id: string): number | null;
   /** Current best-chain tip height — one provider call, O(1) (ARCHITECTURE → Correct and cheap are separate obligations). */
   chainHeight(): number;
   /** Anchors for sync (height + block ID pairs across the chain). */
@@ -694,28 +694,8 @@ export class SyncMachine {
   }
 
   /**
-   * Index every ordering block on our best chain by ID, in a single pass.
-   *
-   * The store answers ID questions only by height, so asking it once per ID in a
-   * message is `O(ids × chainHeight)` — the shape audit H-9 flagged: one message
-   * with a long ID list becomes a full-chain scan per ID and freezes the main
-   * thread. Building the index once per message makes the same work
-   * `O(chainHeight + ids)`, with the per-ID part an O(1) map lookup.
-   */
-  private blockIdIndex(): Map<string, number> {
-    const index = new Map<string, number>();
-    const ourHeight = this.store.chainHeight();
-    for (let h = 0; h <= ourHeight; h++) {
-      const id = this.store.getOrderingBlockId(h);
-      if (id !== null) index.set(id, h);
-    }
-    return index;
-  }
-
-  /**
    * Process an Inv (inventory) message.
    *
-   * If we're syncing, request the announced modifiers from our sync peer.
    * Only the current sync peer's Invs are honoured (request provenance, audit
    * M-10): a third party's Inv must neither cause requests nor grow the
    * outstanding set. Dropped without penalty — Invs from other peers are
@@ -725,6 +705,9 @@ export class SyncMachine {
    * requesting. Every id actually requested is recorded as outstanding for the
    * sync peer; the set never grows past MAX_OUTSTANDING_IDS — the request is
    * trimmed instead.
+   *
+   * NET_INTERFACE → Sync Handler Registration: one id is one provider call,
+   * never a chain walk — k ids cost k point lookups.
    */
   private handleInvMsg(peerId: string, inv: Inv): void {
     const syncPeerId = this.state.syncPeerId;
@@ -733,13 +716,12 @@ export class SyncMachine {
     // Unknown modifier types are dropped before any store work is done.
     if (inv.typeId !== MODIFIER_ORDERING_BLOCK) return;
 
-    const known = this.blockIdIndex();
     const requested = this.outstanding.get(syncPeerId);
     // A Set both deduplicates ids repeated within one Inv and preserves
     // announcement order for the trim below.
     const fresh = new Set<string>();
     for (const id of inv.ids) {
-      if (known.has(id) || requested?.has(id)) continue;
+      if (this.store.heightByBlockId(id) !== null || requested?.has(id)) continue;
       fresh.add(id);
     }
     if (fresh.size === 0) return;
@@ -770,11 +752,12 @@ export class SyncMachine {
    * Process a ModifierRequest from a peer — serve the requested data from
    * our local store.
    *
-   * Two bounds apply. The ID list was capped on receipt, and the store is walked
-   * once (see `blockIdIndex`) rather than once per ID. The assembled body is also
-   * byte-bounded: a response is truncated at `MAX_SERVE_BODY_BYTES` so it always
-   * fits inside the requester's stream cap. The first matching block is always
-   * included, so an oversized block still moves rather than wedging sync.
+   * The ID list was capped on receipt. Each id is resolved through a single
+   * heightByBlockId point lookup (NET_INTERFACE → Sync Handler Registration).
+   * The assembled body is byte-bounded: a response is truncated at
+   * MAX_SERVE_BODY_BYTES so it always fits inside the requester's stream cap.
+   * The first matching block is always included, so an oversized block still
+   * moves rather than wedging sync.
    */
   private handleModifierRequestMsg(peerId: string, req: ModifierRequest): void {
     if (req.typeId === MODIFIER_ORDERING_BLOCK) {
@@ -784,13 +767,12 @@ export class SyncMachine {
 
   // NET_INTERFACE → ModifierRequest: ordering blocks served from the chain
   private serveOrderingBlocks(peerId: string, req: ModifierRequest): void {
-    const heightOf = this.blockIdIndex();
     const modifiers: { id: string; data: Uint8Array }[] = [];
     let bodyBytes = 0;
 
     for (const id of req.ids) {
-      const height = heightOf.get(id);
-      if (height === undefined) continue;
+      const height = this.store.heightByBlockId(id);
+      if (height === null) continue;
       const data = this.store.serializeOrderingBlock(height);
       if (!data) continue;
       if (modifiers.length > 0 && bodyBytes + data.length > MAX_SERVE_BODY_BYTES) break;

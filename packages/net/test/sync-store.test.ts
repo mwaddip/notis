@@ -7,7 +7,6 @@ import {
   encodeOrderingBlock,
 } from '@dagsocial/types';
 import {
-  blockHash,
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
   verifyContentLimits,
@@ -19,25 +18,6 @@ import {
 import { LazySyncStore, NetNode } from '../src/node.js';
 import type { NetConfig, NetValidators } from '../src/types.js';
 
-// ---------------------------------------------------------------------------
-// Why this file exists
-//
-// Without this file `LazySyncStore.getOrderingBlockId` has no coverage at all:
-// mutate the method to unconditionally return `null` and the rest of the suite
-// stays green. A total lobotomy the suite cannot see is the strongest possible
-// evidence that the suite is not testing the thing.
-//
-// So these tests drive the real method on the real class. Every case below
-// fails against `return null`, and the class-B cases fail against an unguarded
-// `blockHash` as well — they pin the guard, not merely the method, which is
-// what makes them something other than a restatement of whatever the code
-// currently does.
-// ---------------------------------------------------------------------------
-
-// `powTargetBits` is in units of 1/256 of a bit (VALIDATION_INTERFACE →
-// orderingPowTarget), so every difficulty below is written `bits * 256`. The
-// work assertions stay in whole bits, which is what makes `blockWork(10 * 256)`
-// exactly `1n << 10n`.
 function makeHeader(overrides: Partial<BlockHeader> = {}): BlockHeader {
   return {
     protocolVersion: PROTOCOL_VERSION,
@@ -56,10 +36,6 @@ function makeHeader(overrides: Partial<BlockHeader> = {}): BlockHeader {
 function makeBlock(header: BlockHeader): OrderingBlock {
   return {
     header,
-    // Every block carries at least one transaction, because the settlement is
-    // one (VALIDATION_INTERFACE → verifyOrderingBlockStructure;
-    // NODE_INTERFACE → It is the LAST entry in `utxoTxIds`). These blocks are
-    // served through `encodeServableOrderingBlock`, which gates on structure.
     utxoTxTree: {
       utxoTxIds: [header.height.toString(16).padStart(64, '0')],
       utxoTxs: [new Uint8Array(96).fill(header.height & 0xff)],
@@ -79,153 +55,111 @@ const validators: NetValidators = {
   verifyPostBody,
 };
 
-/** A store wired to serve exactly these blocks by height. */
-function storeServing(blocks: Map<number, unknown>): LazySyncStore {
+/** A store wired to serve blocks by height, with id providers. */
+function storeServing(blocks: Map<number, unknown>, ids?: Map<number, string>): LazySyncStore {
   const store = new LazySyncStore(validators);
   store.setOrderingBlockFn((h) => blocks.get(h) ?? null);
   let max = 0;
   for (const h of blocks.keys()) if (h > max) max = h;
   store.setChainHeightProvider(() => max);
+  if (ids) {
+    const heightById = new Map<string, number>();
+    for (const [h, id] of ids) heightById.set(id, h);
+    store.setBlockIdProvider((h) => ids.get(h) ?? null);
+    store.setHeightByBlockIdProvider((id) => heightById.get(id) ?? null);
+  }
   return store;
 }
 
-const HEX64 = /^[0-9a-f]{64}$/;
-
 // ---------------------------------------------------------------------------
-// Class A — an in-domain header still hashes, and hashes canonically
+// Provider-read tests — NET_INTERFACE → Sync Handler Registration
 // ---------------------------------------------------------------------------
 
-describe('LazySyncStore.getOrderingBlockId — in-domain headers (class A)', () => {
-  it('returns the canonical block hash, not merely something non-null', () => {
-    const header = makeHeader();
-    const store = storeServing(new Map([[1, makeBlock(header)]]));
-
-    const id = store.getOrderingBlockId(1);
-
-    // Two assertions, deliberately. The shape check alone would survive a
-    // method that hashed the wrong thing; the equality check is what pins this
-    // to `blockHash` over the header.
-    expect(id).toMatch(HEX64);
-    expect(id).toBe(blockHash(header));
+describe('LazySyncStore.getOrderingBlockId — provider read', () => {
+  it('returns the provider value for a known height', () => {
+    const store = new LazySyncStore(validators);
+    store.setBlockIdProvider((h) => h === 1 ? 'id_1' : null);
+    expect(store.getOrderingBlockId(1)).toBe('id_1');
   });
 
-  it('distinguishes headers that differ in one field', () => {
-    // A migration that dropped the header on the floor and hashed a constant
-    // would pass every single-header test above. This is the cheapest way to
-    // refuse that.
-    const a = storeServing(new Map([[1, makeBlock(makeHeader({ height: 1 }))]]));
-    const b = storeServing(new Map([[1, makeBlock(makeHeader({ height: 2 }))]]));
-
-    expect(a.getOrderingBlockId(1)).not.toBe(b.getOrderingBlockId(1));
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Class B — out of domain but still encodable: the headers the guard catches
-// ---------------------------------------------------------------------------
-
-describe('LazySyncStore.getOrderingBlockId — out-of-domain headers (class B)', () => {
-  it('createdAt NaN yields null, where it used to yield a plausible id', () => {
-    // The single-field delta is the whole test. `createdAt` is the field that
-    // had no domain check anywhere in the repo before 1f, and cbor-x encodes
-    // NaN happily — so pre-1f this returned a real-looking 64-hex id. Under a
-    // positional encoder `vlqU` is total *by sentinel*, so NaN, -1, 1.5 and
-    // 2^60 would all collide on one hash: serving an id here would advertise a
-    // sync anchor that several distinct headers share.
-    //
-    // Written as a delta against the same header with a valid createdAt, not
-    // against a second hashing function: `blockHash` is the only one, and an
-    // assertion phrased against a helper is only as durable as the helper.
-    const good = makeHeader({ createdAt: 1_000_000 });
-    const bad = makeHeader({ createdAt: Number.NaN });
-
-    const goodStore = storeServing(new Map([[1, makeBlock(good)]]));
-    const badStore = storeServing(new Map([[1, makeBlock(bad)]]));
-
-    expect(goodStore.getOrderingBlockId(1)).toMatch(HEX64);
-    expect(badStore.getOrderingBlockId(1)).toBeNull();
-  });
-
-  it.each([
-    ['negative height', { height: -1 }],
-    ['fractional height', { height: 1.5 }],
-    ['non-hex prevBlockHash', { prevBlockHash: 'zz'.repeat(32) }],
-    ['short prevBlockHash', { prevBlockHash: 'ab' }],
-    ['uppercase prevBlockHash', { prevBlockHash: 'AB'.repeat(32) }],
-    ['stateRoot at 64 chars, not 66', { stateRoot: '00'.repeat(32) }],
-    ['validatorId of the wrong length', { validatorId: new Uint8Array(31) }],
-    ['powNonce Infinity', { powNonce: Number.POSITIVE_INFINITY }],
-  ])('%s yields null', (_label, override) => {
-    const store = storeServing(
-      new Map([[1, makeBlock(makeHeader(override as Partial<BlockHeader>))]]),
-    );
+  it('returns null when the provider returns null', () => {
+    const store = new LazySyncStore(validators);
+    store.setBlockIdProvider(() => null);
     expect(store.getOrderingBlockId(1)).toBeNull();
   });
 
-  it('a validatorId that is a 32-character string, not 32 bytes, yields null', () => {
-    // A length check alone would accept this and the encoder would not.
-    // `isBytesOfLength` checks type
-    // before width, so it lands as `null` rather than as a throw.
-    const store = storeServing(
-      new Map([[1, makeBlock(makeHeader({ validatorId: 'x'.repeat(32) as unknown as Uint8Array }))]]),
-    );
-    expect(store.getOrderingBlockId(1)).toBeNull();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// The absence branches around the call — each one is a place a lobotomy hides
-// ---------------------------------------------------------------------------
-
-describe('LazySyncStore.getOrderingBlockId — absence', () => {
-  it('returns null when no headers handler has been registered', () => {
+  it('returns null when no provider is set', () => {
     expect(new LazySyncStore(validators).getOrderingBlockId(1)).toBeNull();
   });
 
-  it('returns null when the handler has no block at that height', () => {
-    const store = storeServing(new Map([[1, makeBlock(makeHeader())]]));
-    expect(store.getOrderingBlockId(2)).toBeNull();
+  it('a later setBlockIdProvider replaces the delegate', () => {
+    const store = new LazySyncStore(validators);
+    store.setBlockIdProvider(() => 'old');
+    expect(store.getOrderingBlockId(1)).toBe('old');
+    store.setBlockIdProvider(() => 'new');
+    expect(store.getOrderingBlockId(1)).toBe('new');
+  });
+});
+
+describe('LazySyncStore.heightByBlockId — provider read', () => {
+  it('returns the provider value for a known id', () => {
+    const store = new LazySyncStore(validators);
+    store.setHeightByBlockIdProvider((id) => id === 'abc' ? 5 : null);
+    expect(store.heightByBlockId('abc')).toBe(5);
   });
 
-  it.each([
-    ['a block with no header', {}],
-    ['a header that is not an object', { header: 42 }],
-    ['a null header', { header: null }],
-    ['a non-object block', 'not-a-block'],
-  ])('returns null for %s', (_label, served) => {
-    const store = storeServing(new Map([[1, served]]));
-    expect(store.getOrderingBlockId(1)).toBeNull();
+  it('returns null for an unknown id', () => {
+    const store = new LazySyncStore(validators);
+    store.setHeightByBlockIdProvider(() => null);
+    expect(store.heightByBlockId('xyz')).toBeNull();
+  });
+
+  it('returns null when no provider is set', () => {
+    expect(new LazySyncStore(validators).heightByBlockId('abc')).toBeNull();
+  });
+
+  it('a later setHeightByBlockIdProvider replaces the delegate', () => {
+    const store = new LazySyncStore(validators);
+    store.setHeightByBlockIdProvider(() => 10);
+    expect(store.heightByBlockId('x')).toBe(10);
+    store.setHeightByBlockIdProvider(() => 99);
+    expect(store.heightByBlockId('x')).toBe(99);
   });
 });
 
 // ---------------------------------------------------------------------------
-// The caller — what the `null` actually costs, one level up
+// getAnchors — reads the block id provider, not the headers provider
 // ---------------------------------------------------------------------------
 
 describe('LazySyncStore.getAnchors', () => {
-  it('advertises an anchor for an in-domain tip', () => {
-    const header = makeHeader();
-    const store = storeServing(new Map([[1, makeBlock(header)]]));
+  it('advertises an anchor from the block id provider', () => {
+    const store = new LazySyncStore(validators);
+    store.setChainHeightProvider(() => 1);
+    store.setBlockIdProvider((h) => h === 1 ? 'tip_id' : null);
 
     expect(store.getAnchors()).toEqual([
-      { height: 1, blockId: blockHash(header) },
+      { height: 1, blockId: 'tip_id' },
     ]);
   });
 
-  it('advertises no anchor for an out-of-domain tip, rather than a colliding one', () => {
-    // This is class B's consequence at the call site: the absence is absorbed
-    // (`if (id)`), so a malformed stored header costs us one anchor instead of
-    // publishing an id that several distinct headers would share.
-    const store = storeServing(
-      new Map([[1, makeBlock(makeHeader({ createdAt: Number.NaN }))]]),
-    );
-
+  it('returns empty when the block id provider is unset', () => {
+    const store = new LazySyncStore(validators);
+    store.setChainHeightProvider(() => 5);
     expect(store.getAnchors()).toEqual([]);
+  });
+
+  it('skips heights where the provider returns null', () => {
+    const store = new LazySyncStore(validators);
+    store.setChainHeightProvider(() => 20);
+    store.setBlockIdProvider((h) => h === 20 ? 'tip20' : null);
+
+    const anchors = store.getAnchors();
+    expect(anchors).toEqual([{ height: 20, blockId: 'tip20' }]);
   });
 });
 
 // ---------------------------------------------------------------------------
-// The wiring — that this is the store NetNode actually uses
+// NetNode forwarding — provider setters reach the sync store
 // ---------------------------------------------------------------------------
 
 const config: NetConfig = {
@@ -239,24 +173,33 @@ const config: NetConfig = {
   syncRequestTimeoutMs: 10000,
 };
 
-describe('NetNode.setHeadersHandler wiring', () => {
-  it('routes the public handler into the store the sync machine reads', () => {
-    // Without this, every test above proves only that a class works — not that
-    // it is the class production drives. `setHeadersHandler` only stores
-    // delegates, so no `start()` and no I/O is needed here.
-    //
-    // The cast reaches a private field, deliberately and in one place: there is
-    // no public reader for `getOrderingBlockId` on NetNode. It pins the field
-    // name `syncStore`; if that rename ever happens, this line is the one to
-    // follow, and widening the class's public surface is the alternative.
-    const header = makeHeader();
+describe('NetNode provider forwarding', () => {
+  function getStore(net: NetNode): LazySyncStore {
+    return (net as unknown as { syncStore: LazySyncStore }).syncStore;
+  }
+
+  it('setBlockIdProvider forwards to the sync store', () => {
     const net = new NetNode(config, validators);
-    net.setHeadersHandler((h) => (h === 7 ? makeBlock(header) : null));
+    net.setBlockIdProvider((h) => h === 7 ? 'id7' : null);
 
-    const store = (net as unknown as { syncStore: LazySyncStore }).syncStore;
-
-    expect(store.getOrderingBlockId(7)).toBe(blockHash(header));
+    const store = getStore(net);
+    expect(store.getOrderingBlockId(7)).toBe('id7');
     expect(store.getOrderingBlockId(8)).toBeNull();
+  });
+
+  it('setHeightByBlockIdProvider forwards to the sync store', () => {
+    const net = new NetNode(config, validators);
+    net.setHeightByBlockIdProvider((id) => id === 'abc' ? 3 : null);
+
+    const store = getStore(net);
+    expect(store.heightByBlockId('abc')).toBe(3);
+    expect(store.heightByBlockId('xyz')).toBeNull();
+  });
+
+  it('setChainHeightProvider forwards to the sync store', () => {
+    const net = new NetNode(config, validators);
+    net.setChainHeightProvider(() => 77);
+    expect(getStore(net).chainHeight()).toBe(77);
   });
 });
 
@@ -265,7 +208,7 @@ describe('setChainHeightProvider wiring', () => {
     const store = new LazySyncStore(validators);
     let headersProviderCalls = 0;
     let heightProviderCalls = 0;
-    store.setOrderingBlockFn((h) => { headersProviderCalls++; return h <= 5 ? {} : null; });
+    store.setOrderingBlockFn(() => { headersProviderCalls++; return null; });
     store.setChainHeightProvider(() => { heightProviderCalls++; return 42; });
 
     const result = store.chainHeight();
@@ -286,13 +229,6 @@ describe('setChainHeightProvider wiring', () => {
     expect(store.chainHeight()).toBe(10);
     store.setChainHeightProvider(() => 99);
     expect(store.chainHeight()).toBe(99);
-  });
-
-  it('NetNode.setChainHeightProvider forwards to the sync store', () => {
-    const net = new NetNode(config, validators);
-    net.setChainHeightProvider(() => 77);
-    const store = (net as unknown as { syncStore: LazySyncStore }).syncStore;
-    expect(store.chainHeight()).toBe(77);
   });
 });
 
