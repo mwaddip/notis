@@ -45,6 +45,8 @@ import {
   MempoolFullError,
   PendingSpendConflictError,
   getOrderingBlock,
+  getOrderingBlockHash,
+  getHeightByBlockHash,
   peerStorage,
   getKarmaOwners,
   registerKarmaMembershipHook,
@@ -240,6 +242,11 @@ net.setHeadersHandler(guardedGetOrderingBlock);
 // The tip height net advertises in handshakes and SyncInfo — the store's
 // MAX(height), unwrapped: it decodes no row (NODE_INTERFACE → Sync handlers).
 net.setChainHeightProvider(getCurrentHeight);
+
+// NODE_INTERFACE → Sync handlers: the block_hash column, unwrapped — a column
+// read decodes no row, so there is nothing for failStopIfCorruptChain to promote.
+net.setBlockIdProvider(getOrderingBlockHash);
+net.setHeightByBlockIdProvider(getHeightByBlockHash);
 
 // NODE_INTERFACE → "Backfill after sync": four seams the net layer reads bodies through.
 net.setPostBodyProvider((id: string) => {

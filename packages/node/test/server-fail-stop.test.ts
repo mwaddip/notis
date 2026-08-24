@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { AddressInfo } from 'net';
-import { makeTestConfig, makeBlock } from './helpers.js';
+import { makeTestConfig, makeBlock, insertPoisonedBlock } from './helpers.js';
 import { MAX_BLOCK_BODY_BYTES, profileFor } from '@dagsocial/types';
 
 function makeConfig() {
@@ -31,12 +31,16 @@ describe('server /blocks guardStoreRead wiring', () => {
     vi.resetModules();
   });
 
-  async function startApp(block?: ReturnType<typeof makeBlock>) {
-    const { initDb, closeDb } = await import('../src/store/db.js');
+  async function startApp(block?: ReturnType<typeof makeBlock>, poison = false) {
+    const { initDb, closeDb, getDb } = await import('../src/store/db.js');
     initDb(':memory:');
     if (block) {
-      const ordering = await import('../src/store/ordering.js');
-      ordering.createOrderingBlock(block);
+      if (poison) {
+        insertPoisonedBlock(getDb(), block);
+      } else {
+        const ordering = await import('../src/store/ordering.js');
+        ordering.createOrderingBlock(block);
+      }
     }
     const { createApp } = await import('../src/server.js');
     const app = createApp(makeConfig());
@@ -54,7 +58,7 @@ describe('server /blocks guardStoreRead wiring', () => {
     }) as never);
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const { baseUrl, close } = await startApp(makeBlock(1, -1));
+    const { baseUrl, close } = await startApp(makeBlock(1, -1), true);
     try {
       // The mocked process.exit throws inside the handler; whether the client
       // sees a 500 or a dropped socket is not the pin.
@@ -71,7 +75,7 @@ describe('server /blocks guardStoreRead wiring', () => {
     }) as never);
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const { baseUrl, close } = await startApp(makeBlock(1, -1));
+    const { baseUrl, close } = await startApp(makeBlock(1, -1), true);
     try {
       // The mocked process.exit throws inside the handler; whether the client
       // sees a 500 or a dropped socket is not the pin.

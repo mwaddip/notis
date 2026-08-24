@@ -8,6 +8,8 @@ import {
   computeBoxId,
   canonicalBoxBytes,
   encodeTx,
+  encodeHeader,
+  encodeUtxoTxTree,
   u32BE,
   leafHash,
   buildMerkleRoot,
@@ -1161,4 +1163,28 @@ export function makeBlock(height: number, createdAt: number): OrderingBlock {
     },
     validatorSignature: new Uint8Array(64),
   };
+}
+
+/**
+ * Insert a block row via raw SQL, bypassing `createOrderingBlock`'s blockHash
+ * guard. For tests that deliberately poison the store with an unhashable header.
+ */
+export function insertPoisonedBlock(
+  db: import('better-sqlite3').Database,
+  block: OrderingBlock,
+): void {
+  const hash = blockHash(block.header);
+  db.prepare(
+    `INSERT INTO ordering_blocks
+       (height, header_cbor, utxotx_tree_cbor,
+        validator_signature, created_at, block_hash)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(
+    block.header.height,
+    Buffer.from(encodeHeader(block.header)),
+    Buffer.from(encodeUtxoTxTree(block.utxoTxTree)),
+    Buffer.from(block.validatorSignature),
+    block.header.createdAt,
+    hash ?? `poisoned-${block.header.height}`,
+  );
 }

@@ -126,6 +126,7 @@ describe('db lifecycle', () => {
     expect(orderNames).toContain('utxotx_tree_cbor');
     expect(orderNames).toContain('validator_signature');
     expect(orderNames).toContain('created_at');
+    expect(orderNames).toContain('block_hash');
 
     // mempool — the confirmed-entry cleanup columns (MEMPOOL_INTERFACE →
     // Schema). Both `tx_id` and `prune_entry_id` are written at insert and

@@ -42,7 +42,7 @@ import {
   makeTestIdentity,
   mineNextBlock,
   signHeader,
-  solveHeaderPow, fixturePostId, seedPostTx, fillerTx, activateProverOverStore, makePruneEntry } from '../helpers.js';
+  solveHeaderPow, fixturePostId, seedPostTx, fillerTx, activateProverOverStore, makePruneEntry, insertPoisonedBlock } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Test config
@@ -863,7 +863,7 @@ describe('a stored header that cannot be hashed', () => {
     // rather than a property of this function, and these tests pin the behaviour
     // the claim would have to survive.
     const block = buildBlock(1, -1);
-    ordering.createOrderingBlock(block);
+    insertPoisonedBlock(db.getDb(), block);
     expect(ordering.getCurrentHeight()).toBe(1);
 
     return {
@@ -958,12 +958,14 @@ describe('a stored header that cannot be hashed', () => {
 
     // One step past the top of the domain: the row still round-trips, and the
     // header it produces has no hash. This is what the general claim above
-    // would have ruled out.
+    // would have ruled out. Bypasses `createOrderingBlock`'s blockHash guard
+    // because the whole point is to store a header the domain rejects.
     ordering.deleteOrderingBlock(1);
-    ordering.createOrderingBlock({
+    const pastBlock = {
       ...extremes,
       header: { ...extremes.header, powTargetBits: 65537 },
-    });
+    };
+    insertPoisonedBlock(db.getDb(), pastBlock);
     const past = ordering.getOrderingBlock(1)!;
     expect(past.header.powTargetBits).toBe(65537);
     expect(verifyHeaderFieldDomains(past.header).valid).toBe(false);
