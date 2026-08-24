@@ -6,9 +6,11 @@ import type { UserId } from '@dagsocial/types';
 
 /**
  * The per-identity decay clock — the second committed entity alongside boxes
- * (Spec G D4). Once boxes carry no height, `decay.ts` has nothing to read from
- * them, and consensus may not read an uncommitted store column, so the clock
- * lives in committed state:
+ * (Spec G D4). Neither height that meets `insertBox` may feed it: a box's
+ * `createdAtBlock` is creator-declared, so a backdated box would backdate its
+ * owner's clock, and the `created_at_block` column is uncommitted
+ * (NODE_INTERFACE → Populating the record). So the clock lives in committed
+ * state:
  *
  *   stale       = (height − lastActivityBlock) >= staleThresholdBlocks
  *   owedPeriods = floor( (height − max(lastActivityBlock, lastDecayBlock)) / interval )

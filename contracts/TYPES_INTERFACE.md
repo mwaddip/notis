@@ -2850,9 +2850,12 @@ above it.
   apply-time field mutation that the id does not cover
 - Every id preimage carries a domain tag; box ids, tx ids and identity-record keys share one
   32-byte keyspace and must not be forgeable across it
-- A box carries **no block height**. Consensus-relevant time lives in explicit named fields
-  (`lockedUntilBlock`) or in committed per-identity state (`IdentityRecord.invitedAtBlock`,
-  which is what dates a bond's probation) — never in an implicit creation stamp
+- A box's block height is **creator-declared**: `createdAtBlock` sits in the shared prefix, so the
+  creator signs it and the box id covers it. The general bound is one-directional
+  (`createdAtBlock <= currentBlockHeight`); **every rule deriving from it owes its own exact
+  check**, and backdating is bounded by nothing else. Consensus time otherwise lives in explicit
+  named fields (`lockedUntilBlock`) or in committed per-identity state
+  (`IdentityRecord.invitedAtBlock`, which is what dates a bond's probation)
 - Box `value` is `bigint` integer base units (uniform across box types), `< BOX_VALUE_BOUND`
   (§Box value domain); no float math anywhere in consensus
   value arithmetic

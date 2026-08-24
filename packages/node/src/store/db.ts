@@ -71,8 +71,10 @@ const MIGRATIONS = [
   )`,
 
   // Identity records — the second committed entity alongside boxes (Spec G D4).
-  // Per-identity decay clock; once boxes carry no height, decay.ts has nothing
-  // to read from them, so the clock lives in committed state.
+  // Per-identity decay clock; a creator-declared box height would let a backdated
+  // box backdate its owner's clock, and the created_at_block column is
+  // uncommitted, so the clock lives in committed state
+  // (NODE_INTERFACE → Populating the record).
   //
   // Keyed on the raw 32 Ed25519 public-key bytes (UserId — Spec G D5 withdrawn,
   // there is no separate IdentityId type). The AVL key is DERIVED as

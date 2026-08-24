@@ -1883,9 +1883,9 @@ export function applyTx(
     for (const box of outputsWithIds) {
       // The box goes in exactly as `materializeOutput` built it. Spreading it
       // is wrong: any key added or reordered here changes the id, since
-      // `computeBoxId` hashes the box itself. The settled height reaches the
-      // `created_at_block` store column through `insertBox`, which takes it
-      // from the open journal — the only place it can come from.
+      // `computeBoxId` hashes the box itself. `insertBox` fills the
+      // `created_at_block` store column from the box's own `createdAtBlock`
+      // (NODE_INTERFACE → Populating the record).
       deps.insertBox(box);
     }
   });

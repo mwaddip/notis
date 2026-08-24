@@ -26,8 +26,10 @@ import {
  * producer has to remember to do it.
  *
  * The height comes from the **open journal**, never from the box. `insertBox`
- * takes no height, and a box carries none: `createdAtBlock` is not a box field,
- * and the `created_at_block` COLUMN is store-only, which consensus code must
+ * takes no height argument, and it must not reach for the box's
+ * `createdAtBlock`: that field is creator-declared, so a backdated box would
+ * backdate its owner's clock (NODE_INTERFACE → Populating the record). The
+ * `created_at_block` COLUMN is store-only, which consensus code must
  * never read (NODE_INTERFACE → "`created_at_block` is a store column, never a
  * consensus input"). Every test below therefore drives a journal height that
  * differs from the seed its fixture was built with, so an implementation that
