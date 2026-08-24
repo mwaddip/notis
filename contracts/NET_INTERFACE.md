@@ -2,7 +2,7 @@
 
 **Component:** `@dagsocial/net`
 **Protocol version:** 2
-**Last updated:** 2026-08-01
+**Last updated:** 2026-08-24
 
 ## Scope
 
@@ -386,7 +386,8 @@ and fork choice compares work over the verified segment it is handed (`NODE_INTE
 choice decides on verified headers`), never over a peer's claim about its own chain.
 
 Anchors at heights `[tipHeight, tipHeight - 16, tipHeight - 128, tipHeight - 512]`
-(fewer if chain is shorter). They let the receiver find the best common point.
+(fewer if chain is shorter). They are the locator for the best common point that a persistent
+header store would search — unbuilt, so no receiver runs that search today.
 
 ### Inv (code 3)
 
