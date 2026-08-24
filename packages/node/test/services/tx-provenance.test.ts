@@ -39,13 +39,24 @@ const TX_ID = 'fe'.repeat(32);
 // type said `CreditBox` — a stored box — while the body returns a literal with
 // no id and no provenance, which is precisely the distinction this suite exists
 // to pin (Spec G phase C3: outputs get their provenance from the transaction).
-function creditCandidate(value: bigint, owner: Uint8Array): CandidateOf<CreditBox> {
+function creditCandidate(
+  value: bigint,
+  owner: Uint8Array,
+  createdAtBlock = 0,
+): CandidateOf<CreditBox> {
   return {
     boxType: 'credit',
     value,
-    createdAtBlock: 0,
+    createdAtBlock,
     owner,
   };
+}
+
+// The module's own type rather than a hand-written shape: under a hand-written
+// shape, reaching for another export is a compile error and the test that
+// needed it goes unwritten instead.
+async function importJournalFresh() {
+  return import('../../src/store/journal.js');
 }
 
 describe('transaction output provenance (Spec G phase C3)', () => {
@@ -211,10 +222,15 @@ describe('transaction output provenance (Spec G phase C3)', () => {
   it('applyTx stores the materialized box unchanged, and the height goes to the column', async () => {
     // The stored box is byte-identical to what `materializeOutput` produced:
     // any key added or reordered changes the id, so the store path adds nothing.
+    //
     // `insertBox` fills the `created_at_block` column from the box's own
-    // `createdAtBlock` (NODE_INTERFACE → Populating the record).
+    // `createdAtBlock`, never from the open journal
+    // (NODE_INTERFACE → Populating the record). The box declares 300 while the
+    // journal and the applied height are 777, so a writer reaching for the
+    // journal reads a height this assertion refuses.
     const { initDb } = await importDbFresh();
     const { insertBox, getBox } = await importUtxoFresh();
+    const { beginBlockJournal, finishBlockJournal } = await importJournalFresh();
     const { serializeBox } = await import('../../src/state/serialize-box.js');
     const { materializeOutput, applyTx } = await import(
       '../../src/services/utxo-engine.js'
@@ -222,7 +238,8 @@ describe('transaction output provenance (Spec G phase C3)', () => {
     const { getDb } = await importDbFresh();
     initDb(':memory:');
 
-    const produced = materializeOutput(creditCandidate(100n, user(0xf1)), TX_ID, 0);
+    const produced = materializeOutput(creditCandidate(100n, user(0xf1), 300), TX_ID, 0);
+    beginBlockJournal(777);
     applyTx(
       {
         getBox,
@@ -235,6 +252,14 @@ describe('transaction output provenance (Spec G phase C3)', () => {
       [produced],
       777,
     );
+    finishBlockJournal();
+
+    const columnHeight = (
+      getDb()
+        .prepare('SELECT created_at_block FROM utxo_boxes WHERE id = ?')
+        .get(produced.id!) as { created_at_block: number }
+    ).created_at_block;
+    expect(columnHeight).toBe(300);
 
     const restored = getBox(produced.id!)!;
     expect(restored.txId).toBe(TX_ID);
