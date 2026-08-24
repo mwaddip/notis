@@ -212,8 +212,9 @@ function totalKarma(m: Modules, owner: Uint8Array): bigint {
  * Run one scenario and capture its outputs.
  *
  * Every block is wrapped in a real `beginBlockJournal(height)` /
- * `finishBlockJournal()` pair, because that is the only place the settled height
- * lives: `insertBox` takes no height argument and a box carries none.
+ * `finishBlockJournal()` pair, because the activity clock `insertBox` bumps reads
+ * the open journal and takes no height argument
+ * (NODE_INTERFACE → Populating the record).
  */
 export async function runScenario(scenario: Scenario): Promise<ScenarioCapture> {
   const m = await loadModules();
