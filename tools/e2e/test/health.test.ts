@@ -50,11 +50,13 @@ describe('health', () => {
   });
 
   it('row a: /health and /stats shapes and values across the mesh', async () => {
-    mesh = await createMesh({ fileIndex: FILE_INDEX, nodeCount: 3 });
+    mesh = await createMesh({ fileIndex: FILE_INDEX, nodeCount: 1 });
     const miner = mesh.nodes[0]!;
 
-    // ---- mesh proof ----
+    // ---- mine before followers join so they provably sync ----
     await mine(miner, mesh.miningSecret, 1);
+    await mesh.addNode();
+    await mesh.addNode();
     await waitHeight(mesh.nodes, 1);
 
     const tips = await Promise.all(mesh.nodes.map(getBlockCurrent));
@@ -79,7 +81,7 @@ describe('health', () => {
       // H2: measure the mesh topology — bootstrap-first may be a star
       expect(peersConnected).toBeGreaterThanOrEqual(1);
 
-      expect(['idle', 'synced']).toContain(h['sync_phase']);
+      expect(h['sync_phase']).toBe(node === miner ? 'idle' : 'synced');
       expect(h['syncing']).toBe(false);
       expect(h['last_post_received_ms_ago']).toBeNull();
       expect(typeof h['uptime_seconds']).toBe('number');
