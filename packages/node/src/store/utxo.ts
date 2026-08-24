@@ -531,24 +531,8 @@ export function getKarmaValue(owner: Uint8Array): bigint {
 }
 
 /**
- * Return the single unspent credit box for the given owner, or null if none.
- */
-export function getCreditBox(owner: Uint8Array): CreditBox | null {
-  const db = getDb();
-  const row = db
-    .prepare(
-      `SELECT * FROM utxo_boxes
-       WHERE owner = ? AND box_type = 'credit' AND spent_at_block IS NULL
-       LIMIT 1`,
-    )
-    .safeIntegers()
-    .get(Buffer.from(owner)) as UtxoRow | undefined;
-  return row ? (rowToBox(row) as CreditBox) : null;
-}
-
-/**
- * Return all unspent credit boxes for the given owner, sorted by value
- * descending (largest-first for UTXO selection).
+ * Return all unspent credit boxes for the given owner, ordered by value
+ * descending then id — a total order, so element [0] is a deterministic read.
  */
 export function getCreditBoxes(owner: Uint8Array): CreditBox[] {
   const db = getDb();
@@ -556,7 +540,7 @@ export function getCreditBoxes(owner: Uint8Array): CreditBox[] {
     .prepare(
       `SELECT * FROM utxo_boxes
        WHERE owner = ? AND box_type = 'credit' AND spent_at_block IS NULL
-       ORDER BY value DESC`,
+       ORDER BY value DESC, id`,
     )
     .safeIntegers()
     .all(Buffer.from(owner)) as UtxoRow[];

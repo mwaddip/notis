@@ -130,7 +130,6 @@ async function importUtxo() {
     getKarmaBox: (owner: Uint8Array) => KarmaBox | null;
     getBox: (boxId: string) => unknown;
     consumeBox: (boxId: string, consumedAtBlock: number) => void;
-    getCreditBox: (owner: Uint8Array) => unknown;
   };
 }
 

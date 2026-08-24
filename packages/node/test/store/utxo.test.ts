@@ -30,7 +30,6 @@ async function importUtxoFresh() {
     getBox: (boxId: string) => AnyBox | null;
     getKarmaBox: (owner: Uint8Array) => KarmaBox | null;
     getKarmaBoxes: (owner: Uint8Array) => KarmaBox[];
-    getCreditBox: (owner: Uint8Array) => CreditBox | null;
     getCreditBoxes: (owner: Uint8Array) => CreditBox[];
     getBondFor: (inviteePublicKey: Uint8Array) => BondBox | null;
     getBondBoxes: (inviterId: Uint8Array) => BondBox[];
@@ -249,11 +248,11 @@ describe('utxo store', () => {
     expect(gone).toBeNull();
   });
 
-  // --- getCreditBox returns single unspent credit box -----------------------
+  // --- getCreditBoxes returns unspent credit boxes in total order ------------
 
-  it('getCreditBox returns the single unspent credit box for an owner', async () => {
+  it('getCreditBoxes returns boxes for an owner and empty for another', async () => {
     const { initDb } = await importDbFresh();
-    const { insertBox, getCreditBox } = await importUtxoFresh();
+    const { insertBox, getCreditBoxes } = await importUtxoFresh();
     const { computeBoxId } = await importTypes();
 
     initDb(':memory:');
@@ -263,13 +262,38 @@ describe('utxo store', () => {
     box.id = computeBoxId(box);
     insertBox(box);
 
-    const found = getCreditBox(OWNER_A);
-    expect(found).not.toBeNull();
-    expect(found!.value).toBe(999n);
+    const found = getCreditBoxes(OWNER_A);
+    expect(found).toHaveLength(1);
+    expect(found[0]!.value).toBe(999n);
 
-    // Owner without a credit box returns null
-    const none = getCreditBox(OWNER_B);
-    expect(none).toBeNull();
+    // Owner without a credit box returns empty array
+    const none = getCreditBoxes(OWNER_B);
+    expect(none).toHaveLength(0);
+  });
+
+  it('getCreditBoxes breaks equal-value ties by id', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertBox, getCreditBoxes } = await importUtxoFresh();
+    const { computeBoxId } = await importTypes();
+
+    initDb(':memory:');
+
+    const boxA = makeCreditBox({ value: 500n, owner: OWNER_A });
+    Object.assign(boxA, fixtureProvenance(boxA, 1));
+    boxA.id = computeBoxId(boxA);
+    insertBox(boxA);
+
+    const boxB = makeCreditBox({ value: 500n, owner: OWNER_A });
+    Object.assign(boxB, fixtureProvenance(boxB, 2));
+    boxB.id = computeBoxId(boxB);
+    insertBox(boxB);
+
+    const boxes = getCreditBoxes(OWNER_A);
+    expect(boxes).toHaveLength(2);
+    expect(boxes[0]!.value).toBe(500n);
+    expect(boxes[1]!.value).toBe(500n);
+    // Equal value → ascending id tiebreak
+    expect(boxes[0]!.id! < boxes[1]!.id!).toBe(true);
   });
 
 

@@ -31,7 +31,6 @@ export {
   getEmissionBox,
   getTreasuryBox,
   getKarmaPoolBox,
-  getCreditBox,
   getCreditBoxes,
   getBondFor,
   getBondsInvitedAt,
