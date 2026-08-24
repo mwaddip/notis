@@ -108,14 +108,12 @@ resolved once at startup from `NETWORK_TYPE`. It is never a per-call-site defaul
 > **not** break same-network peering: devnet↔devnet frames share `MAGIC_DEVNET`, match on the
 > own-magic compare, and never reach the set.
 >
-> The damage is **cross-network**. A devnet peer reaching a mainnet or testnet node fails the
-> own-magic compare, is not found in the stale set, is therefore classified as not-a-frame,
-> falls through to the legacy raw-CBOR path, decodes as malformed, and is **permanently
-> banned** — where the correct outcome is a polite wrong-network close. A stale set converts
-> a routine misconfiguration into a ban.
->
-> Note this is **latent until per-profile magics are actually supplied** (P2-A phase 3b).
-> While every node frames as mainnet, no devnet magic ever reaches the wire.
+> The damage is **cross-network classification**. A devnet peer reaching a mainnet or
+> testnet node fails the own-magic compare; found in the set it is closed as a
+> wrong-network peer, missing from a stale set it is closed as not-a-frame. Both land in
+> the Ban policy's frame tier — closed, no penalty — so a stale set costs no ban; what it
+> costs is the diagnosis, and a wrong-network condition an operator could read from the
+> log reports as garbage instead.
 >
 > ⚠ **Both the magics and the canonical set come from `@dagsocial/types`, not
 > `@dagsocial/wire`.** They move there in P2-A phase 5, beside `NetworkProfile` — wire's
@@ -247,6 +245,12 @@ outbound: connect → identify → open stream → send Handshake → receive Ha
 inbound:  accept → identify → receive stream → receive Handshake → send Handshake → active
 ```
 
+**A handshake is a frame or it is nothing.** A payload that does not decode as a valid
+frame — truncated, leading bytes that are no known magic, a failed checksum — is rejected
+and the stream closed; there is **no unframed raw-CBOR fallback**, so no handshake byte
+ever reaches a CBOR parser except as the body of a checksum-verified frame. The
+classification of each frame-decode failure is the Ban policy's first tier below.
+
 ### Handshake Body (CBOR)
 
 ```typescript
@@ -326,7 +330,19 @@ Handshake specifics:
 - `agentName` / `nodeName` are strings; `capabilities` is an array of numbers (unknown
   capabilities preserved, not rejected — forward compat)
 
-**Ban policy** — distinguish adversarial input from a compatibility mismatch:
+**Ban policy** — two tiers, split by what a failure is evidence of:
+
+*Frame tier — the payload never decoded as a frame, or the frame refused itself.* Close the
+stream, **no penalty**, for every code: a recognized foreign magic is a wrong-network
+misconfiguration; an unsupported frame version is a newer peer; a checksum mismatch is a
+corrupt link or a forgery, indistinguishable from here; truncated bytes or no known magic at
+all are a link that died mid-write or garbage, equally indistinguishable. None of these is
+*evidence* of misbehaviour, so none earns ban pressure — and none reaches a parser, so none
+can be misclassified by one.
+
+*Body tier — the frame decoded, its checksum held, and the CBOR body inside is wrong.* A
+valid checksum proves the sender meant exactly these bytes, which is what licenses treating
+body defects as deliberate:
 - Malformed / out-of-bounds input (missing or wrong-typed fields, negative or
   over-`MAX_ADVERTISED_HEIGHT` values) is adversarial → stream closed, peer **banned
   permanently**.
@@ -553,14 +569,19 @@ pick_sync_peer() → sync_from_peer() → backfill() → synced()
 
 ### Sync Integrity (audit M-10)
 
-- **Response binding.** A `ModifierResponse` is processed only if it
-  answers an outstanding `ModifierRequest` this node previously sent **to
-  that same peer**: the machine tracks the requested modifier ids per
-  request target; a response modifier whose id was not requested from its
-  sender is dropped — dropped, not penalized, because a response can
-  legitimately cross a peer rotation in flight. Requests are only ever
-  sent to the current sync peer, so this implies: no other peer can push
-  blocks into the store via the sync path.
+- **Response binding — sender and label, never content.** A `ModifierResponse` is
+  processed only if it answers an outstanding `ModifierRequest` this node previously
+  sent **to that same peer**: the machine tracks the requested modifier ids per
+  request target; a response modifier whose id was not requested from its sender is
+  dropped — dropped, not penalized, because a response can legitimately cross a peer
+  rotation in flight. Requests are only ever sent to the current sync peer, so no
+  *other* peer can feed this path. **The id is a label: `data` is never hashed and
+  never compared against `id`**, so the sync peer itself can answer a request for
+  block X with any bytes whatsoever. What protects the store is the node's apply
+  funnel — structure gate, chain linkage, PoW — which every sync-delivered block
+  passes through exactly as a gossiped one does; a mislabelled response costs this
+  node one outstanding slot until the block is re-announced, never a stored block.
+  Net owns the sender-and-label check; the funnel owns content validity.
 - **Request provenance.** While syncing, only an Inv from the current sync
   peer may trigger a `ModifierRequest`. A third party's Inv must neither
   cause requests nor grow the outstanding set.
