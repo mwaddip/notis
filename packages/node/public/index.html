@@ -301,6 +301,12 @@ import { blake2b } from 'https://cdn.jsdelivr.net/npm/blakejs@1.2.1/+esm';
 
 // Auto-detect: behind nginx with /testnet/ prefix, or direct node access
 const API = window.location.pathname.startsWith('/testnet') ? '/testnet/api' : '';
+
+// ⛔ **The faucet is NOT under `API`.** It is a service of its own on its own port
+// and the node serves no `/faucet` route (NODE_INTERFACE → "The node serves no
+// faucet, and holds no key it could sign one with"), so a request built from `API`
+// reaches the node and 404s. The deployed path proxies `/testnet/faucet` to it.
+const FAUCET = window.location.pathname.startsWith('/testnet') ? '/testnet/faucet' : '/faucet';
 const encoder = new TextEncoder();
 
 // ===========================================================================
@@ -1530,7 +1536,7 @@ async function requestFromFaucet(path, label, btn) {
   result.innerHTML = `<span class="result-msg">Requesting ${esc(label.toLowerCase())}...</span>`;
 
   try {
-    const res = await fetch(API + path, {
+    const res = await fetch(FAUCET + path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pubkey: userId }),
@@ -1565,11 +1571,11 @@ async function requestFromFaucet(path, label, btn) {
 }
 
 document.getElementById('faucetKarmaBtn').addEventListener('click', (e) => {
-  requestFromFaucet('/faucet/karma', 'Karma', e.currentTarget);
+  requestFromFaucet('/karma', 'Karma', e.currentTarget);
 });
 
 document.getElementById('faucetCreditsBtn').addEventListener('click', (e) => {
-  requestFromFaucet('/faucet/credits', 'Credits', e.currentTarget);
+  requestFromFaucet('/credits', 'Credits', e.currentTarget);
 });
 
 // ===========================================================================

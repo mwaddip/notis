@@ -61,8 +61,10 @@ If an axis genuinely does not fit, that is a conversation about the shared defin
 ⚠ **A Notis-specific reading of `A` (Agility).** `ARCHITECTURE.md → Design Principles` states that
 correctness and cost are separate obligations and **only correctness is instrumented** — no gate in
 this repo measures CPU, allocation, or cadence. So an `A8+` here is not "make it fast"; it is
-**"nothing will catch you if this is wasteful, so you are the check."** The sync loop that consumed a
-full core, permanently, from the day it landed until 2026-08-11 passed every test the whole time.
+**"nothing will catch you if this is wasteful, so you are the check."**
+
+> ⚠ **Measured 2026-08-11.** A sync loop consumed a full core, permanently, from the day it landed,
+> and passed every test the whole time.
 
 ## Stat Profiles
 

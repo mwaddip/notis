@@ -127,10 +127,11 @@ no heading and no lead points at nothing.
 reader has to reason about code that is gone, and a narrated history is a second claim that decays
 independently of the one beside it.
 
-⚠ **This binds code comments. `contracts/` is deliberately exempt for now** — some phase citations
-there are load-bearing while the contract-vs-code reconciliation is unwritten (user, 2026-08-11). **Do
-not sweep `contracts/` under this rule.** The exemption ends with that reconciliation, not with a
-cleanup.
+⚠ **This binds `contracts/` as well as code comments.** A contract states the rule as it stands, and
+prose describing what the text used to say is narration there exactly as it is in a comment. **A
+marker is the exception, and only for its own subject** — recording a change is what a marker is for,
+so `RESOLVED`, `SUPERSEDED` and a dated record may state what they replaced, and a passage marked as
+a given date's state keeps its reasoning. Prose outside one describes the present tree.
 
 ## Commit and PR bodies
 
