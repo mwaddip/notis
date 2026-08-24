@@ -1,3 +1,4 @@
+import { GENESIS_PREV_BLOCK_HASH } from '@dagsocial/types';
 import type { NetConfig } from './types.js';
 import {
   MSG_HANDSHAKE,
@@ -28,7 +29,7 @@ import {
 export interface SyncStore {
   /** Full ordering block by height, or null if not available. */
   getOrderingBlock(height: number): unknown | null;
-  /** CBOR-serialized ordering block bytes for a given height, or null. */
+  /** Encoded ordering block bytes for a given height, or null. */
   serializeOrderingBlock(height: number): Uint8Array | null;
   /** Block ID (hash) for a given height, or null if not available. */
   getOrderingBlockId(height: number): string | null;
@@ -419,16 +420,13 @@ export class SyncMachine {
   /**
    * Dispatch an incoming framed message from a peer.
    *
-   * The `body` is the raw CBOR payload (already stripped of the frame
+   * The `body` is the positional payload (already stripped of the frame
    * envelope by the caller).
    *
-   * Every body is decoded *and* shape-checked before it is queued: a message
-   * that fails the boundary is dropped here and attributed to the sender, so no
-   * unvalidated value ever reaches a handler.
-   *
-   * Shape is not enough on its own — every inbound array is also length-capped
-   * here, because each element costs the handler work and the sender chooses how
-   * many there are.
+   * Every body is decoded through its positional codec and domain-checked
+   * before it is queued: a message that fails the boundary — malformed,
+   * truncated, over-cap, nonEmpty violation — is dropped here and attributed
+   * to the sender, so no unvalidated value ever reaches a handler.
    *
    * Routes to control queue (SyncInfo) or data queue (everything else).
    */
@@ -440,7 +438,6 @@ export class SyncMachine {
           this.rejectMessage(peerId, code, 'malformed SyncInfo');
           return;
         }
-        if (!this.withinCap(peerId, code, 'SyncInfo anchors', info.anchors.length)) return;
         this.pushControl({ type: 'sync-info', peerId, info });
         break;
       }
@@ -450,7 +447,6 @@ export class SyncMachine {
           this.rejectMessage(peerId, code, 'malformed Inv');
           return;
         }
-        if (!this.withinCap(peerId, code, 'Inv ids', inv.ids.length)) return;
         this.pushData({ type: 'inv', peerId, inv });
         break;
       }
@@ -460,7 +456,6 @@ export class SyncMachine {
           this.rejectMessage(peerId, code, 'malformed ModifierRequest');
           return;
         }
-        if (!this.withinCap(peerId, code, 'ModifierRequest ids', req.ids.length)) return;
         this.pushData({ type: 'modifier-request', peerId, req });
         break;
       }
@@ -470,28 +465,11 @@ export class SyncMachine {
           this.rejectMessage(peerId, code, 'malformed ModifierResponse');
           return;
         }
-        if (!this.withinCap(peerId, code, 'ModifierResponse modifiers', resp.modifiers.length)) {
-          return;
-        }
         this.pushData({ type: 'modifier-response', peerId, resp });
         break;
       }
       // Unknown message types are silently ignored.
     }
-  }
-
-  /**
-   * Enforce `MAX_INV_IDS` on an inbound array, on receipt.
-   *
-   * Returns false — and drops + penalizes — when the peer sent more entries than
-   * the protocol allows. The check belongs here rather than in the codec: this is
-   * the first point that knows *who* sent the message, and an over-cap array is a
-   * protocol violation, not a decode failure.
-   */
-  private withinCap(peerId: string, code: number, label: string, length: number): boolean {
-    if (length <= MAX_INV_IDS) return true;
-    this.rejectMessage(peerId, code, `${label} exceeds ${MAX_INV_IDS} (got ${length})`);
-    return false;
   }
 
   /**
@@ -1062,7 +1040,7 @@ export class SyncMachine {
 
   private sendSyncInfo(peerId: string): void {
     const tipHeight = this.store.chainHeight();
-    const tipBlockId = this.store.getOrderingBlockId(tipHeight) ?? '';
+    const tipBlockId = this.store.getOrderingBlockId(tipHeight) ?? GENESIS_PREV_BLOCK_HASH;
 
     const info: SyncInfo = {
       tipHeight,

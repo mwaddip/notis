@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { encode } from 'cbor-x';
+import { encodeStruct } from '@dagsocial/types';
 import { SyncMachine } from '../src/sync-machine.js';
+import { invCodec, modifierResponseCodec } from '../src/sync-codec.js';
 import type { SyncStore } from '../src/sync-machine.js';
 import {
   MSG_INV,
@@ -108,7 +109,7 @@ function peerDisconnect(machine: SyncMachine, peerId: string): void {
 
 function sendInv(machine: SyncMachine, peerId: string, ids: string[]): void {
   const inv: Inv = { typeId: MODIFIER_ORDERING_BLOCK, ids };
-  machine.handleMessage(peerId, MSG_INV, new Uint8Array(encode(inv)));
+  machine.handleMessage(peerId, MSG_INV, encodeStruct(invCodec, inv));
   machine.flush();
 }
 
@@ -118,12 +119,17 @@ function sendResponse(
   modifiers: { id: string; data: Uint8Array }[],
   typeId: number = MODIFIER_ORDERING_BLOCK,
 ): void {
-  const body = new Uint8Array(encode({ typeId, modifiers }));
+  const body = encodeStruct(modifierResponseCodec, { typeId, modifiers });
   machine.handleMessage(peerId, MSG_MODIFIER_RESPONSE, body);
   machine.flush();
 }
 
-/** A response modifier with the given payload bytes. */
+function hx(tag: string): string {
+  let hex = '';
+  for (let i = 0; i < tag.length; i++) hex += tag.charCodeAt(i).toString(16).padStart(2, '0');
+  return hex.padStart(64, '0');
+}
+
 function mod(id: string, ...bytes: number[]): { id: string; data: Uint8Array } {
   return { id, data: new Uint8Array(bytes) };
 }
@@ -140,9 +146,8 @@ function sentRequests(sent: SentMessage[]): { peerId: string; req: ModifierReque
   return reqs;
 }
 
-/** n distinct ids sharing a tag prefix. */
 function batch(tag: string, n: number): string[] {
-  return Array.from({ length: n }, (_, i) => `${tag}_${i}`);
+  return Array.from({ length: n }, (_, i) => hx(`${tag}_${i}`));
 }
 
 describe('sync integrity (audit M-10)', () => {
@@ -166,10 +171,10 @@ describe('sync integrity (audit M-10)', () => {
     it('drops a response from a non-sync peer while a request to the sync peer is outstanding', () => {
       const { machine, appended, violations } = makeMachine();
       peerActive(machine, 'peerA', 100);
-      sendInv(machine, 'peerA', ['x', 'y']); // request sent → {x, y} outstanding
+      sendInv(machine, 'peerA', [hx('x'), hx('y')]); // request sent → {x, y} outstanding
 
       vi.advanceTimersByTime(30_000);
-      sendResponse(machine, 'peerB', [mod('x', 9)]); // plausible, but from B
+      sendResponse(machine, 'peerB', [mod(hx('x'), 9)]); // plausible, but from B
 
       expect(appended).toHaveLength(0); // never reached the apply pipeline
       expect(violations).toHaveLength(0); // dropped without penalty
@@ -185,9 +190,9 @@ describe('sync integrity (audit M-10)', () => {
     it('control: the same response from the sync peer is applied', () => {
       const { machine, appended, violations } = makeMachine();
       peerActive(machine, 'peerA', 100);
-      sendInv(machine, 'peerA', ['x', 'y']);
+      sendInv(machine, 'peerA', [hx('x'), hx('y')]);
 
-      sendResponse(machine, 'peerA', [mod('x', 1), mod('y', 2)]);
+      sendResponse(machine, 'peerA', [mod(hx('x'), 1), mod(hx('y'), 2)]);
 
       expect(appended).toHaveLength(2);
       expect(Array.from(appended[0] as Uint8Array)).toEqual([1]);
@@ -206,14 +211,14 @@ describe('sync integrity (audit M-10)', () => {
     it('drops ids never requested, then still accepts the requested ones', () => {
       const { machine, appended, violations } = makeMachine();
       peerActive(machine, 'peerA', 100);
-      sendInv(machine, 'peerA', ['x']); // only x is outstanding
+      sendInv(machine, 'peerA', [hx('x')]); // only x is outstanding
 
-      sendResponse(machine, 'peerA', [mod('u', 7)]); // u was never requested
+      sendResponse(machine, 'peerA', [mod(hx('u'), 7)]); // u was never requested
       expect(appended).toHaveLength(0);
       expect(violations).toHaveLength(0); // dropped without penalty
 
       // Control: the conversation is not poisoned — the requested id lands.
-      sendResponse(machine, 'peerA', [mod('x', 1)]);
+      sendResponse(machine, 'peerA', [mod(hx('x'), 1)]);
       expect(appended).toHaveLength(1);
       expect(Array.from(appended[0] as Uint8Array)).toEqual([1]);
     });
@@ -221,13 +226,13 @@ describe('sync integrity (audit M-10)', () => {
     it('does not consume outstanding ids on a response of a different modifier type', () => {
       const { machine, appended } = makeMachine();
       peerActive(machine, 'peerA', 100);
-      sendInv(machine, 'peerA', ['x']);
+      sendInv(machine, 'peerA', [hx('x')]);
 
-      sendResponse(machine, 'peerA', [mod('x', 9)], 999); // wrong typeId
+      sendResponse(machine, 'peerA', [mod(hx('x'), 9)], 200); // wrong typeId
       expect(appended).toHaveLength(0);
 
       // x is still outstanding — the real answer is accepted afterwards.
-      sendResponse(machine, 'peerA', [mod('x', 1)]);
+      sendResponse(machine, 'peerA', [mod(hx('x'), 1)]);
       expect(appended).toHaveLength(1);
     });
   });
@@ -243,15 +248,15 @@ describe('sync integrity (audit M-10)', () => {
     it('rotates away from a peer feeding non-advancing responses', () => {
       const { machine, appended } = makeMachine(); // appendBlocks does NOT advance height
       peerActive(machine, 'peerA', 100); // t=0: enters syncing, clock reset
-      sendInv(machine, 'peerA', ['j1', 'j2', 'j3']); // all outstanding
+      sendInv(machine, 'peerA', [hx('j1'), hx('j2'), hx('j3')]); // all outstanding
 
       // Junk every 20s: solicited ids, applied, but chainHeight never moves.
       vi.advanceTimersByTime(20_000);
-      sendResponse(machine, 'peerA', [mod('j1', 1)]);
+      sendResponse(machine, 'peerA', [mod(hx('j1'), 1)]);
       vi.advanceTimersByTime(20_000);
-      sendResponse(machine, 'peerA', [mod('j2', 2)]);
+      sendResponse(machine, 'peerA', [mod(hx('j2'), 2)]);
       vi.advanceTimersByTime(20_000);
-      sendResponse(machine, 'peerA', [mod('j3', 3)]);
+      sendResponse(machine, 'peerA', [mod(hx('j3'), 3)]);
 
       // The junk DID go through the apply path — and still counts for nothing.
       expect(appended).toHaveLength(3);
@@ -267,10 +272,10 @@ describe('sync integrity (audit M-10)', () => {
     it('control: chain-advancing responses keep the clock fresh, bounded to one window', () => {
       const { machine, appended } = makeMachine({ advanceOnAppend: true });
       peerActive(machine, 'peerA', 100); // t=0
-      sendInv(machine, 'peerA', ['g1', 'g2']);
+      sendInv(machine, 'peerA', [hx('g1'), hx('g2')]);
 
       vi.advanceTimersByTime(50_000); // t=50s
-      sendResponse(machine, 'peerA', [mod('g1', 1)]); // height 0 → 1: real progress
+      sendResponse(machine, 'peerA', [mod(hx('g1'), 1)]); // height 0 → 1: real progress
       expect(appended).toHaveLength(1);
 
       vi.advanceTimersByTime(11_000); // t=61s — 11s since progress
@@ -295,15 +300,15 @@ describe('sync integrity (audit M-10)', () => {
     it('applies a subset, keeps the remainder outstanding, rejects re-sends of consumed ids', () => {
       const { machine, appended, violations } = makeMachine();
       peerActive(machine, 'peerA', 100);
-      sendInv(machine, 'peerA', ['x', 'y', 'z']); // one request for all three
+      sendInv(machine, 'peerA', [hx('x'), hx('y'), hx('z')]); // one request for all three
 
-      sendResponse(machine, 'peerA', [mod('x', 1)]); // partial: serve-side truncation
+      sendResponse(machine, 'peerA', [mod(hx('x'), 1)]); // partial: serve-side truncation
       expect(appended).toHaveLength(1);
 
-      sendResponse(machine, 'peerA', [mod('y', 2), mod('z', 3)]); // remainder still accepted
+      sendResponse(machine, 'peerA', [mod(hx('y'), 2), mod(hx('z'), 3)]); // remainder still accepted
       expect(appended).toHaveLength(3);
 
-      sendResponse(machine, 'peerA', [mod('x', 9)]); // x already consumed
+      sendResponse(machine, 'peerA', [mod(hx('x'), 9)]); // x already consumed
       expect(appended).toHaveLength(3);
       expect(violations).toHaveLength(0);
     });
@@ -312,9 +317,9 @@ describe('sync integrity (audit M-10)', () => {
     it('processes a duplicate id within one response once', () => {
       const { machine, appended } = makeMachine();
       peerActive(machine, 'peerA', 100);
-      sendInv(machine, 'peerA', ['x']);
+      sendInv(machine, 'peerA', [hx('x')]);
 
-      sendResponse(machine, 'peerA', [mod('x', 1), mod('x', 2)]);
+      sendResponse(machine, 'peerA', [mod(hx('x'), 1), mod(hx('x'), 2)]);
 
       expect(appended).toHaveLength(1);
       expect(Array.from(appended[0] as Uint8Array)).toEqual([1]);
@@ -323,12 +328,12 @@ describe('sync integrity (audit M-10)', () => {
     it('leaves an empty-data modifier outstanding for a later real response', () => {
       const { machine, appended } = makeMachine();
       peerActive(machine, 'peerA', 100);
-      sendInv(machine, 'peerA', ['x']);
+      sendInv(machine, 'peerA', [hx('x')]);
 
-      sendResponse(machine, 'peerA', [mod('x')]); // empty payload answers nothing
+      sendResponse(machine, 'peerA', [mod(hx('x'))]); // empty payload answers nothing
       expect(appended).toHaveLength(0);
 
-      sendResponse(machine, 'peerA', [mod('x', 1)]);
+      sendResponse(machine, 'peerA', [mod(hx('x'), 1)]);
       expect(appended).toHaveLength(1);
     });
   });
@@ -343,14 +348,14 @@ describe('sync integrity (audit M-10)', () => {
     it('drops a late response for ids requested before a stall rotation', () => {
       const { machine, appended, violations } = makeMachine();
       peerActive(machine, 'peerA', 100);
-      sendInv(machine, 'peerA', ['x']);
+      sendInv(machine, 'peerA', [hx('x')]);
 
       vi.advanceTimersByTime(61_000);
       machine.onTimerTick(); // stall → rotate away from peerA
       expect(machine.getState().phase).toBe('idle');
       expect(machine.getState().stalledPeers.has('peerA')).toBe(true);
 
-      sendResponse(machine, 'peerA', [mod('x', 1)]); // crossed the rotation in flight
+      sendResponse(machine, 'peerA', [mod(hx('x'), 1)]); // crossed the rotation in flight
       expect(appended).toHaveLength(0);
       expect(violations).toHaveLength(0); // dropped without penalty, no crash
     });
@@ -358,12 +363,12 @@ describe('sync integrity (audit M-10)', () => {
     it('drops a late response for ids requested before the sync peer disconnected', () => {
       const { machine, appended, violations } = makeMachine();
       peerActive(machine, 'peerA', 100);
-      sendInv(machine, 'peerA', ['x']);
+      sendInv(machine, 'peerA', [hx('x')]);
 
       peerDisconnect(machine, 'peerA');
       expect(machine.getState().phase).toBe('idle');
 
-      sendResponse(machine, 'peerA', [mod('x', 1)]);
+      sendResponse(machine, 'peerA', [mod(hx('x'), 1)]);
       expect(appended).toHaveLength(0);
       expect(violations).toHaveLength(0);
     });
@@ -371,13 +376,13 @@ describe('sync integrity (audit M-10)', () => {
     it('control: without rotation or disconnect the same late response is applied', () => {
       const { machine, appended } = makeMachine();
       peerActive(machine, 'peerA', 100);
-      sendInv(machine, 'peerA', ['x']);
+      sendInv(machine, 'peerA', [hx('x')]);
 
       vi.advanceTimersByTime(59_000); // inside the stall window — no rotation
       machine.onTimerTick();
       expect(machine.getState().phase).toBe('syncing');
 
-      sendResponse(machine, 'peerA', [mod('x', 1)]);
+      sendResponse(machine, 'peerA', [mod(hx('x'), 1)]);
       expect(appended).toHaveLength(1);
     });
   });
@@ -394,12 +399,12 @@ describe('sync integrity (audit M-10)', () => {
       const { machine, sent, appended, violations } = makeMachine();
       peerActive(machine, 'peerA', 100);
 
-      sendInv(machine, 'peerB', ['z']); // third party announces while we sync from A
+      sendInv(machine, 'peerB', [hx('z')]); // third party announces while we sync from A
       expect(sentRequests(sent)).toHaveLength(0);
       expect(violations).toHaveLength(0); // dropped without penalty
 
       // z never became outstanding — even the sync peer cannot deliver it.
-      sendResponse(machine, 'peerA', [mod('z', 1)]);
+      sendResponse(machine, 'peerA', [mod(hx('z'), 1)]);
       expect(appended).toHaveLength(0);
     });
 
@@ -407,38 +412,35 @@ describe('sync integrity (audit M-10)', () => {
       const { machine, sent, appended } = makeMachine();
       peerActive(machine, 'peerA', 100);
 
-      sendInv(machine, 'peerA', ['w']);
+      sendInv(machine, 'peerA', [hx('w')]);
       const reqs = sentRequests(sent);
       expect(reqs).toHaveLength(1);
       expect(reqs[0]!.peerId).toBe('peerA');
-      expect(reqs[0]!.req.ids).toEqual(['w']);
+      expect(reqs[0]!.req.ids).toEqual([hx('w')]);
 
-      sendResponse(machine, 'peerA', [mod('w', 1)]);
+      sendResponse(machine, 'peerA', [mod(hx('w'), 1)]);
       expect(appended).toHaveLength(1);
     });
 
-    // Vacuity check: without Inv dedup the request repeats both copies of x.
     it('deduplicates ids repeated within one Inv', () => {
       const { machine, sent } = makeMachine();
       peerActive(machine, 'peerA', 100);
 
-      sendInv(machine, 'peerA', ['x', 'x', 'y']);
+      sendInv(machine, 'peerA', [hx('x'), hx('x'), hx('y')]);
       const reqs = sentRequests(sent);
       expect(reqs).toHaveLength(1);
-      expect(reqs[0]!.req.ids).toEqual(['x', 'y']);
+      expect(reqs[0]!.req.ids).toEqual([hx('x'), hx('y')]);
     });
 
-    // Vacuity check: without the outstanding-set check the second request
-    // re-asks for x.
     it('does not re-request ids that are already outstanding', () => {
       const { machine, sent } = makeMachine();
       peerActive(machine, 'peerA', 100);
 
-      sendInv(machine, 'peerA', ['x']);
-      sendInv(machine, 'peerA', ['x', 'y']); // x already outstanding
+      sendInv(machine, 'peerA', [hx('x')]);
+      sendInv(machine, 'peerA', [hx('x'), hx('y')]);
       const reqs = sentRequests(sent);
       expect(reqs).toHaveLength(2);
-      expect(reqs[1]!.req.ids).toEqual(['y']);
+      expect(reqs[1]!.req.ids).toEqual([hx('y')]);
     });
   });
 

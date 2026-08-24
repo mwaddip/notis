@@ -41,7 +41,7 @@ import {
 import { encodeServableOrderingBlock } from './serve-encode.js';
 import { isBogusAddress } from './bogus-addr.js';
 import { readStreamBounded } from './util.js';
-import { MAX_CHAIN_RESPONSE_ITEMS, MAX_INV_IDS, MAX_SERVE_BODY_BYTES, MAX_STREAM_BYTES } from './msg-guards.js';
+import { MAX_CHAIN_RESPONSE_ITEMS, MAX_SERVE_BODY_BYTES, MAX_STREAM_BYTES } from './msg-guards.js';
 import { PeerDb, type PeerStorage } from './peerdb.js';
 import { SyncMachine } from './sync-machine.js';
 import type { SyncStore } from './sync-machine.js';
@@ -96,8 +96,8 @@ export type HandshakePayload =
  * A valid frame yields its body. Every failure is a reject: recognized
  * foreign magic (`wrong-magic`), unsupported frame version, checksum
  * mismatch, or anything else — truncated data, leading bytes matching no
- * known magic (`not-a-frame`). No payload reaches a CBOR parser except as
- * the body of a checksum-verified frame.
+ * known magic (`not-a-frame`). No payload reaches a positional decoder
+ * except as the body of a checksum-verified frame.
  *
  * NET_INTERFACE → "Ban policy": every code this function returns is
  * frame-tier — stream closed, no penalty.
@@ -371,12 +371,16 @@ export function serveBlocksResponse(
 // so the tests drive the same code the stream handler calls.
 // ---------------------------------------------------------------------------
 
-/** Frame a `ModifierResponse` (5) for post bodies: the bodies we hold, byte-bounded. */
+/**
+ * Frame a `ModifierResponse` (5) for post bodies: the bodies we hold,
+ * byte-bounded. Returns `null` when no requested body is available — the
+ * caller answers with zero bytes (NET_INTERFACE → ModifierResponse).
+ */
 export function servePostBodiesResponse(
   magic: number,
   req: ModifierRequest,
   provider: (id: string) => string | null,
-): Uint8Array {
+): Uint8Array | null {
   const modifiers: { id: string; data: Uint8Array }[] = [];
   let bodyBytes = 0;
 
@@ -389,6 +393,7 @@ export function servePostBodiesResponse(
     modifiers.push({ id, data });
   }
 
+  if (modifiers.length === 0) return null;
   const resp: ModifierResponse = { typeId: req.typeId, modifiers };
   return encodeModifierResponse(magic, resp);
 }
@@ -1173,16 +1178,6 @@ export class NetNode {
             await replyEmpty();
             return;
           }
-          if (req.ids.length > MAX_INV_IDS) {
-            console.warn(`[net] ModifierRequest ids from ${peerId} exceeds ${MAX_INV_IDS} (got ${req.ids.length})`);
-            this.peerMgr.recordPenaltyKind(
-              PenaltyKind.ProtocolViolation,
-              peerId,
-              `ModifierRequest ids exceeds ${MAX_INV_IDS}`,
-            );
-            await replyEmpty();
-            return;
-          }
           if (req.typeId === MODIFIER_POST_BODY) {
             const provider = this.postBodyProvider;
             if (!provider) {
@@ -1190,6 +1185,10 @@ export class NetNode {
               return;
             }
             const response = servePostBodiesResponse(magic, req, provider);
+            if (response === null) {
+              await replyEmpty();
+              return;
+            }
             await stream.sink([response]);
             return;
           }

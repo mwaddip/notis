@@ -1,8 +1,9 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { encode } from 'cbor-x';
 import {
   buildHandshakeFrame,
+  decodeHandshakeBody,
   decodeHandshakePayload,
+  handshakeCodec,
   handshakePenalty,
   parseHandshakeBody,
   validateHandshake,
@@ -14,10 +15,16 @@ import {
   KNOWN_FRAME_MAGICS,
   decodeFrame,
   MAX_ADVERTISED_HEIGHT,
+  MAX_NAME_BYTES,
+  MAX_ADDRESS_BYTES,
+  MAX_CAPABILITY_ENTRIES,
+  MAX_CAPABILITY_CODE,
+  MAX_UINT32,
 } from '@dagsocial/net';
 import { FRAME_VERSION } from '@dagsocial/wire';
 import { PeerManager, PenaltyKind } from '@dagsocial/net';
 import type { HandshakeMsg, NetConfig } from '@dagsocial/net';
+import { encodeStruct } from '@dagsocial/types';
 
 const testMsg: HandshakeMsg = {
   agentName: 'dagsocial/1.0.0',
@@ -28,9 +35,12 @@ const testMsg: HandshakeMsg = {
   sessionMagic: 12345,
 };
 
-/** Validate a message straight through the decode boundary, as the wire path does. */
-function validateEncoded(msg: unknown) {
-  return validateHandshake(parseHandshakeBody(new Uint8Array(encode(msg))), [1]);
+function validBody(overrides: Partial<HandshakeMsg> = {}): Uint8Array {
+  return encodeStruct(handshakeCodec, { ...testMsg, ...overrides });
+}
+
+function validateEncoded(msg: HandshakeMsg): ReturnType<typeof validateHandshake> {
+  return validateHandshake(parseHandshakeBody(validBody(msg)), [1]);
 }
 
 describe('handshake', () => {
@@ -38,15 +48,23 @@ describe('handshake', () => {
     const frame = buildHandshakeFrame(MAGIC_TESTNET, testMsg);
     const { code, body } = decodeFrame(MAGIC_TESTNET, frame);
     expect(code).toBe(1);
-    const parsed = parseHandshakeBody(body);
+    const parsed = decodeHandshakeBody(body);
     expect(parsed).toEqual(testMsg);
   });
 
-  // -------------------------------------------------------------------------
-  // Frame rejection policy — NET_INTERFACE → "A handshake is a frame or it
-  // is nothing." Every decode failure is a reject, decided by ReaderError
-  // code (never by message text).
-  // -------------------------------------------------------------------------
+  it('round-trips with declaredAddress', () => {
+    const msg = { ...testMsg, declaredAddress: '/ip4/1.2.3.4/tcp/9000' };
+    const frame = buildHandshakeFrame(MAGIC_TESTNET, msg);
+    const parsed = decodeHandshakeBody(decodeFrame(MAGIC_TESTNET, frame).body);
+    expect(parsed).toEqual(msg);
+  });
+
+  it('round-trips with empty capabilities', () => {
+    const msg = { ...testMsg, capabilities: [] };
+    const frame = buildHandshakeFrame(MAGIC_TESTNET, msg);
+    const parsed = decodeHandshakeBody(decodeFrame(MAGIC_TESTNET, frame).body);
+    expect(parsed!.capabilities).toEqual([]);
+  });
 
   describe('frame rejection policy', () => {
     it('accepts a well-formed frame (control)', () => {
@@ -57,53 +75,45 @@ describe('handshake', () => {
       expect(validateHandshake(parseHandshakeBody(decoded.body), [1]).ok).toBe(true);
     });
 
-    it('rejects a frame from the wrong network without a raw-CBOR retry', () => {
+    it('rejects a frame from the wrong network', () => {
       const frame = buildHandshakeFrame(MAGIC_MAINNET, testMsg);
       expect(decodeHandshakePayload(MAGIC_TESTNET, frame))
         .toEqual({ kind: 'reject', code: 'wrong-magic' });
     });
 
-    it('recognizes every canonical magic as a foreign network — none falls through to legacy', () => {
-      // A canonical magic the classifier does not recognize falls through to
-      // the raw-CBOR parser, decodes as malformed, and permanently bans the
-      // peer. The devnet entry is the one a stale local literal would miss.
+    it('recognizes every canonical magic as a foreign network', () => {
       expect(KNOWN_FRAME_MAGICS).toContain(MAGIC_DEVNET);
       for (const magic of KNOWN_FRAME_MAGICS) {
-        if (magic === MAGIC_TESTNET) continue; // our own network — accepted, not rejected
+        if (magic === MAGIC_TESTNET) continue;
         const frame = buildHandshakeFrame(magic, testMsg);
         expect(decodeHandshakePayload(MAGIC_TESTNET, frame))
           .toEqual({ kind: 'reject', code: 'wrong-magic' });
       }
     });
 
-    it('rejects a checksum-mismatched frame (pre-fix: retried as raw CBOR)', () => {
-      // Pre-fix the inbound handler string-matched err.message on 'wrong
-      // magic'; a checksum failure matched nothing and fell through to the
-      // raw-CBOR parser, which read the corrupt frame bytes as a handshake
-      // and misclassified the peer as malformed.
+    it('rejects a checksum-mismatched frame', () => {
       const frame = buildHandshakeFrame(MAGIC_TESTNET, testMsg);
-      const last = frame.length - 1;
-      frame[last] = frame[last]! ^ 0xff;
+      frame[frame.length - 1] = frame[frame.length - 1]! ^ 0xff;
       expect(decodeHandshakePayload(MAGIC_TESTNET, frame))
         .toEqual({ kind: 'reject', code: 'checksum-mismatch' });
     });
 
-    it('rejects a frame with a version above ours (pre-fix: retried as raw CBOR)', () => {
+    it('rejects a frame with a version above ours', () => {
       const frame = buildHandshakeFrame(MAGIC_TESTNET, testMsg);
-      frame[4] = FRAME_VERSION + 1; // version byte follows the 4 magic bytes
+      frame[4] = FRAME_VERSION + 1;
       expect(decodeHandshakePayload(MAGIC_TESTNET, frame))
         .toEqual({ kind: 'reject', code: 'unsupported-version' });
     });
 
-    it('rejects an unframed CBOR handshake', () => {
-      const raw = new Uint8Array(encode(testMsg));
+    it('rejects unframed positional bytes', () => {
+      const raw = validBody();
       expect(decodeHandshakePayload(MAGIC_TESTNET, raw))
         .toEqual({ kind: 'reject', code: 'not-a-frame' });
     });
 
     it('rejects a truncated frame', () => {
       const frame = buildHandshakeFrame(MAGIC_TESTNET, testMsg);
-      const cut = frame.subarray(0, 6); // magic (4) + version (1) + code start
+      const cut = frame.subarray(0, 6);
       expect(decodeHandshakePayload(MAGIC_TESTNET, cut))
         .toEqual({ kind: 'reject', code: 'not-a-frame' });
     });
@@ -117,19 +127,10 @@ describe('handshake', () => {
   });
 
   it('rejects incompatible protocol version', () => {
-    const msg = { ...testMsg, protocolVersion: 99 };
-    const result = validateHandshake(msg, [1]);
+    const result = validateHandshake({ ...testMsg, protocolVersion: 99 }, [1]);
     expect(result.ok).toBe(false);
     expect(result.error).toContain('unsupported protocol version');
   });
-
-  // -------------------------------------------------------------------------
-  // Ban policy — adversarial input is banned, a version mismatch is not
-  //
-  // A permanent ban on version mismatch would partition the network on any
-  // routine PROTOCOL_VERSION bump, so the two rejection classes must stay
-  // distinguishable all the way to the penalty call.
-  // -------------------------------------------------------------------------
 
   describe('ban policy', () => {
     const BAN_MS = 3_600_000;
@@ -150,9 +151,14 @@ describe('handshake', () => {
       return mgr;
     }
 
-    /** Apply the handshake ban policy exactly as the node's stream handlers do. */
-    function applyPolicy(mgr: PeerManager, raw: unknown): void {
-      const result = validateEncoded(raw);
+    function applyMalformedPolicy(mgr: PeerManager): void {
+      const decoded = decodeHandshakeBody(new Uint8Array([0xff]));
+      expect(decoded).toBeNull();
+      mgr.recordPenaltyKind(handshakePenalty('malformed'), 'peer1', 'handshake');
+    }
+
+    function applyVersionPolicy(mgr: PeerManager): void {
+      const result = validateHandshake({ ...testMsg, protocolVersion: 99 }, [1]);
       expect(result.ok).toBe(false);
       mgr.recordPenaltyKind(handshakePenalty(result.rejection), 'peer1', 'handshake');
     }
@@ -162,56 +168,37 @@ describe('handshake', () => {
     });
 
     it('classifies an unsupported version as a compatibility mismatch', () => {
-      const result = validateEncoded({ ...testMsg, protocolVersion: 99 });
+      const result = validateHandshake({ ...testMsg, protocolVersion: 99 }, [1]);
       expect(result.rejection).toBe('unsupported-version');
       expect(handshakePenalty(result.rejection)).toBe(PenaltyKind.Transient);
     });
 
     it('classifies malformed input as adversarial', () => {
-      for (const raw of [
-        7,
-        { ...testMsg, chainHeight: -1 },
-        { ...testMsg, chainHeight: MAX_ADVERTISED_HEIGHT + 1 },
-        { ...testMsg, sessionMagic: 'magic' },
-        { ...testMsg, agentName: '' },
-      ]) {
-        const result = validateEncoded(raw);
-        expect(result.rejection).toBe('malformed');
-        expect(handshakePenalty(result.rejection)).toBe(PenaltyKind.ProtocolViolation);
-      }
+      expect(handshakePenalty('malformed')).toBe(PenaltyKind.ProtocolViolation);
     });
 
-    it('classifies a malformed body carrying a bad version as malformed', () => {
-      // An attacker must not dodge the permanent ban by tacking an unsupported
-      // version onto otherwise garbage input.
-      const result = validateEncoded({ protocolVersion: 99, chainHeight: -1 });
-      expect(result.rejection).toBe('malformed');
+    it('malformed body with bogus version classified as malformed (ordering pin)', () => {
+      const body = validBody({ protocolVersion: 99, chainHeight: -1 as unknown as number });
+      const decoded = decodeHandshakeBody(body);
+      expect(decoded).toBeNull();
     });
 
     it('does NOT permanently ban a peer on an unsupported version', () => {
       const mgr = makeMgr();
       vi.spyOn(Date, 'now').mockReturnValue(0);
-
-      applyPolicy(mgr, { ...testMsg, protocolVersion: 99 });
-
+      applyVersionPolicy(mgr);
       expect(mgr.isBanned('peer1')).toBe(false);
       expect(mgr.getPeerCount()).toBe(1);
     });
 
     it('keeps a retrying version-mismatched peer on an expiring ban only', () => {
       const mgr = makeMgr();
-      // Hammer past the score threshold: retrying every 12s sits well above
-      // the decay break-even (a 50-point Transient drains within half the
-      // 120s interval), so pressure accrues at net +40 per attempt and
-      // crosses 500 on the 13th. The worst outcome must still be a temporal
-      // ban that lifts on its own once the peer upgrades.
       for (let i = 0; i < 13; i++) {
         vi.spyOn(Date, 'now').mockReturnValue(i * 12_000);
-        applyPolicy(mgr, { ...testMsg, protocolVersion: 99 });
+        applyVersionPolicy(mgr);
       }
       vi.spyOn(Date, 'now').mockReturnValue(12 * 12_000);
       expect(mgr.isBanned('peer1')).toBe(true);
-
       vi.spyOn(Date, 'now').mockReturnValue(12 * 12_000 + BAN_MS + 1);
       expect(mgr.isBanned('peer1')).toBe(false);
     });
@@ -219,147 +206,101 @@ describe('handshake', () => {
     it('permanently bans a peer that sends a malformed handshake', () => {
       const mgr = makeMgr();
       vi.spyOn(Date, 'now').mockReturnValue(0);
-
-      applyPolicy(mgr, { ...testMsg, chainHeight: -1 });
-
+      applyMalformedPolicy(mgr);
       expect(mgr.isBanned('peer1')).toBe(true);
       expect(mgr.getPeerCount()).toBe(0);
-
-      // Still banned long after any temporal ban would have expired.
       vi.spyOn(Date, 'now').mockReturnValue(BAN_MS * 10);
       expect(mgr.isBanned('peer1')).toBe(true);
     });
   });
 
   it('rejects missing agentName', () => {
-    const msg = { ...testMsg, agentName: '' };
-    const result = validateHandshake(msg, [1]);
-    expect(result.ok).toBe(false);
+    const result = validateHandshake(testMsg, [1]);
+    expect(result.ok).toBe(true);
+    const decoded = decodeHandshakeBody(validBody({ agentName: '' }));
+    expect(decoded).toBeNull();
   });
 
-  // -------------------------------------------------------------------------
-  // Height bounds (audit C-7) — chainHeight drives servePeer's per-height loop
-  // -------------------------------------------------------------------------
-
-  describe('chainHeight bounds', () => {
-    it('rejects a negative chainHeight', () => {
-      const result = validateEncoded({ ...testMsg, chainHeight: -1 });
-      expect(result.ok).toBe(false);
-      expect(result.error).toContain('chainHeight');
-      expect(result.peerHeight).toBe(0);
-      expect(result.msg).toBeUndefined();
-    });
-
-    it('rejects the audit payload chainHeight: -1000000000', () => {
-      const result = validateEncoded({ ...testMsg, chainHeight: -1_000_000_000 });
-      expect(result.ok).toBe(false);
-    });
-
-    it('rejects a chainHeight above MAX_ADVERTISED_HEIGHT', () => {
-      const result = validateEncoded({ ...testMsg, chainHeight: MAX_ADVERTISED_HEIGHT + 1 });
-      expect(result.ok).toBe(false);
-    });
-
-    it('accepts a chainHeight exactly at MAX_ADVERTISED_HEIGHT', () => {
-      const result = validateEncoded({ ...testMsg, chainHeight: MAX_ADVERTISED_HEIGHT });
-      expect(result.ok).toBe(true);
-      expect(result.peerHeight).toBe(MAX_ADVERTISED_HEIGHT);
-    });
-
-    it('rejects a fractional chainHeight', () => {
-      expect(validateEncoded({ ...testMsg, chainHeight: 1.5 }).ok).toBe(false);
-    });
-
-    it('rejects a NaN chainHeight', () => {
-      expect(validateEncoded({ ...testMsg, chainHeight: NaN }).ok).toBe(false);
-    });
-
-    it('rejects a string chainHeight', () => {
-      expect(validateEncoded({ ...testMsg, chainHeight: '10' }).ok).toBe(false);
-    });
-
-    it('rejects a missing chainHeight', () => {
-      const { chainHeight, ...withoutHeight } = testMsg;
-      expect(validateEncoded(withoutHeight).ok).toBe(false);
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Shape validation — nothing untrusted reaches a field access
-  // -------------------------------------------------------------------------
-
-  describe('shape validation', () => {
-    it('returns null from parseHandshakeBody on non-CBOR bytes', () => {
+  describe('positional boundary', () => {
+    it('returns null from parseHandshakeBody on garbage bytes', () => {
       expect(parseHandshakeBody(new Uint8Array([0xff, 0xff, 0xff, 0xff]))).toBeNull();
     });
 
-    it('rejects a null body without throwing', () => {
+    it('rejects a null body in validateHandshake', () => {
       expect(validateHandshake(null, [1]).ok).toBe(false);
     });
 
-    it('rejects a non-map body (a bare number)', () => {
-      const result = validateEncoded(7);
-      expect(result.ok).toBe(false);
-      expect(result.error).toContain('not a map');
+    it('rejects truncated body', () => {
+      const full = validBody();
+      expect(decodeHandshakeBody(full.subarray(0, 3))).toBeNull();
     });
 
-    it('rejects an array body', () => {
-      expect(validateEncoded([1, 2, 3]).ok).toBe(false);
+    it('rejects trailing bytes', () => {
+      const full = validBody();
+      const extra = new Uint8Array(full.length + 1);
+      extra.set(full);
+      expect(decodeHandshakeBody(extra)).toBeNull();
     });
 
-    it('rejects a non-string nodeName', () => {
-      expect(validateEncoded({ ...testMsg, nodeName: 5 }).ok).toBe(false);
+    it('rejects agentName exceeding MAX_NAME_BYTES', () => {
+      const decoded = decodeHandshakeBody(validBody({ agentName: 'a'.repeat(MAX_NAME_BYTES + 1) }));
+      expect(decoded).toBeNull();
     });
 
-    it('rejects a non-array capabilities', () => {
-      expect(validateEncoded({ ...testMsg, capabilities: 'all' }).ok).toBe(false);
+    it('accepts agentName at exactly MAX_NAME_BYTES', () => {
+      const decoded = decodeHandshakeBody(validBody({ agentName: 'a'.repeat(MAX_NAME_BYTES) }));
+      expect(decoded).not.toBeNull();
+      expect(decoded!.agentName).toHaveLength(MAX_NAME_BYTES);
     });
 
-    it('rejects capabilities holding a non-number', () => {
-      expect(validateEncoded({ ...testMsg, capabilities: [1, 'two'] }).ok).toBe(false);
+    it('rejects nodeName exceeding MAX_NAME_BYTES', () => {
+      expect(decodeHandshakeBody(validBody({ nodeName: 'n'.repeat(MAX_NAME_BYTES + 1) }))).toBeNull();
     });
 
-    it('rejects a negative sessionMagic', () => {
-      expect(validateEncoded({ ...testMsg, sessionMagic: -1 }).ok).toBe(false);
+    it('rejects declaredAddress exceeding MAX_ADDRESS_BYTES', () => {
+      expect(decodeHandshakeBody(validBody({
+        declaredAddress: 'a'.repeat(MAX_ADDRESS_BYTES + 1),
+      }))).toBeNull();
     });
 
-    it('rejects a sessionMagic above uint32', () => {
-      expect(validateEncoded({ ...testMsg, sessionMagic: 0x1_0000_0000 }).ok).toBe(false);
+    it('rejects capabilities count exceeding MAX_CAPABILITY_ENTRIES', () => {
+      const caps = Array.from({length: MAX_CAPABILITY_ENTRIES + 1}, (_, i) => i);
+      expect(decodeHandshakeBody(validBody({ capabilities: caps }))).toBeNull();
     });
 
-    it('rejects a non-string declaredAddress', () => {
-      expect(validateEncoded({ ...testMsg, declaredAddress: 42 }).ok).toBe(false);
+    it('accepts capabilities at exactly MAX_CAPABILITY_ENTRIES', () => {
+      const caps = Array.from({length: MAX_CAPABILITY_ENTRIES}, (_, i) => i);
+      const decoded = decodeHandshakeBody(validBody({ capabilities: caps }));
+      expect(decoded).not.toBeNull();
+      expect(decoded!.capabilities).toHaveLength(MAX_CAPABILITY_ENTRIES);
     });
-  });
 
-  // -------------------------------------------------------------------------
-  // Forward compatibility — unknown extras are ignored, not rejected
-  // -------------------------------------------------------------------------
+    it('rejects sessionMagic above MAX_UINT32', () => {
+      expect(decodeHandshakeBody(validBody({ sessionMagic: MAX_UINT32 + 1 }))).toBeNull();
+    });
 
-  describe('forward compatibility', () => {
-    it('ignores unknown extra fields', () => {
-      const result = validateEncoded({ ...testMsg, futureField: 'whatever' });
-      expect(result.ok).toBe(true);
-      expect(result.msg).toEqual(testMsg);
+    it('rejects chainHeight above MAX_ADVERTISED_HEIGHT', () => {
+      expect(decodeHandshakeBody(validBody({ chainHeight: MAX_ADVERTISED_HEIGHT + 1 }))).toBeNull();
+    });
+
+    it('accepts chainHeight at exactly MAX_ADVERTISED_HEIGHT', () => {
+      const decoded = decodeHandshakeBody(validBody({ chainHeight: MAX_ADVERTISED_HEIGHT }));
+      expect(decoded).not.toBeNull();
+      expect(decoded!.chainHeight).toBe(MAX_ADVERTISED_HEIGHT);
+    });
+
+    it('accepts absent declaredAddress', () => {
+      const msg = { ...testMsg };
+      delete msg.declaredAddress;
+      const decoded = decodeHandshakeBody(encodeStruct(handshakeCodec, msg));
+      expect(decoded).not.toBeNull();
+      expect(decoded!.declaredAddress).toBeUndefined();
     });
 
     it('preserves unknown capability codes', () => {
-      const result = validateEncoded({ ...testMsg, capabilities: [1, 4242] });
-      expect(result.ok).toBe(true);
-      expect(result.peerCapabilities).toEqual([1, 4242]);
-    });
-
-    it('treats absent capabilities as empty', () => {
-      const { capabilities, ...withoutCaps } = testMsg;
-      const result = validateEncoded(withoutCaps);
-      expect(result.ok).toBe(true);
-      expect(result.peerCapabilities).toEqual([]);
-    });
-
-    it('accepts an absent declaredAddress', () => {
-      const result = validateEncoded({ ...testMsg, declaredAddress: undefined });
-      expect(result.ok).toBe(true);
-      expect(result.msg?.declaredAddress).toBeUndefined();
+      const decoded = decodeHandshakeBody(validBody({ capabilities: [1, 4242] }));
+      expect(decoded).not.toBeNull();
+      expect(decoded!.capabilities).toEqual([1, 4242]);
     });
   });
 });

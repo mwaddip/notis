@@ -167,9 +167,8 @@ export interface NetValidators {
 // ---------------------------------------------------------------------------
 
 /**
- * Body of a GetPeers request (code 8). Empty by design — the request carries no
- * parameters. Encoded as an empty CBOR map so a future version can add fields
- * without changing the framing.
+ * Body of a GetPeers request (code 8). Zero-byte body — the request carries
+ * no parameters. Evolution is a protocol version bump.
  */
 export interface GetPeersMsg {}
 

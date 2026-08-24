@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { encode } from 'cbor-x';
-import { computeContentHash } from '@dagsocial/types';
+import { computeContentHash, encodeStruct } from '@dagsocial/types';
+import {
+  syncInfoCodec, invCodec, modifierRequestCodec, modifierResponseCodec,
+} from '../src/sync-codec.js';
 import { SyncMachine } from '../src/sync-machine.js';
 import type { SyncStore } from '../src/sync-machine.js';
 import {
@@ -68,16 +70,22 @@ function makeMachine(overrides?: {
   return { machine, sent };
 }
 
-/** CBOR-encode a SyncInfo, enqueue it, and flush. */
+const H32 = '0'.repeat(64);
+const H32_A = 'a'.repeat(64);
+const H32_B = 'b'.repeat(64);
+
+function hexId(n: number): string {
+  return (n + 1).toString(16).padStart(64, '0');
+}
+
 function sendSyncInfo(machine: SyncMachine, peerId: string, info: SyncInfo): void {
-  const body = new Uint8Array(encode(info));
+  const body = encodeStruct(syncInfoCodec, info);
   machine.handleMessage(peerId, MSG_SYNC_INFO, body);
   machine.flush();
 }
 
-/** CBOR-encode an Inv, enqueue it, and flush. */
 function sendInv(machine: SyncMachine, peerId: string, inv: Inv): void {
-  const body = new Uint8Array(encode(inv));
+  const body = encodeStruct(invCodec, inv);
   machine.handleMessage(peerId, MSG_INV, body);
   machine.flush();
 }
@@ -143,7 +151,7 @@ describe('SyncMachine', () => {
 
     it('sends SyncInfo when transitioning to syncing', () => {
       const { machine, sent } = makeMachine({
-        store: { chainHeight: () => 0, getOrderingBlockId: () => 'abc123' },
+        store: { chainHeight: () => 0, getOrderingBlockId: () => H32 },
       });
       peerActive(machine, 'peer1', 100);
       expect(sent.length).toBe(1);
@@ -167,7 +175,7 @@ describe('SyncMachine', () => {
       const { machine, sent } = makeMachine({
         store: {
           chainHeight: () => 10,
-          getOrderingBlockId: (h: number) => `block_${h}`,
+          getOrderingBlockId: (h: number) => hexId(h),
         },
       });
       peerActive(machine, 'peer1', 5); // peer at 5, we at 10
@@ -181,7 +189,7 @@ describe('SyncMachine', () => {
       peerActive(machine, 'peer1', 200);
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
-        tipBlockId: 'abc',
+        tipBlockId: H32,
         anchors: [],
       });
       expect(machine.getState().phase).toBe('synced');
@@ -214,7 +222,7 @@ describe('SyncMachine', () => {
       const { machine } = makeMachine({ store: { chainHeight: () => 0 } });
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
-        tipBlockId: 'abc',
+        tipBlockId: H32,
         anchors: [],
       });
       expect(machine.getState().phase).toBe('syncing');
@@ -225,12 +233,12 @@ describe('SyncMachine', () => {
       const { machine, sent } = makeMachine({
         store: {
           chainHeight: () => 10,
-          getOrderingBlockId: (h: number) => `block_${h}`,
+          getOrderingBlockId: (h: number) => hexId(h),
         },
       });
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 5,
-        tipBlockId: 'xyz',
+        tipBlockId: H32_A,
         anchors: [],
       });
       // NET_INTERFACE → Serve Side: SyncInfo reply then Inv, both to the sender
@@ -248,7 +256,7 @@ describe('SyncMachine', () => {
       // Now peer reports equal height
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
-        tipBlockId: 'abc',
+        tipBlockId: H32,
         anchors: [],
       });
       expect(machine.getState().phase).toBe('synced');
@@ -261,7 +269,7 @@ describe('SyncMachine', () => {
 
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
-        tipBlockId: 'abc',
+        tipBlockId: H32,
         anchors: [],
       });
       expect(machine.getState().phase).toBe('synced');
@@ -272,7 +280,7 @@ describe('SyncMachine', () => {
       const { machine } = makeMachine({ store: { chainHeight: () => 100 } });
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
-        tipBlockId: 'abc',
+        tipBlockId: H32,
         anchors: [],
       });
       expect(machine.getState().phase).toBe('idle');
@@ -284,7 +292,7 @@ describe('SyncMachine', () => {
       peerActive(machine, 'peer1', 200);
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
-        tipBlockId: 'abc',
+        tipBlockId: H32,
         anchors: [],
       });
       expect(machine.getState().phase).toBe('synced');
@@ -292,7 +300,7 @@ describe('SyncMachine', () => {
       // A different peer reports higher height via SyncInfo
       sendSyncInfo(machine, 'peer2', {
         tipHeight: 300,
-        tipBlockId: 'def',
+        tipBlockId: H32_A,
         anchors: [],
       });
       expect(machine.getState().phase).toBe('syncing');
@@ -304,7 +312,7 @@ describe('SyncMachine', () => {
       machine.getState().stalledPeers.add('peer1');
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
-        tipBlockId: 'abc',
+        tipBlockId: H32,
         anchors: [],
       });
       expect(machine.getState().stalledPeers.has('peer1')).toBe(false);
@@ -321,9 +329,9 @@ describe('SyncMachine', () => {
         store: { chainHeight: () => 0, getOrderingBlockId: () => null },
       });
       peerActive(machine, 'peer1', 100);
-      sent.length = 0; // clear the SyncInfo send
+      sent.length = 0;
 
-      const inv: Inv = { typeId: MODIFIER_ORDERING_BLOCK, ids: ['id1', 'id2'] };
+      const inv: Inv = { typeId: MODIFIER_ORDERING_BLOCK, ids: [H32, H32_A] };
       sendInv(machine, 'peer1', inv);
 
       expect(sent.length).toBe(1);
@@ -332,8 +340,7 @@ describe('SyncMachine', () => {
 
     it('ignores Inv when not syncing', () => {
       const { machine, sent } = makeMachine({ store: { chainHeight: () => 0 } });
-      // Machine is idle
-      const inv: Inv = { typeId: MODIFIER_ORDERING_BLOCK, ids: ['id1'] };
+      const inv: Inv = { typeId: MODIFIER_ORDERING_BLOCK, ids: [H32] };
       sendInv(machine, 'peer1', inv);
 
       expect(sent.length).toBe(0);
@@ -343,13 +350,13 @@ describe('SyncMachine', () => {
       const { machine, sent } = makeMachine({
         store: {
           chainHeight: () => 1,
-          heightByBlockId: (id: string) => (id === 'id1' ? 1 : null),
+          heightByBlockId: (id: string) => (id === H32 ? 1 : null),
         },
       });
       peerActive(machine, 'peer1', 100);
       sent.length = 0;
 
-      const inv: Inv = { typeId: MODIFIER_ORDERING_BLOCK, ids: ['id1', 'id2'] };
+      const inv: Inv = { typeId: MODIFIER_ORDERING_BLOCK, ids: [H32, H32_A] };
       sendInv(machine, 'peer1', inv);
 
       expect(sent.length).toBe(1);
@@ -359,13 +366,13 @@ describe('SyncMachine', () => {
       const { machine, sent } = makeMachine({
         store: {
           chainHeight: () => 2,
-          heightByBlockId: (id: string) => (id === 'id1' ? 1 : id === 'id2' ? 2 : null),
+          heightByBlockId: (id: string) => (id === H32 ? 1 : id === H32_A ? 2 : null),
         },
       });
       peerActive(machine, 'peer1', 100);
       sent.length = 0;
 
-      const inv: Inv = { typeId: MODIFIER_ORDERING_BLOCK, ids: ['id1', 'id2'] };
+      const inv: Inv = { typeId: MODIFIER_ORDERING_BLOCK, ids: [H32, H32_A] };
       sendInv(machine, 'peer1', inv);
 
       expect(sent.length).toBe(0);
@@ -378,7 +385,7 @@ describe('SyncMachine', () => {
       peerActive(machine, 'peer1', 100);
       sent.length = 0;
 
-      const inv: Inv = { typeId: 999, ids: ['x'] };
+      const inv: Inv = { typeId: 200, ids: [H32] };
       sendInv(machine, 'peer1', inv);
 
       expect(sent.length).toBe(0);
@@ -394,12 +401,11 @@ describe('SyncMachine', () => {
     // same peer (audit M-10) — each test solicits via an Inv from the sync
     // peer first. The unsolicited paths are covered in sync-integrity.test.ts.
 
-    it('no-ops on empty modifier list', () => {
+    it('rejects empty modifier list (nonEmpty)', () => {
       const { machine } = makeMachine({ store: { chainHeight: () => 0 } });
-      const body = new Uint8Array(
-        encode({ typeId: MODIFIER_ORDERING_BLOCK, modifiers: [] }),
-      );
-      // Should not throw
+      const body = encodeStruct(modifierResponseCodec, {
+        typeId: MODIFIER_ORDERING_BLOCK, modifiers: [],
+      });
       machine.handleMessage('peer1', MSG_MODIFIER_RESPONSE, body);
       machine.flush();
     });
@@ -413,16 +419,14 @@ describe('SyncMachine', () => {
         },
       });
       peerActive(machine, 'peer1', 100);
-      sendInv(machine, 'peer1', { typeId: MODIFIER_ORDERING_BLOCK, ids: ['b1', 'b2'] });
-      const body = new Uint8Array(
-        encode({
-          typeId: MODIFIER_ORDERING_BLOCK,
-          modifiers: [
-            { id: 'b1', data: new Uint8Array([1]) },
-            { id: 'b2', data: new Uint8Array([2]) },
-          ],
-        }),
-      );
+      sendInv(machine, 'peer1', { typeId: MODIFIER_ORDERING_BLOCK, ids: [H32, H32_A] });
+      const body = encodeStruct(modifierResponseCodec, {
+        typeId: MODIFIER_ORDERING_BLOCK,
+        modifiers: [
+          { id: H32, data: new Uint8Array([1]) },
+          { id: H32_A, data: new Uint8Array([2]) },
+        ],
+      });
       machine.handleMessage('peer1', MSG_MODIFIER_RESPONSE, body);
       machine.flush();
       expect(appended.length).toBe(2);
@@ -437,16 +441,14 @@ describe('SyncMachine', () => {
         },
       });
       peerActive(machine, 'peer1', 100);
-      sendInv(machine, 'peer1', { typeId: MODIFIER_ORDERING_BLOCK, ids: ['b1', 'b2'] });
-      const body = new Uint8Array(
-        encode({
-          typeId: MODIFIER_ORDERING_BLOCK,
-          modifiers: [
-            { id: 'b1', data: new Uint8Array([]) }, // empty — skipped
-            { id: 'b2', data: new Uint8Array([2]) },
-          ],
-        }),
-      );
+      sendInv(machine, 'peer1', { typeId: MODIFIER_ORDERING_BLOCK, ids: [H32, H32_A] });
+      const body = encodeStruct(modifierResponseCodec, {
+        typeId: MODIFIER_ORDERING_BLOCK,
+        modifiers: [
+          { id: H32, data: new Uint8Array([]) },
+          { id: H32_A, data: new Uint8Array([2]) },
+        ],
+      });
       machine.handleMessage('peer1', MSG_MODIFIER_RESPONSE, body);
       machine.flush();
       expect(appended.length).toBe(1);
@@ -462,7 +464,7 @@ describe('SyncMachine', () => {
       const { machine, sent } = makeMachine({
         store: {
           chainHeight: () => 10,
-          getOrderingBlockId: (h: number) => `block_${h}`,
+          getOrderingBlockId: (h: number) => hexId(h),
         },
       });
       peerActive(machine, 'peer1', 5);
@@ -473,7 +475,7 @@ describe('SyncMachine', () => {
       const { machine, sent } = makeMachine({
         store: {
           chainHeight: () => 10,
-          getOrderingBlockId: (h: number) => `block_${h}`,
+          getOrderingBlockId: (h: number) => hexId(h),
         },
       });
       peerActive(machine, 'peer1', 10); // equal — behind condition is peerHeight < ourHeight
@@ -484,7 +486,7 @@ describe('SyncMachine', () => {
       const { machine, sent } = makeMachine({
         store: {
           chainHeight: () => 1000,
-          getOrderingBlockId: (h: number) => `block_${h}`,
+          getOrderingBlockId: (h: number) => hexId(h),
         },
       });
       peerActive(machine, 'peer1', 0);
@@ -499,8 +501,8 @@ describe('SyncMachine', () => {
         store: {
           chainHeight: () => 5,
           getOrderingBlockId: (h: number) => {
-            if (h === 3) return null; // gap at height 3
-            return `block_${h}`;
+            if (h === 3) return null;
+            return hexId(h);
           },
         },
       });
@@ -548,24 +550,19 @@ describe('SyncMachine', () => {
         },
       });
       peerActive(machine, 'peer1', 100);
-      sendInv(machine, 'peer1', { typeId: MODIFIER_ORDERING_BLOCK, ids: ['b1'] });
+      sendInv(machine, 'peer1', { typeId: MODIFIER_ORDERING_BLOCK, ids: [H32] });
 
-      // Real progress: a solicited response that advances the chain
-      vi.advanceTimersByTime(30_000); // 30s
-      const body = new Uint8Array(
-        encode({
-          typeId: MODIFIER_ORDERING_BLOCK,
-          modifiers: [{ id: 'b1', data: new Uint8Array([1]) }],
-        }),
-      );
+      vi.advanceTimersByTime(30_000);
+      const body = encodeStruct(modifierResponseCodec, {
+        typeId: MODIFIER_ORDERING_BLOCK,
+        modifiers: [{ id: H32, data: new Uint8Array([1]) }],
+      });
       machine.handleMessage('peer1', MSG_MODIFIER_RESPONSE, body);
-      machine.flush(); // <-- process the data event so lastProgressMs updates
+      machine.flush();
 
-      // Advance to 61s total
       vi.advanceTimersByTime(31_000);
       machine.onTimerTick();
 
-      // Should still be syncing — progress was at 30s (31s ago < 60s)
       expect(machine.getState().phase).toBe('syncing');
     });
 
@@ -578,15 +575,12 @@ describe('SyncMachine', () => {
         },
       });
       peerActive(machine, 'peer1', 100);
-      sendInv(machine, 'peer1', { typeId: MODIFIER_ORDERING_BLOCK, ids: ['b1'] });
+      sendInv(machine, 'peer1', { typeId: MODIFIER_ORDERING_BLOCK, ids: [H32] });
 
-      // Solicited, chain-advancing progress at t=0
-      const body = new Uint8Array(
-        encode({
-          typeId: MODIFIER_ORDERING_BLOCK,
-          modifiers: [{ id: 'b1', data: new Uint8Array([1]) }],
-        }),
-      );
+      const body = encodeStruct(modifierResponseCodec, {
+        typeId: MODIFIER_ORDERING_BLOCK,
+        modifiers: [{ id: H32, data: new Uint8Array([1]) }],
+      });
       machine.handleMessage('peer1', MSG_MODIFIER_RESPONSE, body);
       machine.flush(); // <-- process the data event so lastProgressMs updates
 
@@ -622,14 +616,12 @@ describe('SyncMachine', () => {
         },
       });
       peerActive(machine, 'peer1', 100);
-      sendInv(machine, 'peer1', { typeId: MODIFIER_ORDERING_BLOCK, ids: ['b1'] });
+      sendInv(machine, 'peer1', { typeId: MODIFIER_ORDERING_BLOCK, ids: [H32] });
 
-      const body = new Uint8Array(
-        encode({
-          typeId: MODIFIER_ORDERING_BLOCK,
-          modifiers: [{ id: 'b1', data: new Uint8Array([1]) }],
-        }),
-      );
+      const body = encodeStruct(modifierResponseCodec, {
+        typeId: MODIFIER_ORDERING_BLOCK,
+        modifiers: [{ id: H32, data: new Uint8Array([1]) }],
+      });
       machine.handleMessage('peer1', MSG_MODIFIER_RESPONSE, body);
       machine.flush();
 
@@ -667,7 +659,7 @@ describe('SyncMachine', () => {
       peerActive(machine, 'peer1', 200);
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
-        tipBlockId: 'abc',
+        tipBlockId: H32,
         anchors: [],
       });
       expect(machine.getState().phase).toBe('synced');
@@ -726,7 +718,7 @@ describe('SyncMachine', () => {
       peerActive(machine, 'peer1', 200);
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
-        tipBlockId: 'abc',
+        tipBlockId: H32,
         anchors: [],
       });
       expect(machine.getState().phase).toBe('synced');
@@ -794,8 +786,8 @@ describe('SyncMachine', () => {
       const { machine, sent } = makeMachine({
         store: {
           chainHeight: () => 42,
-          getOrderingBlockId: (h: number) => (h === 42 ? 'tip42' : null),
-          getAnchors: () => [{ height: 0, blockId: 'genesis' }],
+          getOrderingBlockId: (h: number) => (h === 42 ? H32 : null),
+          getAnchors: () => [{ height: 0, blockId: H32_B }],
         },
       });
 
@@ -843,19 +835,17 @@ describe('SyncMachine', () => {
       const { machine, sent } = makeMachine({
         store: {
           chainHeight: () => 5,
-          heightByBlockId: (id: string) => parseInt(id.replace('block_', ''), 10),
+          heightByBlockId: () => 3,
           getOrderingBlock: () => ({ header: { height: 3 } }),
           serializeOrderingBlock: () => new Uint8Array([1, 2, 3]),
         },
       });
 
-      const req: ModifierRequest = { typeId: MODIFIER_ORDERING_BLOCK, ids: ['block_3'] };
-      const body = new Uint8Array(encode(req));
+      const req: ModifierRequest = { typeId: MODIFIER_ORDERING_BLOCK, ids: [H32] };
+      const body = encodeStruct(modifierRequestCodec, req);
       machine.handleMessage('peer1', MSG_MODIFIER_REQUEST, body);
       machine.flush();
 
-      // A response goes out only when at least one modifier is found — the
-      // 'does not respond when no blocks match' case below is the control.
       expect(sent.length).toBe(1);
       expect(sent[0]!.peerId).toBe('peer1');
     });
@@ -868,8 +858,8 @@ describe('SyncMachine', () => {
         },
       });
 
-      const req: ModifierRequest = { typeId: MODIFIER_ORDERING_BLOCK, ids: ['nonexistent'] };
-      const body = new Uint8Array(encode(req));
+      const req: ModifierRequest = { typeId: MODIFIER_ORDERING_BLOCK, ids: [H32] };
+      const body = encodeStruct(modifierRequestCodec, req);
       machine.handleMessage('peer1', MSG_MODIFIER_REQUEST, body);
       machine.flush();
 
@@ -971,9 +961,7 @@ describe('SyncMachine', () => {
       });
       bodyStore.set(ID_A, CONTENT_A);
 
-      machine.handleMessage('sync-peer', MSG_SYNC_INFO, new Uint8Array(
-        encode({ tipHeight: 100, tipBlockId: 'abc', anchors: [] }),
-      ));
+      machine.handleMessage('sync-peer', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 100, tipBlockId: H32, anchors: [] }));
       machine.flush();
 
       expect(machine.getState().phase).toBe('backfill');
@@ -987,9 +975,7 @@ describe('SyncMachine', () => {
         missingBodies: [],
       });
 
-      machine.handleMessage('sync-peer', MSG_SYNC_INFO, new Uint8Array(
-        encode({ tipHeight: 100, tipBlockId: 'abc', anchors: [] }),
-      ));
+      machine.handleMessage('sync-peer', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 100, tipBlockId: H32, anchors: [] }));
       machine.flush();
 
       expect(machine.getState().phase).toBe('synced');
@@ -1013,9 +999,7 @@ describe('SyncMachine', () => {
       machine.flush();
       height = 50;
 
-      machine.handleMessage('peer1', MSG_SYNC_INFO, new Uint8Array(
-        encode({ tipHeight: 50, tipBlockId: 'abc', anchors: [] }),
-      ));
+      machine.handleMessage('peer1', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 50, tipBlockId: H32, anchors: [] }));
       machine.flush();
 
       expect(machine.getState().phase).toBe('synced');
@@ -1031,9 +1015,7 @@ describe('SyncMachine', () => {
       });
       bodyStore.set(ID_A, CONTENT_A);
 
-      machine.handleMessage('sync-peer', MSG_SYNC_INFO, new Uint8Array(
-        encode({ tipHeight: 100, tipBlockId: 'abc', anchors: [] }),
-      ));
+      machine.handleMessage('sync-peer', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 100, tipBlockId: H32, anchors: [] }));
       machine.flush();
       expect(machine.getState().phase).toBe('backfill');
 
@@ -1049,9 +1031,7 @@ describe('SyncMachine', () => {
         missingBodies: [{ id: ID_A, contentHash: HASH_A }],
       });
 
-      machine.handleMessage('sync-peer', MSG_SYNC_INFO, new Uint8Array(
-        encode({ tipHeight: 100, tipBlockId: 'abc', anchors: [] }),
-      ));
+      machine.handleMessage('sync-peer', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 100, tipBlockId: H32, anchors: [] }));
       machine.flush();
 
       expect(machine.getState().phase).toBe('backfill');
@@ -1087,9 +1067,7 @@ describe('SyncMachine', () => {
         return results;
       });
 
-      machine.handleMessage('sync-peer', MSG_SYNC_INFO, new Uint8Array(
-        encode({ tipHeight: 100, tipBlockId: 'abc', anchors: [] }),
-      ));
+      machine.handleMessage('sync-peer', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 100, tipBlockId: H32, anchors: [] }));
       machine.flush();
       expect(machine.getState().phase).toBe('backfill');
 
@@ -1107,9 +1085,7 @@ describe('SyncMachine', () => {
         connectedPeers: ['sync-peer', 'peer2'],
       });
 
-      machine.handleMessage('sync-peer', MSG_SYNC_INFO, new Uint8Array(
-        encode({ tipHeight: 100, tipBlockId: 'abc', anchors: [] }),
-      ));
+      machine.handleMessage('sync-peer', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 100, tipBlockId: H32, anchors: [] }));
       machine.flush();
       expect(machine.getState().phase).toBe('backfill');
       expect(machine.getState().syncPeerId).toBe('sync-peer');
@@ -1132,9 +1108,7 @@ describe('SyncMachine', () => {
       });
       // bodyStore has no entries → pull returns empty
 
-      machine.handleMessage('sync-peer', MSG_SYNC_INFO, new Uint8Array(
-        encode({ tipHeight: 100, tipBlockId: 'abc', anchors: [] }),
-      ));
+      machine.handleMessage('sync-peer', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 100, tipBlockId: H32, anchors: [] }));
       machine.flush();
       expect(machine.getState().phase).toBe('backfill');
 
@@ -1155,9 +1129,7 @@ describe('SyncMachine', () => {
       });
       bodyStore.set(ID_A, CONTENT_A);
 
-      machine.handleMessage('sync-peer', MSG_SYNC_INFO, new Uint8Array(
-        encode({ tipHeight: 100, tipBlockId: 'abc', anchors: [] }),
-      ));
+      machine.handleMessage('sync-peer', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 100, tipBlockId: H32, anchors: [] }));
       machine.flush();
       expect(machine.getState().phase).toBe('backfill');
 
@@ -1196,10 +1168,9 @@ describe('SyncMachine', () => {
 
     // --- decode boundary: the message never reaches a handler ---------------
 
-    it('drops a ModifierRequest with no ids and penalizes the sender', () => {
+    it('drops a truncated ModifierRequest and penalizes the sender', () => {
       const { machine, sent, violations } = makeReportingMachine({ chainHeight: () => 5 });
-      // The audit payload: well-formed CBOR, but `ids` is missing.
-      machine.handleMessage('attacker', MSG_MODIFIER_REQUEST, new Uint8Array(encode({ typeId: 101 })));
+      machine.handleMessage('attacker', MSG_MODIFIER_REQUEST, new Uint8Array([101]));
       machine.flush();
 
       expect(sent).toHaveLength(0);
@@ -1209,7 +1180,7 @@ describe('SyncMachine', () => {
     it('drops a malformed Inv', () => {
       const { machine, violations } = makeReportingMachine({ chainHeight: () => 0 });
       peerActive(machine, 'peer1', 100);
-      machine.handleMessage('peer1', MSG_INV, new Uint8Array(encode({ typeId: 101, ids: 'all' })));
+      machine.handleMessage('peer1', MSG_INV, new Uint8Array([101, 0xff]));
       machine.flush();
       expect(violations).toEqual([{ peerId: 'peer1', reason: 'malformed Inv' }]);
     });
@@ -1220,13 +1191,13 @@ describe('SyncMachine', () => {
         chainHeight: () => 0,
         appendBlocks: (blocks: unknown[]) => { appended.push(...blocks); },
       });
-      machine.handleMessage('peer1', MSG_MODIFIER_RESPONSE, new Uint8Array(encode({ typeId: 101 })));
+      machine.handleMessage('peer1', MSG_MODIFIER_RESPONSE, new Uint8Array([101]));
       machine.flush();
       expect(appended).toHaveLength(0);
       expect(violations).toEqual([{ peerId: 'peer1', reason: 'malformed ModifierResponse' }]);
     });
 
-    it('drops non-CBOR garbage without throwing', () => {
+    it('drops garbage bytes without throwing', () => {
       const { machine, violations } = makeReportingMachine({ chainHeight: () => 0 });
       machine.handleMessage('attacker', MSG_SYNC_INFO, new Uint8Array([0xff, 0xff, 0xff]));
       machine.flush();
@@ -1240,7 +1211,7 @@ describe('SyncMachine', () => {
       const reads: number[] = [];
       const { machine, sent, violations } = makeReportingMachine({
         chainHeight: () => 10,
-        getOrderingBlockId: (h: number) => { reads.push(h); return `block_${h}`; },
+        getOrderingBlockId: (h: number) => { reads.push(h); return hexId(h); },
       });
 
       machine.onPeerActive('attacker', -1_000_000_000);
@@ -1257,14 +1228,10 @@ describe('SyncMachine', () => {
       const reads: number[] = [];
       const { machine, sent, violations } = makeReportingMachine({
         chainHeight: () => 10,
-        getOrderingBlockId: (h: number) => { reads.push(h); return `block_${h}`; },
+        getOrderingBlockId: (h: number) => { reads.push(h); return hexId(h); },
       });
 
-      machine.handleMessage('attacker', MSG_SYNC_INFO, new Uint8Array(encode({
-        tipHeight: -1_000_000_000,
-        tipBlockId: 'x',
-        anchors: [],
-      })));
+      machine.handleMessage('attacker', MSG_SYNC_INFO, new Uint8Array([0x80, 0x80]));
       machine.flush();
 
       expect(reads).toHaveLength(0);
@@ -1276,14 +1243,14 @@ describe('SyncMachine', () => {
       const reads: number[] = [];
       const { machine, sent, violations } = makeReportingMachine({
         chainHeight: () => 10,
-        getOrderingBlockId: (h: number) => { reads.push(h); return `block_${h}`; },
+        getOrderingBlockId: (h: number) => { reads.push(h); return hexId(h); },
       });
 
-      machine.handleMessage('peer1', MSG_SYNC_INFO, new Uint8Array(encode({
+      machine.handleMessage('peer1', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, {
         tipHeight: 5,
-        tipBlockId: 'x',
+        tipBlockId: H32,
         anchors: [],
-      })));
+      }));
       machine.flush();
 
       // SyncInfo reply reads tip (10), then servePeer reads 6..10
@@ -1299,7 +1266,7 @@ describe('SyncMachine', () => {
       const { machine } = makeReportingMachine({ chainHeight: () => 0 });
       machine.start();
       try {
-        machine.handleMessage('attacker', MSG_MODIFIER_REQUEST, new Uint8Array(encode({ typeId: 101 })));
+        machine.handleMessage('attacker', MSG_MODIFIER_REQUEST, new Uint8Array([101]));
         await settle();
 
         // The loop must still be processing. If the throw above escaped the
@@ -1376,13 +1343,11 @@ describe('SyncMachine', () => {
       });
 
       peerActive(machine, 'peer1', 100);
-      sendInv(machine, 'peer1', { typeId: MODIFIER_ORDERING_BLOCK, ids: ['b1'] });
-      const body = new Uint8Array(
-        encode({
-          typeId: MODIFIER_ORDERING_BLOCK,
-          modifiers: [{ id: 'b1', data: new Uint8Array([1]) }],
-        }),
-      );
+      sendInv(machine, 'peer1', { typeId: MODIFIER_ORDERING_BLOCK, ids: [H32] });
+      const body = encodeStruct(modifierResponseCodec, {
+        typeId: MODIFIER_ORDERING_BLOCK,
+        modifiers: [{ id: H32, data: new Uint8Array([1]) }],
+      });
 
       machine.handleMessage('peer1', MSG_MODIFIER_RESPONSE, body);
       expect(() => machine.flush()).not.toThrow();
@@ -1421,7 +1386,7 @@ describe('SyncMachine', () => {
       return { machine, sent, violations };
     }
 
-    const ids = (n: number): string[] => Array.from({ length: n }, (_, i) => `block_${i + 1}`);
+    const ids = (n: number): string[] => Array.from({ length: n }, (_, i) => hexId(i));
 
     // --- inbound arrays are capped on receipt -------------------------------
 
@@ -1438,14 +1403,14 @@ describe('SyncMachine', () => {
       machine.handleMessage(
         'attacker',
         MSG_INV,
-        new Uint8Array(encode({ typeId: MODIFIER_ORDERING_BLOCK, ids: ids(MAX_INV_IDS + 1) })),
+        encodeStruct(invCodec, { typeId: MODIFIER_ORDERING_BLOCK, ids: ids(MAX_INV_IDS + 1) }),
       );
       machine.flush();
 
       expect(sent).toHaveLength(0);
       expect(lookups).toHaveLength(0);
       expect(violations).toHaveLength(1);
-      expect(violations[0]!.reason).toContain(`exceeds ${MAX_INV_IDS}`);
+      expect(violations[0]!.reason).toContain('malformed Inv');
     });
 
     it('accepts an Inv of exactly MAX_INV_IDS ids', () => {
@@ -1456,7 +1421,7 @@ describe('SyncMachine', () => {
       machine.handleMessage(
         'peer1',
         MSG_INV,
-        new Uint8Array(encode({ typeId: MODIFIER_ORDERING_BLOCK, ids: ids(MAX_INV_IDS) })),
+        encodeStruct(invCodec, { typeId: MODIFIER_ORDERING_BLOCK, ids: ids(MAX_INV_IDS) }),
       );
       machine.flush();
 
@@ -1475,14 +1440,14 @@ describe('SyncMachine', () => {
       machine.handleMessage(
         'attacker',
         MSG_MODIFIER_REQUEST,
-        new Uint8Array(encode({ typeId: MODIFIER_ORDERING_BLOCK, ids: ids(MAX_INV_IDS + 1) })),
+        encodeStruct(modifierRequestCodec, { typeId: MODIFIER_ORDERING_BLOCK, ids: ids(MAX_INV_IDS + 1) }),
       );
       machine.flush();
 
       expect(lookups).toHaveLength(0);
       expect(sent).toHaveLength(0);
       expect(violations).toHaveLength(1);
-      expect(violations[0]!.reason).toContain(`exceeds ${MAX_INV_IDS}`);
+      expect(violations[0]!.reason).toContain('malformed ModifierRequest');
     });
 
     it('drops a ModifierResponse over MAX_INV_IDS without applying it', () => {
@@ -1495,32 +1460,32 @@ describe('SyncMachine', () => {
       machine.handleMessage(
         'attacker',
         MSG_MODIFIER_RESPONSE,
-        new Uint8Array(encode({
+        encodeStruct(modifierResponseCodec, {
           typeId: MODIFIER_ORDERING_BLOCK,
           modifiers: ids(MAX_INV_IDS + 1).map((id) => ({ id, data: new Uint8Array([1]) })),
-        })),
+        }),
       );
       machine.flush();
 
       expect(appended).toHaveLength(0);
       expect(violations).toHaveLength(1);
-      expect(violations[0]!.reason).toContain(`exceeds ${MAX_INV_IDS}`);
+      expect(violations[0]!.reason).toContain('malformed ModifierResponse');
     });
 
-    it('drops a SyncInfo with more than MAX_INV_IDS anchors', () => {
+    it('drops a SyncInfo with more than MAX_SYNC_ANCHORS anchors', () => {
       const { machine, sent, violations } = makeReportingMachine({ chainHeight: () => 10 });
 
-      machine.handleMessage('attacker', MSG_SYNC_INFO, new Uint8Array(encode({
+      machine.handleMessage('attacker', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, {
         tipHeight: 5,
-        tipBlockId: 'x',
-        anchors: Array.from({ length: MAX_INV_IDS + 1 }, (_, i) => ({ height: i, blockId: `a${i}` })),
-      })));
+        tipBlockId: H32,
+        anchors: Array.from({ length: 5 }, (_, i) => ({ height: i, blockId: H32 })),
+      }));
       machine.flush();
 
       expect(sent).toHaveLength(0);
       expect(machine.getState().phase).toBe('idle');
       expect(violations).toHaveLength(1);
-      expect(violations[0]!.reason).toContain(`exceeds ${MAX_INV_IDS}`);
+      expect(violations[0]!.reason).toContain('malformed SyncInfo');
     });
 
     // --- cost rule: k ids cost k point lookups, no index rebuild -----
@@ -1534,7 +1499,7 @@ describe('SyncMachine', () => {
       const lookups: string[] = [];
       const { machine, sent } = makeReportingMachine({
         chainHeight: () => 50,
-        getOrderingBlockId: (h: number) => { idReads.push(h); return `block_${h}`; },
+        getOrderingBlockId: (h: number) => { idReads.push(h); return hexId(h); },
         heightByBlockId: (id: string) => { lookups.push(id); return null; },
       });
       peerActive(machine, 'peer1', 1000);
@@ -1545,10 +1510,10 @@ describe('SyncMachine', () => {
       machine.handleMessage(
         'peer1',
         MSG_INV,
-        new Uint8Array(encode({
+        encodeStruct(invCodec, {
           typeId: MODIFIER_ORDERING_BLOCK,
-          ids: Array.from({ length: K }, (_, i) => `unknown_${i}`),
-        })),
+          ids: Array.from({ length: K }, (_, i) => hexId(1000 + i)),
+        }),
       );
       machine.flush();
 
@@ -1564,15 +1529,15 @@ describe('SyncMachine', () => {
       let serializeCalls = 0;
       const { machine, sent } = makeReportingMachine({
         chainHeight: () => 50,
-        getOrderingBlockId: (h: number) => { idReads.push(h); return `block_${h}`; },
-        heightByBlockId: (id: string) => { lookups.push(id); return parseInt(id.replace('block_', ''), 10); },
+        getOrderingBlockId: (h: number) => { idReads.push(h); return hexId(h); },
+        heightByBlockId: (id: string) => { lookups.push(id); return 1; },
         serializeOrderingBlock: () => { serializeCalls++; return new Uint8Array([1, 2, 3]); },
       });
 
       machine.handleMessage(
         'peer1',
         MSG_MODIFIER_REQUEST,
-        new Uint8Array(encode({ typeId: MODIFIER_ORDERING_BLOCK, ids: ids(K) })),
+        encodeStruct(modifierRequestCodec, { typeId: MODIFIER_ORDERING_BLOCK, ids: ids(K) }),
       );
       machine.flush();
 
@@ -1593,7 +1558,7 @@ describe('SyncMachine', () => {
       machine.handleMessage(
         'peer1',
         MSG_MODIFIER_REQUEST,
-        new Uint8Array(encode({ typeId: MODIFIER_ORDERING_BLOCK, ids: ids(5) })),
+        encodeStruct(modifierRequestCodec, { typeId: MODIFIER_ORDERING_BLOCK, ids: ids(5) }),
       );
       machine.flush();
 
@@ -1611,17 +1576,17 @@ describe('SyncMachine', () => {
     }
 
     it('truncates a response that would exceed MAX_SERVE_BODY_BYTES', () => {
-      const chunk = new Uint8Array(3 * 1024 * 1024); // two of these overflow 4 MiB
+      const chunk = new Uint8Array(3 * 1024 * 1024);
       const { machine, sent } = makeReportingMachine({
         chainHeight: () => 3,
-        heightByBlockId: (id: string) => parseInt(id.replace('block_', ''), 10),
+        heightByBlockId: () => 1,
         serializeOrderingBlock: () => chunk,
       });
 
       machine.handleMessage(
         'peer1',
         MSG_MODIFIER_REQUEST,
-        new Uint8Array(encode({ typeId: MODIFIER_ORDERING_BLOCK, ids: ids(3) })),
+        encodeStruct(modifierRequestCodec, { typeId: MODIFIER_ORDERING_BLOCK, ids: ids(3) }),
       );
       machine.flush();
 
@@ -1632,14 +1597,14 @@ describe('SyncMachine', () => {
       const chunk = new Uint8Array(MAX_SERVE_BODY_BYTES + 1024);
       const { machine, sent } = makeReportingMachine({
         chainHeight: () => 1,
-        heightByBlockId: (id: string) => parseInt(id.replace('block_', ''), 10),
+        heightByBlockId: () => 1,
         serializeOrderingBlock: () => chunk,
       });
 
       machine.handleMessage(
         'peer1',
         MSG_MODIFIER_REQUEST,
-        new Uint8Array(encode({ typeId: MODIFIER_ORDERING_BLOCK, ids: ids(1) })),
+        encodeStruct(modifierRequestCodec, { typeId: MODIFIER_ORDERING_BLOCK, ids: ids(1) }),
       );
       machine.flush();
 
@@ -1666,7 +1631,7 @@ describe('SyncMachine', () => {
       const { body } = decodeFrame(testConfig.magic!, syncInfoMsg!.data);
       const decoded = decodeSyncInfo(body);
       expect(decoded).not.toBeNull();
-      expect(decoded!.tipBlockId).toBe('');
+      expect(decoded!.tipBlockId).toBe(H32);
     });
 
     it('anchors are empty when id provider is unset', () => {
@@ -1694,7 +1659,7 @@ describe('SyncMachine', () => {
       machine.handleMessage(
         'peer1',
         MSG_INV,
-        new Uint8Array(encode({ typeId: MODIFIER_ORDERING_BLOCK, ids: ['a', 'b', 'c'] })),
+        encodeStruct(invCodec, { typeId: MODIFIER_ORDERING_BLOCK, ids: [H32, H32_A, H32_B] }),
       );
       machine.flush();
 
@@ -1702,7 +1667,7 @@ describe('SyncMachine', () => {
       const { body } = decodeFrame(testConfig.magic!, sent[0]!.data);
       const req = decodeModifierRequest(body);
       expect(req).not.toBeNull();
-      expect(req!.ids).toEqual(['a', 'b', 'c']);
+      expect(req!.ids).toEqual([H32, H32_A, H32_B]);
     });
 
     it('ModifierRequest serves nothing when heightByBlockId provider is unset', () => {
@@ -1716,7 +1681,7 @@ describe('SyncMachine', () => {
       machine.handleMessage(
         'peer1',
         MSG_MODIFIER_REQUEST,
-        new Uint8Array(encode({ typeId: MODIFIER_ORDERING_BLOCK, ids: ['a', 'b'] })),
+        encodeStruct(modifierRequestCodec, { typeId: MODIFIER_ORDERING_BLOCK, ids: [H32, H32_A] }),
       );
       machine.flush();
 
@@ -1815,7 +1780,7 @@ describe('SyncMachine', () => {
       const { machine, sent } = makeMachine({
         store: {
           chainHeight: () => 20,
-          getOrderingBlockId: (h: number) => `block_${h}`,
+          getOrderingBlockId: (h: number) => hexId(h),
         },
       });
       // Sync from a different peer so the reply is NOT to our sync peer
@@ -1824,7 +1789,7 @@ describe('SyncMachine', () => {
 
       sendSyncInfo(machine, 'behindPeer', {
         tipHeight: 10,
-        tipBlockId: 'x',
+        tipBlockId: H32,
         anchors: [],
       });
 
@@ -1848,12 +1813,12 @@ describe('SyncMachine', () => {
       const { machine, sent } = makeMachine({
         store: {
           chainHeight: () => 100,
-          getOrderingBlockId: () => 'abc',
+          getOrderingBlockId: () => H32,
         },
       });
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
-        tipBlockId: 'abc',
+        tipBlockId: H32,
         anchors: [],
       });
 
@@ -1875,7 +1840,7 @@ describe('SyncMachine', () => {
 
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 50,
-        tipBlockId: 'abc',
+        tipBlockId: H32,
         anchors: [],
       });
 
@@ -1899,7 +1864,7 @@ describe('SyncMachine', () => {
       const { machine, sent } = makeMachine({
         store: {
           chainHeight: () => height,
-          getOrderingBlockId: () => 'tip',
+          getOrderingBlockId: () => H32_B,
           getAnchors: () => [],
         },
       });
@@ -1915,7 +1880,7 @@ describe('SyncMachine', () => {
       // The equal-height reply from the sync peer → backfill → synced
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
-        tipBlockId: 'tip',
+        tipBlockId: H32_B,
         anchors: [],
       });
 
@@ -1941,19 +1906,19 @@ describe('SyncMachine', () => {
       const { machine, sent } = makeMachine({
         store: {
           chainHeight: () => 100,
-          getOrderingBlockId: () => 'abc',
+          getOrderingBlockId: () => H32,
           getAnchors: () => [],
         },
       });
 
       // First SyncInfo from peer1 — movement (first report) → reply
-      sendSyncInfo(machine, 'peer1', { tipHeight: 100, tipBlockId: 'abc', anchors: [] });
+      sendSyncInfo(machine, 'peer1', { tipHeight: 100, tipBlockId: H32, anchors: [] });
       const afterFirst = sent.length;
       expect(afterFirst).toBe(1);
 
       // Second identical SyncInfo within the floor — suppressed
       vi.advanceTimersByTime(5_000);
-      sendSyncInfo(machine, 'peer1', { tipHeight: 100, tipBlockId: 'abc', anchors: [] });
+      sendSyncInfo(machine, 'peer1', { tipHeight: 100, tipBlockId: H32, anchors: [] });
       expect(sent.length).toBe(afterFirst);
     });
 
@@ -1961,17 +1926,17 @@ describe('SyncMachine', () => {
       const { machine, sent } = makeMachine({
         store: {
           chainHeight: () => 100,
-          getOrderingBlockId: () => 'abc',
+          getOrderingBlockId: () => H32,
           getAnchors: () => [],
         },
       });
 
-      sendSyncInfo(machine, 'peer1', { tipHeight: 100, tipBlockId: 'abc', anchors: [] });
+      sendSyncInfo(machine, 'peer1', { tipHeight: 100, tipBlockId: H32, anchors: [] });
       const afterFirst = sent.length;
 
       // Sender's tip changed → movement → reply at once (pick may add a send)
       vi.advanceTimersByTime(1_000);
-      sendSyncInfo(machine, 'peer1', { tipHeight: 101, tipBlockId: 'def', anchors: [] });
+      sendSyncInfo(machine, 'peer1', { tipHeight: 101, tipBlockId: H32_A, anchors: [] });
       // The reply fires (movement); pick may enter syncing and send another
       expect(sent.length).toBeGreaterThan(afterFirst);
       // The reply is addressed to the sender
@@ -1983,18 +1948,18 @@ describe('SyncMachine', () => {
       const { machine, sent } = makeMachine({
         store: {
           chainHeight: () => height,
-          getOrderingBlockId: () => 'abc',
+          getOrderingBlockId: () => H32,
           getAnchors: () => [],
         },
       });
 
-      sendSyncInfo(machine, 'peer1', { tipHeight: 100, tipBlockId: 'abc', anchors: [] });
+      sendSyncInfo(machine, 'peer1', { tipHeight: 100, tipBlockId: H32, anchors: [] });
       const afterFirst = sent.length;
 
       // Our tip advanced
       height = 101;
       vi.advanceTimersByTime(1_000);
-      sendSyncInfo(machine, 'peer1', { tipHeight: 100, tipBlockId: 'abc', anchors: [] });
+      sendSyncInfo(machine, 'peer1', { tipHeight: 100, tipBlockId: H32, anchors: [] });
 
       // Our movement → reply + Inv (peer now behind)
       expect(sent.length).toBeGreaterThan(afterFirst);
@@ -2004,24 +1969,24 @@ describe('SyncMachine', () => {
       const { machine, sent } = makeMachine({
         store: {
           chainHeight: () => 100,
-          getOrderingBlockId: () => 'tip',
+          getOrderingBlockId: () => H32_B,
           getAnchors: () => [],
         },
       });
 
       // First SyncInfo from peer1 — first report → movement → reply
-      sendSyncInfo(machine, 'peer1', { tipHeight: 100, tipBlockId: 'tip', anchors: [] });
+      sendSyncInfo(machine, 'peer1', { tipHeight: 100, tipBlockId: H32_B, anchors: [] });
       const afterFirst = sent.length;
       expect(afterFirst).toBe(1);
 
       // Peer1 echoes the same values within the floor → suppressed
       vi.advanceTimersByTime(1_000);
-      sendSyncInfo(machine, 'peer1', { tipHeight: 100, tipBlockId: 'tip', anchors: [] });
+      sendSyncInfo(machine, 'peer1', { tipHeight: 100, tipBlockId: H32_B, anchors: [] });
       expect(sent.length).toBe(afterFirst);
 
       // After MIN_SYNCINFO_INTERVAL_MS the floor expires → one more reply
       vi.advanceTimersByTime(15_000);
-      sendSyncInfo(machine, 'peer1', { tipHeight: 100, tipBlockId: 'tip', anchors: [] });
+      sendSyncInfo(machine, 'peer1', { tipHeight: 100, tipBlockId: H32_B, anchors: [] });
       expect(sent.length).toBe(afterFirst + 1);
     });
   });
@@ -2067,7 +2032,7 @@ describe('SyncMachine', () => {
       const { machine } = makeMachine({
         store: {
           chainHeight: () => height,
-          getOrderingBlockId: () => 'abc',
+          getOrderingBlockId: () => H32,
           getAnchors: () => [],
         },
       });
@@ -2081,7 +2046,7 @@ describe('SyncMachine', () => {
 
       // Finish syncing from peerA
       height = 100;
-      sendSyncInfo(machine, 'peerA', { tipHeight: 100, tipBlockId: 'abc', anchors: [] });
+      sendSyncInfo(machine, 'peerA', { tipHeight: 100, tipBlockId: H32, anchors: [] });
 
       // enterSynced → pickSyncPeer → peerD above us → adopt
       expect(machine.getState().phase).toBe('syncing');
@@ -2143,12 +2108,7 @@ describe('SyncMachine', () => {
         (peerId, reason) => violations.push({ peerId, reason }),
       );
 
-      // decodeSyncInfo returns null for out-of-domain tipHeight → rejectMessage
-      const body = new Uint8Array(encode({
-        tipHeight: -1,
-        tipBlockId: 'abc',
-        anchors: [],
-      }));
+      const body = new Uint8Array([0x80, 0x80]);
       machine.handleMessage('attacker', MSG_SYNC_INFO, body);
       machine.flush();
 
@@ -2184,19 +2144,16 @@ describe('SyncMachine', () => {
       });
 
       peerActive(machine, 'peer1', 100);
-      sendInv(machine, 'peer1', { typeId: MODIFIER_ORDERING_BLOCK, ids: ['b1'] });
+      sendInv(machine, 'peer1', { typeId: MODIFIER_ORDERING_BLOCK, ids: [H32] });
       sent.length = 0;
 
-      const body = new Uint8Array(
-        encode({
-          typeId: MODIFIER_ORDERING_BLOCK,
-          modifiers: [{ id: 'b1', data: new Uint8Array([1]) }],
-        }),
-      );
+      const body = encodeStruct(modifierResponseCodec, {
+        typeId: MODIFIER_ORDERING_BLOCK,
+        modifiers: [{ id: H32, data: new Uint8Array([1]) }],
+      });
       machine.handleMessage('peer1', MSG_MODIFIER_RESPONSE, body);
       machine.flush();
 
-      // One SyncInfo sent to peer1 (the sync peer) on progress
       const syncInfos = sent.filter(s => {
         const f = decodeFrame(testConfig.magic, s.data);
         return f && f.code === MSG_SYNC_INFO && s.peerId === 'peer1';
@@ -2214,15 +2171,13 @@ describe('SyncMachine', () => {
       });
 
       peerActive(machine, 'peer1', 100);
-      sendInv(machine, 'peer1', { typeId: MODIFIER_ORDERING_BLOCK, ids: ['b1'] });
+      sendInv(machine, 'peer1', { typeId: MODIFIER_ORDERING_BLOCK, ids: [H32] });
       sent.length = 0;
 
-      const body = new Uint8Array(
-        encode({
-          typeId: MODIFIER_ORDERING_BLOCK,
-          modifiers: [{ id: 'b1', data: new Uint8Array([1]) }],
-        }),
-      );
+      const body = encodeStruct(modifierResponseCodec, {
+        typeId: MODIFIER_ORDERING_BLOCK,
+        modifiers: [{ id: H32, data: new Uint8Array([1]) }],
+      });
       machine.handleMessage('peer1', MSG_MODIFIER_RESPONSE, body);
       machine.flush();
 
@@ -2268,7 +2223,7 @@ describe('SyncMachine', () => {
       const { machine } = makeMachine({
         store: {
           chainHeight: () => 100,
-          getOrderingBlockId: () => 'abc',
+          getOrderingBlockId: () => H32,
           getAnchors: () => [],
         },
       });
@@ -2280,7 +2235,7 @@ describe('SyncMachine', () => {
       // NET_INTERFACE → Sync State Machine, Backfill: only the sync peer's equal triggers it
       sendSyncInfo(machine, 'peerX', {
         tipHeight: 100,
-        tipBlockId: 'abc',
+        tipBlockId: H32,
         anchors: [],
       });
 
@@ -2298,7 +2253,7 @@ describe('SyncMachine', () => {
       const { machine } = makeMachine({
         store: {
           chainHeight: () => height,
-          getOrderingBlockId: () => 'abc',
+          getOrderingBlockId: () => H32,
           getAnchors: () => [],
         },
       });
@@ -2306,7 +2261,7 @@ describe('SyncMachine', () => {
       // Sync from a temporary peer and reach synced
       peerActive(machine, 'tmp', 10, 'outbound');
       height = 10;
-      sendSyncInfo(machine, 'tmp', { tipHeight: 10, tipBlockId: 'abc', anchors: [] });
+      sendSyncInfo(machine, 'tmp', { tipHeight: 10, tipBlockId: H32, anchors: [] });
       expect(machine.getState().phase).toBe('synced');
 
       // While synced, register both candidates above us

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { encode } from 'cbor-x';
+import { encodeStruct } from '@dagsocial/types';
+import { handshakeCodec } from '../src/handshake.js';
 import { PROTOCOL_VERSION } from '@dagsocial/types';
 import type { OrderingBlock } from '@dagsocial/types';
 import {
@@ -336,18 +337,18 @@ describe('inbound handshake handler — our own reply', () => {
 // ---------------------------------------------------------------------------
 
 describe('inbound handshake handler — frame-tier rejection', () => {
-  it('does not ban a peer that sends unframed CBOR', async () => {
+  it('does not ban a peer that sends unframed positional bytes', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { send, peerMgr, peerId } = makeHandshakeHarness({ chainHeight: 0 });
 
-    const raw = new Uint8Array(encode({
+    const raw = encodeStruct(handshakeCodec, {
       agentName: 'dagsocial/1.0.0',
       protocolVersion: PROTOCOL_VERSION,
       nodeName: 'peer',
       chainHeight: 7,
       capabilities: [],
       sessionMagic: 1234,
-    }));
+    });
     const written = await send(raw);
 
     expect(isEmptyReply(written)).toBe(true);
