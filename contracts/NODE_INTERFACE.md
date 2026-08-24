@@ -1093,9 +1093,12 @@ tree collapse into clean rejections:
 > (`handleOrderingBlock`'s held check and `extendsOurTip`, then `applyOrderingBlock`'s chain-link
 > read), fork resolution (`findForkPoint`, `revertBlock`, `resolveFork`'s anchor and work walk), the
 > block creator's tip read, the two `/blocks` routes, and the provider handed to
-> `net.setHeadersHandler`, through which every `SyncInfo` (its tip id and anchors) and every served
-> chain query decodes stored rows — a handshake decodes none: its `chainHeight` is the
-> `setChainHeightProvider` read, `MAX(height)`. Only apply's read passes through a catch that could promote anything;
+> `net.setHeadersHandler`, through which every served chain query and every block a
+> `ModifierResponse` serves decodes stored rows — a handshake decodes none: its `chainHeight` is the
+> `setChainHeightProvider` read, `MAX(height)`; a `SyncInfo` decodes none: its tip id and anchors are
+> `setBlockIdProvider` reads of the stored `block_hash` column, and an inbound `Inv` or
+> `ModifierRequest` resolves its ids through `setHeightByBlockIdProvider` point lookups the same way
+> — only the blocks actually served decode. Only apply's read passes through a catch that could promote anything;
 > the store frame names the fault so that all of them raise one class — and **every outer frame is a
 > boundary**: the gossip and the pull registrations of `handleOrderingBlock` both wrap it in
 > `failStopIfCorruptChain` (Relay handlers; Sync handlers); the launched `resolveFork` promise carries
@@ -2931,6 +2934,8 @@ See `MEMPOOL_INTERFACE.md` for the full mempool contract.
 | `createOrderingBlock(block)` | `(OrderingBlock) => void` |
 | `getOrderingBlock(height)` | `(number) => OrderingBlock \| null` |
 | `getCurrentHeight()` | `() => number` |
+| `getOrderingBlockHash(height)` | `(number) => string \| null` — the stored `block_hash` column, no row decode |
+| `getHeightByBlockHash(hash)` | `(string) => number \| null` — indexed point lookup on the same column |
 | `deleteOrderingBlock(height)` | `(number) => void` — for fork rollback |
 
 ### Refused headers
@@ -3860,7 +3865,7 @@ Stage 2 handlers for inbound gossip messages. Startup order:
 1. initDb()
 2. Create NetNode with config + validators
 3. Register Stage 2 handlers (onOrderingBlock, onTx)
-4. Register sync handlers (setBlocksHandler, setHeadersHandler, setChainHeightProvider) BEFORE net.start()
+4. Register sync handlers (setBlocksHandler, setHeadersHandler, setChainHeightProvider, setBlockIdProvider, setHeightByBlockIdProvider) BEFORE net.start()
 5. await net.start()          // connect to bootstrap, subscribe to topics
 6. startHttpServer()          // begin accepting API requests
 7. startBlockCreator()         // begin producing ordering blocks
@@ -4189,16 +4194,24 @@ funnel:
   gossip registration does — `net` contains a handler throw to one logged message, and that frame
   must never be the outer one for a corrupt-state error
 - **`setHeadersHandler(getBlock)`**: the provider `net` reads stored blocks through — headers for
-  fork resolution, bodies for served chain queries, the tip id and anchors for every `SyncInfo`. The
+  fork resolution, bodies for served chain queries, the blocks a `ModifierResponse` serves. The
   provider node hands over wraps the store read in `failStopIfCorruptChain`: a stored row that will
   not decode stops the node ("What the funnel's totality catch is FOR") rather than failing every
-  `SyncInfo` and query as the peer's fault inside `net`'s contained catches. The two `/blocks` routes
+  served query and response as the peer's fault inside `net`'s contained catches. The two `/blocks` routes
   are given the same wrapped read
 - **`setChainHeightProvider(getCurrentHeight)`**: the tip height `net` advertises and compares — the
   store's `MAX(height)`, the same read the block creator and fork resolution take, handed over
   unwrapped: it decodes no row, so there is nothing for `failStopIfCorruptChain` to promote. `net`
   reads it once per handshake, `SyncInfo` and served chain query in place of a walk through the
   headers provider (NET_INTERFACE → Sync Handler Registration)
+- **`setBlockIdProvider(getOrderingBlockHash)`**: the block id at a height — the store's
+  `block_hash` column, written by `createOrderingBlock` from the node's own decoded header at the
+  table's single INSERT — behind every `SyncInfo`'s tip id and anchors and every Inv continuation.
+  Handed over unwrapped: a column read decodes no row, so there is nothing for
+  `failStopIfCorruptChain` to promote
+- **`setHeightByBlockIdProvider(getHeightByBlockHash)`**: the height holding a block id — an indexed
+  point lookup on the same column — behind the inbound `Inv` filter and `ModifierRequest` resolution
+  (NET_INTERFACE → Sync Handler Registration). Unwrapped for the same reason
 
 A block carries its posts whole in `utxoTxs`, so there is no content-sweep and
 no per-post serve path. `onPeerActive` is wired to peer-readiness
