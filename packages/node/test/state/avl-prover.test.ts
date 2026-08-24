@@ -1,16 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
-import { BatchAVLProver } from '@ergots/avltree';
 import { SqliteAvlStorage } from '../../src/state/avl-storage.js';
 import {
   createAvlProver,
   applyBlockMutations,
   bootstrapAvlProver,
   checkpointProver,
-  HEIGHT_SENTINEL,
-  encodeHeight,
 } from '../../src/state/avl-prover.js';
-import { serializeBox } from '../../src/state/serialize-box.js';
 import { config } from '../../src/config.js';
 import { fixtureProvenance } from '../helpers.js';
 import type { AnyBox } from '@dagsocial/types';

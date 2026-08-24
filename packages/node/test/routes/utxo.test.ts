@@ -1,4 +1,4 @@
-import { fixtureProvenance, seedProvenance, txToJson, uid } from '../helpers.js';
+import { seedProvenance, txToJson } from '../helpers.js';
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import express from 'express';
 import http from 'http';
@@ -15,14 +15,10 @@ import {
   consumeBox,
 } from '../../src/store/utxo.js';
 import { getIdentityRecord } from '../../src/store/identity-records.js';
-import { hasActiveVouchEscrow } from '../../src/store/utxo.js';
 import { getBoxWithPending } from '../../src/store/mempool.js';
 import { setNet } from '../../src/services/net-instance.js';
 import {
-} from '../../src/store/system.js';
-import {
   generateKeyPair,
-  computeBoxId,
   computeTxId,
   selectBoxes,
   PROTOCOL_VERSION,
@@ -36,7 +32,6 @@ import type {
   CandidateOf,
   CreditBox,
   KarmaBox,
-  NetworkType,
   UtxoTransaction,
 } from '@dagsocial/types';
 import { createRouter } from '../../src/routes/utxo.js';

@@ -67,7 +67,6 @@ const TARGET_ID = '11'.repeat(32);
 // no encoding — the same rule the post ids above carry, applied to inputs now
 // that the pool derives its output ids at insert.
 const BOX_1 = '61'.repeat(32);
-const BOX_2 = '62'.repeat(32);
 const BOX_3 = '63'.repeat(32);
 const BOX_5 = '65'.repeat(32);
 const BOX_99 = '69'.repeat(32);

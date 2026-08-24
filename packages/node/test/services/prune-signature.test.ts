@@ -17,11 +17,6 @@ describe('PruneEntry Ed25519 signature', () => {
     const signature = sign(null, payload, privateKey);
 
     // Verify
-    const authorId = publicKey.export({ format: 'jwk' }).x
-      ? Buffer.from(publicKey.export({ format: 'jwk' }).x!, 'base64url')
-      : publicKey.export({ type: 'spki', format: 'der' }).subarray(-32);
-
-    // Actually, get raw 32-byte public key:
     const rawPub = publicKey.export({ type: 'spki', format: 'der' }).subarray(-32);
 
     const keyObject = createPublicKey({

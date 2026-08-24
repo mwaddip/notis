@@ -1,9 +1,7 @@
 import { fixturePostId, makePostCommit } from '../helpers.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { generateKeyPairSync, type KeyObject } from 'crypto';
-import { computeContentHash, PROTOCOL_VERSION } from '@dagsocial/types';
-import type { PostCommit, Stump } from '@dagsocial/types';
-
+import { PROTOCOL_VERSION } from '@dagsocial/types';
 import {
   initDb,
   closeDb,

@@ -18,7 +18,6 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
-  computeBoxId,
   computeTxId,
   PROTOCOL_VERSION,
   VOUCH_KARMA_AMOUNT,
@@ -31,7 +30,6 @@ import type {
   OrderingBlock,
 } from '@dagsocial/types';
 import {
-  fixtureProvenance,
   hex,
   makeKarmaBox,
   makeTestConfig,

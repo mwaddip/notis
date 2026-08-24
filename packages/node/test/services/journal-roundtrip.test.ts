@@ -7,37 +7,27 @@ import {
   vi,
 } from 'vitest';
 import {
-  computeBoxId,
-  computePostId,
   computeTxId,
   POST_LOCK_REPLY_COST,
   PROTOCOL_VERSION,
   MAX_BLOCK_BODY_BYTES,
 } from '@dagsocial/types';
 import type {
-  CandidateOf,
   CreditBox,
   VouchEscrowBox,
   KarmaBox,
   OrderingBlock,
-  Post,
-  PostLockBox,
-  Stump,
   UtxoTransaction,
 } from '@dagsocial/types';
-import type { StoredPost } from '../../src/store/posts.js';
 import type Database from 'better-sqlite3';
 import type { Config } from '../../src/config.js';
 import {
   changeBoxOf,
   FIXTURE_BOND_KARMA,
-  fixturePostId,
-  fixtureProvenance,
   hex,
   lockBoxOf,
   makeApplicableBlock,
   makeKarmaBox,
-  makePost,
   seedPostTx,
   makePruneEntry,
   makeTestConfig,
@@ -45,7 +35,6 @@ import {
   mineNextBlock,
   seedProvenance,
   signTransaction,
-  type TestIdentity,
   activateProverOverStore,
 } from '../helpers.js';
 
@@ -557,7 +546,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     db.initDb(':memory:');
 
     const voucher = makeTestIdentity();
-    const target = makeTestIdentity();
+    makeTestIdentity();
     const utxo = await importUtxo();
     const vouch = await importVouch();
 

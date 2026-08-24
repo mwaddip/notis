@@ -34,14 +34,13 @@ import { config } from '../../src/config.js';
 import {
   makeKarmaBox,
   makeLikeTx,
-  makePost,
   makeTestConfig,
   makeTestIdentity,
   mineNextBlock,
   seedAsOneTx,
   signTransaction,
   uid,
-  type TestIdentity, fixturePostId, fillerTx, seedPostTx, makePostCommit, activateProverOverStore,
+  type TestIdentity, seedPostTx, makePostCommit, activateProverOverStore,
   seedKarmaPoolBox, makeApplicableBlock,
   FIXTURE_BOND_KARMA,
 } from '../helpers.js';
@@ -81,9 +80,6 @@ async function importMempool() {
 }
 async function importLikes() {
   return await import('../../src/store/likes.js');
-}
-async function importTopology() {
-  return await import('../../src/store/topology.js');
 }
 async function importBlockCreator() {
   return await import('../../src/services/block-creator.js');
@@ -612,7 +608,7 @@ describe('the invite at block application', () => {
   async function claimThenSettle(likes: bigint, bondValue = FIXTURE_BOND_KARMA) {
     const seeded = await seedPair(bondValue);
     const { utxo, inviter, invitee, bond } = seeded;
-    const mempool = await importMempool();
+    await importMempool();
     const records = await importRecords();
 
     const firstBlock = await mineOne();
@@ -753,7 +749,7 @@ describe('the invite at block application', () => {
   async function poolLikes(batch: LikeFixture[], inviteeKey: Uint8Array) {
     const posts = await import('../../src/store/posts.js');
     const mempool = await importMempool();
-    const types = await import('@dagsocial/types');
+    await import('@dagsocial/types');
 
     for (const { commit, content, postTx, postId, liker, karma } of batch) {
       posts.insertPost(postId, commit, content);
@@ -793,7 +789,7 @@ describe('the invite at block application', () => {
       FIXTURE_BOND_KARMA,
       [{ count: 3, nonceBase: 0 }, { count: 2, nonceBase: 10 }],
     );
-    const mempool = await importMempool();
+    await importMempool();
     const records = await importRecords();
 
     const invitedAtBlock = (await mineOne())!.header.height;
@@ -826,7 +822,7 @@ describe('the invite at block application', () => {
       FIXTURE_BOND_KARMA,
       [{ count: INVITE_BOND_VEST_PER_LIKES, nonceBase: 100 }],
     );
-    const mempool = await importMempool();
+    await importMempool();
     const records = await importRecords();
     const db = await importDb();
 
@@ -904,10 +900,10 @@ describe('the invite at block application — decay adjacency', () => {
     const utxo = await import('../../src/store/utxo.js');
     const records = await import('../../src/store/identity-records.js');
     const mempool = await import('../../src/store/mempool.js');
-    const posts = await import('../../src/store/posts.js');
+    await import('../../src/store/posts.js');
     const ordering = await import('../../src/store/ordering.js');
     const bc = await import('../../src/services/block-creator.js');
-    const types = await import('@dagsocial/types');
+    await import('@dagsocial/types');
 
     const cfg = makeTestConfig({
       dbPath: ':memory:',

@@ -15,8 +15,6 @@ import { describe, it, expect, vi } from 'vitest';
 import { unlinkSync } from 'fs';
 import { generateKeyPairSync, sign as cryptoSign, type KeyObject } from 'crypto';
 import {
-  computeBoxId,
-  computePostId,
   computeTxId,
   selectBoxes,
   PROTOCOL_VERSION,
@@ -35,15 +33,13 @@ import type Database from 'better-sqlite3';
 import type { BlockJournal } from '../../src/store/journal.js';
 import { config } from '../../src/config.js';
 import {
-  fixtureProvenance,
   makeApplicableBlock,
-  makePost,
   makeTestConfig,
   makeTestIdentity,
   mineNextBlock,
   rawPublicKey,
   seedProvenance,
-  type Stored, fixturePostId, seedPostTx, activateProverOverStore } from '../helpers.js';
+  type Stored, seedPostTx, activateProverOverStore } from '../helpers.js';
 
 // Same shape as block-apply.test.ts — small epoch, internal miner. Every field
 // below is kept verbatim; `makeTestConfig` only fills the thirteen `Config`
@@ -198,7 +194,7 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
     const identityRecords = await importIdentityRecords();
     const credits = await importCredits();
     const mempool = await importMempool();
-    const posts = await importPosts();
+    await importPosts();
     const bc = await importBlockCreator();
     const journalStore = await importJournalStore();
 
@@ -297,9 +293,9 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
     const identityRecords = await importIdentityRecords();
     const credits = await importCredits();
     const mempool = await importMempool();
-    const posts = await importPosts();
+    await importPosts();
     const bc = await importBlockCreator();
-    const avl = await importAvl();
+    await importAvl();
     const blockApply = await importBlockApply();
     let ordering = await importOrdering();
     const { serializeBox } = await import('../../src/state/serialize-box.js');

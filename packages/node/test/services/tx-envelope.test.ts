@@ -42,7 +42,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { generateKeyPairSync, sign as cryptoSign, type KeyObject } from 'crypto';
 import {
-  computeBoxId,
   computeTxId,
   decodeTx,
   encodeTx,
@@ -58,7 +57,6 @@ import { encode as cborEncode } from 'cbor-x';
 import Database from 'better-sqlite3';
 
 import {
-  fixtureProvenance,
   rawPublicKey,
   seedProvenance,
   type Stored,
@@ -73,7 +71,6 @@ import {
   getKarmaBoxes,
   insertBox as storeInsertBox,
   consumeBox as storeConsumeBox,
-  hasActiveVouchEscrow as storeHasActiveVouchEscrow,
 } from '../../src/store/index.js';
 import { checkTxEnvelope, validateTx } from '../../src/services/utxo-engine.js';
 import { config } from '../../src/config.js';

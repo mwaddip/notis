@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { generateKeyPairSync, sign as cryptoSign } from 'crypto';
 import {
-  computeBoxId,
   computeTxId,
   decodeTx,
   selectBoxes,
@@ -28,12 +27,10 @@ import {
   consumeBox,
 } from '../../src/store/utxo.js';
 import { getIdentityRecord } from '../../src/store/identity-records.js';
-import { hasActiveVouchEscrow } from '../../src/store/utxo.js';
 import { getPendingEntries } from '../../src/store/mempool.js';
 import { sendCredits } from '../../src/services/credits.js';
 import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
 import {
-  fixtureProvenance,
   rawPublicKey,
   seedProvenance,
   type Stored,

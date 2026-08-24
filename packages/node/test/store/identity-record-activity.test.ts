@@ -3,7 +3,6 @@ import type Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
 import { computeBoxId } from '@dagsocial/types';
 import type {
-  AnyBox,
   CandidateOf,
   CreditBox,
   KarmaBox,
@@ -12,7 +11,6 @@ import type {
 import type { BlockJournal } from '../../src/store/journal.js';
 import type { IdentityRecord } from '../../src/store/identity-records.js';
 import {
-  fixtureProvenance,
   seedProvenance,
   type Stored,
 } from '../helpers.js';
@@ -89,7 +87,7 @@ function karmaBox(
   return seedProvenance<KarmaBox>(candidate, seed);
 }
 
-function creditBox(o: UserId, value: bigint, seed: number): Stored<CreditBox> {
+function creditBox(o: UserId, value: bigint, _seed: number): Stored<CreditBox> {
   return seedProvenance<CreditBox>({
     boxType: 'credit' as const,
     value,

@@ -7,12 +7,11 @@
  * finalizeBlock, so no manual ingestion step is needed.
  */
 import {
-  fixtureProvenance,
   makeTestConfig,
   mineNextBlock,
   rawPublicKey,
   seedProvenance,
-  signTransaction, fixturePostId, seedPostTx, seedKarmaPoolBox,
+  signTransaction, seedPostTx, seedKarmaPoolBox,
   FIXTURE_BOND_KARMA,
 } from '../helpers.js';
 import {
@@ -28,16 +27,11 @@ import {
   createPrivateKey,
 } from 'crypto';
 import {
-  computeBoxId,
-  computeTxId,
   PROTOCOL_VERSION,
   LIKE_KARMA_COST,
-  computePostId,
-  decodeTx,
   MAX_BLOCK_BODY_BYTES,
 } from '@dagsocial/types';
 import type {
-  Post,
   KarmaBox,
   BondBox,
   UtxoTransaction,
@@ -175,16 +169,6 @@ function makeTestIdentity(): TestIdentity {
   const { publicKey, privateKey } = generateKeyPairSync('ed25519');
   const pubKey = rawPublicKey(publicKey);
   return { userId: pubKey, publicKey: pubKey, privateKey };
-}
-
-function makePost(authorId: Uint8Array, content = 'test post'): Post {
-  return {
-    content,
-    author: authorId,
-    parentRefs: [],
-    protocolVersion: PROTOCOL_VERSION,
-    type: 'regular',
-  };
 }
 
 function makeKarmaBox(value: bigint, owner: Uint8Array, seed: number): KarmaBox {
@@ -571,8 +555,6 @@ describe('full-pipeline', () => {
     bc.startBlockCreator(testConfig);
     const block = (await mineNextBlock(bc)) as Record<string, unknown> | null;
     expect(block).not.toBeNull();
-    const blockHeight = (block!.header as Record<string, unknown>).height as number;
-
     // ---- Step 3: Verify confirmed state (UTXO txs applied by block creator) ----
     // Old karma consumed (check via deps, which filters by spent_at_block)
     expect(deps.getBox(karmaBox.id!)).toBeNull();

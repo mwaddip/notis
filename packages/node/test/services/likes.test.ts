@@ -5,8 +5,6 @@ import {
   type KeyObject,
 } from 'crypto';
 import {
-  computeBoxId,
-  computePostId,
   computeTxId,
   computeContentHash,
   LIKE_KARMA_COST,
@@ -17,7 +15,7 @@ import {
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,
 } from '@dagsocial/types';
-import type { KarmaBox, LikeAccrualBox, Post, Stump, UtxoTransaction, AnyBox } from '@dagsocial/types';
+import type { KarmaBox, LikeAccrualBox, Stump, UtxoTransaction, AnyBox } from '@dagsocial/types';
 
 /**
  * The author every post in this suite belongs to — the key the like's marker
@@ -38,13 +36,11 @@ import {
   insertStump,
   getBox as storeGetBox,
   getIdentityRecord as storeGetIdentityRecord,
-  hasActiveVouchEscrow as storeHasActiveVouchEscrow,
   hasPendingLike, insertUtxoTx } from '../../src/store/index.js';
 import { castLike } from '../../src/services/likes.js';
 import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
 import { config } from '../../src/config.js';
 import {
-  fixtureProvenance,
   rawPublicKey,
   seedProvenance,
   signTransaction,

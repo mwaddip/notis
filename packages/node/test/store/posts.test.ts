@@ -1,7 +1,6 @@
-import { uid, fixturePostId, makePostCommit } from '../helpers.js';
+import { uid, fixturePostId } from '../helpers.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type Database from 'better-sqlite3';
-import { randomBytes } from 'node:crypto';
 import { computeContentHash } from '@dagsocial/types';
 import type { PostCommit, Stump } from '@dagsocial/types';
 

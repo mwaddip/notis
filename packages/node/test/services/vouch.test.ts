@@ -115,7 +115,7 @@ function seedVouchEscrow(owner: Uint8Array, releaseAtBlock: number): void {
 function vouchTxFor(
   voucherId: Uint8Array,
   targetId: Uint8Array,
-  seed: number,
+  _seed: number,
 ): UtxoTransaction {
   return {
     inputs: [],

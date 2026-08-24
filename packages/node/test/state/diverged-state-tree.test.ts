@@ -7,7 +7,6 @@ import {
   type RecordPut,
 } from '../../src/state/avl-prover.js';
 import { DivergedStateTreeError } from '../../src/services/corrupt-state.js';
-import { config } from '../../src/config.js';
 import { fixtureProvenance } from '../helpers.js';
 import type { AnyBox } from '@dagsocial/types';
 import type { IdentityRecord } from '../../src/store/identity-records.js';

@@ -29,7 +29,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { generateKeyPairSync, sign as cryptoSign, type KeyObject } from 'crypto';
-import { computeBoxId, computeTxId, VOUCH_KARMA_AMOUNT,
+import { computeTxId, VOUCH_KARMA_AMOUNT,
   KARMA_STALE_THRESHOLD_BLOCKS,
   KARMA_DECAY_INTERVAL_BLOCKS,
   KARMA_DECAY_AMOUNT,
@@ -39,7 +39,6 @@ import type { AnyBox, KarmaBox, VouchBox, UtxoTransaction } from '@dagsocial/typ
 import Database from 'better-sqlite3';
 
 import {
-  fixtureProvenance,
   rawPublicKey,
   seedProvenance,
 } from '../helpers.js';
@@ -53,7 +52,6 @@ import {
   getKarmaBoxes,
   insertBox as storeInsertBox,
   consumeBox as storeConsumeBox,
-  hasActiveVouchEscrow as storeHasActiveVouchEscrow,
 } from '../../src/store/index.js';
 import { validateTx } from '../../src/services/utxo-engine.js';
 import { config } from '../../src/config.js';

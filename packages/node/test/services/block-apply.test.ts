@@ -7,9 +7,7 @@ import {
   vi,
 } from 'vitest';
 import {
-  computePostId,
   computeTxId,
-  computeContentHash,
   encodeOrderingBlock,
   decodeOrderingBlock,
   PROTOCOL_VERSION,
@@ -17,14 +15,12 @@ import {
   KARMA_STALE_THRESHOLD_BLOCKS,
   EMPTY_STATE_ROOT,
   VOUCH_KARMA_AMOUNT,
-  VOUCH_MIN_BALANCE,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   MAX_BLOCK_BODY_BYTES,
 } from '@dagsocial/types';
 import { verifyOrderingBlockPoW } from '@dagsocial/validation';
 import type {
   Post,
-  PostCommit,
   KarmaBox,
   CreditBox,
   VouchBox,
@@ -32,11 +28,9 @@ import type {
   PostLockBox,
   BlockHeader,
   OrderingBlock,
-  Stump,
   PruneEntry,
   UtxoTransaction,
 } from '@dagsocial/types';
-import type { StoredPost } from '../../src/store/posts.js';
 import type { BlockJournal, BoxMutation } from '../../src/store/journal.js';
 import type { AnyBox } from '@dagsocial/types';
 import type { DecayPlan } from '../../src/services/decay.js';
@@ -47,14 +41,12 @@ import type { TestIdentity } from '../helpers.js';
 import {
   ZERO_HASH,
   changeBoxOf,
-  feeBoxOf,
   hex,
   makeApplicableBlock,
   makeCreditBox,
   makeCreditTx,
   makeKarmaBox,
   makeLikeTx,
-  makePost,
   makePostCommit,
   makePruneEntry,
   makeTestConfig,
@@ -63,7 +55,7 @@ import {
   seedProvenance,
   signHeader,
   signTransaction,
-  fixturePostId, seedPostTx, fillerTx,
+  seedPostTx, fillerTx,
   coinbaseOf, withCoinbase } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
@@ -646,7 +638,7 @@ describe('block-apply journal recording', () => {
       db.initDb(':memory:');
       const utxo = await importUtxo();
       const blockApply = await importBlockApply();
-      const { computeBlockReward } = await import('../../src/services/block-creator.js');
+      await import('../../src/services/block-creator.js');
 
       const sender = makeTestIdentity();
       const miner = makeTestIdentity();
@@ -671,7 +663,7 @@ describe('block-apply journal recording', () => {
       db.initDb(':memory:');
       const utxo = await importUtxo();
       const blockApply = await importBlockApply();
-      const { computeBlockReward } = await import('../../src/services/block-creator.js');
+      await import('../../src/services/block-creator.js');
 
       const sender = makeTestIdentity();
       const miner = makeTestIdentity();
@@ -702,7 +694,7 @@ describe('block-apply journal recording', () => {
       db.initDb(':memory:');
       const utxo = await importUtxo();
       const blockApply = await importBlockApply();
-      const { computeBlockReward } = await import('../../src/services/block-creator.js');
+      await import('../../src/services/block-creator.js');
       const { materializeOutput } = await import('../../src/services/utxo-engine.js');
 
       const sender = makeTestIdentity();
@@ -737,7 +729,7 @@ describe('block-apply journal recording', () => {
       db.initDb(':memory:');
       const utxo = await importUtxo();
       const blockApply = await importBlockApply();
-      const { computeBlockReward } = await import('../../src/services/block-creator.js');
+      await import('../../src/services/block-creator.js');
 
       const voucher = makeTestIdentity();
       const target = makeTestIdentity();
@@ -792,7 +784,7 @@ describe('block-apply journal recording', () => {
       db.initDb(':memory:');
       await importUtxo();
       const blockApply = await importBlockApply();
-      const { computeBlockReward } = await import('../../src/services/block-creator.js');
+      await import('../../src/services/block-creator.js');
 
       // The total is exactly right and no value is misrouted, so the zero-value
       // clause is the only gate that can refuse this.
@@ -1534,7 +1526,6 @@ describe('block-apply mint provenance', () => {
     const utxo = await importUtxo();
     const blockApply = await importBlockApply();
     const { computeBlockReward } = await import('../../src/services/block-creator.js');
-    const { computeMintTxId } = await import('@dagsocial/types');
     // ⛔ **The coinbase is ONE transaction's outputs now, not N mint events.**
     // Each output is a `CreditBox` of the settlement, so its provenance is the
     // settlement's own `txId` at the output's own position — no synthetic mint
@@ -2031,7 +2022,7 @@ describe('block-apply H-3 post authorship and prune binding', () => {
     // `block_topology`'s author comes from `tx.post.author` now, so a fixture
     // that seeded the post and asserted an id would be testing its own
     // arithmetic — the binding under attack here is the one apply derives.
-    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'victim post');
+    const { tx: postTx, postId } = await seedPostTx(author, 'victim post');
 
     const blockApply = await importBlockApply();
 
@@ -2110,7 +2101,7 @@ describe('block-apply H-3 post authorship and prune binding', () => {
     // it, so block_topology has no author for it and it is not prunable. Held
     // locally and unconfirmed is exactly the state a gossip-only post is in.
     const author = makeTestIdentity();
-    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'unconfirmed post');
+    const { commit, postId, content } = await seedPostTx(author, 'unconfirmed post');
 
     const posts = await importPosts();
     posts.insertPost(postId, commit, content);

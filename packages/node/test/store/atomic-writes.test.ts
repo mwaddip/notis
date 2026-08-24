@@ -1,8 +1,8 @@
-import { uid, fixturePostId, makePostCommit } from '../helpers.js';
+import { uid, fixturePostId } from '../helpers.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type Database from 'better-sqlite3';
 import { computeContentHash } from '@dagsocial/types';
-import type { PostCommit, Stump } from '@dagsocial/types';
+import type { PostCommit } from '@dagsocial/types';
 
 function hex(u: Uint8Array): string { return Buffer.from(u).toString('hex'); }
 
@@ -19,10 +19,6 @@ async function importPostsFresh() {
   return import('../../src/store/posts.js');
 }
 
-async function importStumpsFresh() {
-  return import('../../src/store/stumps.js');
-}
-
 function makeCommit(overrides: Partial<PostCommit> & { content?: string } = {}): { commit: PostCommit; content: string } {
   const content = overrides.content ?? 'atomic test post';
   const { content: _, ...rest } = overrides;
@@ -35,18 +31,6 @@ function makeCommit(overrides: Partial<PostCommit> & { content?: string } = {}):
     ...rest,
   };
   return { commit, content };
-}
-
-function makeStump(overrides: Partial<Stump> = {}): Stump {
-  return {
-    rootPostHash: '0000000000000000000000000000000000000000000000000000000000000000',
-    authorId: uid('tester'),
-    replyCount: 0,
-    upvoteCount: 0,
-    protocolVersion: 1,
-    compactedAtBlockHeight: 10,
-    ...overrides,
-  };
 }
 
 describe('atomic writes', () => {
@@ -168,7 +152,7 @@ describe('atomic writes', () => {
   });
 
   it('deletePostRows + restorePostRows round-trip preserves all data', async () => {
-    const { initDb, getDb } = await importDbFresh();
+    const { initDb } = await importDbFresh();
     const { insertPost, confirmPost, deletePostRows, restorePostRows, getPost, isLivePost, getParentRefs } = await importPostsFresh();
 
     initDb(':memory:');
@@ -245,7 +229,7 @@ describe('atomic writes', () => {
   });
 
   it('deletePendingPost atomically removes post and parent refs', async () => {
-    const { initDb, getDb } = await importDbFresh();
+    const { initDb } = await importDbFresh();
     const { insertPost, deletePendingPost, getPost, getParentRefs } = await importPostsFresh();
 
     initDb(':memory:');

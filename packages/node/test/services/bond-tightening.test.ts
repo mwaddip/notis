@@ -53,7 +53,6 @@ import {
   getKarmaBoxes,
   insertBox as storeInsertBox,
   consumeBox as storeConsumeBox,
-  hasActiveVouchEscrow as storeHasActiveVouchEscrow,
 } from '../../src/store/index.js';
 import { validateTx } from '../../src/services/utxo-engine.js';
 import { computeTxId } from '@dagsocial/types';

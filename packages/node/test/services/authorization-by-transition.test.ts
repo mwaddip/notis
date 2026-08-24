@@ -44,7 +44,6 @@ import {
   getKarmaBoxes,
   insertBox as storeInsertBox,
   consumeBox as storeConsumeBox,
-  hasActiveVouchEscrow as storeHasActiveVouchEscrow,
 } from '../../src/store/index.js';
 import { validateTx } from '../../src/services/utxo-engine.js';
 import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
@@ -215,7 +214,7 @@ describe('authorization is a property of the transition', () => {
 
   const ENTRIES = Object.entries(CASES) as [AnyBox['boxType'], Case][];
 
-  function spendOf(boxType: AnyBox['boxType'], c: Case): UtxoTransaction {
+  function spendOf(_boxType: AnyBox['boxType'], c: Case): UtxoTransaction {
     const box = seedProvenance<AnyBox>(c.box(holder, other), 1, nonce++);
     storeInsertBox(box);
     return {

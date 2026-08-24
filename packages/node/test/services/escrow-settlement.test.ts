@@ -7,9 +7,6 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
-  computeBoxId,
-  computeTxId,
-  encodeTx,
   PROTOCOL_VERSION,
   VOUCH_KARMA_AMOUNT,
   MAX_BLOCK_BODY_BYTES,

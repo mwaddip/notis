@@ -1,7 +1,5 @@
 import {
-  fixtureProvenance,
   labelNonce,
-  seedAsOneTx,
   seedProvenance,
   signTransaction,
   txToJson,
@@ -12,19 +10,17 @@ import express from 'express';
 import http from 'http';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { generateKeyPairSync, createPrivateKey, sign as cryptoSign, type KeyObject } from 'crypto';
+import { createPrivateKey, sign as cryptoSign, type KeyObject } from 'crypto';
 import { initDb, closeDb, getDb } from '../../src/store/db.js';
 import {
   getKarmaBox, getKarmaBoxes, getBox as storeGetBox, insertBox as storeInsertBox } from '../../src/store/utxo.js';
 import { getIdentityRecord as storeGetIdentityRecord } from '../../src/store/identity-records.js';
-import { hasActiveVouchEscrow as storeHasActiveVouchEscrow } from '../../src/store/utxo.js';
 import { getCurrentHeight } from '../../src/store/ordering.js';
 import {
   createInvite,
 } from '../../src/services/invites.js';
 import {
   generateKeyPair,
-  computeBoxId,
   computeTxId,
   PROTOCOL_VERSION,
   KARMA_STALE_THRESHOLD_BLOCKS,
@@ -194,23 +190,6 @@ describe('invites routes', () => {
     }, 1, nonce);
     storeInsertBox(karma);
     return karma;
-  }
-
-  /** Seed the bond an invite leaves behind — there is no second box. */
-  function seedBondFor(label: string, invitee: Uint8Array): { bond: BondBox } {
-    const bond = seedProvenance<BondBox>(
-      {
-        boxType: 'bond' as const,
-        value: FIXTURE_BOND_KARMA,
-        createdAtBlock: 0,
-        inviterId,
-        inviteePublicKey: invitee,
-      },
-      1,
-      labelNonce(label),
-    );
-    storeInsertBox(bond);
-    return { bond };
   }
 
   it('POST /invites creates invite and returns 201 with pending', async () => {

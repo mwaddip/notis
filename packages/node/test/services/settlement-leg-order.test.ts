@@ -33,7 +33,6 @@ import {
   hex,
   labelNonce,
 } from '../helpers.js';
-import type { Stored } from '../helpers.js';
 
 const HEIGHT = 10;
 const EMISSION = 100n;

@@ -371,38 +371,6 @@ describe('direct mint producers attach provenance (Spec G phase C2)', () => {
   beforeEach(async () => { vi.resetModules(); });
   afterEach(() => { vi.resetModules(); });
 
-  /** Store-backed `DecayDeps`, so decay runs against real boxes. */
-  async function decayDeps() {
-    const utxo = await import('../../src/store/utxo.js');
-    const { getDb } = await import('../../src/store/db.js');
-    // Spec G phase D: the decay clock is committed state, read and written
-    // through the same injected seam as the boxes.
-    const records = await import('../../src/store/identity-records.js');
-    return {
-      getKarmaBoxes: utxo.getKarmaBoxes,
-      consumeBox: utxo.consumeBox,
-      insertBox: utxo.insertBox,
-      getIdentityRecord: records.getIdentityRecord,
-      putIdentityRecord: records.putIdentityRecord,
-      getKarmaOwners: () =>
-        (
-          getDb()
-            .prepare(
-              `SELECT DISTINCT owner FROM utxo_boxes
-               WHERE box_type = 'karma' AND spent_at_block IS NULL`,
-            )
-            .all() as { owner: Buffer }[]
-        ).map((r) => new Uint8Array(r.owner)),
-    };
-  }
-
-  const DECAY_CFG = {
-    staleThresholdBlocks: 10,
-    decayIntervalBlocks: 5,
-    decayAmount: 1n,
-    karmaMinimum: 0n,
-  };
-
   // ⛔ **DECAY HAS NO PROVENANCE CASES, BECAUSE IT PRODUCES NO BOX.** It derives
   // a plan, and the block's settlement transaction emits the replacement karma
   // as one of its outputs (NODE_INTERFACE → The settlement transaction) — so the

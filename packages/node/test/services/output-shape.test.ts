@@ -21,7 +21,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { generateKeyPairSync, sign as cryptoSign, type KeyObject } from 'crypto';
 import {
-  computeBoxId,
   computeTxId,
   POST_LOCK_THREAD_COST,
   VOUCH_KARMA_AMOUNT,
@@ -40,8 +39,6 @@ import type {
 } from '@dagsocial/types';
 import Database from 'better-sqlite3';
 import {
-  fixtureProvenance,
-  makePost,
   makePostCommit,
   seedProvenance,
   type Stored,
@@ -57,7 +54,6 @@ import {
   getKarmaBoxes,
   insertBox as storeInsertBox,
   consumeBox as storeConsumeBox,
-  hasActiveVouchEscrow as storeHasActiveVouchEscrow,
 } from '../../src/store/index.js';
 import {
   validateTx,

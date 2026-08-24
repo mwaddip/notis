@@ -1,14 +1,13 @@
 import {
-  fixtureProvenance,
   rawPublicKey,
   seedProvenance,
   signTransaction,
   txToJson,
-  uid, fixturePostId, makePostCommit } from '../helpers.js';
+  fixturePostId, makePostCommit } from '../helpers.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import express from 'express';
 import http from 'http';
-import { createHash, generateKeyPairSync, createPrivateKey } from 'crypto';
+import { generateKeyPairSync, createPrivateKey } from 'crypto';
 import { initDb, closeDb, getDb } from '../../src/store/db.js';
 import { insertPost, getPost, queryPosts, getAncestors, getSubtree, deletePostRows } from '../../src/store/posts.js';
 import { getCurrentHeight, getBlockCreatedAt } from '../../src/store/ordering.js';
@@ -29,7 +28,6 @@ import {
   generateKeyPair,
   computeContentHash,
   PROTOCOL_VERSION,
-  computeBoxId,
   computePostId,
   POST_LOCK_THREAD_COST,
   KARMA_STALE_THRESHOLD_BLOCKS,
@@ -251,7 +249,7 @@ describe('posts routes', () => {
       createdAtBlock: 0,
       owner: userId,
     }, 1);
-    const newKarmaId = newKarma.id;
+
 
     const postLockBox: CandidateOf<PostLockBox> = {
       boxType: 'post_lock',

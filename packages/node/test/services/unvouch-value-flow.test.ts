@@ -23,7 +23,6 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
-  computeBoxId,
   PROTOCOL_VERSION,
   VOUCH_KARMA_AMOUNT,
   MAX_BLOCK_BODY_BYTES,
@@ -35,7 +34,6 @@ import type {
   OrderingBlock,
 } from '@dagsocial/types';
 import {
-  fixtureProvenance,
   hex,
   makeTestConfig,
   makeTestIdentity,

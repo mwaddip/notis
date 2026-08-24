@@ -2,7 +2,6 @@ import { ByteKeyedMap } from '../helpers.js';
 import { describe, it, expect } from 'vitest';
 import {
   generateKeyPairSync,
-  type KeyObject,
 } from 'crypto';
 import {
   PROTOCOL_VERSION,
@@ -53,7 +52,6 @@ function createMockDeps(store: MockStore): VerifierDeps {
 
 describe('verifyPost', () => {
   let pubKeyRaw: Uint8Array;
-  let privKey: KeyObject;
   let userId: Uint8Array;
 
   function makeStore(): MockStore {
@@ -76,10 +74,9 @@ describe('verifyPost', () => {
   }
 
   {
-    const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+    const { publicKey } = generateKeyPairSync('ed25519');
     const pubDer = publicKey.export({ type: 'spki', format: 'der' }) as Buffer;
     pubKeyRaw = new Uint8Array(pubDer.slice(pubDer.length - 32));
-    privKey = privateKey;
     userId = pubKeyRaw;
   }
 
