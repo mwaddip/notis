@@ -103,9 +103,10 @@ default (package)         S10 P10 E3  C7  I7  A6  L9
 ```
 default (package)         S8  P10 E9  C5  I8  A9  L9
   Adversarial peers, unbounded input, and a sync loop that must resume after anything.
-  A is 9 — unusually high for this project — because the one measured performance defect
-  in the repo lives in this package's event loop, and no test can see its return.
-  See the A note above.
+  A is 9 — unusually high for this project — because this package owns the one loop that
+  runs continuously and the one input nobody rate-limits, and no gate here measures either:
+  a wasteful path in this event loop returns correct results forever, at whatever price,
+  with every suite green. See the A note above.
 ```
 
 ### @dagsocial/node
