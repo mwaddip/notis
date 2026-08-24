@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import { blockHash } from '@dagsocial/validation';
 import type { OrderingBlock } from '@dagsocial/types';
 import { postIdsOf } from '../services/block-posts.js';
 
@@ -20,6 +19,7 @@ export { KARMA_SUPPLY_TYPES } from '../karma-supply.js';
 
 export interface BlocksDeps {
   getOrderingBlock(height: number): OrderingBlock | null;
+  getOrderingBlockHash(height: number): string | null;
   getCurrentHeight(): number;
   getPostCount(): number;
   getPendingPostCount(): number;
@@ -66,7 +66,7 @@ function blockToJson(block: OrderingBlock): Record<string, unknown> {
       // transactions. There is no separate sub-block section to report.
       postIds: postIdsOf(block),
       pruneEntries: block.utxoTxTree.pruneEntries,
-      // CBOR fields omitted from JSON — UTXO tx CBOR has no meaningful
+      // Binary fields omitted from JSON — UTXO tx bytes have no meaningful
       // textual representation.
       //
       // ⛔ **There is no `coinbaseOutputs` field.** The coinbase is an output of
@@ -93,17 +93,11 @@ export function createRouter(deps: BlocksDeps): Router {
       return;
     }
 
-    // `hash` is already `string | null` here, and its `null` already means "we
-    // have no hash to give you": height 0 above, and a height whose block is
-    // missing from the store below. A stored header outside the encodable
-    // domain is the third case of the same thing, so it reports the same way
-    // rather than changing the response shape or the status code. A client
-    // reads `height > 0 && hash === null` as this node's chain being
-    // inconsistent — which it already had to, for the missing-block case.
-    const block = deps.getOrderingBlock(height);
+    // NODE_INTERFACE → "Who reads the block_hash column, and who deliberately
+    // does not". `null` means height 0 (above) or a missing row.
     res.json({
       height,
-      hash: block ? blockHash(block.header) : null,
+      hash: deps.getOrderingBlockHash(height),
     });
   });
 

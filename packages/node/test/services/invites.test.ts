@@ -201,7 +201,7 @@ describe('invites service', () => {
 
     const pooled = getPendingEntries(100);
     expect(pooled).toHaveLength(1);
-    expect(computeTxId(decodeTx(pooled[0]!.utxoTxCbor!))).toBe(result.txId);
+    expect(computeTxId(decodeTx(pooled[0]!.utxoTxBytes!))).toBe(result.txId);
   });
 
   it('createInvite charges only the bond', () => {

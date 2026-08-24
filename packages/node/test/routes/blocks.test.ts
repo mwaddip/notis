@@ -5,6 +5,7 @@ import http from 'http';
 import { initDb, closeDb, getDb } from '../../src/store/db.js';
 import {
   getOrderingBlock,
+  getOrderingBlockHash,
   getCurrentHeight,
   createOrderingBlock,
 } from '../../src/store/ordering.js';
@@ -62,6 +63,7 @@ async function request(
     // Build deps with real DB queries
     const deps = {
       getOrderingBlock,
+      getOrderingBlockHash,
       getCurrentHeight,
       getPostCount: () =>
         (

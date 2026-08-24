@@ -124,7 +124,7 @@ const MIGRATIONS = [
   `CREATE TABLE IF NOT EXISTS mempool (
     rowid INTEGER PRIMARY KEY AUTOINCREMENT,
     entry_type TEXT NOT NULL CHECK(entry_type IN ('utxo_tx', 'prune')),
-    utxo_tx_cbor BLOB,
+    utxo_tx_bytes BLOB,
     prune_entry_cbor BLOB,
     expires_at_height INTEGER NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -149,8 +149,8 @@ const MIGRATIONS = [
   // Ordering blocks
   `CREATE TABLE IF NOT EXISTS ordering_blocks (
     height INTEGER PRIMARY KEY,
-    header_cbor BLOB NOT NULL,
-    utxotx_tree_cbor BLOB NOT NULL,
+    header_bytes BLOB NOT NULL,
+    utxotx_tree_bytes BLOB NOT NULL,
     validator_signature BLOB NOT NULL,  -- 64 bytes
     created_at INTEGER NOT NULL,
     block_hash TEXT NOT NULL UNIQUE      -- 64-char lowercase hex, blockHash(header)

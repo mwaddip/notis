@@ -115,7 +115,7 @@ async function importMempoolFresh() {
     getPendingEntries: (limit: number) => Array<{
       rowid: number;
       entryType: string;
-      utxoTxCbor: Uint8Array | null;
+      utxoTxBytes: Uint8Array | null;
       expiresAtHeight: number;
       createdAt: string;
     }>;
@@ -137,6 +137,7 @@ async function importOrdering() {
   return (await import('../../src/store/ordering.js')) as {
     getCurrentHeight: () => number;
     getOrderingBlock: (height: number) => OrderingBlock | null;
+    getOrderingBlockHash: (height: number) => string | null;
     deleteOrderingBlock: (height: number) => void;
     createOrderingBlock: (block: OrderingBlock) => void;
   };
@@ -1302,7 +1303,7 @@ describe('revertBlock', () => {
     expect(journal!.appliedUtxoTxs.length).toBeGreaterThan(0);
     const txRecord = journal!.appliedUtxoTxs[0]!;
     expect(txRecord.txId).toBeTruthy();
-    expect(txRecord.txCbor).toBeInstanceOf(Uint8Array);
+    expect(txRecord.txBytes).toBeInstanceOf(Uint8Array);
 
     const insertedIds = journal!.mutations
       .filter((m) => m.kind === 'box' && m.op === 'insert')
@@ -1579,9 +1580,9 @@ describe('reorg', () => {
     // makes the like's absence a drop rather than an empty re-insert path.
     const { computeTxId, decodeTx } = await import('@dagsocial/types');
     const pooled = mempool.getPendingEntries(100)
-      .filter((e: { entryType: string; utxoTxCbor: Uint8Array | null }) =>
-        e.entryType === 'utxo_tx' && e.utxoTxCbor !== null)
-      .map((e: { utxoTxCbor: Uint8Array | null }) => computeTxId(decodeTx(e.utxoTxCbor!)));
+      .filter((e: { entryType: string; utxoTxBytes: Uint8Array | null }) =>
+        e.entryType === 'utxo_tx' && e.utxoTxBytes !== null)
+      .map((e: { utxoTxBytes: Uint8Array | null }) => computeTxId(decodeTx(e.utxoTxBytes!)));
     // The incumbent kept its place; the reverted like was not admitted beside it.
     expect(pooled).not.toContain(computeTxId(likeTx));
     // The post transaction spends a box nothing else claims, so it came back.
@@ -2952,6 +2953,42 @@ describe('handleOrderingBlock — entry', () => {
     expect(net.askedPeers).toEqual([]);
     // Height unchanged — no apply
     expect(ordering.getCurrentHeight()).toBe(1);
+  });
+
+  it('an unhashable arriving block at an empty height is not treated as already held', async () => {
+    // NODE_INTERFACE → "Who reads the block_hash column, and who deliberately
+    // does not". Without the null guard, getOrderingBlockHash(h) === null and
+    // blockHash(unhashable) === null would collide.
+    const db = await importDb();
+    db.initDb(':memory:');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const handleBlock = await importHandleBlock();
+    const ordering = await importOrdering();
+
+    await mineNextBlock(bc);
+
+    // Craft a block at an EMPTY height with an out-of-domain header field.
+    // `blockHash` returns null for an unencodable header.
+    const { blockHash } = await import('@dagsocial/validation');
+    const emptyHeight = 999;
+    const fakeBlock = ordering.getOrderingBlock(1)!;
+    const unhashable = {
+      ...fakeBlock,
+      header: {
+        ...fakeBlock.header,
+        height: emptyHeight,
+        powNonce: Number.MAX_SAFE_INTEGER + 1,
+      },
+    };
+    expect(blockHash(unhashable.header)).toBeNull();
+    expect(ordering.getOrderingBlockHash(emptyHeight)).toBeNull();
+
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const net = stubNet([], []);
+    const result = handleBlock.handleOrderingBlock(unhashable, 'peer-a', net);
+    // Must NOT return true (the "already held" short-circuit)
+    expect(result).not.toBe(true);
   });
 
   it('a non-extending pulled block returns false and triggers resolution', async () => {

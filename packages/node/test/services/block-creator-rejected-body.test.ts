@@ -366,7 +366,7 @@ describe('block creator vs a body its own mutation phase rejects', () => {
     expect(Buffer.from(handle.prover.digest()!).toString('hex')).toBe(preDigest);
   });
 
-  // The `!txCbor` arm is unreachable through `applyOrderingBlock` —
+  // The `!txBytes` arm is unreachable through `applyOrderingBlock` —
   // `verifyOrderingBlockStructure` refuses a body whose `utxoTxs` does not align
   // with `utxoTxIds` before the funnel reads either — but
   // `computePostBlockStateRoot` runs no structure check at all, so the

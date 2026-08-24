@@ -34,11 +34,11 @@ export function postsOf(block: OrderingBlock): BlockPost[] {
   const posts: BlockPost[] = [];
   const { utxoTxIds, utxoTxs } = block.utxoTxTree;
   for (let i = 0; i < utxoTxIds.length; i++) {
-    const cbor = utxoTxs[i];
-    if (!cbor) continue;
+    const raw = utxoTxs[i];
+    if (!raw) continue;
     let tx;
     try {
-      tx = decodeTx(cbor);
+      tx = decodeTx(raw);
     } catch {
       // A body that does not decode is rejected by the embedded-tx loop with a
       // stated reason. Skipping here keeps this function total so the *journal*

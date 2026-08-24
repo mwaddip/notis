@@ -539,8 +539,8 @@ describe('vouch service', () => {
       // Verify mempool has the entry
       const entries = getPendingEntries(100);
       const matching = entries.filter((e) => {
-        if (e.entryType !== 'utxo_tx' || !e.utxoTxCbor) return false;
-        const storedTx = decodeTx(e.utxoTxCbor);
+        if (e.entryType !== 'utxo_tx' || !e.utxoTxBytes) return false;
+        const storedTx = decodeTx(e.utxoTxBytes);
         return storedTx.outputs.some(
           (o) => o.boxType === 'vouch',
         );
@@ -679,8 +679,8 @@ describe('vouch service', () => {
       // Verify mempool has the entry
       const entries = getPendingEntries(100);
       const matching = entries.filter((e) => {
-        if (e.entryType !== 'utxo_tx' || !e.utxoTxCbor) return false;
-        const storedTx = decodeTx(e.utxoTxCbor);
+        if (e.entryType !== 'utxo_tx' || !e.utxoTxBytes) return false;
+        const storedTx = decodeTx(e.utxoTxBytes);
         return storedTx.inputs.includes(vouchBox.id!);
       });
       expect(matching.length).toBe(1);

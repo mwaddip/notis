@@ -52,13 +52,11 @@ export class UnhashableStoredHeaderError extends CorruptChainStateError {
 /**
  * A stored block whose bytes do not decode.
  *
- * The positional format made this the shape local corruption actually arrives
- * in. Under cbor a header outside the encodable domain round-tripped intact and
- * failed later, at `blockHash` — the sibling above. Under positional encoding it
- * never comes back out at all: `writeVlqU` sentinels an out-of-domain value so
- * the row is still *written*, and `readVlqU` refuses the ten bytes past
- * `MAX_SAFE_INTEGER` that sentinel decodes to. The store read throws first, and
- * `blockHash` is never reached.
+ * The positional format makes this the shape local corruption actually arrives
+ * in: `writeVlqU` sentinels an out-of-domain value so the row is still
+ * *written*, and `readVlqU` refuses the ten bytes past `MAX_SAFE_INTEGER` that
+ * sentinel decodes to. The store read throws first, and `blockHash` is never
+ * reached.
  *
  * **Why this is corrupt state and not a rejection, stated as provenance rather
  * than as a guess about the error class.** The decode that raises it reads a

@@ -129,7 +129,7 @@ export function createInvite(
 
   // The id must equal what block application will store, so it is materialized
   // exactly the way that path materializes it; `tx` here is client-supplied
-  // decoded CBOR, so the strip-before-append in `materializeOutput` is
+  // decoded JSON, so the strip-before-append in `materializeOutput` is
   // load-bearing.
   return {
     status: 'pending',

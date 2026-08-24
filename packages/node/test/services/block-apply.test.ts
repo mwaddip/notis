@@ -125,7 +125,7 @@ async function importMempoolFresh() {
     getPendingEntries: (limit: number) => Array<{
       rowid: number;
       entryType: string;
-      utxoTxCbor: Uint8Array | null;
+      utxoTxBytes: Uint8Array | null;
       expiresAtHeight: number;
       createdAt: string;
     }>;
@@ -355,8 +355,8 @@ describe('block-apply journal recording', () => {
     ]);
     const applied = saved!.appliedUtxoTxs[1]!;
     expect(applied.txId).toBe(computeTxId(likeTx));
-    expect(applied.txCbor).toBeInstanceOf(Uint8Array);
-    expect(computeTxId(decodeTx(applied.txCbor))).toBe(applied.txId);
+    expect(applied.txBytes).toBeInstanceOf(Uint8Array);
+    expect(computeTxId(decodeTx(applied.txBytes))).toBe(applied.txId);
 
     // The tx's box mutations live in the primitive log: input consumed,
     // change karma created (the burn shape has no other output)

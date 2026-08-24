@@ -140,7 +140,7 @@ function jsonToPostCommit(raw: unknown): PostCommit {
  * Amount fields that are bigint at runtime but arrive as decimal strings (or
  * safe-integer numbers) over the JSON HTTP API: `value` on every box type,
  * `originalValue` on PostLockBox. Coerced before validation — leaving one as
- * a number would change its CBOR encoding and so the computed box id.
+ * a number would change its positional encoding and so the computed box id.
  */
 const VALUE_BOX_FIELDS = new Set(['value', 'originalValue']);
 

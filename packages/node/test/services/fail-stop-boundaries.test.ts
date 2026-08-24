@@ -153,6 +153,7 @@ describe('route boundary (real wiring)', () => {
     const app = express();
     app.use(createRouter({
       getOrderingBlock: guardStoreRead(ordering.getOrderingBlock),
+      getOrderingBlockHash: ordering.getOrderingBlockHash,
       getCurrentHeight: ordering.getCurrentHeight,
       getPostCount: () => 0,
       getPendingPostCount: () => 0,

@@ -399,7 +399,7 @@ export function createOrderingBlock(): OrderingBlock | null {
     //    pushed here, so the fill and the trim both operate on the list they
     //    select from and never on the tail they do not own.
     const userTxIds: string[] = [];
-    const userTxCbors: Uint8Array[] = [];
+    const userTxBytesList: Uint8Array[] = [];
     const includedRowids: number[] = [];
     const utxoTxTree: UtxoTxTree = {
       utxoTxIds: [],
@@ -412,8 +412,8 @@ export function createOrderingBlock(): OrderingBlock | null {
      * write the whole body — the users' entries then the settlement, last.
      */
     const rebuildBody = (): { valid: boolean; error?: string } => {
-      const decoded = userTxCbors.map((cbor) => {
-        const tx = decodeTx(cbor);
+      const decoded = userTxBytesList.map((raw) => {
+        const tx = decodeTx(raw);
         const txId = computeTxId(tx);
         return { txId, inputs: tx.inputs, outputs: tx.outputs.map((out, i) => materializeOutput(out as AnyBox, txId, i)) };
       });
@@ -424,12 +424,12 @@ export function createOrderingBlock(): OrderingBlock | null {
         newHeight,
         computeBlockReward(newHeight),
         nodeConfig.creditMinerRewardDelay,
-        predictSettlementBody(userTxCbors, validatorId, pruneEntries),
+        predictSettlementBody(userTxBytesList, validatorId, pruneEntries),
         currentMinerPubkey ?? validatorId,
       );
       if ('error' in built) return { valid: false, error: built.error };
       utxoTxTree.utxoTxIds = [...userTxIds, computeTxId(built.tx)];
-      utxoTxTree.utxoTxs = [...userTxCbors, encodeTx(built.tx)];
+      utxoTxTree.utxoTxs = [...userTxBytesList, encodeTx(built.tx)];
       return { valid: true };
     };
 
@@ -482,8 +482,8 @@ export function createOrderingBlock(): OrderingBlock | null {
     const invitedThisBlock = new Set<string>();
     const offerBudgetTo = (klass: 'karma' | 'credit'): void => {
       for (const entry of iteratePendingEntries({ klass })) {
-        if (entry.entryType !== 'utxo_tx' || entry.utxoTxCbor === null) continue;
-        const tx = decodeTx(entry.utxoTxCbor);
+        if (entry.entryType !== 'utxo_tx' || entry.utxoTxBytes === null) continue;
+        const tx = decodeTx(entry.utxoTxBytes);
         const txId = computeTxId(tx);
         const invitee = bondInviteeOf(
           tx.outputs.map((out, i) => materializeOutput(out, txId, i)),
@@ -493,11 +493,11 @@ export function createOrderingBlock(): OrderingBlock | null {
           if (invitedThisBlock.has(inviteeHex)) continue;
           invitedThisBlock.add(inviteeHex);
         }
-        const cost = entryByteCost(entry.utxoTxCbor);
+        const cost = entryByteCost(entry.utxoTxBytes);
         if (spent + cost > budget) return;
         spent += cost;
         userTxIds.push(txId);
-        userTxCbors.push(entry.utxoTxCbor);
+        userTxBytesList.push(entry.utxoTxBytes);
         includedRowids.push(entry.rowid);
       }
     };
@@ -541,7 +541,7 @@ export function createOrderingBlock(): OrderingBlock | null {
     //    last transaction is one `verifyOrderingBlockStructure` refuses outright.
     while (userTxIds.length > 0 && utxoTxTreeByteLength(utxoTxTree) > budget) {
       userTxIds.pop();
-      userTxCbors.pop();
+      userTxBytesList.pop();
       includedRowids.pop();
       const retrimmed = rebuildBody();
       if (!retrimmed.valid) {
@@ -910,11 +910,11 @@ export function settlementDepsWith(
  * unappliable, which the speculation above is what catches.
  */
 export function predictSettlementBody(
-  txCbors: Uint8Array[],
+  txBytesList: Uint8Array[],
   validator: Uint8Array,
   pruneEntries: PruneEntry[] = [],
 ): SettlementBody {
-  const txs = txCbors.map((cbor) => decodeTx(cbor));
+  const txs = txBytesList.map((raw) => decodeTx(raw));
 
   const materialized: AnyBox[][] = [];
   const ownOutputs = new Map<string, AnyBox>();
@@ -964,14 +964,14 @@ export function predictSettlementBody(
  * would have produced, rather than a second construction that agrees by hand.
  */
 export function buildBlockSettlement(
-  txCbors: Uint8Array[],
+  txBytesList: Uint8Array[],
   height: number,
   validator: Uint8Array,
   minerOwner: Uint8Array,
   pruneEntries: PruneEntry[] = [],
 ): { tx: UtxoTransaction } | { error: string } {
-  const decoded = txCbors.map((cbor) => {
-    const tx = decodeTx(cbor);
+  const decoded = txBytesList.map((raw) => {
+    const tx = decodeTx(raw);
     const txId = computeTxId(tx);
     return { txId, inputs: tx.inputs, outputs: tx.outputs.map((out, i) => materializeOutput(out as AnyBox, txId, i)) };
   });
@@ -982,7 +982,7 @@ export function buildBlockSettlement(
     height,
     computeBlockReward(height),
     nodeConfig.creditMinerRewardDelay,
-    predictSettlementBody(txCbors, validator, pruneEntries),
+    predictSettlementBody(txBytesList, validator, pruneEntries),
     minerOwner,
   );
 }
