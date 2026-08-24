@@ -188,7 +188,7 @@ export class SyncMachine {
    *   callers that only want the state machine.
    */
   constructor(
-    private config: NetConfig,
+    config: NetConfig,
     private store: SyncStore,
     private sendToPeer: (peerId: string, data: Uint8Array) => void,
     private onProtocolViolation: (peerId: string, reason: string) => void = () => {},
