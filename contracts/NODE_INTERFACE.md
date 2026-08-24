@@ -4218,8 +4218,10 @@ funnel:
   fork resolution, bodies for served chain queries, the blocks a `ModifierResponse` serves. The
   provider node hands over wraps the store read in `failStopIfCorruptChain`: a stored row that will
   not decode stops the node ("What the funnel's totality catch is FOR") rather than failing every
-  served query and response as the peer's fault inside `net`'s contained catches. The two `/blocks` routes
-  are given the same wrapped read
+  served query and response as the peer's fault inside `net`'s contained catches. `GET /blocks/:height`
+  is given the same wrapped read; `GET /blocks/current` reads the `block_hash` column instead and
+  answers over a rotted row rather than halting ("Who reads the block_hash column, and who
+  deliberately does not")
 - **`setChainHeightProvider(getCurrentHeight)`**: the tip height `net` advertises and compares — the
   store's `MAX(height)`, the same read the block creator and fork resolution take, handed over
   unwrapped: it decodes no row, so there is nothing for `failStopIfCorruptChain` to promote. `net`
