@@ -126,7 +126,7 @@ export type {
 
 // Stumps
 export { computePruneEntryId, serializePruneEntry } from './stump.js';
-export type { PruneIntent, KarmaDelta, Stump, StumpId, PruneEntry } from './stump.js';
+export type { PruneIntent, Stump, StumpId, PruneEntry } from './stump.js';
 
 // Blocks
 //

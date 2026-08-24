@@ -7,7 +7,6 @@ import { initDb, closeDb } from '../../src/store/db.js';
 import {
   getKarmaBox,
   getKarmaBoxes,
-  getCreditBox,
   getCreditBoxes,
   getBondBoxes,
   insertBox,
@@ -61,7 +60,6 @@ async function request(
       getKarmaBox,
       getKarmaBoxes,
       getIdentityRecord,
-      getCreditBox,
       getCreditBoxes,
           getBondBoxes,
       getCurrentHeight: () => 100,
@@ -264,7 +262,7 @@ describe('UTXO routes', () => {
 
     /** Build and sign the transfer the way the demo UI does. */
     function buildSignedTransfer(amount: bigint): UtxoTransaction {
-      const unlocked = [getCreditBox(senderPubKey)!];
+      const unlocked = [getCreditBoxes(senderPubKey)[0]!];
       const selected = selectBoxes(unlocked, amount);
       const totalSelected = selected.reduce((s, b) => s + b.value, 0n);
       const change = totalSelected - amount;

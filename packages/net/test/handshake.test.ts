@@ -43,12 +43,12 @@ describe('handshake', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Frame fallback policy (audit L-15) — which decode failures may fall back
-  // to the legacy unframed raw-CBOR handshake, decided by ReaderError code
-  // (never by message text)
+  // Frame rejection policy — NET_INTERFACE → "A handshake is a frame or it
+  // is nothing." Every decode failure is a reject, decided by ReaderError
+  // code (never by message text).
   // -------------------------------------------------------------------------
 
-  describe('frame fallback policy', () => {
+  describe('frame rejection policy', () => {
     it('accepts a well-formed frame (control)', () => {
       const frame = buildHandshakeFrame(MAGIC_TESTNET, testMsg);
       const decoded = decodeHandshakePayload(MAGIC_TESTNET, frame);
@@ -95,20 +95,17 @@ describe('handshake', () => {
         .toEqual({ kind: 'reject', code: 'unsupported-version' });
     });
 
-    it('falls back to legacy raw CBOR for an unframed handshake, which still validates', () => {
+    it('rejects an unframed CBOR handshake', () => {
       const raw = new Uint8Array(encode(testMsg));
-      const decoded = decodeHandshakePayload(MAGIC_TESTNET, raw);
-      expect(decoded.kind).toBe('legacy');
-      if (decoded.kind === 'reject') return;
-      const result = validateHandshake(parseHandshakeBody(decoded.body), [1]);
-      expect(result.ok).toBe(true);
-      expect(result.msg).toEqual(testMsg);
+      expect(decodeHandshakePayload(MAGIC_TESTNET, raw))
+        .toEqual({ kind: 'reject', code: 'not-a-frame' });
     });
 
-    it('falls back for a truncated frame', () => {
+    it('rejects a truncated frame', () => {
       const frame = buildHandshakeFrame(MAGIC_TESTNET, testMsg);
       const cut = frame.subarray(0, 6); // magic (4) + version (1) + code start
-      expect(decodeHandshakePayload(MAGIC_TESTNET, cut).kind).toBe('legacy');
+      expect(decodeHandshakePayload(MAGIC_TESTNET, cut))
+        .toEqual({ kind: 'reject', code: 'not-a-frame' });
     });
   });
 

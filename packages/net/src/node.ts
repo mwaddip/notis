@@ -88,26 +88,20 @@ function leadingMagic(data: Uint8Array): number | null {
 
 export type HandshakePayload =
   | { kind: 'framed'; body: Uint8Array }
-  | { kind: 'legacy'; body: Uint8Array }
-  | { kind: 'reject'; code: 'wrong-magic' | 'unsupported-version' | 'checksum-mismatch' };
+  | { kind: 'reject'; code: 'wrong-magic' | 'unsupported-version' | 'checksum-mismatch' | 'not-a-frame' };
 
 /**
- * Decode a handshake payload per the frame error-code policy
- * (WIRE_INTERFACE → ReaderError codes):
+ * Decode a handshake payload as a frame — NET_INTERFACE → "A handshake is
+ * a frame or it is nothing."
  *
- * - a valid frame yields its body;
- * - a frame bearing a recognized foreign network magic is a wrong-network
- *   peer — closed, never retried as raw CBOR;
- * - a frame with our magic but a version above ours (a newer peer) or a
- *   failed checksum (corrupt or forged body) is rejected — falling through
- *   to the raw-CBOR parser would feed it frame bytes and misclassify the
- *   peer as adversarial (`malformed` → permanent ban);
- * - anything else — a truncated frame, or a payload whose leading bytes are
- *   no frame magic at all — falls back to the legacy unframed raw-CBOR
- *   handshake and is validated on its own merits.
+ * A valid frame yields its body. Every failure is a reject: recognized
+ * foreign magic (`wrong-magic`), unsupported frame version, checksum
+ * mismatch, or anything else — truncated data, leading bytes matching no
+ * known magic (`not-a-frame`). No payload reaches a CBOR parser except as
+ * the body of a checksum-verified frame.
  *
- * Shared by the inbound handler and the outbound response path so the two
- * cannot drift apart.
+ * NET_INTERFACE → "Ban policy": every code this function returns is
+ * frame-tier — stream closed, no penalty.
  */
 export function decodeHandshakePayload(magic: number, data: Uint8Array): HandshakePayload {
   try {
@@ -120,16 +114,16 @@ export function decodeHandshakePayload(magic: number, data: Uint8Array): Handsha
           if (lead !== null && KNOWN_FRAME_MAGICS.includes(lead)) {
             return { kind: 'reject', code: 'wrong-magic' };
           }
-          break; // not a frame at all — try the legacy path
+          return { kind: 'reject', code: 'not-a-frame' };
         }
         case 'unsupported-version':
         case 'checksum-mismatch':
           return { kind: 'reject', code: err.code };
         default:
-          break; // truncated etc. — try the legacy path
+          return { kind: 'reject', code: 'not-a-frame' };
       }
     }
-    return { kind: 'legacy', body: data };
+    return { kind: 'reject', code: 'not-a-frame' };
   }
 }
 
@@ -932,9 +926,7 @@ export class NetNode {
 
         const decoded = decodeHandshakePayload(magic, data);
         if (decoded.kind === 'reject') {
-          // Wrong network, newer frame version, or corrupt body — close the
-          // stream without the raw-CBOR retry. No penalty: none of these are
-          // evidence of misbehavior (see decodeHandshakePayload).
+          // NET_INTERFACE → "Ban policy": frame-tier reject — stream closed, no penalty.
           console.warn(`[net] inbound handshake frame from ${peerId} rejected: ${decoded.code}`);
           await stream.sink([new Uint8Array(0)]);
           return;
@@ -1298,10 +1290,7 @@ export class NetNode {
 
       const decoded = decodeHandshakePayload(magic, data);
       if (decoded.kind === 'reject') {
-        // Same policy as the inbound handler: close without the raw-CBOR
-        // retry and without a penalty. Pre-taxonomy this fell through to the
-        // CBOR parser, which misclassified the peer as malformed (permanent
-        // ban) for what is a network mismatch or a corrupt link.
+        // NET_INTERFACE → "Ban policy": frame-tier reject — no penalty.
         console.warn(`[net] outbound handshake with ${peerId}: frame rejected (${decoded.code})`);
         return {
           ok: false,

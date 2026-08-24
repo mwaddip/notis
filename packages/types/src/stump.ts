@@ -17,15 +17,6 @@ const encoder = new TextEncoder();
 const PRUNE_ENTRY_ID_DOMAIN = encoder.encode('dagsocial/prune-entry-id/1');
 
 // ---------------------------------------------------------------------------
-// Karma delta (aggregated from pruned subtree)
-// ---------------------------------------------------------------------------
-
-export interface KarmaDelta {
-  userId: UserId;
-  delta: number;
-}
-
-// ---------------------------------------------------------------------------
 // Prune intent (author signs this to authorize pruning)
 // ---------------------------------------------------------------------------
 

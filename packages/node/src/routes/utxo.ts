@@ -23,7 +23,6 @@ export interface UtxoDeps {
   getKarmaBox(owner: Uint8Array): KarmaBox | null;
   getKarmaBoxes(owner: Uint8Array): KarmaBox[];
   getIdentityRecord(owner: Uint8Array): IdentityRecord | null;
-  getCreditBox(owner: Uint8Array): CreditBox | null;
   getCreditBoxes(owner: Uint8Array): CreditBox[];
   getBondBoxes(inviterId: Uint8Array): BondBox[];
   getCurrentHeight(): number;

@@ -2552,8 +2552,7 @@ deterministic by replay, journalled with exact inverses, not in the `stateRoot`.
 | `getKarmaBox(owner)` | `(Uint8Array) => KarmaBox \| null` — single box (backward compat) |
 | `getKarmaBoxes(owner)` | `(Uint8Array) => KarmaBox[]` — multi-box listing (full boxes, keyed on `id` — the contract previously said `{ boxId, value }[]`, which was never the implementation) |
 | `getKarmaValue(owner)` | `(Uint8Array) => bigint` — **summed** value of every unspent karma box. **Consensus input** (the vouch minimum-balance gate), and the single implementation every validation path shares. It must sum, never read one box: `getKarmaBox` is `LIMIT 1` with no `ORDER BY`, so a single-box read makes the verdict a function of SQLite's physical row order — M-12's class. Kept as one store function rather than a closure per deps literal, because a consensus-critical read reproduced at each call site is the mirror pattern that produced `computeTxIdLocal` and the copied `u32BE` |
-| `getCreditBox(owner)` | `(Uint8Array) => CreditBox \| null` — single box |
-| `getCreditBoxes(owner)` | `(Uint8Array) => CreditBox[]` — multi-box, `ORDER BY value DESC` (the contract previously said `{ boxId, value, lockedUntilBlock? }[]`, which was never the implementation) |
+| `getCreditBoxes(owner)` | `(Uint8Array) => CreditBox[]` — multi-box, `ORDER BY value DESC, id` — a total order, so element `[0]` is a deterministic read; there is deliberately **no single-box credit accessor** (an unordered `LIMIT 1` names an arbitrary row — M-12's class) |
 | `getBondFor(inviteePublicKey)` | `(UserId) => BondBox \| null` — the bond naming this key; the settlement path resolves through this |
 | `getBondsInvitedAt(invitedAtBlock)` | `(number) => BondBox[]` — bonds whose invitee's record carries exactly this `invitedAtBlock`. The caller subtracts `INVITE_PROBATION_BLOCKS` from the settle height, so the store stays free of network parameters. ⛔ **The query MUST require `invitedAtBlock > 0`**: `0` is every never-invited identity, so at the single height where `settleHeight == INVITE_PROBATION_BLOCKS` the argument is `0` and an unguarded match sweeps the whole table |
 | `getBondBoxes(inviterId)` | `(UserId) => BondBox[]` — active bonds |
@@ -3824,7 +3823,15 @@ operator may safely change, and four consensus parameters were environment-tunab
 | ~~`ORDERING_BLOCK_MIN_SUB_BLOCKS`~~ | **removed** | ~~`1`~~ | Sub-block arrival no longer triggers production |
 | ~~`ORDERING_BLOCK_INTERVAL_MS`~~ | **removed** | ~~`60000`~~ | There is no producer timer. Block cadence is set by the ordering-block PoW target |
 | `MAX_MEMPOOL_ENTRIES` | `local` | `10000` | Mempool capacity |
+| `MIN_FEE_RATE_PER_BYTE` | `local` | `MIN_FEE_RATE_PER_BYTE` (`0n`) | Relay fee floor in base units per in-block byte — admission policy, not consensus (MEMPOOL_INTERFACE → Fee floor) |
 | `MAX_PEERS` | `local` | `50` | Max connected libp2p peers |
+| `MIN_PEERS` | `local` | `3` | Outbound fill floor — semantics `NET_INTERFACE → Config` |
+| `PEER_DB_CAP` | `local` | `1000` | Soft cap on PeerDb entries — semantics `NET_INTERFACE → Config` |
+| `OUTBOUND_REDIAL_COOLDOWN_MS` | `local` | `60000` | Redial cooldown per failed outbound target — semantics `NET_INTERFACE → Config` |
+| `PENALTY_SCORE_THRESHOLD` | `local` | `500` | Accrued-penalty score that trips a temporal ban — semantics `NET_INTERFACE → Peer Penalty System` |
+| `TEMPORAL_BAN_DURATION_MS` | `local` | `3600000` | Temporal ban length — semantics `NET_INTERFACE → Peer Penalty System` |
+| `PENALTY_SAFE_INTERVAL_MS` | `local` | `120000` | Quiet interval after which accrued penalty decays — semantics `NET_INTERFACE → Peer Penalty System` |
+| `SYNC_REQUEST_TIMEOUT_MS` | `local` | `10000` | Abort timeout on one sync request — semantics `NET_INTERFACE → Config` |
 | `MAX_PROOF_HISTORY` | `local` | `1440` | AVL versions retained for proof serving |
 | `PORT` | `operational` | `3000` | HTTP listen port |
 | `ADMIN_PORT` | `operational` | `3001` | Admin listener port |

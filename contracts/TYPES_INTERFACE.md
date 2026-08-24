@@ -218,6 +218,7 @@ because deriving it is the thing that cannot be done.
 | `leafHash(domain, data)` | `blake2b512(utf8(domain ‖ "\0") ‖ data)[:32]` — domain-separated leaf so a leaf in one tree can't collide with a leaf in another. |
 | `nodeHash(left, right)` | `blake2b512(NODE_TAG ‖ left ‖ right)[:32]` — internal-node hash of two children. |
 | `buildMerkleRoot(leaves)` | Binary Merkle root over ordered leaf hashes. Empty → 32 zero bytes; single leaf → that leaf. **Odd levels PROMOTE the unpaired last node unchanged — they do NOT duplicate it** (see below). |
+| `hexToBuf(hex)` | `(string) => Buffer` — throws on odd length; an even-length string is decoded by `Buffer.from(hex, 'hex')`, which **stops at the first non-hex character**, so the output can be shorter than `hex.length / 2`. Not an alphabet check: the apply-path callers that feed leaf builds get their alphabet pinned upstream, by `verifyOrderingBlockStructure`'s per-element hex checks. |
 
 **Odd-level rule — NORMATIVE, and it is not the Bitcoin default.** When a level has an
 odd number of nodes the unpaired last node is **promoted to the next level unchanged**;
@@ -1071,6 +1072,7 @@ recompute the hash and check the signature.
 | `computeTxId(tx)` | `(UtxoTransaction) => TxId` | Transaction id over candidates |
 | `computeMintTxId(height, reason, subject)` | `(number, MintReason, Uint8Array) => TxId` | Synthetic transaction id for boxes with no creating transaction — genesis seeding and post-lock vesting; everything else is a settlement output with an ordinary id. `subject` encoding is defined per reason — see `NODE_INTERFACE.md` |
 | `canonicalBoxBytes(candidate)` | `(BoxCandidate) => Uint8Array` | The single canonical identity encoding. Exported so tests and mirror implementations (demo UI, light client) assert against the encoder that computes ids, not a lookalike |
+| `selectBoxes(boxes, requiredAmount)` | `(T[], bigint) => T[]` where `T extends { value: bigint }` | Largest-first UTXO selection — a greedy prefix of the **given** order until `requiredAmount` is covered; throws when the boxes' total falls short. **Precondition: the caller supplies boxes sorted by value descending** — the function imposes no order of its own, so its determinism is exactly its caller's. A transaction-builder helper (the faucet's invite and transfer builders are the consumers); no block-application path calls it |
 
 ---
 
@@ -2828,42 +2830,10 @@ above it.
 
 ---
 
-## Journal Event Types
-
-`JournalEvent`:
-```
-{
-  event: string,        // stable marker identifier
-  level: "INFO" | "WARN" | "ERROR",
-  timestamp: string,    // ISO 8601
-  ...fields             // event-specific fields per JOURNAL_EVENTS.md
-}
-```
-
-## DAG Structural Types
-
-`CanonicalBranchEntry`:
-```
-{
-  depth: uint32,
-  postId: bytes[32]
-}
-```
-
-`PostScore`:
-```
-{
-  postId: bytes[32],
-  cumulativeScore: uint64
-}
-```
-
----
-
 ## Preconditions
 - Node.js ≥ 22
-- `cbor-x` installed
-- No other DAGsocial packages needed at build time
+- `@dagsocial/wire` is the only dependency — this package has no runtime dependency outside
+  the workspace; in particular it does not depend on `cbor-x`
 
 ## Postconditions
 - Build produces `dist/index.js` (ESM) + `dist/index.d.ts`
