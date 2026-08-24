@@ -43,12 +43,12 @@ describe('handshake', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Frame fallback policy (audit L-15) — which decode failures may fall back
-  // to the legacy unframed raw-CBOR handshake, decided by ReaderError code
-  // (never by message text)
+  // Frame rejection policy — NET_INTERFACE → "A handshake is a frame or it
+  // is nothing." Every decode failure is a reject, decided by ReaderError
+  // code (never by message text).
   // -------------------------------------------------------------------------
 
-  describe('frame fallback policy', () => {
+  describe('frame rejection policy', () => {
     it('accepts a well-formed frame (control)', () => {
       const frame = buildHandshakeFrame(MAGIC_TESTNET, testMsg);
       const decoded = decodeHandshakePayload(MAGIC_TESTNET, frame);
@@ -95,20 +95,36 @@ describe('handshake', () => {
         .toEqual({ kind: 'reject', code: 'unsupported-version' });
     });
 
-    it('falls back to legacy raw CBOR for an unframed handshake, which still validates', () => {
+    it('rejects an unframed CBOR handshake without banning', () => {
       const raw = new Uint8Array(encode(testMsg));
       const decoded = decodeHandshakePayload(MAGIC_TESTNET, raw);
-      expect(decoded.kind).toBe('legacy');
-      if (decoded.kind === 'reject') return;
-      const result = validateHandshake(parseHandshakeBody(decoded.body), [1]);
-      expect(result.ok).toBe(true);
-      expect(result.msg).toEqual(testMsg);
+      expect(decoded).toEqual({ kind: 'reject', code: 'not-a-frame' });
+
+      // NET_INTERFACE → "Ban policy": frame-tier reject earns no penalty.
+      // A reject kind causes the handler to close without calling
+      // recordPenaltyKind, so a fresh peer stays unbanned.
+      const mgr = new PeerManager({
+        magic: 0x54444147, bootstrapPeers: [], listenAddrs: '/ip4/0.0.0.0/tcp/0',
+        maxPeers: 10, penaltyScoreThreshold: 500, temporalBanDurationMs: 3_600_000,
+        penaltySafeIntervalMs: 120_000, syncRequestTimeoutMs: 10_000,
+      });
+      mgr.addPeer({ id: 'peer1', multiaddrs: [], protocols: [], connectedAt: 0 });
+      expect(mgr.isBanned('peer1')).toBe(false);
     });
 
-    it('falls back for a truncated frame', () => {
+    it('rejects a truncated frame without banning', () => {
       const frame = buildHandshakeFrame(MAGIC_TESTNET, testMsg);
       const cut = frame.subarray(0, 6); // magic (4) + version (1) + code start
-      expect(decodeHandshakePayload(MAGIC_TESTNET, cut).kind).toBe('legacy');
+      expect(decodeHandshakePayload(MAGIC_TESTNET, cut))
+        .toEqual({ kind: 'reject', code: 'not-a-frame' });
+
+      const mgr = new PeerManager({
+        magic: 0x54444147, bootstrapPeers: [], listenAddrs: '/ip4/0.0.0.0/tcp/0',
+        maxPeers: 10, penaltyScoreThreshold: 500, temporalBanDurationMs: 3_600_000,
+        penaltySafeIntervalMs: 120_000, syncRequestTimeoutMs: 10_000,
+      });
+      mgr.addPeer({ id: 'peer1', multiaddrs: [], protocols: [], connectedAt: 0 });
+      expect(mgr.isBanned('peer1')).toBe(false);
     });
   });
 
