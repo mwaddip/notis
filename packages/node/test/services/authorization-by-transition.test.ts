@@ -44,7 +44,6 @@ import {
   getKarmaBoxes,
   insertBox as storeInsertBox,
   consumeBox as storeConsumeBox,
-  hasActiveVouchEscrow as storeHasActiveVouchEscrow,
 } from '../../src/store/index.js';
 import { validateTx } from '../../src/services/utxo-engine.js';
 import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
@@ -215,7 +214,7 @@ describe('authorization is a property of the transition', () => {
 
   const ENTRIES = Object.entries(CASES) as [AnyBox['boxType'], Case][];
 
-  function spendOf(boxType: AnyBox['boxType'], c: Case): UtxoTransaction {
+  function spendOf(c: Case): UtxoTransaction {
     const box = seedProvenance<AnyBox>(c.box(holder, other), 1, nonce++);
     storeInsertBox(box);
     return {
@@ -244,7 +243,7 @@ describe('authorization is a property of the transition', () => {
 
     for (const [boxType, c] of ENTRIES) {
       it(`${boxType}: unsigned is refused, with a verdict rather than a throw`, () => {
-        const result = validateTx(deps, spendOf(boxType, c), 10);
+        const result = validateTx(deps, spendOf(c), 10);
         expect(result.valid).toBe(false);
         expect(result.error).toBeTypeOf('string');
       });
@@ -260,7 +259,7 @@ describe('authorization is a property of the transition', () => {
 
     for (const [boxType, c] of signing) {
       it(`${boxType}: the named key authorizes the spend`, () => {
-        const tx = spendOf(boxType, c);
+        const tx = spendOf(c);
         signTransaction(tx, holder.privateKey, toHex(holder.userId));
 
         const result = validateTx(deps, tx, 10);
@@ -268,7 +267,7 @@ describe('authorization is a property of the transition', () => {
       });
 
       it(`${boxType}: a stranger's signature does not`, () => {
-        const tx = spendOf(boxType, c);
+        const tx = spendOf(c);
         signTransaction(tx, stranger.privateKey, toHex(stranger.userId));
 
         expect(validateTx(deps, tx, 10).valid).toBe(false);
@@ -278,7 +277,7 @@ describe('authorization is a property of the transition', () => {
         // `other` is the vouch target and the invite's invitee — a key the box
         // itself names, which is the near miss a stranger does not test. For
         // karma and credit it is simply a second real key.
-        const tx = spendOf(boxType, c);
+        const tx = spendOf(c);
         signTransaction(tx, other.privateKey, toHex(other.userId));
 
         expect(validateTx(deps, tx, 10).valid).toBe(false);
@@ -303,7 +302,7 @@ describe('authorization is a property of the transition', () => {
     for (const [boxType, c] of barred) {
       it(`${boxType}: refused unsigned, and refused signed by every key involved`, () => {
         for (const id of [null, holder, other, stranger]) {
-          const tx = spendOf(boxType, c);
+          const tx = spendOf(c);
           if (id !== null) signTransaction(tx, id.privateKey, toHex(id.userId));
 
           const result = validateTx(deps, tx, 10);

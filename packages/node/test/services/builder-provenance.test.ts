@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createPrivateKey } from 'crypto';
 import {
-  computeBoxId,
   computeTxId,
   generateKeyPair,
   PROTOCOL_VERSION,
@@ -17,7 +16,6 @@ import { insertBox, getBox, getKarmaBoxes } from '../../src/store/utxo.js';
 import { createInvite } from '../../src/services/invites.js';
 import { validateTx, materializeOutput } from '../../src/services/utxo-engine.js';
 import {
-  fixtureProvenance,
   seedProvenance,
   signTransaction,
   FIXTURE_BOND_KARMA,

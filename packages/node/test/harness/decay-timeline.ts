@@ -3,7 +3,6 @@ import { createHash } from 'node:crypto';
 import { computeBoxId } from '@dagsocial/types';
 import type { KarmaBox } from '@dagsocial/types';
 import {
-  fixtureProvenance,
   labelNonce,
   seedProvenance,
 } from '../helpers.js';

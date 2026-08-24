@@ -12,7 +12,7 @@ import {
   PROTOCOL_VERSION,
   decodePostBody,
 } from '@dagsocial/types';
-import type { BlockHeader, OrderingBlock, Post } from '@dagsocial/types';
+import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
 import { NetNode } from '../src/node.js';
 import { decodeFrame, encodeFrame } from '../src/frame.js';
 import {
@@ -25,7 +25,6 @@ import {
 } from '../src/sync-codec.js';
 import {
   MSG_BLOCKS,
-  MSG_GET_BLOCKS,
   MSG_GET_HEADERS,
   MSG_HEADERS,
   MSG_MODIFIER_RESPONSE,

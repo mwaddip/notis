@@ -23,7 +23,6 @@ import { fileURLToPath } from 'node:url';
 import { generateKeyPairSync, sign as cryptoSign, type KeyObject } from 'crypto';
 import Database from 'better-sqlite3';
 import {
-  computeBoxId,
   computeTxId,
   PROTOCOL_VERSION,
   VOUCH_KARMA_AMOUNT,
@@ -42,7 +41,6 @@ import type {
 } from '@dagsocial/types';
 
 import {
-  fixtureProvenance,
   rawPublicKey,
   seedProvenance,
   signTransaction,

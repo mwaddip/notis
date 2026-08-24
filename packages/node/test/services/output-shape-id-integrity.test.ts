@@ -11,7 +11,7 @@
  * the door shut.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { generateKeyPairSync, sign as cryptoSign, createHash, type KeyObject } from 'crypto';
+import { generateKeyPairSync, sign as cryptoSign, type KeyObject } from 'crypto';
 import {
   computeBoxId,
   computeTxId,
@@ -25,11 +25,7 @@ import {
 import type { AnyBox, KarmaBox, CreditBox, PostCommit, UtxoTransaction } from '@dagsocial/types';
 import Database from 'better-sqlite3';
 import {
-  fixtureProvenance,
-  makePost,
   makePostCommit,
-  makeTestIdentity,
-  seedAsOneTx,
   seedProvenance,
   type Stored,
   FIXTURE_BOND_KARMA,
@@ -44,7 +40,6 @@ import {
   getKarmaBoxes,
   insertBox as storeInsertBox,
   consumeBox as storeConsumeBox,
-  hasActiveVouchEscrow as storeHasActiveVouchEscrow,
 } from '../../src/store/index.js';
 import { validateTx, applyTx } from '../../src/services/utxo-engine.js';
 import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';

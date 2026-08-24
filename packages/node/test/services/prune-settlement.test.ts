@@ -1,16 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { computeBoxId, computeMintTxId, PROTOCOL_VERSION } from '@dagsocial/types';
+import { PROTOCOL_VERSION } from '@dagsocial/types';
 import type {
   PostLockBox,
   KarmaBox,
   OrderingBlock,
-  Post,
   Stump,
 } from '@dagsocial/types';
 import type { BlockJournal, BoxMutation } from '../../src/store/journal.js';
 import type Database from 'better-sqlite3';
 import {
-  fixtureProvenance,
   hex,
   makeApplicableBlock,
   makePruneEntry,
@@ -103,13 +101,6 @@ async function journaled(height: number, fn: () => void): Promise<BlockJournal> 
 function removedIds(journal: BlockJournal): string[] {
   return journal.mutations
     .filter((m) => m.kind === 'box' && m.op === 'remove')
-    .map((m) => (m as BoxMutation).boxId);
-}
-
-/** boxIds of box 'insert' mutations, in application order. */
-function insertedIds(journal: BlockJournal): string[] {
-  return journal.mutations
-    .filter((m) => m.kind === 'box' && m.op === 'insert')
     .map((m) => (m as BoxMutation).boxId);
 }
 
@@ -379,7 +370,7 @@ describe('planPruneSettlement', () => {
   });
 
   it('skips already-spent boxes', async () => {
-    const { getDb } = await importDb();
+    await importDb();
     const utxo = await importUtxo();
     const { planPruneSettlement } = await importSettlePruneUtxo();
 
@@ -401,7 +392,7 @@ describe('planPruneSettlement', () => {
   });
 
   it('aggregates refunds per author across multiple posts', async () => {
-    const { getDb } = await importDb();
+    await importDb();
     const utxo = await importUtxo();
     const { planPruneSettlement } = await importSettlePruneUtxo();
 
@@ -448,7 +439,7 @@ describe('planPruneSettlement', () => {
   });
 
   it('PostLockBox with zero value is not consumed', async () => {
-    const { getDb } = await importDb();
+    await importDb();
     const utxo = await importUtxo();
     const { planPruneSettlement } = await importSettlePruneUtxo();
 
@@ -518,7 +509,7 @@ describe('planPruneSettlement', () => {
   // The case that distinguishes this rule from a plain "stop refunding": one
   // subtree holding both the pruner's own bond and someone else's.
   it("a mixed subtree burns the pruner's lock and returns only the other author's", async () => {
-    const { getDb } = await importDb();
+    await importDb();
     const utxo = await importUtxo();
     const { planPruneSettlement } = await importSettlePruneUtxo();
 
@@ -550,7 +541,7 @@ describe('planPruneSettlement', () => {
   // "…on the root and on their own replies downstream" — the burn is keyed on
   // each lock's owner, not on the subtree's root.
   it("burns the pruning author's own reply lock, not just the root's", async () => {
-    const { getDb } = await importDb();
+    await importDb();
     const utxo = await importUtxo();
     const { planPruneSettlement } = await importSettlePruneUtxo();
 
@@ -652,10 +643,6 @@ describe('planPruneSettlement', () => {
  * expectation independently is what makes these tests fail when the encoder
  * drops `rootPostHash` rather than move with it.
  */
-function expectedSubject(rootPostHash: string, key: Uint8Array): Uint8Array {
-  return new Uint8Array(Buffer.concat([Buffer.from(rootPostHash, 'utf-8'), Buffer.from(key)]));
-}
-
 /** Every karma row the settlement left behind, oldest insert first. */
 function karmaRows(db: Database.Database): Array<{
   tx_id: string | null;
@@ -770,7 +757,7 @@ describe('Full prune lifecycle (UTXO settlement path)', () => {
   });
 
   it("full lifecycle: create posts, prune, verify the reply author's refund", async () => {
-    const { getDb } = await importDb();
+    await importDb();
     const utxo = await importUtxo();
     const topology = await importTopology();
     const { planPruneSettlement } = await importSettlePruneUtxo();

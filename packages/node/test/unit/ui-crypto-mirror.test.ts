@@ -1,4 +1,3 @@
-import { fixturePostId } from '../helpers.js';
 /**
  * TS ↔ JS mirror: the demo UI must encode posts, boxes and transactions
  * byte-identically to `@dagsocial/types` — TYPES_INTERFACE → Canonical field
@@ -40,7 +39,7 @@ import { jsonToTx } from '../../src/routes/json-to-tx.js';
 import { extractDeclaration as extractDeclarationFrom } from './extract-declaration.js';
 import type {
   CandidateOf,
-  Post, PostCommit, KarmaBox, CreditBox, GenesisProofBox, BondBox, PostLockBox, VouchBox,
+  PostCommit, KarmaBox, CreditBox, GenesisProofBox, BondBox, PostLockBox, VouchBox,
   EmissionBox, TreasuryBox, FeeBox, KarmaPoolBox, LikeAccrualBox, VouchEscrowBox,
   AnyBox, UtxoTransaction,
 } from '@dagsocial/types';
@@ -1198,7 +1197,6 @@ describe('demo UI ↔ @dagsocial/types likeTarget tail mirror (P2-D)', () => {
  * refuses.
  */
 const LIKE_AUTHOR_HEX = '7a'.repeat(32);
-const VOUCHER_HEX = '02'.repeat(32);
 /**
  * A release height clearing the engine's floor.
  *

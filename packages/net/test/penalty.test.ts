@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { PeerManager } from '../src/peer-mgr.js';
 import { NetNode } from '../src/node.js';
-import { PenaltyKind, PeerState } from '../src/types.js';
+import { PenaltyKind } from '../src/types.js';
 import type { NetConfig, NetValidators, Peer } from '../src/types.js';
 
 function makeConfig(overrides: Partial<NetConfig> = {}): NetConfig {

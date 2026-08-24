@@ -1,4 +1,4 @@
-import { makeTestConfig, uid } from './helpers.js';
+import { makeTestConfig } from './helpers.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import http from 'http';
 import type { AddressInfo } from 'net';

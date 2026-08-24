@@ -34,7 +34,6 @@ import {
   getIdentityRecord as storeGetIdentityRecord,
   putIdentityRecord as storePutIdentityRecord,
   consumeBox as storeConsumeBox,
-  hasActiveVouchEscrow as storeHasActiveVouchEscrow,
   getPendingEntries,
 } from '../../src/store/index.js';
 import { createInvite } from '../../src/services/invites.js';
@@ -83,8 +82,6 @@ describe('invites service', () => {
   let inviterPubKeyHex: string;
   let inviterId: Uint8Array;
   let inviteePubKey: Uint8Array;
-  let inviteePubKeyHex: string;
-  let inviteePrivKey: KeyObject;
 
   function makeDeps(): UtxoEngineDeps {
     return {
@@ -133,8 +130,6 @@ describe('invites service', () => {
 
     const inviteeKeys = generateKeyPairSync('ed25519');
     inviteePubKey = rawPublicKey(inviteeKeys.publicKey);
-    inviteePrivKey = inviteeKeys.privateKey;
-    inviteePubKeyHex = Buffer.from(inviteePubKey).toString('hex');
 
     deps = makeDeps();
   });

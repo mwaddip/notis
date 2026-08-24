@@ -90,7 +90,6 @@ export function createApp(config: Config): express.Express {
     const desc = descRaw.replace(/\s+/g, ' ').replace(/"/g, '&quot;').trim();
 
     const publicBase = config.publicUrl.replace(/\/$/, '');
-    const apiBase = publicBase ? `${publicBase}/api` : '';
     const proto = (req.headers['x-forwarded-proto'] as string) ?? req.protocol;
     const host = (req.headers['x-forwarded-host'] as string) ?? req.get('host') ?? 'localhost';
     const canonicalUrl = `${proto}://${host}${publicBase}/?post=${encodeURIComponent(postId)}`;

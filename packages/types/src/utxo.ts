@@ -2,7 +2,6 @@ import { createHash } from 'crypto';
 import { ByteReader, ByteWriter, ReaderError } from '@dagsocial/wire';
 import { MAX_GENESIS_PROOF_PAYLOAD_BYTES } from './constants.js';
 import {
-  u32BE,
   type StructCodec,
   decodeStruct,
   encodeStruct,

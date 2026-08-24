@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import type Database from 'better-sqlite3';
 import { uid } from '../helpers.js';
 
 /**

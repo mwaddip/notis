@@ -20,8 +20,8 @@ import {
   ed25519PublicKeyToKeyObject,
 } from '../src/verify.js';
 import { isDisallowedContentCodepoint, PINNED_UNICODE_VERSION } from '../src/content-charset.js';
-import { generateKeyPair, computePostId, computeTxId, computeContentHash, postFieldBytes, EMPTY_STATE_ROOT, MAX_CONTENT_BYTES, MAX_PARENT_REFS, MAX_TX_BYTES, MAX_BLOCK_BODY_BYTES, ORDERING_BLOCK_POW_TARGET_FLOOR, PROTOCOL_VERSION, encodeHeader, encodeTx, encodeUtxoTxTree, utxoTxTreeByteLength, ByteWriter, writeHexNOrThrow, writeBytesNOrThrow, writeVlqU, writeLp } from '@dagsocial/types';
-import type { Post, PostCommit, PruneEntry, BlockHeader, OrderingBlock, UtxoTransaction, AnyBoxCandidate } from '@dagsocial/types';
+import { generateKeyPair, computePostId, computeTxId, computeContentHash, postFieldBytes, EMPTY_STATE_ROOT, MAX_PARENT_REFS, MAX_TX_BYTES, MAX_BLOCK_BODY_BYTES, ORDERING_BLOCK_POW_TARGET_FLOOR, encodeTx, encodeUtxoTxTree, utxoTxTreeByteLength, ByteWriter, writeHexNOrThrow, writeBytesNOrThrow, writeVlqU, writeLp } from '@dagsocial/types';
+import type { PostCommit, PruneEntry, BlockHeader, OrderingBlock, UtxoTransaction, AnyBoxCandidate } from '@dagsocial/types';
 
 /**
  * `blockHash` for a fixture the test has just built and asserts is in-domain.
@@ -1935,7 +1935,6 @@ describe('no-panic on malformed input (M-5)', () => {
   });
 
   const goodCommit = makeGoodCommit();
-  const goodInput = Buffer.from('pow input');
   const goodBlock: OrderingBlock = {
     header: makeHeader(),
     utxoTxTree: { utxoTxIds: [SETTLEMENT_ID], utxoTxs: [SETTLEMENT_BYTES], pruneEntries: [] },
@@ -2234,12 +2233,6 @@ describe('integer guard on protocolVersion and type membership (M-6)', () => {
 
 describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
   const kp = generateKeyPair();
-  const priv = createPrivateKey({
-    key: Buffer.from(kp.secretKey),
-    format: 'der',
-    type: 'pkcs8',
-  });
-  const pubKeyObj = ed25519PublicKeyToKeyObject(kp.publicKey);
 
   /**
    * A well-formed commit — every field in domain. The `PostCommit` the

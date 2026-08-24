@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeAll, vi } from 'vitest';
-import { createPrivateKey, sign } from 'crypto';
 import {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
@@ -437,7 +436,6 @@ describe('tx topic validator — the post membership gate', () => {
   });
 
   it('a non-post packet delivers content === undefined', () => {
-    const seen: Array<{ content: string | undefined }> = [];
     const { topicValidators, peerMgr } = makeHarness(new Set());
     const validate = topicValidators.get(TOPICS.tx)!;
     const peer = newPeer(peerMgr);

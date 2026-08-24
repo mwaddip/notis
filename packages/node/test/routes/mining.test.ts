@@ -201,9 +201,6 @@ describe('mining routes — auth', () => {
 
 describe('mining routes — the template carries no sub-block fields', () => {
   it('subBlockRefs and subBlockEntries are absent from the template JSON', async () => {
-    const committedId = 'aa'.repeat(32);
-    const poisonId = 'bb'.repeat(32);
-
     // ⚠ **There is no poison half to build.** A template carries ONE committed
     // body, and the post ids the miner reads are derived from its post-bearing
     // transactions rather than stored beside them — so there is no second list

@@ -1,4 +1,4 @@
-import { uid, fixturePostId, makePostCommit } from '../helpers.js';
+import { uid, fixturePostId } from '../helpers.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { initDb, closeDb } from '../../src/store/db.js';
 import {
@@ -15,11 +15,9 @@ import {
   getSubtree,
   isLivePost,
 } from '../../src/store/posts.js';
-import { insertStump, deleteStump } from '../../src/store/stumps.js';
-import { insertBlockTopology } from '../../src/store/topology.js';
 import { computeContentHash } from '@dagsocial/types';
 import { unlinkSync } from 'node:fs';
-import type { PostCommit, Stump } from '@dagsocial/types';
+import type { PostCommit } from '@dagsocial/types';
 
 const TEST_DB = '/tmp/dagsocial-test-posts-store.sqlite';
 
@@ -37,18 +35,6 @@ function makeCommit(overrides: Partial<PostCommit> & { content?: string } = {}):
     ...rest,
   };
   return { commit, content };
-}
-
-function makeStump(rootPostHash: string, overrides: Partial<Stump> = {}): Stump {
-  return {
-    rootPostHash,
-    authorId: uid('author-integration'),
-    replyCount: 0,
-    upvoteCount: 0,
-    protocolVersion: 1,
-    compactedAtBlockHeight: 1,
-    ...overrides,
-  };
 }
 
 describe('posts store (integration)', () => {

@@ -45,7 +45,6 @@ import {
   activateProverOverStore,
   makeApplicableBlock,
   makeKarmaBox,
-  makeTestConfig,
   makeTestIdentity,
   seedPostTx,
   signTransaction,
@@ -57,15 +56,6 @@ import {
 const PROBATION = 3;
 /** Short enough that an escrow releases inside a test's block budget. */
 const COOLDOWN = 2;
-
-const testConfig = makeTestConfig({
-  dbPath: ':memory:',
-  networkType: 'devnet' as const,
-  nodeRole: 'miner' as const,
-  orderingBlockPowTargetBits: 3072,
-  inviteProbationBlocks: PROBATION,
-  vouchCooldownBlocks: COOLDOWN,
-});
 
 // ---------------------------------------------------------------------------
 // The conservation set — classified per type, exhaustively

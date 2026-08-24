@@ -1,25 +1,20 @@
 import {
-  fixtureProvenance,
-  rawPublicKey,
   seedProvenance,
   signTransaction,
   txToJson, fixturePostId } from '../helpers.js';
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import express from 'express';
 import http from 'http';
-import { generateKeyPairSync, createPrivateKey, type KeyObject } from 'crypto';
+import { createPrivateKey, type KeyObject } from 'crypto';
 import { initDb, closeDb, getDb } from '../../src/store/db.js';
 import { insertPost } from '../../src/store/posts.js';
 import {
   insertBox, getKarmaBox, getKarmaBoxes, getBox as storeGetBox } from '../../src/store/utxo.js';
 import { getIdentityRecord as storeGetIdentityRecord } from '../../src/store/identity-records.js';
-import { hasActiveVouchEscrow as storeHasActiveVouchEscrow } from '../../src/store/utxo.js';
 import { getCurrentHeight } from '../../src/store/ordering.js';
 import { castLike } from '../../src/services/likes.js';
 import {
   generateKeyPair,
-  computeBoxId,
-  computePostId,
   LIKE_KARMA_COST,
   PROTOCOL_VERSION,
   KARMA_STALE_THRESHOLD_BLOCKS,

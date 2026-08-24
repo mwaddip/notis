@@ -7,7 +7,6 @@ import {
   type KeyObject,
 } from 'crypto';
 import {
-  computePostId,
   computePruneEntryId,
   computeContentHash,
   leafHash,
@@ -15,7 +14,7 @@ import {
   hexToBuf,
   PROTOCOL_VERSION,
 } from '@dagsocial/types';
-import type { Post, PostCommit, PruneIntent, PruneEntry } from '@dagsocial/types';
+import type { Post, PostCommit, PruneIntent } from '@dagsocial/types';
 
 import {
   initDb,
@@ -344,7 +343,7 @@ describe('stump-engine', () => {
 
     // Build the intent while the subtree is live, then settle as block-apply
     // does: insertStump, then deletePostRows.
-    const replyId = insertTestPost(makePost('Reply2', authorId, [rootId]));
+    insertTestPost(makePost('Reply2', authorId, [rootId]));
     const intent = signPruneIntent(rootId, authorId, authorPrivKey);
     insertStump({
       rootPostHash: rootId,

@@ -82,7 +82,6 @@ import type {
   BondBox,
   CreditBox,
   EmissionBox,
-  KarmaBox,
   KarmaPoolBox,
   LikeAccrualBox,
   TreasuryBox,

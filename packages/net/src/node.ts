@@ -46,7 +46,7 @@ import { PeerDb, type PeerStorage } from './peerdb.js';
 import { SyncMachine } from './sync-machine.js';
 import type { SyncStore } from './sync-machine.js';
 import { OutboundManager } from './outbound-mgr.js';
-import { encodeFrame, decodeFrame, KNOWN_FRAME_MAGICS } from './frame.js';
+import { decodeFrame, KNOWN_FRAME_MAGICS } from './frame.js';
 import {
   buildHandshakeFrame,
   handshakePenalty,

@@ -15,7 +15,6 @@ import {
   UnhashableStoredHeaderError,
   failStopIfCorruptChain,
 } from './corrupt-state.js';
-import type { DecayDeps, DecayPlan } from './decay.js';
 import { config } from '../config.js';
 import {
   collectPostBodyKarma,
@@ -48,7 +47,6 @@ import {
 } from './utxo-engine.js';
 import {
   getKarmaBox,
-  getKarmaBoxes,
   getKarmaValue,
   getPost,
   insertStump,
@@ -71,14 +69,9 @@ import {
   getTopologyAuthorBytes,
   getIdentityRecord,
   putIdentityRecord,
-  getEmissionBox,
-  getTreasuryBox,
-  getKarmaPoolBox,
   hasLikeRecord,
   insertLikeRecord,
   getLikeRecordCount,
-  getBondFor,
-  getBondsInvitedAt,
   getPostLockBox,
   getVouchEscrowsReleasableAt,
   purgeRefusedHeaders,
@@ -106,8 +99,6 @@ import {
   MAX_REORG_DEPTH,
   GENESIS_PREV_BLOCK_HASH,
   PROTOCOL_VERSION,
-  INVITE_BOND_VEST_PER_LIKES,
-  LIKES_PER_KARMA_PAYOUT,
   POST_LOCK_UNLOCK_PER_LIKES,
   computeTxId,
   computePruneEntryId,
@@ -117,10 +108,8 @@ import {
 } from '@dagsocial/types';
 import type {
   AnyBox,
-  EmissionBox,
   KarmaBox,
   OrderingBlock,
-  TreasuryBox,
   UtxoTransaction,
 } from '@dagsocial/types';
 

@@ -55,22 +55,6 @@ const validators: NetValidators = {
   verifyPostBody,
 };
 
-/** A store wired to serve blocks by height, with id providers. */
-function storeServing(blocks: Map<number, unknown>, ids?: Map<number, string>): LazySyncStore {
-  const store = new LazySyncStore(validators);
-  store.setOrderingBlockFn((h) => blocks.get(h) ?? null);
-  let max = 0;
-  for (const h of blocks.keys()) if (h > max) max = h;
-  store.setChainHeightProvider(() => max);
-  if (ids) {
-    const heightById = new Map<string, number>();
-    for (const [h, id] of ids) heightById.set(id, h);
-    store.setBlockIdProvider((h) => ids.get(h) ?? null);
-    store.setHeightByBlockIdProvider((id) => heightById.get(id) ?? null);
-  }
-  return store;
-}
-
 // ---------------------------------------------------------------------------
 // Provider-read tests — NET_INTERFACE → Sync Handler Registration
 // ---------------------------------------------------------------------------

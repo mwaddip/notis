@@ -18,7 +18,6 @@ import {
   MAX_NAME_BYTES,
   MAX_ADDRESS_BYTES,
   MAX_CAPABILITY_ENTRIES,
-  MAX_CAPABILITY_CODE,
   MAX_UINT32,
 } from '@dagsocial/net';
 import { FRAME_VERSION } from '@dagsocial/wire';
@@ -37,10 +36,6 @@ const testMsg: HandshakeMsg = {
 
 function validBody(overrides: Partial<HandshakeMsg> = {}): Uint8Array {
   return encodeStruct(handshakeCodec, { ...testMsg, ...overrides });
-}
-
-function validateEncoded(msg: HandshakeMsg): ReturnType<typeof validateHandshake> {
-  return validateHandshake(parseHandshakeBody(validBody(msg)), [1]);
 }
 
 describe('handshake', () => {

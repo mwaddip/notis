@@ -1,11 +1,10 @@
 import {
-  fixtureProvenance,
   makeTestConfig,
   mineNextBlock,
   seedProvenance,
   signTransaction,
   solveHeaderPow,
-  uid, fixturePostId, makePostTx, seedPostTx, fillerTx, coinbaseOf,
+  makePostTx, seedPostTx, fillerTx, coinbaseOf,
   seedEmissionBox } from '../helpers.js';
 import {
   describe,
@@ -21,20 +20,15 @@ import {
   type KeyObject,
 } from 'crypto';
 import {
-  computeBoxId,
-  computePostId,
   MAX_BLOCK_BODY_BYTES,
   PROTOCOL_VERSION,
   LIKE_KARMA_COST, computeTxId, utxoTxTreeByteLength } from '@dagsocial/types';
 import { blockHash } from '@dagsocial/validation';
 import type {
-  Post,
   KarmaBox,
   OrderingBlock,
-  Stump,
   UtxoTransaction,
 } from '@dagsocial/types';
-import type { StoredPost } from '../../src/store/posts.js';
 import type Database from 'better-sqlite3';
 import type { Config } from '../../src/config.js';
 
@@ -147,20 +141,6 @@ function rawPublicKey(keyObj: KeyObject): Uint8Array {
   return new Uint8Array(der.subarray(der.length - 32));
 }
 
-/** Create a public key KeyObject from raw 32-byte public key. */
-function rawToKeyObject(pubKey: Uint8Array): KeyObject {
-  const { createPublicKey } = require('crypto');
-  const ED25519_SPKI_PREFIX = Buffer.from(
-    '302a300506032b6570032100',
-    'hex',
-  );
-  return createPublicKey({
-    key: Buffer.concat([ED25519_SPKI_PREFIX, Buffer.from(pubKey)]),
-    format: 'der',
-    type: 'spki',
-  });
-}
-
 // ---------------------------------------------------------------------------
 // Test data helpers
 // ---------------------------------------------------------------------------
@@ -176,16 +156,6 @@ function makeTestIdentity(): TestIdentity {
   const pubKey = rawPublicKey(publicKey);
   const userId = pubKey;
   return { userId, publicKey: pubKey, privateKey };
-}
-
-function makePost(authorId: Uint8Array, content = 'test post'): Post {
-  return {
-    content,
-    author: authorId,
-    parentRefs: [],
-    protocolVersion: PROTOCOL_VERSION,
-    type: 'regular',
-  };
 }
 
 function makeKarmaBox(
@@ -297,7 +267,7 @@ describe('block-creator', () => {
     // Set up identity
     const author = makeTestIdentity();
 
-    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'hello world');
+    const { commit, tx: postTx, postId } = await seedPostTx(author, 'hello world');
 
     // The transaction IS the post's carrier: the pool holds one entry and the
     // block that takes it carries the payload (NODE_INTERFACE → Post
@@ -564,7 +534,7 @@ describe('block-creator', () => {
   it('batch-linked UTXO transactions appear in utxoTxIds', async () => {
     const db = await importDb();
     db.initDb(':memory:');
-    const posts = await importPosts();
+    await importPosts();
     const utxo = await importUtxo();
     const mempool = await importMempoolFresh();
     const bc = await importBlockCreator();

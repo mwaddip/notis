@@ -1,17 +1,14 @@
 import {
-  makePost,
   makePostCommit,
   seedAsOneTx,
   seedProvenance,
   type Stored,
   fixtureProvenance,
-  uid,
   FIXTURE_BOND_KARMA,
 } from '../helpers.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   generateKeyPairSync,
-  createHash,
   sign as cryptoSign,
   type KeyObject,
 } from 'crypto';
@@ -56,7 +53,6 @@ import {
   getKarmaBoxes,
   insertBox as storeInsertBox,
   consumeBox as storeConsumeBox,
-  hasActiveVouchEscrow as storeHasActiveVouchEscrow,
 } from '../../src/store/index.js';
 import { validateTx, applyTx } from '../../src/services/utxo-engine.js';
 import type { UtxoEngineDeps, UtxoResult } from '../../src/services/utxo-engine.js';

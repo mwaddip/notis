@@ -3,9 +3,9 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import Database from 'better-sqlite3';
-import { computePostId, hexToBuf, profileFor } from '@dagsocial/types';
+import { hexToBuf, profileFor } from '@dagsocial/types';
 import type { NetworkType } from '@dagsocial/types';
-import { makePost, makeTestConfig, mineNextBlock, fixturePostId } from '../helpers.js';
+import { makeTestConfig, mineNextBlock } from '../helpers.js';
 
 /**
  * Genesis is **state, not a block**, and this suite pins the half of that claim

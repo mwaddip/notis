@@ -1,7 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
-  computePostId,
-  computeTxId,
   computeMintTxId,
   computeBoxId,
   canonicalBoxBytes,
@@ -19,19 +17,14 @@ import type {
 } from '@dagsocial/types';
 import type Database from 'better-sqlite3';
 import {
-  changeBoxOf,
-  fixturePostId,
-  fixtureProvenance,
   hex,
   lockBoxOf,
   makeApplicableBlock,
   makeKarmaBox,
   makeLikeTx,
-  makePost,
   makePruneEntry,
   makeTestIdentity,
   seedPostTx,
-  seedProvenance,
   signTransaction,
   type TestIdentity,
   activateProverOverStore,
@@ -271,7 +264,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
     db.initDb(':memory:');
     const utxo = await importUtxo();
     const posts = await importPosts();
-    const records = await importRecords();
+    await importRecords();
     const blockApply = await importBlockApply();
 
     const author = makeTestIdentity();
@@ -325,7 +318,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
       db.initDb(':memory:');
       const utxo = await importUtxo();
       const posts = await importPosts();
-      const records = await importRecords();
+      await importRecords();
       const blockApply = await importBlockApply();
 
       const author = makeTestIdentity();
@@ -514,7 +507,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
     const utxo = await importUtxo();
     const posts = await importPosts();
     const likeRecords = await importLikeRecords();
-    const records = await importRecords();
+    await importRecords();
     const ordering = await importOrdering();
     const blockApply = await importBlockApply();
 
@@ -845,7 +838,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
     db.initDb(':memory:');
     const utxo = await importUtxo();
     const posts = await importPosts();
-    const records = await importRecords();
+    await importRecords();
 
     const author = makeTestIdentity();
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'round-trip carry target');
@@ -887,7 +880,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
     db.initDb(':memory:');
     const utxo = await importUtxo();
     const posts = await importPosts();
-    const records = await importRecords();
+    await importRecords();
 
     const author = makeTestIdentity();
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'round-trip payout target');

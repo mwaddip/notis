@@ -7,28 +7,21 @@ import {
   vi,
 } from 'vitest';
 import {
-  computePostId,
   MAX_REORG_DEPTH,
-  GENESIS_PREV_BLOCK_HASH,
   EMPTY_STATE_ROOT,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   PROTOCOL_VERSION,
-  ReaderError,
   MAX_BLOCK_BODY_BYTES,
   MEMPOOL_EXPIRY_BLOCKS,
   computePruneEntryId,
 } from '@dagsocial/types';
-import { blockHash, cumulativeWork, verifyHeaderChain } from '@dagsocial/validation';
+import { blockHash, cumulativeWork } from '@dagsocial/validation';
 import type {
-  Post,
   KarmaBox,
   OrderingBlock,
-  Stump,
   UtxoTransaction,
   BlockHeader,
-  PruneEntry,
 } from '@dagsocial/types';
-import type { StoredPost } from '../../src/store/posts.js';
 import type { BlockJournal } from '../../src/store/journal.js';
 import type { ForkResolutionNet } from '../../src/services/fork-resolution.js';
 import type Database from 'better-sqlite3';
@@ -37,12 +30,11 @@ import {
   makeApplicableBlock,
   makeKarmaBox,
   makeLikeTx,
-  makePost,
   makeTestConfig,
   makeTestIdentity,
   mineNextBlock,
   signHeader,
-  solveHeaderPow, fixturePostId, seedPostTx, fillerTx, activateProverOverStore, makePruneEntry, insertPoisonedBlock } from '../helpers.js';
+  solveHeaderPow, seedPostTx, fillerTx, activateProverOverStore, makePruneEntry, insertPoisonedBlock } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Test config
@@ -451,7 +443,6 @@ describe('findForkPoint', () => {
 
     // Construct theirHeaders: block 3 (fork) -> block 2 (same as ours) -> block 1 (same)
     // Their chain has same blocks 1 and 2 but a different block 3
-    const block1 = ordering.getOrderingBlock(1);
     const block2 = ordering.getOrderingBlock(2);
     const forkBlock3: BlockHeader = {
       protocolVersion: PROTOCOL_VERSION,
@@ -1785,7 +1776,7 @@ describe('reorg', () => {
     db.initDb(':memory:');
     const proverMod = await import('../../src/state/avl-prover.js');
     proverMod.createAvlProver();
-    const system = await import('../../src/store/system.js');
+    await import('../../src/store/system.js');
     const genesis = await import('../../src/services/genesis-state.js');
     genesis.seedGenesisState();
 
@@ -2485,7 +2476,7 @@ describe('reorg — a missing AVL version at the fork height', () => {
     db.initDb(':memory:');
     const proverMod = await import('../../src/state/avl-prover.js');
     proverMod.createAvlProver();
-    const system = await import('../../src/store/system.js');
+    await import('../../src/store/system.js');
     const genesis = await import('../../src/services/genesis-state.js');
     genesis.seedGenesisState();
 
@@ -2494,7 +2485,7 @@ describe('reorg — a missing AVL version at the fork height', () => {
     // never receives it) nor before it (it would land in the genesis tree and
     // move the pinned root).
     const bc = await importBlockCreator();
-    const utxo = await importUtxo();
+    await importUtxo();
     bc.startBlockCreator(testConfig);
     for (let i = 0; i < 3; i++) {
       await mineNextBlock(bc);
@@ -2995,7 +2986,7 @@ describe('handleOrderingBlock — entry', () => {
     const db = await importDb();
     db.initDb(':memory:');
     const scenario = await buildForkScenario();
-    const ordering = await importOrdering();
+    await importOrdering();
     const handleBlock = await importHandleBlock();
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'log').mockImplementation(() => {});

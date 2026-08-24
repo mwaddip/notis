@@ -16,12 +16,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   generateKeyPairSync,
-  createHash,
   sign as cryptoSign,
   type KeyObject,
 } from 'crypto';
 import {
-  computeBoxId,
   computeTxId,
   VOUCH_KARMA_AMOUNT,
   VOUCH_MIN_BALANCE,
@@ -42,10 +40,8 @@ import type {
 import Database from 'better-sqlite3';
 
 import {
-  fixtureProvenance,
   rawPublicKey,
   seedProvenance,
-  type Stored,
   FIXTURE_BOND_KARMA,
 } from '../helpers.js';
 import {
@@ -61,7 +57,7 @@ import {
   hasActiveVouchEscrow as storeHasActiveVouchEscrow,
   getBondFor,
 } from '../../src/store/index.js';
-import { applyTx, materializeOutput, validateTx } from '../../src/services/utxo-engine.js';
+import { applyTx, validateTx } from '../../src/services/utxo-engine.js';
 import { castVouch } from '../../src/services/vouch.js';
 import { createInvite } from '../../src/services/invites.js';
 import { config } from '../../src/config.js';

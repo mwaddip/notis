@@ -1,13 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { computeBoxId, EMPTY_STATE_ROOT } from '@dagsocial/types';
 import type {
-  CandidateOf,
   CreditBox,
   OrderingBlock,
 } from '@dagsocial/types';
 import type Database from 'better-sqlite3';
 import {
-  fixtureProvenance,
   makeApplicableBlock,
   makeTestIdentity,
   seedProvenance,

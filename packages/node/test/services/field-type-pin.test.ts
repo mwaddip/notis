@@ -27,7 +27,7 @@
  * output-shape-id-integrity.test.ts.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { generateKeyPairSync, sign as cryptoSign, createHash, type KeyObject } from 'crypto';
+import { generateKeyPairSync, sign as cryptoSign, type KeyObject } from 'crypto';
 import {
   BOX_VALUE_BOUND,
   canonicalBoxBytes,
@@ -47,13 +47,10 @@ import {
   fixtureProvenance,
   makeApplicableBlock,
   makeKarmaBox,
-  makePost,
   makePostCommit,
   makeTestIdentity,
-  seedAsOneTx,
   seedProvenance,
   type Stored,
-  type TestIdentity,
   FIXTURE_BOND_KARMA,
 } from '../helpers.js';
 import {
@@ -66,7 +63,6 @@ import {
   getKarmaBoxes,
   insertBox as storeInsertBox,
   consumeBox as storeConsumeBox,
-  hasActiveVouchEscrow as storeHasActiveVouchEscrow,
 } from '../../src/store/index.js';
 import { validateTx, checkOutputShape } from '../../src/services/utxo-engine.js';
 import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';

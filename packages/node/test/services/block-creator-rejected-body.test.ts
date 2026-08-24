@@ -25,10 +25,8 @@ import {
   makeTestConfig,
   makeTestIdentity,
   mineNextBlock,
-  seedProvenance,
   signTransaction,
   solveHeaderPow,
-  type Stored,
   activateProverOverStore,
 } from '../helpers.js';
 import { config } from '../../src/config.js';
