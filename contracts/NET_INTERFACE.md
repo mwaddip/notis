@@ -407,7 +407,9 @@ vlqU(tipHeight) ‖ hexN(tipBlockId, 32) ‖ arr( vlqU(height) ‖ hexN(blockId,
 
 `tipHeight` and every anchor `height` are ≤ `MAX_ADVERTISED_HEIGHT`. At most `MAX_SYNC_ANCHORS`
 (4) anchors — the locator set below is the whole domain — and zero is legal (a genesis-height
-chain has nothing to anchor).
+chain has nothing to anchor). A node with no blocks at all sends `tipHeight` 0 with `tipBlockId`
+= `GENESIS_PREV_BLOCK_HASH` — the same all-zeros id genesis's `prevBlockHash` carries — a
+sentinel compared by nothing today.
 
 The receiver reads `tipHeight` — the whole of the sync decision. `tipBlockId` and the anchors'
 contents are carried for the header store and compared by nothing today. No cumulative-work field is carried: the sync decision is `tipHeight`'s alone,
