@@ -7,7 +7,7 @@ import {
   afterEach,
 } from 'vitest';
 import type { ForkResolutionNet } from '../../src/services/fork-resolution.js';
-import { makeBlock } from '../helpers.js';
+import { makeBlock, insertPoisonedBlock } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Boundary pins that drive the real wiring — `pullBlocksHandler`,
@@ -35,10 +35,10 @@ describe('pull-path boundary (real wiring)', () => {
   });
 
   async function poisonTip() {
-    const { initDb } = await import('../../src/store/db.js');
+    const { initDb, getDb } = await import('../../src/store/db.js');
     initDb(':memory:');
     const ordering = await import('../../src/store/ordering.js');
-    ordering.createOrderingBlock(makeBlock(1, -1));
+    insertPoisonedBlock(getDb(), makeBlock(1, -1));
     expect(ordering.getCurrentHeight()).toBe(1);
     return ordering;
   }
@@ -92,10 +92,10 @@ describe('provider boundary (real wiring)', () => {
     }) as never);
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const { initDb } = await import('../../src/store/db.js');
+    const { initDb, getDb } = await import('../../src/store/db.js');
     initDb(':memory:');
     const ordering = await import('../../src/store/ordering.js');
-    ordering.createOrderingBlock(makeBlock(1, -1));
+    insertPoisonedBlock(getDb(), makeBlock(1, -1));
 
     const { guardStoreRead } = await import(
       '../../src/services/corrupt-state.js'
@@ -138,10 +138,10 @@ describe('route boundary (real wiring)', () => {
     }) as never);
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const { initDb } = await import('../../src/store/db.js');
+    const { initDb, getDb } = await import('../../src/store/db.js');
     initDb(':memory:');
     const ordering = await import('../../src/store/ordering.js');
-    ordering.createOrderingBlock(makeBlock(1, -1));
+    insertPoisonedBlock(getDb(), makeBlock(1, -1));
 
     const { guardStoreRead } = await import(
       '../../src/services/corrupt-state.js'

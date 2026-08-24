@@ -1,5 +1,6 @@
 import { uid } from '../helpers.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { blockHash } from '@dagsocial/validation';
 import type Database from 'better-sqlite3';
 import type { OrderingBlock } from '@dagsocial/types';
 
@@ -22,6 +23,9 @@ async function importOrderingFresh() {
     createOrderingBlock: (block: OrderingBlock) => void;
     getOrderingBlock: (height: number) => OrderingBlock | null;
     getCurrentHeight: () => number;
+    deleteOrderingBlock: (height: number) => void;
+    getOrderingBlockHash: (height: number) => string | null;
+    getHeightByBlockHash: (hash: string) => number | null;
   };
 }
 
@@ -159,5 +163,110 @@ describe('ordering store', () => {
 
     const result = getOrderingBlock(999);
     expect(result).toBeNull();
+  });
+
+  it('getOrderingBlockHash returns the stored block_hash for a present height', async () => {
+    const { initDb } = await importDbFresh();
+    const { createOrderingBlock, getOrderingBlock, getOrderingBlockHash } =
+      await importOrderingFresh();
+
+    initDb(':memory:');
+
+    const block = makeOrderingBlock();
+    createOrderingBlock(block);
+
+    const hash = getOrderingBlockHash(1);
+    expect(hash).not.toBeNull();
+    expect(hash).toBe(blockHash(getOrderingBlock(1)!.header));
+  });
+
+  it('getOrderingBlockHash returns null for absent height', async () => {
+    const { initDb } = await importDbFresh();
+    const { getOrderingBlockHash } = await importOrderingFresh();
+
+    initDb(':memory:');
+
+    expect(getOrderingBlockHash(999)).toBeNull();
+  });
+
+  it('getHeightByBlockHash returns height for known hash, null for unknown', async () => {
+    const { initDb } = await importDbFresh();
+    const { createOrderingBlock, getOrderingBlockHash, getHeightByBlockHash } =
+      await importOrderingFresh();
+
+    initDb(':memory:');
+
+    const block = makeOrderingBlock();
+    createOrderingBlock(block);
+
+    const hash = getOrderingBlockHash(1)!;
+    expect(getHeightByBlockHash(hash)).toBe(1);
+    expect(getHeightByBlockHash('ff'.repeat(32))).toBeNull();
+  });
+
+  it('deleteOrderingBlock removes the hash mapping', async () => {
+    const { initDb } = await importDbFresh();
+    const { createOrderingBlock, deleteOrderingBlock, getOrderingBlockHash, getHeightByBlockHash } =
+      await importOrderingFresh();
+
+    initDb(':memory:');
+
+    const block = makeOrderingBlock();
+    createOrderingBlock(block);
+
+    const hash = getOrderingBlockHash(1)!;
+    expect(getHeightByBlockHash(hash)).toBe(1);
+
+    deleteOrderingBlock(1);
+    expect(getOrderingBlockHash(1)).toBeNull();
+    expect(getHeightByBlockHash(hash)).toBeNull();
+  });
+
+  it('UNIQUE index rejects a duplicate block_hash at a different height', async () => {
+    const { initDb, getDb } = await importDbFresh();
+    const { createOrderingBlock, getOrderingBlockHash } =
+      await importOrderingFresh();
+
+    initDb(':memory:');
+
+    const block1 = makeOrderingBlock();
+    createOrderingBlock(block1);
+    const hash = getOrderingBlockHash(1)!;
+
+    // A second INSERT with the same block_hash at a different height throws.
+    const db = getDb();
+    expect(() => {
+      db.prepare(
+        `INSERT INTO ordering_blocks
+           (height, header_cbor, utxotx_tree_cbor,
+            validator_signature, created_at, block_hash)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      ).run(2, Buffer.alloc(1), Buffer.alloc(1), Buffer.alloc(64), 0, hash);
+    }).toThrow();
+  });
+
+  it('createOrderingBlock throws UnhashableStoredHeaderError when blockHash returns null', async () => {
+    const { initDb } = await importDbFresh();
+    const { createOrderingBlock } = await importOrderingFresh();
+
+    initDb(':memory:');
+
+    const block = makeOrderingBlock({
+      header: {
+        ...makeOrderingBlock().header,
+        createdAt: -1,
+      },
+    });
+    let caught: unknown;
+    try {
+      createOrderingBlock(block);
+    } catch (err) {
+      caught = err;
+    }
+    // By name, not `instanceof` — `vi.resetModules()` gives the dynamically
+    // imported graph its own copy of every class.
+    expect((caught as Error).name).toBe('UnhashableStoredHeaderError');
+    expect((caught as { site: string }).site).toBe('createOrderingBlock');
+    expect((caught as { height: number }).height).toBe(1);
   });
 });

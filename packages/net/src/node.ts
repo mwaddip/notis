@@ -10,7 +10,6 @@ import { multiaddr } from '@multiformats/multiaddr';
 import type { Libp2p } from 'libp2p';
 import type { OrderingBlock, UtxoTransaction, BlockHeader } from '@dagsocial/types';
 import { PROTOCOL_VERSION, decodeOrderingBlock, encodeOrderingBlock, decodePostBody, encodePostBody } from '@dagsocial/types';
-import { blockHash } from '@dagsocial/validation';
 import { ReaderError } from '@dagsocial/wire';
 import type {
   NetConfig, NetValidators, Peer, PeerEntryMsg,
@@ -142,6 +141,8 @@ export class LazySyncStore implements SyncStore {
   private _getOrderingBlock: ((height: number) => unknown | null) | null = null;
   private _blocksHandler: BlocksHandlerFn | null = null;
   private _chainHeightProvider: (() => number) | null = null;
+  private _blockIdProvider: ((height: number) => string | null) | null = null;
+  private _heightByBlockIdProvider: ((id: string) => number | null) | null = null;
 
   /** Validators reach this class for one reason: `serializeOrderingBlock` serves a stored row. */
   constructor(private readonly validators: NetValidators) {}
@@ -158,6 +159,16 @@ export class LazySyncStore implements SyncStore {
     this._chainHeightProvider = fn;
   }
 
+  // NET_INTERFACE → Sync Handler Registration
+  setBlockIdProvider(fn: (height: number) => string | null): void {
+    this._blockIdProvider = fn;
+  }
+
+  // NET_INTERFACE → Sync Handler Registration
+  setHeightByBlockIdProvider(fn: (id: string) => number | null): void {
+    this._heightByBlockIdProvider = fn;
+  }
+
   getOrderingBlock(height: number): unknown | null {
     return this._getOrderingBlock?.(height) ?? null;
   }
@@ -171,34 +182,15 @@ export class LazySyncStore implements SyncStore {
     return encodeServableOrderingBlock(block, this.validators, `height ${height}`);
   }
 
-  getOrderingBlockHeader(height: number): unknown | null {
-    const block = this._getOrderingBlock?.(height);
-    if (block && typeof block === 'object' && 'header' in block) {
-      return (block as { header: unknown }).header;
-    }
-    return null;
+  // NET_INTERFACE → Sync Handler Registration: the id is the store's own,
+  // written at block application; net never computes an id from a header.
+  getOrderingBlockId(height: number): string | null {
+    return this._blockIdProvider?.(height) ?? null;
   }
 
-  getOrderingBlockId(height: number): string | null {
-    const block = this._getOrderingBlock?.(height);
-    if (block && typeof block === 'object' && 'header' in block) {
-      const header = (block as { header: unknown }).header;
-      if (header && typeof header === 'object') {
-        // No `try`/`catch` here, and none is needed: `blockHash` enforces its
-        // own precondition and returns `null` on exactly the headers
-        // `verifyHeaderFieldDomains` rejects (VALIDATION_INTERFACE → blockHash).
-        // So this method absorbs an *absence* and gains no knowledge of what a
-        // well-formed header is.
-        //
-        // `null` is the right answer for a header that is out of domain but
-        // still encodable (`createdAt: NaN`, a negative `height`, a non-hex
-        // `prevBlockHash`): under a positional encoder those headers share one
-        // `blockHash` by sentinel collision, so serving an id for them would be
-        // advertising a colliding anchor.
-        return blockHash(header as Parameters<typeof blockHash>[0]);
-      }
-    }
-    return null;
+  // NET_INTERFACE → Sync Handler Registration: one id is one provider call.
+  heightByBlockId(id: string): number | null {
+    return this._heightByBlockIdProvider?.(id) ?? null;
   }
 
   chainHeight(): number {
@@ -206,7 +198,7 @@ export class LazySyncStore implements SyncStore {
   }
 
   getAnchors(): { height: number; blockId: string }[] {
-    if (!this._getOrderingBlock) return [];
+    if (!this._blockIdProvider) return [];
     const h = this.chainHeight();
     if (h < 1) return [];
     const anchors: { height: number; blockId: string }[] = [];
@@ -1548,11 +1540,19 @@ export class NetNode {
     this.headersProvider = getBlock;
   }
 
-  /**
-   * NET_INTERFACE → Sync Handler Registration
-   */
+  // NET_INTERFACE → Sync Handler Registration
   setChainHeightProvider(cb: () => number): void {
     this.syncStore.setChainHeightProvider(cb);
+  }
+
+  // NET_INTERFACE → Sync Handler Registration
+  setBlockIdProvider(cb: (height: number) => string | null): void {
+    this.syncStore.setBlockIdProvider(cb);
+  }
+
+  // NET_INTERFACE → Sync Handler Registration
+  setHeightByBlockIdProvider(cb: (id: string) => number | null): void {
+    this.syncStore.setHeightByBlockIdProvider(cb);
   }
 
   // -----------------------------------------------------------------------

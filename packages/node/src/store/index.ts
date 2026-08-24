@@ -68,6 +68,8 @@ export {
   getBlockCreatedAt,
   getCurrentHeight,
   deleteOrderingBlock,
+  getOrderingBlockHash,
+  getHeightByBlockHash,
 } from './ordering.js';
 
 export {

@@ -152,7 +152,8 @@ const MIGRATIONS = [
     header_cbor BLOB NOT NULL,
     utxotx_tree_cbor BLOB NOT NULL,
     validator_signature BLOB NOT NULL,  -- 64 bytes
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    block_hash TEXT NOT NULL UNIQUE      -- 64-char lowercase hex, blockHash(header)
   )`,
 
   // Block journal (CBOR-encoded undo data per block)

@@ -35,8 +35,8 @@ function stubStore(overrides: Partial<SyncStore> = {}): SyncStore {
   return {
     getOrderingBlock: () => null,
     serializeOrderingBlock: () => null,
-    getOrderingBlockHeader: () => null,
     getOrderingBlockId: () => null,
+    heightByBlockId: () => null,
     chainHeight: () => 0,
     getAnchors: () => [],
     appendHeaders: () => {},

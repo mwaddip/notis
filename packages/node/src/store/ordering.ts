@@ -6,7 +6,8 @@ import {
   decodeUtxoTxTree,
 } from '@dagsocial/types';
 import type { OrderingBlock } from '@dagsocial/types';
-import { UnreadableStoredBlockError } from '../services/corrupt-state.js';
+import { blockHash } from '@dagsocial/validation';
+import { UnreadableStoredBlockError, UnhashableStoredHeaderError } from '../services/corrupt-state.js';
 
 // ---------------------------------------------------------------------------
 // Row shape (blob-based)
@@ -95,22 +96,33 @@ function rowToOrderingBlock(row: OrderingBlockRow): OrderingBlock {
  * the alias returns only the sites already using the alias. Re-derive by arity
  * — this writer takes a block, the creator's takes nothing — or by import
  * source, and search the table name for the INSERT. The claim is about `src`:
- * tests call this writer directly.
+ * tests write through this writer or through the raw-SQL poison helper that
+ * exists to store rows this guard refuses.
  */
 export function createOrderingBlock(block: OrderingBlock): void {
   const db = getDb();
 
+  // The row's `block_hash` is computed here from the node's own decoded header.
+  // The gates above this writer's one caller — `verifyHeaderFieldDomains` via
+  // `verifyOrderingBlockStructure` — exclude headers `blockHash` rejects, so a
+  // null here is a bug in us, not bad input.
+  const hash = blockHash(block.header);
+  if (hash === null) {
+    throw new UnhashableStoredHeaderError('createOrderingBlock', block.header.height);
+  }
+
   db.prepare(
     `INSERT INTO ordering_blocks
        (height, header_cbor, utxotx_tree_cbor,
-        validator_signature, created_at)
-     VALUES (?, ?, ?, ?, ?)`,
+        validator_signature, created_at, block_hash)
+     VALUES (?, ?, ?, ?, ?, ?)`,
   ).run(
     block.header.height,
     Buffer.from(encodeHeader(block.header)),
     Buffer.from(encodeUtxoTxTree(block.utxoTxTree)),
     Buffer.from(block.validatorSignature),
     block.header.createdAt,
+    hash,
   );
 }
 
@@ -155,4 +167,18 @@ export function getCurrentHeight(): number {
     .prepare('SELECT COALESCE(MAX(height), 0) AS h FROM ordering_blocks')
     .get() as { h: number };
   return row.h;
+}
+
+export function getOrderingBlockHash(height: number): string | null {
+  const row = getDb()
+    .prepare('SELECT block_hash FROM ordering_blocks WHERE height = ?')
+    .get(height) as { block_hash: string } | undefined;
+  return row?.block_hash ?? null;
+}
+
+export function getHeightByBlockHash(hash: string): number | null {
+  const row = getDb()
+    .prepare('SELECT height FROM ordering_blocks WHERE block_hash = ?')
+    .get(hash) as { height: number } | undefined;
+  return row?.height ?? null;
 }
