@@ -854,8 +854,9 @@ aligns 1:1 with `utxoTxIds`, each element a byte view of at most
 > would cost a full `decodeStruct` of the last `utxoTxs` element on the relay path — read,
 > exhaustion, re-encode, byte-compare, per block** — and would retire the opaque-bytes premise that
 > makes `MAX_TX_BYTES` and the body bound cheap. **Refused** (2026-08-17): a block still needs valid
-> PoW to be relayed at all, so the surface is bounded by PoW rather than by this check, and `net` is
-> the one package with a measured performance defect on record.
+> PoW to be relayed at all, so the surface is bounded by PoW rather than by this check, and `net` was
+> then the one package with a measured performance defect on record. **The refusal rests on the PoW
+> bound; the cost clause was that date's state.**
 >
 > ⛔ **A new structural obligation replaces them, and it is SMALLER than first written:
 > `utxoTxIds.length >= 1`.** Every block carries at least one transaction, because the settlement is
