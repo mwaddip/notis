@@ -172,7 +172,6 @@ export const INVITE_PROBATION_BLOCKS = 43200;  // 30 days at 60s → profile: in
 export const INVITE_BOND_VEST_PER_LIKES = 3;
 
 // Genesis
-export const GENESIS_COMMITTEE_KEYS: string[] = []; // → profile: genesisCommitteeKeys
 export const GENESIS_KARMA_PER_MEMBER = 1000n; // → profile: genesisKarmaPerMember
 // Credit emission (Ergo-style linear decay) — amounts in base units of 10^-8 credit
 export const CREDIT_FIXED_RATE_BLOCKS = 1_051_200;    // ~2 years at 60s blocks → profile: creditFixedRateBlocks
