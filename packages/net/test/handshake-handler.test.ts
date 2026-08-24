@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { encode } from 'cbor-x';
 import { PROTOCOL_VERSION } from '@dagsocial/types';
 import type { OrderingBlock } from '@dagsocial/types';
 import {
@@ -323,5 +324,49 @@ describe('inbound handshake handler — our own reply', () => {
     const result = validateHandshake(raw, [PROTOCOL_VERSION]);
     expect(result.ok).toBe(true);
     expect(result.peerHeight).toBe(55);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Frame-tier rejection — NET_INTERFACE → "Ban policy"
+//
+// A payload that does not decode as a valid frame is rejected with no
+// penalty. These drive the real inbound handler so the assertion can fail
+// if the handler ever calls recordPenaltyKind on a frame-tier reject.
+// ---------------------------------------------------------------------------
+
+describe('inbound handshake handler — frame-tier rejection', () => {
+  it('does not ban a peer that sends unframed CBOR', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { send, peerMgr, peerId } = makeHandshakeHarness({ chainHeight: 0 });
+
+    const raw = new Uint8Array(encode({
+      agentName: 'dagsocial/1.0.0',
+      protocolVersion: PROTOCOL_VERSION,
+      nodeName: 'peer',
+      chainHeight: 7,
+      capabilities: [],
+      sessionMagic: 1234,
+    }));
+    const written = await send(raw);
+
+    expect(isEmptyReply(written)).toBe(true);
+    expect(peerMgr.isBanned(peerId)).toBe(false);
+    expect(peerMgr.getPeerMetadata(peerId)?.penaltyCount ?? 0).toBe(0);
+    warnSpy.mockRestore();
+  });
+
+  it('does not ban a peer that sends a truncated frame', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { send, peerMgr, peerId } = makeHandshakeHarness({ chainHeight: 0 });
+
+    const frame = validHandshakeFrame();
+    const cut = frame.subarray(0, 6);
+    const written = await send(cut);
+
+    expect(isEmptyReply(written)).toBe(true);
+    expect(peerMgr.isBanned(peerId)).toBe(false);
+    expect(peerMgr.getPeerMetadata(peerId)?.penaltyCount ?? 0).toBe(0);
+    warnSpy.mockRestore();
   });
 });
