@@ -1908,9 +1908,11 @@ kept here as the record of what closed, and where the reasoning lives.
 2. ✅ `txId`/`index` required on `BoxBase`; `UtxoTransaction.outputs` is
    `AnyBoxCandidate[]` (`TYPES_INTERFACE.md` → BoxId for why that is not the
    base `BoxCandidate`). `id` stays optional, deliberately — same reference.
-3. ✅ `createdAtBlock` and `lastTouchBlock` deleted from the box protocol. The
-   `created_at_block` **column** stays; `last_touch_block` was dropped with the
-   field, having had no reader anywhere — only the INSERT that wrote it.
+3. ✅ Phase G deleted `createdAtBlock` and `lastTouchBlock` from the box protocol.
+   `lastTouchBlock` and its `last_touch_block` column are gone for good: no reader
+   anywhere, only the INSERT that wrote it. `createdAtBlock` is a box field,
+   creator-declared (`TYPES_INTERFACE.md` → "createdAtBlock is a box field, and it
+   is CREATOR-DECLARED"); the `created_at_block` **column** stays.
 4. ✅ `utxo_boxes.tx_id` / `output_index` are `NOT NULL`, in the same commit as
    the box-field deletions. That grouping earned itself twice over: it avoided
    editing ~190 fixtures twice, **and** NOT NULL turned out to be the only thing
@@ -1931,10 +1933,11 @@ kept here as the record of what closed, and where the reasoning lives.
 6. ✅ Attach-provenance-before-deriving-the-id is now testable, and tested:
    `computeBoxId` observes `txId`/`index`, so the two orders are no longer
    byte-identical.
-7. ✅ `insertBox` takes the height from the open journal
-   (`openBlockJournalHeight()`), never from the box. Deleting the field is what
-   proved it: there is nothing else it could read. `0` outside a journal —
-   genesis and bootstrap — which is honest rather than a fallback.
+7. ✅ `insertBox` fills the `created_at_block` **column** from the box's own
+   `createdAtBlock`, and bumps the **activity clock** from the open journal
+   (`openBlockJournalHeight()`) — two heights answering two questions
+   (§Populating the record). Outside a journal — genesis and bootstrap — there
+   is no clock to bump.
 
 **Blockers, both cleared before G3**
 
@@ -2601,10 +2604,10 @@ set provenance until phase C. **Phase G makes them `NOT NULL`.**
 
 #### `created_at_block` is a store column, never a consensus input
 
-`createdAtBlock` left the box protocol (Spec G D3): it was the only
-apply-mutated field, and that is what made box ids dishonest (M-11). The
-**column** survives, written at apply from the *settled* height, and is
-therefore honest by construction.
+The **column** is a denormalisation of the box's own `createdAtBlock`, written at
+insert from the field the creator declared and signed (§Populating the record).
+It is honest because the field it copies is committed — not because the store
+observed anything.
 
 > ⚠ **Consensus code MUST NEVER read `created_at_block`.** It is not committed
 > in the `stateRoot`, so a node bootstrapping from an AVL snapshot cannot
@@ -2618,18 +2621,18 @@ bootstrap sorts by boxId at the prover boundary (M-12), so the SQL order never
 reaches the tree. That sort is what makes this column safe to keep.
 
 Consensus reads its heights elsewhere — locks from `lockedUntilBlock`, bond
-probation and the decay clock both from the identity record below. During the migration window `createdAtBlock` is
-still a *box field* (`TYPES_INTERFACE` → "createdAtBlock is a box field, and it is
-CREATOR-DECLARED") and `decay.ts`
-still reads it, so the column does reach consensus transitively until phase D
-moves the clock. Closing that is exactly what phase D is for; phase G then
-deletes the field and leaves the column with no consensus reader at all.
+probation and the decay clock both from the identity record below, and a creation
+height from the **box field** (`TYPES_INTERFACE` → "createdAtBlock is a box field,
+and it is CREATOR-DECLARED"), which the `stateRoot` commits and this column only
+mirrors.
 
 ### Identity Records (Spec G phase B)
 
-The second committed entity alongside boxes: the per-identity decay clock.
-Once boxes carry no height, `decay.ts` has nothing to read from them, so the
-clock has to live in committed state (Spec G D4).
+The second committed entity alongside boxes: the per-identity decay clock. It may
+read neither height that meets `insertBox` — a box's `createdAtBlock` is
+creator-declared, so a backdated box would backdate its owner's clock, and the
+`created_at_block` column is uncommitted. So the clock lives in committed state
+(Spec G D4).
 
 ```
 IdentityRecord {
@@ -3415,10 +3418,11 @@ response, never the state.
 *(The route parameter is still named `boxId` while addressing two entity kinds.
 Renaming it is a public API change and deliberately not done here.)*
 
-**3. Disjointness must be re-argued, not inherited.** The comment in
-`avl-prover.ts` justifying the remove-group/insert-group split argues from
-"box ids commit to `createdAtBlock`" — a premise Spec G **deletes**. Rewrite it.
-The property survives and strengthens:
+**3. Disjointness rests on provenance, not on height.** That box ids commit to
+`createdAtBlock` does not establish it: two boxes built at one height with one
+content would still collide. `avl-prover.ts` justifies the remove-group /
+insert-group split from `(candidate, txId, index)`, and that argument is what
+holds:
 
 - *Removes vs inserts.* A key in the remove group was in the tree before this
   block; a key in the insert group is created by it. Under provenance-derived
