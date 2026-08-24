@@ -15,7 +15,7 @@ import {
 import type { NetConfig } from '../src/types.js';
 import { MAX_INV_IDS, MAX_SERVE_BODY_BYTES } from '../src/msg-guards.js';
 import { decodeFrame } from '../src/frame.js';
-import { decodeSyncInfo, decodeModifierRequest, decodeModifierResponse } from '../src/sync-codec.js';
+import { decodeInv, decodeSyncInfo, decodeModifierRequest, decodeModifierResponse } from '../src/sync-codec.js';
 import type { SyncInfo, Inv, ModifierRequest } from '../src/sync-types.js';
 
 // ---------------------------------------------------------------------------
@@ -511,6 +511,9 @@ describe('SyncMachine', () => {
       peerActive(machine, 'peer1', 0);
       expect(sent.length).toBe(1);
       expect(ids).toEqual([hexId(1), hexId(2), hexId(4), hexId(5)]);
+      const inv = decodeInv(decodeFrame(testConfig.magic!, sent[0]!.data).body);
+      expect(inv).not.toBeNull();
+      expect(inv!.ids).toEqual([hexId(1), hexId(2), hexId(4), hexId(5)]);
     });
   });
 
