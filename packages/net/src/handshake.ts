@@ -1,15 +1,26 @@
-import { encode, decode } from 'cbor-x';
 import { encodeFrame } from './frame.js';
 import { PenaltyKind } from './types.js';
 import {
-  isRecord,
+  ReaderError,
+  decodeStruct,
+  encodeStruct,
+  readVlqU,
+  writeArr,
+  writeOpt,
+  readOpt,
+  writeVlqU,
+  writeLpUtf8,
+} from '@dagsocial/types';
+import type { StructCodec } from '@dagsocial/types';
+import {
   isBoundedInt,
   isHeight,
-  isBoundedIntArray,
-  MAX_ADVERTISED_HEIGHT,
   MAX_CAPABILITY_CODE,
   MAX_UINT32,
+  MAX_NAME_BYTES,
+  MAX_ADDRESS_BYTES,
 } from './msg-guards.js';
+import { readBoundedLpUtf8, readBoundedCapabilities } from './sync-codec.js';
 
 export interface HandshakeMsg {
   agentName: string;
@@ -63,28 +74,90 @@ export function handshakePenalty(rejection: HandshakeRejection | undefined): Pen
     : PenaltyKind.ProtocolViolation;
 }
 
+// ---------------------------------------------------------------------------
+// Handshake codec (code 1) — NET_INTERFACE → Handshake Body
+//
+// lpUtf8(agentName) ‖ vlqU(protocolVersion) ‖ lpUtf8(nodeName) ‖
+// vlqU(chainHeight) ‖ opt(lpUtf8(declaredAddress)) ‖
+// arr(vlqU(capability)) ‖ vlqU(sessionMagic)
+//
+// Every domain rule fires inside `read` as a ReaderError; the decode boundary
+// collapses it to null → malformed. The version-support check runs AFTER
+// decode, on a structurally sound message only — the ordering pin that keeps
+// garbage-with-bogus-version classified as malformed, not unsupported-version.
+// ---------------------------------------------------------------------------
+
+export const handshakeCodec: StructCodec<HandshakeMsg> = {
+  name: 'handshake',
+  write(w, msg) {
+    writeLpUtf8(w, msg.agentName);
+    writeVlqU(w, msg.protocolVersion);
+    writeLpUtf8(w, msg.nodeName);
+    writeVlqU(w, msg.chainHeight);
+    writeOpt(w, msg.declaredAddress ?? null, writeLpUtf8);
+    writeArr(w, msg.capabilities, (cw, c) => writeVlqU(cw, c));
+    writeVlqU(w, msg.sessionMagic);
+  },
+  read(r) {
+    const agentName = readBoundedLpUtf8(r, MAX_NAME_BYTES, 'handshake.agentName');
+    if (agentName.length === 0) {
+      throw new ReaderError('handshake: empty agentName', 'out-of-domain');
+    }
+    const protocolVersion = readVlqU(r);
+    if (!isBoundedInt(protocolVersion, MAX_CAPABILITY_CODE)) {
+      throw new ReaderError(`handshake: protocolVersion ${protocolVersion} out of domain`, 'out-of-domain');
+    }
+    const nodeName = readBoundedLpUtf8(r, MAX_NAME_BYTES, 'handshake.nodeName');
+    const chainHeight = readVlqU(r);
+    if (!isHeight(chainHeight)) {
+      throw new ReaderError(`handshake: chainHeight ${chainHeight} out of domain`, 'out-of-domain');
+    }
+    const declaredAddressRaw = readOpt(r, (or) =>
+      readBoundedLpUtf8(or, MAX_ADDRESS_BYTES, 'handshake.declaredAddress'),
+    );
+    const capabilities = readBoundedCapabilities(r, 'handshake');
+    const sessionMagic = readVlqU(r);
+    if (!isBoundedInt(sessionMagic, MAX_UINT32)) {
+      throw new ReaderError(`handshake: sessionMagic ${sessionMagic} out of domain`, 'out-of-domain');
+    }
+    const msg: HandshakeMsg = {
+      agentName,
+      protocolVersion,
+      nodeName,
+      chainHeight,
+      capabilities,
+      sessionMagic,
+    };
+    if (declaredAddressRaw !== null) msg.declaredAddress = declaredAddressRaw;
+    return msg;
+  },
+};
+
 /** Build a handshake frame for our node. */
 export function buildHandshakeFrame(
   magic: number,
   msg: HandshakeMsg,
 ): Uint8Array {
-  const body = new Uint8Array(encode(msg));
-  return encodeFrame(magic, 1, body);
+  return encodeFrame(magic, 1, encodeStruct(handshakeCodec, msg));
 }
 
-/**
- * CBOR-decode a handshake body.
- *
- * Returns the raw decoded value — `unknown`, because nothing about it is
- * trustworthy yet — or `null` if the bytes are not well-formed CBOR. Never
- * throws. Pass the result to `validateHandshake` to get a typed message.
- */
-export function parseHandshakeBody(body: Uint8Array): unknown {
+/** Decode a handshake body. Returns null for malformed bytes. */
+export function decodeHandshakeBody(body: Uint8Array): HandshakeMsg | null {
   try {
-    return decode(body);
+    return decodeStruct(handshakeCodec, body);
   } catch {
     return null;
   }
+}
+
+/**
+ * Decode a handshake body through the positional codec.
+ *
+ * Returns a `HandshakeMsg` on success or `null` on malformed input. Pass the
+ * result to `validateHandshake` to check version support.
+ */
+export function parseHandshakeBody(body: Uint8Array): unknown {
+  return decodeHandshakeBody(body);
 }
 
 function reject(
@@ -97,78 +170,31 @@ function reject(
 /**
  * Validate a decoded handshake.
  *
- * This is the decode boundary for the handshake path: `raw` comes straight off
- * the wire from an unauthenticated peer, so every field is shape- and
- * bounds-checked before any of it is used. On success the result carries a
- * normalized `msg` rebuilt from the checked fields — unknown extra fields are
- * ignored (forward compat) and nothing unvalidated leaks inward.
- *
- * `chainHeight` in particular drives the serve loop, which walks the chain one
- * height at a time; a negative or unbounded value there is a node freeze.
- *
- * Shape and bounds are checked *before* protocol-version support, so that a body
- * which is malformed **and** version-mismatched is classified `malformed`: only a
- * handshake we could otherwise have accepted earns the soft `unsupported-version`
- * refusal, and an attacker cannot dodge the permanent ban by tacking a bogus
- * version onto garbage.
+ * Shape and bounds are enforced by the codec; this function checks
+ * protocol-version support. The codec runs first, so a malformed body is
+ * `null` before this is reached — a body that is malformed AND
+ * version-mismatched is classified `malformed`, not `unsupported-version`.
  */
 export function validateHandshake(
   raw: unknown,
   requiredProtocolVersions: number[],
 ): HandshakeResult {
-  if (!isRecord(raw)) {
-    return reject('handshake body is not a map');
+  if (raw === null || typeof raw !== 'object') {
+    return reject('handshake body is not a valid message');
   }
-  if (!isBoundedInt(raw.protocolVersion, MAX_CAPABILITY_CODE)) {
-    return reject(`missing or invalid protocolVersion ${String(raw.protocolVersion)}`);
-  }
-  if (typeof raw.agentName !== 'string' || raw.agentName.length === 0) {
-    return reject('missing or invalid agentName');
-  }
-  if (typeof raw.nodeName !== 'string') {
-    return reject('missing or invalid nodeName');
-  }
-  if (!isHeight(raw.chainHeight)) {
-    return reject(
-      `chainHeight must be an integer in [0, ${MAX_ADVERTISED_HEIGHT}], got ${String(raw.chainHeight)}`,
-    );
-  }
-  if (raw.declaredAddress !== undefined && typeof raw.declaredAddress !== 'string') {
-    return reject('invalid declaredAddress');
-  }
-  // Absent capabilities means "tells us nothing", not "malformed" — older peers
-  // may omit the field entirely. Present means it must be a list of codes.
-  if (raw.capabilities !== undefined && !isBoundedIntArray(raw.capabilities, MAX_CAPABILITY_CODE)) {
-    return reject('invalid capabilities');
-  }
-  if (!isBoundedInt(raw.sessionMagic, MAX_UINT32)) {
-    return reject('missing or invalid sessionMagic');
-  }
+  const msg = raw as HandshakeMsg;
 
-  // Structurally sound. The only remaining reason to refuse is a version we do
-  // not speak — a compatibility mismatch, so a soft refusal rather than a ban.
-  if (!requiredProtocolVersions.includes(raw.protocolVersion)) {
+  if (!requiredProtocolVersions.includes(msg.protocolVersion)) {
     return reject(
-      `unsupported protocol version ${raw.protocolVersion}`,
+      `unsupported protocol version ${msg.protocolVersion}`,
       'unsupported-version',
     );
   }
 
-  const capabilities = raw.capabilities === undefined ? [] : [...raw.capabilities];
-  const msg: HandshakeMsg = {
-    agentName: raw.agentName,
-    protocolVersion: raw.protocolVersion,
-    nodeName: raw.nodeName,
-    chainHeight: raw.chainHeight,
-    capabilities,
-    sessionMagic: raw.sessionMagic,
-  };
-  if (raw.declaredAddress !== undefined) msg.declaredAddress = raw.declaredAddress;
-
   return {
     ok: true,
     peerHeight: msg.chainHeight,
-    peerCapabilities: capabilities,
+    peerCapabilities: [...msg.capabilities],
     msg,
   };
 }

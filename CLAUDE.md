@@ -37,7 +37,7 @@ refuses to run against a missing or stale `dist`. See ARCHITECTURE → "Build an
 
 Five packages, in dependency order:
 
-- `@dagsocial/types` — data structures, base58, CBOR, hashing, protocol constants. **Pure functions only.**
+- `@dagsocial/types` — data structures, base58, positional codecs, hashing, protocol constants. **Pure functions only.**
 - `@dagsocial/wire` — stream framing (VLQ, blake2b checksums, magic bytes).
 - `@dagsocial/validation` — pure stateless checks: PoW, signatures, block structure, Merkle roots.
 - `@dagsocial/net` — libp2p + Gossipsub relay, header-first sync, peer management.
@@ -161,7 +161,7 @@ makes a title plain.
 - **On-chain time is block height**, never wall clock
 - Signatures: raw Ed25519 (64 bytes), base64 on wire. Verified with `crypto.verify(null, …)` and a KeyObject
 - Hashing: `blake2b512` with `.subarray(0, 32)` for every 32-byte output
-- Wire format: positional binary, with CBOR survivals. HTTP API: JSON
+- Wire format: positional binary. HTTP API: JSON
 - **Value conservation** — every user transaction conserves, unconditionally: each cost lands in a
   box the transaction itself outputs (`NODE_INTERFACE` → `validateTx` step 7). All mints and burns
   happen in block-application paths, never inside a user transaction

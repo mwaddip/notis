@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { encode } from 'cbor-x';
+import { encodeStruct } from '@dagsocial/types';
+import { peersCodec } from '../src/sync-codec.js';
 import {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
@@ -56,8 +57,8 @@ function rec(address: string, lastSeenMs: number): PeerRecord {
   };
 }
 
-function body(v: unknown): Uint8Array {
-  return new Uint8Array(encode(v));
+function body(v: PeersMsg): Uint8Array {
+  return encodeStruct(peersCodec, v);
 }
 
 /** The unframed GetPeers body exactly as the dispatch hands it to the serve path. */
@@ -138,7 +139,7 @@ describe('intakePeersBody', () => {
   const good1 = '/ip4/51.15.7.7/tcp/4001';
   const good2 = '/ip6/2001:4860:4860::8888/tcp/4001';
 
-  function entry(address: string): Record<string, unknown> {
+  function entry(address: string): PeersMsg['peers'][number] {
     return { address, agentName: 'remote', nodeName: 'r1', protocolVersion: 1, capabilities: [8] };
   }
 

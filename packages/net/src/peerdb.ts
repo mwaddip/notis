@@ -4,6 +4,9 @@ import {
   isBoundedInt,
   isBoundedIntArray,
   MAX_CAPABILITY_CODE,
+  MAX_CAPABILITY_ENTRIES,
+  MAX_NAME_BYTES,
+  MAX_ADDRESS_BYTES,
 } from './msg-guards.js';
 
 export interface PeerStorage {
@@ -31,15 +34,18 @@ export interface PeerStorage {
  * claim, and this is where it is checked.
  */
 function isServableRecord(rec: unknown): rec is PeerRecord {
-  return (
-    isRecord(rec) &&
-    typeof rec.address === 'string' &&
-    isBoundedInt(rec.lastSeenMs, Number.MAX_SAFE_INTEGER) &&
-    typeof rec.agentName === 'string' &&
-    typeof rec.nodeName === 'string' &&
-    isBoundedInt(rec.protocolVersion, MAX_CAPABILITY_CODE) &&
-    isBoundedIntArray(rec.capabilities, MAX_CAPABILITY_CODE)
-  );
+  if (!isRecord(rec)) return false;
+  if (typeof rec.address !== 'string') return false;
+  if (Buffer.byteLength(rec.address as string, 'utf8') > MAX_ADDRESS_BYTES) return false;
+  if (!isBoundedInt(rec.lastSeenMs, Number.MAX_SAFE_INTEGER)) return false;
+  if (typeof rec.agentName !== 'string' || (rec.agentName as string).length === 0) return false;
+  if (Buffer.byteLength(rec.agentName as string, 'utf8') > MAX_NAME_BYTES) return false;
+  if (typeof rec.nodeName !== 'string') return false;
+  if (Buffer.byteLength(rec.nodeName as string, 'utf8') > MAX_NAME_BYTES) return false;
+  if (!isBoundedInt(rec.protocolVersion, MAX_CAPABILITY_CODE)) return false;
+  if (!isBoundedIntArray(rec.capabilities, MAX_CAPABILITY_CODE)) return false;
+  if (Array.isArray(rec.capabilities) && rec.capabilities.length > MAX_CAPABILITY_ENTRIES) return false;
+  return true;
 }
 
 export class PeerDb {

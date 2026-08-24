@@ -36,6 +36,8 @@ export {
 } from './types.js';
 export {
   buildHandshakeFrame,
+  decodeHandshakeBody,
+  handshakeCodec,
   handshakePenalty,
   parseHandshakeBody,
   validateHandshake,
@@ -45,11 +47,8 @@ export {
   isRecord,
   isBoundedInt,
   isHeight,
-  isStringArray,
   isBoundedIntArray,
-  isBytes,
   MAX_ADVERTISED_HEIGHT,
-  MAX_TYPE_ID,
   MAX_UINT32,
   MAX_CAPABILITY_CODE,
   MAX_INV_IDS,
@@ -57,6 +56,10 @@ export {
   MAX_PEERS_ENTRIES,
   MAX_STREAM_BYTES,
   MAX_SERVE_BODY_BYTES,
+  MAX_CAPABILITY_ENTRIES,
+  MAX_NAME_BYTES,
+  MAX_ADDRESS_BYTES,
+  MAX_SYNC_ANCHORS,
 } from './msg-guards.js';
 export { isBogusAddress } from './bogus-addr.js';
 export { PeerDb } from './peerdb.js';
@@ -85,12 +88,13 @@ export type {
 } from './types.js';
 export type { SyncInfo, Inv, ModifierRequest, ModifierResponse, SyncState } from './sync-types.js';
 export {
-  encodeSyncInfo, decodeSyncInfo,
+  syncInfoCodec, encodeSyncInfo, decodeSyncInfo,
+  invCodec, modifierRequestCodec,
   encodeInv, decodeInv,
   encodeModifierRequest, decodeModifierRequest,
-  encodeModifierResponse, decodeModifierResponse,
+  modifierResponseCodec, encodeModifierResponse, decodeModifierResponse,
   encodeGetPeers, decodeGetPeers,
-  encodePeers, decodePeers,
+  peersCodec, encodePeers, decodePeers,
   encodeGetHeaders, decodeGetHeaders,
   encodeHeaders, decodeHeaders,
   encodeGetBlocks, decodeGetBlocks,

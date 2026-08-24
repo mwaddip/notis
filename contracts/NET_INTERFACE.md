@@ -19,7 +19,7 @@ and `@dagsocial/types` for wire types.
 ## Wire Framing
 
 Every stream message is wrapped in a frame. Gossipsub messages are **not**
-framed — they carry raw CBOR directly on the wire as before.
+framed — each topic carries its payload's positional encoding bare (→ Gossip Topics).
 
 ### Frame Format
 
@@ -34,7 +34,7 @@ framed — they carry raw CBOR directly on the wire as before.
 | code | VLQ | Message type identifier |
 | length | VLQ | Body length in bytes (0 = empty body) |
 | checksum | 4 bytes | First 4 bytes of `blake2b256(body)` |
-| body | `length` bytes | CBOR-encoded payload |
+| body | `length` bytes | Positional message body — layout per message code |
 
 ### Magic Bytes
 
@@ -128,8 +128,9 @@ resolved once at startup from `NETWORK_TYPE`. It is never a per-call-site defaul
 On receiving a frame with an unsupported version:
 - **Major version higher**: close the stream. The peer is using a newer framing
   protocol. Not a penalty — the peer may support an older version on retry.
-- **Minor version higher**: accept. Forward-compat — unknown fields in the body
-  are ignored.
+- **Minor version higher**: accept. A minor bump promises the envelope layout is
+  unchanged; bodies carry no frame-version dependence — message-body changes ride
+  the app `protocolVersion`.
 
 Version 1 is the baseline. A frame version bump means an incompatible change
 to the envelope structure (not the message bodies).
@@ -143,8 +144,10 @@ to the envelope structure (not the message bodies).
 - **VLQ for code**: message type namespace effectively unlimited.
 - **VLQ for length**: handshake (~100 bytes) encodes in 1 byte; block response
   (~100KB) encodes in 3 bytes.
-- **Body is CBOR**: consistent with existing gossip encoding. No second
-  serialization format.
+- **Body is positional**: every body is an `encodeStruct` codec, run through the
+  four-part boundary check on decode (`TYPES_INTERFACE` → The boundary check) —
+  the dialect gossip and the chain responses already speak. One serialization
+  format, the project's own; no third-party parser touches wire bytes.
 - **Checksum via blake2b256**: matches the project's hash standard.
 
 ### Message Codes
@@ -247,23 +250,30 @@ inbound:  accept → identify → receive stream → receive Handshake → send 
 
 **A handshake is a frame or it is nothing.** A payload that does not decode as a valid
 frame — truncated, leading bytes that are no known magic, a failed checksum — is rejected
-and the stream closed; there is **no unframed raw-CBOR fallback**, so no handshake byte
-ever reaches a CBOR parser except as the body of a checksum-verified frame. The
+and the stream closed; there is **no unframed fallback**, so no handshake byte is ever
+parsed except as the body of a checksum-verified frame. The
 classification of each frame-decode failure is the Ban policy's first tier below.
 
-### Handshake Body (CBOR)
+### Handshake Body
 
-```typescript
-{
-  agentName: string          // e.g. "dagsocial/1.0.0"
-  protocolVersion: number    // app protocol version the node supports
-  nodeName: string           // operator-configured, human-readable
-  chainHeight: number        // tip height of this node's chain
-  declaredAddress?: string   // optional multiaddr this node advertises
-  capabilities: number[]     // message codes this node can handle
-  sessionMagic: number       // random per-connection uint32
-}
 ```
+lpUtf8(agentName) ‖ vlqU(protocolVersion) ‖ lpUtf8(nodeName) ‖ vlqU(chainHeight) ‖
+opt(lpUtf8(declaredAddress)) ‖ arr(vlqU(capability)) ‖ vlqU(sessionMagic)
+```
+
+| Field | Rule |
+|---|---|
+| `agentName` | non-empty, ≤ `MAX_NAME_BYTES` (255) UTF-8 bytes — e.g. `"dagsocial/1.0.0"` |
+| `protocolVersion` | ≤ `MAX_CAPABILITY_CODE`; app protocol version the node supports |
+| `nodeName` | ≤ `MAX_NAME_BYTES` bytes; operator-configured, human-readable, may be empty |
+| `chainHeight` | ≤ `MAX_ADVERTISED_HEIGHT`; tip height of this node's chain |
+| `declaredAddress` | optional (`opt`), ≤ `MAX_ADDRESS_BYTES` (255) bytes; multiaddr this node advertises |
+| `capabilities` | count ≤ `MAX_CAPABILITY_ENTRIES` (64), each ≤ `MAX_CAPABILITY_CODE`; message codes this node can handle. Always present — an empty list is a peer that declares nothing |
+| `sessionMagic` | ≤ `MAX_UINT32`; random per-connection uint32 |
+
+Every rule is enforced inside the codec's `read`: a violation is a `ReaderError`, and the decode
+boundary collapses it to `null` → `malformed` (Ban policy below). The version-support check runs
+**after** decode, on a structurally sound message only.
 
 Session magic: each side generates a random `uint32`. The outbound side
 sends its magic; the inbound side echoes it back. Both sides verify the
@@ -284,20 +294,23 @@ validates both sides agree on network.
 
 ### Validation (and untrusted-input safety)
 
-Every decoded stream message — the handshake and all sync messages (`SyncInfo`, `Inv`,
-`ModifierRequest`, `ModifierResponse`, …) — is **structurally validated before use**:
-required fields present and correctly typed, arrays are arrays, and every height or
-count is a `Number.isInteger` that is **non-negative and within a sane maximum**. A
-malformed or out-of-bounds message is dropped and the peer penalized — it must **never
-throw out of, or crash, the handler**, and the sync event loop isolates a per-message
-failure so one bad message degrades that message only, never the loop.
+Every stream message body — the handshake and all sync messages (`SyncInfo`, `Inv`,
+`ModifierRequest`, `ModifierResponse`, …) — decodes through its positional codec, and **the codec
+is the whole structural boundary**: `decodeStruct` runs the four-part boundary check
+(`TYPES_INTERFACE` → The boundary check), and every domain rule — heights, counts, byte caps —
+throws inside `read` before any value escapes. A malformed or out-of-bounds message collapses to
+`null`, is dropped, and the peer penalized — it must **never throw out of, or crash, the
+handler**, and the sync event loop isolates a per-message failure so one bad message degrades
+that message only, never the loop.
 
-**Resource limits (untrusted counts and sizes).** Inbound array lengths (`ids`, `anchors`,
-`modifiers`) are capped at `MAX_INV_IDS` **on receipt** — the cap applies to what a peer
-*sends us*, not only to what we send. Raw stream reads are bounded by `MAX_STREAM_BYTES`
-(never buffer an unbounded attacker-controlled stream). Per-request serve work is bounded:
-handling a request must not be `O(ids × chainHeight)` — an unbounded id list must not each
-trigger a full-chain scan.
+**Resource limits (untrusted counts and sizes).** Inbound array counts are capped **inside the
+codecs, before the first element is read**: `ids` / `modifiers` at `MAX_INV_IDS` — and at least 1,
+an empty `Inv`, `ModifierRequest` or `ModifierResponse` being malformed (no honest sender emits
+one) — `anchors` at `MAX_SYNC_ANCHORS`, `peers` at `MAX_PEERS_ENTRIES`, `capabilities` at
+`MAX_CAPABILITY_ENTRIES`. The cap applies to what a peer *sends us*, not only to what we send.
+Raw stream reads are bounded by `MAX_STREAM_BYTES` (never buffer an unbounded
+attacker-controlled stream). Per-request serve work is bounded: handling a request must not be
+`O(ids × chainHeight)` — an unbounded id list must not each trigger a full-chain scan.
 
 ⛔ **Every arm that assembles more than one stored object into a response is bounded by BYTES, not by
 item count alone.** A count bounds an array's length and says nothing about its weight, and both
@@ -327,7 +340,8 @@ Handshake specifics:
   request range (codes 14, 16), which must clamp its serve loop to the local tip. That range
   arrives over `/dagsocial/sync/1`, so it reaches the serve loop only from a peer in **Active**
   state and a malformed body is attributable to a peer that can be penalized.
-- `agentName` / `nodeName` are strings; `capabilities` is an array of numbers (unknown
+- `agentName` / `nodeName` / `declaredAddress` are byte-capped strings (`MAX_NAME_BYTES` /
+  `MAX_ADDRESS_BYTES`); `capabilities` is a count-capped list of bounded codes (unknown
   capabilities preserved, not rejected — forward compat)
 
 **Ban policy** — two tiers, split by what a failure is evidence of:
@@ -340,12 +354,12 @@ all are a link that died mid-write or garbage, equally indistinguishable. None o
 *evidence* of misbehaviour, so none earns ban pressure — and none reaches a parser, so none
 can be misclassified by one.
 
-*Body tier — the frame decoded, its checksum held, and the CBOR body inside is wrong.* A
+*Body tier — the frame decoded, its checksum held, and the body inside is wrong.* A
 valid checksum proves the sender meant exactly these bytes, which is what licenses treating
 body defects as deliberate:
-- Malformed / out-of-bounds input (missing or wrong-typed fields, negative or
-  over-`MAX_ADVERTISED_HEIGHT` values) is adversarial → stream closed, peer **banned
-  permanently**.
+- Malformed / out-of-bounds input (short or trailing bytes, non-canonical encodings,
+  out-of-domain values such as an over-`MAX_ADVERTISED_HEIGHT` height) is adversarial →
+  stream closed, peer **banned permanently**.
 - `protocolVersion` unsupported is a compatibility mismatch, not an attack → stream closed
   with a **soft refusal; do not permanently ban** (a routine `PROTOCOL_VERSION` bump must not
   partition the network — the peer may upgrade). A short temporary cooldown at most.
@@ -363,7 +377,7 @@ body defects as deliberate:
 ## Historical Sync (Header-First)
 
 Sync uses four framed messages multiplexed over `/dagsocial/sync/1`.
-All messages are CBOR-encoded bodies wrapped in frames.
+All messages are positional bodies wrapped in frames; layouts below.
 
 > ⚠ **PARTIAL — the section title itself is not accurate.** Sync is **not header-first**
 > and has **no body-download phase**; the watermark and durability protocol described
@@ -387,17 +401,18 @@ All messages are CBOR-encoded bodies wrapped in frames.
 
 ### SyncInfo (code 2)
 
-```typescript
-{
-  tipHeight: number
-  tipBlockId: string              // hex
-  anchors: { height: number, blockId: string }[]
-}
+```
+vlqU(tipHeight) ‖ hexN(tipBlockId, 32) ‖ arr( vlqU(height) ‖ hexN(blockId, 32) )
 ```
 
-The receiver reads `tipHeight` — the whole of the sync decision — and `anchors.length`, as a
-cap. `tipBlockId` and the anchors' contents are carried for the header store and compared by
-nothing today. No cumulative-work field is carried: the sync decision is `tipHeight`'s alone,
+`tipHeight` and every anchor `height` are ≤ `MAX_ADVERTISED_HEIGHT`. At most `MAX_SYNC_ANCHORS`
+(4) anchors — the locator set below is the whole domain — and zero is legal (a genesis-height
+chain has nothing to anchor). A node with no blocks at all sends `tipHeight` 0 with `tipBlockId`
+= `GENESIS_PREV_BLOCK_HASH` — the same all-zeros id genesis's `prevBlockHash` carries — a
+sentinel compared by nothing today.
+
+The receiver reads `tipHeight` — the whole of the sync decision. `tipBlockId` and the anchors'
+contents are carried for the header store and compared by nothing today. No cumulative-work field is carried: the sync decision is `tipHeight`'s alone,
 and fork choice compares work over the verified segment it is handed (`NODE_INTERFACE → Fork
 choice decides on verified headers`), never over a peer's claim about its own chain.
 
@@ -407,30 +422,35 @@ header store would search — unbuilt, so no receiver runs that search today.
 
 ### Inv (code 3)
 
-```typescript
-{
-  typeId: 101                    // ordering block header; 102 (sub-block) is retired, never reused
-  ids: string[]                  // hex IDs, max 400 per batch
-}
 ```
+u8(typeId) ‖ arr( hexN(id, 32) )
+```
+
+`typeId` 101 = ordering block header; 102 (sub-block) is retired, never reused. The byte is the
+type id's whole domain: unknown values decode and are dropped by the handler — unknown codes
+preserved, not rejected. 1–`MAX_INV_IDS` (400) ids: the count is read and refused **before the
+first element**, and an empty list is malformed — no honest sender announces nothing.
 
 ### ModifierRequest (code 4)
 
-```typescript
-{
-  typeId: 101 | 103               // 101 ordering block; 103 post body (MODIFIER_POST_BODY); 102 retired, never reused
-  ids: string[]                   // hex ids — block hashes for 101, post ids for 103
-}
 ```
+u8(typeId) ‖ arr( hexN(id, 32) )
+```
+
+Same layout and bounds as `Inv` — 1–`MAX_INV_IDS` ids, count refused before the first element,
+empty malformed. `typeId` 101 = ordering block, 103 = post body (`MODIFIER_POST_BODY`); 102
+retired, never reused. Ids are block hashes for 101, post ids for 103 — 32 bytes either way.
 
 ### ModifierResponse (code 5)
 
-```typescript
-{
-  typeId: 101 | 103
-  modifiers: { id: string, data: Uint8Array }[]   // 101: encodeOrderingBlock; 103: encodePostBody — lpUtf8(content)
-}
 ```
+u8(typeId) ‖ arr( hexN(id, 32) ‖ lp(data) )
+```
+
+1–`MAX_INV_IDS` modifiers, count refused before the first element, empty malformed — a peer with
+none of the requested modifiers answers **zero bytes** (the stream's "cannot answer"), never an
+empty list. `data` is `encodeOrderingBlock` bytes for 101, `encodePostBody` — `lpUtf8(content)` —
+for 103.
 
 **`MODIFIER_POST_BODY` (103) is answered from the local store only — never relayed.** A peer
 that lacks a body omits the id from its response and the requester rotates peers. No modifier
@@ -696,7 +716,8 @@ future design decision, not an implementation detail.
 
 ### GetPeers (code 8)
 
-Body: empty. A peer receiving this queries PeerDb for up to 8 recently-seen
+Body: **zero bytes** — the decoder refuses any non-empty body. A peer receiving this queries
+PeerDb for up to 8 recently-seen
 non-blacklisted, non-self peers (excluding the requester's address) and
 responds with `Peers`.
 
@@ -706,37 +727,22 @@ phase is — serving discovery does not depend on being synced.
 
 ### Peers (code 9)
 
-```typescript
-{
-  peers: {
-    address: string        // multiaddr
-    agentName: string
-    nodeName: string
-    protocolVersion: number
-    capabilities: number[]
-  }[]
-}
+```
+arr( lpUtf8(address) ‖ lpUtf8(agentName) ‖ lpUtf8(nodeName) ‖
+     vlqU(protocolVersion) ‖ arr(vlqU(capability)) )
 ```
 
-Max 64 entries per response. Cap is enforced on the receiver — bodies
-declaring more trigger a permanent ban of the sender. Empty selection
-produces `{ peers: [] }`.
+0–`MAX_PEERS_ENTRIES` (64) entries; the count is refused **before the first entry is read**, and
+a body declaring more is a permanent ban of the sender. Empty selection produces an empty list.
+`address` ≤ `MAX_ADDRESS_BYTES` bytes (multiaddr); `agentName` / `nodeName` ≤ `MAX_NAME_BYTES`.
 
-**Encoding.** Both bodies are CBOR, like every other framed message
-(`encodeFrame(magic, code, encode(body))`); there is no bespoke
-byte-level codec. Decoding follows the `sync-codec.ts` pattern: a decoder
-returns `null` for anything that is not well-formed CBOR **or** does not
-match the declared shape — `peers` an array, and every entry an object
-with a string `address`, string `agentName`, string `nodeName`, plus
-`protocolVersion` and `capabilities` bounded **exactly as
-`validateHandshake` bounds the same two fields** (`isBoundedInt` /
-`isBoundedIntArray` against `MAX_CAPABILITY_CODE`). Pinning them to the
-handshake's bounds rather than "any safe integer" is deliberate: the two
-carry the same values, and a looser rule here would mean two
-implementations disagreeing about which sender gets banned. `null` is a
-`ProtocolViolation` (permanent ban); shape checking is not optional,
-because each field reaches string and dial paths that a CBOR payload can
-otherwise feed any type.
+**Encoding.** Both bodies are positional codecs like every other framed message; there is no
+second dialect. Decoding is `decodeStruct`'s boundary check (`sync-codec.ts`), and every entry
+field carries **exactly the handshake codec's rules for the same field**. Pinning them to the
+handshake's bounds rather than restating them is deliberate: the two carry the same values, and
+a looser rule here would mean two implementations disagreeing about which sender gets banned.
+`null` is a `ProtocolViolation` (permanent ban); field enforcement is not optional, because each
+field reaches string and dial paths.
 
 A single invalid entry rejects the **whole** body, banning the sender.
 That is not collateral damage: a node serves `Peers` from its own PeerDb,

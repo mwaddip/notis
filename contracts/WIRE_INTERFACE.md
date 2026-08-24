@@ -139,12 +139,13 @@ another path.
 `wrong-magic` needs one more bit of judgement, because it covers two
 unrelated situations. If the leading four bytes are a **recognized
 foreign magic** (another `MAGIC_*` constant), the sender is a
-wrong-network peer and the stream is closed. If they are not a frame
-magic at all — an unframed legacy CBOR handshake begins `0xb9 …`, which
-is simply not a frame — the payload may fall back to the legacy
-raw-CBOR path. A `truncated` frame may fall back likewise. Consumers
-MUST make that split themselves; the code alone cannot, since both cases
-are genuinely "these bytes are not the magic I expected".
+wrong-network peer. If they are not a frame magic at all, the payload is
+simply not a frame — net's handshake classification names it
+`not-a-frame`, and there is no unframed fallback path (`NET_INTERFACE` →
+Handshake → "A handshake is a frame or it is nothing"). Either way the
+stream is closed; consumers MUST make the split themselves, since the
+code alone cannot — both cases are genuinely "these bytes are not the
+magic I expected".
 
 Collapsing all of this into one code forces the consumer to guess — or,
 worse, to match on message text, which breaks silently the moment the

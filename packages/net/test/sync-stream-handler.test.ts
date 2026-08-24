@@ -445,7 +445,7 @@ describe('sync stream handler — post body serve (code 103)', () => {
     expect(decodePostBody(resp.modifiers[0]!.data)).toBe(CONTENT);
   });
 
-  it('omits ids the provider does not hold', async () => {
+  it('omits ids the provider does not hold — zero-byte reply', async () => {
     const { send } = makeHandlerHarness({
       postBodyProvider: () => null,
     });
@@ -454,9 +454,7 @@ describe('sync stream handler — post body serve (code 103)', () => {
     const written = await send(req);
 
     expect(written).toHaveLength(1);
-    const frame = decodeFrame(MAGIC, written[0]!);
-    const resp = decodeModifierResponse(frame.body)!;
-    expect(resp.modifiers).toHaveLength(0);
+    expect(written[0]!.length).toBe(0);
   });
 
   it('answers empty when no provider is registered', async () => {

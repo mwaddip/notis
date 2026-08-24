@@ -1,14 +1,11 @@
 /**
- * Structural guards for decoded, untrusted wire messages.
+ * Constants and predicates for the stream-message decode boundary.
  *
- * Every stream message arrives as CBOR from a peer we do not trust. `decode()`
- * returns `any`, so casting the result straight to a message interface lets a
- * missing field surface as a `TypeError` deep inside a handler — or, worse, lets
- * a negative height reach a loop that walks the chain one block at a time.
- *
- * These predicates are the decode boundary: shape first (field presence, types,
- * array-ness), then bounds on every height and count, before the value is used.
- * Unknown extra fields are ignored, not rejected — forward compatibility.
+ * Every stream message body is a positional codec checked by `decodeStruct`'s
+ * four-part boundary (TYPES_INTERFACE → The boundary check). Domain bounds —
+ * heights, counts, byte caps — throw inside each codec's `read` before any
+ * value escapes. These constants and predicates are shared by the codecs and
+ * by PeerDb's row admission gate.
  */
 
 /**
@@ -20,15 +17,6 @@
  * beyond any real chain, far below anything that costs us a loop.
  */
 export const MAX_ADVERTISED_HEIGHT = 100_000_000;
-
-/**
- * Largest modifier type id accepted at the boundary.
- *
- * Unknown-but-bounded type ids pass this check and are dropped by the handler
- * that understands (or does not understand) them — the invariant is that
- * unknown codes are preserved, not rejected.
- */
-export const MAX_TYPE_ID = 65_535;
 
 /** Largest value for a uint32 wire field (session magic). */
 export const MAX_UINT32 = 0xffff_ffff;
@@ -63,6 +51,28 @@ export const MAX_INV_IDS = 400;
  * declaring more is a permanent ban of the sender.
  */
 export const MAX_PEERS_ENTRIES = 64;
+
+/**
+ * Largest `capabilities` array accepted in a handshake or a Peers entry.
+ *
+ * 64 against a 17-row code table. Without this an 8 MiB frame of capability
+ * codes is walked element-wise in the handshake and ×64 in a Peers body.
+ */
+export const MAX_CAPABILITY_ENTRIES = 64;
+
+/** Largest byte span accepted for `agentName` / `nodeName` in a handshake or Peers entry. */
+export const MAX_NAME_BYTES = 255;
+
+/** Largest byte span accepted for `declaredAddress` (handshake) or `address` (Peers entry). */
+export const MAX_ADDRESS_BYTES = 255;
+
+/**
+ * Largest anchor count accepted in a SyncInfo body.
+ *
+ * The locator is `[tip, tip-16, tip-128, tip-512]` — four entries, fewer if
+ * the chain is shorter. Zero is legal (genesis-height chain).
+ */
+export const MAX_SYNC_ANCHORS = 4;
 
 /**
  * Largest number of items in a `Headers` (15) or `Blocks` (17) response —
@@ -105,14 +115,14 @@ export const MAX_STREAM_BYTES = 8 * 1024 * 1024;
  * Largest response body we assemble when serving a peer.
  *
  * Kept at half of `MAX_STREAM_BYTES` so a response we produce always fits inside
- * the read cap on the other end, with room for framing and CBOR overhead. A
+ * the read cap on the other end, with room for framing overhead. A
  * request whose blocks do not fit is answered partially; the requester re-asks
  * for what is still missing on the next SyncInfo round, so truncating here costs
  * a round trip, never a stuck sync.
  */
 export const MAX_SERVE_BODY_BYTES = 4 * 1024 * 1024;
 
-/** True for a plain CBOR map — an object that is neither null nor an array. */
+/** True for a plain object — neither null nor an array. */
 export function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
@@ -120,8 +130,8 @@ export function isRecord(v: unknown): v is Record<string, unknown> {
 /**
  * True for a non-negative integer no greater than `max`.
  *
- * Rejects `NaN`, `Infinity`, fractions, negatives, and bigints — CBOR can carry
- * all of them, and `Number.isInteger` alone lets negatives through.
+ * Rejects `NaN`, `Infinity`, fractions, negatives, and bigints.
+ * `Number.isInteger` alone lets negatives through.
  */
 export function isBoundedInt(v: unknown, max: number): v is number {
   return typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= max;
@@ -132,18 +142,9 @@ export function isHeight(v: unknown): v is number {
   return isBoundedInt(v, MAX_ADVERTISED_HEIGHT);
 }
 
-/** True for an array whose every element is a string. */
-export function isStringArray(v: unknown): v is string[] {
-  return Array.isArray(v) && v.every((x) => typeof x === 'string');
-}
-
 /** True for an array whose every element is a bounded non-negative integer. */
 export function isBoundedIntArray(v: unknown, max: number): v is number[] {
   return Array.isArray(v) && v.every((x) => isBoundedInt(x, max));
 }
 
-/** True for a byte string. cbor-x decodes CBOR byte strings to Buffer, a Uint8Array subclass. */
-export function isBytes(v: unknown): v is Uint8Array {
-  return v instanceof Uint8Array;
-}
 

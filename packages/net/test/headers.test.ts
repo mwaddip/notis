@@ -1,5 +1,4 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { encode } from 'cbor-x';
 import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
 import {
   PROTOCOL_VERSION,
@@ -290,11 +289,9 @@ describe('chain query request encode/decode', () => {
     expect(decodeGetBlocks(new Uint8Array([0x81, 0x00, 0x03]))).toBeNull();
   });
 
-  it('rejects a cbor-x map body under either code', () => {
-    expect(decodeGetHeaders(new Uint8Array(encode({ startHeight: 10, maxCount: 5 })))).toBeNull();
-    expect(
-      decodeGetBlocks(new Uint8Array(encode({ startHeight: 1, endHeight: 3, mode: 'blocks' }))),
-    ).toBeNull();
+  it('rejects arbitrary non-positional bytes', () => {
+    expect(decodeGetHeaders(new Uint8Array([0xa2, 0x64, 0x73, 0x74, 0x61, 0x72]))).toBeNull();
+    expect(decodeGetBlocks(new Uint8Array([0xff, 0xfe, 0xfd, 0xfc]))).toBeNull();
   });
 });
 
@@ -385,14 +382,9 @@ describe('chain response framing', () => {
     expect(decodeBlocks(body.subarray(0, body.length - 1), 1)).toBeNull();
   });
 
-  it('rejects a cbor-x body outright', () => {
-    // No shared prefix with the positional layout to misinterpret: a cbor-x
-    // body is refused whole.
-    const blocks = [makeMockOrderingBlock(1, '00'.repeat(32))];
-    expect(decodeBlocks(new Uint8Array(encode({ blocks })), 5)).toBeNull();
-    expect(
-      decodeHeaders(new Uint8Array(encode([makeMockHeader(1, '00'.repeat(32))])), 5),
-    ).toBeNull();
+  it('rejects arbitrary non-positional bytes', () => {
+    expect(decodeBlocks(new Uint8Array([0xa1, 0x66, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x73]), 5)).toBeNull();
+    expect(decodeHeaders(new Uint8Array([0x9f, 0xa5, 0x68, 0x65]), 5)).toBeNull();
   });
 });
 

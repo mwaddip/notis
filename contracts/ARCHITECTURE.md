@@ -1793,7 +1793,7 @@ forever. A node rejects objects with an unsupported protocol version.
 - Hashing: `blake2b512` truncated to 32 bytes for all 32-byte outputs
 - Signatures: raw Ed25519 (64 bytes). **On the wire the encoding depends on the
   carrier, and "base64" — as this line previously read — is the rarest of the three:**
-  raw bytes inside CBOR (all consensus structures), **lowercase hex** at the HTTP
+  raw bytes in the positional encodings (all consensus structures), **lowercase hex** at the HTTP
   boundary (`json-to-tx.ts`) and in the demo UI, and base64 at exactly one endpoint
   (`routes/utxo.ts`). Verification is `crypto.verify(null, …)` with a KeyObject in
   every case
@@ -2064,8 +2064,8 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   >   before allocating (`wire/src/reader.ts`), and `cumulativeWork` skips any `powTargetBits`
   >   outside `orderingPowTarget`'s domain (`VALIDATION_INTERFACE → blockWork / cumulativeWork`).
   >   Neither allocates on attacker-chosen input.
-  > - *Casts.* The sync decode boundary shape-checks every field and never throws; malformed
-  >   CBOR collapses to `null` and the returned object is rebuilt from checked fields only
+  > - *Casts.* The sync decode boundary runs every body through its positional codec and never
+  >   throws; malformed bytes collapse to `null` and nothing unvalidated escapes the codec
   >   (`net/src/sync-codec.ts`).
   > - ✅ *Throws — measured 2026-08-23.* The claim behind this limb named "an unguarded throwing
   >   step between the Stage-1 pipeline's documented calls": the gossip topic validators

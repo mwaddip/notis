@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { encode } from 'cbor-x';
-import { PROTOCOL_VERSION } from '@dagsocial/types';
+import { PROTOCOL_VERSION, encodeStruct } from '@dagsocial/types';
+import { syncInfoCodec } from '../src/sync-codec.js';
 import {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
@@ -363,8 +363,9 @@ describe('onSyncComplete fires on every entry into synced', () => {
     expect(machine.getState().phase).toBe('syncing');
 
     height = 100;
-    machine.handleMessage('peer1', MSG_SYNC_INFO, new Uint8Array(
-      encode({ tipHeight: 100, tipBlockId: 'abc', anchors: [] }),
+    const H32 = '0'.repeat(64);
+    machine.handleMessage('peer1', MSG_SYNC_INFO, encodeStruct(syncInfoCodec,
+      { tipHeight: 100, tipBlockId: H32, anchors: [] },
     ));
     machine.flush();
     expect(machine.getState().phase).toBe('synced');
@@ -375,8 +376,8 @@ describe('onSyncComplete fires on every entry into synced', () => {
     expect(machine.getState().phase).toBe('syncing');
 
     height = 200;
-    machine.handleMessage('peer2', MSG_SYNC_INFO, new Uint8Array(
-      encode({ tipHeight: 200, tipBlockId: 'def', anchors: [] }),
+    machine.handleMessage('peer2', MSG_SYNC_INFO, encodeStruct(syncInfoCodec,
+      { tipHeight: 200, tipBlockId: H32, anchors: [] },
     ));
     machine.flush();
     expect(machine.getState().phase).toBe('synced');
