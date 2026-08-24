@@ -44,7 +44,6 @@ import type {
 } from '../src/block.js';
 import type { CandidateOf, KarmaBox, UtxoTransaction } from '../src/utxo.js';
 
-const challenge = new Uint8Array(32).fill(0xab);
 // A UserId is 32 raw bytes — an Ed25519 public key. These fixtures carried
 // display strings ('user123', 'validator1'), which no identity can ever be;
 // the test tree was unchecked, so they typechecked as nothing.

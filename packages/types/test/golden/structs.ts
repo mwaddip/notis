@@ -157,7 +157,7 @@ type _AssertBoxTypesMatch =
       ? true
       : never
     : never;
-const _boxTypeCheck: _AssertBoxTypesMatch = true;
+true satisfies _AssertBoxTypesMatch;
 
 /**
  * The type→tag table, restated from the contract so a renumber fails here too
