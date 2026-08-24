@@ -1651,7 +1651,7 @@ function checkAuthorization(tx: UtxoTransaction, inputBoxes: AnyBox[]): UtxoResu
 }
 
 // ---------------------------------------------------------------------------
-// Public API: validateTx, revalidateTxInContext, applyTx, validateAndApplyTx
+// Public API: validateTx, applyTx, validateAndApplyTx
 // ---------------------------------------------------------------------------
 
 /**
@@ -1836,32 +1836,6 @@ export function materializeOutput(box: AnyBoxCandidate, txId: string, index: num
   const { id: _id, txId: _txId, index: _index, ...candidate } = box as AnyBox;
   const withProvenance = { ...candidate, txId, index } as AnyBox;
   return { ...withProvenance, id: computeBoxId(withProvenance) } as AnyBox;
-}
-
-/**
- * Revalidate a previously-validated transaction at a later height.
- *
- * Skips expensive checks (signatures, transitions) and only verifies:
- * - Inputs are still unspent (liveness)
- *
- * Karma decay is handled by the periodic decay engine.
- *
- * Used by the mempool to detect stale transactions.
- */
-export function revalidateTxInContext(
-  deps: UtxoEngineDeps,
-  tx: UtxoTransaction,
-  currentBlockHeight: number,
-): UtxoResult {
-  // Only check liveness — are inputs still unspent?
-  for (const id of tx.inputs) {
-    const box = deps.getBox(id);
-    if (!box) {
-      return { valid: false, error: `Input box not found or already spent: ${id}` };
-    }
-  }
-
-  return { valid: true };
 }
 
 /**

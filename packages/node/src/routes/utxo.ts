@@ -5,10 +5,8 @@ import {
   PROTOCOL_VERSION,
   MEMPOOL_EXPIRY_BLOCKS,
 } from '@dagsocial/types';
-import type { CandidateOf, KarmaBox, CreditBox, BondBox, UtxoTransaction } from '@dagsocial/types';
+import type { KarmaBox, CreditBox, BondBox, UtxoTransaction } from '@dagsocial/types';
 import { sendCredits } from '../services/credits.js';
-import { validateTx } from '../services/utxo-engine.js';
-import { admitTx } from '../services/admit-tx.js';
 import type { UtxoEngineDeps } from '../services/utxo-engine.js';
 import type { IdentityRecord } from '../store/identity-records.js';
 import { getNet } from '../services/net-instance.js';
