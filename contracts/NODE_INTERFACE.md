@@ -891,6 +891,70 @@ verification and refuses a transaction that cannot succeed either way.
 rejected on resync; testnet and devnet wipe at deploy and mainnet does not
 exist, so nothing is stranded — but it is a consensus break, not a refactor.
 
+### Validity ceiling (`ceilingOf`)
+
+> ⚠ **AHEAD OF CODE — 2026-08-25.** The rule below is stated; `ceilingOf` and the pool's use of it are
+> not in the tree yet.
+
+**The highest block height at which a transaction can still validate — the dual of `SPEND_TIMING`.**
+Spend timing is a floor on height and refuses an input spent too *early*; a validity ceiling is a
+ceiling on the same axis and marks a transaction that can no longer be included at all. `null` means
+the transaction has no ceiling, which is the ordinary case.
+
+⛔ **A ceiling is DERIVED, never decided.** A node does not choose it; it reads it off the consensus
+rules a transaction must already satisfy. Two nodes therefore always agree on it, and an operator
+cannot tune it. **That is the whole of why it may live inside `insertUtxoTx` where the fee floor may
+not** (MEMPOOL_INTERFACE → Fee floor): the floor is a local policy that cannot tell a submitter from
+the reorg caller, while a ceiling is a fact about the transaction that holds identically for both.
+
+⛔ **It is NOT a table keyed on `boxType`, and that is a limitation rather than a choice.**
+`AUTHORIZATION`, the output-shape schema and `SPEND_TIMING` are all keyed on the input's type and get
+a compile-time obligation from it. A ceiling is a property of the *transition*, which has no name in
+this codebase — `checkTransitions` discriminates by a `switch` on input type with nested output-shape
+arms — and the input's type is a fact about the input *boxes*, which is state. A ceiling must be
+readable from the transaction's bytes alone (below), so it cannot key on that. **`ceilingOf` is a
+function, and the obligation it cannot get from the type system is carried by a test instead**
+(below).
+
+⛔ **A ceiling is a function of the transaction's own bytes and resolves nothing** — the standing the
+pool's fee and class metadata already have (MEMPOOL_INTERFACE → Fee floor). A node computes it whether
+or not it has ever seen the inputs, which is what lets the pool store it on the row at insert.
+
+The ceilings that exist:
+
+| Transaction, read from its bytes | Ceiling | The rule it mirrors |
+|---|---|---|
+| A rent collection that outputs a successor | the credit outputs' declared `createdAtBlock` | the successor is created at the collecting height, and at no other |
+| A rent collection with no successor | none | a box that cannot cover its charge is taken entire, so no successor is required of it |
+| A vouch cast | the vouch output's `createdAtBlock` + `VOUCH_CAST_HEIGHT_WINDOW` | a cast may not lag its carrying block by more than the window |
+| Everything else | none | |
+
+⛔ **A ceiling recognises a rent collection by SHAPE, not by the biconditional.** Admission tests
+signature-absence alone, and that is sound only because every caller of `admitTx` has already run
+`validateTx` — an unsigned transaction that passed authorization *is* a rent collection
+(NODE_INTERFACE → Storage rent is a transition requiring no signature). **`ceilingOf` has no such
+guarantee**: it runs inside `insertUtxoTx`, which fork resolution reaches directly, so it sees
+transactions no validation has vouched for. It therefore uses the stronger test the block creator uses
+when it splits a body — credit-side *and* unsigned — which reads the outputs and the signature map and
+needs nothing else.
+
+**Where it is enforced: the pool, at two moments, and nowhere in consensus.** No block is ever
+rejected for a ceiling — a block carrying a past-ceiling transaction is already refused by the rule
+the ceiling mirrors, at `validateTx`. The ceiling exists so an entry that can never be included stops
+occupying a slot and stops being reconsidered on every build (MEMPOOL_INTERFACE → Validity ceiling).
+
+⚠ **A new height cap owes a ceiling arm.** Any rule inside `checkTransitions` that bounds
+`currentBlockHeight` from above makes some transaction permanently unincludable once the chain passes
+it, and a rule that does so without a matching arm leaves those entries in the pool until expiry.
+Because the type system cannot demand this, **a test enumerates every `currentBlockHeight` comparison
+in `checkTransitions` against an inventory declared beside it**, and a new comparison fails that test
+until its author records whether it caps height.
+
+⚠ **Two ceilings are known and both were found by hand**, one of them only because storage rent
+landed. The test is what makes the third one fail loudly instead of surfacing as a pool that quietly
+carries dead rows.
+
+
 ### Genesis proof boxes are never in a transaction
 
 **A `genesis_proof` box may never appear as a transaction input or an output.**

@@ -30,6 +30,7 @@ CREATE TABLE mempool (
     like_target TEXT, like_liker TEXT,          -- gate metadata (below)
     invite_inviter TEXT, vouch_voucher TEXT,    -- gate metadata (below)
     tx_fee INTEGER, tx_bytes INTEGER,           -- fee-class metadata (§Eviction)
+    max_valid_height INTEGER,                   -- utxo_tx only: validity ceiling, NULL = none (§Validity ceiling)
     tx_inputs TEXT, tx_output_ids TEXT,         -- conflict-gate metadata
     tx_id TEXT,                                 -- utxo_tx only: the entry's own TxId (confirmed-entry cleanup)
     prune_entry_id TEXT                         -- prune only: the entry's own id (confirmed-entry cleanup)
@@ -219,11 +220,16 @@ not an option.
 purgeExpired(currentHeight: number): number
 ```
 
-Deletes all entries where `expires_at_height < currentHeight`. Returns the
-number of deleted rows.
+Deletes all entries where `expires_at_height < currentHeight`, **and every entry whose
+`max_valid_height` is below `currentHeight`** (Validity ceiling, below). Returns the number of deleted
+rows.
 
-Called at the start of block creation, before `getPendingEntries`. Ensures
-expired entries never make it into a block.
+Called at the start of block creation, before `getPendingEntries`. Ensures expired entries never make
+it into a block — and, with the ceiling, that an entry which can no longer be included is not
+reconsidered on every build.
+
+⚠ **Both reclaim paths run the pending-post cleanup**, not only the expiry one: an entry's DAG row
+dies with its pool row whichever condition removed it (NODE_INTERFACE → Post transactions).
 
 ### removeEntry
 
@@ -541,6 +547,46 @@ producer placing one directly into its own block as the only route **on nodes ap
 
 ⚠ **It protects the consume-whole branch.** A box that cannot cover its charge is taken entire; open
 submission would let anyone race for under-funded boxes instead of only whoever wins a block.
+
+### Validity ceiling
+
+> ⚠ **AHEAD OF CODE — 2026-08-25.** The column and both moments below are stated; neither is in the
+> tree yet.
+
+**An entry whose validity is capped from above by block height leaves the pool once the chain passes
+that cap.** The ceiling itself is defined once, against the consensus rules it mirrors
+(NODE_INTERFACE → Validity ceiling); this section states only what the pool does with it.
+
+`max_valid_height` is written at insert from the transaction's bytes, beside `tx_fee` and `tx_bytes`
+and on the same standing — no state is read, so an entry carries its ceiling whether or not this node
+has ever seen the inputs. `NULL` means no ceiling and is the ordinary case.
+
+**Two moments, because they are different events:**
+
+1. **Refusal at insert.** `insertUtxoTx` refuses a transaction whose ceiling already lies below the
+   current height. This is the path by which a transaction the chain has *reverted* — returned to the
+   pool by fork resolution, which reaches the store directly — is kept out rather than stored and
+   later reclaimed.
+2. **Reclaim while pooled.** `purgeExpired` removes an entry whose ceiling the chain has since passed.
+   This is the path for an entry that was live when it was inserted and went dead as the tip rose; a
+   vouch cast nobody mined within its window is the case that exists today, and it needs no reorg.
+
+⛔ **The reorg caller must treat refusal at insert as an EXPECTED drop.** Fork resolution re-inserts
+inside the same database transaction that applies the new chain, and it rethrows any error it does not
+recognise — so a refusal it has not been taught about aborts the whole reorg, and the node keeps a
+chain it has already scored as the lighter one. A ceiling refusal joins the drops that path already
+absorbs (pool full, pending-spend conflict, oversized transaction): logged, and the reorg continues.
+
+⛔ **A ceiling inside `insertUtxoTx` does not contradict the floor sitting above it** (Fee floor,
+below). The floor is local policy an operator raises under load, and the store cannot tell the reorg
+caller from a submitter — so applied there it would drop confirmed history. A ceiling is derived from
+consensus rules rather than chosen, identical on every node, and equally true of both callers: the
+transaction it refuses is one **no** node can ever include.
+
+⚠ **Refusal at insert rests on the tip never falling.** It is sound because fork choice switches only
+to a chain with strictly greater work and every block carries equal work, so a reorg raises the tip.
+**A retarget would end that**, and refusal at insert would then be able to discard a transaction that
+could still become legal. Reclaim-while-pooled carries no such debt — it re-decides at every build.
 
 ### Fee floor
 
