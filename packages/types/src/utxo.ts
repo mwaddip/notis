@@ -890,27 +890,28 @@ export interface LikeAccrualBox extends BoxBase {
  * The whole of a network's credit emission, held as state — TYPES_INTERFACE →
  * EmissionBox.
  *
- * Genesis creates one on every network holding that profile's entire emission
- * total, and each block spends it to a successor holding `value −
- * computeBlockReward(height)`. No other rule reduces it and none increases it,
- * so what remains to be emitted is a value an observer reads rather than a
- * schedule they trust.
+ * Genesis creates one on every network holding that profile's **carried**
+ * emission total (`creditEmissionTotal`), and each block spends it to a
+ * successor holding `value − min(computeBlockReward(height), value) + unearned`
+ * — the scheduled release capped by what the box holds, plus the forfeited
+ * inclusion bonus returned by the same block (MINING_INTERFACE → Emission
+ * Schedule).
+ *
+ * ⛔ **The value does not decrease monotonically.** A returned bonus can make a
+ * successor larger than its predecessor; the bound survives because what
+ * returns is fee value already in supply.
  *
  * **No owner, and therefore no trailing fields.** The box names no spender
  * because block application is the only one, so its content encoding is the
  * shared prefix alone (see `canonicalBoxBytes`).
  *
- * ⛔ **A successor whose value would be `0` is not created.** The total equals
- * the schedule's sum exactly, so the last emitting block consumes the box and
- * leaves none; above the terminus no emission box exists and nothing is spent.
- * Without it a zero-value box is removed and reinserted on every block forever.
+ * ⛔ **The box exists at every height, `0` included.** A forfeited inclusion
+ * bonus must always have somewhere to land; a box destroyed at exhaustion
+ * would leave it with no destination.
  *
- * ⚠ **The genesis value is derived from the profile's schedule, never carried
- * in the profile.** A hardcoded total that disagrees with `computeBlockReward`
- * either starves the box before the terminus, making every block from that
- * height unproducible, or strands a residue no rule can release. The
- * derivation is node's (MINING_INTERFACE → Emission Schedule); this package
- * declares only the type.
+ * ⛔ **The genesis value is CARRIED in the profile, strictly below the curve's
+ * own sum.** The gap is what a returned bonus drains through; partial payment
+ * closes the starvation risk the old derivation prevented.
  */
 export interface EmissionBox extends BoxBase {
   boxType: 'emission';
@@ -920,8 +921,10 @@ export interface EmissionBox extends BoxBase {
 // --- Treasury ---
 
 /**
- * Where the coinbase's treasury slice and the forfeited inclusion bonus land —
- * TYPES_INTERFACE → TreasuryBox.
+ * Where the coinbase's treasury slice lands — TYPES_INTERFACE → TreasuryBox.
+ *
+ * ⛔ **The forfeited inclusion bonus does NOT land here.** It stays in the
+ * `EmissionBox` (MINING_INTERFACE → "The slices").
  *
  * Block application spends it to a successor holding `value + split.treasury`,
  * and there is no rule that reduces it. ARCHITECTURE → Treasury requires the

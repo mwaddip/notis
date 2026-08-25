@@ -30,6 +30,7 @@ const REQUIRED_PROFILE_FIELDS = [
   'creditMinerRewardDelay',
   'creditFixedRateBlocks',
   'creditEpochBlocks',
+  'creditEmissionTotal',
   'genesisCommitteeKeys',
   'genesisKarmaPerMember',
   'inviteBondMin',
@@ -190,7 +191,7 @@ describe('NETWORK_PROFILES', () => {
     expect(devnet.inviteProbationBlocks).toBe(540);
     expect(devnet.creditMinerRewardDelay).toBe(10);
     expect(devnet.creditFixedRateBlocks).toBe(1000);
-    expect(devnet.creditEpochBlocks).toBe(100);
+    expect(devnet.creditEpochBlocks).toBe(400);
 
     // Every ordering asserted on BOTH profiles, so "devnet mirrors mainnet" is
     // checked rather than assumed: a compression that quietly reorders the

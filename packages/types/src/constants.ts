@@ -175,9 +175,18 @@ export const INVITE_BOND_VEST_PER_LIKES = 3;
 export const GENESIS_KARMA_PER_MEMBER = 1000n; // → profile: genesisKarmaPerMember
 // Credit emission (Ergo-style linear decay) — amounts in base units of 10^-8 credit
 export const CREDIT_FIXED_RATE_BLOCKS = 1_051_200;    // ~2 years at 60s blocks → profile: creditFixedRateBlocks
-export const CREDIT_INITIAL_REWARD = 100n * 10n ** 8n; // 100 credits per block in fixed-rate period
-export const CREDIT_EPOCH_BLOCKS = 129_600;            // ~90 days — reward reduction interval → profile: creditEpochBlocks
-export const CREDIT_REWARD_REDUCTION = 2n * 10n ** 8n; // 2 credits reduced per epoch
+export const CREDIT_INITIAL_REWARD = 42n * 10n ** 8n;  // 42 credits per block in fixed-rate period
+export const CREDIT_EPOCH_BLOCKS = 470_000;            // ~326 days at 60s blocks — reward reduction interval → profile: creditEpochBlocks
+export const CREDIT_REWARD_REDUCTION = 1n * 10n ** 8n; // 1 credit reduced per epoch
+/**
+ * The `EmissionBox`'s genesis value for mainnet and testnet — CARRIED, never
+ * derived (TYPES_INTERFACE → EmissionBox; MINING_INTERFACE → Emission Schedule).
+ *
+ * Strictly below the curve's own sum (448,820,400 at R=42, d=1, F=1,051,200,
+ * E=470,000), so the box empties while the rate is still positive and a
+ * returned inclusion bonus always has a draining tail to pass through.
+ */
+export const CREDIT_EMISSION_TOTAL = 422_640_000n * 10n ** 8n;
 export const CREDIT_MINER_REWARD_DELAY = 1440;         // consensus — blocks before coinbase spendable (24h at 60s blocks) → profile: creditMinerRewardDelay
 export const MEMPOOL_EXPIRY_BLOCKS = 720;               // Blocks before mempool entries expire (~12h)
 
@@ -254,8 +263,8 @@ export const MIN_FEE_RATE_PER_BYTE = 0n;
 // Credit floor and storage rent — TYPES_INTERFACE → Box value domain. Both are
 // CONSENSUS and both are per byte of the box's own record. Derived from Ergo's,
 // scaled by the supply ratio (Ergo's 97,739,924 ERG max against this network's
-// 422,640,000 credit emission), so Ergo's ratio between the two is preserved
-// rather than chosen twice. The PERIOD is a profile field
+// 422,640,000 credit emission total), so Ergo's ratio between the two is
+// preserved rather than chosen twice. The PERIOD is a profile field
 // (`storageRentPeriodBlocks`), not a constant.
 export const MIN_BOX_VALUE_PER_BYTE = 156n;        // consensus — credit outputs only
 export const STORAGE_RENT_PER_BYTE = 605_378n;     // consensus — charged once per period
