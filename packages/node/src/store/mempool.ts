@@ -2,7 +2,7 @@ import { getDb } from './db.js';
 import { getBox } from './utxo.js';
 import { deletePendingPost } from './posts.js';
 import { ClientError } from '../services/client-error.js';
-import { materializeOutput } from '../services/utxo-engine.js';
+import { materializeOutput, ceilingOf } from '../services/utxo-engine.js';
 import type {
   UtxoTransaction,
   PruneEntry,
@@ -165,6 +165,27 @@ export class TxTooLargeError extends ClientError {
       413,
     );
     this.name = 'TxTooLargeError';
+  }
+}
+
+/**
+ * Thrown by `insertUtxoTx` when a transaction's validity ceiling
+ * (NODE_INTERFACE → Validity ceiling) already lies below the current height.
+ *
+ * A `ClientError`, so the refusal reaches the submitter as 409: the
+ * transaction is well formed but can never be included at this height.
+ */
+export class CeilingExceededError extends ClientError {
+  constructor(
+    public readonly ceiling: number,
+    public readonly currentHeight: number,
+  ) {
+    super(
+      `Transaction ceiling ${ceiling} is below current height ${currentHeight}` +
+        ' — it can never be included',
+      409,
+    );
+    this.name = 'CeilingExceededError';
   }
 }
 
@@ -429,6 +450,7 @@ export function bidOf(tx: UtxoTransaction): bigint | null {
 export function insertUtxoTx(
   tx: UtxoTransaction,
   expiresAtHeight: number,
+  currentHeight = 0,
 ): number {
   const db = getDb();
 
@@ -437,6 +459,12 @@ export function insertUtxoTx(
   // one query per input.
   const encoded = encodeTx(tx);
   if (encoded.length > MAX_TX_BYTES) throw new TxTooLargeError(encoded.length);
+
+  // MEMPOOL_INTERFACE → Validity ceiling — refusal at insert.
+  const ceiling = ceilingOf(tx);
+  if (ceiling !== null && ceiling < currentHeight) {
+    throw new CeilingExceededError(ceiling, currentHeight);
+  }
 
   // The class and the price, before the capacity gate that spends them. The
   // byte cost is what this entry would occupy in a block, not the bare encoding
@@ -454,8 +482,9 @@ export function insertUtxoTx(
   const result = db.prepare(
     `INSERT INTO mempool (entry_type, utxo_tx_bytes, expires_at_height,
                           like_target, like_liker, invite_inviter, vouch_voucher,
-                          tx_inputs, tx_output_ids, tx_id, tx_fee, tx_bytes)
-     VALUES ('utxo_tx', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                          tx_inputs, tx_output_ids, tx_id, tx_fee, tx_bytes,
+                          max_valid_height)
+     VALUES ('utxo_tx', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     Buffer.from(encoded),
     expiresAtHeight,
@@ -471,6 +500,7 @@ export function insertUtxoTx(
     // entry that can bid is an entry on the credit ledger.
     fee === null ? null : fee,
     bytes,
+    ceiling,
   );
   return Number(result.lastInsertRowid);
 }
@@ -753,16 +783,20 @@ export function removeUtxoTxEntry(txId: string): number {
 export function purgeExpired(currentHeight: number): number {
   const db = getDb();
   // NODE_INTERFACE → Post transactions — the pending-row rule: an unconfirmed
-  // post entry's DAG row dies with its pool row.
+  // post entry's DAG row dies with its pool row. Both expiry and ceiling
+  // reclaim go through this cleanup.
   const expiring = db.prepare(
-    "SELECT tx_id FROM mempool WHERE expires_at_height < ? AND entry_type = 'utxo_tx' AND tx_id IS NOT NULL",
-  ).all(currentHeight) as Array<{ tx_id: string }>;
+    `SELECT tx_id FROM mempool
+      WHERE (expires_at_height < ? OR (max_valid_height IS NOT NULL AND max_valid_height < ?))
+        AND entry_type = 'utxo_tx' AND tx_id IS NOT NULL`,
+  ).all(currentHeight, currentHeight) as Array<{ tx_id: string }>;
   for (const { tx_id } of expiring) {
     deletePendingPost(computePostId(tx_id, 0));
   }
+  // MEMPOOL_INTERFACE → Validity ceiling — reclaim while pooled.
   const result = db.prepare(
-    'DELETE FROM mempool WHERE expires_at_height < ?',
-  ).run(currentHeight);
+    'DELETE FROM mempool WHERE expires_at_height < ? OR (max_valid_height IS NOT NULL AND max_valid_height < ?)',
+  ).run(currentHeight, currentHeight);
   return result.changes;
 }
 

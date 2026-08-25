@@ -117,6 +117,7 @@ export {
   MempoolFullError,
   PendingSpendConflictError,
   TxTooLargeError,
+  CeilingExceededError,
 } from './mempool.js';
 export type { PoolEntry } from './mempool.js';
 

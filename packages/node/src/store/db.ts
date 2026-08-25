@@ -139,7 +139,8 @@ const MIGRATIONS = [
     tx_inputs TEXT,
     tx_output_ids TEXT,
     tx_id TEXT,
-    prune_entry_id TEXT
+    prune_entry_id TEXT,
+    max_valid_height INTEGER
   )`,
 
   // System config (persistent node-level keypairs, etc.)
