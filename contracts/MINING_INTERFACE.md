@@ -45,6 +45,12 @@ total would be taxed at 5% by arithmetic no rule states. The settlement therefor
 body transaction and sums two totals, not one: `income = emission + fees + rent`, with the treasury
 base computed over the first two alone.
 
+⛔ **AND THE INCLUSION BONUS POOL IS OVER `emission + fees` TOO — the same reason, one step further
+along.** The pool's **unearned** remainder accrues to the treasury (→ the slice table above), so a
+pool computed over the full income routes a share of rent there by a second path, and the rule two
+paragraphs up is violated without any line saying so. **Rent reaches the miner floor entire, and both
+exclusions are required to make that true** — either one alone leaks.
+
 | Parameter | Value | Description |
 |-----------|-------|-------------|
 | `CREDIT_INITIAL_REWARD` | 100 | Credits per block in fixed-rate period |
