@@ -36,8 +36,14 @@ terminates; fees depend on demand; rent is charged on dormant `credit` boxes wha
 transaction volume, so the security budget is never structurally zero. **It is recycled, never
 minted** — supply stays bounded (ARCHITECTURE → Genesis). A producer's rent income is
 `STORAGE_RENT_PER_BYTE × byteLength(boxRecordBytes(box))` per eligible box it takes, and which
-boxes it takes is its own choice (NODE_INTERFACE → Storage rent is the one transition a producer
-authorizes).
+boxes it takes is its own choice, and rent rides the body as an ordinary transaction rather than as a
+settlement leg (NODE_INTERFACE → "Storage rent is a transition requiring no signature").
+
+⛔ **Rent accumulates as its OWN term and never inside `fees`.** The treasury takes
+`COINBASE_TREASURY_PCT` of emission and of fees and **none of rent**, so a charge folded into the fee
+total would be taxed at 5% by arithmetic no rule states. The settlement therefore classifies each
+body transaction and sums two totals, not one: `income = emission + fees + rent`, with the treasury
+base computed over the first two alone.
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|

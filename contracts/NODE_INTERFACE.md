@@ -1306,36 +1306,50 @@ transition. There is no second pass that consults the box to decide who may spen
 **Rows that name no signer require the owner's signature** — every karma and credit row above. That
 is a requirement of those transitions, stated once here, not a property the box carries.
 
-#### Storage rent is the one transition a producer authorizes
+#### Storage rent is a transition requiring no signature
 
 > ⚠ **AHEAD OF CODE — 2026-08-25.** Nothing implements rent yet.
 
-⛔ **A `credit` box past its rent period may be spent by the block producer with NO owner
-signature.** Eligibility is the whole authorization rule:
+⛔ **A `credit` box past its rent period is spendable with NO owner signature.** Eligibility is the
+whole authorization rule:
 
 ```
 currentBlockHeight - box.createdAtBlock > profile.storageRentPeriodBlocks
 ```
 
-**It does not name a key**, so it satisfies the rule above rather than excepting it: the requirement
-is *no signature at all*, which the transition table already admits as a shape (*block application
-only* is the same shape from the other side).
+**It names no key**, so it satisfies the rule above rather than excepting it: the requirement is *no
+signature at all*, which this table already admits as a shape.
+
+⛔ **RENT IS AN ORDINARY BODY TRANSACTION, NOT A SETTLEMENT LEG, AND THE CHOICE IS LOAD-BEARING.**
+The settlement's input list is **derived whole** and a verifier recomputes it position by position
+(→ "The two orders are consensus"). Producer-chosen inputs inside it would end that guarantee for
+every settlement, to buy a mechanism that does not need it. A rent transaction rides the body like
+any other, `validateTx` governs it, and **the settlement's derivation is untouched**.
+
+✅ **Its income reaches the coinbase by the path a fee takes, but as a SEPARATE total.** The
+settlement already accumulates `fees` from the body's transactions; rent accumulates the same way and
+into its own term. ⛔ **Not into `fees`** — the treasury takes 5% of fees and none of rent, so folding
+the two would tax rent by arithmetic no rule states. The settlement classifies each body transaction
+and sums both (MINING_INTERFACE → Coinbase Application).
 
 ✅ **This is where a guarding script would sit on Ergo, and the absence of scripting makes it
 simpler, not harder.** Ergo's rent works by the protocol **overriding** a box's script so a miner may
 spend it. Nothing here holds a script to override, so the eligibility predicate is the entire
 mechanism.
 
-⛔ **Selection is the producer's discretion, and there is no order to specify.** A producer takes the
-eligible boxes it chooses, exactly as it chooses which transactions to include; a validator checks
-eligibility and the fee taken and nothing else. **Two honest producers building different blocks from
-one state is not a divergence** — it is the freedom block production already has.
+⛔ **Which eligible boxes are collected is nobody's rule.** A producer includes the rent transactions
+it chooses, exactly as it chooses which transactions to include at all; a verifier checks eligibility
+and the charge and nothing else. **Two honest producers building different blocks from one state is
+not a divergence.** ✅ **And anyone may build one** — the successor returns to the box's owner and the
+charge lands in a `FeeBox` the coinbase collects, so a submitter gains nothing and grief is bounded by
+eligibility.
 
-**The fee is `STORAGE_RENT_PER_BYTE × byteLength(boxRecordBytes(box))`.** Where the box holds enough,
-the producer takes the fee and recreates the box with the remainder at the current height, which
-resets the clock. Where it does not, the box is **consumed whole**. ⚠ **A box at the credit minimum
-cannot cover one period** — the rent-to-floor ratio is 3,889× (TYPES_INTERFACE → Box value domain) —
-so the minimum is a spam bound and never a survival guarantee.
+**The charge is `STORAGE_RENT_PER_BYTE × byteLength(boxRecordBytes(box))`, exactly.** Where the box
+covers it, exactly one successor `credit` box carries `value − charge` to the **same owner** at the
+current height, which resets the clock. Where it does not, the box is **consumed whole and no
+successor exists**. ⚠ **A box at the credit minimum cannot cover one period** — the rent-to-floor
+ratio is 3,889× (TYPES_INTERFACE → Box value domain) — so the minimum is a spam bound and never a
+survival guarantee.
 
 ⚠ **Rent is a third coinbase income term, and the treasury takes none of it** (MINING_INTERFACE →
 Coinbase Application).
