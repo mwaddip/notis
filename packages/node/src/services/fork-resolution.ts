@@ -30,6 +30,7 @@ import {
   insertRefusedHeader,
   anyRefusedHeader,
 } from '../store/index.js';
+import { ceilingOf } from './utxo-engine.js';
 import { getDb } from '../store/db.js';
 import { isBlockJournalOpen, type BlockJournal } from '../store/journal.js';
 import { putIdentityRecord, deleteIdentityRecord } from '../store/identity-records.js';
@@ -426,6 +427,12 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[]): void {
     // Re-insert UTXO txs
     for (const txRecord of journal.appliedUtxoTxs) {
       const tx = decodeTx(txRecord.txBytes);
+      // MEMPOOL_INTERFACE → Validity ceiling — the reorg caller screens.
+      const ceiling = ceilingOf(tx);
+      if (ceiling !== null && ceiling < newTipHeight) {
+        console.warn(`Reorg re-insertion skipped, past ceiling ${ceiling} at height ${newTipHeight}: tx ${txRecord.txId}`);
+        continue;
+      }
       reinsert(() => insertUtxoTx(tx, mempoolExpiry), `tx ${txRecord.txId}`);
     }
   }

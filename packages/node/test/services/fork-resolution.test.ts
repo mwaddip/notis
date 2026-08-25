@@ -14,6 +14,7 @@ import {
   MAX_BLOCK_BODY_BYTES,
   MEMPOOL_EXPIRY_BLOCKS,
   computePruneEntryId,
+  encodeTx,
 } from '@dagsocial/types';
 import { blockHash, cumulativeWork } from '@dagsocial/validation';
 import type {
@@ -3243,6 +3244,161 @@ describe('resolveFork — body-stage refusal → mark → re-serve → continuat
     expect(ordering.getCurrentHeight()).toBe(4);
     for (const [i, block] of honestBlocks.entries()) {
       expect(blockHash(ordering.getOrderingBlock(i + 2)!.header)).toBe(blockHash(block.header));
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests — reorg ceiling screen (MEMPOOL_INTERFACE → Validity ceiling: the
+// reorg caller screens a past-ceiling transaction).
+// ---------------------------------------------------------------------------
+
+describe('reorg — ceiling screen', () => {
+  beforeEach(async () => { vi.resetModules(); });
+  afterEach(async () => {
+    try {
+      const bc = await importBlockCreator();
+      bc.stopBlockCreator();
+    } catch { /* not imported */ }
+    vi.resetModules();
+  });
+
+  function ceilingTx(createdAtBlock: number): UtxoTransaction {
+    const owner = new Uint8Array(32);
+    return {
+      inputs: ['aa'.repeat(32)],
+      outputs: [
+        { boxType: 'karma', value: 99n, owner, createdAtBlock },
+        {
+          boxType: 'vouch',
+          value: 1n,
+          voucherId: owner,
+          targetId: owner,
+          createdAtBlock,
+        },
+      ],
+      signatures: { ['00'.repeat(32)]: new Uint8Array(64) },
+      protocolVersion: PROTOCOL_VERSION,
+    };
+  }
+
+  async function injectCeilingTx(height: number, tx: UtxoTransaction) {
+    const journalMod = await import('../../src/store/journal.js');
+    const journal = journalMod.getBlockJournal(height);
+    if (!journal) throw new Error(`no journal at height ${height}`);
+    const encoded = encodeTx(tx);
+    journal.appliedUtxoTxs.push({ txId: 'ceiling-test-tx', txBytes: encoded });
+    journalMod.insertBlockJournal(journal);
+  }
+
+  it('screens a past-ceiling tx when newTipHeight exceeds the ceiling', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const db = await importDb();
+      db.initDb(':memory:');
+
+      const author = makeTestIdentity();
+      const posts = await importPosts();
+      const mempool = await importMempoolFresh();
+      const bc = await importBlockCreator();
+      bc.startBlockCreator(testConfig);
+
+      // Build 7 blocks so reorg(0, chain) has newTipHeight = 7
+      for (let i = 0; i < 7; i++) {
+        const { commit, tx: postTx, postId, content } = await seedPostTx(author, `ceiling ${i}`);
+        posts.insertPost(postId, commit, content);
+        mempool.insertUtxoTx(postTx, 1000);
+        await mineNextBlock(bc);
+      }
+
+      const ordering = await importOrdering();
+      expect(ordering.getCurrentHeight()).toBe(7);
+
+      // Inject a vouch tx with createdAtBlock = 1 (ceiling = 6) into block 1's journal
+      await injectCeilingTx(1, ceilingTx(1));
+
+      const chain = Array.from({ length: 7 }, (_, i) => ordering.getOrderingBlock(i + 1)!);
+      const forkResolution = await importForkResolution();
+      forkResolution.reorg(0, chain);
+
+      // The screen fired: ceiling 6 < newTipHeight 7
+      expect(
+        warn.mock.calls.some((c) => String(c[0]).includes('past ceiling')),
+      ).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('does not screen when newTipHeight equals the ceiling', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const db = await importDb();
+      db.initDb(':memory:');
+
+      const author = makeTestIdentity();
+      const posts = await importPosts();
+      const mempool = await importMempoolFresh();
+      const bc = await importBlockCreator();
+      bc.startBlockCreator(testConfig);
+
+      // Build 6 blocks so reorg(0, chain) has newTipHeight = 6
+      for (let i = 0; i < 6; i++) {
+        const { commit, tx: postTx, postId, content } = await seedPostTx(author, `no-screen ${i}`);
+        posts.insertPost(postId, commit, content);
+        mempool.insertUtxoTx(postTx, 1000);
+        await mineNextBlock(bc);
+      }
+
+      const ordering = await importOrdering();
+      expect(ordering.getCurrentHeight()).toBe(6);
+
+      // Inject a vouch tx with createdAtBlock = 1 (ceiling = 6) into block 1's journal
+      await injectCeilingTx(1, ceilingTx(1));
+
+      const chain = Array.from({ length: 6 }, (_, i) => ordering.getOrderingBlock(i + 1)!);
+      const forkResolution = await importForkResolution();
+      forkResolution.reorg(0, chain);
+
+      // ceiling 6 < 6 is false — not screened
+      expect(
+        warn.mock.calls.some((c) => String(c[0]).includes('past ceiling')),
+      ).toBe(false);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('a tx with no ceiling is never screened', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const db = await importDb();
+      db.initDb(':memory:');
+
+      const author = makeTestIdentity();
+      const posts = await importPosts();
+      const mempool = await importMempoolFresh();
+      const bc = await importBlockCreator();
+      bc.startBlockCreator(testConfig);
+
+      for (let i = 0; i < 7; i++) {
+        const { commit, tx: postTx, postId, content } = await seedPostTx(author, `null-ceiling ${i}`);
+        posts.insertPost(postId, commit, content);
+        mempool.insertUtxoTx(postTx, 1000);
+        await mineNextBlock(bc);
+      }
+
+      const ordering = await importOrdering();
+      const chain = Array.from({ length: 7 }, (_, i) => ordering.getOrderingBlock(i + 1)!);
+      const forkResolution = await importForkResolution();
+      forkResolution.reorg(0, chain);
+
+      // No tx has a ceiling — the screen message never fires
+      expect(
+        warn.mock.calls.some((c) => String(c[0]).includes('past ceiling')),
+      ).toBe(false);
+    } finally {
+      warn.mockRestore();
     }
   });
 });

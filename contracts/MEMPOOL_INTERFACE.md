@@ -30,6 +30,7 @@ CREATE TABLE mempool (
     like_target TEXT, like_liker TEXT,          -- gate metadata (below)
     invite_inviter TEXT, vouch_voucher TEXT,    -- gate metadata (below)
     tx_fee INTEGER, tx_bytes INTEGER,           -- fee-class metadata (§Eviction)
+    max_valid_height INTEGER,                   -- utxo_tx only: validity ceiling, NULL = none (§Validity ceiling)
     tx_inputs TEXT, tx_output_ids TEXT,         -- conflict-gate metadata
     tx_id TEXT,                                 -- utxo_tx only: the entry's own TxId (confirmed-entry cleanup)
     prune_entry_id TEXT                         -- prune only: the entry's own id (confirmed-entry cleanup)
@@ -219,11 +220,16 @@ not an option.
 purgeExpired(currentHeight: number): number
 ```
 
-Deletes all entries where `expires_at_height < currentHeight`. Returns the
-number of deleted rows.
+Deletes all entries where `expires_at_height < currentHeight`, **and every entry whose
+`max_valid_height` is below `currentHeight`** (Validity ceiling, below). Returns the number of deleted
+rows.
 
-Called at the start of block creation, before `getPendingEntries`. Ensures
-expired entries never make it into a block.
+Called at the start of block creation, before `getPendingEntries`. Ensures expired entries never make
+it into a block — and, with the ceiling, that an entry which can no longer be included is not
+reconsidered on every build.
+
+⚠ **Both reclaim paths run the pending-post cleanup**, not only the expiry one: an entry's DAG row
+dies with its pool row whichever condition removed it (NODE_INTERFACE → Post transactions).
 
 ### removeEntry
 
@@ -541,6 +547,39 @@ producer placing one directly into its own block as the only route **on nodes ap
 
 ⚠ **It protects the consume-whole branch.** A box that cannot cover its charge is taken entire; open
 submission would let anyone race for under-funded boxes instead of only whoever wins a block.
+
+### Validity ceiling
+
+**An entry whose validity is capped from above by block height leaves the pool once the chain passes
+that cap.** The ceiling itself is defined once, against the consensus rules it mirrors
+(NODE_INTERFACE → Validity ceiling); this section states only what the pool does with it.
+
+`max_valid_height` is written at insert from the transaction's bytes, beside `tx_fee` and `tx_bytes`
+and on the same standing — no state is read, so an entry carries its ceiling whether or not this node
+has ever seen the inputs. `NULL` means no ceiling and is the ordinary case.
+
+**The pool reclaims; it does not screen.** `purgeExpired` removes an entry whose ceiling the chain
+has passed, alongside the entries whose expiry it has passed. This catches an entry that was live when
+it was inserted and went dead as the tip rose — a vouch cast nobody mined inside its window is the
+case that exists today, and it needs no reorg to arise.
+
+⛔ **`insertUtxoTx` does not test the ceiling, and the reason is not the fee floor's.** The floor
+stays above the store because the store cannot tell a submitter from the reorg caller (Fee floor,
+below). A ceiling could be tested there safely — it is derived rather than chosen, so it reads the
+same for every caller — but it would be testing something that cannot arrive: every submission path
+runs `validateTx` first, so only fork resolution can offer a past-ceiling transaction, and the store
+does not hold the height to judge it against.
+
+⛔ **The reorg caller screens before the store.** Fork resolution knows the height its re-insertion is
+for — the tip the reorg is moving to, the same height its `mempoolExpiry` is derived from — and drops
+a transaction whose ceiling lies below it rather than offering it to the pool. **The screen is a skip,
+never a throw**: re-insertion runs inside the transaction that applies the new chain, and an error
+that path does not recognise would abort the reorg and leave the node on a chain it has already scored
+as the lighter one.
+
+⚠ **Screening against the tip the reorg is moving to is correct whether that tip rose or fell.** It
+asks whether the transaction can validate at the height it is being returned for, which is a question
+about that height and carries no assumption about the direction the chain moved.
 
 ### Fee floor
 
