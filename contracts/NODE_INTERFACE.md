@@ -1337,9 +1337,24 @@ mechanism.
 ⛔ **Which eligible boxes are collected is nobody's rule.** A producer includes the rent transactions
 it chooses, exactly as it chooses which transactions to include at all; a verifier checks eligibility
 and the charge and nothing else. **Two honest producers building different blocks from one state is
-not a divergence.** ✅ **And anyone may build one** — the successor returns to the box's owner and the
-charge lands in a `FeeBox` the coinbase collects, so a submitter gains nothing and grief is bounded by
-eligibility.
+not a divergence.**
+
+⛔ **A rent transaction is REFUSED AT MEMPOOL ADMISSION, and that is what makes collection the
+producer's.** `admitTx` rejects one outright — the same seam the fee floor occupies and for the same
+reason: **policy, not consensus.** A block carrying a rent transaction is valid whoever built it, and
+apply re-validates without reference to authorship.
+
+⚠ **This is the normal case, not a guarantee, and the difference is worth stating.** A transaction
+carries no author, so consensus has no key to test a producer restriction against — the producer's
+identity exists only at settlement, as the coinbase payout key. Refusal at admission removes the only
+path a non-producer has into a block **on nodes that apply it**; an operator who relayed them anyway
+would be within their rights, exactly as one who sets a different fee floor is.
+
+⚠ **What the refusal is protecting is the consume-whole branch.** A box that cannot cover its charge
+is taken entire, so open submission would let anyone race for under-funded boxes rather than only
+whoever wins a block. The amounts are sub-minimum credits and carry no tokens, so the exposure is far
+below Ergo's equivalent — but the collection is the block producer's by design, and admission is where
+that is expressed.
 
 **The charge is `STORAGE_RENT_PER_BYTE × byteLength(boxRecordBytes(box))`, exactly.** Where the box
 covers it, exactly one successor `credit` box carries `value − charge` to the **same owner** at the
