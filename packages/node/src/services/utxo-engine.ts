@@ -13,6 +13,7 @@ import {
   VOUCH_KARMA_AMOUNT,
   VOUCH_MIN_BALANCE,
 } from '@dagsocial/types';
+import { isCreditSideTx } from './coinbase-split.js';
 import { effectiveKarma } from './decay.js';
 import type { DecayCfg } from './decay.js';
 import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, PostLockBox, PostCommit } from '@dagsocial/types';
@@ -762,6 +763,36 @@ function checkTransitions(
     default:
       return { valid: false, error: `Unknown box type: ${inputType}` };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Validity ceiling (NODE_INTERFACE → Validity ceiling)
+// ---------------------------------------------------------------------------
+
+/**
+ * The highest block height at which `tx` can still validate, or `null` when no
+ * ceiling applies. A pure function of the transaction's own bytes — no state,
+ * no input boxes.
+ */
+export function ceilingOf(tx: UtxoTransaction): number | null {
+  const outs = tx.outputs ?? [];
+
+  // NODE_INTERFACE → Validity ceiling — rent recognised by SHAPE, not the
+  // biconditional: credit-side AND unsigned.
+  if (isCreditSideTx(tx) && Object.keys(tx.signatures).length === 0) {
+    const creditOuts = outs.filter((o) => o.boxType === 'credit');
+    if (creditOuts.length === 0) return null;
+    return Math.min(...creditOuts.map((o) => o.createdAtBlock));
+  }
+
+  // A vouch output on a karma-side transaction is a vouch cast; its window
+  // is the ceiling.
+  const vouchOut = outs.find((o) => o.boxType === 'vouch');
+  if (vouchOut) {
+    return vouchOut.createdAtBlock + VOUCH_CAST_HEIGHT_WINDOW;
+  }
+
+  return null;
 }
 
 // ---------------------------------------------------------------------------
