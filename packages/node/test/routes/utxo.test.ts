@@ -245,10 +245,10 @@ describe('UTXO routes', () => {
       const receiver = generateKeyPair();
       receiverPubKey = receiver.publicKey;
 
-      // Seed sender with 200 credits
+      // Seed sender with 200k credits
       const box = seedProvenance<CreditBox>({
         boxType: 'credit',
-        value: 200n,
+        value: 200_000n,
         owner: senderPubKey,
       }, 1);
       seededBoxId = box.id;
@@ -383,7 +383,7 @@ describe('UTXO routes', () => {
     });
 
     it('rejects a forged signature with 400 — invalid tx, per the contract', async () => {
-      const tx = buildSignedTransfer(50n);
+      const tx = buildSignedTransfer(50_000n);
       tx.signatures[senderHex] = new Uint8Array(64).fill(0xaa);
       const res = await request('/credits/transfer', 'POST', { tx: txToJson(tx) });
       expect(res.status).toBe(400);
@@ -399,7 +399,7 @@ describe('UTXO routes', () => {
       const broadcastTx = vi.fn((_tx: UtxoTransaction) => Promise.resolve());
       setNet({ broadcastTx } as unknown as Parameters<typeof setNet>[0]);
 
-      const tx = buildSignedTransfer(50n);
+      const tx = buildSignedTransfer(50_000n);
       const res = await request('/credits/transfer', 'POST', { tx: txToJson(tx) });
 
       expect(res.status).toBe(200);

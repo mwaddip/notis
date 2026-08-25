@@ -86,7 +86,7 @@ describe('the fee box never reaches the prover', () => {
 
     const sender = makeTestIdentity();
     const miner = makeTestIdentity();
-    const box = makeCreditBox(1000n, sender.userId, 0, 1);
+    const box = makeCreditBox(100_000n, sender.userId, 0, 1);
     utxo.insertBox(box);
 
     await activateProverOverStore();
@@ -100,7 +100,7 @@ describe('the fee box never reaches the prover', () => {
       getBlockJournal: (height: number) => BlockJournal | null;
     };
 
-    const tx = makeCreditTx(sender, [box], 100n);
+    const tx = makeCreditTx(sender, [box], 10_000n);
     const feeBox = feeBoxOf(tx)!;
     expect(feeBox.boxType).toBe('fee');
 

@@ -201,7 +201,7 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
     const alice = generateKeyPairSync('ed25519');
     const alicePub = rawPublicKey(alice.publicKey);
     const bob = makeTestIdentity();
-    const seeded = seedCreditBox(utxo.insertBox, alicePub, 500n);
+    const seeded = seedCreditBox(utxo.insertBox, alicePub, 500_000n);
 
     const engineDeps = {
       getBox: utxo.getBox,
@@ -227,7 +227,7 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
     // Pool the transfer — nothing settles yet.
     const tx = buildSignedTransfer(
       utxo.getCreditBoxes(alicePub),
-      alicePub, bob.userId, 400n, alice.privateKey,
+      alicePub, bob.userId, 400_000n, alice.privateKey,
     );
     const pooled = credits.sendCredits(engineDeps, tx, 0);
     expect(pooled.status).toBe('pending');
@@ -248,10 +248,10 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
     expect(utxo.getBox(seeded.id!)).toBeNull();
     const bobBoxes = utxo.getCreditBoxes(bob.userId);
     expect(bobBoxes).toHaveLength(1);
-    expect(bobBoxes[0]!.value).toBe(400n);
+    expect(bobBoxes[0]!.value).toBe(400_000n);
     expect(bobBoxes[0]!.txId).toBe(pooled.txId);
     expect(bobBoxes[0]!.index).toBe(0);
-    const change = utxo.getCreditBoxes(alicePub).find((b) => b.value === 100n);
+    const change = utxo.getCreditBoxes(alicePub).find((b) => b.value === 100_000n);
     expect(change).toBeDefined();
     expect(change!.txId).toBe(pooled.txId);
     expect(change!.index).toBe(1);
@@ -303,7 +303,7 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
     const alice = generateKeyPairSync('ed25519');
     const alicePub = rawPublicKey(alice.publicKey);
     const bob = makeTestIdentity();
-    const seeded = seedCreditBox(utxo.insertBox, alicePub, 500n);
+    const seeded = seedCreditBox(utxo.insertBox, alicePub, 500_000n);
 
     // Block 3 spends this post's karma box, so it has to be in the store before
     // the tree is built from it — the transaction itself is pooled later.
@@ -340,7 +340,7 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
     };
     const tx = buildSignedTransfer(
       utxo.getCreditBoxes(alicePub),
-      alicePub, bob.userId, 400n, alice.privateKey,
+      alicePub, bob.userId, 400_000n, alice.privateKey,
     );
     const pooled = credits.sendCredits(engineDeps, tx, 2);
 

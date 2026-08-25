@@ -376,7 +376,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
 
     const senderBox = seedProvenance<CreditBox>({
       boxType: 'credit',
-      value: 100n,
+      value: 100_000n,
       createdAtBlock: 0,
       owner: sender.userId,
     }, 1);
@@ -389,19 +389,19 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     await mineNextBlock(bc); // height 1 baseline
     const pre = takeSnapshot(db, handle, 1);
 
-    // Signed, value-conserving credit transfer: 40 to the recipient, 60 change.
+    // Signed, value-conserving credit transfer: 40k to the recipient, 60k change.
     const tx: UtxoTransaction = {
       inputs: [senderBox.id!],
       outputs: [
         {
           boxType: 'credit',
-          value: 40n,
+          value: 40_000n,
           createdAtBlock: 0,
           owner: recipient.userId,
         } as CreditBox,
         {
           boxType: 'credit',
-          value: 60n,
+          value: 60_000n,
           createdAtBlock: 0,
           owner: sender.userId,
         } as CreditBox,

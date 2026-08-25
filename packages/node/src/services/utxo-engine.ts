@@ -1,9 +1,11 @@
 import { verify as cryptoVerify } from 'crypto';
 import {
   BOX_VALUE_BOUND,
+  boxRecordBytes,
   computeBoxId,
   computeTxId,
   LIKE_KARMA_COST,
+  MIN_BOX_VALUE_PER_BYTE,
   POST_LOCK_THREAD_COST,
   POST_LOCK_REPLY_COST,
   PROTOCOL_VERSION,
@@ -1756,7 +1758,21 @@ export function validateTx(
   const shapeCheck = checkOutputShape(tx.outputs);
   if (!shapeCheck.valid) return shapeCheck;
 
-  // ---- 6. No output claims a height the chain has not reached ----
+  // Computed once ahead of step 6 (the credit floor reads it) and reused at
+  // the end for output materialization.
+  const txId = computeTxId(tx);
+
+  // ---- 6. Height bounds and credit floor ----
+  // TYPES_INTERFACE → Monotonic creation height: no output may predate its
+  // oldest input. Step 1 rejects an empty input list, so inputBoxes is
+  // non-empty here.
+  let highestInputHeight = 0;
+  for (const box of inputBoxes) {
+    if (box.createdAtBlock > highestInputHeight) {
+      highestInputHeight = box.createdAtBlock;
+    }
+  }
+
   for (const out of tx.outputs) {
     const declared = (out as Record<string, unknown>).createdAtBlock as number;
     if (declared > currentBlockHeight) {
@@ -1764,6 +1780,33 @@ export function validateTx(
         valid: false,
         error: `Output createdAtBlock ${declared} is ahead of height ${currentBlockHeight}`,
       };
+    }
+    if (declared < highestInputHeight) {
+      return {
+        valid: false,
+        error: `Output createdAtBlock ${declared} is below highest input height ${highestInputHeight}`,
+      };
+    }
+  }
+
+  // TYPES_INTERFACE → Box value domain: a credit output carries at least
+  // MIN_BOX_VALUE_PER_BYTE per byte of its record. The record includes the
+  // value's own VLQ encoding, but the definition is satisfiable: VLQ byte
+  // transitions are exponential (128, 16384, …) while the floor increment
+  // per extra byte is constant (156), so no value fails its own threshold
+  // while a smaller one passes.
+  if (tx.outputs.some(o => o.boxType === 'credit')) {
+    for (let i = 0; i < tx.outputs.length; i++) {
+      const out = tx.outputs[i]!;
+      if (out.boxType !== 'credit') continue;
+      const recordLen = BigInt(boxRecordBytes(out, txId, i).length);
+      const floor = MIN_BOX_VALUE_PER_BYTE * recordLen;
+      if (out.value < floor) {
+        return {
+          valid: false,
+          error: `Credit output ${i} value ${out.value} is below the per-byte minimum ${floor} (${recordLen} record bytes)`,
+        };
+      }
     }
   }
 
@@ -1789,8 +1832,6 @@ export function validateTx(
   );
   if (!transitionCheck.valid) return transitionCheck;
 
-  // Compute output IDs for the caller (so applyTx doesn't re-compute)
-  const txId = computeTxId(tx);
   const computedOutputs = tx.outputs.map((box, index) =>
     materializeOutput(box, txId, index),
   );

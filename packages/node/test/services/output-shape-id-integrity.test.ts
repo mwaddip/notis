@@ -251,10 +251,10 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
   });
 
   it('honest credit → credit (lockedUntilBlock present) applies and round-trips id-clean', () => {
-    const credit = seedCredit(40n);
+    const credit = seedCredit(40_000n);
     const out = {
       boxType: 'credit',
-      value: 40n,
+      value: 40_000n,
       createdAtBlock: 0,
       owner: ownerPubKey,
       lockedUntilBlock: 500,
@@ -323,10 +323,10 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
   });
 
   it('class-4b mutant, now closed: -0 in a number field is rejected (cbor float at insert, JSON 0 on read)', () => {
-    const credit = seedCredit(40n);
+    const credit = seedCredit(40_000n);
     const out = {
       boxType: 'credit',
-      value: 40n,
+      value: 40_000n,
       createdAtBlock: 0,
       owner: ownerPubKey,
       lockedUntilBlock: -0,

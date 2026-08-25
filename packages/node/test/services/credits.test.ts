@@ -149,8 +149,8 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
   }
 
   it('pools a valid transfer and answers pending — the UTXO set does not move', () => {
-    const seeded = seedCredits(500n);
-    const tx = buildSignedTransfer(400n);
+    const seeded = seedCredits(500_000n);
+    const tx = buildSignedTransfer(400_000n);
 
     const result = sendCredits(engineDeps, tx, HEIGHT);
 
@@ -170,7 +170,7 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
     expect(getCreditBoxes(bobPubKey)).toHaveLength(0);
     const aliceBoxes = getCreditBoxes(alicePubKey);
     expect(aliceBoxes).toHaveLength(1);
-    expect(aliceBoxes[0]!.value).toBe(500n);
+    expect(aliceBoxes[0]!.value).toBe(500_000n);
     const journals = getDb()
       .prepare('SELECT COUNT(*) AS n FROM block_journal')
       .get() as { n: number };
@@ -178,8 +178,8 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
   });
 
   it('an exact-amount transfer (no change output) validates and pools', () => {
-    seedCredits(500n);
-    const tx = buildSignedTransfer(500n);
+    seedCredits(500_000n);
+    const tx = buildSignedTransfer(500_000n);
     expect(tx.outputs).toHaveLength(1);
 
     const result = sendCredits(engineDeps, tx, HEIGHT);
@@ -188,8 +188,8 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
   });
 
   it('rejects an unsigned transfer — the authorization check is validateTx, not a hand-rolled mirror', () => {
-    const seeded = seedCredits(500n);
-    const tx = buildSignedTransfer(400n);
+    const seeded = seedCredits(500_000n);
+    const tx = buildSignedTransfer(400_000n);
     tx.signatures = {};
 
     expect(() => sendCredits(engineDeps, tx, HEIGHT)).toThrow(/Invalid credit transfer/);
@@ -198,8 +198,8 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
   });
 
   it('rejects a forged signature', () => {
-    seedCredits(500n);
-    const tx = buildSignedTransfer(400n);
+    seedCredits(500_000n);
+    const tx = buildSignedTransfer(400_000n);
     tx.signatures[Buffer.from(alicePubKey).toString('hex')] = new Uint8Array(64);
 
     expect(() => sendCredits(engineDeps, tx, HEIGHT)).toThrow(/Invalid credit transfer/);
@@ -207,8 +207,8 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
   });
 
   it('rejects a value-inflating transfer (conservation)', () => {
-    seedCredits(500n);
-    const tx = buildSignedTransfer(400n);
+    seedCredits(500_000n);
+    const tx = buildSignedTransfer(400_000n);
     // Inflate the recipient output after selection: 500 in, 600 out.
     (tx.outputs[0] as CreditBox).value = 500n;
     tx.signatures = {};
@@ -219,8 +219,8 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
   });
 
   it('rejects a spend of a nonexistent or already-spent input', () => {
-    seedCredits(500n);
-    const tx = buildSignedTransfer(400n);
+    seedCredits(500_000n);
+    const tx = buildSignedTransfer(400_000n);
     tx.inputs = ['ff'.repeat(32)];
     tx.signatures = {};
     tx.signatures[Buffer.from(alicePubKey).toString('hex')] = signTxId(tx, alice.privateKey);
@@ -230,7 +230,7 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
   });
 
   it('rejects non-credit outputs (route shape gate, before validation)', () => {
-    const seeded = seedCredits(500n);
+    const seeded = seedCredits(500_000n);
     const karmaOut: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 500n,
@@ -251,7 +251,7 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
   });
 
   it('rejects an empty-output transfer (shape gate)', () => {
-    const seeded = seedCredits(500n);
+    const seeded = seedCredits(500_000n);
     const tx: UtxoTransaction = {
       inputs: [seeded.id!],
       outputs: [],
@@ -265,13 +265,13 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
   });
 
   it('a multi-box transfer pools with all selected inputs intact', () => {
-    seedCredits(100n);
-    seedCredits(50n);
-    seedCredits(20n);
-    seedCredits(10n);
+    seedCredits(100_000n);
+    seedCredits(50_000n);
+    seedCredits(20_000n);
+    seedCredits(10_000n);
 
-    const tx = buildSignedTransfer(155n);
-    expect(tx.inputs).toHaveLength(3); // largest-first: 100 + 50 + 20
+    const tx = buildSignedTransfer(155_000n);
+    expect(tx.inputs).toHaveLength(3); // largest-first: 100k + 50k + 20k
 
     const result = sendCredits(engineDeps, tx, HEIGHT);
     expect(result.status).toBe('pending');
