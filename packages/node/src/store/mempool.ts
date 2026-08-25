@@ -168,26 +168,6 @@ export class TxTooLargeError extends ClientError {
   }
 }
 
-/**
- * Thrown by `insertUtxoTx` when a transaction's validity ceiling
- * (NODE_INTERFACE → Validity ceiling) already lies below the current height.
- *
- * A `ClientError`, so the refusal reaches the submitter as 409: the
- * transaction is well formed but can never be included at this height.
- */
-export class CeilingExceededError extends ClientError {
-  constructor(
-    public readonly ceiling: number,
-    public readonly currentHeight: number,
-  ) {
-    super(
-      `Transaction ceiling ${ceiling} is below current height ${currentHeight}` +
-        ' — it can never be included',
-      409,
-    );
-    this.name = 'CeilingExceededError';
-  }
-}
 
 /**
  * In-memory representation of a pending pool entry (MEMPOOL_INTERFACE →
@@ -450,7 +430,6 @@ export function bidOf(tx: UtxoTransaction): bigint | null {
 export function insertUtxoTx(
   tx: UtxoTransaction,
   expiresAtHeight: number,
-  currentHeight = 0,
 ): number {
   const db = getDb();
 
@@ -460,11 +439,10 @@ export function insertUtxoTx(
   const encoded = encodeTx(tx);
   if (encoded.length > MAX_TX_BYTES) throw new TxTooLargeError(encoded.length);
 
-  // MEMPOOL_INTERFACE → Validity ceiling — refusal at insert.
+  // MEMPOOL_INTERFACE → Validity ceiling — stored at insert, reclaimed by
+  // purgeExpired. The reorg caller screens before offering (NODE_INTERFACE →
+  // Validity ceiling); insertUtxoTx does not test it.
   const ceiling = ceilingOf(tx);
-  if (ceiling !== null && ceiling < currentHeight) {
-    throw new CeilingExceededError(ceiling, currentHeight);
-  }
 
   // The class and the price, before the capacity gate that spends them. The
   // byte cost is what this entry would occupy in a block, not the bare encoding
