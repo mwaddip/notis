@@ -903,9 +903,11 @@ the transaction has no ceiling, which is the ordinary case.
 
 ⛔ **A ceiling is DERIVED, never decided.** A node does not choose it; it reads it off the consensus
 rules a transaction must already satisfy. Two nodes therefore always agree on it, and an operator
-cannot tune it. **That is the whole of why it may live inside `insertUtxoTx` where the fee floor may
-not** (MEMPOOL_INTERFACE → Fee floor): the floor is a local policy that cannot tell a submitter from
-the reorg caller, while a ceiling is a fact about the transaction that holds identically for both.
+cannot tune it — unlike the fee floor, which is local policy (MEMPOOL_INTERFACE → Fee floor). Both
+nonetheless sit **above** the store rather than inside it, for different reasons: the floor because
+the store cannot tell a submitter from the reorg caller, the ceiling because the only caller that can
+present a past-ceiling transaction is the reorg caller, and it is the only one holding the height to
+judge it against.
 
 ⛔ **It is NOT a table keyed on `boxType`, and that is a limitation rather than a choice.**
 `AUTHORIZATION`, the output-shape schema and `SPEND_TIMING` are all keyed on the input's type and get
@@ -938,10 +940,17 @@ transactions no validation has vouched for. It therefore uses the stronger test 
 when it splits a body — credit-side *and* unsigned — which reads the outputs and the signature map and
 needs nothing else.
 
-**Where it is enforced: the pool, at two moments, and nowhere in consensus.** No block is ever
-rejected for a ceiling — a block carrying a past-ceiling transaction is already refused by the rule
-the ceiling mirrors, at `validateTx`. The ceiling exists so an entry that can never be included stops
-occupying a slot and stops being reconsidered on every build (MEMPOOL_INTERFACE → Validity ceiling).
+**Where it is enforced: the pool reclaims, the reorg caller screens, and consensus does nothing.** No
+block is ever rejected for a ceiling — a block carrying a past-ceiling transaction is already refused
+by the rule the ceiling mirrors, at `validateTx`. The ceiling exists so an entry that can never be
+included stops occupying a slot and stops being reconsidered on every build
+(MEMPOOL_INTERFACE → Validity ceiling).
+
+⛔ **Only re-insertion after a reorg can present a past-ceiling transaction.** Every submission path
+runs `validateTx` before admission, so a stale vouch dies at its window check and a rent collection at
+the rent refusal (MEMPOOL_INTERFACE → Storage rent is refused at admission). Fork resolution alone
+returns transactions to the pool without validating them, which is why the screen belongs there and
+nowhere else.
 
 ⚠ **A new height cap owes a ceiling arm.** Any rule inside `checkTransitions` that bounds
 `currentBlockHeight` from above makes some transaction permanently unincludable once the chain passes

@@ -550,7 +550,7 @@ submission would let anyone race for under-funded boxes instead of only whoever 
 
 ### Validity ceiling
 
-> ⚠ **AHEAD OF CODE — 2026-08-25.** The column and both moments below are stated; neither is in the
+> ⚠ **AHEAD OF CODE — 2026-08-25.** The column and the reclaim below are stated; neither is in the
 > tree yet.
 
 **An entry whose validity is capped from above by block height leaves the pool once the chain passes
@@ -561,32 +561,28 @@ that cap.** The ceiling itself is defined once, against the consensus rules it m
 and on the same standing — no state is read, so an entry carries its ceiling whether or not this node
 has ever seen the inputs. `NULL` means no ceiling and is the ordinary case.
 
-**Two moments, because they are different events:**
+**The pool reclaims; it does not screen.** `purgeExpired` removes an entry whose ceiling the chain
+has passed, alongside the entries whose expiry it has passed. This catches an entry that was live when
+it was inserted and went dead as the tip rose — a vouch cast nobody mined inside its window is the
+case that exists today, and it needs no reorg to arise.
 
-1. **Refusal at insert.** `insertUtxoTx` refuses a transaction whose ceiling already lies below the
-   current height. This is the path by which a transaction the chain has *reverted* — returned to the
-   pool by fork resolution, which reaches the store directly — is kept out rather than stored and
-   later reclaimed.
-2. **Reclaim while pooled.** `purgeExpired` removes an entry whose ceiling the chain has since passed.
-   This is the path for an entry that was live when it was inserted and went dead as the tip rose; a
-   vouch cast nobody mined within its window is the case that exists today, and it needs no reorg.
+⛔ **`insertUtxoTx` does not test the ceiling, and the reason is not the fee floor's.** The floor
+stays above the store because the store cannot tell a submitter from the reorg caller (Fee floor,
+below). A ceiling could be tested there safely — it is derived rather than chosen, so it reads the
+same for every caller — but it would be testing something that cannot arrive: every submission path
+runs `validateTx` first, so only fork resolution can offer a past-ceiling transaction, and the store
+does not hold the height to judge it against.
 
-⛔ **The reorg caller must treat refusal at insert as an EXPECTED drop.** Fork resolution re-inserts
-inside the same database transaction that applies the new chain, and it rethrows any error it does not
-recognise — so a refusal it has not been taught about aborts the whole reorg, and the node keeps a
-chain it has already scored as the lighter one. A ceiling refusal joins the drops that path already
-absorbs (pool full, pending-spend conflict, oversized transaction): logged, and the reorg continues.
+⛔ **The reorg caller screens before the store.** Fork resolution knows the height its re-insertion is
+for — the tip the reorg is moving to, the same height its `mempoolExpiry` is derived from — and drops
+a transaction whose ceiling lies below it rather than offering it to the pool. **The screen is a skip,
+never a throw**: re-insertion runs inside the transaction that applies the new chain, and an error
+that path does not recognise would abort the reorg and leave the node on a chain it has already scored
+as the lighter one.
 
-⛔ **A ceiling inside `insertUtxoTx` does not contradict the floor sitting above it** (Fee floor,
-below). The floor is local policy an operator raises under load, and the store cannot tell the reorg
-caller from a submitter — so applied there it would drop confirmed history. A ceiling is derived from
-consensus rules rather than chosen, identical on every node, and equally true of both callers: the
-transaction it refuses is one **no** node can ever include.
-
-⚠ **Refusal at insert rests on the tip never falling.** It is sound because fork choice switches only
-to a chain with strictly greater work and every block carries equal work, so a reorg raises the tip.
-**A retarget would end that**, and refusal at insert would then be able to discard a transaction that
-could still become legal. Reclaim-while-pooled carries no such debt — it re-decides at every build.
+⚠ **Screening against the tip the reorg is moving to is correct whether that tip rose or fell.** It
+asks whether the transaction can validate at the height it is being returned for, which is a question
+about that height and carries no assumption about the direction the chain moved.
 
 ### Fee floor
 
