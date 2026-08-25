@@ -1620,8 +1620,8 @@ const OWNER_SIGNATURE: Authorization = {
  * OWNER_SIGNATURE (NODE_INTERFACE → "Storage rent is a transition requiring
  * no signature"). `null` means authorized without a signature.
  *
- * Height-dependent — the table's entries were height-free before this, so
- * the `signer` signature was widened to accept `currentBlockHeight`.
+ * Height-dependent: `signer` takes `currentBlockHeight` because a
+ * rent-eligible box's requirement depends on it.
  */
 function creditAuthorization(storageRentPeriodBlocks: number): Authorization {
   return {
