@@ -1551,7 +1551,7 @@ not be independently readable.
 `ORDERING_BLOCK_POW_TARGET_BITS` · `KARMA_DECAY_INTERVAL_BLOCKS` ·
 `KARMA_STALE_THRESHOLD_BLOCKS` · `VOUCH_COOLDOWN_BLOCKS` · `INVITE_PROBATION_BLOCKS` ·
 `CREDIT_MINER_REWARD_DELAY` · `CREDIT_FIXED_RATE_BLOCKS` ·
-`CREDIT_EPOCH_BLOCKS` · `GENESIS_KARMA_PER_MEMBER` · `INVITE_BOND_MIN` · `INVITE_BOND_MAX` ·
+`CREDIT_EPOCH_BLOCKS` · `CREDIT_EMISSION_TOTAL` · `GENESIS_KARMA_PER_MEMBER` · `INVITE_BOND_MIN` · `INVITE_BOND_MAX` ·
 `genesisCommitteeKeys` · `genesisProofPayload` · `genesisStateRoot` · `faucetPublicKey` ·
 `storageRentPeriodBlocks`
 
@@ -1564,6 +1564,13 @@ fact stated twice, the sole per-network input to the genesis box set and the hei
 it. Each belongs to the genesis axis this section already declares, so they add fields to a declared
 axis rather than opening a fourth.
 
+> ⚠ **`CREDIT_EMISSION_TOTAL` is per-network because the curve it must sit under is.** It is the
+> `EmissionBox`'s genesis value, carried rather than derived (TYPES_INTERFACE → EmissionBox), and a
+> network's curve is a function of its own `CREDIT_FIXED_RATE_BLOCKS` and `CREDIT_EPOCH_BLOCKS`. **The
+> RULE is universal and the NUMBER is not**: every profile's total must be *strictly below* its own
+> curve's sum, which is what leaves a paying tail for a returned inclusion bonus to drain through. The
+> resulting fraction is a consequence and not a parameter — no profile carries one.
+
 > ⚠ **`storageRentPeriodBlocks` is field-only for the reason rent's rate is not: the rate is
 > economics and universal, the period is timescale and per-network.** ⛔ **Devnet's is bounded from
 > both sides.** Mainnet's 2,102,400 blocks is unreachable in any test, so a universal period would
@@ -1575,7 +1582,9 @@ axis rather than opening a fourth.
 karma and credit cost** (`LIKE_KARMA_COST`, `LIKES_PER_KARMA_PAYOUT`, `POST_LOCK_*`,
 `VOUCH_KARMA_AMOUNT`, `INVITE_BOND_VEST_PER_LIKES`, `KARMA_MINIMUM`, `KARMA_DECAY_AMOUNT`,
 `COINBASE_TREASURY_PCT` and the other coinbase slice percentages,
-`CREDIT_INITIAL_REWARD`).
+`CREDIT_INITIAL_REWARD`, `CREDIT_REWARD_REDUCTION`). ⚠ **The decay pair is universal, and that
+fixes the epoch COUNT on every network** — at `R = 42` and `d = 1` the decay runs 41 epochs
+everywhere, and only `CREDIT_EPOCH_BLOCKS` compresses how long each one lasts.
 
 **The split is normative: mechanics are universal, caps may vary.** A defect lives in a formula,
 a ratio or a mechanism — never in the size of a limit. A network running a larger `inviteBondMax`
@@ -1884,10 +1893,16 @@ forever. A node rejects objects with an unsupported protocol version.
   > excludes the pool; asserting either against the other is the error this note exists to
   > prevent.
 - Total credit supply = genesis + ordering block rewards - future sinks
-  > The reward term is bounded: emission terminates, totalling 422,640,000 credits
-  > (`MINING_INTERFACE → Emission Schedule`). Genesis credits sit on top of that and sinks
-  > pull the other way, so the supply is bounded above by `genesis + 422,640,000` and is not
-  > equal to it.
+  > The reward term is bounded: emission terminates, and the box it is released from holds
+  > 422,640,000 credits at genesis (`MINING_INTERFACE → Emission Schedule`). Genesis credits sit
+  > on top of that and sinks pull the other way, so the supply is bounded above by
+  > `genesis + 422,640,000` and is not equal to it.
+  >
+  > ⚠ **The terminus is a BALANCE and not a height, so the bound rests on the box rather than on
+  > the schedule.** The curve's own sum is larger than the box, and a forfeited inclusion bonus is
+  > returned to the box, which pushes the terminus later — the runway has a floor and no ceiling.
+  > **A return does not raise this bound**: what returns is fee value the same block consumed, so
+  > the box defers supply that already existed rather than minting new.
   >
   > **The bound is held as state, not only as a rule.** Genesis creates an `EmissionBox`
   > holding the whole total, and every block releases from it rather than minting
