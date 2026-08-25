@@ -911,7 +911,7 @@ export interface LikeAccrualBox extends BoxBase {
  *
  * ⛔ **The genesis value is CARRIED in the profile, strictly below the curve's
  * own sum.** The gap is what a returned bonus drains through; partial payment
- * closes the starvation risk the old derivation prevented.
+ * closes the starvation risk a below-curve total creates.
  */
 export interface EmissionBox extends BoxBase {
   boxType: 'emission';
