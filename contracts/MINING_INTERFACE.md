@@ -26,7 +26,18 @@ Ergo-style linear decay **to zero — there is no tail**. At 60-second blocks:
 | **Total** | **7,401,600** | **~14.07 years** |
 
 Block 7,401,600 is the last that pays. Above it the reward is 0 and the coinbase carries
-whatever the other income terms yield — fees, and storage rent when it arrives.
+whatever the other income terms yield — fees, and storage rent.
+
+> ⚠ **AHEAD OF CODE — 2026-08-25.** Storage rent is designed and unbuilt; the two terms the
+> coinbase carries today are emission and fees.
+
+⛔ **Storage rent is the perpetual term, and it is why emission needs no tail.** Emission
+terminates; fees depend on demand; rent is charged on dormant `credit` boxes whatever the
+transaction volume, so the security budget is never structurally zero. **It is recycled, never
+minted** — supply stays bounded (ARCHITECTURE → Genesis). A producer's rent income is
+`STORAGE_RENT_PER_BYTE × byteLength(boxRecordBytes(box))` per eligible box it takes, and which
+boxes it takes is its own choice (NODE_INTERFACE → Storage rent is the one transition a producer
+authorizes).
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|
@@ -364,6 +375,7 @@ consumed by the settlement in the block that created it.
 | Miner floor | `COINBASE_MINER_FLOOR_PCT` | Guaranteed, plus every remainder |
 | Backer pool | `COINBASE_BACKER_PCT` | **AHEAD OF CODE** — nothing stakes and nothing links, so this share falls to the miner floor |
 | Inclusion bonus | `COINBASE_BONUS_PCT` | `pool × actors ÷ (actors + INCLUSION_BONUS_K)` to the miner; the unearned remainder to the treasury |
+| Storage rent | — | **AHEAD OF CODE 2026-08-25.** A third income **term**, not a slice: the treasury takes `COINBASE_TREASURY_PCT` of emission and of fees and **none of rent**, so rent reaches the miner floor entire |
 
 `actors` is the count of **distinct owners of the karma boxes** spent by the block's
 karma-side transactions, excluding the block's own validator.

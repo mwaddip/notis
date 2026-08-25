@@ -413,7 +413,7 @@ KarmaBox {
   id: BoxId
   value: bigint                // Karma balance (bigint base units — see value denomination)
   owner: PublicKey             // Ed25519 public key (32 bytes)
-  createdAtBlock: number       // Block height when box was created
+  createdAtBlock: number       // The height its creator DECLARED (<= current height)
 }
 ```
 
@@ -551,7 +551,7 @@ VouchBox {
   value: 1n                   // VOUCH_KARMA_AMOUNT — always 1n (bigint)
   voucherId: UserId           // Who staked the karma
   targetId: UserId            // Who is being vouched for
-  createdAtBlock: number      // Block height when vouch was cast
+  createdAtBlock: number      // Declared cast height — within VOUCH_CAST_HEIGHT_WINDOW of the carrying block
 }
 ```
 
@@ -1552,15 +1552,24 @@ not be independently readable.
 `KARMA_STALE_THRESHOLD_BLOCKS` · `VOUCH_COOLDOWN_BLOCKS` · `INVITE_PROBATION_BLOCKS` ·
 `CREDIT_MINER_REWARD_DELAY` · `CREDIT_FIXED_RATE_BLOCKS` ·
 `CREDIT_EPOCH_BLOCKS` · `GENESIS_KARMA_PER_MEMBER` · `INVITE_BOND_MIN` · `INVITE_BOND_MAX` ·
-`genesisCommitteeKeys` · `genesisProofPayload` · `genesisStateRoot` · `faucetPublicKey`
+`genesisCommitteeKeys` · `genesisProofPayload` · `genesisStateRoot` · `faucetPublicKey` ·
+`storageRentPeriodBlocks`
 
 **Every name is spelled by its definition site, and the case says which one.** A `SCREAMING_CASE` name
 is a `constants.ts` export that a profile field reads; a `camelCase` name is a `NetworkProfile` field
-that no constant stands beside — the four at the end of the list. `genesisCommitteeKeys` and
-`faucetPublicKey` are field-only because one constant serves one value and each network names its own;
-`genesisProofPayload` and `genesisStateRoot` are one fact stated twice, the sole per-network input to
-the genesis box set and the height-0 AVL+ root over it. All four belong to the genesis axis this
-section already declares, so they add fields to a declared axis rather than opening a fourth.
+that no constant stands beside — **the case is the statement, so no count is kept here and none has to
+be maintained.** `genesisCommitteeKeys` and `faucetPublicKey` are field-only because one constant
+serves one value and each network names its own; `genesisProofPayload` and `genesisStateRoot` are one
+fact stated twice, the sole per-network input to the genesis box set and the height-0 AVL+ root over
+it. Each belongs to the genesis axis this section already declares, so they add fields to a declared
+axis rather than opening a fourth.
+
+> ⚠ **AHEAD OF CODE — 2026-08-25.** `storageRentPeriodBlocks` is the storage-rent unit's and no
+> profile carries it yet. It is field-only for the reason rent's rate is not: **the rate is
+> economics and universal, the period is timescale and per-network.** ⛔ **Devnet needs its own or
+> the path is untestable** — a universal 2,102,400-block period is unreachable in any scenario, and
+> a period below the suite's own ceiling would let a producer collect the faucet's genesis credits
+> underneath a running test.
 
 **Universal — every other constant, including consensus ones:** the format limits
 (`MAX_CONTENT_BYTES`, `MAX_PARENT_REFS`, `PROTOCOL_VERSION`, `AVL_KEY_LENGTH`) and **every

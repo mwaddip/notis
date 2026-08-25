@@ -779,11 +779,22 @@ citation of a `validateTx` step in this repo:
    fields freely. (Step position changed by the field-type pin — the check
    originally ran last; see the placement note in "Output shape".)
 6. No output claims a height the chain has not reached:
-   `createdAtBlock <= currentBlockHeight` for every output. One-directional —
-   backdating an output is bounded only where a rule deriving from the field
-   imposes its own check (TYPES_INTERFACE → "BoxCandidate is the base, CandidateOf<B> is the
-   per-type candidate"; the vouch cast
-   window under "Vouch transition rules" is one).
+   `createdAtBlock <= currentBlockHeight` for every output. **And no output is
+   older than the oldest input** — `output.createdAtBlock >= max(input.createdAtBlock)`,
+   on every box type (TYPES_INTERFACE → Monotonic creation height).
+
+   > ⚠ **AHEAD OF CODE — 2026-08-25.** The monotonic half is the storage-rent
+   > unit's; only the upper bound is enforced today.
+
+   ⛔ **The two halves answer different attackers and neither replaces the
+   other.** The upper bound stops a box claiming the future, which is the
+   creator lying about their own box. The monotonic bound stops a box being
+   handed to someone else already aged — a credit output's height is the
+   **sender's** choice, not the recipient's, so without it one party can make
+   another's box rent-collectible at once. ⚠ **A rule deriving from
+   `createdAtBlock` still owes its own check where it needs one tighter than
+   this**: the vouch cast window under "Vouch transition rules" is one, and it
+   stands beside the monotonic bound rather than being replaced by it.
 7. Value conservation: `sum(input values) == sum(output values)` **across the
    transaction as a whole — one total per side, not per box type —
    unconditionally. The exception list is empty.** Every user transaction's
@@ -1294,6 +1305,40 @@ transition. There is no second pass that consults the box to decide who may spen
 
 **Rows that name no signer require the owner's signature** — every karma and credit row above. That
 is a requirement of those transitions, stated once here, not a property the box carries.
+
+#### Storage rent is the one transition a producer authorizes
+
+> ⚠ **AHEAD OF CODE — 2026-08-25.** Nothing implements rent yet.
+
+⛔ **A `credit` box past its rent period may be spent by the block producer with NO owner
+signature.** Eligibility is the whole authorization rule:
+
+```
+currentBlockHeight - box.createdAtBlock > profile.storageRentPeriodBlocks
+```
+
+**It does not name a key**, so it satisfies the rule above rather than excepting it: the requirement
+is *no signature at all*, which the transition table already admits as a shape (*block application
+only* is the same shape from the other side).
+
+✅ **This is where a guarding script would sit on Ergo, and the absence of scripting makes it
+simpler, not harder.** Ergo's rent works by the protocol **overriding** a box's script so a miner may
+spend it. Nothing here holds a script to override, so the eligibility predicate is the entire
+mechanism.
+
+⛔ **Selection is the producer's discretion, and there is no order to specify.** A producer takes the
+eligible boxes it chooses, exactly as it chooses which transactions to include; a validator checks
+eligibility and the fee taken and nothing else. **Two honest producers building different blocks from
+one state is not a divergence** — it is the freedom block production already has.
+
+**The fee is `STORAGE_RENT_PER_BYTE × byteLength(boxRecordBytes(box))`.** Where the box holds enough,
+the producer takes the fee and recreates the box with the remainder at the current height, which
+resets the clock. Where it does not, the box is **consumed whole**. ⚠ **A box at the credit minimum
+cannot cover one period** — the rent-to-floor ratio is 3,889× (TYPES_INTERFACE → Box value domain) —
+so the minimum is a spam bound and never a survival guarantee.
+
+⚠ **Rent is a third coinbase income term, and the treasury takes none of it** (MINING_INTERFACE →
+Coinbase Application).
 
 ⛔ **No requirement may name a key that is not already in consensus state.** A rule may demand a
 signature by the key at `box.owner`, or by a key the box names (`inviteePublicKey`, `inviterId`,
@@ -1899,9 +1944,14 @@ kept here as the record of what closed, and where the reasoning lives.
    base `BoxCandidate`). `id` stays optional, deliberately — same reference.
 3. ✅ Phase G deleted `createdAtBlock` and `lastTouchBlock` from the box protocol.
    `lastTouchBlock` and its `last_touch_block` column are gone for good: no reader
-   anywhere, only the INSERT that wrote it. `createdAtBlock` is a box field,
-   creator-declared (`TYPES_INTERFACE.md` → "createdAtBlock is a box field, and it
-   is CREATOR-DECLARED"); the `created_at_block` **column** stays.
+   anywhere, only the INSERT that wrote it. ⚠ **`createdAtBlock` RETURNED, and only
+   its deletion was reversed.** It is a box field again — creator-declared content in
+   the shared prefix, restored once the decay clock stopped reading it, which is what
+   made a client-declared height untenable in the first place (`ARCHITECTURE` →
+   Ergo-Adopted Invariants carries the reversal and its premise; `TYPES_INTERFACE` →
+   "createdAtBlock is a box field, and it is CREATOR-DECLARED" carries the rule, and
+   the obligation every deriving rule owes). The `created_at_block` **column** stays,
+   filled from the box's own field.
 4. ✅ `utxo_boxes.tx_id` / `output_index` are `NOT NULL`, in the same commit as
    the box-field deletions. That grouping earned itself twice over: it avoided
    editing ~190 fixtures twice, **and** NOT NULL turned out to be the only thing

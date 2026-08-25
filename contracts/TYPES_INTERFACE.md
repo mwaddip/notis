@@ -336,6 +336,37 @@ reads the box, and a rule that consulted the column instead would be reading som
 rules that read the value. **Every rule deriving from `createdAtBlock` owes its own exact
 check**; the general bound is one-directional on purpose.
 
+#### Monotonic creation height
+
+> ⚠ **AHEAD OF CODE — 2026-08-25.** The predicate below is the storage-rent unit's; nothing
+> enforces it yet.
+
+⛔ **A transaction's outputs may not be older than its oldest input**, on **every** box type:
+
+```
+highestInputHeight = max(input.createdAtBlock for input in inputs)
+every output: output.createdAtBlock >= highestInputHeight
+```
+
+**This is storage rent's discharge of the obligation above, and it is Ergo's EIP-39.** Rent reads
+`createdAtBlock` to decide eligibility, so it owes a check; this is that check, stated once for every
+type rather than as a rent-only clause.
+
+✅ **It is a pure function of the transaction.** No current height is read, so admission and block
+application run the identical predicate and cannot disagree.
+
+✅ **It leaves the height CREATOR-DECLARED, which is what keeps a box id derivable before
+inclusion.** That property is load-bearing: node's pending view materialises each output and compares
+ids to admit a chained transaction, and multiple social actions inside one block interval are
+ordinary. A protocol-stamped height would move the field to provenance and take that away.
+
+⚠ **It bounds rather than fixes.** An output may still be as old as the oldest input, so a sender
+spending a near-eligible box passes that age on. What it removes is the unbounded case: **an age can
+never move backwards through a chain of spends**, so a height of `0` is unreachable for anything
+descending from a fresh box. Without it, the height a box carries is chosen by whoever **built** it —
+a credit output's height is the sender's choice, not the recipient's — so an unchecked declaration
+lets one party make another's box collectible at once.
+
 #### Mint identity
 
 Boxes created by block application rather than by a user transaction (coinbase, karma mints,
@@ -467,6 +498,33 @@ THIS RULE FIXES.**
 |---|---|---|
 | **encodable** — what `vlqU64` / `canonicalBoxBytes` will write | `[0, 2⁶⁴)` | the writer; **unchanged** |
 | **accepted** — what consensus admits as a box value | `[0, 2⁶³)` | this rule |
+
+> ⚠ **AHEAD OF CODE — 2026-08-25.** The floor below is the storage-rent unit's; nothing enforces it
+> yet.
+
+⛔ **A `credit` output carries a per-byte MINIMUM, and no other box type does.**
+
+```
+MIN_BOX_VALUE_PER_BYTE = 156n        // base units per byte of the box's record
+every credit output: value >= MIN_BOX_VALUE_PER_BYTE * byteLength(boxRecordBytes(box))
+```
+
+**Why `credit` alone.** `GenesisProofBox`'s value is structurally `0n` — it holds neither karma nor
+credits and never enters supply accounting — and the karma pool's zero-value successor is created
+deliberately, the one place the no-zero-box rule inverts. A blanket floor makes both unencodable.
+**Karma is excluded by ruling**: it is non-tradeable and already decays.
+
+**What it closes.** `credit(X) → credit(0) + fee(X)` conserves and is legal without it, leaving a box
+storage rent can never charge and never clear — rent takes value from a box, and that one has none to
+take. The floor makes the output inexpressible.
+
+✅ **It does NOT bound the fee from above.** The whole-input fee is `credit(X) → fee(X)`, which carries
+no `credit` output at all, so the floor never binds it — see NODE_INTERFACE → "A whole-input fee is
+expressible, and the encoding is worth knowing", which stands unchanged.
+
+⚠ **And it does NOT protect a box from rent.** Rent per period is `605,378` base units per byte
+against a floor of `156` — **3,889×** — so a box sitting at the minimum is consumed at its first
+collection. The floor prevents spam *creation*; surviving rent needs a deliberate buffer.
 
 **Why the accepted domain is narrower: the ledger is SQLite, and `INTEGER` is a SIGNED 64-bit
 integer.** A value in `[2⁶³, 2⁶⁴)` encodes cleanly, derives a box id, passes a `u64` check — and
@@ -2436,6 +2494,9 @@ export interface NetworkProfile {
   readonly creditFixedRateBlocks: number;
   readonly creditEpochBlocks: number;
 
+  // Storage rent — AHEAD OF CODE 2026-08-25
+  readonly storageRentPeriodBlocks: number;
+
   // Genesis
   readonly genesisCommitteeKeys: readonly string[];
   readonly genesisKarmaPerMember: bigint;
@@ -2785,6 +2846,13 @@ export const COINBASE_BONUS_PCT = 25;        // consensus — the inclusion bonu
 export const INCLUSION_BONUS_K = 5n;         // consensus — the bonus curve's knee
 export const MEMPOOL_CREDIT_SHARE_PCT = 50;  // policy — credit share of the pool
 export const MIN_FEE_RATE_PER_BYTE = 0n;     // policy — relay floor, base units per IN-BLOCK byte
+
+// Storage rent and the credit floor — AHEAD OF CODE 2026-08-25. Both are CONSENSUS and both are
+// per byte of the box's own record. Derived from Ergo's, scaled by the supply ratio (Ergo's
+// 97,739,924 ERG max against this network's 422,640,000 credit emission), so Ergo's 3,889x ratio
+// between the two is preserved rather than chosen twice. The PERIOD is a profile field, not here.
+export const MIN_BOX_VALUE_PER_BYTE = 156n;        // consensus — credit outputs only
+export const STORAGE_RENT_PER_BYTE = 605_378n;     // consensus — charged once per period
 ```
 
 > The four `COINBASE_*_PCT` values **must sum to 100** — four independent `export const`s
