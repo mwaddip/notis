@@ -114,6 +114,7 @@ const decayPlan: DecayPlan = {
 
 const body: SettlementBody = {
   fees: 10n,
+  rent: 0n,
   actors: 1,
   feeBoxIds: [feeBox.id!],
   invites: [{ invitee: newInvitee.userId, amount: 15n }],

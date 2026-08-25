@@ -41,6 +41,7 @@ import {
   setPostBody,
   getMissingBodies,
   getBox,
+  getBoxProvenance,
   getCurrentHeight,
   MempoolFullError,
   PendingSpendConflictError,
@@ -185,6 +186,8 @@ net.onTx((tx, content, fromPeerId) => {
     // transition rules") — same rule again: a relayed invite naming an existing
     // account must be refused here as well as at the block path.
     getIdentityRecord,
+    storageRentPeriodBlocks: config.storageRentPeriodBlocks,
+    getBoxProvenance,
     runInTransaction: (fn: () => void) => fn(),
   };
   const currentHeight = getCurrentHeight();

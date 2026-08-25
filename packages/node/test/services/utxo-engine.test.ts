@@ -144,6 +144,8 @@ describe('validateAndApplyTx', () => {
         decayAmount: KARMA_DECAY_AMOUNT,
         karmaMinimum: KARMA_MINIMUM,
       },
+      storageRentPeriodBlocks: 40,
+      getBoxProvenance: () => null,
       getTopologyAuthor: (postId: string) =>
         postId === LIKE_TARGET_POST ? LIKE_TARGET_AUTHOR : null,
       runInTransaction: (fn: () => void) => {
@@ -1295,7 +1297,7 @@ describe('validateAndApplyTx', () => {
 
       const creditBox = {
         boxType: 'credit' as const,
-        value: 100n,
+        value: 100_000n,
         createdAtBlock: 0,
         owner: ownerPubKey,
       };
@@ -1306,8 +1308,8 @@ describe('validateAndApplyTx', () => {
       const tx = buildSignedTx(
         [creditBoxId],
         [
-          { ...creditBox, value: 30n, owner: recipientRaw },
-          { ...creditBox, value: 70n },
+          { ...creditBox, value: 30_000n, owner: recipientRaw },
+          { ...creditBox, value: 70_000n },
         ] as AnyBox[],
         ownerPrivKey,
         ownerPubKey,
@@ -1580,7 +1582,7 @@ describe('validateAndApplyTx', () => {
     it('likeTarget on a non-karma (credit) spend: invalid', () => {
       const creditBox = {
         boxType: 'credit' as const,
-        value: 100n,
+        value: 100_000n,
         createdAtBlock: 0,
         owner: ownerPubKey,
       };
@@ -1590,7 +1592,7 @@ describe('validateAndApplyTx', () => {
 
       const tx = buildSignedTx(
         [creditId],
-        [{ ...creditBox, value: 99n } as AnyBox],
+        [{ ...creditBox, value: 99_000n } as AnyBox],
         ownerPrivKey, ownerPubKey, 1, TARGET,
       );
       const result = validateTx(deps, tx, 10);
@@ -1749,9 +1751,9 @@ describe('validateAndApplyTx', () => {
     // assertion pins.
     it('rejects a credit deficit of any size when no fee box names it', () => {
       const cases: [bigint, bigint][] = [
-        [1000n, 999n],   // a 1-unit gap
-        [1000n, 900n],   // an ordinary gap
-        [1000n, 1n],     // very nearly the whole balance
+        [100_000n, 99_999n],   // a 1-unit gap
+        [100_000n, 90_000n],   // an ordinary gap
+        [100_000n, 12_000n],   // very nearly the whole balance
       ];
       cases.forEach(([inValue, outValue], i) => {
         const box = creditIn(inValue, 100 + i);
@@ -1769,9 +1771,9 @@ describe('validateAndApplyTx', () => {
     // legal the moment the gap is written down as a box.
     it('accepts each of those once the gap is a fee box, and the sums close', () => {
       const cases: [bigint, bigint][] = [
-        [1000n, 999n],
-        [1000n, 900n],
-        [1000n, 1n],
+        [100_000n, 99_999n],
+        [100_000n, 90_000n],
+        [100_000n, 12_000n],
       ];
       cases.forEach(([inValue, outValue], i) => {
         const box = creditIn(inValue, 130 + i);
@@ -1792,8 +1794,8 @@ describe('validateAndApplyTx', () => {
     // transitions). `credit(X) → credit(0)` expresses no such thing: it is a
     // whole-input deficit, and the case above refuses it.
     it('accepts a transaction whose only output is a fee box for the entire input', () => {
-      const box = creditIn(1000n, 118);
-      const tx = buildSignedTx([box.id!], [feeOut(1000n)], ownerPrivKey, ownerPubKey);
+      const box = creditIn(100_000n, 118);
+      const tx = buildSignedTx([box.id!], [feeOut(100_000n)], ownerPrivKey, ownerPubKey);
       const result = validateTx(deps, tx, 10);
       expect(result.error).toBeUndefined();
       expect(result.valid).toBe(true);
@@ -1803,10 +1805,10 @@ describe('validateAndApplyTx', () => {
     // inclusion is relay policy (MEMPOOL_INTERFACE → Fee floor), and requiring
     // a positive fee box would put a price floor in consensus.
     it('accepts a credit transaction carrying no fee box at all', () => {
-      const box = creditIn(1000n, 110);
+      const box = creditIn(100_000n, 110);
       const tx = buildSignedTx(
         [box.id!],
-        [creditOut(400n), creditOut(600n)],
+        [creditOut(40_000n), creditOut(60_000n)],
         ownerPrivKey, ownerPubKey,
       );
       const result = validateTx(deps, tx, 10);
@@ -1818,13 +1820,13 @@ describe('validateAndApplyTx', () => {
     // same message and by the same rule as the deficit above. One rule covers
     // both directions, which is what strict equality buys.
     it('rejects a credit transaction whose outputs exceed its inputs', () => {
-      const box = creditIn(1000n, 111);
-      const tx = buildSignedTx([box.id!], [creditOut(1001n)], ownerPrivKey, ownerPubKey);
+      const box = creditIn(100_000n, 111);
+      const tx = buildSignedTx([box.id!], [creditOut(100_001n)], ownerPrivKey, ownerPubKey);
       const result = validateTx(deps, tx, 10);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('Value non-conservation');
-      expect(result.error).toContain('inputs=1000');
-      expect(result.error).toContain('outputs=1001');
+      expect(result.error).toContain('inputs=100000');
+      expect(result.error).toContain('outputs=100001');
     });
 
     // Multi-owner credit inputs are an ordinary multi-party payment — credits
@@ -1833,12 +1835,12 @@ describe('validateAndApplyTx', () => {
     it('accepts a fee box on credit inputs from two different owners', () => {
       const { publicKey: secondPub, privateKey: secondPriv } = generateKeyPairSync('ed25519');
       const secondRaw = rawPublicKey(secondPub);
-      const mine = creditIn(600n, 112);
-      const theirs = creditIn(400n, 113, secondRaw);
+      const mine = creditIn(60_000n, 112);
+      const theirs = creditIn(40_000n, 113, secondRaw);
 
       const tx: UtxoTransaction = {
         inputs: [mine.id!, theirs.id!],
-        outputs: [creditOut(950n), feeOut(50n)],
+        outputs: [creditOut(95_000n), feeOut(5_000n)],
         signatures: {},
         protocolVersion: 1,
       };
@@ -1858,10 +1860,10 @@ describe('validateAndApplyTx', () => {
     // encoding" the zero-value coinbase output is refused for
     // (NODE_INTERFACE → Legal box transitions).
     it('rejects a second fee output', () => {
-      const box = creditIn(1000n, 140);
+      const box = creditIn(100_000n, 140);
       const tx = buildSignedTx(
         [box.id!],
-        [creditOut(900n), feeOut(60n), feeOut(40n)],
+        [creditOut(90_000n), feeOut(6_000n), feeOut(4_000n)],
         ownerPrivKey, ownerPubKey,
       );
       const result = validateTx(deps, tx, 10);
@@ -1873,10 +1875,10 @@ describe('validateAndApplyTx', () => {
     // above close exactly, so without this the rejection could be arithmetic
     // and would move with the wrong rule.
     it('refuses the second fee output at the transition, with the sums closing', () => {
-      const box = creditIn(1000n, 141);
+      const box = creditIn(100_000n, 141);
       const tx = buildSignedTx(
         [box.id!],
-        [creditOut(900n), feeOut(60n), feeOut(40n)],
+        [creditOut(90_000n), feeOut(6_000n), feeOut(4_000n)],
         ownerPrivKey, ownerPubKey,
       );
       const result = validateTx(deps, tx, 10);
@@ -1888,10 +1890,10 @@ describe('validateAndApplyTx', () => {
     // A zero-value fee box conserves, so the transition arm is the only gate
     // that can refuse it, which the negative assertion below pins.
     it('rejects a zero-value fee box', () => {
-      const box = creditIn(1000n, 142);
+      const box = creditIn(100_000n, 142);
       const tx = buildSignedTx(
         [box.id!],
-        [creditOut(1000n), feeOut(0n)],
+        [creditOut(100_000n), feeOut(0n)],
         ownerPrivKey, ownerPubKey,
       );
       const result = validateTx(deps, tx, 10);
@@ -1946,10 +1948,10 @@ describe('validateAndApplyTx', () => {
     // fall-through, so the ordering inside the gate is load-bearing: the like
     // carve runs first and refuses non-karma inputs there.
     it('leaves a like on credit inputs to the like gate, deficit and all', () => {
-      const box = creditIn(1000n, 115);
+      const box = creditIn(100_000n, 115);
       const tx = buildSignedTx(
         [box.id!],
-        [creditOut(900n)],
+        [creditOut(90_000n)],
         ownerPrivKey, ownerPubKey, 1, 'ab'.repeat(32),
       );
       const result = validateTx(deps, tx, 10);
@@ -2057,30 +2059,30 @@ describe('validateAndApplyTx', () => {
     }
 
     it('refuses a credit input before its lockedUntilBlock', () => {
-      const box = lockedCreditIn(500n, 200, 200);
-      const tx = buildSignedTx([box.id!], [creditOut(500n)], ownerPrivKey, ownerPubKey);
+      const box = lockedCreditIn(50_000n, 200, 200);
+      const tx = buildSignedTx([box.id!], [creditOut(50_000n)], ownerPrivKey, ownerPubKey);
       const r = validateTx(deps, tx, 199);
       expect(r.valid).toBe(false);
       expect(r.error).toMatch(/locked until 200/);
     });
 
     it('accepts the same input at exactly lockedUntilBlock', () => {
-      const box = lockedCreditIn(500n, 201, 200);
-      const tx = buildSignedTx([box.id!], [creditOut(500n)], ownerPrivKey, ownerPubKey);
+      const box = lockedCreditIn(50_000n, 201, 200);
+      const tx = buildSignedTx([box.id!], [creditOut(50_000n)], ownerPrivKey, ownerPubKey);
       expect(validateTx(deps, tx, 200).valid).toBe(true);
     });
 
     it('accepts a credit input carrying no lock', () => {
-      const box = unlockedCreditIn(500n, 202);
-      const tx = buildSignedTx([box.id!], [creditOut(500n)], ownerPrivKey, ownerPubKey);
+      const box = unlockedCreditIn(50_000n, 202);
+      const tx = buildSignedTx([box.id!], [creditOut(50_000n)], ownerPrivKey, ownerPubKey);
       expect(validateTx(deps, tx, 1).valid).toBe(true);
     });
 
     it('refuses on timing before authorization, on an unsigned locked spend', () => {
-      const box = lockedCreditIn(500n, 203, 200);
+      const box = lockedCreditIn(50_000n, 203, 200);
       const tx: UtxoTransaction = {
         inputs: [box.id!],
-        outputs: [creditOut(500n)],
+        outputs: [creditOut(50_000n)],
         signatures: {},
         protocolVersion: 1,
       };

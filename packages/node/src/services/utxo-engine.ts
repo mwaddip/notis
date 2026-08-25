@@ -1,10 +1,13 @@
 import { verify as cryptoVerify } from 'crypto';
 import {
   BOX_VALUE_BOUND,
+  boxRecordBytes,
   computeBoxId,
   computeTxId,
   LIKE_KARMA_COST,
+  MIN_BOX_VALUE_PER_BYTE,
   POST_LOCK_THREAD_COST,
+  STORAGE_RENT_PER_BYTE,
   POST_LOCK_REPLY_COST,
   PROTOCOL_VERSION,
   VOUCH_KARMA_AMOUNT,
@@ -159,6 +162,8 @@ export interface UtxoEngineDeps {
   inviteBondMin: bigint;
   inviteBondMax: bigint;
   decayCfg: DecayCfg;
+  storageRentPeriodBlocks: number;
+  getBoxProvenance: (boxId: string) => { txId: string; index: number } | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -212,6 +217,7 @@ function checkTransitions(
   likeTarget: string | undefined,
   post: PostCommit | undefined,
   currentBlockHeight: number,
+  hasSignatures: boolean,
 ): { valid: boolean; error?: string } {
   // ⛔ **THE MARKER'S CONVERSE, AND IT HAS NO PREDECESSOR** (NODE_INTERFACE →
   // Karma transition rules — the like accrual marker is an exemption from the
@@ -597,10 +603,6 @@ function checkTransitions(
           error: `CreditBox can only be spent to create CreditBox or FeeBox outputs`,
         };
       }
-      // Zero or one, never two. A second fee output carries no information and
-      // gives one economic fact two encodings with different `utxoTxRoot`,
-      // which is the same "one block, one encoding" the zero-value coinbase
-      // output is refused for (NODE_INTERFACE → Legal box transitions).
       const feeOutputs = outputs.filter((o) => o.boxType === 'fee');
       if (feeOutputs.length > 1) {
         return {
@@ -608,16 +610,78 @@ function checkTransitions(
           error: `A transaction carries at most one FeeBox output`,
         };
       }
-      // Zero fee means no box. A zero-value fee box conserves, so nothing
-      // downstream refuses it and this is the only gate that can. Same rule
-      // the emission successor carries — one block, one encoding
-      // (TYPES_INTERFACE → EmissionBox).
       if (feeOutputs.some((o) => o.value === 0n)) {
         return {
           valid: false,
           error: `A zero-value FeeBox is not created; zero fee means no box`,
         };
       }
+
+      // ---- Rent biconditional (NODE_INTERFACE → "Storage rent is a
+      // transition requiring no signature") ----
+      //
+      // A credit transaction with no signatures that passed authorization is a
+      // rent collection — every input is rent-eligible, which is the only way
+      // authorization accepts an unsigned credit spend. The biconditional:
+      // unsigned credit ⟺ rent collection. The forward direction is enforced
+      // by the shape rules below; the backward direction is structural —
+      // authorization refuses an unsigned non-eligible credit box.
+      if (!hasSignatures) {
+        const creditOutputs = outputs.filter((o) => o.boxType === 'credit');
+        let totalCharge = 0n;
+        let expectedSuccessors = 0;
+
+        for (const inp of inputs) {
+          const credit = inp as CreditBox;
+          const prov = deps.getBoxProvenance(credit.id!);
+          if (!prov) {
+            return { valid: false, error: `Rent: no provenance for input ${credit.id}` };
+          }
+          const recordLen = BigInt(boxRecordBytes(credit, prov.txId, prov.index).length);
+          const charge = STORAGE_RENT_PER_BYTE * recordLen;
+
+          if (credit.value >= charge) {
+            expectedSuccessors++;
+            const remainder = credit.value - charge;
+            const matched = creditOutputs.some((o) => {
+              const c = o as CreditBox;
+              return c.value === remainder &&
+                Buffer.from(c.owner).equals(Buffer.from(credit.owner)) &&
+                c.createdAtBlock === currentBlockHeight;
+            });
+            if (!matched) {
+              return {
+                valid: false,
+                error:
+                  `Rent: input ${credit.id} (value ${credit.value}) must produce ` +
+                  `a successor of ${remainder} to the same owner at ` +
+                  `height ${currentBlockHeight}`,
+              };
+            }
+            totalCharge += charge;
+          } else {
+            totalCharge += credit.value;
+          }
+        }
+
+        if (creditOutputs.length !== expectedSuccessors) {
+          return {
+            valid: false,
+            error:
+              `Rent: expected ${expectedSuccessors} successor credit outputs, ` +
+              `got ${creditOutputs.length}`,
+          };
+        }
+
+        if (feeOutputs.length !== 1 || feeOutputs[0]!.value !== totalCharge) {
+          return {
+            valid: false,
+            error:
+              `Rent: FeeBox must carry exactly the summed charge ${totalCharge}`,
+          };
+        }
+      }
+
       return { valid: true };
     }
 
@@ -1518,11 +1582,15 @@ type Authorization =
   | {
       /**
        * The key that must have signed, read out of the box and the transition.
-       * Absent when the box carries no such field, which refuses rather than
-       * throwing — every input reaching here is store-shaped, and a row that is
-       * not is a refusal like any other.
+       *
+       * Returns `Uint8Array` — this key must have signed.
+       * Returns `null` — no signature is required for this input (rent-eligible
+       * credit; NODE_INTERFACE → "Storage rent is a transition requiring no
+       * signature").
+       * Returns `undefined` — the box does not carry the field this transition
+       * requires, which refuses rather than passing.
        */
-      signer: (box: AnyBox, tx: UtxoTransaction) => Uint8Array | undefined;
+      signer: (box: AnyBox, tx: UtxoTransaction, currentBlockHeight: number) => Uint8Array | null | undefined;
       /** The refusal when that key did not sign. */
       unsigned: (box: AnyBox, tx: UtxoTransaction) => string;
     }
@@ -1546,6 +1614,27 @@ const OWNER_SIGNATURE: Authorization = {
   signer: (box) => (box as KarmaBox | CreditBox).owner,
   unsigned: missingOwnerSignature,
 };
+
+/**
+ * A rent-eligible credit box requires no signature; all others require
+ * OWNER_SIGNATURE (NODE_INTERFACE → "Storage rent is a transition requiring
+ * no signature"). `null` means authorized without a signature.
+ *
+ * Height-dependent: `signer` takes `currentBlockHeight` because a
+ * rent-eligible box's requirement depends on it.
+ */
+function creditAuthorization(storageRentPeriodBlocks: number): Authorization {
+  return {
+    signer: (box, _tx, currentBlockHeight) => {
+      const credit = box as CreditBox;
+      if (currentBlockHeight - credit.createdAtBlock > storageRentPeriodBlocks) {
+        return null;
+      }
+      return credit.owner;
+    },
+    unsigned: missingOwnerSignature,
+  };
+}
 
 /**
  * `bond`, `post_lock` and `fee` are created by user transactions and consumed
@@ -1572,9 +1661,12 @@ const BLOCK_APPLICATION_ONLY: Authorization = {
  * A type the transition table names as a legal input gets a signer rule; a type
  * no row names gets the absence. Admitting a type is the deliberate act.
  */
-const AUTHORIZATION: Readonly<Record<AnyBox['boxType'], Authorization>> = {
+function authorizationTable(
+  storageRentPeriodBlocks: number,
+): Readonly<Record<AnyBox['boxType'], Authorization>> {
+  return {
   karma: OWNER_SIGNATURE,
-  credit: OWNER_SIGNATURE,
+  credit: creditAuthorization(storageRentPeriodBlocks),
 
   // *voucher-signed*. A `VouchBox` names the staking key as `voucherId` and
   // carries no `owner`, so the key the row means is the one field it has.
@@ -1611,7 +1703,8 @@ const AUTHORIZATION: Readonly<Record<AnyBox['boxType'], Authorization>> = {
       `No transition consumes box ${box.id}: ` +
       `a ${box.boxType} box can never be consumed`,
   },
-};
+  };
+}
 
 /**
  * Check every input's authorization: the signer its transition requires signed
@@ -1621,14 +1714,16 @@ const AUTHORIZATION: Readonly<Record<AnyBox['boxType'], Authorization>> = {
  * here from the input's type and the output count rather than from a shape that
  * has already been validated.
  */
-function checkAuthorization(tx: UtxoTransaction, inputBoxes: AnyBox[]): UtxoResult {
+function checkAuthorization(
+  tx: UtxoTransaction,
+  inputBoxes: AnyBox[],
+  currentBlockHeight: number,
+  storageRentPeriodBlocks: number,
+): UtxoResult {
+  const AUTHORIZATION = authorizationTable(storageRentPeriodBlocks);
   const txHash = Buffer.from(computeTxId(tx), 'hex');
 
   for (const box of inputBoxes) {
-    // Own-property lookup, never a bare index: `boxType` is a store column, so
-    // `boxType: 'constructor'` must land in the arm below rather than retrieve
-    // `Object.prototype.constructor` and throw downstream (NODE_INTERFACE →
-    // "Output shape" states the same rule for the output schema).
     if (!Object.hasOwn(AUTHORIZATION, box.boxType)) {
       return {
         valid: false,
@@ -1641,8 +1736,9 @@ function checkAuthorization(tx: UtxoTransaction, inputBoxes: AnyBox[]): UtxoResu
       return { valid: false, error: rule.noUserTransition(box) };
     }
 
-    const signer = rule.signer(box, tx);
-    if (!signer || !verifyGuardSignature(tx, txHash, signer)) {
+    const signerKey = rule.signer(box, tx, currentBlockHeight);
+    if (signerKey === null) continue;
+    if (!signerKey || !verifyGuardSignature(tx, txHash, signerKey)) {
       return { valid: false, error: rule.unsigned(box, tx) };
     }
   }
@@ -1756,7 +1852,21 @@ export function validateTx(
   const shapeCheck = checkOutputShape(tx.outputs);
   if (!shapeCheck.valid) return shapeCheck;
 
-  // ---- 6. No output claims a height the chain has not reached ----
+  // Computed once ahead of step 6 (the credit floor reads it) and reused at
+  // the end for output materialization.
+  const txId = computeTxId(tx);
+
+  // ---- 6. Height bounds and credit floor ----
+  // TYPES_INTERFACE → Monotonic creation height: no output may predate its
+  // oldest input. Step 1 rejects an empty input list, so inputBoxes is
+  // non-empty here.
+  let highestInputHeight = 0;
+  for (const box of inputBoxes) {
+    if (box.createdAtBlock > highestInputHeight) {
+      highestInputHeight = box.createdAtBlock;
+    }
+  }
+
   for (const out of tx.outputs) {
     const declared = (out as Record<string, unknown>).createdAtBlock as number;
     if (declared > currentBlockHeight) {
@@ -1764,6 +1874,33 @@ export function validateTx(
         valid: false,
         error: `Output createdAtBlock ${declared} is ahead of height ${currentBlockHeight}`,
       };
+    }
+    if (declared < highestInputHeight) {
+      return {
+        valid: false,
+        error: `Output createdAtBlock ${declared} is below highest input height ${highestInputHeight}`,
+      };
+    }
+  }
+
+  // TYPES_INTERFACE → Box value domain: a credit output carries at least
+  // MIN_BOX_VALUE_PER_BYTE per byte of its record. The record includes the
+  // value's own VLQ encoding, but the definition is satisfiable: VLQ byte
+  // transitions are exponential (128, 16384, …) while the floor increment
+  // per extra byte is constant (156), so no value fails its own threshold
+  // while a smaller one passes.
+  if (tx.outputs.some(o => o.boxType === 'credit')) {
+    for (let i = 0; i < tx.outputs.length; i++) {
+      const out = tx.outputs[i]!;
+      if (out.boxType !== 'credit') continue;
+      const recordLen = BigInt(boxRecordBytes(out, txId, i).length);
+      const floor = MIN_BOX_VALUE_PER_BYTE * recordLen;
+      if (out.value < floor) {
+        return {
+          valid: false,
+          error: `Credit output ${i} value ${out.value} is below the per-byte minimum ${floor} (${recordLen} record bytes)`,
+        };
+      }
     }
   }
 
@@ -1775,7 +1912,7 @@ export function validateTx(
   // Ahead of the transition arms, so a transaction that is both unsigned and
   // malformed is refused for being unsigned. The transition is identified here
   // from the input type and the output count; step 9 pins the rest of the shape.
-  const authCheck = checkAuthorization(tx, inputBoxes);
+  const authCheck = checkAuthorization(tx, inputBoxes, currentBlockHeight, deps.storageRentPeriodBlocks);
   if (!authCheck.valid) return authCheck;
 
   // ---- 9. Legal box transitions ----
@@ -1786,11 +1923,10 @@ export function validateTx(
     tx.likeTarget,
     tx.post,
     currentBlockHeight,
+    Object.keys(tx.signatures).length > 0,
   );
   if (!transitionCheck.valid) return transitionCheck;
 
-  // Compute output IDs for the caller (so applyTx doesn't re-compute)
-  const txId = computeTxId(tx);
   const computedOutputs = tx.outputs.map((box, index) =>
     materializeOutput(box, txId, index),
   );

@@ -357,6 +357,15 @@ export function getBox(boxId: string): AnyBox | null {
   return row ? rowToBox(row) : null;
 }
 
+export function getBoxProvenance(boxId: string): { txId: string; index: number } | null {
+  const db = getDb();
+  const row = db
+    .prepare('SELECT tx_id, output_index FROM utxo_boxes WHERE id = ?')
+    .safeIntegers()
+    .get(boxId) as Pick<UtxoRow, 'tx_id' | 'output_index'> | undefined;
+  return row ? { txId: row.tx_id, index: Number(row.output_index) } : null;
+}
+
 /**
  * Return the genesis proof box, or null if this store has not seeded one.
  *
@@ -548,6 +557,35 @@ export function getCreditBoxes(owner: Uint8Array): CreditBox[] {
 }
 
 
+
+/**
+ * Unspent credit boxes past the rent period, oldest first, bounded.
+ *
+ * Selection is discretionary — a producer includes what it chooses
+ * (NODE_INTERFACE → "Storage rent is a transition requiring no signature").
+ */
+export function getRentEligibleCreditBoxes(
+  currentHeight: number,
+  storageRentPeriodBlocks: number,
+  limit: number,
+): Array<{ box: CreditBox; txId: string; index: number }> {
+  const db = getDb();
+  const cutoff = currentHeight - storageRentPeriodBlocks;
+  const rows = db
+    .prepare(
+      `SELECT * FROM utxo_boxes
+       WHERE box_type = 'credit' AND spent_at_block IS NULL
+         AND created_at_block < ?
+       ORDER BY created_at_block ASC
+       LIMIT ?`,
+    )
+    .safeIntegers()
+    .all(cutoff, limit) as UtxoRow[];
+  return rows.map((row) => ({
+    box: rowToBox(row) as CreditBox,
+    ...provenanceOf(row),
+  }));
+}
 
 /**
  * The bond naming this invitee, or null.

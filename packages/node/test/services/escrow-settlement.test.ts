@@ -498,6 +498,8 @@ describe('escrow settlement leg', () => {
           decayAmount: 0n,
           karmaMinimum: 0n,
         },
+        storageRentPeriodBlocks: 40,
+        getBoxProvenance: () => null,
         getTopologyAuthor: () => null,
         runInTransaction: (fn) => fn(),
       },

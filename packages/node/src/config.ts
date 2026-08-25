@@ -92,6 +92,8 @@ export interface Config {
   karmaDecayIntervalBlocks: number;
   karmaDecayAmount: bigint;
   karmaMinimum: bigint;
+  // Storage rent
+  storageRentPeriodBlocks: number;
   // AVL state root
   verifyStateRoot: boolean;
   maxProofHistory: number;
@@ -145,6 +147,7 @@ export function loadConfig(): Readonly<Config> {
     karmaDecayIntervalBlocks: profile.karmaDecayIntervalBlocks,
     karmaDecayAmount: KARMA_DECAY_AMOUNT,
     karmaMinimum: KARMA_MINIMUM,
+    storageRentPeriodBlocks: profile.storageRentPeriodBlocks,
     // AVL state root. On by default since Spec B P3: producer and verifier now
     // agree by construction — the header carries the POST-block digest (H-6),
     // both feeds are canonically ordered (M-12), and the mutation set is

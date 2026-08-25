@@ -413,7 +413,7 @@ KarmaBox {
   id: BoxId
   value: bigint                // Karma balance (bigint base units — see value denomination)
   owner: PublicKey             // Ed25519 public key (32 bytes)
-  createdAtBlock: number       // Block height when box was created
+  createdAtBlock: number       // The height its creator DECLARED (<= current height)
 }
 ```
 
@@ -551,7 +551,7 @@ VouchBox {
   value: 1n                   // VOUCH_KARMA_AMOUNT — always 1n (bigint)
   voucherId: UserId           // Who staked the karma
   targetId: UserId            // Who is being vouched for
-  createdAtBlock: number      // Block height when vouch was cast
+  createdAtBlock: number      // Declared cast height — within VOUCH_CAST_HEIGHT_WINDOW of the carrying block
 }
 ```
 
@@ -1552,15 +1552,23 @@ not be independently readable.
 `KARMA_STALE_THRESHOLD_BLOCKS` · `VOUCH_COOLDOWN_BLOCKS` · `INVITE_PROBATION_BLOCKS` ·
 `CREDIT_MINER_REWARD_DELAY` · `CREDIT_FIXED_RATE_BLOCKS` ·
 `CREDIT_EPOCH_BLOCKS` · `GENESIS_KARMA_PER_MEMBER` · `INVITE_BOND_MIN` · `INVITE_BOND_MAX` ·
-`genesisCommitteeKeys` · `genesisProofPayload` · `genesisStateRoot` · `faucetPublicKey`
+`genesisCommitteeKeys` · `genesisProofPayload` · `genesisStateRoot` · `faucetPublicKey` ·
+`storageRentPeriodBlocks`
 
 **Every name is spelled by its definition site, and the case says which one.** A `SCREAMING_CASE` name
 is a `constants.ts` export that a profile field reads; a `camelCase` name is a `NetworkProfile` field
-that no constant stands beside — the four at the end of the list. `genesisCommitteeKeys` and
-`faucetPublicKey` are field-only because one constant serves one value and each network names its own;
-`genesisProofPayload` and `genesisStateRoot` are one fact stated twice, the sole per-network input to
-the genesis box set and the height-0 AVL+ root over it. All four belong to the genesis axis this
-section already declares, so they add fields to a declared axis rather than opening a fourth.
+that no constant stands beside — **the case is the statement, so no count is kept here and none has to
+be maintained.** `genesisCommitteeKeys` and `faucetPublicKey` are field-only because one constant
+serves one value and each network names its own; `genesisProofPayload` and `genesisStateRoot` are one
+fact stated twice, the sole per-network input to the genesis box set and the height-0 AVL+ root over
+it. Each belongs to the genesis axis this section already declares, so they add fields to a declared
+axis rather than opening a fourth.
+
+> ⚠ **`storageRentPeriodBlocks` is field-only for the reason rent's rate is not: the rate is
+> economics and universal, the period is timescale and per-network.** ⛔ **Devnet's is bounded from
+> both sides.** Mainnet's 2,102,400 blocks is unreachable in any test, so a universal period would
+> leave the rent path unexercised; and a period below the suite's own ceiling lets a producer collect
+> the faucet's genesis credits underneath a running scenario. Devnet's **40** sits between the two.
 
 **Universal — every other constant, including consensus ones:** the format limits
 (`MAX_CONTENT_BYTES`, `MAX_PARENT_REFS`, `PROTOCOL_VERSION`, `AVL_KEY_LENGTH`) and **every
@@ -1711,12 +1719,19 @@ Every post, stump, ordering block, and UTXO transaction carries a
 An object with an old version is validated against that version's rules
 forever. A node rejects objects with an unsupported protocol version.
 
-> ⚠ **NOT IMPLEMENTED — the second sentence is true, the first is not. Verified 2026-08-11.**
-> There is **no version-keyed rule table and no dispatch**. Validation is a **strict equality
-> check against `PROTOCOL_VERSION`** at all four sites that test it — `verifier.ts:142` and
-> `:244` (posts), `utxo-engine.ts:987` (transactions), `block-apply.ts:268` (block headers),
-> every one of them `!== PROTOCOL_VERSION`. So rejecting unsupported versions works, while
-> "validated against that version's rules forever" describes a mechanism that was never built.
+> ⚠ **NOT IMPLEMENTED — the second sentence is true, the first is not.**
+> There is **no version-keyed rule table and no dispatch**. Every check is a **strict equality
+> against `PROTOCOL_VERSION`**, so rejecting an unsupported version works while "validated against
+> that version's rules forever" describes a mechanism that was never built.
+>
+> ⚠ **Re-measured 2026-08-25 — the 2026-08-11 enumeration had rotted entirely.** It named four
+> sites by line, two of them in `verifier.ts`, **a file that no longer exists**, and claimed every
+> one used `!== PROTOCOL_VERSION` where one does. Named by what they are rather than where they sit,
+> the checks are: **one predicate** — `verifyProtocolVersion` in validation, a bare `===`, called
+> from net's gossip on blocks and transactions — and **three that bypass it**, in node's transaction
+> envelope step, node's settlement, and net's handshake, which passes a single-element accept list.
+> **Four checks, three forms, four packages.** A version-keyed table replaces all of them at once,
+> and #20 / #21 reopen when it lands.
 >
 > **The consequence is worse than a missing feature: the first version bump makes existing
 > history un-resyncable.** Under strict equality a v2 node rejects every v1 object,

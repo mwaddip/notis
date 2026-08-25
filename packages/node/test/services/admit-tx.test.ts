@@ -8,8 +8,17 @@
  * above the store instead of inside it.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { createHash } from 'crypto';
-import { computeBoxId, PROTOCOL_VERSION } from '@dagsocial/types';
+import { createHash, generateKeyPairSync } from 'crypto';
+import {
+  boxRecordBytes,
+  computeBoxId,
+  PROTOCOL_VERSION,
+  STORAGE_RENT_PER_BYTE,
+  KARMA_STALE_THRESHOLD_BLOCKS,
+  KARMA_DECAY_INTERVAL_BLOCKS,
+  KARMA_DECAY_AMOUNT,
+  KARMA_MINIMUM,
+} from '@dagsocial/types';
 import type { CreditBox, FeeBox, UtxoTransaction } from '@dagsocial/types';
 
 const originalFloor = process.env['MIN_FEE_RATE_PER_BYTE'];
@@ -30,8 +39,12 @@ function creditBox(label: string, value: bigint): CreditBox {
  * A credit spend that names its fee in a `FeeBox` output — which is the whole
  * of what the floor measures, since `bidOf` resolves no inputs
  * (MEMPOOL_INTERFACE → Fee floor).
+ *
+ * Signed (non-empty `signatures`): the rent refusal fires on an empty map, and
+ * the fee-floor tests are about the fee, not about authorization.
  */
 function spend(box: CreditBox, fee: bigint): UtxoTransaction {
+  const ownerHex = Buffer.from(box.owner).toString('hex');
   return {
     inputs: [box.id!],
     outputs: [
@@ -40,7 +53,7 @@ function spend(box: CreditBox, fee: bigint): UtxoTransaction {
       } as CreditBox,
       { boxType: 'fee', value: fee, createdAtBlock: 0 } as FeeBox,
     ],
-    signatures: {},
+    signatures: { [ownerHex]: new Uint8Array(64) },
     protocolVersion: PROTOCOL_VERSION,
   } as UtxoTransaction;
 }
@@ -48,7 +61,8 @@ function spend(box: CreditBox, fee: bigint): UtxoTransaction {
 /** A karma-side entry: no outputs, so nothing it could bid. */
 function karmaSide(label: string): UtxoTransaction {
   const id = createHash('blake2b512').update(label).digest().subarray(0, 32).toString('hex');
-  return { inputs: [id], outputs: [], signatures: {}, protocolVersion: PROTOCOL_VERSION } as UtxoTransaction;
+  const dummyKey = createHash('blake2b512').update(`${label}_k`).digest().subarray(0, 32).toString('hex');
+  return { inputs: [id], outputs: [], signatures: { [dummyKey]: new Uint8Array(64) }, protocolVersion: PROTOCOL_VERSION } as UtxoTransaction;
 }
 
 /** A fresh node with `MIN_FEE_RATE_PER_BYTE` set, and the boxes seeded. */
@@ -147,5 +161,104 @@ describe('the admission seam', () => {
     process.env['MIN_FEE_RATE_PER_BYTE'] = '-1';
     vi.resetModules();
     await expect(import('../../src/config.js')).rejects.toThrow(/beneath zero/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Rent admission (MEMPOOL_INTERFACE → Storage rent is refused at admission)
+// ---------------------------------------------------------------------------
+
+describe('rent admission refusal', () => {
+  const RENT_PERIOD = 40;
+
+  beforeEach(() => { vi.resetModules(); });
+  afterEach(() => {
+    if (originalFloor === undefined) delete process.env['MIN_FEE_RATE_PER_BYTE'];
+    else process.env['MIN_FEE_RATE_PER_BYTE'] = originalFloor;
+  });
+
+  it('refuses a rent transaction at admission', async () => {
+    const box = creditBox('rent_target', 100_000_000n);
+    const { admit, mem } = await nodeWithFloor('0', [box]);
+
+    // An unsigned transaction: `signatures` is empty — the only way this
+    // passes `validateTx` is as a rent collection (H1 biconditional).
+    const tx: UtxoTransaction = {
+      inputs: [box.id!],
+      outputs: [
+        { boxType: 'credit', value: box.value - 1000n, owner: box.owner, createdAtBlock: 0 } as CreditBox,
+        { boxType: 'fee', value: 1000n, createdAtBlock: 0 } as FeeBox,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+
+    expect(() => admit.admitTx(tx, 1000)).toThrow(admit.RentRefusedError);
+    expect(mem.getPendingEntries(10)).toHaveLength(0);
+  });
+
+  // ⛔ Pins "policy, not consensus": the SAME unsigned transaction that
+  // admission refuses must pass `validateTx` — which is what block application
+  // calls for every embedded transaction. If someone makes the refusal
+  // consensus-level, this test fails.
+  it('validateTx accepts the rent transaction block application would carry', async () => {
+    vi.resetModules();
+    const dbMod = await import('../../src/store/db.js');
+    dbMod.initDb(':memory:');
+    const utxo = await import('../../src/store/utxo.js');
+    const engine = await import('../../src/services/utxo-engine.js');
+    const { rawPublicKey, seedProvenance } = await import('../helpers.js');
+    const cfgMod = await import('../../src/config.js');
+
+    const alice = generateKeyPairSync('ed25519');
+    const alicePub = rawPublicKey(alice.publicKey);
+    const height = 100;
+
+    const box = seedProvenance<CreditBox>(
+      { boxType: 'credit', value: 100_000_000n, owner: alicePub, createdAtBlock: height - RENT_PERIOD - 1 },
+      height - RENT_PERIOD - 1,
+    );
+    utxo.insertBox(box);
+
+    const prov = utxo.getBoxProvenance(box.id!)!;
+    const charge = STORAGE_RENT_PER_BYTE * BigInt(boxRecordBytes(box, prov.txId, prov.index).length);
+
+    const tx: UtxoTransaction = {
+      inputs: [box.id!],
+      outputs: [
+        { boxType: 'credit', value: box.value - charge, owner: alicePub, createdAtBlock: height },
+        { boxType: 'fee', value: charge, createdAtBlock: height },
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+
+    const deps: import('../../src/services/utxo-engine.js').UtxoEngineDeps = {
+      getBox: utxo.getBox,
+      insertBox: utxo.insertBox,
+      consumeBox: utxo.consumeBox,
+      getKarmaBox: utxo.getKarmaBox,
+      getKarmaValue: utxo.getKarmaValue,
+      getIdentityRecord: (await import('../../src/store/identity-records.js')).getIdentityRecord,
+      hasActiveVouchEscrow: () => false,
+      vouchCooldownBlocks: 2,
+      inviteBondMin: cfgMod.config.inviteBondMin,
+      inviteBondMax: cfgMod.config.inviteBondMax,
+      decayCfg: {
+        staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
+        decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS,
+        decayAmount: KARMA_DECAY_AMOUNT,
+        karmaMinimum: KARMA_MINIMUM,
+      },
+      storageRentPeriodBlocks: RENT_PERIOD,
+      getBoxProvenance: utxo.getBoxProvenance,
+      getTopologyAuthor: () => null,
+      runInTransaction: (fn) => fn(),
+    };
+
+    const result = engine.validateTx(deps, tx, height);
+    expect(result.valid).toBe(true);
+
+    dbMod.closeDb();
   });
 });

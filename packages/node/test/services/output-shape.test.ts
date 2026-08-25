@@ -340,6 +340,8 @@ describe('validateTx output shape (integration)', () => {
         decayAmount: KARMA_DECAY_AMOUNT,
         karmaMinimum: KARMA_MINIMUM,
       },
+      storageRentPeriodBlocks: 40,
+      getBoxProvenance: () => null,
       getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
@@ -424,12 +426,12 @@ describe('validateTx output shape (integration)', () => {
   });
 
   it('accepts credit → credit (honest, lockedUntilBlock absent and present)', () => {
-    const c1 = seedCredit(40n);
+    const c1 = seedCredit(40_000n);
     const r1 = validateTx(
       deps,
       signedTx(
         [c1.id!],
-        [{ boxType: 'credit', value: 40n, createdAtBlock: 0, owner: ownerPubKey }],
+        [{ boxType: 'credit', value: 40_000n, createdAtBlock: 0, owner: ownerPubKey }],
       ),
       10,
     );
@@ -442,7 +444,7 @@ describe('validateTx output shape (integration)', () => {
         [
           {
             boxType: 'credit',
-            value: 40n,
+            value: 40_000n,
             createdAtBlock: 0,
             owner: ownerPubKey,
             lockedUntilBlock: 500,

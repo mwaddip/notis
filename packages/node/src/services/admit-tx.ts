@@ -27,6 +27,20 @@ export class FeeBelowFloorError extends ClientError {
 }
 
 /**
+ * Thrown when a rent transaction reaches the pool path.
+ *
+ * A `ClientError` at 403: the transaction is well formed and valid
+ * consensus, but this node refuses to relay it — collection is the block
+ * producer's (MEMPOOL_INTERFACE → Storage rent is refused at admission).
+ */
+export class RentRefusedError extends ClientError {
+  constructor() {
+    super('Rent transactions are not accepted for relay', 403);
+    this.name = 'RentRefusedError';
+  }
+}
+
+/**
  * Admission: this node's relay policy, then the pool.
  *
  * ⛔ **The floor lives here and must never move into `insertUtxoTx`.**
@@ -50,6 +64,14 @@ export class FeeBelowFloorError extends ClientError {
  * change to satisfy a signature rather than a rule.
  */
 export function admitTx(tx: UtxoTransaction, expiresAtHeight: number): number {
+  // MEMPOOL_INTERFACE → Storage rent is refused at admission.
+  // Every caller runs `validateTx` first; an unsigned transaction that passed
+  // authorization is a rent collection — the biconditional (NODE_INTERFACE →
+  // "Storage rent is a transition requiring no signature").
+  if (Object.keys(tx.signatures).length === 0) {
+    throw new RentRefusedError();
+  }
+
   const floor = config.minFeeRatePerByte;
   if (floor > 0n) {
     const fee = bidOf(tx);

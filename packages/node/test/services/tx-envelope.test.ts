@@ -413,6 +413,8 @@ describe('validateTx step 0 — the envelope gate in place', () => {
         decayAmount: KARMA_DECAY_AMOUNT,
         karmaMinimum: KARMA_MINIMUM,
       },
+      storageRentPeriodBlocks: 40,
+      getBoxProvenance: () => null,
       getTopologyAuthor: () => LIKE_AUTHOR,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();

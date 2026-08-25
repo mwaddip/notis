@@ -602,7 +602,7 @@ describe('block-apply journal recording', () => {
     async function minerSliceAt1(fees: bigint, actors: number): Promise<bigint> {
       const { computeBlockReward } = await import('../../src/services/block-creator.js');
       const { splitCoinbase } = await import('../../src/services/coinbase-split.js');
-      return splitCoinbase(computeBlockReward(1), fees, actors).miner;
+      return splitCoinbase(computeBlockReward(1), fees, 0n, actors).miner;
     }
 
     it('accepts a coinbase claiming the fees of the block it carries', async () => {
@@ -613,8 +613,8 @@ describe('block-apply journal recording', () => {
 
       const sender = makeTestIdentity();
       const miner = makeTestIdentity();
-      const boxA = makeCreditBox(1000n, sender.userId, 0, 1);
-      const boxB = makeCreditBox(500n, sender.userId, 0, 2);
+      const boxA = makeCreditBox(100_000n, sender.userId, 0, 1);
+      const boxB = makeCreditBox(50_000n, sender.userId, 0, 2);
       utxo.insertBox(boxA);
       utxo.insertBox(boxB);
 
@@ -622,12 +622,12 @@ describe('block-apply journal recording', () => {
       // which is the thing under test.
       const block = await makeApplicableBlock({
         miner,
-        utxoTxs: [makeCreditTx(sender, [boxA], 100n), makeCreditTx(sender, [boxB], 50n)],
+        utxoTxs: [makeCreditTx(sender, [boxA], 10_000n), makeCreditTx(sender, [boxB], 5_000n)],
       });
 
       expect(blockApply.applyOrderingBlock(block)).toBe(true);
       const paid = utxo.getCreditBoxes(miner.userId)[0]!.value;
-      expect(paid).toBe(await minerSliceAt1(150n, 0));
+      expect(paid).toBe(await minerSliceAt1(15_000n, 0));
       // And the fees moved the number — otherwise this passes on a coinbase
       // that ignored them entirely.
       expect(paid).toBeGreaterThan(await minerSliceAt1(0n, 0));
@@ -642,15 +642,15 @@ describe('block-apply journal recording', () => {
 
       const sender = makeTestIdentity();
       const miner = makeTestIdentity();
-      const box = makeCreditBox(1000n, sender.userId, 0, 1);
+      const box = makeCreditBox(100_000n, sender.userId, 0, 1);
       utxo.insertBox(box);
 
       // One base unit above the slice this body earns.
       const block = await makeApplicableBlock({
         miner,
-        utxoTxs: [makeCreditTx(sender, [box], 100n)],
+        utxoTxs: [makeCreditTx(sender, [box], 10_000n)],
         settlement: withCoinbase([
-          { owner: miner.userId, value: (await minerSliceAt1(100n, 0)) + 1n },
+          { owner: miner.userId, value: (await minerSliceAt1(10_000n, 0)) + 1n },
         ]),
       });
 
@@ -667,7 +667,7 @@ describe('block-apply journal recording', () => {
 
       const sender = makeTestIdentity();
       const miner = makeTestIdentity();
-      const box = makeCreditBox(1000n, sender.userId, 0, 1);
+      const box = makeCreditBox(100_000n, sender.userId, 0, 1);
       utxo.insertBox(box);
 
       // The slice this body would earn if its transaction paid nothing —
@@ -675,7 +675,7 @@ describe('block-apply journal recording', () => {
       // than one valid encoding.
       const block = await makeApplicableBlock({
         miner,
-        utxoTxs: [makeCreditTx(sender, [box], 100n)],
+        utxoTxs: [makeCreditTx(sender, [box], 10_000n)],
         settlement: withCoinbase([
           { owner: miner.userId, value: await minerSliceAt1(0n, 0) },
         ]),
@@ -699,25 +699,25 @@ describe('block-apply journal recording', () => {
 
       const sender = makeTestIdentity();
       const miner = makeTestIdentity();
-      const boxA = makeCreditBox(1000n, sender.userId, 0, 1);
+      const boxA = makeCreditBox(100_000n, sender.userId, 0, 1);
       utxo.insertBox(boxA);
 
-      // A: 1000 → 900, fee 100. B spends A's only output: 900 → 850, fee 50.
-      const txA = makeCreditTx(sender, [boxA], 100n);
+      // A: 100k → 90k, fee 10k. B spends A's output: 90k → 85k, fee 5k.
+      const txA = makeCreditTx(sender, [boxA], 10_000n);
       const aOutput = materializeOutput(
         txA.outputs[0] as never,
         computeTxId(txA),
         0,
       ) as CreditBox;
-      const txB = makeCreditTx(sender, [aOutput], 50n);
+      const txB = makeCreditTx(sender, [aOutput], 5_000n);
 
       const block = await makeApplicableBlock({ miner, utxoTxs: [txA, txB] });
 
       expect(blockApply.applyOrderingBlock(block)).toBe(true);
-      expect(utxo.getCreditBoxes(miner.userId)[0]!.value).toBe(await minerSliceAt1(150n, 0));
+      expect(utxo.getCreditBoxes(miner.userId)[0]!.value).toBe(await minerSliceAt1(15_000n, 0));
       // B's output survives, so the chain really applied rather than the block
       // passing on A alone.
-      expect(utxo.getCreditBoxes(sender.userId)[0]!.value).toBe(850n);
+      expect(utxo.getCreditBoxes(sender.userId)[0]!.value).toBe(85_000n);
     });
 
     // The attribution guard. A karma-side deficit is not a fee, and an unvouch
@@ -842,7 +842,7 @@ describe('block-apply journal recording', () => {
       // no bond in this body asks for. The amount is right, so nothing else can
       // be what rejects it.
       const miner = makeTestIdentity();
-      const split = splitCoinbase(computeBlockReward(1), 0n, 0);
+      const split = splitCoinbase(computeBlockReward(1), 0n, 0n, 0);
       const stranger = makeTestIdentity();
       const grafted = await makeApplicableBlock({
         miner,
@@ -1541,7 +1541,7 @@ describe('block-apply mint provenance', () => {
     const { splitCoinbase } = await import('../../src/services/coinbase-split.js');
     const miner = makeTestIdentity();
     const second = makeTestIdentity();
-    const slice = splitCoinbase(computeBlockReward(1), 0n, 0).miner;
+    const slice = splitCoinbase(computeBlockReward(1), 0n, 0n, 0).miner;
     const secondShare = slice / 10n;
 
     const block = await makeApplicableBlock({

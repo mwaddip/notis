@@ -77,8 +77,8 @@ const CASES: Record<AnyBox['boxType'], Case> = {
     signer: 'holder',
   },
   credit: {
-    box: (h) => ({ boxType: 'credit', value: 10n, createdAtBlock: 0, owner: h.userId }),
-    outputs: (h) => [creditOut(h.userId, 10n)],
+    box: (h) => ({ boxType: 'credit', value: 100_000n, createdAtBlock: 0, owner: h.userId }),
+    outputs: (h) => [creditOut(h.userId, 100_000n)],
     signer: 'holder',
   },
   // *voucher-signed* — and a VouchBox carries no `owner` at all, so the key the
@@ -193,6 +193,8 @@ describe('authorization is a property of the transition', () => {
         decayAmount: KARMA_DECAY_AMOUNT,
         karmaMinimum: KARMA_MINIMUM,
       },
+      storageRentPeriodBlocks: 40,
+      getBoxProvenance: () => null,
       getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => { (db.transaction(fn) as () => void)(); },
     };
@@ -327,12 +329,12 @@ describe('authorization is a property of the transition', () => {
     /** karma → credit: conserves and matches the schema, and no transition allows it. */
     function karmaToCredit(): UtxoTransaction {
       const karma = seedProvenance<AnyBox>({
-        boxType: 'karma', value: 10n,  createdAtBlock: 0,owner: holder.userId,
+        boxType: 'karma', value: 100_000n,  createdAtBlock: 0,owner: holder.userId,
       });
       storeInsertBox(karma);
       return {
         inputs: [karma.id],
-        outputs: [creditOut(holder.userId, 10n)],
+        outputs: [creditOut(holder.userId, 100_000n)],
         signatures: {},
         protocolVersion: PROTOCOL_VERSION,
       };

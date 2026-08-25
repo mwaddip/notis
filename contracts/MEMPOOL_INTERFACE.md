@@ -528,6 +528,20 @@ reachable.
 `purgeExpired` still reclaims space every block, so a full pool also drains on
 its own as entries expire or confirm.
 
+### Storage rent is refused at admission
+
+A node refuses a **rent transaction** — an unsigned `credit` spend, admitted by authorization only
+because every input is rent-eligible (NODE_INTERFACE → "Storage rent is a transition requiring no
+signature"). **Policy, not consensus**, the same standing the fee floor below has: a block carrying
+one is valid whoever built it.
+
+⛔ **Refusal is what makes collection the block producer's.** A transaction carries no author, so
+consensus has no key against which to test a producer restriction. Removing the pool path leaves a
+producer placing one directly into its own block as the only route **on nodes applying this policy**.
+
+⚠ **It protects the consume-whole branch.** A box that cannot cover its charge is taken entire; open
+submission would let anyone race for under-funded boxes instead of only whoever wins a block.
+
 ### Fee floor
 
 A node refuses a credit transaction whose fee rate — the value of its `FeeBox` output in

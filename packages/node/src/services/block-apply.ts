@@ -27,6 +27,7 @@ import {
 } from './block-creator.js';
 import {
   countKarmaActors,
+  isCreditSideTx,
   type EmbeddedTx,
 } from './coinbase-split.js';
 import {
@@ -75,6 +76,7 @@ import {
   getPostLockBox,
   getVouchEscrowsReleasableAt,
   purgeRefusedHeaders,
+  getBoxProvenance,
 } from '../store/index.js';
 import { getDb } from '../store/db.js';
 import {
@@ -857,6 +859,8 @@ function applyMutationPhase(
       decayAmount: config.karmaDecayAmount,
       karmaMinimum: config.karmaMinimum,
     },
+    storageRentPeriodBlocks: config.storageRentPeriodBlocks,
+    getBoxProvenance,
     // ⛔ The like marker's author, from `block_topology` and never
     // `dag_posts.author` (ARCHITECTURE → Likes). The same read §11's apply arm
     // makes, so the marker's pin and the like-record's author cannot disagree.
@@ -1000,6 +1004,7 @@ function applyMutationPhase(
   // first input speak for the transaction rather than being the producer's
   // choice.
   const perTxOutputs = new Map<string, AnyBox[]>();
+  const rentTxIds = new Set<string>();
   const appliedTxs: EmbeddedTx[] = [];
 
   // ⛔ **Two inviters naming the same key in one block must not both grant**
@@ -1154,11 +1159,15 @@ function applyMutationPhase(
       if (firstInput !== undefined) {
         appliedTxs.push({ tx: item.tx, inputBoxes: [getBox(firstInput)!] });
       }
-      // Keyed by the declared id rather than pushed, so the settlement reads
-      // these in committed order and not in the order deferral resolved them.
-      // `item.outputs` are the materialized outputs `validateTx` computed, the
-      // same ones `applyTx` is about to insert, so the id collected here is the
-      // id that exists.
+
+      // Rent recognition by shape: an unsigned credit-side tx that passed
+      // authorization is a rent collection (NODE_INTERFACE → "Storage rent
+      // is a transition requiring no signature"). The biconditional is
+      // structural — authorization refuses unsigned non-eligible credit.
+      if (isCreditSideTx(item.tx) && Object.keys(item.tx.signatures).length === 0) {
+        rentTxIds.add(item.txId);
+      }
+
       perTxOutputs.set(item.txId, item.outputs);
 
       applyTx(utxoDeps, item.tx, item.outputs, height);
@@ -1225,8 +1234,9 @@ function applyMutationPhase(
   // same transaction.
   const settlementBody = emptyBody();
   for (let i = 0; i < lastIndex; i++) {
-    const outputs = perTxOutputs.get(block.utxoTxTree.utxoTxIds[i]!);
-    if (outputs) contributeToBody(settlementBody, outputs);
+    const txId = block.utxoTxTree.utxoTxIds[i]!;
+    const outputs = perTxOutputs.get(txId);
+    if (outputs) contributeToBody(settlementBody, outputs, rentTxIds.has(txId));
   }
   settlementBody.actors = countKarmaActors(appliedTxs, block.header.validatorId);
   settlementBody.prunes = prunePlans;

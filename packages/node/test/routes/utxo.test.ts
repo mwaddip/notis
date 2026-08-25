@@ -76,6 +76,8 @@ async function request(
           decayAmount: KARMA_DECAY_AMOUNT,
           karmaMinimum: KARMA_MINIMUM,
         },
+        storageRentPeriodBlocks: 40,
+        getBoxProvenance: () => null,
         getTopologyAuthor: () => null,
         getIdentityRecord,
         getKarmaBoxes: (owner: Uint8Array) => [getKarmaBox(owner)].filter(Boolean) as KarmaBox[],
@@ -159,6 +161,7 @@ describe('UTXO routes', () => {
       boxType: 'credit',
       value: 99n,
       owner: kp2.publicKey,
+      createdAtBlock: 100,
     }, 1);
     insertBox(creditBox);
 
@@ -245,11 +248,12 @@ describe('UTXO routes', () => {
       const receiver = generateKeyPair();
       receiverPubKey = receiver.publicKey;
 
-      // Seed sender with 200 credits
+      // Seed sender with 200k credits
       const box = seedProvenance<CreditBox>({
         boxType: 'credit',
-        value: 200n,
+        value: 200_000n,
         owner: senderPubKey,
+        createdAtBlock: 100,
       }, 1);
       seededBoxId = box.id;
       insertBox(box);
@@ -265,14 +269,14 @@ describe('UTXO routes', () => {
       const outputs: CandidateOf<CreditBox>[] = [{
         boxType: 'credit',
         value: amount,
-        createdAtBlock: 0,
+        createdAtBlock: 100,
         owner: receiverPubKey,
       }];
       if (change > 0n) {
         outputs.push({
           boxType: 'credit',
           value: change,
-          createdAtBlock: 0,
+          createdAtBlock: 100,
           owner: senderPubKey,
         });
       }
@@ -383,7 +387,7 @@ describe('UTXO routes', () => {
     });
 
     it('rejects a forged signature with 400 — invalid tx, per the contract', async () => {
-      const tx = buildSignedTransfer(50n);
+      const tx = buildSignedTransfer(50_000n);
       tx.signatures[senderHex] = new Uint8Array(64).fill(0xaa);
       const res = await request('/credits/transfer', 'POST', { tx: txToJson(tx) });
       expect(res.status).toBe(400);
@@ -399,7 +403,7 @@ describe('UTXO routes', () => {
       const broadcastTx = vi.fn((_tx: UtxoTransaction) => Promise.resolve());
       setNet({ broadcastTx } as unknown as Parameters<typeof setNet>[0]);
 
-      const tx = buildSignedTransfer(50n);
+      const tx = buildSignedTransfer(50_000n);
       const res = await request('/credits/transfer', 'POST', { tx: txToJson(tx) });
 
       expect(res.status).toBe(200);

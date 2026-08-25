@@ -92,7 +92,7 @@ function settle(
     height,
     emission,
     s.config.config.creditMinerRewardDelay,
-    { fees: opts.fees ?? 0n, actors: opts.actors ?? 0, feeBoxIds: [], invites: [], markers: [], prunes: [] },
+    { fees: opts.fees ?? 0n, rent: 0n, actors: opts.actors ?? 0, feeBoxIds: [], invites: [], markers: [], prunes: [] },
     makeTestIdentity().userId,
   );
   if ('error' in built) return false;
@@ -264,7 +264,7 @@ describe('the treasury box', () => {
     close = () => s.db.closeDb();
 
     const emission = s.creator.computeBlockReward(1);
-    const expected = s.split.splitCoinbase(emission, 0n, 0).treasury;
+    const expected = s.split.splitCoinbase(emission, 0n, 0n, 0).treasury;
     // Non-vacuity: a block whose slice rounded to zero would create nothing, so
     // the case has to be one where something actually accrues.
     expect(expected).toBeGreaterThan(0n);
@@ -282,8 +282,8 @@ describe('the treasury box', () => {
 
     // Two blocks with DIFFERENT fee income, so the two slices differ and a
     // successor that overwrote rather than accrued would be visible.
-    const first = s.split.splitCoinbase(s.creator.computeBlockReward(1), 0n, 0).treasury;
-    const second = s.split.splitCoinbase(s.creator.computeBlockReward(2), 0n, 0).treasury;
+    const first = s.split.splitCoinbase(s.creator.computeBlockReward(1), 0n, 0n, 0).treasury;
+    const second = s.split.splitCoinbase(s.creator.computeBlockReward(2), 0n, 0n, 0).treasury;
     expect(settle(s, 1, s.creator.computeBlockReward(1))).toBe(true);
     const predecessor = s.utxo.getTreasuryBox()!;
 
@@ -310,7 +310,7 @@ describe('the treasury box', () => {
     // Above the terminus with no fees the income is zero, so the slice is too —
     // the one shape whose treasury rounds to nothing.
     const above = DEVNET_LAST_PAYING_HEIGHT + 1;
-    expect(s.split.splitCoinbase(0n, 0n, 0).treasury).toBe(0n);
+    expect(s.split.splitCoinbase(0n, 0n, 0n, 0).treasury).toBe(0n);
     expect(settle(s, above, 0n)).toBe(true);
     // Same box, same id — not a successor of equal value, which would churn a
     // leaf through the AVL tree on every block for no state change.
@@ -360,7 +360,7 @@ describe('credit conservation across a block', () => {
 
       // And the split, not only the sum: the miner's slice is the coinbase, the
       // treasury's is the box, and the two together are the whole release.
-      const split = s.split.splitCoinbase(s.creator.computeBlockReward(1), 0n, 0);
+      const split = s.split.splitCoinbase(s.creator.computeBlockReward(1), 0n, 0n, 0);
       expect(after.credit - before.credit).toBe(split.miner);
       expect(after.treasury - before.treasury).toBe(split.treasury);
     } finally {

@@ -331,8 +331,8 @@ describe('the invite at block application', () => {
     const postTx: UtxoTransaction = {
       inputs: [grantedBox[0]!.id!],
       outputs: [
-        { boxType: 'karma', value: grantedKarma - POST_LOCK_THREAD_COST, createdAtBlock: 0, owner: invitee.userId } as never,
-        { boxType: 'post_lock', value: POST_LOCK_THREAD_COST, createdAtBlock: 0, originalValue: POST_LOCK_THREAD_COST, owner: invitee.userId } as never,
+        { boxType: 'karma', value: grantedKarma - POST_LOCK_THREAD_COST, createdAtBlock: claimHeight, owner: invitee.userId } as never,
+        { boxType: 'post_lock', value: POST_LOCK_THREAD_COST, createdAtBlock: claimHeight, originalValue: POST_LOCK_THREAD_COST, owner: invitee.userId } as never,
       ],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
@@ -466,6 +466,8 @@ describe('the invite at block application', () => {
         decayAmount: KARMA_DECAY_AMOUNT,
         karmaMinimum: KARMA_MINIMUM,
       },
+      storageRentPeriodBlocks: 40,
+      getBoxProvenance: () => null,
       getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => fn(),
     }, second, 2);
