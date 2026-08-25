@@ -10,6 +10,8 @@ import {
   CREDIT_REWARD_REDUCTION,
   EMPTY_STATE_ROOT,
   MAX_BLOCK_BODY_BYTES,
+  STORAGE_RENT_PER_BYTE,
+  boxRecordBytes,
   decodeTx,
   encodeTx,
   computeTxId,
@@ -28,6 +30,7 @@ import type {
   BlockHeader,
   UtxoTxTree,
   AnyBox,
+  AnyBoxCandidate,
   UtxoTransaction,
 } from '@dagsocial/types';
 // The process config, distinct from the injected `config` below. The two
@@ -44,6 +47,7 @@ import {
 } from './block-apply.js';
 import {
   countKarmaActors,
+  isCreditSideTx,
   type EmbeddedTx,
 } from './coinbase-split.js';
 import {
@@ -80,6 +84,7 @@ import {
   getEmissionBox,
   getIdentityRecord,
   getVouchEscrowsReleasableAt,
+  getRentEligibleCreditBoxes,
   getKarmaBoxes,
   getLikeCarryBox,
   getTreasuryBox,
@@ -500,6 +505,43 @@ export function createOrderingBlock(): OrderingBlock | null {
     };
     offerBudgetTo('karma');
     offerBudgetTo('credit');
+
+    // 5b. Rent transactions — the producer selects eligible boxes and builds
+    // unsigned credit spends (NODE_INTERFACE → "Storage rent is a transition
+    // requiring no signature"). Selection is discretionary; a verifier checks
+    // eligibility and the charge and nothing else.
+    const MAX_RENT_TXS_PER_BLOCK = 32;
+    const eligible = getRentEligibleCreditBoxes(
+      newHeight, nodeConfig.storageRentPeriodBlocks, MAX_RENT_TXS_PER_BLOCK,
+    );
+    for (const { box, txId: boxTxId, index: boxIndex } of eligible) {
+      const recordLen = BigInt(boxRecordBytes(box, boxTxId, boxIndex).length);
+      const charge = STORAGE_RENT_PER_BYTE * recordLen;
+      const outputs: AnyBoxCandidate[] = [];
+      if (box.value >= charge) {
+        outputs.push({
+          boxType: 'credit',
+          value: box.value - charge,
+          owner: box.owner,
+          createdAtBlock: newHeight,
+        } as AnyBoxCandidate);
+      }
+      const feeValue = box.value >= charge ? charge : box.value;
+      outputs.push({ boxType: 'fee', value: feeValue, createdAtBlock: newHeight } as AnyBoxCandidate);
+      const rentTx: UtxoTransaction = {
+        inputs: [box.id!],
+        outputs,
+        signatures: {},
+        protocolVersion: PROTOCOL_VERSION,
+      };
+      const encoded = encodeTx(rentTx);
+      const cost = entryByteCost(encoded);
+      if (spent + cost > budget) break;
+      spent += cost;
+      const txId = computeTxId(rentTx);
+      userTxIds.push(txId);
+      userTxBytesList.push(encoded);
+    }
 
     // 6. The settlement, from the transactions the fill actually selected, and
     //    appended as the body's LAST entry — which is the whole of how every node
@@ -934,7 +976,8 @@ export function predictSettlementBody(
       .map(resolve)
       .filter((box): box is AnyBox => box !== null);
     embedded.push({ tx, inputBoxes });
-    contributeToBody(body, materialized[i]!);
+    const isRent = isCreditSideTx(tx) && Object.keys(tx.signatures).length === 0;
+    contributeToBody(body, materialized[i]!, isRent);
   }
 
   body.actors = countKarmaActors(embedded, validator);

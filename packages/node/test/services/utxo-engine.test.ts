@@ -144,6 +144,8 @@ describe('validateAndApplyTx', () => {
         decayAmount: KARMA_DECAY_AMOUNT,
         karmaMinimum: KARMA_MINIMUM,
       },
+      storageRentPeriodBlocks: 40,
+      getBoxProvenance: () => null,
       getTopologyAuthor: (postId: string) =>
         postId === LIKE_TARGET_POST ? LIKE_TARGET_AUTHOR : null,
       runInTransaction: (fn: () => void) => {

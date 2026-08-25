@@ -64,6 +64,8 @@ const engineDeps: UtxoEngineDeps = {
         decayAmount: KARMA_DECAY_AMOUNT,
         karmaMinimum: KARMA_MINIMUM,
       },
+      storageRentPeriodBlocks: 40,
+      getBoxProvenance: () => null,
   getTopologyAuthor: () => null,
   runInTransaction: (fn) => fn(),
 };
@@ -94,7 +96,7 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
     const candidate: CandidateOf<CreditBox> = {
       boxType: 'credit',
       value,
-      createdAtBlock: 0,
+      createdAtBlock: HEIGHT,
       owner: alicePubKey,
     };
     if (lockedUntilBlock !== undefined) {
@@ -119,14 +121,14 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
     const outputs: CandidateOf<CreditBox>[] = [{
       boxType: 'credit',
       value: amount,
-      createdAtBlock: 0,
+      createdAtBlock: HEIGHT,
       owner: bobPubKey,
     }];
     if (change > 0n) {
       outputs.push({
         boxType: 'credit',
         value: change,
-        createdAtBlock: 0,
+        createdAtBlock: HEIGHT,
         owner: alicePubKey,
       });
     }
@@ -234,7 +236,7 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
     const karmaOut: CandidateOf<KarmaBox> = {
       boxType: 'karma',
       value: 500n,
-      createdAtBlock: 0,
+      createdAtBlock: HEIGHT,
       owner: bobPubKey,
     };
     const tx: UtxoTransaction = {
@@ -294,7 +296,7 @@ describe('sendCredits (validate + pool — P2-B phase 3)', () => {
     const candidate: CandidateOf<CreditBox> = {
       boxType: 'credit',
       value: 42n,
-      createdAtBlock: 0,
+      createdAtBlock: HEIGHT,
       owner: bobPubKey,
     };
     const tx: UtxoTransaction = {

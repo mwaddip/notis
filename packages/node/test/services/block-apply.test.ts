@@ -602,7 +602,7 @@ describe('block-apply journal recording', () => {
     async function minerSliceAt1(fees: bigint, actors: number): Promise<bigint> {
       const { computeBlockReward } = await import('../../src/services/block-creator.js');
       const { splitCoinbase } = await import('../../src/services/coinbase-split.js');
-      return splitCoinbase(computeBlockReward(1), fees, actors).miner;
+      return splitCoinbase(computeBlockReward(1), fees, 0n, actors).miner;
     }
 
     it('accepts a coinbase claiming the fees of the block it carries', async () => {
@@ -842,7 +842,7 @@ describe('block-apply journal recording', () => {
       // no bond in this body asks for. The amount is right, so nothing else can
       // be what rejects it.
       const miner = makeTestIdentity();
-      const split = splitCoinbase(computeBlockReward(1), 0n, 0);
+      const split = splitCoinbase(computeBlockReward(1), 0n, 0n, 0);
       const stranger = makeTestIdentity();
       const grafted = await makeApplicableBlock({
         miner,
@@ -1541,7 +1541,7 @@ describe('block-apply mint provenance', () => {
     const { splitCoinbase } = await import('../../src/services/coinbase-split.js');
     const miner = makeTestIdentity();
     const second = makeTestIdentity();
-    const slice = splitCoinbase(computeBlockReward(1), 0n, 0).miner;
+    const slice = splitCoinbase(computeBlockReward(1), 0n, 0n, 0).miner;
     const secondShare = slice / 10n;
 
     const block = await makeApplicableBlock({

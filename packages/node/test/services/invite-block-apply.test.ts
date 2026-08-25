@@ -466,6 +466,8 @@ describe('the invite at block application', () => {
         decayAmount: KARMA_DECAY_AMOUNT,
         karmaMinimum: KARMA_MINIMUM,
       },
+      storageRentPeriodBlocks: 40,
+      getBoxProvenance: () => null,
       getTopologyAuthor: () => null,
       runInTransaction: (fn: () => void) => fn(),
     }, second, 2);

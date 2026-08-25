@@ -76,6 +76,8 @@ async function request(
           decayAmount: KARMA_DECAY_AMOUNT,
           karmaMinimum: KARMA_MINIMUM,
         },
+        storageRentPeriodBlocks: 40,
+        getBoxProvenance: () => null,
         getTopologyAuthor: () => null,
         getIdentityRecord,
         getKarmaBoxes: (owner: Uint8Array) => [getKarmaBox(owner)].filter(Boolean) as KarmaBox[],
@@ -159,6 +161,7 @@ describe('UTXO routes', () => {
       boxType: 'credit',
       value: 99n,
       owner: kp2.publicKey,
+      createdAtBlock: 100,
     }, 1);
     insertBox(creditBox);
 
@@ -250,6 +253,7 @@ describe('UTXO routes', () => {
         boxType: 'credit',
         value: 200_000n,
         owner: senderPubKey,
+        createdAtBlock: 100,
       }, 1);
       seededBoxId = box.id;
       insertBox(box);
@@ -265,14 +269,14 @@ describe('UTXO routes', () => {
       const outputs: CandidateOf<CreditBox>[] = [{
         boxType: 'credit',
         value: amount,
-        createdAtBlock: 0,
+        createdAtBlock: 100,
         owner: receiverPubKey,
       }];
       if (change > 0n) {
         outputs.push({
           boxType: 'credit',
           value: change,
-          createdAtBlock: 0,
+          createdAtBlock: 100,
           owner: senderPubKey,
         });
       }

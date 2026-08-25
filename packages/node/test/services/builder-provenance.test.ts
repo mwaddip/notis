@@ -113,6 +113,8 @@ describe('invite id prediction carries transaction provenance', () => {
       decayAmount: 5n,
       karmaMinimum: 10n,
     },
+    storageRentPeriodBlocks: 40,
+    getBoxProvenance: () => null,
     getTopologyAuthor: () => null,
     runInTransaction: (fn: () => void) => fn(),
   });

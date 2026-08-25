@@ -24,6 +24,7 @@ export type { PostStatus, StoredPost, PrunedTombstone, DeletedPostRow } from './
 
 export {
   getBox,
+  getBoxProvenance,
   getKarmaBox,
   getKarmaBoxes,
   getKarmaValue,
@@ -32,6 +33,7 @@ export {
   getTreasuryBox,
   getKarmaPoolBox,
   getCreditBoxes,
+  getRentEligibleCreditBoxes,
   getBondFor,
   getBondsInvitedAt,
   getBondBoxes,

@@ -104,8 +104,10 @@ import type { PruneSettlement } from './settle-prune-utxo.js';
  * committed transaction order, so the two lists are the same list.
  */
 export interface SettlementBody {
-  /** `Σ FeeBox.value` over the body (MINING_INTERFACE → Coinbase Application). */
+  /** `Σ FeeBox.value` from signed credit transactions. */
   fees: bigint;
+  /** `Σ FeeBox.value` from rent transactions (unsigned credit spends). */
+  rent: bigint;
   /** Distinct karma-side actors, the block's own validator excluded. */
   actors: number;
   /** The ids of those fee boxes, in committed transaction order. */
@@ -231,7 +233,7 @@ function derive(
   minerRewardDelay: number,
   body: SettlementBody,
 ): { derived: DerivedSettlement } | { error: string } {
-  const split = splitCoinbase(emission, body.fees, body.actors);
+  const split = splitCoinbase(emission, body.fees, body.rent, body.actors);
   const inputs: string[] = [];
   const outputs: AnyBoxCandidate[] = [];
 
@@ -855,10 +857,11 @@ export function settlementMarginalBytes(tx: UtxoTransaction): number {
  * prediction and the applier's walk the same arithmetic rather than two walks
  * that must agree.
  */
-export function contributeToBody(body: SettlementBody, outputs: AnyBox[]): void {
+export function contributeToBody(body: SettlementBody, outputs: AnyBox[], isRent = false): void {
   for (const out of outputs) {
     if (out.boxType === 'fee') {
-      body.fees += out.value;
+      if (isRent) body.rent += out.value;
+      else body.fees += out.value;
       body.feeBoxIds.push(out.id!);
     } else if (out.boxType === 'bond') {
       const bond = out as BondBox;
@@ -878,7 +881,7 @@ export function contributeToBody(body: SettlementBody, outputs: AnyBox[]): void 
 
 /** A body with nothing in it yet. */
 export function emptyBody(): SettlementBody {
-  return { fees: 0n, actors: 0, feeBoxIds: [], invites: [], markers: [], prunes: [] };
+  return { fees: 0n, rent: 0n, actors: 0, feeBoxIds: [], invites: [], markers: [], prunes: [] };
 }
 
 /**

@@ -204,6 +204,8 @@ interface EngineDeps {
     decayAmount: bigint;
     karmaMinimum: bigint;
   };
+  storageRentPeriodBlocks: 40,
+  getBoxProvenance: () => null,
   getTopologyAuthor: (postId: string) => Uint8Array | null;
   runInTransaction: (fn: () => void) => void;
 }
@@ -246,6 +248,8 @@ function makeEngineDeps(
       decayAmount: config.karmaDecayAmount,
       karmaMinimum: config.karmaMinimum,
     },
+    storageRentPeriodBlocks: 40,
+    getBoxProvenance: () => null,
     getTopologyAuthor: (postId: string) => {
       const row = db
         .prepare('SELECT author FROM block_topology WHERE post_id = ?')
