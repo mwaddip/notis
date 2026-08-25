@@ -1564,12 +1564,11 @@ fact stated twice, the sole per-network input to the genesis box set and the hei
 it. Each belongs to the genesis axis this section already declares, so they add fields to a declared
 axis rather than opening a fourth.
 
-> ⚠ **AHEAD OF CODE — 2026-08-25.** `storageRentPeriodBlocks` is the storage-rent unit's and no
-> profile carries it yet. It is field-only for the reason rent's rate is not: **the rate is
-> economics and universal, the period is timescale and per-network.** ⛔ **Devnet needs its own or
-> the path is untestable** — a universal 2,102,400-block period is unreachable in any scenario, and
-> a period below the suite's own ceiling would let a producer collect the faucet's genesis credits
-> underneath a running test.
+> ⚠ **`storageRentPeriodBlocks` is field-only for the reason rent's rate is not: the rate is
+> economics and universal, the period is timescale and per-network.** ⛔ **Devnet's is bounded from
+> both sides.** Mainnet's 2,102,400 blocks is unreachable in any test, so a universal period would
+> leave the rent path unexercised; and a period below the suite's own ceiling lets a producer collect
+> the faucet's genesis credits underneath a running scenario. Devnet's **40** sits between the two.
 
 **Universal — every other constant, including consensus ones:** the format limits
 (`MAX_CONTENT_BYTES`, `MAX_PARENT_REFS`, `PROTOCOL_VERSION`, `AVL_KEY_LENGTH`) and **every
@@ -1720,12 +1719,19 @@ Every post, stump, ordering block, and UTXO transaction carries a
 An object with an old version is validated against that version's rules
 forever. A node rejects objects with an unsupported protocol version.
 
-> ⚠ **NOT IMPLEMENTED — the second sentence is true, the first is not. Verified 2026-08-11.**
-> There is **no version-keyed rule table and no dispatch**. Validation is a **strict equality
-> check against `PROTOCOL_VERSION`** at all four sites that test it — `verifier.ts:142` and
-> `:244` (posts), `utxo-engine.ts:987` (transactions), `block-apply.ts:268` (block headers),
-> every one of them `!== PROTOCOL_VERSION`. So rejecting unsupported versions works, while
-> "validated against that version's rules forever" describes a mechanism that was never built.
+> ⚠ **NOT IMPLEMENTED — the second sentence is true, the first is not.**
+> There is **no version-keyed rule table and no dispatch**. Every check is a **strict equality
+> against `PROTOCOL_VERSION`**, so rejecting an unsupported version works while "validated against
+> that version's rules forever" describes a mechanism that was never built.
+>
+> ⚠ **Re-measured 2026-08-25 — the 2026-08-11 enumeration had rotted entirely.** It named four
+> sites by line, two of them in `verifier.ts`, **a file that no longer exists**, and claimed every
+> one used `!== PROTOCOL_VERSION` where one does. Named by what they are rather than where they sit,
+> the checks are: **one predicate** — `verifyProtocolVersion` in validation, a bare `===`, called
+> from net's gossip on blocks and transactions — and **three that bypass it**, in node's transaction
+> envelope step, node's settlement, and net's handshake, which passes a single-element accept list.
+> **Four checks, three forms, four packages.** A version-keyed table replaces all of them at once,
+> and #20 / #21 reopen when it lands.
 >
 > **The consequence is worse than a missing feature: the first version bump makes existing
 > history un-resyncable.** Under strict equality a v2 node rejects every v1 object,

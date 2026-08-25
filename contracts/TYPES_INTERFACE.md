@@ -338,8 +338,6 @@ check**; the general bound is one-directional on purpose.
 
 #### Monotonic creation height
 
-> ⚠ **AHEAD OF CODE — 2026-08-25.** The predicate below is the storage-rent unit's; nothing
-> enforces it yet.
 
 ⛔ **A transaction's outputs may not be older than its oldest input**, on **every** box type:
 
@@ -499,8 +497,6 @@ THIS RULE FIXES.**
 | **encodable** — what `vlqU64` / `canonicalBoxBytes` will write | `[0, 2⁶⁴)` | the writer; **unchanged** |
 | **accepted** — what consensus admits as a box value | `[0, 2⁶³)` | this rule |
 
-> ⚠ **AHEAD OF CODE — 2026-08-25.** The floor below is the storage-rent unit's; nothing enforces it
-> yet.
 
 ⛔ **A `credit` output carries a per-byte MINIMUM, and no other box type does.**
 
@@ -2494,7 +2490,7 @@ export interface NetworkProfile {
   readonly creditFixedRateBlocks: number;
   readonly creditEpochBlocks: number;
 
-  // Storage rent — AHEAD OF CODE 2026-08-25
+  // Storage rent — the PERIOD is per-network; the rate is a universal constant
   readonly storageRentPeriodBlocks: number;
 
   // Genesis
@@ -2847,7 +2843,7 @@ export const INCLUSION_BONUS_K = 5n;         // consensus — the bonus curve's 
 export const MEMPOOL_CREDIT_SHARE_PCT = 50;  // policy — credit share of the pool
 export const MIN_FEE_RATE_PER_BYTE = 0n;     // policy — relay floor, base units per IN-BLOCK byte
 
-// Storage rent and the credit floor — AHEAD OF CODE 2026-08-25. Both are CONSENSUS and both are
+// Storage rent and the credit floor. Both are CONSENSUS and both are
 // per byte of the box's own record. Derived from Ergo's, scaled by the supply ratio (Ergo's
 // 97,739,924 ERG max against this network's 422,640,000 credit emission), so Ergo's 3,889x ratio
 // between the two is preserved rather than chosen twice. The PERIOD is a profile field, not here.

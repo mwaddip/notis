@@ -783,8 +783,6 @@ citation of a `validateTx` step in this repo:
    older than the oldest input** — `output.createdAtBlock >= max(input.createdAtBlock)`,
    on every box type (TYPES_INTERFACE → Monotonic creation height).
 
-   > ⚠ **AHEAD OF CODE — 2026-08-25.** The monotonic half is the storage-rent
-   > unit's; only the upper bound is enforced today.
 
    ⛔ **The two halves answer different attackers and neither replaces the
    other.** The upper bound stops a box claiming the future, which is the
@@ -1308,7 +1306,6 @@ is a requirement of those transitions, stated once here, not a property the box 
 
 #### Storage rent is a transition requiring no signature
 
-> ⚠ **AHEAD OF CODE — 2026-08-25.** Nothing implements rent yet.
 
 ⛔ **A `credit` box past its rent period is spendable with NO owner signature.** Eligibility is the
 whole authorization rule:
