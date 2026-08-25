@@ -24,7 +24,6 @@ import {
   INVITE_BOND_MAX,
   INVITE_PROBATION_BLOCKS,
   INVITE_BOND_VEST_PER_LIKES,
-  GENESIS_COMMITTEE_KEYS,
   GENESIS_KARMA_PER_MEMBER,
   CREDIT_FIXED_RATE_BLOCKS,
   CREDIT_INITIAL_REWARD,
@@ -414,7 +413,6 @@ describe('constants', () => {
   });
 
   it('genesis constants are defined', () => {
-    expect(GENESIS_COMMITTEE_KEYS).toEqual([]);
     expect(GENESIS_KARMA_PER_MEMBER).toBe(1000n);
   });
 

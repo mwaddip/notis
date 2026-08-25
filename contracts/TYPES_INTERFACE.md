@@ -2750,9 +2750,13 @@ export const VOUCH_COOLDOWN_BLOCKS = 60;           // consensus — blocks befor
 ### Genesis
 
 ```typescript
-export const GENESIS_COMMITTEE_KEYS: string[] = [];        // consensus — TBD at genesis
 export const GENESIS_KARMA_PER_MEMBER = 1000n;             // consensus
 ```
+
+**The genesis committee is a `NetworkProfile` field and nothing else.** `genesisCommitteeKeys` is read
+by `services/genesis-state.ts`, which seeds one karma box per entry out of the pool, and all three
+profiles carry it. No `constants.ts` export stands beside it: one constant serves one value, and three
+networks name three committees. Every profile's array is empty and the value is TBD at genesis.
 
 A committee credit grant and a committee dissolution period have no constant and no profile field:
 nothing read `GENESIS_CREDITS_PER_MEMBER` / `genesisCreditsPerMember` or `BOOTSTRAP_PERIOD_BLOCKS` /
