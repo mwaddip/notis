@@ -10,11 +10,11 @@ import { resolve } from 'path';
  * its author declares whether it caps height from above (and therefore owes a
  * `ceilingOf` arm) or not.
  *
- * No regex decides what counts as relevant — a comparison operator adjacent
- * to the identifier is the exact filter that missed the `effectiveKarma` call
- * at line 488, where height flows indirectly through a decay computation
- * into a balance threshold. The inventory carries every mention; the
- * `capsHeight` field carries the judgment.
+ * The inventory carries every mention and `capsHeight` carries the judgment,
+ * because height reaches a rule indirectly as well as directly —
+ * `effectiveKarma` takes `currentBlockHeight` as an argument and feeds a
+ * balance threshold, with no comparison operator anywhere near the
+ * identifier, so a filter keyed on the operator cannot see that shape.
  */
 
 interface HeightMention {
