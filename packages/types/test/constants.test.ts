@@ -29,6 +29,8 @@ import {
   INVITE_BOND_VEST_PER_LIKES,
   LIKES_PER_KARMA_PAYOUT,
   LIKE_KARMA_COST,
+  MIN_BOX_VALUE_PER_BYTE,
+  STORAGE_RENT_PER_BYTE,
 } from '../src/index.js';
 
 describe('PoW difficulty constants', () => {
@@ -239,6 +241,43 @@ describe('box value domain', () => {
   // last eleven bits of the domain it bounds.
   it('is a bigint', () => {
     expect(typeof BOX_VALUE_BOUND).toBe('bigint');
+  });
+});
+
+/**
+ * Credit floor and storage rent — TYPES_INTERFACE → Box value domain.
+ *
+ * Both are consensus constants in base units per byte of a box's record.
+ * Derived from Ergo's, scaled by the supply ratio; the ratio between the
+ * two is preserved rather than chosen twice.
+ */
+describe('credit floor and storage rent', () => {
+  it('pins both values as consensus constants', () => {
+    expect(MIN_BOX_VALUE_PER_BYTE).toBe(156n);
+    expect(STORAGE_RENT_PER_BYTE).toBe(605_378n);
+  });
+
+  it('denominates both as bigint per byte', () => {
+    expect(typeof MIN_BOX_VALUE_PER_BYTE).toBe('bigint');
+    expect(typeof STORAGE_RENT_PER_BYTE).toBe('bigint');
+    expect(MIN_BOX_VALUE_PER_BYTE).toBeGreaterThan(0n);
+    expect(STORAGE_RENT_PER_BYTE).toBeGreaterThan(0n);
+  });
+
+  // TYPES_INTERFACE → Box value domain: a box sitting at the minimum is
+  // consumed at its first collection. The floor prevents spam creation;
+  // surviving rent needs a deliberate buffer.
+  it('rent per byte exceeds the floor per byte', () => {
+    expect(STORAGE_RENT_PER_BYTE).toBeGreaterThan(MIN_BOX_VALUE_PER_BYTE);
+  });
+
+  it('a 100-byte box at the floor cannot cover one period of rent', () => {
+    const bytes = 100n;
+    const floorValue = MIN_BOX_VALUE_PER_BYTE * bytes;   // 15,600
+    const rentCharge = STORAGE_RENT_PER_BYTE * bytes;     // 60,537,800
+    expect(floorValue).toBe(15_600n);
+    expect(rentCharge).toBe(60_537_800n);
+    expect(floorValue).toBeLessThan(rentCharge);
   });
 });
 

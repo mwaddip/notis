@@ -251,6 +251,15 @@ export const MEMPOOL_CREDIT_SHARE_PCT = 50;
  */
 export const MIN_FEE_RATE_PER_BYTE = 0n;
 
+// Credit floor and storage rent — TYPES_INTERFACE → Box value domain. Both are
+// CONSENSUS and both are per byte of the box's own record. Derived from Ergo's,
+// scaled by the supply ratio (Ergo's 97,739,924 ERG max against this network's
+// 422,640,000 credit emission), so Ergo's ratio between the two is preserved
+// rather than chosen twice. The PERIOD is a profile field
+// (`storageRentPeriodBlocks`), not a constant.
+export const MIN_BOX_VALUE_PER_BYTE = 156n;        // consensus — credit outputs only
+export const STORAGE_RENT_PER_BYTE = 605_378n;     // consensus — charged once per period
+
 // Ordering block PoW — difficulty in units of 1/256 of a bit, domain [0, 65536]
 // (VALIDATION_INTERFACE → orderingPowTarget).
 //

@@ -48,6 +48,9 @@ export interface NetworkProfile {
   readonly creditFixedRateBlocks: number;
   readonly creditEpochBlocks: number;
 
+  // Storage rent — the period between collections, in blocks
+  readonly storageRentPeriodBlocks: number;
+
   // Genesis
   readonly genesisCommitteeKeys: readonly string[];
   readonly genesisKarmaPerMember: bigint;
@@ -158,6 +161,11 @@ const MAINNET_PROFILE: NetworkProfile = Object.freeze({
   creditFixedRateBlocks: CREDIT_FIXED_RATE_BLOCKS,
   creditEpochBlocks: CREDIT_EPOCH_BLOCKS,
 
+  // 4 years at 60s blocks, and exactly 2 × creditFixedRateBlocks. The rate is
+  // universal (MIN_BOX_VALUE_PER_BYTE, STORAGE_RENT_PER_BYTE in constants.ts);
+  // the period is timescale and per-network.
+  storageRentPeriodBlocks: 2_102_400,
+
   genesisCommitteeKeys: Object.freeze([] as string[]),
   genesisKarmaPerMember: GENESIS_KARMA_PER_MEMBER,
 
@@ -257,6 +265,14 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
 
   creditFixedRateBlocks: 1000, // ~÷1000 so the fixed-rate → decay transition is reachable
   creditEpochBlocks: 100, // keeps fixed-rate ≈ 10 × epoch (mainnet: ≈ 8×)
+
+  // **Above the deepest height any e2e scenario reaches** (27 = MAX_REORG_DEPTH + 7,
+  // from `fork.test.ts`'s `dTarget = aTarget + 5` where `aTarget = MAX_REORG_DEPTH + 2`).
+  // A period below that ceiling lets a block producer collect the faucet's genesis credits
+  // underneath a running scenario, failing tests for reasons unrelated to what they assert.
+  // 40 gives thirteen blocks of headroom. ⚠ Raising MAX_REORG_DEPTH eats the headroom
+  // silently.
+  storageRentPeriodBlocks: 40,
 
   // ⚠ **A PUBLICLY KNOWN TEST KEY.** Its secret is in tracked source and reaches
   // CI, which is correct for an ephemeral network and is why it is not testnet's.

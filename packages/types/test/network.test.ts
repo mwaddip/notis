@@ -12,6 +12,7 @@ import {
   BOX_VALUE_BOUND,
   INVITE_BOND_VEST_PER_LIKES,
   LIKES_PER_KARMA_PAYOUT,
+  MAX_REORG_DEPTH,
 } from '../src/index.js';
 import type { NetworkType, NetworkProfile } from '../src/index.js';
 
@@ -35,6 +36,7 @@ const REQUIRED_PROFILE_FIELDS = [
   'inviteBondMax',
   'genesisProofPayload',
   'genesisStateRoot',
+  'storageRentPeriodBlocks',
 ].sort();
 
 // ⛔ Optional, and the ABSENCE is the fact rather than a gap. Mainnet names no
@@ -196,6 +198,24 @@ describe('NETWORK_PROFILES', () => {
     for (const p of [mainnet, devnet]) {
       expect(p.creditEpochBlocks).toBeLessThan(p.creditFixedRateBlocks);
     }
+  });
+
+  it('mainnet and testnet set the rent period to four years at 60s blocks', () => {
+    expect(NETWORK_PROFILES.mainnet.storageRentPeriodBlocks).toBe(2_102_400);
+    expect(NETWORK_PROFILES.testnet.storageRentPeriodBlocks).toBe(2_102_400);
+    // Exactly 2 × creditFixedRateBlocks, which is the relationship the contract
+    // states and the profile's own comment carries.
+    expect(NETWORK_PROFILES.mainnet.storageRentPeriodBlocks)
+      .toBe(2 * NETWORK_PROFILES.mainnet.creditFixedRateBlocks);
+  });
+
+  // The deepest e2e height is 27 (MAX_REORG_DEPTH + 7). A period below that
+  // ceiling lets a producer collect the faucet's genesis credits underneath a
+  // running scenario. ⚠ Raising MAX_REORG_DEPTH eats the headroom silently.
+  it('devnet rent period clears the deepest e2e height with headroom', () => {
+    const devnet = NETWORK_PROFILES.devnet;
+    expect(devnet.storageRentPeriodBlocks).toBe(40);
+    expect(devnet.storageRentPeriodBlocks).toBeGreaterThan(MAX_REORG_DEPTH + 7);
   });
 
   it('probation outlasts the stale threshold on every profile', () => {
