@@ -893,9 +893,6 @@ exist, so nothing is stranded — but it is a consensus break, not a refactor.
 
 ### Validity ceiling (`ceilingOf`)
 
-> ⚠ **AHEAD OF CODE — 2026-08-25.** The rule below is stated; `ceilingOf` and the pool's use of it are
-> not in the tree yet.
-
 **The highest block height at which a transaction can still validate — the dual of `SPEND_TIMING`.**
 Spend timing is a floor on height and refuses an input spent too *early*; a validity ceiling is a
 ceiling on the same axis and marks a transaction that can no longer be included at all. `null` means

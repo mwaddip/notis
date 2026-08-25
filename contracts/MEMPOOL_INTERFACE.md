@@ -550,9 +550,6 @@ submission would let anyone race for under-funded boxes instead of only whoever 
 
 ### Validity ceiling
 
-> ⚠ **AHEAD OF CODE — 2026-08-25.** The column and the reclaim below are stated; neither is in the
-> tree yet.
-
 **An entry whose validity is capped from above by block height leaves the pool once the chain passes
 that cap.** The ceiling itself is defined once, against the consensus rules it mirrors
 (NODE_INTERFACE → Validity ceiling); this section states only what the pool does with it.
