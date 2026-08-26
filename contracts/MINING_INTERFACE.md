@@ -378,10 +378,18 @@ transaction's credit outputs are the reward.
 
 ## Coinbase Application
 
-The coinbase carries the block's **income**, not a fixed reward: `emission(height)` plus the
-value of the `FeeBox` outputs the block's transactions carry (TYPES_INTERFACE → FeeBox).
-Storage rent becomes a third term, and nothing in this rule is revisited when it arrives —
-that is the point of stating it income-shaped.
+The coinbase carries the block's **income**, not a fixed reward: the emission this block
+**releases**, plus the value of the `FeeBox` outputs the block's transactions carry
+(TYPES_INTERFACE → FeeBox). Storage rent becomes a third term, and nothing in this rule is
+revisited when it arrives — that is the point of stating it income-shaped.
+
+⛔ **INCOME'S EMISSION TERM IS THE RELEASE, NEVER THE SCHEDULE.** It is
+`min(computeBlockReward(height), value)` for the box this block spends, and the two differ on
+every block from exhaustion onward (→ Emission Schedule). **A split taken over the scheduled
+figure pays out credits the box never released**, and the whole difference is minted from
+nothing — `ARCHITECTURE` → UTXO conservation, and the bound this schedule rests on. The box has
+to be read **before** the slices are computed, not after: the release is an input to the split,
+not a correction applied to its result.
 
 ⛔ **`fees` is a sum over boxes, and resolves no inputs.** Every fee in the block is written
 down in it, so the total is a property of the body's own bytes. **Block application consumes
@@ -413,7 +421,7 @@ consumed by the settlement in the block that created it.
 | Treasury | `COINBASE_TREASURY_PCT` | Per **term** — of emission and of fees, never of storage rent |
 | Miner floor | `COINBASE_MINER_FLOOR_PCT` | Guaranteed, plus every remainder |
 | Backer pool | `COINBASE_BACKER_PCT` | **AHEAD OF CODE** — nothing stakes and nothing links, so this share falls to the miner floor |
-| Inclusion bonus | `COINBASE_BONUS_PCT` | `pool × actors ÷ (actors + INCLUSION_BONUS_K)` to the miner; the unearned remainder is **not minted** — it reduces the block's release and stays in the `EmissionBox` |
+| Inclusion bonus | `COINBASE_BONUS_PCT` | `pool × actors ÷ (actors + INCLUSION_BONUS_K)` to the miner; the unearned remainder is **not minted** — it returns to the `EmissionBox`, which is why that successor is `value − release + unearned` and can exceed its predecessor. The pool is a share of income, so it is computed over the **release** like every other slice |
 | Storage rent | — | A third income **term**, not a slice: the treasury takes `COINBASE_TREASURY_PCT` of emission and of fees and **none of rent**, so rent reaches the miner floor entire |
 
 `actors` is the count of **distinct owners of the karma boxes** spent by the block's
