@@ -67,6 +67,7 @@ async function importSettlePostLockUtxo() {
       rootPostHash: string,
       authorId: Uint8Array,
       postIds: string[],
+      likeCounts: Map<string, number>,
     ) => {
       lockBoxIds: string[];
       refunds: Array<{ owner: Uint8Array; amount: bigint }>;
@@ -332,7 +333,7 @@ describe('planPostLockSettlement', () => {
     // (ARCHITECTURE → The conservation axiom, "not even as an intermediary
     // step"). The settlement consumes every lock and pays every leg at once.
     const journal = await journaled(10, () => {
-      const p = planPostLockSettlement(rootPostId, pruner, [rootPostId, replyPostId]);
+      const p = planPostLockSettlement(rootPostId, pruner, [rootPostId, replyPostId], new Map());
       // The lock is NAMED, not consumed.
       expect(p.lockBoxIds).toEqual([lockBox.box.id]);
       // ⚠ **No merge.** The settlement emits a fresh karma box rather than
@@ -356,7 +357,7 @@ describe('planPostLockSettlement', () => {
   it('handles empty postId list', async () => {
     const { planPostLockSettlement } = await importSettlePostLockUtxo();
 
-    const plan = planPostLockSettlement('0'.repeat(64), makeUserId('pruner-empty'), []);
+    const plan = planPostLockSettlement('0'.repeat(64), makeUserId('pruner-empty'), [], new Map());
     expect(plan.lockBoxIds).toEqual([]);
     expect(plan.refunds).toEqual([]);
     expect(plan.toPool).toBe(0n);
@@ -375,7 +376,7 @@ describe('planPostLockSettlement', () => {
     utxo.insertBox(lockBox.box, lockBox.targetPostId);
     utxo.consumeBox(lockBox.box.id!, 5); // Already spent at block 5
 
-    const plan = planPostLockSettlement(rootPostId, makeUserId('pruner2'), [rootPostId]);
+    const plan = planPostLockSettlement(rootPostId, makeUserId('pruner2'), [rootPostId], new Map());
 
     // A spent box is not named at all — `getPostLockBox` returns only unspent
     // boxes, so it returns null and the entry contributes nothing.
@@ -403,7 +404,7 @@ describe('planPostLockSettlement', () => {
     utxo.insertBox(lb1.box, lb1.targetPostId);
     utxo.insertBox(lb2.box, lb2.targetPostId);
 
-    const plan = planPostLockSettlement(postId1, pruner, [postId1, postId2]);
+    const plan = planPostLockSettlement(postId1, pruner, [postId1, postId2], new Map());
 
     // Both locks named, in `postIds` order — block content fixes it, so the
     // list is not a fourth ordering source.
@@ -425,7 +426,7 @@ describe('planPostLockSettlement', () => {
         // ⛔ The planner is a pure read; block application deletes the
         // subtree's like-records at §5, right after it. Both steps run here so
         // the journalling seam stays under test at the seam that owns it.
-        planPostLockSettlement(postId, makeUserId('pruner4'), [postId]);
+        planPostLockSettlement(postId, makeUserId('pruner4'), [postId], new Map());
         likesStore.deleteLikeRecordsForPosts([postId]);
     });
     expect(journal.mutations.length).toBe(0);
@@ -450,7 +451,7 @@ describe('planPostLockSettlement', () => {
         // ⛔ The planner is a pure read; block application deletes the
         // subtree's like-records at §5, right after it. Both steps run here so
         // the journalling seam stays under test at the seam that owns it.
-        planPostLockSettlement(rootPostId, makeUserId('pruner5'), [rootPostId]);
+        planPostLockSettlement(rootPostId, makeUserId('pruner5'), [rootPostId], new Map());
         likesStore.deleteLikeRecordsForPosts([rootPostId]);
     });
 
@@ -479,7 +480,7 @@ describe('planPostLockSettlement', () => {
     const oldKarma = makeKarmaBox(40n, pruner, 1);
     utxo.insertBox(oldKarma);
 
-    const plan = planPostLockSettlement(rootPostId, pruner, [rootPostId]);
+    const plan = planPostLockSettlement(rootPostId, pruner, [rootPostId], new Map());
 
     // ⛔ **THE BURN NAMES A SINK, AND `toPool` IS THAT NAME**
     // (ARCHITECTURE → The conservation axiom: "burn" means *move back to the
@@ -516,7 +517,7 @@ describe('planPostLockSettlement', () => {
     utxo.insertBox(ownLock.box, ownLock.targetPostId);
     utxo.insertBox(otherLock.box, otherLock.targetPostId);
 
-    const plan = planPostLockSettlement(rootId, pruner, [rootId, replyId]);
+    const plan = planPostLockSettlement(rootId, pruner, [rootId, replyId], new Map());
 
     // Both locks are named. ⛔ **The burn and the return differ only in where the
     // value goes**, so the two figures below are what tell them apart — a
@@ -547,7 +548,7 @@ describe('planPostLockSettlement', () => {
     utxo.insertBox(rootLock.box, rootLock.targetPostId);
     utxo.insertBox(replyLock.box, replyLock.targetPostId);
 
-    const plan = planPostLockSettlement(rootId, pruner, [rootId, ownReplyId]);
+    const plan = planPostLockSettlement(rootId, pruner, [rootId, ownReplyId], new Map());
 
     expect(plan.lockBoxIds).toEqual([rootLock.box.id, replyLock.box.id]);
     // Both of the pruner's own locks go to the pool — the root's AND the reply's,
@@ -579,7 +580,7 @@ describe('planPostLockSettlement', () => {
         // ⛔ The planner is a pure read; block application deletes the
         // subtree's like-records at §5, right after it. Both steps run here so
         // the journalling seam stays under test at the seam that owns it.
-        planPostLockSettlement(rootId, makeUserId('pruner-likes'), [rootId, replyId]);
+        planPostLockSettlement(rootId, makeUserId('pruner-likes'), [rootId, replyId], new Map());
         likesStore.deleteLikeRecordsForPosts([rootId, replyId]);
     });
 
@@ -613,7 +614,7 @@ describe('planPostLockSettlement', () => {
         // ⛔ The planner is a pure read; block application deletes the
         // subtree's like-records at §5, right after it. Both steps run here so
         // the journalling seam stays under test at the seam that owns it.
-        planPostLockSettlement(prunedId, makeUserId('pruner-likes2'), [prunedId]);
+        planPostLockSettlement(prunedId, makeUserId('pruner-likes2'), [prunedId], new Map());
         likesStore.deleteLikeRecordsForPosts([prunedId]);
     });
 
@@ -688,8 +689,8 @@ describe('planPostLockSettlement — refund provenance', () => {
     // it takes that transaction's real `(txId, index)` and two outputs of one
     // transaction cannot collide on `UNIQUE(tx_id, output_index)` — the same
     // owner refunded twice at one height is two positions, by construction.
-    const planA = planPostLockSettlement(rootA, prunerA, [rootA]);
-    const planB = planPostLockSettlement(rootB, prunerB, [rootB]);
+    const planA = planPostLockSettlement(rootA, prunerA, [rootA], new Map());
+    const planB = planPostLockSettlement(rootB, prunerB, [rootB], new Map());
 
     expect(planA.refunds).toHaveLength(1);
     expect(planB.refunds).toHaveLength(1);
@@ -716,7 +717,7 @@ describe('planPostLockSettlement — refund provenance', () => {
     utxo.insertBox(lock.box, lock.targetPostId);
     likes.insertLikeRecord(root, likerId, 3);
 
-    const plan = planPostLockSettlement(root, pruner, [root]);
+    const plan = planPostLockSettlement(root, pruner, [root], new Map());
 
     // ⛔ **Exactly one refund: the author's.** There is no liker leg — a like
     // moves its karma into a marker at cast and the settlement pays it to the

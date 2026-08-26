@@ -87,6 +87,7 @@ import {
   getTreasuryBox,
   getKarmaPoolBox,
   putIdentityRecord,
+  getLikeRecordCount,
 } from '../store/index.js';
 
 // ---------------------------------------------------------------------------
@@ -934,6 +935,9 @@ export function predictSettlementBody(
 
   const body = emptyBody();
   const embedded: EmbeddedTx[] = [];
+  const bodyLikesPerPost = new Map<string, number>();
+  const pendingPrunes: Array<{ rootPostHash: string; author: Uint8Array; subtreePostIds: string[] }> = [];
+
   for (let i = 0; i < txs.length; i++) {
     const tx = txs[i]!;
     const inputBoxes = (tx.inputs ?? [])
@@ -943,15 +947,29 @@ export function predictSettlementBody(
     const isRent = isCreditSideTx(tx) && Object.keys(tx.signatures).length === 0;
     contributeToBody(body, materialized[i]!, isRent);
 
-    // A prune transaction's settlement is derived from its payload and its
-    // first input's owner. On the transaction rail, the prune's author is
-    // `inputKarma.owner`, resolved here from the same inputs the fill selected.
+    if (tx.likeTarget !== undefined) {
+      bodyLikesPerPost.set(tx.likeTarget, (bodyLikesPerPost.get(tx.likeTarget) ?? 0) + 1);
+    }
+
     if (tx.prune && inputBoxes.length > 0) {
       const author = (inputBoxes[0] as KarmaBox).owner;
-      body.postLockSettlements.push(
-        planPostLockSettlement(tx.prune.rootPostHash, author, tx.prune.subtreePostIds),
-      );
+      pendingPrunes.push({ rootPostHash: tx.prune.rootPostHash, author, subtreePostIds: tx.prune.subtreePostIds });
     }
+  }
+
+  // Settlement plans are built after the loop so the like count includes ALL
+  // likes in this body, not only those preceding the prune in committed order.
+  // `getLikeRecordCount` returns the pre-body stored count; the body's likes
+  // are added to match the applier's post-loop `getLikeRecordCount` which
+  // already includes them.
+  for (const p of pendingPrunes) {
+    const likeCounts = new Map<string, number>();
+    for (const postId of p.subtreePostIds) {
+      likeCounts.set(postId, getLikeRecordCount(postId) + (bodyLikesPerPost.get(postId) ?? 0));
+    }
+    body.postLockSettlements.push(
+      planPostLockSettlement(p.rootPostHash, p.author, p.subtreePostIds, likeCounts),
+    );
   }
 
   body.actors = countKarmaActors(embedded, validator);
