@@ -3,128 +3,79 @@ import {
   buildMerkleRoot,
   hexToBuf,
   MEMPOOL_EXPIRY_BLOCKS,
+  computeTxId,
 } from '@dagsocial/types';
-import type { PruneEntry, PruneIntent } from '@dagsocial/types';
+import type { UtxoTransaction } from '@dagsocial/types';
 import {
-  getPost,
-  isLivePost,
-  getSubtree,
   getCurrentHeight,
-  insertMempoolPrune,
+  insertUtxoTx,
+  getTopologyHeight,
 } from '../store/index.js';
-import { createHash, createPublicKey, verify } from 'crypto';
+import { getSubtreeTopology } from '../store/topology.js';
 
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
 /**
- * Execute a prune operation: verify a client-signed PruneIntent and build a
- * PruneEntry to be queued in the mempool.
+ * Validate the prune-specific rules a pool admission cannot check and insert
+ * the transaction into the mempool.
  *
- * Verification steps:
- *  1. Post exists
- *  2. Not already pruned
- *  3. Author matches intent.authorId
- *  4. Client Ed25519 signature over (rootPostHash, subtreeMerkleRoot)
- *  5. subtreePostIds match the actual reply tree
- *  6. Merkle root over postId list is correct
+ * The transaction is a karma→karma self-transfer carrying a `PruneCommit`
+ * payload. Its signature over `txId` covers the payload, and `validateTx`'s
+ * transition arm verifies that the signer is the root's topology author.
  *
- * @param intent  The client-signed prune intent
- * @returns The constructed PruneEntry
+ * What this function adds over bare `insertUtxoTx`:
+ *  - The root must be confirmed in an **earlier** block (the maturity bind,
+ *    matching §8c's consensus check)
+ *  - subtreePostIds must match the committed topology
+ *  - The Merkle root must match the postId list
+ *
+ * These are consensus rules §8c enforces at apply time. Checking them here
+ * keeps a clearly-doomed transaction from taking a pool slot.
  */
-export function executePrune(intent: PruneIntent): PruneEntry {
-  // 1. Verify post exists
-  const post = getPost(intent.rootPostHash);
-  if (!post) {
-    throw Object.assign(new Error('Post not found'), { statusCode: 404 });
+export function executePrune(tx: UtxoTransaction): { txId: string } {
+  const prune = tx.prune;
+  if (!prune) {
+    throw Object.assign(new Error('Transaction carries no prune payload'), { statusCode: 400 });
   }
 
-  // NODE_INTERFACE → Pruning: executePrune on a stump or tombstone → 400.
-  if (!isLivePost(post)) {
-    throw Object.assign(new Error('Post already pruned'), { statusCode: 400 });
-  }
-
-  // 3. Verify author matches
-  if (!Buffer.from(post.author).equals(Buffer.from(intent.authorId))) {
-    throw Object.assign(new Error('Author mismatch'), { statusCode: 403 });
-  }
-
-  // 4. Verify client signature over (rootPostHash, subtreeMerkleRoot)
-  const payload = createHash('blake2b512')
-    .update(intent.rootPostHash)
-    .update(intent.subtreeMerkleRoot)
-    .digest()
-    .subarray(0, 32);
-
-  const keyObject = createPublicKey({
-    key: {
-      kty: 'OKP',
-      crv: 'Ed25519',
-      x: Buffer.from(intent.authorId).toString('base64url'),
-    },
-    format: 'jwk',
-  });
-
-  const valid = verify(null, payload, keyObject, intent.signature);
-  if (!valid) {
-    throw Object.assign(new Error('Invalid prune signature'), { statusCode: 403 });
-  }
-
-  // NODE_INTERFACE → Pruning, step 2: a list whose length differs from its
-  // set size carries a repeat; the set compare alone admits it.
-  if (intent.subtreePostIds.length !== new Set(intent.subtreePostIds).size) {
+  // The root must be confirmed in an earlier block.
+  const currentHeight = getCurrentHeight();
+  const rootHeight = getTopologyHeight(prune.rootPostHash);
+  if (rootHeight === null || rootHeight >= currentHeight) {
     throw Object.assign(
-      new Error('subtreePostIds carries a repeated id'),
+      new Error('Post is not confirmed in an earlier block'),
       { statusCode: 400 },
     );
   }
 
-  // 5. Verify subtreePostIds match the actual reply tree
-  const descendants = getSubtree(intent.rootPostHash);
-  const expectedIds = new Set([
-    intent.rootPostHash,
-    ...descendants.map(p => p.id),
-  ]);
-  const actualIds = new Set(intent.subtreePostIds);
-  if (expectedIds.size !== actualIds.size ||
-      ![...expectedIds].every(id => actualIds.has(id))) {
+  // subtreePostIds must match the committed topology.
+  const topologyIds = getSubtreeTopology(prune.rootPostHash);
+  const entryIds = new Set(prune.subtreePostIds);
+  if (topologyIds.size !== entryIds.size ||
+      ![...topologyIds].every(id => entryIds.has(id))) {
     throw Object.assign(
-      new Error('subtreePostIds does not match actual reply subtree'),
+      new Error('subtreePostIds does not match committed topology'),
       { statusCode: 400 },
     );
   }
 
-  // 6. Verify Merkle root
-  const leaves = intent.subtreePostIds
+  // Merkle root must match the postId list.
+  const leaves = [...prune.subtreePostIds]
     .sort()
     .map(id => leafHash('stump', hexToBuf(id)));
-  const computedRoot = buildMerkleRoot(leaves);
-  if (Buffer.from(computedRoot).toString('hex') !==
-      Buffer.from(intent.subtreeMerkleRoot).toString('hex')) {
+  const computedRoot = Buffer.from(buildMerkleRoot(leaves)).toString('hex');
+  const entryRoot = Buffer.from(prune.subtreeMerkleRoot).toString('hex');
+  if (computedRoot !== entryRoot) {
     throw Object.assign(
       new Error('subtreeMerkleRoot does not match postId list'),
       { statusCode: 400 },
     );
   }
 
-  // 7. Build PruneEntry
-  const entry: PruneEntry = {
-    rootPostHash: intent.rootPostHash,
-    subtreePostIds: intent.subtreePostIds,
-    subtreeMerkleRoot: intent.subtreeMerkleRoot,
-    authorId: intent.authorId,
-    authorSignature: intent.signature,
-  };
+  const txId = computeTxId(tx);
+  insertUtxoTx(tx, currentHeight + MEMPOOL_EXPIRY_BLOCKS);
 
-  // 8. Enqueue in mempool. Nothing is broadcast at prune initiation: the prune
-  // propagates inside the ordering block that carries the PruneEntry, and every
-  // node derives its own stump at settlement (NODE_INTERFACE → "Stumps are
-  // derived state"). A gossiped stump is unverifiable by construction and the
-  // table it would write is trusted by the read API and relay verifier, so no
-  // stump crosses the network in either direction.
-  const currentHeight = getCurrentHeight();
-  insertMempoolPrune(entry, currentHeight + MEMPOOL_EXPIRY_BLOCKS);
-
-  return entry;
+  return { txId };
 }

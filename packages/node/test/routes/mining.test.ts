@@ -44,7 +44,6 @@ function makeTemplate(): OrderingBlock {
       // `coinbaseOutputs` (TYPES_INTERFACE → Ordering block).
       utxoTxIds: ['55'.repeat(32)],
       utxoTxs: [new Uint8Array(96).fill(0x55)],
-      pruneEntries: [],
     },
     validatorSignature: new Uint8Array(64),
   };

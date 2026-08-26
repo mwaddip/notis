@@ -1,4 +1,3 @@
-import { createHash, createPublicKey, verify } from 'crypto';
 import * as validation from '@dagsocial/validation';
 import { transferKarma } from './karma-transfer.js';
 import {
@@ -36,7 +35,7 @@ import {
   contributeToBody,
   emptyBody,
 } from './settlement.js';
-import { postsOf, postIdsOf } from './block-posts.js';
+import { postsOf, postIdsOf, prunesOf } from './block-posts.js';
 import { expectedTarget } from './difficulty.js';
 import {
   applyTx,
@@ -62,12 +61,12 @@ import {
   createOrderingBlock as storeCreateOrderingBlock,
   getOrderingBlock,
   removeUtxoTxEntry,
-  removeMempoolPrunes,
   insertBlockTopology,
   getSubtreeTopology,
   deleteLikeRecordsForPosts,
   getTopologyAuthor,
   getTopologyAuthorBytes,
+  getTopologyHeight,
   getIdentityRecord,
   putIdentityRecord,
   hasLikeRecord,
@@ -103,7 +102,6 @@ import {
   PROTOCOL_VERSION,
   POST_LOCK_UNLOCK_PER_LIKES,
   computeTxId,
-  computePruneEntryId,
   leafHash,
   buildMerkleRoot,
   hexToBuf,
@@ -145,14 +143,13 @@ class BlockRejected extends Error {}
 export function applyOrderingBlock(block: OrderingBlock): boolean {
   // Structure first, before any field of `block` is read. Until this returns
   // valid, nothing about the object's shape is known: the fields below are
-  // decoded from an untrusted producer, and `pruneEntries` in particular
-  // reaches `Buffer.from` and `createHash().update()` further down, which throw
-  // on a number or a plain object. It runs in the funnel rather than in the
-  // gossip topic validator alone, so the guarantee is path-independent: the
-  // pull-sync path decodes straight into the apply handler, and a
-  // validator-only check leaves it reachable with fields of arbitrary type.
-  // Same shape as the PoW target (M-2), coinbase maturity (M-3), and the
-  // validator signature (H-1).
+  // decoded from an untrusted producer and reach `Buffer.from` further down,
+  // which throws on a number or a plain object. It runs in the funnel rather
+  // than in the gossip topic validator alone, so the guarantee is
+  // path-independent: the pull-sync path decodes straight into the apply
+  // handler, and a validator-only check leaves it reachable with fields of
+  // arbitrary type. Same shape as the PoW target (M-2), coinbase maturity
+  // (M-3), and the validator signature (H-1).
   const structure = validation.verifyOrderingBlockStructure(block);
   if (!structure.valid) {
     console.warn(`Rejected block: invalid structure: ${structure.error}`);
@@ -684,120 +681,65 @@ function applyMutationPhase(
     );
   }
 
-  // 8c. Process prune entries from this block
-  // Six verification + settlement steps per entry:
-  //   1. Bind authorId to the root's consensus-recorded author (block_topology)
-  //   2. Verify Ed25519 author signature over (rootPostHash || subtreeMerkleRoot)
-  //   3. Verify postId set against block_topology (deterministic, no DAG walk)
-  //   4. Verify Merkle root from entry.subtreePostIds
-  //   5. Settle UTXO — consume PostLockBoxes, refund karma to every owner
-  //      but the pruning author via the settlement, delete the subtree's
-  //      like-records (journalled)
-  //   6. Prune DAG content, insert simplified Stump for historical record
-  for (const entry of block.utxoTxTree.pruneEntries) {
-    // 1. Authorship binding (H-3)
-    //
-    // The signature check below proves the entry was signed *by* authorId; it
-    // says nothing about authorId being the root's author. Without this bind,
-    // any miner signs blake2b(root ‖ merkleRoot) with their own key and prunes
-    // an arbitrary victim's subtree network-wide. block_topology is the
-    // authority — it is built from block data alone, so a node that synced from
-    // ordering blocks and holds no DAG content reaches the same verdict. A root
-    // no applied block has confirmed has no recorded author and is not prunable
-    // (this also forecloses the unconfirmed-root/empty-subtree edge).
-    //
-    // First, before any Buffer.from on adversarial fields: it is the cheapest
-    // check and the only total one.
-    const recordedAuthor =
-      typeof entry.rootPostHash === 'string' ? getTopologyAuthor(entry.rootPostHash) : null;
-    // authorId is UserId (raw 32 bytes) at runtime — the positional codec preserves the bytes.
-    const claimedAuthor =
-      entry.authorId instanceof Uint8Array
-        ? Buffer.from(entry.authorId).toString('hex')
-        : null;
-    if (recordedAuthor === null || recordedAuthor !== claimedAuthor) {
+  // 8c. Process prune transactions from this block.
+  // The authorship binding and signature check (old steps 1–2) collapse into the
+  // transaction's own validation — the prune transition arm verifies
+  // `inputKarma.owner` against the root's topology author, and the transaction's
+  // signature covers the PruneCommit payload via `txIdBytes`. Steps 3–6 stand.
+  const blockPrunes = prunesOf(block, getTopologyAuthorBytes);
+  for (const bp of blockPrunes) {
+    const { prune } = bp;
+
+    // Maturity bind: the root must have been confirmed in an earlier block.
+    // Without this a block carries a post and a prune of it, the plan reads
+    // `getPostLockBox` before `materializeOutput` has written the box, and
+    // the prune is free (NODE_INTERFACE → Prune transactions).
+    const rootHeight = getTopologyHeight(prune.rootPostHash);
+    if (rootHeight === null || rootHeight >= height) {
       console.error(
-        `Block ${height}: prune authorId does not match the ` +
-        `recorded author of ${entry.rootPostHash}`,
+        `Block ${height}: prune root ${prune.rootPostHash} is not confirmed ` +
+        `in an earlier block (topology height ${rootHeight})`,
       );
-      return false;
-    }
-
-    // 2. Verify authorization
-    const rootBytes = Buffer.from(entry.subtreeMerkleRoot);
-    const payload = createHash('blake2b512')
-      .update(entry.rootPostHash)
-      .update(rootBytes)
-      .digest()
-      .subarray(0, 32);
-
-    const authorKeyBytes = Buffer.from(entry.authorId);
-    const keyObject = createPublicKey({
-      key: {
-        kty: 'OKP',
-        crv: 'Ed25519',
-        x: authorKeyBytes.toString('base64url'),
-      },
-      format: 'jwk',
-    });
-
-    const sigBytes = Buffer.from(entry.authorSignature);
-    if (!verify(null, payload, keyObject, sigBytes)) {
-      console.error(`Block ${height}: invalid prune signature for ${entry.rootPostHash}`);
       return false;
     }
 
     // 3. Verify postId set against block_topology
-    const topologyIds = getSubtreeTopology(entry.rootPostHash);
-    const entryIds = new Set(entry.subtreePostIds);
+    const topologyIds = getSubtreeTopology(prune.rootPostHash);
+    const entryIds = new Set(prune.subtreePostIds);
     if (topologyIds.size !== entryIds.size ||
         ![...topologyIds].every(id => entryIds.has(id))) {
-      console.error(`Block ${height}: prune postId set mismatch for ${entry.rootPostHash}`);
+      console.error(`Block ${height}: prune postId set mismatch for ${prune.rootPostHash}`);
       return false;
     }
 
     // 4. Verify Merkle root
-    const leaves = [...entry.subtreePostIds]
+    const leaves = [...prune.subtreePostIds]
       .sort()
       .map(id => leafHash('stump', hexToBuf(id)));
     const computedRoot = Buffer.from(buildMerkleRoot(leaves)).toString('hex');
-    const entryRoot = Buffer.from(entry.subtreeMerkleRoot).toString('hex');
+    const entryRoot = Buffer.from(prune.subtreeMerkleRoot).toString('hex');
     if (computedRoot !== entryRoot) {
-      console.error(`Block ${height}: prune Merkle root mismatch for ${entry.rootPostHash}`);
+      console.error(`Block ${height}: prune Merkle root mismatch for ${prune.rootPostHash}`);
       return false;
     }
 
     // 5. Settle UTXO — deterministic from post IDs.
-    //
-    // ⛔ **It names boxes rather than moving them.** The pruner's own locks
-    // leave circulation and their sink is the karma pool, which only the
-    // settlement transaction spends, so consuming them here and crediting the
-    // pool at §11a would leave that karma nowhere in between — the intermediary
-    // step `ARCHITECTURE → The conservation axiom` forbids by name. The
-    // settlement consumes them and pays every leg in one operation.
     let likeTally: number;
     try {
       prunePlans.push(
-        planPruneSettlement(entry.rootPostHash, entry.authorId, entry.subtreePostIds),
+        planPruneSettlement(prune.rootPostHash, bp.author, prune.subtreePostIds),
       );
-      // The subtree's like-records die with the prune. The store choke point
-      // captures every doomed row as a `likeRecordDeletions` side-record before
-      // deleting, so a reverted prune restores them exactly. Done here rather
-      // than in the planner, which also runs inside the creator's template fill
-      // and must mutate nothing.
-      likeTally = deleteLikeRecordsForPosts(entry.subtreePostIds);
+      likeTally = deleteLikeRecordsForPosts(prune.subtreePostIds);
     } catch (err) {
-      console.error(`Block ${height}: prune settlement failed for ${entry.rootPostHash}: ${String(err)}`);
+      console.error(`Block ${height}: prune settlement failed for ${prune.rootPostHash}: ${String(err)}`);
       return false;
     }
 
-    // 6. Insert the Stump (journalled), then delete the subtree's DAG rows
-    // (journalled). NODE_INTERFACE → Pruning: the stump is unconditional, the
-    // deletion is by the entry's subtreePostIds — never a local DAG walk.
+    // 6. Insert the Stump (journalled), then delete the subtree's DAG rows.
     const stump = {
-      rootPostHash: entry.rootPostHash,
-      authorId: entry.authorId,
-      replyCount: entry.subtreePostIds.length - 1,
+      rootPostHash: prune.rootPostHash,
+      authorId: bp.author,
+      replyCount: prune.subtreePostIds.length - 1,
       upvoteCount: likeTally,
       protocolVersion: PROTOCOL_VERSION,
       compactedAtBlockHeight: height,
@@ -805,18 +747,8 @@ function applyMutationPhase(
     insertStump(stump);
     recordInsertedStump(stump);
 
-    const deleted = deletePostRows(entry.subtreePostIds);
+    const deleted = deletePostRows(prune.subtreePostIds);
     recordDeletedPosts(deleted);
-  }
-
-  // 8d. Remove confirmed prune entries from the local mempool — the prune-row
-  // twin of `removeUtxoTxEntry` at §11 (MEMPOOL_INTERFACE →
-  // "Confirmed-entry cleanup reaches every row, and it is a lookup rather
-  // than a scan").
-  if (block.utxoTxTree.pruneEntries.length > 0) {
-    removeMempoolPrunes(
-      block.utxoTxTree.pruneEntries.map((e) => computePruneEntryId(e)),
-    );
   }
 
   // 11. Apply UTXO transactions from the block.

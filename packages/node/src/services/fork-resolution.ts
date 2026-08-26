@@ -1,11 +1,10 @@
 import { blockHash, cumulativeWork, verifyHeaderChain } from '@dagsocial/validation';
-import type { BlockHeader, OrderingBlock, PruneEntry } from '@dagsocial/types';
+import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
 import {
   decodeTx,
   MAX_REORG_DEPTH,
   GENESIS_PREV_BLOCK_HASH,
   MEMPOOL_EXPIRY_BLOCKS,
-  computePruneEntryId,
 } from '@dagsocial/types';
 import {
   getOrderingBlock,
@@ -21,8 +20,6 @@ import {
   deleteLikeRecord,
   restoreLikeRecord,
   insertUtxoTx,
-  insertMempoolPrune,
-  removeMempoolPrunes,
   rollbackBlockTopology,
   MempoolFullError,
   PendingSpendConflictError,
@@ -213,11 +210,8 @@ export function findForkPoint(
 
 /**
  * Reverse all mutations from a single block using its journal.
- * Returns the PruneEntry array from the reverted block so callers can
- * re-insert them into the mempool without relying on read-before-delete
- * ordering.
  */
-export function revertBlock(height: number): PruneEntry[] {
+export function revertBlock(height: number): void {
   // Revert must never run while a journal is recording: the mutation replay
   // uses the never-recording inverses, but the vouch-cooldown restores below
   // go through recording primitives and would journal themselves into the
@@ -229,10 +223,6 @@ export function revertBlock(height: number): PruneEntry[] {
   if (!journal) {
     throw new MissingJournalError('revertBlock', height);
   }
-
-  // Collect prune entries before the block is deleted
-  const block = getOrderingBlock(height);
-  const pruneEntries: PruneEntry[] = block?.utxoTxTree.pruneEntries ?? [];
 
   // 1. Replay the primitive mutation log in reverse: box/insert → deleteBox,
   // box/remove → unconsumeBox, record → restore `replaced` or delete. This
@@ -304,8 +294,6 @@ export function revertBlock(height: number): PruneEntry[] {
   deleteOrderingBlock(height);
   deleteBlockJournal(height);
   tryGetAvlProver()?.storage.deleteVersionAtHeight(height);
-
-  return pruneEntries;
 }
 
 /**
@@ -381,15 +369,12 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[]): void {
     getDb().transaction(() => {
   const currentHeight = getCurrentHeight();
 
-  // Phase 1: revert our blocks, collecting journals and prune entries for re-insertion
+  // Phase 1: revert our blocks, collecting journals for re-insertion
   const revertedJournals: BlockJournal[] = [];
-  const revertedPruneEntries: PruneEntry[] = [];
   for (let h = currentHeight; h > forkHeight; h--) {
     const journal = getBlockJournal(h);
     if (journal) revertedJournals.push(journal);
-    // revertBlock() returns prune entries from the deleted block — no implicit
-    // read-before-delete ordering dependency between caller and callee
-    revertedPruneEntries.push(...revertBlock(h));
+    revertBlock(h);
   }
 
   // Phase 1b: roll back AVL prover to fork point.
@@ -434,15 +419,6 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[]): void {
         continue;
       }
       reinsert(() => insertUtxoTx(tx, mempoolExpiry), `tx ${txRecord.txId}`);
-    }
-  }
-
-  // Re-insert prune entries from reverted blocks
-  if (revertedPruneEntries.length > 0) {
-    const entryIds = revertedPruneEntries.map(e => computePruneEntryId(e));
-    removeMempoolPrunes(entryIds);
-    for (const entry of revertedPruneEntries) {
-      reinsert(() => insertMempoolPrune(entry, mempoolExpiry), `prune entry ${entry.rootPostHash}`);
     }
   }
 

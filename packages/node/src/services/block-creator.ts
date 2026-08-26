@@ -17,7 +17,6 @@ import {
   computeTxId,
   leafHash,
   buildMerkleRoot,
-  serializePruneEntry,
   hexToBuf,
   utxoTxTreeByteLength,
 } from '@dagsocial/types';
@@ -60,7 +59,6 @@ import {
 } from './settlement.js';
 import { deriveKarmaDecay } from './decay.js';
 import { planPruneSettlement } from './settle-prune-utxo.js';
-import type { PruneEntry } from '@dagsocial/types';
 import type { DecayDeps, DecayPlan } from './decay.js';
 import type { KarmaBox, VouchEscrowBox } from '@dagsocial/types';
 import { materializeOutput } from './utxo-engine.js';
@@ -73,7 +71,6 @@ import {
   iteratePendingEntries,
   purgeExpired,
   removeEntry,
-  selectMempoolPrunes,
   entryByteCost,
 } from '../store/mempool.js';
 import {
@@ -95,40 +92,26 @@ import {
 // ---------------------------------------------------------------------------
 // Merkle root computation
 //
-// Every leaf preimage is the committed struct's own wire bytes, supplied by
-// `@dagsocial/types` — `serializePruneEntry`, and a bare 32-byte id for
-// `utxotx`. Node states no
-// layout of its own here (TYPES_INTERFACE → Layout — Merkle leaf preimages are
-// the struct's own wire bytes): a second statement of a layout in a second package
-// drifts with no compiler signal, and a consistent transposition round-trips
-// perfectly, so no round-trip test could see it. Only the `leafHash` domain tag
-// belongs to this side of the boundary — that is what makes an entry's wire form
-// and its committed form byte-identical rather than merely parallel.
+// Every leaf preimage is a bare 32-byte id under the `'utxotx'` domain tag.
+// Node states no layout of its own here (TYPES_INTERFACE → Layout — Merkle
+// leaf preimages are the struct's own wire bytes): a second statement of a
+// layout in a second package drifts with no compiler signal.
 // ---------------------------------------------------------------------------
 
 /**
  * The block's one committed root.
  *
  * ⛔ **Leaf ORDER is normative and it is `UtxoTxTree`'s field order** — every
- * transaction, then every prune entry (TYPES_INTERFACE → Ordering block).
- * Reordering is a consensus change with no compiler signal. The settlement is
- * the last `utxoTxIds` entry, so it is the last transaction leaf and its
+ * transaction id as a `'utxotx'` leaf (TYPES_INTERFACE → Ordering block).
+ * The settlement is the last `utxoTxIds` entry, so it is the last leaf and its
  * position is committed here rather than stated anywhere else.
  *
- * What keeps the two kinds apart inside one root is the `leafHash` domain tag,
- * not their position: `'utxotx'` and `'prune'` are distinct and NUL-terminated,
- * so they are prefix-free and a prune leaf cannot be reread as a transaction
- * leaf. The `'coinbase'` domain is a tracked reservation (TYPES_INTERFACE →
- * Tracked reservations) — reachable from no leaf here and reserved while the
- * coinbase concept lives.
+ * The `'coinbase'` and `'prune'` domains are tracked reservations
+ * (TYPES_INTERFACE → Tracked reservations).
  */
 export function computeUtxoTxRoot(tree: UtxoTxTree): string {
-  const leaves: Uint8Array[] = [
-    ...tree.utxoTxIds.map((id) =>
-      leafHash('utxotx', hexToBuf(id))),
-    ...tree.pruneEntries.map((entry) =>
-      leafHash('prune', Buffer.from(serializePruneEntry(entry)))),
-  ];
+  const leaves: Uint8Array[] = tree.utxoTxIds.map((id) =>
+    leafHash('utxotx', hexToBuf(id)));
   return Buffer.from(buildMerkleRoot(leaves)).toString('hex');
 }
 
@@ -351,24 +334,13 @@ export function createOrderingBlock(): OrderingBlock | null {
     // 1. Purge expired mempool entries
     purgeExpired(currentHeight);
 
-    // 2. The prune entries, read off the pool without removing them — a prune
-    //    row leaves the pool the way a transaction row does: by `removeEntry`
-    //    when the body finalizes or is rejected, or by `removeMempoolPrunes`
-    //    when an applied block confirms it (MEMPOOL_INTERFACE →
-    //    selectMempoolPrunes). The prune rowids are pushed into `includedRowids`
-    //    so that `confirmedRowids` tracks every row the template carries.
-    //
-    //    The settlement cannot be built here: it consumes the fee boxes the body
+    // 2. The settlement cannot be built here: it consumes the fee boxes the body
     //    creates and pays a coinbase scaled by the actors the body carries, so it
     //    depends on what the fill selects — and it is itself part of the body the
     //    fill is spending. ⛔ **It has no bounded worst case to reserve**
     //    (MEMPOOL_INTERFACE → The fill budget is bytes; getPendingEntries is a
     //    count), so instead each entry's `entryByteCost` carries its own marginal
     //    cost to it and the sizer below has the last word.
-    const MAX_PRUNES_PER_BLOCK = 32;
-    const pruneSelected = selectMempoolPrunes(MAX_PRUNES_PER_BLOCK);
-    const pruneEntries = pruneSelected.map((s) => s.entry);
-    const pruneRowids = pruneSelected.map((s) => s.rowid);
 
     // 3. The body's byte budget. `blockBodyBudgetBytes` is local — a miner may
     //    publish smaller blocks — while `MAX_BLOCK_BODY_BYTES` is consensus, so
@@ -401,7 +373,6 @@ export function createOrderingBlock(): OrderingBlock | null {
     const utxoTxTree: UtxoTxTree = {
       utxoTxIds: [],
       utxoTxs: [],
-      pruneEntries,
     };
 
     /**
@@ -421,7 +392,7 @@ export function createOrderingBlock(): OrderingBlock | null {
         newHeight,
         computeBlockReward(newHeight),
         nodeConfig.creditMinerRewardDelay,
-        predictSettlementBody(userTxBytesList, validatorId, pruneEntries),
+        predictSettlementBody(userTxBytesList, validatorId),
         currentMinerPubkey ?? validatorId,
       );
       if ('error' in built) return { valid: false, error: built.error };
@@ -592,10 +563,9 @@ export function createOrderingBlock(): OrderingBlock | null {
     //     produced either way, because the chain advancing is not conditional on
     //     income.
 
-    // 12. Track confirmed rowids for finalizeBlock cleanup — every row the
-    //     template carries, transaction and prune rows alike (MEMPOOL_INTERFACE →
+    // 12. Track confirmed rowids for finalizeBlock cleanup (MEMPOOL_INTERFACE →
     //     Block Creator Integration step 4).
-    confirmedRowids = new Set<number>([...pruneRowids, ...includedRowids]);
+    confirmedRowids = new Set<number>(includedRowids);
 
     // 14. Difficulty — fixed by the height schedule, and enforced at apply
     const powTargetBits = expectedTarget(newHeight);
@@ -946,7 +916,6 @@ export function settlementDepsWith(
 export function predictSettlementBody(
   txBytesList: Uint8Array[],
   validator: Uint8Array,
-  pruneEntries: PruneEntry[] = [],
 ): SettlementBody {
   const txs = txBytesList.map((raw) => decodeTx(raw));
 
@@ -973,21 +942,19 @@ export function predictSettlementBody(
     embedded.push({ tx, inputBoxes });
     const isRent = isCreditSideTx(tx) && Object.keys(tx.signatures).length === 0;
     contributeToBody(body, materialized[i]!, isRent);
+
+    // A prune transaction's settlement is derived from its payload and its
+    // first input's owner. On the transaction rail, the prune's author is
+    // `inputKarma.owner`, resolved here from the same inputs the fill selected.
+    if (tx.prune && inputBoxes.length > 0) {
+      const author = (inputBoxes[0] as KarmaBox).owner;
+      body.prunes.push(
+        planPruneSettlement(tx.prune.rootPostHash, author, tx.prune.subtreePostIds),
+      );
+    }
   }
 
   body.actors = countKarmaActors(embedded, validator);
-  // ⛔ **The prune legs are part of the settlement and so part of the
-  // prediction.** A producer that omitted them would build a settlement its own
-  // applier refuses — the pruner's own locks would be inputs one side names and
-  // the other does not. `settlePruneUtxo` reads only the subtree's lock boxes,
-  // which the body does not touch, so deriving it here and at apply reaches the
-  // same plan.
-  //
-  for (const entry of pruneEntries) {
-    body.prunes.push(
-      planPruneSettlement(entry.rootPostHash, entry.authorId, entry.subtreePostIds),
-    );
-  }
   return body;
 }
 
@@ -1003,7 +970,6 @@ export function buildBlockSettlement(
   height: number,
   validator: Uint8Array,
   minerOwner: Uint8Array,
-  pruneEntries: PruneEntry[] = [],
 ): { tx: UtxoTransaction } | { error: string } {
   const decoded = txBytesList.map((raw) => {
     const tx = decodeTx(raw);
@@ -1017,7 +983,7 @@ export function buildBlockSettlement(
     height,
     computeBlockReward(height),
     nodeConfig.creditMinerRewardDelay,
-    predictSettlementBody(txBytesList, validator, pruneEntries),
+    predictSettlementBody(txBytesList, validator),
     minerOwner,
   );
 }

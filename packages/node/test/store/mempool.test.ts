@@ -27,9 +27,6 @@ async function importMempoolFresh() {
     findPendingOutput: (boxId: string) => { id?: string } | null;
     getBoxWithPending: (boxId: string) => { id?: string } | null;
     PendingSpendConflictError: new (boxId: string) => Error;
-    insertMempoolPrune: (entry: any, expiresAtHeight: number) => number;
-    selectMempoolPrunes: (limit: number) => Array<{ rowid: number; entry: any }>;
-    removeMempoolPrunes: (entryIds: string[]) => void;
   };
 }
 
@@ -67,8 +64,6 @@ const TARGET_ID = '11'.repeat(32);
 // no encoding — the same rule the post ids above carry, applied to inputs now
 // that the pool derives its output ids at insert.
 const BOX_1 = '61'.repeat(32);
-const BOX_3 = '63'.repeat(32);
-const BOX_5 = '65'.repeat(32);
 const BOX_99 = '69'.repeat(32);
 
 const bytes = (hex: string) => new Uint8Array(Buffer.from(hex, 'hex'));
@@ -137,26 +132,6 @@ function vouchTx(voucherHex: string, targetHex: string) {
     signatures: {},
     protocolVersion: 1,
   };
-}
-
-// Root post hashes: `serializePruneEntry` writes `rootPostHash` as `b32`, so
-// `'root_1'` has no encoding.
-const ROOT_1 = '31'.repeat(32);
-const ROOT_2 = '32'.repeat(32);
-
-function pruneEntry(rootPostHash: string) {
-  return {
-    rootPostHash,
-    authorId: new Uint8Array(32),
-    subtreeMerkleRoot: new Uint8Array(32),
-    subtreePostIds: [rootPostHash],
-    // `authorSignature` is the name `PruneEntry` declares, and the `as any` on
-    // this fixture is what would hide a misspelling of it. The positional writer
-    // reads declared fields by name, so a typo reaches a fixed-width writer as
-    // `undefined` rather than riding along as an extra map key.
-    authorSignature: new Uint8Array(64),
-    protocolVersion: 1,
-  } as any;
 }
 
 /**
@@ -289,24 +264,18 @@ describe('mempool store', () => {
   });
 
   it('purgeExpired removes entries with expires_at_height < currentHeight', async () => {
-    const { insertUtxoTx, insertMempoolPrune, getPendingEntries, purgeExpired } =
+    const { insertUtxoTx, getPendingEntries, purgeExpired } =
       await importMempoolFresh();
 
     insertUtxoTx(txWithInput('expired') as any, 10);
-    insertMempoolPrune(pruneEntry(ROOT_1), 50);
-    const tx = { inputs: [BOX_3], outputs: [], signatures: {}, protocolVersion: 1 };
-    insertUtxoTx(tx as any, 30);
+    insertUtxoTx(txWithInput('kept_50') as any, 50);
+    insertUtxoTx(txWithInput('kept_30') as any, 30);
 
     const removed = purgeExpired(25); // removes entries with expires_at_height < 25
-    expect(removed).toBe(1); // only expired at 10; the prune at 50 and tx at 30 are kept
+    expect(removed).toBe(1); // only expired at 10; the txs at 50 and 30 are kept
 
-    // Both surviving entry types, so the purge is shown to be keyed on the
-    // height and not on the kind of row.
     const entries = getPendingEntries(10);
     expect(entries).toHaveLength(2);
-    const entryTypes = entries.map((e) => e.entryType);
-    expect(entryTypes).toContain('prune');
-    expect(entryTypes).toContain('utxo_tx');
   });
 
   it('purgeExpired returns count of removed entries', async () => {
@@ -333,26 +302,16 @@ describe('mempool store', () => {
     expect(entries[0].rowid).toBe(rowid1);
   });
 
-  it('handles multiple entries of mixed types', async () => {
-    const { insertUtxoTx, insertMempoolPrune, getPendingEntries } =
+  it('handles multiple entries', async () => {
+    const { insertUtxoTx, getPendingEntries } =
       await importMempoolFresh();
-    const tx = { inputs: [BOX_5], outputs: [], signatures: {}, protocolVersion: 1 };
-
-    insertMempoolPrune(pruneEntry(ROOT_1), 100);
-    insertUtxoTx(tx as any, 100);
-    insertMempoolPrune(pruneEntry(ROOT_2), 100);
+    insertUtxoTx(txWithInput('multi_1') as any, 100);
+    insertUtxoTx(txWithInput('multi_2') as any, 100);
+    insertUtxoTx(txWithInput('multi_3') as any, 100);
 
     const entries = getPendingEntries(10);
     expect(entries).toHaveLength(3);
-
-    // Insertion order, across both entry types — `getPendingEntries` is FIFO by
-    // rowid and does not group by kind.
-    const types = entries.map((e) => e.entryType);
-    expect(types).toEqual(['prune', 'utxo_tx', 'prune']);
-    // A prune row's blob is read by selectMempoolPrunes, not the DTO
-    // (MEMPOOL_INTERFACE → PoolEntry).
-    expect(entries[0].utxoTxBytes).toBeNull();
-    expect(entries[1].utxoTxBytes).toBeInstanceOf(Uint8Array);
+    expect(entries.every((e) => e.utxoTxBytes instanceof Uint8Array)).toBe(true);
   });
 
   it('getPendingEntries returns empty array when mempool is empty', async () => {
@@ -708,112 +667,8 @@ describe('mempool store', () => {
   // frame wraps in a try/catch. A prune test that stops at the insert leaves
   // the writer and the reader free to speak different codecs, so what this
   // needs to assert is the PAIR.
-  describe('prune entry round-trip', () => {
-    it('reads back exactly what was inserted, without removing the row', async () => {
-      const mem = await importMempoolFresh();
-      const entry = pruneEntry(ROOT_1);
-
-      mem.insertMempoolPrune(entry, 100);
-      const selected = mem.selectMempoolPrunes(32);
-
-      expect(selected).toHaveLength(1);
-      const got = selected[0]!.entry;
-      expect(got.rootPostHash).toBe(entry.rootPostHash);
-      expect(got.subtreePostIds).toEqual(entry.subtreePostIds);
-      // `applyMutationPhase` tests `authorId instanceof Uint8Array` before it
-      // hexes the claimed author, and hands all three byte fields to
-      // `Buffer.from` / `createHash().update()`.
-      expect(got.authorId).toBeInstanceOf(Uint8Array);
-      expect(Buffer.from(got.authorId)).toEqual(Buffer.from(entry.authorId));
-      expect(Buffer.from(got.subtreeMerkleRoot)).toEqual(
-        Buffer.from(entry.subtreeMerkleRoot),
-      );
-      expect(Buffer.from(got.authorSignature)).toEqual(
-        Buffer.from(entry.authorSignature),
-      );
-      // The rows stay — `selectMempoolPrunes` is a read, not a drain.
-      expect(mem.getPendingEntries(10)).toHaveLength(1);
-    });
-
-    it('reads in insertion order and the rows remain in the pool', async () => {
-      const mem = await importMempoolFresh();
-      mem.insertMempoolPrune(pruneEntry(ROOT_1), 100);
-      mem.insertMempoolPrune(pruneEntry(ROOT_2), 100);
-
-      const selected = mem.selectMempoolPrunes(32);
-
-      expect(selected.map((s) => s.entry.rootPostHash)).toEqual([ROOT_1, ROOT_2]);
-      expect(mem.getPendingEntries(10)).toHaveLength(2);
-    });
-
-    it('an unreadable row is dropped without taking its readable siblings with it', async () => {
-      const mem = await importMempoolFresh();
-      const { getDb } = await importDbFresh();
-      const poisoned = mem.insertMempoolPrune(pruneEntry(ROOT_1), 100);
-      mem.insertMempoolPrune(pruneEntry(ROOT_2), 100);
-      getDb()
-        .prepare(`UPDATE mempool SET prune_entry_cbor = ? WHERE rowid = ?`)
-        .run(Buffer.from([0xff, 0xff, 0xff]), poisoned);
-      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-      const selected = mem.selectMempoolPrunes(32);
-
-      // The readable sibling survives. A read that failed the whole batch on
-      // one bad blob would stop the miner producing for as long as any row it
-      // cannot read sat in front of it.
-      expect(selected.map((s) => s.entry.rootPostHash)).toEqual([ROOT_2]);
-      // The poisoned row is gone; the readable sibling remains.
-      expect(mem.getPendingEntries(10)).toHaveLength(1);
-      expect(errors).toHaveBeenCalledOnce();
-      errors.mockRestore();
-    });
-
-    it('insertMempoolPrune writes prune_entry_id equal to computePruneEntryId(entry)', async () => {
-      const mem = await importMempoolFresh();
-      const { getDb } = await importDbFresh();
-      const { computePruneEntryId } = await import('@dagsocial/types');
-      const entry = pruneEntry(ROOT_1);
-
-      mem.insertMempoolPrune(entry, 100);
-
-      const row = getDb()
-        .prepare('SELECT prune_entry_id FROM mempool WHERE entry_type = ?')
-        .get('prune') as { prune_entry_id: string };
-      expect(row.prune_entry_id).toBe(computePruneEntryId(entry));
-    });
-
-    it('removeMempoolPrunes deletes by prune_entry_id and leaves the others', async () => {
-      const mem = await importMempoolFresh();
-      const { computePruneEntryId } = await import('@dagsocial/types');
-      const entry = pruneEntry(ROOT_1);
-      mem.insertMempoolPrune(entry, 100);
-      mem.insertMempoolPrune(pruneEntry(ROOT_2), 100);
-
-      mem.removeMempoolPrunes([computePruneEntryId(entry)]);
-
-      const left = mem.selectMempoolPrunes(32);
-      expect(left.map((s) => s.entry.rootPostHash)).toEqual([ROOT_2]);
-    });
-
-    it('removeMempoolPrunes is indexed — idx_mempool_prune_entry_id', async () => {
-      const mem = await importMempoolFresh();
-      const { getDb } = await importDbFresh();
-      const { computePruneEntryId } = await import('@dagsocial/types');
-      const entry = pruneEntry(ROOT_1);
-      mem.insertMempoolPrune(entry, 100);
-      const entryId = computePruneEntryId(entry);
-
-      // MEMPOOL_INTERFACE → "Confirmed-entry cleanup reaches every row, and
-      // it is a lookup rather than a scan"
-      const plan = getDb()
-        .prepare('EXPLAIN QUERY PLAN DELETE FROM mempool WHERE prune_entry_id IN (?)')
-        .all(entryId) as Array<{ detail: string }>;
-      const usesIndex = plan.some((row) =>
-        row.detail.includes('idx_mempool_prune_entry_id'),
-      );
-      expect(usesIndex).toBe(true);
-    });
-  });
+  // Prune entry round-trip tests deleted — prune entries no longer exist as a
+  // separate mempool row type. Prunes ride as ordinary transactions.
 
   // -------------------------------------------------------------------------
   // Size cap — per class. The karma-side class rejects and never evicts; the
@@ -841,15 +696,11 @@ describe('mempool store', () => {
 
       expect(() => mem.insertUtxoTx(txWithInput('sb_1') as any, 100)).not.toThrow();
       expect(() => mem.insertUtxoTx(likeTx(TARGET, LIKER_A) as any, 100)).not.toThrow();
-      expect(() => mem.insertMempoolPrune(pruneEntry(ROOT_1), 100)).not.toThrow();
+      expect(() => mem.insertUtxoTx(txWithInput('sb_x') as any, 100)).not.toThrow();
 
-      // At the class cap, each insert path rejects — including the prune path,
-      // which is bounded by nothing if the class counts filter on `entry_type`.
+      // At the class cap, each insert path rejects.
       expect(() => mem.insertUtxoTx(txWithInput('sb_2') as any, 100)).toThrow(mem.MempoolFullError);
       expect(() => mem.insertUtxoTx(likeTx(TARGET, LIKER_B) as any, 100)).toThrow(
-        mem.MempoolFullError,
-      );
-      expect(() => mem.insertMempoolPrune(pruneEntry(ROOT_2), 100)).toThrow(
         mem.MempoolFullError,
       );
 

@@ -634,7 +634,7 @@ describe('checkTxEnvelope at the decode boundary', () => {
     const decoded = decodeTx(encodeTx(tx));
     for (const key of Object.keys(decoded)) {
       expect(
-        ['inputs', 'outputs', 'signatures', 'protocolVersion', 'likeTarget', 'post'],
+        ['inputs', 'outputs', 'signatures', 'protocolVersion', 'likeTarget', 'post', 'prune'],
         key,
       ).toContain(key);
     }

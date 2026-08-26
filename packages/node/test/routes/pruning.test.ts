@@ -2,28 +2,34 @@ import { describe, it, expect } from 'vitest';
 import express from 'express';
 import http from 'http';
 import { deleteRoutes } from '../../src/routes/delete.js';
-import type { PruneIntent, PruneEntry } from '@dagsocial/types';
+import type { UtxoTransaction } from '@dagsocial/types';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
+function makePruneTx(): UtxoTransaction {
+  return {
+    inputs: ['a'.repeat(64)],
+    outputs: [{ boxType: 'karma' as const, value: 10n, owner: new Uint8Array(32), createdAtBlock: 1 }],
+    signatures: {},
+    protocolVersion: 1,
+    prune: {
+      rootPostHash: 'd'.repeat(64),
+      subtreePostIds: ['d'.repeat(64)],
+      subtreeMerkleRoot: new Uint8Array(32),
+    },
+  };
+}
+
 async function request(
   postId: string,
   body: unknown,
-  executePruneImpl?: (intent: PruneIntent) => PruneEntry,
+  executePruneImpl?: (tx: UtxoTransaction) => { txId: string },
 ): Promise<{ status: number; data: unknown }> {
   return new Promise((resolve) => {
-    const mockEntry: PruneEntry = {
-      rootPostHash: postId,
-      subtreePostIds: [postId],
-      subtreeMerkleRoot: new Uint8Array(32),
-      authorId: new Uint8Array(32),
-      authorSignature: new Uint8Array(64),
-    };
-
     const deps = {
-      executePrune: executePruneImpl ?? (() => mockEntry),
+      executePrune: executePruneImpl ?? (() => ({ txId: 'b'.repeat(64) })),
     };
     const app = express();
     app.use(express.json());
@@ -52,8 +58,11 @@ async function request(
         },
       );
       if (body !== undefined) {
-        r.write(JSON.stringify(body, (_k, v) =>
-          v instanceof Uint8Array ? Buffer.from(v).toString('hex') : v));
+        r.write(JSON.stringify(body, (_k, v) => {
+          if (v instanceof Uint8Array) return Buffer.from(v).toString('hex');
+          if (typeof v === 'bigint') return v.toString();
+          return v;
+        }));
       }
       r.end();
     });
@@ -61,117 +70,56 @@ async function request(
 }
 
 const TEST_POST_HASH = 'd'.repeat(64);
-const TEST_AUTHOR_ID = 'e'.repeat(64);
-const TEST_MERKLE_ROOT = 'f'.repeat(64);
-const TEST_SIGNATURE = 'a'.repeat(128);
-
-function validBody() {
-  return {
-    rootPostHash: TEST_POST_HASH,
-    authorId: TEST_AUTHOR_ID,
-    subtreeMerkleRoot: TEST_MERKLE_ROOT,
-    subtreePostIds: [TEST_POST_HASH],
-    signature: TEST_SIGNATURE,
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 describe('pruning routes', () => {
-  it('POST /posts/:id/prune with valid body returns 201', async () => {
-    const res = await request(TEST_POST_HASH, validBody());
+  it('POST /posts/:id/prune with a prune transaction returns 201', async () => {
+    const res = await request(TEST_POST_HASH, makePruneTx());
     expect(res.status).toBe(201);
     const body = res.data as Record<string, unknown>;
-    expect(body.status).toBe('deleted');
-    expect(typeof body.entryId).toBe('string');
+    expect(body.status).toBe('submitted');
+    expect(typeof body.txId).toBe('string');
     expect(body.postId).toBe(TEST_POST_HASH);
   });
 
-  it('POST /posts/:id/prune missing required fields returns 400', async () => {
-    const res = await request(TEST_POST_HASH, {});
+  it('POST /posts/:id/prune without prune payload returns 400', async () => {
+    const res = await request(TEST_POST_HASH, { inputs: [], outputs: [], signatures: {}, protocolVersion: 1 });
     expect(res.status).toBe(400);
     const body = res.data as Record<string, unknown>;
-    expect(body.error).toContain('Missing required fields');
-  });
-
-  it('POST /posts/:id/prune missing subtreePostIds returns 400', async () => {
-    const { subtreePostIds: _, ...rest } = validBody();
-    const res = await request(TEST_POST_HASH, rest);
-    expect(res.status).toBe(400);
-  });
-
-  it('POST /posts/:id/prune with empty subtreePostIds returns 400', async () => {
-    const res = await request(TEST_POST_HASH, {
-      ...validBody(),
-      subtreePostIds: [],
-    });
-    expect(res.status).toBe(400);
-    const body = res.data as Record<string, unknown>;
-    expect(body.error).toContain('subtreePostIds must be a non-empty array');
-  });
-
-  it('POST /posts/:id/prune with invalid rootPostHash format returns 400', async () => {
-    const res = await request(TEST_POST_HASH, {
-      ...validBody(),
-      rootPostHash: 'not-hex',
-    });
-    expect(res.status).toBe(400);
-  });
-
-  it('POST /posts/:id/prune with invalid authorId format returns 400', async () => {
-    const res = await request(TEST_POST_HASH, {
-      ...validBody(),
-      authorId: 'not-hex',
-    });
-    expect(res.status).toBe(400);
-  });
-
-  it('POST /posts/:id/prune with invalid subtreeMerkleRoot format returns 400', async () => {
-    const res = await request(TEST_POST_HASH, {
-      ...validBody(),
-      subtreeMerkleRoot: 'not-hex',
-    });
-    expect(res.status).toBe(400);
-  });
-
-  it('POST /posts/:id/prune with invalid signature format returns 400', async () => {
-    const res = await request(TEST_POST_HASH, {
-      ...validBody(),
-      signature: 'too-short',
-    });
-    expect(res.status).toBe(400);
+    expect(body.error).toContain('prune transaction');
   });
 
   it('POST /posts/:id/prune returns 404 when executePrune throws 404', async () => {
-    const res = await request(TEST_POST_HASH, validBody(), () => {
+    const res = await request(TEST_POST_HASH, makePruneTx(), () => {
       throw Object.assign(new Error('Post not found'), { statusCode: 404 });
     });
     expect(res.status).toBe(404);
   });
 
   it('POST /posts/:id/prune returns 403 when executePrune throws 403', async () => {
-    const res = await request(TEST_POST_HASH, validBody(), () => {
+    const res = await request(TEST_POST_HASH, makePruneTx(), () => {
       throw Object.assign(new Error('Author mismatch'), { statusCode: 403 });
     });
     expect(res.status).toBe(403);
   });
 
-  it('POST /posts/:id/prune returns 400 when executePrune throws repeated-id', async () => {
-    const res = await request(TEST_POST_HASH, validBody(), () => {
+  it('POST /posts/:id/prune returns 400 when executePrune throws 400', async () => {
+    const res = await request(TEST_POST_HASH, makePruneTx(), () => {
       throw Object.assign(
-        new Error('subtreePostIds carries a repeated id'),
+        new Error('subtreePostIds does not match committed topology'),
         { statusCode: 400 },
       );
     });
     expect(res.status).toBe(400);
     const body = res.data as Record<string, unknown>;
-    expect(body.error).toBe('subtreePostIds carries a repeated id');
+    expect(body.error).toBe('subtreePostIds does not match committed topology');
   });
 
   it('POST /posts/:id/prune returns 500 for unexpected errors', async () => {
-    const res = await request(TEST_POST_HASH, validBody(), () => {
+    const res = await request(TEST_POST_HASH, makePruneTx(), () => {
       throw new Error('unexpected');
     });
     expect(res.status).toBe(500);

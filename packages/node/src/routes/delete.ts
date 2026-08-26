@@ -1,14 +1,13 @@
 import { Router } from 'express';
-import { computePruneEntryId } from '@dagsocial/types';
-import type { PruneIntent, PruneEntry } from '@dagsocial/types';
-import { MempoolFullError } from '../store/mempool.js';
+import type { UtxoTransaction } from '@dagsocial/types';
+import { MempoolFullError, PendingSpendConflictError, TxTooLargeError } from '../store/mempool.js';
 
 // ---------------------------------------------------------------------------
 // Dependency types
 // ---------------------------------------------------------------------------
 
 export interface DeleteDeps {
-  executePrune: (intent: PruneIntent) => PruneEntry;
+  executePrune: (tx: UtxoTransaction) => { txId: string };
 }
 
 // ---------------------------------------------------------------------------
@@ -18,72 +17,21 @@ export interface DeleteDeps {
 export function deleteRoutes(deps: DeleteDeps): Router {
   const router = Router();
 
-  // POST /posts/:id/prune — submit a client-signed PruneIntent
+  // POST /posts/:id/prune — submit a signed prune transaction
   router.post('/posts/:id/prune', (req, res) => {
     try {
-      const {
-        rootPostHash,
-        authorId,
-        subtreeMerkleRoot,
-        subtreePostIds,
-        signature,
-      } = req.body;
-
-      // Validate required fields
-      if (
-        !rootPostHash ||
-        !authorId ||
-        !subtreeMerkleRoot ||
-        !subtreePostIds ||
-        !signature
-      ) {
-        return res.status(400).json({
-          error:
-            'Missing required fields: rootPostHash, authorId, subtreeMerkleRoot, subtreePostIds, signature',
-        });
+      const tx = req.body as UtxoTransaction;
+      if (!tx || !tx.prune) {
+        return res.status(400).json({ error: 'Request must carry a prune transaction' });
       }
 
-      // Validate types
-      if (!Array.isArray(subtreePostIds) || subtreePostIds.length === 0) {
-        return res
-          .status(400)
-          .json({ error: 'subtreePostIds must be a non-empty array' });
-      }
-
-      if (!/^[0-9a-f]{64}$/.test(rootPostHash)) {
-        return res.status(400).json({ error: 'Invalid rootPostHash format' });
-      }
-
-      if (!/^[0-9a-f]{64}$/.test(authorId)) {
-        return res.status(400).json({ error: 'Invalid authorId format' });
-      }
-
-      if (!/^[0-9a-f]{64}$/.test(subtreeMerkleRoot)) {
-        return res
-          .status(400)
-          .json({ error: 'Invalid subtreeMerkleRoot format' });
-      }
-
-      if (!/^[0-9a-f]{128}$/.test(signature)) {
-        return res.status(400).json({ error: 'Invalid signature format' });
-      }
-
-      const intent: PruneIntent = {
-        rootPostHash,
-        authorId: Buffer.from(authorId, 'hex'),
-        subtreeMerkleRoot: Buffer.from(subtreeMerkleRoot, 'hex'),
-        subtreePostIds,
-        signature: Buffer.from(signature, 'hex'),
-      };
-
-      const entry = deps.executePrune(intent);
-      const entryId = computePruneEntryId(entry);
+      const { txId } = deps.executePrune(tx);
 
       return res.status(201).json({
-        status: 'deleted',
-        entryId,
-        postId: rootPostHash,
-        replyCount: subtreePostIds.length - 1,
+        status: 'submitted',
+        txId,
+        postId: tx.prune.rootPostHash,
+        replyCount: tx.prune.subtreePostIds.length - 1,
       });
     } catch (err: any) {
       if (err.statusCode === 404) {
@@ -97,6 +45,12 @@ export function deleteRoutes(deps: DeleteDeps): Router {
       }
       if (err instanceof MempoolFullError) {
         return res.status(503).json({ error: 'mempool full' });
+      }
+      if (err instanceof PendingSpendConflictError) {
+        return res.status(409).json({ error: err.message });
+      }
+      if (err instanceof TxTooLargeError) {
+        return res.status(413).json({ error: err.message });
       }
       console.error('DELETE /posts/:id failed with an unexpected error:', err);
       return res.status(500).json({ error: 'Internal server error' });

@@ -84,7 +84,6 @@ async function seedChainAt(height: number): Promise<void> {
     utxoTxTree: {
       utxoTxIds: [],
       utxoTxs: [],
-      pruneEntries: [],
       coinbaseOutputs: [],
     },
     validatorSignature: new Uint8Array(64),

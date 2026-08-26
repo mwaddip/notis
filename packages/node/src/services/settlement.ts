@@ -125,7 +125,7 @@ export interface SettlementBody {
    * (NODE_INTERFACE → Per-block like settlement).
    */
   markers: Array<{ id: string; author: Uint8Array; value: bigint }>;
-  /** What each of the block's prune entries owes, in prune-entry order. */
+  /** What each of the block's prune transactions owes, in committed order. */
   prunes: PruneSettlement[];
 }
 
@@ -377,7 +377,7 @@ function derive(
     poolSink += plan.burnAmount;
   }
 
-  // 3f. The prune settlements, in prune-entry order. The refunds recirculate;
+  // 3f. The prune settlements, in committed transaction order. The refunds recirculate;
   // the pruner's own locks are the fourth burn and go to the pool.
   for (const prune of body.prunes) {
     for (const id of prune.lockBoxIds) inputs.push(id);
@@ -630,6 +630,9 @@ export function checkSettlement(
   }
   if (settlement.post !== undefined) {
     return { valid: false, error: 'settlement carries a post' };
+  }
+  if (settlement.prune !== undefined) {
+    return { valid: false, error: 'settlement carries a prune' };
   }
   if (settlement.protocolVersion !== PROTOCOL_VERSION) {
     return {

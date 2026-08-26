@@ -51,7 +51,6 @@ function makeOrderingBlock(
     utxoTxTree: {
       utxoTxIds: ['1a'.repeat(32)],
       utxoTxs: [],
-      pruneEntries: [],
     },
     validatorSignature: new Uint8Array(64).fill(0xab),
     ...overrides,
@@ -107,7 +106,6 @@ describe('ordering store', () => {
         // `utxoTxIds`). The store round-trips bytes and reads none of them.
         utxoTxIds: ['2b'.repeat(32)],
         utxoTxs: [new Uint8Array(96).fill(0x2b)],
-        pruneEntries: [],
       },
       validatorSignature: new Uint8Array(64).fill(0xcd),
     });
@@ -140,7 +138,6 @@ describe('ordering store', () => {
     // Asserting a name the struct does not declare is the trap here: it reads
     // as coverage while pinning the storage codec's tolerance for an unknown
     // key, which is a property of the codec and not of the protocol.
-    expect(result!.utxoTxTree.pruneEntries).toEqual([]);
     expect(result!.utxoTxTree.utxoTxIds).toEqual(['2b'.repeat(32)]);
     // The settlement's bytes come back byte-for-byte, and the payload is
     // height-bearing rather than a shared constant: a store returning some other
