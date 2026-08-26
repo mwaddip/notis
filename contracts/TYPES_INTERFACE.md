@@ -920,17 +920,17 @@ to return — and the emission box now joins it rather than standing against it.
 zero-value box is removed and reinserted on every block above exhaustion. The coinbase's "one block,
 one encoding" rule is untouched — that one binds transaction **outputs**, and this box is not one.
 
-> ⚠ **AHEAD OF CODE — 2026-08-26, AND THE FORFEIT'S PRICE DEGRADES ABOVE EXHAUSTION.** While the box
-> is deep a returned share is paid out decades away, so the forfeiting miner's expected recovery is
+> ⚠ **QUALIFIED — 2026-08-26. The forfeit's price degrades above exhaustion.** While the box is deep
+> a returned share is paid out decades away, so the forfeiting miner's expected recovery is
 > approximately zero — which is the whole of why the bonus is a cost rather than a delay
-> (MINING_INTERFACE → "The slices"). **Once the box is empty it is a one-block pass-through**: a
-> return lands, the next block releases it, and a miner holding hashrate share `h` recovers `h` of its
-> own forfeit immediately. §6.8 keys the bonus to income precisely because that regime is where the
-> pressure to exclude peaks, so the defence weakens exactly where it is most needed. The property
-> **"no miner recovers their own forfeit" holds while the box is deep and becomes a one-block deferral
-> after exhaustion.** Recorded, not queued.
+> (MINING_INTERFACE → The slices). **Once the box is empty it is a one-block pass-through**: a return
+> lands, the next block releases it, and a miner holding hashrate share `h` recovers `h` of its own
+> forfeit immediately. The bonus is keyed to income rather than to emission because the pressure to
+> exclude peaks in exactly that regime (MINING_INTERFACE → Coinbase Application), so the defence
+> weakens where it is most needed. **The narrowing: "no miner recovers their own forfeit" holds while
+> the box is deep, and is a one-block deferral after exhaustion.** Recorded, not queued.
 
-⛔ **The genesis value IS written into the profile, and the old guard inverts.** A bound deliberately
+⛔ **The genesis value IS written into the profile, and the guard is the opposite one.** A bound deliberately
 below the curve's sum cannot be a function of the schedule's parameters, so each profile carries its
 own (§Network profiles). Of the two failures the derivation prevented, the first — a total too small,
 starving the box before the terminus — is now taken on purpose and closed by partial payment
