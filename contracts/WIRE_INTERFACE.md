@@ -57,7 +57,7 @@ mismatches.
 > introduced: this package still has zero dependencies, and that must stay true.
 >
 > **Consensus reach — this is fact, not a warning about the future.** This package's writers
-> produce **box ids, tx ids, the block header and `blockHash`, and the prune-entry Merkle
+> produce **box ids, tx ids, the block header and `blockHash`, and the Merkle
 > leaf** — a bug here is a consensus fault, not a dropped message. A change to VLQ output here
 > silently moves every id in the system. **Treat any edit to `vlq.ts`, `reader.ts` or
 > `writer.ts` as a consensus change.**

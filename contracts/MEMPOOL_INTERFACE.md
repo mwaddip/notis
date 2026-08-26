@@ -22,9 +22,9 @@ Single SQLite table:
 ```sql
 CREATE TABLE mempool (
     rowid             INTEGER PRIMARY KEY AUTOINCREMENT,
-    entry_type        TEXT NOT NULL CHECK (entry_type IN ('utxo_tx', 'prune')),
+    entry_type        TEXT NOT NULL CHECK (entry_type IN ('utxo_tx', 'prune')),  -- 'prune' VESTIGIAL: never written (D1-6)
     utxo_tx_bytes     BLOB,            -- positional encodeTx bytes (null for non-utxo_tx)
-    prune_entry_cbor  BLOB,            -- cbor-x-encoded PruneEntry (null for non-prune)
+    prune_entry_cbor  BLOB,            -- VESTIGIAL: never written (D1-6)
     expires_at_height INTEGER NOT NULL, -- Block height after which entry is purged
     created_at        TEXT NOT NULL DEFAULT (datetime('now')),
     like_target TEXT, like_liker TEXT,          -- gate metadata (below)
@@ -33,11 +33,11 @@ CREATE TABLE mempool (
     max_valid_height INTEGER,                   -- utxo_tx only: validity ceiling, NULL = none (§Validity ceiling)
     tx_inputs TEXT, tx_output_ids TEXT,         -- conflict-gate metadata
     tx_id TEXT,                                 -- utxo_tx only: the entry's own TxId (confirmed-entry cleanup)
-    prune_entry_id TEXT                         -- prune only: the entry's own id (confirmed-entry cleanup)
+    prune_entry_id TEXT                         -- VESTIGIAL: never written (D1-6)
 );
 
 CREATE INDEX IF NOT EXISTS idx_mempool_tx_id ON mempool(tx_id) WHERE tx_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_mempool_prune_entry_id ON mempool(prune_entry_id) WHERE prune_entry_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_mempool_prune_entry_id ON mempool(prune_entry_id) WHERE prune_entry_id IS NOT NULL;  -- VESTIGIAL (D1-6)
 ```
 
 The SQLite `rowid` is the canonical identifier for entries.
@@ -52,28 +52,34 @@ not indexed.
 pool by `purgeExpired` at their expiry height, which is the same path an unconfirmed entry always
 took.
 
-**`prune_entry_id` is the same mechanism for `prune` rows** — written at insert from
-`computePruneEntryId(entry)`, partially indexed, and the key by which an applied block's prune entries
-are removed from the pool (`removeMempoolPrunes`). The two columns are disjoint by `entry_type`:
-neither row kind writes the other's. The same ⚠ applies — a prune row written before the column
-existed carries `NULL`, matches no cleanup, and leaves by `purgeExpired`.
+⛔ **A PRUNE IS AN ORDINARY `utxo_tx` ROW.** It is a karma transaction carrying a
+`UtxoTransaction.prune` payload (`NODE_INTERFACE` → Prune transactions), so it is admitted,
+priced, evicted, confirmed-cleaned and expired by exactly the paths above. **Its dedup is its
+spent inputs** — a pooled prune cannot be duplicated because its boxes are gone — so it needs no
+id column of its own.
+
+> ⚠ **`entry_type`, `prune_entry_cbor`, `prune_entry_id` and `idx_mempool_prune_entry_id`
+> survive in `store/db.ts` as VESTIGIAL declarations that nothing reads or writes.** They are
+> recorded as `OUTSTANDING-WORK` D1-6 rather than removed, because
+> `test/store/db-migrations.test.ts` pins the repaired column set and the index order that unit
+> A1 existed to build. **`PoolEntry.entryType` is `'utxo_tx'` alone** — the type is narrow even
+> where the schema is not.
 
 ### PoolEntry (in-memory representation)
 
 ```typescript
 interface PoolEntry {
   rowid: number;
-  entryType: 'utxo_tx' | 'prune';
+  entryType: 'utxo_tx';
   utxoTxBytes: Uint8Array | null;
   expiresAtHeight: number;
   createdAt: string;
 }
 ```
 
-`PoolEntry` carries the `utxo_tx` payload only. A `prune` row appears in the
-listing with `utxoTxBytes: null`; its `prune_entry_cbor` is read by
-`selectMempoolPrunes` straight from the row, so the DTO loads no blob that
-nothing consumes. The `utxo_tx` payload is decoded (`decodeTx`) on read by the
+**One member, and the discriminator is kept rather than removed** — a second entry kind would
+have to widen it, which is a compiler signal a bare row shape would not give. The payload is
+decoded (`decodeTx`) on read by the
 consumer (block creator or relay handler). The store does not decode payloads
 on read; on **insert** of a
 `utxo_tx` it walks the (already-decoded) transaction's outputs once to
@@ -139,42 +145,6 @@ SQL `EXISTS`/`COUNT` over the gate-metadata columns — never a bounded scan.
 These gates see every row regardless of pool size. Hex parameters compare
 against the columns exactly as stored.
 
-### insertMempoolPrune
-
-```
-insertMempoolPrune(entry: PruneEntry, expiresAtHeight: number): number
-```
-
-Encodes the PruneEntry as CBOR and inserts a `prune` row, writing `prune_entry_id`
-(`computePruneEntryId(entry)`) beside it for confirmed-entry cleanup. Returns the
-SQLite `rowid`.
-
-### selectMempoolPrunes
-
-```
-selectMempoolPrunes(limit: number): Array<{ rowid: number; entry: PruneEntry }>
-```
-
-Decodes and returns up to `limit` prune rows in FIFO order (`ORDER BY rowid ASC`), **without
-removing them** — the creator's read, and a read only. A prune row leaves the pool the way a
-transaction row does and by no other path: `removeEntry(rowid)` when a body this node built carried
-it, finalized or rejected (*Block Creator Integration*); `removeMempoolPrunes` when an applied block
-confirms it; `purgeExpired` at its expiry. A row this node cannot decode is dropped at the read and
-reported — a blob the writer cannot have produced is not an entry — and its readable siblings are
-returned.
-
-### removeMempoolPrunes
-
-```
-removeMempoolPrunes(entryIds: string[]): void
-```
-
-Deletes the prune rows whose `prune_entry_id` is in `entryIds` — an indexed delete, the prune-row
-twin of `removeUtxoTxEntry`, never a scan. Called by block application for every prune entry an
-applied block carries (a peer's block, or this node's own, where `finalizeBlock`'s cleanup by rowid
-usually reaches the row first — double removal is harmless), and by `reorg` before it re-inserts the
-prune entries of reverted blocks.
-
 ### getPendingEntries
 
 ```
@@ -182,9 +152,8 @@ getPendingEntries(limit: number, afterRowid?: number): PoolEntry[]
 ```
 
 Returns pending entries in FIFO order (`ORDER BY rowid ASC`), up to `limit`,
-starting after `afterRowid` (default `0` — from the beginning). All entries are
-returned — `utxo_tx` and `prune`. The caller (block creator)
-is responsible for decoding and organizing entries by type.
+starting after `afterRowid` (default `0` — from the beginning). Every row is a `utxo_tx`;
+the caller (block creator) decodes the payload.
 
 Entries are NOT filtered by expiry here — the caller calls `purgeExpired`
 first before fetching.
@@ -264,9 +233,10 @@ leaves the bound unchanged.
    ┌────────────────────────────┐   ┌──────────────────┐
    │  API routes (POST /posts,  │   │  Gossip relay    │
    │  /likes, /invites,         │   │  (onTx) — and    │
-   │  /vouches, /credits/…)     │   │  prune intents   │
+   │  /vouches, /credits/…,     │   │  (onTx)          │
+   │  /posts/:id/prune)         │   │                  │
    └─────────────┬──────────────┘   └────────┬─────────┘
-                 │ insertUtxoTx              │ insertUtxoTx / insertMempoolPrune
+                 │ insertUtxoTx              │ insertUtxoTx
                  ▼                           ▼
                 ┌─────────────────────────────┐
                 │        Mempool (SQLite)     │  ← entries sit here, unconfirmed
@@ -300,8 +270,8 @@ leaves the bound unchanged.
 
 | State | How entered | How exited |
 |-------|------------|------------|
-| **Pending** | `insertUtxoTx` / `insertMempoolPrune` | Carried by a body this node built → `removeEntry` (finalized or rejected); confirmed by an applied block → `removeUtxoTxEntry` / `removeMempoolPrunes`; or `purgeExpired` |
-| **Confirmed** | Block finalization (`removeEntry`), or an applied block's cleanup (`removeUtxoTxEntry` / `removeMempoolPrunes`) | Gone from mempool; state now in ledger |
+| **Pending** | `insertUtxoTx` | Carried by a body this node built → `removeEntry` (finalized or rejected); confirmed by an applied block → `removeUtxoTxEntry`; or `purgeExpired` |
+| **Confirmed** | Block finalization (`removeEntry`), or an applied block's cleanup (`removeUtxoTxEntry`) | Gone from mempool; state now in ledger |
 | **Evicted** | A body this node built was rejected — at speculation or at finalize (`removeEntry` per rowid) | Gone from mempool; state never applied |
 | **Expired** | `purgeExpired` during block assembly | Gone from mempool; state never applied |
 
@@ -329,7 +299,7 @@ together.
 | `POST /vouches` · `DELETE /vouches/:targetId` | `utxo_tx` |
 | `POST /credits/transfer` | `utxo_tx` |
 | Relay: inbound UTXO tx (`onTx`) | `utxo_tx` |
-| Prune intent (`POST /posts/:id/prune`) | `prune` |
+| `POST /posts/:id/prune` | `utxo_tx` |
 
 ---
 
@@ -342,8 +312,6 @@ pending entries:
 2. Draws pending entries in FIFO order and fills up to `BLOCK_BODY_BUDGET_BYTES`
 3. Separates entries by `entryType`:
    - `utxo_tx` entries → `utxoTxIds` / `utxoTxs`
-   - `prune` entries → read via `selectMempoolPrunes`, included as
-     `pruneEntries`; the read removes nothing
 4. Tracks `confirmedRowids` — **every** row the template carries, transaction
    and prune rows alike
 5. After block finalization: `removeEntry(rowid)` for each tracked rowid. **A
@@ -351,7 +319,7 @@ pending entries:
    fills again from what remains (`MINING_INTERFACE → Template and submit`);
    a rejected body that carried no row ends the build. Rows a *peer's* block
    confirms are reached by that block's application (`removeUtxoTxEntry` /
-   `removeMempoolPrunes`), not by this step
+   `removeUtxoTxEntry`), not by this step
 
 ### The fill budget is bytes; `getPendingEntries` is a count
 
@@ -379,7 +347,7 @@ is the arbitrary number moved one level down where no test can see it.
 ⛔ **The sizer has the last word, so no body exceeds the budget.** An accumulator that is nearly right
 plus a final exact measurement is a different guarantee from an accumulator trusted outright.
 
-The budget is spent in this order: `pruneEntries` and the settlement transaction's
+The budget is spent in this order: the settlement transaction's
 footprint first — both mandatory, and neither the miner's to trim — then transactions
 with what remains. The settlement's size depends on what the fill selected, so the
 trim loop re-derives it per iteration rather than measuring it once.
@@ -401,7 +369,7 @@ iteration rather than measured once.
 **Two paths clear a confirmed entry.** A block this node produced is cleaned by rowid
 (`confirmedRowids`, step 5), which reaches every included entry wherever it sits. A block arriving
 **from a peer** is cleaned by `removeUtxoTxEntry(txId)` — an indexed delete on `tx_id` — and by
-`removeMempoolPrunes(entryIds)` — an indexed delete on `prune_entry_id`; both keys are written at
+`removeUtxoTxEntry(txId)` — an indexed delete on `tx_id`; the key is written at
 insert.
 
 **The rule is that cleanup reaches every row**, whatever its depth. An entry left behind holds a
@@ -629,7 +597,7 @@ rather than a rule.
 ### Blob storage
 
 Entries are stored as encoded blobs rather than parsed columns — a `utxo_tx`
-row holds positional `encodeTx` bytes, a `prune` row holds a cbor-x `PruneEntry`
+row holds positional `encodeTx` bytes
 blob. This avoids double-parsing (decode off the wire → JSON for SQLite →
 re-encode for broadcast) and keeps the mempool schema agnostic to entry
 structure. The block creator decodes entries when assembling blocks.

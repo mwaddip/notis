@@ -373,7 +373,7 @@ The SPKI-envelope mechanics survive in the transaction signature path unchanged 
 ### Acceptance criterion — the runtime's, and consensus-visible through one preimage
 
 **No verification site performs a scalar or point canonicality check of its own.** Every
-site — `verifyValidatorSignature` below, `validateTx`'s authorization check, the prune-entry
+site — `verifyValidatorSignature` below, `validateTx`'s authorization check, the transaction
 author check at block application — builds a `KeyObject` and delegates accept/reject entirely
 to `crypto.verify(null, …)`: Ed25519 per RFC 8032 **as the runtime's OpenSSL implements it**.
 The criterion is therefore not a rule this repo states and enforces; it is a rule this repo
@@ -384,11 +384,12 @@ rejected** — a scalar raised by the group order (`S + L`) and the high-bit var
 those two forms were tested; non-canonical `R` encodings, small-order points, and
 cofactored-versus-cofactorless behaviour were not.
 
-**Why this section exists:** signature bytes are excluded from every hash preimage in the
-system except one. `serializePruneEntry` carries `authorSignature` as field 5, and those bytes
-are the `'prune'` Merkle leaf preimage under `utxoTxRoot` (`TYPES_INTERFACE → Layout — Merkle
-leaf preimages are the struct's own wire bytes`). A block carrying a prune entry whose
-signature one runtime accepts and another rejects splits the network — so a second
+**Why this section exists:** ✅ **signature bytes are excluded from every hash preimage in the
+system, with no exception.** `txIdBytes` omits them (`TYPES_INTERFACE → Layout —
+UtxoTransaction`), the header preimage omits `validatorSignature`, and every Merkle leaf is
+`leafHash('utxotx', id)` over an id. **That closes the id-malleability half and leaves the
+verify half open**: a block carrying a transaction whose signature one runtime accepts and
+another rejects splits the network — so a second
 implementation must match `crypto.verify`'s observed behaviour, not a stricter or looser
 reading of RFC 8032, and a runtime whose OpenSSL changes its acceptance set is a consensus
 event, not a dependency bump.
@@ -798,15 +799,12 @@ verifyOrderingBlockStructure(block: OrderingBlock): { valid: boolean; error?: st
 (`TYPES_INTERFACE` → Layout — Block). Checks, in order: the block is an object
 with a `header`; every header field's domain via `verifyHeaderFieldDomains` —
 delegated to the one statement of those domains, re-labelled with this
-function's messages. Every `utxoTxTree.pruneEntries` element: `rootPostHash`
-hex-32, `subtreePostIds` an array of hex-32 **with no repeated id** (a list whose
-length exceeds its set size is refused — the apply-time set compare and the
-Merkle root over the raw list would both admit a repeat, and a repeated id
-inflates the stump's `replyCount` and names one lock box twice),
-`subtreeMerkleRoot` 32 bytes, `authorId` 32 bytes, `authorSignature` 64 bytes —
-byte fields by `isBytes`, never a bare `.length`, because a stored row put back
-through a cast can carry any type and a length check passes what the hash calls
-throw on.
+function's messages.
+
+⛔ **The body's transactions are opaque here.** `utxoTxs` is `arr(…, lp)` — length-prefixed
+bytes this function never decodes — so a **prune payload is out of its reach by
+construction**. `verifyPruneCommitDomains` states that payload's domain instead, and node's
+transition arm calls it (→ `verifyPruneCommitDomains`).
 `validatorSignature` is 64
 bytes (`isBytes`, same rule). Then the two semantic floors a domain check
 cannot know: `height ≥ 1`, and `powTargetBits ≥
@@ -875,14 +873,26 @@ aligns 1:1 with `utxoTxIds`, each element a byte view of at most
 > least one transaction now, because the settlement is one. A structural check that admitted an
 > empty `utxoTxIds` is admitting a block that cannot have paid its own coinbase.
 
-Also checks **`pruneEntries`**: an array, each entry an object with a 64-char
-`rootPostHash`, a `subtreePostIds` array of 64-char strings **with no repeated id**
-(length equals set size), a 32-byte
-`subtreeMerkleRoot`, a 32-byte `authorId`, and a 64-byte `authorSignature`. Byte-length fields must
-be `Uint8Array`, not merely length-bearing — an adversarial or hand-built object can put any type
-in any field, and the consumers of these fields call `Buffer.from(...)` and
-`createHash().update(...)`, which throw on a number or object. Structure
-validation is the layer that guarantees they never see one.
+### `verifyPruneCommitDomains`
+
+**The single statement of a `PruneCommit`'s structural domain**, and the sibling of
+`verifyPostCommitDomains`. An object with a 64-char `rootPostHash`, a `subtreePostIds` array of
+64-char strings **with no repeated id** (length equals set size), and a 32-byte
+`subtreeMerkleRoot`.
+
+**The repeat check is not redundant with the Merkle root.** A root over the raw list admits a
+repeat, and so does an apply-time set compare; a repeated id inflates the stump's `replyCount`
+and names one lock box twice.
+
+**Byte-length fields must be `Uint8Array`, not merely length-bearing** — an adversarial or
+hand-built object can put any type in any field, and the consumers call `Buffer.from(...)` and
+`createHash().update(...)`, which throw on a number or object. This is the layer that guarantees
+they never see one.
+
+⛔ **One statement, two callers.** Node's envelope check and its prune transition arm both call
+this function rather than restating it (`NODE_INTERFACE` → Prune transactions); two
+implementations of one domain drift, which is the class the positional wire format exists to
+close.
 
 #### Each embedded transaction is bounded too
 
@@ -907,9 +917,9 @@ belongs rather than in node's apply path**, because this function is what net ru
 every peer first and refused second, which is the amplification the bound exists to prevent.
 
 ⛔ **It runs after every shape check above, and that order is load-bearing.** The sizer reads
-`utxoTxs` element lengths, the prune-entry fields and the coinbase array; run before those are typed,
+`utxoTxs` element lengths and the coinbase array; run before those are typed,
 it reads a length off whatever a peer put there. The checks above are what make it total — the same
-relationship the `pruneEntries` paragraph describes for `Buffer.from` and `createHash`.
+relationship `verifyPruneCommitDomains` describes for `Buffer.from` and `createHash`.
 
 **The measure is the bytes as they arrived.** `utxoTxs` are opaque, so a received block weighs what
 the peer actually put in it — which is what this node stores and re-serves. See the transaction bound
@@ -941,7 +951,7 @@ gate (see `NODE_INTERFACE.md`, "Structure validation in the apply funnel").
 **delegated to `verifyHeaderFieldDomains`** (Phase 1f), which is the single statement of that
 domain. The error labels this function emits did not change — that is why the predicate returns a
 reason rather than a boolean, and Phase 1e's teeth demonstration asserts those strings exactly. The
-block-level checks (`pruneEntries`, `utxoTxIds`, `utxoTxs` alignment and weight,
+block-level checks (`utxoTxIds`, `utxoTxs` alignment and weight,
 `validatorSignature`) stay here: they are not header fields and no header predicate can see them.
 
 > **The type and presence checks here are not subsumed by the positional codec**, because the codec's

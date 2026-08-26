@@ -399,36 +399,35 @@ invites, vouches, credits, prune).
 
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
-| `POST` | `/posts/:id/prune` | `{ rootPostHash: hex, authorId: hex, subtreeMerkleRoot: hex, subtreePostIds: hex[], signature: hex(128) }` | `{ status: "deleted", entryId: hex, postId: hex, replyCount: number }` (201) | 400 if post is not root (has parent), 403 if not author, 404 |
+| `POST` | `/posts/:id/prune` | `{ tx }` — a prune transaction, JSON-encoded like every other route's (`jsonToTx`) | `{ status: "submitted", txId: hex, postId: hex, replyCount: number }` (201) | 400 if the payload is absent, the root is unconfirmed or confirmed in the current block, the subtree set or the Merkle root mismatches, or `validateTx` refuses it; 404 if the post is unknown; 409 on a pending-spend conflict; 503 if the pool is full |
 
 **Prune flow:**
 
-1. Client walks reply subtree locally, builds Merkle root over postIds,
-   signs `blake2b512(rootPostHash || subtreeMerkleRoot).subarray(0,32)`
-   with Ed25519 key
-2. Node verifies: post exists and is live, author matches, signature valid,
-   subtreePostIds match actual reply tree **and carry no repeated id** (length
-   equals set size — 400; the set compare alone admits `[A, A, B]` against
-   `{A, B}`), Merkle root matches postId list
-3. Node builds PruneEntry, enqueues in mempool. Nothing is broadcast at
-   this point — the prune propagates inside the ordering block that carries
-   it, and each node derives its own stump at settlement (see below)
-4. At block application: a repeated id never reaches this step —
-   `verifyOrderingBlockStructure` refuses it at the gossip topic validator and at
-   the top of `applyOrderingBlock` (VALIDATION_INTERFACE →
-   verifyOrderingBlockStructure); then verify authorship binding (`entry.authorId` equals
-   the `block_topology`-recorded author of `rootPostHash`; reject the block if
-   no topology row exists — an unconfirmed root is not prunable), verify
-   signature, verify topology via block_topology CTE, verify Merkle root,
-   settle UTXO deterministically — the settlement transaction consumes the
-   subtree's PostLockBoxes and refunds **every lock owner except
-   `entry.authorId`**, whose own locks go to the pool — and delete the
-   subtree's like-records (journalled, so a reverted prune restores them),
-   insert the Stump derived from the verified entry
+1. The client builds a **prune transaction** — a karma self-transfer carrying a `PruneCommit`
+   (→ Prune transactions) — and signs its `txId`. There is no separate prune signature: the
+   transaction's own covers the payload.
+2. ⛔ **The route answers `submitted`, never `deleted`.** It reports that the transaction
+   entered the pool, which is what happened; the outcome it does **not** promise is that a
+   block carries it. karma-econ §1.4.2 rules the word out besides — a prune is not a deletion
+   for anyone who archived the content.
+3. The route runs the prune-specific checks — the root confirmed in an **earlier** block, the
+   subtree set against `block_topology`, the Merkle root against the id list — then
+   `validateTx`, then `admitTx`, then `net.broadcastTx`. **The same order every sibling route
+   uses**, and the broadcast is what makes a prune submitted to a non-mining node reach
+   consensus.
+   > ⚠ **The route checks topology, not the DAG.** A pending post has a `dag_posts` row and no
+   > topology row, so a DAG-based subtree read would admit a prune that consensus must reject.
+4. At block application (§8c): the transaction's own validation has already bound authorship
+   (`inputKarma.owner` against the root's topology author) and covered the payload by
+   signature. What remains is the **maturity bind**, the topology set, the Merkle root, the
+   UTXO settlement — the settlement transaction consumes the subtree's `PostLockBox`es and
+   refunds **every lock owner except the pruning author**, whose own locks go to the pool —
+   and deletion of the subtree's like-records (journalled, so a reverted prune restores them),
+   insert of the Stump derived from the verified payload
    (**unconditional** — a node holding no DAG content records the same
    stump; the insert is journalled, so a reverted prune removes it), then
    **delete** the subtree's `dag_posts` and `dag_parent_refs` rows **by the
-   entry's `subtreePostIds`** — the consensus set just verified — never by a
+   payload's `subtreePostIds`** — the consensus set just verified — never by a
    local DAG walk; ids with no local row are simply absent. Every deleted row
    (skeleton, body, status, height, index, parent refs) is captured into the
    block's journal as a side-record **before** deletion (Block Journal →
@@ -443,8 +442,8 @@ invites, vouches, credits, prune).
    reverted prune restores the exact rows — a re-apply recounts the identical
    set
 
-**Stumps are derived state.** A `dag_stumps` row is a local projection of a
-PruneEntry inside an applied ordering block — never information in its own
+**Stumps are derived state.** A `dag_stumps` row is a local projection of an
+applied prune transaction — never information in its own
 right. `insertStump` has exactly one caller: prune settlement in block
 application. No network input writes the table. Inbound stump gossip is not
 consumed, and no stump pull protocol exists: a gossiped stump is unverifiable
@@ -1276,7 +1275,11 @@ The checks:
    own key. The clause closes the class structurally rather than trusting
    either decoder's sanitizing to stay as it is.
 2. **Closed key set**: `inputs`, `outputs`, `signatures`, `protocolVersion`,
-   optionally `likeTarget` and `post`. Any other key rejects.
+   optionally `likeTarget`, `post` and `prune`. Any other key rejects.
+   > **`prune`'s domain is `verifyPruneCommitDomains`'s** (VALIDATION_INTERFACE →
+   > `verifyPruneCommitDomains`), the same obligation `post` carries: `txIdBytes` writes the
+   > payload through `pruneFieldBytes`, whose fixed-width writers throw outside their domain, so
+   > the envelope check is where a malformed payload is refused rather than hashed.
    > ⛔ **`preimages` LEFT THIS SET, AND THE GATE ACCEPTED IT AFTER `computeTxId` STOPPED HASHING
    > IT. Corrected 2026-08-18.** The field is deleted (TYPES_INTERFACE → Layout — UtxoTransaction).
    > ⚠ **Node was conforming to this row while it was wrong** — the defect was the contract's, and
@@ -1456,7 +1459,8 @@ the treasury.
 |----------|---------|-----------|
 | KarmaBox | KarmaBox | Same owner, balance change (earn/spend) |
 | KarmaBox | KarmaBox + LikeAccrualBox | **Like**: `likeTarget` present ⟺ exactly one `LikeAccrualBox` output of exactly `LIKE_KARMA_COST` whose `author` is the target's author from `block_topology` — **and the converse**, a `LikeAccrualBox` output ⟺ `likeTarget` present. Exactly one karma output, same owner as all inputs; target live; `(liker, target)` not recorded. **Value conserved** |
-| KarmaBox | KarmaBox + PostLockBox | **Post** (unit 2): `post` present ⟺ exactly one `PostLockBox` output whose value is `POST_LOCK_THREAD_COST` for a post with no `parentRefs` and `POST_LOCK_REPLY_COST` otherwise. Karma outputs same owner; value conserved — a post carries **no** deficit and **no** surplus. The signing key is the post's author |
+| KarmaBox | KarmaBox + PostLockBox | **Post** (unit 2): `post` present ⟺ exactly one `PostLockBox` output whose value is `POST_LOCK_THREAD_COST` for a post with no `parentRefs` and `POST_LOCK_REPLY_COST` otherwise. Karma outputs same owner; value conserved — a post carries **no** deficit and **no** surplus. The signing key is the post's author. ⛔ **The lock's `owner` is pinned to the karma input's owner**, the sibling of the vouch arm's `voucherId` pin and for the same reason: an unpinned owner lets a transaction put a stranger's key on the lock, and the prune settlement then refunds that stranger while post-lock vesting pays them the author's earned karma — a karma transfer with no invite, the property the whole invite/bond mechanism protects |
+| KarmaBox | KarmaBox | **Prune** (→ Prune transactions): `prune` present ⟹ all-karma inputs sharing one owner, exactly one karma output, **total output equal to total input**, `inputKarma.owner` is the root's `block_topology` author, and `verifyPruneCommitDomains(tx.prune)` passes. ⛔ **An IMPLICATION, not a biconditional** — the converse would forbid the bare self-consolidation the row above admits, so recognition is by payload presence and never by shape |
 | KarmaBox | KarmaBox + BondBox | **Invite**: karma outputs same owner, value conserved; `inviteBondMin ≤ bond.value ≤ inviteBondMax` (per-network caps) and the settlement grants **exactly `bond.value`**; `bond.inviterId` = the karma input owner; `inviteePublicKey` holds **no `IdentityRecord`**, and **no other bond in this block names it** |
 | KarmaBox | KarmaBox + VouchBox | Vouch cast: karma outputs same owner; `vouch.value == VOUCH_KARMA_AMOUNT`; `vouch.voucherId` == the karma input's owner; the voucher's **summed** karma balance ≥ `VOUCH_MIN_BALANCE`; no unspent escrow names the voucher; `vouch.createdAtBlock` within `[height − VOUCH_CAST_HEIGHT_WINDOW, height]` (the upper bound is step 6's; the window bounds backdating, which would shorten the cooldown the escrow derives from it) |
 | VouchBox | VouchEscrowBox | **Unvouch**: exactly one VouchBox input, voucher-signed; exactly one escrow output with `value ==` the consumed box's, `owner == voucherId`, and `releaseAtBlock == vouch.createdAtBlock + vouchCooldownBlocks` — an exact pin, derivable from the consumed box alone. The cooldown runs from the **cast**, so a long-held endorsement costs no extra lockup and no withdrawal pattern returns the stake early. Value conserved |
@@ -1542,6 +1546,46 @@ There is **no other legal bond or invite shape**. In particular:
   is the guard at every site that distinguishes a post from a stump or tombstone ("Resolution
   order for a post id"); a tombstone parent is `Parent post not found`, as the null is today;
   a reply to a stump stays valid (ARCHITECTURE → Post structure: refs may name stumps).
+
+### Prune transactions
+
+- **A prune is a transaction, and that is the whole of its carriage.** It is a
+  karma **self-transfer** — all-karma inputs sharing one owner, exactly one karma
+  output, total output equal to total input — carrying a `PruneCommit` payload
+  (`rootPostHash`, `subtreePostIds`, `subtreeMerkleRoot`; TYPES_INTERFACE →
+  Layout — PruneCommit). It rides `utxoTxIds` with every other transaction; the
+  block body has no prune section.
+- ⛔ **`prune` is an IMPLICATION, never a biconditional.** `prune` present ⟹ the
+  shape above **and** `inputKarma.owner` is the root's `block_topology` author
+  **and** `verifyPruneCommitDomains(tx.prune)` passes. **The reverse must never
+  be written**: a conserving karma self-transfer is legal on its own — it is
+  self-consolidation, the legitimate multi-input case — so a reverse implication
+  would forbid it. ✅ **Recognition is by payload presence, never by shape**, so
+  the missing reverse is safe: nothing else can be mistaken for a prune. This is
+  why `likeTarget`'s and `post`'s biconditional pattern deliberately does **not**
+  transfer — each of those pairs with an observable output, and a prune emits none.
+- **Authorship is the transaction's own.** The payload sits inside the
+  `computeTxId` preimage, so the signer's signature covers it and no separate
+  `authorId` or `authorSignature` exists. `block_topology` is the authority for
+  who may prune a root, so a node holding no DAG content reaches the same verdict.
+- ⛔ **The maturity bind: a root confirmed in the applying block is NOT prunable.**
+  `block_topology.block_height` must be **strictly less** than the applying
+  height. §8c plans the settlement before §11 materializes the block's outputs,
+  so without this a block carrying a post and a prune of that post reads no
+  `PostLockBox`, settles `0` to the pool, and leaves an orphaned lock — **a free
+  prune**. Reachable through the ordinary API, so the intent route enforces the
+  same rule at submit.
+- **`verifyPruneCommitDomains` is the single statement of the payload's
+  structural domain** — `rootPostHash` hex-32, `subtreePostIds` an array of
+  hex-32 **with no repeated id**, `subtreeMerkleRoot` exactly 32 bytes. It lives
+  in `@dagsocial/validation` and both the envelope check and the transition arm
+  call it; two implementations of one domain drift. The precedent is
+  `verifyPostCommitDomains`.
+- **The route submits, validates and broadcasts like every sibling.** The intent
+  route runs the prune-specific checks, then `validateTx`, then `admitTx`, then
+  `net.broadcastTx` — so a prune gossips to every peer's pool and any miner may
+  include it. **A prune submitted to a node that never mines reaches consensus.**
+
 
 ### Bond transition rules
 
@@ -2143,7 +2187,7 @@ the karma pool, the emission box and the treasury box, and the only consumer of 
 
 | | |
 |---|---|
-| **Consumes, in this order** | the emission box (when this height releases) · the treasury box (when this block accrues to it) · every marker box the block's like transactions emitted, in committed transaction order · the carry box of every author the block credits, ascending author hex · the `BondBox` of every bond settling at this height, ascending box id · every `VouchEscrowBox` at or past its `releaseAtBlock` in pre-body state, ascending box id · the karma boxes decay charges · the locks a prune entry names, in prune-entry order · the karma pool box (when this block draws or returns) · every `FeeBox` the body's transactions created, in committed transaction order |
+| **Consumes, in this order** | the emission box (when this height releases) · the treasury box (when this block accrues to it) · every marker box the block's like transactions emitted, in committed transaction order · the carry box of every author the block credits, ascending author hex · the `BondBox` of every bond settling at this height, ascending box id · every `VouchEscrowBox` at or past its `releaseAtBlock` in pre-body state, ascending box id · the karma boxes decay charges · the locks a prune transaction's payload names, in committed transaction order · the karma pool box (when this block draws or returns) · every `FeeBox` the body's transactions created, in committed transaction order |
 | **Emits, in this order** | the successors of the three protocol boxes — emission, treasury, karma pool · the invite grants · like payouts and carry successors · the vested part of each settling bond, back to its inviter · each released escrow's value, back to its owner · decay replacements · prune refunds · the coinbase's credit outputs |
 
 ⛔ **The two orders are consensus.** `derive()` builds the input list and the output list leg by leg in exactly these sequences, and a verifier recomputes both and compares the block's settlement to them position by position — the input list whole, the derived outputs element-wise; the coinbase is constrained, never derived (→ "Determinism is this mechanism's whole risk", the derived / producer-chosen table, where output ordering is a derived field). A leg moved is every settlement's bytes moved, on both sides identically. `node/test/services/settlement-leg-order.test.ts` pins both sequences with one fixture that fires every leg at once.
@@ -2340,11 +2384,11 @@ unassigned config *is* a server-role node: it applies blocks and builds no templ
 ### Block creation (mempool-based)
 
 1. Purge expired mempool entries (`purgeExpired(currentHeight)`)
-2. Read the pool — transactions through `iteratePendingEntries`, karma class first
-   (MEMPOOL_INTERFACE → Ordering), prune entries through `selectMempoolPrunes`; the
-   read removes nothing
+2. Read the pool — every entry through `iteratePendingEntries`, karma class first
+   (MEMPOOL_INTERFACE → Ordering); the read removes nothing. **A prune is one of those
+   entries**, selected like any other transaction and competing for the same body budget
 3.–5. *(Retired with sub-blocks: there is no batch linking and nothing to decode
-    separately — every pending entry is a standalone `utxo_tx` or `prune`.
+    separately — every pending entry is a standalone `utxo_tx`.
     Numbering kept so later step references stay stable.)*
 6.–11. *(Retired by P2-D. Standalone-like sidecar attachment (old step 6), like
     collection, like dedup and the epoch-boundary check are gone — likes are ordinary
@@ -2599,9 +2643,10 @@ the settlement transaction → lifetime-like counters → post-lock vesting → 
 marker inputs follow committed transaction order — every order is one the block fixes.
 All arithmetic `bigint`/integer — a float intermediate is a consensus fork.
 
-**Same-block exclusion:** a block may not carry both a like on post `P` and a prune entry
-covering `P`. Prune settlement runs before embedded txs in the mutation order, so the like
-finds its target pruned, is invalid, and the whole block is rejected. Producers must not
+**Same-block exclusion:** a block may not carry both a like on post `P` and a prune covering
+`P`. §8c settles prunes before §11 applies embedded transactions, so the like finds its target
+stumped, is invalid, and the whole block is rejected — **and that holds however the producer
+orders the two transactions in the body**, because the DAG effect is not in the §11 loop. Producers must not
 assemble such a block; the rule makes the outcome deterministic when one does.
 
 **Blocks with no likes** run neither loop — no record writes, no like leg in the
@@ -3036,9 +3081,6 @@ block has confirmed. Idempotent insert (first block to confirm a postId wins);
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `insertUtxoTx(tx, expiresAtHeight)` | `(UtxoTransaction, number) => number` | Queue UTXO tx, returns rowid |
-| `insertMempoolPrune(entry, expiresAtHeight)` | `(PruneEntry, number) => number` | Queue prune entry, returns rowid |
-| `selectMempoolPrunes(limit)` | `(number) => Array<{ rowid: number; entry: PruneEntry }>` | Decode and return prune rows in FIFO order, removing nothing |
-| `removeMempoolPrunes(entryIds)` | `(string[]) => void` | Remove prune rows by entry id — indexed on `prune_entry_id` |
 | `getPendingEntries(limit)` | `(number) => PoolEntry[]` | FIFO-ordered pending entries |
 | `purgeExpired(currentHeight)` | `(number) => number` | Remove entries past expiry, returns count |
 | `hasPendingLike(targetPostId, likerId)` | `(string, string) => boolean` | SQL EXISTS over gate metadata — unbounded (M-8) |
@@ -3230,10 +3272,8 @@ credits, protocol-box successors, invite grants, like markers and carry,
 decay replacements, prune refunds, fee-box consumption), post-lock vesting's
 transfer, like-record inserts and prune-time deletes (rows restored
 exactly), prune settlement, user txs, and **identity records**. Reorg
-re-insertion reads `appliedUtxoTxs` (txBytes) and the reverted blocks' prune
-entries (`utxoTxTree.pruneEntries`, returned by `revertBlock` — read before the
-block row is deleted), each re-inserted after `removeMempoolPrunes` so a copy
-already in the pool lands once; `confirmedPostIds` is not a mempool key.
+re-insertion reads `appliedUtxoTxs` (txBytes) alone — **a prune is one of those
+transactions**, so it needs no second channel; `confirmedPostIds` is not a mempool key.
 
 Reverse order is what makes a record written **more than once in one block**
 revert correctly (activity bump then decay, at the same height): each inverse
@@ -3253,7 +3293,7 @@ that keeps the last `replaced`; that restores an intra-block intermediate.
 | `getStump(stumpId)` | `(string) => Stump \| null` |
 
 `insertStump`'s only caller is prune settlement in block application — every
-row derives from a PruneEntry the funnel verified (see "Pruning" → "Stumps
+row derives from a prune transaction the funnel verified (see "Pruning" → "Stumps
 are derived state"). Because the insert is unconditional at settlement and
 every apply path goes through the one funnel, a settled prune without its
 stump row cannot arise on a fresh chain; there is no repair or pull path.
@@ -4333,16 +4373,15 @@ funnel:
    author, height)` with `author` the creating transaction's signer and
    `parentRefs` the signed transaction's own. `block_topology.author` is the
    consensus authority for prune authorization, never `dag_posts.author`.
-2. **Prune authorship binding (prune-time).** Before the prune entry's
-   postId-set and Merkle checks, the block is REJECTED unless
-   `getTopologyAuthor(entry.rootPostHash)` returns a non-null author equal to
-   `entry.authorId`. The lookup reads only consensus-recorded data, so the
+2. **Prune authorship binding (transaction-time).** The prune transition arm REJECTS the
+   transaction unless `getTopologyAuthor(prune.rootPostHash)` returns a non-null author equal
+   to `inputKarma.owner`, so a block carrying it is rejected with it. The lookup reads only consensus-recorded data, so the
    verdict is identical on every node — including one that synced from
    ordering blocks alone and holds no DAG content. A root no applied block has
    confirmed has no topology author and is therefore not prunable (this also
-   forecloses the empty-subtree/unconfirmed-root edge). `PruneEntry.authorId`
-   is retained in the wire format and required to equal the topology author;
-   the author signature check then proceeds against it as before.
+   forecloses the empty-subtree/unconfirmed-root edge). ⛔ **The payload carries no `authorId`
+   and no signature of its own** — the transaction's signature over `txId` covers it and the
+   karma input's owner is the author, so there is one authority and nothing to reconcile.
 
 ### Sync handlers (pull-path)
 

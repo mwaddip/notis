@@ -98,7 +98,7 @@ The hybrid preserves the strengths of both.
 ### Block architecture: ordering blocks
 
 One block type. Validators produce **ordering blocks**: full PoW, one committed body
-(`utxoTxIds` + `pruneEntries`), a configurable interval. Every post and like is an
+(`utxoTxIds` + `utxoTxs`), a configurable interval. Every post, like and prune is an
 ordinary UTXO transaction riding `utxoTxIds` with everything else, and each block
 carries the settlement transaction stated below.
 
@@ -350,12 +350,11 @@ The root author may prune their entire subtree at any time. Pruning:
    (NODE_INTERFACE → Resolution order for a post id)
 4. Is authorized by a signed prune transaction from the root author's key
 
-The prune is authorized **solely** by the root author's Ed25519 signature
-over `(rootPostHash, subtreeMerkleRoot)`. The signature travels in the block
-as a PruneEntry. Who "the author" is, is itself consensus data: every
-confirmed post's `author` is the signer of its creating transaction,
-recorded at confirmation in `block_topology`, and a PruneEntry is valid only
-if its `authorId` equals that recorded author (audit H-3) — so a signature from
+The prune is authorized **solely** by the root author, and the authorization is the prune
+transaction's own signature over its `txId` — which covers the `PruneCommit` payload. Who "the
+author" is, is itself consensus data: every confirmed post's `author` is the signer of its
+creating transaction, recorded at confirmation in `block_topology`, and a prune is valid only
+if the karma input's owner equals that recorded author (audit H-3) — so a signature from
 anyone else, however valid for its own key, authorizes nothing. No validator
 attestation is required — settlement is deterministically computable from the
 UTXO state (the subtree's PostLockBoxes) plus the like-records it deletes
@@ -363,9 +362,9 @@ UTXO state (the subtree's PostLockBoxes) plus the like-records it deletes
 content.
 
 Pruning is irreversible. Once content is pruned, it cannot be recovered.
-What propagates is the PruneEntry inside the ordering block that settles
-it — never the original content, and not the stump either: each node
-derives its own stump from the verified entry at settlement (§3). Within
+What propagates is the prune transaction — by gossip like any other, and again inside the
+ordering block that settles it — never the original content, and not the stump either: each
+node derives its own stump from the verified payload at settlement (§3). Within
 `MAX_REORG_DEPTH` the deleted rows exist only as undo records in the prune
 block's journal — never served, never relayed — so a reverted prune restores
 them exactly; once that journal is dropped, **a node holds no byte of the
@@ -763,9 +762,9 @@ to verify box existence or absence without storing the full UTXO set.
 
 A stump is what remains after a post subtree is pruned: a compact record
 that the subtree existed and was settled. The stump itself carries no
-signature — authorization lives in the PruneEntry (author-signed, verified
-at block application), and a stump is a **local projection of that verified
-entry**, derived independently by every node when the prune settles. No
+signature — authorization lives in the prune transaction (author-signed, verified at
+admission and again at block application), and a stump is a **local projection of that
+verified transaction**, derived independently by every node when the prune settles. No
 stump is ever accepted from the network: a gossiped stump would be
 unverifiable by construction (no signature, no `subtreePostIds` to check),
 so the table stumps live in is written by block application alone.
@@ -787,11 +786,10 @@ Stump {
    postIds
 2. Author signs `blake2b512(rootPostHash || subtreeMerkleRoot).subarray(0,32)`
    with their Ed25519 key
-3. Client submits signed PruneIntent to node via `POST /posts/:id/prune`
-4. Node verifies signature, subtree completeness, and Merkle root
-5. Node enqueues PruneEntry in mempool — included in next ordering block via
-   `utxoTxTree.pruneEntries`. Nothing else leaves the node: the prune
-   propagates only inside the block that carries it
+3. Client submits a signed prune **transaction** to a node via `POST /posts/:id/prune`
+4. Node verifies the maturity bind, subtree completeness and Merkle root, then `validateTx`
+5. Node pools it and **broadcasts it to peers like any other transaction**, so any miner may
+   include it — a prune submitted to a node that never mines still reaches consensus
 6. At block application, every node independently verifies: authorship
    binding (`authorId` equals the `block_topology`-recorded author of the
    root; unconfirmed roots are not prunable), Ed25519 signature, postId set
@@ -821,11 +819,11 @@ specified here.
 
 #### Cryptographic guarantees
 
-- Settlement is deterministic from UTXO state + block's PruneEntry — any node
+- Settlement is deterministic from UTXO state + the block's prune payloads — any node
   can verify independently without DAG content
 - The author's signature over `(rootPostHash, subtreeMerkleRoot)` in the block
   is the single point of authorization, and "the author" is pinned by
-  consensus: `PruneEntry.authorId` must equal the author recorded for the
+  consensus: the prune transaction's karma input owner must equal the author recorded for the
   root in `block_topology` (the signer of the root's creating transaction,
   verified against real content by every node that holds it at confirmation time)
 - A node that held the full subtree can verify the Merkle root against the
@@ -1430,8 +1428,8 @@ bodies are positional — ordering blocks through `decodeOrderingBlock`, transac
 `decodeTxPacket` (`net/src/gossip.ts`): the transaction's own bytes, then the post body as an `opt`
 that is present ⟺ the transaction carries a `PostCommit` (NET_INTERFACE → Gossip Topics). A stump
 never travels: it is a local projection with no wire
-form (`NODE_INTERFACE` → "Stumps are derived state"; `TYPES_INTERFACE` → Layout — Stump /
-PruneEntry). The normative per-struct layouts live in `TYPES_INTERFACE.md` → Serialization,
+form (`NODE_INTERFACE` → "Stumps are derived state"; `TYPES_INTERFACE` → Layout — Stump).
+The normative per-struct layouts live in `TYPES_INTERFACE.md` → Serialization,
 not here. Wire-codec types (ByteReader, ByteWriter, VLQ) live in `@dagsocial/wire`.
 
 > **Every consensus preimage becomes a positional byte layout** built on `@dagsocial/wire` — the
@@ -1827,11 +1825,11 @@ forever. A node rejects objects with an unsupported protocol version.
   > ⚠ **Non-malleability is relied upon and stated nowhere.** Measured on node v22.19.0 /
   > openssl 3.0.17: `crypto.verify` rejects the classic `S + L` malleation and the
   > high-bit variant, enforcing RFC 8032's `0 ≤ S < L`. This matters because
-  > `serializePruneEntry` puts `authorSignature` **inside** the `prune` Merkle leaf, hence
-  > inside `utxoTxRoot` — every other signature in the system is excluded from every
-  > preimage. A second verifier (light client, a pure-JS Ed25519 library) that is
-  > cofactored or skips the range check would accept a second valid signature, and there
-  > it would mean two valid *blocks*. **Any mirror implementation MUST enforce
+  > **every signature in the system is excluded from every preimage** — `txIdBytes` omits
+  > them and every Merkle leaf is an id — so a malleated signature can never move a block
+  > hash. What remains is acceptance: a second verifier (light client, a pure-JS Ed25519
+  > library) that is cofactored or skips the range check would accept a signature this one
+  > rejects, and the two would disagree about a block's validity. **Any mirror implementation MUST enforce
   > `0 ≤ S < L`.** Untested: non-canonical `R` encodings, small-order points,
   > cofactored-vs-cofactorless verification
 - Public keys: 32 raw bytes, hex-encoded on wire
@@ -2230,7 +2228,7 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   layer MUST NOT import the node's configuration, networking code, UI code, or
   post content types as values (`import type` only). Beyond DB bindings and
   hashing it imports the `@dagsocial/types` codecs it stores through
-  (`encodeTx` / `decodeTx`, `computeTxId`, `computePruneEntryId`) and node-local
+  (`encodeTx` / `decodeTx`, `computeTxId`) and node-local
   pure helpers and error classes from `journal`, `karma-supply`,
   `mint-provenance` and `services/` — functions and classes that carry no
   configuration, I/O or state. Anything that does — a local setting, the net, an
@@ -2401,7 +2399,7 @@ backfill — and a pruned post has no row (NODE_INTERFACE → Store Interface �
   > the epoch's removal, and block application is the box's only spender.
 - Ordering blocks with validator PoW; posts and likes ride them as ordinary
   transactions
-- Verifiable prune: block-level PruneEntry, Ed25519-signed, UTXO-deterministic
+- Verifiable prune: a karma transaction carrying a `PruneCommit`, Ed25519-signed, UTXO-deterministic
   settlement (the settlement transaction consumes PostLockBoxes and refunds
   lock owners other than the pruner; like-records deleted)
 - AVL+ state root: authenticated dictionary over UTXO set, stateRoot in block
