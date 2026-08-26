@@ -1,8 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import express from 'express';
 import http from 'http';
-import { deleteRoutes } from '../../src/routes/delete.js';
+import { computeTxId } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
+import { deleteRoutes } from '../../src/routes/delete.js';
+import { setNet } from '../../src/services/net-instance.js';
 import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
 
 // ---------------------------------------------------------------------------
@@ -93,6 +95,10 @@ const TEST_POST_HASH = 'd'.repeat(64);
 // ---------------------------------------------------------------------------
 
 describe('pruning routes', () => {
+  afterEach(() => {
+    setNet(null as unknown as Parameters<typeof setNet>[0]);
+  });
+
   it('POST /posts/:id/prune with a prune transaction returns 201', async () => {
     const res = await request(TEST_POST_HASH, { tx: makeJsonPruneTxBody() });
     expect(res.status).toBe(201);
@@ -151,5 +157,21 @@ describe('pruning routes', () => {
     expect(captured!.prune!.subtreeMerkleRoot).toBeInstanceOf(Uint8Array);
     expect(captured!.prune!.subtreeMerkleRoot.length).toBe(32);
     expect(Buffer.from(captured!.prune!.subtreeMerkleRoot).toString('hex')).toBe(merkleHex);
+  });
+
+  it('broadcasts the pooled prune transaction to peers', async () => {
+    const broadcastTx = vi.fn((_tx: UtxoTransaction) => Promise.resolve());
+    setNet({ broadcastTx } as unknown as Parameters<typeof setNet>[0]);
+
+    let captured: UtxoTransaction | undefined;
+    const res = await request(TEST_POST_HASH, { tx: makeJsonPruneTxBody() }, (_deps, tx) => {
+      captured = tx;
+      return { txId: 'b'.repeat(64) };
+    });
+
+    expect(res.status).toBe(201);
+    expect(broadcastTx).toHaveBeenCalledTimes(1);
+    const sent = broadcastTx.mock.calls[0]![0] as UtxoTransaction;
+    expect(computeTxId(sent)).toBe(computeTxId(captured!));
   });
 });
