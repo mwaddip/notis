@@ -15,6 +15,7 @@ import {
   computePowHash,
   isValidVouchTarget,
   verifyPostCommitDomains,
+  verifyPruneCommitDomains,
   verifyPostBody,
   verifyHeaderFieldDomains,
   ed25519PublicKeyToKeyObject,
@@ -2246,6 +2247,90 @@ describe('verifyPostBody', () => {
       expect(() => verifyPostBody(bad, validHash)).not.toThrow();
       expect(() => verifyPostBody(validContent, bad as any)).not.toThrow();
       expect(() => verifyPostBody(bad, bad as any)).not.toThrow();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// verifyPruneCommitDomains
+// ---------------------------------------------------------------------------
+
+describe('verifyPruneCommitDomains', () => {
+  const GOOD = 'ab'.repeat(32);
+
+  const makeValid = () => ({
+    rootPostHash: GOOD,
+    subtreePostIds: [GOOD, 'cd'.repeat(32)],
+    subtreeMerkleRoot: new Uint8Array(32).fill(7),
+  });
+
+  it('accepts a well-formed PruneCommit', () => {
+    expect(verifyPruneCommitDomains(makeValid())).toEqual({ valid: true });
+  });
+
+  it('rejects a non-object', () => {
+    expect(verifyPruneCommitDomains(null)).toEqual({ valid: false, error: 'PruneCommit is not an object' });
+    expect(verifyPruneCommitDomains(42)).toEqual({ valid: false, error: 'PruneCommit is not an object' });
+    expect(verifyPruneCommitDomains('string')).toEqual({ valid: false, error: 'PruneCommit is not an object' });
+  });
+
+  it('rejects invalid rootPostHash', () => {
+    for (const bad of ['aa', 42, new Uint8Array(32), 'zz'.repeat(32), 'AA'.repeat(32)]) {
+      const result = verifyPruneCommitDomains({ ...makeValid(), rootPostHash: bad });
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('rootPostHash');
+    }
+  });
+
+  it('rejects non-array subtreePostIds', () => {
+    const result = verifyPruneCommitDomains({ ...makeValid(), subtreePostIds: 'not-an-array' });
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('subtreePostIds must be an array');
+  });
+
+  it('rejects a subtreePostId that is not hex-32', () => {
+    for (const bad of [42, 'aa', 'zz'.repeat(32), 'AA'.repeat(32)]) {
+      const result = verifyPruneCommitDomains({ ...makeValid(), subtreePostIds: [bad] });
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('subtreePostId must be 64 lowercase hex');
+    }
+  });
+
+  it('rejects subtreePostIds carrying a repeated id', () => {
+    const A = 'aa'.repeat(32);
+    const B = 'bb'.repeat(32);
+    const result = verifyPruneCommitDomains({ ...makeValid(), subtreePostIds: [A, A, B] });
+    expect(result).toEqual({
+      valid: false,
+      error: 'PruneCommit subtreePostIds carries a repeated id',
+    });
+    const clean = verifyPruneCommitDomains({ ...makeValid(), subtreePostIds: [A, B] });
+    expect(clean).toEqual({ valid: true });
+  });
+
+  it('rejects a non-hex element before detecting a repeat', () => {
+    const A = 'aa'.repeat(32);
+    const result = verifyPruneCommitDomains({ ...makeValid(), subtreePostIds: [42, A, A] });
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('subtreePostId must be 64 lowercase hex');
+  });
+
+  it('rejects invalid subtreeMerkleRoot', () => {
+    for (const bad of [42, 'a'.repeat(32), { length: 32 }, new Uint8Array(31), undefined]) {
+      const result = verifyPruneCommitDomains({ ...makeValid(), subtreeMerkleRoot: bad });
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('subtreeMerkleRoot');
+    }
+  });
+
+  it('never throws on adversarial input', () => {
+    const HOSTILE = [
+      null, undefined, 42, 'string', true, NaN, Infinity,
+      [], {}, { rootPostHash: null }, { subtreePostIds: null },
+      { rootPostHash: GOOD, subtreePostIds: [null], subtreeMerkleRoot: 'bad' },
+    ];
+    for (const bad of HOSTILE) {
+      expect(() => verifyPruneCommitDomains(bad)).not.toThrow();
     }
   });
 });

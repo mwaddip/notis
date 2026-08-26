@@ -198,6 +198,41 @@ export function verifyPostCommitDomains(commit: unknown): { valid: boolean; erro
 }
 
 // ---------------------------------------------------------------------------
+// Prune-commit payload domain
+// ---------------------------------------------------------------------------
+
+/**
+ * The prune payload's structural domain, mirroring `verifyPostCommitDomains`.
+ *
+ * `rootPostHash` hex-32, `subtreePostIds` an array of hex-32 with no repeated
+ * id, `subtreeMerkleRoot` exactly 32 bytes. Node calls this from the
+ * transition arm — validation states the rule once, node does not restate it.
+ *
+ * Total on adversarial input, like every function here.
+ */
+export function verifyPruneCommitDomains(commit: unknown): { valid: boolean; error?: string } {
+  if (!isObject(commit)) return { valid: false, error: 'PruneCommit is not an object' };
+  if (!isHex32(commit.rootPostHash)) {
+    return { valid: false, error: 'PruneCommit rootPostHash must be 64 lowercase hex characters' };
+  }
+  if (!Array.isArray(commit.subtreePostIds)) {
+    return { valid: false, error: 'PruneCommit subtreePostIds must be an array' };
+  }
+  for (const id of commit.subtreePostIds) {
+    if (!isHex32(id)) {
+      return { valid: false, error: 'PruneCommit subtreePostId must be 64 lowercase hex characters' };
+    }
+  }
+  if (commit.subtreePostIds.length !== new Set(commit.subtreePostIds).size) {
+    return { valid: false, error: 'PruneCommit subtreePostIds carries a repeated id' };
+  }
+  if (!isBytesOfLength(commit.subtreeMerkleRoot, 32)) {
+    return { valid: false, error: 'PruneCommit subtreeMerkleRoot must be exactly 32 bytes' };
+  }
+  return { valid: true };
+}
+
+// ---------------------------------------------------------------------------
 // The block header's encodable domain
 // ---------------------------------------------------------------------------
 //
