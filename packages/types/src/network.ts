@@ -301,7 +301,7 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   // the faucet identity, since the two profiles name DIFFERENT
   // `faucetPublicKey`s and therefore seed differently-owned karma and credit
   // boxes.
-  genesisStateRoot: '1595b50171e5efccc4ab003be99fd8c3e212d7a1deab808013a5bed0b5b9714603',
+  genesisStateRoot: '8e1b689ebe53c098142ae98224f5ee33ffba7e1aba40c4510a8fe534d3c4b22b03',
 } satisfies NetworkProfile);
 
 export const NETWORK_PROFILES: Readonly<Record<NetworkType, NetworkProfile>> = Object.freeze({

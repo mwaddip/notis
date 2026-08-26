@@ -233,8 +233,8 @@ describe('storage rent', () => {
     expect(withRent.miner).toBe(withoutRent.miner + rent);
   });
 
-  it('treasury + miner == emission + fees + rent', () => {
+  it('treasury + miner + unearned == emission + fees + rent', () => {
     const split = splitCoinbase(1000n, 500n, 200n, 5);
-    expect(split.treasury + split.miner).toBe(1700n);
+    expect(split.treasury + split.miner + split.unearned).toBe(1700n);
   });
 });

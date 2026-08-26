@@ -217,9 +217,8 @@ export function ensureGenesisProofBox(
  * `ensureGenesisProofBox`: the caller supplies what distinguishes the box, so
  * this function is testable under a total without a module reset and `store/`
  * gains no edge into the emission schedule. ⚠ **It must be `emissionTotal()`'s
- * result and never a literal** — a total that disagrees with
- * `computeBlockReward` starves the box before the terminus, making every block
- * from that height unproducible, or strands a residue no rule can release.
+ * result** — the profile's carried total, strictly below the curve's own sum
+ * (MINING_INTERFACE → Emission Schedule).
  *
  * ⚠ **No identity record**, for `ensureGenesisProofBox`'s reason: the box has no
  * owner and holds no karma, so there is no activity clock for a record to hold.

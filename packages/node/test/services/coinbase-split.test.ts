@@ -68,24 +68,25 @@ describe('splitCoinbase', () => {
     for (const actors of [0, 1, 3, 5, 7, 13, 99, 1000]) {
       for (const [emission, fees] of incomes) {
         const s = splitCoinbase(emission, fees, 0n, actors);
-        expect(s.treasury + s.miner).toBe(emission + fees);
-        // Neither slice may go negative — a negative miner floor would be the
-        // treasury minting from the miner rather than dividing an income.
+        expect(s.treasury + s.miner + s.unearned).toBe(emission + fees);
         expect(s.treasury).toBeGreaterThanOrEqual(0n);
         expect(s.miner).toBeGreaterThanOrEqual(0n);
+        expect(s.unearned).toBeGreaterThanOrEqual(0n);
       }
     }
   });
 
   it('forfeits the whole bonus pool at zero actors', () => {
     const s = splitCoinbase(1000n, 0n, 0n, 0);
-    expect(s.treasury).toBe(50n + 250n);   // 5% per-term, plus the entire 25% pool
+    expect(s.treasury).toBe(50n);          // 5% per-term base only
+    expect(s.unearned).toBe(250n);         // entire 25% pool, returned to emission box
     expect(s.miner).toBe(700n);
   });
 
   it('earns the miner half the pool at K actors', () => {
     const s = splitCoinbase(1000n, 0n, 0n, Number(INCLUSION_BONUS_K));
-    expect(s.treasury).toBe(50n + 125n);
+    expect(s.treasury).toBe(50n);
+    expect(s.unearned).toBe(125n);
     expect(s.miner).toBe(825n);
   });
 
@@ -111,9 +112,9 @@ describe('splitCoinbase', () => {
     const offTotal = (20n * BigInt(COINBASE_TREASURY_PCT)) / 100n;       // 1
     expect(perTerm).not.toBe(offTotal);
 
-    // treasury = per-term base (0) + the forfeited pool (20 × 25% = 5)
-    expect(s.treasury).toBe(0n + 5n);
-    expect(s.treasury).not.toBe(offTotal + 5n);
+    // treasury = per-term base only (0), unearned = the forfeited pool (20 × 25% = 5)
+    expect(s.treasury).toBe(0n);
+    expect(s.unearned).toBe(5n);
   });
 
   // Two independent truncations of one pool leak a base unit; `unearned` is
@@ -123,13 +124,12 @@ describe('splitCoinbase', () => {
     for (const income of [1000n, 999_983n, 7n, 123_456_789n]) {
       const pool = (income * BigInt(COINBASE_BONUS_PCT)) / 100n;
       for (let a = 0; a <= 40; a++) {
-        const withActors = splitCoinbase(income, 0n, 0n, a);
-        const withNone = splitCoinbase(income, 0n, 0n, 0);
-        // `unearned` is the treasury's share above its per-term base, and
-        // `earned` is what the miner gained relative to forfeiting everything.
-        const unearned = withActors.treasury - (withNone.treasury - pool);
-        const earned = withActors.miner - withNone.miner;
-        expect(earned + unearned).toBe(pool);
+        const s = splitCoinbase(income, 0n, 0n, a);
+        // `unearned` is returned directly, `earned` is the miner's gain
+        // relative to zero actors.
+        const zeroActors = splitCoinbase(income, 0n, 0n, 0);
+        const earned = s.miner - zeroActors.miner;
+        expect(earned + s.unearned).toBe(pool);
       }
     }
   });
@@ -142,34 +142,34 @@ describe('splitCoinbase', () => {
   // reaches 0 there at devnet height 5,901, which is the height that makes this
   // function's zero case a shape a real block takes rather than only an argument
   // it can be called with.
-  it('leaves nothing for either slice at zero income', () => {
+  it('leaves nothing for any slice at zero income', () => {
     const s = splitCoinbase(0n, 0n, 0n, 0);
     expect(s.treasury).toBe(0n);
     expect(s.miner).toBe(0n);
+    expect(s.unearned).toBe(0n);
 
-    // And at every actor count, so the bonus curve cannot conjure a slice from
-    // an empty pool — `0 × a / (a + K)` is 0, but the subtraction that derives
-    // `unearned` is where a stray base unit would appear if it appeared.
     for (const actors of [0, 1, 5, 40, 1000]) {
       const t = splitCoinbase(0n, 0n, 0n, actors);
-      expect(t.treasury + t.miner).toBe(0n);
+      expect(t.treasury + t.miner + t.unearned).toBe(0n);
       expect(t.treasury).toBe(0n);
       expect(t.miner).toBe(0n);
+      expect(t.unearned).toBe(0n);
     }
   });
 
   it('gives the miner every remainder the divisions leave', () => {
     // Below 4 the bonus pool truncates to zero as well as the treasury base, so
-    // every slice is empty and the whole income lands on the floor — the miner
-    // is the only slice that can hold a remainder.
+    // every slice is empty and the whole income lands on the floor.
     const s = splitCoinbase(3n, 0n, 0n, 0);
     expect(s.treasury).toBe(0n);
+    expect(s.unearned).toBe(0n);
     expect(s.miner).toBe(3n);
 
-    // And at 7 the pool alone rounds up to 1, which the forfeit sends to the
-    // treasury: the floor keeps the other 6 rather than the split losing it.
+    // At 7 the pool rounds to 1, which with zero actors is entirely unearned
+    // and returns to the emission box: the floor keeps the other 6.
     const t = splitCoinbase(7n, 0n, 0n, 0);
-    expect(t.treasury).toBe(1n);
+    expect(t.treasury).toBe(0n);
+    expect(t.unearned).toBe(1n);
     expect(t.miner).toBe(6n);
   });
 });

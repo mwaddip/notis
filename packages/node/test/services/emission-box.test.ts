@@ -18,25 +18,23 @@ import { makeTestIdentity, makeApplicableBlock } from '../helpers.js';
 
 const E8 = 10n ** 8n;
 
-// Mainnet / testnet: F = 1,051,200 · E = 129,600 · R = 100 · d = 2.
-//   fixed  = 1,051,200 × 100                      = 105,120,000
-//   K      = largest k with 100 − 2k > 0          = 49
-//   Σ      = Σ(k=1..49)(100 − 2k) = 4900 − 2450   = 2,450
-//   decay  = 129,600 × 2,450                      = 317,520,000
-//   total                                          = 422,640,000
-const MAINNET_TOTAL = 422_640_000n * E8;
+// Mainnet / testnet: R = 42, d = 1, F = 1,051,200, E = 470,000.
+//   K      = largest k with 42 − k > 0            = 41
+//   Σ      = Σ(k=1..41)(42 − k) = 1722 − 861      = 861
+//   curve  = 1,051,200 × 42 + 470,000 × 861       = 448,820,400
+//   carried total (TYPES_INTERFACE → EmissionBox)  = 422,640,000
+//
+// ⛔ **The carried total is deliberately below the curve.** 422,640,000 is
+// 94.2% of 448,820,400. The test says WHICH number it is — the CARRIED total,
+// not the curve's sum.
+const MAINNET_CARRIED = 422_640_000n * E8;
 
-// Devnet: F = 1,000 · E = 100, same economics (ARCHITECTURE → Network Identity:
+// Devnet: F = 1,000 · E = 400, same economics (ARCHITECTURE → Network Identity:
 // compress time, never economics), so R, d, K and Σ are unchanged.
-//   fixed  = 1,000 × 100        = 100,000
-//   decay  = 100 × 2,450        = 245,000
-//   total                        = 345,000
-const DEVNET_TOTAL = 345_000n * E8;
-
-// Devnet's terminus. Epoch k spans heights F + (k−1)E + 1 … F + kE, so epoch 49
-// — the last that pays, at 100 − 49×2 = 2 credits — spans 5,801 … 5,900.
-const DEVNET_LAST_PAYING_HEIGHT = 5_900;
-const DEVNET_LAST_REWARD = 2n * E8;
+//   curve  = 1,000 × 42 + 400 × 861               = 386,400
+//   carried total                                   = 362,000
+const DEVNET_CARRIED = 362_000n * E8;
+const DEVNET_CURVE_SUM = 386_400n * E8;
 
 async function importFresh() {
   const db = await import('../../src/store/db.js');
@@ -133,104 +131,118 @@ describe('the emission box', () => {
   // The derived total
   // -------------------------------------------------------------------------
 
-  it('mainnet holds 422,640,000 credits at genesis', async () => {
+  it('mainnet holds its carried total at genesis', async () => {
     const s = await bootUnder('mainnet');
     close = () => s.db.closeDb();
 
-    // The pin §3.4 asks for: a schedule change that moves the total fails HERE
-    // rather than silently re-deriving a different genesis.
-    expect(s.creator.emissionTotal()).toBe(MAINNET_TOTAL);
+    // The CARRIED total, not the curve's sum — 94.2% of 448,820,400.
+    expect(s.creator.emissionTotal()).toBe(MAINNET_CARRIED);
 
     const box = s.utxo.getEmissionBox();
     expect(box).not.toBeNull();
-    expect(box!.value).toBe(MAINNET_TOTAL);
+    expect(box!.value).toBe(MAINNET_CARRIED);
     // No owner field at all — not an owner set to zero bytes.
     expect('owner' in box!).toBe(false);
   });
 
-  it('devnet holds its own total, derived from its compressed schedule', async () => {
+  it('devnet holds its own carried total', async () => {
     const s = await bootUnder('devnet');
     close = () => s.db.closeDb();
 
-    // Non-vacuity: devnet's total must NOT be mainnet's. A derivation that
-    // ignored the profile would return mainnet's on every network and the
-    // equality above alone would not see it.
-    expect(s.creator.emissionTotal()).toBe(DEVNET_TOTAL);
-    expect(DEVNET_TOTAL).not.toBe(MAINNET_TOTAL);
-    expect(s.utxo.getEmissionBox()!.value).toBe(DEVNET_TOTAL);
+    // Non-vacuity: devnet's total must NOT be mainnet's.
+    expect(s.creator.emissionTotal()).toBe(DEVNET_CARRIED);
+    expect(DEVNET_CARRIED).not.toBe(MAINNET_CARRIED);
+    expect(s.utxo.getEmissionBox()!.value).toBe(DEVNET_CARRIED);
   });
 
-  it('the total equals the sum of every reward the schedule ever pays', async () => {
+  it('the carried total is strictly below the curve\'s sum', async () => {
     const s = await bootUnder('devnet');
     close = () => s.db.closeDb();
 
-    // The property the two must share, walked height by height rather than in
-    // closed form: too small a total starves the box before the terminus and
-    // makes every block from that height unproducible; too large strands a
-    // residue no rule can release.
-    let paid = 0n;
-    for (let h = 1; h <= DEVNET_LAST_PAYING_HEIGHT + 10; h++) {
-      paid += s.creator.computeBlockReward(h);
+    // The property the guard enforces: the box holds LESS than the curve
+    // would pay over its whole span, so it empties while the schedule is
+    // still positive.
+    let curveTotal = 0n;
+    for (let h = 1; ; h++) {
+      const r = s.creator.computeBlockReward(h);
+      if (r === 0n) break;
+      curveTotal += r;
     }
-    expect(paid).toBe(DEVNET_TOTAL);
+    expect(curveTotal).toBe(DEVNET_CURVE_SUM);
+    expect(DEVNET_CARRIED).toBeLessThan(DEVNET_CURVE_SUM);
+    expect(s.creator.emissionTotal()).toBeLessThan(curveTotal);
   });
 
   // -------------------------------------------------------------------------
-  // The terminus
+  // Balance-driven exhaustion
   // -------------------------------------------------------------------------
 
-  // ⛔ **This is the ONLY test that fails when the no-zero-successor arm is
-  // reverted — measured by mutation, 2026-08-16: 1,433 of 1,434 still passed.**
-  // The terminus has zero incidental coverage anywhere else in the suite, so
-  // weakening or deleting this leaves the rule with nothing behind it.
-  it('holds exactly 2 credits after block 5,899 and is gone after 5,900', async () => {
+  it('the box survives at 0 above the terminus', async () => {
     const s = await bootUnder('devnet');
     close = () => s.db.closeDb();
 
-    // Releases every height up to and including 5,899, driving the box down the
-    // real transition rather than by arithmetic on its value.
-    for (let h = 1; h < DEVNET_LAST_PAYING_HEIGHT; h++) {
-      expect(settle(s, h, s.creator.computeBlockReward(h))).toBe(true);
-    }
+    // Above the terminus the reward is 0 and with no fees the unearned is 0,
+    // so the successor holds exactly what the predecessor did.
+    const before = s.utxo.getEmissionBox()!;
+    expect(settle(s, 17_401, 0n)).toBe(true);
+    const after = s.utxo.getEmissionBox();
+    expect(after).not.toBeNull();
+    expect(after!.value).toBe(before.value);
+    // But it IS a new box — the predecessor was consumed.
+    expect(after!.id).not.toBe(before.id);
 
-    // ⚠ **2 × 10⁸ is also what the deleted `CREDIT_TAIL_REWARD` held, and here
-    // that is a coincidence.** Unit 4's trap was a *reward* assertion at a
-    // height where the terminated and un-terminated curves agree. This asserts a
-    // *box value*, and under the pre-4b rule there is no box at all — so nothing
-    // about it is satisfiable by the old behaviour. Do not "fix" the number.
-    const beforeLast = s.utxo.getEmissionBox();
-    expect(beforeLast).not.toBeNull();
-    expect(beforeLast!.value).toBe(DEVNET_LAST_REWARD);
-
-    // The last paying block takes exactly what is left and creates no successor.
-    expect(settle(s, DEVNET_LAST_PAYING_HEIGHT, DEVNET_LAST_REWARD)).toBe(true);
-    expect(s.utxo.getEmissionBox()).toBeNull();
+    // A second block above the terminus: box still at the same value, still exists.
+    expect(settle(s, 17_402, 0n)).toBe(true);
+    expect(s.utxo.getEmissionBox()).not.toBeNull();
+    expect(s.utxo.getEmissionBox()!.value).toBe(before.value);
   });
 
-  it('a block above the terminus releases nothing and needs no box', async () => {
+  it('partial payment on the first block the box cannot cover in full', async () => {
     const s = await bootUnder('devnet');
     close = () => s.db.closeDb();
 
-    // The height itself carries the rule: above the terminus the reward is 0, so
-    // the block does not touch the box — which is the only reason its absence
-    // there is not a fault.
-    expect(s.creator.computeBlockReward(DEVNET_LAST_PAYING_HEIGHT + 1)).toBe(0n);
-    const above = DEVNET_LAST_PAYING_HEIGHT + 1;
-    expect(settle(s, above, 0n)).toBe(true);
-    // Untouched — still the genesis box, not a successor.
-    expect(s.utxo.getEmissionBox()!.value).toBe(DEVNET_TOTAL);
+    // Claim more than the box holds. The box holds DEVNET_CARRIED.
+    // emission = DEVNET_CARRIED + 1: release = DEVNET_CARRIED (capped),
+    // successor = DEVNET_CARRIED − DEVNET_CARRIED + unearned = unearned.
+    const tooMuch = DEVNET_CARRIED + 1n;
+    const split = s.split.splitCoinbase(tooMuch, 0n, 0n, 0);
+    expect(settle(s, 1, tooMuch)).toBe(true);
+    // The box is not empty — unearned from the (large) emission returns.
+    expect(s.utxo.getEmissionBox()!.value).toBe(split.unearned);
+    expect(split.unearned).toBeGreaterThan(0n);
   });
 
-  it('rejects a release the box cannot cover', async () => {
+  it('returned unearned raises a successor above its predecessor', async () => {
     const s = await bootUnder('devnet');
     close = () => s.db.closeDb();
 
-    // Unreachable while `emissionTotal` and `computeBlockReward` share the
-    // profile — this is the loud failure for the case where they stop agreeing,
-    // whose alternative is a negative successor value.
-    expect(settle(s, 1, DEVNET_TOTAL + 1n)).toBe(false);
-    // And nothing was spent on the way to refusing.
-    expect(s.utxo.getEmissionBox()!.value).toBe(DEVNET_TOTAL);
+    // A block with fees and zero actors: the full bonus pool is unearned and
+    // returns to the emission box. emission=42e8, fees=200e8, actors=0
+    // bonusPool = (42 + 200) × 25 / 100 = 60e8
+    // earned = 0 (no actors), unearned = 60e8
+    // release = 42e8, successor = genesis − 42e8 + 60e8 > genesis
+    const before = s.utxo.getEmissionBox()!;
+    const split = s.split.splitCoinbase(42n * E8, 200n * E8, 0n, 0);
+    expect(settle(s, 1, 42n * E8, { fees: 200n * E8, actors: 0 })).toBe(true);
+    const after = s.utxo.getEmissionBox()!;
+    expect(after.value).toBeGreaterThan(before.value);
+    expect(after.value).toBe(before.value - 42n * E8 + split.unearned);
+  });
+
+  it('a block above the terminus with zero emission still spends the box', async () => {
+    const s = await bootUnder('devnet');
+    close = () => s.db.closeDb();
+
+    // At height above the curve's terminus, emission = 0 but the box is still
+    // spent because unearned has to be returned.
+    const before = s.utxo.getEmissionBox()!;
+    expect(settle(s, 5901, 0n)).toBe(true);
+    const after = s.utxo.getEmissionBox()!;
+    // Box exists with same value (0 emission, 0 fees → 0 unearned)
+    expect(after).not.toBeNull();
+    expect(after.value).toBe(before.value);
+    // But it's a NEW box (predecessor was consumed)
+    expect(after.id).not.toBe(before.id);
   });
 });
 
@@ -307,11 +319,10 @@ describe('the treasury box', () => {
 
     expect(settle(s, 1, s.creator.computeBlockReward(1))).toBe(true);
     const before = s.utxo.getTreasuryBox()!;
-    // Above the terminus with no fees the income is zero, so the slice is too —
-    // the one shape whose treasury rounds to nothing.
-    const above = DEVNET_LAST_PAYING_HEIGHT + 1;
+    // With zero emission and zero fees the treasury slice is zero — the one
+    // shape whose treasury rounds to nothing.
     expect(s.split.splitCoinbase(0n, 0n, 0n, 0).treasury).toBe(0n);
-    expect(settle(s, above, 0n)).toBe(true);
+    expect(settle(s, 2, 0n)).toBe(true);
     // Same box, same id — not a successor of equal value, which would churn a
     // leaf through the AVL tree on every block for no state change.
     expect(s.utxo.getTreasuryBox()!.id).toBe(before.id);

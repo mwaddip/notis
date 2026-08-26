@@ -187,7 +187,8 @@ describe('config', () => {
       expect(cfg.inviteProbationBlocks).toBe(43200);
       expect(cfg.creditMinerRewardDelay).toBe(1440);
       expect(cfg.creditFixedRateBlocks).toBe(1_051_200);
-      expect(cfg.creditEpochBlocks).toBe(129_600);
+      expect(cfg.creditEpochBlocks).toBe(470_000);
+      expect(cfg.creditEmissionTotal).toBe(422_640_000n * 10n ** 8n);
     });
 
     it('NETWORK_TYPE=devnet resolves the devnet profile and copies its values', async () => {
@@ -213,7 +214,8 @@ describe('config', () => {
       expect(cfg.inviteProbationBlocks).toBe(540);
       expect(cfg.creditMinerRewardDelay).toBe(10);
       expect(cfg.creditFixedRateBlocks).toBe(1000);
-      expect(cfg.creditEpochBlocks).toBe(100);
+      expect(cfg.creditEpochBlocks).toBe(400);
+      expect(cfg.creditEmissionTotal).toBe(362_000n * 10n ** 8n);
     });
 
     // The flat fields above are only half the claim: a consumer that still

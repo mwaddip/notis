@@ -2516,11 +2516,6 @@ the **miner's slice alone**. The treasury's share accrues to the `TreasuryBox` a
 inclusion bonus stays in the `EmissionBox` — neither is redirected to the miner, who would
 otherwise recover their own forfeit, and neither is a coinbase output on any network.
 
-> ⚠ **AHEAD OF CODE — 2026-08-26.** The running split accrues the unearned bonus to the
-> `TreasuryBox` alongside the treasury share, and the running box drains on a height schedule.
-> Both paragraphs state the balance-driven schedule that replaces them
-> (MINING_INTERFACE → Emission Schedule).
-
 **Emission is released from a box, not minted.** Genesis holds a carried total in an
 `EmissionBox` (TYPES_INTERFACE → EmissionBox) and each block spends it to a successor holding
 `value − min(computeBlockReward(height), value) + unearned`, so what remains to be emitted is state

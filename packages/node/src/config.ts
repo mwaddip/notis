@@ -69,6 +69,9 @@ export interface Config {
   // both the creator and the applier, so both read these from here.
   creditFixedRateBlocks: number;
   creditEpochBlocks: number;
+  // The EmissionBox's genesis value, CARRIED rather than derived
+  // (TYPES_INTERFACE → EmissionBox). Strictly below the curve's own sum.
+  creditEmissionTotal: bigint;
   // Vouch and invite timing
   vouchCooldownBlocks: number;
   inviteProbationBlocks: number;
@@ -133,6 +136,7 @@ export function loadConfig(): Readonly<Config> {
     creditMinerRewardDelay: profile.creditMinerRewardDelay,
     creditFixedRateBlocks: profile.creditFixedRateBlocks,
     creditEpochBlocks: profile.creditEpochBlocks,
+    creditEmissionTotal: profile.creditEmissionTotal,
     // Vouch and invite timing — per-network timescale, same rule as the karma
     // decay pair below.
     vouchCooldownBlocks: profile.vouchCooldownBlocks,

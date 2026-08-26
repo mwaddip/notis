@@ -103,12 +103,13 @@ export function countKarmaActors(
 }
 
 /**
- * The coinbase's two amounts for a block of this income and this many actors.
+ * The coinbase's three amounts for a block of this income and this many actors.
  *
  * The treasury is taken **per income term** — of emission and of fees, and of
  * storage rent never. The bonus pool is `COINBASE_BONUS_PCT` of `emission +
  * fees` (not rent), of which the miner earns `actors / (actors +
- * INCLUSION_BONUS_K)` and the treasury takes the rest.
+ * INCLUSION_BONUS_K)` and the forfeited remainder is returned to the
+ * `EmissionBox` (MINING_INTERFACE → "The slices").
  *
  * **The miner floor takes every remainder**, which is why it is a subtraction
  * rather than its own percentage: four truncated percentages of one income do
@@ -128,16 +129,16 @@ export function splitCoinbase(
   fees: bigint,
   rent: bigint,
   actors: number,
-): { treasury: bigint; miner: bigint } {
+): { treasury: bigint; miner: bigint; unearned: bigint } {
   const income = emission + fees + rent;
   // NODE_INTERFACE → "Storage rent is a transition requiring no signature":
   // the treasury takes COINBASE_TREASURY_PCT of emission and of fees and
   // NONE of rent, so rent reaches the miner floor entire. The bonus pool
   // is over emission + fees only, for the same reason: its unearned
-  // remainder accrues to the treasury and must not carry rent.
+  // remainder stays in the EmissionBox and must not carry rent.
   const taxableIncome = emission + fees;
   const treasuryPct = BigInt(COINBASE_TREASURY_PCT);
-  const treasuryBase =
+  const treasury =
     (emission * treasuryPct) / 100n + (fees * treasuryPct) / 100n;
 
   const bonusPool = (taxableIncome * BigInt(COINBASE_BONUS_PCT)) / 100n;
@@ -145,6 +146,5 @@ export function splitCoinbase(
   const earned = (bonusPool * a) / (a + INCLUSION_BONUS_K);
   const unearned = bonusPool - earned;
 
-  const treasury = treasuryBase + unearned;
-  return { treasury, miner: income - treasury };
+  return { treasury, miner: income - treasury - unearned, unearned };
 }

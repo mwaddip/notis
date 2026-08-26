@@ -16,11 +16,6 @@ API endpoints (template + submit). Depends on:
 
 ## Emission Schedule
 
-> ⚠ **AHEAD OF CODE — 2026-08-26.** The running schedule is `R = 100`, `d = 2`, `E = 129,600`, and
-> `emissionTotal` derives the box's genesis value from the curve, so the box empties exactly as the
-> rate reaches zero at block 7,401,600. This whole section states the balance-driven schedule that
-> replaces it.
-
 Ergo-style linear decay **that does not reach zero — there is no tail, and there is no last paying
 height either**. At 60-second blocks:
 

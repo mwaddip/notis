@@ -890,10 +890,6 @@ EmissionBox extends BoxBase {
 }
 ```
 
-> ⚠ **AHEAD OF CODE — 2026-08-26.** The running box holds the curve's own sum and its successor is
-> `value − computeBlockReward(height)` flat. This section states the balance-driven box that replaces
-> it (MINING_INTERFACE → Emission Schedule).
-
 **The whole of a network's credit emission, held as state from height 0.** Genesis creates one on
 every network holding that profile's **carried** emission total; each block spends it to a successor
 holding `value − min(computeBlockReward(height), value) + unearned` — the scheduled release capped by

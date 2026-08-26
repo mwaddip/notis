@@ -185,7 +185,10 @@ describe('settlement leg order', () => {
     expect(outs).toHaveLength(10);
 
     expect(outs[0]!.boxType).toBe('emission');
-    expect(outs[0]!.value).toBe(900n);
+    // 1000 − min(100, 1000) + unearned(23) = 923
+    // splitCoinbase(100, 10, 0, 1): bonusPool=(110×25)/100=27,
+    // earned=27×1/6=4, unearned=23
+    expect(outs[0]!.value).toBe(923n);
 
     expect(outs[1]!.boxType).toBe('treasury');
 
