@@ -1,6 +1,6 @@
 import type { PostType, Stump } from '@dagsocial/types';
 import type { PostStatus, StoredPost, PrunedTombstone } from '../store/posts.js';
-import { isLivePost, isStump, isPrunedTombstone } from '../store/posts.js';
+import { isStump, isPrunedTombstone } from '../store/posts.js';
 
 // ---------------------------------------------------------------------------
 // Dependencies
@@ -58,8 +58,15 @@ export interface PrunedJson {
   compactedAtBlockHeight: number;
 }
 
+export interface WithdrawnJson {
+  kind: 'withdrawn';
+  id: string;
+  author: string;
+  withdrawnAtHeight: number;
+}
+
 export interface ThreadJson {
-  post: PostJson | StumpJson | PrunedJson | null;
+  post: PostJson | StumpJson | PrunedJson | WithdrawnJson | null;
   ancestors: PostJson[];
   descendants: PostJson[];
 }
@@ -113,6 +120,15 @@ export function prunedToJson(tombstone: PrunedTombstone): PrunedJson {
   };
 }
 
+export function withdrawnToJson(post: StoredPost): WithdrawnJson {
+  return {
+    kind: 'withdrawn',
+    id: post.id,
+    author: Buffer.from(post.author).toString('hex'),
+    withdrawnAtHeight: post.withdrawnAtHeight!,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
@@ -125,13 +141,15 @@ export class FeedService {
     return this.deps.getBlockCreatedAt(post.blockHeight);
   }
 
-  getPost(id: string): PostJson | StumpJson | PrunedJson | null {
+  getPost(id: string): PostJson | StumpJson | PrunedJson | WithdrawnJson | null {
     const result = this.deps.getPost(id);
     if (!result) return null;
-    if (isLivePost(result)) {
+    if ('status' in result && 'withdrawnAtHeight' in result) {
+      const post = result as StoredPost;
+      if (post.withdrawnAtHeight !== null) return withdrawnToJson(post);
       const likeCount = this.deps.getLikeRecordCount(id);
       const likers = this.deps.getLikersForPost(id);
-      return postToJson(result, likeCount, likers, this.blockCreatedAtFor(result));
+      return postToJson(post, likeCount, likers, this.blockCreatedAtFor(post));
     }
     if (isStump(result)) return stumpToJson(result);
     if (isPrunedTombstone(result)) return prunedToJson(result);
@@ -158,6 +176,12 @@ export class FeedService {
     const result = this.deps.getPost(id);
     if (!result) return null;
 
+    if ('status' in result && 'withdrawnAtHeight' in result) {
+      const post = result as StoredPost;
+      if (post.withdrawnAtHeight !== null) {
+        return { post: withdrawnToJson(post), ancestors: [], descendants: [] };
+      }
+    }
     if (isStump(result)) {
       return { post: stumpToJson(result), ancestors: [], descendants: [] };
     }

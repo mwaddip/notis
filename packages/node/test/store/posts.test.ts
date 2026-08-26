@@ -622,4 +622,35 @@ describe('posts store', () => {
     expect((result as any).withdrawnAtHeight).toBe(10);
     expect((result as any).status).toBe('confirmed');
   });
+
+  it('FeedService.getPost returns WithdrawnJson for a withdrawn post, not null', async () => {
+    const { initDb, getDb } = await importDbFresh();
+    const { insertPost, confirmPost, getPost } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    const { commit, content } = makeCommit({ content: 'feed withdrawn' });
+    const postId = fixturePostId(commit);
+    insertPost(postId, commit, content);
+    confirmPost(postId, 5, 0);
+
+    getDb().prepare('UPDATE dag_posts SET withdrawn_at_height = 10, content = NULL WHERE id = ?').run(postId);
+
+    const { FeedService } = await import('../../src/services/feed-service.js');
+    const feedService = new FeedService({
+      getPost,
+      queryPosts: () => [],
+      getLikeRecordCount: () => 0,
+      getLikersForPost: () => [],
+      getAncestors: () => [],
+      getSubtree: () => [],
+      getBlockCreatedAt: () => null,
+    });
+
+    const result = feedService.getPost(postId);
+    expect(result).not.toBeNull();
+    expect((result as any).kind).toBe('withdrawn');
+    expect((result as any).withdrawnAtHeight).toBe(10);
+    expect((result as any).author).toBe(hex(commit.author));
+  });
 });
