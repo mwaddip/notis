@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type { UtxoTransaction } from '@dagsocial/types';
 import type { UtxoEngineDeps } from '../services/utxo-engine.js';
+import { getNet } from '../services/net-instance.js';
 import { jsonToTx } from './json-to-tx.js';
 import { respondError } from './respond-error.js';
 
@@ -45,6 +46,13 @@ export function deleteRoutes(deps: DeleteDeps): Router {
     try {
       const currentHeight = deps.getCurrentHeight();
       const { txId } = deps.executePrune(deps, tx, currentHeight);
+
+      const net = getNet();
+      if (net) {
+        net.broadcastTx(tx).catch((err: Error) => {
+          console.warn(`Failed to broadcast prune tx: ${err.message}`);
+        });
+      }
 
       res.status(201).json({
         status: 'submitted',
