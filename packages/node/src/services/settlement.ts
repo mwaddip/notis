@@ -226,9 +226,27 @@ function derive(
   minerRewardDelay: number,
   body: SettlementBody,
 ): { derived: DerivedSettlement } | { error: string } {
-  const split = splitCoinbase(emission, body.fees, body.rent, body.actors);
   const inputs: string[] = [];
   const outputs: AnyBoxCandidate[] = [];
+
+  // ---- 1. The emission box — read first ----
+  //
+  // The release caps the emission term the split sees: income's emission is
+  // what the box actually pays, not what the schedule owes
+  // (MINING_INTERFACE → "The slices").
+  const emissionBox = deps.getEmissionBox();
+  if (!emissionBox || !emissionBox.id) {
+    return {
+      error:
+        `height ${height} requires an emission box but this chain holds none`,
+    };
+  }
+  inputs.push(emissionBox.id);
+  const release = emission < emissionBox.value ? emission : emissionBox.value;
+
+  const split = splitCoinbase(release, body.fees, body.rent, body.actors);
+  const remaining = emissionBox.value - release + split.unearned;
+  outputs.push({ boxType: 'emission', value: remaining, createdAtBlock: height });
 
   // What the pool owes and what it is owed, accumulated across every leg below
   // and settled once. ⛔ **The pool box is spent by this transaction and by
@@ -237,26 +255,6 @@ function derive(
   // remainder and the pruner's own locks are all derived here.
   let poolDraw = 0n;
   let poolSink = 0n;
-
-  // ---- 1. The emission box ----
-  //
-  // Spent on EVERY block: `unearned` has to be returned even at a height the
-  // schedule owes nothing on, and the box exists at every height whatever its
-  // value (TYPES_INTERFACE → EmissionBox).
-  {
-    const box = deps.getEmissionBox();
-    if (!box || !box.id) {
-      return {
-        error:
-          `height ${height} requires an emission box but this chain holds none`,
-      };
-    }
-    inputs.push(box.id);
-    // MINING_INTERFACE → Emission Schedule: `min(computeBlockReward(height), value)`.
-    const release = emission < box.value ? emission : box.value;
-    const remaining = box.value - release + split.unearned;
-    outputs.push({ boxType: 'emission', value: remaining, createdAtBlock: height });
-  }
 
   // ---- 2. The treasury box ----
   //

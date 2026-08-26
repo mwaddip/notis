@@ -201,15 +201,30 @@ describe('the emission box', () => {
     const s = await bootUnder('devnet');
     close = () => s.db.closeDb();
 
-    // Claim more than the box holds. The box holds DEVNET_CARRIED.
-    // emission = DEVNET_CARRIED + 1: release = DEVNET_CARRIED (capped),
-    // successor = DEVNET_CARRIED − DEVNET_CARRIED + unearned = unearned.
-    const tooMuch = DEVNET_CARRIED + 1n;
-    const split = s.split.splitCoinbase(tooMuch, 0n, 0n, 0);
-    expect(settle(s, 1, tooMuch)).toBe(true);
-    // The box is not empty — unearned from the (large) emission returns.
-    expect(s.utxo.getEmissionBox()!.value).toBe(split.unearned);
-    expect(split.unearned).toBeGreaterThan(0n);
+    // Drain the box iteratively to below 42e8. Each step: claim box+1 with
+    // 1000 actors so release = box.value and unearned ≈ release × 0.124%.
+    let h = 1;
+    while (s.utxo.getEmissionBox()!.value >= 42n * E8) {
+      const v = s.utxo.getEmissionBox()!.value;
+      expect(settle(s, h, v + 1n, { actors: 1000 })).toBe(true);
+      h++;
+    }
+
+    // The box now holds less than 42e8. The next block triggers partial payment.
+    const boxBefore = s.utxo.getEmissionBox()!;
+    expect(boxBefore.value).toBeGreaterThan(0n);
+    expect(boxBefore.value).toBeLessThan(42n * E8);
+
+    const release = boxBefore.value;
+    const split = s.split.splitCoinbase(release, 0n, 0n, 0);
+    expect(settle(s, h, 42n * E8)).toBe(true);
+    const boxAfter = s.utxo.getEmissionBox()!;
+    expect(boxAfter.value).toBe(split.unearned);
+
+    // Conservation: what left the box = what treasury + miner received.
+    const consumed = boxBefore.value - boxAfter.value;
+    expect(consumed).toBe(split.treasury + split.miner);
+    expect(consumed).toBeLessThan(42n * E8);
   });
 
   it('returned unearned raises a successor above its predecessor', async () => {
@@ -376,6 +391,45 @@ describe('credit conservation across a block', () => {
       expect(after.treasury - before.treasury).toBe(split.treasury);
     } finally {
       db.closeDb();
+      delete process.env['NETWORK_TYPE'];
+      vi.resetModules();
+    }
+  });
+
+  it('conserves under partial payment — a box too small for the scheduled reward', async () => {
+    const s = await bootUnder('devnet');
+    try {
+      // Drain iteratively to below 42e8 so the next block triggers partial.
+      let h = 1;
+      while (s.utxo.getEmissionBox()!.value >= 42n * E8) {
+        const v = s.utxo.getEmissionBox()!.value;
+        expect(settle(s, h, v + 1n, { actors: 1000 })).toBe(true);
+        h++;
+      }
+
+      const boxBefore = s.utxo.getEmissionBox()!.value;
+      const treasuryBefore = s.utxo.getTreasuryBox()?.value ?? 0n;
+      expect(boxBefore).toBeLessThan(42n * E8);
+      expect(boxBefore).toBeGreaterThan(0n);
+
+      const release = boxBefore;
+      const split = s.split.splitCoinbase(release, 0n, 0n, 0);
+      expect(settle(s, h, 42n * E8)).toBe(true);
+
+      const boxAfter = s.utxo.getEmissionBox()!.value;
+      const treasuryAfter = s.utxo.getTreasuryBox()?.value ?? 0n;
+
+      // Conservation: what left the emission box = what treasury + miner received.
+      const emissionConsumed = boxBefore - boxAfter;
+      const treasuryGained = treasuryAfter - treasuryBefore;
+      expect(emissionConsumed).toBe(treasuryGained + split.miner);
+
+      // The gap that would exist if the split saw the schedule (42e8) instead
+      // of the release (~few hundred): miner ≈ 30e8 vs miner ≈ few hundred.
+      expect(split.miner).toBeLessThan(42n * E8);
+      expect(emissionConsumed).toBeLessThan(42n * E8);
+    } finally {
+      s.db.closeDb();
       delete process.env['NETWORK_TYPE'];
       vi.resetModules();
     }
