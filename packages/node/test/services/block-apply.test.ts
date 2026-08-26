@@ -15,6 +15,9 @@ import {
   VOUCH_KARMA_AMOUNT,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   MAX_BLOCK_BODY_BYTES,
+  leafHash,
+  buildMerkleRoot,
+  hexToBuf,
 } from '@dagsocial/types';
 import { verifyOrderingBlockPoW } from '@dagsocial/validation';
 import type {
@@ -2183,6 +2186,76 @@ describe('block-apply funnel totality', () => {
     expect(metrics.getDagTipHeight()).toBe(1);
     await mineNextBlock(bc);
     expect(metrics.getDagTipHeight()).toBe(2);
+  });
+
+  // -----------------------------------------------------------------------
+  // Maturity bind: a prune in the same block the post is confirmed is rejected
+  // -----------------------------------------------------------------------
+
+  it('rejects a block carrying a post and a prune of that post (maturity bind)', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const utxo = await importUtxo();
+    const posts = await importPosts();
+    const blockApply = await importBlockApply();
+
+    const author = makeTestIdentity();
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'same-block prune');
+    posts.insertPost(postId, commit, content);
+
+    const leaves = [postId].sort().map(id => leafHash('stump', hexToBuf(id)));
+    const pruneKarma = makeKarmaBox(100n, author.userId, 0, 99);
+    utxo.insertBox(pruneKarma);
+    const pruneTx: UtxoTransaction = {
+      inputs: [pruneKarma.id!],
+      outputs: [{ boxType: 'karma' as const, value: 100n, createdAtBlock: 0, owner: author.userId }],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+      prune: {
+        rootPostHash: postId,
+        subtreePostIds: [postId],
+        subtreeMerkleRoot: buildMerkleRoot(leaves),
+      },
+    };
+    signTransaction(pruneTx, author.privateKey, hex(author.userId));
+
+    const block = await makeApplicableBlock({ utxoTxs: [postTx, pruneTx] });
+    const applied = blockApply.applyOrderingBlock(block);
+    expect(applied).toBe(false);
+  });
+
+  it('accepts a prune in a block AFTER the post was confirmed (maturity bind satisfied)', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const utxo = await importUtxo();
+    const posts = await importPosts();
+    const blockApply = await importBlockApply();
+
+    const author = makeTestIdentity();
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'earlier-block prune');
+    posts.insertPost(postId, commit, content);
+
+    const block1 = await makeApplicableBlock({ utxoTxs: [postTx] });
+    expect(blockApply.applyOrderingBlock(block1)).toBe(true);
+
+    const pruneKarma = makeKarmaBox(100n, author.userId, 0, 98);
+    utxo.insertBox(pruneKarma);
+    const leaves = [postId].sort().map(id => leafHash('stump', hexToBuf(id)));
+    const pruneTx: UtxoTransaction = {
+      inputs: [pruneKarma.id!],
+      outputs: [{ boxType: 'karma' as const, value: 100n, createdAtBlock: 0, owner: author.userId }],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+      prune: {
+        rootPostHash: postId,
+        subtreePostIds: [postId],
+        subtreeMerkleRoot: buildMerkleRoot(leaves),
+      },
+    };
+    signTransaction(pruneTx, author.privateKey, hex(author.userId));
+
+    const block2 = await makeApplicableBlock({ height: 2, utxoTxs: [pruneTx] });
+    expect(blockApply.applyOrderingBlock(block2)).toBe(true);
   });
 });
 

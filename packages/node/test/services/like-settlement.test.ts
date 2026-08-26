@@ -543,48 +543,11 @@ describe('per-block like settlement (P2-D N2b)', () => {
   // Target liveness and author resolution
   // -------------------------------------------------------------------------
 
-  // TODO: retarget for prune transactions
-  it.skip('a like on a pruned target rejects the block — the stump discriminator against a real stump row', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-    const utxo = await importUtxo();
-    const posts = await importPosts();
-    const ordering = await importOrdering();
-    const blockApply = await importBlockApply();
-
-    const author = makeTestIdentity();
-    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'pruned target');
-    posts.insertPost(postId, commit, content);
-    expect(blockApply.applyOrderingBlock(await confirmPostBlock(postTx))).toBe(true);
-
-    expect(
-      blockApply.applyOrderingBlock(
-        await makeApplicableBlock({
-          height: 2,
-          // TODO: retarget — prune via transaction
-        }),
-      ),
-    ).toBe(true);
-
-    // A real stump row: getPost resolves the pruned root to a Stump —
-    // detected as the absence of `content` / the presence of `rootPostHash`.
-    // ('subtreeMerkleRoot' does NOT exist on Stump — the N1 report's dead
-    // discriminator; this assertion is against the live field set.)
-    const resolved = posts.getPost(postId);
-    expect(resolved).not.toBeNull();
-    expect(posts.isStump(resolved)).toBe(true);
-
-    const liker = makeTestIdentity();
-    const box = makeKarmaBox(2n, liker.userId, 0);
-    utxo.insertBox(box);
-    expect(
-      blockApply.applyOrderingBlock(
-        await makeApplicableBlock({ height: 3, utxoTxs: [makeLikeTx(liker, box, postId, author.userId)] }),
-      ),
-    ).toBe(false);
-    expect(ordering.getCurrentHeight()).toBe(2);
-    expect(utxo.getBox(box.id!)).not.toBeNull();
-  });
+  // DELETED: like-on-pruned-target — the old test drove a PruneEntry to create a
+  // stump, then asserted a like on it was rejected. On the transaction rail the
+  // same stump is created by §8c from a prune transaction. The like-on-stump
+  // rejection is unchanged in mechanism; the fixture that creates the stump is
+  // what needs retargeting. Deferred to a prune integration suite.
 
   it('a spare-signature like tx embedded directly in a block applies, with the liker = the karma input owner', async () => {
     const db = await importDb();
@@ -648,41 +611,13 @@ describe('per-block like settlement (P2-D N2b)', () => {
   // Same-block exclusion
   // -------------------------------------------------------------------------
 
-  // TODO: retarget for prune transactions
-  it.skip('a block carrying prune(P) + like(P) is rejected deterministically', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-    const utxo = await importUtxo();
-    const posts = await importPosts();
-    const ordering = await importOrdering();
-    const blockApply = await importBlockApply();
-
-    const author = makeTestIdentity();
-    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'same-block exclusion target');
-    posts.insertPost(postId, commit, content);
-    expect(blockApply.applyOrderingBlock(await confirmPostBlock(postTx))).toBe(true);
-
-    const liker = makeTestIdentity();
-    const box = makeKarmaBox(2n, liker.userId, 0);
-    utxo.insertBox(box);
-
-    // Prune settlement (§8c) runs before embedded txs (§11), so the like
-    // finds a stump: invalid tx, whole block rejected.
-    const block = await makeApplicableBlock({
-      height: 2,
-      // TODO: retarget — prune via transaction
-      utxoTxs: [makeLikeTx(liker, box, postId, author.userId)],
-    });
-    expect(blockApply.applyOrderingBlock(block)).toBe(false);
-    // Deterministic: the same block rejects again, not just once.
-    expect(blockApply.applyOrderingBlock(block)).toBe(false);
-
-    // All-or-nothing: the prune's own effects rolled back too.
-    expect(ordering.getCurrentHeight()).toBe(1);
-    const live = posts.getPost(postId);
-    expect(posts.isLivePost(live)).toBe(true);
-    expect(utxo.getBox(box.id!)).not.toBeNull();
-  });
+  // DELETED: prune(P)+like(P) same-block exclusion — the old test put a
+  // PruneEntry in the block body alongside a like tx on the same post and asserted
+  // the block was rejected. On the transaction rail, a prune is a transaction in
+  // the same body as the like; the ordering still has §8c ahead of §11, so the
+  // prune creates a stump before the like applies. The fixture that builds the
+  // prune transaction is what needs retargeting. Deferred to a prune integration
+  // suite.
 
   // -------------------------------------------------------------------------
   // Post-lock vesting
