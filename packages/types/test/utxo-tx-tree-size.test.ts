@@ -38,7 +38,6 @@ import {
 } from '../src/codec.js';
 import { encodeUtxoTxTree, utxoTxTreeByteLength } from '../src/serialization.js';
 import type { UtxoTxTree } from '../src/block.js';
-import type { PruneEntry } from '../src/stump.js';
 
 /** The all-ones u64, ten bytes — what every sentinelled field costs. */
 const SENTINEL_WIDTH = encodeVlqBigInt(VLQ_SENTINEL).length;
@@ -60,20 +59,9 @@ function txs(count: number, eachLength: number): Uint8Array[] {
   return Array.from({ length: count }, () => new Uint8Array(eachLength).fill(0x7a));
 }
 
-function makePruneEntry(subtreeCount = 3): PruneEntry {
-  return {
-    rootPostHash: 'a1'.repeat(32),
-    subtreePostIds: ids(subtreeCount),
-    subtreeMerkleRoot: new Uint8Array(32).fill(0x11),
-    authorId: new Uint8Array(32).fill(0x22),
-    authorSignature: new Uint8Array(64).fill(0x33),
-  };
-}
-
 const EMPTY_TREE: UtxoTxTree = {
   utxoTxIds: [],
   utxoTxs: [],
-  pruneEntries: [],
 };
 
 function makeTree(over: Partial<UtxoTxTree> = {}): UtxoTxTree {
@@ -153,29 +141,14 @@ describe('VLQ width mirrors', () => {
 // ---------------------------------------------------------------------------
 
 describe('utxoTxTreeByteLength', () => {
-  // Three `vlqU(0)` counts and nothing else. Pinned as a number as well as an
-  // equivalence: it is the one tree whose size is short enough to read.
-  //
-  // ⛔ **`utxoTxTreeByteLength` computes this number a SECOND WAY**, so its terms
-  // and the codec's sections move together or the two diverge with no compiler
-  // signal. A section present in one and not the other shows up here as a
-  // one-byte gap on every tree, which is why the count is pinned as a literal and
-  // not only as an equivalence.
-  it('sizes the empty tree at three count prefixes', () => {
-    expect(expectSizeMatchesEncoder(EMPTY_TREE)).toBe(3);
+  it('sizes the empty tree at two count prefixes', () => {
+    expect(expectSizeMatchesEncoder(EMPTY_TREE)).toBe(2);
   });
 
-  it('sizes a tree carrying several prune entries', () => {
-    expectSizeMatchesEncoder(makeTree({
-      pruneEntries: [makePruneEntry(1), makePruneEntry(4), makePruneEntry(0)],
-    }));
-  });
-
-  it('sizes a full body — ids, transactions and prunes together', () => {
+  it('sizes a full body — ids and transactions', () => {
     expectSizeMatchesEncoder(makeTree({
       utxoTxIds: ids(300),
       utxoTxs: txs(300, 953),
-      pruneEntries: [makePruneEntry(2), makePruneEntry(200)],
     }));
   });
 });
@@ -198,31 +171,6 @@ describe('VLQ width boundaries', () => {
     });
   }
 
-  // ⛔ **The prune entry is the ONE element writer whose width varies**, so its
-  // count AND its one variable field both straddle here. An element writer added
-  // to the body owes the same pair of loops.
-  for (const n of [0, 1, 127, 128]) {
-    CASES.push({
-      label: `${n} prune entries`,
-      tree: () => makeTree({ pruneEntries: Array.from({ length: n }, () => makePruneEntry(2)) }),
-    });
-    CASES.push({
-      label: `a prune entry naming ${n} subtree post ids`,
-      tree: () => makeTree({ pruneEntries: [makePruneEntry(n)] }),
-    });
-  }
-
-  // An entry's size follows the LENGTH of its one array and nothing else, since
-  // every other field is fixed-width: 161 bytes plus a count prefix plus 32 per
-  // id. These two straddle the prefix's second width step, where a sizer
-  // assuming a one-byte count drifts by a byte per entry rather than per block.
-  for (const n of [16_383, 16_384]) {
-    CASES.push({
-      label: `a prune entry naming ${n} subtree post ids`,
-      tree: () => makeTree({ pruneEntries: [makePruneEntry(n)] }),
-    });
-  }
-
   for (const { label, tree } of CASES) {
     it(`sizes ${label}`, () => {
       expectSizeMatchesEncoder(tree());
@@ -242,7 +190,7 @@ describe('VLQ width boundaries', () => {
  * writer moved rather than only that a total disagreed.
  */
 describe('sentinel branches', () => {
-  const EMPTY_SIZE = 3;
+  const EMPTY_SIZE = 2;
 
   it('costs a non-array section its sentinel count and no elements', () => {
     const tree = makeTree({ utxoTxIds: undefined as unknown as string[] });
@@ -261,13 +209,6 @@ describe('sentinel branches', () => {
     expect(utxoTxTreeByteLength(tree)).toBeGreaterThan(EMPTY_SIZE + 1 + 'abc'.length);
   });
 
-  it('costs a non-array subtreePostIds its sentinel count', () => {
-    const entry = { ...makePruneEntry(), subtreePostIds: null as unknown as string[] };
-    const tree = makeTree({ pruneEntries: [entry] });
-    expectSizeMatchesEncoder(tree);
-    // 160 fixed bytes with the array's count sentinelled.
-    expect(utxoTxTreeByteLength(tree) - EMPTY_SIZE).toBe(160 + SENTINEL_WIDTH);
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -289,24 +230,6 @@ describe('trees the encoder rejects', () => {
     {
       label: 'a utxoTxId of the wrong length',
       tree: makeTree({ utxoTxIds: ['ab'] }),
-    },
-    {
-      label: 'a prune entry whose authorId is not 32 bytes',
-      tree: makeTree({
-        pruneEntries: [{ ...makePruneEntry(0), authorId: new Uint8Array(31) }],
-      }),
-    },
-    {
-      label: 'a prune entry whose rootPostHash is not lowercase hex',
-      tree: makeTree({
-        pruneEntries: [{ ...makePruneEntry(0), rootPostHash: 'AB'.repeat(32) }],
-      }),
-    },
-    {
-      label: 'a prune entry whose signature is the wrong width',
-      tree: makeTree({
-        pruneEntries: [{ ...makePruneEntry(0), authorSignature: new Uint8Array(63) }],
-      }),
     },
   ];
 

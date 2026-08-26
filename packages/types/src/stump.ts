@@ -1,20 +1,14 @@
-import { createHash } from 'crypto';
-import { ByteWriter } from '@dagsocial/wire';
+import { ByteReader, ByteWriter } from '@dagsocial/wire';
 import {
+  readArr,
+  readBytesN,
+  readHexN,
   writeArr,
   writeBytesNOrThrow,
   writeHexNOrThrow,
 } from './codec.js';
 import type { UserId } from './identity.js';
 import type { PostId } from './post.js';
-
-const encoder = new TextEncoder();
-
-/**
- * Domain separator for the prune-entry id (TYPES_INTERFACE → Layout — Stump /
- * PruneEntry). Module-local, following `POST_ID_DOMAIN` (`post.ts`).
- */
-const PRUNE_ENTRY_ID_DOMAIN = encoder.encode('dagsocial/prune-entry-id/1');
 
 // ---------------------------------------------------------------------------
 // Prune intent (author signs this to authorize pruning)
@@ -29,15 +23,20 @@ export interface PruneIntent {
 }
 
 // ---------------------------------------------------------------------------
-// Prune entry (committed in utxoTxTree; one per pruned reply subtree)
+// Prune commit (the payload inside a prune transaction)
 // ---------------------------------------------------------------------------
 
-export interface PruneEntry {
+/**
+ * The prune payload carried by a karma transaction (`UtxoTransaction.prune`).
+ *
+ * The transaction's signature over `txId` covers this payload, so
+ * `authorId` and `authorSignature` leave the struct — the author is
+ * `inputKarma.owner`, which node resolves (TYPES_INTERFACE → UtxoTransaction).
+ */
+export interface PruneCommit {
   rootPostHash: PostId;
   subtreePostIds: PostId[];
-  subtreeMerkleRoot: Uint8Array;
-  authorId: UserId;
-  authorSignature: Uint8Array;     // 64 bytes — Ed25519 sig over blake2b512(rootPostHash ++ subtreeMerkleRoot)
+  subtreeMerkleRoot: Uint8Array;   // 32 bytes
 }
 
 // ---------------------------------------------------------------------------
@@ -56,58 +55,41 @@ export interface Stump {
 export type StumpId = string;
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Prune commit encoding
 // ---------------------------------------------------------------------------
 
 /**
- * Deterministic ID for a PruneEntry (TYPES_INTERFACE → Layout — Stump /
- * PruneEntry).
- *
- * `hex( blake2b512( PRUNE_ENTRY_ID_DOMAIN ‖ b32(rootPostHash) ‖
- * b32(subtreeMerkleRoot) ‖ b32(authorId) )[0..32] )`
- *
- * Two fields stay out deliberately (TYPES_INTERFACE → Layout — Stump /
- * PruneEntry): `subtreePostIds` (committed transitively by
- * `subtreeMerkleRoot`) and `authorSignature` (the id is the mempool dedup
- * key — two identically-parameterized prunes under different valid signature
- * bytes are one intent and must collapse to one entry).
- */
-export function computePruneEntryId(entry: PruneEntry): string {
-  const w = new ByteWriter();
-  w.writeBytes(PRUNE_ENTRY_ID_DOMAIN);
-  writeHexNOrThrow(w, entry.rootPostHash, 32);
-  writeBytesNOrThrow(w, entry.subtreeMerkleRoot, 32);
-  writeBytesNOrThrow(w, entry.authorId, 32);
-  const h = createHash('blake2b512');
-  h.update(w.toBytes());
-  return h.digest().subarray(0, 32).toString('hex');
-}
-
-/**
- * The canonical encoding of a PruneEntry — the Merkle leaf preimage in the
- * subtree proof, committed under `utxoTxRoot`.
- *
- * TYPES_INTERFACE → Layout — Stump / PruneEntry:
+ * The canonical encoding of a PruneCommit — the prune payload inside
+ * `txIdBytes` field 6 (TYPES_INTERFACE → Layout — UtxoTransaction).
  *
  *   | 1 | rootPostHash      | b32 (hex)      |
  *   | 2 | subtreePostIds    | arr(ids, b32)  |
  *   | 3 | subtreeMerkleRoot | b32 (bytes)    |
- *   | 4 | authorId          | b32 (bytes)    |
- *   | 5 | authorSignature   | b64 (bytes)    |
  *
- * Every field is fixed-width, so **every writer throws** outside its domain
- * (TYPES_INTERFACE → Totality): there is no unreachable sentinel at a fixed
- * width, and padding a malformed id to 32 bytes would map it onto a well-formed
- * entry's leaf. The domain is `verifyOrderingBlockStructure`'s, which pins the
- * hex and byte widths of every prune-entry field before a block reaches the
- * Merkle builder.
+ * Every field is fixed-width, so every writer throws outside its domain
+ * (TYPES_INTERFACE → Totality). Self-delimiting: three fields, each
+ * fixed-width or count-prefixed, so nothing follows it to be ambiguous
+ * against — the same property `postFieldBytes` has.
  */
-export function serializePruneEntry(entry: PruneEntry): Uint8Array {
+export function pruneFieldBytes(prune: PruneCommit): Uint8Array {
   const w = new ByteWriter();
-  writeHexNOrThrow(w, entry.rootPostHash, 32);
-  writeArr(w, entry.subtreePostIds, (ww, id) => writeHexNOrThrow(ww, id, 32));
-  writeBytesNOrThrow(w, entry.subtreeMerkleRoot, 32);
-  writeBytesNOrThrow(w, entry.authorId, 32);
-  writeBytesNOrThrow(w, entry.authorSignature, 64);
+  writeHexNOrThrow(w, prune.rootPostHash, 32);
+  writeArr(w, prune.subtreePostIds, (ww, id) => writeHexNOrThrow(ww, id, 32));
+  writeBytesNOrThrow(w, prune.subtreeMerkleRoot, 32);
   return w.toBytes();
+}
+
+/**
+ * The inverse of `pruneFieldBytes` — read a PruneCommit back.
+ *
+ * Adjacent to the writer for the same reason every pair in this format is:
+ * field order is normative and a reader that walks it differently is a
+ * consensus divergence with no compiler signal (TYPES_INTERFACE → Primitives).
+ */
+export function readPruneCommitFields(r: ByteReader): PruneCommit {
+  return {
+    rootPostHash: readHexN(r, 32),
+    subtreePostIds: readArr(r, (rr) => readHexN(rr, 32)),
+    subtreeMerkleRoot: readBytesN(r, 32),
+  };
 }

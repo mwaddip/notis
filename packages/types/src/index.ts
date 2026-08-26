@@ -126,19 +126,11 @@ export type {
   TxId,
 } from './utxo.js';
 
-// Stumps
-export { computePruneEntryId, serializePruneEntry } from './stump.js';
-export type { PruneIntent, Stump, StumpId, PruneEntry } from './stump.js';
+// Stumps / prune
+export { pruneFieldBytes } from './stump.js';
+export type { PruneIntent, PruneCommit, Stump, StumpId } from './stump.js';
 
 // Blocks
-//
-// `serializePruneEntry` (above, with the stumps) is the one block element whose
-// wire bytes are also a Merkle leaf preimage, so it is the one this package
-// exports for node to build a leaf from. The `leafHash` domain tag is the
-// caller's — see TYPES_INTERFACE → Layout — Merkle leaf preimages are the struct's own wire bytes.
-//
-// The leaf domain `'coinbase'` is a tracked reservation
-// (TYPES_INTERFACE → Tracked reservations).
 export {
   EMPTY_STATE_ROOT,
 } from './block.js';
