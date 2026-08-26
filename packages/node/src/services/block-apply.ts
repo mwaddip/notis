@@ -1096,8 +1096,8 @@ function applyMutationPhase(
     const { prune } = bp;
 
     // Maturity bind: the root must have been confirmed in an earlier block.
-    // Producer-independent, decidable from committed state, and ruled for
-    // withdrawal as well as prune (NODE_INTERFACE → Prune transactions).
+    // Producer-independent, decidable from committed state
+    // (NODE_INTERFACE → Prune transactions).
     const rootHeight = getTopologyHeight(prune.rootPostHash);
     if (rootHeight === null || rootHeight >= height) {
       console.error(
@@ -1294,7 +1294,7 @@ function applyMutationPhase(
   // count — so the result is independent of how the likes were spread across
   // blocks.
   //
-  // Posts settled by §8c above (prune or withdrawal) have their vest folded
+  // Posts settled by §8c above have their vest folded
   // into the settlement plan; the settlement at §11a consumed their lock box,
   // so `getPostLockBox` returns null and the loop skips them naturally.
   for (const postId of [...likesPerPost.keys()].sort()) {

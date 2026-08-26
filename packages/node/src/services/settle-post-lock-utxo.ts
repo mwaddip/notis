@@ -3,7 +3,7 @@ import { POST_LOCK_UNLOCK_PER_LIKES } from '@dagsocial/types';
 import { getPostLockBox } from '../store/index.js';
 
 /**
- * What a pruned or withdrawn subtree owes, as a plan rather than as a mutation.
+ * What a pruned subtree owes, as a plan rather than as a mutation.
  *
  * ⛔ **Post-lock settlement moves no karma any more.** The actor's own locks
  * leave circulation, and value leaving circulation goes to the karma supply
@@ -31,7 +31,7 @@ export interface PostLockSettlement {
  * The vest a `PostLockBox` releases for a given lifetime like count.
  *
  * ⛔ **ONE FUNCTION, TWO CALLERS.** `planPostLockSettlement` calls it for posts
- * being pruned or withdrawn (vest folded into the settlement), and §11b calls
+ * being pruned (vest folded into the settlement), and §11b calls
  * it for posts liked this block that are not being settled. Both must use this
  * function — two derivations of one rule is the hazard D11 §4 names.
  */
@@ -47,7 +47,7 @@ export function computeVestAmount(
 }
 
 /**
- * Deterministic settlement for a pruned or withdrawn subtree.
+ * Deterministic settlement for a pruned subtree.
  *
  * ⛔ **A PURE READ.** It names boxes and amounts and mutates nothing — the
  * subtree's like-record deletions are block application's, at §8c, because this
@@ -78,8 +78,7 @@ export function computeVestAmount(
  * apply.** The caller computes it — the creator adds the body's likes to the
  * stored count, the applier's stored count already holds them — and this
  * function never reads `getLikeRecordCount` itself. A plan that did would
- * silently disagree between the two callers (NODE_INTERFACE → Post-lock
- * settlement).
+ * silently disagree between the two callers.
  *
  * ⛔ **A REFUND CARRIES NO MINT PROVENANCE.** It is an output of the block's
  * settlement transaction, so it takes that transaction's real `(txId, index)`
@@ -106,7 +105,10 @@ export function planPostLockSettlement(
 
       if (owner === actor) {
         // The actor's lock: vest goes back to the actor as a refund,
-        // remaining lock value goes to the pool.
+        // remaining lock value goes to the pool. ⚠ **A burn is a
+        // destination, so it is named at the site**: `toPool` carries it,
+        // where a difference between two figures would carry nothing a
+        // search could find (ARCHITECTURE → The conservation axiom).
         if (vestAmount > 0n) {
           refunds.set(owner, (refunds.get(owner) ?? 0n) + vestAmount);
         }
@@ -123,6 +125,9 @@ export function planPostLockSettlement(
   return {
     lockBoxIds,
     // Ascending owner-hex, so two nodes emit one entry's refunds in one order.
+    // A `Map`'s insertion order is the subtree walk's, which is already fixed by
+    // `postIds` — sorted anyway, because relying on that is relying on a
+    // property of the caller rather than on one this function states.
     refunds: [...refunds.entries()]
       .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
       .map(([hexOwner, amount]) => ({
