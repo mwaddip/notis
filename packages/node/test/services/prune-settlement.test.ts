@@ -738,9 +738,6 @@ describe('planPruneSettlement — refund provenance', () => {
 // Integration test: full prune lifecycle (UTXO path)
 // ---------------------------------------------------------------------------
 
-// TODO: retarget prune lifecycle, stump insert, and apply-then-revert tests
-// for prune transactions. The old tests used `pruneEntries` in block fixtures
-// which no longer exists — prunes ride as ordinary transactions now.
 
 describe('Full prune lifecycle (UTXO settlement path)', () => {
   it.todo('retarget for prune transactions');

@@ -426,11 +426,6 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
   // block-apply revert test with digest + re-apply identity.)
   // -----------------------------------------------------------------------
 
-  // DELETED: prune settlement round-trip — the old test drove a PruneEntry through
-  // block application and checked the journal round-trip. On the transaction rail
-  // the same mechanism runs through the embedded-tx loop and §8c, both tested by
-  // block-apply's maturity bind tests and utxo-engine's transition arm tests. A
-  // prune-transaction journal round-trip is deferred to a prune integration suite.
 
   // -----------------------------------------------------------------------
   // The escrow release — the matured `VouchEscrowBox` is consumed and its karma

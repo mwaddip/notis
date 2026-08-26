@@ -667,8 +667,6 @@ describe('mempool store', () => {
   // frame wraps in a try/catch. A prune test that stops at the insert leaves
   // the writer and the reader free to speak different codecs, so what this
   // needs to assert is the PAIR.
-  // Prune entry round-trip tests deleted — prune entries no longer exist as a
-  // separate mempool row type. Prunes ride as ordinary transactions.
 
   // -------------------------------------------------------------------------
   // Size cap — per class. The karma-side class rejects and never evicts; the

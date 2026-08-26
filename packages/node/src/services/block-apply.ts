@@ -682,10 +682,12 @@ function applyMutationPhase(
   }
 
   // 8c. Process prune transactions from this block.
-  // The authorship binding and signature check (old steps 1–2) collapse into the
-  // transaction's own validation — the prune transition arm verifies
-  // `inputKarma.owner` against the root's topology author, and the transaction's
-  // signature covers the PruneCommit payload via `txIdBytes`. Steps 3–6 stand.
+  //
+  // Authorship and the payload's integrity are the transaction's own: the prune
+  // transition arm verifies `inputKarma.owner` against the root's topology
+  // author, and the signature over `txId` covers the PruneCommit through
+  // `txIdBytes`. What remains here is the topology set, the Merkle root, the
+  // maturity bind, the UTXO settlement and the DAG effect.
   const blockPrunes = prunesOf(block, getTopologyAuthorBytes);
   for (const bp of blockPrunes) {
     const { prune } = bp;

@@ -11,9 +11,6 @@ import {
   encodeHeader,
   encodeUtxoTxTree,
   u32BE,
-  leafHash,
-  buildMerkleRoot,
-  hexToBuf,
   PROTOCOL_VERSION,
   LIKE_KARMA_COST,
   POST_LOCK_THREAD_COST,
@@ -756,41 +753,6 @@ export function signHeader(header: BlockHeader, privateKey: KeyObject): Uint8Arr
     throw new Error('signHeader: header is outside the encodable domain — nothing to sign');
   }
   return new Uint8Array(cryptoSign(null, Buffer.from(hash, 'hex'), privateKey));
-}
-
-/** Legacy PruneEntry shape — kept for tests that still reference it. */
-export interface LegacyPruneEntry {
-  rootPostHash: string;
-  subtreePostIds: string[];
-  subtreeMerkleRoot: Uint8Array;
-  authorId: Uint8Array;
-  authorSignature: Uint8Array;
-}
-
-/**
- * A legacy PruneEntry that is internally valid. Kept for tests that need
- * the old entry shape during retargeting; new prune tests should build
- * prune transactions instead.
- */
-export function makePruneEntry(
-  rootPostHash: string,
-  subtreePostIds: string[],
-  signWith: TestIdentity,
-): LegacyPruneEntry {
-  const leaves = [...subtreePostIds].sort().map((id) => leafHash('stump', hexToBuf(id)));
-  const subtreeMerkleRoot = buildMerkleRoot(leaves);
-  const payload = createHash('blake2b512')
-    .update(rootPostHash)
-    .update(Buffer.from(subtreeMerkleRoot))
-    .digest()
-    .subarray(0, 32);
-  return {
-    rootPostHash,
-    subtreePostIds,
-    subtreeMerkleRoot,
-    authorId: signWith.userId,
-    authorSignature: new Uint8Array(cryptoSign(null, payload, signWith.privateKey)),
-  };
 }
 
 /**

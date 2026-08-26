@@ -602,9 +602,10 @@ function checkTransitions(
         if (!domains.valid) {
           return { valid: false, error: `Invalid prune payload: ${domains.error}` };
         }
-        // The karma input's owner is the root's consensus-recorded author.
-        // This is the authorship binding — same check §8c step 1 used to do on
-        // the entry, now collapsed into the transaction's own validation.
+        // The authorship binding: the karma input's owner is the root's
+        // consensus-recorded author (NODE_INTERFACE → Prune transactions).
+        // `block_topology` is the authority, so a node holding no DAG content
+        // reaches the same verdict.
         const rootAuthor = deps.getTopologyAuthor(prune.rootPostHash);
         if (rootAuthor === null ||
             Buffer.from(rootAuthor).toString('hex') !== inputOwnerHex) {

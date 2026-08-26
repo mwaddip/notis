@@ -153,9 +153,13 @@ describe('prune', () => {
     }
 
     // ---- PROPAGATION: prune submitted to a non-mining node reaches consensus ----
-    // A prune is an ordinary transaction and gossips like one. Before the rail,
-    // prune entries had no gossip path — an entry reached consensus only if the
-    // receiving node won a block. This assertion cannot pass on master.
+    //
+    // A prune is an ordinary transaction, so the route broadcasts it and it
+    // gossips to every peer's pool; whichever node mines includes it. This pins
+    // the GOSSIP PATH, not the route: the submit below goes to `peer`, which
+    // never mines, and the stump is asserted on `miner` and then on every node.
+    // ⚠ **If this goes red, propagation broke** — a route change alone would
+    // fail the submit, not the mesh-wide stump.
     const aliceK4 = (await getKarma(miner, alice.publicKeyHex))!;
     const propThread = buildThreadTx(alice, karmaBoxes(aliceK4), 'propagation root', aliceK4.height);
     const propThreadRes = await postPost(miner, propThread.json, propThread.content);

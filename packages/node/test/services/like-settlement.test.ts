@@ -543,11 +543,6 @@ describe('per-block like settlement (P2-D N2b)', () => {
   // Target liveness and author resolution
   // -------------------------------------------------------------------------
 
-  // DELETED: like-on-pruned-target — the old test drove a PruneEntry to create a
-  // stump, then asserted a like on it was rejected. On the transaction rail the
-  // same stump is created by §8c from a prune transaction. The like-on-stump
-  // rejection is unchanged in mechanism; the fixture that creates the stump is
-  // what needs retargeting. Deferred to a prune integration suite.
 
   it('a spare-signature like tx embedded directly in a block applies, with the liker = the karma input owner', async () => {
     const db = await importDb();
@@ -611,13 +606,6 @@ describe('per-block like settlement (P2-D N2b)', () => {
   // Same-block exclusion
   // -------------------------------------------------------------------------
 
-  // DELETED: prune(P)+like(P) same-block exclusion — the old test put a
-  // PruneEntry in the block body alongside a like tx on the same post and asserted
-  // the block was rejected. On the transaction rail, a prune is a transaction in
-  // the same body as the like; the ordering still has §8c ahead of §11, so the
-  // prune creates a stump before the like applies. The fixture that builds the
-  // prune transaction is what needs retargeting. Deferred to a prune integration
-  // suite.
 
   // -------------------------------------------------------------------------
   // Post-lock vesting

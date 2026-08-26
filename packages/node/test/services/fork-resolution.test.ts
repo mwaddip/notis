@@ -1823,8 +1823,6 @@ describe('reorg', () => {
   });
 });
 
-// TODO: retarget prune re-insertion tests — prunes are now re-inserted as
-// transactions through `appliedUtxoTxs`, not as separate entries.
 
 // ---------------------------------------------------------------------------
 // Tests — reorg abort restores the AVL prover (NODE_INTERFACE →

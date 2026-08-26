@@ -2003,7 +2003,6 @@ describe('block-apply H-3 post authorship and prune binding', () => {
     vi.resetModules();
   });
 
-  // TODO: retarget prune authorship binding and structure-gate tests for prune transactions
 
   // -----------------------------------------------------------------------
   // Entry-vs-post verification — content-holders keep lying entries out
@@ -2070,7 +2069,6 @@ describe('block-apply funnel totality', () => {
     vi.resetModules();
   });
 
-  // TODO: retarget prune-entry totality and path-independence tests for prune transactions
 
   // -----------------------------------------------------------------------
   // Totality backstop — an unexpected throw is a rejection, not a crash

@@ -18,9 +18,9 @@
  * ordering block carrying arbitrary extra keys hashing to a byte-identical
  * `blockHash` while the encoding differs by 395 bytes.
  *
- * Prune entries are no longer a block-body section — prunes ride the
- * transaction rail as `UtxoTransaction.prune` payloads. The `utxoTxTree`
- * codec carries two sections (`utxoTxIds`, `utxoTxs`), not three.
+ * The `utxoTxTree` codec carries two sections, `utxoTxIds` and `utxoTxs`. A
+ * prune rides the transaction rail as a `UtxoTransaction.prune` payload, so it
+ * needs no section of its own (TYPES_INTERFACE → Ordering block).
  */
 
 import { ByteReader, ByteWriter } from '@dagsocial/wire';
