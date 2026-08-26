@@ -116,6 +116,7 @@ describe('db lifecycle', () => {
     expect(dagPostsNames).toContain('parent_refs');
     expect(dagPostsNames).toContain('status');
     expect(dagPostsNames).toContain('block_height');
+    expect(dagPostsNames).toContain('withdrawn_at_height');
     expect(dagPostsNames).not.toContain('raw_cbor');
 
     // ordering_blocks — one blob column per body section, plus the header

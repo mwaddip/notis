@@ -95,7 +95,7 @@ describe('posts store', () => {
     expect(result.type).toBe('regular');
     expect(result.status).toBe('pending');
     expect(Object.keys(result).sort()).toEqual(
-      ['author', 'blockHeight', 'blockIndex', 'content', 'contentHash', 'id', 'parentRefs', 'protocolVersion', 'status', 'type'],
+      ['author', 'blockHeight', 'blockIndex', 'content', 'contentHash', 'id', 'parentRefs', 'protocolVersion', 'status', 'type', 'withdrawnAtHeight'],
     );
   });
 
@@ -539,6 +539,87 @@ describe('posts store', () => {
       id: 'x', content: null, contentHash: '00', author: new Uint8Array(32),
       parentRefs: [], protocolVersion: 1, type: 'regular' as const,
       status: 'pending' as const, blockHeight: null, blockIndex: null,
+      withdrawnAtHeight: null,
     })).toBe(true);
+  });
+
+  it('isLivePost returns false for a withdrawn post', async () => {
+    const { isLivePost } = await importPostsFresh();
+
+    expect(isLivePost({
+      id: 'x', content: null, contentHash: '00', author: new Uint8Array(32),
+      parentRefs: [], protocolVersion: 1, type: 'regular' as const,
+      status: 'confirmed' as const, blockHeight: 5, blockIndex: 0,
+      withdrawnAtHeight: 10,
+    })).toBe(false);
+  });
+
+  it('a withdrawn row is excluded from getMissingBodies, getPlaceholdersAt, and setPostBody', async () => {
+    const { initDb, getDb } = await importDbFresh();
+    const { insertPost, confirmPost, getMissingBodies, getPlaceholdersAt, setPostBody } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    const { commit } = makeCommit({ content: 'will withdraw' });
+    const postId = fixturePostId(commit);
+    insertPost(postId, commit, null);
+    confirmPost(postId, 5, 0);
+
+    // Mark as withdrawn directly
+    getDb().prepare('UPDATE dag_posts SET withdrawn_at_height = ? WHERE id = ?').run(10, postId);
+
+    expect(getMissingBodies(100)).toEqual([]);
+    expect(getPlaceholdersAt(5)).toEqual([]);
+    expect(setPostBody(postId, 'resurrected')).toBe(false);
+  });
+
+  it('reorg round-trip: a withdrawn row through deletePostRows → restorePostRows comes back still withdrawn', async () => {
+    const { initDb, getDb } = await importDbFresh();
+    const { insertPost, confirmPost, deletePostRows, restorePostRows, getPost } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    const { commit, content } = makeCommit({ content: 'withdraw me' });
+    const postId = fixturePostId(commit);
+    insertPost(postId, commit, content);
+    confirmPost(postId, 5, 0);
+
+    // Mark as withdrawn directly, then null the content (as withdrawal does)
+    getDb().prepare('UPDATE dag_posts SET withdrawn_at_height = 10, content = NULL WHERE id = ?').run(postId);
+
+    const deleted = deletePostRows([postId]);
+    expect(deleted).toHaveLength(1);
+    expect(deleted[0]!.withdrawnAtHeight).toBe(10);
+    expect(deleted[0]!.content).toBeNull();
+
+    restorePostRows(deleted);
+    const restored = getPost(postId) as any;
+    expect(restored).not.toBeNull();
+    expect(restored.withdrawnAtHeight).toBe(10);
+    expect(restored.content).toBeNull();
+
+    // The restored row must NOT appear in getMissingBodies
+    const { getMissingBodies } = await importPostsFresh();
+    expect(getMissingBodies(100)).toEqual([]);
+  });
+
+  it('getPost returns a withdrawn post as a StoredPost with withdrawnAtHeight set, not null', async () => {
+    const { initDb, getDb } = await importDbFresh();
+    const { insertPost, confirmPost, getPost, isLivePost } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    const { commit, content } = makeCommit({ content: 'to be withdrawn' });
+    const postId = fixturePostId(commit);
+    insertPost(postId, commit, content);
+    confirmPost(postId, 5, 0);
+
+    getDb().prepare('UPDATE dag_posts SET withdrawn_at_height = 10, content = NULL WHERE id = ?').run(postId);
+
+    const result = getPost(postId);
+    expect(result).not.toBeNull();
+    expect(isLivePost(result)).toBe(false);
+    expect((result as any).withdrawnAtHeight).toBe(10);
+    expect((result as any).status).toBe('confirmed');
   });
 });
