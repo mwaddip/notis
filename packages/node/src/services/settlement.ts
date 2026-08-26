@@ -17,19 +17,12 @@
  * | Consumes | the emission box (when this height releases) · the treasury box (when this block accrues to it) · the karma pool box (when this block draws or returns) · every `FeeBox` the body's transactions created · every marker box the block's like transactions emitted · the carry box of every credited author · the `BondBox` of every bond settling at this height · every `VouchEscrowBox` at or past its `releaseAtBlock` in pre-body state · the karma boxes decay charges and the locks a prune entry names |
  * | Emits | the successors of the three protocol boxes · the coinbase's credit outputs · the invite grants · the vested part of each settling bond · each released escrow's value back to its owner · like payouts and carry successors · decay replacements · prune refunds |
  *
- * ⛔ **A PROTOCOL BOX IS CONSUMED EXACTLY WHEN THIS BLOCK'S EFFECTS TOUCH IT.**
- * The emission box already carries that rule — above the terminus nothing is
- * released and the box is not spent (TYPES_INTERFACE → EmissionBox) — and the
- * treasury box and the pool follow it rather than a rule of their own. A block
- * that draws nothing from the pool leaves the pool's id alone, which is what
- * keeps a leaf from churning through the AVL tree on every block for no state
- * change.
- *
- * ⚠ **Above the emission terminus a body with no user work therefore settles to
- * a transaction with no inputs and no outputs.** It conserves, it applies as a
- * no-op, and its id is the same in every such block — which is harmless because
- * a transaction id names no box and the settlement is never pooled. A rule
- * forbidding it would have to be paid for by spending some box on every block.
+ * ⛔ **The emission box is spent on EVERY block** (TYPES_INTERFACE →
+ * EmissionBox), because the forfeited inclusion bonus returns to it even when
+ * the schedule owes nothing. The treasury box and the pool are spent only when
+ * this block's effects touch them. A block that draws nothing from the pool
+ * leaves the pool's id alone, which is what keeps a leaf from churning through
+ * the AVL tree on every block for no state change.
  *
  * ⛔ **ITS INPUTS ARE DERIVED, NOT SERIALIZED**, and the enumeration order is
  * the one the block already fixes: the three protocol boxes in the fixed order
@@ -233,9 +226,27 @@ function derive(
   minerRewardDelay: number,
   body: SettlementBody,
 ): { derived: DerivedSettlement } | { error: string } {
-  const split = splitCoinbase(emission, body.fees, body.rent, body.actors);
   const inputs: string[] = [];
   const outputs: AnyBoxCandidate[] = [];
+
+  // ---- 1. The emission box — read first ----
+  //
+  // The release caps the emission term the split sees: income's emission is
+  // what the box actually pays, not what the schedule owes
+  // (MINING_INTERFACE → "The slices").
+  const emissionBox = deps.getEmissionBox();
+  if (!emissionBox || !emissionBox.id) {
+    return {
+      error:
+        `height ${height} requires an emission box but this chain holds none`,
+    };
+  }
+  inputs.push(emissionBox.id);
+  const release = emission < emissionBox.value ? emission : emissionBox.value;
+
+  const split = splitCoinbase(release, body.fees, body.rent, body.actors);
+  const remaining = emissionBox.value - release + split.unearned;
+  outputs.push({ boxType: 'emission', value: remaining, createdAtBlock: height });
 
   // What the pool owes and what it is owed, accumulated across every leg below
   // and settled once. ⛔ **The pool box is spent by this transaction and by
@@ -244,39 +255,6 @@ function derive(
   // remainder and the pruner's own locks are all derived here.
   let poolDraw = 0n;
   let poolSink = 0n;
-
-  // ---- 1. The emission box ----
-  //
-  // Touched only when this height releases. At and above the terminus there is
-  // no box and nothing is spent, which is why its absence there is not a fault
-  // (TYPES_INTERFACE → EmissionBox).
-  if (emission > 0n) {
-    const box = deps.getEmissionBox();
-    if (!box || !box.id) {
-      return {
-        error:
-          `schedule releases ${emission} at height ${height} but this chain holds ` +
-          `no emission box`,
-      };
-    }
-    if (box.value < emission) {
-      // Unreachable while `emissionTotal()` and `computeBlockReward` share the
-      // profile's parameters — the total IS the sum, so the box covers every
-      // release. Kept as the loud failure for the case where they stop
-      // agreeing, because the alternative is a negative successor value.
-      return {
-        error:
-          `emission box holds ${box.value}, short of the ${emission} height ` +
-          `${height} releases`,
-      };
-    }
-    inputs.push(box.id);
-    const remaining = box.value - emission;
-    // ⛔ A successor whose value would be `0` is not created. The genesis total
-    // is exactly the schedule's sum, so the last emitting block consumes the box
-    // and leaves none — one block, one encoding.
-    if (remaining > 0n) outputs.push({ boxType: 'emission', value: remaining, createdAtBlock: height });
-  }
 
   // ---- 2. The treasury box ----
   //

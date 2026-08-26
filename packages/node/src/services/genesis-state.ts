@@ -265,9 +265,8 @@ export function seedGenesisState(): void {
       // EmissionBox). A network seeded without it releases nothing and produces
       // no block at all.
       //
-      // `emissionTotal()` rather than a per-profile constant — the box's value
-      // and `computeBlockReward` read the same two profile fields, so they
-      // cannot disagree about where the schedule ends.
+      // The profile's carried total, strictly below the curve's own sum
+      // (MINING_INTERFACE → Emission Schedule).
       ensureEmissionBox(emissionTotal(), GENESIS_HEIGHT);
 
       // The committee, on every network — one karma box per profile key. All

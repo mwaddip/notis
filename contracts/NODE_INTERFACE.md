@@ -2512,14 +2512,15 @@ The schedule and its totals are `MINING_INTERFACE → Emission Schedule`.
 
 Coinbase outputs are locked for `CREDIT_MINER_REWARD_DELAY` (1440) blocks — 24h at 60s.
 The coinbase is split per MINING_INTERFACE → Coinbase Application → The slices, and carries
-the **miner's slice alone**. The treasury's share and the unearned inclusion bonus accrue to
-the `TreasuryBox` — never redirected to the miner, who would otherwise recover their own
-forfeit, and never a coinbase output on any network.
+the **miner's slice alone**. The treasury's share accrues to the `TreasuryBox` and the unearned
+inclusion bonus stays in the `EmissionBox` — neither is redirected to the miner, who would
+otherwise recover their own forfeit, and neither is a coinbase output on any network.
 
-**Emission is released from a box, not minted.** Genesis holds the whole schedule in an
-`EmissionBox` (TYPES_INTERFACE → EmissionBox) and each block spends it to a successor
-`computeBlockReward(height)` smaller, so what remains to be emitted is state an observer
-reads. Above the terminus no emission box exists and nothing is released.
+**Emission is released from a box, not minted.** Genesis holds a carried total in an
+`EmissionBox` (TYPES_INTERFACE → EmissionBox) and each block spends it to a successor holding
+`value − min(computeBlockReward(height), value) + unearned`, so what remains to be emitted is state
+an observer reads. **The box exists at every height whatever its value**, because a forfeited bonus
+must always have somewhere to land; above exhaustion it releases nothing until one arrives.
 
 > ✅ **The lock is enforced at spend: `SPEND_TIMING`'s `credit` entry** (§Spend timing). A
 > transaction naming a locked box as an input is refused at `validateTx` step 3, on every path a

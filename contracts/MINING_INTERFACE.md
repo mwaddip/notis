@@ -2,7 +2,7 @@
 
 **Component:** `@dagsocial/node` (mining subsystem)
 **Protocol version:** 2
-**Last updated:** 2026-08-23
+**Last updated:** 2026-08-26
 
 ## Scope
 
@@ -16,17 +16,34 @@ API endpoints (template + submit). Depends on:
 
 ## Emission Schedule
 
-Ergo-style linear decay **to zero — there is no tail**. At 60-second blocks:
+Ergo-style linear decay **that does not reach zero — there is no tail, and there is no last paying
+height either**. At 60-second blocks:
 
 | Parameter | Blocks | Duration |
 |-----------|--------|----------|
 | Fixed-rate period | 1,051,200 | ~2 years |
-| Epoch (reduction interval) | 129,600 | ~90 days |
-| Decay phase | 6,350,400 | 49 epochs, ~12.07 years |
-| **Total** | **7,401,600** | **~14.07 years** |
+| Epoch (reduction interval) | 470,000 | ~326 days |
+| Decay phase | 19,270,000 | 41 epochs, ~36.65 years |
+| Curve's full span | 20,321,200 | ~38.65 years |
+| **Minimum runway** | **15,591,163** | **~29.64 years** |
 
-Block 7,401,600 is the last that pays. Above it the reward is 0 and the coinbase carries
-whatever the other income terms yield — fees, and storage rent.
+⛔ **THE TERMINUS IS A BALANCE, NOT A HEIGHT.** The emission box holds **less** than the curve's own
+sum, so it empties while the curve is still paying — at a rate of **11**, with 4,730,037 blocks of
+schedule left unpaid. The height above is therefore the **minimum** runway and not a terminus: an
+unearned inclusion bonus returns to the box (→ "The slices"), and every credit returned extends the
+runway. **Only the floor is a number.**
+
+**The first block whose release the box cannot cover in full pays what remains**, and every block
+above it pays nothing until a return arrives. ⛔ **Blocks stay producible at and above exhaustion** —
+the coinbase then carries whatever the other income terms yield, fees and storage rent. A rule that
+instead refused such a block would make the chain unproducible from that height, which is the failure
+the derived total existed to prevent and which choosing a smaller box makes real.
+
+⛔ **The emission box is never destroyed** (TYPES_INTERFACE → EmissionBox). Above exhaustion the
+schedule may still owe a positive rate while the box is empty, and fees are never zero, so a forfeited
+inclusion bonus is still produced and still has to land somewhere. **A box destroyed at exhaustion
+would leave it with no destination.** The box therefore exists at every height whatever its value, and
+a return can restart emission until it drains again.
 
 
 ⛔ **Storage rent is the perpetual term, and it is why emission needs no tail.** Emission
@@ -44,15 +61,17 @@ body transaction and sums two totals, not one: `income = emission + fees + rent`
 base computed over the first two alone.
 
 ⛔ **AND THE INCLUSION BONUS POOL IS OVER `emission + fees` TOO — the same reason, one step further
-along.** The pool's **unearned** remainder accrues to the treasury (→ the slice table above), so a
-pool computed over the full income routes a share of rent there by a second path, and the rule two
-paragraphs up is violated without any line saying so. **Rent reaches the miner floor entire, and both
-exclusions are required to make that true** — either one alone leaks.
+along.** The pool's **unearned** remainder stays in the `EmissionBox` (→ the slice table above), so a
+pool computed over the full income diverts a share of rent there by a second path, and the rule two
+paragraphs up is violated without any line saying so. ⛔ **Rent is recycled, never emitted** — routed
+into the emission box it would be released again as coinbase under a schedule that never counted it.
+**Rent reaches the miner floor entire, and both exclusions are required to make that true** — either
+one alone leaks.
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|
-| `CREDIT_INITIAL_REWARD` | 100 | Credits per block in fixed-rate period |
-| `CREDIT_REWARD_REDUCTION` | 2 | Credits reduced per epoch |
+| `CREDIT_INITIAL_REWARD` | 42 | Credits per block in fixed-rate period. **Universal** — economics, never timescale |
+| `CREDIT_REWARD_REDUCTION` | 1 | Credits reduced per epoch. **Universal**, so the decay runs 41 epochs on every network and only `creditEpochBlocks` compresses it |
 | `CREDIT_MINER_REWARD_DELAY` | 1440 | Blocks before coinbase can be spent (24h at 60s) |
 | `COINBASE_TREASURY_PCT` | 5 | Percent of emission and of fees to treasury — never of storage rent |
 | `COINBASE_MINER_FLOOR_PCT` | 35 | Guaranteed miner share, and it takes every remainder |
@@ -66,22 +85,32 @@ exclusions are required to make that true** — either one alone leaks.
 computeBlockReward(height):
   if height == 0: return 0
   if height <= CREDIT_FIXED_RATE_BLOCKS:
-    return CREDIT_INITIAL_REWARD                    // 100
+    return CREDIT_INITIAL_REWARD                    // 42
   epochs = floor((height - CREDIT_FIXED_RATE_BLOCKS - 1) / CREDIT_EPOCH_BLOCKS) + 1
   reward = CREDIT_INITIAL_REWARD - epochs × CREDIT_REWARD_REDUCTION
   return max(reward, 0)
 ```
 
-**Emission total: 422,640,000 credits** — the fixed-rate period (`1,051,200 × 100`) plus
-the decay triangle (`129,600 × Σ(k=1..49)(100 − 2k)`).
+**The curve's own sum is 448,820,400 credits** — the fixed-rate period (`1,051,200 × 42`) plus the
+decay triangle (`470,000 × Σ(k=1..41)(42 − k)`). ⛔ **That is not the emission total.**
 
-**It is also a value in state.** Genesis creates an `EmissionBox` holding exactly this
-total, and each block spends it to a successor `computeBlockReward(height)` smaller
-(TYPES_INTERFACE → EmissionBox). The total is therefore both the schedule's sum and the
-box's genesis value, and the box **derives** it from the parameters above rather than
-carrying its own copy — a second copy that disagreed would starve the box before the
-terminus or strand a residue no rule releases. Every network derives its own from its own
-`creditFixedRateBlocks` and `creditEpochBlocks`.
+**Emission total: 422,640,000 credits — 94.2% of the curve, and a value the profile CARRIES.**
+Genesis creates an `EmissionBox` holding exactly it (TYPES_INTERFACE → EmissionBox).
+
+⛔ **THE TOTAL IS NO LONGER DERIVED FROM THE SCHEDULE, AND THE GUARD INVERTS.** A bound chosen below
+the curve cannot be a function of `creditFixedRateBlocks`, `creditEpochBlocks`,
+`CREDIT_INITIAL_REWARD` and `CREDIT_REWARD_REDUCTION`, so each profile carries its own. Deriving it
+protected against two failures — a total too small starves the box before the terminus, a total too
+large strands a residue no rule releases. **This schedule takes the first deliberately and closes it
+by rule** (partial payment, above), which leaves the second as the only one a guard can still catch:
+`emissionTotal` refuses a carried total that is not **strictly below** the curve's sum. Equal is the
+stranding case, because the curve's unpaid tail is what a returned bonus drains through.
+
+⚠ **The box's value is therefore not monotonically decreasing.** A block's release is reduced by the
+unearned inclusion bonus (→ "The slices"), so a block with large fees and thin karma-side inclusion
+returns more than it releases and the box **rises**. Supply stays bounded either way: what returns is
+fee value already in supply and consumed by the same block that returns it, so the box defers that
+value rather than minting it.
 
 ⚠ **It is not the total supply**, which `ARCHITECTURE → UTXO conservation` defines as
 genesis credits plus ordering block rewards, less sinks. Emission bounds the second term
@@ -89,8 +118,8 @@ alone; genesis credits sit on top of it and sinks pull the other way.
 
 **Coinbase split:** see "Coinbase Application → The slices" below. It is taken over
 block **income**, not over the reward; the treasury's share is per income term; and
-the miner floor absorbs every remainder. The treasury share and the unearned bonus accrue
-to the `TreasuryBox`, never to the miner and never to an output.
+the miner floor absorbs every remainder. The treasury share accrues to the `TreasuryBox` and the
+unearned bonus stays in the `EmissionBox`; neither reaches the miner, and neither is ever an output.
 
 ## Ordering Block (extended)
 
@@ -349,10 +378,18 @@ transaction's credit outputs are the reward.
 
 ## Coinbase Application
 
-The coinbase carries the block's **income**, not a fixed reward: `emission(height)` plus the
-value of the `FeeBox` outputs the block's transactions carry (TYPES_INTERFACE → FeeBox).
-Storage rent becomes a third term, and nothing in this rule is revisited when it arrives —
-that is the point of stating it income-shaped.
+The coinbase carries the block's **income**, not a fixed reward: the emission this block
+**releases**, plus the value of the `FeeBox` outputs the block's transactions carry
+(TYPES_INTERFACE → FeeBox). Storage rent becomes a third term, and nothing in this rule is
+revisited when it arrives — that is the point of stating it income-shaped.
+
+⛔ **INCOME'S EMISSION TERM IS THE RELEASE, NEVER THE SCHEDULE.** It is
+`min(computeBlockReward(height), value)` for the box this block spends, and the two differ on
+every block from exhaustion onward (→ Emission Schedule). **A split taken over the scheduled
+figure pays out credits the box never released**, and the whole difference is minted from
+nothing — `ARCHITECTURE` → UTXO conservation, and the bound this schedule rests on. The box has
+to be read **before** the slices are computed, not after: the release is an input to the split,
+not a correction applied to its result.
 
 ⛔ **`fees` is a sum over boxes, and resolves no inputs.** Every fee in the block is written
 down in it, so the total is a property of the body's own bytes. **Block application consumes
@@ -384,7 +421,7 @@ consumed by the settlement in the block that created it.
 | Treasury | `COINBASE_TREASURY_PCT` | Per **term** — of emission and of fees, never of storage rent |
 | Miner floor | `COINBASE_MINER_FLOOR_PCT` | Guaranteed, plus every remainder |
 | Backer pool | `COINBASE_BACKER_PCT` | **AHEAD OF CODE** — nothing stakes and nothing links, so this share falls to the miner floor |
-| Inclusion bonus | `COINBASE_BONUS_PCT` | `pool × actors ÷ (actors + INCLUSION_BONUS_K)` to the miner; the unearned remainder to the treasury |
+| Inclusion bonus | `COINBASE_BONUS_PCT` | `pool × actors ÷ (actors + INCLUSION_BONUS_K)` to the miner; the unearned remainder is **not minted** — it returns to the `EmissionBox`, which is why that successor is `value − release + unearned` and can exceed its predecessor. The pool is a share of income, so it is computed over the **release** like every other slice |
 | Storage rent | — | A third income **term**, not a slice: the treasury takes `COINBASE_TREASURY_PCT` of emission and of fees and **none of rent**, so rent reaches the miner floor entire |
 
 `actors` is the count of **distinct owners of the karma boxes** spent by the block's
@@ -403,11 +440,19 @@ rounding and storage rent's treasury exemption to miners, which is where rent be
 who recovered their own forfeit would face a delay rather than a cost, and the bonus
 would price nothing.
 
-**Both accrue to the `TreasuryBox` on every network**, which is why no profile carries a
+⛔ **THE PROPERTY IS THAT NO MINER RECOVERS THEIR OWN FORFEIT, not that the forfeit is locked away.**
+A share returned to the `EmissionBox` is paid out only once the box reaches exhaustion, to whichever
+miners exist then and in hashrate proportion. The forfeiting miner's expected recovery is their share
+of a payout at the far end of a thirty-year schedule, which prices as approximately zero. **The bonus
+is a cost and not a delay**, and the cost is paid to future miners rather than withheld from everyone.
+✅ **A returned share is neither a lock nor a burn** — it extends the runway, so a chain with thin
+karma inclusion emits more slowly and lives longer.
+
+**The treasury slice accrues to the `TreasuryBox` on every network**, which is why no profile carries a
 treasury key and no coinbase output is flagged as the treasury's. ARCHITECTURE → Treasury
 requires unspendability **by absent rule** rather than by a withheld key; a box block
 application has no release path for is that rule, while a key nobody admits to holding is
-the shape it rejects. The forfeit is a lock rather than a burn, on every network equally.
+the shape it rejects.
 
 ⚠ **Emission and the treasury slice come from opposite directions.** The miner's slice is
 paid out of released emission plus recreated fees, so it is a settlement credit output; the
@@ -416,8 +461,8 @@ derived from the same `splitCoinbase` result and neither is the producer's choic
 
 ### On block receipt (relay node):
 1. Verify PoW
-2. Verify the settlement's credit outputs sum to the **miner's slice** the slice table yields for this height, fee sum and actor count — `income` less the treasury share and the unearned bonus, both of which accrue to the `TreasuryBox` rather than to any credit output
-3. Verify the two box transitions: the emission box's successor holds `value − emission(height)` and the treasury box's holds `value + treasury`, both **exactly**. This is where the split is enforced — emission and treasury successors are inputs and outputs of the same transaction, so a block paying the whole income to its miner is refused by **conservation itself**
+2. Verify the settlement's credit outputs sum to the **miner's slice** the slice table yields for this height, fee sum and actor count — `income` less the treasury share and the unearned bonus; the first accrues to the `TreasuryBox` and the second is never minted, so neither is a credit output
+3. Verify the two box transitions, both **exactly**: the emission box's successor holds `value − min(computeBlockReward(height), value) + unearned` and the treasury box's holds `value + treasury`. ⛔ **`min` is the release cap and `unearned` is the return.** The release is what the schedule owes bounded by what the box holds, and the forfeited bonus is added straight back — which is why this successor, alone among the two, can exceed its predecessor. This is where the split is enforced — emission and treasury successors are inputs and outputs of the same transaction, so a block paying the whole income to its miner is refused by **conservation itself**
 4. Verify no output carries `value === 0` — otherwise `[]` and `[{value: 0}]` are two valid encodings of one block, with different `utxoTxRoot` and different block hashes. **Not made redundant by conservation**, which a zero-value output satisfies
 5. Settlement credit outputs with `lockedUntilBlock > currentHeight` are stored but not spendable — `SPEND_TIMING`'s `credit` entry refuses a locked input at `validateTx` step 3
 
@@ -505,8 +550,8 @@ the network profile (`TYPES_INTERFACE §Network profiles`), selected together by
    `value === 0`** at any height
 2. The coinbase's split matches the slice table above. The **miner's** half is the
    coinbase's sum; the **treasury's** half is enforced as the `TreasuryBox` successor's
-   value, and the emission box's successor pins what was released. A total-only check
-   on the coinbase alone would accept a block that forfeited nothing
+   value, and the emission box's successor pins the release net of the forfeit. A
+   total-only check on the coinbase alone would accept a block that forfeited nothing
 3. Coinbase outputs cannot be spent before `lockedUntilBlock`, and every coinbase
    output's `lockedUntilBlock` **equals `height + CREDIT_MINER_REWARD_DELAY`** —
    enforced at apply on all paths (gossip, sync, reorg), not only in the gossip

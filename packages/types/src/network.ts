@@ -23,6 +23,7 @@ import {
   CREDIT_MINER_REWARD_DELAY,
   CREDIT_FIXED_RATE_BLOCKS,
   CREDIT_EPOCH_BLOCKS,
+  CREDIT_EMISSION_TOTAL,
   GENESIS_KARMA_PER_MEMBER,
   INVITE_BOND_MIN,
   INVITE_BOND_MAX,
@@ -44,9 +45,13 @@ export interface NetworkProfile {
   readonly inviteProbationBlocks: number;
   readonly creditMinerRewardDelay: number;
 
-  // Emission schedule
+  // Emission schedule. `creditEmissionTotal` is the EmissionBox's genesis value,
+  // CARRIED rather than derived (TYPES_INTERFACE → EmissionBox). It must be
+  // STRICTLY below the curve's own sum for this profile's F and E at the
+  // universal R and d.
   readonly creditFixedRateBlocks: number;
   readonly creditEpochBlocks: number;
+  readonly creditEmissionTotal: bigint;
 
   // Storage rent — the period between collections, in blocks
   readonly storageRentPeriodBlocks: number;
@@ -160,6 +165,7 @@ const MAINNET_PROFILE: NetworkProfile = Object.freeze({
 
   creditFixedRateBlocks: CREDIT_FIXED_RATE_BLOCKS,
   creditEpochBlocks: CREDIT_EPOCH_BLOCKS,
+  creditEmissionTotal: CREDIT_EMISSION_TOTAL,
 
   // 4 years at 60s blocks, and exactly 2 × creditFixedRateBlocks. The rate is
   // universal (MIN_BOX_VALUE_PER_BYTE, STORAGE_RENT_PER_BYTE in constants.ts);
@@ -264,7 +270,8 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   creditMinerRewardDelay: 10, // small enough to spend, large enough to observe immaturity
 
   creditFixedRateBlocks: 1000, // ~÷1000 so the fixed-rate → decay transition is reachable
-  creditEpochBlocks: 100, // keeps fixed-rate ≈ 10 × epoch (mainnet: ≈ 8×)
+  creditEpochBlocks: 400, // fixed-rate ≈ 2.5× epoch (mainnet: ≈ 2.24×)
+  creditEmissionTotal: 362_000n * 10n ** 8n, // below devnet's curve (386,400)
 
   // **Above the deepest height any e2e scenario reaches** (27 = MAX_REORG_DEPTH + 7,
   // from `fork.test.ts`'s `dTarget = aTarget + 5` where `aTarget = MAX_REORG_DEPTH + 2`).
@@ -289,12 +296,12 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   // hex("dagsocial/devnet/genesis-proof/mock") — mock, see mainnet above
   genesisProofPayload: '646167736f6369616c2f6465766e65742f67656e657369732d70726f6f662f6d6f636b',
   // Three things separate this root from testnet's, not one: the proof box's
-  // payload, the emission box's value — derived from `creditFixedRateBlocks`
-  // and `creditEpochBlocks`, so smaller here than on the two networks that
-  // share mainnet's schedule — and the faucet identity, since the two profiles
-  // name DIFFERENT `faucetPublicKey`s and therefore seed differently-owned
-  // karma and credit boxes.
-  genesisStateRoot: '1595b50171e5efccc4ab003be99fd8c3e212d7a1deab808013a5bed0b5b9714603',
+  // payload, the emission box's value — carried as `creditEmissionTotal`, so
+  // smaller here than on the two networks that share mainnet's total — and
+  // the faucet identity, since the two profiles name DIFFERENT
+  // `faucetPublicKey`s and therefore seed differently-owned karma and credit
+  // boxes.
+  genesisStateRoot: '8e1b689ebe53c098142ae98224f5ee33ffba7e1aba40c4510a8fe534d3c4b22b03',
 } satisfies NetworkProfile);
 
 export const NETWORK_PROFILES: Readonly<Record<NetworkType, NetworkProfile>> = Object.freeze({

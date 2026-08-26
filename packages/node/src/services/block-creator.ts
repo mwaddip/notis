@@ -301,33 +301,20 @@ export function computeBlockReward(height: number): bigint {
 }
 
 /**
- * The sum of `computeBlockReward` over every height — this network's whole
- * credit emission, and the value genesis puts in the `EmissionBox`
- * (MINING_INTERFACE → Emission Schedule; TYPES_INTERFACE → EmissionBox).
+ * This network's credit emission total — the value genesis puts in the
+ * `EmissionBox` (MINING_INTERFACE → Emission Schedule; TYPES_INTERFACE →
+ * EmissionBox).
  *
- * ```
- * total = F·R + E · Σ(k = 1..K) (R − k·d)     K = the largest k with R − k·d > 0
- * ```
- *
- * `F` = `creditFixedRateBlocks`, `E` = `creditEpochBlocks`,
- * `R` = `CREDIT_INITIAL_REWARD`, `d` = `CREDIT_REWARD_REDUCTION`. The closed
- * form is the same schedule the loop above walks: heights `1..F` pay `R`, and
- * epoch `k` covers exactly `E` heights paying `R − k·d`.
- *
- * ⛔ **Derived here rather than carried per profile, and that is the whole
- * point.** A stored total that disagreed with `computeBlockReward` fails in one
- * of two silent ways: too small and the box is empty before the terminus, so
- * every block from that height on is unproducible; too large and a residue is
- * stranded that no rule can ever release. Sharing the parameters makes the two
- * unable to disagree. `test/services/genesis-state.test.ts` pins mainnet's
- * result at `422,640,000 × 10⁸` so a schedule change is caught here instead of
- * silently re-deriving a different genesis.
- *
- * Every network derives its own: devnet's compressed `F` and `E` give a
- * different total against the same economics (ARCHITECTURE → Network Identity:
- * compress time, never economics).
+ * ⛔ **Read from the profile, not derived.** A bound deliberately below the
+ * curve's sum cannot be a function of the schedule's parameters, so each
+ * profile carries its own. The guard inverts: the carried total must be
+ * **strictly below** the curve's own sum, because the curve's unpaid tail is
+ * what a returned bonus drains through.
  */
 export function emissionTotal(): bigint {
+  const total = nodeConfig.creditEmissionTotal;
+
+  // The curve's own sum — the ceiling the carried total must sit below.
   const fixed = BigInt(nodeConfig.creditFixedRateBlocks) * CREDIT_INITIAL_REWARD;
   let decay = 0n;
   for (
@@ -337,7 +324,15 @@ export function emissionTotal(): bigint {
   ) {
     decay += reward;
   }
-  return fixed + BigInt(nodeConfig.creditEpochBlocks) * decay;
+  const curveSum = fixed + BigInt(nodeConfig.creditEpochBlocks) * decay;
+
+  if (total >= curveSum) {
+    throw new Error(
+      `creditEmissionTotal ${total} must be strictly below the curve's sum ${curveSum}`,
+    );
+  }
+
+  return total;
 }
 
 // ---------------------------------------------------------------------------

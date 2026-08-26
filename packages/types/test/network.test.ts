@@ -13,6 +13,8 @@ import {
   INVITE_BOND_VEST_PER_LIKES,
   LIKES_PER_KARMA_PAYOUT,
   MAX_REORG_DEPTH,
+  CREDIT_INITIAL_REWARD,
+  CREDIT_REWARD_REDUCTION,
 } from '../src/index.js';
 import type { NetworkType, NetworkProfile } from '../src/index.js';
 
@@ -30,6 +32,7 @@ const REQUIRED_PROFILE_FIELDS = [
   'creditMinerRewardDelay',
   'creditFixedRateBlocks',
   'creditEpochBlocks',
+  'creditEmissionTotal',
   'genesisCommitteeKeys',
   'genesisKarmaPerMember',
   'inviteBondMin',
@@ -190,13 +193,39 @@ describe('NETWORK_PROFILES', () => {
     expect(devnet.inviteProbationBlocks).toBe(540);
     expect(devnet.creditMinerRewardDelay).toBe(10);
     expect(devnet.creditFixedRateBlocks).toBe(1000);
-    expect(devnet.creditEpochBlocks).toBe(100);
+    expect(devnet.creditEpochBlocks).toBe(400);
 
     // Every ordering asserted on BOTH profiles, so "devnet mirrors mainnet" is
     // checked rather than assumed: a compression that quietly reorders the
     // windows fails here and not on the network it would have broken.
     for (const p of [mainnet, devnet]) {
       expect(p.creditEpochBlocks).toBeLessThan(p.creditFixedRateBlocks);
+    }
+  });
+
+  // MINING_INTERFACE → Emission Schedule: the carried total must be STRICTLY
+  // below the curve's own sum, because equal is the stranding case — no unpaid
+  // tail for a returned bonus to drain through. The curve sum is computed here
+  // from each profile's own F and E at the universal R and d; there is no
+  // curve-sum function in types, so this is a carried value vs. a computed one.
+  it('creditEmissionTotal is strictly below the curve sum on every profile', () => {
+    const R = CREDIT_INITIAL_REWARD / (10n ** 8n);
+    const d = CREDIT_REWARD_REDUCTION / (10n ** 8n);
+    const epochs = Number(R / d) - 1; // 41 at R=42, d=1
+
+    for (const profile of Object.values(NETWORK_PROFILES)) {
+      const F = BigInt(profile.creditFixedRateBlocks);
+      const E = BigInt(profile.creditEpochBlocks);
+
+      const fixedRate = F * R;
+      let decaySum = 0n;
+      for (let k = 1; k <= epochs; k++) {
+        decaySum += R - BigInt(k) * d;
+      }
+      const curveSum = (fixedRate + E * decaySum) * 10n ** 8n;
+      const total = profile.creditEmissionTotal;
+
+      expect(total < curveSum, `${profile.networkType}: ${total} must be < ${curveSum}`).toBe(true);
     }
   });
 

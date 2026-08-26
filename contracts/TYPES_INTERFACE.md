@@ -840,9 +840,9 @@ One of the boxes seeded at cold start, beside system karma, faucet credits and t
 ⚠ **It is NO LONGER the whole of network identity at height 0, and this line said it was.** The
 karma and credit boxes are byte-identical across networks, so the payload used to be the only thing
 separating testnet's genesis root from devnet's. The `EmissionBox` is now a **second** per-network
-difference: its value is that profile's emission total, derived from `creditFixedRateBlocks` and
-`creditEpochBlocks`, and devnet's compressed schedule gives it a smaller one. Two networks now
-differ in two boxes, not one. Corrected 2026-08-16, when unit 4b made it false.
+difference: its value is that profile's carried emission total (§Network profiles), and devnet's is
+smaller. Two networks now differ in two boxes, not one. Corrected 2026-08-16, when unit 4b made it
+false.
 
 `value` is `0n` for the same reason `VouchBox.value` is `1n`: the type has exactly one legal value,
 so the literal makes any other unrepresentable rather than merely invalid.
@@ -891,24 +891,52 @@ EmissionBox extends BoxBase {
 ```
 
 **The whole of a network's credit emission, held as state from height 0.** Genesis creates one on
-every network holding that profile's entire emission total; each block spends it to a successor
-holding `value − computeBlockReward(height)`. No other rule reduces it and none increases it, so
-what remains to be emitted is a value an observer reads rather than a schedule they trust — which is
-what `ARCHITECTURE` → UTXO conservation rests its bound on.
+every network holding that profile's **carried** emission total; each block spends it to a successor
+holding `value − min(computeBlockReward(height), value) + unearned` — the scheduled release capped by
+what the box actually holds, less the inclusion bonus the block forfeited (MINING_INTERFACE → "On
+block receipt" step 3). No other rule touches it, so what remains to be emitted is a value an observer
+reads rather than a schedule they trust — which is what `ARCHITECTURE` → UTXO conservation rests its
+bound on.
+
+⛔ **The value does not decrease monotonically, and this line once said it did.** The forfeited bonus
+is added straight back, so a block with large fees and thin karma-side inclusion returns more than it
+releases and the successor is **larger** than its predecessor. The bound survives regardless: what
+returns is fee value already in supply, consumed by the very block that returns it, so the box defers
+that value rather than minting it.
 
 **No owner, and therefore no per-type trailing fields.** The box names no spender because block
 application is the only one. Its content encoding is the shared prefix alone — one of three box
 types with an empty tail (§Layout — Boxes).
 
-⛔ **A successor whose value would be `0` is not created.** The total equals the schedule's sum
-exactly, so the last emitting block consumes the box and leaves none; above the terminus no emission
-box exists and nothing is spent. This is the box form of the rule the coinbase already carries —
-one block, one encoding — and without it a zero-value box is removed and reinserted on every block
-forever.
+⛔ **THE BOX EXISTS AT EVERY HEIGHT, WHATEVER ITS VALUE — `0` INCLUDED.** A forfeited inclusion bonus
+is returned to it (MINING_INTERFACE → "The slices"), and a return must always have somewhere to land.
+Above exhaustion `computeBlockReward` may still be positive while the box is empty, and fees are never
+zero, so the pool is `COINBASE_BONUS_PCT × fees` and its unearned share is still real. **A box
+destroyed at exhaustion would leave that share with no destination**, and the runway rests on it
+having one. §KarmaPoolBox already carries this shape for the same reason — burns must always be able
+to return — and the emission box now joins it rather than standing against it.
 
-⚠ **The genesis value is derived from the profile's schedule, not written into the profile.** A
-hardcoded total that disagrees with `computeBlockReward` either starves the box before the terminus,
-making every block from that height unproducible, or strands a residue no rule can release.
+⚠ **This retires the zero-successor rule for THIS box, and accepts the cost that rule named**: a
+zero-value box is removed and reinserted on every block above exhaustion. The coinbase's "one block,
+one encoding" rule is untouched — that one binds transaction **outputs**, and this box is not one.
+
+> ⚠ **QUALIFIED — 2026-08-26. The forfeit's price degrades above exhaustion.** While the box is deep
+> a returned share is paid out decades away, so the forfeiting miner's expected recovery is
+> approximately zero — which is the whole of why the bonus is a cost rather than a delay
+> (MINING_INTERFACE → The slices). **Once the box is empty it is a one-block pass-through**: a return
+> lands, the next block releases it, and a miner holding hashrate share `h` recovers `h` of its own
+> forfeit immediately. The bonus is keyed to income rather than to emission because the pressure to
+> exclude peaks in exactly that regime (MINING_INTERFACE → Coinbase Application), so the defence
+> weakens where it is most needed. **The narrowing: "no miner recovers their own forfeit" holds while
+> the box is deep, and is a one-block deferral after exhaustion.** Recorded, not queued.
+
+⛔ **The genesis value IS written into the profile, and the guard is the opposite one.** A bound deliberately
+below the curve's sum cannot be a function of the schedule's parameters, so each profile carries its
+own (§Network profiles). Of the two failures the derivation prevented, the first — a total too small,
+starving the box before the terminus — is now taken on purpose and closed by partial payment
+(MINING_INTERFACE → Emission Schedule). The second is what a guard can still catch: a carried total
+must be **strictly below** the curve's own sum, because the unpaid tail is what a returned bonus
+drains through.
 
 ### TreasuryBox
 
@@ -919,8 +947,10 @@ TreasuryBox extends BoxBase {
 }
 ```
 
-**Where the coinbase's treasury slice and the forfeited inclusion bonus land.** Block application
-spends it to a successor holding `value + split.treasury`; there is no rule that reduces it.
+**Where the coinbase's treasury slice lands.** Block application spends it to a successor holding
+`value + split.treasury`; there is no rule that reduces it. ⛔ **The forfeited inclusion bonus does
+NOT land here.** It is never minted at all — it stays in the `EmissionBox` (MINING_INTERFACE → "The
+slices"), so a reader carrying the older rule over will look for it in the wrong box.
 `ARCHITECTURE` → Treasury requires the treasury be unspendable **by absent rule** rather than by a
 withheld key, and this is that rule's shape: no key exists, and block application carries no release
 path to write one out.
@@ -1015,11 +1045,12 @@ from both transaction positions, joining `genesis_proof`, `emission` and `treasu
 supply; it is karma that exists, so it is conservation. **A list serving both questions would have to
 choose, and either choice is wrong.**
 
-> ⛔ **A zero-value successor IS created, and this is the one place the `EmissionBox` rule inverts.**
-> §EmissionBox refuses a zero successor because emission **terminates** — above the terminus no box
-> exists and nothing is spent. The pool never terminates: burns must always have somewhere to return,
-> so the box exists at every height whatever its value. **A reader who pattern-matches to the
-> emission rule here gets it exactly backwards.**
+> ⛔ **A zero-value successor IS created.** Burns must always have somewhere to return, so the box
+> exists at every height whatever its value. **§EmissionBox now carries the same rule for the same
+> shape of reason** — a forfeited inclusion bonus must always have somewhere to land — so the two
+> boxes agree rather than invert. What still differs is *why* each never terminates: the pool because
+> karma circulates forever, the emission box because a forfeit can arrive after the schedule has
+> stopped paying.
 
 ### UtxoTransaction
 
@@ -2486,9 +2517,12 @@ export interface NetworkProfile {
   readonly inviteProbationBlocks: number;
   readonly creditMinerRewardDelay: number;
 
-  // Emission schedule
+  // Emission schedule. `creditEmissionTotal` is the EmissionBox's genesis value and is
+  // CARRIED, never derived (§EmissionBox); it must be STRICTLY below the curve's own sum
+  // for this profile's F and E at the universal R and d.
   readonly creditFixedRateBlocks: number;
   readonly creditEpochBlocks: number;
+  readonly creditEmissionTotal: bigint;
 
   // Storage rent — the PERIOD is per-network; the rate is a universal constant
   readonly storageRentPeriodBlocks: number;
@@ -2831,9 +2865,9 @@ export const ED25519_SPKI_PREFIX = '302a300506032b6570032100';  // SPKI wrapper 
 
 ```typescript
 export const CREDIT_FIXED_RATE_BLOCKS = 1_051_200;     // consensus — ~2 years at 60s blocks
-export const CREDIT_INITIAL_REWARD = 100n * 10n ** 8n; // consensus — 100 credits/block, base units
-export const CREDIT_EPOCH_BLOCKS = 129_600;            // consensus — ~90 days, reduction interval
-export const CREDIT_REWARD_REDUCTION = 2n * 10n ** 8n; // consensus — 2 credits reduced per epoch
+export const CREDIT_INITIAL_REWARD = 42n * 10n ** 8n;  // consensus — 42 credits/block, base units
+export const CREDIT_EPOCH_BLOCKS = 470_000;            // consensus — ~326 days, reduction interval
+export const CREDIT_REWARD_REDUCTION = 1n * 10n ** 8n; // consensus — 1 credit reduced per epoch
 export const CREDIT_MINER_REWARD_DELAY = 1440;         // consensus — blocks before coinbase spendable (24h at 60s blocks)
 export const COINBASE_TREASURY_PCT = 5;      // consensus — per income TERM: of emission and of fees, never of rent
 export const COINBASE_MINER_FLOOR_PCT = 35;  // consensus — guaranteed, and takes every remainder
