@@ -78,9 +78,12 @@ export interface DeletedPostRow {
   withdrawnAtHeight: number | null;
 }
 
+export function isStoredPost(x: StoredPost | Stump | PrunedTombstone | null): x is StoredPost {
+  return x !== null && 'status' in x && !('rootPostHash' in x) && !('kind' in x);
+}
+
 export function isLivePost(x: StoredPost | Stump | PrunedTombstone | null): x is StoredPost {
-  return x !== null && 'status' in x && !('rootPostHash' in x) && !('kind' in x)
-    && (x as StoredPost).withdrawnAtHeight === null;
+  return isStoredPost(x) && x.withdrawnAtHeight === null;
 }
 
 export function isStump(x: StoredPost | Stump | PrunedTombstone | null): x is Stump {

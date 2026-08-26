@@ -15,6 +15,7 @@ export {
   getParentRefs,
   getAncestors,
   getSubtree,
+  isStoredPost,
   isLivePost,
   isStump,
   isPrunedTombstone,

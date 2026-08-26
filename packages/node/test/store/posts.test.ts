@@ -653,4 +653,113 @@ describe('posts store', () => {
     expect((result as any).withdrawnAtHeight).toBe(10);
     expect((result as any).author).toBe(hex(commit.author));
   });
+
+  it('isStoredPost is true and isLivePost is false for the same withdrawn row', async () => {
+    const { initDb, getDb } = await importDbFresh();
+    const { insertPost, confirmPost, getPost } = await importPostsFresh();
+    const { isStoredPost, isLivePost } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    const { commit, content } = makeCommit({ content: 'guard test' });
+    const postId = fixturePostId(commit);
+    insertPost(postId, commit, content);
+    confirmPost(postId, 5, 0);
+
+    getDb().prepare('UPDATE dag_posts SET withdrawn_at_height = 10, content = NULL WHERE id = ?').run(postId);
+
+    const result = getPost(postId);
+    expect(isStoredPost(result)).toBe(true);
+    expect(isLivePost(result)).toBe(false);
+  });
+
+  it('withdrawn ancestor and descendant in a thread come back as WithdrawnJson, not PostJson', async () => {
+    const { initDb, getDb } = await importDbFresh();
+    const { insertPost, confirmPost, getPost, getAncestors, getSubtree } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    const { commit: rootCommit, content: rootContent } = makeCommit({ content: 'root' });
+    const rootId = fixturePostId(rootCommit);
+    insertPost(rootId, rootCommit, rootContent);
+    confirmPost(rootId, 1, 0);
+
+    const { commit: childCommit, content: childContent } = makeCommit({
+      content: 'child',
+      parentRefs: [rootId],
+    });
+    const childId = fixturePostId(childCommit);
+    insertPost(childId, childCommit, childContent);
+    confirmPost(childId, 2, 0);
+
+    const { commit: grandCommit, content: grandContent } = makeCommit({
+      content: 'grandchild',
+      parentRefs: [childId],
+    });
+    const grandId = fixturePostId(grandCommit);
+    insertPost(grandId, grandCommit, grandContent);
+    confirmPost(grandId, 3, 0);
+
+    // Withdraw root (ancestor) and grandchild (descendant)
+    getDb().prepare('UPDATE dag_posts SET withdrawn_at_height = 5, content = NULL WHERE id = ?').run(rootId);
+    getDb().prepare('UPDATE dag_posts SET withdrawn_at_height = 6, content = NULL WHERE id = ?').run(grandId);
+
+    const { FeedService } = await import('../../src/services/feed-service.js');
+    const feedService = new FeedService({
+      getPost,
+      queryPosts: () => [],
+      getLikeRecordCount: () => 0,
+      getLikersForPost: () => [],
+      getAncestors,
+      getSubtree,
+      getBlockCreatedAt: () => null,
+    });
+
+    const thread = feedService.getThread(childId)!;
+    expect(thread).not.toBeNull();
+
+    // The subject post is live
+    expect((thread.post as any).content).toBe('child');
+
+    // Root ancestor is withdrawn
+    expect(thread.ancestors).toHaveLength(1);
+    expect((thread.ancestors[0] as any).kind).toBe('withdrawn');
+    expect((thread.ancestors[0] as any).withdrawnAtHeight).toBe(5);
+
+    // Grandchild descendant is withdrawn
+    expect(thread.descendants).toHaveLength(1);
+    expect((thread.descendants[0] as any).kind).toBe('withdrawn');
+    expect((thread.descendants[0] as any).withdrawnAtHeight).toBe(6);
+  });
+
+  it('a withdrawn post in queryPosts comes back as WithdrawnJson', async () => {
+    const { initDb, getDb } = await importDbFresh();
+    const { insertPost, confirmPost, getPost, queryPosts } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    const { commit, content } = makeCommit({ content: 'feed withdrawn' });
+    const postId = fixturePostId(commit);
+    insertPost(postId, commit, content);
+    confirmPost(postId, 5, 0);
+
+    getDb().prepare('UPDATE dag_posts SET withdrawn_at_height = 10, content = NULL WHERE id = ?').run(postId);
+
+    const { FeedService } = await import('../../src/services/feed-service.js');
+    const feedService = new FeedService({
+      getPost,
+      queryPosts,
+      getLikeRecordCount: () => 0,
+      getLikersForPost: () => [],
+      getAncestors: () => [],
+      getSubtree: () => [],
+      getBlockCreatedAt: () => null,
+    });
+
+    const posts = feedService.queryPosts({});
+    const withdrawn = posts.find((p) => (p as any).id === postId);
+    expect(withdrawn).toBeDefined();
+    expect((withdrawn as any).kind).toBe('withdrawn');
+    expect((withdrawn as any).withdrawnAtHeight).toBe(10);
+  });
 });
