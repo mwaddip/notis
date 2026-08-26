@@ -25,4 +25,4 @@ export { buildThreadTx, buildReplyTx } from './tx/post.js';
 export { buildLikeTx } from './tx/like.js';
 export { buildVouchTx, buildUnvouchTx } from './tx/vouch.js';
 export { buildCreditTransferTx } from './tx/credit.js';
-export { buildPruneIntent, type PruneIntentJson } from './tx/prune.js';
+export { buildPruneTx } from './tx/prune.js';

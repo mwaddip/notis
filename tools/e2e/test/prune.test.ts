@@ -4,14 +4,13 @@ import { mine, confirm, waitHeight } from '../src/miner.js';
 import { DEVNET_FAUCET, fresh } from '../src/identities.js';
 import { buildInviteTx } from '../src/tx/invite.js';
 import { buildThreadTx, buildReplyTx } from '../src/tx/post.js';
-import { buildPruneIntent } from '../src/tx/prune.js';
+import { buildPruneTx } from '../src/tx/prune.js';
 import {
   postInvite,
   postPost,
   postPrune,
   getKarma,
   getPost,
-  getBlock,
   getBlockCurrent,
   NodeError,
   isPost,
@@ -35,9 +34,10 @@ describe('prune', () => {
     await mesh?.teardown();
   });
 
-  it('row b-prune: author prune reads StumpJson, replies read PrunedJson, non-author prune → 403', async () => {
+  it('row b-prune: prune transaction reaches consensus via gossip, stump and pruned shapes, non-author rejection, same-block rejection', async () => {
     mesh = await createMesh({ fileIndex: FILE_INDEX, nodeCount: 3 });
     const miner = mesh.nodes[0]!;
+    const peer = mesh.nodes[1]!;
 
     // ---- mesh proof ----
     await mine(miner, mesh.miningSecret, 1);
@@ -71,6 +71,11 @@ describe('prune', () => {
     const reply2 = buildReplyTx(alice, [reply1.outputs[0]!], 'reply 2', threadRes.postId, aliceK.height);
     const reply2Res = await postPost(miner, reply2.json, reply2.content);
 
+    // ---- bob posts a thread (for the non-author test later) ----
+    const bobK = (await getKarma(miner, bob.publicKeyHex))!;
+    const bobThread = buildThreadTx(bob, karmaBoxes(bobK), 'bob thread', bobK.height);
+    const bobThreadRes = await postPost(miner, bobThread.json, bobThread.content);
+
     await confirm(
       async () => {
         const p = await getPost(miner, threadRes.postId);
@@ -80,10 +85,15 @@ describe('prune', () => {
     );
     await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
 
+    // The maturity bind requires rootHeight < currentHeight.
+    await mine(miner, mesh.miningSecret, 1);
+    await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
+
     // ---- alice prunes her thread ----
+    const aliceK2 = (await getKarma(miner, alice.publicKeyHex))!;
     const subtreePostIds = [threadRes.postId, reply1Res.postId, reply2Res.postId];
-    const pruneIntent = buildPruneIntent(alice, threadRes.postId, subtreePostIds);
-    await postPrune(miner, threadRes.postId, pruneIntent);
+    const pruneTx = buildPruneTx(alice, karmaBoxes(aliceK2), threadRes.postId, subtreePostIds, aliceK2.height);
+    await postPrune(miner, threadRes.postId, pruneTx.json);
 
     await confirm(
       async () => {
@@ -103,17 +113,6 @@ describe('prune', () => {
         expect(rootPost.kind).toBe('stump');
         expect(rootPost.compactedAtBlockHeight).toBeGreaterThan(0);
       }
-    }
-
-    // ---- the block carries the prune entry ----
-    const pruneHeight = (await getBlockCurrent(miner)).height;
-    for (const node of mesh.nodes) {
-      const block = await getBlock(node, pruneHeight);
-      expect(block).not.toBeNull();
-      const tree = (block as Record<string, unknown>)['utxoTxTree'] as {
-        pruneEntries: unknown[];
-      };
-      expect(tree.pruneEntries.length).toBeGreaterThanOrEqual(1);
     }
 
     // ---- pruned replies: kind 'pruned' with rootPostHash and compactedAtBlockHeight ----
@@ -139,27 +138,74 @@ describe('prune', () => {
       }
     }
 
-    // ---- non-author prune → 403 ----
-    // bob creates a thread, alice tries to prune it
-    const bobK = (await getKarma(miner, bob.publicKeyHex))!;
-    const bobThread = buildThreadTx(bob, karmaBoxes(bobK), 'bob thread', bobK.height);
-    const bobThreadRes = await postPost(miner, bobThread.json, bobThread.content);
+    // ---- non-author prune → 400 ----
+    // Authorship is the transition arm's `inputKarma.owner === topologyAuthor`.
+    // validateTx fires before the transaction is pooled, so the route rejects
+    // outright — the prune never enters the mempool.
+    const aliceK3 = (await getKarma(miner, alice.publicKeyHex))!;
+    const fakePrune = buildPruneTx(alice, karmaBoxes(aliceK3), bobThreadRes.postId, [bobThreadRes.postId], aliceK3.height);
+    try {
+      await postPrune(miner, bobThreadRes.postId, fakePrune.json);
+      expect.fail('non-author prune should have been refused');
+    } catch (err) {
+      expect(err).toBeInstanceOf(NodeError);
+      expect((err as NodeError).status).toBe(400);
+    }
+
+    // ---- PROPAGATION: prune submitted to a non-mining node reaches consensus ----
+    // A prune is an ordinary transaction and gossips like one. Before the rail,
+    // prune entries had no gossip path — an entry reached consensus only if the
+    // receiving node won a block. This assertion cannot pass on master.
+    const aliceK4 = (await getKarma(miner, alice.publicKeyHex))!;
+    const propThread = buildThreadTx(alice, karmaBoxes(aliceK4), 'propagation root', aliceK4.height);
+    const propThreadRes = await postPost(miner, propThread.json, propThread.content);
 
     await confirm(
       async () => {
-        const p = await getPost(miner, bobThreadRes.postId);
+        const p = await getPost(miner, propThreadRes.postId);
         return p !== null && isPost(p) && p.status === 'confirmed';
       },
       miner, mesh.miningSecret,
     );
+    await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
 
-    const fakePrune = buildPruneIntent(alice, bobThreadRes.postId, [bobThreadRes.postId]);
+    await mine(miner, mesh.miningSecret, 1);
+    await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
+
+    const aliceK5 = (await getKarma(miner, alice.publicKeyHex))!;
+    const propPruneTx = buildPruneTx(alice, karmaBoxes(aliceK5), propThreadRes.postId, [propThreadRes.postId], aliceK5.height);
+    await postPrune(peer, propThreadRes.postId, propPruneTx.json);
+
+    await confirm(
+      async () => {
+        const p = await getPost(miner, propThreadRes.postId);
+        return p !== null && isStump(p);
+      },
+      miner, mesh.miningSecret, 5,
+    );
+    await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
+
+    for (const node of mesh.nodes) {
+      const p = await getPost(node, propThreadRes.postId);
+      expect(p).not.toBeNull();
+      expect(isStump(p!)).toBe(true);
+    }
+
+    // ---- SAME-BLOCK REJECTION: prune of an unconfirmed post ----
+    // The maturity bind requires the root's topology height to be strictly less
+    // than the current height. An unconfirmed post has no topology entry, so the
+    // route rejects the prune.
+    const aliceK7 = (await getKarma(miner, alice.publicKeyHex))!;
+    const immThread = buildThreadTx(alice, karmaBoxes(aliceK7), 'immediate prune', aliceK7.height);
+    const immThreadRes = await postPost(miner, immThread.json, immThread.content);
+
+    const immPruneTx = buildPruneTx(alice, [immThread.outputs[0]!], immThreadRes.postId, [immThreadRes.postId], aliceK7.height);
     try {
-      await postPrune(miner, bobThreadRes.postId, fakePrune);
-      expect.fail('non-author prune should have been refused');
+      await postPrune(miner, immThreadRes.postId, immPruneTx.json);
+      expect.fail('prune of an unconfirmed post should have been refused');
     } catch (err) {
       expect(err).toBeInstanceOf(NodeError);
-      expect((err as NodeError).status).toBe(403);
+      expect((err as NodeError).status).toBe(400);
     }
   });
 });
