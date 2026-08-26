@@ -17,7 +17,7 @@ import { castVouch, initiateUnvouch } from './services/vouch.js';
 import { createInvite } from './services/invites.js';
 import { executePrune } from './services/stump-engine.js';
 import { readFileSync } from 'fs';
-import { isLivePost } from './store/posts.js';
+import { isLivePost, type StoredPost } from './store/posts.js';
 import { getDb } from './store/db.js';
 import { validateTx } from './services/utxo-engine.js';
 import { admitTx } from './services/admit-tx.js';
@@ -80,6 +80,15 @@ export function createApp(config: Config): express.Express {
     if (!postId) return next();
 
     const result = store.getPost(postId);
+    if (result && 'withdrawnAtHeight' in result && (result as StoredPost).withdrawnAtHeight !== null) {
+      const ogTags = `
+<meta property="og:title" content="Withdrawn by author — Notis">
+<meta property="og:description" content="This post was withdrawn by its author.">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Notis">`;
+      res.type('html').send(indexHtml.replace('</head>', `${ogTags}\n</head>`));
+      return;
+    }
     if (!isLivePost(result) || result.content === null) return next();
 
     const authorHex = Buffer.from(result.author).toString('hex');
@@ -113,6 +122,17 @@ export function createApp(config: Config): express.Express {
   app.get('/preview/:id', (req, res) => {
     const postId = req.params['id']!;
     const result = store.getPost(postId);
+    if (result && 'withdrawnAtHeight' in result && (result as StoredPost).withdrawnAtHeight !== null) {
+      const withdrawn = result as StoredPost;
+      res.status(200).type('html').send(
+        `<!DOCTYPE html><html><head>` +
+        `<meta property="og:title" content="Withdrawn by author — Notis">` +
+        `<meta property="og:description" content="This post was withdrawn by its author.">` +
+        `<meta property="og:site_name" content="Notis">` +
+        `</head><body><p>Withdrawn by author at height ${withdrawn.withdrawnAtHeight}.</p></body></html>`,
+      );
+      return;
+    }
     if (!isLivePost(result) || result.content === null) {
       res.status(404).type('html').send('<!DOCTYPE html><html><body><p>Post not found.</p></body></html>');
       return;
