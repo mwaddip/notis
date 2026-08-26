@@ -6,8 +6,8 @@ import {
 } from '../mint-provenance.js';
 import { commitDecayClocks, deriveKarmaDecay } from './decay.js';
 import { hasActiveVouchEscrow } from '../store/utxo.js';
-import { planPruneSettlement } from './settle-prune-utxo.js';
-import type { PruneSettlement } from './settle-prune-utxo.js';
+import { planPostLockSettlement } from './settle-post-lock-utxo.js';
+import type { PostLockSettlement } from './settle-post-lock-utxo.js';
 import {
   CorruptChainStateError,
   MissingStoredBlockError,
@@ -621,7 +621,7 @@ function applyMutationPhase(
 ): boolean {
   // What each of this block's prune entries owes, in prune-entry order. Filled
   // by §5 and consumed by §11a — the settlement pays every leg.
-  const prunePlans: PruneSettlement[] = [];
+  const postLockPlans: PostLockSettlement[] = [];
 
   // ⛔ **DECAY AND ESCROWS ARE DERIVED FROM PRE-BODY STATE, AND THEY HAVE
   // TO BE.** Decay is computed after decoding (the touched set comes from the
@@ -728,8 +728,8 @@ function applyMutationPhase(
     // 5. Settle UTXO — deterministic from post IDs.
     let likeTally: number;
     try {
-      prunePlans.push(
-        planPruneSettlement(prune.rootPostHash, bp.author, prune.subtreePostIds),
+      postLockPlans.push(
+        planPostLockSettlement(prune.rootPostHash, bp.author, prune.subtreePostIds),
       );
       likeTally = deleteLikeRecordsForPosts(prune.subtreePostIds);
     } catch (err) {
@@ -1173,7 +1173,7 @@ function applyMutationPhase(
     if (outputs) contributeToBody(settlementBody, outputs, rentTxIds.has(txId));
   }
   settlementBody.actors = countKarmaActors(appliedTxs, block.header.validatorId);
-  settlementBody.prunes = prunePlans;
+  settlementBody.postLockSettlements = postLockPlans;
 
   const emission = computeBlockReward(height);
   const settlementCheck = checkSettlement(

@@ -58,7 +58,7 @@ import {
   type SettlementDeps,
 } from './settlement.js';
 import { deriveKarmaDecay } from './decay.js';
-import { planPruneSettlement } from './settle-prune-utxo.js';
+import { planPostLockSettlement } from './settle-post-lock-utxo.js';
 import type { DecayDeps, DecayPlan } from './decay.js';
 import type { KarmaBox, VouchEscrowBox } from '@dagsocial/types';
 import { materializeOutput } from './utxo-engine.js';
@@ -948,8 +948,8 @@ export function predictSettlementBody(
     // `inputKarma.owner`, resolved here from the same inputs the fill selected.
     if (tx.prune && inputBoxes.length > 0) {
       const author = (inputBoxes[0] as KarmaBox).owner;
-      body.prunes.push(
-        planPruneSettlement(tx.prune.rootPostHash, author, tx.prune.subtreePostIds),
+      body.postLockSettlements.push(
+        planPostLockSettlement(tx.prune.rootPostHash, author, tx.prune.subtreePostIds),
       );
     }
   }

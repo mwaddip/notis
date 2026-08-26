@@ -13,7 +13,7 @@ import { getPostLockBox } from '../store/index.js';
  * intermediary step"* forbids exactly that. So the boxes stay live until the
  * settlement consumes them and names both ends in one operation.
  */
-export interface PruneSettlement {
+export interface PostLockSettlement {
   /**
    * Every `PostLockBox` in the subtree, in `postIds` order — the settlement's
    * inputs for this entry. Block content fixes the order, so the list is not a
@@ -65,11 +65,11 @@ export interface PruneSettlement {
  * like every other output, and two outputs of one transaction cannot collide on
  * `UNIQUE(tx_id, output_index)`.
  */
-export function planPruneSettlement(
+export function planPostLockSettlement(
   _rootPostHash: PostId,
   authorId: UserId,
   postIds: PostId[],
-): PruneSettlement {
+): PostLockSettlement {
   const pruner = Buffer.from(authorId).toString('hex');
   const refunds = new Map<string, bigint>();
   const lockBoxIds: string[] = [];

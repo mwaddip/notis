@@ -119,7 +119,7 @@ const body: SettlementBody = {
   feeBoxIds: [feeBox.id!],
   invites: [{ invitee: newInvitee.userId, amount: 15n }],
   markers: [{ id: markerBox.id!, author: likeAuthor.userId, value: 3n }],
-  prunes: [],
+  postLockSettlements: [],
 };
 
 const deps: SettlementDeps = {
@@ -163,7 +163,7 @@ describe('settlement leg order', () => {
     //   emission → treasury → markers (committed tx order) →
     //   carry (ascending author hex) → bonds (ascending box id) →
     //   escrows (ascending box id) → decay consumed →
-    //   [prunes — empty here] → pool → fees (committed tx order)
+    //   [postLockSettlements — empty here] → pool → fees (committed tx order)
     expect(tx.inputs).toEqual([
       emissionBox.id,
       treasuryBox.id,
