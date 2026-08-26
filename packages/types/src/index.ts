@@ -126,9 +126,9 @@ export type {
   TxId,
 } from './utxo.js';
 
-// Stumps / prune
-export { pruneFieldBytes } from './stump.js';
-export type { PruneIntent, PruneCommit, Stump, StumpId } from './stump.js';
+// Stumps / prune / post-withdrawal
+export { postWithdrawFieldBytes, pruneFieldBytes } from './stump.js';
+export type { PostWithdrawCommit, PruneIntent, PruneCommit, Stump, StumpId } from './stump.js';
 
 // Blocks
 export {

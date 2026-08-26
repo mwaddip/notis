@@ -28,8 +28,11 @@ import {
   decodeTx,
   encodeUtxoTxTree,
   decodeUtxoTxTree,
+  postWithdrawFieldBytes,
 } from '../src/index.js';
-import type { AnyBoxCandidate, BoxBase, BoxCandidate, CandidateOf, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, GenesisProofBox, EmissionBox, TreasuryBox, FeeBox, KarmaPoolBox, UtxoTransaction, MintReason } from '../src/index.js';
+import { readPostWithdrawCommitFields } from '../src/stump.js';
+import { ByteReader } from '@dagsocial/wire';
+import type { AnyBoxCandidate, BoxBase, BoxCandidate, CandidateOf, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, GenesisProofBox, EmissionBox, TreasuryBox, FeeBox, KarmaPoolBox, UtxoTransaction, PostWithdrawCommit, MintReason } from '../src/index.js';
 
 /**
  * The height every fixture in this file is built at, and `ac 02` wherever a
@@ -301,11 +304,11 @@ const GOLDEN_TX: UtxoTransaction = {
 };
 
 const GOLDEN_KARMA_BOX_ID =
-  '53f8be958f1b64c770b4e2873b634fa093d451e6f87f06bacc38c5db19cd0f70';
+  '17dddea55a2f23822337e67fcbe8caac0a4454141304568491b410da72ef060c';
 const GOLDEN_CREDIT_BOX_ID =
-  'e8075155c1ea6aa989cc9fe3f4608212afefa2fe83488f90741fe4ee83a0f66e';
+  'f6ffd94ac85441fd961ea55bfb21c7862b6117f1a4f4b65b04e648edb5a2951c';
 const GOLDEN_TX_ID =
-  '7301a236cea28d09a9b6ea833d52ae2779f94421c4f1343f93779d512ddc4b1f';
+  '46d111d9583a6cb81d8537ed3598747353bd2914b74695a1f77dbceac32fc43e';
 
 /** The two candidates as block application materializes them out of GOLDEN_TX. */
 const GOLDEN_KARMA_BOX: KarmaBox = { ...GOLDEN_KARMA_CANDIDATE, txId: GOLDEN_TX_ID, index: 0 };
@@ -531,9 +534,9 @@ const ALL_MINT_REASONS = Object.keys(MINT_REASON_GOLDENS) as MintReason[];
  * protocol-breaking and unversioned.
  */
 const GOLDEN_CANDIDATE_KARMA_ID =
-  '53f8be958f1b64c770b4e2873b634fa093d451e6f87f06bacc38c5db19cd0f70';
+  '17dddea55a2f23822337e67fcbe8caac0a4454141304568491b410da72ef060c';
 const GOLDEN_CANDIDATE_CREDIT_ID =
-  'e8075155c1ea6aa989cc9fe3f4608212afefa2fe83488f90741fe4ee83a0f66e';
+  'f6ffd94ac85441fd961ea55bfb21c7862b6117f1a4f4b65b04e648edb5a2951c';
 const GOLDEN_MINT_GENESIS_ID =
   '9010dd1d6fe6029eb8e856fe38467836781ce43ddad1ce01c0af7afc0bc7b7b2';
 
@@ -1432,7 +1435,7 @@ describe('boxRecordBytes', () => {
     // them here — where the encoder lives — rather than only at the consumer.
     const frozen =
       GOLDEN_KARMA_BOX_BYTES +                                             // boxContentBytes
-      '7301a236cea28d09a9b6ea833d52ae2779f94421c4f1343f93779d512ddc4b1f' + // b32 txId
+      '46d111d9583a6cb81d8537ed3598747353bd2914b74695a1f77dbceac32fc43e' + // b32 txId
       '00';                                                                // vlqU(0)
     expect(Buffer.from(boxRecordBytes(GOLDEN_KARMA_CANDIDATE, GOLDEN_TX_ID, 0)).toString('hex'))
       .toBe(frozen);
@@ -1797,13 +1800,14 @@ describe('transactions', () => {
       //   TxId = blake2b512( TX_ID_DOMAIN ‖ txIdBytes )[0:32],  where
       //   txIdBytes = arr(inputs, b32) ‖ arr(outputs, boxContentBytes)
       //             ‖ vlqU(protocolVersion) ‖ opt(likeTarget) ‖ opt(post)
+      //             ‖ opt(prune) ‖ opt(postWithdraw)
       //
       // ⛔ **`TX_ID_DOMAIN` IS NOT IN `txIdBytes`** — it belongs to the hash, not
       // to the serialized bytes, which is why `encodeTx` does not ship it
       // (TYPES_INTERFACE → Layout — UtxoTransaction). Writing the two as one
       // sequence is the conflation that contract corrects by name.
       //
-      // ⛔ **SIX fields.** This mirror is also the tool for re-pinning: when a
+      // ⛔ **SEVEN fields.** This mirror is also the tool for re-pinning: when a
       // field enters or leaves the preimage, hand-derive the new id here rather
       // than regenerating it from the encoder (TYPES_INTERFACE → "Re-pinning a
       // frozen vector when a preimage changes"). The test below is the validation
@@ -1818,6 +1822,7 @@ describe('transactions', () => {
       h.update(Buffer.from([0]));                                 // opt likeTarget: absent
       h.update(Buffer.from([0]));                                 // opt post: absent
       h.update(Buffer.from([0]));                                 // opt prune: absent
+      h.update(Buffer.from([0]));                                 // opt postWithdraw: absent
       expect(h.digest().subarray(0, 32).toString('hex')).toBe(computeTxId(GOLDEN_TX));
     });
 
@@ -2056,6 +2061,7 @@ describe('transactions', () => {
       h.update(Buffer.from(TARGET_A, 'hex'));           // b32 — raw, not hex text
       h.update(Buffer.from([0]));                       // opt post: absent
       h.update(Buffer.from([0]));                       // opt prune: absent
+      h.update(Buffer.from([0]));                       // opt postWithdraw: absent
       expect(computeTxId(tx)).toBe(h.digest().subarray(0, 32).toString('hex'));
     });
 
@@ -2343,5 +2349,97 @@ describe('the box-type tables', () => {
   // runtime half of what `as const` states in the type.
   it('exports it frozen', () => {
     expect(Object.isFrozen(BOX_TYPE_TAGS)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// postWithdrawFieldBytes / readPostWithdrawCommitFields
+// ---------------------------------------------------------------------------
+
+describe('postWithdrawFieldBytes / readPostWithdrawCommitFields', () => {
+  const POST_ID_A = 'aa'.repeat(32);
+  const POST_ID_B = 'bb'.repeat(32);
+
+  it('round-trips: encode then decode returns the original payload', () => {
+    const pw: PostWithdrawCommit = { postId: POST_ID_A };
+    const bytes = postWithdrawFieldBytes(pw);
+    const decoded = readPostWithdrawCommitFields(new ByteReader(bytes));
+    expect(decoded).toEqual(pw);
+  });
+
+  it('injectivity: two distinct payloads produce distinct bytes', () => {
+    const a = postWithdrawFieldBytes({ postId: POST_ID_A });
+    const b = postWithdrawFieldBytes({ postId: POST_ID_B });
+    expect(Buffer.from(a).toString('hex')).not.toBe(Buffer.from(b).toString('hex'));
+  });
+
+  it('encoding is exactly 32 bytes — one fixed-width b32 field', () => {
+    const bytes = postWithdrawFieldBytes({ postId: POST_ID_A });
+    expect(bytes.length).toBe(32);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeTxId with postWithdraw
+// ---------------------------------------------------------------------------
+
+describe('computeTxId with postWithdraw', () => {
+  const WITHDRAW_POST_A = 'aa'.repeat(32);
+  const WITHDRAW_POST_B = 'bb'.repeat(32);
+
+  const baseTx: UtxoTransaction = {
+    inputs: ['1111111111111111111111111111111111111111111111111111111111111111'],
+    outputs: [{ boxType: 'karma' as const, value: 100n, createdAtBlock: 1, owner: new Uint8Array(32).fill(1) }],
+    signatures: {},
+    protocolVersion: 1,
+  };
+
+  it('a transaction carrying postWithdraw round-trips through encodeTx/decodeTx', () => {
+    const tx: UtxoTransaction = { ...baseTx, postWithdraw: { postId: WITHDRAW_POST_A } };
+    const decoded = decodeTx(encodeTx(tx));
+    expect(decoded.postWithdraw).toEqual({ postId: WITHDRAW_POST_A });
+    expect(computeTxId(decoded)).toBe(computeTxId(tx));
+  });
+
+  it('a relay that rewrites the payload changes the id', () => {
+    const txA: UtxoTransaction = { ...baseTx, postWithdraw: { postId: WITHDRAW_POST_A } };
+    const txB: UtxoTransaction = { ...baseTx, postWithdraw: { postId: WITHDRAW_POST_B } };
+    expect(computeTxId(txA)).not.toBe(computeTxId(txB));
+  });
+
+  it('presence vs absence changes the id', () => {
+    const withField: UtxoTransaction = { ...baseTx, postWithdraw: { postId: WITHDRAW_POST_A } };
+    expect(computeTxId(withField)).not.toBe(computeTxId(baseTx));
+  });
+
+  it('a transaction without postWithdraw decodes with postWithdraw as undefined', () => {
+    const decoded = decodeTx(encodeTx(baseTx));
+    expect(decoded.postWithdraw).toBeUndefined();
+  });
+
+  it('all four payload fields combine unambiguously', () => {
+    const full: UtxoTransaction = {
+      ...baseTx,
+      likeTarget: 'cc'.repeat(32),
+      post: {
+        contentHash: new Uint8Array(32).fill(0xdd),
+        author: new Uint8Array(32).fill(0xee),
+        parentRefs: [],
+        protocolVersion: 1,
+        type: 'regular' as const,
+      },
+      prune: {
+        rootPostHash: 'ff'.repeat(32),
+        subtreePostIds: ['11'.repeat(32)],
+        subtreeMerkleRoot: new Uint8Array(32).fill(0x22),
+      },
+      postWithdraw: { postId: WITHDRAW_POST_A },
+    };
+    const decoded = decodeTx(encodeTx(full));
+    expect(decoded.likeTarget).toBe('cc'.repeat(32));
+    expect(decoded.post?.contentHash).toEqual(new Uint8Array(32).fill(0xdd));
+    expect(decoded.prune?.rootPostHash).toBe('ff'.repeat(32));
+    expect(decoded.postWithdraw?.postId).toBe(WITHDRAW_POST_A);
+    expect(computeTxId(decoded)).toBe(computeTxId(full));
   });
 });
