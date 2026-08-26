@@ -132,7 +132,6 @@ function makeMockOrderingBlock(
       // moves a block, so their content is a plausible weight and nothing more.
       utxoTxIds: [settlementId(height)],
       utxoTxs: [new Uint8Array(96).fill(height & 0xff)],
-      pruneEntries: [],
     },
     validatorSignature: new Uint8Array(64),
   };
@@ -658,7 +657,6 @@ describe('serve: GetBlocks', () => {
     const returned = blocks![0]!;
     expect(returned.header.height).toBe(1);
     expect(returned.header.protocolVersion).toBe(PROTOCOL_VERSION);
-    expect(returned.utxoTxTree.pruneEntries).toEqual([]);
     expect(returned.utxoTxTree.utxoTxIds).toEqual([settlementId(1)]);
     expect(returned.utxoTxTree.utxoTxs[0]).toEqual(new Uint8Array(96).fill(1));
     expect(returned.validatorSignature).toBeInstanceOf(Uint8Array);

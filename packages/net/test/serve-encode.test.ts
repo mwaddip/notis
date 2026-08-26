@@ -81,7 +81,6 @@ function makeOrderingBlock(header: BlockHeader = makeHeader()): OrderingBlock {
     utxoTxTree: {
       utxoTxIds: [header.height.toString(16).padStart(64, '0')],
       utxoTxs: [new Uint8Array(96).fill(header.height & 0xff)],
-      pruneEntries: [],
     },
     validatorSignature: new Uint8Array(64),
   };

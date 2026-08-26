@@ -75,7 +75,6 @@ function settlementBody(height: number): OrderingBlock['utxoTxTree'] {
   return {
     utxoTxIds: [height.toString(16).padStart(64, '0')],
     utxoTxs: [new Uint8Array(96).fill(height & 0xff)],
-    pruneEntries: [],
   };
 }
 
