@@ -8,6 +8,7 @@ import {
 } from '@dagsocial/types';
 import type { UtxoTransaction, PruneCommit } from '@dagsocial/types';
 import { generateKeyPairSync, sign as cryptoSign, type KeyObject } from 'crypto';
+import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
 
 // ---------------------------------------------------------------------------
 // Dynamic import helpers (vi.resetModules isolation)
@@ -23,6 +24,10 @@ async function importDb() {
 
 async function importTopology() {
   return await import('../../src/store/topology.js');
+}
+
+async function importStore() {
+  return await import('../../src/store/index.js');
 }
 
 async function importStumpEngine() {
@@ -88,6 +93,28 @@ function seedKarmaBox(
   ).run(id, Buffer.from(owner), '0'.repeat(64));
 }
 
+async function buildDeps(): Promise<UtxoEngineDeps> {
+  const store = await importStore();
+  const dbMod = await importDb();
+  return {
+    getBox: store.getBoxWithPending,
+    insertBox: store.insertBox,
+    consumeBox: store.consumeBox,
+    getKarmaBox: store.getKarmaBox,
+    getKarmaValue: store.getKarmaValue,
+    getIdentityRecord: store.getIdentityRecord,
+    hasActiveVouchEscrow: store.hasActiveVouchEscrow,
+    vouchCooldownBlocks: 0,
+    inviteBondMin: 0n,
+    inviteBondMax: 0n,
+    decayCfg: { staleThresholdBlocks: 0, decayIntervalBlocks: 0, decayAmount: 0n, karmaMinimum: 0n },
+    storageRentPeriodBlocks: 0,
+    getBoxProvenance: store.getBoxProvenance,
+    getTopologyAuthor: store.getTopologyAuthorBytes,
+    runInTransaction: (fn: () => void) => dbMod.getDb().transaction(fn)(),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -127,20 +154,16 @@ describe('stump-engine (prune transaction rail)', () => {
     const prune = makePruneCommit(ROOT_POST_ID, [ROOT_POST_ID, REPLY_POST_ID]);
     const tx = buildPruneTx(KARMA_BOX_ID, ownerPub, ownerPriv, prune);
 
+    const deps = await buildDeps();
     const engine = await importStumpEngine();
-    const result = engine.executePrune(tx);
+    const result = engine.executePrune(deps, tx, 2);
     expect(result.txId).toBe(computeTxId(tx));
   });
 
   it('rejects a root not confirmed in an earlier block (pending post — the getSubtree→topology change)', async () => {
-    // The post exists in the DAG (pending) but NOT in block_topology — the
-    // exact actor the old getSubtree check accepted and the new topology
-    // check must refuse. No insertBlockTopology call: the post has never been
-    // confirmed by a block.
     seedHeight(db, 2);
     seedKarmaBox(db, KARMA_BOX_ID, ownerPub);
 
-    // A post row in dag_posts proves the DAG holds it; block_topology does not.
     db.prepare(
       `INSERT INTO dag_posts (id, content_hash, content, author, parent_refs, protocol_version, status)
        VALUES (?, ?, 'hello', ?, '[]', 1, 'pending')`,
@@ -149,8 +172,9 @@ describe('stump-engine (prune transaction rail)', () => {
     const prune = makePruneCommit(ROOT_POST_ID, [ROOT_POST_ID]);
     const tx = buildPruneTx(KARMA_BOX_ID, ownerPub, ownerPriv, prune);
 
+    const deps = await buildDeps();
     const engine = await importStumpEngine();
-    expect(() => engine.executePrune(tx)).toThrow(/not confirmed in an earlier block/);
+    expect(() => engine.executePrune(deps, tx, 2)).toThrow(/not confirmed in an earlier block/);
   });
 
   it('rejects a root confirmed at the current height (same-block, maturity bind)', async () => {
@@ -162,8 +186,9 @@ describe('stump-engine (prune transaction rail)', () => {
     const prune = makePruneCommit(ROOT_POST_ID, [ROOT_POST_ID]);
     const tx = buildPruneTx(KARMA_BOX_ID, ownerPub, ownerPriv, prune);
 
+    const deps = await buildDeps();
     const engine = await importStumpEngine();
-    expect(() => engine.executePrune(tx)).toThrow(/not confirmed in an earlier block/);
+    expect(() => engine.executePrune(deps, tx, 2)).toThrow(/not confirmed in an earlier block/);
   });
 
   it('rejects subtreePostIds that do not match committed topology', async () => {
@@ -173,12 +198,12 @@ describe('stump-engine (prune transaction rail)', () => {
     seedHeight(db, 2);
     seedKarmaBox(db, KARMA_BOX_ID, ownerPub);
 
-    // Claim the subtree is only the root — topology says it includes the reply.
     const prune = makePruneCommit(ROOT_POST_ID, [ROOT_POST_ID]);
     const tx = buildPruneTx(KARMA_BOX_ID, ownerPub, ownerPriv, prune);
 
+    const deps = await buildDeps();
     const engine = await importStumpEngine();
-    expect(() => engine.executePrune(tx)).toThrow(/does not match committed topology/);
+    expect(() => engine.executePrune(deps, tx, 2)).toThrow(/does not match committed topology/);
   });
 
   it('rejects a merkle root that does not match the id list', async () => {
@@ -194,7 +219,8 @@ describe('stump-engine (prune transaction rail)', () => {
     };
     const tx = buildPruneTx(KARMA_BOX_ID, ownerPub, ownerPriv, prune);
 
+    const deps = await buildDeps();
     const engine = await importStumpEngine();
-    expect(() => engine.executePrune(tx)).toThrow(/does not match postId list/);
+    expect(() => engine.executePrune(deps, tx, 2)).toThrow(/does not match postId list/);
   });
 });

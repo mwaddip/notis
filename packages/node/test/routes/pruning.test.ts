@@ -3,33 +3,54 @@ import express from 'express';
 import http from 'http';
 import { deleteRoutes } from '../../src/routes/delete.js';
 import type { UtxoTransaction } from '@dagsocial/types';
+import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makePruneTx(): UtxoTransaction {
+function makeJsonPruneTxBody(): Record<string, unknown> {
   return {
     inputs: ['a'.repeat(64)],
-    outputs: [{ boxType: 'karma' as const, value: 10n, owner: new Uint8Array(32), createdAtBlock: 1 }],
+    outputs: [{ boxType: 'karma', value: '10', owner: '0'.repeat(64), createdAtBlock: 1 }],
     signatures: {},
     protocolVersion: 1,
     prune: {
       rootPostHash: 'd'.repeat(64),
       subtreePostIds: ['d'.repeat(64)],
-      subtreeMerkleRoot: new Uint8Array(32),
+      subtreeMerkleRoot: '0'.repeat(64),
     },
   };
 }
 
+const STUB_DEPS: UtxoEngineDeps = {
+  getBox: () => null,
+  insertBox: () => {},
+  consumeBox: () => {},
+  getKarmaBox: () => null,
+  getKarmaValue: () => 0n,
+  getIdentityRecord: () => null,
+  hasActiveVouchEscrow: () => false,
+  vouchCooldownBlocks: 0,
+  inviteBondMin: 0n,
+  inviteBondMax: 0n,
+  decayCfg: { staleThresholdBlocks: 0, decayIntervalBlocks: 0, decayAmount: 0n, karmaMinimum: 0n },
+  storageRentPeriodBlocks: 0,
+  getBoxProvenance: () => null,
+  getTopologyAuthor: () => null,
+  runInTransaction: (fn: () => void) => fn(),
+};
+
 async function request(
   postId: string,
   body: unknown,
-  executePruneImpl?: (tx: UtxoTransaction) => { txId: string },
+  executePruneImpl?: (deps: UtxoEngineDeps, tx: UtxoTransaction, height: number) => { txId: string },
 ): Promise<{ status: number; data: unknown }> {
   return new Promise((resolve) => {
     const deps = {
-      executePrune: executePruneImpl ?? (() => ({ txId: 'b'.repeat(64) })),
+      ...STUB_DEPS,
+      executePrune: executePruneImpl ?? ((_d: UtxoEngineDeps, _t: UtxoTransaction, _h: number) => ({ txId: 'b'.repeat(64) })),
+      getCurrentHeight: () => 10,
     };
     const app = express();
     app.use(express.json());
@@ -58,11 +79,7 @@ async function request(
         },
       );
       if (body !== undefined) {
-        r.write(JSON.stringify(body, (_k, v) => {
-          if (v instanceof Uint8Array) return Buffer.from(v).toString('hex');
-          if (typeof v === 'bigint') return v.toString();
-          return v;
-        }));
+        r.write(JSON.stringify(body));
       }
       r.end();
     });
@@ -77,7 +94,7 @@ const TEST_POST_HASH = 'd'.repeat(64);
 
 describe('pruning routes', () => {
   it('POST /posts/:id/prune with a prune transaction returns 201', async () => {
-    const res = await request(TEST_POST_HASH, makePruneTx());
+    const res = await request(TEST_POST_HASH, { tx: makeJsonPruneTxBody() });
     expect(res.status).toBe(201);
     const body = res.data as Record<string, unknown>;
     expect(body.status).toBe('submitted');
@@ -85,33 +102,26 @@ describe('pruning routes', () => {
     expect(body.postId).toBe(TEST_POST_HASH);
   });
 
-  it('POST /posts/:id/prune without prune payload returns 400', async () => {
-    const res = await request(TEST_POST_HASH, { inputs: [], outputs: [], signatures: {}, protocolVersion: 1 });
+  it('POST /posts/:id/prune without tx field returns 400', async () => {
+    const res = await request(TEST_POST_HASH, {});
     expect(res.status).toBe(400);
     const body = res.data as Record<string, unknown>;
     expect(body.error).toContain('prune transaction');
   });
 
-  it('POST /posts/:id/prune returns 404 when executePrune throws 404', async () => {
-    const res = await request(TEST_POST_HASH, makePruneTx(), () => {
-      throw Object.assign(new Error('Post not found'), { statusCode: 404 });
-    });
-    expect(res.status).toBe(404);
+  it('POST /posts/:id/prune without prune payload returns 400', async () => {
+    const txBody = makeJsonPruneTxBody();
+    delete txBody.prune;
+    const res = await request(TEST_POST_HASH, { tx: txBody });
+    expect(res.status).toBe(400);
+    const body = res.data as Record<string, unknown>;
+    expect(body.error).toContain('prune transaction');
   });
 
-  it('POST /posts/:id/prune returns 403 when executePrune throws 403', async () => {
-    const res = await request(TEST_POST_HASH, makePruneTx(), () => {
-      throw Object.assign(new Error('Author mismatch'), { statusCode: 403 });
-    });
-    expect(res.status).toBe(403);
-  });
-
-  it('POST /posts/:id/prune returns 400 when executePrune throws 400', async () => {
-    const res = await request(TEST_POST_HASH, makePruneTx(), () => {
-      throw Object.assign(
-        new Error('subtreePostIds does not match committed topology'),
-        { statusCode: 400 },
-      );
+  it('POST /posts/:id/prune returns 400 when executePrune throws ClientError', async () => {
+    const { ClientError } = await import('../../src/services/client-error.js');
+    const res = await request(TEST_POST_HASH, { tx: makeJsonPruneTxBody() }, () => {
+      throw new ClientError('subtreePostIds does not match committed topology');
     });
     expect(res.status).toBe(400);
     const body = res.data as Record<string, unknown>;
@@ -119,9 +129,27 @@ describe('pruning routes', () => {
   });
 
   it('POST /posts/:id/prune returns 500 for unexpected errors', async () => {
-    const res = await request(TEST_POST_HASH, makePruneTx(), () => {
+    const res = await request(TEST_POST_HASH, { tx: makeJsonPruneTxBody() }, () => {
       throw new Error('unexpected');
     });
     expect(res.status).toBe(500);
+  });
+
+  it('hex subtreeMerkleRoot in JSON reaches executePrune as Uint8Array', async () => {
+    const merkleHex = 'ab'.repeat(32);
+    const txBody = makeJsonPruneTxBody();
+    (txBody.prune as Record<string, unknown>).subtreeMerkleRoot = merkleHex;
+
+    let captured: UtxoTransaction | undefined;
+    await request(TEST_POST_HASH, { tx: txBody }, (_deps, tx) => {
+      captured = tx;
+      return { txId: 'b'.repeat(64) };
+    });
+
+    expect(captured).toBeDefined();
+    expect(captured!.prune).toBeDefined();
+    expect(captured!.prune!.subtreeMerkleRoot).toBeInstanceOf(Uint8Array);
+    expect(captured!.prune!.subtreeMerkleRoot.length).toBe(32);
+    expect(Buffer.from(captured!.prune!.subtreeMerkleRoot).toString('hex')).toBe(merkleHex);
   });
 });

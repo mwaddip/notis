@@ -1,13 +1,16 @@
 import { Router } from 'express';
 import type { UtxoTransaction } from '@dagsocial/types';
-import { MempoolFullError, PendingSpendConflictError, TxTooLargeError } from '../store/mempool.js';
+import type { UtxoEngineDeps } from '../services/utxo-engine.js';
+import { jsonToTx } from './json-to-tx.js';
+import { respondError } from './respond-error.js';
 
 // ---------------------------------------------------------------------------
 // Dependency types
 // ---------------------------------------------------------------------------
 
-export interface DeleteDeps {
-  executePrune: (tx: UtxoTransaction) => { txId: string };
+export interface DeleteDeps extends UtxoEngineDeps {
+  executePrune: (deps: UtxoEngineDeps, tx: UtxoTransaction, currentBlockHeight: number) => { txId: string };
+  getCurrentHeight: () => number;
 }
 
 // ---------------------------------------------------------------------------
@@ -19,41 +22,38 @@ export function deleteRoutes(deps: DeleteDeps): Router {
 
   // POST /posts/:id/prune — submit a signed prune transaction
   router.post('/posts/:id/prune', (req, res) => {
+    const body = req.body as { tx?: Record<string, unknown> };
+
+    if (!body.tx) {
+      res.status(400).json({ error: 'Request must carry a prune transaction' });
+      return;
+    }
+
+    let tx: UtxoTransaction;
     try {
-      const tx = req.body as UtxoTransaction;
-      if (!tx || !tx.prune) {
-        return res.status(400).json({ error: 'Request must carry a prune transaction' });
-      }
+      tx = jsonToTx(body.tx);
+    } catch (err) {
+      respondError(res, err, 'POST /posts/:id/prune (tx decode)', 'message');
+      return;
+    }
 
-      const { txId } = deps.executePrune(tx);
+    if (!tx.prune) {
+      res.status(400).json({ error: 'Request must carry a prune transaction' });
+      return;
+    }
 
-      return res.status(201).json({
+    try {
+      const currentHeight = deps.getCurrentHeight();
+      const { txId } = deps.executePrune(deps, tx, currentHeight);
+
+      res.status(201).json({
         status: 'submitted',
         txId,
         postId: tx.prune.rootPostHash,
         replyCount: tx.prune.subtreePostIds.length - 1,
       });
-    } catch (err: any) {
-      if (err.statusCode === 404) {
-        return res.status(404).json({ error: 'Post not found' });
-      }
-      if (err.statusCode === 403) {
-        return res.status(403).json({ error: err.message });
-      }
-      if (err.statusCode === 400) {
-        return res.status(400).json({ error: err.message });
-      }
-      if (err instanceof MempoolFullError) {
-        return res.status(503).json({ error: 'mempool full' });
-      }
-      if (err instanceof PendingSpendConflictError) {
-        return res.status(409).json({ error: err.message });
-      }
-      if (err instanceof TxTooLargeError) {
-        return res.status(413).json({ error: err.message });
-      }
-      console.error('DELETE /posts/:id failed with an unexpected error:', err);
-      return res.status(500).json({ error: 'Internal server error' });
+    } catch (err: unknown) {
+      respondError(res, err, 'POST /posts/:id/prune', 'message');
     }
   });
 
