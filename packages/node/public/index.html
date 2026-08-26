@@ -657,6 +657,21 @@ function postFieldBytes(contentHash, authorBytes, parentRefs, protocolVersion, t
   ]);
 }
 
+/**
+ * pruneFieldBytes — the canonical encoding of a PruneCommit:
+ *
+ *   b32(rootPostHash) ‖ arr(subtreePostIds, b32) ‖ b32(subtreeMerkleRoot)
+ *
+ * TYPES_INTERFACE → Layout — PruneCommit.
+ */
+function pruneFieldBytes(prune) {
+  return concatUint8Arrays([
+    b32Hex(prune.rootPostHash, 32),
+    arr(prune.subtreePostIds, (id) => b32Hex(id, 32)),
+    b32Either(prune.subtreeMerkleRoot, 32),
+  ]);
+}
+
 // ===========================================================================
 // canonicalBoxBytes — the single box→bytes rule both id functions use
 // ===========================================================================
@@ -807,6 +822,7 @@ const TX_ID_DOMAIN = encoder.encode('dagsocial/tx-id/1');
  *   | 3 | protocolVersion | vlqU                                         |
  *   | 4 | likeTarget      | opt(b32)                                     |
  *   | 5 | post            | opt(postFieldBytes)                          |
+ *   | 6 | prune           | opt(pruneFieldBytes)                         |
  *
  * Three properties this layout secures, each of which a bare concatenation
  * would not (TYPES_INTERFACE → Layout — UtxoTransaction):
@@ -824,7 +840,7 @@ const TX_ID_DOMAIN = encoder.encode('dagsocial/tx-id/1');
  *
  * Signatures are absent and stay absent: they are Ed25519 *over* this id.
  *
- * ⛔ **FIVE FIELDS, AND THE COUNT IS LOAD-BEARING.** `signTx` signs whatever this
+ * ⛔ **SIX FIELDS, AND THE COUNT IS LOAD-BEARING.** `signTx` signs whatever this
  * returns, so a field here that the node does not write makes the browser sign
  * an id the node never computes — and **every transaction this page builds is
  * rejected**, with nothing in the repo able to see it (NODE_INTERFACE → the
@@ -844,6 +860,7 @@ function computeTxId(tx) {
       post.protocolVersion,
       post.type,
     )),
+    opt(tx.prune, (prune) => pruneFieldBytes(prune)),
   ]);
   const hash = blake2b(combined, null, 64).slice(0, 32);
   return buf2hex(hash);

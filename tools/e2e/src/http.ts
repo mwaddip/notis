@@ -196,9 +196,10 @@ export async function getVouches(
 export async function postPrune(
   node: NodeProcess,
   postId: string,
-  body: object,
-): Promise<Record<string, unknown>> {
-  return jsonPost(node, `/posts/${postId}/prune`, body);
+  txJson: Record<string, unknown>,
+): Promise<{ status: string; txId: string; postId: string; replyCount: number }> {
+  const data = await jsonPost(node, `/posts/${postId}/prune`, { tx: txJson });
+  return data as { status: string; txId: string; postId: string; replyCount: number };
 }
 
 export async function postCreditTransfer(

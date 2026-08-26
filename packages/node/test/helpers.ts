@@ -11,9 +11,6 @@ import {
   encodeHeader,
   encodeUtxoTxTree,
   u32BE,
-  leafHash,
-  buildMerkleRoot,
-  hexToBuf,
   PROTOCOL_VERSION,
   LIKE_KARMA_COST,
   POST_LOCK_THREAD_COST,
@@ -39,7 +36,6 @@ import type {
   FeeBox,
   BlockHeader,
   OrderingBlock,
-  PruneEntry,
 } from '@dagsocial/types';
 
 /**
@@ -760,34 +756,6 @@ export function signHeader(header: BlockHeader, privateKey: KeyObject): Uint8Arr
 }
 
 /**
- * A PruneEntry that is internally valid in every respect a node can check
- * without knowing who the author is: the Merkle root is the real root over the
- * subtree ids, and the signature is a real Ed25519 signature over
- * blake2b(rootPostHash ‖ merkleRoot) from `signWith`, whose public key it
- * carries as `authorId`. What a test varies is *whose* key that is.
- */
-export function makePruneEntry(
-  rootPostHash: string,
-  subtreePostIds: string[],
-  signWith: TestIdentity,
-): PruneEntry {
-  const leaves = [...subtreePostIds].sort().map((id) => leafHash('stump', hexToBuf(id)));
-  const subtreeMerkleRoot = buildMerkleRoot(leaves);
-  const payload = createHash('blake2b512')
-    .update(rootPostHash)
-    .update(Buffer.from(subtreeMerkleRoot))
-    .digest()
-    .subarray(0, 32);
-  return {
-    rootPostHash,
-    subtreePostIds,
-    subtreeMerkleRoot,
-    authorId: signWith.userId,
-    authorSignature: new Uint8Array(cryptoSign(null, payload, signWith.privateKey)),
-  };
-}
-
-/**
  * A hand-built block that passes every apply check: chain-linked at genesis,
  * correct Merkle roots, coinbase paying exactly the scheduled emission with the
  * scheduled maturity lock, the post-block AVL state root, a real PoW solution
@@ -924,8 +892,6 @@ export async function makeApplicableBlock(
     signWith?: KeyObject;
     /** Height to build at; anything above 1 chain-links to the stored block below. */
     height?: number;
-    /** Prune entries this block settles. */
-    pruneEntries?: PruneEntry[];
     /** Mine to this identity (coinbase owner + validatorId) instead of a fresh
      *  one — lets a test seed pre-existing boxes for the coinbase owner. */
     miner?: TestIdentity;
@@ -987,7 +953,6 @@ export async function makeApplicableBlock(
     height,
     miner.userId,
     miner.userId,
-    opts.pruneEntries ?? [],
   );
   if ('error' in built) {
     throw new Error(`makeApplicableBlock: the body has no valid settlement: ${built.error}`);
@@ -1007,7 +972,6 @@ export async function makeApplicableBlock(
   const utxoTxTree = {
     utxoTxIds: [...embeddedTxs.map((tx) => computeTxId(tx)), computeTxId(settlementTx)],
     utxoTxs: [...txBytesList, encodeTx(settlementTx)],
-    pruneEntries: opts.pruneEntries ?? [],
   };
 
   const header = {
@@ -1159,7 +1123,6 @@ export function makeBlock(height: number, createdAt: number): OrderingBlock {
     utxoTxTree: {
       utxoTxIds: ['77'.repeat(32)],
       utxoTxs: [new Uint8Array(96)],
-      pruneEntries: [],
     },
     validatorSignature: new Uint8Array(64),
   };

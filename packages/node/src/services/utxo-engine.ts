@@ -16,7 +16,7 @@ import {
 import { isCreditSideTx } from './coinbase-split.js';
 import { effectiveKarma } from './decay.js';
 import type { DecayCfg } from './decay.js';
-import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, PostLockBox, PostCommit } from '@dagsocial/types';
+import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, PostLockBox, PostCommit, PruneCommit } from '@dagsocial/types';
 
 // `computeTxId` has exactly one implementation and it is types'. This engine
 // must never grow a local copy: the id it returns is both the hash
@@ -26,7 +26,7 @@ import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, Bon
 // same `Encoder` options, same strip rule, same domain tag, all by hand
 // (NODE_INTERFACE → "Box Identity and Mint Provenance").
 
-import { ed25519PublicKeyToKeyObject, verifyPostCommitDomains, verifyProtocolVersion } from '@dagsocial/validation';
+import { ed25519PublicKeyToKeyObject, verifyPostCommitDomains, verifyPruneCommitDomains, verifyProtocolVersion } from '@dagsocial/validation';
 // Type-only: erased at compile time, so the engine gains no runtime edge into
 // the store module graph. Same seam `DecayDeps` uses for the same record.
 import type { IdentityRecord } from '../store/identity-records.js';
@@ -217,6 +217,7 @@ function checkTransitions(
   deps: UtxoEngineDeps,
   likeTarget: string | undefined,
   post: PostCommit | undefined,
+  prune: PruneCommit | undefined,
   currentBlockHeight: number,
   hasSignatures: boolean,
 ): { valid: boolean; error?: string } {
@@ -409,6 +410,16 @@ function checkTransitions(
             error: 'Post author must own the karma the transaction spends',
           };
         }
+        // The lock's owner is pinned to the karma input's owner. Without this
+        // a transaction puts a stranger's key on the lock, and the prune
+        // settlement refunds that stranger — the same property the vouch guard
+        // at voucherId protects (NODE_INTERFACE → Legal box transitions).
+        if (Buffer.from((postLockOutputs[0] as PostLockBox).owner).toString('hex') !== inputOwnerHex) {
+          return {
+            valid: false,
+            error: 'Post lock owner must be the karma input\'s owner',
+          };
+        }
       } else if (post !== undefined) {
         // The biconditional's other direction: a payload with no lock.
         return {
@@ -569,6 +580,38 @@ function checkTransitions(
             error:
               `An invite may not name an existing account: ${inviteeHex} already ` +
               `holds an identity record`,
+          };
+        }
+      } else if (prune !== undefined) {
+        // karma → karma (conserving, with a PruneCommit payload).
+        // ⛔ **An IMPLICATION, never a biconditional** (NODE_INTERFACE → Prune
+        // transactions). `prune` present ⟹ all-karma inputs sharing one owner
+        // (pinned above), exactly one karma output, total output equals total
+        // input (step 7's unconditional conservation), and `inputKarma.owner`
+        // is the root's `block_topology` author.
+        if (karmaOutputs.length !== 1 || outputs.length !== 1) {
+          return {
+            valid: false,
+            error: 'Prune transition requires exactly one karma output',
+          };
+        }
+        // `verifyPruneCommitDomains` is the single statement of the payload's
+        // structural domain — the precedent is `verifyPostCommitDomains` at
+        // the envelope check (NODE_INTERFACE → Prune transactions).
+        const domains = verifyPruneCommitDomains(prune);
+        if (!domains.valid) {
+          return { valid: false, error: `Invalid prune payload: ${domains.error}` };
+        }
+        // The authorship binding: the karma input's owner is the root's
+        // consensus-recorded author (NODE_INTERFACE → Prune transactions).
+        // `block_topology` is the authority, so a node holding no DAG content
+        // reaches the same verdict.
+        const rootAuthor = deps.getTopologyAuthor(prune.rootPostHash);
+        if (rootAuthor === null ||
+            Buffer.from(rootAuthor).toString('hex') !== inputOwnerHex) {
+          return {
+            valid: false,
+            error: `Prune root ${prune.rootPostHash} is not authored by the karma input's owner`,
           };
         }
       }
@@ -931,6 +974,7 @@ const ENVELOPE_ALLOWED: ReadonlySet<string> = new Set<string>([
   ...ENVELOPE_REQUIRED,
   'likeTarget',
   'post',
+  'prune',
 ]);
 
 /**
@@ -1067,7 +1111,7 @@ export function checkTxEnvelope(tx: unknown): UtxoResult {
     if (!ENVELOPE_ALLOWED.has(key)) {
       return { valid: false, error: `Invalid tx envelope: unexpected key '${key}'` };
     }
-    if (tx[key] === undefined && key !== 'likeTarget' && key !== 'post') {
+    if (tx[key] === undefined && key !== 'likeTarget' && key !== 'post' && key !== 'prune') {
       return {
         valid: false,
         error: `Invalid tx envelope: key '${key}' is present with value undefined`,
@@ -1181,6 +1225,19 @@ export function checkTxEnvelope(tx: unknown): UtxoResult {
   // author owns the karma) is the transition arms' business, not the envelope's.
   if (tx.post !== undefined) {
     const domains = verifyPostCommitDomains(tx.post);
+    if (!domains.valid) {
+      return { valid: false, error: `Invalid tx envelope: ${domains.error}` };
+    }
+  }
+
+  // ---- 10. prune: absent, or a payload inside the encodable domain ----
+  //
+  // Same obligation as `post` above: `txIdBytes` writes the payload through
+  // `pruneFieldBytes`, whose fixed-width writers throw outside their domain.
+  // `verifyPruneCommitDomains` is the single statement of that domain
+  // (NODE_INTERFACE → Prune transactions).
+  if (tx.prune !== undefined) {
+    const domains = verifyPruneCommitDomains(tx.prune);
     if (!domains.valid) {
       return { valid: false, error: `Invalid tx envelope: ${domains.error}` };
     }
@@ -1953,6 +2010,7 @@ export function validateTx(
     deps,
     tx.likeTarget,
     tx.post,
+    tx.prune,
     currentBlockHeight,
     Object.keys(tx.signatures).length > 0,
   );

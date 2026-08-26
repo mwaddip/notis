@@ -95,19 +95,17 @@ export {
   getSubtreeTopology,
   getTopologyAuthor,
   getTopologyAuthorBytes,
+  getTopologyHeight,
   rollbackBlockTopology,
 } from './topology.js';
 
 export {
   insertUtxoTx,
-  insertMempoolPrune,
   getPendingEntries,
   iteratePendingEntries,
   purgeExpired,
   removeEntry,
   removeUtxoTxEntry,
-  selectMempoolPrunes,
-  removeMempoolPrunes,
   hasPendingLike,
   countPendingInvites,
   hasPendingVouch,

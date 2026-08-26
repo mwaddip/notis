@@ -65,7 +65,6 @@ function blockToJson(block: OrderingBlock): Record<string, unknown> {
       // The ids of the posts this block creates, derived from its post-bearing
       // transactions. There is no separate sub-block section to report.
       postIds: postIdsOf(block),
-      pruneEntries: block.utxoTxTree.pruneEntries,
       // Binary fields omitted from JSON — UTXO tx bytes have no meaningful
       // textual representation.
       //

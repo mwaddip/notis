@@ -23,11 +23,15 @@ import {
   KARMA_DECAY_INTERVAL_BLOCKS,
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,
+  leafHash,
+  buildMerkleRoot,
+  hexToBuf,
 } from '@dagsocial/types';
 import type {
   AnyBox,
   KarmaBox,
   LikeAccrualBox,
+  PruneCommit,
   BondBox,
   PostCommit,
   PostLockBox,
@@ -101,6 +105,19 @@ function computeTxHash(tx: UtxoTransaction): Uint8Array {
 const LIKE_TARGET_POST = 'ab'.repeat(32);
 const LIKE_TARGET_AUTHOR = new Uint8Array(32).fill(0xab);
 
+/** Posts the topology resolves — tests add entries here for prune tests. */
+const topologyAuthors = new Map<string, Uint8Array>();
+topologyAuthors.set(LIKE_TARGET_POST, LIKE_TARGET_AUTHOR);
+
+function makePruneCommit(rootPostHash: string, subtreePostIds: string[]): PruneCommit {
+  const leaves = [...subtreePostIds].sort().map(id => leafHash('stump', hexToBuf(id)));
+  return {
+    rootPostHash,
+    subtreePostIds,
+    subtreeMerkleRoot: buildMerkleRoot(leaves),
+  };
+}
+
 describe('validateAndApplyTx', () => {
   let db: Database.Database;
   let ownerPubKey: Uint8Array;
@@ -147,7 +164,7 @@ describe('validateAndApplyTx', () => {
       storageRentPeriodBlocks: 40,
       getBoxProvenance: () => null,
       getTopologyAuthor: (postId: string) =>
-        postId === LIKE_TARGET_POST ? LIKE_TARGET_AUTHOR : null,
+        topologyAuthors.get(postId) ?? null,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
       },
@@ -211,6 +228,7 @@ describe('validateAndApplyTx', () => {
     protocolVersion = 1,
     likeTarget?: string,
     post?: PostCommit,
+    prune?: PruneCommit,
   ): UtxoTransaction {
     const hexKey = Buffer.from(pubKey).toString('hex');
     const tx: UtxoTransaction = {
@@ -220,6 +238,7 @@ describe('validateAndApplyTx', () => {
       protocolVersion,
       ...(likeTarget !== undefined ? { likeTarget } : {}),
       ...(post !== undefined ? { post } : {}),
+      ...(prune !== undefined ? { prune } : {}),
     };
     const hash = computeTxHash(tx);
     tx.signatures[hexKey] = signHash(hash, privKey);
@@ -2089,6 +2108,190 @@ describe('validateAndApplyTx', () => {
       const r = validateTx(deps, tx, 199);
       expect(r.error).toMatch(/locked until/);
       expect(r.error).not.toMatch(/signature/i);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // The prune transition arm
+  // -------------------------------------------------------------------------
+  describe('prune transition arm', () => {
+    const PRUNE_ROOT = 'cc'.repeat(32);
+
+    beforeEach(() => {
+      topologyAuthors.set(PRUNE_ROOT, ownerPubKey);
+    });
+    afterEach(() => {
+      topologyAuthors.delete(PRUNE_ROOT);
+    });
+
+    it('accepts a well-formed prune transaction: K(v) → K(v) with PruneCommit', () => {
+      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
+      const newKarma: CandidateOf<KarmaBox> = {
+        boxType: 'karma', value: 100n, createdAtBlock: 0, owner: ownerPubKey,
+      };
+      const prune = makePruneCommit(PRUNE_ROOT, [PRUNE_ROOT]);
+      const tx = buildSignedTx(
+        [karma.id!], [newKarma], ownerPrivKey, ownerPubKey, 1, undefined, undefined, prune,
+      );
+      const result = validateAndApplyTx(deps, tx, 10);
+      expect(result.valid).toBe(true);
+    });
+
+    it('rejects a prune with more than one output', () => {
+      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
+      const out1: CandidateOf<KarmaBox> = {
+        boxType: 'karma', value: 50n, createdAtBlock: 0, owner: ownerPubKey,
+      };
+      const out2: CandidateOf<KarmaBox> = {
+        boxType: 'karma', value: 50n, createdAtBlock: 0, owner: ownerPubKey,
+      };
+      const prune = makePruneCommit(PRUNE_ROOT, [PRUNE_ROOT]);
+      const tx = buildSignedTx(
+        [karma.id!], [out1, out2], ownerPrivKey, ownerPubKey, 1, undefined, undefined, prune,
+      );
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toMatch(/exactly one karma output/i);
+    });
+
+    it('rejects a prune whose rootPostHash has no topology author (unconfirmed root)', () => {
+      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
+      const unconfirmedRoot = 'dd'.repeat(32);
+      const newKarma: CandidateOf<KarmaBox> = {
+        boxType: 'karma', value: 100n, createdAtBlock: 0, owner: ownerPubKey,
+      };
+      const prune = makePruneCommit(unconfirmedRoot, [unconfirmedRoot]);
+      const tx = buildSignedTx(
+        [karma.id!], [newKarma], ownerPrivKey, ownerPubKey, 1, undefined, undefined, prune,
+      );
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toMatch(/not authored by the karma input/);
+    });
+
+    it('rejects a prune whose rootPostHash is authored by a different key (stranger prune)', () => {
+      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
+      const strangerRoot = 'ee'.repeat(32);
+      const { publicKey: strangerPub } = generateKeyPairSync('ed25519');
+      const strangerPubRaw = new Uint8Array(
+        strangerPub.export({ type: 'spki', format: 'der' }).subarray(12),
+      );
+      topologyAuthors.set(strangerRoot, strangerPubRaw);
+      const newKarma: CandidateOf<KarmaBox> = {
+        boxType: 'karma', value: 100n, createdAtBlock: 0, owner: ownerPubKey,
+      };
+      const prune = makePruneCommit(strangerRoot, [strangerRoot]);
+      const tx = buildSignedTx(
+        [karma.id!], [newKarma], ownerPrivKey, ownerPubKey, 1, undefined, undefined, prune,
+      );
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toMatch(/not authored by the karma input/);
+      topologyAuthors.delete(strangerRoot);
+    });
+
+    it('rejects a prune whose payload verifyPruneCommitDomains refuses (bad rootPostHash)', () => {
+      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
+      const newKarma: CandidateOf<KarmaBox> = {
+        boxType: 'karma', value: 100n, createdAtBlock: 0, owner: ownerPubKey,
+      };
+      const badPrune = {
+        rootPostHash: 'not-hex-64',
+        subtreePostIds: ['not-hex-64'],
+        subtreeMerkleRoot: new Uint8Array(32),
+      } as unknown as PruneCommit;
+      // No signature: the envelope check catches the bad payload before
+      // authorization, so signing is unreachable — and computeTxId throws on
+      // a field outside the encoder's domain.
+      const tx: UtxoTransaction = {
+        inputs: [karma.id!],
+        outputs: [newKarma],
+        signatures: {},
+        protocolVersion: 1,
+        prune: badPrune,
+      };
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toMatch(/Invalid tx envelope/);
+    });
+
+    it('a prune does not forbid plain karma self-consolidation (the implication is one-directional)', () => {
+      const k1 = createAndInsertKarma(ownerPubKey, 60n, 1);
+      const k2 = createAndInsertKarma(ownerPubKey, 40n, 2);
+      const merged: CandidateOf<KarmaBox> = {
+        boxType: 'karma', value: 100n, createdAtBlock: 0, owner: ownerPubKey,
+      };
+      const tx = buildSignedTx(
+        [k1.id!, k2.id!], [merged], ownerPrivKey, ownerPubKey,
+      );
+      const result = validateAndApplyTx(deps, tx, 10);
+      expect(result.valid).toBe(true);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // The post_lock owner pin (D1-3)
+  // -------------------------------------------------------------------------
+  describe('post_lock owner pin', () => {
+    it('refuses a post transaction whose post_lock.owner is a stranger key', () => {
+      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
+      const { publicKey: strangerPub } = generateKeyPairSync('ed25519');
+      const strangerPubRaw = new Uint8Array(
+        strangerPub.export({ type: 'spki', format: 'der' }).subarray(12),
+      );
+      const newKarma: CandidateOf<KarmaBox> = {
+        boxType: 'karma',
+        value: 100n - POST_LOCK_THREAD_COST,
+        createdAtBlock: 0,
+        owner: ownerPubKey,
+      };
+      const postLock: CandidateOf<PostLockBox> = {
+        boxType: 'post_lock',
+        value: POST_LOCK_THREAD_COST,
+        createdAtBlock: 0,
+        originalValue: POST_LOCK_THREAD_COST,
+        owner: strangerPubRaw,
+      };
+      const tx = buildSignedTx(
+        [karma.id!],
+        [newKarma, postLock],
+        ownerPrivKey,
+        ownerPubKey,
+        1,
+        undefined,
+        makePostCommit(ownerPubKey, 'stranger-owned lock'),
+      );
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toMatch(/Post lock owner must be the karma input/);
+    });
+
+    it('accepts a post transaction whose post_lock.owner is the karma owner', () => {
+      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
+      const newKarma: CandidateOf<KarmaBox> = {
+        boxType: 'karma',
+        value: 100n - POST_LOCK_THREAD_COST,
+        createdAtBlock: 0,
+        owner: ownerPubKey,
+      };
+      const postLock: CandidateOf<PostLockBox> = {
+        boxType: 'post_lock',
+        value: POST_LOCK_THREAD_COST,
+        createdAtBlock: 0,
+        originalValue: POST_LOCK_THREAD_COST,
+        owner: ownerPubKey,
+      };
+      const tx = buildSignedTx(
+        [karma.id!],
+        [newKarma, postLock],
+        ownerPrivKey,
+        ownerPubKey,
+        1,
+        undefined,
+        makePostCommit(ownerPubKey, 'own-lock payload'),
+      );
+      const result = validateAndApplyTx(deps, tx, 10);
+      expect(result.valid).toBe(true);
     });
   });
 });

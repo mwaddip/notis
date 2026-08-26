@@ -8,8 +8,6 @@ import {
 } from 'vitest';
 import {
   computeTxId,
-  encodeOrderingBlock,
-  decodeOrderingBlock,
   PROTOCOL_VERSION,
   LIKE_KARMA_COST,
   KARMA_STALE_THRESHOLD_BLOCKS,
@@ -17,10 +15,12 @@ import {
   VOUCH_KARMA_AMOUNT,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   MAX_BLOCK_BODY_BYTES,
+  leafHash,
+  buildMerkleRoot,
+  hexToBuf,
 } from '@dagsocial/types';
 import { verifyOrderingBlockPoW } from '@dagsocial/validation';
 import type {
-  Post,
   KarmaBox,
   CreditBox,
   VouchBox,
@@ -28,7 +28,6 @@ import type {
   PostLockBox,
   BlockHeader,
   OrderingBlock,
-  PruneEntry,
   UtxoTransaction,
 } from '@dagsocial/types';
 import type { BlockJournal, BoxMutation } from '../../src/store/journal.js';
@@ -48,7 +47,6 @@ import {
   makeKarmaBox,
   makeLikeTx,
   makePostCommit,
-  makePruneEntry,
   makeTestConfig,
   makeTestIdentity,
   mineNextBlock,
@@ -389,7 +387,6 @@ describe('block-apply journal recording', () => {
         // reads it, so an opaque one is enough here.
         utxoTxIds: ['99'.repeat(32)],
         utxoTxs: [new Uint8Array(96).fill(0x99)],
-        pruneEntries: [],
       },
       validatorSignature: new Uint8Array(64),
     };
@@ -442,7 +439,6 @@ describe('block-apply journal recording', () => {
         // reads it, so an opaque one is enough here.
         utxoTxIds: ['99'.repeat(32)],
         utxoTxs: [new Uint8Array(96).fill(0x99)],
-        pruneEntries: [],
       },
       validatorSignature: new Uint8Array(64),
     };
@@ -487,7 +483,6 @@ describe('block-apply journal recording', () => {
         // reads it, so an opaque one is enough here.
         utxoTxIds: ['99'.repeat(32)],
         utxoTxs: [new Uint8Array(96).fill(0x99)],
-        pruneEntries: [],
       },
       validatorSignature: new Uint8Array(64),
     };
@@ -2008,217 +2003,6 @@ describe('block-apply H-3 post authorship and prune binding', () => {
     vi.resetModules();
   });
 
-  // -----------------------------------------------------------------------
-  // Prune authorship binding — the H-3 attack itself
-  // -----------------------------------------------------------------------
-
-  it('rejects a block pruning a subtree under a key that is not the root author', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-
-    const author = makeTestIdentity();
-    const attacker = makeTestIdentity();
-    // ⛔ The block must CARRY the post transaction, not a claim about the post.
-    // `block_topology`'s author comes from `tx.post.author` now, so a fixture
-    // that seeded the post and asserted an id would be testing its own
-    // arithmetic — the binding under attack here is the one apply derives.
-    const { tx: postTx, postId } = await seedPostTx(author, 'victim post');
-
-    const blockApply = await importBlockApply();
-
-    // Height 1 confirms the post — that is what records its author in
-    // block_topology, and it is the only place the author is recorded.
-    const confirmBlock = await makeApplicableBlock({ utxoTxs: [postTx] });
-    expect(blockApply.applyOrderingBlock(confirmBlock)).toBe(true);
-
-    // Height 2 is the attack: the prune is signed, correctly, by a key that has
-    // nothing to do with the post. Merkle root, postId set and signature all
-    // verify — only the binding to the recorded author does not.
-    const pruneBlock = await makeApplicableBlock({
-      height: 2,
-      pruneEntries: [makePruneEntry(postId, [postId], attacker)],
-    });
-    expect(hex(attacker.userId)).not.toBe(hex(author.userId));
-    expect(blockApply.applyOrderingBlock(pruneBlock)).toBe(false);
-
-    // Rolled back whole: no block at 2, no settlement, no DAG deletion.
-    const ordering = await importOrdering();
-    expect(ordering.getOrderingBlock(2)).toBeNull();
-    expect(ordering.getCurrentHeight()).toBe(1);
-
-    const journal = await importJournalStore();
-    expect(journal.getBlockJournal(2)).toBeNull();
-
-    const posts = await importPosts();
-    const stored = posts.getPost(postId);
-    expect(stored).not.toBeNull();
-    expect(posts.isLivePost(stored)).toBe(true);
-
-    const { getStump } = (await import('../../src/store/stumps.js')) as {
-      getStump: (id: string) => unknown;
-    };
-    expect(getStump(postId)).toBeNull();
-  });
-
-  it('accepts the same prune when authorId is the recorded author (control)', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-
-    const author = makeTestIdentity();
-    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'victim post');
-
-    const posts = await importPosts();
-    posts.insertPost(postId, commit, content);
-
-    const blockApply = await importBlockApply();
-    const confirmBlock = await makeApplicableBlock({
-      utxoTxs: [postTx],
-    });
-    expect(blockApply.applyOrderingBlock(confirmBlock)).toBe(true);
-
-    // Identical in shape to the rejected block above — the signing key is the
-    // only difference, which is what makes that rejection non-vacuous.
-    const pruneBlock = await makeApplicableBlock({
-      height: 2,
-      pruneEntries: [makePruneEntry(postId, [postId], author)],
-    });
-    expect(blockApply.applyOrderingBlock(pruneBlock)).toBe(true);
-
-    const ordering = await importOrdering();
-    expect(ordering.getCurrentHeight()).toBe(2);
-
-    const { getStump } = (await import('../../src/store/stumps.js')) as {
-      getStump: (id: string) => { rootPostHash: string } | null;
-    };
-    expect(getStump(postId)?.rootPostHash).toBe(postId);
-  });
-
-  it('rejects a prune of a root no applied block has confirmed', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-
-    // The author's own key, the author's own post — but nothing has confirmed
-    // it, so block_topology has no author for it and it is not prunable. Held
-    // locally and unconfirmed is exactly the state a gossip-only post is in.
-    const author = makeTestIdentity();
-    const { commit, postId, content } = await seedPostTx(author, 'unconfirmed post');
-
-    const posts = await importPosts();
-    posts.insertPost(postId, commit, content);
-
-    const { getTopologyAuthor } = (await import('../../src/store/topology.js')) as {
-      getTopologyAuthor: (postId: string) => string | null;
-    };
-    expect(getTopologyAuthor(postId)).toBeNull();
-
-    const blockApply = await importBlockApply();
-    const pruneBlock = await makeApplicableBlock({
-      pruneEntries: [makePruneEntry(postId, [postId], author)],
-    });
-    expect(blockApply.applyOrderingBlock(pruneBlock)).toBe(false);
-
-    const ordering = await importOrdering();
-    expect(ordering.getCurrentHeight()).toBe(0);
-    expect((posts.getPost(postId) as Post).content).toBe('unconfirmed post');
-  });
-
-  it('accepts the same prune once a block has confirmed the root (control)', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-
-    const author = makeTestIdentity();
-    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'confirmed post');
-
-    const posts = await importPosts();
-    posts.insertPost(postId, commit, content);
-
-    const blockApply = await importBlockApply();
-    expect(
-      blockApply.applyOrderingBlock(
-        await makeApplicableBlock({
-          utxoTxs: [postTx],
-        }),
-      ),
-    ).toBe(true);
-
-    // Same entry, same key — the topology row is the only thing that changed.
-    const pruneBlock = await makeApplicableBlock({
-      height: 2,
-      pruneEntries: [makePruneEntry(postId, [postId], author)],
-    });
-    expect(blockApply.applyOrderingBlock(pruneBlock)).toBe(true);
-
-    const ordering = await importOrdering();
-    expect(ordering.getCurrentHeight()).toBe(2);
-  });
-
-  // -----------------------------------------------------------------------
-  // Structure gate — a prune entry with a repeated subtreePostId
-  // -----------------------------------------------------------------------
-
-  it('rejects a block whose prune entry carries a repeated subtreePostId', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-
-    const author = makeTestIdentity();
-    const { tx: postTx, postId } = await seedPostTx(author, 'target post');
-
-    const blockApply = await importBlockApply();
-
-    const confirmBlock = await makeApplicableBlock({ utxoTxs: [postTx] });
-    expect(blockApply.applyOrderingBlock(confirmBlock)).toBe(true);
-
-    const repeatedEntry = makePruneEntry(postId, [postId, postId], author);
-    const pruneBlock = await makeApplicableBlock({
-      height: 2,
-      pruneEntries: [repeatedEntry],
-    });
-
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    expect(blockApply.applyOrderingBlock(pruneBlock)).toBe(false);
-    const warnings = warn.mock.calls.map((c) => String(c[0]));
-    warn.mockRestore();
-
-    expect(
-      warnings.some(
-        (w) =>
-          w.includes('Rejected block: invalid structure') &&
-          w.includes('carries a repeated id'),
-      ),
-      `expected structure-gate reason in warnings, got ${JSON.stringify(warnings)}`,
-    ).toBe(true);
-
-    const { getStump } = (await import('../../src/store/stumps.js')) as {
-      getStump: (id: string) => unknown;
-    };
-    expect(getStump(postId)).toBeNull();
-
-    const ordering = await importOrdering();
-    expect(ordering.getCurrentHeight()).toBe(1);
-  });
-
-  it('accepts the same prune when subtreePostIds carries no repeat (control)', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-
-    const author = makeTestIdentity();
-    const { tx: postTx, postId } = await seedPostTx(author, 'target post');
-
-    const blockApply = await importBlockApply();
-
-    const confirmBlock = await makeApplicableBlock({ utxoTxs: [postTx] });
-    expect(blockApply.applyOrderingBlock(confirmBlock)).toBe(true);
-
-    const cleanEntry = makePruneEntry(postId, [postId], author);
-    const pruneBlock = await makeApplicableBlock({
-      height: 2,
-      pruneEntries: [cleanEntry],
-    });
-    expect(blockApply.applyOrderingBlock(pruneBlock)).toBe(true);
-
-    const ordering = await importOrdering();
-    expect(ordering.getCurrentHeight()).toBe(2);
-  });
 
   // -----------------------------------------------------------------------
   // Entry-vs-post verification — content-holders keep lying entries out
@@ -2285,220 +2069,6 @@ describe('block-apply funnel totality', () => {
     vi.resetModules();
   });
 
-  /**
-   * A confirmed post and its consensus-recorded author — the state an attacker
-   * builds a prune entry against. `rootPostHash` and the recorded author are
-   * public consensus data (they ride in every block), so nothing here is a
-   * secret the attacker has to obtain.
-   */
-  async function confirmedPost(): Promise<{ postId: string; author: TestIdentity }> {
-    const author = makeTestIdentity();
-    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'victim post');
-
-    const posts = await importPosts();
-    posts.insertPost(postId, commit, content);
-
-    const blockApply = await importBlockApply();
-    const confirmBlock = await makeApplicableBlock({ utxoTxs: [postTx] });
-    expect(blockApply.applyOrderingBlock(confirmBlock)).toBe(true);
-    return { postId, author };
-  }
-
-  // -----------------------------------------------------------------------
-  // The kill shot: a prune entry whose subtreeMerkleRoot is not bytes
-  // -----------------------------------------------------------------------
-
-  /**
-   * Build the block a malicious producer actually ships: honest roots over an
-   * honest entry, then the hostile entry swapped into the body afterwards.
-   *
-   * The entry can no longer be present while the block is built —
-   * `computeUtxoTxRoot` runs `serializePruneEntry`, which has no encoding for
-   * a non-byte root — so the swap is the only way to construct the case at all.
-   * `expectUnbuildable` below pins that, because it is half the property.
-   */
-  async function killBlockAtHeight2(
-    postId: string,
-    author: TestIdentity,
-  ): Promise<{ block: OrderingBlock; killEntry: PruneEntry }> {
-    const killEntry = {
-      ...makePruneEntry(postId, [postId], author),
-      subtreeMerkleRoot: 42,
-    } as unknown as PruneEntry;
-    const block = await makeApplicableBlock({
-      height: 2,
-      pruneEntries: [makePruneEntry(postId, [postId], author)],
-    });
-    block.utxoTxTree.pruneEntries[0] = killEntry;
-    return { block, killEntry };
-  }
-
-  const STRUCTURE_REJECTION =
-    'Rejected block: invalid structure: Ordering block pruneEntry has invalid subtreeMerkleRoot';
-
-  it('rejects a non-Uint8Array subtreeMerkleRoot at the structure gate, before any Merkle work', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-
-    const { postId, author } = await confirmedPost();
-    const blockApply = await importBlockApply();
-    const { block, killEntry } = await killBlockAtHeight2(postId, author);
-
-    // Half the property: the honest producer cannot build this block at all now.
-    await expect(
-      makeApplicableBlock({ height: 2, pruneEntries: [killEntry] }),
-    ).rejects.toThrow();
-
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    let applied: boolean | undefined;
-    expect(() => { applied = blockApply.applyOrderingBlock(block); }).not.toThrow();
-    const warnings = warn.mock.calls.map((c) => String(c[0]));
-    const errors = error.mock.calls.map((c) => String(c[0]));
-    warn.mockRestore();
-    error.mockRestore();
-
-    expect(applied).toBe(false);
-
-    // ---- the verdict, by its exact label -----------------------------------
-    // `verifyOrderingBlockStructure` owns this rejection (it lives in
-    // `@dagsocial/validation`, not in this package), and
-    // naming the string is what stops the test passing on some *other*
-    // rejection — a root mismatch, say, which is what a fixture that injected
-    // the entry and asserted only `false` would silently have settled for.
-    expect(warnings, `got ${JSON.stringify(warnings)}`).toContain(STRUCTURE_REJECTION);
-
-    // ---- THE ORDERING PIN --------------------------------------------------
-    // The structure gate runs at the top of `applyOrderingBlock`, Merkle
-    // recomputation later in the same funnel (§4). That ordering is
-    // load-bearing: `computeUtxoTxRoot` is partial, so if the two ever swap,
-    // this block throws into the funnel's totality catch instead of producing a
-    // verdict. Nothing else in the suite would notice — `applyOrderingBlock`
-    // answers `false` either way — so the absence of that catch's log line is
-    // the whole signal.
-    expect(errors.filter((e) => e.includes('unexpected failure during apply'))).toEqual([]);
-
-    // …and the reason the ordering matters, stated rather than assumed. Without
-    // this line the pin above is vacuous: it would also hold if the Merkle
-    // computation were still total.
-    const { computeUtxoTxRoot } = await import('../../src/services/block-creator.js');
-    expect(() => computeUtxoTxRoot(block.utxoTxTree)).toThrow();
-
-    // Rolled back whole: the chain does not move and no journal is written.
-    const ordering = await importOrdering();
-    expect(ordering.getOrderingBlock(2)).toBeNull();
-    expect(ordering.getCurrentHeight()).toBe(1);
-
-    const journal = await importJournalStore();
-    expect(journal.getBlockJournal(2)).toBeNull();
-    expect(journal.isBlockJournalOpen()).toBe(false);
-
-    // The prune did not settle: the victim's content is untouched.
-    const posts = await importPosts();
-    expect((posts.getPost(postId) as Post).content).toBe('victim post');
-  });
-
-  it('accepts the same block with a real 32-byte subtreeMerkleRoot (control)', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-
-    const { postId, author } = await confirmedPost();
-    const blockApply = await importBlockApply();
-
-    // Identical in every field but one: the merkle root is the real root over
-    // the subtree ids and the signature covers it. That is what makes the
-    // rejection above a verdict on the field's *type* and nothing else.
-    const block = await makeApplicableBlock({
-      height: 2,
-      pruneEntries: [makePruneEntry(postId, [postId], author)],
-    });
-    expect(blockApply.applyOrderingBlock(block)).toBe(true);
-
-    const ordering = await importOrdering();
-    expect(ordering.getCurrentHeight()).toBe(2);
-
-    const { getStump } = (await import('../../src/store/stumps.js')) as {
-      getStump: (id: string) => { rootPostHash: string } | null;
-    };
-    expect(getStump(postId)?.rootPostHash).toBe(postId);
-  });
-
-  // -----------------------------------------------------------------------
-  // Path independence — the sync path has no gossip validator in front of it
-  // -----------------------------------------------------------------------
-
-  it('the malformed block cannot cross the wire, and the funnel rejects it anyway', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-
-    const { postId, author } = await confirmedPost();
-    const blockApply = await importBlockApply();
-
-    const { block: killBlock } = await killBlockAtHeight2(postId, author);
-
-    // What `NetNode.appendBlocks` does with a peer's Modifier response: decode
-    // the bytes and hand the result straight to the apply handler. No topic
-    // validator runs on this path, which is why the structure check cannot
-    // live in gossip.
-    //
-    // ⚠ **Phase 3b closed the wire half of this, and the old assertion said so
-    // in advance without meaning to.** It read "the wire round-trip preserves
-    // the hostile field verbatim — a CBOR integer decodes back to a number, not
-    // to bytes", which was the defect: a self-describing encoder let a number
-    // occupy a 32-byte field all the way to the apply funnel.
-    //
-    // `subtreeMerkleRoot` is `b32` from bytes now, so `writeBytesNOrThrow`
-    // refuses a number and this block **has no encoding at all** — it cannot be
-    // put on the sync path by anyone. Pinned as the first assertion, because
-    // "the funnel rejects it" and "it cannot arrive" are different guarantees
-    // and this test now carries both.
-    expect(() => encodeOrderingBlock(killBlock)).toThrow(/expected 32 bytes, got number/);
-
-    // The funnel's guarantee is path-independent and survives regardless: it is
-    // about a struct reaching `applyOrderingBlock`, which is still reachable
-    // in-process (the sync handler hands over a decoded object, and a future
-    // codec change must not be what keeps this honest). So the rest of the test
-    // runs against the struct directly, which is what it was really asserting.
-    const decoded = killBlock;
-    expect(typeof decoded.utxoTxTree.pruneEntries[0]!.subtreeMerkleRoot).toBe('number');
-
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    let applied: boolean | undefined;
-    expect(() => { applied = blockApply.applyOrderingBlock(decoded); }).not.toThrow();
-    const warnings = warn.mock.calls.map((c) => String(c[0]));
-    const errors = error.mock.calls.map((c) => String(c[0]));
-    warn.mockRestore();
-    error.mockRestore();
-
-    expect(applied).toBe(false);
-    // Same verdict and same ordering pin as the direct path — that identity is
-    // the point of the test: the guarantee is path-independent because it lives
-    // in the funnel, not in the gossip validator.
-    expect(warnings, `got ${JSON.stringify(warnings)}`).toContain(STRUCTURE_REJECTION);
-    expect(errors.filter((e) => e.includes('unexpected failure during apply'))).toEqual([]);
-
-    const ordering = await importOrdering();
-    expect(ordering.getCurrentHeight()).toBe(1);
-  });
-
-  it('accepts a well-formed block over the same sync path (control)', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-
-    const { postId, author } = await confirmedPost();
-    const blockApply = await importBlockApply();
-
-    const block = await makeApplicableBlock({
-      height: 2,
-      pruneEntries: [makePruneEntry(postId, [postId], author)],
-    });
-    const decoded = decodeOrderingBlock(encodeOrderingBlock(block));
-    expect(blockApply.applyOrderingBlock(decoded)).toBe(true);
-
-    const ordering = await importOrdering();
-    expect(ordering.getCurrentHeight()).toBe(2);
-  });
 
   // -----------------------------------------------------------------------
   // Totality backstop — an unexpected throw is a rejection, not a crash
@@ -2614,6 +2184,76 @@ describe('block-apply funnel totality', () => {
     expect(metrics.getDagTipHeight()).toBe(1);
     await mineNextBlock(bc);
     expect(metrics.getDagTipHeight()).toBe(2);
+  });
+
+  // -----------------------------------------------------------------------
+  // Maturity bind: a prune in the same block the post is confirmed is rejected
+  // -----------------------------------------------------------------------
+
+  it('rejects a block carrying a post and a prune of that post (maturity bind)', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const utxo = await importUtxo();
+    const posts = await importPosts();
+    const blockApply = await importBlockApply();
+
+    const author = makeTestIdentity();
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'same-block prune');
+    posts.insertPost(postId, commit, content);
+
+    const leaves = [postId].sort().map(id => leafHash('stump', hexToBuf(id)));
+    const pruneKarma = makeKarmaBox(100n, author.userId, 0, 99);
+    utxo.insertBox(pruneKarma);
+    const pruneTx: UtxoTransaction = {
+      inputs: [pruneKarma.id!],
+      outputs: [{ boxType: 'karma' as const, value: 100n, createdAtBlock: 0, owner: author.userId }],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+      prune: {
+        rootPostHash: postId,
+        subtreePostIds: [postId],
+        subtreeMerkleRoot: buildMerkleRoot(leaves),
+      },
+    };
+    signTransaction(pruneTx, author.privateKey, hex(author.userId));
+
+    const block = await makeApplicableBlock({ utxoTxs: [postTx, pruneTx] });
+    const applied = blockApply.applyOrderingBlock(block);
+    expect(applied).toBe(false);
+  });
+
+  it('accepts a prune in a block AFTER the post was confirmed (maturity bind satisfied)', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const utxo = await importUtxo();
+    const posts = await importPosts();
+    const blockApply = await importBlockApply();
+
+    const author = makeTestIdentity();
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'earlier-block prune');
+    posts.insertPost(postId, commit, content);
+
+    const block1 = await makeApplicableBlock({ utxoTxs: [postTx] });
+    expect(blockApply.applyOrderingBlock(block1)).toBe(true);
+
+    const pruneKarma = makeKarmaBox(100n, author.userId, 0, 98);
+    utxo.insertBox(pruneKarma);
+    const leaves = [postId].sort().map(id => leafHash('stump', hexToBuf(id)));
+    const pruneTx: UtxoTransaction = {
+      inputs: [pruneKarma.id!],
+      outputs: [{ boxType: 'karma' as const, value: 100n, createdAtBlock: 0, owner: author.userId }],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+      prune: {
+        rootPostHash: postId,
+        subtreePostIds: [postId],
+        subtreeMerkleRoot: buildMerkleRoot(leaves),
+      },
+    };
+    signTransaction(pruneTx, author.privateKey, hex(author.userId));
+
+    const block2 = await makeApplicableBlock({ height: 2, utxoTxs: [pruneTx] });
+    expect(blockApply.applyOrderingBlock(block2)).toBe(true);
   });
 });
 

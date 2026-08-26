@@ -140,7 +140,6 @@ export function createRouter(deps: MiningDeps): Router {
       // The ids of the posts this template creates, derived from its
       // post-bearing transactions.
       postIds: postIdsOf(tpl),
-      pruneEntries: tpl.utxoTxTree.pruneEntries,
       // ⛔ **The coinbase is an output of the settlement transaction**, the last
       // `utxoTxIds` entry, so the template reports no `coinbaseOutputs`
       // (TYPES_INTERFACE → Ordering block). A miner hashes `powPreimage` and

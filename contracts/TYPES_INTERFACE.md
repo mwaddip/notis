@@ -240,7 +240,7 @@ could be presented as `nodeHash(left,right)` for a forged inclusion proof
 
 > **Forward constraint — this is a consensus rule with no test behind it.** The scheme is
 > sound only while **every** leaf domain is a non-empty printable ASCII string, so that no
-> leaf preimage can ever begin with `0x00`. The **three** live domains are `stump`, `prune`,
+> leaf preimage can ever begin with `0x00`. The **two** live domains are `stump` and
 > `utxotx` — all printable, none a prefix of another, so the NUL delimiter suffices.
 > **One retired domain string is a tracked reservation** (→ Tracked reservations, below the
 > boxType tag table): `coinbase` — remnant-bounded by the live coinbase concept itself, so it holds
@@ -1166,7 +1166,7 @@ PruneIntent {
   signature: Uint8Array(64)          // Ed25519 over blake2b512(rootPostHash || subtreeMerkleRoot)
 }
 
-PruneEntry {
+PruneCommit {
   rootPostHash: PostId
   subtreePostIds: PostId[]           // All postIds in the subtree
   subtreeMerkleRoot: Uint8Array(32)  // Merkle root over subtree postIds
@@ -1186,8 +1186,7 @@ Stump {
 
 | Export | Signature | Description |
 |--------|-----------|-------------|
-| `computePruneEntryId(entry)` | `(PruneEntry) => string` | Local mempool/store key — see the preimage under Layout — Stump / PruneEntry |
-| `serializePruneEntry(entry)` | `(PruneEntry) => Uint8Array` | Positional canonical bytes — see Layout — Stump / PruneEntry |
+| `pruneFieldBytes(prune)` | `(PruneCommit) => Uint8Array` | Positional canonical bytes — `txIdBytes` field 6 — see Layout — PruneCommit |
 
 ---
 
@@ -1286,15 +1285,14 @@ OrderingBlock {
 UtxoTxTree {
   utxoTxIds: TxId[]                  // UTXO transaction IDs (likes and POSTS included)
   utxoTxs: Uint8Array[]              // encodeTx bytes (positional), aligned with utxoTxIds
-  pruneEntries: PruneEntry[]         // prune entries committed in this block
 }
 ```
 
-⛔ **One committed list, not two.** A post is a transaction, so it rides `utxoTxIds`
-alongside likes and every other transaction; there is no second tree. `pruneEntries`
-lives here rather than keeping a section of its own —
-`utxoTxRoot` commits both, and the leaf domains (`leafHash`'s first argument) are what
-keep a prune leaf from colliding with a transaction leaf.
+⛔ **ONE COMMITTED LIST, AND ONE LEAF CLASS.** Posts, likes, prunes and the settlement are all
+transactions, so they ride `utxoTxIds` together and the body has no second section.
+`computeUtxoTxRoot` therefore builds every leaf as `leafHash('utxotx', id)` — one domain, one
+preimage shape. `'stump'` remains a live leaf domain for the subtree proof a prune payload
+carries; `'prune'` and `'coinbase'` are tracked reservations (→ Tracked reservations).
 
 Every block carries **one settlement transaction**, riding `utxoTxIds` / `utxoTxs` like any
 other (`ARCHITECTURE` → Block architecture, `NODE_INTERFACE` → the settlement transaction);
@@ -1302,8 +1300,8 @@ coinbase outputs are **its outputs**, so no block-body field carries the reward.
 `'coinbase'` and `'subblock'` leaf domains are retired (`'coinbase'` reserved, `'subblock'` free) —
 **§Merkle primitives holds the one live/retired list.**
 
-⚠ **The body layout is positional** (`arr(utxoTxIds, b32)` ‖ `arr(utxoTxs, lp)` ‖
-`arr(pruneEntries)`), and `utxoTxTreeByteLength` computes the same length a second way and
+⚠ **The body layout is positional** (`arr(utxoTxIds, b32)` ‖ `arr(utxoTxs, lp)`), and
+`utxoTxTreeByteLength` computes the same length a second way and
 gates `MAX_BLOCK_BODY_BYTES` — a body-layout change edits both computations or neither, and
 `serialization.ts` states the pairing at both sites.
 
@@ -1601,37 +1599,38 @@ The body's standalone wire form — a pull response's element, and the packet's 
 The encodings are positional and injective (audit M-1); the frozen golden vectors are the
 cross-implementation anchor, reproduced by the demo-UI mirror.
 
-### Layout — Stump / PruneEntry
+### Layout — Stump
 
-**A `Stump` has no wire form.** It is a local projection of a PruneEntry inside an applied
-ordering block — derived at settlement, never transmitted, never re-read as bytes
-(`NODE_INTERFACE` → "Stumps are derived state"). Its id is its `rootPostHash`, not a hash of any
-encoding.
+**A `Stump` has no wire form.** It is a local projection of an applied prune — derived at
+settlement, never transmitted, never re-read as bytes (`NODE_INTERFACE` → "Stumps are derived
+state"). Its id is its `rootPostHash`, not a hash of any encoding.
 
-**A prune has no `trigger` field.** Every prune is the author's act — the author signs it and
-the author's locks pay for it — so the cause is a constant and carries no field anywhere:
-not in `PruneIntent`, `PruneEntry`, or `Stump`.
+**A prune has no `trigger` field.** Every prune is the author's act — the author signs the
+transaction and the author's locks pay for it — so the cause is a constant and carries no field
+anywhere: not in `PruneIntent`, `PruneCommit`, or `Stump`.
 
-**PruneEntry** (`serializePruneEntry`): `b32(rootPostHash)` ‖ `arr(subtreePostIds, b32)` ‖
-`b32(subtreeMerkleRoot)` ‖ `b32(authorId)` ‖ `b64(authorSignature)`
+### Layout — PruneCommit
 
-**PruneEntry id** (`computePruneEntryId`):
+**The prune payload carried by a karma transaction** (`UtxoTransaction.prune`), written into
+`txIdBytes` field 6 through `pruneFieldBytes`:
 
 ```
-hex( blake2b512( PRUNE_ENTRY_ID_DOMAIN ‖ b32(rootPostHash) ‖ b32(subtreeMerkleRoot) ‖ b32(authorId) )[0..32] )
+b32(rootPostHash) ‖ arr(subtreePostIds, b32) ‖ b32(subtreeMerkleRoot)
 ```
 
-`PRUNE_ENTRY_ID_DOMAIN = utf8('dagsocial/prune-entry-id/1')`, module-local like
-`POST_ID_DOMAIN`. The preimage is built with the codec-layer writers (`writeHexNOrThrow`,
-`writeBytesNOrThrow`), so a malformed field throws rather than hashing garbage. The id is a
-**local mempool/store key** — no committed root covers it. Two fields stay out deliberately:
+**Three fields, and the two that left are the point.** `authorId` and `authorSignature` do not
+appear: the payload sits inside the `computeTxId` preimage, so the transaction's own signature
+covers it and the author is `inputKarma.owner` (NODE_INTERFACE → Prune transactions). A struct
+that authenticated itself needed both; a payload under a transaction's signature needs neither.
 
-- `subtreePostIds` — committed transitively: `subtreeMerkleRoot` is the Merkle root over them,
-  so two entries with different id sets already differ in the preimage.
-- `authorSignature` — the id is the mempool dedup key. Two identically-parameterized prunes
-  under different valid signature bytes are one intent and must collapse to one entry; a
-  signature-bearing preimage would let a re-signer stuff duplicates of the same prune into
-  the pool.
+**Every field is fixed-width or count-prefixed**, so every writer throws outside its domain
+(→ Totality) and the encoding is self-delimiting. `verifyPruneCommitDomains`
+(`@dagsocial/validation`) is the single statement of the domain those writers assume — including
+**no repeated id** in `subtreePostIds`, which a Merkle root over the raw list would admit.
+
+⛔ **A `PruneCommit` has no id of its own, and needs none.** A prune is a transaction: its `TxId`
+identifies it and its spent inputs are its dedup, since a pooled prune cannot be duplicated once
+its boxes are gone.
 
 ### Layout — Boxes
 
@@ -1736,6 +1735,7 @@ from this table — a use that reads every cell as an instruction rather than as
 > | tag `2` + boxType `'invite'` | §InviteBox record and its in-code citations; the tag-2 reject vectors; `node/store/db.ts`'s tag-order comment |
 > | boxType `'like'` | the live illegal-transition rule (`utxo-engine`'s like clause) and its reject vectors |
 > | leaf domain `'coinbase'` | the live coinbase concept (`coinbase-split.ts`, `COINBASE_*` constants) — the string is permanently collision-prone while the concept lives |
+> | leaf domain `'prune'` | the live prune concept (`PruneCommit`, `pruneFieldBytes`, `planPruneSettlement`, `PrunedTombstone`, `executePrune`, `PruneIntent`, `prunesOf`) — a prune stopped being a Merkle leaf when it became a transaction, and the string stays collision-prone while the concept lives |
 
 > ## ⛔ TAG 2 IS A TRACKED HOLE
 >
@@ -1923,7 +1923,7 @@ and both were found by someone searching from a direction the previous searcher 
 **Id preimage** (`txIdBytes`) — signatures are Ed25519 *over* the txId and are correctly absent:
 
 `arr(inputs, b32)` ‖ `arr(outputs, boxContentBytes)` ‖ `vlqU(protocolVersion)` ‖
-`opt(likeTarget, b32)` ‖ `opt(post, postFieldBytes)`
+`opt(likeTarget, b32)` ‖ `opt(post, postFieldBytes)` ‖ `opt(prune, pruneFieldBytes)`
 
 > ⛔ **`TX_ID_DOMAIN` IS NOT IN `txIdBytes`. Corrected 2026-08-17.** This line listed it first while
 > §UtxoTransaction's formula applies it outside — `TxId = blake2b512(TX_ID_DOMAIN ‖ txIdBytes)[0:32]`
@@ -1941,9 +1941,15 @@ and both were found by someone searching from a direction the previous searcher 
 > every `TxId` in existence**, because `opt` spends a one-byte absence marker even on a transaction
 > that never carried one. See "Re-pinning a frozen vector when a preimage changes".
 
-`post` needs no length prefix inside its `opt`: `postFieldBytes` is self-delimiting (every
-field is fixed-width, length-prefixed or a VLQ) and it is last, so nothing follows it to be
-ambiguous against.
+Neither `post` nor `prune` needs a length prefix inside its `opt`: `postFieldBytes` and
+`pruneFieldBytes` are self-delimiting (every field is fixed-width, length-prefixed or a VLQ),
+and `prune` is last, so nothing follows it to be ambiguous against.
+
+⛔ **SIX FIELDS, and an absent `opt` still spends its tag byte.** Appending field 6 moved every
+`TxId` in existence and every box id derived from one, exactly as removing `preimages` did — see
+"Re-pinning a frozen vector when a preimage changes". A reader that keeps five offsets reads
+`prune`'s tag as the end of the struct; the count is load-bearing, and the demo UI's mirror
+(`public/index.html`) states it too.
 
 Order preserves today's sequence. This satisfies **C1 structurally**: the prior preimage used
 `String(protocolVersion)` (the M-1 pattern) and concatenated inputs and variable-length outputs with
@@ -1967,7 +1973,7 @@ biconditional is a check, not a property of the bytes.
 > preimage share one writer rather than agreeing by inspection. This banner read `⚠ UNENFORCED`
 > against a `cbor-x` implementation; the gap `serialization.ts` recorded in its own words is closed
 > on both halves — `encodeTx` is positional, and the `Stump` codec is deleted rather than
-> converted: a stump has no wire form (Layout — Stump / PruneEntry).
+> converted: a stump has no wire form (Layout — Stump).
 >
 > **What the gap cost, measured against `packages/types/dist` on 2026-08-17** — a like transaction
 > with one karma input, one karma output, one signature and a `likeTarget`:
@@ -2087,7 +2093,7 @@ the reason a panic-shaped search is not sufficient here.
 
 `blockHash` = `blake2b512(headerBytes)[0..32]`; `computePowHash` is the same with `powNonce = 0`.
 
-**UtxoTxTree:** `arr(utxoTxIds, b32)` ‖ `arr(utxoTxs, lp)` ‖ `arr(pruneEntries)`
+**UtxoTxTree:** `arr(utxoTxIds, b32)` ‖ `arr(utxoTxs, lp)`
 
 > ⚠ The normative statement is §Ordering block; **this is a restatement, and a
 > restatement is what decays while the thing it restates stays right.**
@@ -2104,10 +2110,10 @@ are.
 
 | Export | Signature | Bytes |
 |---|---|---|
-| `serializePruneEntry` | `(PruneEntry) => Uint8Array` | see Layout — Stump / PruneEntry |
+| `pruneFieldBytes` | `(PruneCommit) => Uint8Array` | see Layout — PruneCommit |
 
-`writePruneEntry` **delegates** to it rather than restating the layout, so the tree codec and the
-Merkle leaf cannot drift apart.
+`txIdBytes` **delegates** to it rather than restating the layout, so the transaction id and any
+reader of the payload cannot drift apart.
 
 > ⚠ **A stale EXPORT row is worse than stale prose:** a reader following `src/index.ts`'s
 > pointer here finds signatures to call, not claims to judge. **Prose invites judgement; a
@@ -2123,8 +2129,8 @@ Merkle leaf cannot drift apart.
 > `test/golden/README.md` carries the same sentence, so the two cannot drift.
 
 **The rule the section states:** *an entry's wire form and its committed form must be the same
-bytes; two statements of one layout is the drift class this format exists to close.* The `'prune'`
-leaf delegates through `serializePruneEntry`. A `'utxotx'` leaf's preimage is
+bytes; two statements of one layout is the drift class this format exists to close.* A `'utxotx'`
+leaf's preimage is
 `leafHash('utxotx', id)` — **the id, never the transaction encoding**, the same 32 bytes the
 body's `utxoTxIds` entry carries — which is what keeps `utxoTxRoot` byte-identical across
 wire-codec changes (`serialization.ts` states the pair beside the codec). The alternative —
@@ -2139,9 +2145,9 @@ wire form and preimage byte-identical rather than merely parallel.
 
 ⚠ **No `...FromBytes` pair is added, and that does not breach the pairing rule under Layout —
 Boxes.** What that rule forbids is one layout whose writer and reader live in **different packages**
-and are free to drift — the `boxRecordBytes` / node-`deserializeBox` split. `readPruneEntry`
-lives beside `writePruneEntry` in `serialization.ts`, and the tree round-trip exercises the pair.
-Nothing crosses a package boundary unpaired.
+and are free to drift — the `boxRecordBytes` / node-`deserializeBox` split. `pruneFieldBytes`
+and the reader that recovers a `PruneCommit` from `txIdBytes` both live in this package, and the
+transaction round-trip exercises the pair. Nothing crosses a package boundary unpaired.
 
 ### Re-pinning a frozen vector when a preimage changes
 
@@ -2226,10 +2232,10 @@ neighbouring one. A constant with no stated input cannot be re-checked without r
 that produced it, which is the analysis nobody repeats.
 
 Naming follows the positional format's `...Bytes` family (`txIdBytes`, `boxContentBytes`,
-`boxRecordBytes`). `serializePruneEntry` keeps its pre-migration name; renaming it is not in scope.
+`boxRecordBytes`), which `pruneFieldBytes` follows.
 
 **The delegation is byte-identical by construction** — same writers, same order — so it is not
-itself a consensus change. The consensus change is node's: the two leaf preimages stop being JSON.
+itself a consensus change. The consensus change is node's: the leaf preimage stops being JSON.
 
 ### Sizing without encoding
 
@@ -2240,7 +2246,7 @@ structure and allocating nothing. It is the measure `MAX_BLOCK_BODY_BYTES` is ch
 allocating the body is the wrong cost.** `verifyOrderingBlockStructure` runs on the gossip relay path
 and would allocate a whole body per arriving block; node's block creator needs a per-entry delta while
 filling, and re-encoding the candidate after each addition is quadratic. The terms are all knowable:
-the tree is `arr(utxoTxIds, b32)` ‖ `arr(utxoTxs, lp)` ‖ `arr(pruneEntries)`,
+the tree is `arr(utxoTxIds, b32)` ‖ `arr(utxoTxs, lp)`,
 and `utxoTxs` are opaque byte arrays, so nothing here depends on the transaction codec.
 
 ⛔ **The equivalence is the contract, not an implementation detail** — a test pins
@@ -2270,7 +2276,7 @@ discriminate are the VLQ width boundaries and the sentinel branches above.
 > four-step boundary check on every `decodeX`.
 >
 > Nothing in this package encodes CBOR. Every row below describes the positional codec it names;
-> `Stump` has no codec and no row — a stump has no wire form (Layout — Stump / PruneEntry).
+> `Stump` has no codec and no row — a stump has no wire form (Layout — Stump).
 
 `serializeBox` was removed here by Spec G phase 0. No `src` caller existed — box serialization
 goes through node's tagged `state/serialize-box.ts` (AVL values) or the identity encoder in
@@ -2294,7 +2300,6 @@ which is now exported as `canonicalBoxBytes` — see "Canonical encoding" under 
 | `encodeUtxoTxTree(t)` | `(UtxoTxTree) => Uint8Array` | Positional (body section) — see Layout — Block |
 | `decodeUtxoTxTree(bytes)` | `(Uint8Array) => UtxoTxTree` | Inverse of `encodeUtxoTxTree` |
 | `utxoTxTreeByteLength(t)` | `(UtxoTxTree) => number` | The body's encoded length, computed from the structure without encoding it. Equal to `encodeUtxoTxTree(t).length` by pinned test — see Sizing without encoding |
-| `serializePruneEntry(e)` | `(PruneEntry) => Uint8Array` | One entry's positional bytes. Both the tree codec's element writer and the `'prune'` Merkle leaf preimage — see Layout — Merkle leaf preimages |
 | `encodeOrderingBlock(b)` | `(OrderingBlock) => Uint8Array` | Positional wire framing: `lp(header)` ‖ `lp(utxoTxTree)` ‖ `b64(validatorSignature)` — see Layout — Block |
 | `decodeOrderingBlock(bytes)` | `(Uint8Array) => OrderingBlock` | Inverse of `encodeOrderingBlock` |
 | `encodeTx(tx)` | `(UtxoTransaction) => Uint8Array` | **Positional** — `txIdBytes` ‖ `arr(signatures sorted)`. See Layout — UtxoTransaction |
@@ -2613,8 +2618,8 @@ ruled (user, 2026-08-19): **28 days**, 40320 at the nominal 60-second block.
 
 ### Domain tags are network-agnostic — deliberately
 
-The seven derivation domain tags — `BOX_ID_DOMAIN`, `TX_ID_DOMAIN`, `MINT_ID_DOMAIN`,
-`IDENTITY_KEY_DOMAIN`, `POST_ID_DOMAIN`, `PRUNE_ENTRY_ID_DOMAIN`, `POST_CONTENT_DOMAIN` — **do
+The six derivation domain tags — `BOX_ID_DOMAIN`, `TX_ID_DOMAIN`, `MINT_ID_DOMAIN`,
+`IDENTITY_KEY_DOMAIN`, `POST_ID_DOMAIN`, `POST_CONTENT_DOMAIN` — **do
 not carry the network, and must not be changed to.** No derivation function takes a network argument, and this package holds no
 module-level network state.
 

@@ -1,29 +1,58 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import express from 'express';
 import http from 'http';
+import { computeTxId } from '@dagsocial/types';
+import type { UtxoTransaction } from '@dagsocial/types';
 import { deleteRoutes } from '../../src/routes/delete.js';
-import type { PruneIntent, PruneEntry } from '@dagsocial/types';
+import { setNet } from '../../src/services/net-instance.js';
+import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
+function makeJsonPruneTxBody(): Record<string, unknown> {
+  return {
+    inputs: ['a'.repeat(64)],
+    outputs: [{ boxType: 'karma', value: '10', owner: '0'.repeat(64), createdAtBlock: 1 }],
+    signatures: {},
+    protocolVersion: 1,
+    prune: {
+      rootPostHash: 'd'.repeat(64),
+      subtreePostIds: ['d'.repeat(64)],
+      subtreeMerkleRoot: '0'.repeat(64),
+    },
+  };
+}
+
+const STUB_DEPS: UtxoEngineDeps = {
+  getBox: () => null,
+  insertBox: () => {},
+  consumeBox: () => {},
+  getKarmaBox: () => null,
+  getKarmaValue: () => 0n,
+  getIdentityRecord: () => null,
+  hasActiveVouchEscrow: () => false,
+  vouchCooldownBlocks: 0,
+  inviteBondMin: 0n,
+  inviteBondMax: 0n,
+  decayCfg: { staleThresholdBlocks: 0, decayIntervalBlocks: 0, decayAmount: 0n, karmaMinimum: 0n },
+  storageRentPeriodBlocks: 0,
+  getBoxProvenance: () => null,
+  getTopologyAuthor: () => null,
+  runInTransaction: (fn: () => void) => fn(),
+};
+
 async function request(
   postId: string,
   body: unknown,
-  executePruneImpl?: (intent: PruneIntent) => PruneEntry,
+  executePruneImpl?: (deps: UtxoEngineDeps, tx: UtxoTransaction, height: number) => { txId: string },
 ): Promise<{ status: number; data: unknown }> {
   return new Promise((resolve) => {
-    const mockEntry: PruneEntry = {
-      rootPostHash: postId,
-      subtreePostIds: [postId],
-      subtreeMerkleRoot: new Uint8Array(32),
-      authorId: new Uint8Array(32),
-      authorSignature: new Uint8Array(64),
-    };
-
     const deps = {
-      executePrune: executePruneImpl ?? (() => mockEntry),
+      ...STUB_DEPS,
+      executePrune: executePruneImpl ?? ((_d: UtxoEngineDeps, _t: UtxoTransaction, _h: number) => ({ txId: 'b'.repeat(64) })),
+      getCurrentHeight: () => 10,
     };
     const app = express();
     app.use(express.json());
@@ -52,8 +81,7 @@ async function request(
         },
       );
       if (body !== undefined) {
-        r.write(JSON.stringify(body, (_k, v) =>
-          v instanceof Uint8Array ? Buffer.from(v).toString('hex') : v));
+        r.write(JSON.stringify(body));
       }
       r.end();
     });
@@ -61,119 +89,89 @@ async function request(
 }
 
 const TEST_POST_HASH = 'd'.repeat(64);
-const TEST_AUTHOR_ID = 'e'.repeat(64);
-const TEST_MERKLE_ROOT = 'f'.repeat(64);
-const TEST_SIGNATURE = 'a'.repeat(128);
-
-function validBody() {
-  return {
-    rootPostHash: TEST_POST_HASH,
-    authorId: TEST_AUTHOR_ID,
-    subtreeMerkleRoot: TEST_MERKLE_ROOT,
-    subtreePostIds: [TEST_POST_HASH],
-    signature: TEST_SIGNATURE,
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 describe('pruning routes', () => {
-  it('POST /posts/:id/prune with valid body returns 201', async () => {
-    const res = await request(TEST_POST_HASH, validBody());
+  afterEach(() => {
+    setNet(null as unknown as Parameters<typeof setNet>[0]);
+  });
+
+  it('POST /posts/:id/prune with a prune transaction returns 201', async () => {
+    const res = await request(TEST_POST_HASH, { tx: makeJsonPruneTxBody() });
     expect(res.status).toBe(201);
     const body = res.data as Record<string, unknown>;
-    expect(body.status).toBe('deleted');
-    expect(typeof body.entryId).toBe('string');
+    expect(body.status).toBe('submitted');
+    expect(typeof body.txId).toBe('string');
     expect(body.postId).toBe(TEST_POST_HASH);
   });
 
-  it('POST /posts/:id/prune missing required fields returns 400', async () => {
+  it('POST /posts/:id/prune without tx field returns 400', async () => {
     const res = await request(TEST_POST_HASH, {});
     expect(res.status).toBe(400);
     const body = res.data as Record<string, unknown>;
-    expect(body.error).toContain('Missing required fields');
+    expect(body.error).toContain('prune transaction');
   });
 
-  it('POST /posts/:id/prune missing subtreePostIds returns 400', async () => {
-    const { subtreePostIds: _, ...rest } = validBody();
-    const res = await request(TEST_POST_HASH, rest);
+  it('POST /posts/:id/prune without prune payload returns 400', async () => {
+    const txBody = makeJsonPruneTxBody();
+    delete txBody.prune;
+    const res = await request(TEST_POST_HASH, { tx: txBody });
     expect(res.status).toBe(400);
+    const body = res.data as Record<string, unknown>;
+    expect(body.error).toContain('prune transaction');
   });
 
-  it('POST /posts/:id/prune with empty subtreePostIds returns 400', async () => {
-    const res = await request(TEST_POST_HASH, {
-      ...validBody(),
-      subtreePostIds: [],
+  it('POST /posts/:id/prune returns 400 when executePrune throws ClientError', async () => {
+    const { ClientError } = await import('../../src/services/client-error.js');
+    const res = await request(TEST_POST_HASH, { tx: makeJsonPruneTxBody() }, () => {
+      throw new ClientError('subtreePostIds does not match committed topology');
     });
     expect(res.status).toBe(400);
     const body = res.data as Record<string, unknown>;
-    expect(body.error).toContain('subtreePostIds must be a non-empty array');
-  });
-
-  it('POST /posts/:id/prune with invalid rootPostHash format returns 400', async () => {
-    const res = await request(TEST_POST_HASH, {
-      ...validBody(),
-      rootPostHash: 'not-hex',
-    });
-    expect(res.status).toBe(400);
-  });
-
-  it('POST /posts/:id/prune with invalid authorId format returns 400', async () => {
-    const res = await request(TEST_POST_HASH, {
-      ...validBody(),
-      authorId: 'not-hex',
-    });
-    expect(res.status).toBe(400);
-  });
-
-  it('POST /posts/:id/prune with invalid subtreeMerkleRoot format returns 400', async () => {
-    const res = await request(TEST_POST_HASH, {
-      ...validBody(),
-      subtreeMerkleRoot: 'not-hex',
-    });
-    expect(res.status).toBe(400);
-  });
-
-  it('POST /posts/:id/prune with invalid signature format returns 400', async () => {
-    const res = await request(TEST_POST_HASH, {
-      ...validBody(),
-      signature: 'too-short',
-    });
-    expect(res.status).toBe(400);
-  });
-
-  it('POST /posts/:id/prune returns 404 when executePrune throws 404', async () => {
-    const res = await request(TEST_POST_HASH, validBody(), () => {
-      throw Object.assign(new Error('Post not found'), { statusCode: 404 });
-    });
-    expect(res.status).toBe(404);
-  });
-
-  it('POST /posts/:id/prune returns 403 when executePrune throws 403', async () => {
-    const res = await request(TEST_POST_HASH, validBody(), () => {
-      throw Object.assign(new Error('Author mismatch'), { statusCode: 403 });
-    });
-    expect(res.status).toBe(403);
-  });
-
-  it('POST /posts/:id/prune returns 400 when executePrune throws repeated-id', async () => {
-    const res = await request(TEST_POST_HASH, validBody(), () => {
-      throw Object.assign(
-        new Error('subtreePostIds carries a repeated id'),
-        { statusCode: 400 },
-      );
-    });
-    expect(res.status).toBe(400);
-    const body = res.data as Record<string, unknown>;
-    expect(body.error).toBe('subtreePostIds carries a repeated id');
+    expect(body.error).toBe('subtreePostIds does not match committed topology');
   });
 
   it('POST /posts/:id/prune returns 500 for unexpected errors', async () => {
-    const res = await request(TEST_POST_HASH, validBody(), () => {
+    const res = await request(TEST_POST_HASH, { tx: makeJsonPruneTxBody() }, () => {
       throw new Error('unexpected');
     });
     expect(res.status).toBe(500);
+  });
+
+  it('hex subtreeMerkleRoot in JSON reaches executePrune as Uint8Array', async () => {
+    const merkleHex = 'ab'.repeat(32);
+    const txBody = makeJsonPruneTxBody();
+    (txBody.prune as Record<string, unknown>).subtreeMerkleRoot = merkleHex;
+
+    let captured: UtxoTransaction | undefined;
+    await request(TEST_POST_HASH, { tx: txBody }, (_deps, tx) => {
+      captured = tx;
+      return { txId: 'b'.repeat(64) };
+    });
+
+    expect(captured).toBeDefined();
+    expect(captured!.prune).toBeDefined();
+    expect(captured!.prune!.subtreeMerkleRoot).toBeInstanceOf(Uint8Array);
+    expect(captured!.prune!.subtreeMerkleRoot.length).toBe(32);
+    expect(Buffer.from(captured!.prune!.subtreeMerkleRoot).toString('hex')).toBe(merkleHex);
+  });
+
+  it('broadcasts the pooled prune transaction to peers', async () => {
+    const broadcastTx = vi.fn((_tx: UtxoTransaction) => Promise.resolve());
+    setNet({ broadcastTx } as unknown as Parameters<typeof setNet>[0]);
+
+    let captured: UtxoTransaction | undefined;
+    const res = await request(TEST_POST_HASH, { tx: makeJsonPruneTxBody() }, (_deps, tx) => {
+      captured = tx;
+      return { txId: 'b'.repeat(64) };
+    });
+
+    expect(res.status).toBe(201);
+    expect(broadcastTx).toHaveBeenCalledTimes(1);
+    const sent = broadcastTx.mock.calls[0]![0] as UtxoTransaction;
+    expect(computeTxId(sent)).toBe(computeTxId(captured!));
   });
 });

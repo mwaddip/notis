@@ -8,7 +8,6 @@ import {
 } from 'vitest';
 import {
   computeTxId,
-  POST_LOCK_REPLY_COST,
   PROTOCOL_VERSION,
   MAX_BLOCK_BODY_BYTES,
 } from '@dagsocial/types';
@@ -22,14 +21,10 @@ import type {
 import type Database from 'better-sqlite3';
 import type { Config } from '../../src/config.js';
 import {
-  changeBoxOf,
   FIXTURE_BOND_KARMA,
   hex,
-  lockBoxOf,
   makeApplicableBlock,
   makeKarmaBox,
-  seedPostTx,
-  makePruneEntry,
   makeTestConfig,
   makeTestIdentity,
   mineNextBlock,
@@ -122,10 +117,6 @@ async function importForkResolution() {
 async function importAvl() {
   return (await import('../../src/state/avl-prover.js')) as
     typeof import('../../src/state/avl-prover.js');
-}
-
-async function importPosts() {
-  return await import('../../src/store/posts.js');
 }
 
 async function importMempool() {
@@ -435,102 +426,6 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
   // block-apply revert test with digest + re-apply identity.)
   // -----------------------------------------------------------------------
 
-  it('prune settlement: settled boxes, merge-consumed karma, and like-records restored', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-
-    const author = makeTestIdentity();
-    const replier = makeTestIdentity();
-    const liker = makeTestIdentity();
-    const utxo = await importUtxo();
-    const posts = await importPosts();
-    const likes = (await import('../../src/store/likes.js')) as {
-      insertLikeRecord: (targetPostId: string, likerId: Uint8Array, blockHeight: number) => void;
-      hasLikeRecord: (targetPostId: string, likerId: Uint8Array) => boolean;
-    };
-
-    // ⛔ The lock boxes are MINTED by the post transactions, not seeded. A post
-    // and its lock are one transaction (NODE_INTERFACE → Post transactions), so
-    // a fixture that seeded a `PostLockBox` beside a separately-inserted post
-    // would settle a pairing the chain never made.
-    const { tx: postTx, postId } = await seedPostTx(author, 'prune round-trip victim');
-    const { tx: replyTx, postId: replyId } = await seedPostTx(
-      replier, 'somebody else in the same thread', { parentRefs: [postId] },
-    );
-
-    const handle = await activateProver();
-    const blockApply = await importBlockApply();
-
-    // Block 1 carries both post transactions — that is what stores the posts,
-    // records `block_topology` (which prune authorization reads) and mints the
-    // two locks. Only the replier's karma is a merge target: the pruning
-    // author's own lock burns and mints nothing to merge into.
-    const confirmBlock = await makeApplicableBlock({ utxoTxs: [postTx, replyTx] });
-    expect(blockApply.applyOrderingBlock(confirmBlock)).toBe(true);
-    // Attribution: the block APPLIED both transactions rather than deferring and
-    // skipping them, which is the shape that leaves every assertion below
-    // measuring an empty chain.
-    expect(posts.getPost(postId)).not.toBeNull();
-    expect(posts.getPost(replyId)).not.toBeNull();
-    const lockBox = lockBoxOf(postTx);
-    const replyLockBox = lockBoxOf(replyTx);
-    expect(utxo.getBox(lockBox.id!)).not.toBeNull();
-    expect(utxo.getBox(replyLockBox.id!)).not.toBeNull();
-    // The change boxes the two post transactions left behind — 1 karma each,
-    // and the replier's is the merge target the refund lands in.
-    const authorChange = changeBoxOf(postTx);
-    const replierChange = changeBoxOf(replyTx);
-    // A like applied at block 1 — seeded with no journal open, so the
-    // seeding records nothing. Part of the pre-state the revert must restore.
-    likes.insertLikeRecord(postId, liker.userId, 1);
-    const pre = takeSnapshot(db, handle, 1);
-
-    const classBlock = await makeApplicableBlock({
-      height: 2,
-      pruneEntries: [makePruneEntry(postId, [postId, replyId], author)],
-    });
-    expect(blockApply.applyOrderingBlock(classBlock)).toBe(true);
-
-    // Settled: both locks consumed by the settlement. The replier is refunded
-    // their lock; the pruning author's own lock goes to the POOL, leaving their
-    // 1 karma of change untouched. ⚠ **No merge** — the settlement emits a fresh
-    // karma output rather than consolidating, so the replier's change box stands
-    // and the BALANCE carries the claim.
-    expect(utxo.getBox(lockBox.id!)).toBeNull();
-    expect(utxo.getBox(replyLockBox.id!)).toBeNull();
-    expect(utxo.getBox(replierChange.id!)).not.toBeNull();
-    expect(utxo.getKarmaValue(replier.userId)).toBe(1n + POST_LOCK_REPLY_COST);
-    expect(utxo.getBox(authorChange.id!)).not.toBeNull();
-    expect(utxo.getKarmaValue(author.userId)).toBe(1n);
-    expect(utxo.getKarmaBox(liker.userId)).toBeNull();
-    expect(likes.hasLikeRecord(postId, liker.userId)).toBe(false);
-    // Every consumption and the record deletion are in the journal the revert
-    // below replays.
-    const journalStore = (await import('../../src/store/journal.js')) as {
-      getBlockJournal: (h: number) => import('../../src/store/journal.js').BlockJournal | null;
-    };
-    const saved = journalStore.getBlockJournal(2)!;
-    expect(
-      saved.mutations
-        .filter((m) => m.kind === 'box' && m.op === 'remove')
-        .map((m) => (m as { boxId: string }).boxId),
-    // ⚠ **The replier's change box is NOT among them.** Nothing consolidates it
-    // any more, so the settlement consumes the two locks and nothing else.
-    ).toEqual(expect.arrayContaining([lockBox.id, replyLockBox.id]));
-    expect(saved.likeRecordDeletions).toEqual([
-      { targetPostId: postId, likerId: liker.userId, appliedAtBlock: 1 },
-    ]);
-
-    await assertRoundTrip(db, handle, pre, classBlock);
-
-    // The re-applied block leaves the same settled state again. Balances, not
-    // boxes — the settlement emits rather than consolidates.
-    expect(utxo.getKarmaValue(replier.userId)).toBe(1n + POST_LOCK_REPLY_COST);
-    expect(utxo.getKarmaValue(author.userId)).toBe(1n);
-    expect(utxo.getBox(lockBox.id!)).toBeNull();
-    expect(utxo.getBox(replyLockBox.id!)).toBeNull();
-    expect(likes.hasLikeRecord(postId, liker.userId)).toBe(false);
-  });
 
   // -----------------------------------------------------------------------
   // The escrow release — the matured `VouchEscrowBox` is consumed and its karma

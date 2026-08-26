@@ -21,7 +21,6 @@ import type { TestIdentity } from '../helpers.js';
 import {
   makeApplicableBlock,
   makeKarmaBox,
-  makePruneEntry,
   makeTestConfig,
   makeTestIdentity,
   mineNextBlock,
@@ -87,7 +86,6 @@ async function importBlockCreator() {
 async function importMempool() {
   return (await import('../../src/store/mempool.js')) as {
     insertUtxoTx: (tx: UtxoTransaction, expiresAtHeight: number) => number;
-    insertMempoolPrune: (entry: import('@dagsocial/types').PruneEntry, expiresAtHeight: number) => number;
     getPendingEntries: (limit: number) => Array<{ rowid: number; entryType: string }>;
   };
 }
@@ -399,7 +397,7 @@ describe('block creator vs a body its own mutation phase rejects', () => {
       },
       // One declared id, no body beside it — the misalignment structure would
       // have caught on every other path into the mutation phase.
-      utxoTxTree: { utxoTxIds: ['ab'.repeat(32)], utxoTxs: [], pruneEntries: [] },
+      utxoTxTree: { utxoTxIds: ['ab'.repeat(32)], utxoTxs: [] },
       validatorSignature: new Uint8Array(64),
     };
 
@@ -563,28 +561,4 @@ describe('block creator vs a body its own mutation phase rejects', () => {
     expect(relevant[0]).toContain('no pool rows');
   });
 
-  it('a prune row pooled beside the stale cast is evicted too', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-
-    const { mempool } = await seedStaleVouchCast();
-    await activateProver();
-
-    const author = makeTestIdentity();
-    const rootHash = 'aa'.repeat(32);
-    const childHash = 'bb'.repeat(32);
-    const entry = makePruneEntry(rootHash, [rootHash, childHash], author);
-    mempool.insertMempoolPrune(entry, 1000);
-
-    const bc = await importBlockCreator();
-    bc.startBlockCreator(testConfig);
-
-    const tpl = bc.getCurrentTemplate();
-    expect(tpl).not.toBeNull();
-    // The held template carries neither the stale cast nor the prune entry.
-    expect(tpl!.utxoTxTree.utxoTxIds).toHaveLength(1);
-    expect(tpl!.utxoTxTree.pruneEntries).toHaveLength(0);
-    // Both are gone from the pool.
-    expect(mempool.getPendingEntries(10)).toHaveLength(0);
-  });
 });

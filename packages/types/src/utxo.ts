@@ -25,6 +25,7 @@ import {
 } from './codec.js';
 import type { UserId } from './identity.js';
 import { postFieldBytes, readPostCommitFields, type PostCommit, type PostId } from './post.js';
+import { pruneFieldBytes, readPruneCommitFields, type PruneCommit } from './stump.js';
 
 // ---------------------------------------------------------------------------
 // Box identity
@@ -1117,6 +1118,16 @@ export interface UtxoTransaction {
    * engine.
    */
   post?: PostCommit;
+  /**
+   * Present ⟹ this transaction is a prune — an author pruning their own reply
+   * subtree. The payload sits inside the `computeTxId` preimage, so the
+   * author's signature over `txId` covers it and a relay cannot rewrite it.
+   *
+   * ⛔ **This is an IMPLICATION, not a biconditional.** Recognition is by payload
+   * presence (`tx.prune !== undefined`), never by silhouette — a plain karma
+   * self-consolidation must stay legal (TYPES_INTERFACE → UtxoTransaction).
+   */
+  prune?: PruneCommit;
 }
 
 /**
@@ -1128,8 +1139,9 @@ export interface UtxoTransaction {
  *   | 3 | protocolVersion | vlqU                                         |
  *   | 4 | likeTarget      | opt(b32)                                     |
  *   | 5 | post            | opt(postFieldBytes)                          |
+ *   | 6 | prune           | opt(pruneFieldBytes)                         |
  *
- * ⛔ **FIVE FIELDS, and dropping one RENUMBERS every field after it unless it is
+ * ⛔ **SIX FIELDS, and dropping one RENUMBERS every field after it unless it is
  * last.** This is a positional layout with no keys, so a reader that skips a field
  * but keeps the old offsets reads `protocolVersion` out of `likeTarget`'s tag and
  * every later field one slot early — a silently wrong `TxId`, not a decode error.
@@ -1177,6 +1189,7 @@ export function writeTxIdFields(w: ByteWriter, tx: UtxoTransaction): void {
   // `undefined` and `null` both take the absent branch — `writeOpt`'s job.
   writeOpt(w, tx.likeTarget, (ww, target) => writeHexNOrThrow(ww, target, 32));
   writeOpt(w, tx.post, (ww, post) => ww.writeBytes(postFieldBytes(post)));
+  writeOpt(w, tx.prune, (ww, prune) => ww.writeBytes(pruneFieldBytes(prune)));
 }
 
 /**
@@ -1203,6 +1216,7 @@ export function readTxIdFields(r: ByteReader): Omit<UtxoTransaction, 'signatures
     protocolVersion: readVlqU(r),
     likeTarget: readOpt(r, (rr) => readHexN(rr, 32)) ?? undefined,
     post: readOpt(r, readPostCommitFields) ?? undefined,
+    prune: readOpt(r, readPruneCommitFields) ?? undefined,
   };
 }
 

@@ -1,5 +1,5 @@
 import { BOX_VALUE_BOUND, PROTOCOL_VERSION } from '@dagsocial/types';
-import type { AnyBox, PostCommit, PostType, UtxoTransaction } from '@dagsocial/types';
+import type { AnyBox, PostCommit, PostType, PruneCommit, UtxoTransaction } from '@dagsocial/types';
 import { ClientError } from '../services/client-error.js';
 
 /**
@@ -90,6 +90,9 @@ export function jsonToTx(raw: Record<string, unknown>): UtxoTransaction {
   // check, as `castLike` owns `likeTarget`'s.
   const post = raw.post === undefined ? undefined : jsonToPostCommit(raw.post);
 
+  // ---- prune ----
+  const prune = raw.prune === undefined ? undefined : jsonToPruneCommit(raw.prune);
+
   return {
     inputs: (raw.inputs ?? []) as string[],
     outputs,
@@ -97,6 +100,7 @@ export function jsonToTx(raw: Record<string, unknown>): UtxoTransaction {
     protocolVersion,
     ...(likeTarget !== undefined ? { likeTarget } : {}),
     ...(post !== undefined ? { post } : {}),
+    ...(prune !== undefined ? { prune } : {}),
   };
 }
 
@@ -133,6 +137,31 @@ function jsonToPostCommit(raw: unknown): PostCommit {
     parentRefs: (p.parentRefs ?? []) as string[],
     protocolVersion: (p.protocolVersion as number) ?? PROTOCOL_VERSION,
     type: ((p.type as string) ?? 'regular') as PostType,
+  };
+}
+
+function jsonToPruneCommit(raw: unknown): PruneCommit {
+  if (typeof raw !== 'object' || raw === null) {
+    throw new ClientError('prune must be an object');
+  }
+  const p = raw as Record<string, unknown>;
+  if (typeof p.rootPostHash !== 'string') {
+    throw new ClientError('prune rootPostHash must be a string');
+  }
+  if (!Array.isArray(p.subtreePostIds) || !p.subtreePostIds.every((id: unknown) => typeof id === 'string')) {
+    throw new ClientError('prune subtreePostIds must be an array of strings');
+  }
+  if (typeof p.subtreeMerkleRoot !== 'string') {
+    throw new ClientError('prune subtreeMerkleRoot must be a hex string');
+  }
+  const subtreeMerkleRoot = hexToBytes(p.subtreeMerkleRoot);
+  if (subtreeMerkleRoot.length !== 32) {
+    throw new ClientError('prune subtreeMerkleRoot must be 32 bytes (64 hex chars)');
+  }
+  return {
+    rootPostHash: p.rootPostHash,
+    subtreePostIds: p.subtreePostIds as string[],
+    subtreeMerkleRoot,
   };
 }
 

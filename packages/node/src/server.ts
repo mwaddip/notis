@@ -256,6 +256,8 @@ export function createApp(config: Config): express.Express {
     '/',
     deleteRoutes({
       executePrune,
+      ...utxoEngineDeps,
+      getCurrentHeight: store.getCurrentHeight,
     }),
   );
 

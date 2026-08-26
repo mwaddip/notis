@@ -1,6 +1,5 @@
 import type { UserId } from './identity.js';
 import type { TxId } from './utxo.js';
-import type { PruneEntry } from './stump.js';
 
 // ---------------------------------------------------------------------------
 // Block header — what gets hashed for block ID and PoW
@@ -35,28 +34,19 @@ export const EMPTY_STATE_ROOT = '00'.repeat(33);
 
 /**
  * **The block's one committed body** (TYPES_INTERFACE → Ordering block). Posts
- * are transactions, so they ride `utxoTxIds` with everything else and there is no
- * second tree; `pruneEntries` live here because `utxoTxRoot` commits them.
+ * and prunes are transactions, so they ride `utxoTxIds` with everything else
+ * and there is no second section.
  *
- * ⛔ **Leaf order is NORMATIVE and it is this struct's field order** —
- * `utxoTxIds`, then `pruneEntries`. `computeUtxoTxRoot` builds its leaves in
- * exactly that sequence; reordering is a consensus change with no compiler
- * signal.
- *
- * What keeps the two kinds apart inside one root is the `leafHash` domain tag —
- * `'utxotx'` and `'prune'`, each NUL-terminated and therefore prefix-free — not
- * their position.
- *
- * ⛔ **TWO LEAF CLASSES.** Every block carries one settlement transaction,
- * riding `utxoTxIds` / `utxoTxs` like any other, and coinbase outputs are
- * **its outputs** (`ARCHITECTURE` → Block architecture; TYPES_INTERFACE →
- * Ordering block). The leaf domain `'coinbase'` is a tracked reservation
- * (TYPES_INTERFACE → Tracked reservations).
+ * ⛔ **ONE LEAF CLASS.** `computeUtxoTxRoot` builds its leaves from `utxoTxIds`
+ * alone — `leafHash('utxotx', id)`. Every block carries one settlement
+ * transaction, riding `utxoTxIds` / `utxoTxs` like any other, and coinbase
+ * outputs are **its outputs** (`ARCHITECTURE` → Block architecture;
+ * TYPES_INTERFACE → Ordering block). The leaf domain `'coinbase'` is a tracked
+ * reservation (TYPES_INTERFACE → Tracked reservations).
  */
 export interface UtxoTxTree {
-  utxoTxIds: TxId[];            // UTXO transactions — posts, likes and the settlement included
+  utxoTxIds: TxId[];            // UTXO transactions — posts, likes, prunes and the settlement included
   utxoTxs: Uint8Array[];        // encoded UtxoTransactions (aligned with utxoTxIds)
-  pruneEntries: PruneEntry[];   // prune entries committed in this block
 }
 
 // ---------------------------------------------------------------------------

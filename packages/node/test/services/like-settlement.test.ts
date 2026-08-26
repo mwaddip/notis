@@ -22,7 +22,6 @@ import {
   makeApplicableBlock,
   makeKarmaBox,
   makeLikeTx,
-  makePruneEntry,
   makeTestIdentity,
   seedPostTx,
   signTransaction,
@@ -544,47 +543,6 @@ describe('per-block like settlement (P2-D N2b)', () => {
   // Target liveness and author resolution
   // -------------------------------------------------------------------------
 
-  it('a like on a pruned target rejects the block — the stump discriminator against a real stump row', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-    const utxo = await importUtxo();
-    const posts = await importPosts();
-    const ordering = await importOrdering();
-    const blockApply = await importBlockApply();
-
-    const author = makeTestIdentity();
-    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'pruned target');
-    posts.insertPost(postId, commit, content);
-    expect(blockApply.applyOrderingBlock(await confirmPostBlock(postTx))).toBe(true);
-
-    expect(
-      blockApply.applyOrderingBlock(
-        await makeApplicableBlock({
-          height: 2,
-          pruneEntries: [makePruneEntry(postId, [postId], author)],
-        }),
-      ),
-    ).toBe(true);
-
-    // A real stump row: getPost resolves the pruned root to a Stump —
-    // detected as the absence of `content` / the presence of `rootPostHash`.
-    // ('subtreeMerkleRoot' does NOT exist on Stump — the N1 report's dead
-    // discriminator; this assertion is against the live field set.)
-    const resolved = posts.getPost(postId);
-    expect(resolved).not.toBeNull();
-    expect(posts.isStump(resolved)).toBe(true);
-
-    const liker = makeTestIdentity();
-    const box = makeKarmaBox(2n, liker.userId, 0);
-    utxo.insertBox(box);
-    expect(
-      blockApply.applyOrderingBlock(
-        await makeApplicableBlock({ height: 3, utxoTxs: [makeLikeTx(liker, box, postId, author.userId)] }),
-      ),
-    ).toBe(false);
-    expect(ordering.getCurrentHeight()).toBe(2);
-    expect(utxo.getBox(box.id!)).not.toBeNull();
-  });
 
   it('a spare-signature like tx embedded directly in a block applies, with the liker = the karma input owner', async () => {
     const db = await importDb();
@@ -648,40 +606,6 @@ describe('per-block like settlement (P2-D N2b)', () => {
   // Same-block exclusion
   // -------------------------------------------------------------------------
 
-  it('a block carrying prune(P) + like(P) is rejected deterministically', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-    const utxo = await importUtxo();
-    const posts = await importPosts();
-    const ordering = await importOrdering();
-    const blockApply = await importBlockApply();
-
-    const author = makeTestIdentity();
-    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'same-block exclusion target');
-    posts.insertPost(postId, commit, content);
-    expect(blockApply.applyOrderingBlock(await confirmPostBlock(postTx))).toBe(true);
-
-    const liker = makeTestIdentity();
-    const box = makeKarmaBox(2n, liker.userId, 0);
-    utxo.insertBox(box);
-
-    // Prune settlement (§8c) runs before embedded txs (§11), so the like
-    // finds a stump: invalid tx, whole block rejected.
-    const block = await makeApplicableBlock({
-      height: 2,
-      pruneEntries: [makePruneEntry(postId, [postId], author)],
-      utxoTxs: [makeLikeTx(liker, box, postId, author.userId)],
-    });
-    expect(blockApply.applyOrderingBlock(block)).toBe(false);
-    // Deterministic: the same block rejects again, not just once.
-    expect(blockApply.applyOrderingBlock(block)).toBe(false);
-
-    // All-or-nothing: the prune's own effects rolled back too.
-    expect(ordering.getCurrentHeight()).toBe(1);
-    const live = posts.getPost(postId);
-    expect(posts.isLivePost(live)).toBe(true);
-    expect(utxo.getBox(box.id!)).not.toBeNull();
-  });
 
   // -------------------------------------------------------------------------
   // Post-lock vesting

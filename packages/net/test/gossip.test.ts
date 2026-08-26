@@ -105,7 +105,6 @@ function settlementBody(): UtxoTxTree {
   return {
     utxoTxIds: ['5e'.repeat(32)],
     utxoTxs: [new Uint8Array(96).fill(0x5e)],
-    pruneEntries: [],
   };
 }
 

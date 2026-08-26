@@ -77,15 +77,8 @@ function makeBlockHeader(): BlockHeader {
 }
 
 /**
- * ⛔ **THREE SECTIONS.** Coinbase outputs are outputs of the block's settlement
- * transaction, so they arrive inside `utxoTxs` like every other transaction's and
- * reach `utxoTxRoot` under the `'utxotx'` leaf that transaction's id already gets
- * (`block.ts` → `UtxoTxTree`). The leaf domain `'coinbase'` is a tracked
- * reservation (TYPES_INTERFACE → Tracked reservations).
- *
- * The fixture carries a prune entry because it is the **one element writer whose
- * width varies**, so a populated body exercises an element layout rather than
- * only count prefixes.
+ * ⛔ **TWO SECTIONS.** Prunes ride the transaction rail, so the tree is
+ * `utxoTxIds` and `utxoTxs` only.
  */
 function makeUtxoTxTree(): UtxoTxTree {
   return {
@@ -95,13 +88,6 @@ function makeUtxoTxTree(): UtxoTxTree {
     // failed on the wrapper rather than on the bytes would be reporting the
     // wrong thing.
     utxoTxs: [new Uint8Array(encodeTx(makeTx()))],
-    pruneEntries: [{
-      rootPostHash: 'ee'.repeat(32),
-      subtreePostIds: ['aa'.repeat(32), 'bb'.repeat(32)],
-      subtreeMerkleRoot: new Uint8Array(32).fill(0x44),
-      authorId: userA,
-      authorSignature: sig64,
-    }],
   };
 }
 
@@ -172,26 +158,8 @@ describe('positional serialization', () => {
       expect(decodeHeader(encodeHeader(makeBlockHeader()))).toEqual(makeBlockHeader());
     });
 
-    it('UtxoTxTree with prune entries — the Merkle-leaf preimage, verbatim', () => {
-      // ⛔ Prune entries moved INTO this tree — `utxoTxRoot` commits them now, and
-      // the `'prune'` leaf domain is what keeps them apart from the transaction
-      // leaves under the same root. Those two are the only leaf classes.
+    it('UtxoTxTree — two sections, no prune entries', () => {
       expect(decodeUtxoTxTree(encodeUtxoTxTree(makeUtxoTxTree()))).toEqual(makeUtxoTxTree());
-    });
-
-    it('UtxoTxTree — several entries in one section', () => {
-      // More than one element in the section whose width varies, which is where
-      // a per-element offset error shows up as a decode failure rather than as a
-      // value that happens to round-trip.
-      const tree = makeUtxoTxTree();
-      const two: UtxoTxTree = {
-        ...tree,
-        pruneEntries: [
-          tree.pruneEntries[0]!,
-          { ...tree.pruneEntries[0]!, subtreePostIds: [] },
-        ],
-      };
-      expect(decodeUtxoTxTree(encodeUtxoTxTree(two))).toEqual(two);
     });
 
     it('OrderingBlock', () => {
@@ -279,20 +247,20 @@ describe('positional serialization', () => {
       expect(computeTxId(decodeTx(encodeTx(signed)))).toBe(computeTxId(signed));
     });
 
-    it('no field name reaches the bytes, and the whole transaction is 43 bytes', () => {
+    it('no field name reaches the bytes, and the whole transaction is 44 bytes', () => {
       // Hand-derived from the layout: arr(inputs)=1, arr(outputs)=1+37 for the
       // karma candidate, vlqU(protocolVersion)=1, opt(likeTarget)=1,
-      // opt(post)=1, arr(signatures)=1.
+      // opt(post)=1, opt(prune)=1, arr(signatures)=1.
       //
       // 37, not 35: the shared prefix is three fields, and this candidate's
       // `createdAtBlock` of 300 takes two VLQ groups.
       //
       // ⚠ **Every `opt` costs its tag byte whether or not the field is there**, so
-      // a sixth field would show up here as 42 even on a transaction that carries
-      // none of it — which is why an optional field is inside every id, not only
-      // the ids that use it.
+      // a seventh field would show up here as 45 even on a transaction that
+      // carries none of it — which is why an optional field is inside every id,
+      // not only the ids that use it.
       const bytes = encodeTx(makeTx());
-      expect(bytes.length).toBe(43);
+      expect(bytes.length).toBe(44);
       for (const name of ['inputs', 'outputs', 'signatures', 'protocolVersion', 'boxType', 'karma']) {
         expect(hex(bytes)).not.toContain(Buffer.from(name, 'utf8').toString('hex'));
       }
@@ -400,14 +368,10 @@ describe('positional serialization', () => {
       expect(decodeHeader(bytes).stateRoot).toHaveLength(66); // b33, not b32
     });
 
-    it('pruneEntry authorId is BYTES where the header validatorId is also bytes', () => {
-      // Both are "a 32-byte Ed25519 public key" written `b32` in the contract,
-      // and here both are `Uint8Array` — so the writer follows the schema type
-      // rather than the notation. The hex writer would throw on either.
-      const back = decodeUtxoTxTree(encodeUtxoTxTree(makeUtxoTxTree()));
-      expect(back.pruneEntries[0]!.authorId).toBeInstanceOf(Uint8Array);
-      // …while its sibling `rootPostHash` is hex, in the same struct.
-      expect(typeof back.pruneEntries[0]!.rootPostHash).toBe('string');
+    it('header validatorId is BYTES where its sibling hashes are hex', () => {
+      const back = decodeHeader(encodeHeader(makeBlockHeader()));
+      expect(back.validatorId).toBeInstanceOf(Uint8Array);
+      expect(typeof back.prevBlockHash).toBe('string');
     });
 
     // ⛔ **NO FIELD IN `UtxoTxTree` REACHES `writeVlqU64OrThrow` OR `writeBool`**,
@@ -423,32 +387,21 @@ describe('positional serialization', () => {
   // -------------------------------------------------------------------------
 
   describe('one body, and the sub-block sections are unrepresentable', () => {
-    it('the tree encodes exactly three arrays, in field order', () => {
-      // An empty tree is three count bytes and nothing else. A fourth array — or
-      // a missing one — shows up as a length delta, which is what makes "the
-      // sections are these three, in this order" a measurement rather than an
-      // inspection. Field order is also the normative LEAF order for
-      // `utxoTxRoot` (TYPES_INTERFACE → Ordering block).
-      //
-      // ⛔ **The count is the whole of what this assertion is for**: a writer that
-      // emitted a fourth section would be four bytes here, and a reader that
-      // expected one would run past the end.
+    it('the tree encodes exactly two arrays, in field order', () => {
       const empty: UtxoTxTree = {
-        utxoTxIds: [], utxoTxs: [], pruneEntries: [],
+        utxoTxIds: [], utxoTxs: [],
       };
       const bytes = encodeUtxoTxTree(empty);
-      expect(bytes.length).toBe(3);
-      expect([...bytes]).toEqual([0, 0, 0]);
+      expect(bytes.length).toBe(2);
+      expect([...bytes]).toEqual([0, 0]);
     });
 
-    it('a decoded tree carries the three sections and nothing else', () => {
+    it('a decoded tree carries the two sections and nothing else', () => {
       const decoded = decodeUtxoTxTree(encodeUtxoTxTree(makeUtxoTxTree()));
       expect(Object.keys(decoded))
-        .toEqual(['utxoTxIds', 'utxoTxs', 'pruneEntries']);
-      // The retired section is unrepresentable, not merely unwritten: an object
-      // carrying it encodes to the same bytes as one without.
-      const withCoinbase = { ...makeUtxoTxTree(), extraJunk: [{ owner: userB, value: 1n }] };
-      expect(hex(encodeUtxoTxTree(withCoinbase as UtxoTxTree)))
+        .toEqual(['utxoTxIds', 'utxoTxs']);
+      const withJunk = { ...makeUtxoTxTree(), extraJunk: [{ owner: userB, value: 1n }] };
+      expect(hex(encodeUtxoTxTree(withJunk as UtxoTxTree)))
         .toBe(hex(encodeUtxoTxTree(makeUtxoTxTree())));
     });
 
@@ -483,15 +436,9 @@ describe('positional serialization', () => {
       expect(decodeHeader(encodeHeader(junk as BlockHeader))).toEqual(makeBlockHeader());
     });
 
-    it('body and entry-level junk likewise', () => {
+    it('body-level junk likewise', () => {
       const tree = makeUtxoTxTree();
-      // Junk the entry, not the tree — the array keeps its length, so a bytes
-      // difference can only come from the junk key and not from a dropped
-      // element.
-      const junked: UtxoTxTree = {
-        ...tree,
-        pruneEntries: [{ ...tree.pruneEntries[0]!, evil: 1 } as never],
-      };
+      const junked = { ...tree, evil: 1 } as UtxoTxTree;
       expect(hex(encodeUtxoTxTree(junked))).toBe(hex(encodeUtxoTxTree(tree)));
     });
 
@@ -702,16 +649,16 @@ describe('positional serialization', () => {
       // does a change to the body's section list.
       //
       // Nothing committed follows it. `utxoTxRoot` is a Merkle root over
-      // `utxoTxIds` and `serializePruneEntry` (node's `computeUtxoTxRoot`) and
-      // never reads `utxoTxs`; the id itself is `computeTxId`, positional and
-      // routed through `canonicalBoxBytes`.
+      // `utxoTxIds` (node's `computeUtxoTxRoot`) and never reads `utxoTxs`;
+      // the id itself is `computeTxId`, positional and routed through
+      // `canonicalBoxBytes`.
       //
       // ⛔ **A MOVE HERE CARRIES NO VERDICT, AND NOTHING HERE SAYS WHICH KIND IT
       // WAS.** Several unrelated changes reach this one hash and it cannot tell
       // them apart. The pins that decide are elsewhere: the BlockHeader pin above
       // for the header, and the frozen ids in `utxo.test.ts` for consensus. **Read
       // this one only as "the frame changed" — never as evidence about what.**
-      expect(hash(encodeOrderingBlock(makeOrderingBlock()))).toBe('728b6773548de993b08f2aeada12e28e87f9ff0cbefe33467989549fb8b088b3');
+      expect(hash(encodeOrderingBlock(makeOrderingBlock()))).toBe('b10312050e62fff03f2dfdbc8d99b33ba5060a007c2710dd1281cf03c1aecf49');
     });
 
     it('Post: the wire codec IS the payload preimage, with no tail at all', () => {

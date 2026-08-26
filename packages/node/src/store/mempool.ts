@@ -5,7 +5,6 @@ import { ClientError } from '../services/client-error.js';
 import { materializeOutput, ceilingOf } from '../services/utxo-engine.js';
 import type {
   UtxoTransaction,
-  PruneEntry,
   BondBox,
   VouchBox,
   AnyBox,
@@ -17,12 +16,10 @@ import {
   decodeTx,
   computeTxId,
   computePostId,
-  computePruneEntryId,
   utxoTxTreeByteLength,
 } from '@dagsocial/types';
 import { isCreditSideTx } from '../services/coinbase-split.js';
 import { settlementMarginalBytes } from '../services/settlement.js';
-import { encode as cborEncode, decode as cborDecode } from 'cbor-x';
 
 /**
  * Which half of the pool an entry occupies (MEMPOOL_INTERFACE → Eviction,
@@ -74,7 +71,6 @@ export class MempoolFullError extends Error {
 const EMPTY_BODY_BYTES = utxoTxTreeByteLength({
   utxoTxIds: [],
   utxoTxs: [],
-  pruneEntries: [],
 });
 
 /** A well-formed stand-in, so the probe below measures a real `b32` entry. */
@@ -105,7 +101,6 @@ export function entryByteCost(txBytes: Uint8Array): number {
     utxoTxTreeByteLength({
       utxoTxIds: [PROBE_TX_ID],
       utxoTxs: [txBytes],
-      pruneEntries: [],
     }) - EMPTY_BODY_BYTES + settlementMarginalBytes(decodeTx(txBytes))
   );
 }
@@ -172,12 +167,11 @@ export class TxTooLargeError extends ClientError {
 /**
  * In-memory representation of a pending pool entry (MEMPOOL_INTERFACE →
  * PoolEntry). Carries the `utxo_tx` payload only; a `prune` row's blob is
- * read by `selectMempoolPrunes` straight from the row, so the DTO loads no
- * blob that nothing consumes.
+ * Carries the `utxo_tx` payload.
  */
 export interface PoolEntry {
   rowid: number;
-  entryType: 'utxo_tx' | 'prune';
+  entryType: 'utxo_tx';
   utxoTxBytes: Uint8Array | null;
   expiresAtHeight: number;
   createdAt: string;
@@ -194,7 +188,7 @@ interface MempoolRow {
 function rowToEntry(row: MempoolRow): PoolEntry {
   return {
     rowid: row.rowid,
-    entryType: row.entry_type as 'utxo_tx' | 'prune',
+    entryType: row.entry_type as 'utxo_tx',
     utxoTxBytes: row.utxo_tx_bytes ? new Uint8Array(row.utxo_tx_bytes) : null,
     expiresAtHeight: row.expires_at_height,
     createdAt: row.created_at,
@@ -242,16 +236,8 @@ function classCaps(): { credit: number; karma: number } {
  *
  * ⛔ **`tx_fee` alone decides, and the two counts partition the table.** Only a
  * credit-side transaction ever sets it, so `IS NULL` catches karma-side
- * transactions, prune entries and rows written before the column existed alike
- * — all of which bid nothing and belong to the class that does not order by
- * price. Filtering on `entry_type` as well would leave prune entries counted by
- * neither class and therefore bounded by nothing.
- *
- * ⚠ **The eviction query below filters on `entry_type` and this one must not.**
- * They are asking different questions and the difference is deliberate: this
- * one bounds the table, so it has to reach every row; that one picks something
- * to delete, so it must reach only transactions. Harmonising them breaks
- * whichever one is changed to match the other.
+ * transactions and rows written before the column existed alike — all of which
+ * bid nothing and belong to the class that does not order by price.
  */
 function classCount(db: ReturnType<typeof getDb>, poolClass: PoolClass): number {
   const test = poolClass === 'credit' ? 'IS NOT NULL' : 'IS NULL';
@@ -629,8 +615,7 @@ const ENTRY_COLUMNS = `rowid, entry_type, utxo_tx_bytes,
  *
  * Nothing here bids, so arrival is the only basis for prioritisation there is
  * (MEMPOOL_INTERFACE → Ordering). Prune entries are in this class and are
- * yielded with it; the block creator draws them through `selectMempoolPrunes`
- * as a mandatory section and skips them here.
+ * Prune transactions ride this class as ordinary karma-side entries.
  */
 function* iterateKarmaFifo(): Generator<PoolEntry> {
   const db = getDb();
@@ -790,101 +775,3 @@ export function removeEntry(rowid: number): void {
   db.prepare('DELETE FROM mempool WHERE rowid = ?').run(rowid);
 }
 
-/**
- * The `prune_entry_cbor` blob is written and read by this module alone — it is
- * a local pool row, on no wire and under no committed root — so its codec is
- * the `cborEncode`/`cborDecode` pair above, stated once and symmetric by
- * construction. A consensus encoder must not be borrowed for it: those state a
- * committed layout that is `@dagsocial/types`' to change, and a dialect change
- * there is invisible to a reader in this package.
- */
-export function insertMempoolPrune(
-  entry: PruneEntry,
-  expiresAtHeight: number,
-): number {
-  const db = getDb();
-  // A prune entry bids nothing and is not a transaction, so it is bounded by
-  // the karma-side cap — the class for everything the fee market does not
-  // price.
-  assertCapacity(db, 'karma', null, 0);
-  const cbor = Buffer.from(cborEncode(entry));
-  const entryId = computePruneEntryId(entry);
-  const result = db.prepare(
-    `INSERT INTO mempool (entry_type, prune_entry_cbor, expires_at_height, prune_entry_id)
-     VALUES ('prune', ?, ?, ?)`,
-  ).run(cbor, expiresAtHeight, entryId);
-  return Number(result.lastInsertRowid);
-}
-
-/**
- * One row's entry, or `null` when this node cannot read a blob it wrote.
- *
- * Isolated per row, and it decides two things at once. A sibling's failure
- * must not destroy a readable row — `selectMempoolPrunes` iterates the batch
- * and returns every decodable entry individually. And the unreadable row is
- * dropped rather than re-raised, because it sits in front of
- * `selectMempoolPrunes`, the creator's read-only pool scan
- * (MEMPOOL_INTERFACE → selectMempoolPrunes): a row nobody can decode would
- * otherwise stop the node producing for as long as it stays, and this blob
- * is local, uncommitted, and re-issuable by its author. Loud, because a
- * store that returns something its own writer cannot have produced is a
- * defect, not an event.
- */
-function decodePruneRow(row: { rowid: number; prune_entry_cbor: Buffer }): PruneEntry | null {
-  try {
-    return cborDecode(row.prune_entry_cbor) as PruneEntry;
-  } catch (err) {
-    console.error(`Dropping unreadable mempool prune row ${row.rowid}:`, err);
-    return null;
-  }
-}
-
-/**
- * Up to `limit` prune rows in FIFO order, decoded and paired with their rowid.
- * Readable rows are returned without removing them — a prune row leaves the
- * pool the way a transaction row does: `removeEntry(rowid)` when a body this
- * node built carried it, `removeMempoolPrunes` when an applied block confirms
- * it, or `purgeExpired` (MEMPOOL_INTERFACE → selectMempoolPrunes). A row this
- * node cannot decode is dropped at the read and reported; its readable siblings
- * are returned.
- */
-export function selectMempoolPrunes(limit: number): Array<{ rowid: number; entry: PruneEntry }> {
-  const db = getDb();
-  const rows = db.prepare(
-    `SELECT rowid, prune_entry_cbor FROM mempool
-     WHERE entry_type = 'prune'
-     ORDER BY rowid ASC LIMIT ?`,
-  ).all(limit) as Array<{ rowid: number; prune_entry_cbor: Buffer }>;
-
-  const result: Array<{ rowid: number; entry: PruneEntry }> = [];
-  const toDrop: number[] = [];
-  for (const row of rows) {
-    const entry = decodePruneRow(row);
-    if (entry !== null) {
-      result.push({ rowid: row.rowid, entry });
-    } else {
-      toDrop.push(row.rowid);
-    }
-  }
-  if (toDrop.length > 0) {
-    db.prepare(
-      `DELETE FROM mempool WHERE rowid IN (${toDrop.map(() => '?').join(',')})`,
-    ).run(...toDrop);
-  }
-  return result;
-}
-
-/**
- * Delete prune rows by their `prune_entry_id` — an indexed delete, the
- * prune-row twin of `removeUtxoTxEntry` (MEMPOOL_INTERFACE →
- * "Confirmed-entry cleanup reaches every row, and it is a lookup rather
- * than a scan").
- */
-export function removeMempoolPrunes(entryIds: string[]): void {
-  if (entryIds.length === 0) return;
-  const db = getDb();
-  const placeholders = entryIds.map(() => '?').join(',');
-  db.prepare(
-    `DELETE FROM mempool WHERE prune_entry_id IN (${placeholders})`,
-  ).run(...entryIds);
-}

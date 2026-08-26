@@ -301,11 +301,11 @@ const GOLDEN_TX: UtxoTransaction = {
 };
 
 const GOLDEN_KARMA_BOX_ID =
-  '13a1506f2ddcc51dbecdac6f1ecb52753bc5efee7ee6425f6ec650c629a5e431';
+  '53f8be958f1b64c770b4e2873b634fa093d451e6f87f06bacc38c5db19cd0f70';
 const GOLDEN_CREDIT_BOX_ID =
-  '6d8044554561eb013448f3369a3ed3a17aebee6a2f348efe2f7609444d5973dd';
+  'e8075155c1ea6aa989cc9fe3f4608212afefa2fe83488f90741fe4ee83a0f66e';
 const GOLDEN_TX_ID =
-  'fdbacd785aee904a5e4d9f5935986ad10e4efaac7e17ad17578d0f1156a9ee57';
+  '7301a236cea28d09a9b6ea833d52ae2779f94421c4f1343f93779d512ddc4b1f';
 
 /** The two candidates as block application materializes them out of GOLDEN_TX. */
 const GOLDEN_KARMA_BOX: KarmaBox = { ...GOLDEN_KARMA_CANDIDATE, txId: GOLDEN_TX_ID, index: 0 };
@@ -531,9 +531,9 @@ const ALL_MINT_REASONS = Object.keys(MINT_REASON_GOLDENS) as MintReason[];
  * protocol-breaking and unversioned.
  */
 const GOLDEN_CANDIDATE_KARMA_ID =
-  '13a1506f2ddcc51dbecdac6f1ecb52753bc5efee7ee6425f6ec650c629a5e431';
+  '53f8be958f1b64c770b4e2873b634fa093d451e6f87f06bacc38c5db19cd0f70';
 const GOLDEN_CANDIDATE_CREDIT_ID =
-  '6d8044554561eb013448f3369a3ed3a17aebee6a2f348efe2f7609444d5973dd';
+  'e8075155c1ea6aa989cc9fe3f4608212afefa2fe83488f90741fe4ee83a0f66e';
 const GOLDEN_MINT_GENESIS_ID =
   '9010dd1d6fe6029eb8e856fe38467836781ce43ddad1ce01c0af7afc0bc7b7b2';
 
@@ -982,7 +982,7 @@ describe('genesis_proof', () => {
     // shares. `utxoTxTree.utxoTxs` is `arr(lp)` and goes through the same
     // primitive on the same positional reader, so it is what a bound placed in
     // the primitive would have caught along with this box — and it must not be.
-    const tree = { utxoTxIds: [], utxoTxs: [overBound], pruneEntries: [] };
+    const tree = { utxoTxIds: [], utxoTxs: [overBound] };
     expect(decodeUtxoTxTree(encodeUtxoTxTree(tree)).utxoTxs[0]).toEqual(overBound);
   });
 });
@@ -1432,7 +1432,7 @@ describe('boxRecordBytes', () => {
     // them here — where the encoder lives — rather than only at the consumer.
     const frozen =
       GOLDEN_KARMA_BOX_BYTES +                                             // boxContentBytes
-      'fdbacd785aee904a5e4d9f5935986ad10e4efaac7e17ad17578d0f1156a9ee57' + // b32 txId
+      '7301a236cea28d09a9b6ea833d52ae2779f94421c4f1343f93779d512ddc4b1f' + // b32 txId
       '00';                                                                // vlqU(0)
     expect(Buffer.from(boxRecordBytes(GOLDEN_KARMA_CANDIDATE, GOLDEN_TX_ID, 0)).toString('hex'))
       .toBe(frozen);
@@ -1803,7 +1803,7 @@ describe('transactions', () => {
       // (TYPES_INTERFACE → Layout — UtxoTransaction). Writing the two as one
       // sequence is the conflation that contract corrects by name.
       //
-      // ⛔ **FIVE fields.** This mirror is also the tool for re-pinning: when a
+      // ⛔ **SIX fields.** This mirror is also the tool for re-pinning: when a
       // field enters or leaves the preimage, hand-derive the new id here rather
       // than regenerating it from the encoder (TYPES_INTERFACE → "Re-pinning a
       // frozen vector when a preimage changes"). The test below is the validation
@@ -1817,15 +1817,16 @@ describe('transactions', () => {
       h.update(Buffer.from([GOLDEN_TX.protocolVersion]));         // vlqU(1)
       h.update(Buffer.from([0]));                                 // opt likeTarget: absent
       h.update(Buffer.from([0]));                                 // opt post: absent
+      h.update(Buffer.from([0]));                                 // opt prune: absent
       expect(h.digest().subarray(0, 32).toString('hex')).toBe(computeTxId(GOLDEN_TX));
     });
 
     it('an OPTIONAL field costs a byte in the id even when absent', () => {
       // ⛔ **The rule that decides what a field's arrival or departure costs.** A
-      // sixth field wedged between `outputs` and `protocolVersion` — an `opt` whose
-      // value is absent, so the cheapest one available — still writes its `0` tag,
-      // and the id below is what this transaction hashes to under that layout. It
-      // is **not** `computeTxId(GOLDEN_TX)`.
+      // seventh field wedged between `outputs` and `protocolVersion` — an `opt`
+      // whose value is absent, so the cheapest one available — still writes its
+      // `0` tag, and the id below is what this transaction hashes to under that
+      // layout. It is **not** `computeTxId(GOLDEN_TX)`.
       //
       // ⛔ **So no frozen id can survive a change to this list**, however optional
       // the field and however empty every transaction leaves it. `opt` is
@@ -1836,20 +1837,21 @@ describe('transactions', () => {
       // reproduces a known id, and this is that check standing in the tree rather
       // than in a commit message (TYPES_INTERFACE → "Re-pinning a frozen vector
       // when a preimage changes").
-      const SIX_FIELD_TX_ID =
-        '126e8fd72bf4382379171d0b156d00b0f7bd573ede0c2e4a6115684e58d1fed5';
+      const SEVEN_FIELD_TX_ID =
+        'b8c6141fc3a1bb3271636dc1b76dc4c5d977052204e6215fad31da04ce7fb406';
       const h = createHash('blake2b512');
       h.update(Buffer.from('dagsocial/tx-id/1'));
       h.update(Buffer.from([GOLDEN_TX.inputs.length]));
       for (const input of GOLDEN_TX.inputs) h.update(Buffer.from(input, 'hex'));
       h.update(Buffer.from([GOLDEN_TX.outputs.length]));
       for (const out of GOLDEN_TX.outputs) h.update(canonicalBoxBytes(out));
-      h.update(Buffer.from([0]));                                 // a sixth field's opt tag: ABSENT
+      h.update(Buffer.from([0]));                                 // a seventh field's opt tag: ABSENT
       h.update(Buffer.from([GOLDEN_TX.protocolVersion]));
       h.update(Buffer.from([0]));                                 // opt likeTarget: absent
       h.update(Buffer.from([0]));                                 // opt post: absent
-      expect(h.digest().subarray(0, 32).toString('hex')).toBe(SIX_FIELD_TX_ID);
-      expect(computeTxId(GOLDEN_TX)).not.toBe(SIX_FIELD_TX_ID);
+      h.update(Buffer.from([0]));                                 // opt prune: absent
+      expect(h.digest().subarray(0, 32).toString('hex')).toBe(SEVEN_FIELD_TX_ID);
+      expect(computeTxId(GOLDEN_TX)).not.toBe(SEVEN_FIELD_TX_ID);
     });
 
     it('the box-id preimage is domain-tagged — independently recomputed', () => {
@@ -2053,6 +2055,7 @@ describe('transactions', () => {
       h.update(Buffer.from([1]));                       // opt likeTarget: present
       h.update(Buffer.from(TARGET_A, 'hex'));           // b32 — raw, not hex text
       h.update(Buffer.from([0]));                       // opt post: absent
+      h.update(Buffer.from([0]));                       // opt prune: absent
       expect(computeTxId(tx)).toBe(h.digest().subarray(0, 32).toString('hex'));
     });
 

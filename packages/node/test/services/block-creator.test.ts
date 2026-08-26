@@ -392,7 +392,7 @@ describe('block-creator', () => {
     // whose section is retired — or a new one added untested, fails here (the
     // block body is consensus-visible bytes).
     expect(Object.keys(block!.utxoTxTree).sort()).toEqual(
-      ['pruneEntries', 'utxoTxIds', 'utxoTxs'],
+      ['utxoTxIds', 'utxoTxs'],
     );
   });
 
@@ -409,8 +409,8 @@ describe('block-creator', () => {
     bc.startBlockCreator(testConfig);
 
     // Heights 59, 60, 61: 60 is the round multiple, 61 the block after.
-    // The body carries the same three keys (`pruneEntries`, `utxoTxIds`,
-    // `utxoTxs`) at each — no height-dependent structural variation.
+    // The body carries the same two keys (`utxoTxIds`, `utxoTxs`) at each —
+    // no height-dependent structural variation.
     for (let i = 0; i < 61; i++) {
       expect(await mineNextBlock(bc)).not.toBeNull();
     }
@@ -420,7 +420,7 @@ describe('block-creator', () => {
       const stored = ordering.getOrderingBlock(height);
       expect(stored).not.toBeNull();
       expect(Object.keys(stored!.utxoTxTree).sort()).toEqual(
-        ['pruneEntries', 'utxoTxIds', 'utxoTxs'],
+        ['utxoTxIds', 'utxoTxs'],
       );
     }
   });
@@ -595,7 +595,6 @@ describe('block-creator', () => {
 
     const treeOf = (txId: string) => ({
       utxoTxIds: [txId], utxoTxs: [new Uint8Array(1)],
-      pruneEntries: [],
     });
     expect(computeTxId(a.tx)).not.toBe(computeTxId(b.tx));
     expect(computeUtxoTxRoot(treeOf(computeTxId(a.tx))))
@@ -686,7 +685,7 @@ describe('block-creator', () => {
       // Non-vacuity: the settlement really is in the reserve, so this is not the
       // empty-tree constant wearing another name.
       expect(reserved).toBeGreaterThan(
-        utxoTxTreeByteLength({ utxoTxIds: [], utxoTxs: [], pruneEntries: [] }),
+        utxoTxTreeByteLength({ utxoTxIds: [], utxoTxs: [] }),
       );
 
       // Pass two, at a budget that binds mid-pool. Every count prefix in the

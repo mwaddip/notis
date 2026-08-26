@@ -15,13 +15,14 @@ import {
   computePowHash,
   isValidVouchTarget,
   verifyPostCommitDomains,
+  verifyPruneCommitDomains,
   verifyPostBody,
   verifyHeaderFieldDomains,
   ed25519PublicKeyToKeyObject,
 } from '../src/verify.js';
 import { isDisallowedContentCodepoint, PINNED_UNICODE_VERSION } from '../src/content-charset.js';
 import { generateKeyPair, computePostId, computeTxId, computeContentHash, postFieldBytes, EMPTY_STATE_ROOT, MAX_PARENT_REFS, MAX_TX_BYTES, MAX_BLOCK_BODY_BYTES, ORDERING_BLOCK_POW_TARGET_FLOOR, encodeTx, encodeUtxoTxTree, utxoTxTreeByteLength, ByteWriter, writeHexNOrThrow, writeBytesNOrThrow, writeVlqU, writeLp } from '@dagsocial/types';
-import type { PostCommit, PruneEntry, BlockHeader, OrderingBlock, UtxoTransaction, AnyBoxCandidate } from '@dagsocial/types';
+import type { PostCommit, BlockHeader, OrderingBlock, UtxoTransaction, AnyBoxCandidate } from '@dagsocial/types';
 
 /**
  * `blockHash` for a fixture the test has just built and asserts is in-domain.
@@ -606,7 +607,6 @@ describe('verifyOrderingBlockStructure', () => {
     utxoTxTree: {
       utxoTxIds: [SETTLEMENT_ID],
       utxoTxs: [SETTLEMENT_BYTES],
-      pruneEntries: [],
     },
     validatorSignature: new Uint8Array(64),
   });
@@ -655,7 +655,7 @@ describe('verifyOrderingBlockStructure', () => {
   });
 
   // ⛔ There is one committed body, so the only presence case left is the tree
-  // itself. `pruneEntries` moved inside it, and its `?.` is what makes a block
+  // itself. The `?.` on the first `utxoTxTree` read is what makes a block
   // carrying no `utxoTxTree` a verdict rather than a TypeError — the failure
   // direction the no-panic rule forbids (VALIDATION_INTERFACE → Postconditions
   // → "No-panic (M-5)").
@@ -668,15 +668,7 @@ describe('verifyOrderingBlockStructure', () => {
     const block = { ...makeValidBlock(), utxoTxTree: undefined } as unknown as OrderingBlock;
     const result = verifyOrderingBlockStructure(block);
     expect(result.valid).toBe(false);
-    expect(result.error).toBe('Ordering block missing utxoTxTree.pruneEntries');
-  });
-
-  it('rejects a block whose utxoTxTree has no pruneEntries array', () => {
-    const block = makeValidBlock();
-    (block.utxoTxTree as { pruneEntries?: unknown }).pruneEntries = undefined;
-    const result = verifyOrderingBlockStructure(block);
-    expect(result.valid).toBe(false);
-    expect(result.error).toBe('Ordering block missing utxoTxTree.pruneEntries');
+    expect(result.error).toBe('Ordering block missing utxoTxTree.utxoTxIds');
   });
 
   it('rejects block with utxoTxs misaligned with utxoTxIds', () => {
@@ -692,7 +684,6 @@ describe('verifyOrderingBlockStructure', () => {
       utxoTxTree: {
         utxoTxs: [],
         likeBoxIds: [],
-        pruneEntries: [],
       },
     } as unknown as OrderingBlock;
     expect(verifyOrderingBlockStructure(block).valid).toBe(false);
@@ -751,26 +742,6 @@ describe('verifyOrderingBlockStructure', () => {
     );
   });
 
-  it('refuses the empty body before reading a prune entry or weighing anything', () => {
-    // ⛔ The way to measure which rule fires is to give one block *two* defects
-    // and check which one it names. This block has an empty body and a prune
-    // entry whose `subtreeMerkleRoot` is a 32-char string; both are refusable,
-    // and the prune loop runs first, so that is the name that comes back.
-    const block = emptyBodied();
-    block.utxoTxTree.pruneEntries = [
-      { ...makeValidPruneEntry(), subtreeMerkleRoot: 'a'.repeat(32) } as unknown as PruneEntry,
-    ];
-    // Prune entries are typed ahead of the count, so that defect is named first
-    // — which is what makes the ordering observable rather than assumed.
-    expect(verifyOrderingBlockStructure(block).error).toContain('invalid subtreeMerkleRoot');
-
-    // With the prune entry sound, the count is what is left.
-    block.utxoTxTree.pruneEntries = [makeValidPruneEntry()];
-    expect(verifyOrderingBlockStructure(block).error).toBe(
-      'Ordering block body carries no settlement transaction',
-    );
-  });
-
   it('states nothing about what the settlement contains', () => {
     // The bytes are never decoded here, so a body whose one transaction is a
     // single junk byte is accepted — what the settlement holds is consensus and
@@ -797,9 +768,9 @@ describe('verifyOrderingBlockStructure', () => {
   });
 
   it('rejects every non-byte-view utxoTxs element, including the length-bearing ones', () => {
-    // The prune-entry rule, one struct over: a `.length` read is not a type
-    // check. An `Array` of byte values, a `{length}` object and a non-`Uint8Array`
-    // typed view all satisfy one and none of them encode.
+    // A `.length` read is not a type check. An `Array` of byte values, a
+    // `{length}` object and a non-`Uint8Array` typed view all satisfy one and
+    // none of them encode.
     for (const bad of ['not-bytes', [1, 2, 3], { length: 3 }, new Uint32Array(3), null, 42]) {
       const block = makeValidBlock();
       block.utxoTxTree.utxoTxIds = ['bb'.repeat(32)];
@@ -835,157 +806,6 @@ describe('verifyOrderingBlockStructure', () => {
     expect(verifyOrderingBlockStructure(block)).toEqual({ valid: true });
   });
 
-  // -------------------------------------------------------------------------
-  // pruneEntries
-  //
-  // These fields are the ones block application feeds to `Buffer.from(...)`
-  // and `createHash().update(...)`, so a wrong *type* here is not a cosmetic
-  // defect: it throws inside the apply funnel. Nothing else validates them.
-  // -------------------------------------------------------------------------
-
-  /** A prune entry that is well-formed in every field the structure check reads. */
-  const makeValidPruneEntry = (): PruneEntry => ({
-    rootPostHash: 'aa'.repeat(32),
-    subtreePostIds: ['aa'.repeat(32), 'bb'.repeat(32)],
-    subtreeMerkleRoot: new Uint8Array(32).fill(7),
-    authorId: new Uint8Array(32).fill(3),
-    authorSignature: new Uint8Array(64).fill(9),
-  });
-
-  /** The valid block, carrying one prune entry with `over` applied to it. */
-  const blockWithPrune = (over: Record<string, unknown> = {}): OrderingBlock => {
-    const block = makeValidBlock();
-    block.utxoTxTree.pruneEntries = [
-      { ...makeValidPruneEntry(), ...over } as unknown as PruneEntry,
-    ];
-    return block;
-  };
-
-  it('accepts a well-formed prune entry (control for every rejection below)', () => {
-    expect(verifyOrderingBlockStructure(blockWithPrune())).toEqual({ valid: true });
-  });
-
-
-  it('rejects a block with no pruneEntries field at all', () => {
-    const block = makeValidBlock();
-    delete (block.utxoTxTree as unknown as Record<string, unknown>).pruneEntries;
-    const result = verifyOrderingBlockStructure(block);
-    expect(result.valid).toBe(false);
-    expect(result.error).toContain('pruneEntries');
-  });
-
-  it('rejects a non-array pruneEntries', () => {
-    const block = makeValidBlock();
-    (block.utxoTxTree as unknown as Record<string, unknown>).pruneEntries = 'nope';
-    expect(verifyOrderingBlockStructure(block).valid).toBe(false);
-  });
-
-  it('rejects a prune entry that is not an object', () => {
-    const block = makeValidBlock();
-    (block.utxoTxTree as unknown as Record<string, unknown>).pruneEntries = [42];
-    const result = verifyOrderingBlockStructure(block);
-    expect(result.valid).toBe(false);
-    expect(result.error).toContain('pruneEntry is not an object');
-  });
-
-  // Each case below deviates from `makeValidPruneEntry()` in exactly one field,
-  // and the control above proves the rest of the entry passes — so what each
-  // one measures is that field and nothing else. The distinct-error assertion
-  // at the end proves no two of them are being rejected for the same reason.
-  const REJECTED_SHAPES: Array<{ name: string; over: Record<string, unknown>; error: string }> = [
-    { name: 'rootPostHash too short', over: { rootPostHash: 'aa' }, error: 'invalid rootPostHash' },
-    { name: 'rootPostHash not a string', over: { rootPostHash: 42 }, error: 'invalid rootPostHash' },
-    { name: 'rootPostHash bytes, not hex', over: { rootPostHash: new Uint8Array(32) }, error: 'invalid rootPostHash' },
-    { name: 'subtreePostIds not an array', over: { subtreePostIds: 'aa'.repeat(32) }, error: 'invalid subtreePostIds' },
-    { name: 'subtreePostIds holds a non-string', over: { subtreePostIds: [42] }, error: 'subtreePostId must be 64 lowercase hex' },
-    { name: 'subtreePostIds holds a short string', over: { subtreePostIds: ['aa'] }, error: 'subtreePostId must be 64 lowercase hex' },
-    // The alphabet, not just the width: 64 characters that are not hex, which a
-    // length-only check waves through while the message still says "hex".
-    { name: 'subtreePostIds holds a 64-char non-hex string', over: { subtreePostIds: ['zz'.repeat(32)] }, error: 'subtreePostId must be 64 lowercase hex' },
-    { name: 'subtreePostIds holds an uppercase-hex id', over: { subtreePostIds: ['AA'.repeat(32)] }, error: 'subtreePostId must be 64 lowercase hex' },
-    { name: 'rootPostHash is 64 chars of non-hex', over: { rootPostHash: 'zz'.repeat(32) }, error: 'invalid rootPostHash' },
-    { name: 'rootPostHash is uppercase hex', over: { rootPostHash: 'AA'.repeat(32) }, error: 'invalid rootPostHash' },
-    // The kill shot: an integer where 32 bytes belong. `Buffer.from(42)`
-    // throws, and block apply reaches it with nothing in between.
-    { name: 'subtreeMerkleRoot is a number', over: { subtreeMerkleRoot: 42 }, error: 'invalid subtreeMerkleRoot' },
-    // Length-bearing impostors — what a `.length`-only check would wave through.
-    { name: 'subtreeMerkleRoot is a 32-char string', over: { subtreeMerkleRoot: 'a'.repeat(32) }, error: 'invalid subtreeMerkleRoot' },
-    { name: 'subtreeMerkleRoot is {length: 32}', over: { subtreeMerkleRoot: { length: 32 } }, error: 'invalid subtreeMerkleRoot' },
-    { name: 'subtreeMerkleRoot is a 32-element array', over: { subtreeMerkleRoot: new Array(32).fill(0) }, error: 'invalid subtreeMerkleRoot' },
-    // Right type, wrong width — an 8-byte key or root is not a key or root.
-    { name: 'subtreeMerkleRoot is 31 bytes', over: { subtreeMerkleRoot: new Uint8Array(31) }, error: 'invalid subtreeMerkleRoot' },
-    { name: 'subtreeMerkleRoot is a Uint32Array', over: { subtreeMerkleRoot: new Uint32Array(8) }, error: 'invalid subtreeMerkleRoot' },
-    { name: 'subtreeMerkleRoot missing', over: { subtreeMerkleRoot: undefined }, error: 'invalid subtreeMerkleRoot' },
-    { name: 'authorId is a 32-char string', over: { authorId: 'a'.repeat(32) }, error: 'invalid authorId' },
-    { name: 'authorId is {length: 32}', over: { authorId: { length: 32 } }, error: 'invalid authorId' },
-    { name: 'authorId is 33 bytes', over: { authorId: new Uint8Array(33) }, error: 'invalid authorId' },
-    { name: 'authorId missing', over: { authorId: undefined }, error: 'invalid authorId' },
-    { name: 'authorSignature is a 64-char string', over: { authorSignature: 'a'.repeat(64) }, error: 'invalid authorSignature' },
-    { name: 'authorSignature is {length: 64}', over: { authorSignature: { length: 64 } }, error: 'invalid authorSignature' },
-    { name: 'authorSignature is 32 bytes', over: { authorSignature: new Uint8Array(32) }, error: 'invalid authorSignature' },
-    { name: 'authorSignature missing', over: { authorSignature: undefined }, error: 'invalid authorSignature' },
-  ];
-
-  for (const shape of REJECTED_SHAPES) {
-    it(`rejects a prune entry whose ${shape.name}`, () => {
-      const result = verifyOrderingBlockStructure(blockWithPrune(shape.over));
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain(shape.error);
-    });
-  }
-
-  it('names the offending field distinctly for each prune-entry rejection', () => {
-    // One error string per field, so an operator reading a rejection log can
-    // tell which field the producer got wrong.
-    const errors = new Set(REJECTED_SHAPES.map((s) => s.error));
-    expect(errors.size).toBe(6);
-    for (const shape of REJECTED_SHAPES) {
-      expect(verifyOrderingBlockStructure(blockWithPrune(shape.over)).error).toContain(shape.error);
-    }
-  });
-
-  it('never throws on a hostile prune entry', () => {
-    for (const shape of REJECTED_SHAPES) {
-      expect(() => verifyOrderingBlockStructure(blockWithPrune(shape.over))).not.toThrow();
-    }
-  });
-
-  // --- subtreePostIds distinctness -------------------------------------------
-
-  it('rejects a prune entry whose subtreePostIds carries a repeated id', () => {
-    const A = 'aa'.repeat(32);
-    const B = 'bb'.repeat(32);
-    const block = blockWithPrune({ subtreePostIds: [A, A, B] });
-    const result = verifyOrderingBlockStructure(block);
-    expect(result).toEqual({
-      valid: false,
-      error: 'Ordering block pruneEntry subtreePostIds carries a repeated id',
-    });
-
-    const clean = blockWithPrune({ subtreePostIds: [A, B] });
-    expect(verifyOrderingBlockStructure(clean)).toEqual({ valid: true });
-  });
-
-  it('finds a repeated id in the second prune entry', () => {
-    const A = 'cc'.repeat(32);
-    const B = 'dd'.repeat(32);
-    const block = makeValidBlock();
-    block.utxoTxTree.pruneEntries = [
-      makeValidPruneEntry(),
-      { ...makeValidPruneEntry(), subtreePostIds: [A, A, B] } as unknown as PruneEntry,
-    ];
-    const result = verifyOrderingBlockStructure(block);
-    expect(result.valid).toBe(false);
-    expect(result.error).toContain('carries a repeated id');
-  });
-
-  it('rejects a non-hex element before detecting a repeat', () => {
-    const A = 'aa'.repeat(32);
-    const block = blockWithPrune({ subtreePostIds: [42, A, A] });
-    const result = verifyOrderingBlockStructure(block);
-    expect(result.valid).toBe(false);
-    expect(result.error).toContain('subtreePostId must be 64 lowercase hex');
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -998,11 +818,11 @@ describe('verifyOrderingBlockStructure', () => {
 // block and shown to pass, and the control proves the rest of the structure
 // check passes on an otherwise identical object.
 //
-// The path this closes is the store, not the preimage. Prune entries carry
-// hex-32 fields (`rootPostHash`, `subtreePostIds`) that reach `block_topology`
-// and `rowToPost` → `computePostId`. A 64-character non-hex string passes a
-// bare length check, reaches a hex-decode boundary, and either throws or
-// silently produces wrong bytes — the hex-alphabet pin here is the gate.
+// The path this closes is the store, not the preimage. Hex-32 fields
+// (`utxoTxIds` elements) reach `computeUtxoTxRoot`'s Merkle build. A
+// 64-character non-hex string passes a bare length check, reaches a hex-decode
+// boundary, and either throws or silently produces wrong bytes — the
+// hex-alphabet pin here is the gate.
 // ---------------------------------------------------------------------------
 
 describe('ordering-block hex domains — the pin has teeth', () => {
@@ -1049,8 +869,8 @@ describe('ordering-block hex domains — the pin has teeth', () => {
   const kp = generateKeyPair();
 
   /**
-   * A block whose one body carries `pruneEntries` / `utxoTxIds`, with a
-   * genuinely mined and signed header.
+   * A block whose one body carries `utxoTxIds`, with a genuinely mined and
+   * signed header.
    *
    * `utxoTxRoot` is a producer-chosen 64-hex string here, not recomputed:
    * `verifyOrderingBlockStructure` does not recompute it (that is apply-time, in
@@ -1074,7 +894,7 @@ describe('ordering-block hex domains — the pin has teeth', () => {
     // The settlement is the default body, not an empty one: a fixture with no
     // transactions is refused by the count rule and would measure that instead
     // of the poison it names (VALIDATION_INTERFACE → verifyOrderingBlockStructure).
-    const { utxoTxIds = [SETTLEMENT_ID], ...tree } = body;
+    const { utxoTxIds = [SETTLEMENT_ID] } = body;
     const solved = solve({
       protocolVersion: 1,
       height: 42,
@@ -1096,20 +916,10 @@ describe('ordering-block hex domains — the pin has teeth', () => {
       utxoTxTree: {
         utxoTxIds,
         utxoTxs: utxoTxIds.map(() => new Uint8Array(1)),
-        pruneEntries: tree.pruneEntries ?? [],
       },
       validatorSignature,
     };
   };
-
-  const prune = (over: Partial<PruneEntry> = {}): PruneEntry => ({
-    rootPostHash: GOOD,
-    subtreePostIds: [GOOD],
-    subtreeMerkleRoot: new Uint8Array(32).fill(7),
-    authorId: new Uint8Array(32).fill(3),
-    authorSignature: new Uint8Array(64).fill(9),
-    ...over,
-  });
 
   /**
    * The Stage-1 ordering-block pipeline as `net`'s `orderingBlock` topic
@@ -1124,32 +934,10 @@ describe('ordering-block hex domains — the pin has teeth', () => {
 
   const CASES: Array<{ name: string; poison: string; block: () => OrderingBlock; error: string }> = [
     {
-      name: 'pruneEntry.rootPostHash',
-      poison: NON_HEX_64,
-      block: () => makeBlock({ pruneEntries: [prune({ rootPostHash: NON_HEX_64 })] }),
-      error: 'invalid rootPostHash',
-    },
-    {
-      name: 'pruneEntry.subtreePostIds',
-      poison: NON_HEX_64,
-      block: () => makeBlock({ pruneEntries: [prune({ subtreePostIds: [NON_HEX_64] })] }),
-      error: 'subtreePostId must be 64 lowercase hex',
-    },
-    {
       name: 'utxoTxIds — the element check that did not exist',
       poison: NON_HEX_64,
       block: () => makeBlock({ utxoTxIds: [NON_HEX_64] }),
       error: 'utxoTxId must be 64 lowercase hex',
-    },
-    // Uppercase hex is the injectivity half: it decodes to the *same* 32 bytes
-    // as its lowercase spelling, so accepting both gives one id two in-memory
-    // representations — the malleability the fixed-width encoding exists to
-    // close, arriving from the codec side.
-    {
-      name: 'pruneEntry.subtreePostIds in uppercase hex',
-      poison: UPPER_HEX_64,
-      block: () => makeBlock({ pruneEntries: [prune({ subtreePostIds: [UPPER_HEX_64] })] }),
-      error: 'subtreePostId must be 64 lowercase hex',
     },
   ];
 
@@ -1173,10 +961,7 @@ describe('ordering-block hex domains — the pin has teeth', () => {
   ];
 
   it('has a control block that this function accepts', () => {
-    const control = makeBlock({
-      pruneEntries: [prune()],
-      utxoTxIds: [GOOD],
-    });
+    const control = makeBlock({ utxoTxIds: [GOOD] });
     expect(verifyOrderingBlockStructure(control)).toEqual({ valid: true });
     expect(everythingElsePasses(control)).toBe(true);
   });
@@ -1192,7 +977,7 @@ describe('ordering-block hex domains — the pin has teeth', () => {
   // -------------------------------------------------------------------------
 
   describe('a body with no settlement', () => {
-    const empty = (): OrderingBlock => makeBlock({ pruneEntries: [prune()], utxoTxIds: [] });
+    const empty = (): OrderingBlock => makeBlock({ utxoTxIds: [] });
 
     it('still clears version, height, PoW and the validator signature', () => {
       const block = empty();
@@ -1211,10 +996,7 @@ describe('ordering-block hex domains — the pin has teeth', () => {
     });
 
     it('one transaction, and the same block is accepted', () => {
-      // The control differs from the fixture above in the body alone, so the
-      // prune entry, the header and the signature are all held fixed across the
-      // two verdicts.
-      const control = makeBlock({ pruneEntries: [prune()], utxoTxIds: [GOOD] });
+      const control = makeBlock({ utxoTxIds: [GOOD] });
       expect(verifyOrderingBlockStructure(control)).toEqual({ valid: true });
     });
   });
@@ -1500,7 +1282,7 @@ describe('ordering-block hex domains — the pin has teeth', () => {
       // The settlement rides every fixture in the sweep: with an empty body the
       // count rule refuses each one outright and `conforms` would be false for
       // reasons that have nothing to do with the field being poisoned.
-      utxoTxTree: { utxoTxIds: [SETTLEMENT_ID], utxoTxs: [SETTLEMENT_BYTES], pruneEntries: [] },
+      utxoTxTree: { utxoTxIds: [SETTLEMENT_ID], utxoTxs: [SETTLEMENT_BYTES] },
       ...over,
     });
 
@@ -1523,19 +1305,7 @@ describe('ordering-block hex domains — the pin has teeth', () => {
           { block: put({ validatorSignature: bad as Uint8Array }), conforms: isBytesOf(bad, 64) },
           {
             block: put({
-              utxoTxTree: { utxoTxIds: [bad as string], utxoTxs: [new Uint8Array(1)], pruneEntries: [] },
-            }),
-            conforms: isHex(bad, 64),
-          },
-          {
-            block: put({
-              utxoTxTree: {
-                utxoTxIds: [SETTLEMENT_ID],
-                utxoTxs: [SETTLEMENT_BYTES],
-                pruneEntries: [
-                  { ...prune(), rootPostHash: bad, subtreePostIds: [bad] } as unknown as PruneEntry,
-                ],
-              },
+              utxoTxTree: { utxoTxIds: [bad as string], utxoTxs: [new Uint8Array(1)] },
             }),
             conforms: isHex(bad, 64),
           },
@@ -1549,7 +1319,6 @@ describe('ordering-block hex domains — the pin has teeth', () => {
               utxoTxTree: {
                 utxoTxIds: bad as unknown as string[],
                 utxoTxs: bad as unknown as Uint8Array[],
-                pruneEntries: [],
               },
             }),
             conforms: false,
@@ -1592,7 +1361,6 @@ describe('verifyBlockChainLink', () => {
     utxoTxTree: {
       utxoTxIds: [SETTLEMENT_ID],
       utxoTxs: [SETTLEMENT_BYTES],
-      pruneEntries: [],
     },
     validatorSignature: new Uint8Array(64),
   });
@@ -1937,7 +1705,7 @@ describe('no-panic on malformed input (M-5)', () => {
   const goodCommit = makeGoodCommit();
   const goodBlock: OrderingBlock = {
     header: makeHeader(),
-    utxoTxTree: { utxoTxIds: [SETTLEMENT_ID], utxoTxs: [SETTLEMENT_BYTES], pruneEntries: [] },
+    utxoTxTree: { utxoTxIds: [SETTLEMENT_ID], utxoTxs: [SETTLEMENT_BYTES] },
     validatorSignature: new Uint8Array(64),
   };
 
@@ -2000,36 +1768,13 @@ describe('no-panic on malformed input (M-5)', () => {
     for (const bad of MALFORMED) {
       expect(() => verifyOrderingBlockStructure(bad as any)).not.toThrow();
       expect(() => verifyOrderingBlockStructure({ ...goodBlock, header: bad } as any)).not.toThrow();
-      expect(() =>
-        verifyOrderingBlockStructure({
-          ...goodBlock,
-          utxoTxTree: { ...goodBlock.utxoTxTree, pruneEntries: bad },
-        } as any),
-      ).not.toThrow();
-      expect(() =>
-        verifyOrderingBlockStructure({
-          ...goodBlock,
-          utxoTxTree: {
-            ...goodBlock.utxoTxTree,
-            pruneEntries: [
-              {
-                rootPostHash: bad,
-                subtreePostIds: bad,
-                subtreeMerkleRoot: bad,
-                authorId: bad,
-                authorSignature: bad,
-              },
-            ],
-          },
-        } as any),
-      ).not.toThrow();
       // The transaction list itself, which the count rule reads: `.length` off
       // a non-array is `undefined`, and the `Array.isArray` gate above it is
       // what keeps the comparison from being a silent `undefined === 0`.
       expect(() =>
         verifyOrderingBlockStructure({
           ...goodBlock,
-          utxoTxTree: { utxoTxIds: bad, utxoTxs: bad, pruneEntries: [] },
+          utxoTxTree: { utxoTxIds: bad, utxoTxs: bad },
         } as any),
       ).not.toThrow();
       // The id is aligned deliberately: with an empty `utxoTxIds` the count and
@@ -2038,7 +1783,7 @@ describe('no-panic on malformed input (M-5)', () => {
       expect(() =>
         verifyOrderingBlockStructure({
           ...goodBlock,
-          utxoTxTree: { utxoTxIds: ['bb'.repeat(32)], utxoTxs: [bad], pruneEntries: [] },
+          utxoTxTree: { utxoTxIds: ['bb'.repeat(32)], utxoTxs: [bad] },
         } as any),
       ).not.toThrow();
     }
@@ -2507,6 +2252,90 @@ describe('verifyPostBody', () => {
 });
 
 // ---------------------------------------------------------------------------
+// verifyPruneCommitDomains
+// ---------------------------------------------------------------------------
+
+describe('verifyPruneCommitDomains', () => {
+  const GOOD = 'ab'.repeat(32);
+
+  const makeValid = () => ({
+    rootPostHash: GOOD,
+    subtreePostIds: [GOOD, 'cd'.repeat(32)],
+    subtreeMerkleRoot: new Uint8Array(32).fill(7),
+  });
+
+  it('accepts a well-formed PruneCommit', () => {
+    expect(verifyPruneCommitDomains(makeValid())).toEqual({ valid: true });
+  });
+
+  it('rejects a non-object', () => {
+    expect(verifyPruneCommitDomains(null)).toEqual({ valid: false, error: 'PruneCommit is not an object' });
+    expect(verifyPruneCommitDomains(42)).toEqual({ valid: false, error: 'PruneCommit is not an object' });
+    expect(verifyPruneCommitDomains('string')).toEqual({ valid: false, error: 'PruneCommit is not an object' });
+  });
+
+  it('rejects invalid rootPostHash', () => {
+    for (const bad of ['aa', 42, new Uint8Array(32), 'zz'.repeat(32), 'AA'.repeat(32)]) {
+      const result = verifyPruneCommitDomains({ ...makeValid(), rootPostHash: bad });
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('rootPostHash');
+    }
+  });
+
+  it('rejects non-array subtreePostIds', () => {
+    const result = verifyPruneCommitDomains({ ...makeValid(), subtreePostIds: 'not-an-array' });
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('subtreePostIds must be an array');
+  });
+
+  it('rejects a subtreePostId that is not hex-32', () => {
+    for (const bad of [42, 'aa', 'zz'.repeat(32), 'AA'.repeat(32)]) {
+      const result = verifyPruneCommitDomains({ ...makeValid(), subtreePostIds: [bad] });
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('subtreePostId must be 64 lowercase hex');
+    }
+  });
+
+  it('rejects subtreePostIds carrying a repeated id', () => {
+    const A = 'aa'.repeat(32);
+    const B = 'bb'.repeat(32);
+    const result = verifyPruneCommitDomains({ ...makeValid(), subtreePostIds: [A, A, B] });
+    expect(result).toEqual({
+      valid: false,
+      error: 'PruneCommit subtreePostIds carries a repeated id',
+    });
+    const clean = verifyPruneCommitDomains({ ...makeValid(), subtreePostIds: [A, B] });
+    expect(clean).toEqual({ valid: true });
+  });
+
+  it('rejects a non-hex element before detecting a repeat', () => {
+    const A = 'aa'.repeat(32);
+    const result = verifyPruneCommitDomains({ ...makeValid(), subtreePostIds: [42, A, A] });
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('subtreePostId must be 64 lowercase hex');
+  });
+
+  it('rejects invalid subtreeMerkleRoot', () => {
+    for (const bad of [42, 'a'.repeat(32), { length: 32 }, new Uint8Array(31), undefined]) {
+      const result = verifyPruneCommitDomains({ ...makeValid(), subtreeMerkleRoot: bad });
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('subtreeMerkleRoot');
+    }
+  });
+
+  it('never throws on adversarial input', () => {
+    const HOSTILE = [
+      null, undefined, 42, 'string', true, NaN, Infinity,
+      [], {}, { rootPostHash: null }, { subtreePostIds: null },
+      { rootPostHash: GOOD, subtreePostIds: [null], subtreeMerkleRoot: 'bad' },
+    ];
+    for (const bad of HOSTILE) {
+      expect(() => verifyPruneCommitDomains(bad)).not.toThrow();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The header encoders establish their own domain
 //
 // Two failure modes, and only one of them is a panic.
@@ -2676,7 +2505,7 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
 
   const blockOf = (h: BlockHeader, sig: Uint8Array): OrderingBlock => ({
     header: h,
-    utxoTxTree: { utxoTxIds: [SETTLEMENT_ID], utxoTxs: [SETTLEMENT_BYTES], pruneEntries: [] },
+    utxoTxTree: { utxoTxIds: [SETTLEMENT_ID], utxoTxs: [SETTLEMENT_BYTES] },
     validatorSignature: sig,
   });
 
@@ -2938,9 +2767,9 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
 
     it('and the structure gate objects to nothing else about it', () => {
       // `createdAt` is the sole objection: the block fails with that message and
-      // no other. Every other check in that function — the prune entries, the
-      // settlement count, utxoTx alignment, validatorSignature, the height and
-      // target floors — still passes on this exact object.
+      // no other. Every other check in that function — the settlement count,
+      // utxoTx alignment, validatorSignature, the height and target floors —
+      // still passes on this exact object.
       const result = verifyOrderingBlockStructure(block);
       expect(result.valid).toBe(false);
       expect(result.error).toBe('Ordering block header missing or invalid createdAt');
@@ -3269,10 +3098,10 @@ describe('verifyOrderingBlockStructure — the body and embedded-transaction bou
 
   /**
    * A block that passes every structural check, carrying the transactions given.
-   * `pruneEntries` stays empty so the body's weight is the transactions and
-   * their framing alone. The last of them is the settlement, which costs the
-   * body nothing extra — it rides `utxoTxIds` / `utxoTxs` like any other
-   * transaction (TYPES_INTERFACE → Ordering block).
+   * The body's weight is the transactions and their framing alone. The last of
+   * them is the settlement, which costs the body nothing extra — it rides
+   * `utxoTxIds` / `utxoTxs` like any other transaction (TYPES_INTERFACE →
+   * Ordering block).
    */
   const makeBlock = (utxoTxs: Uint8Array[]): OrderingBlock => ({
     header: {
@@ -3289,7 +3118,6 @@ describe('verifyOrderingBlockStructure — the body and embedded-transaction bou
     utxoTxTree: {
       utxoTxIds: utxoTxs.map((_, i) => i.toString(16).padStart(64, '0')),
       utxoTxs,
-      pruneEntries: [],
     },
     validatorSignature: new Uint8Array(64),
   });

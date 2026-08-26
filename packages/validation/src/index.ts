@@ -10,6 +10,7 @@ export {
   verifyContentCharacters,
   verifyParentRefsCount,
   verifyPostCommitDomains,
+  verifyPruneCommitDomains,
   verifyPostBody,
   verifyHeaderFieldDomains,
   verifyTxStructure,

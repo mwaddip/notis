@@ -36,8 +36,7 @@ function rowToStump(row: StumpRow): Stump {
 
 /**
  * Insert a stump into dag_stumps.
- * The stump ID is its rootPostHash — the canonical lookup key shared with
- * the corresponding PruneEntry.
+ * The stump ID is its rootPostHash — the canonical lookup key.
  */
 export function insertStump(stump: Stump): void {
   const db = getDb();

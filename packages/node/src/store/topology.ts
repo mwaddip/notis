@@ -47,6 +47,18 @@ export function getTopologyAuthorBytes(postId: string): Uint8Array | null {
 }
 
 /**
+ * The block height at which a post was confirmed, or null when unconfirmed.
+ * The maturity bind reads this to reject a prune whose root was confirmed in
+ * the applying block itself (NODE_INTERFACE → Prune transactions).
+ */
+export function getTopologyHeight(postId: string): number | null {
+  const row = getDb()
+    .prepare('SELECT block_height FROM block_topology WHERE post_id = ?')
+    .get(postId) as { block_height: number } | undefined;
+  return row ? row.block_height : null;
+}
+
+/**
  * Walk the DAG downward from rootPostId using the block_topology table.
  * Returns the set of all post IDs in the subtree rooted at rootPostId
  * (including rootPostId itself).

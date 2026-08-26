@@ -18,14 +18,9 @@
  * ordering block carrying arbitrary extra keys hashing to a byte-identical
  * `blockHash` while the encoding differs by 395 bytes.
  *
- * ## The element writer holds no layout of its own
- *
- * `writePruneEntry` is one `w.writeBytes(...)`, delegating to
- * `serializePruneEntry` beside its struct. A prune entry is the one element
- * whose bytes are also a Merkle leaf preimage, and the delegation is what keeps
- * the wire form and the committed form one statement instead of two. **It may
- * not grow a field writer of its own** — a reviewer can check that at a glance,
- * which is the point of the shape.
+ * The `utxoTxTree` codec carries two sections, `utxoTxIds` and `utxoTxs`. A
+ * prune rides the transaction rail as a `UtxoTransaction.prune` payload, so it
+ * needs no section of its own (TYPES_INTERFACE → Ordering block).
  */
 
 import { ByteReader, ByteWriter } from '@dagsocial/wire';
@@ -54,7 +49,6 @@ import {
 } from './codec.js';
 import { postFieldBytes, readPostCommitFields, type PostCommit } from './post.js';
 import { readTxIdFields, writeTxIdFields, type UtxoTransaction } from './utxo.js';
-import { serializePruneEntry, type PruneEntry } from './stump.js';
 import type {
   BlockHeader,
   UtxoTxTree,
@@ -251,76 +245,23 @@ export function decodeHeader(bytes: Uint8Array): BlockHeader {
 }
 
 // ---------------------------------------------------------------------------
-// Prune entry — a committed leaf of the one block body
-// ---------------------------------------------------------------------------
-
-/**
- * `b32(rootPostHash)` ‖ `arr(subtreePostIds, b32)` ‖ `b32(subtreeMerkleRoot)` ‖
- * `b32(authorId)` ‖ `b64(authorSignature)`.
- *
- * **The write half delegates to `serializePruneEntry` rather than restating the
- * layout**, and that is the whole point of doing it this way: those bytes are
- * the `'prune'` Merkle leaf preimage committed under `utxoTxRoot`, so an entry's
- * wire form and its committed form must be the same bytes. Two statements of one
- * layout is the drift class this format exists to close — the same reason
- * `boxRecordBytes` delegates its content half to `canonicalBoxBytes`.
- *
- * Every field is fixed-width and throws; the domain is
- * `verifyOrderingBlockStructure`'s per-entry checks, which pin the
- * hex alphabet on the two id fields and `isBytes` plus an exact length on the
- * three byte fields.
- */
-function writePruneEntry(w: ByteWriter, e: PruneEntry): void {
-  w.writeBytes(serializePruneEntry(e));
-}
-
-function readPruneEntry(r: ByteReader): PruneEntry {
-  return {
-    rootPostHash: readHexN(r, 32),
-    subtreePostIds: readArr(r, (rr) => readHexN(rr, 32)),
-    subtreeMerkleRoot: readBytesN(r, 32),
-    authorId: readBytesN(r, 32),
-    authorSignature: readBytesN(r, 64),
-  };
-}
-
-/**
- * The width `writePruneEntry` produces (TYPES_INTERFACE → Sizing without
- * encoding). Four fixed-width fields around one count-prefixed array of `b32`
- * ids — the entry's only variable term, and the reason an entry has no constant
- * size.
- */
-function pruneEntryByteLength(e: PruneEntry): number {
-  return (
-    32 +                                        // rootPostHash      b32
-    arrByteLength(e.subtreePostIds, () => 32) + // subtreePostIds    arr(ids, b32)
-    32 +                                        // subtreeMerkleRoot b32
-    32 +                                        // authorId          b32
-    64                                          // authorSignature   b64
-  );
-}
-
-// ---------------------------------------------------------------------------
 // UTXO transaction tree
 // ---------------------------------------------------------------------------
 
 /**
- * `arr(utxoTxIds, b32)` ‖ `arr(utxoTxs, lp)` ‖ `arr(pruneEntries)`.
+ * `arr(utxoTxIds, b32)` ‖ `arr(utxoTxs, lp)`.
  *
- * **The block's one committed body.** Field order here is the same order
- * `computeUtxoTxRoot` lays its leaves in, and that order is normative
- * (TYPES_INTERFACE → Ordering block) — the wire form and the committed form walk
- * the sections in step rather than each choosing for itself.
+ * **The block's one committed body.** Prunes are transactions, so they ride
+ * `utxoTxIds` with everything else and there is no second section.
  *
- * ⛔ **THREE SECTIONS.** Coinbase outputs are outputs of the block's settlement
+ * ⛔ **TWO SECTIONS.** Coinbase outputs are outputs of the block's settlement
  * transaction, so they arrive inside `utxoTxs` like every other transaction's
  * (`block.ts` → `UtxoTxTree`).
  *
  * ⛔ **`utxoTxTreeByteLength` COMPUTES THIS TREE'S LENGTH A SECOND WAY**, so a
  * section added here or removed from here owes the matching term there in the same
  * change — otherwise two ways of computing one length diverge with no compiler
- * signal. Adding or removing a section that is not the **last** also renumbers the
- * ones after it, since a positional format has no keys.
+ * signal.
  *
  * `utxoTxs` stays opaque: transactions cross as length-prefixed bytes, so this
  * tree does not depend on the transaction codec. `writeLp` is total — a
@@ -335,13 +276,11 @@ const UTXO_TX_TREE: StructCodec<UtxoTxTree> = {
   write(w, t) {
     writeArr(w, t.utxoTxIds, (ww, id) => writeHexNOrThrow(ww, id, 32));
     writeArr(w, t.utxoTxs, writeLp);
-    writeArr(w, t.pruneEntries, writePruneEntry);
   },
   read(r) {
     return {
       utxoTxIds: readArr(r, (rr) => readHexN(rr, 32)),
       utxoTxs: readArr(r, readLp),
-      pruneEntries: readArr(r, readPruneEntry),
     };
   },
 };
@@ -378,8 +317,7 @@ export function decodeUtxoTxTree(bytes: Uint8Array): UtxoTxTree {
 export function utxoTxTreeByteLength(t: UtxoTxTree): number {
   return (
     arrByteLength(t.utxoTxIds, () => 32) +
-    arrByteLength(t.utxoTxs, lpByteLength) +
-    arrByteLength(t.pruneEntries, pruneEntryByteLength)
+    arrByteLength(t.utxoTxs, lpByteLength)
   );
 }
 

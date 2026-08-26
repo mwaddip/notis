@@ -36,7 +36,6 @@ import {
   writeLpUtf8,
 } from '../../src/codec.js';
 import { postFieldBytes, POST_TYPE, type PostCommit } from '../../src/post.js';
-import { serializePruneEntry, type PruneEntry } from '../../src/stump.js';
 import { canonicalBoxBytes, type BoxCandidate } from '../../src/utxo.js';
 import {
   encodeHeader,
@@ -360,38 +359,6 @@ const boxContentCodec: ValueCodec<BoxContent> = {
   },
 };
 
-// ---------------------------------------------------------------------------
-// pruneEntry — the subtree-proof Merkle leaf
-// ---------------------------------------------------------------------------
-
-const pruneEntryCodec: ValueCodec<PruneEntry> = {
-  parse(json: unknown): PruneEntry {
-    const j = json as Record<string, unknown>;
-    return {
-      rootPostHash: j.rootPostHash as string,
-      subtreePostIds: j.subtreePostIds as string[],
-      subtreeMerkleRoot: hex(j.subtreeMerkleRoot as string),
-      authorId: hex(j.authorId as string),
-      authorSignature: hex(j.authorSignature as string),
-    };
-  },
-
-  // Production writer.
-  write(w: ByteWriter, entry: PruneEntry): void {
-    w.writeBytes(serializePruneEntry(entry));
-  },
-
-  // Independent reader — TYPES_INTERFACE → Layout — Stump / PruneEntry.
-  read(r: ByteReader): PruneEntry {
-    return {
-      rootPostHash: readHexN(r, 32),
-      subtreePostIds: readArr(r, (rr) => readHexN(rr, 32)),
-      subtreeMerkleRoot: readBytesN(r, 32),
-      authorId: readBytesN(r, 32),
-      authorSignature: readBytesN(r, 64),
-    };
-  },
-};
 
 // ---------------------------------------------------------------------------
 // The block structs — TYPES_INTERFACE → Layout — Block
@@ -437,38 +404,6 @@ const blockHeaderCodec: ValueCodec<BlockHeader> = {
   },
 };
 
-/** Independent readers for the nested structs, from the layout lines. */
-function readPrune(r: ByteReader): PruneEntry {
-  return {
-    rootPostHash: readHexN(r, 32),
-    subtreePostIds: readArr(r, (rr) => readHexN(rr, 32)),
-    subtreeMerkleRoot: readBytesN(r, 32),
-    authorId: readBytesN(r, 32),
-    authorSignature: readBytesN(r, 64),
-  };
-}
-
-function parsePrune(j: Record<string, unknown>): PruneEntry {
-  return {
-    rootPostHash: j.rootPostHash as string,
-    subtreePostIds: j.subtreePostIds as string[],
-    subtreeMerkleRoot: hex(j.subtreeMerkleRoot as string),
-    authorId: hex(j.authorId as string),
-    authorSignature: hex(j.authorSignature as string),
-  };
-}
-
-// ---------------------------------------------------------------------------
-// The element preimage — TYPES_INTERFACE → Layout — Merkle leaf preimages are the struct's own wire bytes
-// ---------------------------------------------------------------------------
-//
-// `serializePruneEntry` is the one element preimage left under `utxoTxRoot` —
-// `leafHash('prune', …)` — and it has its own vector above, in `prune.json`,
-// where node hashes it directly and a conformance reader can check one leaf
-// without building a tree around it.
-//
-// The leaf domain `'coinbase'` is a tracked reservation
-// (TYPES_INTERFACE → Tracked reservations).
 
 const utxoTxTreeCodec: ValueCodec<UtxoTxTree> = {
   parse(json: unknown): UtxoTxTree {
@@ -476,7 +411,6 @@ const utxoTxTreeCodec: ValueCodec<UtxoTxTree> = {
     return {
       utxoTxIds: j.utxoTxIds as string[],
       utxoTxs: (j.utxoTxs as string[]).map(hex),
-      pruneEntries: (j.pruneEntries as Record<string, unknown>[]).map(parsePrune),
     };
   },
   write(w: ByteWriter, t: UtxoTxTree): void {
@@ -485,8 +419,7 @@ const utxoTxTreeCodec: ValueCodec<UtxoTxTree> = {
   read(r: ByteReader): UtxoTxTree {
     return {
       utxoTxIds: readArr(r, (rr) => readHexN(rr, 32)),
-      utxoTxs: readArr(r, readLp),   // opaque: transactions are length-prefixed bytes
-      pruneEntries: readArr(r, readPrune),
+      utxoTxs: readArr(r, readLp),
     };
   },
 };
@@ -529,7 +462,6 @@ const orderingBlockCodec: ValueCodec<OrderingBlock> = {
 registerStruct('postCommitFields', postCommitFieldsCodec);
 registerStruct('postBody', postBodyCodec);
 registerStruct('boxContent', boxContentCodec);
-registerStruct('pruneEntry', pruneEntryCodec);
 registerStruct('blockHeader', blockHeaderCodec);
 registerStruct('utxoTxTree', utxoTxTreeCodec);
 registerStruct('orderingBlock', orderingBlockCodec);

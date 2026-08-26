@@ -198,6 +198,41 @@ export function verifyPostCommitDomains(commit: unknown): { valid: boolean; erro
 }
 
 // ---------------------------------------------------------------------------
+// Prune-commit payload domain
+// ---------------------------------------------------------------------------
+
+/**
+ * The prune payload's structural domain, mirroring `verifyPostCommitDomains`.
+ *
+ * `rootPostHash` hex-32, `subtreePostIds` an array of hex-32 with no repeated
+ * id, `subtreeMerkleRoot` exactly 32 bytes. Node calls this from the
+ * transition arm — validation states the rule once, node does not restate it.
+ *
+ * Total on adversarial input, like every function here.
+ */
+export function verifyPruneCommitDomains(commit: unknown): { valid: boolean; error?: string } {
+  if (!isObject(commit)) return { valid: false, error: 'PruneCommit is not an object' };
+  if (!isHex32(commit.rootPostHash)) {
+    return { valid: false, error: 'PruneCommit rootPostHash must be 64 lowercase hex characters' };
+  }
+  if (!Array.isArray(commit.subtreePostIds)) {
+    return { valid: false, error: 'PruneCommit subtreePostIds must be an array' };
+  }
+  for (const id of commit.subtreePostIds) {
+    if (!isHex32(id)) {
+      return { valid: false, error: 'PruneCommit subtreePostId must be 64 lowercase hex characters' };
+    }
+  }
+  if (commit.subtreePostIds.length !== new Set(commit.subtreePostIds).size) {
+    return { valid: false, error: 'PruneCommit subtreePostIds carries a repeated id' };
+  }
+  if (!isBytesOfLength(commit.subtreeMerkleRoot, 32)) {
+    return { valid: false, error: 'PruneCommit subtreeMerkleRoot must be exactly 32 bytes' };
+  }
+  return { valid: true };
+}
+
+// ---------------------------------------------------------------------------
 // The block header's encodable domain
 // ---------------------------------------------------------------------------
 //
@@ -653,54 +688,10 @@ export function verifyOrderingBlockStructure(
   if (headerFailure) {
     return { valid: false, error: BLOCK_HEADER_FIELD_ERROR[headerFailure.field] };
   }
-  // Prune entries. Every byte field is checked with `isBytes`, not a `.length`
-  // read: a stored row put back through a bare `value as T` carries any type in
-  // any field, and a 32-char string or a `{length: 32}` object satisfies a
-  // length check while throwing in the `Buffer.from` /
-  // `createHash().update()` these fields reach at block apply.
-  // Type is the only property that makes those calls safe.
-  // The `?.` is load-bearing — it makes a block with no `utxoTxTree` at all a
-  // stated rejection here rather than a TypeError in the loop below.
-  if (!Array.isArray(block.utxoTxTree?.pruneEntries)) {
-    return { valid: false, error: 'Ordering block missing utxoTxTree.pruneEntries' };
-  }
-  for (const entry of block.utxoTxTree.pruneEntries) {
-    if (!isObject(entry)) {
-      return { valid: false, error: 'Ordering block pruneEntry is not an object' };
-    }
-    if (!isHex32(entry.rootPostHash)) {
-      return { valid: false, error: 'Ordering block pruneEntry has invalid rootPostHash' };
-    }
-    if (!Array.isArray(entry.subtreePostIds)) {
-      return { valid: false, error: 'Ordering block pruneEntry has invalid subtreePostIds' };
-    }
-    for (const id of entry.subtreePostIds) {
-      if (!isHex32(id)) {
-        return {
-          valid: false,
-          error: 'Ordering block pruneEntry subtreePostId must be 64 lowercase hex characters',
-        };
-      }
-    }
-    if (entry.subtreePostIds.length !== new Set(entry.subtreePostIds).size) {
-      return {
-        valid: false,
-        error: 'Ordering block pruneEntry subtreePostIds carries a repeated id',
-      };
-    }
-    if (!isBytes(entry.subtreeMerkleRoot) || entry.subtreeMerkleRoot.length !== 32) {
-      return { valid: false, error: 'Ordering block pruneEntry has invalid subtreeMerkleRoot' };
-    }
-    if (!isBytes(entry.authorId) || entry.authorId.length !== 32) {
-      return { valid: false, error: 'Ordering block pruneEntry has invalid authorId' };
-    }
-    if (!isBytes(entry.authorSignature) || entry.authorSignature.length !== 64) {
-      return { valid: false, error: 'Ordering block pruneEntry has invalid authorSignature' };
-    }
-  }
-  // `isBytes`, not a bare `.length` — the same rule the prune-entry block above
-  // states, and it governs the two byte fields outside that block too
-  // (`validatorSignature` here, `validatorId` in the header domain). They are
+  // `isBytes`, not a bare `.length`: a stored row put back through a bare
+  // `value as T` carries any type in any field, and a 64-character string,
+  // `{length: 64}` and a 64-element `Array` all satisfy a length check while
+  // none of them encode through `writeBytesNOrThrow`. They are
   // `b64`/`b32` *from a `Uint8Array`*, so the codec reaches
   // `writeBytesNOrThrow`, which throws on anything that is not a byte view of
   // that exact width; a 64-character string, `{length: 64}` and a 64-element
@@ -802,13 +793,6 @@ export function verifyOrderingBlockStructure(
   }
   // The body weight bound, refused here rather than at apply because this is
   // what net runs before relay (VALIDATION_INTERFACE → The body size bound).
-  //
-  // ⛔ It runs after every check above and that position is the only safe one.
-  // `utxoTxTreeByteLength` is total on a section of any type — a non-array
-  // sections its own count, a non-byte-view element sentinels its length prefix
-  // — but `pruneEntryByteLength` reads a **property** off each entry, so
-  // `pruneEntries: [null]` is a TypeError rather than a length. The prune loop
-  // types it, which puts the earliest total position after that loop.
   //
   // The bound holds a relation and not a number — `MAX_BLOCK_BODY_BYTES` <
   // `MAX_SERVE_BODY_BYTES` < `MAX_STREAM_BYTES` (`TYPES_INTERFACE` → Size caps).
