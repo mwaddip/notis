@@ -38,10 +38,13 @@ PoPowHeader {
 }
 ```
 
-**Layout:** `header` ‖ `encodeInterlinks(interlinks)` — the header's own positional layout followed
-by `vlqU(n) ‖ b32 × n`, `n ≤ MAX_INTERLINKS`, the count refused before the first element. There is
-no Merkle proof: the commitment is recomputed from the vector (`interlinkRoot(interlinks)`), and
-the vector is what a verifier needs in full anyway.
+**Layout:** `lp(header)` ‖ `lp(interlinks)` — the header as `encodeHeader` bytes and the vector as
+`encodeInterlinks` bytes (`vlqU(n) ‖ b32 × n`, `n ≤ MAX_INTERLINKS`, the count refused before the
+first element), each behind its own length prefix and each decoded by its own canonical decoder —
+the framing `OrderingBlock` gives its header (`TYPES_INTERFACE → Layout — Block`), and for the same
+reason: the boundary check runs at the outer level and again inside each section. There is no
+Merkle proof: the commitment is recomputed from the vector (`interlinkRoot(interlinks)`), and the
+vector is what a verifier needs in full anyway.
 
 ### NipopowProof
 
@@ -56,7 +59,8 @@ NipopowProof {
 }
 ```
 
-**Layout:** `vlqU(m) ‖ vlqU(k) ‖ arr(PoPowHeader) ‖ PoPowHeader ‖ arr(BlockHeader)`.
+**Layout:** `vlqU(m) ‖ vlqU(k) ‖ arr(PoPowHeader) ‖ PoPowHeader ‖ arr(lp(header))` — a PoPowHeader
+is its two `lp` sections inline; a tail header is one `lp(header)`.
 
 Both objects are `StructCodec`s, so `decodeStruct`'s re-encode compare makes every proof
 canonical: a non-minimal encoding or trailing bytes is refused as a decode failure, never
