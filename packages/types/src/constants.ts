@@ -316,6 +316,12 @@ export const MAX_REORG_DEPTH = 20;
  */
 export const GENESIS_PREV_BLOCK_HASH = '00'.repeat(32);
 
+// NiPoPoW interlinks — TYPES_INTERFACE → Interlink vector
+/** The largest level a block can have (VALIDATION_INTERFACE → level). */
+export const LEVEL_CAP = 256;
+/** The interlink vector's maximum length: LEVEL_CAP + 1 (the genesis entry). */
+export const MAX_INTERLINKS = 257;
+
 // Crypto
 /** DER-encoded SPKI prefix for raw Ed25519 32-byte public keys (RFC 8410). */
 export const ED25519_SPKI_PREFIX = '302a300506032b6570032100';

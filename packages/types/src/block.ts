@@ -6,7 +6,7 @@ import type { TxId } from './utxo.js';
 // ---------------------------------------------------------------------------
 
 /**
- * ⛔ **Nine positional fields, and dropping a field RENUMBERS every one after
+ * ⛔ **Ten positional fields, and dropping a field RENUMBERS every one after
  * it** (TYPES_INTERFACE → Layout — Block). There are no keys on the wire, so a
  * reader that skips a field but keeps the old offsets decodes `stateRoot` out of
  * `utxoTxRoot`'s bytes and every later field one slot late — a silently wrong
@@ -23,6 +23,7 @@ export interface BlockHeader {
   powNonce: number;
   powTargetBits: number;
   createdAt: number;            // unix ms
+  interlinkRoot: string;        // hex(32) — TYPES_INTERFACE → Interlink vector
 }
 
 /** 33 zero bytes — placeholder for future AVL+ state root. */

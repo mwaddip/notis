@@ -52,6 +52,8 @@ export {
   MAX_REORG_DEPTH,
   GENESIS_PREV_BLOCK_HASH,
   ED25519_SPKI_PREFIX,
+  LEVEL_CAP,
+  MAX_INTERLINKS,
 } from './constants.js';
 
 // Network profiles
@@ -133,6 +135,15 @@ export type {
 // Stumps / prune / post-withdrawal
 export { postWithdrawFieldBytes, pruneFieldBytes } from './stump.js';
 export type { PostWithdrawCommit, PruneCommit, Stump, StumpId } from './stump.js';
+
+// Interlinks — TYPES_INTERFACE → Interlink vector
+export {
+  INTERLINK_DOMAIN,
+  encodeInterlinks,
+  decodeInterlinks,
+  interlinkRoot,
+  updateInterlinks,
+} from './interlinks.js';
 
 // Blocks
 export {
