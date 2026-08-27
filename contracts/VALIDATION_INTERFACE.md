@@ -979,6 +979,20 @@ block-level checks (`utxoTxIds`, `utxoTxs` alignment and weight,
 > **Deleting checks needs the care of adding them.** Use the established deletion proof: exhaustive
 > grep-to-zero plus diff purity, mutation only where behaviour changes.
 
+
+### `verifyPostWithdrawCommitDomains`
+
+```ts
+verifyPostWithdrawCommitDomains(commit: unknown): { valid: boolean; error?: string }
+```
+
+**The single statement of the withdrawal payload's structural domain**, beside
+`verifyPruneCommitDomains` and for the same reason: two implementations of one domain drift, and
+both the node's envelope check and its transition arm call this one.
+
+`postId` must be 64 lowercase hex characters. **It takes `unknown`** — that parameter type is what
+makes it a domain gate rather than a restatement of the TypeScript type, since the value arrives
+from a decoder or an HTTP body and the compiler has never seen it.
 ### verifyBlockChainLink
 
 ```

@@ -1632,6 +1632,28 @@ that authenticated itself needed both; a payload under a transaction's signature
 identifies it and its spent inputs are its dedup, since a pooled prune cannot be duplicated once
 its boxes are gone.
 
+
+### Layout — PostWithdrawCommit
+
+**The withdrawal payload carried by a karma transaction** (`UtxoTransaction.postWithdraw`),
+written into `txIdBytes` field 7 through `postWithdrawFieldBytes`:
+
+```
+b32(postId)
+```
+
+**One field, and one is the whole payload.** A prune's effect spans a subtree that has to be
+pinned against topology; a withdrawal's effect is one post. Authorship is `inputKarma.owner`
+against that post's `block_topology` author, and the payload sits inside the `computeTxId`
+preimage, so there is no separate preimage to domain-tag and no `authorId` or signature of its
+own (NODE_INTERFACE → Withdrawal transactions).
+
+**Fixed-width, so the writer throws outside its domain** (→ Totality) and the encoding is
+self-delimiting. `verifyPostWithdrawCommitDomains` (`@dagsocial/validation`) is the single
+statement of the domain that writer assumes.
+
+⛔ **A `PostWithdrawCommit` has no id of its own, and needs none** — the transaction's `TxId`
+identifies it and its spent inputs are its dedup.
 ### Layout — Boxes
 
 Two encodings, named separately so that "provenance is not in the id" is structural rather than a
@@ -1923,7 +1945,8 @@ and both were found by someone searching from a direction the previous searcher 
 **Id preimage** (`txIdBytes`) — signatures are Ed25519 *over* the txId and are correctly absent:
 
 `arr(inputs, b32)` ‖ `arr(outputs, boxContentBytes)` ‖ `vlqU(protocolVersion)` ‖
-`opt(likeTarget, b32)` ‖ `opt(post, postFieldBytes)` ‖ `opt(prune, pruneFieldBytes)`
+`opt(likeTarget, b32)` ‖ `opt(post, postFieldBytes)` ‖ `opt(prune, pruneFieldBytes)` ‖
+`opt(postWithdraw, postWithdrawFieldBytes)`
 
 > ⛔ **`TX_ID_DOMAIN` IS NOT IN `txIdBytes`. Corrected 2026-08-17.** This line listed it first while
 > §UtxoTransaction's formula applies it outside — `TxId = blake2b512(TX_ID_DOMAIN ‖ txIdBytes)[0:32]`
@@ -1941,13 +1964,20 @@ and both were found by someone searching from a direction the previous searcher 
 > every `TxId` in existence**, because `opt` spends a one-byte absence marker even on a transaction
 > that never carried one. See "Re-pinning a frozen vector when a preimage changes".
 
-Neither `post` nor `prune` needs a length prefix inside its `opt`: `postFieldBytes` and
-`pruneFieldBytes` are self-delimiting (every field is fixed-width, length-prefixed or a VLQ),
-and `prune` is last, so nothing follows it to be ambiguous against.
+No payload needs a length prefix inside its `opt`: `postFieldBytes`, `pruneFieldBytes` and
+`postWithdrawFieldBytes` are each **self-delimiting** — every field within them is fixed-width,
+length-prefixed or a VLQ — so each one's end is decidable from its own bytes wherever it sits.
 
-⛔ **SIX FIELDS, and an absent `opt` still spends its tag byte.** Appending field 6 moved every
-`TxId` in existence and every box id derived from one, exactly as removing `preimages` did — see
-"Re-pinning a frozen vector when a preimage changes". A reader that keeps five offsets reads
+⚠ **Self-delimiting is the whole of the argument, and finality is no part of it.** *"It is
+last, so nothing follows it"* is not a reason to reach for here: **a property that depends on a
+field's position expires the next time the layout grows**, and it expires quietly, in the
+paragraph next to the field that was appended. The property stated above holds wherever a
+payload sits.
+
+⛔ **SEVEN FIELDS, and an absent `opt` still spends its tag byte.** Appending field 7 moved every
+`TxId` in existence and every box id derived from one, exactly as appending field 6 and removing
+`preimages` did — see "Re-pinning a frozen vector when a preimage changes". A reader that keeps
+six offsets reads
 `prune`'s tag as the end of the struct; the count is load-bearing, and the demo UI's mirror
 (`public/index.html`) states it too.
 

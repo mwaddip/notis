@@ -169,7 +169,8 @@ comment says "burned", it means *returned to the pool* — and where the **code*
 value, that code is a defect against this section, not a definition of the word.
 
 ⚠ **Read every "burn" in this directory under this definition.** The like deficit, decay, bond
-forfeiture and a pruner's own locks are all named as burns elsewhere; **all four are transfers to the
+forfeiture, a pruner's own locks and a withdrawing author's own lock are all named as burns
+elsewhere; **all five are transfers to the
 pool.** The naming survives because it is what a holder experiences — the karma leaves them and does
 not come back.
 
@@ -784,16 +785,16 @@ Stump {
 
 1. Author's client walks reply subtree locally, builds Merkle root over
    postIds
-2. Author signs `blake2b512(rootPostHash || subtreeMerkleRoot).subarray(0,32)`
-   with their Ed25519 key
+2. Author signs the **transaction**, whose `TxId` preimage carries the prune payload — there
+   is no payload signature of its own (TYPES_INTERFACE → Layout — PruneCommit)
 3. Client submits a signed prune **transaction** to a node via `POST /posts/:id/prune`
 4. Node verifies the maturity bind, subtree completeness and Merkle root, then `validateTx`
 5. Node pools it and **broadcasts it to peers like any other transaction**, so any miner may
    include it — a prune submitted to a node that never mines still reaches consensus
 6. At block application, every node independently verifies: authorship
-   binding (`authorId` equals the `block_topology`-recorded author of the
-   root; unconfirmed roots are not prunable), Ed25519 signature, postId set
-   against block_topology, Merkle root, then settles UTXO deterministically
+   binding (the karma input's owner equals the `block_topology`-recorded author
+   of the root; a root confirmed in the applying block is not prunable), postId
+   set against block_topology, Merkle root, then settles UTXO deterministically
    — the settlement transaction consumes the subtree's PostLockBoxes and
    refunds **every lock owner except the pruning author**, whose own locks
    go to the pool; the subtree's like-records are deleted (journalled)
@@ -945,9 +946,14 @@ sidecars and no standalone like pool.
 
 **Apply-time rules** (consensus, not gateway courtesy):
 
-- The target post must be **confirmed and live** at apply height. Likes on pruned posts are
-  **rejected by stated rule**, not as an emergent property — without this rule, dropping
-  like-records at prune (below) would reopen duplicate likes on stumps.
+- The target post must be **confirmed and live** at apply height — meaning **at the point in the
+  block's phase order where likes apply**, which is the transaction loop, before the post-lock
+  settlement phase. Likes on posts already stumped, tombstoned or withdrawn **in an earlier
+  block** are **rejected by stated rule**, not as an emergent property — without this rule,
+  dropping like-records at prune (below) would reopen duplicate likes on stumps.
+  ⚠ **A like and a settlement of the same post in ONE block is legal**, and the phase order is
+  why: the like applies first and counts, then the phase stumps or empties the post
+  (NODE_INTERFACE → The post-lock settlement phase).
 - The target's author is resolved from **`block_topology`**, never `dag_posts.author`
   (placeholder rows carry a zeroed author).
 - `(liker, target)` must not already exist in the like-records — one like per account per
@@ -1047,6 +1053,13 @@ alreadyUnlocked = originalValue − value
 shouldUnlock    = totalLikes / POST_LOCK_UNLOCK_PER_LIKES                  // integer, truncating
 toUnlock        = min(value, shouldUnlock − alreadyUnlocked)
 ```
+
+⛔ **A lock being settled in this block vests INSIDE the settlement plan, not here.** Prune and
+withdrawal consume the `PostLockBox`, so the loop below would find nothing to vest from; the plan
+releases what this block's likes earned as a refund to the lock's owner and reduces the pool
+figure by the same amount. Without that fold-in the vest is lost whenever a like and a settlement
+share a block, and **the path-independence stated above would depend on how a producer packs
+blocks** — the same likes paying differently for no rule anyone stated.
 
 `toUnlock > 0` runs `transferKarma`: the `PostLockBox` is consumed as the source, `toUnlock`
 lands in the author's karma (`postlock-unlock`), and the reduced box is the remainder
