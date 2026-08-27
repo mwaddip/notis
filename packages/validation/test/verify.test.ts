@@ -22,7 +22,7 @@ import {
   ed25519PublicKeyToKeyObject,
 } from '../src/verify.js';
 import { isDisallowedContentCodepoint, PINNED_UNICODE_VERSION } from '../src/content-charset.js';
-import { generateKeyPair, computePostId, computeTxId, computeContentHash, postFieldBytes, EMPTY_STATE_ROOT, MAX_PARENT_REFS, MAX_TX_BYTES, MAX_BLOCK_BODY_BYTES, ORDERING_BLOCK_POW_TARGET_FLOOR, encodeTx, encodeUtxoTxTree, utxoTxTreeByteLength, ByteWriter, writeHexNOrThrow, writeBytesNOrThrow, writeVlqU, writeLp } from '@dagsocial/types';
+import { generateKeyPair, computePostId, computeTxId, computeContentHash, postFieldBytes, EMPTY_STATE_ROOT, MAX_PARENT_REFS, MAX_TX_BYTES, MAX_SETTLEMENT_BYTES, MAX_BLOCK_BODY_BYTES, ORDERING_BLOCK_POW_TARGET_FLOOR, encodeTx, encodeUtxoTxTree, utxoTxTreeByteLength, ByteWriter, writeHexNOrThrow, writeBytesNOrThrow, writeVlqU, writeLp } from '@dagsocial/types';
 import type { PostCommit, BlockHeader, OrderingBlock, UtxoTransaction, AnyBoxCandidate } from '@dagsocial/types';
 
 /**
@@ -2259,11 +2259,7 @@ describe('verifyPostBody', () => {
 describe('verifyPruneCommitDomains', () => {
   const GOOD = 'ab'.repeat(32);
 
-  const makeValid = () => ({
-    rootPostHash: GOOD,
-    subtreePostIds: [GOOD, 'cd'.repeat(32)],
-    subtreeMerkleRoot: new Uint8Array(32).fill(7),
-  });
+  const makeValid = () => ({ rootPostHash: GOOD });
 
   it('accepts a well-formed PruneCommit', () => {
     expect(verifyPruneCommitDomains(makeValid())).toEqual({ valid: true });
@@ -2283,52 +2279,11 @@ describe('verifyPruneCommitDomains', () => {
     }
   });
 
-  it('rejects non-array subtreePostIds', () => {
-    const result = verifyPruneCommitDomains({ ...makeValid(), subtreePostIds: 'not-an-array' });
-    expect(result.valid).toBe(false);
-    expect(result.error).toContain('subtreePostIds must be an array');
-  });
-
-  it('rejects a subtreePostId that is not hex-32', () => {
-    for (const bad of [42, 'aa', 'zz'.repeat(32), 'AA'.repeat(32)]) {
-      const result = verifyPruneCommitDomains({ ...makeValid(), subtreePostIds: [bad] });
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain('subtreePostId must be 64 lowercase hex');
-    }
-  });
-
-  it('rejects subtreePostIds carrying a repeated id', () => {
-    const A = 'aa'.repeat(32);
-    const B = 'bb'.repeat(32);
-    const result = verifyPruneCommitDomains({ ...makeValid(), subtreePostIds: [A, A, B] });
-    expect(result).toEqual({
-      valid: false,
-      error: 'PruneCommit subtreePostIds carries a repeated id',
-    });
-    const clean = verifyPruneCommitDomains({ ...makeValid(), subtreePostIds: [A, B] });
-    expect(clean).toEqual({ valid: true });
-  });
-
-  it('rejects a non-hex element before detecting a repeat', () => {
-    const A = 'aa'.repeat(32);
-    const result = verifyPruneCommitDomains({ ...makeValid(), subtreePostIds: [42, A, A] });
-    expect(result.valid).toBe(false);
-    expect(result.error).toContain('subtreePostId must be 64 lowercase hex');
-  });
-
-  it('rejects invalid subtreeMerkleRoot', () => {
-    for (const bad of [42, 'a'.repeat(32), { length: 32 }, new Uint8Array(31), undefined]) {
-      const result = verifyPruneCommitDomains({ ...makeValid(), subtreeMerkleRoot: bad });
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain('subtreeMerkleRoot');
-    }
-  });
-
   it('never throws on adversarial input', () => {
     const HOSTILE = [
       null, undefined, 42, 'string', true, NaN, Infinity,
-      [], {}, { rootPostHash: null }, { subtreePostIds: null },
-      { rootPostHash: GOOD, subtreePostIds: [null], subtreeMerkleRoot: 'bad' },
+      [], {}, { rootPostHash: null }, { rootPostHash: 99 },
+      { rootPostHash: 'AA'.repeat(32) },
     ];
     for (const bad of HOSTILE) {
       expect(() => verifyPruneCommitDomains(bad)).not.toThrow();
@@ -3181,7 +3136,8 @@ describe('verifyOrderingBlockStructure — the body and embedded-transaction bou
   /**
    * Transactions whose tree measures exactly `target`. Each stays under
    * `MAX_TX_BYTES` so the embedded bound can never be the reason a body-size
-   * fixture is refused; the last one absorbs the remainder.
+   * fixture is refused; the last one absorbs the remainder and stays inside
+   * `MAX_SETTLEMENT_BYTES`.
    */
   const bodyOfExactSize = (target: number): Uint8Array[] => {
     const per = 8_000;
@@ -3221,33 +3177,58 @@ describe('verifyOrderingBlockStructure — the body and embedded-transaction bou
   });
 
   describe('the embedded-transaction bound', () => {
-    // Both fixtures are far under the body cap, so the body bound cannot be
-    // credited with either verdict.
-    it('accepts an embedded transaction of exactly MAX_TX_BYTES', () => {
-      const block = makeBlock([new Uint8Array(MAX_TX_BYTES)]);
+    const SETTLEMENT_TOO_LARGE =
+      `Ordering block settlement too large (max ${MAX_SETTLEMENT_BYTES} bytes)`;
+
+    // --- non-last elements are weighed against MAX_TX_BYTES ---
+
+    it('accepts a non-last element of exactly MAX_TX_BYTES', () => {
+      const block = makeBlock([new Uint8Array(MAX_TX_BYTES), new Uint8Array(10)]);
       expect(utxoTxTreeByteLength(block.utxoTxTree)).toBeLessThan(MAX_BLOCK_BODY_BYTES);
       expect(verifyOrderingBlockStructure(block)).toEqual({ valid: true });
     });
 
-    it('rejects one byte more, in a block far under the body cap', () => {
-      const block = makeBlock([new Uint8Array(MAX_TX_BYTES + 1)]);
+    it('rejects a non-last element one byte over MAX_TX_BYTES', () => {
+      const block = makeBlock([new Uint8Array(MAX_TX_BYTES + 1), new Uint8Array(10)]);
       expect(utxoTxTreeByteLength(block.utxoTxTree)).toBeLessThan(MAX_BLOCK_BODY_BYTES);
       expect(verifyOrderingBlockStructure(block)).toEqual({ valid: false, error: TX_TOO_LARGE });
     });
 
-    it('weighs each transaction, not their total', () => {
-      // Two transactions summing past the bound are fine; one over it is not.
-      const halves = makeBlock([new Uint8Array(MAX_TX_BYTES), new Uint8Array(MAX_TX_BYTES)]);
-      expect(verifyOrderingBlockStructure(halves)).toEqual({ valid: true });
-    });
-
-    it('refuses an oversized transaction in any position, not only the first', () => {
+    it('refuses an oversized non-last element in any non-last position', () => {
       const block = makeBlock([
         new Uint8Array(10),
         new Uint8Array(MAX_TX_BYTES + 1),
         new Uint8Array(10),
       ]);
       expect(verifyOrderingBlockStructure(block)).toEqual({ valid: false, error: TX_TOO_LARGE });
+    });
+
+    // --- the last element (settlement) is weighed against MAX_SETTLEMENT_BYTES ---
+
+    it('the last element at MAX_TX_BYTES + 1 passes — not weighed as a user transaction', () => {
+      const block = makeBlock([new Uint8Array(MAX_TX_BYTES + 1)]);
+      expect(utxoTxTreeByteLength(block.utxoTxTree)).toBeLessThan(MAX_BLOCK_BODY_BYTES);
+      expect(verifyOrderingBlockStructure(block)).toEqual({ valid: true });
+    });
+
+    it('accepts the last element at exactly MAX_SETTLEMENT_BYTES', () => {
+      const block = makeBlock([new Uint8Array(10), new Uint8Array(MAX_SETTLEMENT_BYTES)]);
+      expect(utxoTxTreeByteLength(block.utxoTxTree)).toBeLessThan(MAX_BLOCK_BODY_BYTES);
+      expect(verifyOrderingBlockStructure(block)).toEqual({ valid: true });
+    });
+
+    it('rejects the last element one byte over MAX_SETTLEMENT_BYTES', () => {
+      const block = makeBlock([new Uint8Array(10), new Uint8Array(MAX_SETTLEMENT_BYTES + 1)]);
+      expect(utxoTxTreeByteLength(block.utxoTxTree)).toBeLessThan(MAX_BLOCK_BODY_BYTES);
+      expect(verifyOrderingBlockStructure(block)).toEqual({
+        valid: false,
+        error: SETTLEMENT_TOO_LARGE,
+      });
+    });
+
+    it('weighs each non-last transaction independently, not their total', () => {
+      const halves = makeBlock([new Uint8Array(MAX_TX_BYTES), new Uint8Array(MAX_TX_BYTES)]);
+      expect(verifyOrderingBlockStructure(halves)).toEqual({ valid: true });
     });
   });
 });

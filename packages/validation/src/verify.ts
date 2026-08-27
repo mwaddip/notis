@@ -4,6 +4,7 @@ import {
   MAX_CONTENT_BYTES,
   MAX_PARENT_REFS,
   MAX_TX_BYTES,
+  MAX_SETTLEMENT_BYTES,
   MAX_BLOCK_BODY_BYTES,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   ED25519_SPKI_PREFIX,
@@ -202,11 +203,10 @@ export function verifyPostCommitDomains(commit: unknown): { valid: boolean; erro
 // ---------------------------------------------------------------------------
 
 /**
- * The prune payload's structural domain, mirroring `verifyPostCommitDomains`.
- *
- * `rootPostHash` hex-32, `subtreePostIds` an array of hex-32 with no repeated
- * id, `subtreeMerkleRoot` exactly 32 bytes. Node calls this from the
- * transition arm — validation states the rule once, node does not restate it.
+ * The prune payload's structural domain — one field
+ * (VALIDATION_INTERFACE → `verifyPruneCommitDomains`; TYPES_INTERFACE →
+ * Layout — PruneCommit). The subtree is derived at apply, so the payload
+ * carries no set to check for repeats and no root to check for type.
  *
  * Total on adversarial input, like every function here.
  */
@@ -214,20 +214,6 @@ export function verifyPruneCommitDomains(commit: unknown): { valid: boolean; err
   if (!isObject(commit)) return { valid: false, error: 'PruneCommit is not an object' };
   if (!isHex32(commit.rootPostHash)) {
     return { valid: false, error: 'PruneCommit rootPostHash must be 64 lowercase hex characters' };
-  }
-  if (!Array.isArray(commit.subtreePostIds)) {
-    return { valid: false, error: 'PruneCommit subtreePostIds must be an array' };
-  }
-  for (const id of commit.subtreePostIds) {
-    if (!isHex32(id)) {
-      return { valid: false, error: 'PruneCommit subtreePostId must be 64 lowercase hex characters' };
-    }
-  }
-  if (commit.subtreePostIds.length !== new Set(commit.subtreePostIds).size) {
-    return { valid: false, error: 'PruneCommit subtreePostIds carries a repeated id' };
-  }
-  if (!isBytesOfLength(commit.subtreeMerkleRoot, 32)) {
-    return { valid: false, error: 'PruneCommit subtreeMerkleRoot must be exactly 32 bytes' };
   }
   return { valid: true };
 }
@@ -780,27 +766,27 @@ export function verifyOrderingBlockStructure(
   // `appendBlocks`), so a swap is refused there; this pin is what keeps the
   // store write safe independently of that.
   //
-  // Each element carries the same `MAX_TX_BYTES` weight bound `verifyTxStructure`
-  // puts on a transaction that arrives on its own, because `TYPES_INTERFACE` →
-  // Size caps labels that constant consensus and a rule enforced on the relay
-  // path alone binds users and not miners: this function is the only place a
-  // transaction reaching a node *inside a block* is weighed. `verifyTxStructure`
-  // has one production caller, net's `tx` topic validator, and `packages/node`
-  // invokes it zero times — established by enumerating every `validation.<name>`
-  // call in `packages/node/src` (five, all in `block-apply.ts`, none of them this
-  // function) plus the absence of any dynamic `validation[…]` access, 2026-08-15.
-  // Node hands net the whole namespace as its `NetValidators`, so the call site
-  // stays net's. That search would miss a caller reaching it under a local alias.
-  //
-  // The measure is the as-arrived byte length, matching how the body bound below
-  // weighs the same array and deliberately unlike `verifyTxStructure`'s
-  // re-encoding.
-  for (const tx of block.utxoTxTree.utxoTxs) {
+  // Every element but the last is weighed against `MAX_TX_BYTES`; the last
+  // against `MAX_SETTLEMENT_BYTES` — the settlement's size is derived from the
+  // body and from chain state rather than chosen by a user
+  // (TYPES_INTERFACE → Size caps). The non-emptiness check above guarantees a
+  // last element exists. The measure is the as-arrived byte length, matching how
+  // the body bound below weighs the same array and deliberately unlike
+  // `verifyTxStructure`'s re-encoding.
+  const lastIdx = block.utxoTxTree.utxoTxs.length - 1;
+  for (let i = 0; i <= lastIdx; i++) {
+    const tx = block.utxoTxTree.utxoTxs[i]!;
     if (!isBytes(tx)) {
       return { valid: false, error: 'Ordering block utxoTx must be a byte view' };
     }
-    if (tx.length > MAX_TX_BYTES) {
-      return { valid: false, error: `Ordering block utxoTx too large (max ${MAX_TX_BYTES} bytes)` };
+    if (i < lastIdx) {
+      if (tx.length > MAX_TX_BYTES) {
+        return { valid: false, error: `Ordering block utxoTx too large (max ${MAX_TX_BYTES} bytes)` };
+      }
+    } else {
+      if (tx.length > MAX_SETTLEMENT_BYTES) {
+        return { valid: false, error: `Ordering block settlement too large (max ${MAX_SETTLEMENT_BYTES} bytes)` };
+      }
     }
   }
   // The body weight bound, refused here rather than at apply because this is
