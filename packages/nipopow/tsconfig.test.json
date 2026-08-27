@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "paths": {
+      "@dagsocial/*": ["../*/src/index.ts"]
+    }
+  },
+  "include": ["src", "test"]
+}

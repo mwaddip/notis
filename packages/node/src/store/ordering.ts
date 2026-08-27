@@ -7,7 +7,9 @@ import {
   encodeInterlinks,
   decodeInterlinks,
 } from '@dagsocial/types';
-import type { OrderingBlock } from '@dagsocial/types';
+import type { OrderingBlock, BlockHeader } from '@dagsocial/types';
+import type { PoPowHeader } from '@dagsocial/nipopow';
+import { MAX_NIPOPOW_PARAM } from '@dagsocial/nipopow';
 import { blockHash } from '@dagsocial/validation';
 import { UnreadableStoredBlockError, UnhashableStoredHeaderError } from '../services/corrupt-state.js';
 
@@ -196,4 +198,68 @@ export function getInterlinks(height: number): string[] | null {
     .get(height) as { interlinks: Buffer } | undefined;
   if (!row) return null;
   return decodeInterlinks(new Uint8Array(row.interlinks));
+}
+
+// ---------------------------------------------------------------------------
+// Nipopow reader reads (NODE_INTERFACE → Nipopow reader)
+// ---------------------------------------------------------------------------
+
+interface PopowRow {
+  header_bytes: Buffer;
+  interlinks: Buffer;
+}
+
+// NODE_INTERFACE → Nipopow reader: every throw, not only `ReaderError`
+function rowToPopowHeader(row: PopowRow, site: string, height: number): PoPowHeader {
+  try {
+    return {
+      header: decodeHeader(new Uint8Array(row.header_bytes)),
+      interlinks: decodeInterlinks(new Uint8Array(row.interlinks)),
+    };
+  } catch (err) {
+    throw new UnreadableStoredBlockError(site, height, err);
+  }
+}
+
+export function getPopowHeaderByHash(hash: string): PoPowHeader | null {
+  const row = getDb()
+    .prepare('SELECT header_bytes, interlinks, height FROM ordering_blocks WHERE block_hash = ?')
+    .get(hash) as (PopowRow & { height: number }) | undefined;
+  return row ? rowToPopowHeader(row, 'getPopowHeaderByHash', row.height) : null;
+}
+
+export function getPopowHeaderAtHeight(height: number): PoPowHeader | null {
+  const row = getDb()
+    .prepare('SELECT header_bytes, interlinks FROM ordering_blocks WHERE height = ?')
+    .get(height) as PopowRow | undefined;
+  return row ? rowToPopowHeader(row, 'getPopowHeaderAtHeight', height) : null;
+}
+
+export function getLastHeaders(n: number): BlockHeader[] {
+  if (n > MAX_NIPOPOW_PARAM) n = MAX_NIPOPOW_PARAM;
+  const rows = getDb()
+    .prepare('SELECT header_bytes, height FROM ordering_blocks ORDER BY height DESC LIMIT ?')
+    .all(n) as Array<{ header_bytes: Buffer; height: number }>;
+  rows.reverse();
+  return rows.map((row) => {
+    try {
+      return decodeHeader(new Uint8Array(row.header_bytes));
+    } catch (err) {
+      throw new UnreadableStoredBlockError('getLastHeaders', row.height, err);
+    }
+  });
+}
+
+export function getHeadersAfter(height: number, n: number): BlockHeader[] {
+  if (n > MAX_NIPOPOW_PARAM) n = MAX_NIPOPOW_PARAM;
+  const rows = getDb()
+    .prepare('SELECT header_bytes, height FROM ordering_blocks WHERE height > ? ORDER BY height ASC LIMIT ?')
+    .all(height, n) as Array<{ header_bytes: Buffer; height: number }>;
+  return rows.map((row) => {
+    try {
+      return decodeHeader(new Uint8Array(row.header_bytes));
+    } catch (err) {
+      throw new UnreadableStoredBlockError('getHeadersAfter', row.height, err);
+    }
+  });
 }

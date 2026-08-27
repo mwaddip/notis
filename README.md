@@ -319,12 +319,14 @@ pnpm test           # Every package's suite
 pnpm typecheck      # Type-check all packages, src and test trees
 ```
 
-**Five packages:**
+**Six packages:**
 
 - **`@dagsocial/types`** — data structures, hashing, base58, CBOR, protocol
   constants, UTXO selection. Pure functions only.
 - **`@dagsocial/validation`** — pure stateless checks: PoW, signatures, block
   structure, Merkle roots. No panics on untrusted input.
+- **`@dagsocial/nipopow`** — NiPoPoW proofs over the header chain: the proof
+  codecs, the verifier, the comparator, the prover a node serves.
 - **`@dagsocial/wire`** — stream framing (VLQ, blake2b checksums, magic
   bytes), shared by net and node.
 - **`@dagsocial/net`** — libp2p + Gossipsub relay with two-stage validation,

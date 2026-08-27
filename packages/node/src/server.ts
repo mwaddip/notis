@@ -7,6 +7,8 @@ import { createRouter as utxoRoutes } from './routes/utxo.js';
 import { createRouter as vouchRoutes } from './routes/vouches.js';
 import { createRouter as blockRoutes, KARMA_SUPPLY_TYPES } from './routes/blocks.js';
 import { createRouter as miningRoutes } from './routes/mining.js';
+import { createRouter as nipopowRoutes } from './routes/nipopow.js';
+import { createPopowHeaderReader } from './services/nipopow.js';
 import * as store from './store/index.js';
 import { guardStoreRead } from './services/corrupt-state.js';
 import { verifyPost } from './services/verifier.js';
@@ -392,6 +394,21 @@ export function createApp(config: Config): express.Express {
       networkType: config.networkType,
       inviteProbationBlocks: config.inviteProbationBlocks,
       vouchCooldownBlocks: config.vouchCooldownBlocks,
+    }),
+  );
+
+  // Nipopow — NODE_INTERFACE → Nipopow; on every role, unauthenticated
+  app.use(
+    '/',
+    nipopowRoutes({
+      reader: createPopowHeaderReader({
+        getPopowHeaderByHash: store.getPopowHeaderByHash,
+        getPopowHeaderAtHeight: store.getPopowHeaderAtHeight,
+        getLastHeaders: store.getLastHeaders,
+        getHeadersAfter: store.getHeadersAfter,
+        getCurrentHeight: store.getCurrentHeight,
+      }),
+      getCurrentHeight: store.getCurrentHeight,
     }),
   );
 

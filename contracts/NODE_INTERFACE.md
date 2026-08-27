@@ -601,6 +601,16 @@ unauthenticated passthrough. Every request needs
 `Authorization: Bearer <MINING_SECRET>` (constant-time comparison), and the
 `?miner=` coinbase payout override sits behind that auth (audit M-7). Full
 endpoint semantics in `MINING_INTERFACE.md`.
+### Nipopow
+
+| Method | Path | Response | Errors |
+|--------|------|----------|--------|
+| `GET` | `/nipopow/proof/:m/:k` | `{ proof: hex }` — `encodeNipopowProof` bytes (`NIPOPOW_INTERFACE` → NipopowProof) | 400 unless `:m` and `:k` parse as integers in `[1, MAX_NIPOPOW_PARAM]`; 404 `{ error: 'chain too short' }` while the chain height is below `m + k` |
+
+Unauthenticated, on every role. The bytes are the proof's positional encoding, hex in JSON like
+every byte-valued field. The by-header variant (`/:m/:k/:headerId`, proving a named header is in
+the chain) is not served. The prover behind it is `Nipopow prover` below.
+
 ### Status
 
 | Method | Path | Response |
@@ -3320,6 +3330,23 @@ height below `tip − MAX_REORG_DEPTH` cannot appear in any segment `findForkPoi
 would roll back with it. It persists across restarts and is removed only by the purge; a deploy's
 database wipe removes it with everything else.
 
+### Nipopow reader
+
+The four reads `@dagsocial/nipopow`'s `PopowHeaderReader` is implemented over
+(`NIPOPOW_INTERFACE` → proveWithReader), all on the canonical chain — a proof is a function of it,
+and no header tree is involved:
+
+| Function | Signature |
+|----------|-----------|
+| `getPopowHeaderByHash(hash)` | `(string) => PoPowHeader \| null` — the `block_hash` point lookup, then the row's `header_bytes` and `interlinks` decoded |
+| `getPopowHeaderAtHeight(height)` | `(number) => PoPowHeader \| null` — the same row by height |
+| `getLastHeaders(n)` | `(number) => BlockHeader[]` — `ORDER BY height DESC LIMIT n`, returned ascending; `n ≤ MAX_NIPOPOW_PARAM` |
+| `getHeadersAfter(height, n)` | `(number, number) => BlockHeader[]` — `WHERE height > ? ORDER BY height ASC LIMIT n`; `n ≤ MAX_NIPOPOW_PARAM` |
+
+Every list read carries its `LIMIT`, and the limit is the caller's bounded `k`. Each read decodes
+through the guarded read the sync serve uses: a stored row that will not decode is local corruption
+and fail-stops (`failStopIfCorruptChain`), never a refusal the requester is blamed for.
+
 ### Block Journal
 
 The journal is the single source of truth for undoing a block and for feeding
@@ -4051,6 +4078,28 @@ rather than reasoned about; `test/services/fork-resolution.test.ts` pins the rou
 the pinned root.
 
 ---
+
+## Nipopow prover
+
+`GET /nipopow/proof/:m/:k` (HTTP API → Nipopow) answers `proveWithReader(reader, { m, k })`
+(`NIPOPOW_INTERFACE` → proveWithReader) with `reader` the four store reads above (Store Interface →
+Nipopow reader). The route parses and bounds `m` and `k` (400), maps `chain-too-short` to 404, and
+serves the encoded proof; `missing-popow-header` cannot occur on a canonical chain the funnel wrote
+— it is a store that has lost a row the walk needs, and it reaches the fail-stop boundary like any
+other corrupt-chain read.
+
+**Cost, so the exposure is a number:** a proof is O(m · M + k) point reads, `M` the height of the
+tip's vector (~log₂ of the chain height): at `m = k = 6` on a million-block chain ~250 reads and a
+~200 KB response; at the caps (`m = k = 128`) ~8 500 reads and ~7 MB. No cache and no O(N) walk
+exist in the path. This is the node's second unauthenticated read that does real work per call
+(`GET /api/v1/proof/:boxId` is the first); the node has no rate limiting anywhere, and this route
+adds none — a single call is bounded by `MAX_NIPOPOW_PARAM`, and a limiter is a decision across
+every route, not this one's.
+
+**What a served proof proves, and what the client trusts it for,** is `NIPOPOW_INTERFACE` → The
+trust model. The client checks the node's box proofs (`GET /api/v1/proof/:boxId?atHeight`) against
+the `stateRoot` of the proof's `suffixHead` — a header under the client's own verified PoW — so the
+two proof systems compose without the client trusting the node for either.
 
 ## Admin Listener
 

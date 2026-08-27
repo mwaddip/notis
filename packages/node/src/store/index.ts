@@ -77,6 +77,10 @@ export {
   getOrderingBlockHash,
   getHeightByBlockHash,
   getInterlinks,
+  getPopowHeaderByHash,
+  getPopowHeaderAtHeight,
+  getLastHeaders,
+  getHeadersAfter,
 } from './ordering.js';
 
 export {
