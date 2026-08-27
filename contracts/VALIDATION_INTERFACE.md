@@ -282,14 +282,23 @@ hit a verifier judges and the hit a level is computed from are one computation.
 
 ```
 level(header: BlockHeader): number | null
+levelOfHit(hit: Uint8Array, target: Uint8Array): number | null
 ```
 
 The NiPoPoW level (`TYPES_INTERFACE` → Interlink vector): **`Infinity` at height 1**; otherwise the
 largest integer `μ ≥ 0` with `hit · 2^μ ≤ target`, where `hit` is `powHit(header)` and `target` is
 `orderingPowTarget(header.powTargetBits)`, both read as unsigned big-endian integers; **`LEVEL_CAP`**
-(256) when `hit` is zero. `null` when either half is `null`. Integer arithmetic throughout — no
-floating point, no logarithm; a header `verifyOrderingBlockPoW` accepts always has `μ ≥ 0`, and
-`P(level ≥ i) = 2^-i` up to the 1/256-bit granularity of the target.
+(256) when `hit` is zero. `null` when either half is `null`, **and `null` when `hit > target`** — a
+header that fails PoW has no level, and no caller asks for one before `verifyOrderingBlockPoW` has
+answered. Integer arithmetic throughout — no floating point, no logarithm; a header
+`verifyOrderingBlockPoW` accepts always has `μ ≥ 0`, and `P(level ≥ i) = 2^-i` up to the 1/256-bit
+granularity of the target.
+
+`levelOfHit` is the arithmetic half, over the two 32-byte operands: `level(header)` is
+`levelOfHit(powHit(header), orderingPowTarget(header.powTargetBits))` after the height-1 rule, and
+`verifyHeaderChain` computes each header's level from the hit it already holds rather than hashing
+twice. Exported so the zero-hit case — unreachable by nonce search — is pinned directly, and so a
+mirror can assert the arithmetic without a header. `null` on a wrong-width operand; never throws.
 
 The target is the header's **own** `powTargetBits`, exactly as `verifyOrderingBlockPoW` reads it —
 the schedule check that pins that field to `expectedTarget(height)` runs beside this function in
