@@ -52,6 +52,7 @@ async function request(
     const deps = {
       ...STUB_DEPS,
       executePrune: executePruneImpl ?? ((_d: UtxoEngineDeps, _t: UtxoTransaction, _h: number) => ({ txId: 'b'.repeat(64) })),
+      executePostWithdraw: (_d: UtxoEngineDeps, _t: UtxoTransaction, _h: number) => ({ txId: 'c'.repeat(64) }),
       getCurrentHeight: () => 10,
     };
     const app = express();
