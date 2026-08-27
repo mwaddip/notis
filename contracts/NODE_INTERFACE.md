@@ -417,7 +417,7 @@ invites, vouches, credits, prune).
 
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
-| `POST` | `/posts/:id/prune` | `{ tx }` — a prune transaction, JSON-encoded like every other route's (`jsonToTx`) | `{ status: "submitted", txId: hex, postId: hex, replyCount: number }` (201) | 400 if the payload is absent, the root is unconfirmed or confirmed in the current block, the subtree set or the Merkle root mismatches, or `validateTx` refuses it; 404 if the post is unknown; 409 on a pending-spend conflict; 503 if the pool is full |
+| `POST` | `/posts/:id/prune` | `{ tx }` — a prune transaction, JSON-encoded like every other route's (`jsonToTx`) | `{ status: "submitted", txId: hex, postId: hex }` (201) — no `replyCount`: the count is a property of apply, read off the stump. ⚠ AHEAD OF CODE 2026-08-27 (D5): the tree answers `replyCount` read off the payload | 400 if the payload is absent, the root is unconfirmed or confirmed in the current block, or `validateTx` refuses it; 404 if the post is unknown; 409 on a pending-spend conflict; 503 if the pool is full |
 | `POST` | `/posts/:id/withdraw` | `{ tx }` — a withdrawal transaction, JSON-encoded like every other route's (`jsonToTx`) | `{ status: "submitted", txId: hex, postId: hex }` (201) | 400 if the payload is absent, the post is unconfirmed or confirmed in the current block, the signer is not its author, the post is already withdrawn, or `validateTx` refuses it; 404 if the post is unknown; 409 on a pending-spend conflict; 503 if the pool is full |
 
 **Prune flow:**
