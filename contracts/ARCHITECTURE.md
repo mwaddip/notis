@@ -1041,9 +1041,16 @@ inverses, **not** in the `stateRoot`.
   History needs no live record — the burn transaction is block history and names the post,
   and the post's identity stays committed via the stump. Dedup needs none either: a pruned
   post cannot be liked (the rejection rule above).
-- **They survive withdraw.** A withdrawn post (semi-stump — designed, not built) keeps its
-  identity and stays likeable, so its records stay. Records follow the post.
-- Growth is bounded by likes on **live** posts, not by every like ever given.
+- **They survive withdraw.** A withdrawal empties the post and keeps its row, its topology
+  and its identity (NODE_INTERFACE → Withdrawal transactions); nothing in the withdrawal
+  leg touches `like_records`, and the phase reads the count once, to fold the vest into the
+  lock it consumes (NODE_INTERFACE → The post-lock settlement phase). A withdrawn post
+  cannot be liked, so from that block its records are a closed set: the withdrawn view
+  serves no `likers` and no `likeCount`, and the rows do one more job — a later prune of the
+  thread counts them into the stump's `upvoteCount` and deletes them with the subtree's.
+  Records follow the post.
+- Growth is bounded by likes on posts **not yet pruned**, never by every like ever given: a
+  prune removes its subtree's records, and a withdrawn post accepts no new ones.
 
 ### Post karma locking
 
