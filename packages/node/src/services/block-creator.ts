@@ -13,6 +13,8 @@ import {
   STORAGE_RENT_PER_BYTE,
   MAX_BOND_SETTLEMENTS_PER_BLOCK,
   MAX_ESCROW_RETURNS_PER_BLOCK,
+  MAX_POST_LOCK_RELEASES_PER_BLOCK,
+  MAX_SETTLEMENT_BYTES,
   boxRecordBytes,
   decodeTx,
   encodeTx,
@@ -58,6 +60,7 @@ import {
   emptyBody,
   type SettlementBody,
   type SettlementDeps,
+  type ResolvedReleaseCandidate,
 } from './settlement.js';
 import { deriveKarmaDecay } from './decay.js';
 import { planPostLockSettlement } from './settle-post-lock-utxo.js';
@@ -90,7 +93,8 @@ import {
   getKarmaPoolBox,
   putIdentityRecord,
   getLikeRecordCount,
-  getPostLockBox,
+  getPrunedLockCandidates,
+  getTopologyAuthorBytes,
 } from '../store/index.js';
 
 // ---------------------------------------------------------------------------
@@ -391,8 +395,9 @@ export function createOrderingBlock(): OrderingBlock | null {
       });
       const postBody = collectPostBodyKarma(decoded);
       const escrows = getVouchEscrowsReleasableAt(newHeight, MAX_ESCROW_RETURNS_PER_BLOCK);
+      const releases = captureReleaseCandidates();
       const built = buildSettlement(
-        settlementDepsWith(() => deriveKarmaDecay(decayDeps, postBody, newHeight, decayConfig()), escrows),
+        settlementDepsWith(() => deriveKarmaDecay(decayDeps, postBody, newHeight, decayConfig()), escrows, releases),
         newHeight,
         computeBlockReward(newHeight),
         nodeConfig.creditMinerRewardDelay,
@@ -548,7 +553,13 @@ export function createOrderingBlock(): OrderingBlock | null {
     //
     //    ⚠ **The pop takes a USER entry**, never the settlement: a body with no
     //    last transaction is one `verifyOrderingBlockStructure` refuses outright.
-    while (userTxIds.length > 0 && utxoTxTreeByteLength(utxoTxTree) > budget) {
+    const settlementExceedsBound = (): boolean =>
+      utxoTxTree.utxoTxs.length > 0 &&
+      utxoTxTree.utxoTxs[utxoTxTree.utxoTxs.length - 1]!.length > MAX_SETTLEMENT_BYTES;
+    while (
+      userTxIds.length > 0 &&
+      (utxoTxTreeByteLength(utxoTxTree) > budget || settlementExceedsBound())
+    ) {
       userTxIds.pop();
       userTxBytesList.pop();
       includedRowids.pop();
@@ -559,6 +570,16 @@ export function createOrderingBlock(): OrderingBlock | null {
         confirmedRowids = new Set();
         return null;
       }
+    }
+    if (userTxIds.length === 0 && settlementExceedsBound()) {
+      console.error(
+        `Not producing block at height ${newHeight}: settlement ` +
+        `${utxoTxTree.utxoTxs[utxoTxTree.utxoTxs.length - 1]!.length} bytes ` +
+        `exceeds MAX_SETTLEMENT_BYTES ${MAX_SETTLEMENT_BYTES} with no user entries`,
+      );
+      currentTemplate = null;
+      confirmedRowids = new Set();
+      return null;
     }
 
     // 11. Always produce a block — a block with no user work still pays its
@@ -859,9 +880,24 @@ export function decayConfig(): {
  * sides snapshot the releasable set before the apply loop and hand it in
  * (NODE_INTERFACE → The settlement transaction).
  */
+/**
+ * Capture and resolve the release candidates — the actor for each is the
+ * topology author of its pruned root, resolved here so `derive` stays
+ * store-free.
+ */
+export function captureReleaseCandidates(): ResolvedReleaseCandidate[] {
+  const raw = getPrunedLockCandidates(MAX_POST_LOCK_RELEASES_PER_BLOCK);
+  return raw.map((c) => ({
+    box: c.box,
+    postId: c.postId,
+    actor: getTopologyAuthorBytes(c.prunedRoot)!,
+  }));
+}
+
 export function settlementDepsWith(
   plans: () => DecayPlan[],
   escrows: VouchEscrowBox[],
+  releaseCandidates: ResolvedReleaseCandidate[],
 ): SettlementDeps {
   return {
     getEmissionBox,
@@ -869,19 +905,12 @@ export function settlementDepsWith(
     getKarmaPoolBox,
     getBox,
     getLikeCarryBox,
-    // The deadline is computed here rather than in the store, so the query stays
-    // free of network parameters — the standing `getBondsInvitedAt` rule.
     getBondsSettlingAt: (h: number) => {
       const invitedAt = h - nodeConfig.inviteProbationBlocks;
       return invitedAt <= 0 ? [] : getBondsInvitedAt(invitedAt, MAX_BOND_SETTLEMENTS_PER_BLOCK);
     },
     getEscrowsReleasableAt: () => escrows,
-    // ⚠ **The count comes from the identity record, never from a scan of
-    // `like_records`.** Those records die with the post on prune, so a count
-    // derived from them would let a third party lower it: an invitee who replies
-    // in someone else's thread earns likes that the thread's author could then
-    // destroy by pruning, taking karma off an inviter who did nothing
-    // (ARCHITECTURE → Bond outcomes).
+    getReleaseCandidates: () => releaseCandidates,
     getLifetimeLikes: (invitee: Uint8Array) =>
       getIdentityRecord(invitee)?.lifetimeLikesReceived ?? 0n,
     getDecayPlans: plans,
@@ -935,7 +964,6 @@ export function predictSettlementBody(
   const embedded: EmbeddedTx[] = [];
   const bodyLikesPerPost = new Map<string, number>();
   const pendingWithdrawals: Array<{ postId: string; author: Uint8Array }> = [];
-  const pendingPrunes: Array<{ rootPostHash: string; author: Uint8Array; subtreePostIds: string[] }> = [];
 
   for (let i = 0; i < txs.length; i++) {
     const tx = txs[i]!;
@@ -955,37 +983,14 @@ export function predictSettlementBody(
       pendingWithdrawals.push({ postId: tx.postWithdraw.postId, author });
     }
 
-    if (tx.prune && inputBoxes.length > 0) {
-      const author = (inputBoxes[0] as KarmaBox).owner;
-      pendingPrunes.push({ rootPostHash: tx.prune.rootPostHash, author, subtreePostIds: tx.prune.subtreePostIds });
-    }
   }
 
-  // Settlement plans: withdrawals first (matching the applier's phase order),
-  // then prunes. The claimed set carries across both so a prune skips locks
-  // already claimed by a withdrawal.
-  const claimedPostLockIds = new Set<string>();
-
+  // Settlement plans: withdrawals in committed transaction order.
   for (const w of pendingWithdrawals) {
     const likeCounts = new Map<string, number>();
     likeCounts.set(w.postId, getLikeRecordCount(w.postId) + (bodyLikesPerPost.get(w.postId) ?? 0));
     const plan = planPostLockSettlement(w.postId, w.author, [w.postId], likeCounts);
     body.postLockSettlements.push(plan);
-    for (const id of plan.lockBoxIds) claimedPostLockIds.add(id);
-  }
-
-  for (const p of pendingPrunes) {
-    const settlablePostIds = p.subtreePostIds.filter((id: string) => {
-      const lockBox = getPostLockBox(id);
-      return !lockBox || !lockBox.id || !claimedPostLockIds.has(lockBox.id);
-    });
-    const likeCounts = new Map<string, number>();
-    for (const postId of settlablePostIds) {
-      likeCounts.set(postId, getLikeRecordCount(postId) + (bodyLikesPerPost.get(postId) ?? 0));
-    }
-    body.postLockSettlements.push(
-      planPostLockSettlement(p.rootPostHash, p.author, settlablePostIds, likeCounts),
-    );
   }
 
   body.actors = countKarmaActors(embedded, validator);
@@ -1012,8 +1017,9 @@ export function buildBlockSettlement(
   });
   const postBody = collectPostBodyKarma(decoded);
   const escrows = getVouchEscrowsReleasableAt(height, MAX_ESCROW_RETURNS_PER_BLOCK);
+  const releases = captureReleaseCandidates();
   return buildSettlement(
-    settlementDepsWith(() => deriveKarmaDecay(decayDeps, postBody, height, decayConfig()), escrows),
+    settlementDepsWith(() => deriveKarmaDecay(decayDeps, postBody, height, decayConfig()), escrows, releases),
     height,
     computeBlockReward(height),
     nodeConfig.creditMinerRewardDelay,

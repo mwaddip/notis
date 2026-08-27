@@ -6,7 +6,7 @@ import {
 } from '../mint-provenance.js';
 import { commitDecayClocks, deriveKarmaDecay } from './decay.js';
 import { hasActiveVouchEscrow } from '../store/utxo.js';
-import { planPostLockSettlement, computeVestAmount } from './settle-post-lock-utxo.js';
+import { computeVestAmount, planPostLockSettlement } from './settle-post-lock-utxo.js';
 import type { PostLockSettlement } from './settle-post-lock-utxo.js';
 import {
   CorruptChainStateError,
@@ -16,6 +16,7 @@ import {
 } from './corrupt-state.js';
 import { config } from '../config.js';
 import {
+  captureReleaseCandidates,
   collectPostBodyKarma,
   computeBlockReward,
   computeUtxoTxRoot,
@@ -69,6 +70,7 @@ import {
   getTopologyAuthor,
   getTopologyAuthorBytes,
   getTopologyHeight,
+  markPrunedTopology,
   getIdentityRecord,
   putIdentityRecord,
   hasLikeRecord,
@@ -105,9 +107,6 @@ import {
   PROTOCOL_VERSION,
   MAX_ESCROW_RETURNS_PER_BLOCK,
   computeTxId,
-  leafHash,
-  buildMerkleRoot,
-  hexToBuf,
 } from '@dagsocial/types';
 import type {
   AnyBox,
@@ -897,9 +896,12 @@ function applyMutationPhase(
     decayAmount: config.karmaDecayAmount,
     karmaMinimum: config.karmaMinimum,
   });
-  // Escrows: captured before the apply loop so the body's own unvouch does
-  // not appear in the settlement's input list on one side only.
+  // Escrows and release candidates: captured before the apply loop so the
+  // body's own mutations do not appear in the settlement's input list on one
+  // side only. A prune in this block's body marks rows during §8c, after the
+  // capture, so its locks are candidates from h + 1.
   const escrows = getVouchEscrowsReleasableAt(height, MAX_ESCROW_RETURNS_PER_BLOCK);
+  const releaseCandidates = captureReleaseCandidates();
 
   // Multi-pass: try to apply txs, retrying those whose inputs aren't
   // available yet (may have been created by an earlier tx in this block).
@@ -1083,23 +1085,18 @@ function applyMutationPhase(
     queue.push(...remaining);
   }
 
-  // The claimed set — post-lock box ids consumed by withdrawals and prunes.
-  // A withdrawal and a prune both claiming one lock would put the same box id
-  // in the settlement's inputs twice. The prune pass skips a claimed lock.
+  // The claimed set — post-lock box ids consumed by withdrawals. A withdrawal
+  // and a prune both targeting one post: the withdrawal forfeits the lock, the
+  // prune marks the topology row but the lock is already claimed.
   const claimedPostLockIds = new Set<string>();
 
   // 8b. Process withdrawal transactions from this block.
-  //
-  // ⛔ **WITHDRAWALS FIRST, in committed transaction order; then prunes** — the
-  // order is load-bearing (spec §5.2). A withdrawal forfeits the bond; a prune
-  // of the same thread then finds the lock already claimed and skips it.
   const withdrawnThisBlock = new Set<string>();
   const blockWithdrawals = withdrawalsOf(block, getTopologyAuthorBytes);
   for (const bw of blockWithdrawals) {
     const { postWithdraw } = bw;
     const postId = postWithdraw.postId;
 
-    // Maturity bind: the post must have been confirmed in an earlier block.
     const postHeight = getTopologyHeight(postId);
     if (postHeight === null || postHeight >= height) {
       console.error(
@@ -1109,8 +1106,6 @@ function applyMutationPhase(
       return false;
     }
 
-    // Reject the block if this post is already withdrawn or was withdrawn
-    // earlier in this same block.
     const existing = getPost(postId);
     if (!isStoredPost(existing) || existing.withdrawnAtHeight !== null) {
       console.error(
@@ -1126,39 +1121,29 @@ function applyMutationPhase(
     }
     withdrawnThisBlock.add(postId);
 
-    // Settlement — one-element post set, owner equals the actor.
     const likeCounts = new Map<string, number>();
     likeCounts.set(postId, getLikeRecordCount(postId));
     const plan = planPostLockSettlement(postId, bw.author, [postId], likeCounts);
     postLockPlans.push(plan);
     for (const id of plan.lockBoxIds) claimedPostLockIds.add(id);
 
-    // The DAG effect: content → NULL, marker set. Row and topology survive.
     const priorContent = existing.content;
     recordWithdrawnPost(postId, priorContent);
     withdrawPost(postId, height);
   }
 
-  // 8c. Process prune transactions from this block.
+  // 8c. Prune transactions — derived set, deferred locks
+  // (NODE_INTERFACE → Prune transactions).
   //
-  // ⛔ **AFTER THE TRANSACTION LOOP.** The like arm at §11 rejects a like on a
-  // stumped post, so running §8c before the loop made a block carrying like(P)
-  // and prune(P) invalid — two unrelated users could hand a producer a
-  // block-invalidating pair. After the loop the like arm sees a live post and
-  // the pair is valid, with no producer-side filter.
-  //
-  // Authorship and the payload's integrity are the transaction's own: the prune
-  // transition arm verifies `inputKarma.owner` against the root's topology
-  // author, and the signature over `txId` covers the PruneCommit through
-  // `txIdBytes`. What remains here is the topology set, the Merkle root, the
-  // maturity bind, the UTXO settlement and the DAG effect.
+  // The set is derived from `getSubtreeTopology(rootPostHash)` as topology
+  // stands after §8 populated it from this block, so a same-block reply is
+  // in the set. No lock is consumed in this block — `markPrunedTopology`
+  // records the rows and the release leg settles them from `h + 1`.
   const blockPrunes = prunesOf(block, getTopologyAuthorBytes);
   for (const bp of blockPrunes) {
     const { prune } = bp;
 
-    // Maturity bind: the root must have been confirmed in an earlier block.
-    // Producer-independent, decidable from committed state
-    // (NODE_INTERFACE → Prune transactions).
+    // Maturity bind (NODE_INTERFACE → Prune transactions).
     const rootHeight = getTopologyHeight(prune.rootPostHash);
     if (rootHeight === null || rootHeight >= height) {
       console.error(
@@ -1168,59 +1153,42 @@ function applyMutationPhase(
       return false;
     }
 
-    // 3. Verify postId set against block_topology
-    const topologyIds = getSubtreeTopology(prune.rootPostHash);
-    const entryIds = new Set(prune.subtreePostIds);
-    if (topologyIds.size !== entryIds.size ||
-        ![...topologyIds].every(id => entryIds.has(id))) {
-      console.error(`Block ${height}: prune postId set mismatch for ${prune.rootPostHash}`);
-      return false;
-    }
+    // The set is derived, not from the payload.
+    const subtreePostIds = [...getSubtreeTopology(prune.rootPostHash)];
 
-    // 4. Verify Merkle root
-    const leaves = [...prune.subtreePostIds]
-      .sort()
-      .map(id => leafHash('stump', hexToBuf(id)));
-    const computedRoot = Buffer.from(buildMerkleRoot(leaves)).toString('hex');
-    const entryRoot = Buffer.from(prune.subtreeMerkleRoot).toString('hex');
-    if (computedRoot !== entryRoot) {
-      console.error(`Block ${height}: prune Merkle root mismatch for ${prune.rootPostHash}`);
-      return false;
-    }
-
-    // 5. Settle UTXO — deterministic from post IDs and like counts.
-    // `getLikeRecordCount` already includes this block's likes (the loop
-    // inserted them at §11), so the count is the lifetime total after this
-    // block — matching the creator's `stored + bodyLikes` derivation.
-    //
-    // Posts whose locks were already claimed by a withdrawal in this block
-    // are excluded from the settlement — the withdrawal forfeited them.
-    const settlablePostIds = prune.subtreePostIds.filter(
-      (id: string) => {
-        const lockBox = getPostLockBox(id);
-        return !lockBox || !lockBox.id || !claimedPostLockIds.has(lockBox.id);
-      },
-    );
-    let likeTally: number;
-    try {
-      const likeCounts = new Map<string, number>();
-      for (const postId of settlablePostIds) {
-        likeCounts.set(postId, getLikeRecordCount(postId));
-      }
-      postLockPlans.push(
-        planPostLockSettlement(prune.rootPostHash, bp.author, settlablePostIds, likeCounts),
+    // Same-block vest: for each post in `likesPerPost ∩ set` holding a live
+    // lock, vest this block's likes before the like-records are deleted.
+    // §11b will find a count of 0 or no lock and vest nothing twice.
+    for (const postId of subtreePostIds) {
+      if (!likesPerPost.has(postId)) continue;
+      const lockBox = getPostLockBox(postId);
+      if (!lockBox || !lockBox.id) continue;
+      const toUnlock = computeVestAmount(lockBox, getLikeRecordCount(postId));
+      if (toUnlock <= 0n) continue;
+      transferKarma(
+        [lockBox],
+        [{ owner: lockBox.owner, amount: toUnlock, ctx: postlockUnlockContext(postId), nonActivity: true }],
+        {
+          shape: (value) => ({
+            boxType: 'post_lock',
+            value,
+            createdAtBlock: height,
+            originalValue: lockBox.originalValue,
+            owner: lockBox.owner,
+          }),
+          ctx: postlockRemainderContext(postId),
+          postLockTarget: postId,
+        },
+        height,
       );
-      likeTally = deleteLikeRecordsForPosts(prune.subtreePostIds);
-    } catch (err) {
-      console.error(`Block ${height}: prune settlement failed for ${prune.rootPostHash}: ${String(err)}`);
-      return false;
     }
 
-    // 6. Insert the Stump (journalled), then delete the subtree's DAG rows.
+    const likeTally = deleteLikeRecordsForPosts(subtreePostIds);
+
     const stump = {
       rootPostHash: prune.rootPostHash,
       authorId: bp.author,
-      replyCount: prune.subtreePostIds.length - 1,
+      replyCount: subtreePostIds.length - 1,
       upvoteCount: likeTally,
       protocolVersion: PROTOCOL_VERSION,
       compactedAtBlockHeight: height,
@@ -1228,8 +1196,10 @@ function applyMutationPhase(
     insertStump(stump);
     recordInsertedStump(stump);
 
-    const deleted = deletePostRows(prune.subtreePostIds);
+    const deleted = deletePostRows(subtreePostIds);
     recordDeletedPosts(deleted);
+
+    markPrunedTopology(subtreePostIds, height, prune.rootPostHash);
   }
 
   // 11a. The settlement transaction — the block's every protocol effect, in one
@@ -1258,7 +1228,7 @@ function applyMutationPhase(
 
   const emission = computeBlockReward(height);
   const settlementCheck = checkSettlement(
-    settlementDepsWith(() => decayPlans, escrows),
+    settlementDepsWith(() => decayPlans, escrows, releaseCandidates),
     height,
     emission,
     config.creditMinerRewardDelay,

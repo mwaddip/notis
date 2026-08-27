@@ -134,6 +134,7 @@ const deps: SettlementDeps = {
   },
   getBondsSettlingAt: () => [bondBox as BondBox],
   getEscrowsReleasableAt: () => [escrowBox as VouchEscrowBox],
+  getReleaseCandidates: () => [],
   getLifetimeLikes: (invitee) =>
     hex(invitee) === hex(bondInvitee.userId) ? 9n : 0n,
   getDecayPlans: () => [decayPlan],

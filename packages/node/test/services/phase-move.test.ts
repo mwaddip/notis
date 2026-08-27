@@ -1,9 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   PROTOCOL_VERSION,
-  leafHash,
-  buildMerkleRoot,
-  hexToBuf,
 } from '@dagsocial/types';
 import type {
   KarmaBox,
@@ -73,7 +70,6 @@ function makePruneTx(
   postId: string,
   karmaBox: KarmaBox,
 ): UtxoTransaction {
-  const leaves = [postId].sort().map(id => leafHash('stump', hexToBuf(id)));
   const tx: UtxoTransaction = {
     inputs: [karmaBox.id!],
     outputs: [{ boxType: 'karma' as const, value: karmaBox.value, createdAtBlock: 0, owner: author.userId }],
@@ -81,8 +77,6 @@ function makePruneTx(
     protocolVersion: PROTOCOL_VERSION,
     prune: {
       rootPostHash: postId,
-      subtreePostIds: [postId],
-      subtreeMerkleRoot: buildMerkleRoot(leaves),
     },
   };
   signTransaction(tx, author.privateKey, hex(author.userId));
@@ -170,24 +164,22 @@ describe('phase-move: vest path-independence', () => {
     const block2 = await makeApplicableBlock({ height: 2, utxoTxs: [likeTx, pruneTx] });
     expect(blockApply.applyOrderingBlock(block2)).toBe(true);
 
-    const karmaAfter = utxo.getKarmaValue(author.userId);
-    // The author should have received the vest amount (1 karma) as a settlement
-    // refund, on top of whatever the like payout and other settlement effects are.
-    // The lock's remaining value (5 - 1 = 4) goes to the pool.
-    // The vest refund is the key: the author gets 1 karma back from their lock.
-    //
-    // Exact delta depends on settlement mechanics (like payout, pool, etc.),
-    // but the critical property is that the vest happened — the lock box is consumed,
-    // and the author received at least 1 karma from the vest.
-    const lockBox = utxo.getPostLockBox(postId);
-    expect(lockBox).toBeNull(); // consumed by settlement
+    // The prune block vests the same-block like through §8c but defers the
+    // lock release — the lock survives the prune block and is a candidate for
+    // the next block's settlement release leg.
+    const lockAfterPrune = utxo.getPostLockBox(postId);
+    expect(lockAfterPrune).not.toBeNull();
 
-    // The stump exists and the block applied — the vest was folded in.
-    // If the vest had NOT been folded in, either:
-    //   a) the block would be rejected (settlement mismatch), or
-    //   b) the vest would be lost (author gets 0 instead of 1)
-    // The block applying proves the settlement agreed, and the author's karma
-    // increasing by at least the vest proves it wasn't lost.
+    // Block 3: empty body — the settlement's release leg consumes the lock.
+    const block3 = await makeApplicableBlock({ height: 3, utxoTxs: [] });
+    expect(blockApply.applyOrderingBlock(block3)).toBe(true);
+
+    const lockAfterRelease = utxo.getPostLockBox(postId);
+    // The lock is consumed by the release leg — §8c vested, the release leg
+    // refunds or pools the remainder.
+    expect(lockAfterRelease).toBeNull();
+
+    const karmaAfter = utxo.getKarmaValue(author.userId);
     expect(karmaAfter).toBeGreaterThan(karmaBefore);
   });
 });
