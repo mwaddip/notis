@@ -522,9 +522,9 @@ holding different values diverge. Classes are defined in
 > and it is now **1440 for 24h** (TYPES_INTERFACE → Credit emission). **Do not read a passing
 > unit check as a settled value.**
 >
-> ⚠ **The 28-day figure is separately still open.** The economics design track wants a
-> short, days-scale grace window ("e.g. ~5, not 28"), so `40320` is a faithful translation
-> of a value that is itself pending the constants-pinning session — not a decided number.
+> ⚠ **The 28-day duration is a separate question from the unit, and it is ruled** (user,
+> 2026-08-19; `TYPES_INTERFACE → Network profiles`). `CONSTANTS → Karma` records the standing
+> of every value in this table.
 
 #### Credit boxes
 
@@ -1095,9 +1095,8 @@ No user transaction can spend a `PostLockBox` — block application is its only 
 | `POST_LOCK_UNLOCK_PER_LIKES` | `10` | Every N lifetime likes unlocks 1 karma |
 
 All universal constants — never per-network (§Network Identity: compress time, never
-economics). Values are placeholders until the constants session pins them — with one
-pinned exception: `KARMA_STALE_THRESHOLD_BLOCKS`'s duration is ruled at 28 days
-(user, 2026-08-19; `TYPES_INTERFACE` states the same at the profile passage).
+economics). Every value in this table is a placeholder; `CONSTANTS → Post lock and likes`
+records that standing beside the value, and the register is where it changes.
 
 **Retired, do not rebuild:** the like box · the free-like tier (`dag_likes` rows as
 likes) · unlike and every refund path · the epoch interval. The boxType string `'like'`
@@ -1325,8 +1324,9 @@ separate keys if desired.
 >
 > **Genesis is where an unset consensus parameter is least recoverable** — it is baked into
 > the first block and every state root after it. Before any launch: decide the committee
-> set, decide whether an empty committee is a startup failure, and pin both. This belongs
-> with the constants-pinning session, not to be defaulted into.
+> set, decide whether an empty committee is a startup failure, and pin both. A launch decision,
+> not a default — and not a register row: `CONSTANTS → Excluded` lists the committee with the
+> identity fields, because it names a network rather than tunes one.
 
 Bootstrap uses a **genesis committee**: genesis seeding creates one karma box per genesis
 committee key, **drawn out of the pool**, and the committee's sole purpose is to invite the first
