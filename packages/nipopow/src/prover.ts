@@ -3,7 +3,7 @@ import { blockHash } from '@dagsocial/validation';
 import { MAX_NIPOPOW_PARAM } from './codec.js';
 import type { PoPowHeader, NipopowProof } from './codec.js';
 
-// NIPOPOW_INTERFACE → PopowHeaderReader
+// NIPOPOW_INTERFACE → proveWithReader
 export interface PopowHeaderReader {
   chainHeight(): number;
   popowHeaderByHash(hash: string): PoPowHeader | null;
@@ -71,7 +71,8 @@ export function proveWithReader(
   const suffixTail = suffixHeaders.slice(1);
 
   // 2. Prefix: walk from the top level down
-  // NIPOPOW_INTERFACE → interlinks[i] is the level-i pointer; interlinks[0] = genesis;
+  // TYPES_INTERFACE → Interlink vector, NIPOPOW_INTERFACE → proveWithReader —
+  // interlinks[i] is the level-i pointer; interlinks[0] = genesis;
   // level 0 has no pointer and is never walked
   const M = suffixHead.interlinks.length - 1;
   const collected = new Map<number, PoPowHeader>();

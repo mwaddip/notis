@@ -127,7 +127,7 @@ export function verifyProof(
   }
 
   // Rule 6: connections, strict adjacency
-  // NIPOPOW_INTERFACE → connections
+  // NIPOPOW_INTERFACE → verifyProof
   for (let i = 1; i < allPoPow.length; i++) {
     const cur = allPoPow[i]!;
     const prev = allPoPow[i - 1]!;

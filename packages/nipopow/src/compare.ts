@@ -36,7 +36,7 @@ function lowestCommonAncestor(left: BlockHeader[], right: BlockHeader[]): BlockH
   return lca;
 }
 
-// NIPOPOW_INTERFACE → bestArg: max over μ ≥ 0 of 2^μ · |{ h ∈ chain : level(h) ≥ μ }|,
+// NIPOPOW_INTERFACE → compareProofs — bestArg: max over μ ≥ 0 of 2^μ · |{ h ∈ chain : level(h) ≥ μ }|,
 // counting a level μ ≥ 1 only while it holds at least m headers
 export function bestArg(headers: BlockHeader[], m: number): bigint {
   const levels = headers.map(h => level(h));
