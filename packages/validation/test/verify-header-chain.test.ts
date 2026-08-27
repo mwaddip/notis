@@ -509,6 +509,28 @@ describe('verifyHeaderChain', () => {
       expect(result).toEqual({ ok: false, index: 0, reason: 'interlinks' });
     });
 
+    it('empty vector above genesis → interlinks at index 0, never throws', () => {
+      // An empty vector is valid only at genesis (height 0). Above it,
+      // updateInterlinks would throw on a finite level with prev.length === 0.
+      // The anchor shape check refuses it as a verdict, not a throw.
+      const emptyAboveGenesis = {
+        prevBlockHash: 'aa'.repeat(32),
+        height: 5,
+        interlinks: [] as string[],
+      };
+      // Mine a header that commits to interlinkRoot([]) — the root the
+      // empty vector produces — so step 7 would pass if the shape check
+      // did not fire first.
+      const h = mineHeader({
+        height: 6,
+        prevBlockHash: emptyAboveGenesis.prevBlockHash,
+        interlinkRoot: interlinkRoot([]),
+      });
+      expect(() => verifyHeaderChain([h], emptyAboveGenesis, constantTarget)).not.toThrow();
+      const result = verifyHeaderChain([h], emptyAboveGenesis, constantTarget);
+      expect(result).toEqual({ ok: false, index: 0, reason: 'interlinks' });
+    });
+
     it('malformed anchor never throws', () => {
       for (const bad of [null, undefined, 42, 'str', [42], [null]]) {
         const badAnchor = { ...anchor, interlinks: bad as unknown as string[] };

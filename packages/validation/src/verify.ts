@@ -993,10 +993,14 @@ export function verifyHeaderChain(
   }
 
   // Validate anchor interlinks before entering the loop: a malformed vector
-  // would throw inside `interlinkRoot` (which calls `encodeInterlinks`).
+  // would throw inside `interlinkRoot` (which calls `encodeInterlinks`), and
+  // an empty vector above genesis would throw in `updateInterlinks` when
+  // the first header's finite level reaches it. Only the genesis anchor
+  // (height 0) may carry an empty vector.
   if (!Array.isArray(anchor.interlinks) ||
       anchor.interlinks.length > MAX_INTERLINKS ||
-      anchor.interlinks.some(e => !isHex32(e))) {
+      anchor.interlinks.some(e => !isHex32(e)) ||
+      (anchor.interlinks.length === 0 && anchor.height !== 0)) {
     return { ok: false, index: 0, reason: 'interlinks' };
   }
 
