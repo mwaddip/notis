@@ -16,7 +16,7 @@ Repo directory is `dagsocial`; the project is Notis.
 ## Quick commands
 
 ```bash
-pnpm build                          # Build all five packages
+pnpm build                          # Build all six packages
 pnpm test                           # Run all tests — includes tools/e2e, which spawns BUILT nodes: build first
 pnpm typecheck                      # src AND test trees, both configs
 node packages/node/dist/index.js    # Start a node on :3000
@@ -35,11 +35,12 @@ refuses to run against a missing or stale `dist`. See ARCHITECTURE → "Build an
 
 ## Architecture
 
-Five packages, in dependency order:
+Six packages, in dependency order:
 
 - `@dagsocial/types` — data structures, base58, positional codecs, hashing, protocol constants. **Pure functions only.**
 - `@dagsocial/wire` — stream framing (VLQ, blake2b checksums, magic bytes).
 - `@dagsocial/validation` — pure stateless checks: PoW, signatures, block structure, Merkle roots.
+- `@dagsocial/nipopow` — NiPoPoW proofs over ordering-block headers: the proof codecs, `verifyProof`, `compareProofs`, `proveWithReader`. **Pure functions only.**
 - `@dagsocial/net` — libp2p + Gossipsub relay, header-first sync, peer management.
 - `@dagsocial/node` — Express server, PoW, verifier, SQLite store, UTXO engine, AVL+ state root, block creator, demo UI.
 
@@ -62,6 +63,7 @@ contract first, then implement against it, never the reverse.
 - `contracts/VALIDATION_INTERFACE.md` — stateless checks
 - `contracts/NODE_INTERFACE.md` — API, verifier, store interface
 - `contracts/NET_INTERFACE.md` — libp2p, gossip, sync
+- `contracts/NIPOPOW_INTERFACE.md` — the proof package: objects, codecs, verifier, comparator, prover
 - `contracts/MEMPOOL_INTERFACE.md` · `contracts/MINING_INTERFACE.md` · `contracts/JOURNAL_EVENTS.md`
 - `contracts/WEB_INTERFACE.md` — web client (Phase 2)
 - `contracts/HOUSE_STYLE.md` — colour, type, the mark, motion, interaction, spacing, voice

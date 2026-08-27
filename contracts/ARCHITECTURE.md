@@ -1678,7 +1678,7 @@ rejection note below is the instance worth naming.
 > reasons.
 >
 > **It conflicts with a load-bearing invariant.** `@dagsocial/types` is contractually pure —
-> "no side effects, no module-level state" — and five packages derive consensus bytes from
+> "no side effects, no module-level state" — and six packages derive consensus bytes from
 > it. Network-scoped tags force either module-level state in that package or a network
 > argument on every derivation. Module-level state is the config-read-at-a-distance defect
 > this whole section exists to remove, wearing a different hat.
@@ -2271,7 +2271,7 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   karma-membership hook, `setMempoolCap`).
 - **"Does NOT own" on every package** — each package explicitly lists what
   it is NOT responsible for. Prevents scope creep.
-  > **True — all five packages carry it.** Note it lives in `packages/*/CLAUDE.md`, not in
+  > **True — all six packages carry it.** Note it lives in `packages/*/CLAUDE.md`, not in
   > `contracts/`, so it is a session-context convention rather than a contract one.
 
 ### Data integrity
@@ -2312,7 +2312,7 @@ the repo root and merged into every package's vitest config.
 
 Six rules govern it:
 
-1. **Uniform across all five packages.** Aliasing some and not others puts two copies of the same
+1. **Uniform across all six packages.** Aliasing some and not others puts two copies of the same
    module in one process — one transpiled from `src`, one bundled inside `dist`. `instanceof` fails
    across that boundary and every module-level singleton exists twice.
 2. **The alias target is `src/index.ts`, not `src/`.** The barrel stays the surface under test, so a
@@ -2331,7 +2331,7 @@ Six rules govern it:
    package — a stale build is a refusal, never a run against old code that reports green. The gate
    order in rule 3 is what keeps the refusal from firing: build first. Being under `tools/*`, the
    suite is in `pnpm -r test` by the workspace glob; nothing has to remember to run it.
-5. **Test trees are typechecked — all five packages, at zero.** Each `typecheck` script runs
+5. **Test trees are typechecked — all six packages, at zero.** Each `typecheck` script runs
    `tsc --noEmit && tsc --noEmit -p tsconfig.test.json`, so `pnpm -r typecheck` compiles every
    test tree in the workspace. Node was the last to land: 409 errors → 0, in one unit, with **zero
    `src` edits**. The debt did not come apart mechanically — a bulk retype of all missing-provenance

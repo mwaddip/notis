@@ -100,6 +100,19 @@ default (package)         S10 P10 E3  C7  I7  A6  L9
   reachability arguments expire.
 ```
 
+### @dagsocial/nipopow
+
+```
+default (package)         S9  P10 E3  C7  I7  A6  L10
+  A light client's whole basis for trusting a chain. Every proof is peer-served bytes that
+  arrive with a claim about work — P is 10 for the same reason validation's is: a wrong
+  accept here is a light client on an attacker's chain, and no full node ever sees it.
+  Stateless, so E is low. L is 10: the correctness lives entirely at edges — the genesis
+  anchor, a level exactly at a threshold, the last header of a walk, an empty tail, a
+  chain of exactly m + k — and KMZ17's argument holds only if every one of them is the
+  paper's, not an approximation of it.
+```
+
 ### @dagsocial/net
 
 ```
