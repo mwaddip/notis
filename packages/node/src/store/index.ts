@@ -34,7 +34,10 @@ export {
   getBoxProvenance,
   getKarmaBox,
   getKarmaBoxes,
+  getKarmaBoxesPage,
   getKarmaValue,
+  getCreditValue,
+  getCreditBoxesPage,
   getGenesisProofBox,
   getEmissionBox,
   getTreasuryBox,
@@ -44,6 +47,7 @@ export {
   getBondFor,
   getBondsInvitedAt,
   getBondBoxes,
+  getBondBoxesPage,
   getVouchEscrowsFor,
   getVouchEscrowsReleasableAt,
   hasActiveVouchEscrow,
@@ -144,6 +148,7 @@ export { loadAllPeers, putPeer, deletePeer, peerStorage } from './peers.js';
 export {
   getVouchBox,
   getVouchesForTarget,
+  getVouchesForTargetPage,
   getVouchesByVoucher,
   hasAnyActiveVouch,
 } from './vouch-queries.js';

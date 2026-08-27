@@ -549,4 +549,81 @@ describe('utxo store', () => {
     expect(results).toEqual([]);
   });
 
+  // --- page reads: order and count -------------------------------------------
+
+  it('getKarmaBoxesPage returns one page with count over the whole set', async () => {
+    const { initDb } = await importDbFresh();
+    const utxo = await import('../../src/store/utxo.js');
+    const { computeBoxId } = await importTypes();
+
+    initDb(':memory:');
+
+    const owner = bytes(32);
+    const ids: string[] = [];
+    for (const v of [300n, 100n, 200n]) {
+      const box = makeKarmaBox({ value: v, owner });
+      Object.assign(box, fixtureProvenance(box, 1));
+      box.id = computeBoxId(box);
+      utxo.insertBox(box);
+      ids.push(box.id);
+    }
+
+    const result = utxo.getKarmaBoxesPage(owner, { limit: 2, offset: 0 });
+    expect(result.count).toBe(3);
+    expect(result.rows).toHaveLength(2);
+    expect(result.rows[0]!.value).toBe(300n);
+    expect(result.rows[1]!.value).toBe(200n);
+  });
+
+  it('getCreditBoxesPage returns one page with count over the whole set', async () => {
+    const { initDb } = await importDbFresh();
+    const utxo = await import('../../src/store/utxo.js');
+    const { computeBoxId } = await importTypes();
+
+    initDb(':memory:');
+
+    const owner = bytes(32);
+    for (const v of [50n, 150n, 250n]) {
+      const box = makeCreditBox({ value: v, owner });
+      Object.assign(box, fixtureProvenance(box, 1));
+      box.id = computeBoxId(box);
+      utxo.insertBox(box);
+    }
+
+    const result = utxo.getCreditBoxesPage(owner, { limit: 2, offset: 0 });
+    expect(result.count).toBe(3);
+    expect(result.rows).toHaveLength(2);
+    expect(result.rows[0]!.value).toBe(250n);
+    expect(result.rows[1]!.value).toBe(150n);
+  });
+
+  it('getBondBoxesPage lists unspent bonds only, ascending id, with count', async () => {
+    const { initDb } = await importDbFresh();
+    const utxo = await import('../../src/store/utxo.js');
+    const { computeBoxId } = await importTypes();
+
+    initDb(':memory:');
+
+    const inviter = uid('bond-page-inviter');
+    const bonds: BondBox[] = [];
+    for (let i = 0; i < 3; i++) {
+      const box = makeBondBox({ inviterId: inviter, value: BigInt(10 + i) });
+      Object.assign(box, fixtureProvenance(box, 1));
+      box.id = computeBoxId(box);
+      utxo.insertBox(box);
+      bonds.push(box);
+    }
+
+    // Settle one bond
+    utxo.consumeBox(bonds[1]!.id!, 5);
+
+    const result = utxo.getBondBoxesPage(inviter, { limit: 50, offset: 0 });
+    expect(result.count).toBe(2);
+    expect(result.rows).toHaveLength(2);
+    expect(result.rows.find(b => b.id === bonds[1]!.id)).toBeUndefined();
+
+    // Ascending id
+    const resultIds = result.rows.map(b => b.id!);
+    expect(resultIds).toEqual([...resultIds].sort());
+  });
 });
