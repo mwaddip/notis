@@ -442,6 +442,87 @@ export function getAncestors(postId: string): StoredPost[] {
   return ancestors;
 }
 
+// NODE_INTERFACE → Store Interface → getAncestorsNearest
+export function getAncestorsNearest(
+  postId: string,
+  limit: number,
+): { rows: StoredPost[]; count: number } {
+  const db = getDb();
+  const ancestors: StoredPost[] = [];
+  const seen = new Set<string>();
+  let currentId: string | null = postId;
+
+  while (currentId) {
+    const parents = getParentRefs(currentId);
+    const firstParent: string | undefined = parents[0];
+    if (!firstParent) break;
+
+    if (seen.has(firstParent)) break;
+    seen.add(firstParent);
+
+    const row = db
+      .prepare('SELECT * FROM dag_posts WHERE id = ?')
+      .get(firstParent) as PostRow | undefined;
+    if (!row) break;
+
+    ancestors.unshift(rowToPost(row));
+    currentId = firstParent;
+  }
+
+  const count = ancestors.length;
+  const nearest = ancestors.slice(Math.max(0, count - limit));
+  return { rows: nearest, count };
+}
+
+// NODE_INTERFACE → Store Interface → getSubtreePage
+export function getSubtreePage(
+  postId: string,
+  page: { limit: number; offset: number },
+): { rows: StoredPost[]; count: number } {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      `WITH RECURSIVE subtree AS (
+         SELECT dp.*, dp.rowid AS rn FROM dag_posts dp
+         JOIN dag_parent_refs dpr ON dp.id = dpr.post_id
+         WHERE dpr.parent_id = ?
+
+         UNION
+
+         SELECT dp.*, dp.rowid AS rn FROM dag_posts dp
+         JOIN dag_parent_refs dpr ON dp.id = dpr.post_id
+         JOIN subtree s ON dpr.parent_id = s.id
+       )
+       SELECT * FROM subtree
+       ORDER BY
+         CASE WHEN status = 'confirmed' THEN 0 ELSE 1 END,
+         CASE WHEN status = 'confirmed' THEN block_height END,
+         CASE WHEN status = 'confirmed' THEN block_index END,
+         rn
+       LIMIT ? OFFSET ?`,
+    )
+    .all(postId, page.limit, page.offset) as PostRow[];
+
+  const countRow = db
+    .prepare(
+      `WITH RECURSIVE subtree AS (
+         SELECT dp.id FROM dag_posts dp
+         JOIN dag_parent_refs dpr ON dp.id = dpr.post_id
+         WHERE dpr.parent_id = ?
+
+         UNION
+
+         SELECT dp.id FROM dag_posts dp
+         JOIN dag_parent_refs dpr ON dp.id = dpr.post_id
+         JOIN subtree s ON dpr.parent_id = s.id
+       )
+       SELECT COUNT(*) AS cnt FROM subtree`,
+    )
+    .get(postId) as { cnt: number };
+
+  return { rows: rows.map(rowToPost), count: countRow.cnt };
+}
+
 export function getParentRefs(postId: string): string[] {
   const rows = getDb()
     .prepare('SELECT parent_id FROM dag_parent_refs WHERE post_id = ?')

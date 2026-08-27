@@ -1,3 +1,5 @@
+export interface Page { limit: number; offset: number }
+
 export { initDb, getDb, closeDb } from './db.js';
 export {
   insertPost,
@@ -16,7 +18,9 @@ export {
   getPrunedTombstone,
   getParentRefs,
   getAncestors,
+  getAncestorsNearest,
   getSubtree,
+  getSubtreePage,
   isStoredPost,
   isLivePost,
   isStump,
