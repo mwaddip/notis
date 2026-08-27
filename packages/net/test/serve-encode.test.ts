@@ -65,6 +65,7 @@ function makeHeader(overrides: Partial<BlockHeader> = {}): BlockHeader {
     // moves with the constant instead of having to be re-chosen beside it.
     powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
     createdAt: 1_000_000,
+    interlinkRoot: '00'.repeat(32),
     ...overrides,
   };
 }

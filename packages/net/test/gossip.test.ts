@@ -123,6 +123,7 @@ describe('ordering-block topic validator (relay PoW gate)', () => {
     powNonce: 0,
     powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR, // the structure floor
     createdAt: 1_722_470_400_000,
+    interlinkRoot: '00'.repeat(32),
   };
 
   function makeBlock(header: BlockHeader): OrderingBlock {
@@ -543,6 +544,7 @@ describe('gossip dispatch listener', () => {
     powNonce: 0,
     powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
     createdAt: 1_722_470_400_000,
+    interlinkRoot: '00'.repeat(32),
   };
   const dispatchBlock: OrderingBlock = {
     header: dispatchHeader,

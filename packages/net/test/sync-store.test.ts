@@ -29,6 +29,7 @@ function makeHeader(overrides: Partial<BlockHeader> = {}): BlockHeader {
     powNonce: 100,
     powTargetBits: 4 * 256,
     createdAt: 1_000_000,
+    interlinkRoot: '00'.repeat(32),
     ...overrides,
   };
 }
