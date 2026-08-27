@@ -68,6 +68,8 @@ async function request(
       getCurrentHeight: () => 100,
       decayCfg: DECAY_CFG,
       getUtxoEngineDeps: () => ({
+        // The pending view, as server.ts wires the submission routes: a grant
+        // spending the change box of one still pooled resolves its input here.
         getBox: getBoxWithPending,
         insertBox,
         consumeBox,
@@ -136,7 +138,6 @@ describe('UTXO routes', () => {
     try { unlinkSync(TEST_DB); } catch { /* ignore */ }
     initDb(TEST_DB);
 
-    // User with karma
     const kp1 = generateKeyPair();
     karmaUserId = kp1.publicKey;
     karmaUserIdHex = Buffer.from(karmaUserId).toString('hex');
@@ -147,6 +148,7 @@ describe('UTXO routes', () => {
     }, 1);
     insertBox(karmaBox);
 
+    // Second karma box for same user — multi-box total must sum across all boxes
     const karmaBox2 = seedProvenance<KarmaBox>({
       boxType: 'karma',
       value: 58n,
@@ -166,7 +168,8 @@ describe('UTXO routes', () => {
     }, 1);
     insertBox(creditBox);
 
-    // An inviter with a live bond
+    // An inviter with a live bond — the whole of what an invite leaves
+    // behind (ARCHITECTURE → Invite System).
     const kp3 = generateKeyPair();
     inviteUserId = kp3.publicKey;
     inviteUserIdHex = Buffer.from(inviteUserId).toString('hex');
@@ -334,6 +337,7 @@ describe('UTXO routes', () => {
       insertBox(box);
     });
 
+    /** Build and sign the transfer the way the demo UI does. */
     function buildSignedTransfer(amount: bigint): UtxoTransaction {
       const unlocked = getCreditBoxesPage(senderPubKey, { limit: 100, offset: 0 }).rows;
       const selected = selectBoxes(unlocked, amount);
@@ -391,6 +395,9 @@ describe('UTXO routes', () => {
       owner: 'ab'.repeat(32),
     };
 
+    // The envelope gate as the HTTP backstop (NODE_INTERFACE → "Transaction
+    // envelope shape").
+
     it('backstops a non-array inputs with a 400, not the pre-gate 500', async () => {
       const res = await request('/credits/transfer', 'POST', {
         tx: { inputs: 5, outputs: [CREDIT_OUT], signatures: {}, protocolVersion: PROTOCOL_VERSION },
@@ -401,6 +408,9 @@ describe('UTXO routes', () => {
       );
     });
 
+    // A transaction carries its own `protocolVersion`, and the block header's
+    // gate says nothing about it. Without a check at this edge a client that
+    // signs a junk version has it pooled and applied end-to-end.
     it('backstops a junk protocolVersion with a 400', async () => {
       const res = await request('/credits/transfer', 'POST', {
         tx: {
@@ -453,6 +463,9 @@ describe('UTXO routes', () => {
     });
 
     it('pools a valid transfer, answers pending, broadcasts — and settles nothing', async () => {
+      // Declared with the parameter it is actually called with: a zero-arity
+      // mock types `mock.calls[0]` as the empty tuple, so the assertion below
+      // reads argument 0 of a call the type system says takes none.
       const broadcastTx = vi.fn((_tx: UtxoTransaction) => Promise.resolve());
       setNet({ broadcastTx } as unknown as Parameters<typeof setNet>[0]);
 
@@ -467,8 +480,11 @@ describe('UTXO routes', () => {
       expect(body.sent).toBeUndefined();
       expect(body.change).toBeUndefined();
 
+      // The input box is still unspent — the HTTP call settles nothing.
       expect(getBox(seededBoxId)).not.toBeNull();
+      expect(getCreditBoxesPage(receiverPubKey, { limit: 1, offset: 0 }).count).toBe(0);
 
+      // The pooled tx went out to peers.
       expect(broadcastTx).toHaveBeenCalledTimes(1);
       const sent = broadcastTx.mock.calls[0]![0] as UtxoTransaction;
       expect(computeTxId(sent)).toBe(computeTxId(tx));

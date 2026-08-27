@@ -1,10 +1,9 @@
 import { Router, Response } from 'express';
-import type { UtxoTransaction } from '@dagsocial/types';
+import type { UtxoTransaction, KarmaBox, CreditBox, BondBox } from '@dagsocial/types';
 import { sendCredits } from '../services/credits.js';
 import type { UtxoEngineDeps } from '../services/utxo-engine.js';
 import type { IdentityRecord } from '../store/identity-records.js';
 import type { Page } from '../store/index.js';
-import type { KarmaBox, CreditBox, BondBox } from '@dagsocial/types';
 import type { DecayCfg } from '../services/decay.js';
 import { effectiveKarma } from '../services/decay.js';
 import { getNet } from '../services/net-instance.js';
@@ -59,19 +58,16 @@ export function createRouter(deps: UtxoDeps): Router {
       return;
     }
 
-    const total = deps.getKarmaValue(userIdBytes);
-    if (total === 0n) {
-      const pageResult = deps.getKarmaBoxesPage(userIdBytes, page);
-      if (pageResult.count === 0) {
-        res.status(404).json({ error: 'No karma box found' });
-        return;
-      }
+    const pageResult = deps.getKarmaBoxesPage(userIdBytes, page);
+    if (pageResult.count === 0) {
+      res.status(404).json({ error: 'No karma box found' });
+      return;
     }
 
+    const total = deps.getKarmaValue(userIdBytes);
     const record = deps.getIdentityRecord(userIdBytes);
     const height = deps.getCurrentHeight();
     const eff = effectiveKarma(total, record, height, deps.decayCfg);
-    const pageResult = deps.getKarmaBoxesPage(userIdBytes, page);
 
     res.json({
       userId: req.params['userId'],
@@ -118,7 +114,10 @@ export function createRouter(deps: UtxoDeps): Router {
     });
   });
 
-  // POST /credits/transfer
+  // POST /credits/transfer — pool a client-built, client-signed credit
+  // transfer: jsonToTx → validateTx + admitTx in the service → broadcast
+  // → pending response, the path every other tx route takes. Credits move when
+  // the transaction is mined.
   router.post('/credits/transfer', (req, res) => {
     const body = req.body as { tx?: Record<string, unknown> };
 
@@ -156,7 +155,7 @@ export function createRouter(deps: UtxoDeps): Router {
     }
   });
 
-  // GET /invites/:userId
+  // NODE_INTERFACE → UTXO queries — a bond IS the open invite; unspent bonds only.
   router.get('/invites/:userId', (req, res) => {
     const userIdBytes = parseUserId(req.params['userId']!, res);
     if (!userIdBytes) return;

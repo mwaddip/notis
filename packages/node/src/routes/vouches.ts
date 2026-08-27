@@ -123,7 +123,7 @@ export function createRouter(deps: VouchesDeps): Router {
     if (target) {
       const page = parsePage(req.query as Record<string, unknown>);
       if (isPageError(page)) {
-        res.status(400).json({ error: 400, reason: page.error });
+        res.status(400).json({ error: page.error });
         return;
       }
       const targetBytes = new Uint8Array(Buffer.from(target, 'hex'));

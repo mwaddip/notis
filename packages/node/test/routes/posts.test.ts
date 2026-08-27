@@ -9,7 +9,7 @@ import express from 'express';
 import http from 'http';
 import { generateKeyPairSync, createPrivateKey } from 'crypto';
 import { initDb, closeDb, getDb } from '../../src/store/db.js';
-import { insertPost, getPost, queryPosts, getAncestorsNearest, getSubtreePage, deletePostRows } from '../../src/store/posts.js';
+import { insertPost, getPost, queryPosts, getAncestorsNearest, getSubtreePage, deletePostRows, confirmPost, withdrawPost } from '../../src/store/posts.js';
 import { getCurrentHeight, getBlockCreatedAt } from '../../src/store/ordering.js';
 import {
   getKarmaBox,
@@ -19,7 +19,7 @@ import {
 } from '../../src/store/utxo.js';
 import { getIdentityRecord as storeGetIdentityRecord } from '../../src/store/identity-records.js';
 import { hasActiveVouchEscrow } from '../../src/store/utxo.js';
-import { getLikeRecordCount, hasLikeRecord } from '../../src/store/likes.js';
+import { getLikeRecordCount, hasLikeRecord, insertLikeRecord } from '../../src/store/likes.js';
 import { insertUtxoTx, getPendingEntries } from '../../src/store/mempool.js';
 import { verifyPost } from '../../src/services/verifier.js';
 import { validateTx } from '../../src/services/utxo-engine.js';
@@ -425,6 +425,152 @@ describe('posts routes', () => {
       const feed = res.data as Array<Record<string, unknown>>;
       expect(feed.some((p) => p['id'] === prunedRootId)).toBe(false);
       expect(feed.some((p) => p['kind'] === 'stump')).toBe(false);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // viewer / likedByViewer
+  // -----------------------------------------------------------------------
+
+  describe('likedByViewer and viewer param', () => {
+    let viewerHex: string;
+    let viewerBytes: Uint8Array;
+    let likedPostId: string;
+    let unlikedPostId: string;
+
+    beforeAll(() => {
+      const keys = generateKeyPairSync('ed25519');
+      const raw = keys.publicKey.export({ type: 'spki', format: 'der' }) as Buffer;
+      viewerBytes = new Uint8Array(raw.subarray(raw.length - 32));
+      viewerHex = Buffer.from(viewerBytes).toString('hex');
+
+      const authorKeys = generateKeyPairSync('ed25519');
+      const authorRaw = authorKeys.publicKey.export({ type: 'spki', format: 'der' }) as Buffer;
+      const author = new Uint8Array(authorRaw.subarray(authorRaw.length - 32));
+
+      const commit1 = makePostCommit(author, 'liked post', { parentRefs: [] });
+      likedPostId = fixturePostId(commit1);
+      insertPost(likedPostId, commit1, 'liked post');
+      confirmPost(likedPostId, 10, 0);
+      insertLikeRecord(likedPostId, viewerBytes, 10);
+
+      const commit2 = makePostCommit(author, 'unliked post', { parentRefs: [] });
+      unlikedPostId = fixturePostId(commit2);
+      insertPost(unlikedPostId, commit2, 'unliked post');
+      confirmPost(unlikedPostId, 10, 1);
+    });
+
+    it('GET /posts?viewer= answers likedByViewer true for a liked post', async () => {
+      const res = await request(`/?viewer=${viewerHex}`, 'GET');
+      expect(res.status).toBe(200);
+      const posts = res.data as Array<Record<string, unknown>>;
+      const liked = posts.find(p => p['id'] === likedPostId);
+      expect(liked).toBeDefined();
+      expect(liked!['likedByViewer']).toBe(true);
+    });
+
+    it('GET /posts?viewer= answers likedByViewer false for an unliked post', async () => {
+      const res = await request(`/?viewer=${viewerHex}`, 'GET');
+      expect(res.status).toBe(200);
+      const posts = res.data as Array<Record<string, unknown>>;
+      const unliked = posts.find(p => p['id'] === unlikedPostId);
+      expect(unliked).toBeDefined();
+      expect(unliked!['likedByViewer']).toBe(false);
+    });
+
+    it('GET /posts without viewer answers likedByViewer null', async () => {
+      const res = await request('/', 'GET');
+      expect(res.status).toBe(200);
+      const posts = res.data as Array<Record<string, unknown>>;
+      const post = posts.find(p => p['id'] === likedPostId);
+      expect(post).toBeDefined();
+      expect(post!['likedByViewer']).toBeNull();
+    });
+
+    it('GET /posts/:id?viewer= answers likedByViewer true', async () => {
+      const res = await request(`/${likedPostId}?viewer=${viewerHex}`, 'GET');
+      expect(res.status).toBe(200);
+      const body = res.data as Record<string, unknown>;
+      expect(body['likedByViewer']).toBe(true);
+    });
+
+    it('GET /posts?viewer=<bad> returns 400', async () => {
+      const res = await request('/?viewer=tooshort', 'GET');
+      expect(res.status).toBe(400);
+      const body = res.data as Record<string, unknown>;
+      expect(body['error']).toContain('viewer must be a 64-character hex string');
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // thread counts
+  // -----------------------------------------------------------------------
+
+  describe('thread pagination and counts', () => {
+    let rootId: string;
+    let childId: string;
+    let grandchildId: string;
+    let withdrawnRootId: string;
+    let withdrawnChildId: string;
+
+    beforeAll(() => {
+      const keys = generateKeyPairSync('ed25519');
+      const raw = keys.publicKey.export({ type: 'spki', format: 'der' }) as Buffer;
+      const author = new Uint8Array(raw.subarray(raw.length - 32));
+
+      const c0 = makePostCommit(author, 'thread root', { parentRefs: [] });
+      rootId = fixturePostId(c0);
+      insertPost(rootId, c0, 'thread root');
+      confirmPost(rootId, 20, 0);
+
+      const c1 = makePostCommit(author, 'thread child', { parentRefs: [rootId] });
+      childId = fixturePostId(c1);
+      insertPost(childId, c1, 'thread child');
+      confirmPost(childId, 21, 0);
+
+      const c2 = makePostCommit(author, 'thread grandchild', { parentRefs: [childId] });
+      grandchildId = fixturePostId(c2);
+      insertPost(grandchildId, c2, 'thread grandchild');
+      confirmPost(grandchildId, 22, 0);
+
+      // A withdrawn root for the empty-thread test
+      const cw = makePostCommit(author, 'withdrawn root', { parentRefs: [] });
+      withdrawnRootId = fixturePostId(cw);
+      insertPost(withdrawnRootId, cw, 'withdrawn root');
+      confirmPost(withdrawnRootId, 23, 0);
+      withdrawPost(withdrawnRootId, 24);
+
+      const cwc = makePostCommit(author, 'withdrawn child', { parentRefs: [withdrawnRootId] });
+      withdrawnChildId = fixturePostId(cwc);
+      insertPost(withdrawnChildId, cwc, 'withdrawn child');
+      confirmPost(withdrawnChildId, 23, 1);
+    });
+
+    it('thread?limit=1 on grandchild: one ancestor row, ancestorCount 2', async () => {
+      const res = await request(`/${grandchildId}/thread?limit=1`, 'GET');
+      expect(res.status).toBe(200);
+      const body = res.data as Record<string, unknown>;
+      expect((body['ancestors'] as unknown[]).length).toBe(1);
+      expect(body['ancestorCount']).toBe(2);
+    });
+
+    it('thread descendants with offset=1 skips the first', async () => {
+      const res = await request(`/${rootId}/thread?limit=1&offset=1`, 'GET');
+      expect(res.status).toBe(200);
+      const body = res.data as Record<string, unknown>;
+      const descs = body['descendants'] as Array<Record<string, unknown>>;
+      expect(descs.length).toBe(1);
+      expect(body['descendantCount']).toBe(2);
+    });
+
+    it('thread on a withdrawn subject: both lists empty, both counts 0', async () => {
+      const res = await request(`/${withdrawnRootId}/thread`, 'GET');
+      expect(res.status).toBe(200);
+      const body = res.data as Record<string, unknown>;
+      expect(body['ancestors']).toEqual([]);
+      expect(body['ancestorCount']).toBe(0);
+      expect(body['descendants']).toEqual([]);
+      expect(body['descendantCount']).toBe(0);
     });
   });
 });
