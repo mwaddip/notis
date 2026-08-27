@@ -1,6 +1,6 @@
 import type { PostType, Stump } from '@dagsocial/types';
 import type { PostStatus, StoredPost, PrunedTombstone } from '../store/posts.js';
-import { isLivePost, isStump, isPrunedTombstone } from '../store/posts.js';
+import { isStoredPost, isStump, isPrunedTombstone } from '../store/posts.js';
 
 // ---------------------------------------------------------------------------
 // Dependencies
@@ -58,10 +58,17 @@ export interface PrunedJson {
   compactedAtBlockHeight: number;
 }
 
+export interface WithdrawnJson {
+  kind: 'withdrawn';
+  id: string;
+  author: string;
+  withdrawnAtHeight: number;
+}
+
 export interface ThreadJson {
-  post: PostJson | StumpJson | PrunedJson | null;
-  ancestors: PostJson[];
-  descendants: PostJson[];
+  post: PostJson | StumpJson | PrunedJson | WithdrawnJson | null;
+  ancestors: Array<PostJson | WithdrawnJson>;
+  descendants: Array<PostJson | WithdrawnJson>;
 }
 
 // ---------------------------------------------------------------------------
@@ -113,6 +120,15 @@ export function prunedToJson(tombstone: PrunedTombstone): PrunedJson {
   };
 }
 
+export function withdrawnToJson(post: StoredPost): WithdrawnJson {
+  return {
+    kind: 'withdrawn',
+    id: post.id,
+    author: Buffer.from(post.author).toString('hex'),
+    withdrawnAtHeight: post.withdrawnAtHeight!,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
@@ -125,10 +141,18 @@ export class FeedService {
     return this.deps.getBlockCreatedAt(post.blockHeight);
   }
 
-  getPost(id: string): PostJson | StumpJson | PrunedJson | null {
+  private storedPostToJson(post: StoredPost): PostJson | WithdrawnJson {
+    if (post.withdrawnAtHeight !== null) return withdrawnToJson(post);
+    const likeCount = this.deps.getLikeRecordCount(post.id);
+    const likers = this.deps.getLikersForPost(post.id);
+    return postToJson(post, likeCount, likers, this.blockCreatedAtFor(post));
+  }
+
+  getPost(id: string): PostJson | StumpJson | PrunedJson | WithdrawnJson | null {
     const result = this.deps.getPost(id);
     if (!result) return null;
-    if (isLivePost(result)) {
+    if (isStoredPost(result)) {
+      if (result.withdrawnAtHeight !== null) return withdrawnToJson(result);
       const likeCount = this.deps.getLikeRecordCount(id);
       const likers = this.deps.getLikersForPost(id);
       return postToJson(result, likeCount, likers, this.blockCreatedAtFor(result));
@@ -142,22 +166,22 @@ export class FeedService {
     author?: Uint8Array;
     limit?: number;
     offset?: number;
-  }): PostJson[] {
+  }): Array<PostJson | WithdrawnJson> {
     const limit = Math.min(opts.limit ?? 50, 100);
     const offset = opts.offset ?? 0;
     const posts = this.deps.queryPosts({ author: opts.author, limit, offset });
-    return posts.map((post) => {
-      const postId = post.id;
-      const likeCount = this.deps.getLikeRecordCount(postId);
-      const likers = this.deps.getLikersForPost(postId);
-      return postToJson(post, likeCount, likers, this.blockCreatedAtFor(post));
-    });
+    return posts.map((post) => this.storedPostToJson(post));
   }
 
   getThread(id: string): ThreadJson | null {
     const result = this.deps.getPost(id);
     if (!result) return null;
 
+    if (isStoredPost(result)) {
+      if (result.withdrawnAtHeight !== null) {
+        return { post: withdrawnToJson(result), ancestors: [], descendants: [] };
+      }
+    }
     if (isStump(result)) {
       return { post: stumpToJson(result), ancestors: [], descendants: [] };
     }
@@ -171,20 +195,10 @@ export class FeedService {
     const postJson = postToJson(post, likeCount, likers, this.blockCreatedAtFor(post));
 
     const ancestorPosts = this.deps.getAncestors(id);
-    const ancestors = ancestorPosts.map((p) => {
-      const pid = p.id;
-      const c = this.deps.getLikeRecordCount(pid);
-      const l = this.deps.getLikersForPost(pid);
-      return postToJson(p, c, l, this.blockCreatedAtFor(p));
-    });
+    const ancestors = ancestorPosts.map((p) => this.storedPostToJson(p));
 
     const descendantPosts = this.deps.getSubtree(id);
-    const descendants = descendantPosts.map((p) => {
-      const pid = p.id;
-      const c = this.deps.getLikeRecordCount(pid);
-      const l = this.deps.getLikersForPost(pid);
-      return postToJson(p, c, l, this.blockCreatedAtFor(p));
-    });
+    const descendants = descendantPosts.map((p) => this.storedPostToJson(p));
 
     return { post: postJson, ancestors, descendants };
   }

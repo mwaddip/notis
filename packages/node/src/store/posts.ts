@@ -16,6 +16,7 @@ interface PostRow {
   status: string;
   block_height: number | null;
   block_index: number | null;
+  withdrawn_at_height: number | null;
 }
 
 interface StumpRow {
@@ -52,6 +53,7 @@ export interface StoredPost {
   status: PostStatus;
   blockHeight: number | null;
   blockIndex: number | null;
+  withdrawnAtHeight: number | null;
 }
 
 export interface PrunedTombstone {
@@ -73,10 +75,15 @@ export interface DeletedPostRow {
   status: PostStatus;
   blockHeight: number | null;
   blockIndex: number | null;
+  withdrawnAtHeight: number | null;
+}
+
+export function isStoredPost(x: StoredPost | Stump | PrunedTombstone | null): x is StoredPost {
+  return x !== null && 'status' in x && !('rootPostHash' in x) && !('kind' in x);
 }
 
 export function isLivePost(x: StoredPost | Stump | PrunedTombstone | null): x is StoredPost {
-  return x !== null && 'status' in x && !('rootPostHash' in x) && !('kind' in x);
+  return isStoredPost(x) && x.withdrawnAtHeight === null;
 }
 
 export function isStump(x: StoredPost | Stump | PrunedTombstone | null): x is Stump {
@@ -103,6 +110,7 @@ function rowToPost(row: PostRow): StoredPost {
     status: row.status as PostStatus,
     blockHeight: row.block_height,
     blockIndex: row.block_index,
+    withdrawnAtHeight: row.withdrawn_at_height,
   };
 }
 
@@ -153,7 +161,7 @@ export function insertPost(postId: PostId, commit: PostCommit, content: string |
 export function setPostBody(postId: string, content: string): boolean {
   const result = getDb()
     .prepare(
-      `UPDATE dag_posts SET content = ? WHERE id = ? AND content IS NULL`,
+      `UPDATE dag_posts SET content = ? WHERE id = ? AND content IS NULL AND withdrawn_at_height IS NULL`,
     )
     .run(content, postId);
   return result.changes > 0;
@@ -241,7 +249,7 @@ export function getMissingBodies(limit: number): Array<{ id: string; contentHash
   const rows = getDb()
     .prepare(
       `SELECT id, content_hash FROM dag_posts
-       WHERE content IS NULL
+       WHERE content IS NULL AND withdrawn_at_height IS NULL
        ORDER BY block_height DESC, block_index DESC
        LIMIT ?`,
     )
@@ -253,7 +261,7 @@ export function getPlaceholdersAt(height: number): Array<{ id: string; contentHa
   const rows = getDb()
     .prepare(
       `SELECT id, content_hash FROM dag_posts
-       WHERE block_height = ? AND content IS NULL`,
+       WHERE block_height = ? AND content IS NULL AND withdrawn_at_height IS NULL`,
     )
     .all(height) as Array<{ id: string; content_hash: string }>;
   return rows.map(r => ({ id: r.id, contentHash: r.content_hash }));
@@ -305,6 +313,22 @@ export function confirmPost(postId: string, blockHeight: number, blockIndex: num
     .run(blockHeight, blockIndex, postId);
 }
 
+export function withdrawPost(postId: string, height: number): void {
+  getDb()
+    .prepare(
+      `UPDATE dag_posts SET content = NULL, withdrawn_at_height = ? WHERE id = ?`,
+    )
+    .run(height, postId);
+}
+
+export function clearWithdrawal(postId: string, content: string | null): void {
+  getDb()
+    .prepare(
+      `UPDATE dag_posts SET content = ?, withdrawn_at_height = NULL WHERE id = ?`,
+    )
+    .run(content, postId);
+}
+
 export function unconfirmPost(postId: string): void {
   getDb()
     .prepare(
@@ -349,6 +373,7 @@ export function deletePostRows(ids: string[]): DeletedPostRow[] {
       status: row.status as PostStatus,
       blockHeight: row.block_height,
       blockIndex: row.block_index,
+      withdrawnAtHeight: row.withdrawn_at_height,
     });
 
     deleteRefs.run(id);
@@ -363,8 +388,9 @@ export function restorePostRows(rows: DeletedPostRow[]): void {
   const insertPostStmt = db.prepare(
     `INSERT INTO dag_posts
        (id, content_hash, content, author, parent_refs,
-        protocol_version, type, status, block_height, block_index)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        protocol_version, type, status, block_height, block_index,
+        withdrawn_at_height)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   const insertRef = db.prepare(
     'INSERT OR IGNORE INTO dag_parent_refs (post_id, parent_id) VALUES (?, ?)',
@@ -382,6 +408,7 @@ export function restorePostRows(rows: DeletedPostRow[]): void {
       row.status,
       row.blockHeight,
       row.blockIndex,
+      row.withdrawnAtHeight,
     );
     for (const parentId of row.parentRefs) {
       insertRef.run(row.id, parentId);

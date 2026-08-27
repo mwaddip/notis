@@ -90,7 +90,7 @@ function settle(
     height,
     emission,
     s.config.config.creditMinerRewardDelay,
-    { fees: opts.fees ?? 0n, rent: 0n, actors: opts.actors ?? 0, feeBoxIds: [], invites: [], markers: [], prunes: [] },
+    { fees: opts.fees ?? 0n, rent: 0n, actors: opts.actors ?? 0, feeBoxIds: [], invites: [], markers: [], postLockSettlements: [] },
     makeTestIdentity().userId,
   );
   if ('error' in built) return false;

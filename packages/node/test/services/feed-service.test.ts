@@ -177,14 +177,14 @@ describe('feed-service', () => {
     confirmPost(liveRootId, 42, 0);
 
     const listed = feedService.queryPosts({ author: authorId });
-    expect(listed.find((p) => p.id === liveRootId)!.status).toBe('confirmed');
-    expect(listed.find((p) => p.id === liveReplyId)!.status).toBe('pending');
+    expect((listed.find((p) => p.id === liveRootId) as PostJson).status).toBe('confirmed');
+    expect((listed.find((p) => p.id === liveReplyId) as PostJson).status).toBe('pending');
 
     const thread = feedService.getThread(liveReplyId)!;
     expect((thread.post as PostJson).status).toBe('pending');
-    expect(thread.ancestors.map((p) => p.status)).toEqual(['confirmed']);
+    expect(thread.ancestors.map((p) => (p as PostJson).status)).toEqual(['confirmed']);
 
     const rootThread = feedService.getThread(liveRootId)!;
-    expect(rootThread.descendants.map((p) => p.status)).toEqual(['pending']);
+    expect(rootThread.descendants.map((p) => (p as PostJson).status)).toEqual(['pending']);
   });
 });

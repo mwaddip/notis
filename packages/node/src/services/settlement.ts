@@ -83,7 +83,7 @@ import type {
 } from '@dagsocial/types';
 import { splitCoinbase } from './coinbase-split.js';
 import type { DecayPlan } from './decay.js';
-import type { PruneSettlement } from './settle-prune-utxo.js';
+import type { PostLockSettlement } from './settle-post-lock-utxo.js';
 
 // ---------------------------------------------------------------------------
 // The body a settlement is derived from
@@ -126,7 +126,7 @@ export interface SettlementBody {
    */
   markers: Array<{ id: string; author: Uint8Array; value: bigint }>;
   /** What each of the block's prune transactions owes, in committed order. */
-  prunes: PruneSettlement[];
+  postLockSettlements: PostLockSettlement[];
 }
 
 /**
@@ -379,9 +379,9 @@ function derive(
 
   // 3f. The prune settlements, in committed transaction order. The refunds recirculate;
   // the pruner's own locks are the fourth burn and go to the pool.
-  for (const prune of body.prunes) {
-    for (const id of prune.lockBoxIds) inputs.push(id);
-    poolSink += prune.toPool;
+  for (const plan of body.postLockSettlements) {
+    for (const id of plan.lockBoxIds) inputs.push(id);
+    poolSink += plan.toPool;
   }
 
   // ---- 4. The karma pool, settled once ----
@@ -471,8 +471,8 @@ function derive(
       });
     }
   }
-  for (const prune of body.prunes) {
-    for (const refund of prune.refunds) {
+  for (const plan of body.postLockSettlements) {
+    for (const refund of plan.refunds) {
       outputs.push({ boxType: 'karma', value: refund.amount, owner: refund.owner, nonActivity: true, createdAtBlock: height });
     }
   }
@@ -619,9 +619,10 @@ export function checkSettlement(
 
   // ---- 2. Nothing but the transaction ----
   //
-  // A settlement carries no signature, no like and no post. Each would be bytes
-  // inside `utxoTxRoot` that no rule reads, which is the malleability
-  // `checkTxEnvelope`'s closed key set refuses for user transactions.
+  // A settlement carries no signature, no like, no post, no prune and no
+  // withdrawal. Each would be bytes inside `utxoTxRoot` that no rule reads,
+  // which is the malleability `checkTxEnvelope`'s closed key set refuses for
+  // user transactions.
   if (Object.keys(settlement.signatures ?? {}).length !== 0) {
     return { valid: false, error: 'settlement carries a signature; no key authorizes it' };
   }
@@ -633,6 +634,9 @@ export function checkSettlement(
   }
   if (settlement.prune !== undefined) {
     return { valid: false, error: 'settlement carries a prune' };
+  }
+  if (settlement.postWithdraw !== undefined) {
+    return { valid: false, error: 'settlement carries a postWithdraw' };
   }
   if (settlement.protocolVersion !== PROTOCOL_VERSION) {
     return {
@@ -862,7 +866,7 @@ export function contributeToBody(body: SettlementBody, outputs: AnyBox[], isRent
 
 /** A body with nothing in it yet. */
 export function emptyBody(): SettlementBody {
-  return { fees: 0n, rent: 0n, actors: 0, feeBoxIds: [], invites: [], markers: [], prunes: [] };
+  return { fees: 0n, rent: 0n, actors: 0, feeBoxIds: [], invites: [], markers: [], postLockSettlements: [] };
 }
 
 /**

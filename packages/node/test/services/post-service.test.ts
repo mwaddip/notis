@@ -29,6 +29,7 @@ function mockDeps(overrides?: Partial<PostServiceDeps>): PostServiceDeps {
       id, content: 'hello', contentHash: Buffer.from(computeContentHash('hello')).toString('hex'),
       author: new Uint8Array(32), parentRefs: [], protocolVersion: PROTOCOL_VERSION,
       type: 'regular' as const, status: 'confirmed' as const, blockHeight: null, blockIndex: null,
+      withdrawnAtHeight: null,
     }),
     insertPost: () => {},
     getCurrentHeight: () => 100,

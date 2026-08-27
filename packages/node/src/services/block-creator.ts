@@ -58,7 +58,7 @@ import {
   type SettlementDeps,
 } from './settlement.js';
 import { deriveKarmaDecay } from './decay.js';
-import { planPruneSettlement } from './settle-prune-utxo.js';
+import { planPostLockSettlement } from './settle-post-lock-utxo.js';
 import type { DecayDeps, DecayPlan } from './decay.js';
 import type { KarmaBox, VouchEscrowBox } from '@dagsocial/types';
 import { materializeOutput } from './utxo-engine.js';
@@ -87,6 +87,8 @@ import {
   getTreasuryBox,
   getKarmaPoolBox,
   putIdentityRecord,
+  getLikeRecordCount,
+  getPostLockBox,
 } from '../store/index.js';
 
 // ---------------------------------------------------------------------------
@@ -934,6 +936,10 @@ export function predictSettlementBody(
 
   const body = emptyBody();
   const embedded: EmbeddedTx[] = [];
+  const bodyLikesPerPost = new Map<string, number>();
+  const pendingWithdrawals: Array<{ postId: string; author: Uint8Array }> = [];
+  const pendingPrunes: Array<{ rootPostHash: string; author: Uint8Array; subtreePostIds: string[] }> = [];
+
   for (let i = 0; i < txs.length; i++) {
     const tx = txs[i]!;
     const inputBoxes = (tx.inputs ?? [])
@@ -943,15 +949,46 @@ export function predictSettlementBody(
     const isRent = isCreditSideTx(tx) && Object.keys(tx.signatures).length === 0;
     contributeToBody(body, materialized[i]!, isRent);
 
-    // A prune transaction's settlement is derived from its payload and its
-    // first input's owner. On the transaction rail, the prune's author is
-    // `inputKarma.owner`, resolved here from the same inputs the fill selected.
+    if (tx.likeTarget !== undefined) {
+      bodyLikesPerPost.set(tx.likeTarget, (bodyLikesPerPost.get(tx.likeTarget) ?? 0) + 1);
+    }
+
+    if (tx.postWithdraw && inputBoxes.length > 0) {
+      const author = (inputBoxes[0] as KarmaBox).owner;
+      pendingWithdrawals.push({ postId: tx.postWithdraw.postId, author });
+    }
+
     if (tx.prune && inputBoxes.length > 0) {
       const author = (inputBoxes[0] as KarmaBox).owner;
-      body.prunes.push(
-        planPruneSettlement(tx.prune.rootPostHash, author, tx.prune.subtreePostIds),
-      );
+      pendingPrunes.push({ rootPostHash: tx.prune.rootPostHash, author, subtreePostIds: tx.prune.subtreePostIds });
     }
+  }
+
+  // Settlement plans: withdrawals first (matching the applier's phase order),
+  // then prunes. The claimed set carries across both so a prune skips locks
+  // already claimed by a withdrawal.
+  const claimedPostLockIds = new Set<string>();
+
+  for (const w of pendingWithdrawals) {
+    const likeCounts = new Map<string, number>();
+    likeCounts.set(w.postId, getLikeRecordCount(w.postId) + (bodyLikesPerPost.get(w.postId) ?? 0));
+    const plan = planPostLockSettlement(w.postId, w.author, [w.postId], likeCounts);
+    body.postLockSettlements.push(plan);
+    for (const id of plan.lockBoxIds) claimedPostLockIds.add(id);
+  }
+
+  for (const p of pendingPrunes) {
+    const settlablePostIds = p.subtreePostIds.filter((id: string) => {
+      const lockBox = getPostLockBox(id);
+      return !lockBox || !lockBox.id || !claimedPostLockIds.has(lockBox.id);
+    });
+    const likeCounts = new Map<string, number>();
+    for (const postId of settlablePostIds) {
+      likeCounts.set(postId, getLikeRecordCount(postId) + (bodyLikesPerPost.get(postId) ?? 0));
+    }
+    body.postLockSettlements.push(
+      planPostLockSettlement(p.rootPostHash, p.author, settlablePostIds, likeCounts),
+    );
   }
 
   body.actors = countKarmaActors(embedded, validator);

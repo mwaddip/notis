@@ -226,6 +226,24 @@ render "not yet available", not an error. **Liveness is the typed guard `isLiveP
 `null`; every site that must distinguish a post from a stump or tombstone narrows through the
 guard (Post transactions → the placeholder rules).
 
+⛔ **A WITHDRAWN POST IS ARM 1 AND IS NOT LIVE, AND THOSE ARE TWO QUESTIONS.** It keeps its
+`dag_posts` row — no fourth arm — with `content` `null` and `withdrawn_at_height` set. The
+guards split accordingly:
+
+- **`isStoredPost`** — structural: a `dag_posts` row rather than a stump or a tombstone.
+- **`isLivePost`** = `isStoredPost(x) && x.withdrawnAtHeight === null` — the liveness question,
+  and the one the like arm asks at block application.
+
+⚠ **`content: null` alone cannot tell a placeholder from a withdrawal**, and the difference is
+the whole of the guard: a placeholder is *waiting for* its body and a withdrawn post must never
+receive one. Every read that distinguishes them reads the **marker**, never the null.
+
+**The JSON projection has a fourth arm where the store has three.** `feedService` answers
+`WithdrawnJson { kind: 'withdrawn', id, author, withdrawnAtHeight }` — carrying **no content
+field** — for the subject of a thread, for its ancestors and descendants, and in the feed.
+A withdrawn post that answered `404` would be indistinguishable from an id the node never heard
+of, and one projected as a live post with `content: null` would render as a body still loading.
+
 **Implemented 2026-08-08** (`stumpToJson`, beside `postToJson`). What it
 replaced: the raw `Stump` went out as-is, so `res.json` serialized `authorId`
 — a `Uint8Array` — index-keyed as `{"0":…,"1":…}`, and `getThread` cast the raw
@@ -400,6 +418,7 @@ invites, vouches, credits, prune).
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
 | `POST` | `/posts/:id/prune` | `{ tx }` — a prune transaction, JSON-encoded like every other route's (`jsonToTx`) | `{ status: "submitted", txId: hex, postId: hex, replyCount: number }` (201) | 400 if the payload is absent, the root is unconfirmed or confirmed in the current block, the subtree set or the Merkle root mismatches, or `validateTx` refuses it; 404 if the post is unknown; 409 on a pending-spend conflict; 503 if the pool is full |
+| `POST` | `/posts/:id/withdraw` | `{ tx }` — a withdrawal transaction, JSON-encoded like every other route's (`jsonToTx`) | `{ status: "submitted", txId: hex, postId: hex }` (201) | 400 if the payload is absent, the post is unconfirmed or confirmed in the current block, the signer is not its author, the post is already withdrawn, or `validateTx` refuses it; 404 if the post is unknown; 409 on a pending-spend conflict; 503 if the pool is full |
 
 **Prune flow:**
 
@@ -1275,7 +1294,14 @@ The checks:
    own key. The clause closes the class structurally rather than trusting
    either decoder's sanitizing to stay as it is.
 2. **Closed key set**: `inputs`, `outputs`, `signatures`, `protocolVersion`,
-   optionally `likeTarget`, `post` and `prune`. Any other key rejects.
+   optionally `likeTarget`, `post`, `prune` and `postWithdraw`. Any other key
+   rejects.
+   > ⛔ **A NEW PAYLOAD FIELD IS TWO ENTRIES HERE, NOT ONE.** `decodeTx` writes
+   > every field unconditionally, holding `undefined` where the tag said absent,
+   > so a field must also join the set of keys **permitted to hold `undefined`**.
+   > The allowed set alone still rejects every transaction that is *not* of the
+   > new kind — which is the whole embedded path — and the failure names the new
+   > key, not the missing exemption.
    > **`prune`'s domain is `verifyPruneCommitDomains`'s** (VALIDATION_INTERFACE →
    > `verifyPruneCommitDomains`), the same obligation `post` carries: `txIdBytes` writes the
    > payload through `pruneFieldBytes`, whose fixed-width writers throw outside their domain, so
@@ -1570,11 +1596,11 @@ There is **no other legal bond or invite shape**. In particular:
   who may prune a root, so a node holding no DAG content reaches the same verdict.
 - ⛔ **The maturity bind: a root confirmed in the applying block is NOT prunable.**
   `block_topology.block_height` must be **strictly less** than the applying
-  height. §8c plans the settlement before §11 materializes the block's outputs,
-  so without this a block carrying a post and a prune of that post reads no
-  `PostLockBox`, settles `0` to the pool, and leaves an orphaned lock — **a free
-  prune**. Reachable through the ordinary API, so the intent route enforces the
-  same rule at submit.
+  height. Producer-independent and decidable from committed state alone, and it
+  forbids nothing legitimate — an author who changes their mind waits one block
+  and prunes properly, paying the lock. Reachable through the ordinary API, so
+  the intent route enforces the same rule at submit. **The same bind governs
+  withdrawal.**
 - **`verifyPruneCommitDomains` is the single statement of the payload's
   structural domain** — `rootPostHash` hex-32, `subtreePostIds` an array of
   hex-32 **with no repeated id**, `subtreeMerkleRoot` exactly 32 bytes. It lives
@@ -1586,6 +1612,76 @@ There is **no other legal bond or invite shape**. In particular:
   `net.broadcastTx` — so a prune gossips to every peer's pool and any miner may
   include it. **A prune submitted to a node that never mines reaches consensus.**
 
+
+### Withdrawal transactions
+
+- **A withdrawal empties one post and leaves its subtree intact.** It is a karma
+  **self-transfer** — all-karma inputs sharing one owner, exactly one karma
+  output, total output equal to total input — carrying a `PostWithdrawCommit`
+  payload (`postId`; TYPES_INTERFACE → Layout — PostWithdrawCommit). It rides
+  `utxoTxIds` with every other transaction.
+- ⛔ **This is not deletion and is never described as one.** The `postId`, the
+  `parentRefs` and the `block_topology` row all survive, so every descendant
+  keeps its anchor. Any peer that archived the content before withdrawal can
+  republish it; what the protocol guarantees is that honest nodes drop the bytes,
+  that they stop propagating, and that the author's intent is attributable.
+  **User-facing wording is "withdrawn by author", never "deleted".**
+- ⛔ **`postWithdraw` is an IMPLICATION, never a biconditional**, for prune's
+  reason: a withdrawal emits no observable output, so its right side is an
+  ordinary conserving self-transfer which must stay legal. `postWithdraw` present
+  ⟹ the shape above **and** `inputKarma.owner` is the post's `block_topology`
+  author **and** `verifyPostWithdrawCommitDomains(tx.postWithdraw)` passes.
+- **Authorship is the transaction's own** — the payload sits inside the
+  `computeTxId` preimage, so no separate `authorId` or signature exists.
+- ⛔ **A withdrawn post cannot be liked.** `isLivePost` is
+  `isStoredPost(x) && x.withdrawnAtHeight === null`, and every consumer narrows
+  through it — including the like arm at block application, which is a consensus
+  path. `isStoredPost` answers the separate, purely structural question.
+- ⛔ **A post may be withdrawn once.** The marker already being set, or a second
+  withdrawal of the same post earlier in the same block, rejects the block. The
+  state that would refuse the second is written by the settlement, which runs
+  after, so an in-block set is required.
+- **The store keeps the row and empties it**: `content` to `NULL`,
+  `withdrawn_at_height` to the applying height. ⚠ **`content IS NULL` alone means
+  *placeholder*** — a body not yet backfilled — so the marker is what the three
+  body queries (`getMissingBodies`, `getPlaceholdersAt`, `setPostBody`) read to
+  tell the two apart. Without it a withdrawn post re-enters the backfill queue and
+  a peer still holding the bytes refills it.
+- **The route submits, validates and broadcasts like every sibling** —
+  `POST /posts/:id/withdraw`, then `validateTx`, `admitTx`, `net.broadcastTx`.
+  **A withdrawal submitted to a node that never mines reaches consensus.**
+
+### The post-lock settlement phase
+
+- **One phase settles every `PostLockBox` a block consumes**, after the
+  transaction apply loop and before the settlement transaction is built.
+- ⛔ **It runs AFTER the loop, and that is load-bearing.** The like arm rejects a
+  like on a stumped post, so a phase running before the loop would make a block
+  carrying like(P) and prune(P) invalid — two unrelated users' individually valid
+  transactions that no producer could combine into one block. After the loop the
+  like arm sees a live post and the pair is valid, with no producer-side filter.
+- ⛔ **Withdrawals settle first, then prunes, each in committed transaction
+  order.** The order is load-bearing: a reply withdrawn by its own author in the
+  block its thread is pruned must **forfeit** its bond, and the reverse order
+  refunds that bond and then finds no lock to forfeit — content withdrawn and
+  stake returned, which is the churn the bond exists to price.
+- ⛔ **One claimed set of lock-box ids carries across both passes.** A withdrawal
+  and a prune both naming one lock would put the same box id in the settlement's
+  input list twice, which `validateTx` refuses as a duplicate input. The prune
+  pass skips a claimed lock. ⚠ **The exclusion applies to the settlement only** —
+  a prune's topology-set and Merkle-root checks verify against its **full**
+  `subtreePostIds`.
+- **The vest is folded into the plan.** A lock being settled releases what this
+  block's likes earned before the remainder is burned, as a refund to the lock's
+  owner with the pool figure reduced by the same amount — no new leg, no
+  intermediate box. Without it the vest is lost whenever a like and a settlement
+  share a block, which would make a stated path-independence depend on how a
+  producer packs blocks.
+- ⛔ **The plan is a pure function of its inputs.** It is derived twice — by the
+  creator from pre-body state and by the applier from post-body state — so the
+  lifetime like count is a **parameter**, stated as *the count as of after this
+  block's likes apply*. A plan that read the count itself would disagree between
+  the two callers with no compiler signal.
 
 ### Bond transition rules
 
@@ -2643,11 +2739,17 @@ the settlement transaction → lifetime-like counters → post-lock vesting → 
 marker inputs follow committed transaction order — every order is one the block fixes.
 All arithmetic `bigint`/integer — a float intermediate is a consensus fork.
 
-**Same-block exclusion:** a block may not carry both a like on post `P` and a prune covering
-`P`. §8c settles prunes before §11 applies embedded transactions, so the like finds its target
-stumped, is invalid, and the whole block is rejected — **and that holds however the producer
-orders the two transactions in the body**, because the DAG effect is not in the §11 loop. Producers must not
-assemble such a block; the rule makes the outcome deterministic when one does.
+**A like and a settlement of the same post SHARE a block.** A block may carry a like on post `P`
+together with a prune covering `P` or a withdrawal of `P`. The post-lock settlement phase runs
+**after** the transaction loop, so the like arm finds `P` live, the like applies and counts, and
+the phase then stumps or empties it. ⛔ **The two transactions come from two unrelated users and
+each is independently valid**, so any rule rejecting the pair would make a block a producer
+cannot assemble out of transactions it was handed. **The outcome does not depend on how the
+producer orders them in the body** — the DAG effect is a phase, not a per-transaction step.
+
+⚠ **A like on a post settled in an EARLIER block still rejects the block.** `isLivePost` is
+false for a stump, a tombstone and a withdrawn post alike, and that rule is unchanged: it is
+what stops a dropped like-record reopening duplicate likes (ARCHITECTURE → Likes).
 
 **Blocks with no likes** run neither loop — no record writes, no like leg in the
 settlement, no vesting. An author's carry box sits unchanged (and in the `stateRoot`,
@@ -3203,6 +3305,13 @@ BlockJournal {
                                    // only place a pruned body survives, and only until this
                                    // journal is purged (ARCHITECTURE → Subtree pruning)
   insertedStumps: Stump[]          // prune settlement's stump rows — inverse: deleteStump
+  withdrawnPosts: Array<{ id: string, content: string | null }>
+                                   // withdrawal's emptied dag_posts rows — inverse: restore the
+                                   // content and clear withdrawn_at_height. ⛔ `content` is
+                                   // `string | null` because a post may be withdrawn while it is
+                                   // still a PLACEHOLDER, and the inverse of that is a row with
+                                   // null content AND a clear marker. A withdrawal MUTATES a row
+                                   // rather than deleting it, so `deletedPosts` cannot carry it
 }
 ```
 The field names are the `journal_cbor` keys: the journal is the node's local format, with no

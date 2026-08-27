@@ -127,4 +127,15 @@ describe('jsonToTx box value validation (audit L-11, Spec B P0)', () => {
     expect(out.value).toBe(5n);
     expect(out.originalValue).toBe(5n);
   });
+
+  it('a JSON body carrying postWithdraw survives jsonToTx with the payload intact', () => {
+    const postId = 'ff'.repeat(32);
+    const raw = {
+      ...rawTx(100),
+      postWithdraw: { postId },
+    };
+    const tx = jsonToTx(raw);
+    expect(tx.postWithdraw).toBeDefined();
+    expect(tx.postWithdraw!.postId).toBe(postId);
+  });
 });

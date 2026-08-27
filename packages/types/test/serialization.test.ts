@@ -247,20 +247,20 @@ describe('positional serialization', () => {
       expect(computeTxId(decodeTx(encodeTx(signed)))).toBe(computeTxId(signed));
     });
 
-    it('no field name reaches the bytes, and the whole transaction is 44 bytes', () => {
+    it('no field name reaches the bytes, and the whole transaction is 45 bytes', () => {
       // Hand-derived from the layout: arr(inputs)=1, arr(outputs)=1+37 for the
       // karma candidate, vlqU(protocolVersion)=1, opt(likeTarget)=1,
-      // opt(post)=1, opt(prune)=1, arr(signatures)=1.
+      // opt(post)=1, opt(prune)=1, opt(postWithdraw)=1, arr(signatures)=1.
       //
       // 37, not 35: the shared prefix is three fields, and this candidate's
       // `createdAtBlock` of 300 takes two VLQ groups.
       //
       // ⚠ **Every `opt` costs its tag byte whether or not the field is there**, so
-      // a seventh field would show up here as 45 even on a transaction that
+      // an eighth field would show up here as 46 even on a transaction that
       // carries none of it — which is why an optional field is inside every id,
       // not only the ids that use it.
       const bytes = encodeTx(makeTx());
-      expect(bytes.length).toBe(44);
+      expect(bytes.length).toBe(45);
       for (const name of ['inputs', 'outputs', 'signatures', 'protocolVersion', 'boxType', 'karma']) {
         expect(hex(bytes)).not.toContain(Buffer.from(name, 'utf8').toString('hex'));
       }
@@ -658,7 +658,7 @@ describe('positional serialization', () => {
       // them apart. The pins that decide are elsewhere: the BlockHeader pin above
       // for the header, and the frozen ids in `utxo.test.ts` for consensus. **Read
       // this one only as "the frame changed" — never as evidence about what.**
-      expect(hash(encodeOrderingBlock(makeOrderingBlock()))).toBe('b10312050e62fff03f2dfdbc8d99b33ba5060a007c2710dd1281cf03c1aecf49');
+      expect(hash(encodeOrderingBlock(makeOrderingBlock()))).toBe('042d2806e34dddeb0db5d1f2fea02b26c66cb49f146d824e5fe6a5681eeb3a24');
     });
 
     it('Post: the wire codec IS the payload preimage, with no tail at all', () => {

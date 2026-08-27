@@ -58,7 +58,7 @@ export function castLike(
   }
   // NODE_INTERFACE → Karma transition rules: a like targets a live post only.
   if (!isLivePost(post)) {
-    throw new ClientError('Cannot like a pruned post');
+    throw new ClientError('Cannot like a pruned or withdrawn post');
   }
 
   // ---- 3. Verify not already liked (DB + mempool) ----

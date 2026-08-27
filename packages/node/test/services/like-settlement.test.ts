@@ -888,7 +888,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
 
   it('revertBlock restores prune-deleted like-records (all three columns) and removes inserted ones', async () => {
     // The likeRecordDeletions inverse, seeded via direct store calls: the
-    // prune-time producer (settle-prune-utxo) is N3 — this pins the revert
+    // prune-time producer (settle-post-lock-utxo) is N3 — this pins the revert
     // machinery it will rely on. One journal carries BOTH inverse classes for
     // DIFFERENT records (the same-block exclusion only forbids them for the
     // same record).
@@ -918,6 +918,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
       ],
       deletedPosts: [],
       insertedStumps: [],
+      withdrawnPosts: [],
     });
 
     forkResolution.revertBlock(7);

@@ -6,8 +6,8 @@ import {
 } from '../mint-provenance.js';
 import { commitDecayClocks, deriveKarmaDecay } from './decay.js';
 import { hasActiveVouchEscrow } from '../store/utxo.js';
-import { planPruneSettlement } from './settle-prune-utxo.js';
-import type { PruneSettlement } from './settle-prune-utxo.js';
+import { planPostLockSettlement, computeVestAmount } from './settle-post-lock-utxo.js';
+import type { PostLockSettlement } from './settle-post-lock-utxo.js';
 import {
   CorruptChainStateError,
   MissingStoredBlockError,
@@ -35,7 +35,7 @@ import {
   contributeToBody,
   emptyBody,
 } from './settlement.js';
-import { postsOf, postIdsOf, prunesOf } from './block-posts.js';
+import { postsOf, postIdsOf, prunesOf, withdrawalsOf } from './block-posts.js';
 import { expectedTarget } from './difficulty.js';
 import {
   applyTx,
@@ -56,7 +56,9 @@ import {
   confirmPost,
   insertPost,
   deletePostRows,
+  withdrawPost,
   isLivePost,
+  isStoredPost,
   getCurrentHeight,
   createOrderingBlock as storeCreateOrderingBlock,
   getOrderingBlock,
@@ -86,6 +88,7 @@ import {
   recordAppliedUtxoTx,
   recordDeletedPosts,
   recordInsertedStump,
+  recordWithdrawnPost,
   insertBlockJournal,
   purgeOldJournals,
 } from '../store/journal.js';
@@ -100,7 +103,6 @@ import {
   MAX_REORG_DEPTH,
   GENESIS_PREV_BLOCK_HASH,
   PROTOCOL_VERSION,
-  POST_LOCK_UNLOCK_PER_LIKES,
   computeTxId,
   leafHash,
   buildMerkleRoot,
@@ -621,7 +623,7 @@ function applyMutationPhase(
 ): boolean {
   // What each of this block's prune entries owes, in prune-entry order. Filled
   // by §5 and consumed by §11a — the settlement pays every leg.
-  const prunePlans: PruneSettlement[] = [];
+  const postLockPlans: PostLockSettlement[] = [];
 
   // ⛔ **DECAY AND ESCROWS ARE DERIVED FROM PRE-BODY STATE, AND THEY HAVE
   // TO BE.** Decay is computed after decoding (the touched set comes from the
@@ -679,78 +681,6 @@ function applyMutationPhase(
       Buffer.from(post.author).toString('hex'),
       height,
     );
-  }
-
-  // 8c. Process prune transactions from this block.
-  //
-  // Authorship and the payload's integrity are the transaction's own: the prune
-  // transition arm verifies `inputKarma.owner` against the root's topology
-  // author, and the signature over `txId` covers the PruneCommit through
-  // `txIdBytes`. What remains here is the topology set, the Merkle root, the
-  // maturity bind, the UTXO settlement and the DAG effect.
-  const blockPrunes = prunesOf(block, getTopologyAuthorBytes);
-  for (const bp of blockPrunes) {
-    const { prune } = bp;
-
-    // Maturity bind: the root must have been confirmed in an earlier block.
-    // Without this a block carries a post and a prune of it, the plan reads
-    // `getPostLockBox` before `materializeOutput` has written the box, and
-    // the prune is free (NODE_INTERFACE → Prune transactions).
-    const rootHeight = getTopologyHeight(prune.rootPostHash);
-    if (rootHeight === null || rootHeight >= height) {
-      console.error(
-        `Block ${height}: prune root ${prune.rootPostHash} is not confirmed ` +
-        `in an earlier block (topology height ${rootHeight})`,
-      );
-      return false;
-    }
-
-    // 3. Verify postId set against block_topology
-    const topologyIds = getSubtreeTopology(prune.rootPostHash);
-    const entryIds = new Set(prune.subtreePostIds);
-    if (topologyIds.size !== entryIds.size ||
-        ![...topologyIds].every(id => entryIds.has(id))) {
-      console.error(`Block ${height}: prune postId set mismatch for ${prune.rootPostHash}`);
-      return false;
-    }
-
-    // 4. Verify Merkle root
-    const leaves = [...prune.subtreePostIds]
-      .sort()
-      .map(id => leafHash('stump', hexToBuf(id)));
-    const computedRoot = Buffer.from(buildMerkleRoot(leaves)).toString('hex');
-    const entryRoot = Buffer.from(prune.subtreeMerkleRoot).toString('hex');
-    if (computedRoot !== entryRoot) {
-      console.error(`Block ${height}: prune Merkle root mismatch for ${prune.rootPostHash}`);
-      return false;
-    }
-
-    // 5. Settle UTXO — deterministic from post IDs.
-    let likeTally: number;
-    try {
-      prunePlans.push(
-        planPruneSettlement(prune.rootPostHash, bp.author, prune.subtreePostIds),
-      );
-      likeTally = deleteLikeRecordsForPosts(prune.subtreePostIds);
-    } catch (err) {
-      console.error(`Block ${height}: prune settlement failed for ${prune.rootPostHash}: ${String(err)}`);
-      return false;
-    }
-
-    // 6. Insert the Stump (journalled), then delete the subtree's DAG rows.
-    const stump = {
-      rootPostHash: prune.rootPostHash,
-      authorId: bp.author,
-      replyCount: prune.subtreePostIds.length - 1,
-      upvoteCount: likeTally,
-      protocolVersion: PROTOCOL_VERSION,
-      compactedAtBlockHeight: height,
-    };
-    insertStump(stump);
-    recordInsertedStump(stump);
-
-    const deleted = deletePostRows(prune.subtreePostIds);
-    recordDeletedPosts(deleted);
   }
 
   // 11. Apply UTXO transactions from the block.
@@ -859,8 +789,9 @@ function applyMutationPhase(
     //
     // ⚠ **The settlement gets the schema that admits the three protocol
     // boxes.** It creates the emission, treasury and pool successors, which a
-    // user transaction may not — the same closed key set and the same field
-    // types, over a wider set of box types.
+    // user transaction may not — the same closed key set (the four required
+    // fields plus `likeTarget`, `post`, `prune` and `postWithdraw`) and the
+    // same field types, over a wider set of box types.
     const envelopeCheck = checkTxEnvelope(tx);
     if (!envelopeCheck.valid) {
       console.warn(
@@ -1038,7 +969,7 @@ function applyMutationPhase(
         if (!isLivePost(target)) {
           console.warn(
             `Rejected block height=${height}: like tx ${item.txId} targets ` +
-            `pruned or unknown post ${targetPostId}`,
+            `pruned, withdrawn or unknown post ${targetPostId}`,
           );
           return false;
         }
@@ -1151,6 +1082,155 @@ function applyMutationPhase(
     queue.push(...remaining);
   }
 
+  // The claimed set — post-lock box ids consumed by withdrawals and prunes.
+  // A withdrawal and a prune both claiming one lock would put the same box id
+  // in the settlement's inputs twice. The prune pass skips a claimed lock.
+  const claimedPostLockIds = new Set<string>();
+
+  // 8b. Process withdrawal transactions from this block.
+  //
+  // ⛔ **WITHDRAWALS FIRST, in committed transaction order; then prunes** — the
+  // order is load-bearing (spec §5.2). A withdrawal forfeits the bond; a prune
+  // of the same thread then finds the lock already claimed and skips it.
+  const withdrawnThisBlock = new Set<string>();
+  const blockWithdrawals = withdrawalsOf(block, getTopologyAuthorBytes);
+  for (const bw of blockWithdrawals) {
+    const { postWithdraw } = bw;
+    const postId = postWithdraw.postId;
+
+    // Maturity bind: the post must have been confirmed in an earlier block.
+    const postHeight = getTopologyHeight(postId);
+    if (postHeight === null || postHeight >= height) {
+      console.error(
+        `Block ${height}: postWithdraw ${postId} is not confirmed ` +
+        `in an earlier block (topology height ${postHeight})`,
+      );
+      return false;
+    }
+
+    // Reject the block if this post is already withdrawn or was withdrawn
+    // earlier in this same block.
+    const existing = getPost(postId);
+    if (!isStoredPost(existing) || existing.withdrawnAtHeight !== null) {
+      console.error(
+        `Block ${height}: postWithdraw ${postId} targets an already-withdrawn or unknown post`,
+      );
+      return false;
+    }
+    if (withdrawnThisBlock.has(postId)) {
+      console.error(
+        `Block ${height}: duplicate postWithdraw for ${postId} in the same block`,
+      );
+      return false;
+    }
+    withdrawnThisBlock.add(postId);
+
+    // Settlement — one-element post set, owner equals the actor.
+    const likeCounts = new Map<string, number>();
+    likeCounts.set(postId, getLikeRecordCount(postId));
+    const plan = planPostLockSettlement(postId, bw.author, [postId], likeCounts);
+    postLockPlans.push(plan);
+    for (const id of plan.lockBoxIds) claimedPostLockIds.add(id);
+
+    // The DAG effect: content → NULL, marker set. Row and topology survive.
+    const priorContent = existing.content;
+    recordWithdrawnPost(postId, priorContent);
+    withdrawPost(postId, height);
+  }
+
+  // 8c. Process prune transactions from this block.
+  //
+  // ⛔ **AFTER THE TRANSACTION LOOP.** The like arm at §11 rejects a like on a
+  // stumped post, so running §8c before the loop made a block carrying like(P)
+  // and prune(P) invalid — two unrelated users could hand a producer a
+  // block-invalidating pair. After the loop the like arm sees a live post and
+  // the pair is valid, with no producer-side filter.
+  //
+  // Authorship and the payload's integrity are the transaction's own: the prune
+  // transition arm verifies `inputKarma.owner` against the root's topology
+  // author, and the signature over `txId` covers the PruneCommit through
+  // `txIdBytes`. What remains here is the topology set, the Merkle root, the
+  // maturity bind, the UTXO settlement and the DAG effect.
+  const blockPrunes = prunesOf(block, getTopologyAuthorBytes);
+  for (const bp of blockPrunes) {
+    const { prune } = bp;
+
+    // Maturity bind: the root must have been confirmed in an earlier block.
+    // Producer-independent, decidable from committed state
+    // (NODE_INTERFACE → Prune transactions).
+    const rootHeight = getTopologyHeight(prune.rootPostHash);
+    if (rootHeight === null || rootHeight >= height) {
+      console.error(
+        `Block ${height}: prune root ${prune.rootPostHash} is not confirmed ` +
+        `in an earlier block (topology height ${rootHeight})`,
+      );
+      return false;
+    }
+
+    // 3. Verify postId set against block_topology
+    const topologyIds = getSubtreeTopology(prune.rootPostHash);
+    const entryIds = new Set(prune.subtreePostIds);
+    if (topologyIds.size !== entryIds.size ||
+        ![...topologyIds].every(id => entryIds.has(id))) {
+      console.error(`Block ${height}: prune postId set mismatch for ${prune.rootPostHash}`);
+      return false;
+    }
+
+    // 4. Verify Merkle root
+    const leaves = [...prune.subtreePostIds]
+      .sort()
+      .map(id => leafHash('stump', hexToBuf(id)));
+    const computedRoot = Buffer.from(buildMerkleRoot(leaves)).toString('hex');
+    const entryRoot = Buffer.from(prune.subtreeMerkleRoot).toString('hex');
+    if (computedRoot !== entryRoot) {
+      console.error(`Block ${height}: prune Merkle root mismatch for ${prune.rootPostHash}`);
+      return false;
+    }
+
+    // 5. Settle UTXO — deterministic from post IDs and like counts.
+    // `getLikeRecordCount` already includes this block's likes (the loop
+    // inserted them at §11), so the count is the lifetime total after this
+    // block — matching the creator's `stored + bodyLikes` derivation.
+    //
+    // Posts whose locks were already claimed by a withdrawal in this block
+    // are excluded from the settlement — the withdrawal forfeited them.
+    const settlablePostIds = prune.subtreePostIds.filter(
+      (id: string) => {
+        const lockBox = getPostLockBox(id);
+        return !lockBox || !lockBox.id || !claimedPostLockIds.has(lockBox.id);
+      },
+    );
+    let likeTally: number;
+    try {
+      const likeCounts = new Map<string, number>();
+      for (const postId of settlablePostIds) {
+        likeCounts.set(postId, getLikeRecordCount(postId));
+      }
+      postLockPlans.push(
+        planPostLockSettlement(prune.rootPostHash, bp.author, settlablePostIds, likeCounts),
+      );
+      likeTally = deleteLikeRecordsForPosts(prune.subtreePostIds);
+    } catch (err) {
+      console.error(`Block ${height}: prune settlement failed for ${prune.rootPostHash}: ${String(err)}`);
+      return false;
+    }
+
+    // 6. Insert the Stump (journalled), then delete the subtree's DAG rows.
+    const stump = {
+      rootPostHash: prune.rootPostHash,
+      authorId: bp.author,
+      replyCount: prune.subtreePostIds.length - 1,
+      upvoteCount: likeTally,
+      protocolVersion: PROTOCOL_VERSION,
+      compactedAtBlockHeight: height,
+    };
+    insertStump(stump);
+    recordInsertedStump(stump);
+
+    const deleted = deletePostRows(prune.subtreePostIds);
+    recordDeletedPosts(deleted);
+  }
+
   // 11a. The settlement transaction — the block's every protocol effect, in one
   // transaction committed under `utxoTxRoot` (NODE_INTERFACE → the settlement
   // transaction).
@@ -1173,7 +1253,7 @@ function applyMutationPhase(
     if (outputs) contributeToBody(settlementBody, outputs, rentTxIds.has(txId));
   }
   settlementBody.actors = countKarmaActors(appliedTxs, block.header.validatorId);
-  settlementBody.prunes = prunePlans;
+  settlementBody.postLockSettlements = postLockPlans;
 
   const emission = computeBlockReward(height);
   const settlementCheck = checkSettlement(
@@ -1283,19 +1363,13 @@ function applyMutationPhase(
   // count — so the result is independent of how the likes were spread across
   // blocks.
   //
-  // ⚠ **The one karma path still outside the settlement, and it belongs
-  // outside.** A `PostLockBox` vests into its own owner's karma and a reduced
-  // lock, so the pool is uninvolved — the first of the three shapes
-  // (ARCHITECTURE → How a source and a sink get named), which needs no
-  // protocol box and therefore no place in the block's one pool spend.
+  // Posts settled by §8c above have their vest folded
+  // into the settlement plan; the settlement at §11a consumed their lock box,
+  // so `getPostLockBox` returns null and the loop skips them naturally.
   for (const postId of [...likesPerPost.keys()].sort()) {
     const lockBox = getPostLockBox(postId);
     if (!lockBox || !lockBox.id) continue;
-    const totalLikes = BigInt(getLikeRecordCount(postId)); // lifetime, live post
-    const alreadyUnlocked = lockBox.originalValue - lockBox.value;
-    const shouldUnlock = totalLikes / BigInt(POST_LOCK_UNLOCK_PER_LIKES);
-    const unlockable = shouldUnlock - alreadyUnlocked;
-    const toUnlock = lockBox.value < unlockable ? lockBox.value : unlockable;
+    const toUnlock = computeVestAmount(lockBox, getLikeRecordCount(postId));
     if (toUnlock <= 0n) continue;
     // ⛔ **The `PostLockBox` is the source, and naming it is the whole change**
     // (ARCHITECTURE → How a source and a sink get named, first shape). The

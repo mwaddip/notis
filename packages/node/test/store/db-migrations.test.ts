@@ -184,3 +184,53 @@ describe('migrateMempoolTxColumns', () => {
     closeDb();
   });
 });
+
+describe('migrateDagPostsColumns', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    vi.resetModules();
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'notis-dagposts-migration-'));
+  });
+
+  afterEach(() => {
+    vi.resetModules();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('adds withdrawn_at_height to a pre-column dag_posts table without disturbing existing rows', async () => {
+    const dbPath = path.join(tmpDir, 'dagposts.db');
+
+    const raw = new Database(dbPath);
+    raw.exec(`CREATE TABLE dag_posts (
+      id TEXT PRIMARY KEY,
+      content_hash TEXT NOT NULL,
+      content TEXT,
+      author BLOB NOT NULL,
+      parent_refs TEXT NOT NULL,
+      protocol_version INTEGER NOT NULL,
+      type TEXT NOT NULL DEFAULT 'regular',
+      status TEXT NOT NULL DEFAULT 'pending',
+      block_height INTEGER,
+      block_index INTEGER
+    )`);
+    raw.exec(
+      `INSERT INTO dag_posts (id, content_hash, content, author, parent_refs, protocol_version, type, status)
+       VALUES ('post1', 'aabb', 'hello', X'${'00'.repeat(32)}', '[]', 1, 'regular', 'pending')`,
+    );
+    raw.close();
+
+    const { initDb, getDb, closeDb } = await importFresh();
+    initDb(dbPath);
+    const db = getDb();
+
+    const cols = (db.pragma('table_info(dag_posts)') as Array<{ name: string }>)
+      .map(c => c.name);
+    expect(cols).toContain('withdrawn_at_height');
+
+    const row = db.prepare('SELECT withdrawn_at_height FROM dag_posts WHERE id = ?').get('post1') as any;
+    expect(row.withdrawn_at_height).toBeNull();
+
+    closeDb();
+  });
+});

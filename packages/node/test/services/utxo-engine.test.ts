@@ -31,6 +31,7 @@ import type {
   AnyBox,
   KarmaBox,
   LikeAccrualBox,
+  PostWithdrawCommit,
   PruneCommit,
   BondBox,
   PostCommit,
@@ -229,6 +230,7 @@ describe('validateAndApplyTx', () => {
     likeTarget?: string,
     post?: PostCommit,
     prune?: PruneCommit,
+    postWithdraw?: PostWithdrawCommit,
   ): UtxoTransaction {
     const hexKey = Buffer.from(pubKey).toString('hex');
     const tx: UtxoTransaction = {
@@ -239,6 +241,7 @@ describe('validateAndApplyTx', () => {
       ...(likeTarget !== undefined ? { likeTarget } : {}),
       ...(post !== undefined ? { post } : {}),
       ...(prune !== undefined ? { prune } : {}),
+      ...(postWithdraw !== undefined ? { postWithdraw } : {}),
     };
     const hash = computeTxHash(tx);
     tx.signatures[hexKey] = signHash(hash, privKey);
@@ -2216,6 +2219,67 @@ describe('validateAndApplyTx', () => {
     });
 
     it('a prune does not forbid plain karma self-consolidation (the implication is one-directional)', () => {
+      const k1 = createAndInsertKarma(ownerPubKey, 60n, 1);
+      const k2 = createAndInsertKarma(ownerPubKey, 40n, 2);
+      const merged: CandidateOf<KarmaBox> = {
+        boxType: 'karma', value: 100n, createdAtBlock: 0, owner: ownerPubKey,
+      };
+      const tx = buildSignedTx(
+        [k1.id!, k2.id!], [merged], ownerPrivKey, ownerPubKey,
+      );
+      const result = validateAndApplyTx(deps, tx, 10);
+      expect(result.valid).toBe(true);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // The postWithdraw transition arm
+  // -------------------------------------------------------------------------
+  describe('postWithdraw transition arm', () => {
+    const WITHDRAW_POST = 'bb'.repeat(32);
+
+    beforeEach(() => {
+      topologyAuthors.set(WITHDRAW_POST, ownerPubKey);
+    });
+    afterEach(() => {
+      topologyAuthors.delete(WITHDRAW_POST);
+    });
+
+    it('accepts a well-formed postWithdraw transaction: K(v) → K(v) with PostWithdrawCommit', () => {
+      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
+      const newKarma: CandidateOf<KarmaBox> = {
+        boxType: 'karma', value: 100n, createdAtBlock: 0, owner: ownerPubKey,
+      };
+      const pw: PostWithdrawCommit = { postId: WITHDRAW_POST };
+      const tx = buildSignedTx(
+        [karma.id!], [newKarma], ownerPrivKey, ownerPubKey, 1, undefined, undefined, undefined, pw,
+      );
+      const result = validateAndApplyTx(deps, tx, 10);
+      expect(result.valid).toBe(true);
+    });
+
+    it('rejects a postWithdraw whose postId is authored by a different key', () => {
+      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
+      const strangerPost = 'ee'.repeat(32);
+      const { publicKey: strangerPub } = generateKeyPairSync('ed25519');
+      const strangerPubRaw = new Uint8Array(
+        strangerPub.export({ type: 'spki', format: 'der' }).subarray(12),
+      );
+      topologyAuthors.set(strangerPost, strangerPubRaw);
+      const newKarma: CandidateOf<KarmaBox> = {
+        boxType: 'karma', value: 100n, createdAtBlock: 0, owner: ownerPubKey,
+      };
+      const pw: PostWithdrawCommit = { postId: strangerPost };
+      const tx = buildSignedTx(
+        [karma.id!], [newKarma], ownerPrivKey, ownerPubKey, 1, undefined, undefined, undefined, pw,
+      );
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toMatch(/not authored by the karma input/);
+      topologyAuthors.delete(strangerPost);
+    });
+
+    it('a plain karma self-consolidation carrying no payload is still valid', () => {
       const k1 = createAndInsertKarma(ownerPubKey, 60n, 1);
       const k2 = createAndInsertKarma(ownerPubKey, 40n, 2);
       const merged: CandidateOf<KarmaBox> = {

@@ -233,6 +233,18 @@ export function verifyPruneCommitDomains(commit: unknown): { valid: boolean; err
 }
 
 // ---------------------------------------------------------------------------
+// Post-withdraw-commit payload domain
+// ---------------------------------------------------------------------------
+
+export function verifyPostWithdrawCommitDomains(commit: unknown): { valid: boolean; error?: string } {
+  if (!isObject(commit)) return { valid: false, error: 'PostWithdrawCommit is not an object' };
+  if (!isHex32(commit.postId)) {
+    return { valid: false, error: 'PostWithdrawCommit postId must be 64 lowercase hex characters' };
+  }
+  return { valid: true };
+}
+
+// ---------------------------------------------------------------------------
 // The block header's encodable domain
 // ---------------------------------------------------------------------------
 //

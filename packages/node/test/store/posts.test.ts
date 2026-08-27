@@ -95,7 +95,7 @@ describe('posts store', () => {
     expect(result.type).toBe('regular');
     expect(result.status).toBe('pending');
     expect(Object.keys(result).sort()).toEqual(
-      ['author', 'blockHeight', 'blockIndex', 'content', 'contentHash', 'id', 'parentRefs', 'protocolVersion', 'status', 'type'],
+      ['author', 'blockHeight', 'blockIndex', 'content', 'contentHash', 'id', 'parentRefs', 'protocolVersion', 'status', 'type', 'withdrawnAtHeight'],
     );
   });
 
@@ -539,6 +539,227 @@ describe('posts store', () => {
       id: 'x', content: null, contentHash: '00', author: new Uint8Array(32),
       parentRefs: [], protocolVersion: 1, type: 'regular' as const,
       status: 'pending' as const, blockHeight: null, blockIndex: null,
+      withdrawnAtHeight: null,
     })).toBe(true);
+  });
+
+  it('isLivePost returns false for a withdrawn post', async () => {
+    const { isLivePost } = await importPostsFresh();
+
+    expect(isLivePost({
+      id: 'x', content: null, contentHash: '00', author: new Uint8Array(32),
+      parentRefs: [], protocolVersion: 1, type: 'regular' as const,
+      status: 'confirmed' as const, blockHeight: 5, blockIndex: 0,
+      withdrawnAtHeight: 10,
+    })).toBe(false);
+  });
+
+  it('a withdrawn row is excluded from getMissingBodies, getPlaceholdersAt, and setPostBody', async () => {
+    const { initDb, getDb } = await importDbFresh();
+    const { insertPost, confirmPost, getMissingBodies, getPlaceholdersAt, setPostBody } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    const { commit } = makeCommit({ content: 'will withdraw' });
+    const postId = fixturePostId(commit);
+    insertPost(postId, commit, null);
+    confirmPost(postId, 5, 0);
+
+    // Mark as withdrawn directly
+    getDb().prepare('UPDATE dag_posts SET withdrawn_at_height = ? WHERE id = ?').run(10, postId);
+
+    expect(getMissingBodies(100)).toEqual([]);
+    expect(getPlaceholdersAt(5)).toEqual([]);
+    expect(setPostBody(postId, 'resurrected')).toBe(false);
+  });
+
+  it('reorg round-trip: a withdrawn row through deletePostRows → restorePostRows comes back still withdrawn', async () => {
+    const { initDb, getDb } = await importDbFresh();
+    const { insertPost, confirmPost, deletePostRows, restorePostRows, getPost } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    const { commit, content } = makeCommit({ content: 'withdraw me' });
+    const postId = fixturePostId(commit);
+    insertPost(postId, commit, content);
+    confirmPost(postId, 5, 0);
+
+    // Mark as withdrawn directly, then null the content (as withdrawal does)
+    getDb().prepare('UPDATE dag_posts SET withdrawn_at_height = 10, content = NULL WHERE id = ?').run(postId);
+
+    const deleted = deletePostRows([postId]);
+    expect(deleted).toHaveLength(1);
+    expect(deleted[0]!.withdrawnAtHeight).toBe(10);
+    expect(deleted[0]!.content).toBeNull();
+
+    restorePostRows(deleted);
+    const restored = getPost(postId) as any;
+    expect(restored).not.toBeNull();
+    expect(restored.withdrawnAtHeight).toBe(10);
+    expect(restored.content).toBeNull();
+
+    // The restored row must NOT appear in getMissingBodies
+    const { getMissingBodies } = await importPostsFresh();
+    expect(getMissingBodies(100)).toEqual([]);
+  });
+
+  it('getPost returns a withdrawn post as a StoredPost with withdrawnAtHeight set, not null', async () => {
+    const { initDb, getDb } = await importDbFresh();
+    const { insertPost, confirmPost, getPost, isLivePost } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    const { commit, content } = makeCommit({ content: 'to be withdrawn' });
+    const postId = fixturePostId(commit);
+    insertPost(postId, commit, content);
+    confirmPost(postId, 5, 0);
+
+    getDb().prepare('UPDATE dag_posts SET withdrawn_at_height = 10, content = NULL WHERE id = ?').run(postId);
+
+    const result = getPost(postId);
+    expect(result).not.toBeNull();
+    expect(isLivePost(result)).toBe(false);
+    expect((result as any).withdrawnAtHeight).toBe(10);
+    expect((result as any).status).toBe('confirmed');
+  });
+
+  it('FeedService.getPost returns WithdrawnJson for a withdrawn post, not null', async () => {
+    const { initDb, getDb } = await importDbFresh();
+    const { insertPost, confirmPost, getPost } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    const { commit, content } = makeCommit({ content: 'feed withdrawn' });
+    const postId = fixturePostId(commit);
+    insertPost(postId, commit, content);
+    confirmPost(postId, 5, 0);
+
+    getDb().prepare('UPDATE dag_posts SET withdrawn_at_height = 10, content = NULL WHERE id = ?').run(postId);
+
+    const { FeedService } = await import('../../src/services/feed-service.js');
+    const feedService = new FeedService({
+      getPost,
+      queryPosts: () => [],
+      getLikeRecordCount: () => 0,
+      getLikersForPost: () => [],
+      getAncestors: () => [],
+      getSubtree: () => [],
+      getBlockCreatedAt: () => null,
+    });
+
+    const result = feedService.getPost(postId);
+    expect(result).not.toBeNull();
+    expect((result as any).kind).toBe('withdrawn');
+    expect((result as any).withdrawnAtHeight).toBe(10);
+    expect((result as any).author).toBe(hex(commit.author));
+  });
+
+  it('isStoredPost is true and isLivePost is false for the same withdrawn row', async () => {
+    const { initDb, getDb } = await importDbFresh();
+    const { insertPost, confirmPost, getPost } = await importPostsFresh();
+    const { isStoredPost, isLivePost } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    const { commit, content } = makeCommit({ content: 'guard test' });
+    const postId = fixturePostId(commit);
+    insertPost(postId, commit, content);
+    confirmPost(postId, 5, 0);
+
+    getDb().prepare('UPDATE dag_posts SET withdrawn_at_height = 10, content = NULL WHERE id = ?').run(postId);
+
+    const result = getPost(postId);
+    expect(isStoredPost(result)).toBe(true);
+    expect(isLivePost(result)).toBe(false);
+  });
+
+  it('withdrawn ancestor and descendant in a thread come back as WithdrawnJson, not PostJson', async () => {
+    const { initDb, getDb } = await importDbFresh();
+    const { insertPost, confirmPost, getPost, getAncestors, getSubtree } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    const { commit: rootCommit, content: rootContent } = makeCommit({ content: 'root' });
+    const rootId = fixturePostId(rootCommit);
+    insertPost(rootId, rootCommit, rootContent);
+    confirmPost(rootId, 1, 0);
+
+    const { commit: childCommit, content: childContent } = makeCommit({
+      content: 'child',
+      parentRefs: [rootId],
+    });
+    const childId = fixturePostId(childCommit);
+    insertPost(childId, childCommit, childContent);
+    confirmPost(childId, 2, 0);
+
+    const { commit: grandCommit, content: grandContent } = makeCommit({
+      content: 'grandchild',
+      parentRefs: [childId],
+    });
+    const grandId = fixturePostId(grandCommit);
+    insertPost(grandId, grandCommit, grandContent);
+    confirmPost(grandId, 3, 0);
+
+    // Withdraw root (ancestor) and grandchild (descendant)
+    getDb().prepare('UPDATE dag_posts SET withdrawn_at_height = 5, content = NULL WHERE id = ?').run(rootId);
+    getDb().prepare('UPDATE dag_posts SET withdrawn_at_height = 6, content = NULL WHERE id = ?').run(grandId);
+
+    const { FeedService } = await import('../../src/services/feed-service.js');
+    const feedService = new FeedService({
+      getPost,
+      queryPosts: () => [],
+      getLikeRecordCount: () => 0,
+      getLikersForPost: () => [],
+      getAncestors,
+      getSubtree,
+      getBlockCreatedAt: () => null,
+    });
+
+    const thread = feedService.getThread(childId)!;
+    expect(thread).not.toBeNull();
+
+    // The subject post is live
+    expect((thread.post as any).content).toBe('child');
+
+    // Root ancestor is withdrawn
+    expect(thread.ancestors).toHaveLength(1);
+    expect((thread.ancestors[0] as any).kind).toBe('withdrawn');
+    expect((thread.ancestors[0] as any).withdrawnAtHeight).toBe(5);
+
+    // Grandchild descendant is withdrawn
+    expect(thread.descendants).toHaveLength(1);
+    expect((thread.descendants[0] as any).kind).toBe('withdrawn');
+    expect((thread.descendants[0] as any).withdrawnAtHeight).toBe(6);
+  });
+
+  it('a withdrawn post in queryPosts comes back as WithdrawnJson', async () => {
+    const { initDb, getDb } = await importDbFresh();
+    const { insertPost, confirmPost, getPost, queryPosts } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    const { commit, content } = makeCommit({ content: 'feed withdrawn' });
+    const postId = fixturePostId(commit);
+    insertPost(postId, commit, content);
+    confirmPost(postId, 5, 0);
+
+    getDb().prepare('UPDATE dag_posts SET withdrawn_at_height = 10, content = NULL WHERE id = ?').run(postId);
+
+    const { FeedService } = await import('../../src/services/feed-service.js');
+    const feedService = new FeedService({
+      getPost,
+      queryPosts,
+      getLikeRecordCount: () => 0,
+      getLikersForPost: () => [],
+      getAncestors: () => [],
+      getSubtree: () => [],
+      getBlockCreatedAt: () => null,
+    });
+
+    const posts = feedService.queryPosts({});
+    const withdrawn = posts.find((p) => (p as any).id === postId);
+    expect(withdrawn).toBeDefined();
+    expect((withdrawn as any).kind).toBe('withdrawn');
+    expect((withdrawn as any).withdrawnAtHeight).toBe(10);
   });
 });

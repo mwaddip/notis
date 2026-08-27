@@ -274,7 +274,7 @@ describe('likes service (P2-D: the like is a burn transaction)', () => {
     insertStump(stump);
 
     const tx = buildBurnLikeTx(karma, stumpId);
-    expect(() => castLike(deps, tx, 5)).toThrow('Cannot like a pruned post');
+    expect(() => castLike(deps, tx, 5)).toThrow('Cannot like a pruned or withdrawn post');
   });
 
   // -----------------------------------------------------------------------

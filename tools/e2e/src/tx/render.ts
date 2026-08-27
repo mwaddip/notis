@@ -46,6 +46,9 @@ function txToJson(tx: UtxoTransaction): Record<string, unknown> {
   if (tx.prune !== undefined) {
     result['prune'] = convertValue(tx.prune);
   }
+  if (tx.postWithdraw !== undefined) {
+    result['postWithdraw'] = convertValue(tx.postWithdraw);
+  }
   return result;
 }
 

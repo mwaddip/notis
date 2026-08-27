@@ -79,6 +79,8 @@ export interface BlockJournal {
   }>;
   deletedPosts: DeletedPostRow[];
   insertedStumps: Stump[];
+  /** Inverse: restore the prior content and clear the marker. */
+  withdrawnPosts: Array<{ id: string; content: string | null }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -135,6 +137,7 @@ export function beginBlockJournal(height: number): void {
     likeRecordDeletions: [],
     deletedPosts: [],
     insertedStumps: [],
+    withdrawnPosts: [],
   };
   openKarmaSupplyDelta = 0n;
 }
@@ -300,6 +303,10 @@ export function recordInsertedStump(stump: Stump): void {
   openJournal.insertedStumps.push(stump);
 }
 
+export function recordWithdrawnPost(id: string, content: string | null): void {
+  if (openJournal === null) return;
+  openJournal.withdrawnPosts.push({ id, content });
+}
 
 // ---------------------------------------------------------------------------
 // Persistence — one CBOR-encoded row per applied block

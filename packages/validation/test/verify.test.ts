@@ -16,6 +16,7 @@ import {
   isValidVouchTarget,
   verifyPostCommitDomains,
   verifyPruneCommitDomains,
+  verifyPostWithdrawCommitDomains,
   verifyPostBody,
   verifyHeaderFieldDomains,
   ed25519PublicKeyToKeyObject,
@@ -2331,6 +2332,61 @@ describe('verifyPruneCommitDomains', () => {
     ];
     for (const bad of HOSTILE) {
       expect(() => verifyPruneCommitDomains(bad)).not.toThrow();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// verifyPostWithdrawCommitDomains
+// ---------------------------------------------------------------------------
+
+describe('verifyPostWithdrawCommitDomains', () => {
+  const GOOD = 'ab'.repeat(32);
+
+  const makeValid = () => ({ postId: GOOD });
+
+  it('accepts a well-formed PostWithdrawCommit', () => {
+    expect(verifyPostWithdrawCommitDomains(makeValid())).toEqual({ valid: true });
+  });
+
+  it('rejects a non-object', () => {
+    expect(verifyPostWithdrawCommitDomains(null)).toEqual({ valid: false, error: 'PostWithdrawCommit is not an object' });
+    expect(verifyPostWithdrawCommitDomains(42)).toEqual({ valid: false, error: 'PostWithdrawCommit is not an object' });
+    expect(verifyPostWithdrawCommitDomains('string')).toEqual({ valid: false, error: 'PostWithdrawCommit is not an object' });
+  });
+
+  it('rejects missing postId', () => {
+    const result = verifyPostWithdrawCommitDomains({});
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('postId');
+  });
+
+  it('rejects a non-string postId', () => {
+    const result = verifyPostWithdrawCommitDomains({ postId: 42 });
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('postId');
+  });
+
+  it('rejects a postId of wrong length', () => {
+    const result = verifyPostWithdrawCommitDomains({ postId: 'aa' });
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('postId');
+  });
+
+  it('rejects uppercase hex postId', () => {
+    const result = verifyPostWithdrawCommitDomains({ postId: 'AB'.repeat(32) });
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('postId');
+  });
+
+  it('never throws on adversarial input', () => {
+    const HOSTILE = [
+      null, undefined, 42, 'string', true, NaN, Infinity,
+      [], {}, { postId: null }, { postId: undefined },
+      { postId: new Uint8Array(32) }, { postId: {} },
+    ];
+    for (const bad of HOSTILE) {
+      expect(() => verifyPostWithdrawCommitDomains(bad)).not.toThrow();
     }
   });
 });

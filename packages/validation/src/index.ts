@@ -11,6 +11,7 @@ export {
   verifyParentRefsCount,
   verifyPostCommitDomains,
   verifyPruneCommitDomains,
+  verifyPostWithdrawCommitDomains,
   verifyPostBody,
   verifyHeaderFieldDomains,
   verifyTxStructure,

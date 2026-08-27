@@ -15,7 +15,8 @@ const MIGRATIONS = [
     type TEXT NOT NULL DEFAULT 'regular',  -- PostType: 'regular' | 'profile'
     status TEXT NOT NULL DEFAULT 'pending',  -- 'pending' | 'confirmed'
     block_height INTEGER,            -- NULL until confirmed
-    block_index INTEGER              -- NULL until confirmed; committed position in block
+    block_index INTEGER,             -- NULL until confirmed; committed position in block
+    withdrawn_at_height INTEGER      -- NULL = not withdrawn; set = withdrawal confirmed at this height
   )`,
 
   `CREATE TABLE IF NOT EXISTS dag_parent_refs (
@@ -25,8 +26,8 @@ const MIGRATIONS = [
   )`,
 
   // Stumps — the columns `Stump` declares and no others. A stump's subtree
-  // Merkle root, its prune signature and its karma deltas live in the
-  // `PruneEntry` the block carries, never in the row the settlement writes.
+  // Merkle root, its prune signature and its karma deltas live in the prune
+  // transaction the block carries, never in the row the settlement writes.
   `CREATE TABLE IF NOT EXISTS dag_stumps (
     id TEXT PRIMARY KEY,
     root_post_hash TEXT NOT NULL,
@@ -322,6 +323,13 @@ function migrateMempoolTxColumns(database: Database.Database): void {
  * is below what earns a permanent schema object, and it is not a write-cost
  * argument — write cost was measured and is nil for both.
  */
+function migrateDagPostsColumns(database: Database.Database): void {
+  const cols = database.prepare("PRAGMA table_info('dag_posts')").all() as Array<{ name: string }>;
+  const has = (name: string): boolean => cols.some(c => c.name === name);
+
+  if (!has('withdrawn_at_height')) database.exec(`ALTER TABLE dag_posts ADD COLUMN withdrawn_at_height INTEGER`);
+}
+
 function createMempoolGateIndexes(database: Database.Database): void {
   database.exec(`
     CREATE INDEX IF NOT EXISTS idx_mempool_like
@@ -362,6 +370,7 @@ export function initDb(path: string): void {
   migrateAvlTree(db);
   migrateBlockTopology(db);
   migrateMempoolTxColumns(db);
+  migrateDagPostsColumns(db);
   createMempoolGateIndexes(db);
 
   emitDbOpenComplete(Date.now() - startedAt);

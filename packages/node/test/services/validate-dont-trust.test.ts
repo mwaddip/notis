@@ -39,6 +39,7 @@ function makeStoredParent(id: string): StoredPost {
     status: 'confirmed',
     blockHeight: null,
     blockIndex: null,
+    withdrawnAtHeight: null,
   };
 }
 

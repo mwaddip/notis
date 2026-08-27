@@ -3,7 +3,7 @@ import express from 'express';
 import http from 'http';
 import { computeTxId } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
-import { deleteRoutes } from '../../src/routes/delete.js';
+import { pruneWithdrawRoutes } from '../../src/routes/prune-withdraw.js';
 import { setNet } from '../../src/services/net-instance.js';
 import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
 
@@ -52,11 +52,12 @@ async function request(
     const deps = {
       ...STUB_DEPS,
       executePrune: executePruneImpl ?? ((_d: UtxoEngineDeps, _t: UtxoTransaction, _h: number) => ({ txId: 'b'.repeat(64) })),
+      executePostWithdraw: (_d: UtxoEngineDeps, _t: UtxoTransaction, _h: number) => ({ txId: 'c'.repeat(64) }),
       getCurrentHeight: () => 10,
     };
     const app = express();
     app.use(express.json());
-    app.use(deleteRoutes(deps));
+    app.use(pruneWithdrawRoutes(deps));
     const server = app.listen(0, () => {
       const addr = server.address() as { port: number };
       const r = http.request(

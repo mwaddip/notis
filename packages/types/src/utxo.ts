@@ -25,7 +25,14 @@ import {
 } from './codec.js';
 import type { UserId } from './identity.js';
 import { postFieldBytes, readPostCommitFields, type PostCommit, type PostId } from './post.js';
-import { pruneFieldBytes, readPruneCommitFields, type PruneCommit } from './stump.js';
+import {
+  postWithdrawFieldBytes,
+  pruneFieldBytes,
+  readPostWithdrawCommitFields,
+  readPruneCommitFields,
+  type PostWithdrawCommit,
+  type PruneCommit,
+} from './stump.js';
 
 // ---------------------------------------------------------------------------
 // Box identity
@@ -1128,6 +1135,16 @@ export interface UtxoTransaction {
    * self-consolidation must stay legal (TYPES_INTERFACE → UtxoTransaction).
    */
   prune?: PruneCommit;
+  /**
+   * Present ⟹ this transaction is a content withdrawal — an author dropping
+   * one post's content from the DAG. The payload sits inside the `computeTxId`
+   * preimage, so the author's signature over `txId` covers it and a relay
+   * cannot rewrite it.
+   *
+   * ⛔ **Same IMPLICATION shape as `prune`.** Recognition is by payload
+   * presence (`tx.postWithdraw !== undefined`), never by silhouette.
+   */
+  postWithdraw?: PostWithdrawCommit;
 }
 
 /**
@@ -1140,8 +1157,9 @@ export interface UtxoTransaction {
  *   | 4 | likeTarget      | opt(b32)                                     |
  *   | 5 | post            | opt(postFieldBytes)                          |
  *   | 6 | prune           | opt(pruneFieldBytes)                         |
+ *   | 7 | postWithdraw    | opt(postWithdrawFieldBytes)                   |
  *
- * ⛔ **SIX FIELDS, and dropping one RENUMBERS every field after it unless it is
+ * ⛔ **SEVEN FIELDS, and dropping one RENUMBERS every field after it unless it is
  * last.** This is a positional layout with no keys, so a reader that skips a field
  * but keeps the old offsets reads `protocolVersion` out of `likeTarget`'s tag and
  * every later field one slot early — a silently wrong `TxId`, not a decode error.
@@ -1162,19 +1180,22 @@ export interface UtxoTransaction {
  *   distinction — an empty-string target hashes differently from absence.
  * - `post` takes the same `opt()` tag, for the same reason, and needs no length
  *   prefix inside it: `postFieldBytes` is self-delimiting (every field is
- *   fixed-width, length-prefixed or a VLQ) and it is last, so nothing follows it
- *   to be ambiguous against. Its own injectivity is `postFieldBytes`'
- *   (`post.ts`), which is why that property is required there even though the
- *   post id no longer reads those bytes.
- * ⚠ **`likeTarget` and `post` are mutually exclusive in practice** — a
- * transaction is a like or a post, never both — but the encoding does not rest on
- * it: each carries its own presence tag, so the tail stays unambiguous however
- * the fields combine.
+ *   fixed-width, length-prefixed or a VLQ). Its own injectivity is
+ *   `postFieldBytes`' (`post.ts`), which is why that property is required
+ *   there even though the post id no longer reads those bytes.
+ * - `prune` takes the same `opt()` tag. `pruneFieldBytes` is self-delimiting:
+ *   every field is fixed-width or count-prefixed.
+ * - `postWithdraw` takes the same `opt()` tag. `postWithdrawFieldBytes` is
+ *   self-delimiting: one fixed-width field (b32).
+ * ⚠ **`likeTarget`, `post`, `prune` and `postWithdraw` are mutually exclusive
+ * in practice** — a transaction carries at most one payload — but the encoding
+ * does not rest on it: each carries its own presence tag, so the tail stays
+ * unambiguous however the fields combine.
  *
  * Signatures are absent and stay absent: they are Ed25519 *over* this id.
  *
- * ⛔ **THIS IS THE ONLY STATEMENT OF THESE SIX FIELDS, and `encodeTx` reaches it
- * rather than repeating it.** The wire codec is exactly these bytes plus
+ * ⛔ **THIS IS THE ONLY STATEMENT OF THESE SEVEN FIELDS, and `encodeTx` reaches
+ * it rather than repeating it.** The wire codec is exactly these bytes plus
  * `arr(signatures sorted, b32(pubkey) ‖ b64(sig))` (TYPES_INTERFACE → Layout —
  * UtxoTransaction, the wire-codec row), so the id preimage and the wire form
  * share one writer and cannot drift — the same delegation `boxRecordBytes` makes
@@ -1190,10 +1211,11 @@ export function writeTxIdFields(w: ByteWriter, tx: UtxoTransaction): void {
   writeOpt(w, tx.likeTarget, (ww, target) => writeHexNOrThrow(ww, target, 32));
   writeOpt(w, tx.post, (ww, post) => ww.writeBytes(postFieldBytes(post)));
   writeOpt(w, tx.prune, (ww, prune) => ww.writeBytes(pruneFieldBytes(prune)));
+  writeOpt(w, tx.postWithdraw, (ww, pw) => ww.writeBytes(postWithdrawFieldBytes(pw)));
 }
 
 /**
- * The inverse of `writeTxIdFields` — the six preimage fields, read back.
+ * The inverse of `writeTxIdFields` — the seven preimage fields, read back.
  *
  * **Adjacent to the writer for the reason every pair in this format is**: field
  * order is normative and a reader that walks it differently is a consensus
@@ -1217,6 +1239,7 @@ export function readTxIdFields(r: ByteReader): Omit<UtxoTransaction, 'signatures
     likeTarget: readOpt(r, (rr) => readHexN(rr, 32)) ?? undefined,
     post: readOpt(r, readPostCommitFields) ?? undefined,
     prune: readOpt(r, readPruneCommitFields) ?? undefined,
+    postWithdraw: readOpt(r, readPostWithdrawCommitFields) ?? undefined,
   };
 }
 

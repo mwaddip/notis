@@ -140,6 +140,7 @@ describe('verifyPost', () => {
       id: parentId, content: 'parent', contentHash: Buffer.from(computeContentHash('parent')).toString('hex'),
       author: userId, parentRefs: [], protocolVersion: PROTOCOL_VERSION,
       type: 'regular', status: 'confirmed', blockHeight: 1, blockIndex: 0,
+      withdrawnAtHeight: null,
     });
     const commit = makeCommit({ parentRefs: [parentId] });
     const deps = createMockDeps(store);
