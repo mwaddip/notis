@@ -11,6 +11,8 @@ import {
   EMPTY_STATE_ROOT,
   MAX_BLOCK_BODY_BYTES,
   STORAGE_RENT_PER_BYTE,
+  MAX_BOND_SETTLEMENTS_PER_BLOCK,
+  MAX_ESCROW_RETURNS_PER_BLOCK,
   boxRecordBytes,
   decodeTx,
   encodeTx,
@@ -388,7 +390,7 @@ export function createOrderingBlock(): OrderingBlock | null {
         return { txId, inputs: tx.inputs, outputs: tx.outputs.map((out, i) => materializeOutput(out as AnyBox, txId, i)) };
       });
       const postBody = collectPostBodyKarma(decoded);
-      const escrows = getVouchEscrowsReleasableAt(newHeight);
+      const escrows = getVouchEscrowsReleasableAt(newHeight, MAX_ESCROW_RETURNS_PER_BLOCK);
       const built = buildSettlement(
         settlementDepsWith(() => deriveKarmaDecay(decayDeps, postBody, newHeight, decayConfig()), escrows),
         newHeight,
@@ -870,13 +872,8 @@ export function settlementDepsWith(
     // The deadline is computed here rather than in the store, so the query stays
     // free of network parameters — the standing `getBondsInvitedAt` rule.
     getBondsSettlingAt: (h: number) => {
-      // `<= 0` and not `< 0`: `0` is the never-invited sentinel, so at exactly
-      // `height == INVITE_PROBATION_BLOCKS` this lands on it and every identity
-      // that never claimed would match at once. `getBondsInvitedAt` refuses the
-      // same value in SQL — the same rule in two places, and either alone
-      // suffices.
       const invitedAt = h - nodeConfig.inviteProbationBlocks;
-      return invitedAt <= 0 ? [] : getBondsInvitedAt(invitedAt);
+      return invitedAt <= 0 ? [] : getBondsInvitedAt(invitedAt, MAX_BOND_SETTLEMENTS_PER_BLOCK);
     },
     getEscrowsReleasableAt: () => escrows,
     // ⚠ **The count comes from the identity record, never from a scan of
@@ -1014,7 +1011,7 @@ export function buildBlockSettlement(
     return { txId, inputs: tx.inputs, outputs: tx.outputs.map((out, i) => materializeOutput(out as AnyBox, txId, i)) };
   });
   const postBody = collectPostBodyKarma(decoded);
-  const escrows = getVouchEscrowsReleasableAt(height);
+  const escrows = getVouchEscrowsReleasableAt(height, MAX_ESCROW_RETURNS_PER_BLOCK);
   return buildSettlement(
     settlementDepsWith(() => deriveKarmaDecay(decayDeps, postBody, height, decayConfig()), escrows),
     height,

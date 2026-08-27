@@ -103,6 +103,7 @@ import {
   MAX_REORG_DEPTH,
   GENESIS_PREV_BLOCK_HASH,
   PROTOCOL_VERSION,
+  MAX_ESCROW_RETURNS_PER_BLOCK,
   computeTxId,
   leafHash,
   buildMerkleRoot,
@@ -898,7 +899,7 @@ function applyMutationPhase(
   });
   // Escrows: captured before the apply loop so the body's own unvouch does
   // not appear in the settlement's input list on one side only.
-  const escrows = getVouchEscrowsReleasableAt(height);
+  const escrows = getVouchEscrowsReleasableAt(height, MAX_ESCROW_RETURNS_PER_BLOCK);
 
   // Multi-pass: try to apply txs, retrying those whose inputs aren't
   // available yet (may have been created by an earlier tx in this block).
