@@ -280,6 +280,17 @@ giving each a named home is a row of its own.
 | `FAUCET_CREDITS_INITIAL` (literal) | `10_000_000_000_000n` | 100 000 credits | consensus | none stated. `node/src/store/system.ts` | CHOSEN | `ARCHITECTURE → Genesis` |
 | `MAX_RENT_TXS_PER_BLOCK` (literal) | `32` | rent collections a producer selects per block | policy | none stated; creator policy on a body-driven leg. `node/src/services/block-creator.ts` | CHOSEN | `NODE_INTERFACE → The settlement transaction` |
 
+## HTTP view bounds
+
+`packages/node` — the page every list a view returns is cut to (`NODE_INTERFACE → "Every list a view
+returns is a page"`). Interface numbers a client depends on, not consensus; module-private, so the
+drift test's converse does not reach them and the rows are marked.
+
+| Name | Value | Reads as | Kind | Argument | Status | Rule |
+|---|---|---|---|---|---|---|
+| `PAGE_LIMIT_DEFAULT` (literal) | `50` | rows a view returns when no `limit` is named | policy | none stated. `node/src/routes/page.ts` | CHOSEN | `NODE_INTERFACE → "Every list a view returns is a page"` |
+| `PAGE_LIMIT_MAX` (literal) | `100` | the most rows one page carries, whatever `limit` names | policy | none stated. `node/src/routes/page.ts` | CHOSEN | `NODE_INTERFACE → "Every list a view returns is a page"` |
+
 ## Client defaults
 
 `tools/nipopow-client` — what the light client asks for when no flag says otherwise.
