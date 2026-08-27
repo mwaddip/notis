@@ -786,8 +786,9 @@ function applyMutationPhase(
     //
     // ⚠ **The settlement gets the schema that admits the three protocol
     // boxes.** It creates the emission, treasury and pool successors, which a
-    // user transaction may not — the same closed key set and the same field
-    // types, over a wider set of box types.
+    // user transaction may not — the same closed key set (the four required
+    // fields plus `likeTarget`, `post`, `prune` and `postWithdraw`) and the
+    // same field types, over a wider set of box types.
     const envelopeCheck = checkTxEnvelope(tx);
     if (!envelopeCheck.valid) {
       console.warn(

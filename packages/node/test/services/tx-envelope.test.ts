@@ -628,13 +628,13 @@ describe('checkTxEnvelope at the decode boundary', () => {
   });
 
   it('and what it DOES return carries the closed key set, nothing else', () => {
-    // Including the two optional fields, present and holding `undefined` where
+    // Including the four optional fields, present and holding `undefined` where
     // the presence tag said absent — the shape the gate has to accept.
     const tx = envelope() as unknown as UtxoTransaction;
     const decoded = decodeTx(encodeTx(tx));
     for (const key of Object.keys(decoded)) {
       expect(
-        ['inputs', 'outputs', 'signatures', 'protocolVersion', 'likeTarget', 'post', 'prune'],
+        ['inputs', 'outputs', 'signatures', 'protocolVersion', 'likeTarget', 'post', 'prune', 'postWithdraw'],
         key,
       ).toContain(key);
     }

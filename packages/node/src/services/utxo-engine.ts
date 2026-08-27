@@ -16,7 +16,7 @@ import {
 import { isCreditSideTx } from './coinbase-split.js';
 import { effectiveKarma } from './decay.js';
 import type { DecayCfg } from './decay.js';
-import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, PostLockBox, PostCommit, PruneCommit } from '@dagsocial/types';
+import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, PostLockBox, PostCommit, PruneCommit, PostWithdrawCommit } from '@dagsocial/types';
 
 // `computeTxId` has exactly one implementation and it is types'. This engine
 // must never grow a local copy: the id it returns is both the hash
@@ -26,7 +26,7 @@ import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, Bon
 // same `Encoder` options, same strip rule, same domain tag, all by hand
 // (NODE_INTERFACE → "Box Identity and Mint Provenance").
 
-import { ed25519PublicKeyToKeyObject, verifyPostCommitDomains, verifyPruneCommitDomains, verifyProtocolVersion } from '@dagsocial/validation';
+import { ed25519PublicKeyToKeyObject, verifyPostCommitDomains, verifyPostWithdrawCommitDomains, verifyPruneCommitDomains, verifyProtocolVersion } from '@dagsocial/validation';
 // Type-only: erased at compile time, so the engine gains no runtime edge into
 // the store module graph. Same seam `DecayDeps` uses for the same record.
 import type { IdentityRecord } from '../store/identity-records.js';
@@ -218,6 +218,7 @@ function checkTransitions(
   likeTarget: string | undefined,
   post: PostCommit | undefined,
   prune: PruneCommit | undefined,
+  postWithdraw: PostWithdrawCommit | undefined,
   currentBlockHeight: number,
   hasSignatures: boolean,
 ): { valid: boolean; error?: string } {
@@ -614,6 +615,29 @@ function checkTransitions(
             error: `Prune root ${prune.rootPostHash} is not authored by the karma input's owner`,
           };
         }
+      } else if (postWithdraw !== undefined) {
+        // karma → karma (conserving, with a PostWithdrawCommit payload).
+        // ⛔ **An IMPLICATION, never a biconditional**: `postWithdraw` present ⟹
+        // all-karma inputs sharing one owner (pinned above), exactly one karma
+        // output, total output equals total input (step 7's unconditional
+        // conservation), and `inputKarma.owner` is the post's `block_topology`
+        // author. The reverse does not hold: the right side is an ordinary
+        // conserving self-transfer, and forbidding it would break plain karma
+        // self-consolidation.
+        if (karmaOutputs.length !== 1 || outputs.length !== 1) {
+          return {
+            valid: false,
+            error: 'PostWithdraw transition requires exactly one karma output',
+          };
+        }
+        const postAuthor = deps.getTopologyAuthor(postWithdraw.postId);
+        if (postAuthor === null ||
+            Buffer.from(postAuthor).toString('hex') !== inputOwnerHex) {
+          return {
+            valid: false,
+            error: `PostWithdraw post ${postWithdraw.postId} is not authored by the karma input's owner`,
+          };
+        }
       }
       // else: karma → karma only, which is always valid
 
@@ -975,6 +999,7 @@ const ENVELOPE_ALLOWED: ReadonlySet<string> = new Set<string>([
   'likeTarget',
   'post',
   'prune',
+  'postWithdraw',
 ]);
 
 /**
@@ -1093,17 +1118,18 @@ export function checkTxEnvelope(tx: unknown): UtxoResult {
 
   // ---- 2. Closed key set; a present-undefined key rejects ----
   //
-  // ⛔ **The two OPTIONAL fields are exempt, and the reason is the codec.**
-  // `likeTarget` and `post` each take `opt()`'s presence tag, which writes a
-  // single `0` for absence — so an absent field and a present-`undefined` one
-  // are ONE byte string, not two, and `computeTxId`'s `!== undefined` test reads
-  // that byte string the way the encoder wrote it (TYPES_INTERFACE → Layout —
-  // UtxoTransaction). There is no ambiguity here for a rule to refuse.
+  // ⛔ **The four OPTIONAL fields are exempt, and the reason is the codec.**
+  // `likeTarget`, `post`, `prune` and `postWithdraw` each take `opt()`'s
+  // presence tag, which writes a single `0` for absence — so an absent field
+  // and a present-`undefined` one are ONE byte string, not two, and
+  // `computeTxId`'s `!== undefined` test reads that byte string the way the
+  // encoder wrote it (TYPES_INTERFACE → Layout — UtxoTransaction). There is
+  // no ambiguity here for a rule to refuse.
   //
-  // ⚠ **And the decoder produces exactly that shape**: `decodeTx` writes both
-  // keys unconditionally, holding `undefined` where the tag said absent. A gate
-  // refusing it refuses every non-like, non-post transaction arriving inside a
-  // block — which is the whole of the embedded path.
+  // ⚠ **And the decoder produces exactly that shape**: `decodeTx` writes all
+  // four keys unconditionally, holding `undefined` where the tag said absent.
+  // A gate refusing it refuses every transaction arriving inside a block
+  // that does not carry the payload — which is the whole of the embedded path.
   //
   // Every other key keeps the refusal: a required field holding `undefined` is
   // not a transaction, and an unknown one is refused by the closed set above it.
@@ -1111,7 +1137,7 @@ export function checkTxEnvelope(tx: unknown): UtxoResult {
     if (!ENVELOPE_ALLOWED.has(key)) {
       return { valid: false, error: `Invalid tx envelope: unexpected key '${key}'` };
     }
-    if (tx[key] === undefined && key !== 'likeTarget' && key !== 'post' && key !== 'prune') {
+    if (tx[key] === undefined && key !== 'likeTarget' && key !== 'post' && key !== 'prune' && key !== 'postWithdraw') {
       return {
         valid: false,
         error: `Invalid tx envelope: key '${key}' is present with value undefined`,
@@ -1238,6 +1264,19 @@ export function checkTxEnvelope(tx: unknown): UtxoResult {
   // (NODE_INTERFACE → Prune transactions).
   if (tx.prune !== undefined) {
     const domains = verifyPruneCommitDomains(tx.prune);
+    if (!domains.valid) {
+      return { valid: false, error: `Invalid tx envelope: ${domains.error}` };
+    }
+  }
+
+  // ---- 11. postWithdraw: absent, or a payload inside the encodable domain ----
+  //
+  // Same obligation as `prune` above: `txIdBytes` writes the payload through
+  // `postWithdrawFieldBytes`, whose fixed-width writer throws outside its
+  // domain. `verifyPostWithdrawCommitDomains` is the single statement of
+  // that domain.
+  if (tx.postWithdraw !== undefined) {
+    const domains = verifyPostWithdrawCommitDomains(tx.postWithdraw);
     if (!domains.valid) {
       return { valid: false, error: `Invalid tx envelope: ${domains.error}` };
     }
@@ -2011,6 +2050,7 @@ export function validateTx(
     tx.likeTarget,
     tx.post,
     tx.prune,
+    tx.postWithdraw,
     currentBlockHeight,
     Object.keys(tx.signatures).length > 0,
   );

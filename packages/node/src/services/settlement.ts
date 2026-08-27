@@ -619,9 +619,10 @@ export function checkSettlement(
 
   // ---- 2. Nothing but the transaction ----
   //
-  // A settlement carries no signature, no like and no post. Each would be bytes
-  // inside `utxoTxRoot` that no rule reads, which is the malleability
-  // `checkTxEnvelope`'s closed key set refuses for user transactions.
+  // A settlement carries no signature, no like, no post, no prune and no
+  // withdrawal. Each would be bytes inside `utxoTxRoot` that no rule reads,
+  // which is the malleability `checkTxEnvelope`'s closed key set refuses for
+  // user transactions.
   if (Object.keys(settlement.signatures ?? {}).length !== 0) {
     return { valid: false, error: 'settlement carries a signature; no key authorizes it' };
   }
@@ -633,6 +634,9 @@ export function checkSettlement(
   }
   if (settlement.prune !== undefined) {
     return { valid: false, error: 'settlement carries a prune' };
+  }
+  if (settlement.postWithdraw !== undefined) {
+    return { valid: false, error: 'settlement carries a postWithdraw' };
   }
   if (settlement.protocolVersion !== PROTOCOL_VERSION) {
     return {

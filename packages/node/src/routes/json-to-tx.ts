@@ -1,5 +1,5 @@
 import { BOX_VALUE_BOUND, PROTOCOL_VERSION } from '@dagsocial/types';
-import type { AnyBox, PostCommit, PostType, PruneCommit, UtxoTransaction } from '@dagsocial/types';
+import type { AnyBox, PostCommit, PostType, PostWithdrawCommit, PruneCommit, UtxoTransaction } from '@dagsocial/types';
 import { ClientError } from '../services/client-error.js';
 
 /**
@@ -93,6 +93,9 @@ export function jsonToTx(raw: Record<string, unknown>): UtxoTransaction {
   // ---- prune ----
   const prune = raw.prune === undefined ? undefined : jsonToPruneCommit(raw.prune);
 
+  // ---- postWithdraw ----
+  const postWithdraw = raw.postWithdraw === undefined ? undefined : jsonToPostWithdrawCommit(raw.postWithdraw);
+
   return {
     inputs: (raw.inputs ?? []) as string[],
     outputs,
@@ -101,6 +104,7 @@ export function jsonToTx(raw: Record<string, unknown>): UtxoTransaction {
     ...(likeTarget !== undefined ? { likeTarget } : {}),
     ...(post !== undefined ? { post } : {}),
     ...(prune !== undefined ? { prune } : {}),
+    ...(postWithdraw !== undefined ? { postWithdraw } : {}),
   };
 }
 
@@ -163,6 +167,17 @@ function jsonToPruneCommit(raw: unknown): PruneCommit {
     subtreePostIds: p.subtreePostIds as string[],
     subtreeMerkleRoot,
   };
+}
+
+function jsonToPostWithdrawCommit(raw: unknown): PostWithdrawCommit {
+  if (typeof raw !== 'object' || raw === null) {
+    throw new ClientError('postWithdraw must be an object');
+  }
+  const p = raw as Record<string, unknown>;
+  if (typeof p.postId !== 'string') {
+    throw new ClientError('postWithdraw postId must be a string');
+  }
+  return { postId: p.postId };
 }
 
 /**

@@ -227,4 +227,16 @@ describe('settlement leg order', () => {
       deps, HEIGHT, EMISSION, MINER_REWARD_DELAY, body, tx);
     expect(check.valid).toBe(true);
   });
+
+  it('refuses a settlement carrying a postWithdraw payload', () => {
+    const result = buildSettlement(
+      deps, HEIGHT, EMISSION, MINER_REWARD_DELAY, body, miner.userId);
+    expect('tx' in result).toBe(true);
+    if (!('tx' in result)) return;
+    const poisoned = { ...result.tx, postWithdraw: { postId: 'aa'.repeat(32) } };
+    const check = checkSettlement(
+      deps, HEIGHT, EMISSION, MINER_REWARD_DELAY, body, poisoned);
+    expect(check.valid).toBe(false);
+    expect(check.error).toMatch(/settlement carries a postWithdraw/);
+  });
 });
