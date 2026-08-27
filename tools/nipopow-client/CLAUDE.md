@@ -52,7 +52,8 @@ reproduces the key. A node's listing of box ids is used as a *list to prove*, ne
 
 **2. No local encoding, no local consensus.** `boxRecordFromBytes`, `computeCandidateBoxId`,
 `profileFor` come from `@dagsocial/types`; `verifyProof`, `compareProofs`, `decodeNipopowProof`
-from `@dagsocial/nipopow`; `verifyAvlLookup` from `@ergots/avltree`. This tool hashes nothing and
+from `@dagsocial/nipopow`; `blockHash` from `@dagsocial/validation`; `verifyAvlLookup` from
+`@ergots/avltree`. This tool hashes nothing and
 decodes nothing of its own — a third implementation of any of these would be the first one a user
 trusts with a balance.
 
