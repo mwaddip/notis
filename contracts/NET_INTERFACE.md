@@ -227,9 +227,10 @@ topic string `/dagsocial/subblock/1`.** Held by its live guard — `gossip.test.
 the topic has no validator — and it leaves with that guard.
 
 `/dagsocial/stump/1` is retired (P2-F F1): a gossiped stump is unverifiable
-by construction (no author signature, no `subtreePostIds`) and stumps are
+by construction (no signature, no set to check against topology) and stumps are
 derived locally from applied blocks, so the topic is neither subscribed nor
-published. Prunes propagate as PruneEntries inside ordering blocks.
+published. Prunes propagate as transactions — on the `tx` topic and inside
+ordering blocks.
 
 All gossip topics carry the object's own positional wire encoding directly — no framing.
 The topic version (`/1`) matches the protocol version for topic naming but

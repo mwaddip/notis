@@ -429,30 +429,31 @@ invites, vouches, credits, prune).
    entered the pool, which is what happened; the outcome it does **not** promise is that a
    block carries it. karma-econ §1.4.2 rules the word out besides — a prune is not a deletion
    for anyone who archived the content.
-3. The route runs the prune-specific checks — the root confirmed in an **earlier** block, the
-   subtree set against `block_topology`, the Merkle root against the id list — then
-   `validateTx`, then `admitTx`, then `net.broadcastTx`. **The same order every sibling route
-   uses**, and the broadcast is what makes a prune submitted to a non-mining node reach
-   consensus.
+3. The route runs the prune-specific check — the root confirmed in an **earlier** block, read
+   from `block_topology` — then `validateTx`, then `admitTx`, then `net.broadcastTx`. **The same
+   order every sibling route uses**, and the broadcast is what makes a prune submitted to a
+   non-mining node reach consensus. The response is `{ status: "submitted", txId, postId }` —
+   no `replyCount`, which is a property of apply and is read off the stump.
    > ⚠ **The route checks topology, not the DAG.** A pending post has a `dag_posts` row and no
-   > topology row, so a DAG-based subtree read would admit a prune that consensus must reject.
+   > topology row, so a DAG-based read would admit a prune that consensus must reject.
+   > ⚠ **AHEAD OF CODE, 2026-08-27 (D5).** The tree's route also checks the payload's set and
+   > Merkle root and answers with `replyCount` read off the payload.
 4. At block application (§8c): the transaction's own validation has already bound authorship
    (`inputKarma.owner` against the root's topology author) and covered the payload by
-   signature. What remains is the **maturity bind**, the topology set, the Merkle root, the
-   UTXO settlement — the settlement transaction consumes the subtree's `PostLockBox`es and
-   refunds **every lock owner except the pruning author**, whose own locks go to the pool —
-   and deletion of the subtree's like-records (journalled, so a reverted prune restores them),
-   insert of the Stump derived from the verified payload
-   (**unconditional** — a node holding no DAG content records the same
-   stump; the insert is journalled, so a reverted prune removes it), then
-   **delete** the subtree's `dag_posts` and `dag_parent_refs` rows **by the
-   payload's `subtreePostIds`** — the consensus set just verified — never by a
-   local DAG walk; ids with no local row are simply absent. Every deleted row
-   (skeleton, body, status, height, index, parent refs) is captured into the
-   block's journal as a side-record **before** deletion (Block Journal →
-   `deletedPosts`), so a reverted prune restores it exactly; below
-   `MAX_REORG_DEPTH` the journal is dropped and the node holds no byte of the
-   subtree's content anywhere (ARCHITECTURE → Subtree pruning).
+   signature. What remains is the **maturity bind**, the derived set, the vest of this block's
+   own likes on the subtree, the deletion of the subtree's like-records (journalled, so a
+   reverted prune restores them), the insert of the Stump derived from that set
+   (**unconditional** — a node holding no DAG content records the same stump; the insert is
+   journalled, so a reverted prune removes it), the **deletion** of the subtree's `dag_posts`
+   and `dag_parent_refs` rows **by the derived set** — never by a local DAG walk; ids with no
+   local row are simply absent — and the **marking** of the set's `block_topology` rows, from
+   which later blocks' settlements release the subtree's `PostLockBox`es at the leg's cap,
+   refunding **every lock owner except the pruning author**, whose own locks go to the pool
+   (→ Prune transactions; → The settlement transaction). Every deleted row (skeleton, body,
+   status, height, index, parent refs) is captured into the block's journal as a side-record
+   **before** deletion (Block Journal → `deletedPosts`), so a reverted prune restores it exactly;
+   below `MAX_REORG_DEPTH` the journal is dropped and the node holds no byte of the subtree's
+   content anywhere (ARCHITECTURE → Subtree pruning).
 
    **The stump's `upvoteCount` is the like tally of the pruned subtree**: the
    count of like-records the deletion removed, the root's likes included
@@ -466,8 +467,8 @@ applied prune transaction — never information in its own
 right. `insertStump` has exactly one caller: prune settlement in block
 application. No network input writes the table. Inbound stump gossip is not
 consumed, and no stump pull protocol exists: a gossiped stump is unverifiable
-by construction (it carries neither the author signature nor
-`subtreePostIds`, so a receiver has nothing to check it against), while the
+by construction (it carries no signature and names no set, so a receiver has
+nothing to check it against), while the
 table it would write is trusted by both the read API (`getPost` resolves
 stumps) and the relay verifier (parent-existence, step 8) — which is why
 nothing unverified may reach it (audit F-api-20, and the sweep-response
@@ -1575,12 +1576,37 @@ There is **no other legal bond or invite shape**. In particular:
 
 ### Prune transactions
 
+> ⚠ **AHEAD OF CODE — the derived set and the deferred locks, 2026-08-27 (D5).** The tree's
+> payload carries `subtreePostIds` and `subtreeMerkleRoot`, §8c verifies both against topology
+> and rejects the block on a mismatch, and the prune's block settles every lock in the subtree
+> through `planPostLockSettlement`. The bullets below that describe a one-field payload, a
+> derived set, the in-block vest and the marked topology rows describe the D5 branch; the
+> release leg is → The settlement transaction.
+
 - **A prune is a transaction, and that is the whole of its carriage.** It is a
   karma **self-transfer** — all-karma inputs sharing one owner, exactly one karma
   output, total output equal to total input — carrying a `PruneCommit` payload
-  (`rootPostHash`, `subtreePostIds`, `subtreeMerkleRoot`; TYPES_INTERFACE →
-  Layout — PruneCommit). It rides `utxoTxIds` with every other transaction; the
-  block body has no prune section.
+  (`rootPostHash`; TYPES_INTERFACE → Layout — PruneCommit). It rides `utxoTxIds`
+  with every other transaction; the block body has no prune section.
+- ⛔ **The subtree is derived, never carried.** At §8c the set is
+  `getSubtreeTopology(rootPostHash)` — every `block_topology` row reachable from
+  the root through `parent_refs`, the root included, **as the table stands after
+  §8 populated it from this block's own posts** — so a reply confirmed in the
+  prune's block is in the set, and a reply confirmed between the prune's signing
+  and its inclusion invalidates nothing. Every node derives the same set from
+  committed state; a node holding no DAG content reaches the same verdict.
+- ⛔ **The prune's block deletes and marks; it settles no lock.** §8c, per prune
+  in committed order: the maturity bind; **this block's own likes on subtree
+  posts vest** — for each post in the block's like set that is in the subtree and
+  holds a live `PostLockBox`, the per-block vest (§11b's primitive, bounded by the
+  block's like transactions) runs before the like-records go; the like-records
+  are deleted and tallied; the stump is inserted (`replyCount` = set size − 1,
+  `upvoteCount` = the tally); `dag_posts` and `dag_parent_refs` rows are deleted
+  by the set; and **every `block_topology` row in the set is marked**
+  `pruned_at_height = h`, `pruned_root = rootPostHash`. The marks are the release
+  leg's queue (→ The settlement transaction) and are journalled (→ Block
+  Journal). No `PostLockBox` is consumed here — a subtree of any size prunes in
+  one block, and its locks drain at the leg's cap.
 - ⛔ **`prune` is an IMPLICATION, never a biconditional.** `prune` present ⟹ the
   shape above **and** `inputKarma.owner` is the root's `block_topology` author
   **and** `verifyPruneCommitDomains(tx.prune)` passes. **The reverse must never
@@ -1602,9 +1628,8 @@ There is **no other legal bond or invite shape**. In particular:
   the intent route enforces the same rule at submit. **The same bind governs
   withdrawal.**
 - **`verifyPruneCommitDomains` is the single statement of the payload's
-  structural domain** — `rootPostHash` hex-32, `subtreePostIds` an array of
-  hex-32 **with no repeated id**, `subtreeMerkleRoot` exactly 32 bytes. It lives
-  in `@dagsocial/validation` and both the envelope check and the transition arm
+  structural domain** — `rootPostHash` hex-32, and nothing else. It lives in
+  `@dagsocial/validation` and both the envelope check and the transition arm
   call it; two implementations of one domain drift. The precedent is
   `verifyPostCommitDomains`.
 - **The route submits, validates and broadcasts like every sibling.** The intent
@@ -1660,23 +1685,30 @@ There is **no other legal bond or invite shape**. In particular:
   carrying like(P) and prune(P) invalid — two unrelated users' individually valid
   transactions that no producer could combine into one block. After the loop the
   like arm sees a live post and the pair is valid, with no producer-side filter.
-- ⛔ **Withdrawals settle first, then prunes, each in committed transaction
-  order.** The order is load-bearing: a reply withdrawn by its own author in the
-  block its thread is pruned must **forfeit** its bond, and the reverse order
-  refunds that bond and then finds no lock to forfeit — content withdrawn and
-  stake returned, which is the churn the bond exists to price.
-- ⛔ **One claimed set of lock-box ids carries across both passes.** A withdrawal
-  and a prune both naming one lock would put the same box id in the settlement's
-  input list twice, which `validateTx` refuses as a duplicate input. The prune
-  pass skips a claimed lock. ⚠ **The exclusion applies to the settlement only** —
-  a prune's topology-set and Merkle-root checks verify against its **full**
-  `subtreePostIds`.
-- **The vest is folded into the plan.** A lock being settled releases what this
-  block's likes earned before the remainder is burned, as a refund to the lock's
-  owner with the pool figure reduced by the same amount — no new leg, no
-  intermediate box. Without it the vest is lost whenever a like and a settlement
-  share a block, which would make a stated path-independence depend on how a
-  producer packs blocks.
+- **Withdrawals first, then prunes, each in committed transaction order.** A
+  reply withdrawn by its own author in the block its thread is pruned
+  **forfeits** its bond: the withdrawal's settlement leg consumes the lock in
+  this block, and the prune pass consumes nothing, so the later release leg
+  finds that lock spent and refunds nothing — content withdrawn and stake
+  forfeited, whichever pass runs first. The order is kept for the phase's own
+  legibility, not for the outcome.
+- ⛔ **The prune pass consumes no lock, so the claimed set is withdrawal's alone.**
+  A withdrawal's lock is consumed by this block's settlement; a lock the prune
+  pass marks is released by a later block's settlement (→ The settlement
+  transaction), and a lock a withdrawal consumed is spent and is never a
+  candidate. Two withdrawals of one post in one block are refused above; nothing
+  else can name one lock twice.
+  > ⚠ **AHEAD OF CODE, 2026-08-27 (D5).** The tree's prune pass settles its locks in-block and
+  > skips the claimed ones; this bullet describes the D5 branch.
+- **The vest is folded into the plan for a withdrawal.** A lock being settled
+  releases what this block's likes earned before the remainder is burned, as a
+  refund to the lock's owner with the pool figure reduced by the same amount — no
+  new leg, no intermediate box. Without it the vest is lost whenever a like and a
+  settlement share a block, which would make a stated path-independence depend on
+  how a producer packs blocks. **A prune has no plan to fold into**: its block
+  vests the same likes through §11b's primitive at §8c (→ Prune transactions),
+  and a released lock's `value` is already net of every vest, because §11b vests
+  per block from the lifetime count and no like lands on a stumped post.
 - ⛔ **The plan is a pure function of its inputs.** It is derived twice — by the
   creator from pre-body state and by the applier from post-body state — so the
   lifetime like count is a **parameter**, stated as *the count as of after this
@@ -1695,9 +1727,14 @@ There is **no other legal bond or invite shape**. In particular:
   Settlement mints the vested part to the inviter and destroys the rest;
   cancellation returns the whole of it. No path pays a bond to the
   invitee.
-- **Settlement happens once, at the deadline, and reads only likes.**
-  `IdentityRecord.invitedAtBlock + INVITE_PROBATION_BLOCKS` is the
-  height; the vested amount is
+- **Settlement happens once, at or past the deadline, and reads only likes.**
+  `IdentityRecord.invitedAtBlock + INVITE_PROBATION_BLOCKS` is the height a
+  bond becomes eligible; the settlement takes at most
+  `MAX_BOND_SETTLEMENTS_PER_BLOCK` eligible bonds per block, ascending
+  `(invitedAtBlock, box id)`, and a bond still waiting settles against the
+  counter as it stands in the block that takes it (`TYPES_INTERFACE` →
+  Settlement caps; ⚠ AHEAD OF CODE 2026-08-27 (D5): the tree settles every
+  bond at exactly the deadline height). The vested amount is
   `min(floor(IdentityRecord.lifetimeLikesReceived / INVITE_BOND_VEST_PER_LIKES), bond.value)`,
   and the remainder
   burns regardless of what the invitee did otherwise. No karma balance is
@@ -2283,14 +2320,34 @@ the karma pool, the emission box and the treasury box, and the only consumer of 
 
 | | |
 |---|---|
-| **Consumes, in this order** | the emission box (when this height releases) · the treasury box (when this block accrues to it) · every marker box the block's like transactions emitted, in committed transaction order · the carry box of every author the block credits, ascending author hex · the `BondBox` of every bond settling at this height, ascending box id · every `VouchEscrowBox` at or past its `releaseAtBlock` in pre-body state, ascending box id · the karma boxes decay charges · the locks a prune transaction's payload names, in committed transaction order · the karma pool box (when this block draws or returns) · every `FeeBox` the body's transactions created, in committed transaction order |
-| **Emits, in this order** | the successors of the three protocol boxes — emission, treasury, karma pool · the invite grants · like payouts and carry successors · the vested part of each settling bond, back to its inviter · each released escrow's value, back to its owner · decay replacements · prune refunds · the coinbase's credit outputs |
+| **Consumes, in this order** | the emission box (when this height releases) · the treasury box (when this block accrues to it) · every marker box the block's like transactions emitted, in committed transaction order · the carry box of every author the block credits, ascending author hex · **at most `MAX_BOND_SETTLEMENTS_PER_BLOCK`** `BondBox`es whose invitee's `invitedAtBlock` is at or past `height − inviteProbationBlocks` in pre-body state, ascending `(invitedAtBlock, box id)` · **at most `MAX_ESCROW_RETURNS_PER_BLOCK`** `VouchEscrowBox`es at or past their `releaseAtBlock` in pre-body state, ascending `(releaseAtBlock, box id)` · the karma boxes decay charges · the locks a withdrawal transaction names, in committed transaction order · **at most `MAX_POST_LOCK_RELEASES_PER_BLOCK`** `PostLockBox`es whose post's `block_topology` row is marked pruned, in pre-body state, ascending `(pruned_at_height, post_id)` · the karma pool box (when this block draws or returns) · every `FeeBox` the body's transactions created, in committed transaction order |
+| **Emits, in this order** | the successors of the three protocol boxes — emission, treasury, karma pool · the invite grants · like payouts and carry successors · the vested part of each settling bond, back to its inviter · each released escrow's value, back to its owner · decay replacements · withdrawal refunds · post-lock releases, one karma output per owner ascending owner hex · the coinbase's credit outputs |
+
+> ⚠ **AHEAD OF CODE — the three capped legs, 2026-08-27 (D5).** The tree settles every bond
+> invited at exactly `height − inviteProbationBlocks`, every releasable escrow, and every lock a
+> prune's payload names, uncapped and in the prune's own block. The capped, carried-forward form
+> in both rows describes the D5 branch; the caps are `TYPES_INTERFACE` → Settlement caps.
+
+⛔ **A leg the body does not drive is capped, and the remainder waits.** Bonds, escrows and
+post-lock releases are read from chain state, so no producer can shrink them by selecting a
+smaller body; each takes at most its cap per block in the stated total order — the order key is
+unique, so every verifier takes the same items — and a candidate stays eligible **at or past** its
+height until a block consumes it. **The release leg**: a candidate is an unspent `PostLockBox`
+whose target post's `block_topology` row carries `pruned_at_height` (→ Prune transactions); the
+actor is that row's `pruned_root`'s topology author, equal to the stump's `authorId`; the actor's
+own locks go to the pool and every other lock's `value` returns to its owner as karma
+(`nonActivity: true`), aggregated per owner. A spent lock leaves the queue by being spent — there
+is no cursor to store. ⚠ **The three caps and the empty-body settlement are the liveness
+relation** (`TYPES_INTERFACE` → Size caps): whatever the chain state holds, the settlement of an
+empty body fits `MAX_SETTLEMENT_BYTES`, so a block exists at every height.
 
 ⛔ **The two orders are consensus.** `derive()` builds the input list and the output list leg by leg in exactly these sequences, and a verifier recomputes both and compares the block's settlement to them position by position — the input list whole, the derived outputs element-wise; the coinbase is constrained, never derived (→ "Determinism is this mechanism's whole risk", the derived / producer-chosen table, where output ordering is a derived field). A leg moved is every settlement's bytes moved, on both sides identically. `node/test/services/settlement-leg-order.test.ts` pins both sequences with one fixture that fires every leg at once.
 
 ⚠ **The escrow leg reads PRE-BODY state, and returns at or past `releaseAtBlock`, not at it.**
-The settlement of height `h` consumes every unspent `VouchEscrowBox` with `releaseAtBlock <= h` that
-exists in the state the block builds on, ascending box id, and emits each one's value to its `owner`
+The settlement of height `h` consumes **at most `MAX_ESCROW_RETURNS_PER_BLOCK`** of the unspent
+`VouchEscrowBox`es with `releaseAtBlock <= h` that exist in the state the block builds on, ascending
+`(releaseAtBlock, box id)` — the rest stay eligible (`TYPES_INTERFACE` → Settlement caps; ⚠ AHEAD OF
+CODE 2026-08-27 (D5): the tree consumes every one, ascending box id) — and emits each one's value to its `owner`
 as karma (`nonActivity: true`) — emitting nothing for a value of zero, like every karma leg, so a
 zero-value escrow is consumed without an output (unreachable on a valid chain: the cast pins every
 stake at `VOUCH_KARMA_AMOUNT`). The body can *create* an escrow — an unvouch of a vouch held longer
@@ -2314,8 +2371,13 @@ emission box, the treasury or a fee box rides the settlement.
 
 The pool's id changes every time it is spent, so two transactions naming it conflict — and unlike an
 ordinary contended box **the loser is not deferred but permanently invalid.** One protocol spend per
-block gives zero contention. A transaction may carry as many outputs as it needs, so **this bounds
-nothing** about how many invites, likes or sweeps a block holds.
+block gives zero contention. A transaction may carry as many outputs as it needs, so **the one-spend
+rule bounds nothing** about how many invites, likes or sweeps a block holds. **What does bound them
+is the settlement's own size**: `MAX_SETTLEMENT_BYTES` (`TYPES_INTERFACE` → Size caps) weighs the
+whole transaction, so a block carries as many likes as their marker inputs fit beside its other
+legs — the producer keeps the body-driven legs inside it by selection (`MEMPOOL_INTERFACE` → The
+fill budget is bytes; `getPendingEntries` is a count), and the three capped legs above keep the
+state-driven ones inside it whatever the producer selects.
 
 #### ⛔ Its marker inputs are DERIVED, not serialized
 
@@ -3312,6 +3374,10 @@ BlockJournal {
                                    // still a PLACEHOLDER, and the inverse of that is a row with
                                    // null content AND a clear marker. A withdrawal MUTATES a row
                                    // rather than deleting it, so `deletedPosts` cannot carry it
+  prunedTopologyRows: string[]     // the post ids whose block_topology rows §8c marked pruned —
+                                   // inverse: clear pruned_at_height and pruned_root. The rows
+                                   // themselves survive a prune; only the marks are this block's.
+                                   // ⚠ AHEAD OF CODE 2026-08-27 (D5) — the tree has no marks
 }
 ```
 The field names are the `journal_cbor` keys: the journal is the node's local format, with no

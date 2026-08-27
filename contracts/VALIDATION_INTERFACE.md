@@ -875,19 +875,15 @@ aligns 1:1 with `utxoTxIds`, each element a byte view of at most
 
 ### `verifyPruneCommitDomains`
 
+> ⚠ **AHEAD OF CODE — one field, 2026-08-27 (D5).** The tree's domain is three fields — the
+> `rootPostHash`, a `subtreePostIds` array with no repeated id, a 32-byte `subtreeMerkleRoot` —
+> and the repeat check and the byte-view check below belong to those two. This section describes
+> the D5 branch (`TYPES_INTERFACE` → Layout — PruneCommit).
+
 **The single statement of a `PruneCommit`'s structural domain**, and the sibling of
-`verifyPostCommitDomains`. An object with a 64-char `rootPostHash`, a `subtreePostIds` array of
-64-char strings **with no repeated id** (length equals set size), and a 32-byte
-`subtreeMerkleRoot`.
-
-**The repeat check is not redundant with the Merkle root.** A root over the raw list admits a
-repeat, and so does an apply-time set compare; a repeated id inflates the stump's `replyCount`
-and names one lock box twice.
-
-**Byte-length fields must be `Uint8Array`, not merely length-bearing** — an adversarial or
-hand-built object can put any type in any field, and the consumers call `Buffer.from(...)` and
-`createHash().update(...)`, which throw on a number or object. This is the layer that guarantees
-they never see one.
+`verifyPostCommitDomains` and `verifyPostWithdrawCommitDomains`. An object whose `rootPostHash` is
+a 64-char lowercase-hex string, and nothing else: the subtree is derived at apply, so the payload
+carries no set to check for repeats and no root to check for type.
 
 ⛔ **One statement, two callers.** Node's envelope check and its prune transition arm both call
 this function rather than restating it (`NODE_INTERFACE` → Prune transactions); two
@@ -896,7 +892,16 @@ close.
 
 #### Each embedded transaction is bounded too
 
-`utxoTxs[i].length > MAX_TX_BYTES` rejects, checked in the same loop that types the elements.
+`utxoTxs[i].length > MAX_TX_BYTES` rejects for every element but the last, and
+`utxoTxs[last].length > MAX_SETTLEMENT_BYTES` rejects for the last — both checked in the same loop
+that types the elements. The last element is the settlement transaction, and positional identity is
+the whole of how it is known here (`NODE_INTERFACE` → The settlement transaction); its bound is its
+own because its size is derived from the body and from chain state rather than chosen by a user
+(`TYPES_INTERFACE` → Size caps).
+
+> ⚠ **AHEAD OF CODE — the last element's own bound, 2026-08-27 (D5).** The tree's loop weighs
+> every element, the last included, against `MAX_TX_BYTES`. The two-bound form above describes the
+> D5 branch.
 
 ⛔ **Without it, `MAX_TX_BYTES` would not be a consensus bound at all.** `verifyTxStructure` carries
 the same limit but has exactly one production caller — net's gossip `tx` validator — and
@@ -918,8 +923,8 @@ every peer first and refused second, which is the amplification the bound exists
 
 ⛔ **It runs after every shape check above, and that order is load-bearing.** The sizer reads
 `utxoTxs` element lengths and the coinbase array; run before those are typed,
-it reads a length off whatever a peer put there. The checks above are what make it total — the same
-relationship `verifyPruneCommitDomains` describes for `Buffer.from` and `createHash`.
+it reads a length off whatever a peer put there. The checks above are what make it total — a sizer
+or a hasher handed an untyped field throws, so the shape check is what guarantees it never sees one.
 
 **The measure is the bytes as they arrived.** `utxoTxs` are opaque, so a received block weighs what
 the peer actually put in it — which is what this node stores and re-serves. See the transaction bound

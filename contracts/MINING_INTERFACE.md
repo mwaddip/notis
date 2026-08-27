@@ -275,6 +275,14 @@ chain cannot build at all (no emission box at a height that releases, no karma p
 draws on it) is terminal on the first attempt for the same reason. The loop runs only inside a build
 that holds no template, so the stability rule below is untouched.
 
+**A body's size is never the cause.** The fill measures the assembled tree against the body budget
+and the rebuilt settlement against `MAX_SETTLEMENT_BYTES` before the template exists
+(`MEMPOOL_INTERFACE` → The fill budget is bytes; `getPendingEntries` is a count), so the block
+`verifyOrderingBlockStructure` weighs at submit is one the fill already fitted; the rejected-body
+loop above is for a body the **mutation phase** refuses. ⚠ **AHEAD OF CODE, 2026-08-27 (D5)**: the
+tree's fill does not weigh the settlement, so a settlement above `MAX_TX_BYTES` — some 310 like
+markers' worth — is mined, refused at submit, and its rows evicted.
+
 **Holding one and serving one are separate**, and 404 is routine again for the second: a node that has
 not yet met its peers withholds the template it holds. See *The peer-readiness gate* below. **A 404
 from a miner node is one of two things** — that gate, or a terminal decline, which is on the node's
