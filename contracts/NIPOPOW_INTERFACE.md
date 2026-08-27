@@ -4,10 +4,6 @@
 **Protocol version:** 1
 **Last updated:** 2026-08-27
 
-> ⚠ **AHEAD OF CODE — 2026-08-27.** This contract is written for the `nipopow-prover` unit; the
-> package directory holds its `CLAUDE.md` and nothing else until that unit's code lands on the same
-> branch. Retired when the unit's gate is green.
-
 ## Scope
 
 Non-interactive proofs of proof-of-work over Notis ordering-block headers — KMZ17 superblock
