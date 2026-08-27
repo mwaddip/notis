@@ -401,9 +401,9 @@ describe('posts store', () => {
     expect(refs).toEqual(refs3);
   });
 
-  it('getSubtree returns all descendants (multi-level)', async () => {
+  it('getSubtreePage returns all descendants (multi-level)', async () => {
     const { initDb } = await importDbFresh();
-    const { insertPost, getSubtree } = await importPostsFresh();
+    const { insertPost, getSubtreePage } = await importPostsFresh();
 
     initDb(':memory:');
 
@@ -418,9 +418,9 @@ describe('posts store', () => {
     const { commit: gcCommit, content: gcContent } = makeCommit({ content: 'grandchild', parentRefs: [childId] });
     insertPost(fixturePostId(gcCommit), gcCommit, gcContent);
 
-    const subtree = getSubtree(rootId);
-    expect(subtree).toHaveLength(2);
-    const contents = subtree.map((p) => p.content).sort();
+    const result = getSubtreePage(rootId, { limit: 50, offset: 0 });
+    expect(result.count).toBe(2);
+    const contents = result.rows.map((p) => p.content).sort();
     expect(contents).toEqual(['child', 'grandchild']);
   });
 
@@ -641,9 +641,9 @@ describe('posts store', () => {
       getPost,
       queryPosts: () => [],
       getLikeRecordCount: () => 0,
-      getLikersForPost: () => [],
-      getAncestors: () => [],
-      getSubtree: () => [],
+      hasLikeRecord: () => false,
+      getAncestorsNearest: () => ({ rows: [], count: 0 }),
+      getSubtreePage: () => ({ rows: [], count: 0 }),
       getBlockCreatedAt: () => null,
     });
 
@@ -675,7 +675,7 @@ describe('posts store', () => {
 
   it('withdrawn ancestor and descendant in a thread come back as WithdrawnJson, not PostJson', async () => {
     const { initDb, getDb } = await importDbFresh();
-    const { insertPost, confirmPost, getPost, getAncestors, getSubtree } = await importPostsFresh();
+    const { insertPost, confirmPost, getPost, getAncestorsNearest, getSubtreePage } = await importPostsFresh();
 
     initDb(':memory:');
 
@@ -709,13 +709,13 @@ describe('posts store', () => {
       getPost,
       queryPosts: () => [],
       getLikeRecordCount: () => 0,
-      getLikersForPost: () => [],
-      getAncestors,
-      getSubtree,
+      hasLikeRecord: () => false,
+      getAncestorsNearest,
+      getSubtreePage,
       getBlockCreatedAt: () => null,
     });
 
-    const thread = feedService.getThread(childId)!;
+    const thread = feedService.getThread(childId, { limit: 50, offset: 0 })!;
     expect(thread).not.toBeNull();
 
     // The subject post is live
@@ -750,9 +750,9 @@ describe('posts store', () => {
       getPost,
       queryPosts,
       getLikeRecordCount: () => 0,
-      getLikersForPost: () => [],
-      getAncestors: () => [],
-      getSubtree: () => [],
+      hasLikeRecord: () => false,
+      getAncestorsNearest: () => ({ rows: [], count: 0 }),
+      getSubtreePage: () => ({ rows: [], count: 0 }),
       getBlockCreatedAt: () => null,
     });
 

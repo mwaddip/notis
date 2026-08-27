@@ -9,7 +9,7 @@ import express from 'express';
 import http from 'http';
 import { generateKeyPairSync, createPrivateKey } from 'crypto';
 import { initDb, closeDb, getDb } from '../../src/store/db.js';
-import { insertPost, getPost, queryPosts, getAncestors, getSubtree, deletePostRows } from '../../src/store/posts.js';
+import { insertPost, getPost, queryPosts, getAncestorsNearest, getSubtreePage, deletePostRows } from '../../src/store/posts.js';
 import { getCurrentHeight, getBlockCreatedAt } from '../../src/store/ordering.js';
 import {
   getKarmaBox,
@@ -19,8 +19,7 @@ import {
 } from '../../src/store/utxo.js';
 import { getIdentityRecord as storeGetIdentityRecord } from '../../src/store/identity-records.js';
 import { hasActiveVouchEscrow } from '../../src/store/utxo.js';
-import { getLikeRecordCount } from '../../src/store/likes.js';
-import { getLikersForPost } from '../../src/store/utxo.js';
+import { getLikeRecordCount, hasLikeRecord } from '../../src/store/likes.js';
 import { insertUtxoTx, getPendingEntries } from '../../src/store/mempool.js';
 import { verifyPost } from '../../src/services/verifier.js';
 import { validateTx } from '../../src/services/utxo-engine.js';
@@ -80,9 +79,9 @@ async function request(
       getBoxProvenance: () => null,
       getKarmaBox,
       getLikeRecordCount,
-      getLikersForPost,
-      getAncestors,
-      getSubtree,
+      hasLikeRecord,
+      getAncestorsNearest,
+      getSubtreePage,
       getBlockCreatedAt,
       inviteBondMin: config.inviteBondMin,
       inviteBondMax: config.inviteBondMax,
@@ -414,7 +413,9 @@ describe('posts routes', () => {
           ...stumpScalars,
         },
         ancestors: [],
+        ancestorCount: 0,
         descendants: [],
+        descendantCount: 0,
       });
     });
 

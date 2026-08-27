@@ -9,9 +9,9 @@ import {
   getPost as storeGetPost,
   queryPosts,
   getLikeRecordCount,
-  getLikersForPost,
-  getAncestors,
-  getSubtree,
+  hasLikeRecord,
+  getAncestorsNearest,
+  getSubtreePage,
   insertStump,
   deletePostRows,
   confirmPost,
@@ -81,9 +81,9 @@ describe('feed-service', () => {
       getPost: storeGetPost,
       queryPosts,
       getLikeRecordCount,
-      getLikersForPost,
-      getAncestors,
-      getSubtree,
+      hasLikeRecord,
+      getAncestorsNearest,
+      getSubtreePage,
       getBlockCreatedAt,
     });
   });
@@ -104,7 +104,7 @@ describe('feed-service', () => {
     expect(r['contentHash']).toMatch(/^[0-9a-f]{64}$/);
     expect(r['author']).toBe(Buffer.from(authorId).toString('hex'));
     expect(r['likeCount']).toBe(0);
-    expect(r['likers']).toEqual([]);
+    expect(r['likedByViewer']).toBeNull();
   });
 
   it('getPost on a pruned root returns StumpJson, not the raw Stump', () => {
@@ -137,19 +137,23 @@ describe('feed-service', () => {
   // -----------------------------------------------------------------------
 
   it('getThread returns full thread context for a live post (control)', () => {
-    const t = feedService.getThread(liveReplyId);
+    const t = feedService.getThread(liveReplyId, { limit: 50, offset: 0 });
     expect(t).not.toBeNull();
     expect(t!.post).not.toBeNull();
     expect((t!.post as PostJson).id).toBe(liveReplyId);
     expect(t!.ancestors.map((p) => p.id)).toEqual([liveRootId]);
+    expect(t!.ancestorCount).toBe(1);
     expect(t!.descendants).toEqual([]);
+    expect(t!.descendantCount).toBe(0);
   });
 
   it('getThread on a pruned root returns the stump shell as StumpJson', () => {
-    const t = feedService.getThread(prunedRootId);
+    const t = feedService.getThread(prunedRootId, { limit: 50, offset: 0 });
     expect(t).not.toBeNull();
     expect(t!.ancestors).toEqual([]);
+    expect(t!.ancestorCount).toBe(0);
     expect(t!.descendants).toEqual([]);
+    expect(t!.descendantCount).toBe(0);
     expect(t!.post).toEqual({
       kind: 'stump',
       id: prunedRootId,
@@ -159,7 +163,7 @@ describe('feed-service', () => {
   });
 
   it('getThread returns null for an unknown id', () => {
-    expect(feedService.getThread('ab'.repeat(32))).toBeNull();
+    expect(feedService.getThread('ab'.repeat(32), { limit: 50, offset: 0 })).toBeNull();
   });
 
   // -----------------------------------------------------------------------
@@ -180,11 +184,11 @@ describe('feed-service', () => {
     expect((listed.find((p) => p.id === liveRootId) as PostJson).status).toBe('confirmed');
     expect((listed.find((p) => p.id === liveReplyId) as PostJson).status).toBe('pending');
 
-    const thread = feedService.getThread(liveReplyId)!;
+    const thread = feedService.getThread(liveReplyId, { limit: 50, offset: 0 })!;
     expect((thread.post as PostJson).status).toBe('pending');
     expect(thread.ancestors.map((p) => (p as PostJson).status)).toEqual(['confirmed']);
 
-    const rootThread = feedService.getThread(liveRootId)!;
+    const rootThread = feedService.getThread(liveRootId, { limit: 50, offset: 0 })!;
     expect(rootThread.descendants.map((p) => (p as PostJson).status)).toEqual(['pending']);
   });
 });
