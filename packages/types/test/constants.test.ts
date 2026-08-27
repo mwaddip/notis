@@ -31,6 +31,8 @@ import {
   LIKE_KARMA_COST,
   MIN_BOX_VALUE_PER_BYTE,
   STORAGE_RENT_PER_BYTE,
+  MAX_BLOCK_BODY_BYTES,
+  MAX_SETTLEMENT_BYTES,
 } from '../src/index.js';
 
 describe('PoW difficulty constants', () => {
@@ -325,4 +327,15 @@ describe('invite economics', () => {
 
   // ⛔ The grant IS the bond, so no second constant is free to fall below the
   // first (ARCHITECTURE → Invite System).
+});
+
+/**
+ * Size caps and settlement caps — TYPES_INTERFACE → Size caps, → Settlement caps.
+ *
+ * The availability relation: a legal settlement fits a legal body.
+ */
+describe('settlement size caps', () => {
+  it('a legal settlement fits inside a legal body', () => {
+    expect(MAX_SETTLEMENT_BYTES).toBeLessThan(MAX_BLOCK_BODY_BYTES);
+  });
 });

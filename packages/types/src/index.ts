@@ -6,6 +6,10 @@ export {
   MAX_GENESIS_PROOF_PAYLOAD_BYTES,
   MAX_BLOCK_BODY_BYTES,
   MAX_TX_BYTES,
+  MAX_SETTLEMENT_BYTES,
+  MAX_BOND_SETTLEMENTS_PER_BLOCK,
+  MAX_ESCROW_RETURNS_PER_BLOCK,
+  MAX_POST_LOCK_RELEASES_PER_BLOCK,
   BOX_VALUE_BOUND,
   AVL_KEY_LENGTH,
   KARMA_POSTING_MINIMUM,
@@ -128,7 +132,7 @@ export type {
 
 // Stumps / prune / post-withdrawal
 export { postWithdrawFieldBytes, pruneFieldBytes } from './stump.js';
-export type { PostWithdrawCommit, PruneIntent, PruneCommit, Stump, StumpId } from './stump.js';
+export type { PostWithdrawCommit, PruneCommit, Stump, StumpId } from './stump.js';
 
 // Blocks
 export {
