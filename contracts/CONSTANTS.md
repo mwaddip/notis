@@ -21,7 +21,7 @@ that set with its defaults).
 | Name | the identifier as its definition site spells it — `SCREAMING_CASE` is a `constants.ts` (or another package's) export, `camelCase` is a `NetworkProfile` field |
 | Value | **the value as JavaScript evaluates the code's expression**, in a code span — a decimal integer, `_` group separators allowed, `n` for a bigint, nothing else in the cell. `42n * 10n ** 8n` is written `4_200_000_000n` |
 | Reads as | the human quantity — hours, credits, bytes |
-| Kind | `consensus` (block validity), `policy` (a producer's or relay's choice that consensus does not check), `format` (a codec bound), `local` |
+| Kind | `consensus` (block validity), `policy` (a producer's or relay's choice that consensus does not check), `format` (a codec bound), `local`; `→ profile` after it marks a constant a `NetworkProfile` field reads |
 | Argument | what produces the number: a formula, a dated measurement, a dated ruling — or *none stated* |
 | Status | one of the six below |
 | Rule | the contract section that states the rule the number serves |
@@ -64,8 +64,8 @@ marked.
 ## Universal constants
 
 `@dagsocial/types` → `constants.ts`. Universal means every network carries the same value
-(`ARCHITECTURE → What varies per network`); the ones a profile field reads are marked
-**→ profile** and appear again under → Per-network values with all three cells.
+(`ARCHITECTURE → What varies per network`); the ones a profile field reads carry **→ profile**
+in their Kind cell and appear again under → Per-network values with all three cells.
 
 ### Format and domain
 
@@ -102,8 +102,8 @@ Three limits stand in a fixed order — `MAX_BLOCK_BODY_BYTES < MAX_SERVE_BODY_B
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
 | `KARMA_POSTING_MINIMUM` | `1n` | 1 karma to post | consensus | none stated | CHOSEN | `TYPES_INTERFACE → Karma` |
-| `KARMA_STALE_THRESHOLD_BLOCKS` **→ profile** | `40320` | 28 days at 60 s | consensus | user ruling, 2026-08-19: 28 days | RULED | `TYPES_INTERFACE → Network profiles` |
-| `KARMA_DECAY_INTERVAL_BLOCKS` **→ profile** | `1440` | 24 h at 60 s | consensus | none stated for the duration; the unit is 60-second blocks | CHOSEN | `TYPES_INTERFACE → Karma` |
+| `KARMA_STALE_THRESHOLD_BLOCKS` | `40320` | 28 days at 60 s | consensus → profile | user ruling, 2026-08-19: 28 days | RULED | `TYPES_INTERFACE → Network profiles` |
+| `KARMA_DECAY_INTERVAL_BLOCKS` | `1440` | 24 h at 60 s | consensus → profile | none stated for the duration; the unit is 60-second blocks | CHOSEN | `TYPES_INTERFACE → Karma` |
 | `KARMA_DECAY_AMOUNT` | `5n` | 5 karma per period | consensus | none stated | CHOSEN | `ARCHITECTURE → Karma decay` |
 | `KARMA_MINIMUM` | `10n` | the decay floor | consensus | none stated | CHOSEN | `ARCHITECTURE → Karma decay` |
 
@@ -125,23 +125,23 @@ Three limits stand in a fixed order — `MAX_BLOCK_BODY_BYTES < MAX_SERVE_BODY_B
 |---|---|---|---|---|---|---|
 | `VOUCH_KARMA_AMOUNT` | `1n` | one vote stakes 1 karma | consensus | user ruling, 2026-08-07 | RULED | `NODE_INTERFACE → Vouch transition rules` |
 | `VOUCH_MIN_BALANCE` | `11n` | summed karma balance to cast | consensus | none stated | CHOSEN | `ARCHITECTURE → Vouch boxes` |
-| `VOUCH_COOLDOWN_BLOCKS` **→ profile** | `60` | 1 h at 60 s | consensus | none stated | CHOSEN | `ARCHITECTURE → Vouch boxes` |
+| `VOUCH_COOLDOWN_BLOCKS` | `60` | 1 h at 60 s | consensus → profile | none stated | CHOSEN | `ARCHITECTURE → Vouch boxes` |
 
 ### Invites
 
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
 | `INVITE_MIN_KARMA` | `1n` | = `KARMA_POSTING_MINIMUM` | consensus | an alias | DERIVED | `TYPES_INTERFACE → Invites` |
-| `INVITE_BOND_MIN` **→ profile** | `25n` | the cheapest bond, and the smallest grant | consensus | placeholder weight | PROVISIONAL | `TYPES_INTERFACE → Invites` |
-| `INVITE_BOND_MAX` **→ profile** | `250n` | the largest bond | consensus | placeholder weight | PROVISIONAL | `TYPES_INTERFACE → Invites` |
-| `INVITE_PROBATION_BLOCKS` **→ profile** | `43200` | 30 days at 60 s | consensus | decided 2026-08-14: an absolute one-month clock from the invite, so an inviter's exposure is time-bounded | DECIDED | `ARCHITECTURE → Bond outcomes` |
+| `INVITE_BOND_MIN` | `25n` | the cheapest bond, and the smallest grant | consensus → profile | placeholder weight | PROVISIONAL | `TYPES_INTERFACE → Invites` |
+| `INVITE_BOND_MAX` | `250n` | the largest bond | consensus → profile | placeholder weight | PROVISIONAL | `TYPES_INTERFACE → Invites` |
+| `INVITE_PROBATION_BLOCKS` | `43200` | 30 days at 60 s | consensus → profile | decided 2026-08-14: an absolute one-month clock from the invite, so an inviter's exposure is time-bounded | DECIDED | `ARCHITECTURE → Bond outcomes` |
 | `INVITE_BOND_VEST_PER_LIKES` | `3` | `V`: likes received per karma of bond vested | consensus | decided 2026-08-18 as the supply dial: with `L = 5` a completed invite moves `0.4 · B` into circulation. ⚠ The cost-gated-emission floor (burn-to-vest ≥ grant) is met at `V = 5`, where that figure is zero; 3 sits below it by choice | DECIDED | `ARCHITECTURE → Invite System` |
 
 ### Genesis
 
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
-| `GENESIS_KARMA_PER_MEMBER` **→ profile** | `1000n` | karma per committee key, out of the pool | consensus | none stated | CHOSEN | `ARCHITECTURE → Genesis` |
+| `GENESIS_KARMA_PER_MEMBER` | `1000n` | karma per committee key, out of the pool | consensus → profile | none stated | CHOSEN | `ARCHITECTURE → Genesis` |
 
 ### Credit emission
 
@@ -149,12 +149,12 @@ Amounts are base units of 10⁻⁸ credit (`TYPES_INTERFACE → Denomination`).
 
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
-| `CREDIT_FIXED_RATE_BLOCKS` **→ profile** | `1_051_200` | 2 years at 60 s | consensus | decided 2026-08-25: two years at `R` before the decay begins | DECIDED | `MINING_INTERFACE → Emission Schedule` |
+| `CREDIT_FIXED_RATE_BLOCKS` | `1_051_200` | 2 years at 60 s | consensus → profile | decided 2026-08-25: two years at `R` before the decay begins | DECIDED | `MINING_INTERFACE → Emission Schedule` |
 | `CREDIT_INITIAL_REWARD` | `4_200_000_000n` | 42 credits per block | consensus | decided 2026-08-25: a ~30-year minimum runway at a fixed total — 422 640 000 ÷ 15 778 800 blocks ≈ 26.8 credits/block average — with a positive rate at exhaustion; `R` is what gives | DECIDED | `MINING_INTERFACE → Emission Schedule` |
-| `CREDIT_EPOCH_BLOCKS` **→ profile** | `470_000` | ~326 days | consensus | decided 2026-08-25, with `R` | DECIDED | `MINING_INTERFACE → Emission Schedule` |
+| `CREDIT_EPOCH_BLOCKS` | `470_000` | ~326 days | consensus → profile | decided 2026-08-25, with `R` | DECIDED | `MINING_INTERFACE → Emission Schedule` |
 | `CREDIT_REWARD_REDUCTION` | `100_000_000n` | 1 credit per epoch; 41 epochs on every network | consensus | decided 2026-08-25, with `R` | DECIDED | `MINING_INTERFACE → Emission Schedule` |
-| `CREDIT_EMISSION_TOTAL` **→ profile** | `42_264_000_000_000_000n` | 422 640 000 credits — 94.2 % of the curve's 448 820 400 | consensus | carried, never derived; the rule is *strictly below the curve's sum*, so a returned bonus has a paying tail to drain through; exhaustion at block 15 591 163 (~29.6 y) at rate 11 | DECIDED | `MINING_INTERFACE → Emission Schedule` |
-| `CREDIT_MINER_REWARD_DELAY` **→ profile** | `1440` | 24 h before a coinbase output spends | consensus | none stated for the duration | CHOSEN | `MINING_INTERFACE → Emission Schedule` |
+| `CREDIT_EMISSION_TOTAL` | `42_264_000_000_000_000n` | 422 640 000 credits — 94.2 % of the curve's 448 820 400 | consensus → profile | carried, never derived; the rule is *strictly below the curve's sum*, so a returned bonus has a paying tail to drain through; exhaustion at block 15 591 163 (~29.6 y) at rate 11 | DECIDED | `MINING_INTERFACE → Emission Schedule` |
+| `CREDIT_MINER_REWARD_DELAY` | `1440` | 24 h before a coinbase output spends | consensus → profile | none stated for the duration | CHOSEN | `MINING_INTERFACE → Emission Schedule` |
 | `MEMPOOL_EXPIRY_BLOCKS` | `720` | ~12 h | local | none stated | CHOSEN | `TYPES_INTERFACE → Mempool and encoding` |
 
 ### Coinbase and the pool
@@ -185,7 +185,7 @@ Units of 1/256 of a bit (`VALIDATION_INTERFACE → orderingPowTarget`).
 
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
-| `ORDERING_BLOCK_POW_TARGET_BITS` **→ profile** | `5984` | 23.375 bits — a 60 s solve at 181 262 H/s | consensus | measured: 60 s × 181 262 H/s = 10 875 720 hashes, log₂ = 23.3746 bits, × 256 = 5983.9 → 5984. One machine, one thread, standing in for the network's total | PROVISIONAL | `TYPES_INTERFACE → Ordering block PoW` |
+| `ORDERING_BLOCK_POW_TARGET_BITS` | `5984` | 23.375 bits — a 60 s solve at 181 262 H/s | consensus → profile | measured: 60 s × 181 262 H/s = 10 875 720 hashes, log₂ = 23.3746 bits, × 256 = 5983.9 → 5984. One machine, one thread, standing in for the network's total | PROVISIONAL | `TYPES_INTERFACE → Ordering block PoW` |
 | `ORDERING_BLOCK_POW_TARGET_FLOOR` | `2304` | 9 whole bits | consensus | the first whole bit above 2180, beneath which a 1/256-bit step buys zero work and difficulty moves while `cumulativeWork` does not | DERIVED | `VALIDATION_INTERFACE → blockWork / cumulativeWork` |
 
 ### Interlinks
