@@ -345,6 +345,9 @@ function migrateBlockTopologyColumns(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_block_topology_pruned
       ON block_topology(pruned_at_height, post_id)
       WHERE pruned_at_height IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_utxo_boxes_post_lock_target
+      ON utxo_boxes(json_extract(extra_data, '$.targetPostId'))
+      WHERE box_type = 'post_lock' AND spent_at_block IS NULL;
   `);
 }
 

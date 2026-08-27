@@ -19,8 +19,6 @@ function makeJsonPruneTxBody(): Record<string, unknown> {
     protocolVersion: 1,
     prune: {
       rootPostHash: 'd'.repeat(64),
-      subtreePostIds: ['d'.repeat(64)],
-      subtreeMerkleRoot: '0'.repeat(64),
     },
   };
 }
@@ -128,11 +126,11 @@ describe('pruning routes', () => {
   it('POST /posts/:id/prune returns 400 when executePrune throws ClientError', async () => {
     const { ClientError } = await import('../../src/services/client-error.js');
     const res = await request(TEST_POST_HASH, { tx: makeJsonPruneTxBody() }, () => {
-      throw new ClientError('subtreePostIds does not match committed topology');
+      throw new ClientError('Post is not confirmed in an earlier block');
     });
     expect(res.status).toBe(400);
     const body = res.data as Record<string, unknown>;
-    expect(body.error).toBe('subtreePostIds does not match committed topology');
+    expect(body.error).toBe('Post is not confirmed in an earlier block');
   });
 
   it('POST /posts/:id/prune returns 500 for unexpected errors', async () => {
@@ -140,24 +138,6 @@ describe('pruning routes', () => {
       throw new Error('unexpected');
     });
     expect(res.status).toBe(500);
-  });
-
-  it('hex subtreeMerkleRoot in JSON reaches executePrune as Uint8Array', async () => {
-    const merkleHex = 'ab'.repeat(32);
-    const txBody = makeJsonPruneTxBody();
-    (txBody.prune as Record<string, unknown>).subtreeMerkleRoot = merkleHex;
-
-    let captured: UtxoTransaction | undefined;
-    await request(TEST_POST_HASH, { tx: txBody }, (_deps, tx) => {
-      captured = tx;
-      return { txId: 'b'.repeat(64) };
-    });
-
-    expect(captured).toBeDefined();
-    expect(captured!.prune).toBeDefined();
-    expect(captured!.prune!.subtreeMerkleRoot).toBeInstanceOf(Uint8Array);
-    expect(captured!.prune!.subtreeMerkleRoot.length).toBe(32);
-    expect(Buffer.from(captured!.prune!.subtreeMerkleRoot).toString('hex')).toBe(merkleHex);
   });
 
   it('broadcasts the pooled prune transaction to peers', async () => {

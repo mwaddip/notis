@@ -360,3 +360,28 @@ describe('journal round-trip for prunedTopologyRows', () => {
     expect(rows).toEqual([]);
   });
 });
+
+describe('getPrunedLockCandidates query plan', () => {
+  beforeEach(() => { vi.resetModules(); });
+  afterEach(() => { vi.resetModules(); });
+
+  it('does not scan utxo_boxes', async () => {
+    const s = await importAll();
+    s.initDb(':memory:');
+    const db = s.getDb();
+    const plan = db.prepare(
+      `EXPLAIN QUERY PLAN
+       SELECT b.*, t.post_id AS target_post_id, t.pruned_at_height, t.pruned_root
+       FROM utxo_boxes b
+       JOIN block_topology t
+         ON t.post_id = json_extract(b.extra_data, '$.targetPostId')
+       WHERE b.box_type = 'post_lock'
+         AND b.spent_at_block IS NULL
+         AND t.pruned_at_height IS NOT NULL
+       ORDER BY t.pruned_at_height, t.post_id
+       LIMIT ?`,
+    ).all(64) as Array<{ detail: string }>;
+    const details = plan.map(r => r.detail).join('\n');
+    expect(details).not.toContain('SCAN utxo_boxes');
+  });
+});

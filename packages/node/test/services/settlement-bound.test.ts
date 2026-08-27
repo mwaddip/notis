@@ -12,9 +12,7 @@ import {
   MAX_ESCROW_RETURNS_PER_BLOCK,
   MAX_BOND_SETTLEMENTS_PER_BLOCK,
   MAX_POST_LOCK_RELEASES_PER_BLOCK,
-  VOUCH_KARMA_AMOUNT,
   LIKE_KARMA_COST,
-  POST_LOCK_UNLOCK_PER_LIKES,
   encodeTx,
 } from '@dagsocial/types';
 import type {
@@ -30,32 +28,16 @@ import {
   hex,
   makeApplicableBlock,
   makeKarmaBox as helperMakeKarmaBox,
-  makeTestConfig,
   makeTestIdentity,
-  mineNextBlock,
   seedPostTx,
   seedProvenance,
   signTransaction,
   type TestIdentity,
-  type Stored,
-  FIXTURE_BOND_KARMA,
   makeLikeTx,
 } from '../helpers.js';
 import { config } from '../../src/config.js';
 import type { Config } from '../../src/config.js';
 
-const MAX_BLOCK_BODY_BYTES = 2_000_000;
-const testConfig = makeTestConfig({
-  port: 3000,
-  dbPath: ':memory:',
-  networkType: 'testnet' as const,
-  nodeRole: 'miner' as const,
-  blockBodyBudgetBytes: MAX_BLOCK_BODY_BYTES,
-  orderingBlockPowTargetBits: 3072,
-  bootstrapPeers: [] as string[],
-  listenAddrs: '/ip4/127.0.0.1/tcp/0',
-  maxPeers: 50,
-});
 
 type DbModule = {
   initDb: (path: string) => void;
@@ -146,7 +128,7 @@ function makePruneTx(
 // ---------------------------------------------------------------------------
 
 describe('T1 — escrow cap and multi-block drain', () => {
-  beforeEach(() => vi.resetModules());
+  beforeEach(() => { vi.resetModules(); });
   afterEach(() => {
     vi.resetModules();
   });
@@ -202,13 +184,97 @@ describe('T1 — escrow cap and multi-block drain', () => {
 });
 
 // ---------------------------------------------------------------------------
+// T2 — the like storm. Each like adds one 32-byte marker input to the
+// settlement, plus one 38-byte carry output per distinct author. With all
+// likes to the same post (one author), the cost after the first is 32 bytes
+// per like.
+//
+// OLD bound: MAX_TX_BYTES 10,000 → N_old ≈ (10,000 − 108) / 32 = 309
+// NEW bound: MAX_SETTLEMENT_BYTES 100,000 → N_new ≈ (100,000 − 108) / 32 = 3,122
+//
+// (a) 320 likes: fits the new bound (the finding closed).
+// (b) 3,200 likes: exceeds the new bound — the fill must trim.
+// ---------------------------------------------------------------------------
+
+describe('T2 — like storm', () => {
+  beforeEach(() => { vi.resetModules(); });
+  afterEach(() => { vi.resetModules(); });
+
+  it('more likes than the OLD bound fit the new bound; more than the NEW bound exceeds it', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const utxo = await importUtxo();
+    const topology = await importTopology();
+    const blockApply = await importBlockApply();
+    const bc = await importBlockCreator();
+
+    // Block 1: seeds emission + pool
+    const block1 = await makeApplicableBlock({ utxoTxs: [] });
+    expect(blockApply.applyOrderingBlock(block1)).toBe(true);
+
+    // One target post (all likes target the same author)
+    const postAuthor = makeTestIdentity();
+    const targetPostId = (9000).toString(16).padStart(64, '0');
+    topology.insertBlockTopology(targetPostId, [], hex(postAuthor.userId), 1);
+
+    // Seed the author's karma box (the carry needs one to exist)
+    const authorKarma = seedProvenance<KarmaBox>({
+      boxType: 'karma' as const,
+      value: 1000n,
+      createdAtBlock: 1,
+      owner: postAuthor.userId,
+    }, 9999);
+    utxo.insertBox(authorKarma);
+
+    // Build like tx bytes — each liker contributes one marker input
+    function makeLikeTxBytes(count: number): Uint8Array[] {
+      const txBytes: Uint8Array[] = [];
+      for (let i = 0; i < count; i++) {
+        const liker = makeTestIdentity();
+        const karmaBox = seedProvenance<KarmaBox>({
+          boxType: 'karma' as const,
+          value: LIKE_KARMA_COST,
+          createdAtBlock: 1,
+          owner: liker.userId,
+        }, 10_000 + i);
+        utxo.insertBox(karmaBox);
+        const tx = makeLikeTx(liker, karmaBox, targetPostId, postAuthor.userId);
+        txBytes.push(encodeTx(tx));
+      }
+      return txBytes;
+    }
+
+    const miner = makeTestIdentity();
+
+    // (a) 320 likes: exceeds old MAX_TX_BYTES, fits MAX_SETTLEMENT_BYTES
+    const likesA = makeLikeTxBytes(320);
+    const resultA = bc.buildBlockSettlement(likesA, 2, miner.userId, miner.userId);
+    expect('tx' in resultA).toBe(true);
+    if ('tx' in resultA) {
+      const bytes = encodeTx(resultA.tx).length;
+      expect(bytes).toBeGreaterThan(10_000);
+      expect(bytes).toBeLessThanOrEqual(MAX_SETTLEMENT_BYTES);
+    }
+
+    // (b) 3,200 likes: exceeds MAX_SETTLEMENT_BYTES — the fill must trim
+    const likesB = makeLikeTxBytes(3200);
+    const resultB = bc.buildBlockSettlement(likesB, 2, miner.userId, miner.userId);
+    expect('tx' in resultB).toBe(true);
+    if ('tx' in resultB) {
+      const bytes = encodeTx(resultB.tx).length;
+      expect(bytes).toBeGreaterThan(MAX_SETTLEMENT_BYTES);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // T3 — the liveness relation: buildSettlement over an empty body with every
 // state-driven leg at its cap encodes ≤ MAX_SETTLEMENT_BYTES.
 // ---------------------------------------------------------------------------
 
 describe('T3 — liveness relation', () => {
-  beforeEach(() => vi.resetModules());
-  afterEach(() => vi.resetModules());
+  beforeEach(() => { vi.resetModules(); });
+  afterEach(() => { vi.resetModules(); });
 
   it('a settlement with all state-driven legs at cap fits MAX_SETTLEMENT_BYTES', async () => {
     const db = await importDb();
@@ -286,8 +352,8 @@ describe('T3 — liveness relation', () => {
 // ---------------------------------------------------------------------------
 
 describe('T4 — multi-block release', () => {
-  beforeEach(() => vi.resetModules());
-  afterEach(() => vi.resetModules());
+  beforeEach(() => { vi.resetModules(); });
+  afterEach(() => { vi.resetModules(); });
 
   it('70 locks under one root release over 2 blocks; actor locks reach the pool', async () => {
     const db = await importDb();
@@ -363,8 +429,8 @@ describe('T4 — multi-block release', () => {
 // ---------------------------------------------------------------------------
 
 describe('T5 — same-block reply and prune', () => {
-  beforeEach(() => vi.resetModules());
-  afterEach(() => vi.resetModules());
+  beforeEach(() => { vi.resetModules(); });
+  afterEach(() => { vi.resetModules(); });
 
   it('a reply and prune of its root in one block is valid; the reply lock is a candidate at h+1', async () => {
     const db = await importDb();
@@ -411,8 +477,8 @@ describe('T5 — same-block reply and prune', () => {
 // ---------------------------------------------------------------------------
 
 describe('T6 — vest path through the release leg', () => {
-  beforeEach(() => vi.resetModules());
-  afterEach(() => vi.resetModules());
+  beforeEach(() => { vi.resetModules(); });
+  afterEach(() => { vi.resetModules(); });
 
   it('a lock released after a like reflects the vest from the like block', async () => {
     const db = await importDb();
@@ -492,8 +558,8 @@ describe('T6 — vest path through the release leg', () => {
 });
 
 describe('T6b — same-block like and prune vest lands once', () => {
-  beforeEach(() => vi.resetModules());
-  afterEach(() => vi.resetModules());
+  beforeEach(() => { vi.resetModules(); });
+  afterEach(() => { vi.resetModules(); });
 
   it('like(P) and prune(root) in one block: §8c vests once, §11b adds nothing', async () => {
     const db = await importDb();

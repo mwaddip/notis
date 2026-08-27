@@ -2,9 +2,6 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   computeTxId,
   PROTOCOL_VERSION,
-  leafHash,
-  buildMerkleRoot,
-  hexToBuf,
 } from '@dagsocial/types';
 import type { UtxoTransaction, PruneCommit } from '@dagsocial/types';
 import { generateKeyPairSync, sign as cryptoSign, type KeyObject } from 'crypto';
@@ -43,9 +40,8 @@ function rawPublicKey(keyObj: KeyObject): Uint8Array {
   return new Uint8Array(der.subarray(der.length - 32));
 }
 
-function makePruneCommit(rootPostHash: string, subtreePostIds: string[]): PruneCommit {
-  const leaves = [...subtreePostIds].sort().map(id => leafHash('stump', hexToBuf(id)));
-  return { rootPostHash, subtreePostIds, subtreeMerkleRoot: buildMerkleRoot(leaves) };
+function makePruneCommit(rootPostHash: string): PruneCommit {
+  return { rootPostHash };
 }
 
 function buildPruneTx(
@@ -151,7 +147,7 @@ describe('stump-engine (prune transaction rail)', () => {
     seedHeight(db, 2);
     seedKarmaBox(db, KARMA_BOX_ID, ownerPub);
 
-    const prune = makePruneCommit(ROOT_POST_ID, [ROOT_POST_ID, REPLY_POST_ID]);
+    const prune = makePruneCommit(ROOT_POST_ID);
     const tx = buildPruneTx(KARMA_BOX_ID, ownerPub, ownerPriv, prune);
 
     const deps = await buildDeps();
@@ -169,7 +165,7 @@ describe('stump-engine (prune transaction rail)', () => {
        VALUES (?, ?, 'hello', ?, '[]', 1, 'pending')`,
     ).run(ROOT_POST_ID, '0'.repeat(64), Buffer.from(ownerPub));
 
-    const prune = makePruneCommit(ROOT_POST_ID, [ROOT_POST_ID]);
+    const prune = makePruneCommit(ROOT_POST_ID);
     const tx = buildPruneTx(KARMA_BOX_ID, ownerPub, ownerPriv, prune);
 
     const deps = await buildDeps();
@@ -183,44 +179,11 @@ describe('stump-engine (prune transaction rail)', () => {
     seedHeight(db, 2);
     seedKarmaBox(db, KARMA_BOX_ID, ownerPub);
 
-    const prune = makePruneCommit(ROOT_POST_ID, [ROOT_POST_ID]);
+    const prune = makePruneCommit(ROOT_POST_ID);
     const tx = buildPruneTx(KARMA_BOX_ID, ownerPub, ownerPriv, prune);
 
     const deps = await buildDeps();
     const engine = await importStumpEngine();
     expect(() => engine.executePrune(deps, tx, 2)).toThrow(/not confirmed in an earlier block/);
-  });
-
-  it('rejects subtreePostIds that do not match committed topology', async () => {
-    const topology = await importTopology();
-    topology.insertBlockTopology(ROOT_POST_ID, [], authorHex(), 1);
-    topology.insertBlockTopology(REPLY_POST_ID, [ROOT_POST_ID], authorHex(), 1);
-    seedHeight(db, 2);
-    seedKarmaBox(db, KARMA_BOX_ID, ownerPub);
-
-    const prune = makePruneCommit(ROOT_POST_ID, [ROOT_POST_ID]);
-    const tx = buildPruneTx(KARMA_BOX_ID, ownerPub, ownerPriv, prune);
-
-    const deps = await buildDeps();
-    const engine = await importStumpEngine();
-    expect(() => engine.executePrune(deps, tx, 2)).toThrow(/does not match committed topology/);
-  });
-
-  it('rejects a merkle root that does not match the id list', async () => {
-    const topology = await importTopology();
-    topology.insertBlockTopology(ROOT_POST_ID, [], authorHex(), 1);
-    seedHeight(db, 2);
-    seedKarmaBox(db, KARMA_BOX_ID, ownerPub);
-
-    const prune: PruneCommit = {
-      rootPostHash: ROOT_POST_ID,
-      subtreePostIds: [ROOT_POST_ID],
-      subtreeMerkleRoot: new Uint8Array(32).fill(0xff),
-    };
-    const tx = buildPruneTx(KARMA_BOX_ID, ownerPub, ownerPriv, prune);
-
-    const deps = await buildDeps();
-    const engine = await importStumpEngine();
-    expect(() => engine.executePrune(deps, tx, 2)).toThrow(/does not match postId list/);
   });
 });
