@@ -177,11 +177,11 @@ export function decodeTxPacket(bytes: Uint8Array): TxPacket {
 }
 
 // ---------------------------------------------------------------------------
-// Block header — TYPES_INTERFACE → Layout — Block, rows 1–10
+// Block header — TYPES_INTERFACE → Layout — Block, fields 1–10
 // ---------------------------------------------------------------------------
 
 /**
- * Nine fields. `protocolVersion` is **first** so it can be read before any
+ * Ten fields. `protocolVersion` is **first** so it can be read before any
  * version-dependent dispatch exists to need it (TYPES_INTERFACE → Layout —
  * Block); there is exactly one
  * version today, and this pins the seam without building the version-keyed rule
@@ -201,8 +201,8 @@ export function decodeTxPacket(bytes: Uint8Array): TxPacket {
  *
  * ## Totality
  *
- * Four throwing rows (`b32` ×3, `b33` ×1) and five `vlqU`, which are total by
- * sentinel and therefore **collide rather than throw**. All nine are pinned by
+ * Five throwing rows (`b32` ×4, `b33` ×1) and five `vlqU`, which are total by
+ * sentinel and therefore **collide rather than throw**. All ten are pinned by
  * `verifyHeaderFieldDomains`, which is the only header domain in the
  * repo and which `blockHash` / `computePowHash` run internally — so the two
  * functions that reach this encoder establish their own precondition rather than
@@ -220,6 +220,7 @@ const HEADER: StructCodec<BlockHeader> = {
     writeVlqU(w, h.powNonce);
     writeVlqU(w, h.powTargetBits);
     writeVlqU(w, h.createdAt);
+    writeHexNOrThrow(w, h.interlinkRoot, 32);
   },
   read(r) {
     return {
@@ -232,6 +233,7 @@ const HEADER: StructCodec<BlockHeader> = {
       powNonce: readVlqU(r),
       powTargetBits: readVlqU(r),
       createdAt: readVlqU(r),
+      interlinkRoot: readHexN(r, 32),
     };
   },
 };

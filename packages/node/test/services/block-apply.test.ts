@@ -51,7 +51,8 @@ import {
   signHeader,
   signTransaction,
   seedPostTx, fillerTx,
-  coinbaseOf, withCoinbase } from '../helpers.js';
+  coinbaseOf, withCoinbase,
+  seedEmissionBox, seedKarmaPoolBox } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Test config
@@ -378,6 +379,7 @@ describe('block-apply journal recording', () => {
         powNonce: 0,
         powTargetBits: expectedTarget(1),
         createdAt: Date.now(),
+        interlinkRoot: '00'.repeat(32),
       },
       utxoTxTree: {
         // A body's last entry is its settlement; PoW is refused before anything
@@ -430,6 +432,7 @@ describe('block-apply journal recording', () => {
         powNonce: 0,
         powTargetBits: expectedTarget(99),
         createdAt: Date.now(),
+        interlinkRoot: '00'.repeat(32),
       },
       utxoTxTree: {
         // A body's last entry is its settlement; PoW is refused before anything
@@ -474,6 +477,7 @@ describe('block-apply journal recording', () => {
         powNonce: 0,
         powTargetBits: expectedTarget(1),
         createdAt: Date.now(),
+        interlinkRoot: '00'.repeat(32),
       },
       utxoTxTree: {
         // A body's last entry is its settlement; PoW is refused before anything
@@ -2236,6 +2240,104 @@ describe('block-apply funnel totality', () => {
 
     const block2 = await makeApplicableBlock({ height: 2, utxoTxs: [pruneTx] });
     expect(blockApply.applyOrderingBlock(block2)).toBe(true);
+  });
+
+  // -----------------------------------------------------------------------
+  // Interlink root (NODE_INTERFACE → Ordering block apply-time authorization)
+  // -----------------------------------------------------------------------
+
+  it('height 1 commits to interlinkRoot([])', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const ba = await importBlockApply();
+    const { interlinkRoot } = await import('@dagsocial/types');
+    const block = await makeApplicableBlock();
+    expect(block.header.interlinkRoot).toBe(interlinkRoot([]));
+    expect(ba.applyOrderingBlock(block)).toBe(true);
+  });
+
+  it('a block with a tampered interlinkRoot is rejected before any mutation', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const ba = await importBlockApply();
+    const { solveHeaderPow } = await import('../helpers.js');
+    const miner = makeTestIdentity();
+    const { computeUtxoTxRoot, buildBlockSettlement } = await import(
+      '../../src/services/block-creator.js'
+    );
+    const { expectedTarget } = await import('../../src/services/difficulty.js');
+    const { encodeTx, interlinkRoot } = await import('@dagsocial/types');
+    await seedEmissionBox();
+    await seedKarmaPoolBox();
+    const built = buildBlockSettlement([], 1, miner.userId, miner.userId);
+    if ('error' in built) throw new Error(built.error);
+    const tree = {
+      utxoTxIds: [computeTxId(built.tx)],
+      utxoTxs: [encodeTx(built.tx)],
+    };
+    const header: BlockHeader = {
+      protocolVersion: PROTOCOL_VERSION,
+      height: 1,
+      prevBlockHash: ZERO_HASH,
+      utxoTxRoot: computeUtxoTxRoot(tree),
+      stateRoot: EMPTY_STATE_ROOT,
+      validatorId: miner.userId,
+      powNonce: 0,
+      powTargetBits: expectedTarget(1),
+      createdAt: Date.now(),
+      interlinkRoot: 'ff'.repeat(32),
+    };
+    solveHeaderPow(header);
+    const block: OrderingBlock = {
+      header,
+      utxoTxTree: tree,
+      validatorSignature: signHeader(header, miner.privateKey),
+    };
+    expect(block.header.interlinkRoot).not.toBe(interlinkRoot([]));
+    expect(ba.applyOrderingBlock(block)).toBe(false);
+
+    const journal = await importJournalStore();
+    expect(journal.getBlockJournal(1)).toBeNull();
+  });
+
+  // -----------------------------------------------------------------------
+  // Genesis pin (NODE_INTERFACE → Ordering block apply-time authorization)
+  // -----------------------------------------------------------------------
+
+  it('genesis pin: empty genesisId accepts any block 1', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const ba = await importBlockApply();
+    expect(config.profile.genesisId).toBe('');
+    const block = await makeApplicableBlock();
+    expect(ba.applyOrderingBlock(block)).toBe(true);
+  });
+
+  it('genesis pin: pinned-match accepted', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const ba = await importBlockApply();
+    const { blockHash } = await import('@dagsocial/validation');
+    const block = await makeApplicableBlock();
+    const bh = blockHash(block.header)!;
+    // The profile is frozen; mock the config module so the funnel sees the pin.
+    vi.doMock('../../src/config.js', () => ({
+      config: { ...testConfig, profile: { ...config.profile, genesisId: bh } },
+    }));
+    const ba2 = (await import('../../src/services/block-apply.js')) as typeof ba;
+    expect(ba2.applyOrderingBlock(block)).toBe(true);
+  });
+
+  it('genesis pin: pinned-mismatch rejected', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    // Mock config BEFORE block-apply imports it, so the funnel sees the pin.
+    vi.doMock('../../src/config.js', () => ({
+      config: { ...testConfig, profile: { ...config.profile, genesisId: 'ab'.repeat(32) } },
+    }));
+    const ba = (await import('../../src/services/block-apply.js')) as Awaited<ReturnType<typeof importBlockApply>>;
+    const block = await makeApplicableBlock();
+    expect(ba.applyOrderingBlock(block)).toBe(false);
   });
 });
 

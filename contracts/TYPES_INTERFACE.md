@@ -435,6 +435,7 @@ computes different ids.
 | `TX_ID_DOMAIN` | transaction id |
 | `MINT_ID_DOMAIN` | synthetic mint transaction id |
 | `IDENTITY_KEY_DOMAIN` | per-identity record key in the AVL tree |
+| `INTERLINK_DOMAIN` | the interlink vector's commitment in a block header (→ Interlink vector) |
 
 Box ids, tx ids and identity-record keys share one 32-byte keyspace and the AVL tree now holds
 two entity kinds, so the separation must be in the preimage. (`computePostId` already works
@@ -1193,6 +1194,7 @@ BlockHeader {
   powNonce: number               // PoW solution
   powTargetBits: number          // Difficulty target for this block
   createdAt: number              // Unix ms — stamped at TEMPLATE BUILD, not at solve
+  interlinkRoot: string          // hex(32) — commitment to the interlink vector (→ Interlink vector)
 }
 ```
 
@@ -1210,7 +1212,8 @@ offset rather than discover it. The field is domain-pinned as `isU64Safe` and va
 
 > ⛔ **`networkType` was proposed as a header field twice and is REJECTED — decided
 > 2026-08-10, reversing 2026-08-06.** It was never implemented; nothing is being removed from
-> code. **The header is nine fields.** Read this before proposing it a third time.
+> code. **The header is ten fields**, `interlinkRoot` the tenth (→ Interlink vector). Read this
+> before proposing it a third time.
 >
 > The argument for it was legibility: id derivation is network-agnostic by decision (§Domain
 > tags are network-agnostic), so a header field would be the only consensus-visible network
@@ -1253,8 +1256,66 @@ The header is what gets hashed. `blockHash(header) = blake2b512(encodeHeader(hea
 (hex) is both the block's canonical hash — the next block's `prevBlockHash` — and the
 message the validator signs. The PoW preimage is the same encoding with `powNonce`
 zeroed (`computePowHash`). Both functions live in `@dagsocial/validation`. The body is
-bound into the header transitively through `utxoTxRoot` / `stateRoot`,
-so the header alone commits to the whole block.
+bound into the header transitively through `utxoTxRoot` / `stateRoot`, and the chain's
+superblock structure through `interlinkRoot` (→ Interlink vector), so the header alone
+commits to the whole block.
+
+### Interlink vector
+
+Every block commits, through `interlinkRoot`, to the **interlink vector** `I(h)` — the superblock
+back-pointers a NiPoPoW proof walks. This section is the vector's contract, because every full node
+maintains and verifies it whether or not it ever serves a proof.
+
+**Definition.** `I(1) = []`. For `h ≥ 2`, `I(h) = [id(1), p₁, …, p_M]` — `id(1)` the height-1
+block's hash; `p_i` the hash of the most recent block among heights `2..h−1` whose level is at
+least `i`; `M` the highest level among them. The vector is dense by construction: `I(2) = [id(1)]`,
+and a chain of level-0 blocks keeps `[id(1)]`. A block's **level** is `VALIDATION_INTERFACE →
+level` — ∞ at height 1, otherwise the largest `μ ≥ 0` with `powHit · 2^μ ≤ target`, an integer
+computed from the header's own PoW and capped at `LEVEL_CAP`.
+
+**Update rule** — the vector is a function of the parent alone:
+
+```
+updateInterlinks(prev: string[], prevHash: string, prevLevel: number): string[]
+```
+
+`prev` is the parent's vector `I(h−1)`, `prevHash` its `blockHash`, `prevLevel` its level. When the
+parent is height 1 (`prevLevel === Infinity`) the result is `[prevHash]`. Otherwise, with
+`L = prevLevel`, positions `1..L` become `prevHash`, positions above `L` are kept, and the length
+grows to `L + 1` when `L ≥ prev.length`. Pure; returns a fresh array; never mutates `prev`.
+
+**Bound.** `MAX_INTERLINKS = 257` — `LEVEL_CAP + 1`, the level cap plus the genesis entry, argued
+from the maximum: the expectation is ~log₂ N entries, and the bound is not the expectation. The
+codec refuses a longer vector before reading its first element.
+
+**Encoding — one form for the wire, the store and the commitment's preimage:**
+
+```
+encodeInterlinks(vector) = vlqU(n) ‖ b32 × n           n ≤ MAX_INTERLINKS
+decodeInterlinks(bytes)  = its inverse; the count is refused before the first element
+interlinkRoot(vector)    = hex( blake2b512( INTERLINK_DOMAIN ‖ encodeInterlinks(vector) )[:32] )
+```
+
+`INTERLINK_DOMAIN = 'dagsocial/interlinks/1'` (→ Domain tags). Height 1 commits to the empty
+vector — `interlinkRoot([])`, a real digest under the same rule, not a sentinel. There is no
+run-length form: the bytes a proof carries are the bytes the header committed to.
+
+**Who verifies.** Every full node checks `header.interlinkRoot === interlinkRoot(updateInterlinks(
+I(parent), parentHash, level(parent)))` in the apply funnel (`NODE_INTERFACE` → Ordering block
+apply-time authorization) and over a peer's segment before any of its work counts
+(`VALIDATION_INTERFACE` → verifyHeaderChain, step 7); the block creator derives the template's root
+the same way from the tip. The vector is stored beside each block as a cache derivable from headers
+(`NODE_INTERFACE` → Ordering blocks).
+
+**Genesis anchoring.** `I[0]` is the height-1 block's hash for every block above it. A profile that
+pins `genesisId` (→ Network profiles) fixes which block 1 that can be; an unpinned profile accepts
+any PoW-valid block 1, and two chains with different ones share no block.
+
+⚠ **A retarget changes this section.** The level is defined against a target that is a constant
+per profile at every height (`MINING_INTERFACE` → Difficulty Schedule). A difficulty adjustment, if
+one is ever designed, makes a proof carry the headers a verifier needs to recompute the schedule —
+Ergo's continuous mode — and is a `PROTOCOL_VERSION` bump with a new proof layout. Nothing here
+reserves for it.
 
 ### Ordering block
 
@@ -2052,8 +2113,9 @@ biconditional is a check, not a property of the bytes.
 | 7 | `powNonce` | `vlqU` |
 | 8 | `powTargetBits` | `vlqU` |
 | 9 | `createdAt` | `vlqU` |
+| 10 | `interlinkRoot` | `b32` — the interlink vector's commitment (→ Interlink vector); **last, so no earlier field's number depends on it** |
 
-⛔ **Nine fields, and a positional layout with no keys — removing a field is never a
+⛔ **Ten fields, and a positional layout with no keys — removing a field is never a
 deletion in place; it renumbers everything after it.** (`subBlockRoot`'s removal renumbered
 `utxoTxRoot` through `createdAt`: a reader keeping the old offsets decodes `stateRoot` out
 of `utxoTxRoot`'s bytes and every later field one slot late — a silent wrong `blockHash`,
@@ -2073,7 +2135,9 @@ field produces, so it captured nothing of that window. The shape it copied is al
 own verifier anchors to — `@ergots/nipopow`'s `checkInterlinksProof` verifies against an
 interlinks-only root, explicitly *not* `header.extensionRoot`. **A field that commits to nothing is
 the mirror image of `subBlockRefs`, deleted for being uncommitted.** C11 returns
-to the P2-C register undone; re-derive it when there is a design to commit to.
+to the P2-C register undone; re-derive it when there is a design to commit to. **Re-derived: field
+10, `interlinkRoot`, commits to a vector every full node maintains and verifies (→ Interlink
+vector) — the content `extensionDigest` lacked.**
 
 **`networkType` was added 2026-08-09 and REJECTED 2026-08-10 — see the BlockHeader definition above
 for why the field itself does not survive.** What follows is about how its *absence from this table*
@@ -2102,13 +2166,13 @@ authority alone.
 throwing-writer obligation is now larger in proportion, not smaller.** The withdrawn `networkType`
 row was the header's only `enum8` — a **total** writer whose presence was explicitly argued to add
 nothing to that obligation. Removing it removes the one row that was already discharged. What is left
-is **four throwing rows and five `vlqU`** — but ⚠ **`b32` is TWO different writers and this note
+is **five throwing rows and five `vlqU`** — but ⚠ **`b32` is TWO different writers and this note
 first grouped them as one, which is the `bond.inviteePublicKey` failure committed inside the note
 warning about it:**
 
 | Rows | In-memory type | Writer |
 |---|---|---|
-| `prevBlockHash`, `utxoTxRoot` | `string` (hex) | `writeHexNOrThrow(…, 32)` |
+| `prevBlockHash`, `utxoTxRoot`, `interlinkRoot` | `string` (hex) | `writeHexNOrThrow(…, 32)` |
 | **`validatorId`** | **`Uint8Array`** (`UserId`) | **`writeBytesNOrThrow(…, 32)`** |
 | `stateRoot` | `string` (hex) | `writeHexNOrThrow(…, 33)` |
 
@@ -2324,6 +2388,10 @@ which is now exported as `canonicalBoxBytes` — see "Canonical encoding" under 
 | `decodeTxPacket(bytes)` | `(Uint8Array) => { tx: UtxoTransaction; content?: string }` | Inverse of `encodeTxPacket` |
 | `encodeHeader(h)` | `(BlockHeader) => Uint8Array` | Positional — the input to `blockHash` / `computePowHash`. See Layout — Block |
 | `decodeHeader(bytes)` | `(Uint8Array) => BlockHeader` | Inverse of `encodeHeader` |
+| `encodeInterlinks(v)` | `(string[]) => Uint8Array` | `vlqU(n)` ‖ `b32 × n`, `n ≤ MAX_INTERLINKS` — the vector's one form: wire, store, and the preimage of `interlinkRoot`. See Interlink vector |
+| `decodeInterlinks(bytes)` | `(Uint8Array) => string[]` | Inverse of `encodeInterlinks`; the count is refused before the first element |
+| `interlinkRoot(v)` | `(string[]) => string` | `hex(blake2b512(INTERLINK_DOMAIN ‖ encodeInterlinks(v))[:32])` — header field 10. See Interlink vector |
+| `updateInterlinks(prev, prevHash, prevLevel)` | `(string[], string, number) => string[]` | The vector the block after `prev`'s block commits to. See Interlink vector |
 | `encodeUtxoTxTree(t)` | `(UtxoTxTree) => Uint8Array` | Positional (body section) — see Layout — Block |
 | `decodeUtxoTxTree(bytes)` | `(Uint8Array) => UtxoTxTree` | Inverse of `encodeUtxoTxTree` |
 | `utxoTxTreeByteLength(t)` | `(UtxoTxTree) => number` | The body's encoded length, computed from the structure without encoding it. Equal to `encodeUtxoTxTree(t).length` by pinned test — see Sizing without encoding |
@@ -2511,7 +2579,9 @@ it (NODE_INTERFACE → Ordering block apply-time authorization), the block creat
 height-1 template (MINING_INTERFACE → GET /mining/template), and fork resolution hands it to
 `verifyHeaderChain` as the anchor for a fork at `GENESIS_HEIGHT` (NODE_INTERFACE → Fork choice
 decides on verified headers). Heights start at 1, so no header is ever hashed to this value; it is a
-sentinel by construction, not a digest. ⚠ `store/mempool.ts`'s `PROBE_TX_ID` is the same bytes with
+sentinel by construction, not a digest. When the profile pins `genesisId` (→ Network profiles), a
+height-1 block must also **hash to it** — the sentinel says what block 1 builds on, the pin says which
+block 1 it is. ⚠ `store/mempool.ts`'s `PROBE_TX_ID` is the same bytes with
 a different meaning and is **not** this constant.
 
 ### Network profiles
@@ -2564,6 +2634,7 @@ export interface NetworkProfile {
   readonly genesisKarmaPerMember: bigint;
   readonly genesisProofPayload: string;   // hex — the GenesisProofBox payload, distinct per network
   readonly genesisStateRoot: string;      // hex, 66 chars — the pinned height-0 AVL+ root
+  readonly genesisId: string;             // hex(32) or '' — the pinned height-1 block hash; '' = unpinned
 }
 
 export const NETWORK_PROFILES: Readonly<Record<NetworkType, NetworkProfile>>;
@@ -2625,6 +2696,14 @@ node's boot check rather than in this file.
 `{ ...MAINNET_PROFILE, … }`, so a value written only into mainnet is inherited silently by testnet
 with no type error, collapsing the one field whose whole job is keeping the networks apart. Each is
 overridden explicitly and `network.test.ts` asserts the override rather than the spread.
+
+**`genesisId` pins block 1, and is empty until a network has one.** Hex(32) of the height-1 block's
+`blockHash`, or `''`. When set, the height-1 chain-link refuses any other block 1 (`NODE_INTERFACE` →
+Ordering block apply-time authorization, genesis pin) and a NiPoPoW proof must anchor on it
+(→ Interlink vector). Devnet is always `''` — every run mines its own block 1. Testnet and mainnet are
+`''` until their block 1 exists and are pinned in the release after: a value, not a format, so
+pinning it moves no bytes. Field-only and per-network like the other genesis fields; `network.test.ts`
+asserts each profile's own value rather than the spread.
 
 **Every constant not listed in `NetworkProfile` is universal across networks**, including
 consensus ones — the format limits (`MAX_CONTENT_BYTES`, `MAX_PARENT_REFS`,
@@ -3001,6 +3080,19 @@ to read them as whole bits.
 resolving below 2180 — a 1/256-bit step there buys zero additional work — so a chain admitted beneath
 that line retargets without moving the quantity fork choice selects on. 2304 is the first whole bit
 above it.
+
+### Interlinks
+
+```typescript
+export const LEVEL_CAP = 256;        // consensus — the level of a header whose PoW hit is 0; no level exceeds it
+export const MAX_INTERLINKS = 257;   // consensus — LEVEL_CAP + 1: the interlink vector's longest form
+export const INTERLINK_DOMAIN = encoder.encode('dagsocial/interlinks/1');   // → Domain tags
+```
+
+Both bounds are argued from the maximum (→ Interlink vector): a non-zero hit's level is below the
+target's bit length, which is at most 256 for every target `orderingPowTarget` can expand, and a zero
+hit is defined as `LEVEL_CAP`; the vector holds one entry per level plus genesis. Neither is
+provisional, and neither is a profile field.
 
 ---
 

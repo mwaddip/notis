@@ -1,5 +1,7 @@
 import { describe, it, afterAll, expect } from 'vitest';
-import { computeContentHash } from '@dagsocial/types';
+import { computeContentHash, updateInterlinks, interlinkRoot } from '@dagsocial/types';
+import type { BlockHeader } from '@dagsocial/types';
+import { blockHash, level } from '@dagsocial/validation';
 import { createMesh, type Mesh } from '../src/mesh.js';
 import { mine, confirm, waitHeight } from '../src/miner.js';
 import { DEVNET_FAUCET, fresh } from '../src/identities.js';
@@ -98,15 +100,50 @@ describe('sync', () => {
       await new Promise(r => setTimeout(r, 100));
     }
 
-    // ---- late joiner has all blocks with matching stateRoots ----
-    for (let h = 1; h <= targetHeight; h++) {
+    // ---- late joiner has all blocks, stateRoots match, interlinkRoots match
+    //      a recomputation from served headers (TYPES_INTERFACE → Interlink vector) ----
+    const finalTip = (await getBlockCurrent(miner)).height;
+    for (const node of [miner, lateNode]) {
+      let vector: string[] = [];
+      for (let h = 1; h <= finalTip; h++) {
+        const raw = await getBlock(node, h);
+        expect(raw).not.toBeNull();
+        const hdr = (raw as Record<string, unknown>)['header'] as Record<string, unknown>;
+        const header: BlockHeader = {
+          protocolVersion: hdr['protocolVersion'] as number,
+          height: hdr['height'] as number,
+          prevBlockHash: hdr['prevBlockHash'] as string,
+          utxoTxRoot: hdr['utxoTxRoot'] as string,
+          stateRoot: hdr['stateRoot'] as string,
+          validatorId: Buffer.from(hdr['validatorId'] as string, 'hex'),
+          powNonce: hdr['powNonce'] as number,
+          powTargetBits: hdr['powTargetBits'] as number,
+          createdAt: hdr['createdAt'] as number,
+          interlinkRoot: hdr['interlinkRoot'] as string,
+        };
+
+        const hash = blockHash(header);
+        expect(hash).not.toBeNull();
+
+        const lv = level(header);
+        expect(lv).not.toBeNull();
+
+        const expectedRoot = interlinkRoot(vector);
+        expect(header.interlinkRoot).toBe(expectedRoot);
+
+        vector = updateInterlinks(vector, hash!, lv!);
+      }
+    }
+
+    for (let h = 1; h <= finalTip; h++) {
       const b1 = await getBlock(miner, h);
       const bLate = await getBlock(lateNode, h);
       expect(b1).not.toBeNull();
       expect(bLate).not.toBeNull();
-      const h1 = (b1 as Record<string, unknown>)['header'] as { stateRoot: string };
-      const hLate = (bLate as Record<string, unknown>)['header'] as { stateRoot: string };
-      expect(hLate.stateRoot).toBe(h1.stateRoot);
+      const h1 = (b1 as Record<string, unknown>)['header'] as Record<string, unknown>;
+      const hLate = (bLate as Record<string, unknown>)['header'] as Record<string, unknown>;
+      expect(hLate['stateRoot']).toBe(h1['stateRoot']);
+      expect(hLate['interlinkRoot']).toBe(h1['interlinkRoot']);
     }
 
     // ---- post on the late joiner: confirmed with body and correct hash ----

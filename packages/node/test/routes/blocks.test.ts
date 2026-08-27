@@ -38,6 +38,7 @@ function makeBlock(height: number): OrderingBlock {
       powNonce: 0,
       powTargetBits: 256 * 12,
       createdAt: Date.now(),
+      interlinkRoot: '00'.repeat(32),
     },
     utxoTxTree: {
       // Every body carries a settlement as its last entry, and this one carries
@@ -164,7 +165,7 @@ describe('blocks routes', () => {
     //
     // Carried by the height-1 block rather than a second one on purpose — a
     // block at height 2 would move the tip `/blocks/current` asserts on.
-    createOrderingBlock(makeBlock(1));
+    createOrderingBlock(makeBlock(1), []);
   });
 
   afterAll(() => {
@@ -178,6 +179,7 @@ describe('blocks routes', () => {
     const body = res.data as Record<string, unknown>;
     const header = body.header as Record<string, unknown>;
     expect(header.height).toBe(1);
+    expect(header.interlinkRoot).toBe('00'.repeat(32));
     expect(typeof body.validatorSignature).toBe('string');
     expect(body.validatorSignature).toBeDefined();
   });

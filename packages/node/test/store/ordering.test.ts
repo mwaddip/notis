@@ -20,12 +20,13 @@ async function importDbFresh() {
 async function importOrderingFresh() {
   const mod = await import('../../src/store/ordering.js');
   return mod as {
-    createOrderingBlock: (block: OrderingBlock) => void;
+    createOrderingBlock: (block: OrderingBlock, interlinks: string[]) => void;
     getOrderingBlock: (height: number) => OrderingBlock | null;
     getCurrentHeight: () => number;
     deleteOrderingBlock: (height: number) => void;
     getOrderingBlockHash: (height: number) => string | null;
     getHeightByBlockHash: (hash: string) => number | null;
+    getInterlinks: (height: number) => string[] | null;
   };
 }
 
@@ -47,6 +48,7 @@ function makeOrderingBlock(
       powNonce: 0,
       powTargetBits: 256 * 12,
       createdAt: Date.now(),
+      interlinkRoot: '00'.repeat(32),
     },
     utxoTxTree: {
       utxoTxIds: ['1a'.repeat(32)],
@@ -99,6 +101,7 @@ describe('ordering store', () => {
         // multi-byte path rather than only its one-byte one.
         powTargetBits: 256 * 14,
         createdAt: 1234567890,
+        interlinkRoot: 'ee'.repeat(32),
       },
       utxoTxTree: {
         // The settlement is the last entry, and here it is the only one — the
@@ -110,7 +113,7 @@ describe('ordering store', () => {
       validatorSignature: new Uint8Array(64).fill(0xcd),
     });
 
-    createOrderingBlock(block);
+    createOrderingBlock(block, ['ab'.repeat(32), 'cd'.repeat(32)]);
 
     const result = getOrderingBlock(1);
     expect(result).not.toBeNull();
@@ -124,6 +127,7 @@ describe('ordering store', () => {
     expect(h.powNonce).toBe(42);
     expect(h.powTargetBits).toBe(256 * 14);
     expect(h.createdAt).toBe(1234567890);
+    expect(h.interlinkRoot).toBe(block.header.interlinkRoot);
 
     expect(result!.validatorSignature).toEqual(
       new Uint8Array(64).fill(0xcd),
@@ -170,7 +174,7 @@ describe('ordering store', () => {
     initDb(':memory:');
 
     const block = makeOrderingBlock();
-    createOrderingBlock(block);
+    createOrderingBlock(block, []);
 
     const hash = getOrderingBlockHash(1);
     expect(hash).not.toBeNull();
@@ -194,7 +198,7 @@ describe('ordering store', () => {
     initDb(':memory:');
 
     const block = makeOrderingBlock();
-    createOrderingBlock(block);
+    createOrderingBlock(block, []);
 
     const hash = getOrderingBlockHash(1)!;
     expect(getHeightByBlockHash(hash)).toBe(1);
@@ -209,7 +213,7 @@ describe('ordering store', () => {
     initDb(':memory:');
 
     const block = makeOrderingBlock();
-    createOrderingBlock(block);
+    createOrderingBlock(block, []);
 
     const hash = getOrderingBlockHash(1)!;
     expect(getHeightByBlockHash(hash)).toBe(1);
@@ -227,7 +231,7 @@ describe('ordering store', () => {
     initDb(':memory:');
 
     const block1 = makeOrderingBlock();
-    createOrderingBlock(block1);
+    createOrderingBlock(block1, []);
     const hash = getOrderingBlockHash(1)!;
 
     // A second INSERT with the same block_hash at a different height throws.
@@ -236,9 +240,9 @@ describe('ordering store', () => {
       db.prepare(
         `INSERT INTO ordering_blocks
            (height, header_bytes, utxotx_tree_bytes,
-            validator_signature, created_at, block_hash)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      ).run(2, Buffer.alloc(1), Buffer.alloc(1), Buffer.alloc(64), 0, hash);
+            validator_signature, created_at, block_hash, interlinks)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run(2, Buffer.alloc(1), Buffer.alloc(1), Buffer.alloc(64), 0, hash, Buffer.alloc(1));
     }).toThrow();
   });
 
@@ -256,7 +260,7 @@ describe('ordering store', () => {
     });
     let caught: unknown;
     try {
-      createOrderingBlock(block);
+      createOrderingBlock(block, []);
     } catch (err) {
       caught = err;
     }
@@ -265,5 +269,41 @@ describe('ordering store', () => {
     expect((caught as Error).name).toBe('UnhashableStoredHeaderError');
     expect((caught as { site: string }).site).toBe('createOrderingBlock');
     expect((caught as { height: number }).height).toBe(1);
+  });
+
+  it('getInterlinks round-trips the stored vector', async () => {
+    const { initDb } = await importDbFresh();
+    const { createOrderingBlock, getInterlinks } = await importOrderingFresh();
+
+    initDb(':memory:');
+
+    const ids = ['ab'.repeat(32), 'cd'.repeat(32), 'ef'.repeat(32)];
+    const block = makeOrderingBlock();
+    createOrderingBlock(block, ids);
+
+    expect(getInterlinks(1)).toEqual(ids);
+  });
+
+  it('getInterlinks returns null for missing height', async () => {
+    const { initDb } = await importDbFresh();
+    const { getInterlinks } = await importOrderingFresh();
+
+    initDb(':memory:');
+
+    expect(getInterlinks(999)).toBeNull();
+  });
+
+  it('deleteOrderingBlock drops the interlinks with the row', async () => {
+    const { initDb } = await importDbFresh();
+    const { createOrderingBlock, deleteOrderingBlock, getInterlinks } =
+      await importOrderingFresh();
+
+    initDb(':memory:');
+
+    createOrderingBlock(makeOrderingBlock(), ['aa'.repeat(32)]);
+    expect(getInterlinks(1)).toEqual(['aa'.repeat(32)]);
+
+    deleteOrderingBlock(1);
+    expect(getInterlinks(1)).toBeNull();
   });
 });

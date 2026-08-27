@@ -42,6 +42,7 @@ import {
   encodeUtxoTxTree,
   encodeOrderingBlock,
 } from '../../src/serialization.js';
+import { encodeInterlinks } from '../../src/interlinks.js';
 import type {
   BlockHeader,
   OrderingBlock,
@@ -384,6 +385,7 @@ const blockHeaderCodec: ValueCodec<BlockHeader> = {
       powNonce: j.powNonce as number,
       powTargetBits: j.powTargetBits as number,
       createdAt: j.createdAt as number,
+      interlinkRoot: j.interlinkRoot as string,
     };
   },
   write(w: ByteWriter, h: BlockHeader): void {
@@ -400,6 +402,7 @@ const blockHeaderCodec: ValueCodec<BlockHeader> = {
       powNonce: readVlqU(r),
       powTargetBits: readVlqU(r),
       createdAt: readVlqU(r),
+      interlinkRoot: readHexN(r, 32),
     };
   },
 };
@@ -459,9 +462,29 @@ const orderingBlockCodec: ValueCodec<OrderingBlock> = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// Interlinks — TYPES_INTERFACE → Interlink vector
+// ---------------------------------------------------------------------------
+
+const interlinksCodec: ValueCodec<string[]> = {
+  parse(json: unknown): string[] {
+    return json as string[];
+  },
+  write(w: ByteWriter, vector: string[]): void {
+    w.writeBytes(encodeInterlinks(vector));
+  },
+  read(r: ByteReader): string[] {
+    const count = readVlqU(r);
+    const ids: string[] = [];
+    for (let i = 0; i < count; i++) ids.push(readHexN(r, 32));
+    return ids;
+  },
+};
+
 registerStruct('postCommitFields', postCommitFieldsCodec);
 registerStruct('postBody', postBodyCodec);
 registerStruct('boxContent', boxContentCodec);
 registerStruct('blockHeader', blockHeaderCodec);
 registerStruct('utxoTxTree', utxoTxTreeCodec);
 registerStruct('orderingBlock', orderingBlockCodec);
+registerStruct('interlinks', interlinksCodec);

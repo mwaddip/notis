@@ -39,6 +39,7 @@ const REQUIRED_PROFILE_FIELDS = [
   'inviteBondMax',
   'genesisProofPayload',
   'genesisStateRoot',
+  'genesisId',
   'storageRentPeriodBlocks',
 ].sort();
 
@@ -143,6 +144,8 @@ describe('NETWORK_PROFILES', () => {
       // genesis seeds a faucet's boxes at all, so it separates the two networks
       // the same way the payload does.
       'faucetPublicKey',
+      // The pinned height-1 block hash — empty until a network has one.
+      'genesisId',
     ]);
     // ⚠ **Caps, not mechanics** (ARCHITECTURE → "What varies per network, and
     // what must not"). Every name here is a BOUND; a formula or a ratio may not
@@ -332,6 +335,20 @@ describe('NETWORK_PROFILES', () => {
     const { mainnet, testnet } = NETWORK_PROFILES;
     expect(testnet.genesisProofPayload).not.toBe(mainnet.genesisProofPayload);
     expect(testnet.genesisStateRoot).not.toBe(mainnet.genesisStateRoot);
+  });
+
+  // TYPES_INTERFACE → Network profiles: `genesisId` pins block 1, and is
+  // empty until a network has one. Devnet is always '' — every run mines
+  // its own block 1.
+  it('every genesisId is empty or 64 lowercase hex, and devnet is empty', () => {
+    for (const profile of Object.values(NETWORK_PROFILES)) {
+      const id = profile.genesisId;
+      expect(
+        id === '' || /^[0-9a-f]{64}$/.test(id),
+        `${profile.networkType}.genesisId: ${JSON.stringify(id)}`,
+      ).toBe(true);
+    }
+    expect(NETWORK_PROFILES.devnet.genesisId).toBe('');
   });
 });
 

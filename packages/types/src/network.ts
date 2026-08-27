@@ -127,6 +127,7 @@ export interface NetworkProfile {
    * it).
    */
   readonly genesisStateRoot: string;
+  readonly genesisId: string;             // hex(32) or '' — the pinned height-1 block hash; '' = unpinned
 }
 
 // The network magics live here, not in @dagsocial/wire: wire has zero runtime dependencies
@@ -195,6 +196,7 @@ const MAINNET_PROFILE: NetworkProfile = Object.freeze({
   // three, and the faucet identity's record — which is why this root's trailing
   // height byte (`02`) differs from theirs (`03`).
   genesisStateRoot: '5cc05fea25e2a7d3a4a14f10431d245a884817be1327d6286d227b3087d056bf02',
+  genesisId: '',
 } satisfies NetworkProfile);
 
 // testnet: mainnet's MECHANICS with relaxed CAPS — the public playground. A testnet that
@@ -223,6 +225,7 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   // single failure: the spread would hand testnet mainnet's root, and a root is
   // exactly what a node checks its own seeded state against.
   genesisStateRoot: 'd5c1520829489cec74dfbf680da01a21c74add478656ac377f5cfefd6adfc00e03',
+  genesisId: '',
 } satisfies NetworkProfile);
 
 // devnet: compressed timescale, same economics. `karmaDecayIntervalBlocks` (3) and
@@ -302,6 +305,7 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   // `faucetPublicKey`s and therefore seed differently-owned karma and credit
   // boxes.
   genesisStateRoot: '8e1b689ebe53c098142ae98224f5ee33ffba7e1aba40c4510a8fe534d3c4b22b03',
+  genesisId: '',
 } satisfies NetworkProfile);
 
 export const NETWORK_PROFILES: Readonly<Record<NetworkType, NetworkProfile>> = Object.freeze({

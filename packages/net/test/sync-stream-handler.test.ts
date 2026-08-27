@@ -243,6 +243,7 @@ function makeQueryHeader(height: number): BlockHeader {
     powNonce: height,
     powTargetBits: 4 * 256,
     createdAt: 1_000_000 + height,
+    interlinkRoot: '00'.repeat(32),
   };
 }
 

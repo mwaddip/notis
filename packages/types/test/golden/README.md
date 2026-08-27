@@ -31,7 +31,7 @@ Normative source for the layouts: `contracts/TYPES_INTERFACE.md` → Serializati
 the all-zeros case is where a transposition of two same-width fields becomes
 invisible.
 
-⛔ **The header is NINE fields.** A reader keeping stale offsets produces a
+⛔ **The header is TEN fields.** A reader keeping stale offsets produces a
 silently wrong `blockHash`, not a decode error. The `blockHeader` vectors are
 what catch that.
 

@@ -73,6 +73,7 @@ function makeBlockHeader(): BlockHeader {
     powNonce: 0,
     powTargetBits: 3072,
     createdAt: 1700000000000,
+    interlinkRoot: '00'.repeat(32),
   };
 }
 
@@ -374,6 +375,22 @@ describe('positional serialization', () => {
       expect(typeof back.prevBlockHash).toBe('string');
     });
 
+    it('interlinkRoot (field 10) throws on a 63-char value', () => {
+      const h = { ...makeBlockHeader(), interlinkRoot: 'aa'.repeat(31) + 'a' };
+      expect(() => encodeHeader(h)).toThrow();
+    });
+
+    it('interlinkRoot (field 10) throws on non-hex', () => {
+      const h = { ...makeBlockHeader(), interlinkRoot: 'zz'.repeat(32) };
+      expect(() => encodeHeader(h)).toThrow();
+    });
+
+    it('interlinkRoot decodes as a hex string', () => {
+      const back = decodeHeader(encodeHeader(makeBlockHeader()));
+      expect(typeof back.interlinkRoot).toBe('string');
+      expect(back.interlinkRoot).toHaveLength(64);
+    });
+
     // ⛔ **NO FIELD IN `UtxoTxTree` REACHES `writeVlqU64OrThrow` OR `writeBool`**,
     // so this section pins neither writer and a reader must not infer that the
     // body covers them. **Both are pinned one struct over**, in `utxo.test.ts`:
@@ -629,15 +646,15 @@ describe('positional serialization', () => {
       expect(id).toBe(POST_COMMIT_ID);
     });
 
-    it('BlockHeader: nine fields, 140 positional bytes', () => {
-      // ⛔ Nine fields, 140 positional bytes: five VLQ
-      // integers (1+1+1+2+6) plus 32+32+33+32 raw bytes. A reader with the
-      // right length and wrong offsets is still 140 bytes and hashes
+    it('BlockHeader: ten fields, 172 positional bytes', () => {
+      // ⛔ Ten fields, 172 positional bytes: five VLQ
+      // integers (1+1+1+2+6) plus 32+32+33+32+32 raw bytes. A reader with the
+      // right length and wrong offsets is still 172 bytes and hashes
       // differently, which is why the hash is pinned beside the length rather
       // than instead of it.
       const bytes = encodeHeader(makeBlockHeader());
-      expect(bytes.length).toBe(140);
-      expect(hash(bytes)).toBe('63e9132c42173752a8449618d5371b6aafafdb7cc8e1df4e243814a9fc837a07');
+      expect(bytes.length).toBe(172);
+      expect(hash(bytes)).toBe('a7ac7ad921c04409944cf5b7695c62bd93853b5e71553b441e249df362582132');
       expect(hex(bytes)).not.toContain(Buffer.from('prevBlockHash', 'utf8').toString('hex'));
     });
 
@@ -658,7 +675,7 @@ describe('positional serialization', () => {
       // them apart. The pins that decide are elsewhere: the BlockHeader pin above
       // for the header, and the frozen ids in `utxo.test.ts` for consensus. **Read
       // this one only as "the frame changed" — never as evidence about what.**
-      expect(hash(encodeOrderingBlock(makeOrderingBlock()))).toBe('042d2806e34dddeb0db5d1f2fea02b26c66cb49f146d824e5fe6a5681eeb3a24');
+      expect(hash(encodeOrderingBlock(makeOrderingBlock()))).toBe('eda5d02a639233f54c3bd3df8634dab5a608bd46efa8879f79f9c592cea62108');
     });
 
     it('Post: the wire codec IS the payload preimage, with no tail at all', () => {

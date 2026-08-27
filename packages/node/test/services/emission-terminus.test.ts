@@ -1,4 +1,4 @@
-import { coinbaseOf, makeApplicableBlock, makeTestIdentity, ZERO_HASH } from '../helpers.js';
+import { coinbaseOf, makeApplicableBlock, makeTestIdentity, solveHeaderPow, ZERO_HASH } from '../helpers.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   CREDIT_INITIAL_REWARD,
@@ -37,7 +37,7 @@ async function importDb() {
 
 async function importOrdering() {
   return (await import('../../src/store/ordering.js')) as unknown as {
-    createOrderingBlock: (block: OrderingBlock) => void;
+    createOrderingBlock: (block: OrderingBlock, interlinks: string[]) => void;
     getOrderingBlock: (height: number) => OrderingBlock | null;
     getCurrentHeight: () => number;
   };
@@ -67,27 +67,34 @@ async function importBlockApply() {
 async function seedChainAt(height: number): Promise<void> {
   const ordering = await importOrdering();
   const { expectedTarget } = await import('../../src/services/difficulty.js');
+  const { interlinkRoot } = await import('@dagsocial/types');
   const seedMiner = makeTestIdentity();
 
+  // The seeded interlinks must be non-empty so `updateInterlinks` at height+1
+  // does not throw on a finite level. A single-entry vector is the genesis case.
+  const seedInterlinks = [ZERO_HASH];
+  const header = {
+    protocolVersion: PROTOCOL_VERSION,
+    height,
+    prevBlockHash: ZERO_HASH,
+    utxoTxRoot: ZERO_HASH,
+    stateRoot: EMPTY_STATE_ROOT,
+    validatorId: seedMiner.userId,
+    powNonce: 0,
+    powTargetBits: expectedTarget(height),
+    createdAt: Date.now(),
+    interlinkRoot: interlinkRoot(seedInterlinks),
+  };
+  header.powNonce = solveHeaderPow(header as import('@dagsocial/types').BlockHeader);
   ordering.createOrderingBlock({
-    header: {
-      protocolVersion: PROTOCOL_VERSION,
-      height,
-      prevBlockHash: ZERO_HASH,
-      utxoTxRoot: ZERO_HASH,
-      stateRoot: EMPTY_STATE_ROOT,
-      validatorId: seedMiner.userId,
-      powNonce: 0,
-      powTargetBits: expectedTarget(height),
-      createdAt: Date.now(),
-    },
+    header,
     utxoTxTree: {
       utxoTxIds: [],
       utxoTxs: [],
       coinbaseOutputs: [],
     },
     validatorSignature: new Uint8Array(64),
-  } as unknown as OrderingBlock);
+  } as unknown as import('@dagsocial/types').OrderingBlock, seedInterlinks);
 
   expect(ordering.getCurrentHeight()).toBe(height);
 }

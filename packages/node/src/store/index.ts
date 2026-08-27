@@ -76,6 +76,7 @@ export {
   deleteOrderingBlock,
   getOrderingBlockHash,
   getHeightByBlockHash,
+  getInterlinks,
 } from './ordering.js';
 
 export {

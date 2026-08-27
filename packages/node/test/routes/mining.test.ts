@@ -37,6 +37,7 @@ function makeTemplate(): OrderingBlock {
       powNonce: 0,
       powTargetBits: 256 * 12,
       createdAt: 1_700_000_000_000,
+      interlinkRoot: '00'.repeat(32),
     },
     utxoTxTree: {
       // The coinbase is an output of the settlement, which is the body's last
@@ -85,6 +86,7 @@ describe('mining routes — auth', () => {
         .set('Authorization', `Bearer ${SECRET}`);
       expect(res.status).toBe(200);
       expect(res.body.header.height).toBe(7);
+      expect(res.body.header.interlinkRoot).toBe('00'.repeat(32));
       expect(res.body.powPreimage).toMatch(/^[0-9a-f]{64}$/);
     });
 

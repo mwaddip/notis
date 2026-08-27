@@ -68,6 +68,7 @@ describe('verifyValidatorSignature', () => {
     powNonce: 12345,
     powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
     createdAt: 1_700_000_000_000,
+    interlinkRoot: '00'.repeat(32),
     ...over,
   });
 
@@ -604,6 +605,7 @@ describe('verifyOrderingBlockStructure', () => {
       powNonce: 0,
       powTargetBits: 3072,
       createdAt: Date.now(),
+      interlinkRoot: '00'.repeat(32),
     },
     utxoTxTree: {
       utxoTxIds: [SETTLEMENT_ID],
@@ -906,6 +908,7 @@ describe('ordering-block hex domains — the pin has teeth', () => {
       powNonce: 0,
       powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
       createdAt: 1_700_000_000_000,
+      interlinkRoot: '00'.repeat(32),
       ...headerOver,
     });
     // Signed over the mined header, then substituted — so the signature is real
@@ -1358,6 +1361,7 @@ describe('verifyBlockChainLink', () => {
       powNonce: 0,
       powTargetBits: 3072,
       createdAt: Date.now(),
+      interlinkRoot: '00'.repeat(32),
     },
     utxoTxTree: {
       utxoTxIds: [SETTLEMENT_ID],
@@ -1582,6 +1586,7 @@ describe('integer guards on the header nonce and targetBits (M-6)', () => {
     powNonce: 0,
     powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
     createdAt: 1_700_000_000_000,
+    interlinkRoot: '00'.repeat(32),
     ...over,
   });
 
@@ -1699,6 +1704,7 @@ describe('no-panic on malformed input (M-5)', () => {
     validatorId: new Uint8Array(32).fill(1),
     powNonce: 0,
     powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
+    interlinkRoot: '00'.repeat(32),
     createdAt: 1_700_000_000_000,
     ...over,
   });
@@ -2384,6 +2390,7 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
     powNonce: 0,
     powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
     createdAt: 1_700_000_000_000,
+    interlinkRoot: '00'.repeat(32),
     ...over,
   });
 
@@ -2446,6 +2453,7 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
     writeVlqU(w, h.powNonce);
     writeVlqU(w, h.powTargetBits);
     writeVlqU(w, h.createdAt);
+    hexOrFiller(h.interlinkRoot, 32);
     return w.toBytes();
   };
 
@@ -2573,7 +2581,7 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
   ];
 
   const NUMERIC_FIELDS = ['protocolVersion', 'height', 'powNonce', 'powTargetBits', 'createdAt'] as const;
-  const HEX32_FIELDS = ['prevBlockHash', 'utxoTxRoot'] as const;
+  const HEX32_FIELDS = ['prevBlockHash', 'utxoTxRoot', 'interlinkRoot'] as const;
 
   for (const field of NUMERIC_FIELDS) {
     for (const [name, bad] of BAD_NUMBERS) {
@@ -2624,8 +2632,8 @@ describe('the header domain pin has teeth (spec §6.2)', () => {
     }
     reasons.add(verifyHeaderFieldDomains(header({ stateRoot: 'nope' })).error!);
     reasons.add(verifyHeaderFieldDomains(header({ validatorId: 'nope' as unknown as Uint8Array })).error!);
-    // Nine header fields, each with a distinct domain rule.
-    expect(reasons.size).toBe(9);
+    // Ten header fields, each with a distinct domain rule.
+    expect(reasons.size).toBe(10);
   });
 
   // -------------------------------------------------------------------------
@@ -3125,6 +3133,7 @@ describe('verifyOrderingBlockStructure — the body and embedded-transaction bou
       powNonce: 0,
       powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
       createdAt: 1_700_000_000_000,
+      interlinkRoot: '00'.repeat(32),
     },
     utxoTxTree: {
       utxoTxIds: utxoTxs.map((_, i) => i.toString(16).padStart(64, '0')),

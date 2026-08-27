@@ -23,10 +23,13 @@ import {
   buildMerkleRoot,
   hexToBuf,
   utxoTxTreeByteLength,
+  interlinkRoot,
+  updateInterlinks,
 } from '@dagsocial/types';
 import {
   verifyOrderingBlockPoW,
   blockHash,
+  level,
 } from '@dagsocial/validation';
 import type {
   OrderingBlock,
@@ -95,6 +98,7 @@ import {
   getLikeRecordCount,
   getPrunedLockCandidates,
   getTopologyAuthorBytes,
+  getInterlinks,
 } from '../store/index.js';
 
 // ---------------------------------------------------------------------------
@@ -625,6 +629,27 @@ export function createOrderingBlock(): OrderingBlock | null {
     // 19. Build header template (powNonce=0). `stateRoot` is a placeholder here
     // and is replaced in 19b — the speculative run needs a whole candidate block,
     // and the mutation phase reads neither the nonce nor the signature.
+    //
+    // interlinkRoot: the root the header commits to (TYPES_INTERFACE → Interlink
+    // vector). A null level or missing vector on our own tip → the boundary.
+    let templateInterlinks: string[];
+    if (prevBlock) {
+      const storedInterlinks = getInterlinks(currentHeight);
+      if (storedInterlinks === null) {
+        failStopIfCorruptChain(
+          new UnhashableStoredHeaderError('createOrderingBlock/interlinks', currentHeight),
+        );
+      }
+      const prevLevel = level(prevBlock.header);
+      if (prevLevel === null) {
+        failStopIfCorruptChain(
+          new UnhashableStoredHeaderError('createOrderingBlock/level', currentHeight),
+        );
+      }
+      templateInterlinks = updateInterlinks(storedInterlinks!, prevBlockHash!, prevLevel!);
+    } else {
+      templateInterlinks = [];
+    }
     const headerTemplate: BlockHeader = {
       protocolVersion: PROTOCOL_VERSION,
       height: newHeight,
@@ -635,6 +660,7 @@ export function createOrderingBlock(): OrderingBlock | null {
       powNonce: 0,
       powTargetBits,
       createdAt: Date.now(),
+      interlinkRoot: interlinkRoot(templateInterlinks),
     };
     const candidate: OrderingBlock = {
       header: headerTemplate,

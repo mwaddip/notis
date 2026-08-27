@@ -8,6 +8,10 @@ import {
   MAX_BLOCK_BODY_BYTES,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   ED25519_SPKI_PREFIX,
+  LEVEL_CAP,
+  MAX_INTERLINKS,
+  interlinkRoot,
+  updateInterlinks,
 } from '@dagsocial/types';
 import { encodeHeader, encodeTx, utxoTxTreeByteLength, computeContentHash } from '@dagsocial/types';
 import type { BlockHeader, OrderingBlock, UtxoTransaction } from '@dagsocial/types';
@@ -256,7 +260,8 @@ type HeaderField =
   | 'validatorId'
   | 'powNonce'
   | 'powTargetBits'
-  | 'createdAt';
+  | 'createdAt'
+  | 'interlinkRoot';
 
 interface HeaderDomainRule {
   readonly field: HeaderField;
@@ -291,6 +296,8 @@ const HEADER_DOMAIN: readonly HeaderDomainRule[] = [
   // reference lacks" applies. `createdAt` stays a producer-set record that no
   // node validates against anything, as in every chain in the lineage.
   { field: 'createdAt', ok: isU64Safe, error: 'Block header createdAt must be a non-negative safe integer' },
+  // b32 — the interlink vector's commitment (TYPES_INTERFACE → Interlink vector)
+  { field: 'interlinkRoot', ok: isHex32, error: 'Block header interlinkRoot must be 64 lowercase hex characters' },
 ];
 
 /**
@@ -314,7 +321,7 @@ function firstHeaderDomainFailure(h: unknown): HeaderDomainRule | null {
  * encodable domain.
  *
  * Only declared fields are checked, and that is the whole domain: `encodeHeader`
- * writes the nine declared fields positionally and reads nothing else, so an
+ * writes the ten declared fields positionally and reads nothing else, so an
  * *extra* property on a header — a symbol, a function, a reference cycle —
  * reaches no writer and has no bytes.
  *
@@ -670,6 +677,7 @@ const BLOCK_HEADER_FIELD_ERROR: Record<HeaderField, string> = {
   powNonce: 'Ordering block missing or invalid powNonce',
   powTargetBits: 'Ordering block missing or invalid powTargetBits',
   createdAt: 'Ordering block header missing or invalid createdAt',
+  interlinkRoot: 'Ordering block header missing or invalid interlinkRoot',
 };
 
 export function verifyOrderingBlockStructure(
@@ -868,25 +876,75 @@ export function computePowHash(header: BlockHeader): Buffer | null {
 }
 
 // ---------------------------------------------------------------------------
-// verifyOrderingBlockPoW
+// powHit — VALIDATION_INTERFACE → powHit
 // ---------------------------------------------------------------------------
 
-export function verifyOrderingBlockPoW(header: BlockHeader): boolean {
-  // One gate, not two: the guarded preimage establishes the whole header domain,
-  // which includes `powNonce` / `powTargetBits` as non-negative safe integers
-  // (M-6) — the bound that keeps `BigInt` / `writeBigUInt64LE` from throwing.
+/**
+ * The 32-byte digest a header's nonce produced — the bytes `meetsPowTarget`
+ * compares against the target. `null` on exactly the inputs `computePowHash`
+ * refuses (M-5/M-6); never throws.
+ */
+export function powHit(header: BlockHeader): Uint8Array | null {
   const preimage = computePowHash(header);
-  if (preimage === null) return false;
-  const target = orderingPowTarget(header.powTargetBits);
-  if (target === null) return false;
+  if (preimage === null) return null;
+  if (!isU64Safe(header.powNonce)) return null;
   const nonceBuf = Buffer.alloc(8);
   nonceBuf.writeBigUInt64LE(BigInt(header.powNonce));
-  const hash = createHash('blake2b512')
+  return createHash('blake2b512')
     .update(preimage)
     .update(nonceBuf)
     .digest()
     .subarray(0, 32);
-  return meetsPowTarget(hash, target);
+}
+
+// ---------------------------------------------------------------------------
+// verifyOrderingBlockPoW
+// ---------------------------------------------------------------------------
+
+export function verifyOrderingBlockPoW(header: BlockHeader): boolean {
+  const hit = powHit(header);
+  if (hit === null) return false;
+  const target = orderingPowTarget(header.powTargetBits);
+  if (target === null) return false;
+  return meetsPowTarget(hit, target);
+}
+
+// ---------------------------------------------------------------------------
+// levelOfHit / level — VALIDATION_INTERFACE → level
+// ---------------------------------------------------------------------------
+
+/**
+ * The arithmetic half of the NiPoPoW level: the largest `μ ≥ 0` with
+ * `hit · 2^μ ≤ target`, both read as unsigned big-endian integers.
+ * `LEVEL_CAP` when `hit` is zero; `null` when `hit > target` or either
+ * operand is not exactly 32 bytes. Never throws.
+ */
+export function levelOfHit(hit: Uint8Array, target: Uint8Array): number | null {
+  if (!isBytes(hit) || hit.length !== 32) return null;
+  if (!isBytes(target) || target.length !== 32) return null;
+  let h = 0n;
+  for (const byte of hit) h = (h << 8n) | BigInt(byte);
+  if (h === 0n) return LEVEL_CAP;
+  let t = 0n;
+  for (const byte of target) t = (t << 8n) | BigInt(byte);
+  if (h > t) return null;
+  let mu = 0;
+  while ((h << BigInt(mu + 1)) <= t) mu++;
+  return mu;
+}
+
+/**
+ * The superblock level of a header (VALIDATION_INTERFACE → level).
+ * `Infinity` at height 1; otherwise `levelOfHit(powHit(header), target)`.
+ * `null` when either half is `null`.
+ */
+export function level(header: BlockHeader): number | null {
+  if (isObject(header) && (header as Record<string, unknown>).height === 1) return Infinity;
+  const hit = powHit(header);
+  if (hit === null) return null;
+  const target = orderingPowTarget(header.powTargetBits);
+  if (target === null) return null;
+  return levelOfHit(hit, target);
 }
 
 // ---------------------------------------------------------------------------
@@ -919,7 +977,7 @@ export function verifyBlockChainLink(
  */
 export type HeaderChainVerdict =
   | { ok: true; work: bigint; hashes: string[] }
-  | { ok: false; index: number; reason: 'domain' | 'version' | 'height' | 'link' | 'target' | 'pow' };
+  | { ok: false; index: number; reason: 'domain' | 'version' | 'height' | 'link' | 'target' | 'pow' | 'interlinks' };
 
 /**
  * Verify a contiguous header segment against an anchor and a target schedule.
@@ -927,14 +985,27 @@ export type HeaderChainVerdict =
  */
 export function verifyHeaderChain(
   headers: BlockHeader[],
-  anchor: { prevBlockHash: string; height: number },
+  anchor: { prevBlockHash: string; height: number; interlinks: string[] },
   scheduledTarget: (height: number) => number,
 ): HeaderChainVerdict {
   if (!Array.isArray(headers) || headers.length === 0) {
     return { ok: true, work: 0n, hashes: [] };
   }
 
+  // Validate anchor interlinks before entering the loop: a malformed vector
+  // would throw inside `interlinkRoot` (which calls `encodeInterlinks`), and
+  // an empty vector above genesis would throw in `updateInterlinks` when
+  // the first header's finite level reaches it. Only the genesis anchor
+  // (height 0) may carry an empty vector.
+  if (!Array.isArray(anchor.interlinks) ||
+      anchor.interlinks.length > MAX_INTERLINKS ||
+      anchor.interlinks.some(e => !isHex32(e)) ||
+      (anchor.interlinks.length === 0 && anchor.height !== 0)) {
+    return { ok: false, index: 0, reason: 'interlinks' };
+  }
+
   const hashes: string[] = [];
+  let expectedInterlinks = anchor.interlinks;
 
   for (let i = 0; i < headers.length; i++) {
     const header = headers[i]!;
@@ -968,10 +1039,26 @@ export function verifyHeaderChain(
       return { ok: false, index: i, reason: 'target' };
     }
 
-    // 6. PoW — the solution must meet the header's own target
-    if (!verifyOrderingBlockPoW(header)) {
+    // 6. PoW — compute the hit once, use for both the PoW check and the
+    //    level computation for the next header's vector.
+    const hit = powHit(header);
+    if (hit === null) return { ok: false, index: i, reason: 'pow' };
+    const target = orderingPowTarget(header.powTargetBits);
+    if (target === null || !meetsPowTarget(hit, target)) {
       return { ok: false, index: i, reason: 'pow' };
     }
+
+    // 7. Interlink root — VALIDATION_INTERFACE → verifyHeaderChain step 7
+    const expectedRoot = interlinkRoot(expectedInterlinks);
+    if (header.interlinkRoot !== expectedRoot) {
+      return { ok: false, index: i, reason: 'interlinks' };
+    }
+
+    // Advance the expected interlink vector for the next header.
+    // Height 1 → Infinity (VALIDATION_INTERFACE → level); otherwise the
+    // arithmetic level from the hit already computed for step 6.
+    const headerLevel = header.height === 1 ? Infinity : levelOfHit(hit, target!);
+    expectedInterlinks = updateInterlinks(expectedInterlinks, hash, headerLevel!);
 
     hashes.push(hash);
   }

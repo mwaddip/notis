@@ -13,8 +13,9 @@ import {
   PROTOCOL_VERSION,
   MAX_BLOCK_BODY_BYTES,
   encodeTx,
+  updateInterlinks,
 } from '@dagsocial/types';
-import { blockHash, cumulativeWork } from '@dagsocial/validation';
+import { blockHash, cumulativeWork, level as headerLevel } from '@dagsocial/validation';
 import type {
   KarmaBox,
   OrderingBlock,
@@ -33,7 +34,8 @@ import {
   makeTestIdentity,
   mineNextBlock,
   signHeader,
-  solveHeaderPow, seedPostTx, fillerTx, activateProverOverStore, insertPoisonedBlock } from '../helpers.js';
+  solveHeaderPow, seedPostTx, fillerTx, activateProverOverStore, insertPoisonedBlock,
+  buildMinedHeaderChain } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Test config
@@ -130,7 +132,8 @@ async function importOrdering() {
     getOrderingBlock: (height: number) => OrderingBlock | null;
     getOrderingBlockHash: (height: number) => string | null;
     deleteOrderingBlock: (height: number) => void;
-    createOrderingBlock: (block: OrderingBlock) => void;
+    createOrderingBlock: (block: OrderingBlock, interlinks: string[]) => void;
+    getInterlinks: (height: number) => string[] | null;
   };
 }
 
@@ -216,6 +219,7 @@ describe('cumulativeWork', () => {
       powNonce: 0,
       powTargetBits: 256 * 10,
       createdAt: 1000,
+      interlinkRoot: '00'.repeat(32),
     };
     const h2: BlockHeader = {
       ...h1,
@@ -238,6 +242,7 @@ describe('cumulativeWork', () => {
       powNonce: 0,
       powTargetBits: 256 * 5,
       createdAt: 1000,
+      interlinkRoot: '00'.repeat(32),
     };
     const h2: BlockHeader = {
       ...h1,
@@ -256,11 +261,11 @@ describe('cumulativeWork', () => {
     const chainA = [
       {
         protocolVersion: PROTOCOL_VERSION, height: 1, prevBlockHash: '00'.repeat(32),
-        validatorId: new Uint8Array(32), powNonce: 0, powTargetBits: 256 * 5, createdAt: 1000,
+        validatorId: new Uint8Array(32), powNonce: 0, powTargetBits: 256 * 5, createdAt: 1000, interlinkRoot: '00'.repeat(32),
       },
       {
         protocolVersion: PROTOCOL_VERSION, height: 2, prevBlockHash: 'ff'.repeat(32),
-        validatorId: new Uint8Array(32), powNonce: 0, powTargetBits: 256 * 5, createdAt: 2000,
+        validatorId: new Uint8Array(32), powNonce: 0, powTargetBits: 256 * 5, createdAt: 2000, interlinkRoot: '00'.repeat(32),
       },
     ] as BlockHeader[];
 
@@ -268,7 +273,7 @@ describe('cumulativeWork', () => {
     const chainB = [
       {
         protocolVersion: PROTOCOL_VERSION, height: 1, prevBlockHash: '00'.repeat(32),
-        validatorId: new Uint8Array(32), powNonce: 0, powTargetBits: 256 * 7, createdAt: 1000,
+        validatorId: new Uint8Array(32), powNonce: 0, powTargetBits: 256 * 7, createdAt: 1000, interlinkRoot: '00'.repeat(32),
       },
     ] as BlockHeader[];
 
@@ -369,6 +374,7 @@ describe('extendsOurTip', () => {
         powNonce: 0,
         powTargetBits: 256 * 4,
         createdAt: Date.now(),
+        interlinkRoot: '00'.repeat(32),
       },
       utxoTxTree: { utxoTxIds: ['77'.repeat(32)], utxoTxs: [new Uint8Array(96)] },
       validatorSignature: new Uint8Array(64),
@@ -393,6 +399,7 @@ describe('extendsOurTip', () => {
         powNonce: 0,
         powTargetBits: 256 * 4,
         createdAt: Date.now(),
+        interlinkRoot: '00'.repeat(32),
       },
       utxoTxTree: { utxoTxIds: ['77'.repeat(32)], utxoTxs: [new Uint8Array(96)] },
       validatorSignature: new Uint8Array(64),
@@ -454,6 +461,7 @@ describe('findForkPoint', () => {
       powNonce: 0,
       powTargetBits: 256 * 4,
       createdAt: Date.now(),
+      interlinkRoot: '00'.repeat(32),
     };
 
     const theirHeaders: BlockHeader[] = [
@@ -512,6 +520,7 @@ describe('findForkPoint', () => {
         powNonce: 0,
         powTargetBits: 256 * 4,
         createdAt: Date.now(),
+        interlinkRoot: '00'.repeat(32),
       },
     ];
 
@@ -564,6 +573,7 @@ describe('findForkPoint', () => {
         powNonce: 0,
         powTargetBits: 256 * 4,
         createdAt: Date.now(),
+        interlinkRoot: '00'.repeat(32),
       },
       deepBlock!.header,
     ];
@@ -607,6 +617,7 @@ describe('findForkPoint', () => {
       powNonce: 0,
       powTargetBits: 256 * 4,
       createdAt: Date.now(),
+      interlinkRoot: '00'.repeat(32),
     });
 
     for (let i = 0; i < MAX_REORG_DEPTH; i++) {
@@ -672,6 +683,7 @@ describe('findForkPoint', () => {
       powNonce: 0,
       powTargetBits: 256 * 4,
       createdAt: Date.now(),
+      interlinkRoot: '00'.repeat(32),
     };
 
     // Control: this batch, unpoisoned, falls through to genesis.
@@ -738,6 +750,7 @@ describe('findForkPoint', () => {
       powNonce: 0,
       powTargetBits: 256 * 4,
       createdAt: Date.now(),
+      interlinkRoot: '00'.repeat(32),
     };
 
     return {
@@ -825,6 +838,7 @@ describe('a stored header that cannot be hashed', () => {
         powNonce: 0,
         powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
         createdAt,
+        interlinkRoot: '00'.repeat(32),
       },
       utxoTxTree: { utxoTxIds: ['77'.repeat(32)], utxoTxs: [new Uint8Array(96)] },
       validatorSignature: new Uint8Array(64),
@@ -937,11 +951,12 @@ describe('a stored header that cannot be hashed', () => {
         powNonce: 0,
         powTargetBits: 65536,
         createdAt: Number.MAX_SAFE_INTEGER,
+        interlinkRoot: '00'.repeat(32),
       },
       utxoTxTree: { utxoTxIds: ['77'.repeat(32)], utxoTxs: [new Uint8Array(96)] },
       validatorSignature: new Uint8Array(64),
     };
-    ordering.createOrderingBlock(extremes);
+    ordering.createOrderingBlock(extremes, []);
 
     const readBack = ordering.getOrderingBlock(1)!;
     expect(verifyHeaderFieldDomains(readBack.header)).toEqual({ valid: true });
@@ -1038,11 +1053,12 @@ describe('a stored header that cannot be hashed', () => {
         powNonce: 0,
         powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
         createdAt: 1,
+        interlinkRoot: '00'.repeat(32),
       },
       utxoTxTree: { utxoTxIds: ['77'.repeat(32)], utxoTxs: [new Uint8Array(96)] },
       validatorSignature: new Uint8Array(64),
     });
-    for (const h of [1, 2, 3]) ordering.createOrderingBlock(build(h));
+    for (const h of [1, 2, 3]) ordering.createOrderingBlock(build(h), []);
 
     return {
       ordering,
@@ -2523,6 +2539,7 @@ describe('resolveFork — #5(b) pinned closed', () => {
         protocolVersion: PROTOCOL_VERSION,
         createdAt: 0,
         validatorId: new Uint8Array(32),
+        interlinkRoot: '00'.repeat(32),
       });
     }
     // Include the shared block at height 1 for the fork point
@@ -2583,6 +2600,7 @@ describe('resolveFork — tampered headers refused before any block request', ()
         protocolVersion: PROTOCOL_VERSION,
         createdAt: 0,
         validatorId: new Uint8Array(32),
+        interlinkRoot: '00'.repeat(32),
       });
     }
 
@@ -2683,6 +2701,7 @@ describe('resolveFork — refused headers', () => {
         protocolVersion: PROTOCOL_VERSION,
         createdAt: 0,
         validatorId: new Uint8Array(32),
+        interlinkRoot: '00'.repeat(32),
       },
       ordering.getOrderingBlock(1)!.header,
     ];
@@ -3034,6 +3053,7 @@ describe('resolveFork — body-stage refusal → mark → re-serve → continuat
         protocolVersion: PROTOCOL_VERSION,
         createdAt: 0,
         validatorId: new Uint8Array(32),
+        interlinkRoot: '00'.repeat(32),
       } as BlockHeader,
       ...forgedHeaders,
     ];
@@ -3226,6 +3246,135 @@ describe('reorg — ceiling screen', () => {
       ).toBe(false);
     } finally {
       warn.mockRestore();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Interlink root — verifyHeaderChain step 7 in fork choice
+// (NODE_INTERFACE → Fork choice decides on verified headers, step 4-5;
+//  VALIDATION_INTERFACE → verifyHeaderChain)
+// ---------------------------------------------------------------------------
+
+describe('resolveFork — interlink root verification (step 7)', () => {
+  beforeEach(async () => { vi.resetModules(); });
+  afterEach(async () => {
+    try { (await importBlockCreator()).stopBlockCreator(); } catch {}
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it('a segment with a wrong interlinkRoot is refused with reason interlinks before any block fetch', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    await mineNextBlock(bc);
+    await mineNextBlock(bc);
+    await mineNextBlock(bc);
+    expect(ordering.getCurrentHeight()).toBe(3);
+
+    // Fork at height 1 — build a competing chain of 3 with correct roots
+    const sharedH1 = ordering.getOrderingBlock(1)!.header;
+    const sharedHash = blockHash(sharedH1)!;
+    const sharedLevel = headerLevel(sharedH1)!;
+    const anchorIl = updateInterlinks([], sharedHash, sharedLevel);
+    const { headers: good } = buildMinedHeaderChain({
+      anchorPrevBlockHash: sharedHash,
+      anchorInterlinks: anchorIl,
+      startHeight: 2,
+      count: 3,
+      powTargetBits: testConfig.orderingBlockPowTargetBits,
+    });
+
+    // Tamper the root at index 1 (height 3) — re-mine so PoW passes
+    const tampered: BlockHeader = { ...good[1]!, interlinkRoot: 'ff'.repeat(32) };
+    tampered.powNonce = solveHeaderPow(tampered);
+    const segment = [good[0]!, tampered, good[2]!];
+
+    // Serve newest-first, with shared height-1 block as the fork anchor
+    const theirHeaders = [...segment].reverse().concat(sharedH1);
+    const net = stubNet(theirHeaders, []);
+    await forkResolution.resolveFork(
+      { header: segment[2]!, utxoTxTree: { utxoTxIds: [], utxoTxs: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock,
+      net,
+      'peer-bad-root',
+    );
+
+    expect(net.blockRequests).toEqual([]);
+    expect(net.penalties).toEqual([
+      expect.objectContaining({ kind: 'misbehavior' }),
+    ]);
+  });
+
+  it('a competing chain with correct interlink roots reorgs successfully, and stored interlinks match recomputation', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // Shared block 1
+    await mineNextBlock(bc);
+    expect(ordering.getCurrentHeight()).toBe(1);
+
+    // Build a competing chain of 5 from height 2 — applied on top of the
+    // shared height 1, so each block goes through the full apply funnel and
+    // its interlink root is verified there.
+    const competingBlocks: OrderingBlock[] = [];
+    for (let i = 0; i < 5; i++) {
+      const b = await mineNextBlock(bc);
+      expect(b).not.toBeNull();
+      competingBlocks.push(ordering.getOrderingBlock(2 + i)!);
+    }
+    expect(ordering.getCurrentHeight()).toBe(6);
+
+    // Revert back to height 1 and mine our chain (3 blocks, strictly less work)
+    for (let h = 6; h > 1; h--) forkResolution.revertBlock(h);
+    expect(ordering.getCurrentHeight()).toBe(1);
+    await mineNextBlock(bc);
+    await mineNextBlock(bc);
+    await mineNextBlock(bc);
+    expect(ordering.getCurrentHeight()).toBe(4);
+
+    // Serve the competing chain (5 blocks, more work than our 3)
+    const theirHeaders = [...competingBlocks].reverse().map(b => b.header)
+      .concat(ordering.getOrderingBlock(1)!.header);
+    const net = stubNet(theirHeaders, competingBlocks);
+    await forkResolution.resolveFork(
+      competingBlocks[4]!,
+      net,
+      'peer-longer-chain',
+    );
+
+    // Reorg succeeded — new tip is height 6
+    expect(ordering.getCurrentHeight()).toBe(6);
+
+    // Walk height 1 → tip: every stored interlink vector matches a recomputation
+    // from the stored headers (TYPES_INTERFACE → Interlink vector).
+    let il: string[] = [];
+    for (let h = 1; h <= 6; h++) {
+      const stored = ordering.getInterlinks(h);
+      expect(stored).not.toBeNull();
+      expect(stored).toEqual(il);
+
+      const header = ordering.getOrderingBlock(h)!.header;
+      const hash = blockHash(header)!;
+      const lvl = headerLevel(header);
+      if (h === 1) {
+        il = updateInterlinks([], hash, Infinity);
+      } else {
+        expect(lvl).not.toBeNull();
+        il = updateInterlinks(il, hash, lvl!);
+      }
     }
   });
 });
