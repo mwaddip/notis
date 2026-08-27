@@ -25,10 +25,9 @@ interface PinnedRow {
 }
 
 function parseValueCell(cell: string): ParsedValue | null {
-  const m = cell.match(/`([^`]+)`/);
+  const m = cell.match(/^`(\d[\d_]*n?)`$/);
   if (!m) return null;
   const raw = m[1]!;
-  if (!/^\d[\d_]*n?$/.test(raw)) return null;
   const isBigint = raw.endsWith('n');
   const digits = raw.replace(/[_n]/g, '');
   return {
