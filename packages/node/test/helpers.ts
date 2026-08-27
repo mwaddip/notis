@@ -21,7 +21,7 @@ import {
   updateInterlinks,
   encodeInterlinks,
 } from '@dagsocial/types';
-import { verifyOrderingBlockPoW, blockHash } from '@dagsocial/validation';
+import { verifyOrderingBlockPoW, blockHash, level as headerLevel } from '@dagsocial/validation';
 import { materializeOutput } from '../src/services/utxo-engine.js';
 import { config } from '../src/config.js';
 import type { Config } from '../src/config.js';
@@ -1173,4 +1173,61 @@ export function insertPoisonedBlock(
     hash ?? `poisoned-${block.header.height}`,
     Buffer.from(encodeInterlinks([])),
   );
+}
+
+/**
+ * Build a chain of PoW-solved headers maintaining the interlink vector.
+ *
+ * Each header has a correct `interlinkRoot` derived from
+ * `updateInterlinks(prev, prevHash, level(prev))`, and valid PoW so
+ * `verifyHeaderChain` accepts the whole segment.
+ *
+ * Returns headers (chronological) and the interlink vector at each height
+ * (indexed by position in the array, not by absolute height).
+ */
+export function buildMinedHeaderChain(opts: {
+  anchorPrevBlockHash: string;
+  anchorInterlinks: string[];
+  startHeight: number;
+  count: number;
+  powTargetBits: number;
+}): { headers: BlockHeader[]; interlinksPerHeader: string[][] } {
+  const { anchorPrevBlockHash, anchorInterlinks, startHeight, count, powTargetBits } = opts;
+  const headers: BlockHeader[] = [];
+  const interlinksPerHeader: string[][] = [];
+  let prevHash = anchorPrevBlockHash;
+  let prevInterlinks = anchorInterlinks;
+  let prevLevel: number = Infinity;
+
+  for (let i = 0; i < count; i++) {
+    const height = startHeight + i;
+    const expected = height === 1
+      ? []
+      : updateInterlinks(prevInterlinks, prevHash, prevLevel);
+    const header: BlockHeader = {
+      protocolVersion: PROTOCOL_VERSION,
+      height,
+      prevBlockHash: prevHash,
+      utxoTxRoot: '00'.repeat(32),
+      stateRoot: EMPTY_STATE_ROOT,
+      validatorId: new Uint8Array(32),
+      powNonce: 0,
+      powTargetBits,
+      createdAt: i,
+      interlinkRoot: interlinkRoot(expected),
+    };
+    header.powNonce = solveHeaderPow(header);
+    const hash = blockHash(header);
+    if (hash === null) throw new Error(`buildMinedHeaderChain: unhashable at height ${height}`);
+    const lvl = headerLevel(header);
+    if (lvl === null) throw new Error(`buildMinedHeaderChain: null level at height ${height}`);
+
+    headers.push(header);
+    interlinksPerHeader.push(expected);
+
+    prevHash = hash;
+    prevInterlinks = expected;
+    prevLevel = lvl;
+  }
+  return { headers, interlinksPerHeader };
 }
