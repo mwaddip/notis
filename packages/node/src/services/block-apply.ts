@@ -35,7 +35,7 @@ import {
   contributeToBody,
   emptyBody,
 } from './settlement.js';
-import { postsOf, postIdsOf, prunesOf } from './block-posts.js';
+import { postsOf, postIdsOf, prunesOf, withdrawalsOf } from './block-posts.js';
 import { expectedTarget } from './difficulty.js';
 import {
   applyTx,
@@ -56,7 +56,9 @@ import {
   confirmPost,
   insertPost,
   deletePostRows,
+  withdrawPost,
   isLivePost,
+  isStoredPost,
   getCurrentHeight,
   createOrderingBlock as storeCreateOrderingBlock,
   getOrderingBlock,
@@ -86,6 +88,7 @@ import {
   recordAppliedUtxoTx,
   recordDeletedPosts,
   recordInsertedStump,
+  recordWithdrawnPost,
   insertBlockJournal,
   purgeOldJournals,
 } from '../store/journal.js';
@@ -966,7 +969,7 @@ function applyMutationPhase(
         if (!isLivePost(target)) {
           console.warn(
             `Rejected block height=${height}: like tx ${item.txId} targets ` +
-            `pruned or unknown post ${targetPostId}`,
+            `pruned, withdrawn or unknown post ${targetPostId}`,
           );
           return false;
         }
@@ -1079,6 +1082,62 @@ function applyMutationPhase(
     queue.push(...remaining);
   }
 
+  // The claimed set — post-lock box ids consumed by withdrawals and prunes.
+  // A withdrawal and a prune both claiming one lock would put the same box id
+  // in the settlement's inputs twice. The prune pass skips a claimed lock.
+  const claimedPostLockIds = new Set<string>();
+
+  // 8b. Process withdrawal transactions from this block.
+  //
+  // ⛔ **WITHDRAWALS FIRST, in committed transaction order; then prunes** — the
+  // order is load-bearing (spec §5.2). A withdrawal forfeits the bond; a prune
+  // of the same thread then finds the lock already claimed and skips it.
+  const withdrawnThisBlock = new Set<string>();
+  const blockWithdrawals = withdrawalsOf(block, getTopologyAuthorBytes);
+  for (const bw of blockWithdrawals) {
+    const { postWithdraw } = bw;
+    const postId = postWithdraw.postId;
+
+    // Maturity bind: the post must have been confirmed in an earlier block.
+    const postHeight = getTopologyHeight(postId);
+    if (postHeight === null || postHeight >= height) {
+      console.error(
+        `Block ${height}: postWithdraw ${postId} is not confirmed ` +
+        `in an earlier block (topology height ${postHeight})`,
+      );
+      return false;
+    }
+
+    // Reject the block if this post is already withdrawn or was withdrawn
+    // earlier in this same block.
+    const existing = getPost(postId);
+    if (!isStoredPost(existing) || existing.withdrawnAtHeight !== null) {
+      console.error(
+        `Block ${height}: postWithdraw ${postId} targets an already-withdrawn or unknown post`,
+      );
+      return false;
+    }
+    if (withdrawnThisBlock.has(postId)) {
+      console.error(
+        `Block ${height}: duplicate postWithdraw for ${postId} in the same block`,
+      );
+      return false;
+    }
+    withdrawnThisBlock.add(postId);
+
+    // Settlement — one-element post set, owner equals the actor.
+    const likeCounts = new Map<string, number>();
+    likeCounts.set(postId, getLikeRecordCount(postId));
+    const plan = planPostLockSettlement(postId, bw.author, [postId], likeCounts);
+    postLockPlans.push(plan);
+    for (const id of plan.lockBoxIds) claimedPostLockIds.add(id);
+
+    // The DAG effect: content → NULL, marker set. Row and topology survive.
+    const priorContent = existing.content;
+    recordWithdrawnPost(postId, priorContent);
+    withdrawPost(postId, height);
+  }
+
   // 8c. Process prune transactions from this block.
   //
   // ⛔ **AFTER THE TRANSACTION LOOP.** The like arm at §11 rejects a like on a
@@ -1132,14 +1191,23 @@ function applyMutationPhase(
     // `getLikeRecordCount` already includes this block's likes (the loop
     // inserted them at §11), so the count is the lifetime total after this
     // block — matching the creator's `stored + bodyLikes` derivation.
+    //
+    // Posts whose locks were already claimed by a withdrawal in this block
+    // are excluded from the settlement — the withdrawal forfeited them.
+    const settlablePostIds = prune.subtreePostIds.filter(
+      (id: string) => {
+        const lockBox = getPostLockBox(id);
+        return !lockBox || !lockBox.id || !claimedPostLockIds.has(lockBox.id);
+      },
+    );
     let likeTally: number;
     try {
       const likeCounts = new Map<string, number>();
-      for (const postId of prune.subtreePostIds) {
+      for (const postId of settlablePostIds) {
         likeCounts.set(postId, getLikeRecordCount(postId));
       }
       postLockPlans.push(
-        planPostLockSettlement(prune.rootPostHash, bp.author, prune.subtreePostIds, likeCounts),
+        planPostLockSettlement(prune.rootPostHash, bp.author, settlablePostIds, likeCounts),
       );
       likeTally = deleteLikeRecordsForPosts(prune.subtreePostIds);
     } catch (err) {

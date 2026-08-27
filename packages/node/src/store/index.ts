@@ -11,6 +11,8 @@ export {
   deletePendingPost,
   deletePostRows,
   restorePostRows,
+  withdrawPost,
+  clearWithdrawal,
   getPrunedTombstone,
   getParentRefs,
   getAncestors,

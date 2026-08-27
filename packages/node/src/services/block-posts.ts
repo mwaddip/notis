@@ -1,5 +1,5 @@
 import { computePostId, decodeTx } from '@dagsocial/types';
-import type { OrderingBlock, PostCommit, PostId, PruneCommit, TxId } from '@dagsocial/types';
+import type { OrderingBlock, PostCommit, PostId, PostWithdrawCommit, PruneCommit, TxId } from '@dagsocial/types';
 
 /** One post a block creates, with the transaction identity that names it. */
 export interface BlockPost {
@@ -55,6 +55,46 @@ export function postsOf(block: OrderingBlock): BlockPost[] {
 /** Just the ids — the shape the journal and mempool cleanup want. */
 export function postIdsOf(block: OrderingBlock): PostId[] {
   return postsOf(block).map((p) => p.postId);
+}
+
+/** One withdrawal a block carries, with the transaction identity. */
+export interface BlockWithdrawal {
+  txId: TxId;
+  author: Uint8Array;
+  postWithdraw: PostWithdrawCommit;
+}
+
+/**
+ * The withdrawals a block carries, read from the **committed** transaction list.
+ *
+ * ⛔ **One derivation, used by the forward pass and by every inverse.** Same
+ * rule as `postsOf` — the journal's rollback must read the same list apply read.
+ *
+ * `author` is the karma inputs' owner from the input boxes. The transaction's
+ * own validation (the postWithdraw transition arm) has already verified that
+ * `inputKarma.owner` equals the topology author.
+ */
+export function withdrawalsOf(
+  block: OrderingBlock,
+  getAuthor: (postId: string) => Uint8Array | null,
+): BlockWithdrawal[] {
+  const withdrawals: BlockWithdrawal[] = [];
+  const { utxoTxIds, utxoTxs } = block.utxoTxTree;
+  for (let i = 0; i < utxoTxIds.length; i++) {
+    const raw = utxoTxs[i];
+    if (!raw) continue;
+    let tx;
+    try {
+      tx = decodeTx(raw);
+    } catch {
+      continue;
+    }
+    if (!tx.postWithdraw) continue;
+    const author = getAuthor(tx.postWithdraw.postId);
+    if (!author) continue;
+    withdrawals.push({ txId: utxoTxIds[i]!, author, postWithdraw: tx.postWithdraw });
+  }
+  return withdrawals;
 }
 
 /** One prune a block carries, with the transaction identity that authorises it. */

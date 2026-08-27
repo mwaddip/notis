@@ -313,6 +313,22 @@ export function confirmPost(postId: string, blockHeight: number, blockIndex: num
     .run(blockHeight, blockIndex, postId);
 }
 
+export function withdrawPost(postId: string, height: number): void {
+  getDb()
+    .prepare(
+      `UPDATE dag_posts SET content = NULL, withdrawn_at_height = ? WHERE id = ?`,
+    )
+    .run(height, postId);
+}
+
+export function clearWithdrawal(postId: string, content: string | null): void {
+  getDb()
+    .prepare(
+      `UPDATE dag_posts SET content = ?, withdrawn_at_height = NULL WHERE id = ?`,
+    )
+    .run(content, postId);
+}
+
 export function unconfirmPost(postId: string): void {
   getDb()
     .prepare(

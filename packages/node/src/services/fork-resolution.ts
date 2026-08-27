@@ -16,6 +16,7 @@ import {
   deleteBox,
   unconfirmPost,
   restorePostRows,
+  clearWithdrawal,
   deleteStump,
   deleteLikeRecord,
   restoreLikeRecord,
@@ -276,6 +277,10 @@ export function revertBlock(height: number): void {
   }
   for (const stump of journal.insertedStumps) {
     deleteStump(stump.rootPostHash);
+  }
+  // Withdrawal inverses: restore content and clear the marker.
+  for (const wp of journal.withdrawnPosts ?? []) {
+    clearWithdrawal(wp.id, wp.content);
   }
   // ⛔ **The vouch escrow needs no side-record and no inverse of its own.** It
   // is a box, so `insertBox`/`consumeBox` journal its creation and its spend as
