@@ -64,7 +64,7 @@ describe('pull-path boundary (real wiring)', () => {
     initDb(':memory:');
     const ordering = await import('../../src/store/ordering.js');
     const clean = makeBlock(1, 100);
-    ordering.createOrderingBlock(clean);
+    ordering.createOrderingBlock(clean, []);
 
     const { pullBlocksHandler } = await import(
       '../../src/services/handle-block.js'
@@ -109,7 +109,7 @@ describe('provider boundary (real wiring)', () => {
     const { initDb } = await import('../../src/store/db.js');
     initDb(':memory:');
     const ordering = await import('../../src/store/ordering.js');
-    ordering.createOrderingBlock(makeBlock(1, 100));
+    ordering.createOrderingBlock(makeBlock(1, 100), []);
 
     const { guardStoreRead } = await import(
       '../../src/services/corrupt-state.js'

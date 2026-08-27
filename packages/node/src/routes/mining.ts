@@ -136,6 +136,7 @@ export function createRouter(deps: MiningDeps): Router {
         validatorId: Buffer.from(tpl.header.validatorId).toString('hex'),
         powTargetBits: tpl.header.powTargetBits,
         createdAt: tpl.header.createdAt,
+        interlinkRoot: tpl.header.interlinkRoot,
       },
       // The ids of the posts this template creates, derived from its
       // post-bearing transactions.

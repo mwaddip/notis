@@ -70,8 +70,8 @@ function buildPruneTx(
 function seedHeight(db: import('better-sqlite3').Database, height: number): void {
   db.prepare(
     `INSERT OR IGNORE INTO ordering_blocks
-       (height, header_bytes, utxotx_tree_bytes, validator_signature, created_at, block_hash)
-     VALUES (?, zeroblob(1), zeroblob(1), zeroblob(64), 0, ?)`,
+       (height, header_bytes, utxotx_tree_bytes, validator_signature, created_at, block_hash, interlinks)
+     VALUES (?, zeroblob(1), zeroblob(1), zeroblob(64), 0, ?, zeroblob(1))`,
   ).run(height, '0'.repeat(64));
 }
 

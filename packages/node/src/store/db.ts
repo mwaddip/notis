@@ -157,7 +157,8 @@ const MIGRATIONS = [
     utxotx_tree_bytes BLOB NOT NULL,
     validator_signature BLOB NOT NULL,  -- 64 bytes
     created_at INTEGER NOT NULL,
-    block_hash TEXT NOT NULL UNIQUE      -- 64-char lowercase hex, blockHash(header)
+    block_hash TEXT NOT NULL UNIQUE,     -- 64-char lowercase hex, blockHash(header)
+    interlinks BLOB NOT NULL            -- encodeInterlinks(vector), NODE_INTERFACE → Ordering blocks
   )`,
 
   // Block journal (CBOR-encoded undo data per block)

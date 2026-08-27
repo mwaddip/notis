@@ -80,6 +80,7 @@ import {
   getVouchEscrowsReleasableAt,
   purgeRefusedHeaders,
   getBoxProvenance,
+  getInterlinks,
 } from '../store/index.js';
 import { getDb } from '../store/db.js';
 import {
@@ -107,6 +108,8 @@ import {
   PROTOCOL_VERSION,
   MAX_ESCROW_RETURNS_PER_BLOCK,
   computeTxId,
+  interlinkRoot,
+  updateInterlinks,
 } from '@dagsocial/types';
 import type {
   AnyBox,
@@ -238,7 +241,9 @@ function applyBlockBody(block: OrderingBlock): boolean {
   // speculative caller (`computePostBlockStateRoot`) records identically.
   beginBlockJournal(block.header.height);
 
-  // 1. Chain-link check
+  // 1. Chain-link check + interlink root + genesis pin
+  // (NODE_INTERFACE → Ordering block apply-time authorization)
+  let expectedInterlinks: string[];
   if (currentHeight === 0) {
     // Genesis: prevBlockHash must be all zeros
     if (block.header.prevBlockHash !== GENESIS_PREV_BLOCK_HASH) {
@@ -251,23 +256,28 @@ function applyBlockBody(block: OrderingBlock): boolean {
       abortBlockJournal();
       return false;
     }
+    expectedInterlinks = [];
+
+    // Genesis pin (TYPES_INTERFACE → Network profiles)
+    const genesisId = config.profile.genesisId;
+    if (genesisId !== '') {
+      const bh = validation.blockHash(block.header);
+      if (bh !== genesisId) {
+        console.warn(`Rejected block height=${block.header.height}: genesis pin mismatch`);
+        abortBlockJournal();
+        return false;
+      }
+    }
   } else {
-    // `currentHeight` *is* `MAX(height)` over this table, so a missing block at
-    // exactly that height is not "we don't have it yet" — it is the row the tip
-    // was read from having gone. Same fault as the unhashable header below it,
-    // and it throws rather than rejecting: reporting it as the arriving block's
-    // rejection blames a peer for our own store and then repeats for every
-    // block after it.
+    // Every throw in this branch reads our own stored tip, not the arriving
+    // block: a rejection would blame a peer for our store and repeat for
+    // every block after it (NODE_INTERFACE → Ordering block apply-time
+    // authorization; NODE_INTERFACE → Ordering blocks, the corrupt-header
+    // tripwire).
     const prevBlock = getOrderingBlock(currentHeight);
     if (!prevBlock) {
       throw new MissingStoredBlockError('applyOrderingBlock', currentHeight);
     }
-    // `prevBlock` is our own stored tip, not the arriving block, so a header
-    // outside the encodable domain here is not this block's fault and is not a
-    // rejection at all: the store has produced a header the gate above
-    // (`verifyOrderingBlockStructure`, same domain predicate) could never have
-    // let in. It leaves through the funnel's catch untouched — see the note
-    // there — and the node stops at the boundary.
     const prevHash = validation.blockHash(prevBlock.header);
     if (prevHash === null) {
       throw new UnhashableStoredHeaderError('applyOrderingBlock', currentHeight);
@@ -277,6 +287,20 @@ function applyBlockBody(block: OrderingBlock): boolean {
       abortBlockJournal();
       return false;
     }
+    const storedInterlinks = getInterlinks(currentHeight);
+    if (storedInterlinks === null) {
+      throw new UnhashableStoredHeaderError('applyOrderingBlock/interlinks', currentHeight);
+    }
+    const prevLevel = validation.level(prevBlock.header);
+    if (prevLevel === null) {
+      throw new UnhashableStoredHeaderError('applyOrderingBlock/level', currentHeight);
+    }
+    expectedInterlinks = updateInterlinks(storedInterlinks, prevHash, prevLevel);
+  }
+  if (block.header.interlinkRoot !== interlinkRoot(expectedInterlinks)) {
+    console.warn(`Rejected block height=${block.header.height}: interlinkRoot mismatch`);
+    abortBlockJournal();
+    return false;
   }
 
   // 2. Protocol version
@@ -337,8 +361,8 @@ function applyBlockBody(block: OrderingBlock): boolean {
   //    and every clause about it is one rule in one place
   //    (`settlement.ts` → checkSettlement).
 
-  // 6. Store the block
-  storeCreateOrderingBlock(block);
+  // 6. Store the block — the vector the funnel verified is the one stored
+  storeCreateOrderingBlock(block, expectedInterlinks);
 
   // 6. Invalidate the local mining template (this height is taken). Only
   // invalidation here: the replacement commits to the post-block stateRoot, and

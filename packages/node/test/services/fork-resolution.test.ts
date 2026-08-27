@@ -130,7 +130,7 @@ async function importOrdering() {
     getOrderingBlock: (height: number) => OrderingBlock | null;
     getOrderingBlockHash: (height: number) => string | null;
     deleteOrderingBlock: (height: number) => void;
-    createOrderingBlock: (block: OrderingBlock) => void;
+    createOrderingBlock: (block: OrderingBlock, interlinks: string[]) => void;
   };
 }
 
@@ -216,6 +216,7 @@ describe('cumulativeWork', () => {
       powNonce: 0,
       powTargetBits: 256 * 10,
       createdAt: 1000,
+      interlinkRoot: '00'.repeat(32),
     };
     const h2: BlockHeader = {
       ...h1,
@@ -238,6 +239,7 @@ describe('cumulativeWork', () => {
       powNonce: 0,
       powTargetBits: 256 * 5,
       createdAt: 1000,
+      interlinkRoot: '00'.repeat(32),
     };
     const h2: BlockHeader = {
       ...h1,
@@ -256,11 +258,11 @@ describe('cumulativeWork', () => {
     const chainA = [
       {
         protocolVersion: PROTOCOL_VERSION, height: 1, prevBlockHash: '00'.repeat(32),
-        validatorId: new Uint8Array(32), powNonce: 0, powTargetBits: 256 * 5, createdAt: 1000,
+        validatorId: new Uint8Array(32), powNonce: 0, powTargetBits: 256 * 5, createdAt: 1000, interlinkRoot: '00'.repeat(32),
       },
       {
         protocolVersion: PROTOCOL_VERSION, height: 2, prevBlockHash: 'ff'.repeat(32),
-        validatorId: new Uint8Array(32), powNonce: 0, powTargetBits: 256 * 5, createdAt: 2000,
+        validatorId: new Uint8Array(32), powNonce: 0, powTargetBits: 256 * 5, createdAt: 2000, interlinkRoot: '00'.repeat(32),
       },
     ] as BlockHeader[];
 
@@ -268,7 +270,7 @@ describe('cumulativeWork', () => {
     const chainB = [
       {
         protocolVersion: PROTOCOL_VERSION, height: 1, prevBlockHash: '00'.repeat(32),
-        validatorId: new Uint8Array(32), powNonce: 0, powTargetBits: 256 * 7, createdAt: 1000,
+        validatorId: new Uint8Array(32), powNonce: 0, powTargetBits: 256 * 7, createdAt: 1000, interlinkRoot: '00'.repeat(32),
       },
     ] as BlockHeader[];
 
@@ -369,6 +371,7 @@ describe('extendsOurTip', () => {
         powNonce: 0,
         powTargetBits: 256 * 4,
         createdAt: Date.now(),
+        interlinkRoot: '00'.repeat(32),
       },
       utxoTxTree: { utxoTxIds: ['77'.repeat(32)], utxoTxs: [new Uint8Array(96)] },
       validatorSignature: new Uint8Array(64),
@@ -393,6 +396,7 @@ describe('extendsOurTip', () => {
         powNonce: 0,
         powTargetBits: 256 * 4,
         createdAt: Date.now(),
+        interlinkRoot: '00'.repeat(32),
       },
       utxoTxTree: { utxoTxIds: ['77'.repeat(32)], utxoTxs: [new Uint8Array(96)] },
       validatorSignature: new Uint8Array(64),
@@ -454,6 +458,7 @@ describe('findForkPoint', () => {
       powNonce: 0,
       powTargetBits: 256 * 4,
       createdAt: Date.now(),
+      interlinkRoot: '00'.repeat(32),
     };
 
     const theirHeaders: BlockHeader[] = [
@@ -512,6 +517,7 @@ describe('findForkPoint', () => {
         powNonce: 0,
         powTargetBits: 256 * 4,
         createdAt: Date.now(),
+        interlinkRoot: '00'.repeat(32),
       },
     ];
 
@@ -564,6 +570,7 @@ describe('findForkPoint', () => {
         powNonce: 0,
         powTargetBits: 256 * 4,
         createdAt: Date.now(),
+        interlinkRoot: '00'.repeat(32),
       },
       deepBlock!.header,
     ];
@@ -607,6 +614,7 @@ describe('findForkPoint', () => {
       powNonce: 0,
       powTargetBits: 256 * 4,
       createdAt: Date.now(),
+      interlinkRoot: '00'.repeat(32),
     });
 
     for (let i = 0; i < MAX_REORG_DEPTH; i++) {
@@ -672,6 +680,7 @@ describe('findForkPoint', () => {
       powNonce: 0,
       powTargetBits: 256 * 4,
       createdAt: Date.now(),
+      interlinkRoot: '00'.repeat(32),
     };
 
     // Control: this batch, unpoisoned, falls through to genesis.
@@ -738,6 +747,7 @@ describe('findForkPoint', () => {
       powNonce: 0,
       powTargetBits: 256 * 4,
       createdAt: Date.now(),
+      interlinkRoot: '00'.repeat(32),
     };
 
     return {
@@ -825,6 +835,7 @@ describe('a stored header that cannot be hashed', () => {
         powNonce: 0,
         powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
         createdAt,
+        interlinkRoot: '00'.repeat(32),
       },
       utxoTxTree: { utxoTxIds: ['77'.repeat(32)], utxoTxs: [new Uint8Array(96)] },
       validatorSignature: new Uint8Array(64),
@@ -937,11 +948,12 @@ describe('a stored header that cannot be hashed', () => {
         powNonce: 0,
         powTargetBits: 65536,
         createdAt: Number.MAX_SAFE_INTEGER,
+        interlinkRoot: '00'.repeat(32),
       },
       utxoTxTree: { utxoTxIds: ['77'.repeat(32)], utxoTxs: [new Uint8Array(96)] },
       validatorSignature: new Uint8Array(64),
     };
-    ordering.createOrderingBlock(extremes);
+    ordering.createOrderingBlock(extremes, []);
 
     const readBack = ordering.getOrderingBlock(1)!;
     expect(verifyHeaderFieldDomains(readBack.header)).toEqual({ valid: true });
@@ -1038,11 +1050,12 @@ describe('a stored header that cannot be hashed', () => {
         powNonce: 0,
         powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
         createdAt: 1,
+        interlinkRoot: '00'.repeat(32),
       },
       utxoTxTree: { utxoTxIds: ['77'.repeat(32)], utxoTxs: [new Uint8Array(96)] },
       validatorSignature: new Uint8Array(64),
     });
-    for (const h of [1, 2, 3]) ordering.createOrderingBlock(build(h));
+    for (const h of [1, 2, 3]) ordering.createOrderingBlock(build(h), []);
 
     return {
       ordering,
@@ -2523,6 +2536,7 @@ describe('resolveFork — #5(b) pinned closed', () => {
         protocolVersion: PROTOCOL_VERSION,
         createdAt: 0,
         validatorId: new Uint8Array(32),
+        interlinkRoot: '00'.repeat(32),
       });
     }
     // Include the shared block at height 1 for the fork point
@@ -2583,6 +2597,7 @@ describe('resolveFork — tampered headers refused before any block request', ()
         protocolVersion: PROTOCOL_VERSION,
         createdAt: 0,
         validatorId: new Uint8Array(32),
+        interlinkRoot: '00'.repeat(32),
       });
     }
 
@@ -2683,6 +2698,7 @@ describe('resolveFork — refused headers', () => {
         protocolVersion: PROTOCOL_VERSION,
         createdAt: 0,
         validatorId: new Uint8Array(32),
+        interlinkRoot: '00'.repeat(32),
       },
       ordering.getOrderingBlock(1)!.header,
     ];
@@ -3034,6 +3050,7 @@ describe('resolveFork — body-stage refusal → mark → re-serve → continuat
         protocolVersion: PROTOCOL_VERSION,
         createdAt: 0,
         validatorId: new Uint8Array(32),
+        interlinkRoot: '00'.repeat(32),
       } as BlockHeader,
       ...forgedHeaders,
     ];

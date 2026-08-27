@@ -39,7 +39,7 @@ describe('server /blocks guardStoreRead wiring', () => {
         insertPoisonedBlock(getDb(), block);
       } else {
         const ordering = await import('../src/store/ordering.js');
-        ordering.createOrderingBlock(block);
+        ordering.createOrderingBlock(block, []);
       }
     }
     const { createApp } = await import('../src/server.js');

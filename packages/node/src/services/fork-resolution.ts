@@ -1,10 +1,11 @@
-import { blockHash, cumulativeWork, verifyHeaderChain } from '@dagsocial/validation';
+import { blockHash, cumulativeWork, level, verifyHeaderChain } from '@dagsocial/validation';
 import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
 import {
   decodeTx,
   MAX_REORG_DEPTH,
   GENESIS_PREV_BLOCK_HASH,
   MEMPOOL_EXPIRY_BLOCKS,
+  updateInterlinks,
 } from '@dagsocial/types';
 import {
   getOrderingBlock,
@@ -28,6 +29,7 @@ import {
   TxTooLargeError,
   insertRefusedHeader,
   anyRefusedHeader,
+  getInterlinks,
 } from '../store/index.js';
 import { ceilingOf } from './utxo-engine.js';
 import { getDb } from '../store/db.js';
@@ -540,14 +542,32 @@ export async function resolveFork(
 
     // 4. Anchor and chronological segment above the fork.
     let anchorPrevBlockHash: string;
+    let anchorInterlinks: string[];
     if (forkHeight === 0) {
       anchorPrevBlockHash = GENESIS_PREV_BLOCK_HASH;
+      anchorInterlinks = [];
     } else {
       const forkBlock = getOrderingBlock(forkHeight);
       if (!forkBlock) throw new MissingStoredBlockError('resolveFork anchor', forkHeight);
       anchorPrevBlockHash = ourChainHash(forkBlock.header, 'resolveFork anchor');
+      // NODE_INTERFACE → Fork choice decides on verified headers, step 4
+      const storedInterlinks = getInterlinks(forkHeight);
+      if (storedInterlinks === null) {
+        throw new UnhashableStoredHeaderError('resolveFork/interlinks', forkHeight);
+      }
+      const forkLevel = level(forkBlock.header);
+      if (forkLevel === null) {
+        throw new UnhashableStoredHeaderError('resolveFork/level', forkHeight);
+      }
+      anchorInterlinks = updateInterlinks(
+        storedInterlinks, anchorPrevBlockHash, forkLevel,
+      );
     }
-    const anchor = { prevBlockHash: anchorPrevBlockHash, height: forkHeight };
+    const anchor = {
+      prevBlockHash: anchorPrevBlockHash,
+      height: forkHeight,
+      interlinks: anchorInterlinks,
+    };
     const segment = theirHeaders
       .filter((h) => h.height > forkHeight)
       .reverse();

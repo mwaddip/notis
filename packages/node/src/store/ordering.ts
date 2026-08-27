@@ -4,6 +4,8 @@ import {
   decodeHeader,
   encodeUtxoTxTree,
   decodeUtxoTxTree,
+  encodeInterlinks,
+  decodeInterlinks,
 } from '@dagsocial/types';
 import type { OrderingBlock } from '@dagsocial/types';
 import { blockHash } from '@dagsocial/validation';
@@ -99,7 +101,7 @@ function rowToOrderingBlock(row: OrderingBlockRow): OrderingBlock {
  * tests write through this writer or through the raw-SQL poison helper that
  * exists to store rows this guard refuses.
  */
-export function createOrderingBlock(block: OrderingBlock): void {
+export function createOrderingBlock(block: OrderingBlock, interlinks: string[]): void {
   const db = getDb();
 
   // The row's `block_hash` is computed here from the node's own decoded header.
@@ -114,8 +116,8 @@ export function createOrderingBlock(block: OrderingBlock): void {
   db.prepare(
     `INSERT INTO ordering_blocks
        (height, header_bytes, utxotx_tree_bytes,
-        validator_signature, created_at, block_hash)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+        validator_signature, created_at, block_hash, interlinks)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     block.header.height,
     Buffer.from(encodeHeader(block.header)),
@@ -123,6 +125,7 @@ export function createOrderingBlock(block: OrderingBlock): void {
     Buffer.from(block.validatorSignature),
     block.header.createdAt,
     hash,
+    Buffer.from(encodeInterlinks(interlinks)),
   );
 }
 
@@ -181,4 +184,16 @@ export function getHeightByBlockHash(hash: string): number | null {
     .prepare('SELECT height FROM ordering_blocks WHERE block_hash = ?')
     .get(hash) as { height: number } | undefined;
   return row?.height ?? null;
+}
+
+/**
+ * The stored interlink vector at a height, decoded; `null` for no row
+ * (NODE_INTERFACE → Ordering blocks).
+ */
+export function getInterlinks(height: number): string[] | null {
+  const row = getDb()
+    .prepare('SELECT interlinks FROM ordering_blocks WHERE height = ?')
+    .get(height) as { interlinks: Buffer } | undefined;
+  if (!row) return null;
+  return decodeInterlinks(new Uint8Array(row.interlinks));
 }

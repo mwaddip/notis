@@ -17,6 +17,9 @@ import {
   POST_LOCK_REPLY_COST,
   EMPTY_STATE_ROOT,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
+  interlinkRoot,
+  updateInterlinks,
+  encodeInterlinks,
 } from '@dagsocial/types';
 import { verifyOrderingBlockPoW, blockHash } from '@dagsocial/validation';
 import { materializeOutput } from '../src/services/utxo-engine.js';
@@ -974,6 +977,23 @@ export async function makeApplicableBlock(
     utxoTxs: [...txBytesList, encodeTx(settlementTx)],
   };
 
+  // Interlink root (TYPES_INTERFACE → Interlink vector)
+  let headerInterlinkRoot: string;
+  if (height === 1) {
+    headerInterlinkRoot = interlinkRoot([]);
+  } else {
+    const { getInterlinks } = await import('../src/store/ordering.js');
+    const { level: levelFn } = await import('@dagsocial/validation');
+    const { getOrderingBlock: getBlock } = await import('../src/store/ordering.js');
+    const prevBlk = getBlock(height - 1)!;
+    const storedIl = getInterlinks(height - 1);
+    const prevLvl = levelFn(prevBlk.header);
+    if (storedIl !== null && prevLvl !== null) {
+      headerInterlinkRoot = interlinkRoot(updateInterlinks(storedIl, prevBlockHash, prevLvl));
+    } else {
+      headerInterlinkRoot = interlinkRoot([]);
+    }
+  }
   const header = {
     protocolVersion: PROTOCOL_VERSION,
     height,
@@ -984,6 +1004,7 @@ export async function makeApplicableBlock(
     powNonce: 0,
     powTargetBits: opts.powTargetBits ?? expectedTarget(height),
     createdAt: Date.now(),
+    interlinkRoot: headerInterlinkRoot,
   } as BlockHeader;
 
   const block = {
@@ -1119,6 +1140,7 @@ export function makeBlock(height: number, createdAt: number): OrderingBlock {
       powNonce: 0,
       powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
       createdAt,
+      interlinkRoot: '00'.repeat(32),
     },
     utxoTxTree: {
       utxoTxIds: ['77'.repeat(32)],
@@ -1140,8 +1162,8 @@ export function insertPoisonedBlock(
   db.prepare(
     `INSERT INTO ordering_blocks
        (height, header_bytes, utxotx_tree_bytes,
-        validator_signature, created_at, block_hash)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+        validator_signature, created_at, block_hash, interlinks)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     block.header.height,
     Buffer.from(encodeHeader(block.header)),
@@ -1149,5 +1171,6 @@ export function insertPoisonedBlock(
     Buffer.from(block.validatorSignature),
     block.header.createdAt,
     hash ?? `poisoned-${block.header.height}`,
+    Buffer.from(encodeInterlinks([])),
   );
 }
