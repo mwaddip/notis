@@ -21,7 +21,7 @@ describe('proveWithReader', () => {
           const reader = makeReader(chain);
           const proof = proveWithReader(reader, { m, k });
 
-          // NIPOPOW_INTERFACE → prefix[0] is height 1
+          // NIPOPOW_INTERFACE → proveWithReader — prefix[0] is height 1
           expect(proof.prefix[0]!.header.height).toBe(1);
 
           // Heights strictly ascending across the flattened sequence
@@ -34,10 +34,10 @@ describe('proveWithReader', () => {
             expect(allHeights[i]!).toBeGreaterThan(allHeights[i - 1]!);
           }
 
-          // NIPOPOW_INTERFACE → suffixHead.header.height === chainHeight − k + 1
+          // NIPOPOW_INTERFACE → proveWithReader — suffixHead.header.height === chainHeight − k + 1
           expect(proof.suffixHead.header.height).toBe(chainLen - k + 1);
 
-          // NIPOPOW_INTERFACE → tail is k − 1 headers
+          // NIPOPOW_INTERFACE → proveWithReader — tail is k − 1 headers
           expect(proof.suffixTail.length).toBe(k - 1);
         });
       }

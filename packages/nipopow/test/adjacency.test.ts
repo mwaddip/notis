@@ -8,7 +8,7 @@ import {
   devnetProfile,
 } from './helpers.js';
 
-// NIPOPOW_INTERFACE → "pinned by the package's property test over mined chains"
+// NIPOPOW_INTERFACE → verifyProof — pinned by the package's property test over mined chains
 // For many random mined chains, proveWithReader → verifyProof must pass
 // including rule 6's strict adjacency. If it ever fails, that is the unit's
 // most important finding.

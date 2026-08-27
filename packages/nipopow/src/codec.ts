@@ -72,7 +72,7 @@ const NIPOPOW_PROOF: StructCodec<NipopowProof> = {
     const m = readBoundedVlqU(r, 1, MAX_NIPOPOW_PARAM, 'm');
     const k = readBoundedVlqU(r, 1, MAX_NIPOPOW_PARAM, 'k');
 
-    // NIPOPOW_INTERFACE → prefix.length ≤ MAX_NIPOPOW_PREFIX, refused before the first element
+    // NIPOPOW_INTERFACE → NipopowProof — prefix.length ≤ MAX_NIPOPOW_PREFIX, refused before the first element
     const prefixCount = readVlqU(r);
     if (prefixCount > MAX_NIPOPOW_PREFIX) {
       throw new ReaderError(
@@ -87,7 +87,7 @@ const NIPOPOW_PROOF: StructCodec<NipopowProof> = {
 
     const suffixHead = POPOW_HEADER.read(r);
 
-    // NIPOPOW_INTERFACE → suffixTail.length ≤ k − 1, refused before the first element
+    // NIPOPOW_INTERFACE → NipopowProof — suffixTail.length ≤ k − 1, refused before the first element
     const tailCount = readVlqU(r);
     if (tailCount > k - 1) {
       throw new ReaderError(
