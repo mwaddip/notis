@@ -79,8 +79,8 @@ export const MAX_NIPOPOW_PREFIX = 16_384;  // prefix entries — provisional
 
 **The prefix bound's arithmetic, so it reproduces:** the prover keeps at most ~2m headers per
 level (the m-th-from-last anchoring at each level plus the level below's members above it) over
-at most 33 levels below 2³² blocks — 8 448 at `m = 128`; the reader bound is twice that. Both
-numbers are provisional and belong to the constants-pinning session. At `m = k = 6` on a
+at most 33 levels below 2³² blocks — 8 448 at `m = 128`; the reader bound is 2¹⁴, above that
+maximum with headroom. Both numbers are provisional (`CONSTANTS → nipopow`). At `m = k = 6` on a
 million-block chain a proof is ~240 PoPowHeaders, ~200 KB.
 
 ⚠ **A retarget changes this contract.** The proof carries no difficulty headers because the target

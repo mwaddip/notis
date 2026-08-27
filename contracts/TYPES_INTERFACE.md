@@ -2717,10 +2717,12 @@ downstream re-reads the environment, and no function takes a profile override ar
 an override parameter is the same defect as the environment read, reached by a different
 door.
 
-⚠ **Values are not pinned here.** `devnet`'s compressed timings and both public networks'
-difficulty belong to the constants-pinning session. **Do not read any number in this
-contract as decided** — with one exception: `KARMA_STALE_THRESHOLD_BLOCKS`'s duration is
-ruled (user, 2026-08-19): **28 days**, 40320 at the nominal 60-second block.
+⚠ **Values are not pinned here.** This contract states the rules the numbers serve; which
+numbers are ruled, derived, provisional or merely chosen is the register's to say —
+`CONSTANTS → Per-network values` for the three profiles, `CONSTANTS → Universal constants` for
+the rest. **Do not read any number in this contract as decided** — with one exception, stated
+here because this is where it is cited from: `KARMA_STALE_THRESHOLD_BLOCKS`'s duration is ruled
+(user, 2026-08-19): **28 days**, 40320 at the nominal 60-second block.
 
 ### Domain tags are network-agnostic — deliberately
 
@@ -2817,7 +2819,7 @@ owner (measured: 70 bytes with the four protocol outputs and nothing else, +32 p
 karma output). **The settlement, not the encoding, sets the per-block ceiling on likes**: the bound
 divided by the marker input's 32 bytes, less what the block's other legs take.
 
-**Two relations are the rule; the numbers are the constants session's.**
+**Two relations are the rule; the numbers are provisional** (`CONSTANTS → Size caps`).
 
 | Relation | What it guarantees |
 |---|---|
@@ -2933,11 +2935,9 @@ export const KARMA_MINIMUM = 10n;                    // consensus — floor, dec
 > decided, and it is now **1440 for 24h** (§Credit emission). **Do not read a passing unit
 > check as a settled value.**
 >
-> ⚠ **Separately, 28 days is itself probably the wrong duration.** The economics design
-> track calls for a **short, days-scale window — "e.g. ~5, not 28"** — so this correction
-> fixes the *unit* while leaving the *value* open. Do not read `40320` as a decided number;
-> it is the faithful translation of a figure that is itself pending the constants-pinning
-> session. **Two independent problems, and only one is fixed here.**
+> ⚠ **The duration is a separate question from the unit, and it is ruled: 28 days (user,
+> 2026-08-19).** This correction is about the unit alone; the ruling is stated at → Network
+> profiles, and `CONSTANTS → Karma` records the standing of every value in this block.
 
 ### Post lock
 

@@ -68,6 +68,7 @@ contract first, then implement against it, never the reverse.
 - `contracts/WEB_INTERFACE.md` — web client (Phase 2)
 - `contracts/HOUSE_STYLE.md` — colour, type, the mark, motion, interaction, spacing, voice
 - `contracts/SPECIAL.md` — per-subsystem attention weights
+- `contracts/CONSTANTS.md` — every protocol number in one place, with what argues it and its standing
 
 **The contract change rides the same branch as the code that implements it** — not merged ahead of it.
 One PR shows the rule and its implementation together, so a reviewer can check they agree instead of
