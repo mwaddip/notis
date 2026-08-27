@@ -58,8 +58,9 @@ outside the test, and the section it sits in says what pins it instead. `@dagsoc
 one package the test does not reach: `@dagsocial/node` declares no dependency on it, so its rows are
 marked.
 
-> ⚠ **AHEAD OF CODE — 2026-08-27.** The test is dispatched with this register and lands on the same
-> branch; the marker is retired when it does.
+The test is the first in the repo to read `contracts/`, and the grammar above is what it parses:
+a row's value cell is the code span and nothing else, so a cell that carries anything beside the
+value is a grammar failure rather than a skip.
 
 ## Universal constants
 
