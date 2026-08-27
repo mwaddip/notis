@@ -91,6 +91,9 @@ importers:
       '@dagsocial/net':
         specifier: workspace:*
         version: link:../net
+      '@dagsocial/nipopow':
+        specifier: workspace:*
+        version: link:../nipopow
       '@dagsocial/types':
         specifier: workspace:*
         version: link:../types

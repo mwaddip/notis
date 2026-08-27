@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@dagsocial/net": "workspace:*",
+    "@dagsocial/nipopow": "workspace:*",
     "@dagsocial/types": "workspace:*",
     "@dagsocial/validation": "workspace:*",
     "@ergots/avltree": "^0.4.0",
