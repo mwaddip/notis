@@ -106,7 +106,7 @@ export interface PostResponse {
   status: string;
   blockHeight: number | null;
   likeCount: number;
-  likers: string[];
+  likedByViewer: boolean | null;
   confirmedAuthor: string | null;
 }
 

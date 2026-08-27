@@ -1,3 +1,5 @@
+export interface Page { limit: number; offset: number }
+
 export { initDb, getDb, closeDb } from './db.js';
 export {
   insertPost,
@@ -15,8 +17,8 @@ export {
   clearWithdrawal,
   getPrunedTombstone,
   getParentRefs,
-  getAncestors,
-  getSubtree,
+  getAncestorsNearest,
+  getSubtreePage,
   isStoredPost,
   isLivePost,
   isStump,
@@ -30,7 +32,10 @@ export {
   getBoxProvenance,
   getKarmaBox,
   getKarmaBoxes,
+  getKarmaBoxesPage,
   getKarmaValue,
+  getCreditValue,
+  getCreditBoxesPage,
   getGenesisProofBox,
   getEmissionBox,
   getTreasuryBox,
@@ -39,7 +44,7 @@ export {
   getRentEligibleCreditBoxes,
   getBondFor,
   getBondsInvitedAt,
-  getBondBoxes,
+  getBondBoxesPage,
   getVouchEscrowsFor,
   getVouchEscrowsReleasableAt,
   hasActiveVouchEscrow,
@@ -47,7 +52,6 @@ export {
   getUnspentPostLockBoxes,
   getPostLockBox,
   getPrunedLockCandidates,
-  getLikersForPost,
   getUnspentBoxes,
   insertBox,
   consumeBox,
@@ -139,7 +143,7 @@ export { loadAllPeers, putPeer, deletePeer, peerStorage } from './peers.js';
 
 export {
   getVouchBox,
-  getVouchesForTarget,
+  getVouchesForTargetPage,
   getVouchesByVoucher,
   hasAnyActiveVouch,
 } from './vouch-queries.js';

@@ -94,17 +94,15 @@ async function importUtxo() {
   return import('../../src/store/utxo.js');
 }
 
-/** The read path as server.ts wires it: counts and likers from like_records. */
+/** The read path as server.ts wires it: counts and likedByViewer from like_records. */
 async function importFeedReadPath() {
   const posts = await import('../../src/store/posts.js');
-  const utxo = await import('../../src/store/utxo.js');
   const likes = await import('../../src/store/likes.js');
   const feed = await import('../../src/services/feed-service.js');
   return {
     queryPosts: posts.queryPosts,
-    getAncestors: posts.getAncestors,
-    getSubtree: posts.getSubtree,
-    getLikersForPost: utxo.getLikersForPost,
+    getAncestorsNearest: posts.getAncestorsNearest,
+    getSubtreePage: posts.getSubtreePage,
     getLikeRecordCount: likes.getLikeRecordCount,
     hasLikeRecord: likes.hasLikeRecord,
     FeedService: feed.FeedService,
@@ -393,14 +391,14 @@ describe('full-pipeline', () => {
       getPost: posts.getPost,
       queryPosts: f.queryPosts,
       getLikeRecordCount: f.getLikeRecordCount,
-      getLikersForPost: f.getLikersForPost,
-      getAncestors: f.getAncestors,
-      getSubtree: f.getSubtree,
+      hasLikeRecord: f.hasLikeRecord,
+      getAncestorsNearest: f.getAncestorsNearest,
+      getSubtreePage: f.getSubtreePage,
       getBlockCreatedAt: ordering.getBlockCreatedAt,
     });
-    const postJson = feed.getPost(postId) as { likeCount: number; likers: string[] };
+    const postJson = feed.getPost(postId, liker.userId) as { likeCount: number; likedByViewer: boolean | null };
     expect(postJson.likeCount).toBe(1);
-    expect(postJson.likers).toEqual([likerPubHex]);
+    expect(postJson.likedByViewer).toBe(true);
   });
 
   // -------------------------------------------------------------------------

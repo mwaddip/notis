@@ -122,9 +122,28 @@ are hex-encoded.
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
 | `POST` | `/posts` | `{ tx: UtxoTransaction, content: string }` — client-built, client-signed post tx with `tx.post` (the `PostCommit`) set, and the body beside it ("Post transactions" below) | `{ postId, status: "pending", expiresAtHeight, txId }` (200) | 400 if `tx`, `tx.post` or `content` is missing or malformed, `content` fails `verifyPostBody` against `tx.post.contentHash` (reason named), the commit fails verification, the transaction fails `validateTx`, or the first input is not a karma box owned by `post.author` |
-| `GET` | `/posts/:id` | — | `PostJson`, `StumpJson` or `PrunedJson` (all below), **plus `confirmedAuthor`** | 404 only for an id the node has never heard of ("Resolution order for a post id") |
-| `GET` | `/posts/:id/thread` | — | `{ post, ancestors, descendants }` — full thread context; `post` is `PostJson`, `StumpJson` or `PrunedJson` | 404 as above |
-| `GET` | `/posts` | `?author=hex&limit=50&offset=0` — `limit` defaults to 50 and clamps to 100, `offset` defaults to 0 | PostJson[] (same shape, live only — placeholders included, no stumps, no tombstones; ordering below) | 400 if a present `limit` or `offset` does not parse as a non-negative safe integer |
+| `GET` | `/posts/:id` | `?viewer=hex` — optional ("`viewer` names the identity a read is for" below) | `PostJson`, `StumpJson` or `PrunedJson` (all below), **plus `confirmedAuthor`** | 404 only for an id the node has never heard of ("Resolution order for a post id"); 400 if a present `viewer` is not 64 hex chars |
+| `GET` | `/posts/:id/thread` | `?viewer=hex&limit=50&offset=0` — `viewer` optional; `limit` and `offset` page the descendants ("Every list a view returns is a page" below) | `{ post, ancestors, ancestorCount, descendants, descendantCount }` — `post` is `PostJson`, `StumpJson`, `PrunedJson` or `WithdrawnJson`; `ancestors` the nearest `limit` ancestors, oldest first (`offset` does not apply — the context above the topmost one is that post's own thread); `descendants` one page of the subtree in committed order, `(blockHeight, blockIndex)` ascending, pending posts after them by arrival; `ancestorCount` and `descendantCount` are over the whole chain and the whole subtree. On a stump, a tombstone or a withdrawn subject both lists are empty and both counts 0 | 404 as above; 400 as `/posts` |
+| `GET` | `/posts` | `?author=hex&viewer=hex&limit=50&offset=0` — `author` and `viewer` optional; `limit` defaults to 50 and clamps to 100, `offset` defaults to 0 | PostJson[] (same shape, live only — placeholders included, no stumps, no tombstones; ordering below) | 400 if a present `limit` or `offset` does not parse as a non-negative safe integer, or a present `viewer` is not 64 hex chars |
+
+**Every list a view returns is a page.** `limit` defaults to `PAGE_LIMIT_DEFAULT` (50) and clamps
+to `PAGE_LIMIT_MAX` (100), `offset` defaults to 0, and a present value that does not parse as a
+non-negative safe integer is a 400 — one parser, `routes/page.ts`, serves every paged route, and the
+two numbers live there (`CONSTANTS → HTTP view bounds`). A page is a prefix of a **stated total
+order** — a function of state, never of row order — and rides beside a count over the whole set, so
+a client can tell a complete list from a first page. The paged lists: the thread's `ancestors` and
+`descendants`, `/vouches?target=`, and the `boxes` and `bonds` of `/karma/:userId`,
+`/credits/:userId` and `/invites/:userId` (→ UTXO queries). Every other list a view returns is
+bounded by rule: `GET /posts` by this same clamp, `/vouches?voucher=` by the single active vouch,
+its cooldown arm by the cooldown, a block's body by its caps.
+
+**`viewer` names the identity a read is for.** Optional on `GET /posts`, `GET /posts/:id` and
+`GET /posts/:id/thread`, 64 hex chars (400 otherwise). When it is present, every `PostJson` in the
+response answers `likedByViewer` — whether that identity holds a like-record on the post
+(`hasLikeRecord`, one keyed read per post) — and when it is absent the field is `null`. **The node
+serves no list of who liked a post.** `likeCount` is the count, `likedByViewer` is the one
+per-identity question a client has, and the records themselves are consensus state an indexer
+derives from the blocks.
 
 **PostJson shape.** The post's own fields, hex where they are bytes, plus what the node knows
 about it:
@@ -143,7 +162,7 @@ PostJson = {
   blockIndex: number | null,
   blockCreatedAt: number | null,
   likeCount: number,
-  likers: hex[]                // liker ids, ascending
+  likedByViewer: boolean | null // with ?viewer=: does that identity hold a like-record on this post; without: null
 }
 ```
 
@@ -183,7 +202,7 @@ StumpJson = {
 
 `PostJson` carries no `kind` field; clients discriminate on its presence.
 `GET /posts/:id/thread` on a stump returns
-`{ post: StumpJson, ancestors: [], descendants: [] }`. The feed listing
+`{ post: StumpJson, ancestors: [], ancestorCount: 0, descendants: [], descendantCount: 0 }`. The feed listing
 (`GET /posts`) remains live-posts-only — no stumps, unchanged.
 
 **PrunedJson shape — the tombstone (decided 2026-08-22).** A pruned **descendant** has no DAG
@@ -203,7 +222,7 @@ PrunedJson = {
 ```
 
 `GET /posts/:id/thread` on a tombstone returns `{ post: PrunedJson, ancestors: [],
-descendants: [] }`, the stump's form. Clients discriminate the three shapes on `kind`: absent →
+ancestorCount: 0, descendants: [], descendantCount: 0 }`, the stump's form. Clients discriminate the three shapes on `kind`: absent →
 `PostJson`, `'stump'`, `'pruned'`.
 
 #### Resolution order for a post id
@@ -368,7 +387,7 @@ creation, so nothing stays open. `expiresAtHeight` on the response is the
 |--------|------|---------|-------------|
 | `POST` | `/vouches` | `castVouch` | Signed UTXO tx (KarmaBox to KarmaBox + VouchBox) |
 | `DELETE` | `/vouches/:targetId` | `initiateUnvouch` | Signed UTXO tx (VouchBox to none) |
-| `GET` | `/vouches?target=X` | `getVouchesForTarget` | List vouchers for identity |
+| `GET` | `/vouches?target=X&limit=50&offset=0` | `getVouchesForTargetPage` | `{ vouches: [{ voucherId, targetId }], count }` — one page of the identity's vouchers, ascending box id; `count` over the whole set (HTTP API → "Every list a view returns is a page") |
 | `GET` | `/vouches?voucher=X` | `getVouchesByVoucher` | List who identity vouches for |
 | `GET` | `/vouches?voucher=X&cooldowns=1` | `getVouchCooldowns` | Active cooldowns |
 
@@ -478,20 +497,26 @@ against live content).
 
 | Method | Path | Response | Errors |
 |--------|------|----------|--------|
-| `GET` | `/karma/:userId` | `{ userId: hex, total, boxes: [{ boxId, value }], lastActivityBlock, lastDecayBlock, height }` | 400 if `userId` is not 64 chars; 404 when the user holds no karma box |
-| `GET` | `/credits/:userId` | `{ userId: hex, total, boxes: [{ boxId, value, lockedUntilBlock? }] }` | 400 if `userId` is not 64 chars; 404 when the user holds no credit box |
-| `GET` | `/invites/:userId` | `{ bonds: [{ id, value, inviterId, inviteePublicKey }] }` — a bond IS the open invite; there is no second list | 400 if `userId` is not 64 chars; an inviter holding no bond answers `{ bonds: [] }` |
+| `GET` | `/karma/:userId?limit=50&offset=0` | `{ userId: hex, total, effective, boxes: [{ boxId, value }], boxCount, lastActivityBlock, lastDecayBlock, height }` — `total` the face sum over every unspent karma box (`getKarmaValue`), `effective` that sum after virtual decay (`effectiveKarma`, the call every karma-sufficiency check on the node makes), `boxes` one page in `value DESC, id`, `boxCount` over the whole set | 400 if `userId` is not 64 chars or a present `limit`/`offset` does not parse; 404 when the user holds no karma box |
+| `GET` | `/credits/:userId?limit=50&offset=0` | `{ userId: hex, total, boxes: [{ boxId, value, lockedUntilBlock? }], boxCount }` — `total` over every unspent credit box, `boxes` one page in `value DESC, id`, `boxCount` over the whole set | 400 if `userId` is not 64 chars or a present `limit`/`offset` does not parse; 404 when the user holds no credit box |
+| `GET` | `/invites/:userId?limit=50&offset=0` | `{ bonds: [{ id, value, inviterId, inviteePublicKey }], bondCount }` — the inviter's **unspent** bonds, one page ascending box id, `bondCount` over the whole set; a bond IS the open invite, so a settled one is not listed and there is no second list | 400 if `userId` is not 64 chars or a present `limit`/`offset` does not parse; an inviter holding no live bond answers `{ bonds: [], bondCount: 0 }` |
 
 Multi-box UTXO model — identities can hold multiple karma/credit boxes.
-`total` is the sum across all boxes. **`value` and `total` are decimal strings** in
-the JSON (box values are `bigint`; JSON cannot carry one) — clients parse them with
+`total` is the sum across all boxes, and `boxes` is a page of them in the order coin selection
+reads — largest first — so a client covering an amount takes boxes from the front of the page and
+never needs the whole set to know its balance. **`value`, `total` and `effective` are decimal
+strings** in the JSON (box values are `bigint`; JSON cannot carry one) — clients parse them with
 `BigInt(...)`. Applies to every response carrying a `value`/`total` (`/karma`,
 `/credits`, `/status` totals, mining template, etc.). See "Values are BigInt (P0)".
 
-`/karma/:userId` carries three plain numbers beside the boxes: `lastActivityBlock` and
-`lastDecayBlock` are the owner's identity-record clocks (`0` where no record exists), and `height`
-is the chain height at the time of the response — the inputs of the decay a client previews
-("Karma decay (virtual, squared on touch)").
+**`/karma/:userId` answers the balance twice, and a client spends against `effective`.** `total`
+is the face sum; `effective` is the same sum after virtual decay, computed by the one
+`effectiveKarma` every karma-sufficiency check on the node reads ("Karma decay (virtual, squared
+on touch)") — a client that derives it from the clocks holds a second implementation of a
+consensus valuation, which is the mirror class. The three plain numbers beside them —
+`lastActivityBlock` and `lastDecayBlock`, the owner's identity-record clocks (`0` where no record
+exists), and `height`, the chain height at the time of the response — are that valuation's inputs,
+served so a client can show when the next period falls.
 
 ### Credits
 
@@ -1928,7 +1953,8 @@ identity, and then only through that block's settlement transaction
 produces the same per-identity leg shape as before — consume the identity's
 post-body karma boxes, re-emit effective to the owner and the remainder to the
 pool — with the trigger being **touch**, never a per-block walk. See
-`decay.ts`.
+`decay.ts`. The read API reports the same valuation: `GET /karma/:userId` carries it as
+`effective` (→ UTXO queries).
 
 The clock is the `IdentityRecord` (Store Interface → Identity Records):
 
@@ -2846,8 +2872,8 @@ Fresh schema — no Phase 1 migration.
 | `restorePostRows(rows)` | `(DeletedPostRow[]) => void` — the inverse, from the journal |
 | `getPrunedTombstone(id)` | `(string) => PrunedTombstone \| null` — step 3 of the resolution order: a `block_topology` row whose parent chain reaches a stump |
 | `getParentRefs(postId)` | `(string) => PostId[]` |
-| `getAncestors(postId)` | `(string) => StoredPost[]` — walk up parent chain, genesis → parent |
-| `getSubtree(postId)` | `(string) => StoredPost[]` — all descendants (recursive CTE) |
+| `getAncestorsNearest(postId, limit)` | `(string, number) => { rows: StoredPost[], count: number }` — the nearest `limit` ancestors, oldest first, walking the parent chain upward from the post; `count` is the chain's whole depth |
+| `getSubtreePage(postId, page)` | `(string, Page) => { rows: StoredPost[], count: number }` — one page of the descendants (recursive CTE) in committed order, `(block_height, block_index)` ascending, pending rows after them by `rowid`; `count` over the whole subtree |
 
 > **`StoredPost` is the DAG `Post` with `content: string | null`, `contentHash`, and a required
 > `status: PostStatus`** (`'pending' | 'confirmed'` — a pruned post has no row), exported from
@@ -2859,6 +2885,11 @@ Fresh schema — no Phase 1 migration.
 > declared `Post & { status?: string }`, a bare `Post` type-checked and `?? 'unknown'` read as a
 > verdict rather than an absence — every response served `"unknown"` and nothing complained. A
 > required field makes a caller with no status fail to compile instead.
+
+> **`Page` is `{ limit: number, offset: number }`**, already clamped by the route (HTTP API →
+> "Every list a view returns is a page"). A page read returns `{ rows, count }` with `count` over
+> the whole set, and its predicate is the whole-set read's, stated once — a second `WHERE` naming
+> the same set is the mirror class the `getKarmaValue` row names.
 
 **`dag_posts` columns:** `id`, `content_hash` (hex, NOT NULL), `content` (**nullable** — `NULL` is
 the placeholder), `author`, `parent_refs`, `protocol_version`, `type`, `status`, `block_height`,
@@ -2902,12 +2933,14 @@ deterministic by replay, journalled with exact inverses, not in the `stateRoot`.
 | `getUnspentBoxes()` | `() => AnyBox[]` — all unspent boxes (for AVL bootstrapping) |
 | `getKarmaBox(owner)` | `(Uint8Array) => KarmaBox \| null` — single box (backward compat) |
 | `getKarmaBoxes(owner)` | `(Uint8Array) => KarmaBox[]` — multi-box listing: full boxes, keyed on `id` |
+| `getKarmaBoxesPage(owner, page)` | `(Uint8Array, Page) => { rows: KarmaBox[], count: number }` — the view's page of the set `getKarmaBoxes` reads, `ORDER BY value DESC, id`; never a consensus input — every balance check reads the whole set through `getKarmaBoxes` / `getKarmaValue` |
 | `getKarmaValue(owner)` | `(Uint8Array) => bigint` — **summed** value of every unspent karma box. **Consensus input** (the vouch minimum-balance gate), and the single implementation every validation path shares. It must sum, never read one box: `getKarmaBox` is `LIMIT 1` with no `ORDER BY`, so a single-box read makes the verdict a function of SQLite's physical row order — M-12's class. Kept as one store function rather than a closure per deps literal, because a consensus-critical read reproduced at each call site is the mirror pattern that produced `computeTxIdLocal` and the copied `u32BE` |
 | `getCreditBoxes(owner)` | `(Uint8Array) => CreditBox[]` — multi-box, `ORDER BY value DESC, id` — a total order, so element `[0]` is a deterministic read; there is deliberately **no single-box credit accessor** (an unordered `LIMIT 1` names an arbitrary row — M-12's class) |
+| `getCreditBoxesPage(owner, page)` | `(Uint8Array, Page) => { rows: CreditBox[], count: number }` — the view's page of the set `getCreditBoxes` reads, the same order |
+| `getCreditValue(owner)` | `(Uint8Array) => bigint` — summed value of every unspent credit box, over `getCreditBoxes` in `getKarmaValue`'s shape; a view read (`/credits/:userId`'s `total`), not a consensus input |
 | `getBondFor(inviteePublicKey)` | `(UserId) => BondBox \| null` — the bond naming this key; the settlement path resolves through this |
 | `getBondsInvitedAt(invitedAtBlock)` | `(number) => BondBox[]` — bonds whose invitee's record carries exactly this `invitedAtBlock`. The caller subtracts `INVITE_PROBATION_BLOCKS` from the settle height, so the store stays free of network parameters. ⛔ **The query MUST require `invitedAtBlock > 0`**: `0` is every never-invited identity, so at the single height where `settleHeight == INVITE_PROBATION_BLOCKS` the argument is `0` and an unguarded match sweeps the whole table |
-| `getBondBoxes(inviterId)` | `(UserId) => BondBox[]` — active bonds |
-| `getLikersForPost(postId)` | `(string) => string[]` — hex user IDs who liked; reads `like_records` (P2-D), `ORDER BY liker_id` so the listing is a function of state, not row order (N4a ratification) |
+| `getBondBoxesPage(inviterId, page)` | `(UserId, Page) => { rows: BondBox[], count: number }` — the inviter's **unspent** bonds (`spent_at_block IS NULL`), ascending `id`; `count` over the whole set |
 | `getUnspentPostLockBoxes()` | `() => PostLockBox[]` |
 | `getPostLockBox(targetPostId)` | `(string) => PostLockBox \| null` |
 | `insertBox(box)` | `(AnyBox) => void` — writes the provenance columns; records `{kind:'box', op:'insert', boxId, box}` while a block journal is open |

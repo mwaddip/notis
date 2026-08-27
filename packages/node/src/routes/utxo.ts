@@ -1,24 +1,30 @@
 import { Router, Response } from 'express';
-import type { KarmaBox, CreditBox, BondBox, UtxoTransaction } from '@dagsocial/types';
+import type { UtxoTransaction, KarmaBox, CreditBox, BondBox } from '@dagsocial/types';
 import { sendCredits } from '../services/credits.js';
 import type { UtxoEngineDeps } from '../services/utxo-engine.js';
 import type { IdentityRecord } from '../store/identity-records.js';
+import type { Page } from '../store/index.js';
+import type { DecayCfg } from '../services/decay.js';
+import { effectiveKarma } from '../services/decay.js';
 import { getNet } from '../services/net-instance.js';
 import { jsonToTx } from './json-to-tx.js';
 import { respondError } from './respond-error.js';
+import { parsePage, isPageError } from './page.js';
 
 // ---------------------------------------------------------------------------
 // Dependency types
 // ---------------------------------------------------------------------------
 
 export interface UtxoDeps {
-  getKarmaBox(owner: Uint8Array): KarmaBox | null;
-  getKarmaBoxes(owner: Uint8Array): KarmaBox[];
+  getKarmaValue(owner: Uint8Array): bigint;
+  getKarmaBoxesPage(owner: Uint8Array, page: Page): { rows: KarmaBox[]; count: number };
   getIdentityRecord(owner: Uint8Array): IdentityRecord | null;
-  getCreditBoxes(owner: Uint8Array): CreditBox[];
-  getBondBoxes(inviterId: Uint8Array): BondBox[];
+  getCreditValue(owner: Uint8Array): bigint;
+  getCreditBoxesPage(owner: Uint8Array, page: Page): { rows: CreditBox[]; count: number };
+  getBondBoxesPage(inviterId: Uint8Array, page: Page): { rows: BondBox[]; count: number };
   getCurrentHeight(): number;
   getUtxoEngineDeps(): UtxoEngineDeps;
+  decayCfg: DecayCfg;
 }
 
 // ---------------------------------------------------------------------------
@@ -28,7 +34,6 @@ export interface UtxoDeps {
 export function createRouter(deps: UtxoDeps): Router {
   const router = Router();
 
-  // Helper: parse hex userId from URL param, return Uint8Array
   function parseUserId(param: string, res: Response): Uint8Array | null {
     if (!param || typeof param !== 'string' || param.length !== 64) {
       res.status(400).json({ error: 'userId must be a 64-character hex string' });
@@ -42,57 +47,70 @@ export function createRouter(deps: UtxoDeps): Router {
     }
   }
 
-  // GET /karma/:userId — get karma balance for a user
+  // GET /karma/:userId
   router.get('/karma/:userId', (req, res) => {
     const userIdBytes = parseUserId(req.params['userId']!, res);
     if (!userIdBytes) return;
 
-    const karmaBoxes = deps.getKarmaBoxes(userIdBytes);
-    if (karmaBoxes.length === 0) {
+    const page = parsePage(req.query as Record<string, unknown>);
+    if (isPageError(page)) {
+      res.status(400).json({ error: page.error });
+      return;
+    }
+
+    const pageResult = deps.getKarmaBoxesPage(userIdBytes, page);
+    if (pageResult.count === 0) {
       res.status(404).json({ error: 'No karma box found' });
       return;
     }
 
-    const total = karmaBoxes.reduce((sum, b) => sum + b.value, 0n);
-    const boxes = karmaBoxes.map(b => ({
-      boxId: b.id!,
-      value: b.value.toString(),
-    }));
+    const total = deps.getKarmaValue(userIdBytes);
     const record = deps.getIdentityRecord(userIdBytes);
     const height = deps.getCurrentHeight();
+    const eff = effectiveKarma(total, record, height, deps.decayCfg);
 
     res.json({
       userId: req.params['userId'],
       total: total.toString(),
-      boxes,
+      effective: eff.toString(),
+      boxes: pageResult.rows.map(b => ({
+        boxId: b.id!,
+        value: b.value.toString(),
+      })),
+      boxCount: pageResult.count,
       lastActivityBlock: record?.lastActivityBlock ?? 0,
       lastDecayBlock: record?.lastDecayBlock ?? 0,
       height,
     });
   });
 
-  // GET /credits/:userId — get credit balance for a user (multi-box)
+  // GET /credits/:userId
   router.get('/credits/:userId', (req, res) => {
     const userIdBytes = parseUserId(req.params['userId']!, res);
     if (!userIdBytes) return;
 
-    const creditBoxes = deps.getCreditBoxes(userIdBytes);
-    if (creditBoxes.length === 0) {
+    const page = parsePage(req.query as Record<string, unknown>);
+    if (isPageError(page)) {
+      res.status(400).json({ error: page.error });
+      return;
+    }
+
+    const total = deps.getCreditValue(userIdBytes);
+    const pageResult = deps.getCreditBoxesPage(userIdBytes, page);
+    if (pageResult.count === 0) {
       res.status(404).json({ error: 'No credit box found' });
       return;
     }
 
-    const total = creditBoxes.reduce((sum, b) => sum + b.value, 0n);
-    const boxes = creditBoxes.map(b => ({
-      boxId: b.id!,
-      value: b.value.toString(),
-      ...(b.lockedUntilBlock !== undefined ? { lockedUntilBlock: b.lockedUntilBlock } : {}),
-    }));
-
     res.json({
       userId: req.params['userId'],
       total: total.toString(),
-      boxes,
+      boxes: pageResult.rows.map(b => ({
+        boxId: b.id!,
+        value: b.value.toString(),
+        ...(b.lockedUntilBlock !== undefined ? { lockedUntilBlock: b.lockedUntilBlock } : {}),
+      })),
+      boxCount: pageResult.count,
     });
   });
 
@@ -120,7 +138,6 @@ export function createRouter(deps: UtxoDeps): Router {
       const currentHeight = deps.getCurrentHeight();
       const result = sendCredits(deps.getUtxoEngineDeps(), tx, currentHeight);
 
-      // Broadcast to peers (fire-and-forget)
       const net = getNet();
       if (net) {
         net.broadcastTx(result.tx).catch((err: Error) => {
@@ -138,25 +155,27 @@ export function createRouter(deps: UtxoDeps): Router {
     }
   });
 
-  // GET /invites/:userId — the bonds an inviter holds
-  //
-  // ⛔ **The `open` array is gone with the box it listed.** An invite is one
-  // transaction creating a bond, so a bond IS the open invite and a second list
-  // would be the same rows under another name (ARCHITECTURE → Invite System).
-  // A bond is live from creation until its probation deadline.
+  // NODE_INTERFACE → UTXO queries — a bond IS the open invite; unspent bonds only.
   router.get('/invites/:userId', (req, res) => {
     const userIdBytes = parseUserId(req.params['userId']!, res);
     if (!userIdBytes) return;
 
-    const bonds = deps.getBondBoxes(userIdBytes);
+    const page = parsePage(req.query as Record<string, unknown>);
+    if (isPageError(page)) {
+      res.status(400).json({ error: page.error });
+      return;
+    }
+
+    const pageResult = deps.getBondBoxesPage(userIdBytes, page);
 
     res.json({
-      bonds: bonds.map((b) => ({
+      bonds: pageResult.rows.map((b) => ({
         id: b.id,
         value: b.value.toString(),
         inviterId: Buffer.from(b.inviterId).toString('hex'),
         inviteePublicKey: Buffer.from(b.inviteePublicKey).toString('hex'),
       })),
+      bondCount: pageResult.count,
     });
   });
 

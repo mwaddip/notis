@@ -24,18 +24,27 @@ export function getVouchBox(
   return getBox(row.id) as VouchBox | null;
 }
 
-export function getVouchesForTarget(targetId: Uint8Array): VouchBox[] {
+// NODE_INTERFACE → Vouches
+const VOUCH_TARGET_WHERE =
+  `box_type = 'vouch' AND spent_at_block IS NULL AND json_extract(extra_data, '$.targetId') = ?`;
+export function getVouchesForTargetPage(
+  targetId: Uint8Array,
+  page: { limit: number; offset: number },
+): { rows: VouchBox[]; count: number } {
   const db = getDb();
-  const rows = db
+  const hex = pubkeyToHex(targetId);
+  const ids = db
     .prepare(
-      `SELECT id FROM utxo_boxes
-       WHERE box_type = 'vouch' AND spent_at_block IS NULL
-         AND json_extract(extra_data, '$.targetId') = ?`,
+      `SELECT id FROM utxo_boxes WHERE ${VOUCH_TARGET_WHERE} ORDER BY id LIMIT ? OFFSET ?`,
     )
-    .all(pubkeyToHex(targetId)) as Array<{ id: string }>;
-  return rows
+    .all(hex, page.limit, page.offset) as Array<{ id: string }>;
+  const rows = ids
     .map((r) => getBox(r.id))
     .filter((b): b is VouchBox => b !== null && b.boxType === 'vouch');
+  const countRow = db
+    .prepare(`SELECT COUNT(*) AS cnt FROM utxo_boxes WHERE ${VOUCH_TARGET_WHERE}`)
+    .get(hex) as { cnt: number };
+  return { rows, count: countRow.cnt };
 }
 
 export function getVouchesByVoucher(voucherId: Uint8Array): VouchBox[] {

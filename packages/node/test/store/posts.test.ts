@@ -401,9 +401,9 @@ describe('posts store', () => {
     expect(refs).toEqual(refs3);
   });
 
-  it('getSubtree returns all descendants (multi-level)', async () => {
+  it('getSubtreePage returns all descendants (multi-level)', async () => {
     const { initDb } = await importDbFresh();
-    const { insertPost, getSubtree } = await importPostsFresh();
+    const { insertPost, getSubtreePage } = await importPostsFresh();
 
     initDb(':memory:');
 
@@ -418,9 +418,9 @@ describe('posts store', () => {
     const { commit: gcCommit, content: gcContent } = makeCommit({ content: 'grandchild', parentRefs: [childId] });
     insertPost(fixturePostId(gcCommit), gcCommit, gcContent);
 
-    const subtree = getSubtree(rootId);
-    expect(subtree).toHaveLength(2);
-    const contents = subtree.map((p) => p.content).sort();
+    const result = getSubtreePage(rootId, { limit: 50, offset: 0 });
+    expect(result.count).toBe(2);
+    const contents = result.rows.map((p) => p.content).sort();
     expect(contents).toEqual(['child', 'grandchild']);
   });
 
@@ -641,9 +641,9 @@ describe('posts store', () => {
       getPost,
       queryPosts: () => [],
       getLikeRecordCount: () => 0,
-      getLikersForPost: () => [],
-      getAncestors: () => [],
-      getSubtree: () => [],
+      hasLikeRecord: () => false,
+      getAncestorsNearest: () => ({ rows: [], count: 0 }),
+      getSubtreePage: () => ({ rows: [], count: 0 }),
       getBlockCreatedAt: () => null,
     });
 
@@ -675,7 +675,7 @@ describe('posts store', () => {
 
   it('withdrawn ancestor and descendant in a thread come back as WithdrawnJson, not PostJson', async () => {
     const { initDb, getDb } = await importDbFresh();
-    const { insertPost, confirmPost, getPost, getAncestors, getSubtree } = await importPostsFresh();
+    const { insertPost, confirmPost, getPost, getAncestorsNearest, getSubtreePage } = await importPostsFresh();
 
     initDb(':memory:');
 
@@ -709,13 +709,13 @@ describe('posts store', () => {
       getPost,
       queryPosts: () => [],
       getLikeRecordCount: () => 0,
-      getLikersForPost: () => [],
-      getAncestors,
-      getSubtree,
+      hasLikeRecord: () => false,
+      getAncestorsNearest,
+      getSubtreePage,
       getBlockCreatedAt: () => null,
     });
 
-    const thread = feedService.getThread(childId)!;
+    const thread = feedService.getThread(childId, { limit: 50, offset: 0 })!;
     expect(thread).not.toBeNull();
 
     // The subject post is live
@@ -750,16 +750,141 @@ describe('posts store', () => {
       getPost,
       queryPosts,
       getLikeRecordCount: () => 0,
-      getLikersForPost: () => [],
-      getAncestors: () => [],
-      getSubtree: () => [],
+      hasLikeRecord: () => false,
+      getAncestorsNearest: () => ({ rows: [], count: 0 }),
+      getSubtreePage: () => ({ rows: [], count: 0 }),
       getBlockCreatedAt: () => null,
     });
 
-    const posts = feedService.queryPosts({});
+    const posts = feedService.queryPosts({ limit: 50, offset: 0 });
     const withdrawn = posts.find((p) => (p as any).id === postId);
     expect(withdrawn).toBeDefined();
     expect((withdrawn as any).kind).toBe('withdrawn');
     expect((withdrawn as any).withdrawnAtHeight).toBe(10);
+  });
+
+  // -------------------------------------------------------------------------
+  // getAncestorsNearest
+  // -------------------------------------------------------------------------
+
+  it('getAncestorsNearest returns the nearest `limit` ancestors, oldest first', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertPost, getAncestorsNearest } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    const { commit: c0, content: ct0 } = makeCommit({ content: 'root', parentRefs: [] });
+    const id0 = fixturePostId(c0);
+    insertPost(id0, c0, ct0);
+
+    const { commit: c1, content: ct1 } = makeCommit({ content: 'child', parentRefs: [id0] });
+    const id1 = fixturePostId(c1);
+    insertPost(id1, c1, ct1);
+
+    const { commit: c2, content: ct2 } = makeCommit({ content: 'grandchild', parentRefs: [id1] });
+    const id2 = fixturePostId(c2);
+    insertPost(id2, c2, ct2);
+
+    const { commit: c3, content: ct3 } = makeCommit({ content: 'great-grandchild', parentRefs: [id2] });
+    const id3 = fixturePostId(c3);
+    insertPost(id3, c3, ct3);
+
+    // Limit 2: the nearest two ancestors of great-grandchild are grandchild and child
+    const result = getAncestorsNearest(id3, 2);
+    expect(result.count).toBe(3);
+    expect(result.rows).toHaveLength(2);
+    expect(result.rows.map(p => p.content)).toEqual(['child', 'grandchild']);
+  });
+
+  it('getAncestorsNearest returns full chain when limit exceeds depth', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertPost, getAncestorsNearest } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    const { commit: c0, content: ct0 } = makeCommit({ content: 'root', parentRefs: [] });
+    const id0 = fixturePostId(c0);
+    insertPost(id0, c0, ct0);
+
+    const { commit: c1, content: ct1 } = makeCommit({ content: 'child', parentRefs: [id0] });
+    const id1 = fixturePostId(c1);
+    insertPost(id1, c1, ct1);
+
+    const result = getAncestorsNearest(id1, 50);
+    expect(result.count).toBe(1);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]!.content).toBe('root');
+  });
+
+  // -------------------------------------------------------------------------
+  // getSubtreePage
+  // -------------------------------------------------------------------------
+
+  it('getSubtreePage returns descendants in committed order with count', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertPost, confirmPost, getSubtreePage } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    const { commit: cRoot, content: ctRoot } = makeCommit({ content: 'root', parentRefs: [] });
+    const rootId = fixturePostId(cRoot);
+    insertPost(rootId, cRoot, ctRoot);
+    confirmPost(rootId, 1, 0);
+
+    const { commit: c1, content: ct1 } = makeCommit({ content: 'child-b', parentRefs: [rootId] });
+    const id1 = fixturePostId(c1);
+    insertPost(id1, c1, ct1);
+    confirmPost(id1, 3, 0);
+
+    const { commit: c2, content: ct2 } = makeCommit({ content: 'child-a', parentRefs: [rootId] });
+    const id2 = fixturePostId(c2);
+    insertPost(id2, c2, ct2);
+    confirmPost(id2, 2, 0);
+
+    const { commit: c3, content: ct3 } = makeCommit({ content: 'grandchild', parentRefs: [id1] });
+    const id3 = fixturePostId(c3);
+    insertPost(id3, c3, ct3);
+    confirmPost(id3, 2, 1);
+
+    const result = getSubtreePage(rootId, { limit: 50, offset: 0 });
+    expect(result.count).toBe(3);
+    expect(result.rows.map(p => p.content)).toEqual(['child-a', 'grandchild', 'child-b']);
+  });
+
+  it('getSubtreePage paginates and places pending descendants last', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertPost, confirmPost, getSubtreePage } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    const { commit: cRoot, content: ctRoot } = makeCommit({ content: 'root', parentRefs: [] });
+    const rootId = fixturePostId(cRoot);
+    insertPost(rootId, cRoot, ctRoot);
+    confirmPost(rootId, 1, 0);
+
+    const { commit: c1, content: ct1 } = makeCommit({ content: 'confirmed-1', parentRefs: [rootId] });
+    const id1 = fixturePostId(c1);
+    insertPost(id1, c1, ct1);
+    confirmPost(id1, 2, 0);
+
+    const { commit: c2, content: ct2 } = makeCommit({ content: 'confirmed-2', parentRefs: [rootId] });
+    const id2 = fixturePostId(c2);
+    insertPost(id2, c2, ct2);
+    confirmPost(id2, 2, 1);
+
+    // A pending descendant — no confirmPost call
+    const { commit: c3, content: ct3 } = makeCommit({ content: 'pending-desc', parentRefs: [rootId] });
+    const id3 = fixturePostId(c3);
+    insertPost(id3, c3, ct3);
+
+    // Full set: count 3, pending last
+    const full = getSubtreePage(rootId, { limit: 50, offset: 0 });
+    expect(full.count).toBe(3);
+    expect(full.rows[2]!.content).toBe('pending-desc');
+
+    // Page of 2: the count is still over the whole set
+    const page = getSubtreePage(rootId, { limit: 2, offset: 0 });
+    expect(page.count).toBe(3);
+    expect(page.rows).toHaveLength(2);
   });
 });

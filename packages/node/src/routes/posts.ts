@@ -6,6 +6,7 @@ import type { FeedServiceDeps } from '../services/feed-service.js';
 import { getNet } from '../services/net-instance.js';
 import { jsonToTx } from './json-to-tx.js';
 import { respondError } from './respond-error.js';
+import { parsePage, parseViewer, isPageError, isViewerError } from './page.js';
 
 // ---------------------------------------------------------------------------
 // Dependency types
@@ -74,7 +75,17 @@ export function createRouter(deps: PostsDeps): Router {
 
   // GET /posts/:id/thread
   router.get('/:id/thread', (req, res) => {
-    const thread = feedService.getThread(req.params['id']!);
+    const page = parsePage(req.query as Record<string, unknown>);
+    if (isPageError(page)) {
+      res.status(400).json({ error: page.error });
+      return;
+    }
+    const viewer = parseViewer(req.query as Record<string, unknown>);
+    if (isViewerError(viewer)) {
+      res.status(400).json({ error: viewer.error });
+      return;
+    }
+    const thread = feedService.getThread(req.params['id']!, page, viewer);
     if (!thread) {
       res.status(404).json({ error: 404, reason: 'Post not found' });
       return;
@@ -85,7 +96,12 @@ export function createRouter(deps: PostsDeps): Router {
   // GET /posts/:id
   router.get('/:id', (req, res) => {
     const id = req.params['id']!;
-    const result = feedService.getPost(id);
+    const viewer = parseViewer(req.query as Record<string, unknown>);
+    if (isViewerError(viewer)) {
+      res.status(400).json({ error: viewer.error });
+      return;
+    }
+    const result = feedService.getPost(id, viewer);
     if (!result) {
       res.status(404).json({ error: 404, reason: 'Post not found' });
       return;
@@ -95,26 +111,20 @@ export function createRouter(deps: PostsDeps): Router {
 
   // GET /posts — NODE_INTERFACE → Posts
   router.get('/', (req, res) => {
-    const rawLimit = req.query['limit'] as string | undefined;
-    const rawOffset = req.query['offset'] as string | undefined;
-
-    const parsedLimit = rawLimit !== undefined ? parseInt(rawLimit, 10) : 50;
-    if (rawLimit !== undefined && (!Number.isSafeInteger(parsedLimit) || parsedLimit < 0)) {
-      res.status(400).json({ error: 'limit must be a non-negative safe integer' });
+    const page = parsePage(req.query as Record<string, unknown>);
+    if (isPageError(page)) {
+      res.status(400).json({ error: page.error });
       return;
     }
-    const parsedOffset = rawOffset !== undefined ? parseInt(rawOffset, 10) : 0;
-    if (rawOffset !== undefined && (!Number.isSafeInteger(parsedOffset) || parsedOffset < 0)) {
-      res.status(400).json({ error: 'offset must be a non-negative safe integer' });
+    const viewer = parseViewer(req.query as Record<string, unknown>);
+    if (isViewerError(viewer)) {
+      res.status(400).json({ error: viewer.error });
       return;
     }
-
-    const limit = Math.min(parsedLimit, 100);
-    const offset = parsedOffset;
     const authorHex = req.query['author'] as string | undefined;
     const author = authorHex ? new Uint8Array(Buffer.from(authorHex, 'hex')) : undefined;
 
-    const posts = feedService.queryPosts({ author, limit, offset });
+    const posts = feedService.queryPosts({ author, ...page, viewer });
     res.json(posts);
   });
 

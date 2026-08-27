@@ -105,22 +105,6 @@ describe('like-records store (P2-D N2a)', () => {
     expect(s.getLikeRecordCount('post-1')).toBe(1);
   });
 
-  it('getLikersForPost returns exactly the record-holders as hex ids (N4a repoint)', async () => {
-    const s = await importAll();
-    s.initDb(':memory:');
-
-    s.insertLikeRecord('post-1', LIKER_A, 1);
-    s.insertLikeRecord('post-1', LIKER_B, 2);
-    s.insertLikeRecord('post-2', LIKER_C, 3);
-
-    const hexOf = (u: Uint8Array) => Buffer.from(u).toString('hex');
-    // Rows come back ordered by liker_id bytes; hex encoding preserves that
-    // order, so sorting the expected hexes states the same order.
-    expect(s.getLikersForPost('post-1')).toEqual([hexOf(LIKER_A), hexOf(LIKER_B)].sort());
-    expect(s.getLikersForPost('post-2')).toEqual([hexOf(LIKER_C)]);
-    expect(s.getLikersForPost('post-none')).toEqual([]);
-  });
-
   // --- Inverses --------------------------------------------------------------
 
   it('deleteLikeRecord is the exact inverse of one insert', async () => {

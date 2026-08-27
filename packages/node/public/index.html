@@ -347,28 +347,8 @@ const VOUCH_KARMA_AMOUNT = 1n;
  * owns the verdict, and its message is what the button shows on a refusal.
  */
 const VOUCH_MIN_BALANCE = 11n;
-const KARMA_STALE_THRESHOLD_BLOCKS = 40320;
-const KARMA_DECAY_INTERVAL_BLOCKS = 1440;
-const KARMA_DECAY_AMOUNT = 5n;
-const KARMA_MINIMUM = 10n;
 /** Credits are 8-decimal: 10⁸ base units (10⁻⁸ credit) per displayed credit. */
 const CREDIT_SCALE = 100000000n;
-
-/**
- * Effective karma — the one implementation (VALIDATION_INTERFACE → "One
- * implementation per rule"). Mirrors decay.ts:effectiveKarma.
- */
-function effectiveKarma(faceTotal, lastActivityBlock, lastDecayBlock, height) {
-  if (height <= KARMA_STALE_THRESHOLD_BLOCKS) return faceTotal;
-  if (height - lastActivityBlock < KARMA_STALE_THRESHOLD_BLOCKS) return faceTotal;
-  const clockStart = Math.max(lastActivityBlock, lastDecayBlock);
-  const periods = Math.floor((height - clockStart) / KARMA_DECAY_INTERVAL_BLOCKS);
-  if (periods <= 0) return faceTotal;
-  const owed = BigInt(periods) * KARMA_DECAY_AMOUNT;
-  const floor = faceTotal < KARMA_MINIMUM ? faceTotal : KARMA_MINIMUM;
-  const decayed = faceTotal - owed;
-  return decayed > floor ? decayed : floor;
-}
 
 /** JSON.stringify replacer: bigint → decimal string (JSON cannot carry bigint). */
 function jsonBigint(_k, v) { return typeof v === 'bigint' ? v.toString() : v; }
@@ -964,14 +944,11 @@ async function fetchKarmaBox() {
     if (!res.ok) return null;
     const data = await res.json();
     data.total = BigInt(data.total);
+    data.effective = BigInt(data.effective);
     for (const b of data.boxes) b.value = BigInt(b.value);
+    const serverTotal = data.total;
     const patched = applyPendingKarmaChange(data);
-    patched.effective = effectiveKarma(
-      patched.total,
-      data.lastActivityBlock ?? 0,
-      data.lastDecayBlock ?? 0,
-      data.height ?? 0,
-    );
+    patched.effective = data.effective - (serverTotal - patched.total);
     return patched;
   } catch {
     return null;
@@ -1868,7 +1845,9 @@ async function doLike(targetPostId) {
     // (NODE_INTERFACE → Karma transition rules). `null` means no block has
     // confirmed the post, and a like on an unconfirmed post is unbuildable —
     // the marker has no author to name.
-    const postRes = await fetch(API + '/posts/' + encodeURIComponent(targetPostId));
+    let postUrl = API + '/posts/' + encodeURIComponent(targetPostId);
+    if (userId) postUrl += '?viewer=' + userId;
+    const postRes = await fetch(postUrl);
     const confirmedAuthor = postRes.ok ? (await postRes.json()).confirmedAuthor : null;
     if (!confirmedAuthor) {
       setStatus('Post not confirmed yet — a like names its author, so wait a block', 'error');
@@ -1953,7 +1932,7 @@ function renderPost(p, id, depth, highlighted = false) {
     ? '<span style="font-style:italic;color:var(--muted)">not yet available</span>'
     : escWithBreaks(p.content);
 
-  const liked = userId && p.likers && p.likers.includes(userId);
+  const liked = p.likedByViewer === true;
   const likeCount = typeof p.likeCount === 'number' ? p.likeCount : 0;
   const isOwn = userId && p.author === userId;
   const deleteBtn = isOwn
@@ -2011,6 +1990,7 @@ async function loadFeed() {
   try {
     let url = API + '/posts?limit=50';
     if (feedFilter !== 'all') url += '&author=' + feedFilter;
+    if (userId) url += '&viewer=' + userId;
     const res = await fetch(url);
     const posts = await res.json();
     if (!posts.length) { feed.innerHTML = '<div class="empty">No posts yet. Write something!</div>'; return; }
@@ -2070,7 +2050,9 @@ async function loadThread(postId, pushState = true) {
   }
 
   try {
-    const res = await fetch(API + '/posts/' + encodeURIComponent(postId) + '/thread');
+    let threadUrl = API + '/posts/' + encodeURIComponent(postId) + '/thread';
+    if (userId) threadUrl += '?viewer=' + userId;
+    const res = await fetch(threadUrl);
     if (!res.ok) {
       feed.innerHTML = '<div class="empty">Post not found.</div>';
       return;
@@ -2080,13 +2062,16 @@ async function loadThread(postId, pushState = true) {
     // Build ancestors HTML (straight line, oldest first → immediate parent)
     let ancestorsHtml = '';
     if (thread.ancestors && thread.ancestors.length > 0) {
+      if (thread.ancestorCount > thread.ancestors.length) {
+        ancestorsHtml += `<div style="font-size:11px;color:var(--inkMute);margin-bottom:4px">${thread.ancestorCount - thread.ancestors.length} older</div>`;
+      }
       const parts = [];
       for (const a of thread.ancestors) {
         const aid = a.id;
         parts.push(renderPost(a, aid, 0, false));
         parts.push('<div class="ancestor-connector">↓</div>');
       }
-      ancestorsHtml = parts.join('');
+      ancestorsHtml += parts.join('');
     }
 
     // Target post (highlighted)
@@ -2138,6 +2123,7 @@ async function loadThread(postId, pushState = true) {
       ${ancestorsHtml}
       ${targetHtml}
       ${descendantsHtml ? '<div style="margin-top:8px"></div>' + descendantsHtml : ''}
+      ${thread.descendantCount > (thread.descendants ? thread.descendants.length : 0) ? `<div style="font-size:11px;color:var(--inkMute);margin-top:4px">${thread.descendantCount - thread.descendants.length} more replies</div>` : ''}
     `;
 
     // Back button handler
@@ -2293,12 +2279,7 @@ async function loadIdentityStatus() {
     if (res.ok) {
       const data = await res.json();
       const face = BigInt(data.total);
-      const eff = effectiveKarma(
-        face,
-        data.lastActivityBlock ?? 0,
-        data.lastDecayBlock ?? 0,
-        data.height ?? 0,
-      );
+      const eff = BigInt(data.effective);
       karmaEl.textContent = face === eff ? eff.toString() : `${eff} (${face})`;
       karmaEl.style.color = eff > 0n ? 'var(--greenText)' : 'var(--inkMute)';
     } else {

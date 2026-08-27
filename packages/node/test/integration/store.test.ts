@@ -12,7 +12,7 @@ import {
   deletePostRows,
   restorePostRows,
   getParentRefs,
-  getSubtree,
+  getSubtreePage,
   isLivePost,
 } from '../../src/store/posts.js';
 import { computeContentHash } from '@dagsocial/types';
@@ -131,7 +131,7 @@ describe('posts store (integration)', () => {
     expect(getParentRefs(postId)).toEqual(refs);
   });
 
-  it('getSubtree returns all descendants across levels', () => {
+  it('getSubtreePage returns all descendants across levels', () => {
     const { commit: rootCommit, content: rootContent } = makeCommit({ content: 'tree-root', parentRefs: [] });
     const rootId = fixturePostId(rootCommit);
     insertPost(rootId, rootCommit, rootContent);
@@ -143,8 +143,8 @@ describe('posts store (integration)', () => {
     const { commit: gcCommit, content: gcContent } = makeCommit({ content: 'tree-grandchild', parentRefs: [childId] });
     insertPost(fixturePostId(gcCommit), gcCommit, gcContent);
 
-    const subtree = getSubtree(rootId);
-    const contents = subtree.map((p) => p.content).sort();
+    const result = getSubtreePage(rootId, { limit: 50, offset: 0 });
+    const contents = result.rows.map((p) => p.content).sort();
     expect(contents).toEqual(['tree-child', 'tree-grandchild']);
   });
 

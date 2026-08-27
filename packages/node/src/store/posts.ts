@@ -416,7 +416,11 @@ export function restorePostRows(rows: DeletedPostRow[]): void {
   }
 }
 
-export function getAncestors(postId: string): StoredPost[] {
+// NODE_INTERFACE → Posts DAG
+export function getAncestorsNearest(
+  postId: string,
+  limit: number,
+): { rows: StoredPost[]; count: number } {
   const db = getDb();
   const ancestors: StoredPost[] = [];
   const seen = new Set<string>();
@@ -439,7 +443,49 @@ export function getAncestors(postId: string): StoredPost[] {
     currentId = firstParent;
   }
 
-  return ancestors;
+  const count = ancestors.length;
+  const nearest = ancestors.slice(Math.max(0, count - limit));
+  return { rows: nearest, count };
+}
+
+const SUBTREE_CTE =
+  `WITH RECURSIVE subtree AS (
+     SELECT dp.id FROM dag_posts dp
+     JOIN dag_parent_refs dpr ON dp.id = dpr.post_id
+     WHERE dpr.parent_id = ?
+
+     UNION
+
+     SELECT dp.id FROM dag_posts dp
+     JOIN dag_parent_refs dpr ON dp.id = dpr.post_id
+     JOIN subtree s ON dpr.parent_id = s.id
+   )`;
+
+// NODE_INTERFACE → Posts DAG
+export function getSubtreePage(
+  postId: string,
+  page: { limit: number; offset: number },
+): { rows: StoredPost[]; count: number } {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      `${SUBTREE_CTE}
+       SELECT dp.*, dp.rowid AS rn FROM dag_posts dp
+       JOIN subtree s ON dp.id = s.id
+       ORDER BY
+         CASE WHEN dp.status = 'confirmed' THEN 0 ELSE 1 END,
+         CASE WHEN dp.status = 'confirmed' THEN dp.block_height END,
+         CASE WHEN dp.status = 'confirmed' THEN dp.block_index END,
+         rn
+       LIMIT ? OFFSET ?`,
+    )
+    .all(postId, page.limit, page.offset) as PostRow[];
+
+  const countRow = db
+    .prepare(`${SUBTREE_CTE} SELECT COUNT(*) AS cnt FROM subtree`)
+    .get(postId) as { cnt: number };
+
+  return { rows: rows.map(rowToPost), count: countRow.cnt };
 }
 
 export function getParentRefs(postId: string): string[] {
@@ -449,23 +495,4 @@ export function getParentRefs(postId: string): string[] {
   return rows.map((r) => r.parent_id);
 }
 
-export function getSubtree(postId: string): StoredPost[] {
-  const db = getDb();
-  const rows = db
-    .prepare(
-      `WITH RECURSIVE subtree AS (
-         SELECT dp.* FROM dag_posts dp
-         JOIN dag_parent_refs dpr ON dp.id = dpr.post_id
-         WHERE dpr.parent_id = ?
 
-         UNION
-
-         SELECT dp.* FROM dag_posts dp
-         JOIN dag_parent_refs dpr ON dp.id = dpr.post_id
-         JOIN subtree s ON dpr.parent_id = s.id
-       )
-       SELECT DISTINCT * FROM subtree`,
-    )
-    .all(postId) as PostRow[];
-  return rows.map(rowToPost);
-}

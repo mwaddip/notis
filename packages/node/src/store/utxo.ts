@@ -539,6 +539,15 @@ export function getKarmaValue(owner: Uint8Array): bigint {
   return getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n);
 }
 
+// NODE_INTERFACE → UTXO
+export function getKarmaBoxesPage(
+  owner: Uint8Array,
+  page: { limit: number; offset: number },
+): { rows: KarmaBox[]; count: number } {
+  const all = getKarmaBoxes(owner);
+  return { rows: all.slice(page.offset, page.offset + page.limit), count: all.length };
+}
+
 /**
  * Return all unspent credit boxes for the given owner, ordered by value
  * descending then id — a total order, so element [0] is a deterministic read.
@@ -556,7 +565,18 @@ export function getCreditBoxes(owner: Uint8Array): CreditBox[] {
   return rows.map(rowToBox) as CreditBox[];
 }
 
+export function getCreditValue(owner: Uint8Array): bigint {
+  return getCreditBoxes(owner).reduce((sum, b) => sum + b.value, 0n);
+}
 
+// NODE_INTERFACE → UTXO
+export function getCreditBoxesPage(
+  owner: Uint8Array,
+  page: { limit: number; offset: number },
+): { rows: CreditBox[]; count: number } {
+  const all = getCreditBoxes(owner);
+  return { rows: all.slice(page.offset, page.offset + page.limit), count: all.length };
+}
 
 /**
  * Unspent credit boxes past the rent period, oldest first, bounded.
@@ -656,38 +676,25 @@ export function getBondsInvitedAt(maxInvitedAt: number, limit: number): BondBox[
   return rows.map((r) => rowToBox(r) as BondBox);
 }
 
-/**
- * Return all bond boxes associated with the given inviter.
- */
-export function getBondBoxes(inviterId: Uint8Array): BondBox[] {
+// NODE_INTERFACE → UTXO
+const BOND_PAGE_WHERE =
+  `box_type = 'bond' AND spent_at_block IS NULL AND json_extract(extra_data, '$.inviterId') = ?`;
+export function getBondBoxesPage(
+  inviterId: Uint8Array,
+  page: { limit: number; offset: number },
+): { rows: BondBox[]; count: number } {
   const db = getDb();
+  const hex = pubkeyToHex(inviterId);
   const rows = db
     .prepare(
-      `SELECT * FROM utxo_boxes
-       WHERE box_type = 'bond'
-         AND json_extract(extra_data, '$.inviterId') = ?`,
+      `SELECT * FROM utxo_boxes WHERE ${BOND_PAGE_WHERE} ORDER BY id LIMIT ? OFFSET ?`,
     )
     .safeIntegers()
-    .all(pubkeyToHex(inviterId)) as UtxoRow[];
-  return rows.map((r) => rowToBox(r) as BondBox);
-}
-
-/**
- * Return the hex-encoded liker IDs for everyone holding a like-record on
- * the given post (N4a — reads `like_records`, the source of truth since
- * per-block settlement). Used by the feed API to tell clients who has liked.
- * Ordered by liker id so the listing is a function of state, not row order.
- */
-export function getLikersForPost(targetPostId: string): string[] {
-  const db = getDb();
-  const rows = db
-    .prepare(
-      `SELECT liker_id FROM like_records
-       WHERE target_post_id = ?
-       ORDER BY liker_id`,
-    )
-    .all(targetPostId) as { liker_id: Buffer }[];
-  return rows.map((r) => r.liker_id.toString('hex'));
+    .all(hex, page.limit, page.offset) as UtxoRow[];
+  const countRow = db
+    .prepare(`SELECT COUNT(*) AS cnt FROM utxo_boxes WHERE ${BOND_PAGE_WHERE}`)
+    .get(hex) as { cnt: number };
+  return { rows: rows.map((r) => rowToBox(r) as BondBox), count: countRow.cnt };
 }
 
 /**
