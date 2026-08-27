@@ -534,6 +534,10 @@ nothing.
 | `GET` | `/blocks/:height` | OrderingBlock object (JSON with hex fields) | 400 unless `:height` parses as a non-negative safe integer, 404 |
 | `GET` | `/blocks/current` | `{ height, hash }` — **`hash` is nullable** | — |
 
+The `header` object in `/blocks/:height`'s response carries all ten header fields, `interlinkRoot`
+included (`TYPES_INTERFACE` → Layout — Block) — the field a client that recomputes the interlink
+vector from served headers checks.
+
 **`hash` is `string | null`** (Phase 1f). It is `blockHash` of the stored tip
 header, and that function returns `null` for a header outside the encodable domain
 (`VALIDATION_INTERFACE` → `blockHash`). A stored tip cannot be outside it — every header in the
@@ -3262,11 +3266,12 @@ See `MEMPOOL_INTERFACE.md` for the full mempool contract.
 
 | Function | Signature |
 |----------|-----------|
-| `createOrderingBlock(block)` | `(OrderingBlock) => void` |
+| `createOrderingBlock(block, interlinks)` | `(OrderingBlock, string[]) => void` — `interlinks` is the vector the header committed to, stored `encodeInterlinks`'d in the `interlinks` column |
 | `getOrderingBlock(height)` | `(number) => OrderingBlock \| null` |
 | `getCurrentHeight()` | `() => number` |
 | `getOrderingBlockHash(height)` | `(number) => string \| null` — the stored `block_hash` column, no row decode |
 | `getHeightByBlockHash(hash)` | `(string) => number \| null` — indexed point lookup on the same column |
+| `getInterlinks(height)` | `(number) => string[] \| null` — the stored vector, decoded; `null` for no row |
 | `deleteOrderingBlock(height)` | `(number) => void` — for fork rollback |
 
 **Who reads the `block_hash` column, and who deliberately does not.**
@@ -3278,6 +3283,13 @@ the decoded header instead, and must keep doing so**: the recompute is the
 corrupt-header tripwire (`UnhashableStoredHeaderError` — a column read returns
 the insert-time hash over a header row that has since rotted), and
 `verifyBlockChainLink` recomputes internally in any case.
+
+**The `interlinks` column is a cache of the header chain, never journaled.** `I(h)` is a function of
+the headers below `h` (`TYPES_INTERFACE` → Interlink vector), so the column can always be rebuilt from
+`header_bytes`. It is written by `createOrderingBlock` with the vector the funnel verified, read by the
+funnel for the next block's check, by the block creator for the template, and by fork resolution for
+the anchor; `deleteOrderingBlock` drops it with the row, so a reorg needs no undo entry for it.
+Declared in the base `CREATE TABLE`, not the ALTER pass — no store predates it.
 
 ### Refused headers
 
@@ -3946,9 +3958,11 @@ with the chain untouched:
    the chains share only the genesis state, `null` when the divergence is deeper than
    `MAX_REORG_DEPTH`. `null` → no decision, no penalty: a deep fork is indistinguishable from an
    honest peer.
-4. **The anchor and the segment.** Anchor = `{ prevBlockHash, height: f }` where `prevBlockHash` is
-   the hash of our block at `f`, or `GENESIS_PREV_BLOCK_HASH` at `f = 0`; segment = their headers
-   above `f`, chronological.
+4. **The anchor and the segment.** Anchor = `{ prevBlockHash, height: f, interlinks }` where
+   `prevBlockHash` is the hash of our block at `f`, or `GENESIS_PREV_BLOCK_HASH` at `f = 0`, and
+   `interlinks` is the vector the block at `f + 1` must commit to — `updateInterlinks(getInterlinks(f),
+   hash(f), level(our header at f))`, or `[]` at `f = 0`; segment = their headers above `f`,
+   chronological.
 5. **Verification.** `verifyHeaderChain(segment, anchor, expectedTarget)` (VALIDATION_INTERFACE →
    verifyHeaderChain). A refusal is classified: `index 0` · `reason 'height'` · `f === 0` is a
    **window miss** — their chain stands more than `MAX_REORG_DEPTH · 2` above a genesis-rooted fork
@@ -4010,9 +4024,9 @@ that share no block. Heights still start at 1, so height 0 holds no block and no
 holds is the genesis *state*, which every node on a network shares byte for byte because the
 section above makes any other one fail-stop. There is nothing for a peer to lie about: a
 height-1 block has its `prevBlockHash` checked against `GENESIS_PREV_BLOCK_HASH` (TYPES_INTERFACE
-→ Genesis parent hash) before it can be stored — the same value a fork at 0 hands
-`verifyHeaderChain` as its anchor — and that
-check is on every path into the store, and what makes "every path" true is stated on
+→ Genesis parent hash), and its hash against `genesisId` where the profile pins one, before it can be
+stored — the sentinel is the same value a fork at 0 hands `verifyHeaderChain` as its anchor — and
+both checks are on every path into the store, and what makes "every path" true is stated on
 `createOrderingBlock` in `node/src/store/ordering.ts`: one writer, called from `applyBlockBody`
 downstream of the chain-link gate in the same function. All four callers of `applyOrderingBlock`
 (gossip, sync pull, block creator, `reorg`) go through it.
@@ -4480,7 +4494,7 @@ mode flag: there is no "skip the checks" parameter on the apply path.
 
 | Phase | Contents | Runs in speculative computation? |
 |-------|----------|----------------------------------|
-| **Validation** | chain-link, protocol version, PoW target + PoW, validator signature, Merkle roots, coinbase value + maturity, block storage, `clearTemplate` | No — the header does not exist yet |
+| **Validation** | chain-link, protocol version, PoW target + PoW, interlink root, validator signature, Merkle roots, coinbase value + maturity, block storage, `clearTemplate` | No — the header does not exist yet |
 | **Mutation** | coinbase mint, post confirmation, DAG scores, topology, prune verification + settlement, embedded UTXO txs, per-block like settlement + post-lock vesting, decay, vouch cooldowns | Yes — verbatim, at an explicitly passed height |
 | **Commit** | AVL feed + `stateRoot` verification + checkpoint, journal persistence | No — the speculative run reads the digest and rolls back |
 
@@ -4517,6 +4531,21 @@ against `block.header.validatorId` — so every node reaches the same verdict. I
 sits alongside the height-scheduled PoW-target and coinbase-maturity checks
 already enforced in this funnel, and precedes any mutation so a bad-signature
 block rolls back to a no-op.
+
+**Interlink root.** The block is rejected unless `header.interlinkRoot ===
+interlinkRoot(updateInterlinks(I(parent), parentHash, level(parent)))` — `I(parent)` from the store's
+`interlinks` column (Store Interface → Ordering blocks), `parentHash` the recomputed `blockHash` of the
+stored parent header (the corrupt-header tripwire, not the column read), `level(parent)` from
+`@dagsocial/validation`; at height 1 the expected vector is `[]`. Pure and deterministic, so every node
+reaches the same verdict, and the vector it verified is what `createOrderingBlock` stores. The same
+rule runs over a peer's segment in `verifyHeaderChain` before fork choice scores it (`TYPES_INTERFACE`
+→ Interlink vector).
+
+**Genesis pin.** When the profile's `genesisId` is non-empty, the height-1 chain-link also requires
+`blockHash(header) === genesisId` — a block 1 that builds on `GENESIS_PREV_BLOCK_HASH` but is not the
+pinned one is rejected like any chain-link failure. An empty `genesisId` (devnet always; testnet and
+mainnet until their block 1 exists) leaves the height-1 check as the sentinel compare alone
+(`TYPES_INTERFACE` → Network profiles).
 
 **Post authorship + prune authorship (H-3).** A post transaction carries the
 **whole post** in `utxoTxs` plus the author's signature over the `TxId`, so

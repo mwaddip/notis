@@ -266,16 +266,45 @@ reaches a rule as a meaning.
 `verifyOrderingBlockPoW` is unaffected — ordering-block PoW is the consensus PoW and
 always was. **Consensus is honestly single-phase.**
 
+### powHit — the digest a header's nonce produced
+
+```
+powHit(header: BlockHeader): Uint8Array | null
+```
+
+`blake2b512(computePowHash(header) ‖ encodeLE64(powNonce))[:32]` — the 32 bytes the admission rule
+compares against the target, returned rather than judged. `null` on exactly the inputs
+`computePowHash` refuses (its domain, M-5/M-6); never throws. `verifyOrderingBlockPoW` is
+`meetsPowTarget(powHit(header), orderingPowTarget(header.powTargetBits))` and nothing else, so the
+hit a verifier judges and the hit a level is computed from are one computation.
+
+### level — the superblock level of a header
+
+```
+level(header: BlockHeader): number | null
+```
+
+The NiPoPoW level (`TYPES_INTERFACE` → Interlink vector): **`Infinity` at height 1**; otherwise the
+largest integer `μ ≥ 0` with `hit · 2^μ ≤ target`, where `hit` is `powHit(header)` and `target` is
+`orderingPowTarget(header.powTargetBits)`, both read as unsigned big-endian integers; **`LEVEL_CAP`**
+(256) when `hit` is zero. `null` when either half is `null`. Integer arithmetic throughout — no
+floating point, no logarithm; a header `verifyOrderingBlockPoW` accepts always has `μ ≥ 0`, and
+`P(level ≥ i) = 2^-i` up to the 1/256-bit granularity of the target.
+
+The target is the header's **own** `powTargetBits`, exactly as `verifyOrderingBlockPoW` reads it —
+the schedule check that pins that field to `expectedTarget(height)` runs beside this function in
+every caller (`verifyHeaderChain` step 5, the apply funnel), never inside it. This package owns no
+schedule.
+
 ### verifyOrderingBlockPoW
 
 ```
 verifyOrderingBlockPoW(header: BlockHeader): boolean
 ```
 
-Computes the PoW preimage via `computePowHash(header)`, encodes `header.powNonce`
-as u64 LE, hashes `preimage || nonceBytes` with blake2b512, takes the first 32
-bytes, and answers `meetsPowTarget(hash, orderingPowTarget(header.powTargetBits))` —
-`false` when `orderingPowTarget` returns `null`.
+Answers `meetsPowTarget(powHit(header), orderingPowTarget(header.powTargetBits))` — `false` when
+either half is `null`. The hit is `powHit` above: `blake2b512(computePowHash(header) ‖
+encodeLE64(powNonce))[:32]`.
 Guards its inputs (M-5 / M-6): returns `false` — never throws — if the
 header is not encodable, or if `powNonce` / `powTargetBits` is not a
 non-negative safe integer.
@@ -306,8 +335,8 @@ Computes the preimage the PoW nonce hashes against: takes the header with
 `powNonce` set to `0`, encodes it (`encodeHeader`), and returns
 `blake2b512(encoded).subarray(0, 32)`. The preimage is over the **header**, not a
 separate "block body" — it covers `protocolVersion`, `height`, `prevBlockHash`,
-`utxoTxRoot`, `stateRoot`, `validatorId`, `powTargetBits`, and
-`createdAt`, with `powNonce` zeroed. The block *body* (UTXO txs and prune
+`utxoTxRoot`, `stateRoot`, `validatorId`, `powTargetBits`, `createdAt` and
+`interlinkRoot`, with `powNonce` zeroed. The block *body* (UTXO txs and prune
 entries) is committed **transitively**: `utxoTxRoot` is the
 Merkle root over it and `stateRoot` is the AVL+ digest, so any body change alters
 a root and therefore the preimage. `validatorSignature` is not a header field, so
@@ -622,6 +651,7 @@ The domain, by field:
 | `powNonce` | non-negative safe integer | `vlqU` |
 | `powTargetBits` | non-negative safe integer | `vlqU` |
 | **`createdAt`** | **non-negative safe integer** — new in 1f | `vlqU` |
+| `interlinkRoot` | `/^[0-9a-f]{64}$/` | `b32` |
 
 ⛔ **The table used to carry a `networkType` row, marked AHEAD OF CODE for Phase 3. That header field
 is REJECTED (2026-08-10)** — see `TYPES_INTERFACE` → Block header and `ARCHITECTURE §How the network
@@ -795,7 +825,7 @@ constant of its own**, and a bound with no subject here would be the first.
 verifyOrderingBlockStructure(block: OrderingBlock): { valid: boolean; error?: string }
 ```
 
-**The block has one body**, and the header is **nine positional fields**
+**The block has one body**, and the header is **ten positional fields**
 (`TYPES_INTERFACE` → Layout — Block). Checks, in order: the block is an object
 with a `header`; every header field's domain via `verifyHeaderFieldDomains` —
 delegated to the one statement of those domains, re-labelled with this
@@ -1009,10 +1039,10 @@ every non-genesis block (the genesis case has no previous block to link to).
 ```
 verifyHeaderChain(
   headers: BlockHeader[],                 // chronological; expected to start at anchor.height + 1
-  anchor: { prevBlockHash: string; height: number },
+  anchor: { prevBlockHash: string; height: number; interlinks: string[] },
   scheduledTarget: (height: number) => number,
 ): { ok: true; work: bigint; hashes: string[] }
- | { ok: false; index: number; reason: 'domain' | 'version' | 'height' | 'link' | 'target' | 'pow' }
+ | { ok: false; index: number; reason: 'domain' | 'version' | 'height' | 'link' | 'target' | 'pow' | 'interlinks' }
 ```
 
 **The header-level rules a chain must pass before any of its work counts**, applied to every header
@@ -1020,7 +1050,10 @@ in order. For header `i`: `blockHash(header) !== null` (`domain` — the whole
 `verifyHeaderFieldDomains` domain, stated once by the hash) · `verifyProtocolVersion` (`version`) ·
 `height === anchor.height + 1 + i` (`height`) · `prevBlockHash` equals `anchor.prevBlockHash` for
 `i = 0` and `hashes[i − 1]` after (`link`) · `powTargetBits === scheduledTarget(height)` (`target`) ·
-`verifyOrderingBlockPoW(header)` (`pow`). The first failure answers `{ ok: false, index, reason }`
+`verifyOrderingBlockPoW(header)` (`pow`) · `interlinkRoot === interlinkRoot(expected[i])` (`interlinks`),
+where `expected[0]` is `anchor.interlinks` and `expected[i]` is `updateInterlinks(expected[i − 1],
+hashes[i − 1], level(headers[i − 1]))` after (`TYPES_INTERFACE` → Interlink vector) — step 7, and the
+one step that reads the header before it. The first failure answers `{ ok: false, index, reason }`
 for the whole segment — **refuse-whole, never skip**: skipping would let the peer choose which of its
 headers count, and a header that cannot be interpreted decides nothing. Nothing partial is exposed.
 
@@ -1032,14 +1065,19 @@ incumbent's and an empty `hashes` admits no block.
 
 **The anchor is the fork point.** Its `prevBlockHash` is the hash of the block the segment must
 build on — for a fork at `GENESIS_HEIGHT` it is `GENESIS_PREV_BLOCK_HASH` (TYPES_INTERFACE → Genesis
-parent hash), the same value apply's genesis branch checks a height-1 block against.
+parent hash), the same value apply's genesis branch checks a height-1 block against. Its `interlinks`
+is **the vector the segment's first header must commit to** — the caller computes it from the fork
+point's stored vector, `updateInterlinks(I(f), hash(f), level(f))`, or passes `[]` at `GENESIS_HEIGHT`
+(`NODE_INTERFACE` → Fork choice decides on verified headers, step 4). The function walks the expected
+vectors forward from there and reads no store.
 
 **The schedule is injected, not imported.** This package is stateless and owns no
 `expectedTarget`; the caller passes the network's schedule. A retarget therefore changes the
 caller's function and nothing here — the retarget seam is the parameter.
 
 **These are exactly the header-level checks of the apply funnel** (`applyOrderingBlock`: structure's
-header domain and version, chain link, scheduled target, PoW), run once over a peer's segment before
+header domain and version, chain link, scheduled target, PoW, interlink root), run once over a peer's
+segment before
 it is scored and again by apply when it is applied. The validator signature is **not** among them:
 `validatorSignature` rides the block, not the header, so it stays a body-stage check.
 

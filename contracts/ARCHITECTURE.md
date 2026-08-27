@@ -1550,6 +1550,10 @@ non-breaking and devnet for protocol-breaking testing). The third network is **n
 > What a network commits to is therefore a **33-byte digest**, not a header: `NetworkProfile
 > .genesisStateRoot`, the height-0 AVL+ root, pinned per network and checked against the seeded state
 > at boot. `types/src/network.ts` carried the same sentence in code and moves with it.
+>
+> A network that has mined its block 1 commits to that header too: `NetworkProfile.genesisId`, the
+> height-1 block hash — `''` until then, and on devnet always (`TYPES_INTERFACE` → Network profiles).
+> The digest says what state the chain starts from; the pin says which block starts it.
 
 ### Profile selection
 
@@ -1573,13 +1577,13 @@ not be independently readable.
 `KARMA_STALE_THRESHOLD_BLOCKS` · `VOUCH_COOLDOWN_BLOCKS` · `INVITE_PROBATION_BLOCKS` ·
 `CREDIT_MINER_REWARD_DELAY` · `CREDIT_FIXED_RATE_BLOCKS` ·
 `CREDIT_EPOCH_BLOCKS` · `CREDIT_EMISSION_TOTAL` · `GENESIS_KARMA_PER_MEMBER` · `INVITE_BOND_MIN` · `INVITE_BOND_MAX` ·
-`genesisCommitteeKeys` · `genesisProofPayload` · `genesisStateRoot` · `faucetPublicKey` ·
+`genesisCommitteeKeys` · `genesisProofPayload` · `genesisStateRoot` · `genesisId` · `faucetPublicKey` ·
 `storageRentPeriodBlocks`
 
 **Every name is spelled by its definition site, and the case says which one.** A `SCREAMING_CASE` name
 is a `constants.ts` export that a profile field reads; a `camelCase` name is a `NetworkProfile` field
 that no constant stands beside — **the case is the statement, so no count is kept here and none has to
-be maintained.** `genesisCommitteeKeys` and `faucetPublicKey` are field-only because one constant
+be maintained.** `genesisCommitteeKeys`, `genesisId` and `faucetPublicKey` are field-only because one constant
 serves one value and each network names its own; `genesisProofPayload` and `genesisStateRoot` are one
 fact stated twice, the sole per-network input to the genesis box set and the height-0 AVL+ root over
 it. Each belongs to the genesis axis this section already declares, so they add fields to a declared
@@ -1654,6 +1658,12 @@ seeding computes that root and compares, and a mismatch is fail-stop rather than
 transaction so a divergent genesis is never committed. The per-network input is the
 `genesis_proof` box's payload: the system karma and faucet credit boxes are byte-identical on
 testnet and devnet, so the proof box is the whole of what separates those two roots.
+
+**When a profile pins `genesisId`, the chain layer commits to block 1's hash as well.** The height-1
+chain-link refuses any other block 1 (`NODE_INTERFACE` → Ordering block apply-time authorization,
+genesis pin), and a NiPoPoW proof anchors on it (`TYPES_INTERFACE` → Interlink vector). The pin is
+`''` until a network has mined block 1 — devnet never pins — so it commits only where a network has
+something to commit to.
 
 ⚠ **Dated, because the row above read as a live mechanism before one existed.** Genesis was
 per-network in this contract from the start and was not per-network in the tree: until

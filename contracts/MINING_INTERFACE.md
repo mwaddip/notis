@@ -244,7 +244,8 @@ precedes it, only a holder of the mining secret can redirect the coinbase.
     "stateRoot": "hex(32)",
     "validatorId": "hex(32)",
     "powTargetBits": 20,
-    "createdAt": 1234567890000
+    "createdAt": 1234567890000,
+    "interlinkRoot": "hex(32)"
   },
   "utxoTxIds": ["hex(32)", ...],
   "postIds": ["hex(32)", ...],
@@ -255,6 +256,10 @@ precedes it, only a holder of the mining secret can redirect the coinbase.
 `powPreimage` is `computePowHash(header)` (see "Block hash and PoW preimage") —
 the fixed 32-byte preimage the miner hashes with the nonce. The miner never
 touches CBOR.
+
+`interlinkRoot` is the node's — `interlinkRoot(updateInterlinks(I(tip), tipHash, level(tip)))` from
+the tip the template builds on (`TYPES_INTERFACE` → Interlink vector); the miner supplies a nonce and
+a height, never a header field.
 
 #### Template and submit
 
