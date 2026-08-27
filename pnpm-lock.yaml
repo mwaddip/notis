@@ -193,6 +193,9 @@ importers:
 
   tools/e2e:
     dependencies:
+      '@dagsocial/nipopow':
+        specifier: workspace:*
+        version: link:../../packages/nipopow
       '@dagsocial/types':
         specifier: workspace:*
         version: link:../../packages/types

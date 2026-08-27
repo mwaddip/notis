@@ -8,6 +8,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@dagsocial/nipopow": "workspace:*",
     "@dagsocial/types": "workspace:*",
     "@dagsocial/validation": "workspace:*"
   },
