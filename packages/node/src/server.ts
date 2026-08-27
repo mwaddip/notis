@@ -16,6 +16,7 @@ import { castLike } from './services/likes.js';
 import { castVouch, initiateUnvouch } from './services/vouch.js';
 import { createInvite } from './services/invites.js';
 import { executePrune } from './services/stump-engine.js';
+import { executePostWithdraw } from './services/post-withdraw.js';
 import { readFileSync } from 'fs';
 import { isLivePost, type StoredPost } from './store/posts.js';
 import { getDb } from './store/db.js';
@@ -276,6 +277,7 @@ export function createApp(config: Config): express.Express {
     '/',
     deleteRoutes({
       executePrune,
+      executePostWithdraw,
       ...utxoEngineDeps,
       getCurrentHeight: store.getCurrentHeight,
     }),
