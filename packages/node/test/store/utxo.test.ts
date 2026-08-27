@@ -32,7 +32,6 @@ async function importUtxoFresh() {
     getKarmaBoxes: (owner: Uint8Array) => KarmaBox[];
     getCreditBoxes: (owner: Uint8Array) => CreditBox[];
     getBondFor: (inviteePublicKey: Uint8Array) => BondBox | null;
-    getBondBoxes: (inviterId: Uint8Array) => BondBox[];
     insertBox: (box: AnyBox, postLockTarget?: string) => void;
     consumeBox: (boxId: string, consumedAtBlock: number) => void;
     BoxNotLiveError: new (boxId: string) => Error & { readonly boxId: string };
@@ -328,11 +327,11 @@ describe('utxo store', () => {
     expect(getBondFor(invitee)).toBeNull();
   });
 
-  // --- getBondBoxes returns active bonds ------------------------------------
+  // --- getBondBoxesPage returns unspent bonds ---------------------------------
 
-  it('getBondBoxes returns bond boxes for an inviter', async () => {
+  it('getBondBoxesPage returns unspent bond boxes for an inviter', async () => {
     const { initDb } = await importDbFresh();
-    const { insertBox, getBondBoxes } = await importUtxoFresh();
+    const utxo = await import('../../src/store/utxo.js');
     const { computeBoxId } = await importTypes();
 
     initDb(':memory:');
@@ -340,30 +339,29 @@ describe('utxo store', () => {
     const bond1 = makeBondBox({ inviterId: uid('charlie'), value: 10n });
     Object.assign(bond1, fixtureProvenance(bond1, 1));
     bond1.id = computeBoxId(bond1);
-    insertBox(bond1);
+    utxo.insertBox(bond1);
 
     const bond2 = makeBondBox({ inviterId: uid('charlie'), value: 15n });
     Object.assign(bond2, fixtureProvenance(bond2, 1));
     bond2.id = computeBoxId(bond2);
-    insertBox(bond2);
+    utxo.insertBox(bond2);
 
     const bond3 = makeBondBox({ inviterId: uid('dave'), value: 20n });
     Object.assign(bond3, fixtureProvenance(bond3, 1));
     bond3.id = computeBoxId(bond3);
-    insertBox(bond3);
+    utxo.insertBox(bond3);
 
-    const charlieBonds = getBondBoxes(uid('charlie'));
-    expect(charlieBonds).toHaveLength(2);
-    expect(charlieBonds[0]!.value).toBe(10n);
-    expect(charlieBonds[1]!.value).toBe(15n);
+    const charlieResult = utxo.getBondBoxesPage(uid('charlie'), { limit: 50, offset: 0 });
+    expect(charlieResult.rows).toHaveLength(2);
+    expect(charlieResult.count).toBe(2);
 
-    const daveBonds = getBondBoxes(uid('dave'));
-    expect(daveBonds).toHaveLength(1);
-    expect(daveBonds[0]!.value).toBe(20n);
+    const daveResult = utxo.getBondBoxesPage(uid('dave'), { limit: 50, offset: 0 });
+    expect(daveResult.rows).toHaveLength(1);
+    expect(daveResult.count).toBe(1);
 
-    // No bonds for unknown inviter
-    const none = getBondBoxes(uid('nobody'));
-    expect(none).toHaveLength(0);
+    const noneResult = utxo.getBondBoxesPage(uid('nobody'), { limit: 50, offset: 0 });
+    expect(noneResult.rows).toHaveLength(0);
+    expect(noneResult.count).toBe(0);
   });
 
   // --- consumeBox marks as spent --------------------------------------------

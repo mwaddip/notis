@@ -44,7 +44,6 @@ export {
   getRentEligibleCreditBoxes,
   getBondFor,
   getBondsInvitedAt,
-  getBondBoxes,
   getBondBoxesPage,
   getVouchEscrowsFor,
   getVouchEscrowsReleasableAt,
@@ -53,7 +52,6 @@ export {
   getUnspentPostLockBoxes,
   getPostLockBox,
   getPrunedLockCandidates,
-  getLikersForPost,
   getUnspentBoxes,
   insertBox,
   consumeBox,
@@ -145,7 +143,6 @@ export { loadAllPeers, putPeer, deletePeer, peerStorage } from './peers.js';
 
 export {
   getVouchBox,
-  getVouchesForTarget,
   getVouchesForTargetPage,
   getVouchesByVoucher,
   hasAnyActiveVouch,

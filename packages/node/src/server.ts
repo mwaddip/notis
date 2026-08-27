@@ -289,13 +289,15 @@ export function createApp(config: Config): express.Express {
   app.use(
     '/',
     utxoRoutes({
-      getKarmaBox: store.getKarmaBox,
-      getKarmaBoxes: store.getKarmaBoxes,
+      getKarmaValue: store.getKarmaValue,
+      getKarmaBoxesPage: store.getKarmaBoxesPage,
       getIdentityRecord: store.getIdentityRecord,
-      getCreditBoxes: store.getCreditBoxes,
-      getBondBoxes: store.getBondBoxes,
+      getCreditValue: store.getCreditValue,
+      getCreditBoxesPage: store.getCreditBoxesPage,
+      getBondBoxesPage: store.getBondBoxesPage,
       getCurrentHeight: store.getCurrentHeight,
       getUtxoEngineDeps: () => utxoEngineDeps,
+      decayCfg: decayConfig(),
     }),
   );
 

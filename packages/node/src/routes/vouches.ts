@@ -5,10 +5,11 @@ import { getNet } from '../services/net-instance.js';
 import { jsonToTx } from './json-to-tx.js';
 import { respondError } from './respond-error.js';
 import {
-  getVouchesForTarget,
+  getVouchesForTargetPage,
   getVouchesByVoucher,
   getVouchEscrowsFor,
 } from '../store/index.js';
+import { parsePage, isPageError } from './page.js';
 
 export interface VouchesDeps extends UtxoEngineDeps {
   castVouch(
@@ -120,14 +121,19 @@ export function createRouter(deps: VouchesDeps): Router {
     }
 
     if (target) {
+      const page = parsePage(req.query as Record<string, unknown>);
+      if (isPageError(page)) {
+        res.status(400).json({ error: 400, reason: page.error });
+        return;
+      }
       const targetBytes = new Uint8Array(Buffer.from(target, 'hex'));
-      const vouches = getVouchesForTarget(targetBytes);
+      const result = getVouchesForTargetPage(targetBytes, page);
       res.status(200).json({
-        vouches: vouches.map((v) => ({
+        vouches: result.rows.map((v) => ({
           voucherId: Buffer.from(v.voucherId).toString('hex'),
           targetId: Buffer.from(v.targetId).toString('hex'),
         })),
-        count: vouches.length,
+        count: result.count,
       });
       return;
     }

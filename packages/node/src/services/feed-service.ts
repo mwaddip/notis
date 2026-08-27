@@ -170,13 +170,11 @@ export class FeedService {
 
   queryPosts(opts: {
     author?: Uint8Array;
-    limit?: number;
-    offset?: number;
+    limit: number;
+    offset: number;
     viewer?: Uint8Array | null;
   }): Array<PostJson | WithdrawnJson> {
-    const limit = Math.min(opts.limit ?? 50, 100);
-    const offset = opts.offset ?? 0;
-    const posts = this.deps.queryPosts({ author: opts.author, limit, offset });
+    const posts = this.deps.queryPosts({ author: opts.author, limit: opts.limit, offset: opts.offset });
     return posts.map((post) => this.storedPostToJson(post, opts.viewer ?? null));
   }
 

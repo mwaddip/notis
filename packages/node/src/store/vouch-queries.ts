@@ -24,20 +24,6 @@ export function getVouchBox(
   return getBox(row.id) as VouchBox | null;
 }
 
-export function getVouchesForTarget(targetId: Uint8Array): VouchBox[] {
-  const db = getDb();
-  const rows = db
-    .prepare(
-      `SELECT id FROM utxo_boxes
-       WHERE box_type = 'vouch' AND spent_at_block IS NULL
-         AND json_extract(extra_data, '$.targetId') = ?`,
-    )
-    .all(pubkeyToHex(targetId)) as Array<{ id: string }>;
-  return rows
-    .map((r) => getBox(r.id))
-    .filter((b): b is VouchBox => b !== null && b.boxType === 'vouch');
-}
-
 // NODE_INTERFACE → Vouches
 const VOUCH_TARGET_WHERE =
   `box_type = 'vouch' AND spent_at_block IS NULL AND json_extract(extra_data, '$.targetId') = ?`;

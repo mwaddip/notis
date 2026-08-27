@@ -94,7 +94,7 @@ async function importUtxo() {
   return import('../../src/store/utxo.js');
 }
 
-/** The read path as server.ts wires it: counts and likers from like_records. */
+/** The read path as server.ts wires it: counts and likedByViewer from like_records. */
 async function importFeedReadPath() {
   const posts = await import('../../src/store/posts.js');
   const likes = await import('../../src/store/likes.js');

@@ -676,22 +676,6 @@ export function getBondsInvitedAt(maxInvitedAt: number, limit: number): BondBox[
   return rows.map((r) => rowToBox(r) as BondBox);
 }
 
-/**
- * Return all bond boxes associated with the given inviter.
- */
-export function getBondBoxes(inviterId: Uint8Array): BondBox[] {
-  const db = getDb();
-  const rows = db
-    .prepare(
-      `SELECT * FROM utxo_boxes
-       WHERE box_type = 'bond'
-         AND json_extract(extra_data, '$.inviterId') = ?`,
-    )
-    .safeIntegers()
-    .all(pubkeyToHex(inviterId)) as UtxoRow[];
-  return rows.map((r) => rowToBox(r) as BondBox);
-}
-
 // NODE_INTERFACE → UTXO
 const BOND_PAGE_WHERE =
   `box_type = 'bond' AND spent_at_block IS NULL AND json_extract(extra_data, '$.inviterId') = ?`;
@@ -711,24 +695,6 @@ export function getBondBoxesPage(
     .prepare(`SELECT COUNT(*) AS cnt FROM utxo_boxes WHERE ${BOND_PAGE_WHERE}`)
     .get(hex) as { cnt: number };
   return { rows: rows.map((r) => rowToBox(r) as BondBox), count: countRow.cnt };
-}
-
-/**
- * Return the hex-encoded liker IDs for everyone holding a like-record on
- * the given post (N4a — reads `like_records`, the source of truth since
- * per-block settlement). Used by the feed API to tell clients who has liked.
- * Ordered by liker id so the listing is a function of state, not row order.
- */
-export function getLikersForPost(targetPostId: string): string[] {
-  const db = getDb();
-  const rows = db
-    .prepare(
-      `SELECT liker_id FROM like_records
-       WHERE target_post_id = ?
-       ORDER BY liker_id`,
-    )
-    .all(targetPostId) as { liker_id: Buffer }[];
-  return rows.map((r) => r.liker_id.toString('hex'));
 }
 
 /**

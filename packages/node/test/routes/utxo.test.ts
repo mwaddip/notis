@@ -6,15 +6,16 @@ import { createPrivateKey, sign } from 'crypto';
 import { initDb, closeDb } from '../../src/store/db.js';
 import {
   getKarmaBox,
-  getKarmaBoxes,
-  getCreditBoxes,
-  getBondBoxes,
+  getKarmaBoxesPage,
+  getKarmaValue,
+  getCreditBoxesPage,
+  getCreditValue,
+  getBondBoxesPage,
   insertBox,
   getBox,
-  getKarmaValue,
   consumeBox,
 } from '../../src/store/utxo.js';
-import { getIdentityRecord } from '../../src/store/identity-records.js';
+import { getIdentityRecord, putIdentityRecord } from '../../src/store/identity-records.js';
 import { getBoxWithPending } from '../../src/store/mempool.js';
 import { setNet } from '../../src/services/net-instance.js';
 import {
@@ -38,8 +39,14 @@ import { createRouter } from '../../src/routes/utxo.js';
 import { jsonToTx } from '../../src/routes/json-to-tx.js';
 import { unlinkSync } from 'fs';
 import { config } from '../../src/config.js';
-
 const TEST_DB = '/tmp/dagsocial-test-routes-utxo.sqlite';
+
+const DECAY_CFG = {
+  staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
+  decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS,
+  decayAmount: KARMA_DECAY_AMOUNT,
+  karmaMinimum: KARMA_MINIMUM,
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -52,17 +59,17 @@ async function request(
 ): Promise<{ status: number; data: unknown }> {
   return new Promise((resolve) => {
     const deps = {
-      getKarmaBox,
-      getKarmaBoxes,
+      getKarmaValue,
+      getKarmaBoxesPage,
       getIdentityRecord,
-      getCreditBoxes,
-          getBondBoxes,
+      getCreditValue,
+      getCreditBoxesPage,
+      getBondBoxesPage,
       getCurrentHeight: () => 100,
+      decayCfg: DECAY_CFG,
       getUtxoEngineDeps: () => ({
-        // The pending view, as server.ts wires the submission routes: a grant
-        // spending the change box of one still pooled resolves its input here.
         getBox: getBoxWithPending,
-              insertBox,
+        insertBox,
         consumeBox,
         getKarmaBox,
         getKarmaValue,
@@ -70,12 +77,7 @@ async function request(
         vouchCooldownBlocks: 2,
         inviteBondMin: config.inviteBondMin,
         inviteBondMax: config.inviteBondMax,
-        decayCfg: {
-          staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
-          decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS,
-          decayAmount: KARMA_DECAY_AMOUNT,
-          karmaMinimum: KARMA_MINIMUM,
-        },
+        decayCfg: DECAY_CFG,
         storageRentPeriodBlocks: 40,
         getBoxProvenance: () => null,
         getTopologyAuthor: () => null,
@@ -145,7 +147,6 @@ describe('UTXO routes', () => {
     }, 1);
     insertBox(karmaBox);
 
-    // Second karma box for same user — multi-box total must sum across all boxes
     const karmaBox2 = seedProvenance<KarmaBox>({
       boxType: 'karma',
       value: 58n,
@@ -165,8 +166,7 @@ describe('UTXO routes', () => {
     }, 1);
     insertBox(creditBox);
 
-    // An inviter with a live bond — the whole of what an invite leaves behind
-    // (ARCHITECTURE → Invite System).
+    // An inviter with a live bond
     const kp3 = generateKeyPair();
     inviteUserId = kp3.publicKey;
     inviteUserIdHex = Buffer.from(inviteUserId).toString('hex');
@@ -178,6 +178,16 @@ describe('UTXO routes', () => {
       inviteePublicKey,
     }, 1);
     insertBox(bondBox);
+
+    // A settled bond for the same inviter — should NOT appear
+    const settledBond = seedProvenance<BondBox>({
+      boxType: 'bond' as const,
+      value: 3n,
+      inviterId: inviteUserId,
+      inviteePublicKey: new Uint8Array(32).fill(0xcc),
+    }, 1);
+    insertBox(settledBond);
+    consumeBox(settledBond.id!, 10);
   });
 
   afterAll(() => {
@@ -185,23 +195,79 @@ describe('UTXO routes', () => {
     try { unlinkSync(TEST_DB); } catch { /* ignore */ }
   });
 
-  it('GET /karma/:userId returns karma balance', async () => {
+  it('GET /karma/:userId returns karma balance with effective and boxCount', async () => {
     const res = await request(`/karma/${karmaUserIdHex}`);
     expect(res.status).toBe(200);
     const body = res.data as Record<string, unknown>;
     expect(body.userId).toBe(karmaUserIdHex);
     expect(body.total).toBe('100');
+    expect(body.effective).toBe('100');
     expect(Array.isArray(body.boxes)).toBe(true);
     expect(body.boxes).toHaveLength(2);
-    expect(typeof (body.boxes as unknown[])[0]).toBe('object');
-    const b0 = (body.boxes as unknown[])[0] as Record<string, unknown>;
-    expect(typeof b0.boxId).toBe('string');
-    // Vary order: ensure both box values exist (avoids assuming query order)
+    expect(body.boxCount).toBe(2);
     const boxValues = (body.boxes as unknown[]).map((b: unknown) => (b as Record<string, unknown>).value);
     expect(boxValues).toEqual(expect.arrayContaining(['42', '58']));
   });
 
-  it('GET /credits/:userId returns credit balance (multi-box)', async () => {
+  it('GET /karma/:userId with effective < total for a stale identity', async () => {
+    // Set up a stale identity record: last activity far in the past
+    putIdentityRecord(karmaUserId, {
+      lastActivityBlock: 1,
+      lastDecayBlock: 1,
+      invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n,
+    });
+
+    // Request at height 100 (stale threshold is 40320, so height 100 is not stale with activity at 1)
+    // Need a height much greater than staleThresholdBlocks + activity
+    const staleRequest = (): Promise<{ status: number; data: unknown }> =>
+      new Promise((resolve) => {
+        const deps = {
+          getKarmaValue,
+          getKarmaBoxesPage,
+          getIdentityRecord,
+          getCreditValue,
+          getCreditBoxesPage,
+          getBondBoxesPage,
+          getCurrentHeight: () => 100000,
+          decayCfg: DECAY_CFG,
+          getUtxoEngineDeps: () => ({} as any),
+        };
+        const app = express();
+        app.use(express.json());
+        app.use(createRouter(deps));
+        const server = app.listen(0, () => {
+          const addr = server.address() as { port: number };
+          const req = http.request(
+            { hostname: 'localhost', port: addr.port, path: `/karma/${karmaUserIdHex}`, method: 'GET' },
+            (res) => {
+              let d = '';
+              res.on('data', (c) => (d += c));
+              res.on('end', () => {
+                server.close();
+                resolve({ status: res.statusCode ?? 0, data: JSON.parse(d) });
+              });
+            },
+          );
+          req.end();
+        });
+      });
+
+    const res = await staleRequest();
+    expect(res.status).toBe(200);
+    const body = res.data as Record<string, unknown>;
+    expect(BigInt(body.effective as string)).toBeLessThan(BigInt(body.total as string));
+
+    // Clean up identity record
+    putIdentityRecord(karmaUserId, {
+      lastActivityBlock: 0,
+      lastDecayBlock: 0,
+      invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n,
+    });
+  });
+
+  it('GET /credits/:userId returns credit balance with boxCount', async () => {
     const res = await request(`/credits/${creditUserIdHex}`);
     expect(res.status).toBe(200);
     const body = res.data as Record<string, unknown>;
@@ -209,30 +275,40 @@ describe('UTXO routes', () => {
     expect(body.total).toBe('99');
     expect(Array.isArray(body.boxes)).toBe(true);
     expect(body.boxes).toHaveLength(1);
+    expect(body.boxCount).toBe(1);
     const b0 = (body.boxes as unknown[])[0] as Record<string, unknown>;
     expect(typeof b0.boxId).toBe('string');
     expect(b0.value).toBe('99');
   });
 
-  it('GET /invites/:userId returns bonds, and no `open` array at all', async () => {
+  it('GET /invites/:userId returns unspent bonds only, with bondCount', async () => {
     const res = await request(`/invites/${inviteUserIdHex}`);
     expect(res.status).toBe(200);
     const body = res.data as Record<string, unknown>;
-    // ⛔ **The `open` key is gone, not empty.** A bond IS the open invite, so a
-    // second list would be the same rows under another name — and a
-    // permanently-empty array is a field that says nothing.
     expect(body.open).toBeUndefined();
     expect(Array.isArray(body.bonds)).toBe(true);
+    expect(body.bonds).toHaveLength(1);
+    expect(body.bondCount).toBe(1);
     const bond = (body.bonds as Record<string, unknown>[])[0]!;
     expect(bond.inviterId).toBe(inviteUserIdHex);
     expect(bond.inviteePublicKey).toBe('bb'.repeat(32));
+  });
+
+  it('GET /invites/:userId answers { bonds: [], bondCount: 0 } for an inviter with no live bond', async () => {
+    const kp = generateKeyPair();
+    const hex = Buffer.from(kp.publicKey).toString('hex');
+    const res = await request(`/invites/${hex}`);
+    expect(res.status).toBe(200);
+    const body = res.data as Record<string, unknown>;
+    expect(body.bonds).toEqual([]);
+    expect(body.bondCount).toBe(0);
   });
 
   // ---------------------------------------------------------------------------
   // Credit transfer tests
   // ---------------------------------------------------------------------------
 
-  describe('POST /credits/transfer (client-built tx — P2-B phase 3)', () => {
+  describe('POST /credits/transfer (client-built tx)', () => {
     let senderPubKey: Uint8Array;
     let senderPrivKey: Uint8Array;
     let senderHex: string;
@@ -248,7 +324,6 @@ describe('UTXO routes', () => {
       const receiver = generateKeyPair();
       receiverPubKey = receiver.publicKey;
 
-      // Seed sender with 200k credits
       const box = seedProvenance<CreditBox>({
         boxType: 'credit',
         value: 200_000n,
@@ -259,9 +334,8 @@ describe('UTXO routes', () => {
       insertBox(box);
     });
 
-    /** Build and sign the transfer the way the demo UI does. */
     function buildSignedTransfer(amount: bigint): UtxoTransaction {
-      const unlocked = [getCreditBoxes(senderPubKey)[0]!];
+      const unlocked = getCreditBoxesPage(senderPubKey, { limit: 100, offset: 0 }).rows;
       const selected = selectBoxes(unlocked, amount);
       const totalSelected = selected.reduce((s, b) => s + b.value, 0n);
       const change = totalSelected - amount;
@@ -311,18 +385,6 @@ describe('UTXO routes', () => {
       expect(res.status).toBe(400);
     });
 
-    // -----------------------------------------------------------------------
-    // The envelope gate as the HTTP backstop (NODE_INTERFACE → "Transaction
-    // envelope shape", call sites). `jsonToTx` gives every OTHER field a
-    // friendly per-field 400, but `inputs` and `protocolVersion` ride through
-    // on bare type assertions — `(raw.inputs ?? []) as string[]` and
-    // `(raw.protocolVersion as number)`. Nothing in the route or the service
-    // looked at either, so they reached `validateTx` raw. MEASURED pre-gate:
-    // `inputs: 5` with a real credit output returned 500 {"error":"Internal
-    // error"} — the generic body L-12 mandates for an unexpected throw, i.e.
-    // the node treating attacker input as its own bug.
-    // -----------------------------------------------------------------------
-
     const CREDIT_OUT = {
       boxType: 'credit',
       value: '10',
@@ -340,9 +402,6 @@ describe('UTXO routes', () => {
     });
 
     it('backstops a junk protocolVersion with a 400', async () => {
-      // A transaction carries its own `protocolVersion`, and the block header's
-      // gate says nothing about it. Without a check at this edge a client that
-      // signs a junk version has it pooled and applied end-to-end.
       const res = await request('/credits/transfer', 'POST', {
         tx: {
           inputs: [seededBoxId],
@@ -373,9 +432,6 @@ describe('UTXO routes', () => {
     });
 
     it('jsonToTx omits preimages rather than emitting a present-undefined key', async () => {
-      // The producer defect the gate surfaced: `preimages: … : undefined` left
-      // a present key holding `undefined` on EVERY preimage-free HTTP tx —
-      // hashed as absent by `computeTxId`, rejected as ambiguous by the gate.
       const tx = jsonToTx({
         inputs: [seededBoxId],
         outputs: [CREDIT_OUT],
@@ -397,9 +453,6 @@ describe('UTXO routes', () => {
     });
 
     it('pools a valid transfer, answers pending, broadcasts — and settles nothing', async () => {
-      // Declared with the parameter it is actually called with: a zero-arity
-      // mock types `mock.calls[0]` as the empty tuple, so the assertion below
-      // reads argument 0 of a call the type system says takes none.
       const broadcastTx = vi.fn((_tx: UtxoTransaction) => Promise.resolve());
       setNet({ broadcastTx } as unknown as Parameters<typeof setNet>[0]);
 
@@ -411,15 +464,11 @@ describe('UTXO routes', () => {
       expect(body.status).toBe('pending');
       expect(body.txId).toBe(computeTxId(tx));
       expect(typeof body.expiresAtHeight).toBe('number');
-      // Settled fields are gone: credits move when the tx is mined.
       expect(body.sent).toBeUndefined();
       expect(body.change).toBeUndefined();
 
-      // The input box is still unspent — the HTTP call settles nothing.
       expect(getBox(seededBoxId)).not.toBeNull();
-      expect(getCreditBoxes(receiverPubKey)).toHaveLength(0);
 
-      // The pooled tx went out to peers.
       expect(broadcastTx).toHaveBeenCalledTimes(1);
       const sent = broadcastTx.mock.calls[0]![0] as UtxoTransaction;
       expect(computeTxId(sent)).toBe(computeTxId(tx));

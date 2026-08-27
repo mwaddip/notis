@@ -756,7 +756,7 @@ describe('posts store', () => {
       getBlockCreatedAt: () => null,
     });
 
-    const posts = feedService.queryPosts({});
+    const posts = feedService.queryPosts({ limit: 50, offset: 0 });
     const withdrawn = posts.find((p) => (p as any).id === postId);
     expect(withdrawn).toBeDefined();
     expect((withdrawn as any).kind).toBe('withdrawn');

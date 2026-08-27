@@ -180,7 +180,7 @@ describe('feed-service', () => {
   it('every path that serves a post serves its status', () => {
     confirmPost(liveRootId, 42, 0);
 
-    const listed = feedService.queryPosts({ author: authorId });
+    const listed = feedService.queryPosts({ author: authorId, limit: 50, offset: 0 });
     expect((listed.find((p) => p.id === liveRootId) as PostJson).status).toBe('confirmed');
     expect((listed.find((p) => p.id === liveReplyId) as PostJson).status).toBe('pending');
 
