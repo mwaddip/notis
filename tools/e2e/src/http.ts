@@ -127,7 +127,14 @@ export interface PrunedResponse {
   compactedAtBlockHeight: number;
 }
 
-export type GetPostResponse = PostResponse | StumpResponse | PrunedResponse;
+export interface WithdrawnResponse {
+  kind: 'withdrawn';
+  id: string;
+  author: string;
+  withdrawnAtHeight: number;
+}
+
+export type GetPostResponse = PostResponse | StumpResponse | PrunedResponse | WithdrawnResponse;
 
 export function isPost(p: GetPostResponse): p is PostResponse {
   return !('kind' in p);
@@ -139,6 +146,10 @@ export function isStump(p: GetPostResponse): p is StumpResponse {
 
 export function isPruned(p: GetPostResponse): p is PrunedResponse {
   return 'kind' in p && p.kind === 'pruned';
+}
+
+export function isWithdrawn(p: GetPostResponse): p is WithdrawnResponse {
+  return 'kind' in p && p.kind === 'withdrawn';
 }
 
 export async function getPost(
@@ -200,6 +211,15 @@ export async function postPrune(
 ): Promise<{ status: string; txId: string; postId: string; replyCount: number }> {
   const data = await jsonPost(node, `/posts/${postId}/prune`, { tx: txJson });
   return data as { status: string; txId: string; postId: string; replyCount: number };
+}
+
+export async function postPostWithdraw(
+  node: NodeProcess,
+  postId: string,
+  txJson: Record<string, unknown>,
+): Promise<{ status: string; txId: string; postId: string }> {
+  const data = await jsonPost(node, `/posts/${postId}/withdraw`, { tx: txJson });
+  return data as { status: string; txId: string; postId: string };
 }
 
 export async function postCreditTransfer(

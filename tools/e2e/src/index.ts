@@ -9,6 +9,7 @@ export {
   deleteVouch,
   getVouches,
   postPrune,
+  postPostWithdraw,
   postCreditTransfer,
   getKarma,
   getCredits,
@@ -17,7 +18,9 @@ export {
   getBlockCurrent,
   getStatus,
   NodeError,
+  isWithdrawn,
   type PostResponse,
+  type WithdrawnResponse,
 } from './http.js';
 export { signAndRender, type BoxRef, type BuiltTx } from './tx/render.js';
 export { buildInviteTx } from './tx/invite.js';
@@ -26,3 +29,4 @@ export { buildLikeTx } from './tx/like.js';
 export { buildVouchTx, buildUnvouchTx } from './tx/vouch.js';
 export { buildCreditTransferTx } from './tx/credit.js';
 export { buildPruneTx } from './tx/prune.js';
+export { buildPostWithdrawTx } from './tx/post-withdraw.js';
