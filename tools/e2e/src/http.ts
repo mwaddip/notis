@@ -208,9 +208,9 @@ export async function postPrune(
   node: NodeProcess,
   postId: string,
   txJson: Record<string, unknown>,
-): Promise<{ status: string; txId: string; postId: string; replyCount: number }> {
+): Promise<{ status: string; txId: string; postId: string }> {
   const data = await jsonPost(node, `/posts/${postId}/prune`, { tx: txJson });
-  return data as { status: string; txId: string; postId: string; replyCount: number };
+  return data as { status: string; txId: string; postId: string };
 }
 
 export async function postPostWithdraw(
