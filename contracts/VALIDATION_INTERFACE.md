@@ -875,11 +875,6 @@ aligns 1:1 with `utxoTxIds`, each element a byte view of at most
 
 ### `verifyPruneCommitDomains`
 
-> ⚠ **AHEAD OF CODE — one field, 2026-08-27 (D5).** The tree's domain is three fields — the
-> `rootPostHash`, a `subtreePostIds` array with no repeated id, a 32-byte `subtreeMerkleRoot` —
-> and the repeat check and the byte-view check below belong to those two. This section describes
-> the D5 branch (`TYPES_INTERFACE` → Layout — PruneCommit).
-
 **The single statement of a `PruneCommit`'s structural domain**, and the sibling of
 `verifyPostCommitDomains` and `verifyPostWithdrawCommitDomains`. An object whose `rootPostHash` is
 a 64-char lowercase-hex string, and nothing else: the subtree is derived at apply, so the payload
@@ -898,10 +893,6 @@ that types the elements. The last element is the settlement transaction, and pos
 the whole of how it is known here (`NODE_INTERFACE` → The settlement transaction); its bound is its
 own because its size is derived from the body and from chain state rather than chosen by a user
 (`TYPES_INTERFACE` → Size caps).
-
-> ⚠ **AHEAD OF CODE — the last element's own bound, 2026-08-27 (D5).** The tree's loop weighs
-> every element, the last included, against `MAX_TX_BYTES`. The two-bound form above describes the
-> D5 branch.
 
 ⛔ **Without it, `MAX_TX_BYTES` would not be a consensus bound at all.** `verifyTxStructure` carries
 the same limit but has exactly one production caller — net's gossip `tx` validator — and

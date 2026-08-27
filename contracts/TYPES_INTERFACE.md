@@ -246,10 +246,6 @@ could be presented as `nodeHash(left,right)` for a forged inclusion proof
 > remnant-bounded by the live concept that carries the word, so each holds while that concept does.
 > `subblock` is retired and free: no live identifier carries the word.
 >
-> > ⚠ **AHEAD OF CODE — `stump` retires with D5, 2026-08-27.** The tree's prune payload still
-> > carries a subtree Merkle root over `leafHash('stump', postId)` leaves, so `stump` is live there
-> > and `merkle.ts`'s mirror says two. Both follow this list when the D5 branch lands.
->
 > ⛔ **A live/retired list restated in two places is the drift class this file names
 > everywhere else; there is one list and it is here.**
 > **Adding a leaf domain that begins with a non-printable byte silently reopens
@@ -1161,10 +1157,6 @@ recompute the hash and check the signature.
 
 ## Stump Types (`stump.ts`)
 
-> ⚠ **AHEAD OF CODE — `PruneCommit` is one field and `PruneIntent` is gone, 2026-08-27 (D5).**
-> The tree's `PruneCommit` carries `subtreePostIds` and `subtreeMerkleRoot`, and `stump.ts` still
-> defines and exports a `PruneIntent` nothing reads. This block describes the D5 branch.
-
 ```
 PruneCommit {
   rootPostHash: PostId               // the subtree is derived from block_topology at apply — Layout — PruneCommit
@@ -1608,10 +1600,6 @@ anywhere: not in `PruneCommit` or `Stump`.
 
 ### Layout — PruneCommit
 
-> ⚠ **AHEAD OF CODE — one field, 2026-08-27 (D5).** The tree writes
-> `b32(rootPostHash) ‖ arr(subtreePostIds, b32) ‖ b32(subtreeMerkleRoot)` and checks the set and
-> the root at submit and at apply. This section describes the D5 branch.
-
 **The prune payload carried by a karma transaction** (`UtxoTransaction.prune`), written into
 `txIdBytes` field 6 through `pruneFieldBytes`:
 
@@ -1766,7 +1754,7 @@ from this table — a use that reads every cell as an instruction rather than as
 > | boxType `'like'` | the live illegal-transition rule (`utxo-engine`'s like clause) and its reject vectors |
 > | leaf domain `'coinbase'` | the live coinbase concept (`coinbase-split.ts`, `COINBASE_*` constants) — the string is permanently collision-prone while the concept lives |
 > | leaf domain `'prune'` | the live prune concept (`PruneCommit`, `pruneFieldBytes`, `PrunedTombstone`, `executePrune`, `prunesOf`, `routes/prune-withdraw.ts`) — a prune is a transaction, not a Merkle leaf, and the string stays collision-prone while the concept lives |
-> | leaf domain `'stump'` | the live stump concept (`Stump`, `dag_stumps`, `insertStump`, `stump-engine.ts`, the `'stump'` resolution shape) — a stump is derived state with no Merkle leaf, and the string stays collision-prone while the concept lives. ⚠ **AHEAD OF CODE, 2026-08-27 (D5)**: the tree's prune payload still hashes `'stump'` leaves; the row holds from the D5 branch |
+> | leaf domain `'stump'` | the live stump concept (`Stump`, `dag_stumps`, `insertStump`, `stump-engine.ts`, the `'stump'` resolution shape) — a stump is derived state with no Merkle leaf, and the string stays collision-prone while the concept lives |
 
 > ## ⛔ TAG 2 IS A TRACKED HOLE
 >
@@ -2734,11 +2722,6 @@ export const MAX_BLOCK_BODY_BYTES = 2_000_000;   // consensus — encoded UtxoTx
 export const MAX_TX_BYTES = 10_000;              // consensus — encoded UtxoTransaction; every body element but the last
 export const MAX_SETTLEMENT_BYTES = 100_000;     // consensus — the encoded settlement transaction, the body's last element
 ```
-
-> ⚠ **AHEAD OF CODE — the settlement's own bound, 2026-08-27 (D5).** The tree weighs the body's
-> last element against `MAX_TX_BYTES` like every other, and no constant named `MAX_SETTLEMENT_BYTES`
-> or `MAX_*_PER_BLOCK` exists. Everything in this section and in → Settlement caps that names one
-> describes the D5 branch. The values are provisional until the constants session.
 
 Consensus bounds on **weight**, checked in `@dagsocial/validation` — the body by
 `verifyOrderingBlockStructure`; a user transaction by `verifyTxStructure` on the relay path and

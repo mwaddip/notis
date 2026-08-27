@@ -372,9 +372,6 @@ is monotone for the same reason the first is. The state-driven legs are capped b
 cannot push an empty body's settlement over the bound, so the loop always terminates with a legal
 settlement, and a size refusal at submit is unreachable (`MINING_INTERFACE` → Template and submit).
 
-> ⚠ **AHEAD OF CODE, 2026-08-27 (D5).** The tree's loop measures the tree against the body budget
-> only; a settlement above `MAX_TX_BYTES` is first refused at submit, after the PoW is spent.
-
 ### Confirmed-entry cleanup reaches every row, and it is a lookup rather than a scan
 
 **Two paths clear a confirmed entry.** A block this node produced is cleaned by rowid

@@ -417,7 +417,7 @@ invites, vouches, credits, prune).
 
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
-| `POST` | `/posts/:id/prune` | `{ tx }` — a prune transaction, JSON-encoded like every other route's (`jsonToTx`) | `{ status: "submitted", txId: hex, postId: hex }` (201) — no `replyCount`: the count is a property of apply, read off the stump. ⚠ AHEAD OF CODE 2026-08-27 (D5): the tree answers `replyCount` read off the payload | 400 if the payload is absent, the root is unconfirmed or confirmed in the current block, or `validateTx` refuses it; 404 if the post is unknown; 409 on a pending-spend conflict; 503 if the pool is full |
+| `POST` | `/posts/:id/prune` | `{ tx }` — a prune transaction, JSON-encoded like every other route's (`jsonToTx`) | `{ status: "submitted", txId: hex, postId: hex }` (201) — no `replyCount`: the count is a property of apply, read off the stump | 400 if the payload is absent, the root is unconfirmed or confirmed in the current block, or `validateTx` refuses it; 404 if the post is unknown; 409 on a pending-spend conflict; 503 if the pool is full |
 | `POST` | `/posts/:id/withdraw` | `{ tx }` — a withdrawal transaction, JSON-encoded like every other route's (`jsonToTx`) | `{ status: "submitted", txId: hex, postId: hex }` (201) | 400 if the payload is absent, the post is unconfirmed or confirmed in the current block, the signer is not its author, the post is already withdrawn, or `validateTx` refuses it; 404 if the post is unknown; 409 on a pending-spend conflict; 503 if the pool is full |
 
 **Prune flow:**
@@ -436,8 +436,6 @@ invites, vouches, credits, prune).
    no `replyCount`, which is a property of apply and is read off the stump.
    > ⚠ **The route checks topology, not the DAG.** A pending post has a `dag_posts` row and no
    > topology row, so a DAG-based read would admit a prune that consensus must reject.
-   > ⚠ **AHEAD OF CODE, 2026-08-27 (D5).** The tree's route also checks the payload's set and
-   > Merkle root and answers with `replyCount` read off the payload.
 4. At block application (§8c): the transaction's own validation has already bound authorship
    (`inputKarma.owner` against the root's topology author) and covered the payload by
    signature. What remains is the **maturity bind**, the derived set, the vest of this block's
@@ -1576,13 +1574,6 @@ There is **no other legal bond or invite shape**. In particular:
 
 ### Prune transactions
 
-> ⚠ **AHEAD OF CODE — the derived set and the deferred locks, 2026-08-27 (D5).** The tree's
-> payload carries `subtreePostIds` and `subtreeMerkleRoot`, §8c verifies both against topology
-> and rejects the block on a mismatch, and the prune's block settles every lock in the subtree
-> through `planPostLockSettlement`. The bullets below that describe a one-field payload, a
-> derived set, the in-block vest and the marked topology rows describe the D5 branch; the
-> release leg is → The settlement transaction.
-
 - **A prune is a transaction, and that is the whole of its carriage.** It is a
   karma **self-transfer** — all-karma inputs sharing one owner, exactly one karma
   output, total output equal to total input — carrying a `PruneCommit` payload
@@ -1698,8 +1689,6 @@ There is **no other legal bond or invite shape**. In particular:
   transaction), and a lock a withdrawal consumed is spent and is never a
   candidate. Two withdrawals of one post in one block are refused above; nothing
   else can name one lock twice.
-  > ⚠ **AHEAD OF CODE, 2026-08-27 (D5).** The tree's prune pass settles its locks in-block and
-  > skips the claimed ones; this bullet describes the D5 branch.
 - **The vest is folded into the plan for a withdrawal.** A lock being settled
   releases what this block's likes earned before the remainder is burned, as a
   refund to the lock's owner with the pool figure reduced by the same amount — no
@@ -1733,8 +1722,7 @@ There is **no other legal bond or invite shape**. In particular:
   `MAX_BOND_SETTLEMENTS_PER_BLOCK` eligible bonds per block, ascending
   `(invitedAtBlock, box id)`, and a bond still waiting settles against the
   counter as it stands in the block that takes it (`TYPES_INTERFACE` →
-  Settlement caps; ⚠ AHEAD OF CODE 2026-08-27 (D5): the tree settles every
-  bond at exactly the deadline height). The vested amount is
+  Settlement caps). The vested amount is
   `min(floor(IdentityRecord.lifetimeLikesReceived / INVITE_BOND_VEST_PER_LIKES), bond.value)`,
   and the remainder
   burns regardless of what the invitee did otherwise. No karma balance is
@@ -2323,11 +2311,6 @@ the karma pool, the emission box and the treasury box, and the only consumer of 
 | **Consumes, in this order** | the emission box (when this height releases) · the treasury box (when this block accrues to it) · every marker box the block's like transactions emitted, in committed transaction order · the carry box of every author the block credits, ascending author hex · **at most `MAX_BOND_SETTLEMENTS_PER_BLOCK`** `BondBox`es whose invitee's `invitedAtBlock` is at or past `height − inviteProbationBlocks` in pre-body state, ascending `(invitedAtBlock, box id)` · **at most `MAX_ESCROW_RETURNS_PER_BLOCK`** `VouchEscrowBox`es at or past their `releaseAtBlock` in pre-body state, ascending `(releaseAtBlock, box id)` · the karma boxes decay charges · the locks a withdrawal transaction names, in committed transaction order · **at most `MAX_POST_LOCK_RELEASES_PER_BLOCK`** `PostLockBox`es whose post's `block_topology` row is marked pruned, in pre-body state, ascending `(pruned_at_height, post_id)` · the karma pool box (when this block draws or returns) · every `FeeBox` the body's transactions created, in committed transaction order |
 | **Emits, in this order** | the successors of the three protocol boxes — emission, treasury, karma pool · the invite grants · like payouts and carry successors · the vested part of each settling bond, back to its inviter · each released escrow's value, back to its owner · decay replacements · withdrawal refunds · post-lock releases, one karma output per owner ascending owner hex · the coinbase's credit outputs |
 
-> ⚠ **AHEAD OF CODE — the three capped legs, 2026-08-27 (D5).** The tree settles every bond
-> invited at exactly `height − inviteProbationBlocks`, every releasable escrow, and every lock a
-> prune's payload names, uncapped and in the prune's own block. The capped, carried-forward form
-> in both rows describes the D5 branch; the caps are `TYPES_INTERFACE` → Settlement caps.
-
 ⛔ **A leg the body does not drive is capped, and the remainder waits.** Bonds, escrows and
 post-lock releases are read from chain state, so no producer can shrink them by selecting a
 smaller body; each takes at most its cap per block in the stated total order — the order key is
@@ -2346,8 +2329,8 @@ empty body fits `MAX_SETTLEMENT_BYTES`, so a block exists at every height.
 ⚠ **The escrow leg reads PRE-BODY state, and returns at or past `releaseAtBlock`, not at it.**
 The settlement of height `h` consumes **at most `MAX_ESCROW_RETURNS_PER_BLOCK`** of the unspent
 `VouchEscrowBox`es with `releaseAtBlock <= h` that exist in the state the block builds on, ascending
-`(releaseAtBlock, box id)` — the rest stay eligible (`TYPES_INTERFACE` → Settlement caps; ⚠ AHEAD OF
-CODE 2026-08-27 (D5): the tree consumes every one, ascending box id) — and emits each one's value to its `owner`
+`(releaseAtBlock, box id)` — the rest stay eligible (`TYPES_INTERFACE` → Settlement caps) — and emits
+each one's value to its `owner`
 as karma (`nonActivity: true`) — emitting nothing for a value of zero, like every karma leg, so a
 zero-value escrow is consumed without an output (unreachable on a valid chain: the cast pins every
 stake at `VOUCH_KARMA_AMOUNT`). The body can *create* an escrow — an unvouch of a vouch held longer
@@ -3377,7 +3360,6 @@ BlockJournal {
   prunedTopologyRows: string[]     // the post ids whose block_topology rows §8c marked pruned —
                                    // inverse: clear pruned_at_height and pruned_root. The rows
                                    // themselves survive a prune; only the marks are this block's.
-                                   // ⚠ AHEAD OF CODE 2026-08-27 (D5) — the tree has no marks
 }
 ```
 The field names are the `journal_cbor` keys: the journal is the node's local format, with no

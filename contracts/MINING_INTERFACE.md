@@ -279,9 +279,7 @@ that holds no template, so the stability rule below is untouched.
 and the rebuilt settlement against `MAX_SETTLEMENT_BYTES` before the template exists
 (`MEMPOOL_INTERFACE` → The fill budget is bytes; `getPendingEntries` is a count), so the block
 `verifyOrderingBlockStructure` weighs at submit is one the fill already fitted; the rejected-body
-loop above is for a body the **mutation phase** refuses. ⚠ **AHEAD OF CODE, 2026-08-27 (D5)**: the
-tree's fill does not weigh the settlement, so a settlement above `MAX_TX_BYTES` — some 310 like
-markers' worth — is mined, refused at submit, and its rows evicted.
+loop above is for a body the **mutation phase** refuses.
 
 **Holding one and serving one are separate**, and 404 is routine again for the second: a node that has
 not yet met its peers withholds the template it holds. See *The peer-readiness gate* below. **A 404

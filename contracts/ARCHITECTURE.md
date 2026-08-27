@@ -810,10 +810,6 @@ Stump {
    subtree of any size prunes in one block and its locks drain at the cap
    (NODE_INTERFACE → The settlement transaction)
 
-> ⚠ **AHEAD OF CODE — steps 1, 4, 6–8, 2026-08-27 (D5).** The tree's client walks the subtree
-> and builds a Merkle root, the node checks both at submit and at apply, and the prune's own block
-> settles every lock. The list describes the D5 branch.
-
 No validator attestation is needed — the author's signature authorizes the
 prune, and the settlement is deterministically computable from UTXO state.
 
@@ -1188,9 +1184,6 @@ INVITE_PROBATION_BLOCKS`, and reads one thing:
 ascending `(invitedAtBlock, box id)`; a bond still waiting settles against the counter as it
 stands in the block that takes it, so a backlog of `n` gives an invitee up to ⌈`n` / cap⌉ extra
 blocks of likes — a bounded delay, never a skipped settlement.
-
-> ⚠ **AHEAD OF CODE, 2026-08-27 (D5).** The tree settles every bond at exactly the deadline
-> height, uncapped; the capped, at-or-past form describes the D5 branch.
 
 | Scenario | Bond karma | Significance |
 |----------|------------|--------------|
