@@ -672,6 +672,10 @@ function pruneFieldBytes(prune) {
   ]);
 }
 
+function postWithdrawFieldBytes(pw) {
+  return b32Hex(pw.postId, 32);
+}
+
 // ===========================================================================
 // canonicalBoxBytes — the single box→bytes rule both id functions use
 // ===========================================================================
@@ -823,6 +827,7 @@ const TX_ID_DOMAIN = encoder.encode('dagsocial/tx-id/1');
  *   | 4 | likeTarget      | opt(b32)                                     |
  *   | 5 | post            | opt(postFieldBytes)                          |
  *   | 6 | prune           | opt(pruneFieldBytes)                         |
+ *   | 7 | postWithdraw    | opt(postWithdrawFieldBytes)                   |
  *
  * Three properties this layout secures, each of which a bare concatenation
  * would not (TYPES_INTERFACE → Layout — UtxoTransaction):
@@ -840,7 +845,7 @@ const TX_ID_DOMAIN = encoder.encode('dagsocial/tx-id/1');
  *
  * Signatures are absent and stay absent: they are Ed25519 *over* this id.
  *
- * ⛔ **SIX FIELDS, AND THE COUNT IS LOAD-BEARING.** `signTx` signs whatever this
+ * ⛔ **SEVEN FIELDS, AND THE COUNT IS LOAD-BEARING.** `signTx` signs whatever this
  * returns, so a field here that the node does not write makes the browser sign
  * an id the node never computes — and **every transaction this page builds is
  * rejected**, with nothing in the repo able to see it (NODE_INTERFACE → the
@@ -861,6 +866,7 @@ function computeTxId(tx) {
       post.type,
     )),
     opt(tx.prune, (prune) => pruneFieldBytes(prune)),
+    opt(tx.postWithdraw, (pw) => postWithdrawFieldBytes(pw)),
   ]);
   const hash = blake2b(combined, null, 64).slice(0, 32);
   return buf2hex(hash);
