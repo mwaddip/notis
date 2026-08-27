@@ -13,6 +13,7 @@ function header(powTargetBits: number): BlockHeader {
     powNonce: 0,
     powTargetBits,
     createdAt: 0,
+    interlinkRoot: '00'.repeat(32),
   };
 }
 

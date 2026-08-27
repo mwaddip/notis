@@ -5,9 +5,10 @@ import {
   blockHash,
   cumulativeWork,
   blockWork,
+  level,
 } from '../src/index.js';
 import type { BlockHeader } from '@dagsocial/types';
-import { PROTOCOL_VERSION } from '@dagsocial/types';
+import { PROTOCOL_VERSION, interlinkRoot, updateInterlinks } from '@dagsocial/types';
 
 // ---------------------------------------------------------------------------
 // Solver — the shape `pow-predicate.test.ts` and `node/test/helpers.ts` use:
@@ -36,6 +37,7 @@ function makeHeader(overrides: Partial<BlockHeader> & { height: number; prevBloc
     powNonce: 0,
     powTargetBits: DEVNET_TARGET,
     createdAt: 0,
+    interlinkRoot: '00'.repeat(32),
     ...overrides,
   };
 }
@@ -49,17 +51,24 @@ function mineHeader(overrides: Partial<BlockHeader> & { height: number; prevBloc
 /**
  * Mine a contiguous segment of `count` headers starting at `anchor.height + 1`.
  * Each header's `prevBlockHash` is the `blockHash` of its predecessor (the
- * anchor's `prevBlockHash` for the first).
+ * anchor's `prevBlockHash` for the first). Each header's `interlinkRoot`
+ * commits to the interlink vector the anchor's `interlinks` field starts from,
+ * walked forward by `updateInterlinks` + `level`.
  */
 function mineChain(
-  anchor: { prevBlockHash: string; height: number },
+  anchor: { prevBlockHash: string; height: number; interlinks: string[] },
   count: number,
 ): BlockHeader[] {
   const headers: BlockHeader[] = [];
   let prevHash = anchor.prevBlockHash;
+  let expectedInterlinks = anchor.interlinks;
   for (let i = 0; i < count; i++) {
-    const h = mineHeader({ height: anchor.height + 1 + i, prevBlockHash: prevHash });
-    prevHash = blockHash(h)!;
+    const root = interlinkRoot(expectedInterlinks);
+    const h = mineHeader({ height: anchor.height + 1 + i, prevBlockHash: prevHash, interlinkRoot: root });
+    const hash = blockHash(h)!;
+    const lev = level(h)!;
+    expectedInterlinks = updateInterlinks(expectedInterlinks, hash, lev);
+    prevHash = hash;
     headers.push(h);
   }
   return headers;
@@ -72,8 +81,8 @@ const constantTarget = () => DEVNET_TARGET;
 // ---------------------------------------------------------------------------
 
 describe('verifyHeaderChain', () => {
-  const anchor = { prevBlockHash: 'aa'.repeat(32), height: 10 };
-  const genesisAnchor = { prevBlockHash: '00'.repeat(32), height: 0 };
+  const anchor = { prevBlockHash: 'aa'.repeat(32), height: 10, interlinks: ['bb'.repeat(32)] };
+  const genesisAnchor = { prevBlockHash: '00'.repeat(32), height: 0, interlinks: [] as string[] };
 
   // ---- Happy path ----
 
@@ -184,7 +193,7 @@ describe('verifyHeaderChain', () => {
     });
 
     it('wrong start — height does not continue from anchor', () => {
-      const wrongAnchor = { prevBlockHash: 'aa'.repeat(32), height: 5 };
+      const wrongAnchor = { prevBlockHash: 'aa'.repeat(32), height: 5, interlinks: ['bb'.repeat(32)] };
       const headers = mineChain(anchor, 3);
       const result = verifyHeaderChain(headers, wrongAnchor, constantTarget);
       expect(result).toEqual({ ok: false, index: 0, reason: 'height' });
@@ -310,22 +319,28 @@ describe('verifyHeaderChain', () => {
       const retargetHeight = anchor.height + 2;
       const schedule = (h: number) => (h >= retargetHeight ? TARGET_B : TARGET_A);
 
+      let vec = anchor.interlinks;
       const h0 = mineHeader({
         height: anchor.height + 1,
         prevBlockHash: anchor.prevBlockHash,
         powTargetBits: TARGET_A,
+        interlinkRoot: interlinkRoot(vec),
       });
       const h0Hash = blockHash(h0)!;
+      vec = updateInterlinks(vec, h0Hash, level(h0)!);
       const h1 = mineHeader({
         height: anchor.height + 2,
         prevBlockHash: h0Hash,
         powTargetBits: TARGET_B,
+        interlinkRoot: interlinkRoot(vec),
       });
       const h1Hash = blockHash(h1)!;
+      vec = updateInterlinks(vec, h1Hash, level(h1)!);
       const h2 = mineHeader({
         height: anchor.height + 3,
         prevBlockHash: h1Hash,
         powTargetBits: TARGET_B,
+        interlinkRoot: interlinkRoot(vec),
       });
 
       const headers = [h0, h1, h2];
@@ -337,6 +352,7 @@ describe('verifyHeaderChain', () => {
         height: anchor.height + 2,
         prevBlockHash: h0Hash,
         powTargetBits: TARGET_A,
+        interlinkRoot: interlinkRoot(updateInterlinks(anchor.interlinks, h0Hash, level(h0)!)),
       });
       const headersMismatch = [h0, h1Wrong, h2];
       const fail = verifyHeaderChain(headersMismatch, anchor, schedule);
@@ -410,5 +426,94 @@ describe('verifyHeaderChain', () => {
     expect(result).toEqual({ ok: false, index: 1, reason: 'pow' });
     expect('work' in result).toBe(false);
     expect('hashes' in result).toBe(false);
+  });
+
+  // ---- reason: interlinks (step 7) ----
+
+  describe('reason: interlinks', () => {
+    it('the honest chain passes step 7 — mineChain maintains the vector', () => {
+      const headers = mineChain(genesisAnchor, 5);
+      const result = verifyHeaderChain(headers, genesisAnchor, constantTarget);
+      expect(result.ok).toBe(true);
+    });
+
+    it('a header mined with a wrong interlinkRoot → { index: i, reason: interlinks }', () => {
+      // Mine the first header honestly, then mine header[1] with a wrong root
+      // baked in (so PoW passes over the wrong root).
+      const headers = mineChain(anchor, 1);
+      const h0hash = blockHash(headers[0]!)!;
+      const wrongRoot = 'ff'.repeat(32);
+      const h1 = mineHeader({
+        height: anchor.height + 2,
+        prevBlockHash: h0hash,
+        interlinkRoot: wrongRoot,
+      });
+      const result = verifyHeaderChain([headers[0]!, h1], anchor, constantTarget);
+      expect(result).toEqual({ ok: false, index: 1, reason: 'interlinks' });
+    });
+
+    it('a root from a different vector → refused', () => {
+      const headers = mineChain(anchor, 1);
+      const h0hash = blockHash(headers[0]!)!;
+      const wrongRoot = interlinkRoot(['cc'.repeat(32), 'dd'.repeat(32)]);
+      const h1 = mineHeader({
+        height: anchor.height + 2,
+        prevBlockHash: h0hash,
+        interlinkRoot: wrongRoot,
+      });
+      const result = verifyHeaderChain([headers[0]!, h1], anchor, constantTarget);
+      expect(result).toEqual({ ok: false, index: 1, reason: 'interlinks' });
+    });
+
+    it('an anchor vector that is not the chain\'s → refused at index 0', () => {
+      const headers = mineChain(anchor, 2);
+      const wrongAnchor = { ...anchor, interlinks: ['cc'.repeat(32), 'dd'.repeat(32)] };
+      const result = verifyHeaderChain(headers, wrongAnchor, constantTarget);
+      expect(result).toEqual({ ok: false, index: 0, reason: 'interlinks' });
+    });
+
+    it('genesis anchor [] accepted for a height-1 header committing to interlinkRoot([])', () => {
+      const headers = mineChain(genesisAnchor, 1);
+      expect(headers[0]!.interlinkRoot).toBe(interlinkRoot([]));
+      const result = verifyHeaderChain(headers, genesisAnchor, constantTarget);
+      expect(result.ok).toBe(true);
+    });
+
+    it('a non-genesis anchor with a non-empty vector threads through', () => {
+      const headers = mineChain(anchor, 3);
+      const result = verifyHeaderChain(headers, anchor, constantTarget);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.hashes).toHaveLength(3);
+    });
+
+    it('malformed anchor vector — not an array → interlinks at index 0', () => {
+      const badAnchor = { ...anchor, interlinks: 'not-an-array' as unknown as string[] };
+      const headers = mineChain(anchor, 1);
+      const result = verifyHeaderChain(headers, badAnchor, constantTarget);
+      expect(result).toEqual({ ok: false, index: 0, reason: 'interlinks' });
+    });
+
+    it('malformed anchor vector — entry not hex(32) → interlinks at index 0', () => {
+      const badAnchor = { ...anchor, interlinks: ['not-hex'] };
+      const headers = mineChain(anchor, 1);
+      const result = verifyHeaderChain(headers, badAnchor, constantTarget);
+      expect(result).toEqual({ ok: false, index: 0, reason: 'interlinks' });
+    });
+
+    it('malformed anchor vector — too many entries → interlinks at index 0', () => {
+      const tooMany = Array.from({ length: 258 }, () => 'aa'.repeat(32));
+      const badAnchor = { ...anchor, interlinks: tooMany };
+      const headers = mineChain(anchor, 1);
+      const result = verifyHeaderChain(headers, badAnchor, constantTarget);
+      expect(result).toEqual({ ok: false, index: 0, reason: 'interlinks' });
+    });
+
+    it('malformed anchor never throws', () => {
+      for (const bad of [null, undefined, 42, 'str', [42], [null]]) {
+        const badAnchor = { ...anchor, interlinks: bad as unknown as string[] };
+        expect(() => verifyHeaderChain([], badAnchor, constantTarget)).not.toThrow();
+      }
+    });
   });
 });
