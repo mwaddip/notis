@@ -344,7 +344,7 @@ the transaction's signature, and ordered by the block that includes it.
 The root author may prune their entire subtree at any time. Pruning:
 
 1. **Deletes** the root post and all descendant posts from the DAG — rows and bodies, by the
-   entry's `subtreePostIds`; not a status flip, not a read filter
+   subtree `block_topology` derives for the root at apply; not a status flip, not a read filter
 2. Cascades to all replies — a reply exists only in the context of its root
 3. Replaces the entire subtree with a **stump** (see §3): the root's id lives on as the stump;
    a descendant's id answers only a tombstone derived from `block_topology` and that stump
@@ -562,9 +562,11 @@ is escrowed — not burned, not transferred to the target.
 **Withdrawal is instant, and that is a requirement rather than a side effect.**
 A voucher who concludes their target is untrustworthy stops endorsing at once:
 the vouch stops counting the moment the `VouchBox` is spent. Only the stake's
-return waits — the unvouch outputs a `VouchEscrowBox`, and the block settlement
-returns it to the voucher at the first height at or past `releaseAtBlock`. No
-client action claims it.
+return waits — the unvouch outputs a `VouchEscrowBox`, and a block settlement
+returns it to the voucher at or past `releaseAtBlock`: the first block whose
+settlement has room, since a settlement returns at most
+`MAX_ESCROW_RETURNS_PER_BLOCK` escrows, oldest release first (TYPES_INTERFACE →
+Settlement caps). No client action claims it.
 
 **The cooldown runs from the cast.**
 `releaseAtBlock == vouch.createdAtBlock + vouchCooldownBlocks`, an exact pin
@@ -767,7 +769,7 @@ signature — authorization lives in the prune transaction (author-signed, verif
 admission and again at block application), and a stump is a **local projection of that
 verified transaction**, derived independently by every node when the prune settles. No
 stump is ever accepted from the network: a gossiped stump would be
-unverifiable by construction (no signature, no `subtreePostIds` to check),
+unverifiable by construction (no signature, no set to check against topology),
 so the table stumps live in is written by block application alone.
 
 ```
@@ -783,26 +785,30 @@ Stump {
 
 #### Prune lifecycle
 
-1. Author's client walks reply subtree locally, builds Merkle root over
-   postIds
+1. Author's client names the root — the payload is `{ rootPostHash }` and nothing else
+   (TYPES_INTERFACE → Layout — PruneCommit)
 2. Author signs the **transaction**, whose `TxId` preimage carries the prune payload — there
-   is no payload signature of its own (TYPES_INTERFACE → Layout — PruneCommit)
+   is no payload signature of its own
 3. Client submits a signed prune **transaction** to a node via `POST /posts/:id/prune`
-4. Node verifies the maturity bind, subtree completeness and Merkle root, then `validateTx`
+4. Node verifies the maturity bind, then `validateTx`
 5. Node pools it and **broadcasts it to peers like any other transaction**, so any miner may
    include it — a prune submitted to a node that never mines still reaches consensus
-6. At block application, every node independently verifies: authorship
+6. At block application, every node independently verifies the authorship
    binding (the karma input's owner equals the `block_topology`-recorded author
-   of the root; a root confirmed in the applying block is not prunable), postId
-   set against block_topology, Merkle root, then settles UTXO deterministically
-   — the settlement transaction consumes the subtree's PostLockBoxes and
-   refunds **every lock owner except the pruning author**, whose own locks
-   go to the pool; the subtree's like-records are deleted (journalled)
-7. The simplified Stump is inserted, derived from the verified entry —
+   of the root; a root confirmed in the applying block is not prunable) and
+   **derives the subtree from `block_topology`** — same-block replies included —
+   then vests this block's own likes on it, deletes its like-records
+   (journalled), and **marks its topology rows pruned**
+7. The simplified Stump is inserted, derived from that set —
    unconditionally, so a node holding no DAG content records the same
    stump — then the subtree's DAG rows, bodies included, are deleted by the
-   entry's `subtreePostIds`, each captured into the block's journal first so
-   a reverted prune restores them exactly (NODE_INTERFACE → Pruning)
+   set, each captured into the block's journal first so a reverted prune
+   restores them exactly (NODE_INTERFACE → Prune transactions)
+8. **The subtree's `PostLockBox`es are released by later blocks' settlements**, at most
+   `MAX_POST_LOCK_RELEASES_PER_BLOCK` per block in `(pruned height, post id)` order — refunding
+   **every lock owner except the pruning author**, whose own locks go to the pool — so a
+   subtree of any size prunes in one block and its locks drain at the cap
+   (NODE_INTERFACE → The settlement transaction)
 
 No validator attestation is needed — the author's signature authorizes the
 prune, and the settlement is deterministically computable from UTXO state.
@@ -820,10 +826,10 @@ specified here.
 
 #### Cryptographic guarantees
 
-- Settlement is deterministic from UTXO state + the block's prune payloads — any node
+- Settlement is deterministic from UTXO state + `block_topology`'s marks — any node
   can verify independently without DAG content
-- The author's signature over `(rootPostHash, subtreeMerkleRoot)` in the block
-  is the single point of authorization, and "the author" is pinned by
+- The author's signature over the transaction's `txId`, whose preimage carries the
+  `rootPostHash`, is the single point of authorization, and "the author" is pinned by
   consensus: the prune transaction's karma input owner must equal the author recorded for the
   root in `block_topology` (the signer of the root's creating transaction,
   verified against real content by every node that holds it at confirmation time)
@@ -1171,9 +1177,13 @@ not an emergent property.**
 
 ### Bond outcomes
 
-The bond settles **once**, at `IdentityRecord.invitedAtBlock +
+The bond settles **once**, at or past `IdentityRecord.invitedAtBlock +
 INVITE_PROBATION_BLOCKS`, and reads one thing:
-`IdentityRecord.lifetimeLikesReceived`.
+`IdentityRecord.lifetimeLikesReceived`. **At or past, because the settlement takes at most
+`MAX_BOND_SETTLEMENTS_PER_BLOCK` eligible bonds per block** (TYPES_INTERFACE → Settlement caps),
+ascending `(invitedAtBlock, box id)`; a bond still waiting settles against the counter as it
+stands in the block that takes it, so a backlog of `n` gives an invitee up to ⌈`n` / cap⌉ extra
+blocks of likes — a bounded delay, never a skipped settlement.
 
 | Scenario | Bond karma | Significance |
 |----------|------------|--------------|

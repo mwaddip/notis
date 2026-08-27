@@ -2430,8 +2430,6 @@ describe('computeTxId with postWithdraw', () => {
       },
       prune: {
         rootPostHash: 'ff'.repeat(32),
-        subtreePostIds: ['11'.repeat(32)],
-        subtreeMerkleRoot: new Uint8Array(32).fill(0x22),
       },
       postWithdraw: { postId: WITHDRAW_POST_A },
     };

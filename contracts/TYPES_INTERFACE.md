@@ -240,11 +240,11 @@ could be presented as `nodeHash(left,right)` for a forged inclusion proof
 
 > **Forward constraint — this is a consensus rule with no test behind it.** The scheme is
 > sound only while **every** leaf domain is a non-empty printable ASCII string, so that no
-> leaf preimage can ever begin with `0x00`. The **two** live domains are `stump` and
-> `utxotx` — all printable, none a prefix of another, so the NUL delimiter suffices.
-> **One retired domain string is a tracked reservation** (→ Tracked reservations, below the
-> boxType tag table): `coinbase` — remnant-bounded by the live coinbase concept itself, so it holds
-> while that concept does. `subblock` is retired and free: no live identifier carries the word.
+> leaf preimage can ever begin with `0x00`. The **one** live domain is `utxotx` — printable, so
+> the NUL delimiter suffices. **Three retired domain strings are tracked reservations**
+> (→ Tracked reservations, below the boxType tag table): `coinbase`, `prune` and `stump` — each
+> remnant-bounded by the live concept that carries the word, so each holds while that concept does.
+> `subblock` is retired and free: no live identifier carries the word.
 >
 > ⛔ **A live/retired list restated in two places is the drift class this file names
 > everywhere else; there is one list and it is here.**
@@ -1158,20 +1158,8 @@ recompute the hash and check the signature.
 ## Stump Types (`stump.ts`)
 
 ```
-PruneIntent {
-  rootPostHash: PostId
-  authorId: UserId
-  subtreeMerkleRoot: Uint8Array(32)  // Merkle root over subtree postIds
-  subtreePostIds: PostId[]           // All postIds in the subtree
-  signature: Uint8Array(64)          // Ed25519 over blake2b512(rootPostHash || subtreeMerkleRoot)
-}
-
 PruneCommit {
-  rootPostHash: PostId
-  subtreePostIds: PostId[]           // All postIds in the subtree
-  subtreeMerkleRoot: Uint8Array(32)  // Merkle root over subtree postIds
-  authorId: UserId
-  authorSignature: Uint8Array(64)    // Ed25519 over blake2b512(rootPostHash || subtreeMerkleRoot)
+  rootPostHash: PostId               // the subtree is derived from block_topology at apply — Layout — PruneCommit
 }
 
 Stump {
@@ -1291,8 +1279,9 @@ UtxoTxTree {
 ⛔ **ONE COMMITTED LIST, AND ONE LEAF CLASS.** Posts, likes, prunes and the settlement are all
 transactions, so they ride `utxoTxIds` together and the body has no second section.
 `computeUtxoTxRoot` therefore builds every leaf as `leafHash('utxotx', id)` — one domain, one
-preimage shape. `'stump'` remains a live leaf domain for the subtree proof a prune payload
-carries; `'prune'` and `'coinbase'` are tracked reservations (→ Tracked reservations).
+preimage shape, and the only live one: `'stump'`, `'prune'` and `'coinbase'` are tracked
+reservations (→ Tracked reservations; `'stump'` joins them with D5, whose prune payload carries no
+subtree proof — Layout — PruneCommit).
 
 Every block carries **one settlement transaction**, riding `utxoTxIds` / `utxoTxs` like any
 other (`ARCHITECTURE` → Block architecture, `NODE_INTERFACE` → the settlement transaction);
@@ -1607,7 +1596,7 @@ state"). Its id is its `rootPostHash`, not a hash of any encoding.
 
 **A prune has no `trigger` field.** Every prune is the author's act — the author signs the
 transaction and the author's locks pay for it — so the cause is a constant and carries no field
-anywhere: not in `PruneIntent`, `PruneCommit`, or `Stump`.
+anywhere: not in `PruneCommit` or `Stump`.
 
 ### Layout — PruneCommit
 
@@ -1615,18 +1604,25 @@ anywhere: not in `PruneIntent`, `PruneCommit`, or `Stump`.
 `txIdBytes` field 6 through `pruneFieldBytes`:
 
 ```
-b32(rootPostHash) ‖ arr(subtreePostIds, b32) ‖ b32(subtreeMerkleRoot)
+b32(rootPostHash)
 ```
 
-**Three fields, and the two that left are the point.** `authorId` and `authorSignature` do not
-appear: the payload sits inside the `computeTxId` preimage, so the transaction's own signature
-covers it and the author is `inputKarma.owner` (NODE_INTERFACE → Prune transactions). A struct
-that authenticated itself needed both; a payload under a transaction's signature needs neither.
+**One field, and the set is the node's to derive.** The subtree a prune removes is
+`block_topology`'s answer for the root at the applying height, same-block replies included, and
+every node derives it identically (NODE_INTERFACE → Prune transactions). **The payload does not
+carry the set, and that is a rule with two reasons**: a carried set pins the author to a snapshot,
+so a reply confirmed between signing and inclusion is a block-invalidating mismatch that two
+unrelated users can hand a producer; and a carried set puts the transaction's byte bound on the
+subtrees an author can prune at all. The author signs "this thread", which is exactly what subtree
+ownership grants (ARCHITECTURE → Subtree ownership).
 
-**Every field is fixed-width or count-prefixed**, so every writer throws outside its domain
-(→ Totality) and the encoding is self-delimiting. `verifyPruneCommitDomains`
-(`@dagsocial/validation`) is the single statement of the domain those writers assume — including
-**no repeated id** in `subtreePostIds`, which a Merkle root over the raw list would admit.
+`authorId` and `authorSignature` do not appear: the payload sits inside the `computeTxId` preimage,
+so the transaction's own signature covers it and the author is `inputKarma.owner`. The layout is
+the shape `PostWithdrawCommit` has.
+
+**Fixed-width, so the writer throws outside its domain** (→ Totality) and the encoding is
+self-delimiting. `verifyPruneCommitDomains` (`@dagsocial/validation`) is the single statement of
+the domain that writer assumes.
 
 ⛔ **A `PruneCommit` has no id of its own, and needs none.** A prune is a transaction: its `TxId`
 identifies it and its spent inputs are its dedup, since a pooled prune cannot be duplicated once
@@ -1757,7 +1753,8 @@ from this table — a use that reads every cell as an instruction rather than as
 > | tag `2` + boxType `'invite'` | §InviteBox record and its in-code citations; the tag-2 reject vectors; `node/store/db.ts`'s tag-order comment |
 > | boxType `'like'` | the live illegal-transition rule (`utxo-engine`'s like clause) and its reject vectors |
 > | leaf domain `'coinbase'` | the live coinbase concept (`coinbase-split.ts`, `COINBASE_*` constants) — the string is permanently collision-prone while the concept lives |
-> | leaf domain `'prune'` | the live prune concept (`PruneCommit`, `pruneFieldBytes`, `planPruneSettlement`, `PrunedTombstone`, `executePrune`, `PruneIntent`, `prunesOf`) — a prune stopped being a Merkle leaf when it became a transaction, and the string stays collision-prone while the concept lives |
+> | leaf domain `'prune'` | the live prune concept (`PruneCommit`, `pruneFieldBytes`, `PrunedTombstone`, `executePrune`, `prunesOf`, `routes/prune-withdraw.ts`) — a prune is a transaction, not a Merkle leaf, and the string stays collision-prone while the concept lives |
+> | leaf domain `'stump'` | the live stump concept (`Stump`, `dag_stumps`, `insertStump`, `stump-engine.ts`, the `'stump'` resolution shape) — a stump is derived state with no Merkle leaf, and the string stays collision-prone while the concept lives |
 
 > ## ⛔ TAG 2 IS A TRACKED HOLE
 >
@@ -2722,14 +2719,37 @@ and the seeder that writes one deliberately does not measure it.
 
 ```typescript
 export const MAX_BLOCK_BODY_BYTES = 2_000_000;   // consensus — encoded UtxoTxTree
-export const MAX_TX_BYTES = 10_000;              // consensus — encoded UtxoTransaction
+export const MAX_TX_BYTES = 10_000;              // consensus — encoded UtxoTransaction; every body element but the last
+export const MAX_SETTLEMENT_BYTES = 100_000;     // consensus — the encoded settlement transaction, the body's last element
 ```
 
 Consensus bounds on **weight**, checked in `@dagsocial/validation` — the body by
-`verifyOrderingBlockStructure`, the transaction by `verifyTxStructure` — so an oversized object is
-refused before relay rather than after storage. Distinct in kind from `### Content limits` above,
-which are format bounds a codec enforces on one field; these bound whole structures and no codec
-consults them.
+`verifyOrderingBlockStructure`; a user transaction by `verifyTxStructure` on the relay path and
+again per body element; **the settlement transaction by `MAX_SETTLEMENT_BYTES`**, positional
+identity naming it as the last element — so an oversized object is refused before relay rather than
+after storage. Distinct in kind from `### Content limits` above, which are format bounds a codec
+enforces on one field; these bound whole structures and no codec consults them.
+
+**The settlement has its own bound because it is derived.** `MAX_TX_BYTES` exists so a transaction
+cannot be valid, poolable and unminable at once (below); a settlement is never pooled, and its size
+is a function of the body and of chain state — one 32-byte input per like marker, per fee box, per
+settling bond, per releasable escrow, per released post lock; one karma output per paid author or
+owner (measured: 70 bytes with the four protocol outputs and nothing else, +32 per input, +38 per
+karma output). **The settlement, not the encoding, sets the per-block ceiling on likes**: the bound
+divided by the marker input's 32 bytes, less what the block's other legs take.
+
+**Two relations are the rule; the numbers are the constants session's.**
+
+| Relation | What it guarantees |
+|---|---|
+| `MAX_SETTLEMENT_BYTES` + its framing < `MAX_BLOCK_BODY_BYTES` | availability — a legal settlement fits a legal body |
+| an **empty-body** settlement with every state-driven leg at its cap (→ Settlement caps) encodes ≤ `MAX_SETTLEMENT_BYTES` | **liveness** — a valid block exists at every height, whatever the chain state holds |
+
+The second is pinned by a test that **builds** that settlement through the node's own derivation and
+encodes it — never by a hand-derived sum, which is a lower bound on cost, not a budget (→ Layout —
+UtxoTransaction). The producer keeps every body-driven leg inside the bound by selection
+(`MEMPOOL_INTERFACE` → The fill budget is bytes; `getPendingEntries` is a count); the caps keep the
+state-driven legs inside it whatever the producer selects.
 
 **The block bound is what makes validity and availability agree.** Three limits stand in a fixed
 order, and the *relation* is the rule rather than any individual number:
@@ -2758,6 +2778,28 @@ framing at present transaction sizes, not 32. `MAX_TX_BYTES` admits roughly 148 
 288 under the positional one — far past any single consolidation a wallet builds. Its job is to keep
 a transaction from being valid, poolable and unminable at once: without it, one larger than the block
 budget occupies a mempool slot that no block can ever drain.
+
+### Settlement caps
+
+```typescript
+export const MAX_BOND_SETTLEMENTS_PER_BLOCK = 64;     // consensus — bonds settled per block, at or past their deadline
+export const MAX_ESCROW_RETURNS_PER_BLOCK = 64;       // consensus — vouch escrows returned per block, at or past release
+export const MAX_POST_LOCK_RELEASES_PER_BLOCK = 64;   // consensus — pruned posts' locks released per block
+```
+
+**A settlement leg the body does not drive is capped, and carries forward.** Three legs read chain
+state rather than the block's transactions — bonds whose probation has ended, escrows whose
+cooldown has ended, and the post locks of pruned subtrees — so no producer can trim them by
+selecting a smaller body. Each consumes at most its cap per block, in a total order, and leaves the
+rest for the next block; a candidate is eligible **at or past** its height, never only at it, so
+nothing is skipped by waiting (`NODE_INTERFACE` → The settlement transaction). The three caps are
+what make the liveness relation under → Size caps a constant rather than a hope: their sum, at the
+measured per-item cost, is the largest settlement an empty body can carry.
+
+**Bounded delay, stated.** Under a backlog of `n` candidates a leg drains in ⌈`n` / cap⌉ blocks; a
+bond may vest more in the meantime (`ARCHITECTURE` → Bond outcomes), a cooling voucher waits that
+long to recast (`ARCHITECTURE` → Vouch boxes), a pruned reply's author waits that long for the
+refund. None of the three moves value it does not owe.
 
 ### State format
 

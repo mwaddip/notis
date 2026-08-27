@@ -73,7 +73,7 @@ async function importUtxo() {
     getUnspentBoxes: () => import('@dagsocial/types').AnyBox[];
     getVouchEscrowsFor: (voucherId: Uint8Array) => VouchEscrowBox[];
     hasActiveVouchEscrow: (voucherId: Uint8Array) => boolean;
-    getVouchEscrowsReleasableAt: (height: number) => VouchEscrowBox[];
+    getVouchEscrowsReleasableAt: (height: number, limit: number) => VouchEscrowBox[];
   };
 }
 
@@ -172,7 +172,7 @@ describe('escrow settlement leg', () => {
     utxo.insertBox(escrow);
 
     expect(utxo.hasActiveVouchEscrow(voucher.userId)).toBe(true);
-    expect(utxo.getVouchEscrowsReleasableAt(1)).toHaveLength(1);
+    expect(utxo.getVouchEscrowsReleasableAt(1, 64)).toHaveLength(1);
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
@@ -213,7 +213,7 @@ describe('escrow settlement leg', () => {
     const escrow = makeEscrowBox(3n, voucher.userId, 100);
     utxo.insertBox(escrow);
 
-    expect(utxo.getVouchEscrowsReleasableAt(1)).toHaveLength(0);
+    expect(utxo.getVouchEscrowsReleasableAt(1, 64)).toHaveLength(0);
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
@@ -299,7 +299,7 @@ describe('escrow settlement leg', () => {
     utxo.insertBox(escrow2);
 
     // Both are releasable at height 1
-    const releasable = utxo.getVouchEscrowsReleasableAt(1);
+    const releasable = utxo.getVouchEscrowsReleasableAt(1, 64);
     expect(releasable).toHaveLength(2);
     // Ascending box id
     expect(releasable[0]!.id! < releasable[1]!.id!).toBe(true);

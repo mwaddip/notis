@@ -84,6 +84,7 @@ function settle(
       getLikeCarryBox: () => null,
       getBondsSettlingAt: () => [],
       getEscrowsReleasableAt: () => [],
+      getReleaseCandidates: () => [],
       getLifetimeLikes: () => 0n,
       getDecayPlans: () => [],
     },

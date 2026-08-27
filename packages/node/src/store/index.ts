@@ -46,6 +46,7 @@ export {
   getLikeCarryBox,
   getUnspentPostLockBoxes,
   getPostLockBox,
+  getPrunedLockCandidates,
   getLikersForPost,
   getUnspentBoxes,
   insertBox,
@@ -56,7 +57,7 @@ export {
   getKarmaOwners,
   registerKarmaMembershipHook,
 } from './utxo.js';
-export type { KarmaMembershipHook } from './utxo.js';
+export type { KarmaMembershipHook, PrunedLockCandidate } from './utxo.js';
 
 export {
   insertLikeRecord,
@@ -100,6 +101,8 @@ export {
   getTopologyAuthorBytes,
   getTopologyHeight,
   rollbackBlockTopology,
+  markPrunedTopology,
+  clearPrunedTopology,
 } from './topology.js';
 
 export {

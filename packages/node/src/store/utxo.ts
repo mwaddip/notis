@@ -631,20 +631,28 @@ export function getBondFor(inviteePublicKey: Uint8Array): BondBox | null {
  * checks, which is why `invite-block-apply.test.ts` has to remove both before
  * its case fails.
  */
-export function getBondsInvitedAt(invitedAtBlock: number): BondBox[] {
+/**
+ * Unspent bonds whose invitee's `invited_at_block` is in `(0, maxInvitedAt]`,
+ * ordered `(invited_at_block, box id)`, limited to `limit`.
+ *
+ * NODE_INTERFACE → The settlement transaction: the bond leg's candidate set.
+ * Ordering key `(invited_at_block, box id)` — unique, because box id is unique.
+ */
+export function getBondsInvitedAt(maxInvitedAt: number, limit: number): BondBox[] {
   const rows = getDb()
     .prepare(
       `SELECT b.* FROM utxo_boxes b
+       JOIN identity_records ir
+         ON lower(hex(ir.identity_id)) = json_extract(b.extra_data, '$.inviteePublicKey')
        WHERE b.box_type = 'bond'
          AND b.spent_at_block IS NULL
-         AND json_extract(b.extra_data, '$.inviteePublicKey') IN (
-           SELECT lower(hex(identity_id)) FROM identity_records
-           WHERE invited_at_block > 0 AND invited_at_block = ?
-         )
-       ORDER BY b.id`,
+         AND ir.invited_at_block > 0
+         AND ir.invited_at_block <= ?
+       ORDER BY ir.invited_at_block, b.id
+       LIMIT ?`,
     )
     .safeIntegers()
-    .all(invitedAtBlock) as UtxoRow[];
+    .all(maxInvitedAt, limit) as UtxoRow[];
   return rows.map((r) => rowToBox(r) as BondBox);
 }
 
@@ -736,17 +744,25 @@ export function hasActiveVouchEscrow(voucherId: Uint8Array): boolean {
  * (NODE_INTERFACE → The settlement transaction). Read from pre-body state
  * on both sides; the caller captures the list before the apply loop.
  */
-export function getVouchEscrowsReleasableAt(height: number): VouchEscrowBox[] {
+/**
+ * At most `limit` unspent escrows at or past their release height,
+ * ordered `(releaseAtBlock, id)`.
+ *
+ * NODE_INTERFACE → The settlement transaction: the escrow leg's candidate set.
+ * Ordering key `(releaseAtBlock, id)` — unique, because box id is unique.
+ */
+export function getVouchEscrowsReleasableAt(height: number, limit: number): VouchEscrowBox[] {
   const rows = getDb()
     .prepare(
       `SELECT * FROM utxo_boxes
        WHERE box_type = 'vouch_escrow'
          AND spent_at_block IS NULL
          AND json_extract(extra_data, '$.releaseAtBlock') <= ?
-       ORDER BY id`,
+       ORDER BY json_extract(extra_data, '$.releaseAtBlock'), id
+       LIMIT ?`,
     )
     .safeIntegers()
-    .all(height) as UtxoRow[];
+    .all(height, limit) as UtxoRow[];
   return rows.map((r) => rowToBox(r) as VouchEscrowBox);
 }
 
@@ -828,6 +844,46 @@ export function getPostLockBox(targetPostId: string): PostLockBox | null {
     .get(targetPostId) as UtxoRow | undefined;
   if (!row) return null;
   return rowToBox(row) as PostLockBox;
+}
+
+/** A pruned post's lock eligible for release by a future settlement. */
+export interface PrunedLockCandidate {
+  box: PostLockBox;
+  postId: string;
+  prunedAtHeight: number;
+  prunedRoot: string;
+}
+
+/**
+ * Unspent `PostLockBox`es whose target post's topology row is marked pruned,
+ * ordered `(pruned_at_height, post_id)`, limited to `limit`.
+ *
+ * NODE_INTERFACE → The settlement transaction: the release leg's candidate set.
+ * Ordering key `(pruned_at_height, post_id)` — unique, because `post_id` is the
+ * topology table's PK.
+ */
+export function getPrunedLockCandidates(limit: number): PrunedLockCandidate[] {
+  const db = getDb();
+  const rows = db.prepare(
+    `SELECT b.*, t.post_id AS target_post_id, t.pruned_at_height, t.pruned_root
+     FROM utxo_boxes b
+     JOIN block_topology t
+       ON t.post_id = json_extract(b.extra_data, '$.targetPostId')
+     WHERE b.box_type = 'post_lock'
+       AND b.spent_at_block IS NULL
+       AND t.pruned_at_height IS NOT NULL
+     ORDER BY t.pruned_at_height, t.post_id
+     LIMIT ?`,
+  )
+    .safeIntegers()
+    .all(limit) as UtxoRow[];
+
+  return rows.map((r) => ({
+    box: rowToBox(r) as PostLockBox,
+    postId: (r as unknown as Record<string, unknown>).target_post_id as string,
+    prunedAtHeight: Number((r as unknown as Record<string, unknown>).pruned_at_height),
+    prunedRoot: (r as unknown as Record<string, unknown>).pruned_root as string,
+  }));
 }
 
 /**

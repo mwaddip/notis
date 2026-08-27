@@ -152,21 +152,7 @@ function jsonToPruneCommit(raw: unknown): PruneCommit {
   if (typeof p.rootPostHash !== 'string') {
     throw new ClientError('prune rootPostHash must be a string');
   }
-  if (!Array.isArray(p.subtreePostIds) || !p.subtreePostIds.every((id: unknown) => typeof id === 'string')) {
-    throw new ClientError('prune subtreePostIds must be an array of strings');
-  }
-  if (typeof p.subtreeMerkleRoot !== 'string') {
-    throw new ClientError('prune subtreeMerkleRoot must be a hex string');
-  }
-  const subtreeMerkleRoot = hexToBytes(p.subtreeMerkleRoot);
-  if (subtreeMerkleRoot.length !== 32) {
-    throw new ClientError('prune subtreeMerkleRoot must be 32 bytes (64 hex chars)');
-  }
-  return {
-    rootPostHash: p.rootPostHash,
-    subtreePostIds: p.subtreePostIds as string[],
-    subtreeMerkleRoot,
-  };
+  return { rootPostHash: p.rootPostHash };
 }
 
 function jsonToPostWithdrawCommit(raw: unknown): PostWithdrawCommit {

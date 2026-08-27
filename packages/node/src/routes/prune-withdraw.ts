@@ -59,7 +59,6 @@ export function pruneWithdrawRoutes(deps: PruneWithdrawDeps): Router {
         status: 'submitted',
         txId,
         postId: tx.prune.rootPostHash,
-        replyCount: tx.prune.subtreePostIds.length - 1,
       });
     } catch (err: unknown) {
       respondError(res, err, 'POST /posts/:id/prune', 'message');

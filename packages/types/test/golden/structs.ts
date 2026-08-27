@@ -4,8 +4,8 @@
  * These differ from `probe.ts` in one deliberate way, and it is the point of
  * the file: **the write half is the production function.** `probe` is a
  * synthetic struct whose two halves are both test-side, so it regression-tests
- * the harness; these encode through `postFieldBytes`, `canonicalBoxBytes` and
- * `serializePruneEntry` themselves, so a vector is a pin on the shipped
+ * the harness; these encode through `postFieldBytes` and `canonicalBoxBytes`
+ * themselves, so a vector is a pin on the shipped
  * encoder rather than on a lookalike.
  *
  * The **read** half is written independently, from the layout tables in

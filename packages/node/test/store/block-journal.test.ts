@@ -101,6 +101,7 @@ describe('block journal (store choke-point recording)', () => {
       'likeRecordDeletions',
       'likeRecordInsertions',
       'mutations',
+      'prunedTopologyRows',
       'withdrawnPosts',
     ]);
     expect(s.isBlockJournalOpen()).toBe(false);

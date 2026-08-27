@@ -234,3 +234,52 @@ describe('migrateDagPostsColumns', () => {
     closeDb();
   });
 });
+
+describe('migrateBlockTopologyColumns', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    vi.resetModules();
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'notis-topology-migration-'));
+  });
+
+  afterEach(() => {
+    vi.resetModules();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('adds pruned_at_height and pruned_root to a pre-column block_topology table', async () => {
+    const dbPath = path.join(tmpDir, 'topology.db');
+
+    const raw = new Database(dbPath);
+    raw.exec(`CREATE TABLE block_topology (
+      post_id TEXT PRIMARY KEY,
+      parent_refs TEXT NOT NULL,
+      author TEXT NOT NULL,
+      block_height INTEGER NOT NULL
+    )`);
+    raw.exec(
+      `INSERT INTO block_topology (post_id, parent_refs, author, block_height)
+       VALUES ('post1', '[]', '${'00'.repeat(32)}', 1)`,
+    );
+    raw.close();
+
+    const { initDb, getDb, closeDb } = await importFresh();
+    initDb(dbPath);
+    const db = getDb();
+
+    const cols = (db.pragma('table_info(block_topology)') as Array<{ name: string }>)
+      .map(c => c.name);
+    expect(cols).toContain('pruned_at_height');
+    expect(cols).toContain('pruned_root');
+
+    const row = db.prepare('SELECT pruned_at_height, pruned_root FROM block_topology WHERE post_id = ?').get('post1') as any;
+    expect(row.pruned_at_height).toBeNull();
+    expect(row.pruned_root).toBeNull();
+
+    const indexes = db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='block_topology'").all() as Array<{ name: string }>;
+    expect(indexes.map(i => i.name)).toContain('idx_block_topology_pruned');
+
+    closeDb();
+  });
+});

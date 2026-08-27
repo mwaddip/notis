@@ -84,6 +84,7 @@ import type {
 import { splitCoinbase } from './coinbase-split.js';
 import type { DecayPlan } from './decay.js';
 import type { PostLockSettlement } from './settle-post-lock-utxo.js';
+import type { PrunedLockCandidate } from '../store/utxo.js';
 
 // ---------------------------------------------------------------------------
 // The body a settlement is derived from
@@ -159,10 +160,19 @@ export interface SettlementDeps {
   getBondsSettlingAt: (height: number) => BondBox[];
   /** Unspent escrows at or past `releaseAtBlock`, ascending box id, pre-body. */
   getEscrowsReleasableAt: (height: number) => VouchEscrowBox[];
+  /** Pruned locks eligible for release, ascending `(pruned_at_height, post_id)`, pre-body, actor resolved at capture. */
+  getReleaseCandidates: () => ResolvedReleaseCandidate[];
   /** `IdentityRecord.lifetimeLikesReceived` — the one field a bond settles against. */
   getLifetimeLikes: (invitee: Uint8Array) => bigint;
   /** What every stale identity owes, in the decay pass's stated owner order. */
   getDecayPlans: () => DecayPlan[];
+}
+
+/** A pruned lock candidate with its actor already resolved at capture. */
+export interface ResolvedReleaseCandidate {
+  box: PrunedLockCandidate['box'];
+  postId: string;
+  actor: Uint8Array;
 }
 
 /** What a settlement's construction or check answers with. */
@@ -377,11 +387,29 @@ function derive(
     poolSink += plan.burnAmount;
   }
 
-  // 3f. The prune settlements, in committed transaction order. The refunds recirculate;
-  // the pruner's own locks are the fourth burn and go to the pool.
+  // 3f. Post-lock withdrawal settlements, in committed transaction order.
   for (const plan of body.postLockSettlements) {
     for (const id of plan.lockBoxIds) inputs.push(id);
     poolSink += plan.toPool;
+  }
+
+  // 3g. The release leg — pruned locks whose topology row is marked, deferred
+  // from the prune's block (NODE_INTERFACE → The post-lock settlement phase).
+  // Actor's own locks go to the pool; others get a per-owner refund.
+  const candidates = deps.getReleaseCandidates();
+  const releaseRefunds = new Map<string, { owner: Uint8Array; amount: bigint }>();
+  for (const c of candidates) {
+    if (!c.box.id) continue;
+    inputs.push(c.box.id);
+    const ownerHex = hexOf(c.box.owner);
+    const actorHex = hexOf(c.actor);
+    if (ownerHex === actorHex) {
+      poolSink += c.box.value;
+    } else {
+      const existing = releaseRefunds.get(ownerHex);
+      if (existing) existing.amount += c.box.value;
+      else releaseRefunds.set(ownerHex, { owner: c.box.owner, amount: c.box.value });
+    }
   }
 
   // ---- 4. The karma pool, settled once ----
@@ -473,6 +501,14 @@ function derive(
   }
   for (const plan of body.postLockSettlements) {
     for (const refund of plan.refunds) {
+      outputs.push({ boxType: 'karma', value: refund.amount, owner: refund.owner, nonActivity: true, createdAtBlock: height });
+    }
+  }
+  // Release refunds, ascending owner hex (NODE_INTERFACE → The settlement
+  // transaction). No vest term — §8c vested the prune block's likes already.
+  for (const ownerHex of [...releaseRefunds.keys()].sort()) {
+    const refund = releaseRefunds.get(ownerHex)!;
+    if (refund.amount > 0n) {
       outputs.push({ boxType: 'karma', value: refund.amount, owner: refund.owner, nonActivity: true, createdAtBlock: height });
     }
   }

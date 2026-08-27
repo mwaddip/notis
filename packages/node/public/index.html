@@ -657,19 +657,9 @@ function postFieldBytes(contentHash, authorBytes, parentRefs, protocolVersion, t
   ]);
 }
 
-/**
- * pruneFieldBytes — the canonical encoding of a PruneCommit:
- *
- *   b32(rootPostHash) ‖ arr(subtreePostIds, b32) ‖ b32(subtreeMerkleRoot)
- *
- * TYPES_INTERFACE → Layout — PruneCommit.
- */
+// TYPES_INTERFACE → Layout — PruneCommit
 function pruneFieldBytes(prune) {
-  return concatUint8Arrays([
-    b32Hex(prune.rootPostHash, 32),
-    arr(prune.subtreePostIds, (id) => b32Hex(id, 32)),
-    b32Either(prune.subtreeMerkleRoot, 32),
-  ]);
+  return b32Hex(prune.rootPostHash, 32);
 }
 
 function postWithdrawFieldBytes(pw) {

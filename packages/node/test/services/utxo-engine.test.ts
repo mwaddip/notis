@@ -23,9 +23,6 @@ import {
   KARMA_DECAY_INTERVAL_BLOCKS,
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,
-  leafHash,
-  buildMerkleRoot,
-  hexToBuf,
 } from '@dagsocial/types';
 import type {
   AnyBox,
@@ -110,13 +107,8 @@ const LIKE_TARGET_AUTHOR = new Uint8Array(32).fill(0xab);
 const topologyAuthors = new Map<string, Uint8Array>();
 topologyAuthors.set(LIKE_TARGET_POST, LIKE_TARGET_AUTHOR);
 
-function makePruneCommit(rootPostHash: string, subtreePostIds: string[]): PruneCommit {
-  const leaves = [...subtreePostIds].sort().map(id => leafHash('stump', hexToBuf(id)));
-  return {
-    rootPostHash,
-    subtreePostIds,
-    subtreeMerkleRoot: buildMerkleRoot(leaves),
-  };
+function makePruneCommit(rootPostHash: string): PruneCommit {
+  return { rootPostHash };
 }
 
 describe('validateAndApplyTx', () => {
@@ -2132,7 +2124,7 @@ describe('validateAndApplyTx', () => {
       const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma', value: 100n, createdAtBlock: 0, owner: ownerPubKey,
       };
-      const prune = makePruneCommit(PRUNE_ROOT, [PRUNE_ROOT]);
+      const prune = makePruneCommit(PRUNE_ROOT);
       const tx = buildSignedTx(
         [karma.id!], [newKarma], ownerPrivKey, ownerPubKey, 1, undefined, undefined, prune,
       );
@@ -2148,7 +2140,7 @@ describe('validateAndApplyTx', () => {
       const out2: CandidateOf<KarmaBox> = {
         boxType: 'karma', value: 50n, createdAtBlock: 0, owner: ownerPubKey,
       };
-      const prune = makePruneCommit(PRUNE_ROOT, [PRUNE_ROOT]);
+      const prune = makePruneCommit(PRUNE_ROOT);
       const tx = buildSignedTx(
         [karma.id!], [out1, out2], ownerPrivKey, ownerPubKey, 1, undefined, undefined, prune,
       );
@@ -2163,7 +2155,7 @@ describe('validateAndApplyTx', () => {
       const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma', value: 100n, createdAtBlock: 0, owner: ownerPubKey,
       };
-      const prune = makePruneCommit(unconfirmedRoot, [unconfirmedRoot]);
+      const prune = makePruneCommit(unconfirmedRoot);
       const tx = buildSignedTx(
         [karma.id!], [newKarma], ownerPrivKey, ownerPubKey, 1, undefined, undefined, prune,
       );
@@ -2183,7 +2175,7 @@ describe('validateAndApplyTx', () => {
       const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma', value: 100n, createdAtBlock: 0, owner: ownerPubKey,
       };
-      const prune = makePruneCommit(strangerRoot, [strangerRoot]);
+      const prune = makePruneCommit(strangerRoot);
       const tx = buildSignedTx(
         [karma.id!], [newKarma], ownerPrivKey, ownerPubKey, 1, undefined, undefined, prune,
       );
@@ -2200,8 +2192,6 @@ describe('validateAndApplyTx', () => {
       };
       const badPrune = {
         rootPostHash: 'not-hex-64',
-        subtreePostIds: ['not-hex-64'],
-        subtreeMerkleRoot: new Uint8Array(32),
       } as unknown as PruneCommit;
       // No signature: the envelope check catches the bad payload before
       // authorization, so signing is unreachable — and computeTxId throws on

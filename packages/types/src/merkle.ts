@@ -31,10 +31,10 @@ export function leafHash(domain: string, data: Uint8Array): Uint8Array {
  * Domain tag prefixed to every internal Merkle node (L-9).
  *
  * `leafHash` prefixes its input with `utf8(domain + "\0")`, so every leaf
- * preimage begins with the first byte of a domain string. The **two** live
- * domains are printable ASCII — 'stump', 'utxotx' — so NUL can never start
- * a leaf preimage, which makes 0x00 a safe reserved tag for internal nodes.
- * Any future leaf domain must likewise be a non-empty printable string.
+ * preimage begins with the first byte of a domain string. The **one** live
+ * domain is printable ASCII — 'utxotx' — so NUL can never start a leaf
+ * preimage, which makes 0x00 a safe reserved tag for internal nodes. Any
+ * future leaf domain must likewise be a non-empty printable string.
  *
  * ⚠ **There is ONE list and it is TYPES_INTERFACE → Merkle primitives.** This
  * comment mirrors it and must be re-derived against it rather than edited from

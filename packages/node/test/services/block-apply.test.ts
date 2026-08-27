@@ -15,9 +15,6 @@ import {
   VOUCH_KARMA_AMOUNT,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   MAX_BLOCK_BODY_BYTES,
-  leafHash,
-  buildMerkleRoot,
-  hexToBuf,
 } from '@dagsocial/types';
 import { verifyOrderingBlockPoW } from '@dagsocial/validation';
 import type {
@@ -2042,15 +2039,10 @@ describe('block-apply H-3 post authorship and prune binding', () => {
 // ---------------------------------------------------------------------------
 // The apply funnel is a total function of its input
 //
-// `verifyOrderingBlockStructure` ran only in the gossip topic validator, so the
-// pull-sync path — CBOR-decode straight into the apply handler — reached
-// consensus code with fields of arbitrary type. Nothing between there and the
-// prune loop's `Buffer.from(entry.subtreeMerkleRoot)` checks that field, and a
-// throw out of `applyOrderingBlock` becomes an unhandled rejection in the
-// gossip callback (whose promise the net layer discards), which exits the
-// process. A rejected block is never stored, so the node re-fetches it on
-// restart and dies again: one cheaply-mined block, a permanent network-wide
-// crash loop.
+// An unexpected throw out of `applyOrderingBlock` becomes an unhandled
+// rejection in the gossip callback, which exits the process. A rejected block
+// is never stored, so the node re-fetches it on restart and dies again. The
+// apply funnel catches every throw and converts it into `false`.
 // ---------------------------------------------------------------------------
 
 describe('block-apply funnel totality', () => {
@@ -2201,7 +2193,6 @@ describe('block-apply funnel totality', () => {
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'same-block prune');
     posts.insertPost(postId, commit, content);
 
-    const leaves = [postId].sort().map(id => leafHash('stump', hexToBuf(id)));
     const pruneKarma = makeKarmaBox(100n, author.userId, 0, 99);
     utxo.insertBox(pruneKarma);
     const pruneTx: UtxoTransaction = {
@@ -2209,11 +2200,7 @@ describe('block-apply funnel totality', () => {
       outputs: [{ boxType: 'karma' as const, value: 100n, createdAtBlock: 0, owner: author.userId }],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
-      prune: {
-        rootPostHash: postId,
-        subtreePostIds: [postId],
-        subtreeMerkleRoot: buildMerkleRoot(leaves),
-      },
+      prune: { rootPostHash: postId },
     };
     signTransaction(pruneTx, author.privateKey, hex(author.userId));
 
@@ -2238,17 +2225,12 @@ describe('block-apply funnel totality', () => {
 
     const pruneKarma = makeKarmaBox(100n, author.userId, 0, 98);
     utxo.insertBox(pruneKarma);
-    const leaves = [postId].sort().map(id => leafHash('stump', hexToBuf(id)));
     const pruneTx: UtxoTransaction = {
       inputs: [pruneKarma.id!],
       outputs: [{ boxType: 'karma' as const, value: 100n, createdAtBlock: 0, owner: author.userId }],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
-      prune: {
-        rootPostHash: postId,
-        subtreePostIds: [postId],
-        subtreeMerkleRoot: buildMerkleRoot(leaves),
-      },
+      prune: { rootPostHash: postId },
     };
     signTransaction(pruneTx, author.privateKey, hex(author.userId));
 

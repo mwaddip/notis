@@ -8,9 +8,6 @@ import {
 } from 'vitest';
 import {
   PROTOCOL_VERSION,
-  leafHash,
-  buildMerkleRoot,
-  hexToBuf,
   MAX_BLOCK_BODY_BYTES,
 } from '@dagsocial/types';
 import type {
@@ -252,12 +249,6 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
     utxo.insertBox(withdrawKarma);
     const withdrawTx = makePostWithdrawTx(replyAuthor, replyId, withdrawKarma);
 
-    const subtreeIds = [rootId, replyId];
-    const leaves = [...subtreeIds]
-      .sort()
-      .map(id => leafHash('stump', hexToBuf(id)));
-    const merkleRoot = buildMerkleRoot(leaves);
-
     const pruneKarma = makeKarmaBox(10n, rootAuthor.userId, 2, 88);
     utxo.insertBox(pruneKarma);
     const pruneTx: UtxoTransaction = {
@@ -267,11 +258,7 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
       ],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
-      prune: {
-        rootPostHash: rootId,
-        subtreePostIds: subtreeIds,
-        subtreeMerkleRoot: merkleRoot,
-      },
+      prune: { rootPostHash: rootId },
     };
     signTransaction(pruneTx, rootAuthor.privateKey, toHex(rootAuthor.userId));
 

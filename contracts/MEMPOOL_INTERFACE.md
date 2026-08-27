@@ -364,6 +364,14 @@ a budget every peer measures. ✅ **Popping is monotone**, so the trim loop conv
 a transaction removes its settlement contribution too, and the settlement is rebuilt on each
 iteration rather than measured once.
 
+⛔ **The settlement is trimmed against its own bound as well.** The loop pops a user entry while
+the rebuilt settlement encodes above `MAX_SETTLEMENT_BYTES` (`TYPES_INTERFACE` → Size caps), not
+only while the tree exceeds the body budget — every body-driven settlement leg (markers, fee boxes,
+touched identities, carry boxes, grants, withdrawal locks) shrinks with the body, so this condition
+is monotone for the same reason the first is. The state-driven legs are capped by consensus and
+cannot push an empty body's settlement over the bound, so the loop always terminates with a legal
+settlement, and a size refusal at submit is unreachable (`MINING_INTERFACE` → Template and submit).
+
 ### Confirmed-entry cleanup reaches every row, and it is a lookup rather than a scan
 
 **Two paths clear a confirmed entry.** A block this node produced is cleaned by rowid

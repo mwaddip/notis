@@ -1,4 +1,5 @@
 import { getDb } from './db.js';
+import { recordPrunedTopologyRows } from './journal.js';
 
 /**
  * Record a post's parent references and author at the block height where it was
@@ -89,3 +90,43 @@ export function rollbackBlockTopology(blockHeight: number): void {
     `DELETE FROM block_topology WHERE block_height = ?`,
   ).run(blockHeight);
 }
+
+/**
+ * Mark the named topology rows as pruned at the given height by the given root.
+ * Rows survive a prune — `deletePostRows` touches `dag_posts` and
+ * `dag_parent_refs` only (NODE_INTERFACE → Prune transactions). The two columns
+ * are the release leg's queue (NODE_INTERFACE → The settlement transaction).
+ */
+export function markPrunedTopology(
+  postIds: string[],
+  height: number,
+  rootPostHash: string,
+): void {
+  if (postIds.length === 0) return;
+  const db = getDb();
+  const stmt = db.prepare(
+    `UPDATE block_topology SET pruned_at_height = ?, pruned_root = ?
+     WHERE post_id = ?`,
+  );
+  for (const id of postIds) {
+    stmt.run(height, rootPostHash, id);
+  }
+  recordPrunedTopologyRows(postIds);
+}
+
+/**
+ * Clear the pruned marks — the inverse of `markPrunedTopology`, called by
+ * `revertBlock` through the journal's `prunedTopologyRows` side-record.
+ */
+export function clearPrunedTopology(postIds: string[]): void {
+  if (postIds.length === 0) return;
+  const db = getDb();
+  const stmt = db.prepare(
+    `UPDATE block_topology SET pruned_at_height = NULL, pruned_root = NULL
+     WHERE post_id = ?`,
+  );
+  for (const id of postIds) {
+    stmt.run(id);
+  }
+}
+

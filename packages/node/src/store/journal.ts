@@ -81,6 +81,12 @@ export interface BlockJournal {
   insertedStumps: Stump[];
   /** Inverse: restore the prior content and clear the marker. */
   withdrawnPosts: Array<{ id: string; content: string | null }>;
+  /**
+   * The post ids whose `block_topology` rows §8c marked pruned — inverse:
+   * `clearPrunedTopology`. The `?? []` guards journals written before this
+   * field existed (NODE_INTERFACE → Block Journal).
+   */
+  prunedTopologyRows: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -138,6 +144,7 @@ export function beginBlockJournal(height: number): void {
     deletedPosts: [],
     insertedStumps: [],
     withdrawnPosts: [],
+    prunedTopologyRows: [],
   };
   openKarmaSupplyDelta = 0n;
 }
@@ -306,6 +313,11 @@ export function recordInsertedStump(stump: Stump): void {
 export function recordWithdrawnPost(id: string, content: string | null): void {
   if (openJournal === null) return;
   openJournal.withdrawnPosts.push({ id, content });
+}
+
+export function recordPrunedTopologyRows(postIds: string[]): void {
+  if (openJournal === null) return;
+  openJournal.prunedTopologyRows.push(...postIds);
 }
 
 // ---------------------------------------------------------------------------

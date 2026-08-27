@@ -107,10 +107,8 @@ describe('leaf/node domain separation (L-9)', () => {
   });
 
   it('no leaf domain in use can begin with the node tag', () => {
-    // Every leafHash call site in the monorepo passes one of these literals.
-    // The retired domain `'coinbase'` is a tracked reservation
-    // (TYPES_INTERFACE → Tracked reservations).
-    for (const d of ['stump', 'prune', 'utxotx']) {
+    // TYPES_INTERFACE → Merkle primitives: one live domain.
+    for (const d of ['utxotx']) {
       expect(new TextEncoder().encode(d + '\0')[0]).not.toBe(0x00);
     }
   });
