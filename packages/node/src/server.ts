@@ -2,7 +2,7 @@ import express from 'express';
 import { createRouter as postRoutes } from './routes/posts.js';
 import { createRouter as likeRoutes } from './routes/likes.js';
 import { createRouter as inviteRoutes } from './routes/invites.js';
-import { deleteRoutes } from './routes/delete.js';
+import { pruneWithdrawRoutes } from './routes/prune-withdraw.js';
 import { createRouter as utxoRoutes } from './routes/utxo.js';
 import { createRouter as vouchRoutes } from './routes/vouches.js';
 import { createRouter as blockRoutes, KARMA_SUPPLY_TYPES } from './routes/blocks.js';
@@ -272,10 +272,10 @@ export function createApp(config: Config): express.Express {
     }),
   );
 
-  // Delete — POST /posts/:id/prune
+  // Prune and withdraw routes
   app.use(
     '/',
-    deleteRoutes({
+    pruneWithdrawRoutes({
       executePrune,
       executePostWithdraw,
       ...utxoEngineDeps,

@@ -490,7 +490,7 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
   it('POST /posts/:id/withdraw submits, broadcasts and returns 201', async () => {
     const http = await import('http');
     const express = (await import('express')).default;
-    const { deleteRoutes } = await import('../../src/routes/delete.js');
+    const { pruneWithdrawRoutes } = await import('../../src/routes/prune-withdraw.js');
     const { setNet } = await import('../../src/services/net-instance.js');
 
     let broadcastCalled = false;
@@ -521,7 +521,7 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
 
     const app = express();
     app.use(express.json());
-    app.use(deleteRoutes(deps));
+    app.use(pruneWithdrawRoutes(deps));
 
     const postId = 'aa'.repeat(32);
     const txBody = {

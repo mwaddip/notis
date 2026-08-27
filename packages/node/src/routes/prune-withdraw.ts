@@ -9,7 +9,7 @@ import { respondError } from './respond-error.js';
 // Dependency types
 // ---------------------------------------------------------------------------
 
-export interface DeleteDeps extends UtxoEngineDeps {
+export interface PruneWithdrawDeps extends UtxoEngineDeps {
   executePrune: (deps: UtxoEngineDeps, tx: UtxoTransaction, currentBlockHeight: number) => { txId: string };
   executePostWithdraw: (deps: UtxoEngineDeps, tx: UtxoTransaction, currentBlockHeight: number) => { txId: string };
   getCurrentHeight: () => number;
@@ -19,7 +19,7 @@ export interface DeleteDeps extends UtxoEngineDeps {
 // Factory
 // ---------------------------------------------------------------------------
 
-export function deleteRoutes(deps: DeleteDeps): Router {
+export function pruneWithdrawRoutes(deps: PruneWithdrawDeps): Router {
   const router = Router();
 
   // POST /posts/:id/prune — submit a signed prune transaction
