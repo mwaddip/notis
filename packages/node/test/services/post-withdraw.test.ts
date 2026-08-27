@@ -472,6 +472,98 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
   });
 
   // -----------------------------------------------------------------------
+  // 6b. Like-records survive withdrawal, counted on prune, restored on revert
+  // -----------------------------------------------------------------------
+  // ARCHITECTURE → Like-records
+  it('a like-record outlives its post\'s withdrawal; a later prune counts it into the stump and deletes it; revert restores it', async () => {
+    const { hasLikeRecord, getLikeRecordCount } = await import('../../src/store/likes.js');
+    const { getStump } = await import('../../src/store/stumps.js');
+    const forkRes = await importForkResolution();
+
+    const A = makeTestIdentity();
+    const B = makeTestIdentity();
+    const C = makeTestIdentity();
+
+    // Block 1: A posts root R
+    const { postId: rootId } = await postAndConfirm(A, 'root');
+
+    // Block 2: B replies P with parentRefs: [R]
+    const { tx: replyTx, postId: replyId } = await seedPostTx(B, 'reply', {
+      parentRefs: [rootId],
+    });
+    const block2 = await makeApplicableBlock({
+      miner,
+      utxoTxs: [replyTx],
+      height: 2,
+    });
+    expect(apply.applyOrderingBlock(block2)).toBe(true);
+    posts.setPostBody(replyId, 'reply');
+
+    // Block 3: C likes P
+    const { LIKE_KARMA_COST } = await import('@dagsocial/types');
+    const likerKarma = makeKarmaBox(LIKE_KARMA_COST + 1n, C.userId, 2, 90);
+    utxo.insertBox(likerKarma);
+    const likeTx: UtxoTransaction = {
+      inputs: [likerKarma.id!],
+      outputs: [
+        { boxType: 'karma', value: 1n, createdAtBlock: likerKarma.createdAtBlock, owner: C.userId } as never,
+        { boxType: 'like_accrual', value: LIKE_KARMA_COST, createdAtBlock: likerKarma.createdAtBlock, author: B.userId } as never,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+      likeTarget: replyId,
+    };
+    signTransaction(likeTx, C.privateKey, toHex(C.userId));
+    const block3 = await makeApplicableBlock({
+      miner,
+      utxoTxs: [likeTx],
+      height: 3,
+    });
+    expect(apply.applyOrderingBlock(block3)).toBe(true);
+    expect(getLikeRecordCount(replyId)).toBe(1);
+
+    // Block 4: B withdraws P
+    const withdrawKarma = makeKarmaBox(10n, B.userId, 2, 91);
+    utxo.insertBox(withdrawKarma);
+    const withdrawTx = makePostWithdrawTx(B, replyId, withdrawKarma);
+    const block4 = await makeApplicableBlock({
+      miner,
+      utxoTxs: [withdrawTx],
+      height: 4,
+    });
+    expect(apply.applyOrderingBlock(block4)).toBe(true);
+    expect(hasLikeRecord(replyId, C.userId)).toBe(true);
+    expect(getLikeRecordCount(replyId)).toBe(1);
+
+    // Block 5: A prunes R
+    const pruneKarma = makeKarmaBox(10n, A.userId, 2, 92);
+    utxo.insertBox(pruneKarma);
+    const pruneTx: UtxoTransaction = {
+      inputs: [pruneKarma.id!],
+      outputs: [
+        { boxType: 'karma', value: pruneKarma.value, createdAtBlock: pruneKarma.createdAtBlock, owner: A.userId } as never,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+      prune: { rootPostHash: rootId },
+    };
+    signTransaction(pruneTx, A.privateKey, toHex(A.userId));
+    const block5 = await makeApplicableBlock({
+      miner,
+      utxoTxs: [pruneTx],
+      height: 5,
+    });
+    expect(apply.applyOrderingBlock(block5)).toBe(true);
+    expect(getStump(rootId)!.upvoteCount).toBe(1);
+    expect(hasLikeRecord(replyId, C.userId)).toBe(false);
+
+    // Revert block 5: the exact inverse
+    forkRes.revertBlock(5);
+    expect(hasLikeRecord(replyId, C.userId)).toBe(true);
+    expect(getStump(rootId)).toBeNull();
+  });
+
+  // -----------------------------------------------------------------------
   // 7. The route: submits, broadcasts, returns 201
   // -----------------------------------------------------------------------
   it('POST /posts/:id/withdraw submits, broadcasts and returns 201', async () => {
