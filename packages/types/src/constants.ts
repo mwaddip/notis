@@ -16,7 +16,7 @@ export const MAX_CONTENT_BYTES = 300;
  * A post names at most **one** parent (user decision, 2026-08-09).
  *
  * Multi-parent has no use case here beyond spam, and raising this cap reopens an
- * authorization defect: `getSubtree` (node's `store/posts.ts`) is a recursive
+ * authorization defect: `getSubtreePage` (node's `store/posts.ts`) is a recursive
  * CTE with `UNION`/`DISTINCT` *because* a post could belong to several subtrees
  * at once, so a reply naming parents A and B in different threads is inside A's
  * subtree by that query — and A's author can prune it, deleting a reply that
