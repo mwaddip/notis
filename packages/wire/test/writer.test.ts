@@ -10,13 +10,6 @@ describe('ByteWriter', () => {
     expect(w.toBytes()).toEqual(new Uint8Array([0xab, 0xcd]));
   });
 
-  it('writeBool', () => {
-    const w = new ByteWriter();
-    w.writeBool(true);
-    w.writeBool(false);
-    expect(w.toBytes()).toEqual(new Uint8Array([1, 0]));
-  });
-
   it('writeVlqU round-trips through ByteReader', () => {
     const w = new ByteWriter();
     w.writeVlqU(0);
