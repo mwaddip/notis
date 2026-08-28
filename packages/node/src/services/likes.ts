@@ -23,7 +23,7 @@ const LIKE_TARGET_RE = /^[0-9a-f]{64}$/;
  *
  * Receives a pre-built, signed UtxoTransaction from the client with
  * `likeTarget` set. The engine enforces the biconditional like shape — karma
- * inputs with one owner, exactly one karma output with that same owner, and a
+ * inputs with one owner, at most one karma output with that same owner, and a
  * deficit of exactly `LIKE_KARMA_COST`. There is no free tier, no refund
  * schedule, and no unlike: one like per `(liker, post)`, forever.
  *
