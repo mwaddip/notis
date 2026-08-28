@@ -7,7 +7,7 @@ import { getNet } from '../services/net-instance.js';
 import { jsonToTx } from './json-to-tx.js';
 import { respondError } from './respond-error.js';
 import type { PostKey } from '../store/index.js';
-import { parseLimit, isLimitError, parseAfter, isAfterError, parseViewer, isViewerError } from './page.js';
+import { parseLimit, isLimitError, parseAfter, isAfterError, parseViewer, isViewerError, formatKey } from './page.js';
 
 // ---------------------------------------------------------------------------
 // Dependency types
@@ -94,7 +94,10 @@ export function createRouter(deps: PostsDeps): Router {
       res.status(404).json({ error: 404, reason: 'Post not found' });
       return;
     }
-    res.json(thread);
+    res.json({
+      ...thread,
+      next: thread.next ? formatKey('post', thread.next) : null,
+    });
   });
 
   // GET /posts/:id
@@ -133,7 +136,10 @@ export function createRouter(deps: PostsDeps): Router {
       after: after as PostKey | undefined,
       viewer,
     });
-    res.json(result);
+    res.json({
+      ...result,
+      next: result.next ? formatKey('post', result.next) : null,
+    });
   });
 
   return router;

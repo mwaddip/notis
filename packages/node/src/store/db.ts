@@ -386,6 +386,12 @@ function createPageIndexes(database: Database.Database): void {
       WHERE status = 'confirmed';
     CREATE INDEX IF NOT EXISTS idx_dag_parent_refs_parent
       ON dag_parent_refs(parent_id);
+    CREATE INDEX IF NOT EXISTS idx_utxo_boxes_bond_inviter
+      ON utxo_boxes(json_extract(extra_data, '$.inviterId'), id)
+      WHERE box_type = 'bond' AND spent_at_block IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_utxo_boxes_vouch_target
+      ON utxo_boxes(json_extract(extra_data, '$.targetId'), id)
+      WHERE box_type = 'vouch' AND spent_at_block IS NULL;
   `);
 }
 

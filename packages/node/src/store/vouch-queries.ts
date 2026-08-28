@@ -1,5 +1,6 @@
 import { getDb } from './db.js';
 import { getBox, rowToBox } from './utxo.js';
+import type { UtxoRow } from './utxo.js';
 import type { VouchBox } from '@dagsocial/types';
 import type { Page, PageResult } from './index.js';
 
@@ -44,14 +45,14 @@ export function getVouchesForTargetPage(
       `SELECT * FROM utxo_boxes WHERE ${VOUCH_TARGET_WHERE}${afterClause} ORDER BY id LIMIT ?`,
     )
     .safeIntegers()
-    .all(...params) as Array<Record<string, unknown>>;
+    .all(...params) as UtxoRow[];
 
   const hasMore = rows.length > page.limit;
   const resultRows = hasMore ? rows.slice(0, page.limit) : rows;
   const vouches = resultRows
-    .map((r) => rowToBox(r as never) as VouchBox);
+    .map((r) => rowToBox(r) as VouchBox);
   const last = resultRows[resultRows.length - 1];
-  const next: string | null = hasMore && last ? last.id as string : null;
+  const next: string | null = hasMore && last ? last.id : null;
 
   const countRow = db
     .prepare(`SELECT COUNT(*) AS cnt FROM utxo_boxes WHERE ${VOUCH_TARGET_WHERE}`)

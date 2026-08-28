@@ -72,13 +72,20 @@ export interface WithdrawnJson {
   withdrawnAtHeight: number;
 }
 
-export interface ThreadJson {
+export interface ThreadResult {
   post: PostJson | StumpJson | PrunedJson | WithdrawnJson | null;
   ancestors: Array<PostJson | WithdrawnJson>;
   ancestorCount: number;
   descendants: Array<PostJson | WithdrawnJson>;
   descendantCount: number;
-  next: string | null;
+  next: PostKey | null;
+  pending: Array<PostJson | WithdrawnJson>;
+  pendingCount: number;
+}
+
+export interface FeedResult {
+  posts: Array<PostJson | WithdrawnJson>;
+  next: PostKey | null;
   pending: Array<PostJson | WithdrawnJson>;
   pendingCount: number;
 }
@@ -141,9 +148,6 @@ export function withdrawnToJson(post: StoredPost): WithdrawnJson {
   };
 }
 
-function formatPostKey(key: PostKey): string {
-  return `${key.blockHeight}:${key.blockIndex}`;
-}
 
 // ---------------------------------------------------------------------------
 // Service
@@ -186,12 +190,12 @@ export class FeedService {
     limit: number;
     after?: PostKey;
     viewer?: Uint8Array | null;
-  }): { posts: Array<PostJson | WithdrawnJson>; next: string | null; pending: Array<PostJson | WithdrawnJson>; pendingCount: number } {
+  }): FeedResult {
     const result = this.deps.queryPostsPage({ author: opts.author, limit: opts.limit, after: opts.after });
     const viewer = opts.viewer ?? null;
     return {
       posts: result.rows.map((post) => this.storedPostToJson(post, viewer)),
-      next: result.next ? formatPostKey(result.next) : null,
+      next: result.next,
       pending: result.pending.map((post) => this.storedPostToJson(post, viewer)),
       pendingCount: result.pendingCount,
     };
@@ -201,7 +205,7 @@ export class FeedService {
     id: string,
     page: Page<PostKey>,
     viewer: Uint8Array | null = null,
-  ): ThreadJson | null {
+  ): ThreadResult | null {
     const result = this.deps.getPost(id);
     if (!result) return null;
 
@@ -248,7 +252,7 @@ export class FeedService {
       ancestorCount: ancestorResult.count,
       descendants,
       descendantCount: descendantResult.count,
-      next: descendantResult.next ? formatPostKey(descendantResult.next) : null,
+      next: descendantResult.next,
       pending: descendantResult.pending.map((p) => this.storedPostToJson(p, viewer)),
       pendingCount: descendantResult.pendingCount,
     };

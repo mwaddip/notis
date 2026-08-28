@@ -773,20 +773,37 @@ describe('utxo store', () => {
     }
   });
 
-  it('EXPLAIN QUERY PLAN: bond and vouch pages scan by id', async () => {
+  it('EXPLAIN QUERY PLAN: bond pages use idx_utxo_boxes_bond_inviter', async () => {
     const { initDb, getDb } = await importDbFresh();
     initDb(':memory:');
     const db = getDb();
     const hex = 'aa'.repeat(32);
 
-    const bondPlan = db.prepare(
+    const pagePlan = db.prepare(
       `EXPLAIN QUERY PLAN SELECT * FROM utxo_boxes WHERE box_type = 'bond' AND spent_at_block IS NULL AND json_extract(extra_data, '$.inviterId') = ? AND id > ? ORDER BY id LIMIT ?`,
     ).all(hex, hex, 11) as Array<{ detail: string }>;
-    expect(bondPlan.some(r => r.detail.includes('utxo_boxes'))).toBe(true);
+    expect(pagePlan.some(r => r.detail.includes('idx_utxo_boxes_bond_inviter'))).toBe(true);
 
-    const vouchPlan = db.prepare(
+    const countPlan = db.prepare(
+      `EXPLAIN QUERY PLAN SELECT COUNT(*) AS cnt FROM utxo_boxes WHERE box_type = 'bond' AND spent_at_block IS NULL AND json_extract(extra_data, '$.inviterId') = ?`,
+    ).all(hex) as Array<{ detail: string }>;
+    expect(countPlan.some(r => r.detail.includes('idx_utxo_boxes_bond_inviter'))).toBe(true);
+  });
+
+  it('EXPLAIN QUERY PLAN: vouch pages use idx_utxo_boxes_vouch_target', async () => {
+    const { initDb, getDb } = await importDbFresh();
+    initDb(':memory:');
+    const db = getDb();
+    const hex = 'aa'.repeat(32);
+
+    const pagePlan = db.prepare(
       `EXPLAIN QUERY PLAN SELECT * FROM utxo_boxes WHERE box_type = 'vouch' AND spent_at_block IS NULL AND json_extract(extra_data, '$.targetId') = ? AND id > ? ORDER BY id LIMIT ?`,
     ).all(hex, hex, 11) as Array<{ detail: string }>;
-    expect(vouchPlan.some(r => r.detail.includes('utxo_boxes'))).toBe(true);
+    expect(pagePlan.some(r => r.detail.includes('idx_utxo_boxes_vouch_target'))).toBe(true);
+
+    const countPlan = db.prepare(
+      `EXPLAIN QUERY PLAN SELECT COUNT(*) AS cnt FROM utxo_boxes WHERE box_type = 'vouch' AND spent_at_block IS NULL AND json_extract(extra_data, '$.targetId') = ?`,
+    ).all(hex) as Array<{ detail: string }>;
+    expect(countPlan.some(r => r.detail.includes('idx_utxo_boxes_vouch_target'))).toBe(true);
   });
 });

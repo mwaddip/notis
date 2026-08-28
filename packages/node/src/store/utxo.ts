@@ -34,7 +34,7 @@ import type {
 // column arrives as bigint. `value` must stay bigint (loses precision above
 // 2^53 otherwise); block-height columns are converted back to number in
 // rowToBox.
-interface UtxoRow {
+export interface UtxoRow {
   id: string;
   box_type: string;
   value: bigint;

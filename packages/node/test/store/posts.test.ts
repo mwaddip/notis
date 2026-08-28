@@ -900,4 +900,185 @@ describe('posts store', () => {
     expect(page.rows).toHaveLength(1);
     expect(page.next).not.toBeNull();
   });
+
+  // --- keyset pins (phase 3) ---
+
+  it('feed continuation across a head insert: no overlap, no gap', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertPost, confirmPost, queryPostsPage } = await importPostsFresh();
+
+    initDb(':memory:');
+    for (let i = 0; i < 4; i++) {
+      const { commit, content } = makeCommit({ content: `p${i}` });
+      insertPost(fixturePostId(commit), commit, content);
+      confirmPost(fixturePostId(commit), 10, i);
+    }
+
+    const page1 = queryPostsPage({ limit: 2 });
+    expect(page1.rows).toHaveLength(2);
+    expect(page1.next).not.toBeNull();
+    const page1Ids = new Set(page1.rows.map(p => p.id));
+
+    const { commit: newA, content: newAC } = makeCommit({ content: 'new-a' });
+    insertPost(fixturePostId(newA), newA, newAC);
+    confirmPost(fixturePostId(newA), 20, 0);
+    const { commit: newB, content: newBC } = makeCommit({ content: 'new-b' });
+    insertPost(fixturePostId(newB), newB, newBC);
+    confirmPost(fixturePostId(newB), 20, 1);
+
+    const page2 = queryPostsPage({ limit: 2, after: page1.next! });
+    for (const p of page2.rows) expect(page1Ids.has(p.id)).toBe(false);
+    expect(page2.rows).toHaveLength(2);
+  });
+
+  it('subtree continuation across a prune: no skip', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertPost, confirmPost, deletePostRows, getSubtreePage } = await importPostsFresh();
+
+    initDb(':memory:');
+    const { commit: rootC, content: rootCt } = makeCommit({ content: 'root', parentRefs: [] });
+    const rootId = fixturePostId(rootC);
+    insertPost(rootId, rootC, rootCt);
+    confirmPost(rootId, 1, 0);
+
+    const childIds: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const { commit, content } = makeCommit({ content: `child-${i}`, parentRefs: [rootId] });
+      const id = fixturePostId(commit);
+      insertPost(id, commit, content);
+      confirmPost(id, 2, i);
+      childIds.push(id);
+    }
+
+    const page1 = getSubtreePage(rootId, { limit: 2 });
+    expect(page1.rows).toHaveLength(2);
+    expect(page1.next).not.toBeNull();
+
+    deletePostRows([childIds[0]!]);
+
+    const page2 = getSubtreePage(rootId, { limit: 2, after: page1.next! });
+    expect(page2.rows).toHaveLength(1);
+  });
+
+  it('exact next on feed: exactly limit → null; limit + 1 → key', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertPost, confirmPost, queryPostsPage } = await importPostsFresh();
+
+    initDb(':memory:');
+    for (let i = 0; i < 2; i++) {
+      const { commit, content } = makeCommit({ content: `e${i}` });
+      insertPost(fixturePostId(commit), commit, content);
+      confirmPost(fixturePostId(commit), 10, i);
+    }
+    const exact = queryPostsPage({ limit: 2 });
+    expect(exact.next).toBeNull();
+
+    const { commit: extra, content: extraC } = makeCommit({ content: 'extra' });
+    insertPost(fixturePostId(extra), extra, extraC);
+    confirmPost(fixturePostId(extra), 10, 2);
+    const withExtra = queryPostsPage({ limit: 2 });
+    expect(withExtra.next).not.toBeNull();
+  });
+
+  it('exact next on subtree: exactly limit → null; limit + 1 → key', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertPost, confirmPost, getSubtreePage } = await importPostsFresh();
+
+    initDb(':memory:');
+    const { commit: rootC, content: rootCt } = makeCommit({ content: 'root', parentRefs: [] });
+    const rootId = fixturePostId(rootC);
+    insertPost(rootId, rootC, rootCt);
+    confirmPost(rootId, 1, 0);
+
+    for (let i = 0; i < 2; i++) {
+      const { commit, content } = makeCommit({ content: `s${i}`, parentRefs: [rootId] });
+      insertPost(fixturePostId(commit), commit, content);
+      confirmPost(fixturePostId(commit), 2, i);
+    }
+    const exact = getSubtreePage(rootId, { limit: 2 });
+    expect(exact.next).toBeNull();
+
+    const { commit: extra, content: extraC } = makeCommit({ content: 'extra', parentRefs: [rootId] });
+    insertPost(fixturePostId(extra), extra, extraC);
+    confirmPost(fixturePostId(extra), 2, 2);
+    const withExtra = getSubtreePage(rootId, { limit: 2 });
+    expect(withExtra.next).not.toBeNull();
+  });
+
+  it('pending window larger than limit on feed', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertPost, queryPostsPage } = await importPostsFresh();
+
+    initDb(':memory:');
+    for (let i = 0; i < 3; i++) {
+      const { commit, content } = makeCommit({ content: `pend-${i}` });
+      insertPost(fixturePostId(commit), commit, content);
+    }
+    const result = queryPostsPage({ limit: 2 });
+    expect(result.pending).toHaveLength(2);
+    expect(result.pendingCount).toBe(3);
+    expect(result.pending[0]!.content).toBe('pend-2');
+  });
+
+  it('pending window larger than limit on subtree', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertPost, confirmPost, getSubtreePage } = await importPostsFresh();
+
+    initDb(':memory:');
+    const { commit: rootC, content: rootCt } = makeCommit({ content: 'root', parentRefs: [] });
+    const rootId = fixturePostId(rootC);
+    insertPost(rootId, rootC, rootCt);
+    confirmPost(rootId, 1, 0);
+
+    for (let i = 0; i < 3; i++) {
+      const { commit, content } = makeCommit({ content: `sub-pend-${i}`, parentRefs: [rootId] });
+      insertPost(fixturePostId(commit), commit, content);
+    }
+    const result = getSubtreePage(rootId, { limit: 2 });
+    expect(result.pending).toHaveLength(2);
+    expect(result.pendingCount).toBe(3);
+    expect(result.pending[0]!.content).toBe('sub-pend-2');
+  });
+
+  it('EXPLAIN QUERY PLAN: feed page uses idx_dag_posts_confirmed', async () => {
+    const { initDb, getDb } = await importDbFresh();
+    initDb(':memory:');
+    const db = getDb();
+
+    const plan = db.prepare(
+      `EXPLAIN QUERY PLAN SELECT * FROM dag_posts WHERE status = 'confirmed' ORDER BY block_height DESC, block_index DESC LIMIT ?`,
+    ).all(11) as Array<{ detail: string }>;
+    expect(plan.some(r => r.detail.includes('idx_dag_posts_confirmed'))).toBe(true);
+
+    const authorPlan = db.prepare(
+      `EXPLAIN QUERY PLAN SELECT * FROM dag_posts WHERE status = 'confirmed' AND author = ? ORDER BY block_height DESC, block_index DESC LIMIT ?`,
+    ).all(Buffer.alloc(32), 11) as Array<{ detail: string }>;
+    const authorDetail = authorPlan.map(r => r.detail).join(' ');
+    if (!authorDetail.includes('idx_dag_posts_confirmed')) {
+      expect(authorDetail).toContain('dag_posts');
+    }
+  });
+
+  it('EXPLAIN QUERY PLAN: subtree CTE uses idx_dag_parent_refs_parent', async () => {
+    const { initDb, getDb } = await importDbFresh();
+    initDb(':memory:');
+    const db = getDb();
+
+    const plan = db.prepare(
+      `EXPLAIN QUERY PLAN WITH RECURSIVE subtree AS (
+         SELECT dp.id FROM dag_posts dp
+         JOIN dag_parent_refs dpr ON dp.id = dpr.post_id
+         WHERE dpr.parent_id = ?
+         UNION
+         SELECT dp.id FROM dag_posts dp
+         JOIN dag_parent_refs dpr ON dp.id = dpr.post_id
+         JOIN subtree s ON dpr.parent_id = s.id
+       )
+       SELECT dp.* FROM dag_posts dp
+       JOIN subtree s ON dp.id = s.id
+       WHERE dp.status = 'confirmed'
+       ORDER BY dp.block_height, dp.block_index LIMIT ?`,
+    ).all('ab'.repeat(32), 11) as Array<{ detail: string }>;
+    expect(plan.some(r => r.detail.includes('idx_dag_parent_refs_parent'))).toBe(true);
+  });
 });
