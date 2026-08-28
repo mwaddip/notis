@@ -8,8 +8,8 @@ import {
   devnetProfile,
 } from './helpers.js';
 
-// NIPOPOW_INTERFACE → verifyProof — the prove → verify round trip over deterministic
-// chains at five lengths and five (m, k) pairs, rule 6's strict adjacency included
+// NIPOPOW_INTERFACE → verifyProof. The prove-then-verify round trip over deterministic
+// chains at five lengths and five (m, k) pairs, rule 6's strict adjacency included.
 describe('strict-adjacency property test', () => {
   const profile = devnetProfile();
   const mkParams = [
