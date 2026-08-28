@@ -13,20 +13,15 @@ import {
 
 // ---------------------------------------------------------------------------
 // Spec B P2 acceptance (M-12) — the audit escalation scenario, made
-// permanent: two nodes holding the same box set, but with the boxes inserted
-// into their DBs in different row orders, build/apply the same blocks and end
-// at the identical AVL digest.
+// permanent: two nodes holding the same box set, but with the bootstrap feed
+// presented in different orders, build/apply the same blocks and end at the
+// identical AVL digest.
 //
-// Node A seeds the boxes in creation order and builds the chain with the
-// production block creator (which also applies each block). Node B — a fresh
-// module universe via vi.resetModules() — seeds the identical boxes in
-// reversed row order and applies node A's blocks, the gossip path.
-//
-// The divergence this pins enters through the bootstrap feed:
-// getUnspentBoxes orders by created_at_block, and same-height boxes tie, so
-// SQLite resolves them by rowid — i.e. the order the rows were written. The
-// two nodes therefore bootstrap the identical box set in opposite orders,
-// and an unsorted feed builds two differently-shaped AVL trees.
+// Node A seeds the boxes in creation order and bootstraps with the store's
+// feed. Node B — a fresh module universe via vi.resetModules() — seeds the
+// identical boxes in reversed row order and activateProver hands the reversed
+// list to bootstrapAvlProver. The store read has no tie order the test relies
+// on; the bootstrap sort neutralises whichever order it gets.
 //
 // (The divergently-ordered set is plain karma boxes that nothing spends — the
 // property under test does not depend on what the boxes are.)
@@ -99,22 +94,25 @@ async function importUtxo() {
  * Activate the AVL prover singleton on the current universe's DB and
  * bootstrap the seeded boxes — the production startup wiring from
  * src/index.ts (same shape as the journal round-trip harness).
+ *
+ * `permute`, when given, is applied to the store's feed before
+ * bootstrapAvlProver sees it — the test hands node B the reversed list so the
+ * non-vacuity assertion holds regardless of the store's scan order.
  */
-async function activateProver() {
+async function activateProver(
+  permute?: (rows: import('@dagsocial/types').AnyBox[]) => import('@dagsocial/types').AnyBox[],
+) {
   const avlMod = await importAvl();
   const utxo = await importUtxo();
   const handle = avlMod.createAvlProver();
-  const unspent = utxo.getUnspentBoxes();
+  const raw = utxo.getUnspentBoxes();
+  const unspent = permute ? permute(raw) : raw;
   expect(unspent.length).toBeGreaterThan(0);
   avlMod.bootstrapAvlProver(handle, unspent, 0, []);
   expect(avlMod.tryGetAvlProver()).not.toBeNull();
   return {
     handle,
-    // The order the prover WOULD have seen without the sort — returned so the
-    // test can assert the two nodes really presented divergent input.
     feedOrder: unspent.map((b) => b.id!),
-    // Captured before any block: this isolates the bootstrap feed from every
-    // later mutation, so it is the assertion the bootstrap sort owns outright.
     bootstrapDigest: new Uint8Array(handle.prover.digest()!),
   };
 }
@@ -193,7 +191,7 @@ describe('AVL digest order-independence across nodes (P2 acceptance)', () => {
       handle: handleB,
       feedOrder: feedB,
       bootstrapDigest: bootB,
-    } = await activateProver();
+    } = await activateProver(rows => [...rows].reverse());
     // Non-vacuity: the two nodes really did present the same box set to the
     // prover in different orders — the condition the sort has to neutralize.
     expect([...feedB].sort()).toEqual([...feedA].sort());
