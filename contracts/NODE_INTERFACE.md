@@ -2881,7 +2881,6 @@ Fresh schema — no Phase 1 migration.
 | `getPost(id)` | `(string) => StoredPost \| Stump \| PrunedTombstone \| null` — "Resolution order for a post id" |
 | `getMissingBodies(limit)` | `(number) => { id, contentHash }[]` — rows with `content IS NULL`, newest first (`block_height` desc, `block_index` desc); the backfill list |
 | `queryPostsPage({ author?, limit, after? })` | `({ author?: Uint8Array } & Page<PostKey>) => { rows: StoredPost[], next: PostKey \| null, pending: StoredPost[], pendingCount: number }` — `rows` one page of the live committed rows (placeholders included), newest first in committed order, strictly after `after`; `pending` the live pending rows, the author's when `author` is given, newest arrival first (`rowid` descending), cut to `limit`; `pendingCount` over all of them |
-| `getPendingPosts(limit)` | `(number) => StoredPost[]` — oldest first, by arrival |
 | `confirmPost(postId, blockHeight, blockIndex)` | `(string, number, number) => void` — height and committed position |
 | `unconfirmPost(postId)` | `(string) => void` — for fork rollbacks; clears height and position, keeps the body |
 | `deletePendingPost(postId)` | `(string) => void` — the pending row of a post transaction that left the pool unconfirmed (Post transactions → the pending-row rule) |
@@ -2889,7 +2888,7 @@ Fresh schema — no Phase 1 migration.
 | `restorePostRows(rows)` | `(DeletedPostRow[]) => void` — the inverse, from the journal |
 | `getPrunedTombstone(id)` | `(string) => PrunedTombstone \| null` — step 3 of the resolution order: a `block_topology` row whose parent chain reaches a stump |
 | `getParentRefs(postId)` | `(string) => PostId[]` |
-| `getAncestorsNearest(postId, limit)` | `(string, number) => { rows: StoredPost[], count: number }` — the nearest `limit` ancestors, oldest first, walking the parent chain upward from the post; `count` is the chain's whole depth |
+| `getAncestorsNearest(postId, limit)` | `(string, number) => { rows: StoredPost[], count: number }` — the nearest `limit` ancestors, oldest first, walking the parent chain upward from the post; `count` is the chain's whole depth. **The chain ends at the first ancestor with no `dag_posts` row** — a stump — so `count` never exceeds what `rows` can carry; one recursive CTE over `dag_parent_refs`, one lookup per level |
 | `getSubtreePage(postId, page)` | `(string, Page<PostKey>) => { rows: StoredPost[], next: PostKey \| null, count: number, pending: StoredPost[], pendingCount: number }` — `rows` one page of the subtree's committed rows (the recursive CTE, stated once) in committed order, `(block_height, block_index)` ascending, strictly after `after`; `count` over the whole subtree, pending included; `pending` the subtree's pending rows, newest arrival first, cut to `limit`; `pendingCount` over all of them. The CTE enumerates the subtree — O(subtree) on the `dag_parent_refs (parent_id)` index — and the page is `limit + 1` rows of that enumeration: the one page read whose cost is the set's, not the page's |
 
 > **`StoredPost` is the DAG `Post` with `content: string | null`, `contentHash`, and a required
@@ -2957,9 +2956,6 @@ topology row's `parent_refs`, written by `insertBlockTopology` with the row and 
 `rollbackBlockTopology` with it — the column stays the record, the table is its index. The
 subtree walk (`getSubtreeTopology`, → Prune transactions) recurses on `parent_id = ?`, one
 index lookup per row of the set, so a prune's derived set costs the set and not the table.
-
-> ⚠ **AHEAD OF CODE — 2026-08-28.** The edge table lands with the `direct-pass` node dispatch;
-> until then the walk matches `json_each(parent_refs)` against every topology row per level.
 
 | Function | Signature |
 |----------|-----------|
@@ -3343,7 +3339,7 @@ Full semantics in `MEMPOOL_INTERFACE.md`.
 ```
 {
   rowid: number
-  entryType: "utxo_tx" | "prune"
+  entryType: "utxo_tx"
   utxoTxBytes: Uint8Array | null
   expiresAtHeight: number
   createdAt: string

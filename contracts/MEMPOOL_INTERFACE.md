@@ -22,9 +22,8 @@ Single SQLite table:
 ```sql
 CREATE TABLE mempool (
     rowid             INTEGER PRIMARY KEY AUTOINCREMENT,
-    entry_type        TEXT NOT NULL CHECK (entry_type IN ('utxo_tx', 'prune')),  -- 'prune' VESTIGIAL: never written (D1-6)
-    utxo_tx_bytes     BLOB,            -- positional encodeTx bytes (null for non-utxo_tx)
-    prune_entry_cbor  BLOB,            -- VESTIGIAL: never written (D1-6)
+    entry_type        TEXT NOT NULL CHECK (entry_type IN ('utxo_tx')),
+    utxo_tx_bytes     BLOB,            -- positional encodeTx bytes
     expires_at_height INTEGER NOT NULL, -- Block height after which entry is purged
     created_at        TEXT NOT NULL DEFAULT (datetime('now')),
     like_target TEXT, like_liker TEXT,          -- gate metadata (below)
@@ -32,12 +31,10 @@ CREATE TABLE mempool (
     tx_fee INTEGER, tx_bytes INTEGER,           -- fee-class metadata (§Eviction)
     max_valid_height INTEGER,                   -- utxo_tx only: validity ceiling, NULL = none (§Validity ceiling)
     tx_inputs TEXT, tx_output_ids TEXT,         -- conflict-gate metadata
-    tx_id TEXT,                                 -- utxo_tx only: the entry's own TxId (confirmed-entry cleanup)
-    prune_entry_id TEXT                         -- VESTIGIAL: never written (D1-6)
+    tx_id TEXT                                  -- the entry's own TxId (confirmed-entry cleanup)
 );
 
 CREATE INDEX IF NOT EXISTS idx_mempool_tx_id ON mempool(tx_id) WHERE tx_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_mempool_prune_entry_id ON mempool(prune_entry_id) WHERE prune_entry_id IS NOT NULL;  -- VESTIGIAL (D1-6)
 ```
 
 The SQLite `rowid` is the canonical identifier for entries.
@@ -45,8 +42,7 @@ The SQLite `rowid` is the canonical identifier for entries.
 **`tx_id` is written at insert from the `computeTxId` `insertUtxoTx` already performs**, so it costs
 no additional hash. It exists because cleanup has to find an entry *by transaction identity* when a
 peer's block confirms it, and a scan that recomputes the id per candidate is the cost measured under
-*Confirmed-entry cleanup* below. The index is **partial** — non-`utxo_tx` rows carry `NULL` and are
-not indexed.
+*Confirmed-entry cleanup* below. The index is **partial** — a row without a `tx_id` is not indexed.
 
 ⚠ **Rows written before the column existed carry `NULL` and no cleanup matches them.** They leave the
 pool by `purgeExpired` at their expiry height, which is the same path an unconfirmed entry always
@@ -57,13 +53,6 @@ took.
 priced, evicted, confirmed-cleaned and expired by exactly the paths above. **Its dedup is its
 spent inputs** — a pooled prune cannot be duplicated because its boxes are gone — so it needs no
 id column of its own.
-
-> ⚠ **`entry_type`, `prune_entry_cbor`, `prune_entry_id` and `idx_mempool_prune_entry_id`
-> survive in `store/db.ts` as VESTIGIAL declarations that nothing reads or writes.** They are
-> recorded as `OUTSTANDING-WORK` D1-6 rather than removed, because
-> `test/store/db-migrations.test.ts` pins the repaired column set and the index order that unit
-> A1 existed to build. **`PoolEntry.entryType` is `'utxo_tx'` alone** — the type is narrow even
-> where the schema is not.
 
 ### PoolEntry (in-memory representation)
 
@@ -310,10 +299,9 @@ pending entries:
 
 1. Calls `purgeExpired(currentHeight)` — drops stale entries
 2. Draws pending entries in FIFO order and fills up to `BLOCK_BODY_BUDGET_BYTES`
-3. Separates entries by `entryType`:
-   - `utxo_tx` entries → `utxoTxIds` / `utxoTxs`
-4. Tracks `confirmedRowids` — **every** row the template carries, transaction
-   and prune rows alike
+3. Every entry is a `utxo_tx` → `utxoTxIds` / `utxoTxs`
+4. Tracks `confirmedRowids` — **every** row the template carries (a prune is a
+   transaction row)
 5. After block finalization: `removeEntry(rowid)` for each tracked rowid. **A
    body the mutation phase rejects is evicted the same way**, and the creator
    fills again from what remains (`MINING_INTERFACE → Template and submit`);
@@ -432,8 +420,7 @@ When an ordering block is received from gossip:
 2. For each `utxoTxId`: decode from mempool or reconstruct, **fully re-validate with
    `validateTx`**, then `applyTx`
 3. Confirm the block's posts (ids from its post transactions)
-4. Remove confirmed entries from mempool — transactions by `tx_id`, prune entries by
-   `prune_entry_id`
+4. Remove confirmed entries from mempool by `tx_id` (a prune is a transaction)
 
 ⛔ **Step 2 is full re-validation, never a liveness-only re-check.** A permissionless block
 producer can embed a transaction that never passed pool entry or relay validation, so

@@ -1188,8 +1188,8 @@ BlockHeader {
   protocolVersion: number        // 1
   height: number                 // Monotonically increasing, starting from 1
   prevBlockHash: string          // hex(32) — hash of the previous block's header
-  utxoTxRoot: string             // hex(32) — Merkle root over the block body (txs + prune entries)
-  stateRoot: string              // hex(33) — AVL+ digest (EMPTY_STATE_ROOT until enabled)
+  utxoTxRoot: string             // hex(32) — Merkle root over the body's transactions (→ Ordering block; a prune is a transaction)
+  stateRoot: string              // hex(33) — the AVL+ digest after this block is applied (NODE_INTERFACE → Post-block stateRoot)
   validatorId: UserId            // Block producer's 32-byte public key
   powNonce: number               // PoW solution
   powTargetBits: number          // Difficulty target for this block
@@ -2995,10 +2995,6 @@ export const VOUCH_COOLDOWN_BLOCKS = 60;           // consensus — blocks befor
 export const VOUCH_CAST_HEIGHT_WINDOW = 5;         // consensus — a cast's createdAtBlock may lag its carrying block by at most this many blocks
 ```
 
-> ⚠ **AHEAD OF CODE — 2026-08-28.** `VOUCH_CAST_HEIGHT_WINDOW` is exported here and imported by
-> `node/src/services/utxo-engine.ts`; the rule it serves is `NODE_INTERFACE → Vouch transition rules`,
-> which states it protocol-level and never a profile field.
-
 ### Genesis
 
 ```typescript
@@ -3006,9 +3002,6 @@ export const GENESIS_KARMA_PER_MEMBER = 1000n;             // consensus
 export const SYSTEM_KARMA_INITIAL = 1_000_000n;            // consensus — the faucet identity's karma at genesis
 export const FAUCET_CREDITS_INITIAL = 100_000n * 10n ** 8n; // consensus — 100 000 credits in base units
 ```
-
-> ⚠ **AHEAD OF CODE — 2026-08-28.** The two seeds are exported here and imported by
-> `node/src/store/system.ts`, which builds the genesis boxes from them.
 
 **The faucet identity's two seeds are universal constants, not profile fields.** The boxes are
 byte-identical everywhere they are seeded at all (→ Network profiles); whether they are seeded is
