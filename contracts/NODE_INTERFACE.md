@@ -190,7 +190,7 @@ is identical on every node — and it is **the only key a like may earmark karma
 transition rules"). A stump carries it too, and so does the tombstone: topology survives pruning.
 `GET /posts/:id/thread` and the listing do not carry it.
 
-**PostJson time and order (decided 2026-08-20).** A post has no timestamp
+**PostJson time and order.** Decided 2026-08-20. A post has no timestamp
 (TYPES_INTERFACE → Layout — PostCommit). `PostJson` carries the post's `type` with the rest of its
 fields, plus three node-local columns: `blockHeight` and `blockIndex` — the confirming block
 and the post's committed position in it — and `blockCreatedAt`, the confirming block
@@ -1637,7 +1637,7 @@ There is **no other legal bond or invite shape**. In particular:
   with every other transaction; the block body has no prune section.
 - ⛔ **The subtree is derived, never carried.** At §8c the set is
   `getSubtreeTopology(rootPostHash)` — every `block_topology` row reachable from
-  the root through `parent_refs`, the root included, **as the table stands after
+  the root through its parent edges, the root included, **as the table stands after
   §8 populated it from this block's own posts** — so a reply confirmed in the
   prune's block is in the set, and a reply confirmed between the prune's signing
   and its inclusion invalidates nothing. Every node derives the same set from
@@ -2950,6 +2950,16 @@ applied_at_block INTEGER NOT NULL, PRIMARY KEY (target_post_id, liker_id))`. Wri
 read inside consensus). Content-layer consensus state, the `block_topology` tier:
 deterministic by replay, journalled with exact inverses, not in the `stateRoot`. The
 `dag_likes` table is **dropped**.
+
+**The topology's parent edges are a table of their own.** `block_topology_parents
+(parent_id, post_id, PRIMARY KEY (parent_id, post_id))` holds one row per entry of a
+topology row's `parent_refs`, written by `insertBlockTopology` with the row and deleted by
+`rollbackBlockTopology` with it — the column stays the record, the table is its index. The
+subtree walk (`getSubtreeTopology`, → Prune transactions) recurses on `parent_id = ?`, one
+index lookup per row of the set, so a prune's derived set costs the set and not the table.
+
+> ⚠ **AHEAD OF CODE — 2026-08-28.** The edge table lands with the `direct-pass` node dispatch;
+> until then the walk matches `json_each(parent_refs)` against every topology row per level.
 
 | Function | Signature |
 |----------|-----------|
