@@ -289,7 +289,7 @@ export function createApp(config: Config): express.Express {
   app.use(
     '/',
     utxoRoutes({
-      getKarmaValue: store.getKarmaValue,
+      getKarmaTotal: store.getKarmaTotal,
       getKarmaBoxesPage: store.getKarmaBoxesPage,
       getIdentityRecord: store.getIdentityRecord,
       getCreditValue: store.getCreditValue,

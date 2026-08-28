@@ -8,6 +8,7 @@ import {
   getKarmaBox,
   getKarmaBoxesPage,
   getKarmaValue,
+  getKarmaTotal,
   getCreditBoxesPage,
   getCreditValue,
   getBondBoxesPage,
@@ -59,7 +60,7 @@ async function request(
 ): Promise<{ status: number; data: unknown }> {
   return new Promise((resolve) => {
     const deps = {
-      getKarmaValue,
+      getKarmaTotal,
       getKarmaBoxesPage,
       getIdentityRecord,
       getCreditValue,
@@ -226,7 +227,7 @@ describe('UTXO routes', () => {
     const staleRequest = (): Promise<{ status: number; data: unknown }> =>
       new Promise((resolve) => {
         const deps = {
-          getKarmaValue,
+          getKarmaTotal,
           getKarmaBoxesPage,
           getIdentityRecord,
           getCreditValue,
@@ -339,7 +340,7 @@ describe('UTXO routes', () => {
 
     /** Build and sign the transfer the way the demo UI does. */
     function buildSignedTransfer(amount: bigint): UtxoTransaction {
-      const unlocked = getCreditBoxesPage(senderPubKey, { limit: 100, offset: 0 }).rows;
+      const unlocked = getCreditBoxesPage(senderPubKey, { limit: 100 }).rows;
       const selected = selectBoxes(unlocked, amount);
       const totalSelected = selected.reduce((s, b) => s + b.value, 0n);
       const change = totalSelected - amount;
@@ -482,7 +483,7 @@ describe('UTXO routes', () => {
 
       // The input box is still unspent — the HTTP call settles nothing.
       expect(getBox(seededBoxId)).not.toBeNull();
-      expect(getCreditBoxesPage(receiverPubKey, { limit: 1, offset: 0 }).count).toBe(0);
+      expect(getCreditBoxesPage(receiverPubKey, { limit: 1 }).count).toBe(0);
 
       // The pooled tx went out to peers.
       expect(broadcastTx).toHaveBeenCalledTimes(1);

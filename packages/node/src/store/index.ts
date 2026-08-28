@@ -40,6 +40,7 @@ export {
   getKarmaBoxes,
   getKarmaBoxesPage,
   getKarmaValue,
+  getKarmaTotal,
   getCreditValue,
   getCreditBoxesPage,
   getGenesisProofBox,

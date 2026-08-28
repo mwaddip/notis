@@ -351,15 +351,15 @@ describe('utxo store', () => {
     bond3.id = computeBoxId(bond3);
     utxo.insertBox(bond3);
 
-    const charlieResult = utxo.getBondBoxesPage(uid('charlie'), { limit: 50, offset: 0 });
+    const charlieResult = utxo.getBondBoxesPage(uid('charlie'), { limit: 50 });
     expect(charlieResult.rows).toHaveLength(2);
     expect(charlieResult.count).toBe(2);
 
-    const daveResult = utxo.getBondBoxesPage(uid('dave'), { limit: 50, offset: 0 });
+    const daveResult = utxo.getBondBoxesPage(uid('dave'), { limit: 50 });
     expect(daveResult.rows).toHaveLength(1);
     expect(daveResult.count).toBe(1);
 
-    const noneResult = utxo.getBondBoxesPage(uid('nobody'), { limit: 50, offset: 0 });
+    const noneResult = utxo.getBondBoxesPage(uid('nobody'), { limit: 50 });
     expect(noneResult.rows).toHaveLength(0);
     expect(noneResult.count).toBe(0);
   });
@@ -566,11 +566,12 @@ describe('utxo store', () => {
       ids.push(box.id);
     }
 
-    const result = utxo.getKarmaBoxesPage(owner, { limit: 2, offset: 0 });
+    const result = utxo.getKarmaBoxesPage(owner, { limit: 2 });
     expect(result.count).toBe(3);
     expect(result.rows).toHaveLength(2);
     expect(result.rows[0]!.value).toBe(300n);
     expect(result.rows[1]!.value).toBe(200n);
+    expect(result.next).not.toBeNull();
   });
 
   it('getCreditBoxesPage returns one page with count over the whole set', async () => {
@@ -588,11 +589,12 @@ describe('utxo store', () => {
       utxo.insertBox(box);
     }
 
-    const result = utxo.getCreditBoxesPage(owner, { limit: 2, offset: 0 });
+    const result = utxo.getCreditBoxesPage(owner, { limit: 2 });
     expect(result.count).toBe(3);
     expect(result.rows).toHaveLength(2);
     expect(result.rows[0]!.value).toBe(250n);
     expect(result.rows[1]!.value).toBe(150n);
+    expect(result.next).not.toBeNull();
   });
 
   it('getBondBoxesPage lists unspent bonds only, ascending id, with count', async () => {
@@ -615,7 +617,7 @@ describe('utxo store', () => {
     // Settle one bond
     utxo.consumeBox(bonds[1]!.id!, 5);
 
-    const result = utxo.getBondBoxesPage(inviter, { limit: 50, offset: 0 });
+    const result = utxo.getBondBoxesPage(inviter, { limit: 50 });
     expect(result.count).toBe(2);
     expect(result.rows).toHaveLength(2);
     expect(result.rows.find(b => b.id === bonds[1]!.id)).toBeUndefined();

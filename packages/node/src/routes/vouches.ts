@@ -9,7 +9,7 @@ import {
   getVouchesByVoucher,
   getVouchEscrowsFor,
 } from '../store/index.js';
-import { parsePage, isPageError } from './page.js';
+import { parseLimit, isLimitError, parseAfter, isAfterError } from './page.js';
 
 export interface VouchesDeps extends UtxoEngineDeps {
   castVouch(
@@ -121,19 +121,21 @@ export function createRouter(deps: VouchesDeps): Router {
     }
 
     if (target) {
-      const page = parsePage(req.query as Record<string, unknown>);
-      if (isPageError(page)) {
-        res.status(400).json({ error: page.error });
-        return;
-      }
+      const limit = parseLimit(req.query as Record<string, unknown>);
+      if (isLimitError(limit)) { res.status(400).json({ error: limit.error }); return; }
+      const after = parseAfter(req.query as Record<string, unknown>, 'id');
+      if (isAfterError(after)) { res.status(400).json({ error: after.error }); return; }
       const targetBytes = new Uint8Array(Buffer.from(target, 'hex'));
-      const result = getVouchesForTargetPage(targetBytes, page);
+      const result = getVouchesForTargetPage(targetBytes, {
+        limit, after: after as string | undefined,
+      });
       res.status(200).json({
         vouches: result.rows.map((v) => ({
           voucherId: Buffer.from(v.voucherId).toString('hex'),
           targetId: Buffer.from(v.targetId).toString('hex'),
         })),
         count: result.count,
+        next: result.next,
       });
       return;
     }
