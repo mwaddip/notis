@@ -248,16 +248,16 @@ describe('positional serialization', () => {
       expect(computeTxId(decodeTx(encodeTx(signed)))).toBe(computeTxId(signed));
     });
 
-    it('no field name reaches the bytes, and the whole transaction is 45 bytes', () => {
-      // Hand-derived from the layout: arr(inputs)=1, arr(outputs)=1+37 for the
+    it('no field name reaches the bytes, and the whole transaction is 44 bytes', () => {
+      // Hand-derived from the layout: arr(inputs)=1, arr(outputs)=1+36 for the
       // karma candidate, vlqU(protocolVersion)=1, opt(likeTarget)=1,
       // opt(post)=1, opt(prune)=1, opt(postWithdraw)=1, arr(signatures)=1.
       //
-      // 37, not 35: the shared prefix is three fields, and this candidate's
+      // 36: the shared prefix is three fields, and this candidate's
       // `createdAtBlock` of 300 takes two VLQ groups.
       //
       // ⚠ **Every `opt` costs its tag byte whether or not the field is there**, so
-      // an eighth field would show up here as 46 even on a transaction that
+      // an eighth field would show up here as 45 even on a transaction that
       // carries none of it — which is why an optional field is inside every id,
       // not only the ids that use it.
       const bytes = encodeTx(makeTx());

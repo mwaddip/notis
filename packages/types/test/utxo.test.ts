@@ -429,8 +429,7 @@ describe('golden vectors (positional box encoding)', () => {
   it('golden vector: full canonical identity bytes are frozen', () => {
     expect(Buffer.from(canonicalBoxBytes(GOLDEN_KARMA_BOX)).toString('hex')).toBe(GOLDEN_KARMA_BOX_BYTES);
     expect(Buffer.from(canonicalBoxBytes(GOLDEN_CREDIT_BOX)).toString('hex')).toBe(GOLDEN_CREDIT_BOX_BYTES);
-    // 35 bytes: no map header, no key names, a one-byte `value`, and a one-byte
-    // absent option.
+    // 36: tag, one-byte value, two-byte height, the 32-byte owner.
     expect(canonicalBoxBytes(GOLDEN_KARMA_BOX).length).toBe(36);
   });
 
@@ -740,7 +739,7 @@ describe('like_accrual and vouch_escrow', () => {
     expect(canonicalBoxBytes(makeVouchEscrowBox())[0]).toBe(12);
   });
 
-  it('a like accrual is tag, value and the author key — 34 bytes, no option tag', () => {
+  it('a like accrual is tag, value and the author key — 36 bytes, no option tag', () => {
     expect(hexOf(canonicalBoxBytes(makeLikeAccrualBox()))).toBe(LIKE_ACCRUAL_BYTES);
     // Both arms are a single b32 with nothing after it — equal at equal value.
     expect(canonicalBoxBytes(makeLikeAccrualBox()).length).toBe(36);

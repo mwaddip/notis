@@ -705,7 +705,6 @@ export interface KarmaBox extends BoxBase {
   owner: Uint8Array;          // 32 raw bytes — Ed25519 public key
   // No per-box age field: the decay clock reads the committed per-identity
   // record, not box ages.
-
 }
 
 // --- Credit ---

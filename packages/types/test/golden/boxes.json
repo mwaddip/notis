@@ -36,7 +36,7 @@
         "owner": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
       },
       "bytes": "0101ac02000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00",
-      "note": "The smallest credit box: value 1, the owner, and the absent lockedUntilBlock option. 37 bytes, one more than box/karma-minimal at 36 \u2014 the credit arm's absent lockedUntilBlock option costs a byte karma no longer has. Built at createdAtBlock 300, the prefix's third field, 2 VLQ byte(s)."
+      "note": "The smallest credit box: value 1, the owner, and the absent lockedUntilBlock option. 37 bytes, one more than box/karma-minimal at 36 \u2014 the credit arm's absent lockedUntilBlock option costs a byte the karma arm has no field for. Built at createdAtBlock 300, the prefix's third field, 2 VLQ byte(s)."
     },
     {
       "name": "box/credit-wide",
