@@ -1203,7 +1203,7 @@ function applyMutationPhase(
       if (toUnlock <= 0n) continue;
       transferKarma(
         [lockBox],
-        [{ owner: lockBox.owner, amount: toUnlock, ctx: postlockUnlockContext(postId), nonActivity: true }],
+        [{ owner: lockBox.owner, amount: toUnlock, ctx: postlockUnlockContext(postId) }],
         {
           shape: (value) => ({
             boxType: 'post_lock',
@@ -1388,7 +1388,7 @@ function applyMutationPhase(
     // `(height, 'postlock-remainder', postId)` cannot repeat.
     transferKarma(
       [lockBox],
-      [{ owner: lockBox.owner, amount: toUnlock, ctx: postlockUnlockContext(postId), nonActivity: true }],
+      [{ owner: lockBox.owner, amount: toUnlock, ctx: postlockUnlockContext(postId) }],
       {
         shape: (value) => ({
           boxType: 'post_lock',
