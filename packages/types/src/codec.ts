@@ -53,8 +53,8 @@ import { ByteReader, ByteWriter, ReaderError } from '@dagsocial/wire';
  * **Totality is achievable exactly where the encodable domain is narrower than
  * the wire domain.** That holds for `vlqU`/`vlqS` (a `number` inside a u64),
  * for `lp`/`lpUtf8` (the *length* is a `number` inside a u64, so a malformed
- * payload sentinels its length prefix), for `enum8` (a tag set inside a byte)
- * and for `writeBool` (`{0,1}` inside a byte). It does **not** hold for
+ * payload sentinels its length prefix) and for `enum8` (a tag set inside a
+ * byte). It does **not** hold for
  * `vlqU64` (a `bigint` spans the full u64), for `u8` (a byte), nor for
  * `b32`/`b33`/`b64` (a fixed-width field's wire domain is every value of that
  * width). Those writers throw and say so in their names; their domains must be
@@ -204,9 +204,7 @@ export class CodecError extends ReaderError {
  * A bare `u8`'s wire domain is the whole byte, so it has no unreachable
  * sentinel — same structural situation as `vlqU64` and the fixed-width
  * writers. Note that the `u8` *fields* in the layout tables never hit this:
- * `nonActivity` is a boolean (`writeBool`, whose `{0,1}` domain really is
- * narrower) and box/reason tags are `enum8` (a closed table). Both
- * of those stay total.
+ * box/reason tags are `enum8` (a closed table, total by sentinel).
  *
  * @throws {Error} unless `value` is an integer in `0..255`
  */
@@ -220,22 +218,6 @@ export function writeU8OrThrow(w: ByteWriter, value: number): void {
 /** `u8(x)` — one byte, unconstrained on the way in. */
 export function readU8(r: ByteReader): number {
   return r.readU8();
-}
-
-/**
- * `u8(x)` from a boolean.
- *
- * Total, and soundly so: `readBool` rejects anything but `0x00` / `0x01`, so
- * the encodable domain is `{0, 1}` and `0xff` is unreachable from a valid
- * value — it cannot decode back into anything at all.
- */
-export function writeBool(w: ByteWriter, value: boolean): void {
-  w.writeU8(value === true ? 1 : value === false ? 0 : 0xff);
-}
-
-/** `u8(x)` to a boolean — strict, no truthy coercion. */
-export function readBool(r: ByteReader): boolean {
-  return r.readBool();
 }
 
 /** `vlqU(x)` — unsigned VLQ from a `number`. Total: sentinel, never throws. */
@@ -530,9 +512,8 @@ export function arrByteLength<T>(items: T[], sizeOf: (x: T) => number): number {
  *
  * `undefined` counts as absent alongside `null`. Wire's `writeOption` tests
  * `=== null` only, and the optional fields in the layout tables are declared
- * `nonActivity?: boolean` / `lockedUntilBlock?: number` — so an absent field
- * arrives as `undefined` and would otherwise take the *present* branch and
- * serialize nothing after the tag.
+ * `lockedUntilBlock?: number` — so an absent field arrives as `undefined` and
+ * would otherwise take the *present* branch and serialize nothing after the tag.
  */
 export function writeOpt<T>(
   w: ByteWriter,

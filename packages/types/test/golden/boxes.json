@@ -11,21 +11,8 @@
         "createdAtBlock": 300,
         "owner": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
       },
-      "bytes": "0064ac02000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00",
-      "note": "37 bytes, and every one of them is a field the layout table names: one tag byte, one value byte, the two-byte createdAtBlock, the 32-byte owner, and the absent nonActivity option's 00. No key names \u2014 the field list is positional, so it costs nothing in the bytes. This is not the smallest a karma box gets: value and createdAtBlock are both variable-width, so a karma box at value 0 and height 0 is 35. Built at createdAtBlock 300, the prefix's third field, 2 VLQ byte(s)."
-    },
-    {
-      "name": "box/karma-decay-burn",
-      "codec": "boxContent",
-      "value": {
-        "boxType": "karma",
-        "value": "5",
-        "createdAtBlock": 300,
-        "owner": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-        "nonActivity": true
-      },
-      "bytes": "0005ac02ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0101",
-      "note": "The karma arm's option present: `01` is the present tag and the second `01` is the boolean, two bytes where box/karma-minimal spends one. nonActivity is what gates the decay clock, so this is the one vector that pins the encoding of a field production reads rather than merely stores. The all-ff owner also keeps the option bytes visible against a field that is not all-ff. Built at createdAtBlock 300, the prefix's third field, 2 VLQ byte(s)."
+      "bytes": "0064ac02000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "note": "36 bytes: enum8(karma) 1 + vlqU64(100) 1 + vlqU(300) 2 + b32(owner) 32. The karma tail is the owner alone (TYPES_INTERFACE \u2192 Layout \u2014 Boxes). Built at createdAtBlock 300, the prefix's third field, 2 VLQ byte(s)."
     },
     {
       "name": "box/karma-value-u64-max",
@@ -36,7 +23,7 @@
         "createdAtBlock": 300,
         "owner": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
       },
-      "bytes": "00ffffffffffffffffff01ac02000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00",
+      "bytes": "00ffffffffffffffffff01ac02000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
       "note": "The whole argument for the bigint exception, in one vector: those ten bytes are the all-ones sentinel a malformed NUMBER field takes, and here they are a value the writer emits without complaint. `value: bigint` spans the entire u64, so no sentinel is unreachable and its writer has to throw instead \u2014 sentinelling would give a malformed box a well-formed box's id. ENCODABLE, and deliberately NOT acceptable: consensus admits [0, BOX_VALUE_BOUND) and this value is above it, so what the vector pins is the writer's domain \u2014 a vector proving a value encodes is not a claim consensus accepts it. Built at createdAtBlock 300, the prefix's third field, 2 VLQ byte(s)."
     },
     {
@@ -49,7 +36,7 @@
         "owner": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
       },
       "bytes": "0101ac02000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00",
-      "note": "The smallest credit box: value 1, the owner, and the absent lockedUntilBlock option. 37 bytes, the same width as box/karma-minimal \u2014 the two arms differ only in the tag byte and in which writer the option wraps, so the enum8 tag is the whole of what separates them here. Built at createdAtBlock 300, the prefix's third field, 2 VLQ byte(s)."
+      "note": "The smallest credit box: value 1, the owner, and the absent lockedUntilBlock option. 37 bytes, one more than box/karma-minimal at 36 \u2014 the credit arm's absent lockedUntilBlock option costs a byte karma no longer has. Built at createdAtBlock 300, the prefix's third field, 2 VLQ byte(s)."
     },
     {
       "name": "box/credit-wide",
@@ -214,7 +201,7 @@
         "author": "7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a"
       },
       "bytes": "0b01ac027a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a",
-      "note": "The marker a like transaction outputs, at LIKE_KARMA_COST. 36 bytes, and the layout is the only one in this table whose tail is a single b32 with nothing after it - box/karma-minimal is 37 at the same value because its absent nonActivity option still costs a byte. That one-byte gap is what a reader expecting a field after the key runs past, and it fails here rather than as a moved id. A MARKER CARRIES ITS VALUE: the 01 is the karma the marker stands for, and a zero-value marker would mean those units ceased to exist between the transaction and the settlement. author is ATTRIBUTION, not authorization - no signature by it unlocks the box, exactly as bond.inviterId names a party that cannot spend. Built at createdAtBlock 300, the prefix's third field, 2 VLQ byte(s)."
+      "note": "The marker a like transaction outputs, at LIKE_KARMA_COST. 36 bytes, equal to box/karma-minimal at the same value: both tails are a single b32 with nothing after it. A MARKER CARRIES ITS VALUE: the 01 is the karma the marker stands for, and a zero-value marker would mean those units ceased to exist between the transaction and the settlement. author is ATTRIBUTION, not authorization - no signature by it unlocks the box, exactly as bond.inviterId names a party that cannot spend. Built at createdAtBlock 300, the prefix's third field, 2 VLQ byte(s)."
     },
     {
       "name": "box/like-accrual-carry",
@@ -267,14 +254,14 @@
     {
       "name": "box/non-minimal-value",
       "codec": "boxContent",
-      "bytes": "00e400ac02000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00",
+      "bytes": "00e400ac02000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
       "failure": "non-canonical",
       "note": "box/karma-minimal with `value` padded from 64 to e4 00. It decodes to 100 either way \u2014 only the re-encode compare rejects it, and this is the field a malleability attempt would target because it is what a box is worth. The prefix carries createdAtBlock 300 as its third field, so the shape this vector targets sits where the layout puts it rather than three bytes early."
     },
     {
       "name": "box/trailing-byte",
       "codec": "boxContent",
-      "bytes": "0064ac02000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00ff",
+      "bytes": "0064ac02000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1fff",
       "failure": "trailing-bytes",
       "note": "box/karma-minimal plus a byte. Appended junk is a rejection, not slack \u2014 the defect class this format exists to close is junk riding inside a committed structure. The prefix carries createdAtBlock 300 as its third field, so the shape this vector targets sits where the layout puts it rather than three bytes early."
     },
@@ -284,13 +271,6 @@
       "bytes": "0419ac025656565656565656565656565656565656565656565656565656565656565656cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       "code": "truncated",
       "note": "box/bond with 31 bytes of invitee key instead of 32. The field is b32, so an off-domain width has no encoding at all rather than sharing one with a valid bond \u2014 the writer throws and the reader runs out of bytes. Its domain is established upstream, by node's output-shape schema. The prefix carries createdAtBlock 300 as its third field, so the shape this vector targets sits where the layout puts it rather than three bytes early."
-    },
-    {
-      "name": "box/karma-decay-burn-not-a-boolean",
-      "codec": "boxContent",
-      "bytes": "0064ac02000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f01ff",
-      "code": "invalid-tag",
-      "note": "The karma option's PRESENT branch carrying 0xff where the boolean goes. `writeBool`'s domain is {0,1} inside a byte, so the other 254 have no encoding and the reader refuses them rather than reading any non-zero as true \u2014 a lenient reader would map 254 byte strings onto one value, and every one of them would re-encode to 01. The prefix carries createdAtBlock 300 as its third field, so the shape this vector targets sits where the layout puts it rather than three bytes early."
     }
   ]
 }

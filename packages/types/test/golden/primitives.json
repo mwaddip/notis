@@ -19,20 +19,7 @@
       "codec": "u8",
       "value": 255,
       "bytes": "ff",
-      "note": "A bare u8 spans the whole byte, which is why its writer throws rather than sentinelling: 0xff is a legal value, so it could not also mean 'malformed'. The u8 FIELDS in the layout tables are booleans and enum8 tags, whose domains are narrower and which stay total."
-    },
-
-    {
-      "name": "bool/false",
-      "codec": "bool",
-      "value": false,
-      "bytes": "00"
-    },
-    {
-      "name": "bool/true",
-      "codec": "bool",
-      "value": true,
-      "bytes": "01"
+      "note": "A bare u8 spans the whole byte, which is why its writer throws rather than sentinelling: 0xff is a legal value, so it could not also mean 'malformed'. The u8 FIELDS in the layout tables are enum8 tags, whose domains are narrower and which stay total."
     },
 
     {
@@ -442,14 +429,6 @@
       "value": 16384,
       "bytes": "01808001"
     },
-    {
-      "name": "opt/present-false",
-      "codec": { "opt": "bool" },
-      "value": false,
-      "bytes": "0100",
-      "note": "nonActivity?: boolean — `false` present must differ from absent, or a box loses a committed field silently."
-    },
-
     {
       "name": "enum8/mintReason-postlock-unlock",
       "codec": { "enum8": "mintReason" },

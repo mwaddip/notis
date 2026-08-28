@@ -65,13 +65,6 @@
     },
 
     {
-      "name": "tag/bool-two",
-      "codec": "bool",
-      "bytes": "02",
-      "code": "invalid-tag",
-      "note": "Strict tags — no truthy coercion, per TYPES_INTERFACE → Primitives."
-    },
-    {
       "name": "tag/opt-two",
       "codec": { "opt": "vlqU" },
       "bytes": "0200",

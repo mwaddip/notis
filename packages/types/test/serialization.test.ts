@@ -261,7 +261,7 @@ describe('positional serialization', () => {
       // carries none of it — which is why an optional field is inside every id,
       // not only the ids that use it.
       const bytes = encodeTx(makeTx());
-      expect(bytes.length).toBe(45);
+      expect(bytes.length).toBe(44);
       for (const name of ['inputs', 'outputs', 'signatures', 'protocolVersion', 'boxType', 'karma']) {
         expect(hex(bytes)).not.toContain(Buffer.from(name, 'utf8').toString('hex'));
       }
@@ -308,10 +308,10 @@ describe('positional serialization', () => {
       // 2 — trailing bytes are a rejection, not slack.
       expect(failureOf(() => decodeTx(withTrailingByte(bytes)))).toBe('trailing-bytes');
       // 3 — `protocolVersion` padded: same value, longer encoding. Its offset is
-      // **asserted rather than assumed** — arr(inputs)=1 and arr(outputs)=1+37 put
-      // it at 39 — so a field inserted ahead of it fails here as a wrong-offset
-      // error rather than by silently padding whatever now sits at 39.
-      const PROTOCOL_VERSION_OFFSET = 39;
+      // **asserted rather than assumed** — arr(inputs)=1 and arr(outputs)=1+36 put
+      // it at 38 — so a field inserted ahead of it fails here as a wrong-offset
+      // error rather than by silently padding whatever now sits at 38.
+      const PROTOCOL_VERSION_OFFSET = 38;
       expect(bytes[PROTOCOL_VERSION_OFFSET]).toBe(2);
       const padded = new Uint8Array(bytes.length + 1);
       padded.set(bytes.subarray(0, PROTOCOL_VERSION_OFFSET));
@@ -391,11 +391,10 @@ describe('positional serialization', () => {
       expect(back.interlinkRoot).toHaveLength(64);
     });
 
-    // ⛔ **NO FIELD IN `UtxoTxTree` REACHES `writeVlqU64OrThrow` OR `writeBool`**,
-    // so this section pins neither writer and a reader must not infer that the
-    // body covers them. **Both are pinned one struct over**, in `utxo.test.ts`:
-    // box `value` is the `vlqU64` row and `karma.nonActivity` the `writeBool` one.
-    // A `bigint` or `boolean` field added to the body owes a row here.
+    // ⛔ **NO FIELD IN `UtxoTxTree` REACHES `writeVlqU64OrThrow`**, so this
+    // section does not pin that writer. **It is pinned one struct over**, in
+    // `utxo.test.ts`: box `value` is the `vlqU64` row. A `bigint` field added
+    // to the body owes a row here.
 
   });
 
@@ -675,7 +674,7 @@ describe('positional serialization', () => {
       // them apart. The pins that decide are elsewhere: the BlockHeader pin above
       // for the header, and the frozen ids in `utxo.test.ts` for consensus. **Read
       // this one only as "the frame changed" — never as evidence about what.**
-      expect(hash(encodeOrderingBlock(makeOrderingBlock()))).toBe('eda5d02a639233f54c3bd3df8634dab5a608bd46efa8879f79f9c592cea62108');
+      expect(hash(encodeOrderingBlock(makeOrderingBlock()))).toBe('495114d3e51dbc82b86b89539fcab77ebedcacc902854af55a7159c915903d0e');
     });
 
     it('Post: the wire codec IS the payload preimage, with no tail at all', () => {

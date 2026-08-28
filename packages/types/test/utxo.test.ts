@@ -211,12 +211,10 @@ describe('boxes', () => {
       });
     }
 
-    it('computeBoxId differs when nonActivity differs', () => {
-      const box1 = makeKarmaBox({ value: 100n });
-      const box2 = makeKarmaBox({ value: 100n, nonActivity: true });
-      const id1 = computeBoxId(box1);
-      const id2 = computeBoxId(box2);
-      expect(id1).not.toBe(id2);
+    it('computeBoxId differs when lockedUntilBlock differs', () => {
+      const base = makeCreditBox();
+      const locked: CreditBox = { ...base, lockedUntilBlock: 500 };
+      expect(computeBoxId(base)).not.toBe(computeBoxId(locked));
     });
 
     it('is DETERMINED by the provenance on the box', () => {
@@ -304,11 +302,11 @@ const GOLDEN_TX: UtxoTransaction = {
 };
 
 const GOLDEN_KARMA_BOX_ID =
-  '17dddea55a2f23822337e67fcbe8caac0a4454141304568491b410da72ef060c';
+  '9f0777a506547b897a5b27b40a120bf06a8ba5077bc43176a1d060d5f2bd97ca';
 const GOLDEN_CREDIT_BOX_ID =
-  'f6ffd94ac85441fd961ea55bfb21c7862b6117f1a4f4b65b04e648edb5a2951c';
+  '37354b53d9e1b9c71474158a4befa9d7d8f1f373c8f8a375e1878557ffba307a';
 const GOLDEN_TX_ID =
-  '46d111d9583a6cb81d8537ed3598747353bd2914b74695a1f77dbceac32fc43e';
+  '54cf097e49db50c1adbba0212990cb62d43fa3b773f22ee27a70c3f3239f715b';
 
 /** The two candidates as block application materializes them out of GOLDEN_TX. */
 const GOLDEN_KARMA_BOX: KarmaBox = { ...GOLDEN_KARMA_CANDIDATE, txId: GOLDEN_TX_ID, index: 0 };
@@ -320,8 +318,8 @@ const GOLDEN_CREDIT_BOX: CreditBox = { ...GOLDEN_CREDIT_CANDIDATE, txId: GOLDEN_
  * for every box, so this is what the demo UI's hand-written mirror is checked
  * against.
  *
- *   karma  = 00 | 64 | ac02 | b32(owner)      | 00
- *            ^tag ^vlqU64(100)                  ^opt nonActivity absent
+ *   karma  = 00 | 64 | ac02 | b32(owner)
+ *            ^tag ^vlqU64(100)
  *                      ^vlqU(300) createdAtBlock
  *   credit = 01 | vlqU64(12345678900000000) | ac02 | b32(owner) | 00
  *                                                                 ^opt lockedUntilBlock absent
@@ -330,8 +328,7 @@ const GOLDEN_KARMA_BOX_BYTES =
   '00' +                                                               // enum8 karma
   '64' +                                                               // vlqU64(100)
   'ac02' +                                                             // vlqU(300) createdAtBlock
-  '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f' + // b32 owner
-  '00';                                                                // opt nonActivity absent
+  '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f';  // b32 owner
 const GOLDEN_CREDIT_BOX_BYTES =
   '01' +                                                               // enum8 credit
   '80eae1eac58af715' +                                                 // vlqU64(12345678900000000)
@@ -353,7 +350,6 @@ const GOLDEN_CREDIT_BOX_BYTES =
  *   vlqU64(value)         1n                 → `01`      (1 < 0x80, one group)
  *   vlqU(createdAtBlock)  300                → `ac 02`   (see below)
  *   b32(owner)            32 × 0x11          → `11`×32
- *   opt(nonActivity)        absent             → `00`      (`writeOpt` writes `u8(0)`)
  *
  * **`vlqU(300)`**: base-128, low group first, continuation bit high.
  * `300 = 0b100101100`. Low seven bits `0101100` = 44 = `0x2c`; a group remains,
@@ -382,12 +378,10 @@ describe('the shared prefix carries the creation height', () => {
       Buffer.from([0x01]),         // vlqU64 1n
       Buffer.from([0xac, 0x02]),   // vlqU 300
       Buffer.alloc(32, 0x11),      // b32 owner
-      Buffer.from([0x00]),         // opt nonActivity absent
     ]);
     expect(Buffer.from(canonicalBoxBytes(box))).toEqual(expected);
-    // 37: the two-byte prefix the format had, plus two for a height that needs
-    // two groups. A one-group height makes it 36.
-    expect(canonicalBoxBytes(box).length).toBe(37);
+    // 36: enum8(1) + vlqU64(1) + vlqU(300=2) + b32(32) = 36.
+    expect(canonicalBoxBytes(box).length).toBe(36);
   });
 
   it('the height sits between value and the tail, not after it', () => {
@@ -437,7 +431,7 @@ describe('golden vectors (positional box encoding)', () => {
     expect(Buffer.from(canonicalBoxBytes(GOLDEN_CREDIT_BOX)).toString('hex')).toBe(GOLDEN_CREDIT_BOX_BYTES);
     // 35 bytes: no map header, no key names, a one-byte `value`, and a one-byte
     // absent option.
-    expect(canonicalBoxBytes(GOLDEN_KARMA_BOX).length).toBe(37);
+    expect(canonicalBoxBytes(GOLDEN_KARMA_BOX).length).toBe(36);
   });
 
   it('an unknown boxType takes the reserved 0xff tag rather than throwing', () => {
@@ -534,9 +528,9 @@ const ALL_MINT_REASONS = Object.keys(MINT_REASON_GOLDENS) as MintReason[];
  * protocol-breaking and unversioned.
  */
 const GOLDEN_CANDIDATE_KARMA_ID =
-  '17dddea55a2f23822337e67fcbe8caac0a4454141304568491b410da72ef060c';
+  '9f0777a506547b897a5b27b40a120bf06a8ba5077bc43176a1d060d5f2bd97ca';
 const GOLDEN_CANDIDATE_CREDIT_ID =
-  'f6ffd94ac85441fd961ea55bfb21c7862b6117f1a4f4b65b04e648edb5a2951c';
+  '37354b53d9e1b9c71474158a4befa9d7d8f1f373c8f8a375e1878557ffba307a';
 const GOLDEN_MINT_GENESIS_ID =
   '9010dd1d6fe6029eb8e856fe38467836781ce43ddad1ce01c0af7afc0bc7b7b2';
 
@@ -748,10 +742,9 @@ describe('like_accrual and vouch_escrow', () => {
 
   it('a like accrual is tag, value and the author key — 34 bytes, no option tag', () => {
     expect(hexOf(canonicalBoxBytes(makeLikeAccrualBox()))).toBe(LIKE_ACCRUAL_BYTES);
-    // 34, where `karma` at the same value is 35: the karma arm's absent
-    // `nonActivity` option costs a byte this arm has no field for.
+    // Both arms are a single b32 with nothing after it — equal at equal value.
     expect(canonicalBoxBytes(makeLikeAccrualBox()).length).toBe(36);
-    expect(canonicalBoxBytes(makeKarmaBox()).length).toBe(37);
+    expect(canonicalBoxBytes(makeKarmaBox()).length).toBe(36);
   });
 
   it('a vouch escrow is tag, value, owner and the release height', () => {
@@ -1435,7 +1428,7 @@ describe('boxRecordBytes', () => {
     // them here — where the encoder lives — rather than only at the consumer.
     const frozen =
       GOLDEN_KARMA_BOX_BYTES +                                             // boxContentBytes
-      '46d111d9583a6cb81d8537ed3598747353bd2914b74695a1f77dbceac32fc43e' + // b32 txId
+      '54cf097e49db50c1adbba0212990cb62d43fa3b773f22ee27a70c3f3239f715b' + // b32 txId
       '00';                                                                // vlqU(0)
     expect(Buffer.from(boxRecordBytes(GOLDEN_KARMA_CANDIDATE, GOLDEN_TX_ID, 0)).toString('hex'))
       .toBe(frozen);
@@ -1481,8 +1474,7 @@ describe('boxRecordFromBytes', () => {
    */
   const ALL_BOX_TYPES = {
     karma: [
-      ['karma (opt absent)', GOLDEN_KARMA_CANDIDATE],
-      ['karma (opt present)', { ...GOLDEN_KARMA_CANDIDATE, nonActivity: true }],
+      ['karma', GOLDEN_KARMA_CANDIDATE],
     ],
     credit: [
       ['credit (opt absent)', GOLDEN_CREDIT_CANDIDATE],
@@ -1843,7 +1835,7 @@ describe('transactions', () => {
       // than in a commit message (TYPES_INTERFACE → "Re-pinning a frozen vector
       // when a preimage changes").
       const SEVEN_FIELD_TX_ID =
-        'b8c6141fc3a1bb3271636dc1b76dc4c5d977052204e6215fad31da04ce7fb406';
+        '67b62967f5175f8c7728522122575557ea04338fc608921bc8f752309bb54724';
       const h = createHash('blake2b512');
       h.update(Buffer.from('dagsocial/tx-id/1'));
       h.update(Buffer.from([GOLDEN_TX.inputs.length]));
