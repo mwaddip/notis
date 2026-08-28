@@ -16,15 +16,15 @@ import {
  *
  * This module is that check. It drives a timeline of blocks against the
  * **production** code path — the real store (`insertBox`, `consumeBox`,
- * `getKarmaBoxes`), the real block journal, `transferKarma`, and the real
- * `deriveKarmaDecay` — and captures burn amounts, balances and heights. The
- * captures are frozen as fixtures, and any edit to the decay path has to
- * reproduce them exactly.
+ * `getKarmaBoxes`, `recordKarmaActivity`), the real block journal,
+ * `transferKarma`, and the real `deriveKarmaDecay` — and captures burn amounts,
+ * balances and heights. The captures are frozen as fixtures, and any edit to the
+ * decay path has to reproduce them exactly.
  *
  * **Why the real store and not an in-memory fake.** The behaviour lives in two
- * places at once: `insertBox` records `lastActivityBlock` from the open
- * journal's height, and `decay.ts` reads the record back. A fake store is a
- * reimplementation of the first half, which would leave this harness verifying
+ * places at once: `recordKarmaActivity` records `lastActivityBlock` from the
+ * open journal's height, and `decay.ts` reads the record back. A fake store is
+ * a reimplementation of the first half, which would leave this harness verifying
  * a mirror rather than the shipped code. Driving SQLite means the height the
  * record gets is the height the journal actually carried.
  *
@@ -170,7 +170,7 @@ function applyDecayPlans(
  *
  * `getIdentityRecord`/`putIdentityRecord` are the real store primitives, not
  * stand-ins. A harness-local record map would be a reimplementation of the half
- * `insertBox` owns, and the fixtures would then be checking a mirror.
+ * `recordKarmaActivity` owns, and the fixtures would then be checking a mirror.
  */
 function decayDeps(m: Modules): Parameters<Modules['decay']['deriveKarmaDecay']>[0] {
   return {
@@ -210,9 +210,8 @@ function totalKarma(m: Modules, owner: Uint8Array): bigint {
  * Run one scenario and capture its outputs.
  *
  * Every block is wrapped in a real `beginBlockJournal(height)` /
- * `finishBlockJournal()` pair, because the activity clock `insertBox` bumps reads
- * the open journal and takes no height argument
- * (NODE_INTERFACE → Populating the record).
+ * `finishBlockJournal()` pair, because `recordKarmaActivity` reads the open
+ * journal's height (NODE_INTERFACE → Populating the record).
  */
 export async function runScenario(scenario: Scenario): Promise<ScenarioCapture> {
   const m = await loadModules();
@@ -271,6 +270,7 @@ export async function runScenario(scenario: Scenario): Promise<ScenarioCapture> 
               null,
               height,
             );
+            m.utxo.recordKarmaActivity(owner);
             break;
           }
           case 'seed': {

@@ -118,11 +118,11 @@ const GOLDEN_UTXO_TX: UtxoTransaction = {
 // `0x12345678` for the wide-index case. The sentinel's input is stated at its
 // own declaration, because it is the one that is not a neighbour of these.
 const GOLDEN_KARMA_BOX_ID =
-  '17dddea55a2f23822337e67fcbe8caac0a4454141304568491b410da72ef060c';
+  '9f0777a506547b897a5b27b40a120bf06a8ba5077bc43176a1d060d5f2bd97ca';
 const GOLDEN_CREDIT_BOX_ID =
-  'f6ffd94ac85441fd961ea55bfb21c7862b6117f1a4f4b65b04e648edb5a2951c';
+  '37354b53d9e1b9c71474158a4befa9d7d8f1f373c8f8a375e1878557ffba307a';
 const GOLDEN_UTXO_TX_ID =
-  '46d111d9583a6cb81d8537ed3598747353bd2914b74695a1f77dbceac32fc43e';
+  '54cf097e49db50c1adbba0212990cb62d43fa3b773f22ee27a70c3f3239f715b';
 
 /**
  * The exact canonical bytes for the two golden candidates, frozen. Stronger
@@ -163,11 +163,11 @@ const GOLDEN_CREDIT_BOX: CreditBox =
 // ---------------------------------------------------------------------------
 
 const GOLDEN_KARMA_CANDIDATE_ID =            // (GOLDEN_UTXO_TX_ID, index 0)
-  '17dddea55a2f23822337e67fcbe8caac0a4454141304568491b410da72ef060c';
+  '9f0777a506547b897a5b27b40a120bf06a8ba5077bc43176a1d060d5f2bd97ca';
 const GOLDEN_CREDIT_CANDIDATE_ID =           // (GOLDEN_UTXO_TX_ID, index 1)
-  'f6ffd94ac85441fd961ea55bfb21c7862b6117f1a4f4b65b04e648edb5a2951c';
+  '37354b53d9e1b9c71474158a4befa9d7d8f1f373c8f8a375e1878557ffba307a';
 const GOLDEN_KARMA_CANDIDATE_ID_WIDE_INDEX = // index 0x12345678 — five VLQ bytes
-  'f8c1ad45617ab00352554e1c4bdf7d324941c113429e19eafcf49b7a194da896';
+  '77286bdf52845eaf7bf361576d7c1a330015fe86734d9225e85bd1dc6cbb4a41';
 // ⚠ **Input: a genuinely malformed index (`NaN`), NOT `2**32`** (TYPES_INTERFACE
 // → A regenerated pin's INPUT is unchecked, so state it). `2**32` is inside
 // `vlqU`'s domain and encodes faithfully, so it is a valid index and pinning it
@@ -175,7 +175,7 @@ const GOLDEN_KARMA_CANDIDATE_ID_WIDE_INDEX = // index 0x12345678 — five VLQ by
 // from the wrong input, which no mirror check can see because the mirror is
 // fine.
 const GOLDEN_KARMA_CANDIDATE_ID_SENTINEL =   // any index outside the vlqU domain
-  '40fe3d7d072609b78e7bc450bcdc33d38b75983550f2eb7f76ab978ae162e54b';
+  '13bc64363f2b69a2de36624732cd3ab9a20bc097b573e17344e699d982b5c762';
 
 // ---------------------------------------------------------------------------
 // One fixture per box type
@@ -1135,7 +1135,7 @@ describe('demo UI ↔ @dagsocial/types likeTarget tail mirror (P2-D)', () => {
   // Measured from @dagsocial/types computeTxId — both implementations pin to
   // constants, not just to each other.
   const GOLDEN_LIKE_TX_ID =
-    '9a537adfa42c1cc31a39214bbca70e35947f2138997b47afe732c8ff802059fc';
+    'fee109acb3a8a7a6fd70f564f5e99ef39eae74699d88160238f2802aaf721eb7';
 
   const GOLDEN_LIKE_TX: UtxoTransaction = {
     ...GOLDEN_UTXO_TX,

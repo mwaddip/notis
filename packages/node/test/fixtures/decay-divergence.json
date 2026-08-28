@@ -7,13 +7,13 @@
         {
           "height": 30,
           "owner": "alice",
-          "burnAmount": "45",
+          "burnAmount": "50",
           "consumedCount": 2,
-          "balanceAfter": "55"
+          "balanceAfter": "50"
         }
       ],
       "finalBalances": {
-        "alice": "55"
+        "alice": "50"
       },
       "finalBoxCounts": {
         "alice": 1

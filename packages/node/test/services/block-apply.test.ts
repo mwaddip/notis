@@ -2398,7 +2398,7 @@ describe('block-apply funnel totality', () => {
 // ---------------------------------------------------------------------------
 
 describe('T4: activity clock in the user-transaction loop', () => {
-  beforeEach(() => { vi.resetModules(); });
+  beforeEach(() => { vi.doUnmock('../../src/config.js'); vi.restoreAllMocks(); vi.resetModules(); });
   afterEach(async () => {
     try {
       const bc = await importBlockCreator();
@@ -2406,6 +2406,7 @@ describe('T4: activity clock in the user-transaction loop', () => {
     } catch {
       // Module might not have been imported
     }
+    vi.restoreAllMocks();
     vi.resetModules();
   });
 

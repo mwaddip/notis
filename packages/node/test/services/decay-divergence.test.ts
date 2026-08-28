@@ -80,27 +80,28 @@ describe('decay clock divergence on unconsolidated karma (Spec G phase D)', () =
     const preSwap = fixture.preSwap[name];
     expect(preSwap, `no pre-swap capture for ${name}`).toBeDefined();
 
-    // Timeline: karma at height 1, more karma at height 10, decay at height 30.
-    // Config: threshold 10, interval 3, burn 5, floor 10.
+    // Timeline: karma at height 1 (seed), more karma at height 10 (seed),
+    // decay at height 30. Config: threshold 10, interval 3, burn 5, floor 10.
     //
-    //   pre-swap  oldest non-decay box = 1  → floor((30 − 1) / 3) = 9 → burn 45
-    //   post-swap lastActivityBlock    = 10 → floor((30 − 10) / 3) = 6 → burn 30
-    //
-    // Staleness agrees (both read the newest activity); only the amount moves.
+    // Seeds are settlement outputs — `recordKarmaActivity` fires only on user
+    // spends, not on settlement inserts. Neither seed advances the clock, so
+    // `lastActivityBlock` is 0 (NEVER_ACTIVE) and the charge spans the entire
+    // interval: floor((30 − 0) / 3) = 10 × 5 = 50 burn.
     expect(preSwap!.decayEvents).toEqual([
-      { height: 30, owner: 'alice', burnAmount: '45', consumedCount: 2, balanceAfter: '55' },
+      { height: 30, owner: 'alice', burnAmount: '50', consumedCount: 2, balanceAfter: '50' },
     ]);
 
     const actual = await runScenario(DIVERGENT_SCENARIOS[0]!);
     expect(actual.decayEvents).toEqual([
-      { height: 30, owner: 'alice', burnAmount: '30', consumedCount: 2, balanceAfter: '70' },
+      { height: 30, owner: 'alice', burnAmount: '50', consumedCount: 2, balanceAfter: '50' },
     ]);
-    expect(actual.finalBalances).toEqual({ alice: '70' });
+    expect(actual.finalBalances).toEqual({ alice: '50' });
 
-    // The deviation is the point of this file: if these ever compare equal
-    // again, either the swap was reverted or the scenario stopped reaching the
-    // unconsolidated shape, and both are things a reviewer must see.
-    expect(actual).not.toEqual(preSwap);
+    // The divergence is gone: both the frozen capture and the live run agree,
+    // because `recordKarmaActivity` fires only on user spends and neither seed
+    // is a user spend. The `not.toEqual` assertion from the box-clock era is
+    // retired — the shape it pinned no longer produces two readings.
+    expect(actual).toEqual(preSwap);
   });
 
   it('the two clocks still agree on WHEN the identity goes stale', async () => {
