@@ -52,7 +52,7 @@ export interface UtxoRow {
 // ---------------------------------------------------------------------------
 
 interface KarmaExtra {
-  // Empty — nonActivity retired; the column stays for credit's lockedUntilBlock.
+  // No karma-specific fields; the extra_data column stays for credit's lockedUntilBlock.
 }
 
 interface CreditExtra {

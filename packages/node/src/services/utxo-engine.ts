@@ -303,6 +303,7 @@ function checkTransitions(
       // settlement, never a transfer from a holder — so there is no shape a
       // holder can sign that moves karma to someone else, and no configured key
       // that makes one legal.
+      // TYPES_INTERFACE → Box value domain
       for (const ko of karmaOutputs) {
         const k = ko as KarmaBox;
         if (k.value === 0n) {

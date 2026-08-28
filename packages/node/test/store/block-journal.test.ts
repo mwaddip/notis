@@ -148,8 +148,8 @@ describe('block journal (store choke-point recording)', () => {
     s.insertBox(box);
     const j = s.finishBlockJournal();
 
-    // insertBox journals the box mutation; the activity clock is advanced by
-    // recordKarmaActivity in the user-transaction loop, not by insertBox.
+    // `insertBox` journals the box mutation alone; `recordKarmaActivity`
+    // advances the clock from the user-transaction loop.
     expect(j.mutations[0]).toEqual({ kind: 'box', op: 'insert', boxId: 'box-k1', box });
     expect(j.mutations).toHaveLength(1);
   });
@@ -210,9 +210,8 @@ describe('block journal (store choke-point recording)', () => {
     s.insertBox(makeKarmaBox('new-2'));
     const j = s.finishBlockJournal();
 
-    // insertBox no longer writes an activity record — the clock advances from
-    // recordKarmaActivity in the user-transaction loop, not from the store choke
-    // point. The journal holds the box mutations alone.
+    // `insertBox` journals box mutations alone; `recordKarmaActivity` advances
+    // the clock from the user-transaction loop.
     expect(j.mutations.map((m) => [m.kind, (m as { op?: string }).op, (m as { boxId?: string }).boxId])).toEqual([
       ['box', 'insert', 'new-1'],
       ['box', 'remove', 'pre-existing'],

@@ -904,12 +904,18 @@ function recordPendingKarmaChange(tx) {
 function applyPendingKarmaChange(data) {
   const confirmed = new Set(data.boxes.map(b => b.boxId));
   for (const [spentId, change] of pendingKarmaChange) {
-    if (change !== null && confirmed.has(change.boxId)) pendingKarmaChange.delete(spentId);
+    if (change === null) {
+      if (!confirmed.has(spentId)) pendingKarmaChange.delete(spentId);
+    } else if (confirmed.has(change.boxId)) {
+      pendingKarmaChange.delete(spentId);
+    }
   }
 
   const tips = new Map();
   for (const box of data.boxes) {
     let current = box;
+    // Output ids are hashes of their transaction, so a chain cannot close on
+    // itself; the set makes that a local guarantee rather than an assumption.
     const seen = new Set();
     while (pendingKarmaChange.has(current.boxId) && !seen.has(current.boxId)) {
       seen.add(current.boxId);

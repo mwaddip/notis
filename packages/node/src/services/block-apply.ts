@@ -1049,8 +1049,9 @@ function applyMutationPhase(
       // top of this iteration) and reading the first is sound because
       // `validateTx` has just passed (NODE_INTERFACE → `validateTx` step 3).
       const firstInput = item.tx.inputs[0];
-      if (firstInput !== undefined) {
-        appliedTxs.push({ tx: item.tx, inputBoxes: [getBox(firstInput)!] });
+      const firstInputBox = firstInput !== undefined ? getBox(firstInput)! : null;
+      if (firstInputBox !== null) {
+        appliedTxs.push({ tx: item.tx, inputBoxes: [firstInputBox] });
       }
 
       // Rent recognition by shape: an unsigned credit-side tx that passed
@@ -1070,11 +1071,8 @@ function applyMutationPhase(
       // pins one owner for all karma inputs; the first input's owner is that
       // owner. The write lands after applyTx's box writes, so reverse replay
       // restores it first (NODE_INTERFACE → Populating the record).
-      if (firstInput !== undefined) {
-        const firstBox = appliedTxs[appliedTxs.length - 1]?.inputBoxes[0];
-        if (firstBox?.boxType === 'karma') {
-          recordKarmaActivity((firstBox as KarmaBox).owner);
-        }
+      if (firstInputBox?.boxType === 'karma') {
+        recordKarmaActivity((firstInputBox as KarmaBox).owner);
       }
 
       if (likeToRecord !== null) {

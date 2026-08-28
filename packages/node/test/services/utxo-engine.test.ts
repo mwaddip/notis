@@ -19,6 +19,7 @@ import {
   LIKE_KARMA_COST,
   POST_LOCK_THREAD_COST,
   VOUCH_KARMA_AMOUNT,
+  VOUCH_MIN_BALANCE,
   KARMA_STALE_THRESHOLD_BLOCKS,
   KARMA_DECAY_INTERVAL_BLOCKS,
   KARMA_DECAY_AMOUNT,
@@ -1728,6 +1729,73 @@ describe('validateAndApplyTx', () => {
       const result = validateTx(deps, tx, 10);
       expect(result.valid, result.error).toBe(true);
       expect(result.computedOutputs!.filter(o => o.boxType === 'karma')).toHaveLength(0);
+    });
+
+    it('T3: an exact-spend invite is accepted with bond alone; inviterId pins through the input', () => {
+      const karma = createAndInsertKarma(ownerPubKey, FIXTURE_BOND_KARMA, 1);
+      const bondBox: AnyBoxCandidate = {
+        boxType: 'bond',
+        value: FIXTURE_BOND_KARMA,
+        createdAtBlock: 0,
+        inviterId: ownerUserId,
+        inviteePublicKey: new Uint8Array(32).fill(0xbb),
+      };
+      const tx = buildSignedTx([karma.id!], [bondBox], ownerPrivKey, ownerPubKey);
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid, result.error).toBe(true);
+      expect(result.computedOutputs!.filter(o => o.boxType === 'karma')).toHaveLength(0);
+    });
+
+    it('T3: an exact-spend invite with a foreign inviterId is refused', () => {
+      const karma = createAndInsertKarma(ownerPubKey, FIXTURE_BOND_KARMA, 1);
+      const bondBox: AnyBoxCandidate = {
+        boxType: 'bond',
+        value: FIXTURE_BOND_KARMA,
+        createdAtBlock: 0,
+        inviterId: new Uint8Array(32).fill(0xcc),
+        inviteePublicKey: new Uint8Array(32).fill(0xbb),
+      };
+      const tx = buildSignedTx([karma.id!], [bondBox], ownerPrivKey, ownerPubKey);
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toMatch(/inviterId/);
+    });
+
+    it('T3: an exact-spend vouch is accepted with vouch alone; voucherId pins through the input', () => {
+      // The balance check reads getKarmaValue (all unspent boxes), so a second
+      // box clears VOUCH_MIN_BALANCE while the input is exactly the stake.
+      createAndInsertKarma(ownerPubKey, VOUCH_MIN_BALANCE, 2);
+      const karma = createAndInsertKarma(ownerPubKey, VOUCH_KARMA_AMOUNT, 1);
+      const { publicKey: targetPub } = generateKeyPairSync('ed25519');
+      const targetPubRaw = rawPublicKey(targetPub);
+      const vouchBox: AnyBoxCandidate = {
+        boxType: 'vouch',
+        value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: 10,
+        voucherId: ownerPubKey,
+        targetId: targetPubRaw,
+      };
+      const tx = buildSignedTx([karma.id!], [vouchBox], ownerPrivKey, ownerPubKey);
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid, result.error).toBe(true);
+      expect(result.computedOutputs!.filter(o => o.boxType === 'karma')).toHaveLength(0);
+    });
+
+    it('T3: an exact-spend vouch with a foreign voucherId is refused', () => {
+      const karma = createAndInsertKarma(ownerPubKey, VOUCH_KARMA_AMOUNT, 1);
+      const { publicKey: targetPub } = generateKeyPairSync('ed25519');
+      const targetPubRaw = rawPublicKey(targetPub);
+      const vouchBox: AnyBoxCandidate = {
+        boxType: 'vouch',
+        value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: 10,
+        voucherId: new Uint8Array(32).fill(0xcc),
+        targetId: targetPubRaw,
+      };
+      const tx = buildSignedTx([karma.id!], [vouchBox], ownerPrivKey, ownerPubKey);
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toMatch(/voucherId/);
     });
 
     // --- the retired arms stay dead ----------------------------------------

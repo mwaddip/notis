@@ -35,6 +35,9 @@ async function importDbFresh() {
   };
 }
 
+// The module's own type, not a hand-written shape listing the one or two
+// exports in use: under a hand-written shape, reaching for another export is a
+// compile error, and the test that needed it goes unwritten instead.
 async function importUtxoFresh() {
   return import('../../src/store/utxo.js');
 }
@@ -86,6 +89,16 @@ describe('recordKarmaActivity advances the activity clock', () => {
 
   // -------------------------------------------------------------------------
   // Id integrity across the store round-trip.
+  //
+  // TYPES_INTERFACE → BoxId states that `stored.id === computeBoxId(stored)`
+  // holds "by construction for every box in the UTXO set". A box that breaks it
+  // is one no light client can validate, and the store is where it breaks:
+  // `value` is written as a bigint and read back through `.safeIntegers()`, so
+  // a fixture built with a NUMBER value hashes one way in memory and another
+  // way on the way out.
+  //
+  // The assertion therefore runs against a REAL store round-trip. The in-memory
+  // object is exactly the side that cannot disagree with itself.
   // -------------------------------------------------------------------------
   it('a seeded box read back from the store still derives its own id', async () => {
     const { initDb } = await importDbFresh();
@@ -158,6 +171,21 @@ describe('recordKarmaActivity advances the activity clock', () => {
 
     const alice = owner('alice');
     expect(() => recordKarmaActivity(alice)).toThrow('outside block application');
+  });
+
+  it('height 0 is a height, not "no journal"', async () => {
+    const { initDb } = await importDbFresh();
+    const { beginBlockJournal, finishBlockJournal } = await importJournalFresh();
+    const { recordKarmaActivity } = await importUtxoFresh();
+    const { getIdentityRecord } = await importRecordsFresh();
+    initDb(':memory:');
+
+    const alice = owner('alice');
+    beginBlockJournal(0);
+    recordKarmaActivity(alice);
+    finishBlockJournal();
+
+    expect(getIdentityRecord(alice)).toEqual({ lastActivityBlock: 0, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
   });
 
   it('a later activity bump preserves lastDecayBlock', async () => {
