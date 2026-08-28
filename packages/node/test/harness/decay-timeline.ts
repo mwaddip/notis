@@ -50,19 +50,24 @@ export interface DecayCfg {
  * One thing that happens inside a block, in the order listed.
  *
  * `mint` is the production activity producer: `transferKarma` consumes the
- * owner's existing karma boxes and emits one consolidated replacement, so an
- * owner normally holds exactly one. That is the shape the ledger is usually in.
+ * owner's existing karma boxes and emits one consolidated replacement, and
+ * `recordKarmaActivity` advances the clock. An owner normally holds exactly
+ * one box. That is the shape the ledger is usually in.
  *
- * `seed` inserts a karma box **without** consolidating — the shape reached when
- * settlement karma outputs land beside existing holdings (an invite grant and
- * a later payout to the same owner do not spend the recipient's karma). A clock
- * kept on the boxes has to choose between the oldest and the newest here, and
- * the committed record does not, which is why multi-box owners get their own
- * fixture group rather than being folded into the consolidated ones.
+ * `seed` inserts a karma box **without** consolidating and **without**
+ * advancing the clock — the shape reached when settlement karma outputs land
+ * beside existing holdings. A clock kept on the boxes has to choose between
+ * the oldest and the newest here, and the committed record does not, which is
+ * why multi-box owners get their own fixture group.
+ *
+ * `activity` advances the clock without changing boxes — an owner's karma
+ * spend whose change is recorded by `recordKarmaActivity` alone, paired with
+ * a `seed` that supplies the box at the same height.
  */
 export type Step =
   | { at: number; op: 'mint'; owner: string; amount: bigint }
   | { at: number; op: 'seed'; owner: string; amount: bigint; tag: string }
+  | { at: number; op: 'activity'; owner: string }
   | { at: number; op: 'decay' };
 
 export interface Scenario {
@@ -287,6 +292,10 @@ export async function runScenario(scenario: Scenario): Promise<ScenarioCapture> 
               owner,
             }, step.at, labelNonce(step.tag));
             m.utxo.insertBox(box);
+            break;
+          }
+          case 'activity': {
+            m.utxo.recordKarmaActivity(ownerBytes(step.owner));
             break;
           }
           case 'decay': {

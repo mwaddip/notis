@@ -193,12 +193,11 @@ export const EQUIVALENT_SCENARIOS: Scenario[] = [
 
 export const DIVERGENT_SCENARIOS: Scenario[] = [
   {
-    // Two non-decay karma boxes at different heights for one owner.
-    //
-    // Reachable: settlement karma outputs do not consolidate — an invite grant
-    // and a later like payout to the same owner both land beside existing
-    // holdings (NODE_INTERFACE → The settlement transaction, no-consolidation
-    // rule). Neither spends what the recipient already holds, so both survive.
+    // Two non-decay karma boxes at different heights from the owner's own
+    // spends: an activity at height 1 that leaves a box, and a second at
+    // height 10 that leaves another. Under the old box-based clock, staleness
+    // charged from the oldest box (height 1); under the record-based clock,
+    // from the newest activity (height 10).
     //
     // This is the shape where "oldest non-decay box" and "newest activity" are
     // different numbers, so a clock kept on the boxes and a clock kept on the
@@ -208,8 +207,10 @@ export const DIVERGENT_SCENARIOS: Scenario[] = [
     cfg: FAST,
     owners: ['alice'],
     steps: [
-      { at: 1, op: 'seed', owner: 'alice', amount: 50n, tag: 'first-grant' },
-      { at: 10, op: 'seed', owner: 'alice', amount: 50n, tag: 'second-grant' },
+      { at: 1, op: 'seed', owner: 'alice', amount: 50n, tag: 'first-spend' },
+      { at: 1, op: 'activity', owner: 'alice' },
+      { at: 10, op: 'seed', owner: 'alice', amount: 50n, tag: 'second-spend' },
+      { at: 10, op: 'activity', owner: 'alice' },
       { at: 30, op: 'decay' },
     ],
   },
