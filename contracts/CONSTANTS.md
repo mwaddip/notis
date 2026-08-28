@@ -127,6 +127,7 @@ Three limits stand in a fixed order — `MAX_BLOCK_BODY_BYTES < MAX_SERVE_BODY_B
 | `VOUCH_KARMA_AMOUNT` | `1n` | one vote stakes 1 karma | consensus | user ruling, 2026-08-07 | RULED | `NODE_INTERFACE → Vouch transition rules` |
 | `VOUCH_MIN_BALANCE` | `11n` | summed karma balance to cast | consensus | none stated | CHOSEN | `ARCHITECTURE → Vouch boxes` |
 | `VOUCH_COOLDOWN_BLOCKS` | `60` | 1 h at 60 s | consensus → profile | none stated | CHOSEN | `ARCHITECTURE → Vouch boxes` |
+| `VOUCH_CAST_HEIGHT_WINDOW` | `5` | a vouch output's `createdAtBlock` may lag its carrying block by at most 5 | consensus | protocol-level, the same on every network — never a profile field; none stated for the number | CHOSEN | `NODE_INTERFACE → Vouch transition rules` |
 
 ### Invites
 
@@ -143,6 +144,8 @@ Three limits stand in a fixed order — `MAX_BLOCK_BODY_BYTES < MAX_SERVE_BODY_B
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
 | `GENESIS_KARMA_PER_MEMBER` | `1000n` | karma per committee key, out of the pool | consensus → profile | none stated | CHOSEN | `ARCHITECTURE → Genesis` |
+| `SYSTEM_KARMA_INITIAL` | `1_000_000n` | the faucet identity's karma at genesis, on the networks whose profile names a `faucetPublicKey` | consensus | capacity is this divided by the bond it chooses — 1 000 invites at testnet's ceiling, 40 000 at the floor; it does not replenish | CHOSEN | `NODE_INTERFACE → Faucet` |
+| `FAUCET_CREDITS_INITIAL` | `10_000_000_000_000n` | 100 000 credits, seeded beside the karma | consensus | none stated | CHOSEN | `NODE_INTERFACE → Faucet` |
 
 ### Credit emission
 
@@ -244,6 +247,18 @@ devnet differ where a cell says so. The identity fields — `magic`, `genesisCom
 | `MAX_NIPOPOW_PARAM` | `128` | the largest `m` and the largest `k` a proof or a request may carry | format | provisional; at `m = k = 6` a million-block proof is ~240 PoPowHeaders, ~200 KB, and the prover's work per call grows with `m` | PROVISIONAL | `NIPOPOW_INTERFACE → Constants` |
 | `MAX_NIPOPOW_PREFIX` | `16_384` | 2¹⁴ prefix entries | format | ~2m headers per level over ≤ 33 levels is 8 448 at the `m` cap; 2¹⁴ sits above it with headroom, and moves with `MAX_NIPOPOW_PARAM` | PROVISIONAL | `NIPOPOW_INTERFACE → Constants` |
 
+### validation
+
+`@dagsocial/validation` → `verify.ts`. The scale of the ordering-target expansion is an implementation
+choice, not consensus (`VALIDATION_INTERFACE → What is not consensus`): any expansion satisfying the
+predicate agrees with every other on every input, and under-precision is one-sided. Module-private, so
+the row is marked; `scripts/miner.mjs` carries a mirror of the declaration that `miner-mirror.test.ts`
+holds byte-identical across the whole domain.
+
+| Name | Value | Reads as | Kind | Argument | Status | Rule |
+|---|---|---|---|---|---|---|
+| `ORDERING_TARGET_PRECISION` (literal) | `320n` | the scale the fractional-bit factor table is written at | local | the factors' fixed-point precision; under-precision is safe and one-sided. `validation/src/verify.ts` | CHOSEN | `VALIDATION_INTERFACE → What is not consensus` |
+
 ### net
 
 Relay and codec bounds a peer's messages must respect; a body over one is refused before its first
@@ -266,18 +281,13 @@ under → Size caps.
 | `GET_PEERS_RESPONSE_LIMIT` | `8` | peers served per `GetPeers` | policy | none stated | CHOSEN | `NET_INTERFACE → Peers` |
 | `BACKFILL_BATCH_IDS` | `100` | post bodies requested per batch | policy | none stated | CHOSEN | `NET_INTERFACE → Sync State Machine` |
 
-## Numbers with no named home
+## Producer policy
 
-Consensus or genesis quantities that live as module-private literals. Each is a number a second
-implementation must agree on and no barrel exports; the register lists them where they are, and
-giving each a named home is a row of its own.
+`packages/node` — a producer's choices on legs consensus does not check. Literals in the creator, so
+the drift test's converse does not reach them and the rows are marked.
 
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
-| `VOUCH_CAST_HEIGHT_WINDOW` (literal) | `5` | a vouch output's `createdAtBlock` may lag its block by at most 5 | consensus | protocol-level, the same on every node; none stated for the number. `node/src/services/utxo-engine.ts` | CHOSEN | `NODE_INTERFACE → Vouch transition rules` |
-| `ORDERING_TARGET_PRECISION` (literal) | `320n` | the scale the fractional-bit factor table is written at | consensus | the factors' fixed-point precision; `validation/src/verify.ts` | DOMAIN | `VALIDATION_INTERFACE → orderingPowTarget` |
-| `SYSTEM_KARMA_INITIAL` (literal) | `1_000_000n` | the faucet identity's karma at genesis, on the two networks that seed one | consensus | capacity is this divided by the bond it chooses — 1 000 invites at testnet's ceiling, 40 000 at the floor; it does not replenish. `node/src/store/system.ts` | CHOSEN | `ARCHITECTURE → Genesis` |
-| `FAUCET_CREDITS_INITIAL` (literal) | `10_000_000_000_000n` | 100 000 credits | consensus | none stated. `node/src/store/system.ts` | CHOSEN | `ARCHITECTURE → Genesis` |
 | `MAX_RENT_TXS_PER_BLOCK` (literal) | `32` | rent collections a producer selects per block | policy | none stated; creator policy on a body-driven leg. `node/src/services/block-creator.ts` | CHOSEN | `NODE_INTERFACE → The settlement transaction` |
 
 ## HTTP view bounds
@@ -323,8 +333,6 @@ check can tell an omission from an exclusion.
   `CREDIT_MINER_REWARD_DELAY`, `MAX_REORG_DEPTH`, and most of net's bounds. None is marked
   provisional, and none has an argument on record. Marking or arguing them is a decision for their
   owner, not for this register.
-- **Two consensus quantities have no named home** — `VOUCH_CAST_HEIGHT_WINDOW` and the two genesis
-  seeds under → Numbers with no named home — so a client cannot import what it must agree on.
 - **`INVITE_BOND_VEST_PER_LIKES` sits below the value at which the cost-gated-emission floor is met
   with zero inflation** — 3 against 5 — and the choice is recorded as a supply decision, not an
   oversight.
