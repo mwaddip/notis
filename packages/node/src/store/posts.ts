@@ -319,16 +319,6 @@ export function queryPostsPage(opts: {
   return { rows, next, pending, pendingCount };
 }
 
-export function getPendingPosts(limit: number): StoredPost[] {
-  const db = getDb();
-  const rows = db
-    .prepare(
-      "SELECT * FROM dag_posts WHERE status = 'pending' ORDER BY rowid ASC LIMIT ?",
-    )
-    .all(limit) as PostRow[];
-  return rows.map(rowToPost);
-}
-
 export function confirmPost(postId: string, blockHeight: number, blockIndex: number): void {
   getDb()
     .prepare(

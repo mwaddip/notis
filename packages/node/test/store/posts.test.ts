@@ -331,45 +331,9 @@ describe('posts store', () => {
     expect(result.pendingCount).toBe(1);
   });
 
-  it('getPendingPosts returns oldest first', async () => {
-    const { initDb } = await importDbFresh();
-    const { insertPost, getPendingPosts } = await importPostsFresh();
-
-    initDb(':memory:');
-
-    for (const label of ['oldest', 'middle', 'newest']) {
-      const { commit, content } = makeCommit({ content: label });
-      insertPost(fixturePostId(commit), commit, content);
-    }
-
-    const pending = getPendingPosts(10);
-    expect(pending).toHaveLength(3);
-    expect(pending[0]!.content).toBe('oldest');
-    expect(pending[1]!.content).toBe('middle');
-    expect(pending[2]!.content).toBe('newest');
-  });
-
-  it('getPendingPosts respects the limit parameter', async () => {
-    const { initDb } = await importDbFresh();
-    const { insertPost, getPendingPosts } = await importPostsFresh();
-
-    initDb(':memory:');
-
-    for (let i = 0; i < 5; i++) {
-      const { commit, content } = makeCommit({ content: `pending-${i}` });
-      insertPost(fixturePostId(commit), commit, content);
-    }
-
-    const limited = getPendingPosts(3);
-    expect(limited).toHaveLength(3);
-    expect(limited[0]!.content).toBe('pending-0');
-    expect(limited[1]!.content).toBe('pending-1');
-    expect(limited[2]!.content).toBe('pending-2');
-  });
-
   it('confirmPost updates status, blockHeight and blockIndex', async () => {
-    const { initDb, getDb } = await importDbFresh();
-    const { insertPost, confirmPost, getPendingPosts } = await importPostsFresh();
+    const { initDb } = await importDbFresh();
+    const { insertPost, confirmPost, getPost } = await importPostsFresh();
 
     initDb(':memory:');
 
@@ -377,19 +341,15 @@ describe('posts store', () => {
     const postId = fixturePostId(commit);
     insertPost(postId, commit, content);
 
-    expect(getPendingPosts(10)).toHaveLength(1);
+    const before = getPost(postId);
+    expect(before && 'status' in before && before.status).toBe('pending');
 
     confirmPost(postId, 42, 3);
 
-    expect(getPendingPosts(10)).toHaveLength(0);
-
-    const row = getDb()
-      .prepare('SELECT status, block_height, block_index FROM dag_posts WHERE id = ?')
-      .get(postId) as { status: string; block_height: number; block_index: number } | undefined;
-    expect(row).toBeDefined();
-    expect(row!.status).toBe('confirmed');
-    expect(row!.block_height).toBe(42);
-    expect(row!.block_index).toBe(3);
+    const after = getPost(postId);
+    expect(after && 'status' in after ? after.status : undefined).toBe('confirmed');
+    expect(after && 'blockHeight' in after ? after.blockHeight : undefined).toBe(42);
+    expect(after && 'blockIndex' in after ? after.blockIndex : undefined).toBe(3);
   });
 
   it('getParentRefs returns array of parent IDs', async () => {
