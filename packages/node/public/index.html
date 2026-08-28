@@ -1987,41 +1987,36 @@ function renderThread(roots, postMap, children, depth) {
   }).join('');
 }
 
+function compareFeedKeys(a, b) {
+  const [ah, ai] = a.split(':').map(Number);
+  const [bh, bi] = b.split(':').map(Number);
+  return bh - ah || bi - ai;
+}
+function compareDescKeys(a, b) {
+  const [ah, ai] = a.split(':').map(Number);
+  const [bh, bi] = b.split(':').map(Number);
+  return ah - bh || ai - bi;
+}
+
+function mergeRange(map, keyOf, compare, afterKey, rows, next) {
+  const fetchedKeys = new Set();
+  for (const r of rows) { const k = keyOf(r); map.set(k, r); fetchedKeys.add(k); }
+  const delKeys = [];
+  for (const k of map.keys()) {
+    if (fetchedKeys.has(k)) continue;
+    if (afterKey !== null && compare(k, afterKey) <= 0) continue;
+    if (next !== null && compare(k, next) > 0) continue;
+    delKeys.push(k);
+  }
+  for (const k of delKeys) map.delete(k);
+}
+
 // Committed posts keyed by "blockHeight:blockIndex"; pending from the latest fetch.
 const feedMap = new Map();
 let feedPending = [];
 let feedOldestNext = null;
 
 function feedKey(p) { return p.blockHeight + ':' + p.blockIndex; }
-function parseFeedKey(k) { const [h, i] = k.split(':'); return [Number(h), Number(i)]; }
-function compareFeedKeys(a, b) {
-  const [ah, ai] = parseFeedKey(a);
-  const [bh, bi] = parseFeedKey(b);
-  return bh - ah || bi - ai;
-}
-
-function mergeFeed(afterKey, rows, next) {
-  for (const p of rows) feedMap.set(feedKey(p), p);
-  if (afterKey !== null) {
-    const delKeys = [];
-    for (const k of feedMap.keys()) {
-      const cmpAfter = compareFeedKeys(k, afterKey);
-      if (cmpAfter >= 0) continue;
-      if (next !== null && compareFeedKeys(k, next) < 0) continue;
-      delKeys.push(k);
-    }
-    for (const k of delKeys) feedMap.delete(k);
-  } else {
-    const fetchedKeys = new Set(rows.map(feedKey));
-    const delKeys = [];
-    for (const k of feedMap.keys()) {
-      if (fetchedKeys.has(k)) continue;
-      if (next !== null && compareFeedKeys(k, next) < 0) continue;
-      delKeys.push(k);
-    }
-    for (const k of delKeys) feedMap.delete(k);
-  }
-}
 
 function clearFeedMap() {
   feedMap.clear();
@@ -2071,7 +2066,7 @@ async function loadFeedPage(afterKey) {
     if (userId) url += '&viewer=' + userId;
     const res = await fetch(url);
     const data = await res.json();
-    mergeFeed(afterKey || null, data.posts || [], data.next || null);
+    mergeRange(feedMap, feedKey, compareFeedKeys, afterKey || null, data.posts || [], data.next || null);
     feedPending = data.pending || [];
     if (afterKey) {
       if (!data.next) feedOldestNext = null;
@@ -2102,25 +2097,6 @@ let threadOldestNext = null;
 let threadMeta = null;
 
 function descKey(p) { return p.blockHeight + ':' + p.blockIndex; }
-function compareDescKeys(a, b) {
-  const [ah, ai] = a.split(':').map(Number);
-  const [bh, bi] = b.split(':').map(Number);
-  return ah - bh || ai - bi;
-}
-
-function mergeDesc(afterKey, rows, next) {
-  for (const p of rows) threadDescMap.set(descKey(p), p);
-  if (afterKey !== null) {
-    const delKeys = [];
-    for (const k of threadDescMap.keys()) {
-      const cmpAfter = compareDescKeys(k, afterKey);
-      if (cmpAfter <= 0) continue;
-      if (next !== null && compareDescKeys(k, next) > 0) continue;
-      delKeys.push(k);
-    }
-    for (const k of delKeys) threadDescMap.delete(k);
-  }
-}
 
 function clearThreadMap() {
   threadDescMap.clear();
@@ -2232,7 +2208,7 @@ async function loadThreadPage(postId, afterKey) {
     }
     threadMeta.descendantCount = thread.descendantCount;
 
-    mergeDesc(afterKey || null, thread.descendants || [], thread.next || null);
+    mergeRange(threadDescMap, descKey, compareDescKeys, afterKey || null, thread.descendants || [], thread.next || null);
     threadPending = thread.pending || [];
     if (afterKey) {
       if (!thread.next) threadOldestNext = null;
