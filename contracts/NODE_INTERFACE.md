@@ -153,11 +153,6 @@ queries). The thread's `ancestors` is not paged — the nearest `limit`, oldest 
 list a view returns is bounded by rule: `/vouches?voucher=` by the single active vouch, its
 cooldown arm by the cooldown, a block's body by its caps.
 
-> ⚠ **AHEAD OF CODE — 2026-08-28.** The tree pages by `offset` on every list this lead names,
-> `GET /posts` answers a bare array with pending rows at its head, and the thread lists pending
-> descendants after the committed ones; the `keyset-paging` unit lands the grammar above, the
-> `next` and `pending` fields, and the Store Interface reads below on the same branch.
-
 **`viewer` names the identity a read is for.** Optional on `GET /posts`, `GET /posts/:id` and
 `GET /posts/:id/thread`, 64 hex chars (400 otherwise). When it is present, every `PostJson` in the
 response answers `likedByViewer` — whether that identity holds a like-record on the post
@@ -2918,12 +2913,18 @@ Fresh schema — no Phase 1 migration.
 > share: a second `WHERE` naming the same set is the mirror class the `getKarmaValue` row names.
 >
 > **A page read touches `limit + 1` entries of one index that serves both its predicate and its
-> order.** The box, bond, vouch and feed pages run on `utxo_boxes (owner, box_type, value DESC, id)
-> WHERE spent_at_block IS NULL` and `dag_posts (block_height, block_index) WHERE status =
-> 'confirmed'` (with an `author`-led twin where the author-filtered feed needs it); the `SUM` and
-> `COUNT` behind a view are scans of the owner's entries in the same index; `getSubtreePage` is the
-> stated exception. Nothing else in the repo measures cost (`ARCHITECTURE → Design Principles`), so
-> one test per read pins its plan to its index.
+> order.** The post lists range on a row-value comparison — `(block_height, block_index) < (?, ?)`
+> on the feed, `>` on a subtree — over `dag_posts (block_height, block_index) WHERE status =
+> 'confirmed'`, the author-filtered feed over its `author`-led twin; the karma and credit pages
+> mix directions (`value DESC, id`), so with `after` they are two ranges of
+> `utxo_boxes (owner, box_type, value DESC, id) WHERE spent_at_block IS NULL` — the equal-value
+> tail and the lesser values — concatenated in list order, **at most `2 · (limit + 1)` entries**;
+> the bond and vouch pages range by `id` on the partial expression indexes keyed by the bond's
+> `inviterId` and the vouch's `targetId` (`json_extract(extra_data, …)`). The `SUM` and `COUNT`
+> behind a view are scans of the owner's entries in the owner index. `getSubtreePage` is the
+> stated exception: its CTE enumerates the subtree on `dag_parent_refs (parent_id)`. Nothing else
+> in the repo measures cost (`ARCHITECTURE → Design Principles`), so one test per read pins its
+> plan to its index and its range.
 
 **`dag_posts` columns:** `id`, `content_hash` (hex, NOT NULL), `content` (**nullable** — `NULL` is
 the placeholder), `author`, `parent_refs`, `protocol_version`, `type`, `status`, `block_height`,
@@ -2964,10 +2965,10 @@ deterministic by replay, journalled with exact inverses, not in the `stateRoot`.
 | Function | Signature |
 |----------|-----------|
 | `getBox(boxId)` | `(string) => AnyBox \| null` |
-| `getUnspentBoxes()` | `() => AnyBox[]` — all unspent boxes (for AVL bootstrapping) |
+| `getUnspentBoxes()` | `() => AnyBox[]` — all unspent boxes (for AVL bootstrapping), `ORDER BY created_at_block` with ties in no stated order; `bootstrapAvlProver` sorts them canonically, so no reader depends on the tie order |
 | `getKarmaBox(owner)` | `(Uint8Array) => KarmaBox \| null` — single box (backward compat) |
 | `getKarmaBoxes(owner)` | `(Uint8Array) => KarmaBox[]` — multi-box listing: full boxes, keyed on `id` |
-| `getKarmaBoxesPage(owner, page)` | `(Uint8Array, Page<BoxKey>) => { rows: KarmaBox[], next: BoxKey \| null, count: number }` — the view's page of the set `getKarmaBoxes` reads, `ORDER BY value DESC, id` strictly after `after` (`value < ? OR (value = ? AND id > ?)`), over the same `KARMA_UNSPENT_WHERE` fragment; never a consensus input — every balance check reads the whole set through `getKarmaBoxes` / `getKarmaValue` |
+| `getKarmaBoxesPage(owner, page)` | `(Uint8Array, Page<BoxKey>) => { rows: KarmaBox[], next: BoxKey \| null, count: number }` — the view's page of the set `getKarmaBoxes` reads, `ORDER BY value DESC, id` strictly after `after` (two index ranges — `value = ? AND id > ?`, then `value < ?` — concatenated in that order), over the same `KARMA_UNSPENT_WHERE` fragment; never a consensus input — every balance check reads the whole set through `getKarmaBoxes` / `getKarmaValue` |
 | `getKarmaValue(owner)` | `(Uint8Array) => bigint` — **summed** value of every unspent karma box. **Consensus input** (the vouch minimum-balance gate), and the single implementation every validation path shares. It must sum, never read one box: `getKarmaBox` is `LIMIT 1` with no `ORDER BY`, so a single-box read makes the verdict a function of SQLite's physical row order — M-12's class. Kept as one store function rather than a closure per deps literal, because a consensus-critical read reproduced at each call site is the mirror pattern that produced `computeTxIdLocal` and the copied `u32BE`. The predicate is the `KARMA_UNSPENT_WHERE` fragment that `getKarmaTotal`, the `COUNT` and the page share — the set is named once; the sum is computed here, in process |
 | `getKarmaTotal(owner)` | `(Uint8Array) => bigint` — the view's total: `COALESCE(SUM(value), 0)` over `KARMA_UNSPENT_WHERE`, an index scan of the owner's unspent entries; `/karma/:userId`'s `total`. Never a consensus input, and equal to `getKarmaValue` on every owner (a test pins it) |
 | `getCreditBoxes(owner)` | `(Uint8Array) => CreditBox[]` — multi-box, `ORDER BY value DESC, id` — a total order, so element `[0]` is a deterministic read; there is deliberately **no single-box credit accessor** (an unordered `LIMIT 1` names an arbitrary row — M-12's class) |
