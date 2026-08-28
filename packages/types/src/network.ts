@@ -224,7 +224,7 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   // Overridden for the same reason as the payload above, and it is the same
   // single failure: the spread would hand testnet mainnet's root, and a root is
   // exactly what a node checks its own seeded state against.
-  genesisStateRoot: 'd5c1520829489cec74dfbf680da01a21c74add478656ac377f5cfefd6adfc00e03',
+  genesisStateRoot: '84f9ab3f69f5b79e698b3783a00cdeeb90a2c830e0c51d203c7a76dfcd710aae03',
   genesisId: '',
 } satisfies NetworkProfile);
 
@@ -304,7 +304,7 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   // the faucet identity, since the two profiles name DIFFERENT
   // `faucetPublicKey`s and therefore seed differently-owned karma and credit
   // boxes.
-  genesisStateRoot: '8e1b689ebe53c098142ae98224f5ee33ffba7e1aba40c4510a8fe534d3c4b22b03',
+  genesisStateRoot: '7e95c8554057f0c098d700d0079d15f51d2025d59dc75fb8abd9f1b232c29ab803',
   genesisId: '',
 } satisfies NetworkProfile);
 
