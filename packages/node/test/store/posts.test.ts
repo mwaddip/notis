@@ -786,6 +786,33 @@ describe('posts store', () => {
     expect(result.rows[0]!.content).toBe('root');
   });
 
+  it('getAncestorsNearest CTE recursive step searches dag_parent_refs by post_id on PK', async () => {
+    const { initDb, getDb } = await importDbFresh();
+    await importPostsFresh();
+
+    initDb(':memory:');
+
+    const plan = getDb()
+      .prepare(
+        `EXPLAIN QUERY PLAN
+         WITH RECURSIVE chain(pid, depth) AS (
+           SELECT parent_id, 1 FROM dag_parent_refs WHERE post_id = ?
+           UNION ALL
+           SELECT dpr.parent_id, c.depth + 1
+           FROM dag_parent_refs dpr
+           JOIN chain c ON dpr.post_id = c.pid
+         )
+         SELECT dp.* FROM (
+           SELECT pid, depth FROM chain ORDER BY depth ASC LIMIT ?
+         ) nearest
+         JOIN dag_posts dp ON dp.id = nearest.pid
+         ORDER BY nearest.depth DESC`,
+      )
+      .all('dummy', 10) as Array<{ detail: string }>;
+    const details = plan.map(r => r.detail).join('\n');
+    expect(details).toContain('SEARCH dpr USING COVERING INDEX sqlite_autoindex_dag_parent_refs_1 (post_id=?)');
+  });
+
   // -------------------------------------------------------------------------
   // getSubtreePage
   // -------------------------------------------------------------------------

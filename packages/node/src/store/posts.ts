@@ -430,36 +430,43 @@ export function restorePostRows(rows: DeletedPostRow[]): void {
   }
 }
 
-// NODE_INTERFACE → Posts DAG
+// NODE_INTERFACE → Store Interface, getAncestorsNearest.
+// A post's id is a hash over its parentRefs, so no id can be its own ancestor
+// — the chain is acyclic by construction and the CTE needs no depth bound.
 export function getAncestorsNearest(
   postId: string,
   limit: number,
 ): { rows: StoredPost[]; count: number } {
   const db = getDb();
-  const ancestors: StoredPost[] = [];
-  const seen = new Set<string>();
-  let currentId: string | null = postId;
 
-  while (currentId) {
-    const parents = getParentRefs(currentId);
-    const firstParent: string | undefined = parents[0];
-    if (!firstParent) break;
+  const countRow = db.prepare(
+    `WITH RECURSIVE chain(pid, depth) AS (
+       SELECT parent_id, 1 FROM dag_parent_refs WHERE post_id = ?
+       UNION ALL
+       SELECT dpr.parent_id, c.depth + 1
+       FROM dag_parent_refs dpr
+       JOIN chain c ON dpr.post_id = c.pid
+     )
+     SELECT COUNT(*) AS cnt FROM chain`,
+  ).get(postId) as { cnt: number };
+  const count = countRow.cnt;
 
-    if (seen.has(firstParent)) break;
-    seen.add(firstParent);
+  const ancestorRows = db.prepare(
+    `WITH RECURSIVE chain(pid, depth) AS (
+       SELECT parent_id, 1 FROM dag_parent_refs WHERE post_id = ?
+       UNION ALL
+       SELECT dpr.parent_id, c.depth + 1
+       FROM dag_parent_refs dpr
+       JOIN chain c ON dpr.post_id = c.pid
+     )
+     SELECT dp.* FROM (
+       SELECT pid, depth FROM chain ORDER BY depth ASC LIMIT ?
+     ) nearest
+     JOIN dag_posts dp ON dp.id = nearest.pid
+     ORDER BY nearest.depth DESC`,
+  ).all(postId, limit) as PostRow[];
 
-    const row = db
-      .prepare('SELECT * FROM dag_posts WHERE id = ?')
-      .get(firstParent) as PostRow | undefined;
-    if (!row) break;
-
-    ancestors.unshift(rowToPost(row));
-    currentId = firstParent;
-  }
-
-  const count = ancestors.length;
-  const nearest = ancestors.slice(Math.max(0, count - limit));
-  return { rows: nearest, count };
+  return { rows: ancestorRows.map(rowToPost), count };
 }
 
 const SUBTREE_CTE =
