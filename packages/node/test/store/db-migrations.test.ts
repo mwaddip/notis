@@ -13,7 +13,7 @@ async function importFresh() {
   };
 }
 
-// The six columns migrateMempoolTxColumns adds to an existing mempool table
+// The five columns migrateMempoolTxColumns adds to an existing mempool table
 // (MEMPOOL_INTERFACE → Schema).
 const ALTER_COLUMNS = [
   'tx_inputs',
@@ -21,7 +21,6 @@ const ALTER_COLUMNS = [
   'tx_id',
   'tx_fee',
   'tx_bytes',
-  'prune_entry_id',
 ];
 
 // Every index createMempoolGateIndexes declares, derived from db.ts.
@@ -33,7 +32,6 @@ const GATE_INDEX_NAMES = [
   'idx_mempool_tx_inputs',
   'idx_mempool_tx_output_ids',
   'idx_mempool_tx_id',
-  'idx_mempool_prune_entry_id',
   'idx_mempool_fee_rate',
 ];
 
@@ -42,9 +40,8 @@ const GATE_INDEX_NAMES = [
 // missing these columns; it does not pin any historical schema.
 const PRE_COLUMN_MEMPOOL = `CREATE TABLE mempool (
   rowid INTEGER PRIMARY KEY AUTOINCREMENT,
-  entry_type TEXT NOT NULL CHECK(entry_type IN ('utxo_tx', 'prune')),
+  entry_type TEXT NOT NULL CHECK(entry_type IN ('utxo_tx')),
   utxo_tx_bytes BLOB,
-  prune_entry_cbor BLOB,
   expires_at_height INTEGER NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   like_target TEXT,
@@ -53,12 +50,11 @@ const PRE_COLUMN_MEMPOOL = `CREATE TABLE mempool (
   vouch_voucher TEXT
 )`;
 
-// Same table with only prune_entry_id missing — pins the per-column guard.
+// Same table with only tx_bytes missing — pins the per-column guard.
 const MISSING_ONE_MEMPOOL = `CREATE TABLE mempool (
   rowid INTEGER PRIMARY KEY AUTOINCREMENT,
-  entry_type TEXT NOT NULL CHECK(entry_type IN ('utxo_tx', 'prune')),
+  entry_type TEXT NOT NULL CHECK(entry_type IN ('utxo_tx')),
   utxo_tx_bytes BLOB,
-  prune_entry_cbor BLOB,
   expires_at_height INTEGER NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   like_target TEXT,
@@ -68,8 +64,7 @@ const MISSING_ONE_MEMPOOL = `CREATE TABLE mempool (
   tx_inputs TEXT,
   tx_output_ids TEXT,
   tx_id TEXT,
-  tx_fee INTEGER,
-  tx_bytes INTEGER
+  tx_fee INTEGER
 )`;
 
 describe('migrateMempoolTxColumns', () => {
@@ -127,8 +122,8 @@ describe('migrateMempoolTxColumns', () => {
 
     const cols = (db.pragma('table_info(mempool)') as Array<{ name: string }>)
       .map(c => c.name);
-    expect(cols).toContain('prune_entry_id');
-    for (const col of ['tx_inputs', 'tx_output_ids', 'tx_id', 'tx_fee', 'tx_bytes']) {
+    expect(cols).toContain('tx_bytes');
+    for (const col of ['tx_inputs', 'tx_output_ids', 'tx_id', 'tx_fee']) {
       expect(cols).toContain(col);
     }
 
@@ -173,7 +168,7 @@ describe('migrateMempoolTxColumns', () => {
     const db = getDb();
 
     const row = db.prepare(
-      `SELECT tx_inputs, tx_output_ids, tx_id, tx_fee, tx_bytes, prune_entry_id
+      `SELECT tx_inputs, tx_output_ids, tx_id, tx_fee, tx_bytes
        FROM mempool WHERE rowid = ?`,
     ).get(inserted.rowid) as Record<string, unknown>;
     expect(row).toBeDefined();
