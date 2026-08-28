@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // The settlement's escrow leg: at height h, every unspent VouchEscrowBox with
 // releaseAtBlock <= h is consumed (ascending box id, pre-body) and its value
-// returned to its owner as karma, nonActivity: true
+// returned to its owner as karma
 // (NODE_INTERFACE → The settlement transaction).
 // ---------------------------------------------------------------------------
 
@@ -158,7 +158,7 @@ describe('escrow settlement leg', () => {
   });
 
   // §4.7 (a): at releaseAtBlock == h, the escrow is an input and its value a
-  // karma output to owner, nonActivity: true, in the stated position (after
+  // karma output to owner in the stated position (after
   // bond outputs, before decay).
   it('(a) escrow at releaseAtBlock == h is consumed and returned as karma', async () => {
     const db = await importDb();
@@ -191,7 +191,6 @@ describe('escrow settlement leg', () => {
     expect(karmaBoxes.length).toBeGreaterThanOrEqual(1);
     const returnBox = karmaBoxes.find((b) => b.value === stakeValue);
     expect(returnBox).toBeDefined();
-    expect(returnBox!.nonActivity).toBe(true);
     expect(returnBox!.createdAtBlock).toBe(1);
 
     // The settlement's inputs include the escrow
@@ -280,7 +279,7 @@ describe('escrow settlement leg', () => {
     expect(utxo.hasActiveVouchEscrow(voucher.userId)).toBe(false);
 
     const karmaBoxes = utxo.getKarmaBoxes(voucher.userId);
-    const returnedBox = karmaBoxes.find((b) => b.value === VOUCH_KARMA_AMOUNT && b.nonActivity === true);
+    const returnedBox = karmaBoxes.find((b) => b.value === VOUCH_KARMA_AMOUNT);
     expect(returnedBox).toBeDefined();
   });
 
@@ -361,8 +360,6 @@ describe('escrow settlement leg', () => {
     const karmaBoxes = utxo.getKarmaBoxes(voucher.userId);
     const returnBox = karmaBoxes.find((b) => b.value === stakeValue);
     expect(returnBox).toBeDefined();
-    expect(returnBox!.nonActivity).toBe(true);
-
     // Direct conservation: Σ input values == Σ output values. Inputs are
     // spent, so read them including consumed boxes via raw SQL.
     const ordering = await importOrdering();

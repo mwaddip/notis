@@ -167,12 +167,11 @@ describe('box provenance columns (Spec G phase B)', () => {
     );
     initDb(':memory:');
 
-    // The optional-field branches in rowToBox — `nonActivity` present/absent
-    // and `lockedUntilBlock` present/absent — so a regression in any of them
-    // moves the digest.
+    // The optional-field branch in rowToBox — `lockedUntilBlock` present/absent
+    // — so a regression in it moves the digest.
     const produced: AnyBox[] = [
       makeKarmaBox('11'.repeat(32)),
-      makeKarmaBox('22'.repeat(32), { nonActivity: true }),
+      makeKarmaBox('22'.repeat(32)),
       {
         id: '33'.repeat(32), boxType: 'credit', value: 5000n,
         createdAtBlock: 0, owner: OWNER,

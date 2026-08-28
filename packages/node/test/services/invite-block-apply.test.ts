@@ -282,9 +282,9 @@ describe('the invite at block application', () => {
     const record = records.getIdentityRecord(invitee.userId);
     expect(record!.invitedAtBlock).toBe(height);
     // The clock epoch: lastActivityBlock starts at the claim height, not 0
-    // (NODE_INTERFACE → Identity Records). The grant output carries
-    // nonActivity: true, so insertBox does not bump the clock — the epoch is
-    // the record write's.
+    // (NODE_INTERFACE → Identity Records). The grant is a settlement output,
+    // and only the user loop advances the clock — the epoch is the record
+    // write's.
     expect(record!.lastActivityBlock).toBe(height);
   });
 

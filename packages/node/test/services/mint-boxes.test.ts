@@ -379,10 +379,6 @@ describe('direct mint producers attach provenance (Spec G phase C2)', () => {
   // identity of the box it charges**: it is a fresh output of a different
   // transaction, which is structural rather than asserted.
   //
-  // ⚠ The `nonActivity` flag is load-bearing and is tested in
-  // `conservation-axiom` and the decay suite: it is what keeps the settlement's
-  // karma output from resetting the owner's activity clock.
-
   it('the two genesis boxes get distinct provenance under one selector each', async () => {
     const { initDb } = await importDbFresh();
     const { getBox } = await importUtxoFresh();

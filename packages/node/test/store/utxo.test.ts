@@ -130,23 +130,6 @@ describe('utxo store', () => {
     expect(computeBoxId(result)).toBe(result.id);
   });
 
-  it('insertBox + getBox round-trip preserves nonActivity on KarmaBox', async () => {
-    const { initDb } = await importDbFresh();
-    const { insertBox, getBox } = await importUtxoFresh();
-    const { computeBoxId } = await importTypes();
-
-    initDb(':memory:');
-
-    const box = makeKarmaBox({ value: 100n, nonActivity: true });
-    Object.assign(box, fixtureProvenance(box, 1));
-    box.id = computeBoxId(box);
-    insertBox(box);
-
-    const result = getBox(box.id!) as KarmaBox;
-    expect(result).not.toBeNull();
-    expect(result.nonActivity).toBe(true);
-  });
-
   it('insertBox + getBox round-trip for CreditBox', async () => {
     const { initDb } = await importDbFresh();
     const { insertBox, getBox } = await importUtxoFresh();

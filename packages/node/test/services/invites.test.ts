@@ -222,10 +222,10 @@ describe('invites service', () => {
     const tx: UtxoTransaction = {
       inputs: [karma.id!],
       outputs: [
-        { boxType: 'karma', value: 0n,  createdAtBlock: 0,owner: inviterId } as CandidateOf<KarmaBox>,
+        { boxType: 'karma', value: 1n,  createdAtBlock: 0,owner: inviterId } as CandidateOf<KarmaBox>,
         {
           boxType: 'bond', value: FIXTURE_BOND_KARMA, inviterId,
-          inviteePublicKey: inviteePubKey, 
+          inviteePublicKey: inviteePubKey,
         } as CandidateOf<BondBox>,
       ],
       signatures: {},
@@ -336,7 +336,7 @@ describe('invites service', () => {
     const tx: UtxoTransaction = {
       inputs: [karma.id!],
       outputs: [
-        { boxType: 'karma', value: 0n,  createdAtBlock: 0,owner: inviterId } as CandidateOf<KarmaBox>,
+        { boxType: 'karma', value: 1n,  createdAtBlock: 0,owner: inviterId } as CandidateOf<KarmaBox>,
         {
           boxType: 'bond', value: config.inviteBondMax, inviterId,
           inviteePublicKey: inviteePubKey,

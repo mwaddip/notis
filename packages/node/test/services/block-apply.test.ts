@@ -1620,10 +1620,8 @@ describe('block-apply mint provenance', () => {
         .map((m) => m.box as AnyBox)
         .filter((b) => b.boxType === 'karma' && hex((b as KarmaBox).owner) === ownerHex);
 
-      // The only karma mint is the escrow return (nonActivity: true).
-      // No decay leg fired — face stays.
+      // The only karma mint is the escrow return. No decay leg fired — face stays.
       expect(karmaMints.length).toBe(1);
-      expect((karmaMints[0] as KarmaBox).nonActivity).toBe(true);
       expect((karmaMints[0] as KarmaBox).value).toBe(VOUCH_KARMA_AMOUNT);
 
       // The karma box is live at face + the returned escrow.

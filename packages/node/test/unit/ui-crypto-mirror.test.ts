@@ -352,7 +352,7 @@ function extractConst(src: string, name: string): string {
  */
 const BYTE_PRIMITIVES = [
   'vlqU', 'vlqS', 'vlqU64', 'vlqBigInt', 'lp', 'lpUtf8', 'arr', 'opt',
-  'boolByte', 'enum8Tag', 'b32Bytes', 'b32Hex', 'b32Either',
+  'enum8Tag', 'b32Bytes', 'b32Hex', 'b32Either',
 ] as const;
 
 /** The rest of what the mirror evaluates: helpers and the id preimages. */
@@ -396,7 +396,7 @@ const MIRRORED_CONSTS = [
 /** What `loadUiCrypto` hands back; must stay in step with `UiCrypto`. */
 const RETURNED = [
   'postFieldBytes', 'computeContentHash', 'computePostId', 'u32BE',
-  'vlqU', 'vlqS', 'vlqU64', 'lp', 'lpUtf8', 'arr', 'opt', 'boolByte', 'enum8Tag',
+  'vlqU', 'vlqS', 'vlqU64', 'lp', 'lpUtf8', 'arr', 'opt', 'enum8Tag',
   'b32Bytes', 'b32Hex',
   'canonicalBoxBytes', 'computeBoxId', 'computeTxId', 'computeCandidateBoxId',
   'jsonBigint', 'buildVouchTx', 'buildUnvouchTx',
@@ -425,7 +425,6 @@ interface UiCrypto {
   lpUtf8: (s: string) => Uint8Array;
   arr: <T>(items: T[], f: (x: T) => Uint8Array) => Uint8Array;
   opt: <T>(v: T | null | undefined, f: (x: T) => Uint8Array) => Uint8Array;
-  boolByte: (v: boolean) => Uint8Array;
   enum8Tag: (table: Record<string, number>, v: string) => Uint8Array;
   b32Bytes: (v: Uint8Array, n: number) => Uint8Array;
   b32Hex: (v: string, n: number) => Uint8Array;
@@ -613,8 +612,6 @@ describe('demo UI ↔ @dagsocial/types encoding mirror (M-1)', () => {
     expect(hexOf(ui.opt(undefined, () => new Uint8Array([9])))).toBe('00');
     expect(hexOf(ui.opt(null, () => new Uint8Array([9])))).toBe('00');
     expect(hexOf(ui.opt(7, () => new Uint8Array([9])))).toBe('0109');
-    expect(hexOf(ui.boolByte(false))).toBe('00');
-    expect(hexOf(ui.boolByte(true))).toBe('01');
     expect(hexOf(ui.enum8Tag({ a: 0, b: 4 }, 'b'))).toBe('04');
   });
 
@@ -636,7 +633,6 @@ describe('demo UI ↔ @dagsocial/types encoding mirror (M-1)', () => {
     expect(hexOf(ui.lp(undefined as unknown as Uint8Array))).toBe(SENTINEL);
     expect(hexOf(ui.lpUtf8(undefined as unknown as string))).toBe(SENTINEL);
     expect(hexOf(ui.arr(undefined as unknown as number[], () => new Uint8Array()))).toBe(SENTINEL);
-    expect(hexOf(ui.boolByte(undefined as unknown as boolean))).toBe('ff');
     expect(hexOf(ui.enum8Tag({ a: 0 }, 'nope'))).toBe('ff');
     // No unreachable sentinel exists for these, so they throw on both sides.
     expect(() => ui.vlqU64(1 as unknown as bigint)).toThrow();
