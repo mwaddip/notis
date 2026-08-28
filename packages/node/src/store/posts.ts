@@ -431,7 +431,9 @@ export function restorePostRows(rows: DeletedPostRow[]): void {
 }
 
 // NODE_INTERFACE → Store Interface, getAncestorsNearest.
-// The chain is the ancestors that are posts; a stump ends it.
+// The chain is the ancestors that are posts; a stump ends it. A post's id is
+// a hash over its parentRefs, so no id can be its own ancestor — the recursion
+// needs no depth bound.
 const ANCESTOR_CTE =
   `WITH RECURSIVE chain(pid, depth) AS (
      SELECT dpr.parent_id, 1

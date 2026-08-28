@@ -32,9 +32,6 @@ import { ed25519PublicKeyToKeyObject, verifyPostCommitDomains, verifyPostWithdra
 // the store module graph. Same seam `DecayDeps` uses for the same record.
 import type { IdentityRecord } from '../store/identity-records.js';
 
-// NODE_INTERFACE → Vouch transition rules: the cast height is pinned inside
-// a window so a client cannot shorten its own cooldown.
-
 // ---------------------------------------------------------------------------
 // The karma transition set
 // ---------------------------------------------------------------------------

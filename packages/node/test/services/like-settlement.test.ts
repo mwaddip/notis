@@ -1011,6 +1011,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
 
     const pruneKarma = makeKarmaBox(1n, author.userId, 0, 7099);
     utxo.insertBox(pruneKarma);
+    const authorKarmaBefore = utxo.getKarmaValue(author.userId);
     const pruneTx: UtxoTransaction = {
       inputs: [pruneKarma.id!],
       outputs: [
@@ -1034,8 +1035,10 @@ describe('per-block like settlement (P2-D N2b)', () => {
     expect(lockBox!.value).toBe(POST_LOCK_THREAD_COST - 1n);
     expect(lockBox!.originalValue).toBe(POST_LOCK_THREAD_COST);
 
-    // (b) The lock moved by 1n, so the vest ran — its output is the
-    // postlockUnlockContext karma box.
+    // (b) The vest's destination: the author's karma gained exactly
+    // vest(1n) + accrual(8n) = 9n. The prune self-transfer conserves.
+    const authorKarmaAfter = utxo.getKarmaValue(author.userId);
+    expect(authorKarmaAfter - authorKarmaBefore).toBe(9n);
 
     // (c) upvote_count is 10 and every record is gone.
     const stump = db.getDb()

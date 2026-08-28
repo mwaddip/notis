@@ -137,7 +137,7 @@ export function computeUtxoTxRoot(tree: UtxoTxTree): string {
 
 // NODE_INTERFACE → "Storage rent is a transition requiring no signature";
 // CONSTANTS → Producer policy.
-export const MAX_RENT_TXS_PER_BLOCK = 32;
+const MAX_RENT_TXS_PER_BLOCK = 32;
 
 // ---------------------------------------------------------------------------
 // Module-level state

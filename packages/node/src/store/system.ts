@@ -37,8 +37,6 @@ import {
 // must not").
 // ---------------------------------------------------------------------------
 
-// CONSTANTS → Genesis: capacity is SYSTEM_KARMA_INITIAL divided by the bond.
-
 /**
  * The height a genesis mint commits to.
  *
@@ -69,6 +67,7 @@ export function ensureSystemKarmaBox(systemPubKey: Uint8Array, currentHeight: nu
 
   const box: KarmaBox = {
     boxType: 'karma',
+    // CONSTANTS → Genesis: capacity is SYSTEM_KARMA_INITIAL divided by the bond.
     value: SYSTEM_KARMA_INITIAL,
     createdAtBlock: genesisHeight,
     owner: systemPubKey,
