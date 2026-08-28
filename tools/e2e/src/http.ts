@@ -69,6 +69,7 @@ export async function getKarma(
 ): Promise<{
   userId: string;
   total: string;
+  effective: string;
   boxes: { boxId: string; value: string }[];
   height: number;
 } | null> {
@@ -76,6 +77,7 @@ export async function getKarma(
   return data as {
     userId: string;
     total: string;
+    effective: string;
     boxes: { boxId: string; value: string }[];
     height: number;
   } | null;
