@@ -752,24 +752,38 @@ describe('utxo store', () => {
     expect(utxo.getKarmaTotal(owner)).toBe(600n);
   });
 
-  it('EXPLAIN QUERY PLAN: owner-keyed pages, SUMs and COUNTs use idx_utxo_boxes_owner_type_value', async () => {
+  it('EXPLAIN QUERY PLAN: box pages use two-range form with after, SUMs and COUNTs use the owner index', async () => {
     const { initDb, getDb } = await importDbFresh();
     initDb(':memory:');
     const db = getDb();
     const owner = Buffer.from(bytes(32));
+    const id = 'aa'.repeat(32);
+    const limit = 11;
 
-    const ownerPlans = [
-      db.prepare(`EXPLAIN QUERY PLAN SELECT * FROM utxo_boxes WHERE owner = ? AND box_type = 'karma' AND spent_at_block IS NULL AND (value < ? OR (value = ? AND id > ?)) ORDER BY value DESC, id LIMIT ?`).all(owner, 100, 100, 'aa'.repeat(32), 11),
-      db.prepare(`EXPLAIN QUERY PLAN SELECT * FROM utxo_boxes WHERE owner = ? AND box_type = 'credit' AND spent_at_block IS NULL ORDER BY value DESC, id LIMIT ?`).all(owner, 11),
+    const afterPlan = db.prepare(
+      `EXPLAIN QUERY PLAN SELECT * FROM (
+         SELECT * FROM utxo_boxes WHERE owner = ? AND box_type = 'karma' AND spent_at_block IS NULL AND value = ? AND id > ? ORDER BY id LIMIT ?
+       ) UNION ALL SELECT * FROM (
+         SELECT * FROM utxo_boxes WHERE owner = ? AND box_type = 'karma' AND spent_at_block IS NULL AND value < ? ORDER BY value DESC, id LIMIT ?
+       ) ORDER BY value DESC, id LIMIT ?`,
+    ).all(owner, 100, id, limit, owner, 100, limit, limit) as Array<{ detail: string }>;
+    const afterDetail = afterPlan.map(r => r.detail).join(' ');
+    expect(afterDetail).toContain('value=? AND id>?');
+    expect(afterDetail).toContain('value<?');
+
+    const noAfterPlan = db.prepare(
+      `EXPLAIN QUERY PLAN SELECT * FROM utxo_boxes WHERE owner = ? AND box_type = 'credit' AND spent_at_block IS NULL ORDER BY value DESC, id LIMIT ?`,
+    ).all(owner, limit) as Array<{ detail: string }>;
+    expect(noAfterPlan.some(r => r.detail.includes('idx_utxo_boxes_owner_type_value'))).toBe(true);
+
+    const sumAndCountPlans = [
       db.prepare(`EXPLAIN QUERY PLAN SELECT COALESCE(SUM(value), 0) AS s FROM utxo_boxes WHERE owner = ? AND box_type = 'karma' AND spent_at_block IS NULL`).all(owner),
       db.prepare(`EXPLAIN QUERY PLAN SELECT COALESCE(SUM(value), 0) AS s FROM utxo_boxes WHERE owner = ? AND box_type = 'credit' AND spent_at_block IS NULL`).all(owner),
       db.prepare(`EXPLAIN QUERY PLAN SELECT COUNT(*) AS cnt FROM utxo_boxes WHERE owner = ? AND box_type = 'karma' AND spent_at_block IS NULL`).all(owner),
       db.prepare(`EXPLAIN QUERY PLAN SELECT COUNT(*) AS cnt FROM utxo_boxes WHERE owner = ? AND box_type = 'credit' AND spent_at_block IS NULL`).all(owner),
     ];
-
-    for (const plan of ownerPlans) {
-      const detail = (plan as Array<{ detail: string }>).map(r => r.detail).join(' ');
-      expect(detail).toContain('idx_utxo_boxes_owner_type_value');
+    for (const plan of sumAndCountPlans) {
+      expect((plan as Array<{ detail: string }>).some(r => r.detail.includes('idx_utxo_boxes_owner_type_value'))).toBe(true);
     }
   });
 

@@ -384,6 +384,9 @@ function createPageIndexes(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_dag_posts_confirmed
       ON dag_posts(block_height, block_index)
       WHERE status = 'confirmed';
+    CREATE INDEX IF NOT EXISTS idx_dag_posts_author_confirmed
+      ON dag_posts(author, block_height, block_index)
+      WHERE status = 'confirmed';
     CREATE INDEX IF NOT EXISTS idx_dag_parent_refs_parent
       ON dag_parent_refs(parent_id);
     CREATE INDEX IF NOT EXISTS idx_utxo_boxes_bond_inviter

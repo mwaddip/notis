@@ -1040,23 +1040,22 @@ describe('posts store', () => {
     expect(result.pending[0]!.content).toBe('sub-pend-2');
   });
 
-  it('EXPLAIN QUERY PLAN: feed page uses idx_dag_posts_confirmed', async () => {
+  it('EXPLAIN QUERY PLAN: feed page ranges on row value', async () => {
     const { initDb, getDb } = await importDbFresh();
     initDb(':memory:');
     const db = getDb();
 
     const plan = db.prepare(
-      `EXPLAIN QUERY PLAN SELECT * FROM dag_posts WHERE status = 'confirmed' ORDER BY block_height DESC, block_index DESC LIMIT ?`,
-    ).all(11) as Array<{ detail: string }>;
-    expect(plan.some(r => r.detail.includes('idx_dag_posts_confirmed'))).toBe(true);
+      `EXPLAIN QUERY PLAN SELECT * FROM dag_posts WHERE status = 'confirmed' AND (block_height, block_index) < (?, ?) ORDER BY block_height DESC, block_index DESC LIMIT ?`,
+    ).all(10, 5, 11) as Array<{ detail: string }>;
+    const detail = plan.map(r => r.detail).join(' ');
+    expect(detail).toContain('(block_height,block_index)<(?,?)');
 
     const authorPlan = db.prepare(
-      `EXPLAIN QUERY PLAN SELECT * FROM dag_posts WHERE status = 'confirmed' AND author = ? ORDER BY block_height DESC, block_index DESC LIMIT ?`,
-    ).all(Buffer.alloc(32), 11) as Array<{ detail: string }>;
+      `EXPLAIN QUERY PLAN SELECT * FROM dag_posts WHERE status = 'confirmed' AND author = ? AND (block_height, block_index) < (?, ?) ORDER BY block_height DESC, block_index DESC LIMIT ?`,
+    ).all(Buffer.alloc(32), 10, 5, 11) as Array<{ detail: string }>;
     const authorDetail = authorPlan.map(r => r.detail).join(' ');
-    if (!authorDetail.includes('idx_dag_posts_confirmed')) {
-      expect(authorDetail).toContain('dag_posts');
-    }
+    expect(authorDetail).toContain('idx_dag_posts_author_confirmed');
   });
 
   it('EXPLAIN QUERY PLAN: subtree CTE uses idx_dag_parent_refs_parent', async () => {

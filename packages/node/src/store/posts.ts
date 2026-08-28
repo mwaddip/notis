@@ -284,8 +284,8 @@ export function queryPostsPage(opts: {
     committedParams.push(Buffer.from(opts.author));
   }
   if (opts.after) {
-    committedSql += ` AND (block_height < ? OR (block_height = ? AND block_index < ?))`;
-    committedParams.push(opts.after.blockHeight, opts.after.blockHeight, opts.after.blockIndex);
+    committedSql += ` AND (block_height, block_index) < (?, ?)`;
+    committedParams.push(opts.after.blockHeight, opts.after.blockIndex);
   }
   committedSql += ` ORDER BY block_height DESC, block_index DESC LIMIT ?`;
   committedParams.push(opts.limit + 1);
@@ -500,8 +500,8 @@ export function getSubtreePage(
      WHERE dp.status = 'confirmed'`;
   const committedParams: unknown[] = [postId];
   if (page.after) {
-    committedSql += ` AND (dp.block_height > ? OR (dp.block_height = ? AND dp.block_index > ?))`;
-    committedParams.push(page.after.blockHeight, page.after.blockHeight, page.after.blockIndex);
+    committedSql += ` AND (dp.block_height, dp.block_index) > (?, ?)`;
+    committedParams.push(page.after.blockHeight, page.after.blockIndex);
   }
   committedSql += ` ORDER BY dp.block_height, dp.block_index LIMIT ?`;
   committedParams.push(page.limit + 1);

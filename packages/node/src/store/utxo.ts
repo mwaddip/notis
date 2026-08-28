@@ -547,29 +547,41 @@ export function getKarmaValue(owner: Uint8Array): bigint {
 }
 
 // NODE_INTERFACE → "Every list a view returns is a page"
+function boxPageQuery(
+  db: ReturnType<typeof getDb>,
+  fragment: string,
+  ownerBuf: Buffer,
+  after: BoxKey | undefined,
+  limit: number,
+): UtxoRow[] {
+  if (!after) {
+    return db
+      .prepare(`SELECT * FROM utxo_boxes WHERE ${fragment} ORDER BY value DESC, id LIMIT ?`)
+      .safeIntegers()
+      .all(ownerBuf, limit + 1) as UtxoRow[];
+  }
+  return db
+    .prepare(
+      `SELECT * FROM (
+         SELECT * FROM utxo_boxes WHERE ${fragment} AND value = ? AND id > ? ORDER BY id LIMIT ?
+       ) UNION ALL SELECT * FROM (
+         SELECT * FROM utxo_boxes WHERE ${fragment} AND value < ? ORDER BY value DESC, id LIMIT ?
+       ) ORDER BY value DESC, id LIMIT ?`,
+    )
+    .safeIntegers()
+    .all(ownerBuf, after.value, after.id, limit + 1,
+         ownerBuf, after.value, limit + 1,
+         limit + 1) as UtxoRow[];
+}
+
 export function getKarmaBoxesPage(
   owner: Uint8Array,
   page: Page<BoxKey>,
 ): PageResult<KarmaBox, BoxKey> {
   const db = getDb();
   const ownerBuf = Buffer.from(owner);
-  const afterClause = page.after
-    ? ` AND (value < ? OR (value = ? AND id > ?))`
-    : '';
-  const params: unknown[] = [ownerBuf];
-  if (page.after) params.push(page.after.value, page.after.value, page.after.id);
-  params.push(page.limit + 1);
 
-  const rows = db
-    .prepare(
-      `SELECT * FROM utxo_boxes
-       WHERE ${KARMA_UNSPENT_WHERE}${afterClause}
-       ORDER BY value DESC, id
-       LIMIT ?`,
-    )
-    .safeIntegers()
-    .all(...params) as UtxoRow[];
-
+  const rows = boxPageQuery(db, KARMA_UNSPENT_WHERE, ownerBuf, page.after, page.limit);
   const hasMore = rows.length > page.limit;
   const resultRows = hasMore ? rows.slice(0, page.limit) : rows;
   const boxes = resultRows.map(rowToBox) as KarmaBox[];
@@ -633,22 +645,8 @@ export function getCreditBoxesPage(
 ): PageResult<CreditBox, BoxKey> {
   const db = getDb();
   const ownerBuf = Buffer.from(owner);
-  const afterClause = page.after
-    ? ` AND (value < ? OR (value = ? AND id > ?))`
-    : '';
-  const params: unknown[] = [ownerBuf];
-  if (page.after) params.push(page.after.value, page.after.value, page.after.id);
-  params.push(page.limit + 1);
 
-  const rows = db
-    .prepare(
-      `SELECT * FROM utxo_boxes
-       WHERE ${CREDIT_UNSPENT_WHERE}${afterClause}
-       ORDER BY value DESC, id
-       LIMIT ?`,
-    )
-    .safeIntegers()
-    .all(...params) as UtxoRow[];
+  const rows = boxPageQuery(db, CREDIT_UNSPENT_WHERE, ownerBuf, page.after, page.limit);
 
   const hasMore = rows.length > page.limit;
   const resultRows = hasMore ? rows.slice(0, page.limit) : rows;
