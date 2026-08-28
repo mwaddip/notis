@@ -33,6 +33,9 @@ import {
   STORAGE_RENT_PER_BYTE,
   MAX_BLOCK_BODY_BYTES,
   MAX_SETTLEMENT_BYTES,
+  VOUCH_CAST_HEIGHT_WINDOW,
+  SYSTEM_KARMA_INITIAL,
+  FAUCET_CREDITS_INITIAL,
 } from '../src/index.js';
 
 describe('PoW difficulty constants', () => {
@@ -337,5 +340,55 @@ describe('invite economics', () => {
 describe('settlement size caps', () => {
   it('a legal settlement fits inside a legal body', () => {
     expect(MAX_SETTLEMENT_BYTES).toBeLessThan(MAX_BLOCK_BODY_BYTES);
+  });
+});
+
+/**
+ * TYPES_INTERFACE → Vouch. The vouch cast height window bounds how far a vouch
+ * output's `createdAtBlock` may lag the block carrying it
+ * (NODE_INTERFACE → Vouch transition rules).
+ */
+describe('VOUCH_CAST_HEIGHT_WINDOW', () => {
+  it('is a positive integer', () => {
+    expect(Number.isSafeInteger(VOUCH_CAST_HEIGHT_WINDOW)).toBe(true);
+    expect(VOUCH_CAST_HEIGHT_WINDOW).toBeGreaterThan(0);
+  });
+
+  it('is universal, not a per-network profile field', () => {
+    for (const profile of Object.values(NETWORK_PROFILES)) {
+      expect(Object.hasOwn(profile, 'vouchCastHeightWindow')).toBe(false);
+    }
+  });
+});
+
+/**
+ * TYPES_INTERFACE → Genesis. The faucet identity's two seeds — karma and
+ * credits at genesis, on every network whose profile names a `faucetPublicKey`
+ * (NODE_INTERFACE → Faucet).
+ */
+describe('SYSTEM_KARMA_INITIAL', () => {
+  it('is a positive bigint', () => {
+    expect(typeof SYSTEM_KARMA_INITIAL).toBe('bigint');
+    expect(SYSTEM_KARMA_INITIAL).toBeGreaterThan(0n);
+  });
+
+  it('is universal, not a per-network profile field', () => {
+    for (const profile of Object.values(NETWORK_PROFILES)) {
+      expect(Object.hasOwn(profile, 'systemKarmaInitial')).toBe(false);
+    }
+  });
+});
+
+describe('FAUCET_CREDITS_INITIAL', () => {
+  it('is a positive bigint denominated in base units', () => {
+    expect(typeof FAUCET_CREDITS_INITIAL).toBe('bigint');
+    expect(FAUCET_CREDITS_INITIAL).toBeGreaterThan(0n);
+    expect(FAUCET_CREDITS_INITIAL).toBe(100_000n * 10n ** 8n);
+  });
+
+  it('is universal, not a per-network profile field', () => {
+    for (const profile of Object.values(NETWORK_PROFILES)) {
+      expect(Object.hasOwn(profile, 'faucetCreditsInitial')).toBe(false);
+    }
   });
 });
