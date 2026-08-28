@@ -46,29 +46,42 @@ export interface MinedChain {
   popowHeaders: PoPowHeader[];
 }
 
-export function buildMinedChain(opts: {
-  count: number;
-  powTargetBits?: number;
-  forceLevels?: Map<number, number>;
-}): MinedChain {
-  const { count, forceLevels } = opts;
-  const powTargetBits = opts.powTargetBits ?? DEVNET_POW_TARGET_BITS;
-  const headers: BlockHeader[] = [];
-  const interlinksPerHeader: string[][] = [];
-  const popowHeaders: PoPowHeader[] = [];
-  let prevHash = GENESIS_PREV_BLOCK_HASH;
-  let prevInterlinks: string[] = [];
-  let prevLevel: number = Infinity;
+interface BuildState {
+  headers: BlockHeader[];
+  interlinksPerHeader: string[][];
+  popowHeaders: PoPowHeader[];
+  prevHash: string;
+  prevInterlinks: string[];
+  prevLevel: number;
+}
 
-  for (let i = 0; i < count; i++) {
+function freshState(): BuildState {
+  return {
+    headers: [],
+    interlinksPerHeader: [],
+    popowHeaders: [],
+    prevHash: GENESIS_PREV_BLOCK_HASH,
+    prevInterlinks: [],
+    prevLevel: Infinity,
+  };
+}
+
+function mineHeaders(
+  from: number,
+  to: number,
+  powTargetBits: number,
+  forceLevels: Map<number, number> | undefined,
+  state: BuildState,
+): void {
+  for (let i = from; i < to; i++) {
     const height = i + 1;
     const expected = height === 1
       ? []
-      : updateInterlinks(prevInterlinks, prevHash, prevLevel);
+      : updateInterlinks(state.prevInterlinks, state.prevHash, state.prevLevel);
     const header: BlockHeader = {
       protocolVersion: PROTOCOL_VERSION,
       height,
-      prevBlockHash: prevHash,
+      prevBlockHash: state.prevHash,
       utxoTxRoot: '00'.repeat(32),
       stateRoot: EMPTY_STATE_ROOT,
       validatorId: new Uint8Array(32),
@@ -90,15 +103,79 @@ export function buildMinedChain(opts: {
     const lvl = headerLevel(header);
     if (lvl === null) throw new Error(`null level at height ${height}`);
 
-    headers.push(header);
-    interlinksPerHeader.push(expected);
-    popowHeaders.push({ header, interlinks: expected });
+    state.headers.push(header);
+    state.interlinksPerHeader.push(expected);
+    state.popowHeaders.push({ header, interlinks: expected });
 
-    prevHash = hash;
-    prevInterlinks = expected;
-    prevLevel = lvl;
+    state.prevHash = hash;
+    state.prevInterlinks = expected;
+    state.prevLevel = lvl;
   }
-  return { headers, interlinksPerHeader, popowHeaders };
+}
+
+export function buildMinedChainFresh(opts: {
+  count: number;
+  powTargetBits?: number;
+  forceLevels?: Map<number, number>;
+}): MinedChain {
+  const powTargetBits = opts.powTargetBits ?? DEVNET_POW_TARGET_BITS;
+  const state = freshState();
+  mineHeaders(0, opts.count, powTargetBits, opts.forceLevels, state);
+  return {
+    headers: state.headers,
+    interlinksPerHeader: state.interlinksPerHeader,
+    popowHeaders: state.popowHeaders,
+  };
+}
+
+function memoKey(powTargetBits: number, forceLevels?: Map<number, number>): string {
+  let key = String(powTargetBits);
+  if (forceLevels && forceLevels.size > 0) {
+    const sorted = [...forceLevels.entries()].sort((a, b) => a[0] - b[0]);
+    key += '/' + sorted.map(([h, l]) => `${h}:${l}`).join(',');
+  }
+  return key;
+}
+
+function sliceChain(state: BuildState, count: number): MinedChain {
+  return {
+    headers: state.headers.slice(0, count),
+    interlinksPerHeader: state.interlinksPerHeader.slice(0, count),
+    popowHeaders: state.popowHeaders.slice(0, count),
+  };
+}
+
+const chainMemo = new Map<string, BuildState>();
+
+export function buildMinedChain(opts: {
+  count: number;
+  powTargetBits?: number;
+  forceLevels?: Map<number, number>;
+}): MinedChain {
+  const { count, forceLevels } = opts;
+  const powTargetBits = opts.powTargetBits ?? DEVNET_POW_TARGET_BITS;
+  const key = memoKey(powTargetBits, forceLevels);
+  const existing = chainMemo.get(key);
+
+  if (existing && existing.headers.length >= count) {
+    return sliceChain(existing, count);
+  }
+
+  const state: BuildState = existing
+    ? {
+        headers: [...existing.headers],
+        interlinksPerHeader: [...existing.interlinksPerHeader],
+        popowHeaders: [...existing.popowHeaders],
+        prevHash: existing.prevHash,
+        prevInterlinks: existing.prevInterlinks,
+        prevLevel: existing.prevLevel,
+      }
+    : freshState();
+
+  mineHeaders(state.headers.length, count, powTargetBits, forceLevels, state);
+  chainMemo.set(key, state);
+
+  return sliceChain(state, count);
 }
 
 export function makeReader(chain: MinedChain): PopowHeaderReader {
