@@ -740,14 +740,3 @@ describe('planPostLockSettlement — refund provenance', () => {
 // ---------------------------------------------------------------------------
 
 
-describe('Full prune lifecycle (UTXO settlement path)', () => {
-  it.todo('retarget for prune transactions');
-});
-
-describe('prune settlement stump insert (P2-F F1)', () => {
-  it.todo('retarget for prune transactions');
-});
-
-describe('prune apply-then-revert (P2-D N3b, real settle path)', () => {
-  it.todo('retarget for prune transactions');
-});

@@ -939,4 +939,106 @@ describe('per-block like settlement (P2-D N2b)', () => {
     // The inserted record is gone.
     expect(likes.hasLikeRecord(likedPost, likerB.userId)).toBe(false);
   });
+
+  it('a like on a pruned target rejects the block — the stump is created by the real prune path', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const utxo = await importUtxo();
+    const posts = await importPosts();
+    await importRecords();
+    const blockApply = await importBlockApply();
+
+    const author = makeTestIdentity();
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'pruned-like-target');
+    posts.insertPost(postId, commit, content);
+
+    // Block 1: confirms the post.
+    expect(blockApply.applyOrderingBlock(await confirmPostBlock(postTx))).toBe(true);
+
+    // Block 2: prune the post through the real path.
+    const pruneKarma = makeKarmaBox(1n, author.userId, 0, 8001);
+    utxo.insertBox(pruneKarma);
+    const pruneTx: UtxoTransaction = {
+      inputs: [pruneKarma.id!],
+      outputs: [
+        { boxType: 'karma', value: 1n, createdAtBlock: 0, owner: author.userId } as never,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+      prune: { rootPostHash: postId },
+    };
+    signTransaction(pruneTx, author.privateKey, hex(author.userId));
+    expect(blockApply.applyOrderingBlock(
+      await makeApplicableBlock({ height: 2, utxoTxs: [pruneTx] }),
+    )).toBe(true);
+
+    // The stump exists.
+    const stumps = db.getDb()
+      .prepare('SELECT * FROM dag_stumps WHERE root_post_hash = ?')
+      .all(postId);
+    expect(stumps).toHaveLength(1);
+
+    // Block 3: a like on the pruned post rejects the block.
+    const [liker] = await seedLikers(1, 9001);
+    const likeTx = makeLikeTx(
+      liker!.id, liker!.box, postId,
+      author.userId,
+    );
+    const block3 = await makeApplicableBlock({ height: 3, utxoTxs: [likeTx] });
+    expect(blockApply.applyOrderingBlock(block3)).toBe(false);
+  });
+
+  it('prune(P) + like(P) in one block: vest this block\'s likes before the like-records go', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const utxo = await importUtxo();
+    const posts = await importPosts();
+    await importRecords();
+    const blockApply = await importBlockApply();
+    const likes = await import('../../src/store/likes.js');
+
+    const author = makeTestIdentity();
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'prune-like-same');
+    posts.insertPost(postId, commit, content);
+
+    // Block 1: confirms the post.
+    expect(blockApply.applyOrderingBlock(await confirmPostBlock(postTx))).toBe(true);
+
+    // Block 2: like(P) + prune(P). The like comes first in the utxoTxs so it
+    // is validated and recorded before §8c runs the prune.
+    const [liker] = await seedLikers(1, 7001);
+    const likeTx = makeLikeTx(
+      liker!.id, liker!.box, postId,
+      author.userId,
+    );
+    const pruneKarma = makeKarmaBox(1n, author.userId, 0, 7002);
+    utxo.insertBox(pruneKarma);
+    const pruneTx: UtxoTransaction = {
+      inputs: [pruneKarma.id!],
+      outputs: [
+        { boxType: 'karma', value: 1n, createdAtBlock: 0, owner: author.userId } as never,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+      prune: { rootPostHash: postId },
+    };
+    signTransaction(pruneTx, author.privateKey, hex(author.userId));
+
+    const block2 = await makeApplicableBlock({
+      height: 2,
+      utxoTxs: [likeTx, pruneTx],
+    });
+    expect(blockApply.applyOrderingBlock(block2)).toBe(true);
+
+    // §8c vests this block's likes before the like-records go — the stump
+    // recorded the like tally.
+    const stump = db.getDb()
+      .prepare('SELECT upvote_count FROM dag_stumps WHERE root_post_hash = ?')
+      .get(postId) as { upvote_count: number } | undefined;
+    expect(stump).toBeDefined();
+    expect(stump!.upvote_count).toBe(1);
+
+    // The like-record is gone (§8c deleted it after vesting).
+    expect(likes.hasLikeRecord(postId, liker!.id.userId)).toBe(false);
+  });
 });
