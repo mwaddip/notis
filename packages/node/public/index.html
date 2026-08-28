@@ -446,7 +446,7 @@ function concatUint8Arrays(arrays) {
 // node sentinels (or vice versa) would diverge on precisely the malformed input
 // a light client is most likely to be handed:
 //
-//  - `vlqU`, `vlqS`, `lp`, `lpUtf8`, `arr`, `enum8Tag`, `boolByte` are TOTAL.
+//  - `vlqU`, `vlqS`, `lp`, `lpUtf8`, `arr`, `enum8Tag` are TOTAL.
 //    An out-of-domain value takes the all-ones sentinel, which is unreachable
 //    from a well-formed field because the encodable domain (non-negative safe
 //    integers, real byte lengths, a closed tag set) is narrower than the u64 or
@@ -599,11 +599,6 @@ function opt(value, f) {
   return concatUint8Arrays([new Uint8Array([1]), f(value)]);
 }
 
-/** u8 from a boolean. Total: anything else takes the unreachable 0xff. */
-function boolByte(value) {
-  return new Uint8Array([value === true ? 1 : value === false ? 0 : 0xff]);
-}
-
 /**
  * A closed u8 tag table. Total: a value outside the table writes the reserved
  * 0xff, which no valid member may claim.
@@ -704,10 +699,7 @@ function canonicalBoxBytes(box) {
 function boxTypeFields(box) {
   switch (box.boxType) {
     case 'karma':
-      return concatUint8Arrays([
-        b32Either(box.owner, 32),
-        opt(box.nonActivity, boolByte),
-      ]);
+      return b32Either(box.owner, 32);
     case 'credit':
       return concatUint8Arrays([
         b32Either(box.owner, 32),
@@ -890,12 +882,16 @@ const pendingKarmaChange = new Map();
 /**
  * Record the karma change a submitted transaction will create.
  *
- * Every karma-spending builder on this page puts its change at output 0, and
- * calling this after a successful submit — rather than inside the builders — is
- * what keeps a transaction the server refused out of the map.
+ * When the builder emits a karma change output (position 0, boxType 'karma'),
+ * the spent boxes chain to it. When an exact spend leaves no karma output, the
+ * spent boxes have no successor — `null` marks them as consumed, and
+ * `applyPendingKarmaChange` drops them from the spendable set.
  */
 function recordPendingKarmaChange(tx) {
-  const change = { boxId: predictOutputBoxId(tx, 0), value: tx.outputs[0].value };
+  const first = tx.outputs[0];
+  const change = first && first.boxType === 'karma'
+    ? { boxId: predictOutputBoxId(tx, 0), value: first.value }
+    : null;
   for (const spentId of tx.inputs) pendingKarmaChange.set(spentId, change);
 }
 
@@ -908,20 +904,20 @@ function recordPendingKarmaChange(tx) {
 function applyPendingKarmaChange(data) {
   const confirmed = new Set(data.boxes.map(b => b.boxId));
   for (const [spentId, change] of pendingKarmaChange) {
-    if (confirmed.has(change.boxId)) pendingKarmaChange.delete(spentId);
+    if (change !== null && confirmed.has(change.boxId)) pendingKarmaChange.delete(spentId);
   }
 
   const tips = new Map();
   for (const box of data.boxes) {
     let current = box;
-    // Output ids are hashes of their transaction, so a chain cannot close on
-    // itself; the set makes that a local guarantee rather than an assumption.
     const seen = new Set();
     while (pendingKarmaChange.has(current.boxId) && !seen.has(current.boxId)) {
       seen.add(current.boxId);
-      current = pendingKarmaChange.get(current.boxId);
+      const next = pendingKarmaChange.get(current.boxId);
+      if (next === null) { current = null; break; }
+      current = next;
     }
-    tips.set(current.boxId, current);
+    if (current !== null) tips.set(current.boxId, current);
   }
 
   data.boxes = [...tips.values()].sort((a, b) => (b.value > a.value ? 1 : b.value < a.value ? -1 : 0));
@@ -993,18 +989,11 @@ async function fetchCreditBoxes() {
 // Tx construction helpers
 // ===========================================================================
 
-/** Build the karma-lock tx for post creation. Uses all boxes needed to cover lockAmount. */
+/** Build the karma-lock tx for post creation. At most one karma change output. */
 function buildPostTx(karmaBox, lockAmount, post, pubKeyHex) {
   const selected = selectBoxes(karmaBox.boxes, lockAmount);
   const selectedTotal = selected.reduce((sum, b) => sum + b.value, 0n);
-  const newKarmaValue = selectedTotal - lockAmount;
-
-  const karmaOutput = {
-    boxType: 'karma',
-    value: newKarmaValue,
-    createdAtBlock: currentBlockHeight,
-    owner: pubKeyHex,
-  };
+  const change = selectedTotal - lockAmount;
 
   const postLockOutput = {
     boxType: 'post_lock',
@@ -1014,9 +1003,19 @@ function buildPostTx(karmaBox, lockAmount, post, pubKeyHex) {
     owner: pubKeyHex,
   };
 
+  const outputs = [postLockOutput];
+  if (change > 0n) {
+    outputs.unshift({
+      boxType: 'karma',
+      value: change,
+      createdAtBlock: currentBlockHeight,
+      owner: pubKeyHex,
+    });
+  }
+
   return {
     inputs: selected.map(b => b.boxId),
-    outputs: [karmaOutput, postLockOutput],
+    outputs,
     signatures: {},
     protocolVersion: PROTOCOL_VERSION,
     // ⛔ The post rides INSIDE the transaction. `postFieldBytes` is in the
@@ -1028,7 +1027,7 @@ function buildPostTx(karmaBox, lockAmount, post, pubKeyHex) {
 }
 
 /**
- * Build a like tx: karma boxes in, one karma box out at
+ * Build a like tx: karma boxes in, at most one karma box out at
  * `total − LIKE_KARMA_COST`, one `LikeAccrualBox` marker carrying that cost,
  * and `likeTarget` naming the post.
  *
@@ -1053,14 +1052,7 @@ function buildPostTx(karmaBox, lockAmount, post, pubKeyHex) {
 function buildLikeTx(karmaBox, targetPostId, pubKeyHex, authorHex) {
   const selected = selectBoxes(karmaBox.boxes, LIKE_KARMA_COST);
   const selectedTotal = selected.reduce((sum, b) => sum + b.value, 0n);
-  const newKarmaValue = selectedTotal - LIKE_KARMA_COST;
-
-  const karmaOutput = {
-    boxType: 'karma',
-    value: newKarmaValue,
-    createdAtBlock: currentBlockHeight,
-    owner: pubKeyHex,
-  };
+  const change = selectedTotal - LIKE_KARMA_COST;
 
   const accrualOutput = {
     boxType: 'like_accrual',
@@ -1069,9 +1061,19 @@ function buildLikeTx(karmaBox, targetPostId, pubKeyHex, authorHex) {
     author: authorHex,
   };
 
+  const outputs = [accrualOutput];
+  if (change > 0n) {
+    outputs.unshift({
+      boxType: 'karma',
+      value: change,
+      createdAtBlock: currentBlockHeight,
+      owner: pubKeyHex,
+    });
+  }
+
   return {
     inputs: selected.map(b => b.boxId),
-    outputs: [karmaOutput, accrualOutput],
+    outputs,
     signatures: {},
     protocolVersion: PROTOCOL_VERSION,
     likeTarget: targetPostId,
@@ -1079,9 +1081,9 @@ function buildLikeTx(karmaBox, targetPostId, pubKeyHex, authorHex) {
 }
 
 /**
- * Build an invite tx: karma boxes → karma(change) + bond.
+ * Build an invite tx: karma boxes → at most one karma(change) + bond.
  *
- * ⛔ **TWO OUTPUTS, AND THE BOND IS THE WHOLE REQUEST.** The invite is one
+ * ⛔ **THE BOND IS THE WHOLE REQUEST.** The invite is one
  * transaction — there is no claim and no cancel — so the bond carries the
  * invitee's key and the block's settlement grants them **the bond's own value**
  * out of the karma pool (ARCHITECTURE → Invite System).
@@ -1096,13 +1098,7 @@ function buildLikeTx(karmaBox, targetPostId, pubKeyHex, authorHex) {
 function buildCreateInviteTx(karmaBox, pubKeyHex, inviteePubKeyHex) {
   const selected = selectBoxes(karmaBox.boxes, INVITE_BOND_DEFAULT);
   const selectedTotal = selected.reduce((sum, b) => sum + b.value, 0n);
-
-  const karmaOutput = {
-    boxType: 'karma',
-    value: selectedTotal - INVITE_BOND_DEFAULT,
-    createdAtBlock: currentBlockHeight,
-    owner: pubKeyHex,
-  };
+  const change = selectedTotal - INVITE_BOND_DEFAULT;
 
   // The bond is the whole cost of an invite and the network's only sybil price.
   // No user transaction consumes it at all: block application settles it at the
@@ -1120,21 +1116,31 @@ function buildCreateInviteTx(karmaBox, pubKeyHex, inviteePubKeyHex) {
     inviteePublicKey: inviteePubKeyHex,
   };
 
+  const outputs = [bondOutput];
+  if (change > 0n) {
+    outputs.unshift({
+      boxType: 'karma',
+      value: change,
+      createdAtBlock: currentBlockHeight,
+      owner: pubKeyHex,
+    });
+  }
+
   return {
     inputs: selected.map(b => b.boxId),
-    outputs: [karmaOutput, bondOutput],
+    outputs,
     signatures: {},
     protocolVersion: PROTOCOL_VERSION,
   };
 }
 
 /**
- * Build a vouch-cast tx: karma boxes → karma(change) + vouch.
+ * Build a vouch-cast tx: at most one karma(change) + vouch.
  *
- * The three fields consensus pins, all in NODE_INTERFACE → "Vouch transition
- * rules": the stake is exactly `VOUCH_KARMA_AMOUNT`, `voucherId` is the karma
- * input's owner, and the shape is exactly one karma output plus one vouch
- * output. `targetId` is the only free field.
+ * The contract pins the vouch alone (NODE_INTERFACE → Vouch transition rules):
+ * the stake is exactly `VOUCH_KARMA_AMOUNT`, `voucherId` is the karma input's
+ * owner, and `targetId` is the only free field. The karma change output is
+ * present iff the spend does not exhaust the inputs.
  *
  * `voucherId` and `targetId` go out as hex, like every other binary field this
  * page sends — `jsonToTx`'s `BINARY_BOX_FIELDS` names both, and the mirror in
@@ -1144,13 +1150,7 @@ function buildCreateInviteTx(karmaBox, pubKeyHex, inviteePubKeyHex) {
 function buildVouchTx(karmaBox, targetIdHex, pubKeyHex) {
   const selected = selectBoxes(karmaBox.boxes, VOUCH_KARMA_AMOUNT);
   const selectedTotal = selected.reduce((sum, b) => sum + b.value, 0n);
-
-  const karmaOutput = {
-    boxType: 'karma',
-    value: selectedTotal - VOUCH_KARMA_AMOUNT,
-    createdAtBlock: currentBlockHeight,
-    owner: pubKeyHex,
-  };
+  const change = selectedTotal - VOUCH_KARMA_AMOUNT;
 
   const vouchOutput = {
     boxType: 'vouch',
@@ -1160,9 +1160,19 @@ function buildVouchTx(karmaBox, targetIdHex, pubKeyHex) {
     targetId: targetIdHex,
   };
 
+  const outputs = [vouchOutput];
+  if (change > 0n) {
+    outputs.unshift({
+      boxType: 'karma',
+      value: change,
+      createdAtBlock: currentBlockHeight,
+      owner: pubKeyHex,
+    });
+  }
+
   return {
     inputs: selected.map(b => b.boxId),
-    outputs: [karmaOutput, vouchOutput],
+    outputs,
     signatures: {},
     protocolVersion: PROTOCOL_VERSION,
   };

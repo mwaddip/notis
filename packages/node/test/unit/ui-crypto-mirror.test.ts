@@ -133,8 +133,7 @@ const GOLDEN_KARMA_BOX_BYTES =
   '00' +                                                               // enum8 karma
   '64' +                                                               // vlqU64 value 100
   'ac02' +                                                             // vlqU createdAtBlock 300
-  '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f' + // b32 owner
-  '00';                                                                // opt nonActivity absent
+  '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f';   // b32 owner
 
 const GOLDEN_CREDIT_BOX_BYTES =
   '01' +                                                               // enum8 credit
