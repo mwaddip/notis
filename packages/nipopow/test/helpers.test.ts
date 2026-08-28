@@ -25,6 +25,19 @@ describe('buildMinedChain memo', () => {
     }
   });
 
+  it('mutating a returned object throws and the memo is unaffected', () => {
+    const chain = buildMinedChain({ count: 10 });
+
+    expect(() => { chain.headers[0]!.height = 99; }).toThrow(TypeError);
+    expect(() => { chain.interlinksPerHeader[1]!.push('ff'.repeat(32)); }).toThrow(TypeError);
+    expect(() => { (chain.popowHeaders[0] as any).extra = true; }).toThrow(TypeError);
+
+    const again = buildMinedChain({ count: 10 });
+    for (let i = 0; i < 10; i++) {
+      expect(blockHash(again.headers[i]!)).toBe(blockHash(chain.headers[i]!));
+    }
+  });
+
   it('memoized result is byte-identical under a forced-level key', () => {
     const forceLevels = new Map<number, number>();
     forceLevels.set(3, 2);

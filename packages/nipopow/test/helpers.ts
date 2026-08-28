@@ -103,9 +103,14 @@ function mineHeaders(
     const lvl = headerLevel(header);
     if (lvl === null) throw new Error(`null level at height ${height}`);
 
+    // validatorId bytes are not frozen — Object.freeze on a typed array with elements throws
+    Object.freeze(header);
+    Object.freeze(expected);
+    const entry: PoPowHeader = Object.freeze({ header, interlinks: expected });
+
     state.headers.push(header);
     state.interlinksPerHeader.push(expected);
-    state.popowHeaders.push({ header, interlinks: expected });
+    state.popowHeaders.push(entry);
 
     state.prevHash = hash;
     state.prevInterlinks = expected;
