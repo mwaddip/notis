@@ -431,8 +431,20 @@ export function restorePostRows(rows: DeletedPostRow[]): void {
 }
 
 // NODE_INTERFACE → Store Interface, getAncestorsNearest.
-// A post's id is a hash over its parentRefs, so no id can be its own ancestor
-// — the chain is acyclic by construction and the CTE needs no depth bound.
+// The chain is the ancestors that are posts; a stump ends it.
+const ANCESTOR_CTE =
+  `WITH RECURSIVE chain(pid, depth) AS (
+     SELECT dpr.parent_id, 1
+     FROM dag_parent_refs dpr
+     JOIN dag_posts dp ON dp.id = dpr.parent_id
+     WHERE dpr.post_id = ?
+     UNION ALL
+     SELECT dpr.parent_id, c.depth + 1
+     FROM dag_parent_refs dpr
+     JOIN chain c ON dpr.post_id = c.pid
+     JOIN dag_posts dp ON dp.id = dpr.parent_id
+   )`;
+
 export function getAncestorsNearest(
   postId: string,
   limit: number,
@@ -440,25 +452,12 @@ export function getAncestorsNearest(
   const db = getDb();
 
   const countRow = db.prepare(
-    `WITH RECURSIVE chain(pid, depth) AS (
-       SELECT parent_id, 1 FROM dag_parent_refs WHERE post_id = ?
-       UNION ALL
-       SELECT dpr.parent_id, c.depth + 1
-       FROM dag_parent_refs dpr
-       JOIN chain c ON dpr.post_id = c.pid
-     )
-     SELECT COUNT(*) AS cnt FROM chain`,
+    `${ANCESTOR_CTE} SELECT COUNT(*) AS cnt FROM chain`,
   ).get(postId) as { cnt: number };
   const count = countRow.cnt;
 
   const ancestorRows = db.prepare(
-    `WITH RECURSIVE chain(pid, depth) AS (
-       SELECT parent_id, 1 FROM dag_parent_refs WHERE post_id = ?
-       UNION ALL
-       SELECT dpr.parent_id, c.depth + 1
-       FROM dag_parent_refs dpr
-       JOIN chain c ON dpr.post_id = c.pid
-     )
+    `${ANCESTOR_CTE}
      SELECT dp.* FROM (
        SELECT pid, depth FROM chain ORDER BY depth ASC LIMIT ?
      ) nearest

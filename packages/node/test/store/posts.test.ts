@@ -786,7 +786,33 @@ describe('posts store', () => {
     expect(result.rows[0]!.content).toBe('root');
   });
 
-  it('getAncestorsNearest CTE recursive step searches dag_parent_refs by post_id on PK', async () => {
+  it('getAncestorsNearest stops at an ancestor with no dag_posts row', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertPost, deletePostRows, getAncestorsNearest } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    const { commit: cS, content: ctS } = makeCommit({ content: 'stump', parentRefs: [] });
+    const idS = fixturePostId(cS);
+    insertPost(idS, cS, ctS);
+
+    const { commit: cR, content: ctR } = makeCommit({ content: 'reply', parentRefs: [idS] });
+    const idR = fixturePostId(cR);
+    insertPost(idR, cR, ctR);
+
+    const { commit: cR2, content: ctR2 } = makeCommit({ content: 'reply2', parentRefs: [idR] });
+    const idR2 = fixturePostId(cR2);
+    insertPost(idR2, cR2, ctR2);
+
+    deletePostRows([idS]);
+
+    const result = getAncestorsNearest(idR2, 10);
+    expect(result.count).toBe(1);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]!.content).toBe('reply');
+  });
+
+  it('getAncestorsNearest CTE recursive step searches dag_parent_refs and dag_posts on PK', async () => {
     const { initDb, getDb } = await importDbFresh();
     await importPostsFresh();
 
@@ -796,11 +822,15 @@ describe('posts store', () => {
       .prepare(
         `EXPLAIN QUERY PLAN
          WITH RECURSIVE chain(pid, depth) AS (
-           SELECT parent_id, 1 FROM dag_parent_refs WHERE post_id = ?
+           SELECT dpr.parent_id, 1
+           FROM dag_parent_refs dpr
+           JOIN dag_posts dp ON dp.id = dpr.parent_id
+           WHERE dpr.post_id = ?
            UNION ALL
            SELECT dpr.parent_id, c.depth + 1
            FROM dag_parent_refs dpr
            JOIN chain c ON dpr.post_id = c.pid
+           JOIN dag_posts dp ON dp.id = dpr.parent_id
          )
          SELECT dp.* FROM (
            SELECT pid, depth FROM chain ORDER BY depth ASC LIMIT ?
@@ -811,6 +841,7 @@ describe('posts store', () => {
       .all('dummy', 10) as Array<{ detail: string }>;
     const details = plan.map(r => r.detail).join('\n');
     expect(details).toContain('SEARCH dpr USING COVERING INDEX sqlite_autoindex_dag_parent_refs_1 (post_id=?)');
+    expect(details).toContain('SEARCH dp USING COVERING INDEX sqlite_autoindex_dag_posts_1 (id=?)');
   });
 
   // -------------------------------------------------------------------------
