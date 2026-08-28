@@ -626,4 +626,167 @@ describe('utxo store', () => {
     const resultIds = result.rows.map(b => b.id!);
     expect(resultIds).toEqual([...resultIds].sort());
   });
+
+  // --- keyset pins ---
+
+  it('karma page continuation across an insert: no overlap, no gap', async () => {
+    const { initDb } = await importDbFresh();
+    const utxo = await import('../../src/store/utxo.js');
+    const { computeBoxId } = await importTypes();
+
+    initDb(':memory:');
+    const owner = bytes(32);
+    for (const v of [400n, 300n, 200n, 100n]) {
+      const box = makeKarmaBox({ value: v, owner });
+      Object.assign(box, fixtureProvenance(box, 1));
+      box.id = computeBoxId(box);
+      utxo.insertBox(box);
+    }
+
+    const page1 = utxo.getKarmaBoxesPage(owner, { limit: 2 });
+    expect(page1.rows.map(b => b.value)).toEqual([400n, 300n]);
+    expect(page1.next).not.toBeNull();
+
+    const insert = makeKarmaBox({ value: 350n, owner });
+    Object.assign(insert, fixtureProvenance(insert, 1));
+    insert.id = computeBoxId(insert);
+    utxo.insertBox(insert);
+
+    const page2 = utxo.getKarmaBoxesPage(owner, { limit: 2, after: page1.next! });
+    const page2Values = page2.rows.map(b => b.value);
+    expect(page2Values).not.toContainEqual(400n);
+    expect(page2Values).not.toContainEqual(300n);
+    expect(page2Values).toContainEqual(200n);
+  });
+
+  it('karma page continuation across a spend: no skip', async () => {
+    const { initDb } = await importDbFresh();
+    const utxo = await import('../../src/store/utxo.js');
+    const { computeBoxId } = await importTypes();
+
+    initDb(':memory:');
+    const owner = bytes(32);
+    const boxes: KarmaBox[] = [];
+    for (const v of [400n, 300n, 200n, 100n]) {
+      const box = makeKarmaBox({ value: v, owner });
+      Object.assign(box, fixtureProvenance(box, 1));
+      box.id = computeBoxId(box);
+      utxo.insertBox(box);
+      boxes.push(box);
+    }
+
+    const page1 = utxo.getKarmaBoxesPage(owner, { limit: 2 });
+    expect(page1.next).not.toBeNull();
+
+    utxo.consumeBox(boxes[1]!.id!, 5);
+
+    const page2 = utxo.getKarmaBoxesPage(owner, { limit: 2, after: page1.next! });
+    expect(page2.rows.map(b => b.value)).toEqual([200n, 100n]);
+  });
+
+  it('exact next: exactly limit rows → null; limit + 1 → the limit-th key', async () => {
+    const { initDb } = await importDbFresh();
+    const utxo = await import('../../src/store/utxo.js');
+    const { computeBoxId } = await importTypes();
+
+    initDb(':memory:');
+    const owner = bytes(32);
+    for (const v of [200n, 100n]) {
+      const box = makeKarmaBox({ value: v, owner });
+      Object.assign(box, fixtureProvenance(box, 1));
+      box.id = computeBoxId(box);
+      utxo.insertBox(box);
+    }
+    const exact = utxo.getKarmaBoxesPage(owner, { limit: 2 });
+    expect(exact.next).toBeNull();
+
+    const extra = makeKarmaBox({ value: 50n, owner });
+    Object.assign(extra, fixtureProvenance(extra, 1));
+    extra.id = computeBoxId(extra);
+    utxo.insertBox(extra);
+    const withExtra = utxo.getKarmaBoxesPage(owner, { limit: 2 });
+    expect(withExtra.next).not.toBeNull();
+    expect(withExtra.next!.value).toBe(100n);
+  });
+
+  it('exact next on bond page', async () => {
+    const { initDb } = await importDbFresh();
+    const utxo = await import('../../src/store/utxo.js');
+    const { computeBoxId } = await importTypes();
+
+    initDb(':memory:');
+    const inviter = uid('exact-bond');
+    const bonds: BondBox[] = [];
+    for (let i = 0; i < 2; i++) {
+      const box = makeBondBox({ inviterId: inviter, value: BigInt(10 + i) });
+      Object.assign(box, fixtureProvenance(box, 1));
+      box.id = computeBoxId(box);
+      utxo.insertBox(box);
+      bonds.push(box);
+    }
+    const exact = utxo.getBondBoxesPage(inviter, { limit: 2 });
+    expect(exact.next).toBeNull();
+
+    const extra = makeBondBox({ inviterId: inviter, value: 20n });
+    Object.assign(extra, fixtureProvenance(extra, 1));
+    extra.id = computeBoxId(extra);
+    utxo.insertBox(extra);
+    const withExtra = utxo.getBondBoxesPage(inviter, { limit: 2 });
+    expect(withExtra.next).not.toBeNull();
+  });
+
+  it('getKarmaTotal equals getKarmaValue on an owner with three boxes', async () => {
+    const { initDb } = await importDbFresh();
+    const utxo = await import('../../src/store/utxo.js');
+    const { computeBoxId } = await importTypes();
+
+    initDb(':memory:');
+    const owner = bytes(32);
+    for (const v of [100n, 200n, 300n]) {
+      const box = makeKarmaBox({ value: v, owner });
+      Object.assign(box, fixtureProvenance(box, 1));
+      box.id = computeBoxId(box);
+      utxo.insertBox(box);
+    }
+    expect(utxo.getKarmaTotal(owner)).toBe(utxo.getKarmaValue(owner));
+    expect(utxo.getKarmaTotal(owner)).toBe(600n);
+  });
+
+  it('EXPLAIN QUERY PLAN: owner-keyed pages, SUMs and COUNTs use idx_utxo_boxes_owner_type_value', async () => {
+    const { initDb, getDb } = await importDbFresh();
+    initDb(':memory:');
+    const db = getDb();
+    const owner = Buffer.from(bytes(32));
+
+    const ownerPlans = [
+      db.prepare(`EXPLAIN QUERY PLAN SELECT * FROM utxo_boxes WHERE owner = ? AND box_type = 'karma' AND spent_at_block IS NULL AND (value < ? OR (value = ? AND id > ?)) ORDER BY value DESC, id LIMIT ?`).all(owner, 100, 100, 'aa'.repeat(32), 11),
+      db.prepare(`EXPLAIN QUERY PLAN SELECT * FROM utxo_boxes WHERE owner = ? AND box_type = 'credit' AND spent_at_block IS NULL ORDER BY value DESC, id LIMIT ?`).all(owner, 11),
+      db.prepare(`EXPLAIN QUERY PLAN SELECT COALESCE(SUM(value), 0) AS s FROM utxo_boxes WHERE owner = ? AND box_type = 'karma' AND spent_at_block IS NULL`).all(owner),
+      db.prepare(`EXPLAIN QUERY PLAN SELECT COALESCE(SUM(value), 0) AS s FROM utxo_boxes WHERE owner = ? AND box_type = 'credit' AND spent_at_block IS NULL`).all(owner),
+      db.prepare(`EXPLAIN QUERY PLAN SELECT COUNT(*) AS cnt FROM utxo_boxes WHERE owner = ? AND box_type = 'karma' AND spent_at_block IS NULL`).all(owner),
+      db.prepare(`EXPLAIN QUERY PLAN SELECT COUNT(*) AS cnt FROM utxo_boxes WHERE owner = ? AND box_type = 'credit' AND spent_at_block IS NULL`).all(owner),
+    ];
+
+    for (const plan of ownerPlans) {
+      const detail = (plan as Array<{ detail: string }>).map(r => r.detail).join(' ');
+      expect(detail).toContain('idx_utxo_boxes_owner_type_value');
+    }
+  });
+
+  it('EXPLAIN QUERY PLAN: bond and vouch pages scan by id', async () => {
+    const { initDb, getDb } = await importDbFresh();
+    initDb(':memory:');
+    const db = getDb();
+    const hex = 'aa'.repeat(32);
+
+    const bondPlan = db.prepare(
+      `EXPLAIN QUERY PLAN SELECT * FROM utxo_boxes WHERE box_type = 'bond' AND spent_at_block IS NULL AND json_extract(extra_data, '$.inviterId') = ? AND id > ? ORDER BY id LIMIT ?`,
+    ).all(hex, hex, 11) as Array<{ detail: string }>;
+    expect(bondPlan.some(r => r.detail.includes('utxo_boxes'))).toBe(true);
+
+    const vouchPlan = db.prepare(
+      `EXPLAIN QUERY PLAN SELECT * FROM utxo_boxes WHERE box_type = 'vouch' AND spent_at_block IS NULL AND json_extract(extra_data, '$.targetId') = ? AND id > ? ORDER BY id LIMIT ?`,
+    ).all(hex, hex, 11) as Array<{ detail: string }>;
+    expect(vouchPlan.some(r => r.detail.includes('utxo_boxes'))).toBe(true);
+  });
 });

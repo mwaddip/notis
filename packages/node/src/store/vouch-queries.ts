@@ -1,7 +1,7 @@
 import { getDb } from './db.js';
-import { getBox } from './utxo.js';
+import { getBox, rowToBox } from './utxo.js';
 import type { VouchBox } from '@dagsocial/types';
-import type { PageKeyset, PageResult } from './index.js';
+import type { Page, PageResult } from './index.js';
 
 function pubkeyToHex(pk: Uint8Array): string {
   return Buffer.from(pk).toString('hex');
@@ -25,12 +25,12 @@ export function getVouchBox(
   return getBox(row.id) as VouchBox | null;
 }
 
-// NODE_INTERFACE → Vouches → getVouchesForTargetPage
+// NODE_INTERFACE → "Every list a view returns is a page"
 const VOUCH_TARGET_WHERE =
   `box_type = 'vouch' AND spent_at_block IS NULL AND json_extract(extra_data, '$.targetId') = ?`;
 export function getVouchesForTargetPage(
   targetId: Uint8Array,
-  page: PageKeyset<string>,
+  page: Page<string>,
 ): PageResult<VouchBox, string> {
   const db = getDb();
   const hex = pubkeyToHex(targetId);
@@ -49,8 +49,7 @@ export function getVouchesForTargetPage(
   const hasMore = rows.length > page.limit;
   const resultRows = hasMore ? rows.slice(0, page.limit) : rows;
   const vouches = resultRows
-    .map((r) => getBox(r.id as string))
-    .filter((b): b is VouchBox => b !== null && b.boxType === 'vouch');
+    .map((r) => rowToBox(r as never) as VouchBox);
   const last = resultRows[resultRows.length - 1];
   const next: string | null = hasMore && last ? last.id as string : null;
 

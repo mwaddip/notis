@@ -375,7 +375,7 @@ function createMempoolGateIndexes(database: Database.Database): void {
   `);
 }
 
-// NODE_INTERFACE → Store Interface → "A page read touches limit + 1 entries of one index"
+// NODE_INTERFACE → "A page read touches limit + 1 entries of one index that serves both its predicate and its order"
 function createPageIndexes(database: Database.Database): void {
   database.exec(`
     CREATE INDEX IF NOT EXISTS idx_utxo_boxes_owner_type_value

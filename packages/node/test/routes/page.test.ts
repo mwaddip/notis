@@ -8,8 +8,7 @@ import {
 } from '../../src/routes/page.js';
 
 // ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-// parseViewer (unchanged)
+// parseViewer
 // ---------------------------------------------------------------------------
 
 describe('parseViewer', () => {
@@ -74,6 +73,14 @@ describe('parseLimit', () => {
     const r = parseLimit({ limit: '10000000000000000000' });
     expect(isLimitError(r)).toBe(true);
   });
+
+  it('rejects hex notation', () => {
+    expect(isLimitError(parseLimit({ limit: '0x10' }))).toBe(true);
+  });
+
+  it('rejects scientific notation', () => {
+    expect(isLimitError(parseLimit({ limit: '1e2' }))).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -95,6 +102,10 @@ describe('parseAfter (post)', () => {
     const r = parseAfter({ after: '0:0' }, 'post');
     expect(isAfterError(r)).toBe(false);
     expect(r).toEqual({ blockHeight: 0, blockIndex: 0 });
+  });
+
+  it('rejects empty first part', () => {
+    expect(isAfterError(parseAfter({ after: ':5' }, 'post'))).toBe(true);
   });
 
   it('rejects missing colon', () => {
@@ -165,6 +176,14 @@ describe('parseAfter (box)', () => {
 
   it('rejects non-numeric value', () => {
     expect(isAfterError(parseAfter({ after: `xyz:${validId}` }, 'box'))).toBe(true);
+  });
+
+  it('rejects empty value part', () => {
+    expect(isAfterError(parseAfter({ after: `:${validId}` }, 'box'))).toBe(true);
+  });
+
+  it('rejects hex value', () => {
+    expect(isAfterError(parseAfter({ after: `0x10:${validId}` }, 'box'))).toBe(true);
   });
 });
 

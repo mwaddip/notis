@@ -1,6 +1,6 @@
 import { getDb } from './db.js';
 import type { PostCommit, PostId, PostType, Stump } from '@dagsocial/types';
-import type { PageKeyset, PostKey } from './index.js';
+import type { Page, PostKey } from './index.js';
 
 // ---------------------------------------------------------------------------
 // Row shapes
@@ -268,7 +268,7 @@ export function getPlaceholdersAt(height: number): Array<{ id: string; contentHa
   return rows.map(r => ({ id: r.id, contentHash: r.content_hash }));
 }
 
-// NODE_INTERFACE → Store Interface → queryPostsPage
+// NODE_INTERFACE → "Every list a view returns is a page"
 export function queryPostsPage(opts: {
   author?: Uint8Array;
   limit: number;
@@ -485,10 +485,10 @@ const SUBTREE_CTE =
      JOIN subtree s ON dpr.parent_id = s.id
    )`;
 
-// NODE_INTERFACE → Store Interface → getSubtreePage
+// NODE_INTERFACE → "Every list a view returns is a page"
 export function getSubtreePage(
   postId: string,
-  page: PageKeyset<PostKey>,
+  page: Page<PostKey>,
 ): { rows: StoredPost[]; next: PostKey | null; count: number; pending: StoredPost[]; pendingCount: number } {
   const db = getDb();
 

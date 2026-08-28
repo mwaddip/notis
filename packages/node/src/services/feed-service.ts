@@ -1,7 +1,7 @@
 import type { PostType, Stump } from '@dagsocial/types';
 import type { PostStatus, StoredPost, PrunedTombstone } from '../store/posts.js';
 import { isStoredPost, isStump, isPrunedTombstone } from '../store/posts.js';
-import type { PageKeyset, PostKey } from '../store/index.js';
+import type { Page, PostKey } from '../store/index.js';
 
 // ---------------------------------------------------------------------------
 // Dependencies
@@ -17,7 +17,7 @@ export interface FeedServiceDeps {
   getLikeRecordCount: (postId: string) => number;
   hasLikeRecord: (postId: string, likerId: Uint8Array) => boolean;
   getAncestorsNearest: (postId: string, limit: number) => { rows: StoredPost[]; count: number };
-  getSubtreePage: (postId: string, page: PageKeyset<PostKey>) => {
+  getSubtreePage: (postId: string, page: Page<PostKey>) => {
     rows: StoredPost[];
     next: PostKey | null;
     count: number;
@@ -199,7 +199,7 @@ export class FeedService {
 
   getThread(
     id: string,
-    page: PageKeyset<PostKey>,
+    page: Page<PostKey>,
     viewer: Uint8Array | null = null,
   ): ThreadJson | null {
     const result = this.deps.getPost(id);

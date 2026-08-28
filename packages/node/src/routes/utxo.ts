@@ -3,7 +3,7 @@ import type { UtxoTransaction, KarmaBox, CreditBox, BondBox } from '@dagsocial/t
 import { sendCredits } from '../services/credits.js';
 import type { UtxoEngineDeps } from '../services/utxo-engine.js';
 import type { IdentityRecord } from '../store/identity-records.js';
-import type { PageKeyset, PageResult, BoxKey } from '../store/index.js';
+import type { Page, PageResult, BoxKey } from '../store/index.js';
 import type { DecayCfg } from '../services/decay.js';
 import { effectiveKarma } from '../services/decay.js';
 import { getNet } from '../services/net-instance.js';
@@ -17,11 +17,11 @@ import { parseLimit, isLimitError, parseAfter, isAfterError, formatKey } from '.
 
 export interface UtxoDeps {
   getKarmaTotal(owner: Uint8Array): bigint;
-  getKarmaBoxesPage(owner: Uint8Array, page: PageKeyset<BoxKey>): PageResult<KarmaBox, BoxKey>;
+  getKarmaBoxesPage(owner: Uint8Array, page: Page<BoxKey>): PageResult<KarmaBox, BoxKey>;
   getIdentityRecord(owner: Uint8Array): IdentityRecord | null;
   getCreditValue(owner: Uint8Array): bigint;
-  getCreditBoxesPage(owner: Uint8Array, page: PageKeyset<BoxKey>): PageResult<CreditBox, BoxKey>;
-  getBondBoxesPage(inviterId: Uint8Array, page: PageKeyset<string>): PageResult<BondBox, string>;
+  getCreditBoxesPage(owner: Uint8Array, page: Page<BoxKey>): PageResult<CreditBox, BoxKey>;
+  getBondBoxesPage(inviterId: Uint8Array, page: Page<string>): PageResult<BondBox, string>;
   getCurrentHeight(): number;
   getUtxoEngineDeps(): UtxoEngineDeps;
   decayCfg: DecayCfg;

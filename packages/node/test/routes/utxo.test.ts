@@ -298,7 +298,7 @@ describe('UTXO routes', () => {
     expect(bond.inviteePublicKey).toBe('bb'.repeat(32));
   });
 
-  it('GET /invites/:userId answers { bonds: [], bondCount: 0 } for an inviter with no live bond', async () => {
+  it('GET /invites/:userId answers { bonds: [], bondCount: 0, next: null } for an inviter with no live bond', async () => {
     const kp = generateKeyPair();
     const hex = Buffer.from(kp.publicKey).toString('hex');
     const res = await request(`/invites/${hex}`);
@@ -306,6 +306,22 @@ describe('UTXO routes', () => {
     const body = res.data as Record<string, unknown>;
     expect(body.bonds).toEqual([]);
     expect(body.bondCount).toBe(0);
+    expect(body.next).toBeNull();
+  });
+
+  it('malformed after → 400 on /karma', async () => {
+    const res = await request(`/karma/${karmaUserIdHex}?after=malformed`);
+    expect(res.status).toBe(400);
+  });
+
+  it('malformed after → 400 on /credits', async () => {
+    const res = await request(`/credits/${creditUserIdHex}?after=malformed`);
+    expect(res.status).toBe(400);
+  });
+
+  it('malformed after → 400 on /invites', async () => {
+    const res = await request(`/invites/${inviteUserIdHex}?after=zz`);
+    expect(res.status).toBe(400);
   });
 
   // ---------------------------------------------------------------------------

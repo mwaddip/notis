@@ -1,7 +1,7 @@
-// NODE_INTERFACE → Store Interface → Page<K>
+// NODE_INTERFACE → "Page<K> is { limit: number, after?: K }"
 export interface PostKey { blockHeight: number; blockIndex: number }
 export interface BoxKey { value: bigint; id: string }
-export interface PageKeyset<K> { limit: number; after?: K }
+export interface Page<K> { limit: number; after?: K }
 export interface PageResult<T, K> { rows: T[]; next: K | null; count: number }
 
 export { initDb, getDb, closeDb } from './db.js';

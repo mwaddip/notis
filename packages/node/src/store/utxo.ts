@@ -9,7 +9,7 @@ import {
 import { getIdentityRecord, putIdentityRecord } from './identity-records.js';
 import { countsAsCirculatingKarma } from '../karma-supply.js';
 import { computePostId } from '@dagsocial/types';
-import type { PageKeyset, PageResult, BoxKey } from './index.js';
+import type { Page, PageResult, BoxKey } from './index.js';
 import type {
   PostId,
   AnyBox,
@@ -154,7 +154,7 @@ function settledHeight(box: AnyBox): number {
  * Columns id, box_type, value, created_at_block and owner are read directly;
  * everything else is parsed from the extra_data JSON column.
  */
-function rowToBox(row: UtxoRow): AnyBox {
+export function rowToBox(row: UtxoRow): AnyBox {
   const extra = row.extra_data ? JSON.parse(row.extra_data) : {};
   const prov = provenanceOf(row);
   const createdAtBlock = Number(row.created_at_block);
@@ -492,7 +492,7 @@ export function getKarmaBox(owner: Uint8Array): KarmaBox | null {
   return row ? (rowToBox(row) as KarmaBox) : null;
 }
 
-// NODE_INTERFACE → Store Interface → Page<K>
+// NODE_INTERFACE → "Page<K> is { limit: number, after?: K }"
 const KARMA_UNSPENT_WHERE =
   `owner = ? AND box_type = 'karma' AND spent_at_block IS NULL`;
 const CREDIT_UNSPENT_WHERE =
@@ -546,10 +546,10 @@ export function getKarmaValue(owner: Uint8Array): bigint {
   return getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n);
 }
 
-// NODE_INTERFACE → Store Interface → getKarmaBoxesPage
+// NODE_INTERFACE → "Every list a view returns is a page"
 export function getKarmaBoxesPage(
   owner: Uint8Array,
-  page: PageKeyset<BoxKey>,
+  page: Page<BoxKey>,
 ): PageResult<KarmaBox, BoxKey> {
   const db = getDb();
   const ownerBuf = Buffer.from(owner);
@@ -585,7 +585,7 @@ export function getKarmaBoxesPage(
   return { rows: boxes, next, count: countRow.cnt };
 }
 
-// NODE_INTERFACE → Store Interface → getKarmaTotal
+// NODE_INTERFACE → "Every list a view returns is a page"
 export function getKarmaTotal(owner: Uint8Array): bigint {
   const row = getDb()
     .prepare(
@@ -614,7 +614,7 @@ export function getCreditBoxes(owner: Uint8Array): CreditBox[] {
   return rows.map(rowToBox) as CreditBox[];
 }
 
-// NODE_INTERFACE → Store Interface → getCreditValue
+// NODE_INTERFACE → "Every list a view returns is a page"
 export function getCreditValue(owner: Uint8Array): bigint {
   const row = getDb()
     .prepare(
@@ -626,10 +626,10 @@ export function getCreditValue(owner: Uint8Array): bigint {
   return row.s;
 }
 
-// NODE_INTERFACE → Store Interface → getCreditBoxesPage
+// NODE_INTERFACE → "Every list a view returns is a page"
 export function getCreditBoxesPage(
   owner: Uint8Array,
-  page: PageKeyset<BoxKey>,
+  page: Page<BoxKey>,
 ): PageResult<CreditBox, BoxKey> {
   const db = getDb();
   const ownerBuf = Buffer.from(owner);
@@ -763,12 +763,12 @@ export function getBondsInvitedAt(maxInvitedAt: number, limit: number): BondBox[
   return rows.map((r) => rowToBox(r) as BondBox);
 }
 
-// NODE_INTERFACE → Store Interface → getBondBoxesPage
+// NODE_INTERFACE → "Every list a view returns is a page"
 const BOND_PAGE_WHERE =
   `box_type = 'bond' AND spent_at_block IS NULL AND json_extract(extra_data, '$.inviterId') = ?`;
 export function getBondBoxesPage(
   inviterId: Uint8Array,
-  page: PageKeyset<string>,
+  page: Page<string>,
 ): PageResult<BondBox, string> {
   const db = getDb();
   const hex = pubkeyToHex(inviterId);
