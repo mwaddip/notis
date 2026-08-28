@@ -8,6 +8,7 @@ import {
   postInvite,
   postPost,
   getKarma,
+  hasKarma,
   getPost,
   getBlockCurrent,
   NodeError,
@@ -45,7 +46,7 @@ describe('validation', () => {
     await postInvite(node1!, inv.json);
 
     await confirm(
-      async () => (await getKarma(node1!, alice.publicKeyHex)) !== null,
+      async () => await hasKarma(node1!, alice.publicKeyHex),
       node1!, mesh.miningSecret,
     );
     await waitHeight(mesh.nodes, (await getBlockCurrent(node1!)).height);

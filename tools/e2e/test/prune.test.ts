@@ -14,6 +14,7 @@ import {
   postPost,
   postPrune,
   getKarma,
+  hasKarma,
   getPost,
   getBlockCurrent,
   NodeError,
@@ -60,7 +61,7 @@ describe('prune', () => {
     await postInvite(miner, inv2.json);
 
     await confirm(
-      async () => (await getKarma(miner, alice.publicKeyHex)) !== null,
+      async () => await hasKarma(miner, alice.publicKeyHex),
       miner, mesh.miningSecret,
     );
     await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
@@ -228,7 +229,7 @@ describe('prune', () => {
     await postInvite(miner, inv2.json);
 
     await confirm(
-      async () => (await getKarma(miner, alice.publicKeyHex)) !== null,
+      async () => await hasKarma(miner, alice.publicKeyHex),
       miner, mesh.miningSecret,
     );
     await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
@@ -334,7 +335,7 @@ describe('prune', () => {
     }
 
     await confirm(
-      async () => (await getKarma(miner, repliers[repliers.length - 1]!.publicKeyHex)) !== null,
+      async () => await hasKarma(miner, repliers[repliers.length - 1]!.publicKeyHex),
       miner, mesh.miningSecret, 5,
     );
     await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);

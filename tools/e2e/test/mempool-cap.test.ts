@@ -8,6 +8,7 @@ import {
   postInvite,
   postPost,
   getKarma,
+  hasKarma,
   getPost,
   isPost,
   getBlockCurrent,
@@ -58,7 +59,7 @@ describe('mempool-cap', () => {
     );
     await postInvite(node, inviteAlice.json);
     await confirm(
-      async () => (await getKarma(node, alice.publicKeyHex)) !== null,
+      async () => await hasKarma(node, alice.publicKeyHex),
       node,
       mesh.miningSecret,
     );
@@ -75,7 +76,7 @@ describe('mempool-cap', () => {
     );
     await postInvite(node, inviteBob.json);
     await confirm(
-      async () => (await getKarma(node, bob.publicKeyHex)) !== null,
+      async () => await hasKarma(node, bob.publicKeyHex),
       node,
       mesh.miningSecret,
     );

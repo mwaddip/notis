@@ -9,6 +9,7 @@ import {
   postInvite,
   postPost,
   getKarma,
+  hasKarma,
   getPost,
   getBlockCurrent,
   NodeError,
@@ -49,7 +50,7 @@ describe('zero-change', () => {
     // ---- faucet invites alice with bond 5 (inviteBondMin), grant is 5 ----
     const alice = fresh();
     const bondAmount = 5n;
-    const faucetK = (await getKarma(miner, DEVNET_FAUCET.publicKeyHex))!;
+    const faucetK = await getKarma(miner, DEVNET_FAUCET.publicKeyHex);
     const invite = buildInviteTx(
       DEVNET_FAUCET,
       karmaBoxes(faucetK),
@@ -60,13 +61,13 @@ describe('zero-change', () => {
     await postInvite(miner, invite.json);
 
     await confirm(
-      async () => (await getKarma(miner, alice.publicKeyHex)) !== null,
+      async () => await hasKarma(miner, alice.publicKeyHex),
       miner,
       mesh.miningSecret,
     );
 
     // ---- alice's grant equals the bond ----
-    const aliceK = (await getKarma(miner, alice.publicKeyHex))!;
+    const aliceK = await getKarma(miner, alice.publicKeyHex);
     expect(BigInt(aliceK.total)).toBe(bondAmount);
     expect(bondAmount).toBe(POST_LOCK_THREAD_COST);
 
@@ -92,11 +93,18 @@ describe('zero-change', () => {
     );
 
     // ---- after the exact spend alice holds no karma boxes ----
+    const confirmedPost = await getPost(miner, postRes.postId);
+    expect(confirmedPost).not.toBeNull();
+    expect(isPost(confirmedPost!)).toBe(true);
+    const postHeight = (confirmedPost as { blockHeight: number }).blockHeight;
+
     const aliceAfter = await getKarma(miner, alice.publicKeyHex);
-    expect(aliceAfter).toBeNull();
+    expect(aliceAfter.boxCount).toBe(0);
+    expect(aliceAfter.total).toBe('0');
+    expect(aliceAfter.lastActivityBlock).toBe(postHeight);
 
     // ---- karma(0) is refused ----
-    const faucetAfter = (await getKarma(miner, DEVNET_FAUCET.publicKeyHex))!;
+    const faucetAfter = await getKarma(miner, DEVNET_FAUCET.publicKeyHex);
     const faucetBoxes = karmaBoxes(faucetAfter);
     const sorted = [...faucetBoxes].sort((a, b) =>
       b.value > a.value ? 1 : b.value < a.value ? -1 : 0,

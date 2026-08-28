@@ -11,6 +11,7 @@ import {
   postInvite,
   postPost,
   getKarma,
+  hasKarma,
   getPost,
   getBlock,
   getBlockCurrent,
@@ -49,7 +50,7 @@ describe('sync', () => {
     await postInvite(miner, inv.json);
 
     await confirm(
-      async () => (await getKarma(miner, alice.publicKeyHex)) !== null,
+      async () => await hasKarma(miner, alice.publicKeyHex),
       miner, mesh.miningSecret,
     );
 

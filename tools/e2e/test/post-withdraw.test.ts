@@ -12,6 +12,7 @@ import {
   postLike,
   postPostWithdraw,
   getKarma,
+  hasKarma,
   getPost,
   getBlockCurrent,
   NodeError,
@@ -56,7 +57,7 @@ describe('post-withdraw', () => {
     await postInvite(miner, inv2.json);
 
     await confirm(
-      async () => (await getKarma(miner, alice.publicKeyHex)) !== null,
+      async () => await hasKarma(miner, alice.publicKeyHex),
       miner, mesh.miningSecret,
     );
     await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);

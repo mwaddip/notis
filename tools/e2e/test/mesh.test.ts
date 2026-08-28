@@ -10,6 +10,7 @@ import {
   postPost,
   postLike,
   getKarma,
+  hasKarma,
   getPost,
   getBlockCurrent,
   NodeError,
@@ -84,7 +85,7 @@ describe('mesh', () => {
     await postInvite(miner, inviteBob.json);
 
     await confirm(
-      async () => (await getKarma(miner, alice.publicKeyHex)) !== null,
+      async () => await hasKarma(miner, alice.publicKeyHex),
       miner,
       mesh.miningSecret,
     );
