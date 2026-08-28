@@ -988,7 +988,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
     expect(blockApply.applyOrderingBlock(block3)).toBe(false);
   });
 
-  it('prune(P) + like(P) in one block: vest this block\'s likes before the like-records go', async () => {
+  it('prune(P) + 10 likes in one block: vest once, delete all records', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     const utxo = await importUtxo();
@@ -1004,14 +1004,12 @@ describe('per-block like settlement (P2-D N2b)', () => {
     // Block 1: confirms the post.
     expect(blockApply.applyOrderingBlock(await confirmPostBlock(postTx))).toBe(true);
 
-    // Block 2: like(P) + prune(P). The like comes first in the utxoTxs so it
-    // is validated and recorded before §8c runs the prune.
-    const [liker] = await seedLikers(1, 7001);
-    const likeTx = makeLikeTx(
-      liker!.id, liker!.box, postId,
-      author.userId,
-    );
-    const pruneKarma = makeKarmaBox(1n, author.userId, 0, 7002);
+    // Block 2: 10 likes + prune(P). 10 likes cross POST_LOCK_UNLOCK_PER_LIKES
+    // so §8c's vest fires with toUnlock = 1n.
+    const likers = await seedLikers(10, 7001);
+    const likeTxs = likers.map(l => makeLikeTx(l.id, l.box, postId, author.userId));
+
+    const pruneKarma = makeKarmaBox(1n, author.userId, 0, 7099);
     utxo.insertBox(pruneKarma);
     const pruneTx: UtxoTransaction = {
       inputs: [pruneKarma.id!],
@@ -1026,19 +1024,31 @@ describe('per-block like settlement (P2-D N2b)', () => {
 
     const block2 = await makeApplicableBlock({
       height: 2,
-      utxoTxs: [likeTx, pruneTx],
+      utxoTxs: [...likeTxs, pruneTx],
     });
     expect(blockApply.applyOrderingBlock(block2)).toBe(true);
 
-    // §8c vests this block's likes before the like-records go — the stump
-    // recorded the like tally.
+    // (a) The post's lock moved by exactly 1n.
+    const lockBox = utxo.getPostLockBox(postId);
+    expect(lockBox).not.toBeNull();
+    expect(lockBox!.value).toBe(POST_LOCK_THREAD_COST - 1n);
+    expect(lockBox!.originalValue).toBe(POST_LOCK_THREAD_COST);
+
+    // (b) The lock moved by 1n, so the vest ran — its output is the
+    // postlockUnlockContext karma box.
+
+    // (c) upvote_count is 10 and every record is gone.
     const stump = db.getDb()
       .prepare('SELECT upvote_count FROM dag_stumps WHERE root_post_hash = ?')
       .get(postId) as { upvote_count: number } | undefined;
     expect(stump).toBeDefined();
-    expect(stump!.upvote_count).toBe(1);
+    expect(stump!.upvote_count).toBe(10);
+    for (const l of likers) {
+      expect(likes.hasLikeRecord(postId, l.id.userId)).toBe(false);
+    }
 
-    // The like-record is gone (§8c deleted it after vesting).
-    expect(likes.hasLikeRecord(postId, liker!.id.userId)).toBe(false);
+    // (d) §11b vested nothing twice: the lock is 4n not 3n — if §8c's vest
+    // AND §11b's vest both fired the lock would be 3n (two unlocks of 1n).
+    expect(lockBox!.value).toBe(4n);
   });
 });

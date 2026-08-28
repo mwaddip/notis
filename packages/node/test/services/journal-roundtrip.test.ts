@@ -464,7 +464,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     const block2 = await makeApplicableBlock({ height: 2, utxoTxs: [pruneTx] });
     expect(blockApply.applyOrderingBlock(block2)).toBe(true);
 
-    // The prune created a stump and deleted the post.
+    // The prune created a stump, marked topology, and deleted the post.
     const stumps = db.getDb()
       .prepare('SELECT * FROM dag_stumps WHERE root_post_hash = ?')
       .all(postId);
@@ -474,6 +474,10 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
       .prepare('SELECT pruned_at_height FROM block_topology WHERE post_id = ?')
       .get(postId) as { pruned_at_height: number | null } | undefined;
     expect(topology?.pruned_at_height).toBe(2);
+
+    const posts = await import('../../src/store/posts.js');
+    const afterPrune = posts.getPost(postId);
+    expect(afterPrune && 'rootPostHash' in afterPrune).toBe(true);
 
     await assertRoundTrip(db, handle, pre, block2);
   });
