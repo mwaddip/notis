@@ -427,8 +427,7 @@ transfers between existing accounts are forbidden — this is what makes karma
 non-tradeable. An account's karma box can be consumed only to:
 - Create invite boxes
 - Create like boxes (spending karma to vote)
-- Create a new karma box for the same owner (after earning/burning, resetting
-  the activity clock)
+- Create a new karma box for the same owner (a balance change)
 
 #### Karma decay (virtual, squared on touch)
 
@@ -457,16 +456,18 @@ values in boxes move only when a transaction touches the identity.
   background sweep. An identity nothing touches keeps its face values and its
   virtual decay indefinitely; its effective value still dissolves, and the
   pool — seeded with the supply total — does not depend on decay inflow.
-- **Clocks:** the touching spend is activity (`lastActivityBlock` advances at
-  the store choke point); squaring advances `lastDecayBlock`. Received value
-  — a like payout, a vesting return, a settlement re-emit — is **not**
-  activity and must not reset the clock.
+- **Clocks:** the touching spend is activity — `lastActivityBlock` advances when
+  block application applies a user transaction that spends the identity's karma,
+  whether or not it leaves a karma box (`NODE_INTERFACE` → Populating the
+  record); squaring advances `lastDecayBlock`. Received value — a like payout, a
+  vesting return, a settlement re-emit — is **not** activity: no settlement
+  output and no settlement consumption moves the activity half.
 - **The clock starts at onboarding.** A never-onboarded identity is neither
   active nor inactive — inactivity presupposes activity — and the invite is
   the one onboarding path, so the claim that creates the identity record
-  initializes `lastActivityBlock` to the claim height. The grant output stays
-  `nonActivity`: the epoch is the record write's, not a box bump's, and an
-  invitee has no earlier clock for the `nonActivity` rule to protect.
+  initializes `lastActivityBlock` to the claim height. The grant is a
+  settlement output and no spend, so it advances nothing: the epoch is the
+  record write's.
 - **Rollback:** squarings ride the settlement and the identity-record journal;
   reverse replay restores both.
 
@@ -1023,12 +1024,6 @@ disagree. The carry is live supply by construction: it is karma, in the UTXO set
 The accumulator is **per author, not per post** (design track §1.3.1): outstanding carry is
 bounded by `x−1` per identity and deferred rather than lost, and the payout is independent
 of arrival pattern — the floor runs over a running total, never over a per-window group.
-
-> ⚠ **Known karma-econ item, stated rather than hidden:** `lastActivityBlock` bumps on any
-> non-decay karma insert, so a settlement like payout resets the author's decay clock —
-> "receiving karma is activity," which `karmanomics.md` explicitly rejects for likes (an
-> activity reset must cost a bond, or a second account resets your clock for 1 karma).
-> Redefining the activity trigger is karma-econ scope; the bump-on-insert semantics stand.
 
 ### Like-records
 

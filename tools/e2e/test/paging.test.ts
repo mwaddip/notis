@@ -8,6 +8,7 @@ import {
   postInvite,
   postPost,
   getKarma,
+  hasKarma,
   getBlockCurrent,
   getPosts,
   getThread,
@@ -61,7 +62,7 @@ describe('paging', () => {
     await postInvite(node, invite.json);
 
     await confirm(
-      async () => (await getKarma(node, alice.publicKeyHex)) !== null,
+      async () => await hasKarma(node, alice.publicKeyHex),
       node,
       mesh.miningSecret,
     );

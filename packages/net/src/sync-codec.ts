@@ -377,7 +377,7 @@ export function decodeGetBlocks(body: Uint8Array): GetBlocksMsg | null {
 // T` cast is not a check, and the gap it leaves is measured rather than
 // theorised — without this codec this path is the sole delivery route for a
 // remote fail-stop. The two sentinel bytes a total writer emits for an
-// out-of-domain field — `writeBool`'s `0xff` for a non-boolean `nonActivity`,
+// out-of-domain field — `enum8`'s `0xff` for a `boxType` outside its table,
 // `writeLp`'s sentinel *length* for a non-byte-view `utxoTxs` element — are
 // refused by our own decoder, so gossip drops both at decode. Handed to the
 // node undecoded they survive apply instead (`utxoTxRoot` honestly commits the

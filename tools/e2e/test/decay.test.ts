@@ -8,6 +8,7 @@ import {
   postInvite,
   postPost,
   getKarma,
+  hasKarma,
   getBlockCurrent,
   getPosts,
 } from '../src/http.js';
@@ -85,7 +86,7 @@ describe('decay', () => {
     await postInvite(node, invite.json);
 
     await confirm(
-      async () => (await getKarma(node, alice.publicKeyHex)) !== null,
+      async () => await hasKarma(node, alice.publicKeyHex),
       node,
       mesh.miningSecret,
     );

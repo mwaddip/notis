@@ -50,13 +50,14 @@ export function createInvite(
     throw new ClientError('No karma box input found in transaction');
   }
 
-  // ---- 2. Verify outputs: exactly 1 karma + 1 bond ----
+  // ---- 2. Verify outputs: exactly 1 bond, at most 1 karma, nothing else ----
   const karmaOutputs = tx.outputs.filter((o) => o.boxType === 'karma');
   const bondOutputs = tx.outputs.filter((o) => o.boxType === 'bond');
 
-  if (tx.outputs.length !== 2 || karmaOutputs.length !== 1 || bondOutputs.length !== 1) {
+  if (bondOutputs.length !== 1 || karmaOutputs.length > 1 ||
+      tx.outputs.length !== 1 + karmaOutputs.length) {
     throw new ClientError(
-      'An invite requires exactly 2 outputs: 1 karma + 1 bond',
+      'An invite requires exactly 1 bond and at most 1 karma output',
     );
   }
 

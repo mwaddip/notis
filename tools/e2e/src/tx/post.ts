@@ -46,18 +46,21 @@ function buildPostTx(
   const changeValue = selectedTotal - lockCost;
 
   const owner = Buffer.from(author.publicKeyHex, 'hex');
+  const outputs: UtxoTransaction['outputs'] = [];
+  if (changeValue > 0n) {
+    outputs.push({ boxType: 'karma', value: changeValue, createdAtBlock: height, owner });
+  }
+  outputs.push({
+    boxType: 'post_lock',
+    value: lockCost,
+    originalValue: lockCost,
+    createdAtBlock: height,
+    owner,
+  });
+
   const tx: UtxoTransaction = {
     inputs: selected.map((b) => b.boxId),
-    outputs: [
-      { boxType: 'karma', value: changeValue, createdAtBlock: height, owner },
-      {
-        boxType: 'post_lock',
-        value: lockCost,
-        originalValue: lockCost,
-        createdAtBlock: height,
-        owner,
-      },
-    ],
+    outputs,
     signatures: {},
     protocolVersion: PROTOCOL_VERSION,
     post: {

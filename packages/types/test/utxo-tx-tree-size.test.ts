@@ -16,8 +16,8 @@
  *     128-element array's prefix is two bytes where a 127-element one's is one,
  *     and `utxoTxs` element prefixes vary per transaction. One byte per element
  *     is ~2 KB of error on a full block.
- *  2. **The encoder's totality is mixed.** `writeArr`, `writeLp`, `writeVlqU`,
- *     `writeBool` and `enum8` are total *by sentinel* — handed an out-of-domain
+ *  2. **The encoder's totality is mixed.** `writeArr`, `writeLp`, `writeVlqU`
+ *     and `enum8` are total *by sentinel* — handed an out-of-domain
  *     value they write a fixed width and the encode SUCCEEDS. Those inputs are
  *     inside the encoder's success domain, so the equivalence has to hold there
  *     too, and it is exactly where a sizer that assumed well-formed fields

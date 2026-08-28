@@ -8,6 +8,7 @@ import {
   postInvite,
   postPost,
   getKarma,
+  hasKarma,
   getBlockCurrent,
   adminGet,
 } from '../src/http.js';
@@ -119,7 +120,7 @@ describe('health', () => {
     await postInvite(miner, invite.json);
 
     await confirm(
-      async () => (await getKarma(miner, alice.publicKeyHex)) !== null,
+      async () => await hasKarma(miner, alice.publicKeyHex),
       miner,
       mesh.miningSecret,
     );

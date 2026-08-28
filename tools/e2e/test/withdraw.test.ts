@@ -10,6 +10,7 @@ import {
   deleteVouch,
   getVouches,
   getKarma,
+  hasKarma,
   getStatus,
   getBlockCurrent,
   NodeError,
@@ -53,7 +54,7 @@ describe('withdraw', () => {
     await postInvite(miner, inv2.json);
 
     await confirm(
-      async () => (await getKarma(miner, voucher.publicKeyHex)) !== null,
+      async () => await hasKarma(miner, voucher.publicKeyHex),
       miner, mesh.miningSecret,
     );
     await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);

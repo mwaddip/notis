@@ -115,7 +115,7 @@ which is diagnostic text and may be reworded at any time.
 | Code | Meaning |
 |------|---------|
 | `truncated` | The bytes ran out — EOF, or fewer than `n` remaining. Genuine short read, nothing more. |
-| `invalid-tag` | A discriminant byte was outside its allowed set (`readBool` not 0/1, `readOption` not 0/1). The bytes were present and wrong, which is not truncation. |
+| `invalid-tag` | A discriminant byte was outside its allowed set (`readOption` not 0/1). The bytes were present and wrong, which is not truncation. |
 | `wrong-magic` | Frame magic did not match the expected network. Signals a wrong-network peer, not corruption. |
 | `unsupported-version` | Frame version exceeds `FRAME_VERSION`. A newer peer, not corruption. |
 | `checksum-mismatch` | The body's checksum failed — corrupted in transit or forged. |
@@ -193,12 +193,6 @@ Reads `n` bytes, advances position by `n`.
 
 - **Throws:** `ReaderError('truncated')` if fewer than `n` bytes remain
 - **Returns:** A subarray (view, not a copy) of the underlying buffer
-
-#### `readBool(): boolean`
-
-Reads one byte. `0` => `false`, `1` => `true`.
-
-- **Throws:** `ReaderError('invalid-tag')` on any other byte value
 
 #### `readVlqU(): number`
 
@@ -299,10 +293,6 @@ Writes one byte.
 #### `writeBytes(bytes: Uint8Array): void`
 
 Writes a byte array. Makes a defensive copy via `.slice()`.
-
-#### `writeBool(value: boolean): void`
-
-Writes `1` for `true`, `0` for `false`.
 
 #### `writeVlqU(value: number): void`
 

@@ -52,7 +52,7 @@ export interface UtxoRow {
 // ---------------------------------------------------------------------------
 
 interface KarmaExtra {
-  nonActivity?: boolean;
+  // No karma-specific fields; the extra_data column stays for credit's lockedUntilBlock.
 }
 
 interface CreditExtra {
@@ -161,19 +161,14 @@ export function rowToBox(row: UtxoRow): AnyBox {
 
   switch (row.box_type) {
     case 'karma': {
-      const e = extra as KarmaExtra;
-      const kb: KarmaBox = {
+      return {
         id: row.id,
         boxType: 'karma',
         value: row.value,
         createdAtBlock,
         owner: new Uint8Array(row.owner!),
         ...prov,
-      };
-      if (e.nonActivity !== undefined) {
-        kb.nonActivity = e.nonActivity;
-      }
-      return kb;
+      } satisfies KarmaBox;
     }
 
     case 'credit': {
@@ -992,26 +987,20 @@ export function getPrunedLockCandidates(limit: number): PrunedLockCandidate[] {
 }
 
 /**
- * Bump an identity's activity clock to the height of the block being applied
- * (NODE_INTERFACE → "Populating the record").
+ * Advance an identity's activity clock to the height of the block being applied
+ * (NODE_INTERFACE → Populating the record).
  *
- * Called from `insertBox` for every karma box with `nonActivity !== true` — the
- * staleness predicate ("no unspent non-decay karma box newer than the
- * threshold") read from the write end. Recording it at the store choke point is
- * what makes the clock correct by construction rather than by re-derivation at
- * each of the eight producers.
+ * Called from the user-transaction loop in `applyOrderingBlock` for every
+ * transaction whose inputs are karma boxes — the spend is the activity
+ * (ARCHITECTURE → Karma decay). Settlement consumption (decay) and settlement
+ * outputs (grants, payouts, vests, returns) do not advance the clock.
  *
  * `lastDecayBlock` is carried through untouched: the fields of the record
  * have different writers, and an activity bump that reset the decay clock would
- * hand the owner a free interval. `invitedAtBlock` likewise — the grant path owns it, and
- * this hook fires on the claim's OWN karma output, so a bump that reset it would
- * erase the height the very same transaction is being recorded for. And
- * `lifetimeLikesReceived`: this hook fires on the like PAYOUT's minted box, so a
- * reset here would destroy the very count that payout was made against.
+ * hand the owner a free interval. `invitedAtBlock` likewise — the grant path
+ * owns it. `lifetimeLikesReceived` likewise — the payout path owns it.
  *
- * With no journal open — genesis, bootstrap, any non-block path — this records
- * nothing, consistent with every other choke-point hook. Consensus only reads
- * the record during block application, and a height invented outside a block
+ * Asserts a journal is open: the user loop always runs inside one, and a call
  * would not be a settled one.
  */
 // ---------------------------------------------------------------------------
@@ -1070,9 +1059,11 @@ function notifyMembershipIfNeeded(
   }
 }
 
-function bumpActivityClock(owner: Uint8Array): void {
+export function recordKarmaActivity(owner: Uint8Array): void {
   const height = openBlockJournalHeight();
-  if (height === null) return;
+  if (height === null) {
+    throw new Error('recordKarmaActivity called outside block application');
+  }
   const existing = getIdentityRecord(owner);
   putIdentityRecord(owner, {
     lastActivityBlock: height,
@@ -1120,26 +1111,12 @@ export function insertBox(box: AnyBox, postLockTarget?: PostId): void {
   // Build extra_data and column values per box type
   let extraData: unknown;
   let owner: Buffer | null = null;
-  // Set below iff this box is a non-decay karma box — the identity whose
-  // activity clock this insertion advances. Carried out of the
-  // switch rather than bumped inside it so the record is written *after* the
-  // box row and its journal entry, keeping reverse-order rollback in the order
-  // the two writes happened.
-  let activityOwner: Uint8Array | null = null;
 
   switch (box.boxType) {
     case 'karma': {
       const k = box as KarmaBox;
-      const ke: KarmaExtra = {};
-      if (k.nonActivity !== undefined) {
-        ke.nonActivity = k.nonActivity;
-      }
-      extraData = ke satisfies KarmaExtra;
+      extraData = {} satisfies KarmaExtra;
       owner = Buffer.from(k.owner);
-      // `!== true`, not `=== undefined`: a decay-burn box is the one karma box
-      // that must NOT reset the clock, and `nonActivity: false` is normal
-      // activity. This is the same test `isIdentityStale` applied to boxes.
-      if (k.nonActivity !== true) activityOwner = k.owner;
       break;
     }
     case 'credit': {
@@ -1253,8 +1230,6 @@ export function insertBox(box: AnyBox, postLockTarget?: PostId): void {
   // supply non-inflatable **by construction**: a mint site added later cannot
   // forget to draw, because drawing is not something its author does.
   if (countsAsCirculatingKarma(box.boxType)) recordKarmaSupplyDelta(box.value);
-
-  if (activityOwner !== null) bumpActivityClock(activityOwner);
 
   if (box.boxType === 'karma' && owner !== null) {
     notifyMembershipIfNeeded(owner, box.id!, 'insert');

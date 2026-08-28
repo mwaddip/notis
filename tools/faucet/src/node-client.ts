@@ -50,15 +50,12 @@ export class HttpNodeClient implements NodeClient {
   }
 
   /**
-   * ⚠ **A JSON 404 is an EMPTY box set, not a failure.** The node answers 404
-   * when the queried identity holds no box of that type, which for the faucet's
-   * own key means it has run dry. A 404 that is not the node's — a proxy
-   * serving nothing at `NODE_URL` — carries no JSON body and is raised, so a
-   * mistyped base path does not read as an empty faucet.
+   * NODE_INTERFACE → HTTP API: an identity with no unspent box answers the
+   * empty page — `boxes: []`, `boxCount 0`, `total "0"` — so the array
+   * passes through and the caller sees an empty set.
    */
   private async boxes(url: string): Promise<WireBox[]> {
     const res = await fetch(url);
-    if (res.status === 404 && isJson(res)) return [];
     if (!res.ok) throw new NodeError(res.status, await failure(res));
     const data = (await res.json()) as { boxes?: WireBox[] };
     return data.boxes ?? [];

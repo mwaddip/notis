@@ -63,24 +63,34 @@ export async function postLike(
   return data as { status: string; txId: string; expiresAtHeight: number };
 }
 
-export async function getKarma(
-  node: NodeProcess,
-  userId: string,
-): Promise<{
+export interface KarmaPage {
   userId: string;
   total: string;
   effective: string;
   boxes: { boxId: string; value: string }[];
+  boxCount: number;
+  next: string | null;
+  lastActivityBlock: number;
+  lastDecayBlock: number;
   height: number;
-} | null> {
-  const data = await jsonGet(node, `/karma/${userId}`);
-  return data as {
-    userId: string;
-    total: string;
-    effective: string;
-    boxes: { boxId: string; value: string }[];
-    height: number;
-  } | null;
+}
+
+export async function getKarma(
+  node: NodeProcess,
+  userId: string,
+): Promise<KarmaPage> {
+  const res = await fetch(`${node.url}/karma/${userId}`);
+  const data = await res.json();
+  if (!res.ok) throw new NodeError(res.status, data as Record<string, unknown>);
+  return data as KarmaPage;
+}
+
+export async function hasKarma(
+  node: NodeProcess,
+  userId: string,
+): Promise<boolean> {
+  const karma = await getKarma(node, userId);
+  return karma.boxCount > 0;
 }
 
 export async function getCredits(

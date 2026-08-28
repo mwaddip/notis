@@ -24,7 +24,6 @@ import {
   readU8,
   readVlqU,
   writeArr,
-  writeBool,
   writeBytesNOrThrow,
   writeHexNOrThrow,
   writeLp,
@@ -86,9 +85,6 @@ describe('total writers never throw', () => {
       expect(() =>
         bytes((w) => writeArr(w, value as number[], (ww, x) => writeVlqU(ww, x))),
       ).not.toThrow();
-    });
-    it(`bool absorbs ${label}`, () => {
-      expect(() => bytes((w) => writeBool(w, value as boolean))).not.toThrow();
     });
   }
 
@@ -199,8 +195,8 @@ describe('hex ↔ bytes lives here and only here', () => {
 describe('opt', () => {
   it('treats undefined as absent, like null', () => {
     // Wire's own writeOption tests `=== null` only, and the optional fields in
-    // the layout tables are declared `nonActivity?:` / `lockedUntilBlock?:` — so
-    // an absent one arrives as undefined and would take the *present* branch.
+    // the layout tables are declared `lockedUntilBlock?:` — so an absent one
+    // arrives as undefined and would take the *present* branch.
     const absentNull = bytes((w) => writeOpt<number>(w, null, (ww, v) => writeVlqU(ww, v)));
     const absentUndef = bytes((w) => writeOpt<number>(w, undefined, (ww, v) => writeVlqU(ww, v)));
     expect(hex(absentUndef)).toBe(hex(absentNull));
@@ -209,7 +205,6 @@ describe('opt', () => {
 
   it('present-but-falsy is not absent', () => {
     expect(hex(bytes((w) => writeOpt(w, 0, (ww, v) => writeVlqU(ww, v))))).toBe('0100');
-    expect(hex(bytes((w) => writeOpt(w, false, (ww, v) => writeBool(ww, v))))).toBe('0100');
     expect(hex(bytes((w) => writeOpt(w, '', (ww, v) => writeLpUtf8(ww, v))))).toBe('0100');
   });
 });

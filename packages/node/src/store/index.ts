@@ -64,6 +64,7 @@ export {
   BoxNotLiveError,
   getKarmaOwners,
   registerKarmaMembershipHook,
+  recordKarmaActivity,
 } from './utxo.js';
 export type { KarmaMembershipHook, PrunedLockCandidate } from './utxo.js';
 

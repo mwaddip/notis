@@ -19,10 +19,6 @@ export class ByteWriter {
     this._length += bytes.length;
   }
 
-  writeBool(value: boolean): void {
-    this.writeU8(value ? 1 : 0);
-  }
-
   writeVlqU(value: number): void {
     if (!Number.isInteger(value) || value < 0) {
       throw new Error(`writeVlqU: invalid value: ${value}`);

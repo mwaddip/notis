@@ -18,7 +18,6 @@ import { ByteReader, ByteWriter } from '@dagsocial/wire';
 import {
   type StructCodec,
   readArr,
-  readBool,
   readBytesN,
   readHexN,
   readLp,
@@ -28,7 +27,6 @@ import {
   readVlqU,
   readVlqU64,
   writeArr,
-  writeBool,
   writeBytesNOrThrow,
   writeHexNOrThrow,
   writeLp,
@@ -51,7 +49,6 @@ export interface Probe {
   offset: number;
   mintReason: 'postlock-unlock' | 'postlock-remainder' | 'genesis' | 'genesis-committee';
   extra: number | null;
-  flag: boolean;
 }
 
 /**
@@ -71,7 +68,6 @@ export interface Probe {
  * | 8 | `offset`  | `vlqS`        |
  * | 9 | `mintReason` | `enum8`    |
  * | 10| `extra`   | `opt(vlqU)`   |
- * | 11| `flag`    | `u8` (bool)   |
  */
 export const probeCodec: StructCodec<Probe> = {
   name: 'Probe',
@@ -87,7 +83,6 @@ export const probeCodec: StructCodec<Probe> = {
     writeVlqS(w, p.offset);
     MINT_REASON.write(w, p.mintReason);
     writeOpt(w, p.extra, (ww, v) => writeVlqU(ww, v));
-    writeBool(w, p.flag);
   },
 
   read(r: ByteReader): Probe {
@@ -102,7 +97,6 @@ export const probeCodec: StructCodec<Probe> = {
       offset: readVlqS(r),
       mintReason: MINT_REASON.read(r),
       extra: readOpt(r, (rr) => readVlqU(rr)),
-      flag: readBool(r),
     };
   },
 };
@@ -122,7 +116,6 @@ const probeValueCodec: ValueCodec<Probe> = {
       offset: j.offset as number,
       mintReason: j.mintReason as Probe['mintReason'],
       extra: (j.extra ?? null) as number | null,
-      flag: j.flag as boolean,
     };
   },
   write: probeCodec.write,

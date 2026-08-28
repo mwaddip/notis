@@ -275,6 +275,61 @@ describe('UTXO routes', () => {
     expect(body.next).toBeNull();
   });
 
+  // ---------------------------------------------------------------------------
+  // NODE_INTERFACE → UTXO queries: the empty page
+  // ---------------------------------------------------------------------------
+
+  it('GET /karma/:userId answers the empty page for an identity with a record and no box', async () => {
+    const kp = generateKeyPair();
+    const hex = Buffer.from(kp.publicKey).toString('hex');
+    putIdentityRecord(kp.publicKey, {
+      lastActivityBlock: 7,
+      lastDecayBlock: 3,
+      invitedAtBlock: 1,
+      lifetimeLikesReceived: 0n,
+    });
+    const res = await request(`/karma/${hex}`);
+    expect(res.status).toBe(200);
+    const body = res.data as Record<string, unknown>;
+    expect(body.userId).toBe(hex);
+    expect(body.boxes).toEqual([]);
+    expect(body.boxCount).toBe(0);
+    expect(body.total).toBe('0');
+    expect(body.effective).toBe('0');
+    expect(body.next).toBeNull();
+    expect(body.lastActivityBlock).toBe(7);
+    expect(body.lastDecayBlock).toBe(3);
+    expect(typeof body.height).toBe('number');
+  });
+
+  it('GET /karma/:userId answers the empty page for an identity the node has never seen', async () => {
+    const kp = generateKeyPair();
+    const hex = Buffer.from(kp.publicKey).toString('hex');
+    const res = await request(`/karma/${hex}`);
+    expect(res.status).toBe(200);
+    const body = res.data as Record<string, unknown>;
+    expect(body.boxes).toEqual([]);
+    expect(body.boxCount).toBe(0);
+    expect(body.total).toBe('0');
+    expect(body.effective).toBe('0');
+    expect(body.next).toBeNull();
+    expect(body.lastActivityBlock).toBe(0);
+    expect(body.lastDecayBlock).toBe(0);
+  });
+
+  it('GET /credits/:userId answers the empty page for an identity with no credit box', async () => {
+    const kp = generateKeyPair();
+    const hex = Buffer.from(kp.publicKey).toString('hex');
+    const res = await request(`/credits/${hex}`);
+    expect(res.status).toBe(200);
+    const body = res.data as Record<string, unknown>;
+    expect(body.userId).toBe(hex);
+    expect(body.boxes).toEqual([]);
+    expect(body.boxCount).toBe(0);
+    expect(body.total).toBe('0');
+    expect(body.next).toBeNull();
+  });
+
   it('malformed after → 400 on /karma', async () => {
     const res = await request(`/karma/${karmaUserIdHex}?after=malformed`);
     expect(res.status).toBe(400);

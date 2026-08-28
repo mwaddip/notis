@@ -11,10 +11,8 @@ import type { BoxRef, BuiltTx } from './tx.js';
  * value to its `inviteePublicKey`, one bond one grant, so this transaction is
  * the whole of what the faucet sends (ARCHITECTURE → Invite System).
  *
- * ⛔ **The karma change output is emitted whatever it holds.** A karma
- * transition must produce at least one karma output (NODE_INTERFACE → Karma
- * transition rules), so an exact spend still carries a zero-value change box —
- * and that box is index 0, which is where the pending chain picks up.
+ * The karma change output is emitted iff `changeValue > 0n` — an exact spend
+ * produces the bond alone (TYPES_INTERFACE → Box value domain).
  */
 export function buildInviteTx(
   cfg: FaucetConfig,
@@ -39,22 +37,23 @@ export function buildInviteTx(
   // `canonicalBoxBytes`, which encodes neither, so attaching them would invent
   // fields the signature does not cover.
   const owner = Buffer.from(cfg.publicKeyHex, 'hex');
+  const outputs: UtxoTransaction['outputs'] = [];
+  if (changeValue > 0n) {
+    outputs.push({ boxType: 'karma', value: changeValue, createdAtBlock: height, owner });
+  }
+  outputs.push({
+    boxType: 'bond',
+    value: cfg.bondAmount,
+    createdAtBlock: height,
+    inviterId: owner,
+    inviteePublicKey: Buffer.from(inviteeHex, 'hex'),
+  });
   const tx: UtxoTransaction = {
     inputs: selected.map((b) => b.boxId),
-    outputs: [
-      { boxType: 'karma', value: changeValue, createdAtBlock: height, owner },
-      {
-        boxType: 'bond',
-        value: cfg.bondAmount,
-        createdAtBlock: height,
-        inviterId: owner,
-        inviteePublicKey: Buffer.from(inviteeHex, 'hex'),
-      },
-    ],
+    outputs,
     signatures: {},
     protocolVersion: PROTOCOL_VERSION,
   };
 
-  // The karma change is output 0, and the pending chain picks up from it.
-  return signAndRender(cfg, tx, 0);
+  return signAndRender(cfg, tx, changeValue > 0n ? 0 : null);
 }

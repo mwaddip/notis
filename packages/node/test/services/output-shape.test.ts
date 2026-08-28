@@ -197,8 +197,7 @@ describe('checkOutputShape (direct)', () => {
     }
   });
 
-  it('accepts the declared optionals present (karma.nonActivity, credit.lockedUntilBlock)', () => {
-    expect(shapeOf([{ ...honestCandidate('karma', owner), nonActivity: true }]).valid).toBe(true);
+  it('accepts the declared optional present (credit.lockedUntilBlock)', () => {
     expect(
       shapeOf([{ ...honestCandidate('credit', owner), lockedUntilBlock: 500 }]).valid,
     ).toBe(true);
@@ -262,8 +261,8 @@ describe('checkOutputShape (direct)', () => {
     // ⚠ And `decodeTx` produces exactly this shape for every optional field, so
     // a gate refusing it refuses every ordinary output arriving inside a block.
     const { canonicalBoxBytes } = await import('@dagsocial/types');
-    const absent = honestCandidate('karma', owner);
-    const undef = { ...absent, nonActivity: undefined };
+    const absent = honestCandidate('credit', owner);
+    const undef = { ...absent, lockedUntilBlock: undefined };
     expect(shapeOf([undef]).valid).toBe(true);
     expect(Buffer.from(canonicalBoxBytes(undef as never)).toString('hex'))
       .toBe(Buffer.from(canonicalBoxBytes(absent as never)).toString('hex'));
@@ -409,19 +408,9 @@ describe('validateTx output shape (integration)', () => {
 
   // ---- accept controls: one legal transition per output boxType ----
 
-  it('accepts karma → karma (honest, nonActivity absent)', () => {
+  it('accepts karma → karma (honest)', () => {
     const karma = seedKarma(100n);
     const r = validateTx(deps, signedTx([karma.id!], [karmaChange(100n)]), 10);
-    expect(r.valid, r.error).toBe(true);
-  });
-
-  it('accepts karma → karma with nonActivity present', () => {
-    const karma = seedKarma(100n);
-    const r = validateTx(
-      deps,
-      signedTx([karma.id!], [{ ...karmaChange(100n), nonActivity: true }]),
-      10,
-    );
     expect(r.valid, r.error).toBe(true);
   });
 
@@ -574,14 +563,14 @@ describe('validateTx output shape (integration)', () => {
     // second shape — and `decodeTx` produces exactly this object for every
     // output arriving inside a block, so a gate refusing it would refuse the
     // ordinary case. What the box round-trips is the absent form.
-    const karma = seedKarma(100n);
-    const tx = signedTx([karma.id!], [{ ...karmaChange(100n), nonActivity: undefined }]);
+    const credit = seedCredit(40_000n);
+    const tx = signedTx([credit.id!], [{ boxType: 'credit', value: 40_000n, createdAtBlock: 0, owner: ownerPubKey, lockedUntilBlock: undefined }]);
     const r = validateTx(deps, tx, 10);
     expect(r.valid, r.error).toBe(true);
     applyTx(deps, tx, r.computedOutputs!, 10);
     const stored = deps.getBox(r.computedOutputs![0]!.id!);
     expect(stored).not.toBeNull();
-    expect('nonActivity' in stored!).toBe(false);
+    expect((stored as CreditBox).lockedUntilBlock).toBeUndefined();
   });
 
   // ---- unknown boxType: the step-4 schema rejects it first ----

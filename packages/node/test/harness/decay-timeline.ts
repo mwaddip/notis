@@ -16,15 +16,15 @@ import {
  *
  * This module is that check. It drives a timeline of blocks against the
  * **production** code path — the real store (`insertBox`, `consumeBox`,
- * `getKarmaBoxes`), the real block journal, `transferKarma`, and the real
- * `deriveKarmaDecay` — and captures burn amounts, balances and heights. The
- * captures are frozen as fixtures, and any edit to the decay path has to
- * reproduce them exactly.
+ * `getKarmaBoxes`, `recordKarmaActivity`), the real block journal,
+ * `transferKarma`, and the real `deriveKarmaDecay` — and captures burn amounts,
+ * balances and heights. The captures are frozen as fixtures, and any edit to the
+ * decay path has to reproduce them exactly.
  *
  * **Why the real store and not an in-memory fake.** The behaviour lives in two
- * places at once: `insertBox` records `lastActivityBlock` from the open
- * journal's height, and `decay.ts` reads the record back. A fake store is a
- * reimplementation of the first half, which would leave this harness verifying
+ * places at once: `recordKarmaActivity` records `lastActivityBlock` from the
+ * open journal's height, and `decay.ts` reads the record back. A fake store is
+ * a reimplementation of the first half, which would leave this harness verifying
  * a mirror rather than the shipped code. Driving SQLite means the height the
  * record gets is the height the journal actually carried.
  *
@@ -50,19 +50,24 @@ export interface DecayCfg {
  * One thing that happens inside a block, in the order listed.
  *
  * `mint` is the production activity producer: `transferKarma` consumes the
- * owner's existing karma boxes and emits one consolidated replacement, so an
- * owner normally holds exactly one. That is the shape the ledger is usually in.
+ * owner's existing karma boxes and emits one consolidated replacement, and
+ * `recordKarmaActivity` advances the clock. An owner normally holds exactly
+ * one box. That is the shape the ledger is usually in.
  *
- * `seed` inserts a karma box **without** consolidating — the shape reached when
- * settlement karma outputs land beside existing holdings (an invite grant and
- * a later payout to the same owner do not spend the recipient's karma). A clock
- * kept on the boxes has to choose between the oldest and the newest here, and
- * the committed record does not, which is why multi-box owners get their own
- * fixture group rather than being folded into the consolidated ones.
+ * `seed` inserts a karma box **without** consolidating and **without**
+ * advancing the clock — the shape reached when settlement karma outputs land
+ * beside existing holdings. A clock kept on the boxes has to choose between
+ * the oldest and the newest here, and the committed record does not, which is
+ * why multi-box owners get their own fixture group.
+ *
+ * `activity` advances the clock without changing boxes — an owner's karma
+ * spend whose change is recorded by `recordKarmaActivity` alone, paired with
+ * a `seed` that supplies the box at the same height.
  */
 export type Step =
   | { at: number; op: 'mint'; owner: string; amount: bigint }
   | { at: number; op: 'seed'; owner: string; amount: bigint; tag: string }
+  | { at: number; op: 'activity'; owner: string }
   | { at: number; op: 'decay' };
 
 export interface Scenario {
@@ -154,7 +159,6 @@ function applyDecayPlans(
       value: plan.newValue,
       createdAtBlock: height,
       owner: plan.owner,
-      nonActivity: true,
       txId: m.provenance.mintTxIdFor(m.provenance.genesisCommitteeContext(plan.owner), height),
       index: m.provenance.MINT_OUTPUT_INDEX,
     };
@@ -171,7 +175,7 @@ function applyDecayPlans(
  *
  * `getIdentityRecord`/`putIdentityRecord` are the real store primitives, not
  * stand-ins. A harness-local record map would be a reimplementation of the half
- * `insertBox` owns, and the fixtures would then be checking a mirror.
+ * `recordKarmaActivity` owns, and the fixtures would then be checking a mirror.
  */
 function decayDeps(m: Modules): Parameters<Modules['decay']['deriveKarmaDecay']>[0] {
   return {
@@ -211,9 +215,8 @@ function totalKarma(m: Modules, owner: Uint8Array): bigint {
  * Run one scenario and capture its outputs.
  *
  * Every block is wrapped in a real `beginBlockJournal(height)` /
- * `finishBlockJournal()` pair, because the activity clock `insertBox` bumps reads
- * the open journal and takes no height argument
- * (NODE_INTERFACE → Populating the record).
+ * `finishBlockJournal()` pair, because `recordKarmaActivity` reads the open
+ * journal's height (NODE_INTERFACE → Populating the record).
  */
 export async function runScenario(scenario: Scenario): Promise<ScenarioCapture> {
   const m = await loadModules();
@@ -272,6 +275,7 @@ export async function runScenario(scenario: Scenario): Promise<ScenarioCapture> 
               null,
               height,
             );
+            m.utxo.recordKarmaActivity(owner);
             break;
           }
           case 'seed': {
@@ -288,6 +292,10 @@ export async function runScenario(scenario: Scenario): Promise<ScenarioCapture> 
               owner,
             }, step.at, labelNonce(step.tag));
             m.utxo.insertBox(box);
+            break;
+          }
+          case 'activity': {
+            m.utxo.recordKarmaActivity(ownerBytes(step.owner));
             break;
           }
           case 'decay': {

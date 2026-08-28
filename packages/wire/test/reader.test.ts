@@ -16,13 +16,6 @@ describe('ByteReader', () => {
     expect(r.position).toBe(3);
   });
 
-  it('reads bool; a byte outside {0,1} is invalid-tag, not truncated', () => {
-    const r = new ByteReader(new Uint8Array([0, 1, 2]));
-    expect(r.readBool()).toBe(false); // control: 0x00
-    expect(r.readBool()).toBe(true);  // control: 0x01
-    expect(readerErrorCode(() => r.readBool())).toBe('invalid-tag');
-  });
-
   it('tracks position and remaining', () => {
     const r = new ByteReader(new Uint8Array(10));
     expect(r.position).toBe(0);

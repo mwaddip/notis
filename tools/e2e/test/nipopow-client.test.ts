@@ -5,7 +5,7 @@ import { createMesh, type Mesh } from '../src/mesh.js';
 import { mine, confirm, waitHeight } from '../src/miner.js';
 import { DEVNET_FAUCET, fresh } from '../src/identities.js';
 import { buildInviteTx } from '../src/tx/invite.js';
-import { postInvite, getKarma, getBlockCurrent } from '../src/http.js';
+import { postInvite, getKarma, hasKarma, getBlockCurrent } from '../src/http.js';
 import type { BoxRef } from '../src/tx/render.js';
 import type { NodeProcess } from '../src/node-process.js';
 
@@ -98,7 +98,7 @@ describe('nipopow-client', () => {
     await postInvite(node1, invite.json);
 
     await confirm(
-      async () => (await getKarma(node1, member.publicKeyHex)) !== null,
+      async () => await hasKarma(node1, member.publicKeyHex),
       node1,
       mesh.miningSecret,
     );

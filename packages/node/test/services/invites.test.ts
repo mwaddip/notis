@@ -18,6 +18,7 @@ import type {
   AnyBox,
   BondBox,
   CandidateOf,
+  CreditBox,
   KarmaBox,
   UtxoTransaction,
 } from '@dagsocial/types';
@@ -222,10 +223,10 @@ describe('invites service', () => {
     const tx: UtxoTransaction = {
       inputs: [karma.id!],
       outputs: [
-        { boxType: 'karma', value: 0n,  createdAtBlock: 0,owner: inviterId } as CandidateOf<KarmaBox>,
+        { boxType: 'karma', value: 1n,  createdAtBlock: 0,owner: inviterId } as CandidateOf<KarmaBox>,
         {
           boxType: 'bond', value: FIXTURE_BOND_KARMA, inviterId,
-          inviteePublicKey: inviteePubKey, 
+          inviteePublicKey: inviteePubKey,
         } as CandidateOf<BondBox>,
       ],
       signatures: {},
@@ -336,7 +337,7 @@ describe('invites service', () => {
     const tx: UtxoTransaction = {
       inputs: [karma.id!],
       outputs: [
-        { boxType: 'karma', value: 0n,  createdAtBlock: 0,owner: inviterId } as CandidateOf<KarmaBox>,
+        { boxType: 'karma', value: 1n,  createdAtBlock: 0,owner: inviterId } as CandidateOf<KarmaBox>,
         {
           boxType: 'bond', value: config.inviteBondMax, inviterId,
           inviteePublicKey: inviteePubKey,
@@ -378,6 +379,77 @@ describe('invites service', () => {
     expect(outSum).toBe(inSum);
     expect(validateTx(deps, tx, 5).valid).toBe(true);
   });
+
+  // -----------------------------------------------------------------------
+  // NODE_INTERFACE → Karma transition rules: the karma output is optional
+  // -----------------------------------------------------------------------
+
+  it('createInvite accepts a bond alone when the inviter spends exactly', () => {
+    const karma = createKarmaBox(inviterId, FIXTURE_BOND_KARMA, 1);
+    const tx: UtxoTransaction = {
+      inputs: [karma.id!],
+      outputs: [
+        {
+          boxType: 'bond',
+          value: FIXTURE_BOND_KARMA,
+          createdAtBlock: 0,
+          inviterId,
+          inviteePublicKey: inviteePubKey,
+        } as CandidateOf<BondBox>,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(tx, inviterPrivKey, inviterPubKeyHex);
+    expect(createInvite(deps, tx, 5).status).toBe('pending');
+  });
+
+  it('createInvite rejects two bonds', () => {
+    const invitee2 = rawPublicKey(generateKeyPairSync('ed25519').publicKey);
+    const karma = createKarmaBox(inviterId, 100n, 1);
+    const tx: UtxoTransaction = {
+      inputs: [karma.id!],
+      outputs: [
+        {
+          boxType: 'bond', value: FIXTURE_BOND_KARMA, createdAtBlock: 0,
+          inviterId, inviteePublicKey: inviteePubKey,
+        } as CandidateOf<BondBox>,
+        {
+          boxType: 'bond', value: FIXTURE_BOND_KARMA, createdAtBlock: 0,
+          inviterId, inviteePublicKey: invitee2,
+        } as CandidateOf<BondBox>,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(tx, inviterPrivKey, inviterPubKeyHex);
+    expect(() => createInvite(deps, tx, 5)).toThrow(/exactly 1 bond/);
+  });
+
+  it('createInvite rejects a bond plus a foreign box type', () => {
+    const karma = createKarmaBox(inviterId, 100n, 1);
+    const tx: UtxoTransaction = {
+      inputs: [karma.id!],
+      outputs: [
+        {
+          boxType: 'bond', value: FIXTURE_BOND_KARMA, createdAtBlock: 0,
+          inviterId, inviteePublicKey: inviteePubKey,
+        } as CandidateOf<BondBox>,
+        {
+          boxType: 'credit', value: 100n - FIXTURE_BOND_KARMA,
+          owner: inviterId, createdAtBlock: 0,
+        } as CandidateOf<CreditBox>,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(tx, inviterPrivKey, inviterPubKeyHex);
+    expect(() => createInvite(deps, tx, 5)).toThrow(/exactly 1 bond/);
+  });
+
+  // -----------------------------------------------------------------------
+  // ⛔ NO user transaction carries a karma surplus
+  // -----------------------------------------------------------------------
 
   it('no shape at all may carry a karma surplus', () => {
     // A plain karma spend that mints itself FIXTURE_BOND_KARMA is refused by

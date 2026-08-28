@@ -51,13 +51,6 @@ export class ByteReader {
     return out;
   }
 
-  readBool(): boolean {
-    const b = this.readU8();
-    if (b === 0) return false;
-    if (b === 1) return true;
-    throw new ReaderError(`readBool: expected 0 or 1, got ${b}`, 'invalid-tag');
-  }
-
   readVlqU(): number {
     let value = 0;
     let shift = 0;

@@ -19,6 +19,7 @@ import {
   LIKE_KARMA_COST,
   POST_LOCK_THREAD_COST,
   VOUCH_KARMA_AMOUNT,
+  VOUCH_MIN_BALANCE,
   KARMA_STALE_THRESHOLD_BLOCKS,
   KARMA_DECAY_INTERVAL_BLOCKS,
   KARMA_DECAY_AMOUNT,
@@ -913,7 +914,7 @@ describe('validateAndApplyTx', () => {
       };
       const negative: CandidateOf<KarmaBox> = {
         boxType: 'karma',
-        value: 0n,
+        value: 1n,
         createdAtBlock: 0,
         owner: ownerPubKey,
       };
@@ -1644,7 +1645,7 @@ describe('validateAndApplyTx', () => {
       );
       const result = validateTx(deps, tx, 10);
       expect(result.valid).toBe(false);
-      expect(result.error).toContain('exactly one karma output');
+      expect(result.error).toContain('at most one karma output');
     });
 
     it('like with karma + another box type: invalid', () => {
@@ -1663,7 +1664,138 @@ describe('validateAndApplyTx', () => {
       );
       const result = validateTx(deps, tx, 10);
       expect(result.valid).toBe(false);
-      expect(result.error).toContain('exactly one karma output');
+      expect(result.error).toContain('at most one karma output');
+    });
+
+    // --- T1: karma(0) is refused (TYPES_INTERFACE → Box value domain) ------
+
+    it('T1: a karma(0) change beside a marker is refused', () => {
+      const karma = createAndInsertKarma(ownerPubKey, LIKE_KARMA_COST, 1);
+      const tx = buildSignedTx(
+        [karma.id!],
+        [karmaOut(0n, ownerPubKey), marker()],
+        ownerPrivKey, ownerPubKey, 1, TARGET,
+      );
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('zero-value karma output');
+    });
+
+    it('T1: karma(1n) control passes', () => {
+      const karma = createAndInsertKarma(ownerPubKey, LIKE_KARMA_COST + 1n, 1);
+      const tx = buildSignedTx(
+        [karma.id!],
+        [karmaOut(1n, ownerPubKey), marker()],
+        ownerPrivKey, ownerPubKey, 1, TARGET,
+      );
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid, result.error).toBe(true);
+    });
+
+    // --- T2: exact-spend like accepted with one output (the marker) --------
+
+    it('T2: a like whose inputs total exactly LIKE_KARMA_COST is accepted with one output', () => {
+      const karma = createAndInsertKarma(ownerPubKey, LIKE_KARMA_COST, 1);
+      const tx = buildSignedTx(
+        [karma.id!],
+        [marker()],
+        ownerPrivKey, ownerPubKey, 1, TARGET,
+      );
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid, result.error).toBe(true);
+      expect(result.computedOutputs).toHaveLength(1);
+      expect(result.computedOutputs![0]!.boxType).toBe('like_accrual');
+    });
+
+    // --- T3: exact-spend post, invite, vouch accepted with no karma output -
+
+    it('T3: an exact-spend post is accepted with no karma output', () => {
+      const karma = createAndInsertKarma(ownerPubKey, POST_LOCK_THREAD_COST, 1);
+      const postLock: AnyBoxCandidate = {
+        boxType: 'post_lock',
+        value: POST_LOCK_THREAD_COST,
+        createdAtBlock: 0,
+        originalValue: POST_LOCK_THREAD_COST,
+        owner: ownerPubKey,
+      };
+      const tx = buildSignedTx(
+        [karma.id!],
+        [postLock],
+        ownerPrivKey, ownerPubKey,
+        1,
+        undefined,
+        makePostCommit(ownerPubKey, 'exact-spend post'),
+      );
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid, result.error).toBe(true);
+      expect(result.computedOutputs!.filter(o => o.boxType === 'karma')).toHaveLength(0);
+    });
+
+    it('T3: an exact-spend invite is accepted with bond alone; inviterId pins through the input', () => {
+      const karma = createAndInsertKarma(ownerPubKey, FIXTURE_BOND_KARMA, 1);
+      const bondBox: AnyBoxCandidate = {
+        boxType: 'bond',
+        value: FIXTURE_BOND_KARMA,
+        createdAtBlock: 0,
+        inviterId: ownerUserId,
+        inviteePublicKey: new Uint8Array(32).fill(0xbb),
+      };
+      const tx = buildSignedTx([karma.id!], [bondBox], ownerPrivKey, ownerPubKey);
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid, result.error).toBe(true);
+      expect(result.computedOutputs!.filter(o => o.boxType === 'karma')).toHaveLength(0);
+    });
+
+    it('T3: an exact-spend invite with a foreign inviterId is refused', () => {
+      const karma = createAndInsertKarma(ownerPubKey, FIXTURE_BOND_KARMA, 1);
+      const bondBox: AnyBoxCandidate = {
+        boxType: 'bond',
+        value: FIXTURE_BOND_KARMA,
+        createdAtBlock: 0,
+        inviterId: new Uint8Array(32).fill(0xcc),
+        inviteePublicKey: new Uint8Array(32).fill(0xbb),
+      };
+      const tx = buildSignedTx([karma.id!], [bondBox], ownerPrivKey, ownerPubKey);
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toMatch(/inviterId/);
+    });
+
+    it('T3: an exact-spend vouch is accepted with vouch alone; voucherId pins through the input', () => {
+      // The balance check reads getKarmaValue (all unspent boxes), so a second
+      // box clears VOUCH_MIN_BALANCE while the input is exactly the stake.
+      createAndInsertKarma(ownerPubKey, VOUCH_MIN_BALANCE, 2);
+      const karma = createAndInsertKarma(ownerPubKey, VOUCH_KARMA_AMOUNT, 1);
+      const { publicKey: targetPub } = generateKeyPairSync('ed25519');
+      const targetPubRaw = rawPublicKey(targetPub);
+      const vouchBox: AnyBoxCandidate = {
+        boxType: 'vouch',
+        value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: 10,
+        voucherId: ownerPubKey,
+        targetId: targetPubRaw,
+      };
+      const tx = buildSignedTx([karma.id!], [vouchBox], ownerPrivKey, ownerPubKey);
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid, result.error).toBe(true);
+      expect(result.computedOutputs!.filter(o => o.boxType === 'karma')).toHaveLength(0);
+    });
+
+    it('T3: an exact-spend vouch with a foreign voucherId is refused', () => {
+      const karma = createAndInsertKarma(ownerPubKey, VOUCH_KARMA_AMOUNT, 1);
+      const { publicKey: targetPub } = generateKeyPairSync('ed25519');
+      const targetPubRaw = rawPublicKey(targetPub);
+      const vouchBox: AnyBoxCandidate = {
+        boxType: 'vouch',
+        value: VOUCH_KARMA_AMOUNT,
+        createdAtBlock: 10,
+        voucherId: new Uint8Array(32).fill(0xcc),
+        targetId: targetPubRaw,
+      };
+      const tx = buildSignedTx([karma.id!], [vouchBox], ownerPrivKey, ownerPubKey);
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toMatch(/voucherId/);
     });
 
     // --- the retired arms stay dead ----------------------------------------

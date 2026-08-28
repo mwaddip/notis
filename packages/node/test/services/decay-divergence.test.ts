@@ -80,8 +80,8 @@ describe('decay clock divergence on unconsolidated karma (Spec G phase D)', () =
     const preSwap = fixture.preSwap[name];
     expect(preSwap, `no pre-swap capture for ${name}`).toBeDefined();
 
-    // Timeline: karma at height 1, more karma at height 10, decay at height 30.
-    // Config: threshold 10, interval 3, burn 5, floor 10.
+    // Timeline: two spends at heights 1 and 10 (seed + activity each),
+    // decay at height 30. Config: threshold 10, interval 3, burn 5, floor 10.
     //
     //   pre-swap  oldest non-decay box = 1  → floor((30 − 1) / 3) = 9 → burn 45
     //   post-swap lastActivityBlock    = 10 → floor((30 − 10) / 3) = 6 → burn 30

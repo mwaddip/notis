@@ -148,16 +148,10 @@ describe('block journal (store choke-point recording)', () => {
     s.insertBox(box);
     const j = s.finishBlockJournal();
 
-    // A non-decay karma box also advances its owner's activity clock at this
-    // same choke point, so the karma case journals two mutations — the box,
-    // then the record it caused, in that order.
+    // `insertBox` journals the box mutation alone; `recordKarmaActivity`
+    // advances the clock from the user-transaction loop.
     expect(j.mutations[0]).toEqual({ kind: 'box', op: 'insert', boxId: 'box-k1', box });
-    expect(j.mutations[1]).toMatchObject({
-      kind: 'record',
-      identityId: OWNER,
-      record: { lastActivityBlock: 1, lastDecayBlock: 0 },
-    });
-    expect(j.mutations).toHaveLength(2);
+    expect(j.mutations).toHaveLength(1);
   });
 
   it('consumeBox records {kind: box, op: remove, boxId} while open', async () => {
@@ -216,16 +210,13 @@ describe('block journal (store choke-point recording)', () => {
     s.insertBox(makeKarmaBox('new-2'));
     const j = s.finishBlockJournal();
 
-    // Each karma insert is immediately followed by the activity-clock record it
-    // caused — the record's position in the log is what makes reverse-order
-    // rollback undo the write before deleting the box behind it.
+    // `insertBox` journals box mutations alone; `recordKarmaActivity` advances
+    // the clock from the user-transaction loop.
     expect(j.mutations.map((m) => [m.kind, (m as { op?: string }).op, (m as { boxId?: string }).boxId])).toEqual([
       ['box', 'insert', 'new-1'],
-      ['record', undefined, undefined],
       ['box', 'remove', 'pre-existing'],
       ['box', 'remove', 'vouch-z'],
       ['box', 'insert', 'new-2'],
-      ['record', undefined, undefined],
     ]);
   });
 

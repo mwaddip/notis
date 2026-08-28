@@ -1620,10 +1620,8 @@ describe('block-apply mint provenance', () => {
         .map((m) => m.box as AnyBox)
         .filter((b) => b.boxType === 'karma' && hex((b as KarmaBox).owner) === ownerHex);
 
-      // The only karma mint is the escrow return (nonActivity: true).
-      // No decay leg fired — face stays.
+      // The only karma mint is the escrow return. No decay leg fired — face stays.
       expect(karmaMints.length).toBe(1);
-      expect((karmaMints[0] as KarmaBox).nonActivity).toBe(true);
       expect((karmaMints[0] as KarmaBox).value).toBe(VOUCH_KARMA_AMOUNT);
 
       // The karma box is live at face + the returned escrow.
@@ -2392,6 +2390,117 @@ describe('block-apply funnel totality', () => {
     const ba = (await import('../../src/services/block-apply.js')) as Awaited<ReturnType<typeof importBlockApply>>;
     const block = await makeApplicableBlock();
     expect(ba.applyOrderingBlock(block)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T4: the activity clock advances from the user-transaction loop
+// ---------------------------------------------------------------------------
+
+describe('T4: activity clock in the user-transaction loop', () => {
+  beforeEach(() => { vi.doUnmock('../../src/config.js'); vi.restoreAllMocks(); vi.resetModules(); });
+  afterEach(async () => {
+    try {
+      const bc = await importBlockCreator();
+      bc.stopBlockCreator();
+    } catch {
+      // Module might not have been imported
+    }
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it('a karma-spending post with a change output advances lastActivityBlock', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+
+    const author = makeTestIdentity();
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'T4 clock post');
+    const posts = await importPosts();
+    posts.insertPost(postId, commit, content);
+
+    const mempool = await importMempoolFresh();
+    mempool.insertUtxoTx(postTx, 1000);
+
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const block = await mineNextBlock(bc);
+    expect(block).not.toBeNull();
+
+    const records = await import('../../src/store/identity-records.js');
+    const record = records.getIdentityRecord(author.userId);
+    expect(record).not.toBeNull();
+    expect(record!.lastActivityBlock).toBe(1);
+  });
+
+  it('a like exact-spend (no karma output) advances lastActivityBlock', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+
+    const liker = makeTestIdentity();
+    const author = makeTestIdentity();
+
+    // Seed a post for the liker to like.
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'T4 like target');
+    const posts = await importPosts();
+    posts.insertPost(postId, commit, content);
+    const mempool = await importMempoolFresh();
+    mempool.insertUtxoTx(postTx, 1000);
+
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    await mineNextBlock(bc);
+
+    // Give the liker exactly LIKE_KARMA_COST — an exact spend.
+    const utxo = await importUtxo();
+    const likerKarma = makeKarmaBox(LIKE_KARMA_COST, liker.userId, 0, 42);
+    utxo.insertBox(likerKarma);
+
+    const likeTx = makeLikeTx(liker, likerKarma, postId, author.userId);
+    mempool.insertUtxoTx(likeTx, 1000);
+
+    const block2 = await mineNextBlock(bc);
+    expect(block2).not.toBeNull();
+
+    const records = await import('../../src/store/identity-records.js');
+    const record = records.getIdentityRecord(liker.userId);
+    expect(record).not.toBeNull();
+    expect(record!.lastActivityBlock).toBe(2);
+  });
+
+  it('a settlement output to an owner does not advance their clock', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+
+    const author = makeTestIdentity();
+    const liker = makeTestIdentity();
+
+    // Seed a post for the liker to like — the author receives a settlement payout.
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'T4 settlement target');
+    const posts = await importPosts();
+    posts.insertPost(postId, commit, content);
+    const mempool = await importMempoolFresh();
+    mempool.insertUtxoTx(postTx, 1000);
+
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    await mineNextBlock(bc);
+
+    const utxo = await importUtxo();
+    const likerKarma = makeKarmaBox(100n, liker.userId, 0, 77);
+    utxo.insertBox(likerKarma);
+
+    const likeTx = makeLikeTx(liker, likerKarma, postId, author.userId);
+    mempool.insertUtxoTx(likeTx, 1000);
+
+    const records = await import('../../src/store/identity-records.js');
+    const authorRecordBefore = records.getIdentityRecord(author.userId);
+    const authorActivityBefore = authorRecordBefore!.lastActivityBlock;
+
+    await mineNextBlock(bc);
+
+    const authorRecordAfter = records.getIdentityRecord(author.userId);
+    expect(authorRecordAfter!.lastActivityBlock).toBe(authorActivityBefore);
   });
 });
 

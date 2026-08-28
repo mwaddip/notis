@@ -506,28 +506,31 @@ export function makeLikeTx(
   targetPostId: string,
   author: Uint8Array,
 ): UtxoTransaction {
+  const change = karmaBox.value - LIKE_KARMA_COST;
+  // ⛔ **THE MARKER, AND IT CARRIES THE COST.** The like conserves now: its
+  // karma moves into a `LikeAccrualBox` earmarked for the author instead of
+  // leaving the ledger as a deficit (ARCHITECTURE → The conservation axiom,
+  // third shape). `author` is required rather than defaulted because the
+  // engine pins it against `block_topology`, and a helper that guessed would
+  // hand every caller a transaction the engine refuses for the wrong reason.
+  const outputs: UtxoTransaction['outputs'] = [];
+  if (change > 0n) {
+    outputs.push({
+      boxType: 'karma',
+      value: change,
+      createdAtBlock: 0,
+      owner: liker.userId,
+    });
+  }
+  outputs.push({
+    boxType: 'like_accrual',
+    value: LIKE_KARMA_COST,
+    createdAtBlock: 0,
+    author,
+  });
   const tx: UtxoTransaction = {
     inputs: [karmaBox.id!],
-    outputs: [
-      {
-        boxType: 'karma',
-        value: karmaBox.value - LIKE_KARMA_COST,
-        createdAtBlock: 0,
-        owner: liker.userId,
-      },
-      // ⛔ **THE MARKER, AND IT CARRIES THE COST.** The like conserves now: its
-      // karma moves into a `LikeAccrualBox` earmarked for the author instead of
-      // leaving the ledger as a deficit (ARCHITECTURE → The conservation axiom,
-      // third shape). `author` is required rather than defaulted because the
-      // engine pins it against `block_topology`, and a helper that guessed would
-      // hand every caller a transaction the engine refuses for the wrong reason.
-      {
-        boxType: 'like_accrual',
-        value: LIKE_KARMA_COST,
-        createdAtBlock: 0,
-        author,
-      },
-    ],
+    outputs,
     signatures: {},
     protocolVersion: PROTOCOL_VERSION,
     likeTarget: targetPostId,

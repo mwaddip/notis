@@ -192,8 +192,6 @@ export {
   CodecError,
   writeU8OrThrow,
   readU8,
-  writeBool,
-  readBool,
   writeVlqU,
   readVlqU,
   writeVlqS,

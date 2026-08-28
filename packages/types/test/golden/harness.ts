@@ -28,7 +28,6 @@ import {
   enum8,
   firstDifference,
   readArr,
-  readBool,
   readBytesN,
   readHexN,
   readLp,
@@ -39,7 +38,6 @@ import {
   readVlqU,
   readVlqU64,
   writeArr,
-  writeBool,
   writeBytesNOrThrow,
   writeHexNOrThrow,
   writeLp,
@@ -216,7 +214,6 @@ const ENUM_TABLES: Record<string, ReturnType<typeof enum8>> = {
 
 const LEAF_CODECS: Record<string, ValueCodec<never>> = {
   u8: codec(asNumber, writeU8OrThrow, readU8),
-  bool: codec((j) => parseSpecials(j) as boolean, writeBool, readBool),
   vlqU: codec(asNumber, writeVlqU, readVlqU),
   vlqS: codec(asNumber, writeVlqS, readVlqS),
   // Decimal string in, `bigint` out — JSON numbers cannot carry a u64.

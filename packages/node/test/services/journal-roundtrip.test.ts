@@ -650,8 +650,8 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     expect(blockApply.applyOrderingBlock(classBlock)).toBe(true);
 
     // One record mutation for the invitee: the settlement's invite-grant
-    // writes invitedAtBlock. The karma box it inserts carries nonActivity: true
-    // (received value), so insertBox does not bump lastActivityBlock.
+    // writes invitedAtBlock. The grant is a settlement output, and only the
+    // user loop advances the clock, so lastActivityBlock stays at the epoch.
     const journalStore = await import('../../src/store/journal.js');
     const recordMutations = journalStore
       .getBlockJournal(2)!

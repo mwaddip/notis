@@ -183,7 +183,7 @@ describe('verifyPost', () => {
   it('rejects insufficient karma', () => {
     const store = makeStore();
     store.identities.set(userId, { userId, publicKey: pubKeyRaw, createdAt: Date.now() });
-    store.karmaBoxes.set(Buffer.from(pubKeyRaw).toString('hex'), [{ value: 0n }]);
+    store.karmaBoxes.set(Buffer.from(pubKeyRaw).toString('hex'), [{ value: 1n }]);
     const commit = makeCommit();
     const deps = createMockDeps(store);
     const result = verifyPost(deps, commit);

@@ -130,7 +130,6 @@ A bare string names a leaf codec; the object forms compose, so `{"arr": {"opt": 
 | Descriptor | In-memory type | JSON form |
 |---|---|---|
 | `u8` | `number` | JSON number |
-| `bool` | `boolean` | `true` / `false` |
 | `vlqU`, `vlqS` | `number` | JSON number, or `{"$special": …}` |
 | `vlqU64` | `bigint` | **decimal string** — JSON numbers cannot carry a u64 |
 | `b32hex`, `b33hex`, `b64hex` | `string` | lowercase hex, exactly `2n` chars |

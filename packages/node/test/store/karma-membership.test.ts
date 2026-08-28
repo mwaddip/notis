@@ -246,4 +246,37 @@ describe('karma membership hook', () => {
     unconsumeBox(box.id!);
     expect(gains).toEqual([ownerHex(OWNER_A)]);
   });
+
+  // T5: an exact spend of an owner's last karma box fires onLoss; a spend
+  // leaving a box does not (TYPES_INTERFACE → Box value domain).
+  it('T5: exact spend of last box fires onLoss; a spend leaving a box does not', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertBox, consumeBox, registerKarmaMembershipHook } = await importUtxoFresh();
+    const { computeBoxId } = await importTypes();
+
+    initDb(':memory:');
+
+    const box1 = makeKarmaBox({ owner: OWNER_A, value: 5n });
+    box1.id = computeBoxId(box1);
+    insertBox(box1);
+
+    const box2 = makeKarmaBox({ owner: OWNER_A, value: 10n });
+    Object.assign(box2, fixtureProvenance(box2, 2));
+    box2.id = computeBoxId(box2);
+    insertBox(box2);
+
+    const losses: string[] = [];
+    registerKarmaMembershipHook({
+      onGain: () => {},
+      onLoss: (h) => losses.push(h),
+    });
+
+    // Consume one — a spend leaving a box: no onLoss.
+    consumeBox(box1.id!, 5);
+    expect(losses).toEqual([]);
+
+    // Consume the last — an exact spend: onLoss fires.
+    consumeBox(box2.id!, 5);
+    expect(losses).toEqual([ownerHex(OWNER_A)]);
+  });
 });
