@@ -509,7 +509,19 @@ every credit output: value >= MIN_BOX_VALUE_PER_BYTE * byteLength(boxRecordBytes
 **Why `credit` alone.** `GenesisProofBox`'s value is structurally `0n` — it holds neither karma nor
 credits and never enters supply accounting — and the karma pool's zero-value successor is created
 deliberately, the one place the no-zero-box rule inverts. A blanket floor makes both unencodable.
-**Karma is excluded by ruling**: it is non-tradeable and already decays.
+**Karma is excluded from the per-byte floor by ruling** — non-tradeable, and it decays — and gets
+the zero rule below instead.
+
+⛔ **A `karma` output of a user transaction carries at least `1n` — zero means no box.** The change
+output is omitted when it would be zero, exactly as every settlement karma leg emits nothing for a
+value of zero and a zero fee means no `FeeBox`: a karma spend whose inputs total its cost leaves no
+karma output, and every pin the shape needs binds through the input (`NODE_INTERFACE` → Karma
+transition rules). The two structural zeros above are block-application outputs — no user
+transaction emits either type.
+
+> ⚠ **AHEAD OF CODE — 2026-08-28. The zero rule.** The engine still requires at least one karma
+> output on every karma spend and admits it at `0n`; this unit's node dispatch replaces the shape
+> requirement with the value rule.
 
 **What it closes.** `credit(X) → credit(0) + fee(X)` conserves and is legal without it, leaving a box
 storage rent can never charge and never clear — rent takes value from a box, and that one has none to
@@ -557,9 +569,14 @@ constraint and must not be described as one.
 KarmaBox extends BoxBase {
   boxType: "karma"
   owner: Uint8Array            // 32 raw bytes — Ed25519 public key
-  nonActivity?: boolean        // Set on any karma output that must not bump the owner's activity clock — settlement outputs and vesting returns; absent on a user transaction's own outputs
 }
 ```
+
+> ⚠ **AHEAD OF CODE — 2026-08-28. `nonActivity` leaves the box.** The tree still carries
+> `nonActivity?: boolean` on `KarmaBox`, in the layout's karma tail and on every settlement karma
+> output. The activity clock reads no box field (`NODE_INTERFACE` → Populating the record), so
+> the field has no reader; this unit's types dispatch deletes it and the golden vectors move with
+> the tail.
 
 Karma boxes are non-tradeable. They can only be consumed by the owner to:
 - Create a bond box (inviting — ARCHITECTURE → Invite System)
@@ -1546,7 +1563,7 @@ and Phase 1b corrected it:
 |---|---|---|---|
 | `vlqU` / `vlqS` (number) | u64 | non-negative safe integers | ✅ sentinel — ten bytes, unreachable from a value needing at most eight |
 | `lp` / `lpUtf8` | u64 length | safe-integer length | ✅ sentinel on the length prefix |
-| `enum8`, `bool` | one byte | closed tag set / `{0,1}` | ✅ sentinel `0xff` |
+| `enum8` | one byte | closed tag set | ✅ sentinel `0xff` |
 | **`vlqU64` (bigint)** | u64 | u64 | ❌ **throws** |
 | **`b32` / `b33` / `b64`** | every value of that width | ditto | ❌ **throws** |
 | **`u8` (bare)** | one byte | one byte | ❌ **throws** |
@@ -1848,7 +1865,7 @@ from this table — a use that reads every cell as an instruction rather than as
 
 | Type | Trailing fields |
 |---|---|
-| `karma` | `b32(owner)` ‖ `opt(nonActivity, u8)` |
+| `karma` | `b32(owner)` |
 | `credit` | `b32(owner)` ‖ `opt(lockedUntilBlock, vlqU)` |
 | `invite` | `b32(inviterId)` ‖ `b32(inviteePublicKey)` |
 | `genesis_proof` | `lp(payload)` |
@@ -1949,8 +1966,7 @@ option, and the `enum8` tag is the whole of what separates them at equal `value`
 
 ⚠ **The option tag is what keeps absence from being a value.** An absent `lockedUntilBlock`
 writes a bare `u8(0)`; `lockedUntilBlock: 0` writes `u8(1) ‖ vlqU(0)`. A raw `vlqU` with `0`
-standing for "unlocked" would give an unlocked box and a box locked until block 0 one id. The
-same holds for `nonActivity`, which is the field the activity clock reads.
+standing for "unlocked" would give an unlocked box and a box locked until block 0 one id.
 
 **`bond.inviteePublicKey` is `b32`.** The field is exactly 32 bytes at every point
 in a bond's life: invite creation sets it (BondBox above) and no later transition

@@ -331,9 +331,9 @@ schedule. One like per `(liker, post)`, forever, costing exactly `LIKE_KARMA_COS
 3. Verify not already liked: like-record `(liker, targetPostId)` absent AND
    `hasPendingLike` over the mempool gate metadata
 4. `validateTx` — the engine enforces the biconditional like shape **both ways** (§validateTx
-   step 7): karma inputs one owner, exactly one karma output same owner, plus exactly one
-   `LikeAccrualBox` output of exactly `LIKE_KARMA_COST` whose `author` is the target's author —
-   and the transaction **conserves**. There is no deficit.
+   step 7): karma inputs one owner, at most one karma output same owner (omitted when the change
+   would be zero), plus exactly one `LikeAccrualBox` output of exactly `LIKE_KARMA_COST` whose
+   `author` is the target's author — and the transaction **conserves**. There is no deficit.
 5. Insert into mempool: `insertUtxoTx(tx, expiresAtHeight)` (gate metadata
    `like_target`/`like_liker` from `likeTarget` + the signer)
 6. Return `{ status: "pending", txId, expiresAtHeight }`
@@ -1091,8 +1091,8 @@ and all of them.
 schema for its `boxType`**:
 
 - **Key set is exact.** Required fields present, no key outside the declared
-  set (`TYPES_INTERFACE` box definitions are authoritative; declared-optional
-  fields — `KarmaBox.nonActivity`, `CreditBox.lockedUntilBlock` — may be present
+  set (`TYPES_INTERFACE` box definitions are authoritative; the declared-optional
+  field — `CreditBox.lockedUntilBlock` — may be present
   or absent, nothing else may vary). A key the schema does not name is a
   reject, not a strip: a stripped key would change the bytes the client signed.
   > **`fee` is user-created and consumable only by block application**, which is
@@ -1119,7 +1119,6 @@ schema for its `boxType`**:
     is deleted with the field (TYPES_INTERFACE → PostLockBox) — the circularity,
     not a domain fix. Kept as a row because the *kind* is still part of the
     schema vocabulary.
-  - `boolean`: `nonActivity` (karma, when present).
 - **Unknown `boxType` is a reject — and the schema lookup is an own-property
   lookup** (`Object.hasOwn` or equivalent), never a bare index into the
   table: `boxType: 'constructor'` must land in the unknown-boxType reject,
@@ -1539,7 +1538,7 @@ the treasury.
 | Consumed | Created | Condition |
 |----------|---------|-----------|
 | KarmaBox | KarmaBox | Same owner, balance change (earn/spend) |
-| KarmaBox | KarmaBox + LikeAccrualBox | **Like**: `likeTarget` present ⟺ exactly one `LikeAccrualBox` output of exactly `LIKE_KARMA_COST` whose `author` is the target's author from `block_topology` — **and the converse**, a `LikeAccrualBox` output ⟺ `likeTarget` present. Exactly one karma output, same owner as all inputs; target live; `(liker, target)` not recorded. **Value conserved** |
+| KarmaBox | KarmaBox + LikeAccrualBox | **Like**: `likeTarget` present ⟺ exactly one `LikeAccrualBox` output of exactly `LIKE_KARMA_COST` whose `author` is the target's author from `block_topology` — **and the converse**, a `LikeAccrualBox` output ⟺ `likeTarget` present. At most one karma output, same owner as all inputs — omitted when the change would be zero; target live; `(liker, target)` not recorded. **Value conserved** |
 | KarmaBox | KarmaBox + PostLockBox | **Post** (unit 2): `post` present ⟺ exactly one `PostLockBox` output whose value is `POST_LOCK_THREAD_COST` for a post with no `parentRefs` and `POST_LOCK_REPLY_COST` otherwise. Karma outputs same owner; value conserved — a post carries **no** deficit and **no** surplus. The signing key is the post's author. ⛔ **The lock's `owner` is pinned to the karma input's owner**, the sibling of the vouch arm's `voucherId` pin and for the same reason: an unpinned owner lets a transaction put a stranger's key on the lock, and the prune settlement then refunds that stranger while post-lock vesting pays them the author's earned karma — a karma transfer with no invite, the property the whole invite/bond mechanism protects |
 | KarmaBox | KarmaBox | **Prune** (→ Prune transactions): `prune` present ⟹ all-karma inputs sharing one owner, exactly one karma output, **total output equal to total input**, `inputKarma.owner` is the root's `block_topology` author, and `verifyPruneCommitDomains(tx.prune)` passes. ⛔ **An IMPLICATION, not a biconditional** — the converse would forbid the bare self-consolidation the row above admits, so recognition is by payload presence and never by shape |
 | KarmaBox | KarmaBox + BondBox | **Invite**: karma outputs same owner, value conserved; `inviteBondMin ≤ bond.value ≤ inviteBondMax` (per-network caps) and the settlement grants **exactly `bond.value`**; `bond.inviterId` = the karma input owner; `inviteePublicKey` holds **no `IdentityRecord`**, and **no other bond in this block names it** |
@@ -1816,9 +1815,10 @@ There is **no other legal bond or invite shape**. In particular:
   deadline. The inviter's cost is a probation-length lock and nothing
   else, and the pool is down a grant that bought no new account.
 
-  Record existence is the right test because **every karma receipt writes
-  one**, through `insertBox`'s choke point. A key with no record has
-  never held karma, so it has never posted and never been liked — which
+  Record existence is the right test because **every path that puts karma in a
+  key's hands writes one** — the invite grant creates the record at the claim, and
+  genesis writes the system identity's explicitly (§Populating the record). A key
+  with no record has never held karma, so it has never posted and never been liked — which
   is also what makes the claim the record-*creating* event for every
   legal invitee, and `lifetimeLikesReceived` necessarily `0` at that
   point. Being barred costs an uninvited party one key generation, since
@@ -1853,6 +1853,19 @@ inside the network's reported supply.
   `karma → karma + bond`) is unaffected: every karma input it spends is its own.
 - **Credits are deliberately exempt.** They are tradeable, so multi-owner
   credit inputs are an ordinary multi-party payment, not a leak.
+- ⛔ **A karma output carries at least `1n`, and the change output is optional**
+  (`TYPES_INTERFACE` → Box value domain: zero means no box). A spend whose karma
+  inputs total exactly its cost — a like from a single 1-karma box, a thread from
+  a 5-karma box, an invite or a vouch that empties the wallet — emits no karma
+  output at all, and the like shape is then the marker alone. No pin needs a
+  karma output to name the owner: `bond.inviterId`, `vouch.voucherId` and the
+  lock's `owner` bind to the karma **input's** owner, and the signature is that
+  owner's. Prune and withdraw keep their single karma output — their inputs are
+  at least `1n`, so it is.
+
+  > ⚠ **AHEAD OF CODE — 2026-08-28.** The karma arm still refuses a spend with no karma output
+  > and admits one at `0n`, and the like shape still requires exactly one karma output; this
+  > unit's node dispatch lands the rule.
 
 > ## ⛔ THE LIKE ACCRUAL MARKER IS AN EXEMPTION FROM THE RULE ABOVE, AND IT MUST NOT BEHAVE LIKE ONE
 >
@@ -1989,10 +2002,9 @@ exactly when *no* box satisfies that — i.e. when
 identity's first decay by one block, which is a behaviour change D10 forbids.
 Found by the phase D session against the code.
 
-**Staleness is unchanged.** Today's test is "no unspent non-decay-burn karma box
-newer than the threshold", and a non-decay karma box is created exactly when the
-owner is touched, so `lastActivityBlock` is the max over those heights and the
-predicate is the same.
+**Staleness reads the record.** `lastActivityBlock` is the height of the owner's
+most recent karma-spending transaction (§Populating the record), so the predicate
+is "no spend within the threshold window".
 
 **`owedPeriods` changes, deliberately — one accepted exception to D10.** The old
 code measures from the **oldest** non-decay box (falling back to the youngest
@@ -2291,10 +2303,10 @@ kept here as the record of what closed, and where the reasoning lives.
    `computeBoxId` observes `txId`/`index`, so the two orders are no longer
    byte-identical.
 7. ✅ `insertBox` fills the `created_at_block` **column** from the box's own
-   `createdAtBlock`, and bumps the **activity clock** from the open journal
-   (`openBlockJournalHeight()`) — two heights answering two questions
-   (§Populating the record). Outside a journal — genesis and bootstrap — there
-   is no clock to bump.
+   `createdAtBlock`; the **activity clock** is block application's, taking the
+   open journal's height when a karma-spending user transaction applies — two
+   heights answering two questions (§Populating the record). Outside a journal —
+   genesis and bootstrap — there is no clock to advance.
 
 **Blockers, both cleared before G3**
 
@@ -2375,8 +2387,8 @@ unique, so every verifier takes the same items — and a candidate stays eligibl
 height until a block consumes it. **The release leg**: a candidate is an unspent `PostLockBox`
 whose target post's `block_topology` row carries `pruned_at_height` (→ Prune transactions); the
 actor is that row's `pruned_root`'s topology author, equal to the stump's `authorId`; the actor's
-own locks go to the pool and every other lock's `value` returns to its owner as karma
-(`nonActivity: true`), aggregated per owner. A spent lock leaves the queue by being spent — there
+own locks go to the pool and every other lock's `value` returns to its owner as karma,
+aggregated per owner. A spent lock leaves the queue by being spent — there
 is no cursor to store. ⚠ **The three caps and the empty-body settlement are the liveness
 relation** (`TYPES_INTERFACE` → Size caps): whatever the chain state holds, the settlement of an
 empty body fits `MAX_SETTLEMENT_BYTES`, so a block exists at every height.
@@ -2388,7 +2400,7 @@ The settlement of height `h` consumes **at most `MAX_ESCROW_RETURNS_PER_BLOCK`**
 `VouchEscrowBox`es with `releaseAtBlock <= h` that exist in the state the block builds on, ascending
 `(releaseAtBlock, box id)` — the rest stay eligible (`TYPES_INTERFACE` → Settlement caps) — and emits
 each one's value to its `owner`
-as karma (`nonActivity: true`) — emitting nothing for a value of zero, like every karma leg, so a
+as karma — emitting nothing for a value of zero, like every karma leg, so a
 zero-value escrow is consumed without an output (unreachable on a valid chain: the cast pins every
 stake at `VOUCH_KARMA_AMOUNT`). The body can *create* an escrow — an unvouch of a vouch held longer
 than one cooldown yields one already past release — and that escrow is not in pre-body state, so it
@@ -2474,8 +2486,8 @@ apply the body, because the settlement is *in* that body. So pre-body state is t
 producer and verifier can both read and agree on. **A derivation taken after the apply loop is a
 different function on the two sides.**
 
-⚠ **It fails on the ordinary case, not an exotic one.** Spending karma bumps `lastActivityBlock`
-through `insertBox`, so an identity that is decay-eligible **before** the loop is fresh **after** it.
+⚠ **It fails on the ordinary case, not an exotic one.** Spending karma advances `lastActivityBlock`
+when the transaction applies, so an identity that is decay-eligible **before** the loop is fresh **after** it.
 A producer deriving post-body says "no decay" and a verifier deriving pre-body says "decay" — or the
 reverse — and **the block never validates.** The identity does not have to do anything unusual: it
 has to transact in the block that decays it.
@@ -3054,7 +3066,7 @@ creator-declared, so a backdated box would backdate its owner's clock, and the
 
 ```
 IdentityRecord {
-  lastActivityBlock: number     // u32 — starts at the claim height that creates the record; bumped when a non-decay karma box is created for the owner
+  lastActivityBlock: number     // u32 — starts at the claim height that creates the record; advanced when block application applies a user transaction spending the owner's karma
   lastDecayBlock: number        // u32 — bumped when decay fires
   invitedAtBlock: number        // u32 — height the invite grant applied; 0 = never invited
   lifetimeLikesReceived: bigint // likes this identity has ever received; never decremented
@@ -3095,7 +3107,7 @@ writer passing `0` compiles and passes typecheck while erasing a probation clock
 or a like history. **Every writer other than the one that owns a field carries the
 stored value through unchanged** — `invitedAtBlock` and `lastActivityBlock`'s
 **epoch** are owned by the grant path (the claim write initializes the activity
-clock to the claim height; advancement stays the store choke point's),
+clock to the claim height; advancement is block application's — §Populating the record),
 `lifetimeLikesReceived` by the lifetime-counter bookkeeping.
 
 **AVL key** — `blake2b512( IDENTITY_KEY_DOMAIN ‖ identityId )[0:32]`, **never
@@ -3187,10 +3199,21 @@ box keyspace, which is a distinct concern from how the bytes are typed.
 
 #### Populating the record
 
-- **`lastActivityBlock`** — bumped at the **store choke point**, `insertBox`,
-  when the inserted box is a karma box with `nonActivity !== true` — the owner's
-  own spends bump; settlement outputs and vesting returns carry the flag and do
-  not.
+- **`lastActivityBlock`** — advanced by **block application**, to the block's
+  height, when a user transaction whose inputs are karma boxes applies: the
+  inputs share one owner (→ Karma transition rules), and that owner's record is
+  written through `putIdentityRecord` after the transaction's box writes, so
+  reverse replay restores it before the boxes it followed. **Whether or not the
+  transaction leaves a karma output** — an exact spend is activity. The
+  settlement's consumption of karma boxes (the decay leg) and every settlement
+  output — grants, payouts, vests, returns, refunds, decay re-emits — leave it
+  untouched: they apply outside the user-transaction loop. Unvouch and credit
+  transactions spend no karma and advance nothing.
+
+  > ⚠ **AHEAD OF CODE — 2026-08-28. The clock moves to the spend.** `insertBox` still advances
+  > the clock on every karma insert whose `nonActivity` is not `true`; this unit's node dispatch
+  > moves the write into `applyOrderingBlock`'s user-transaction loop, and the field leaves the
+  > box (`TYPES_INTERFACE` → KarmaBox).
 - **`lastDecayBlock`** — bumped when decay fires for that owner.
 - **`invitedAtBlock`** — written only by block application when an invite grant
   applies (the settlement's grant leg); every other writer carries it through.
@@ -3205,7 +3228,7 @@ declared and signed, which `canonicalBoxBytes` encodes and the box id covers. Th
 denormalisation of a committed field, not an independent observation.
 
 ⛔ **The ACTIVITY CLOCK takes the open journal's height** — `beginBlockJournal(height)`, the height
-this block is settling at. It must not read the box: the clock records *when the chain saw activity*,
+this block is settling at. It must not read any box's `createdAtBlock`: the clock records *when the chain saw activity*,
 and a creator-declared value is not that. **A backdated box would otherwise backdate its owner's
 decay clock**, which is the one place the loose creator-declared bound would become exploitable.
 
@@ -3227,7 +3250,8 @@ but "should be unreachable" is exactly the condition under which a silent
 exemption would never be noticed.
 
 **Genesis is the one box created with no journal open.** `ensureSystemKarmaBox`
-runs at startup, so the system identity gets no record from the choke point. It
+runs at startup and outside block application, so nothing writes the system
+identity's record. It
 must be given one explicitly at `genesisHeight`, **not** left to a
 default-to-zero: `genesisHeight` is `1` (`currentHeight > 0 ? currentHeight : 1`),
 and a `{0, 0}` default makes the system identity go stale exactly one block
