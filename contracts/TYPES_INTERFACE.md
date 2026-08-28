@@ -519,10 +519,6 @@ karma output, and every pin the shape needs binds through the input (`NODE_INTER
 transition rules). The two structural zeros above are block-application outputs — no user
 transaction emits either type.
 
-> ⚠ **AHEAD OF CODE — 2026-08-28. The zero rule.** The engine still requires at least one karma
-> output on every karma spend and admits it at `0n`; this unit's node dispatch replaces the shape
-> requirement with the value rule.
-
 **What it closes.** `credit(X) → credit(0) + fee(X)` conserves and is legal without it, leaving a box
 storage rent can never charge and never clear — rent takes value from a box, and that one has none to
 take. The floor makes the output inexpressible.
@@ -571,12 +567,6 @@ KarmaBox extends BoxBase {
   owner: Uint8Array            // 32 raw bytes — Ed25519 public key
 }
 ```
-
-> ⚠ **AHEAD OF CODE — 2026-08-28. `nonActivity` leaves the box.** The tree still carries
-> `nonActivity?: boolean` on `KarmaBox`, in the layout's karma tail and on every settlement karma
-> output. The activity clock reads no box field (`NODE_INTERFACE` → Populating the record), so
-> the field has no reader; this unit's types dispatch deletes it and the golden vectors move with
-> the tail.
 
 Karma boxes are non-tradeable. They can only be consumed by the owner to:
 - Create a bond box (inviting — ARCHITECTURE → Invite System)

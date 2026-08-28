@@ -518,10 +518,6 @@ against live content).
 | `GET` | `/credits/:userId?limit=50&after=<value>:<boxId>` | `{ userId: hex, total, boxes: [{ boxId, value, lockedUntilBlock? }], boxCount, next }` — `total` over every unspent credit box (`getCreditValue`), `boxes` one page in `value DESC, id` strictly after `after`, `boxCount` over the whole set, `next` the key to continue from; an identity with no unspent credit box answers the empty page — `boxes: []`, `boxCount 0`, `total "0"`, `next null` | 400 if `userId` is not 64 chars or a present `limit`/`after` does not parse |
 | `GET` | `/invites/:userId?limit=50&after=<boxId>` | `{ bonds: [{ id, value, inviterId, inviteePublicKey }], bondCount, next }` — the inviter's **unspent** bonds, one page ascending box id strictly after `after`, `bondCount` over the whole set, `next` the key to continue from; a bond IS the open invite, so a settled one is not listed and there is no second list | 400 if `userId` is not 64 chars or a present `limit`/`after` does not parse; an inviter holding no live bond answers `{ bonds: [], bondCount: 0, next: null }` |
 
-> ⚠ **AHEAD OF CODE — 2026-08-28. The empty page.** Both routes still answer `404` on an empty set
-> (`routes/utxo.ts`); this unit's node dispatch answers the page, and the e2e suite's waits that read
-> the `404` as "the grant has not landed" move to `boxCount`.
-
 Multi-box UTXO model — identities can hold multiple karma/credit boxes.
 `total` is the sum across all boxes, and `boxes` is a page of them in the order coin selection
 reads — largest first — so a client covering an amount takes boxes from the front of the page and
@@ -1867,10 +1863,6 @@ inside the network's reported supply.
   owner's. Prune and withdraw keep their single karma output — their inputs are
   at least `1n`, so it is.
 
-  > ⚠ **AHEAD OF CODE — 2026-08-28.** The karma arm still refuses a spend with no karma output
-  > and admits one at `0n`, and the like shape still requires exactly one karma output; this
-  > unit's node dispatch lands the rule.
-
 > ## ⛔ THE LIKE ACCRUAL MARKER IS AN EXEMPTION FROM THE RULE ABOVE, AND IT MUST NOT BEHAVE LIKE ONE
 >
 > A `LikeAccrualBox` is a **karma-bearing output earmarked for someone other than the input's owner**
@@ -3213,11 +3205,6 @@ box keyspace, which is a distinct concern from how the bytes are typed.
   output — grants, payouts, vests, returns, refunds, decay re-emits — leave it
   untouched: they apply outside the user-transaction loop. Unvouch and credit
   transactions spend no karma and advance nothing.
-
-  > ⚠ **AHEAD OF CODE — 2026-08-28. The clock moves to the spend.** `insertBox` still advances
-  > the clock on every karma insert whose `nonActivity` is not `true`; this unit's node dispatch
-  > moves the write into `applyOrderingBlock`'s user-transaction loop, and the field leaves the
-  > box (`TYPES_INTERFACE` → KarmaBox).
 - **`lastDecayBlock`** — bumped when decay fires for that owner.
 - **`invitedAtBlock`** — written only by block application when an invite grant
   applies (the settlement's grant leg); every other writer carries it through.
