@@ -1534,6 +1534,21 @@ describe('revertBlock', () => {
       .prepare('SELECT * FROM dag_stumps WHERE root_post_hash = ?')
       .all(postId);
     expect(stumps).toHaveLength(0);
+
+    // The prune tx's UTXO reversal: the input is unspent again.
+    const inputRow = db.getDb()
+      .prepare('SELECT spent_at_block FROM utxo_boxes WHERE id = ?')
+      .get(pruneKarma.id!) as { spent_at_block: number | null } | undefined;
+    expect(inputRow).toBeDefined();
+    expect(inputRow!.spent_at_block).toBeNull();
+
+    // The prune tx's output is gone.
+    const { computeTxId } = await import('@dagsocial/types');
+    const pruneTxId = computeTxId(pruneTx);
+    const outputRow = db.getDb()
+      .prepare('SELECT id FROM utxo_boxes WHERE tx_id = ? AND output_index = 0')
+      .get(pruneTxId) as { id: string } | undefined;
+    expect(outputRow).toBeUndefined();
   });
 });
 
