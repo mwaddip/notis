@@ -20,14 +20,21 @@ describe('buildInviteTx', () => {
     expect(outputs[1]!.boxType).toBe('bond');
   });
 
-  // ⛔ The engine refuses a karma transition that produces no karma output, so
-  // the change box is emitted whatever it holds — and it is index 0, which is
-  // what the pending chain derives its next input from.
-  it('emits the change output even when the spend is exact', () => {
-    const { tx, changeValue } = buildInviteTx(cfg, [{ boxId: B1, value: 250n }], invitee, 512);;
+  // TYPES_INTERFACE → Box value domain: a karma output carries value ≥ 1.
+  it('an exact spend builds the bond alone and change is null', () => {
+    const { tx, changeValue, change } = buildInviteTx(cfg, [{ boxId: B1, value: 250n }], invitee, 512);
     expect(changeValue).toBe(0n);
+    expect(change).toBeNull();
+    expect(outputsOf(tx)).toHaveLength(1);
+    expect(outputsOf(tx)[0]).toMatchObject({ boxType: 'bond', value: '250' });
+  });
+
+  it('a non-exact spend builds change at index 0 and the bond at index 1', () => {
+    const { tx, change } = buildInviteTx(cfg, [{ boxId: B1, value: 400n }], invitee, 512);
+    expect(change).not.toBeNull();
     expect(outputsOf(tx)).toHaveLength(2);
-    expect(outputsOf(tx)[0]).toMatchObject({ boxType: 'karma', value: '0' });
+    expect(outputsOf(tx)[0]).toMatchObject({ boxType: 'karma', value: '150' });
+    expect(outputsOf(tx)[1]).toMatchObject({ boxType: 'bond', value: '250' });
   });
 
   // ⛔ The bond IS the request, and the settlement grants its own value to this
