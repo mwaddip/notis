@@ -60,10 +60,6 @@ export function createRouter(deps: UtxoDeps): Router {
     const pageResult = deps.getKarmaBoxesPage(userIdBytes, {
       limit, after: after as BoxKey | undefined,
     });
-    if (pageResult.count === 0) {
-      res.status(404).json({ error: 'No karma box found' });
-      return;
-    }
 
     const total = deps.getKarmaTotal(userIdBytes);
     const record = deps.getIdentityRecord(userIdBytes);
@@ -100,10 +96,6 @@ export function createRouter(deps: UtxoDeps): Router {
     const pageResult = deps.getCreditBoxesPage(userIdBytes, {
       limit, after: after as BoxKey | undefined,
     });
-    if (pageResult.count === 0) {
-      res.status(404).json({ error: 'No credit box found' });
-      return;
-    }
 
     res.json({
       userId: req.params['userId'],
