@@ -9,7 +9,7 @@ import express from 'express';
 import http from 'http';
 import { generateKeyPairSync, createPrivateKey } from 'crypto';
 import { initDb, closeDb, getDb } from '../../src/store/db.js';
-import { insertPost, getPost, queryPosts, getAncestorsNearest, getSubtreePage, deletePostRows, confirmPost, withdrawPost } from '../../src/store/posts.js';
+import { insertPost, getPost, queryPostsPage, getAncestorsNearest, getSubtreePage, deletePostRows, confirmPost, withdrawPost } from '../../src/store/posts.js';
 import { getCurrentHeight, getBlockCreatedAt } from '../../src/store/ordering.js';
 import {
   getKarmaBox,
@@ -65,7 +65,7 @@ async function request(
     const deps = {
       insertPost,
       getPost,
-      queryPosts,
+      queryPostsPage,
       verifyPost: overrides?.verifyPost ?? verifyPost,
       getKarmaBoxes,
       getIdentityRecord: storeGetIdentityRecord,
@@ -318,14 +318,17 @@ describe('posts routes', () => {
     expect(res.status).toBe(404);
   });
 
-  it('GET /posts with pagination returns empty array when no posts', async () => {
+  it('GET /posts returns the paged shape', async () => {
     const res = await request('/', 'GET');
     expect(res.status).toBe(200);
-    expect(Array.isArray(res.data)).toBe(true);
+    const body = res.data as Record<string, unknown>;
+    expect(Array.isArray(body['posts'])).toBe(true);
+    expect(Array.isArray(body['pending'])).toBe(true);
+    expect(typeof body['pendingCount']).toBe('number');
   });
 
   // -----------------------------------------------------------------------
-  // Integer bounds on limit and offset (NODE_INTERFACE → Posts)
+  // Integer bounds on limit and after (NODE_INTERFACE → Posts)
   // -----------------------------------------------------------------------
 
   it('GET /posts?limit=-1 returns 400', async () => {
@@ -338,8 +341,8 @@ describe('posts routes', () => {
     expect(res.status).toBe(400);
   });
 
-  it('GET /posts?offset=10000000000000000000 returns 400', async () => {
-    const res = await request('/?offset=10000000000000000000', 'GET');
+  it('GET /posts?after=malformed returns 400', async () => {
+    const res = await request('/?after=malformed', 'GET');
     expect(res.status).toBe(400);
   });
 
@@ -348,10 +351,9 @@ describe('posts routes', () => {
     expect(res.status).toBe(200);
   });
 
-  it('GET /posts?limit=0 returns 200 with an empty array', async () => {
+  it('GET /posts?limit=0 returns 400', async () => {
     const res = await request('/?limit=0', 'GET');
-    expect(res.status).toBe(200);
-    expect(res.data).toEqual([]);
+    expect(res.status).toBe(400);
   });
 
   it('GET /posts with no params returns 200', async () => {
@@ -416,13 +418,17 @@ describe('posts routes', () => {
         ancestorCount: 0,
         descendants: [],
         descendantCount: 0,
+        next: null,
+        pending: [],
+        pendingCount: 0,
       });
     });
 
     it('GET /posts stays live-only — the stump never appears in the feed', async () => {
       const res = await request('/', 'GET');
       expect(res.status).toBe(200);
-      const feed = res.data as Array<Record<string, unknown>>;
+      const body = res.data as Record<string, unknown>;
+      const feed = body['posts'] as Array<Record<string, unknown>>;
       expect(feed.some((p) => p['id'] === prunedRootId)).toBe(false);
       expect(feed.some((p) => p['kind'] === 'stump')).toBe(false);
     });
@@ -463,7 +469,8 @@ describe('posts routes', () => {
     it('GET /posts?viewer= answers likedByViewer true for a liked post', async () => {
       const res = await request(`/?viewer=${viewerHex}`, 'GET');
       expect(res.status).toBe(200);
-      const posts = res.data as Array<Record<string, unknown>>;
+      const body = res.data as Record<string, unknown>;
+      const posts = body['posts'] as Array<Record<string, unknown>>;
       const liked = posts.find(p => p['id'] === likedPostId);
       expect(liked).toBeDefined();
       expect(liked!['likedByViewer']).toBe(true);
@@ -472,7 +479,8 @@ describe('posts routes', () => {
     it('GET /posts?viewer= answers likedByViewer false for an unliked post', async () => {
       const res = await request(`/?viewer=${viewerHex}`, 'GET');
       expect(res.status).toBe(200);
-      const posts = res.data as Array<Record<string, unknown>>;
+      const body = res.data as Record<string, unknown>;
+      const posts = body['posts'] as Array<Record<string, unknown>>;
       const unliked = posts.find(p => p['id'] === unlikedPostId);
       expect(unliked).toBeDefined();
       expect(unliked!['likedByViewer']).toBe(false);
@@ -481,7 +489,8 @@ describe('posts routes', () => {
     it('GET /posts without viewer answers likedByViewer null', async () => {
       const res = await request('/', 'GET');
       expect(res.status).toBe(200);
-      const posts = res.data as Array<Record<string, unknown>>;
+      const body = res.data as Record<string, unknown>;
+      const posts = body['posts'] as Array<Record<string, unknown>>;
       const post = posts.find(p => p['id'] === likedPostId);
       expect(post).toBeDefined();
       expect(post!['likedByViewer']).toBeNull();
@@ -554,8 +563,8 @@ describe('posts routes', () => {
       expect(body['ancestorCount']).toBe(2);
     });
 
-    it('thread descendants with offset=1 skips the first', async () => {
-      const res = await request(`/${rootId}/thread?limit=1&offset=1`, 'GET');
+    it('thread descendants with after=<key of the first> skips the first', async () => {
+      const res = await request(`/${rootId}/thread?limit=1&after=21:0`, 'GET');
       expect(res.status).toBe(200);
       const body = res.data as Record<string, unknown>;
       const descs = body['descendants'] as Array<Record<string, unknown>>;
@@ -563,7 +572,7 @@ describe('posts routes', () => {
       expect(body['descendantCount']).toBe(2);
     });
 
-    it('thread on a withdrawn subject: both lists empty, both counts 0', async () => {
+    it('thread on a withdrawn subject: all lists empty, all counts 0, next null', async () => {
       const res = await request(`/${withdrawnRootId}/thread`, 'GET');
       expect(res.status).toBe(200);
       const body = res.data as Record<string, unknown>;
@@ -571,6 +580,9 @@ describe('posts routes', () => {
       expect(body['ancestorCount']).toBe(0);
       expect(body['descendants']).toEqual([]);
       expect(body['descendantCount']).toBe(0);
+      expect(body['next']).toBeNull();
+      expect(body['pending']).toEqual([]);
+      expect(body['pendingCount']).toBe(0);
     });
   });
 });

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  parsePage, parseViewer, isPageError, isViewerError,
+  parseViewer, isViewerError,
   parseLimit, isLimitError,
   parseAfter, isAfterError,
   formatKey,
@@ -8,48 +8,6 @@ import {
 } from '../../src/routes/page.js';
 
 // ---------------------------------------------------------------------------
-// parsePage (kept until phase 3)
-// ---------------------------------------------------------------------------
-
-describe('parsePage', () => {
-  it('returns defaults when no query params are given', () => {
-    const result = parsePage({});
-    expect(isPageError(result)).toBe(false);
-    if (isPageError(result)) return;
-    expect(result.limit).toBe(PAGE_LIMIT_DEFAULT);
-    expect(result.offset).toBe(0);
-  });
-
-  it('clamps limit to PAGE_LIMIT_MAX', () => {
-    const result = parsePage({ limit: '999' });
-    expect(isPageError(result)).toBe(false);
-    if (isPageError(result)) return;
-    expect(result.limit).toBe(PAGE_LIMIT_MAX);
-  });
-
-  it('passes through a limit within range', () => {
-    const result = parsePage({ limit: '10', offset: '5' });
-    expect(isPageError(result)).toBe(false);
-    if (isPageError(result)) return;
-    expect(result.limit).toBe(10);
-    expect(result.offset).toBe(5);
-  });
-
-  it('returns an error for a non-numeric limit', () => {
-    const result = parsePage({ limit: 'abc' });
-    expect(isPageError(result)).toBe(true);
-    if (!isPageError(result)) return;
-    expect(result.error).toContain('limit must be a non-negative safe integer');
-  });
-
-  it('returns an error for a negative offset', () => {
-    const result = parsePage({ offset: '-1' });
-    expect(isPageError(result)).toBe(true);
-    if (!isPageError(result)) return;
-    expect(result.error).toContain('offset must be a non-negative safe integer');
-  });
-});
-
 // ---------------------------------------------------------------------------
 // parseViewer (unchanged)
 // ---------------------------------------------------------------------------

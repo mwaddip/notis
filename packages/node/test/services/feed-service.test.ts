@@ -7,7 +7,7 @@ import {
   closeDb,
   insertPost,
   getPost as storeGetPost,
-  queryPosts,
+  queryPostsPage,
   getLikeRecordCount,
   hasLikeRecord,
   getAncestorsNearest,
@@ -79,7 +79,7 @@ describe('feed-service', () => {
 
     feedService = new FeedService({
       getPost: storeGetPost,
-      queryPosts,
+      queryPostsPage,
       getLikeRecordCount,
       hasLikeRecord,
       getAncestorsNearest,
@@ -137,7 +137,7 @@ describe('feed-service', () => {
   // -----------------------------------------------------------------------
 
   it('getThread returns full thread context for a live post (control)', () => {
-    const t = feedService.getThread(liveReplyId, { limit: 50, offset: 0 });
+    const t = feedService.getThread(liveReplyId, { limit: 50 });
     expect(t).not.toBeNull();
     expect(t!.post).not.toBeNull();
     expect((t!.post as PostJson).id).toBe(liveReplyId);
@@ -145,10 +145,13 @@ describe('feed-service', () => {
     expect(t!.ancestorCount).toBe(1);
     expect(t!.descendants).toEqual([]);
     expect(t!.descendantCount).toBe(0);
+    expect(t!.next).toBeNull();
+    expect(t!.pending).toEqual([]);
+    expect(t!.pendingCount).toBe(0);
   });
 
   it('getThread on a pruned root returns the stump shell as StumpJson', () => {
-    const t = feedService.getThread(prunedRootId, { limit: 50, offset: 0 });
+    const t = feedService.getThread(prunedRootId, { limit: 50 });
     expect(t).not.toBeNull();
     expect(t!.ancestors).toEqual([]);
     expect(t!.ancestorCount).toBe(0);
@@ -163,7 +166,7 @@ describe('feed-service', () => {
   });
 
   it('getThread returns null for an unknown id', () => {
-    expect(feedService.getThread('ab'.repeat(32), { limit: 50, offset: 0 })).toBeNull();
+    expect(feedService.getThread('ab'.repeat(32), { limit: 50 })).toBeNull();
   });
 
   // -----------------------------------------------------------------------
@@ -180,15 +183,15 @@ describe('feed-service', () => {
   it('every path that serves a post serves its status', () => {
     confirmPost(liveRootId, 42, 0);
 
-    const listed = feedService.queryPosts({ author: authorId, limit: 50, offset: 0 });
-    expect((listed.find((p) => p.id === liveRootId) as PostJson).status).toBe('confirmed');
-    expect((listed.find((p) => p.id === liveReplyId) as PostJson).status).toBe('pending');
+    const result = feedService.queryPosts({ author: authorId, limit: 50 });
+    expect((result.posts.find((p) => p.id === liveRootId) as PostJson).status).toBe('confirmed');
+    expect((result.pending.find((p) => p.id === liveReplyId) as PostJson).status).toBe('pending');
 
-    const thread = feedService.getThread(liveReplyId, { limit: 50, offset: 0 })!;
+    const thread = feedService.getThread(liveReplyId, { limit: 50 })!;
     expect((thread.post as PostJson).status).toBe('pending');
     expect(thread.ancestors.map((p) => (p as PostJson).status)).toEqual(['confirmed']);
 
-    const rootThread = feedService.getThread(liveRootId, { limit: 50, offset: 0 })!;
-    expect(rootThread.descendants.map((p) => (p as PostJson).status)).toEqual(['pending']);
+    const rootThread = feedService.getThread(liveRootId, { limit: 50 })!;
+    expect(rootThread.pending.map((p) => (p as PostJson).status)).toEqual(['pending']);
   });
 });

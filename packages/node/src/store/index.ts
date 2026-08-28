@@ -1,5 +1,3 @@
-export interface Page { limit: number; offset: number }
-
 // NODE_INTERFACE → Store Interface → Page<K>
 export interface PostKey { blockHeight: number; blockIndex: number }
 export interface BoxKey { value: bigint; id: string }
@@ -12,7 +10,7 @@ export {
   setPostBody,
   getPost,
   getMissingBodies,
-  queryPosts,
+  queryPostsPage,
   getPendingPosts,
   confirmPost,
   unconfirmPost,
