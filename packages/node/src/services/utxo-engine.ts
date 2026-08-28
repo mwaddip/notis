@@ -305,6 +305,12 @@ function checkTransitions(
       // that makes one legal.
       for (const ko of karmaOutputs) {
         const k = ko as KarmaBox;
+        if (k.value === 0n) {
+          return {
+            valid: false,
+            error: `A zero-value karma output is not created; zero means no box`,
+          };
+        }
         if (Buffer.from(k.owner).toString('hex') !== Buffer.from(inputKarma.owner).toString('hex')) {
           return {
             valid: false,
@@ -313,31 +319,24 @@ function checkTransitions(
         }
       }
 
-      // At least one karma output required
-      if (karmaOutputs.length === 0) {
-        return {
-          valid: false,
-          error: `Karma transition must produce at least one karma output`,
-        };
-      }
-
       if (likeTarget !== undefined) {
         // ⛔ **The forward half of the biconditional** (NODE_INTERFACE → Karma
         // transition rules). `likeTarget` present ⇒ this exact shape and nothing
-        // else: all inputs are karma boxes sharing one owner (pinned above), one
-        // karma output carries the liker's change with that same owner (pinned
-        // above), and one `LikeAccrualBox` carries the cost to the author.
+        // else: all inputs are karma boxes sharing one owner (pinned above), at
+        // most one karma output carries the liker's change with that same owner
+        // (pinned above), and one `LikeAccrualBox` carries the cost to the author.
         //
         // ⛔ **The transaction CONSERVES — there is no deficit any more.** The
         // cost lands in a box rather than leaving the ledger (ARCHITECTURE →
         // The conservation axiom: a marker must carry its value), so step 7's
         // unconditional sum is what pins the total and this arm pins the shape.
-        if (outputs.length !== 2 || karmaOutputs.length !== 1 || accrualOutputs.length !== 1) {
+        if (accrualOutputs.length !== 1 || karmaOutputs.length > 1 ||
+            outputs.length !== 1 + karmaOutputs.length) {
           return {
             valid: false,
             error:
-              `Invalid like transition: exactly one karma output and one ` +
-              `like_accrual marker expected`,
+              `Invalid like transition: at most one karma output and exactly ` +
+              `one like_accrual marker expected`,
           };
         }
         const marker = accrualOutputs[0] as LikeAccrualBox;
@@ -879,8 +878,7 @@ type FieldType =
   | 'hex32'
   | 'uint'
   | 'u32'
-  | 'string'
-  | 'boolean';
+  | 'string';
 
 const FIELD_TYPE_CHECK: Record<FieldType, { ok: (v: unknown) => boolean; expected: string }> = {
   // The value bound is `BOX_VALUE_BOUND`, imported rather than restated
@@ -939,7 +937,6 @@ const FIELD_TYPE_CHECK: Record<FieldType, { ok: (v: unknown) => boolean; expecte
     expected: 'a non-negative safe integer <= 0xFFFFFFFF',
   },
   string: { ok: (v) => typeof v === 'string', expected: 'a string' },
-  boolean: { ok: (v) => typeof v === 'boolean', expected: 'a boolean' },
 };
 
 /**
@@ -958,8 +955,6 @@ function describeValue(v: unknown): string {
       return Object.is(v, -0) ? '-0' : String(v);
     case 'string':
       return JSON.stringify(v.length > 64 ? `${v.slice(0, 64)}…` : v);
-    case 'boolean':
-      return String(v);
     default:
       return typeof v; // 'object' | 'function' | 'symbol' | 'undefined'
   }
@@ -1337,7 +1332,7 @@ const OUTPUT_SHAPE: Record<OutputBoxType, OutputShapeEntry> = (() => {
   return {
     karma: shape('user',
       { boxType: null, value: 'u64', createdAtBlock: 'uint', owner: 'bytes32' },
-      { nonActivity: 'boolean' },
+      {},
     ),
     credit: shape('user',
       { boxType: null, value: 'u64', createdAtBlock: 'uint', owner: 'bytes32' },
@@ -1447,13 +1442,13 @@ const PROTOCOL_OUTPUT_TYPES: ReadonlySet<string> = new Set<string>(
  *
  * ⛔ **A key present with the value `undefined` IS absence, and every reader
  * agrees.** `canonicalBoxBytes` writes one byte string for an absent optional
- * field — measured: a karma candidate with `nonActivity: undefined` and one
- * without encode identically — so the two are not two shapes for a rule to tell
- * apart. ⚠ **And the decoder produces exactly that shape**: `decodeTx` writes
- * every optional box field as an own key, holding `undefined` where the tag said
- * absent, so a gate refusing it refuses every ordinary karma output arriving
- * inside a block. A REQUIRED key holding `undefined` still rejects, in the
- * required-key loop below — that is a missing field, not an absent optional.
+ * field — measured: a credit candidate with `lockedUntilBlock: undefined` and
+ * one without encode identically — so the two are not two shapes for a rule to
+ * tell apart. ⚠ **And the decoder produces exactly that shape**: `decodeTx`
+ * writes every optional box field as an own key, holding `undefined` where the
+ * tag said absent, so a gate refusing it refuses every ordinary credit output
+ * arriving inside a block. A REQUIRED key holding `undefined` still rejects, in
+ * the required-key loop below — that is a missing field, not an absent optional.
  *
  * Exported for direct testing. Through `validateTx` this check runs at step 5
  * — the first consumer of `tx.outputs` — so it is the PRIMARY gate for every
