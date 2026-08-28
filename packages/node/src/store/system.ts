@@ -1,4 +1,4 @@
-import { BOX_VALUE_BOUND, computeBoxId } from '@dagsocial/types';
+import { BOX_VALUE_BOUND, computeBoxId, SYSTEM_KARMA_INITIAL, FAUCET_CREDITS_INITIAL } from '@dagsocial/types';
 import type {
   KarmaBox,
   CreditBox,
@@ -37,13 +37,7 @@ import {
 // must not").
 // ---------------------------------------------------------------------------
 
-/**
- * The faucet identity's stake. **Capacity is this divided by the bond it
- * chooses** — at testnet's 1000 ceiling that is 1,000 invites, at the 25 floor
- * 40,000. It does not replenish: the bond returns only as an invitee earns
- * likes, and what does not vest goes to the pool.
- */
-const SYSTEM_KARMA_INITIAL = 1_000_000n;
+// CONSTANTS → Genesis: capacity is SYSTEM_KARMA_INITIAL divided by the bond.
 
 /**
  * The height a genesis mint commits to.
@@ -116,7 +110,6 @@ export function ensureSystemKarmaBox(systemPubKey: Uint8Array, currentHeight: nu
 // The faucet identity's credit box
 // ---------------------------------------------------------------------------
 
-const FAUCET_CREDITS_INITIAL = 100_000n * 10n ** 8n;  // 100k credits in base units
 
 /**
  * Ensure the faucet identity has a credit box holding `FAUCET_CREDITS_INITIAL`.

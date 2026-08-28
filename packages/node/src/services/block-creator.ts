@@ -135,6 +135,10 @@ export function computeUtxoTxRoot(tree: UtxoTxTree): string {
 // number against the budget; the pool divides a fee by it.
 // ---------------------------------------------------------------------------
 
+// NODE_INTERFACE → "Storage rent is a transition requiring no signature";
+// CONSTANTS → Producer policy.
+export const MAX_RENT_TXS_PER_BLOCK = 32;
+
 // ---------------------------------------------------------------------------
 // Module-level state
 // ---------------------------------------------------------------------------
@@ -489,7 +493,6 @@ export function createOrderingBlock(): OrderingBlock | null {
     // unsigned credit spends (NODE_INTERFACE → "Storage rent is a transition
     // requiring no signature"). Selection is discretionary; a verifier checks
     // eligibility and the charge and nothing else.
-    const MAX_RENT_TXS_PER_BLOCK = 32;
     const eligible = getRentEligibleCreditBoxes(
       newHeight, nodeConfig.storageRentPeriodBlocks, MAX_RENT_TXS_PER_BLOCK,
     );

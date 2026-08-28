@@ -1,9 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { PROTOCOL_VERSION } from '@dagsocial/types';
+import { PROTOCOL_VERSION, VOUCH_CAST_HEIGHT_WINDOW } from '@dagsocial/types';
 import type { UtxoTransaction, AnyBoxCandidate } from '@dagsocial/types';
 import { ceilingOf } from '../../src/services/utxo-engine.js';
-
-const VOUCH_CAST_HEIGHT_WINDOW = 5;
 
 const dummyOwner = new Uint8Array(32);
 const dummySig = new Uint8Array(64);
