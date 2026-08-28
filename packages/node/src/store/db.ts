@@ -226,6 +226,11 @@ function migrateBlockTopology(database: Database.Database): void {
       pruned_at_height INTEGER,
       pruned_root TEXT
     );
+    CREATE TABLE IF NOT EXISTS block_topology_parents (
+      parent_id TEXT NOT NULL,
+      post_id TEXT NOT NULL,
+      PRIMARY KEY (parent_id, post_id)
+    );
     CREATE INDEX IF NOT EXISTS idx_block_topology_height
       ON block_topology(block_height);
     CREATE INDEX IF NOT EXISTS idx_block_topology_pruned
