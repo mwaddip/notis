@@ -15,18 +15,21 @@ export function buildVouchTx(
   const changeValue = selectedTotal - VOUCH_KARMA_AMOUNT;
 
   const owner = Buffer.from(voucher.publicKeyHex, 'hex');
+  const outputs: UtxoTransaction['outputs'] = [];
+  if (changeValue > 0n) {
+    outputs.push({ boxType: 'karma', value: changeValue, createdAtBlock: height, owner });
+  }
+  outputs.push({
+    boxType: 'vouch',
+    value: VOUCH_KARMA_AMOUNT,
+    createdAtBlock: height,
+    voucherId: owner,
+    targetId: Buffer.from(target.publicKeyHex, 'hex'),
+  });
+
   const tx: UtxoTransaction = {
     inputs: selected.map((b) => b.boxId),
-    outputs: [
-      { boxType: 'karma', value: changeValue, createdAtBlock: height, owner },
-      {
-        boxType: 'vouch',
-        value: VOUCH_KARMA_AMOUNT,
-        createdAtBlock: height,
-        voucherId: owner,
-        targetId: Buffer.from(target.publicKeyHex, 'hex'),
-      },
-    ],
+    outputs,
     signatures: {},
     protocolVersion: PROTOCOL_VERSION,
   };

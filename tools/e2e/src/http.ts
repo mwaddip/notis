@@ -71,6 +71,10 @@ export async function getKarma(
   total: string;
   effective: string;
   boxes: { boxId: string; value: string }[];
+  boxCount: number;
+  next: string | null;
+  lastActivityBlock: number;
+  lastDecayBlock: number;
   height: number;
 } | null> {
   const data = await jsonGet(node, `/karma/${userId}`);
@@ -79,6 +83,10 @@ export async function getKarma(
     total: string;
     effective: string;
     boxes: { boxId: string; value: string }[];
+    boxCount: number;
+    next: string | null;
+    lastActivityBlock: number;
+    lastDecayBlock: number;
     height: number;
   } | null;
 }

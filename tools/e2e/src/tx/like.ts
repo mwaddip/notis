@@ -16,17 +16,20 @@ export function buildLikeTx(
   const changeValue = selectedTotal - LIKE_KARMA_COST;
 
   const owner = Buffer.from(liker.publicKeyHex, 'hex');
+  const outputs: UtxoTransaction['outputs'] = [];
+  if (changeValue > 0n) {
+    outputs.push({ boxType: 'karma', value: changeValue, createdAtBlock: height, owner });
+  }
+  outputs.push({
+    boxType: 'like_accrual',
+    value: LIKE_KARMA_COST,
+    createdAtBlock: height,
+    author: Buffer.from(postAuthorHex, 'hex'),
+  });
+
   const tx: UtxoTransaction = {
     inputs: selected.map((b) => b.boxId),
-    outputs: [
-      { boxType: 'karma', value: changeValue, createdAtBlock: height, owner },
-      {
-        boxType: 'like_accrual',
-        value: LIKE_KARMA_COST,
-        createdAtBlock: height,
-        author: Buffer.from(postAuthorHex, 'hex'),
-      },
-    ],
+    outputs,
     signatures: {},
     protocolVersion: PROTOCOL_VERSION,
     likeTarget: postId,

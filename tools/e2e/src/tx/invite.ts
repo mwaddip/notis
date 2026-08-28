@@ -16,18 +16,21 @@ export function buildInviteTx(
   const changeValue = selectedTotal - bondAmount;
 
   const owner = Buffer.from(faucet.publicKeyHex, 'hex');
+  const outputs: UtxoTransaction['outputs'] = [];
+  if (changeValue > 0n) {
+    outputs.push({ boxType: 'karma', value: changeValue, createdAtBlock: height, owner });
+  }
+  outputs.push({
+    boxType: 'bond',
+    value: bondAmount,
+    createdAtBlock: height,
+    inviterId: owner,
+    inviteePublicKey: Buffer.from(invitee.publicKeyHex, 'hex'),
+  });
+
   const tx: UtxoTransaction = {
     inputs: selected.map((b) => b.boxId),
-    outputs: [
-      { boxType: 'karma', value: changeValue, createdAtBlock: height, owner },
-      {
-        boxType: 'bond',
-        value: bondAmount,
-        createdAtBlock: height,
-        inviterId: owner,
-        inviteePublicKey: Buffer.from(invitee.publicKeyHex, 'hex'),
-      },
-    ],
+    outputs,
     signatures: {},
     protocolVersion: PROTOCOL_VERSION,
   };
