@@ -342,8 +342,8 @@ export function utxoTxTreeByteLength(t: UtxoTxTree): number {
  * distinct rejections distinct: a truncated section, a section whose length
  * overruns its parent, and trailing bytes after the signature.
  *
- * **Two sections, not three.** A post is a transaction, so the body it used to
- * ride is gone and `pruneEntries` moved inside `utxoTxTree` (`block.ts`).
+ * **Two `lp` sections** — `header` (the `HEADER` codec) and `utxoTxTree` (the
+ * `UTXO_TX_TREE` codec) — followed by the fixed 64-byte `validatorSignature`.
  *
  * A nested `CodecError` is a `ReaderError`, so it propagates through the outer
  * `decodeStruct`'s step-1 catch unchanged rather than being re-wrapped as a

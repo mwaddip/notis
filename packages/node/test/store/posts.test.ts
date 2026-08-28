@@ -331,45 +331,9 @@ describe('posts store', () => {
     expect(result.pendingCount).toBe(1);
   });
 
-  it('getPendingPosts returns oldest first', async () => {
-    const { initDb } = await importDbFresh();
-    const { insertPost, getPendingPosts } = await importPostsFresh();
-
-    initDb(':memory:');
-
-    for (const label of ['oldest', 'middle', 'newest']) {
-      const { commit, content } = makeCommit({ content: label });
-      insertPost(fixturePostId(commit), commit, content);
-    }
-
-    const pending = getPendingPosts(10);
-    expect(pending).toHaveLength(3);
-    expect(pending[0]!.content).toBe('oldest');
-    expect(pending[1]!.content).toBe('middle');
-    expect(pending[2]!.content).toBe('newest');
-  });
-
-  it('getPendingPosts respects the limit parameter', async () => {
-    const { initDb } = await importDbFresh();
-    const { insertPost, getPendingPosts } = await importPostsFresh();
-
-    initDb(':memory:');
-
-    for (let i = 0; i < 5; i++) {
-      const { commit, content } = makeCommit({ content: `pending-${i}` });
-      insertPost(fixturePostId(commit), commit, content);
-    }
-
-    const limited = getPendingPosts(3);
-    expect(limited).toHaveLength(3);
-    expect(limited[0]!.content).toBe('pending-0');
-    expect(limited[1]!.content).toBe('pending-1');
-    expect(limited[2]!.content).toBe('pending-2');
-  });
-
   it('confirmPost updates status, blockHeight and blockIndex', async () => {
-    const { initDb, getDb } = await importDbFresh();
-    const { insertPost, confirmPost, getPendingPosts } = await importPostsFresh();
+    const { initDb } = await importDbFresh();
+    const { insertPost, confirmPost, getPost } = await importPostsFresh();
 
     initDb(':memory:');
 
@@ -377,19 +341,15 @@ describe('posts store', () => {
     const postId = fixturePostId(commit);
     insertPost(postId, commit, content);
 
-    expect(getPendingPosts(10)).toHaveLength(1);
+    const before = getPost(postId);
+    expect(before && 'status' in before && before.status).toBe('pending');
 
     confirmPost(postId, 42, 3);
 
-    expect(getPendingPosts(10)).toHaveLength(0);
-
-    const row = getDb()
-      .prepare('SELECT status, block_height, block_index FROM dag_posts WHERE id = ?')
-      .get(postId) as { status: string; block_height: number; block_index: number } | undefined;
-    expect(row).toBeDefined();
-    expect(row!.status).toBe('confirmed');
-    expect(row!.block_height).toBe(42);
-    expect(row!.block_index).toBe(3);
+    const after = getPost(postId);
+    expect(after && 'status' in after ? after.status : undefined).toBe('confirmed');
+    expect(after && 'blockHeight' in after ? after.blockHeight : undefined).toBe(42);
+    expect(after && 'blockIndex' in after ? after.blockIndex : undefined).toBe(3);
   });
 
   it('getParentRefs returns array of parent IDs', async () => {
@@ -824,6 +784,64 @@ describe('posts store', () => {
     expect(result.count).toBe(1);
     expect(result.rows).toHaveLength(1);
     expect(result.rows[0]!.content).toBe('root');
+  });
+
+  it('getAncestorsNearest stops at an ancestor with no dag_posts row', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertPost, deletePostRows, getAncestorsNearest } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    const { commit: cS, content: ctS } = makeCommit({ content: 'stump', parentRefs: [] });
+    const idS = fixturePostId(cS);
+    insertPost(idS, cS, ctS);
+
+    const { commit: cR, content: ctR } = makeCommit({ content: 'reply', parentRefs: [idS] });
+    const idR = fixturePostId(cR);
+    insertPost(idR, cR, ctR);
+
+    const { commit: cR2, content: ctR2 } = makeCommit({ content: 'reply2', parentRefs: [idR] });
+    const idR2 = fixturePostId(cR2);
+    insertPost(idR2, cR2, ctR2);
+
+    deletePostRows([idS]);
+
+    const result = getAncestorsNearest(idR2, 10);
+    expect(result.count).toBe(1);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]!.content).toBe('reply');
+  });
+
+  it('getAncestorsNearest CTE recursive step searches dag_parent_refs and dag_posts on PK', async () => {
+    const { initDb, getDb } = await importDbFresh();
+    await importPostsFresh();
+
+    initDb(':memory:');
+
+    const plan = getDb()
+      .prepare(
+        `EXPLAIN QUERY PLAN
+         WITH RECURSIVE chain(pid, depth) AS (
+           SELECT dpr.parent_id, 1
+           FROM dag_parent_refs dpr
+           JOIN dag_posts dp ON dp.id = dpr.parent_id
+           WHERE dpr.post_id = ?
+           UNION ALL
+           SELECT dpr.parent_id, c.depth + 1
+           FROM dag_parent_refs dpr
+           JOIN chain c ON dpr.post_id = c.pid
+           JOIN dag_posts dp ON dp.id = dpr.parent_id
+         )
+         SELECT dp.* FROM (
+           SELECT pid, depth FROM chain ORDER BY depth ASC LIMIT ?
+         ) nearest
+         JOIN dag_posts dp ON dp.id = nearest.pid
+         ORDER BY nearest.depth DESC`,
+      )
+      .all('dummy', 10) as Array<{ detail: string }>;
+    const details = plan.map(r => r.detail).join('\n');
+    expect(details).toContain('SEARCH dpr USING COVERING INDEX sqlite_autoindex_dag_parent_refs_1 (post_id=?)');
+    expect(details).toContain('SEARCH dp USING COVERING INDEX sqlite_autoindex_dag_posts_1 (id=?)');
   });
 
   // -------------------------------------------------------------------------

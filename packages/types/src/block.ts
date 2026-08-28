@@ -26,7 +26,8 @@ export interface BlockHeader {
   interlinkRoot: string;        // hex(32) — TYPES_INTERFACE → Interlink vector
 }
 
-/** 33 zero bytes — placeholder for future AVL+ state root. */
+// 33 zero bytes (TYPES_INTERFACE → Network profiles): the all-zero AVL+ digest
+// that block-creator writes when no prover is available (test-only).
 export const EMPTY_STATE_ROOT = '00'.repeat(33);
 
 // ---------------------------------------------------------------------------

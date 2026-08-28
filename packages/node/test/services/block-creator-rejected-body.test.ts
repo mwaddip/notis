@@ -561,5 +561,4 @@ describe('block creator vs a body its own mutation phase rejects', () => {
     expect(relevant).toHaveLength(1);
     expect(relevant[0]).toContain('no pool rows');
   });
-
 });

@@ -7,7 +7,6 @@ import {
   getPost,
   getMissingBodies,
   queryPostsPage,
-  getPendingPosts,
   confirmPost,
   deletePostRows,
   restorePostRows,
@@ -110,18 +109,18 @@ describe('posts store (integration)', () => {
     expect(aliceResult.rows.every((p) => Buffer.from(p.author).equals(Buffer.from(alice)))).toBe(true);
   });
 
-  it('post lifecycle: pending -> confirm -> not in pending', () => {
+  it('post lifecycle: pending -> confirm -> confirmed', () => {
     const { commit, content } = makeCommit({ content: 'lifecycle-' + Date.now() });
     const postId = fixturePostId(commit);
     insertPost(postId, commit, content);
 
-    const pending = getPendingPosts(100);
-    expect(pending.some(p => p.id === postId)).toBe(true);
+    const before = getPost(postId);
+    expect(before && 'status' in before && before.status).toBe('pending');
 
     confirmPost(postId, 5, 0);
 
-    const afterConfirm = getPendingPosts(100);
-    expect(afterConfirm.some(p => p.id === postId)).toBe(false);
+    const after = getPost(postId);
+    expect(after && 'status' in after && after.status).toBe('confirmed');
   });
 
   it('getParentRefs returns correct parent IDs', () => {

@@ -14,7 +14,6 @@ export default mergeConfig(
       // reflects the workload instead of per-test annotations chasing it.
       testTimeout: 60_000,
       env: {
-        POW_SLOT_TARGET_BITS: '4',
         // The suite mines real PoW at `expectedTarget()`, which reads the
         // process config singleton — a `Config` a test injects cannot reach
         // it. Devnet is the profile whose ordering-block target stays

@@ -1188,8 +1188,8 @@ BlockHeader {
   protocolVersion: number        // 1
   height: number                 // Monotonically increasing, starting from 1
   prevBlockHash: string          // hex(32) — hash of the previous block's header
-  utxoTxRoot: string             // hex(32) — Merkle root over the block body (txs + prune entries)
-  stateRoot: string              // hex(33) — AVL+ digest (EMPTY_STATE_ROOT until enabled)
+  utxoTxRoot: string             // hex(32) — Merkle root over the body's transactions (→ Ordering block; a prune is a transaction)
+  stateRoot: string              // hex(33) — the AVL+ digest after this block is applied (NODE_INTERFACE → Post-block stateRoot)
   validatorId: UserId            // Block producer's 32-byte public key
   powNonce: number               // PoW solution
   powTargetBits: number          // Difficulty target for this block
@@ -2992,13 +2992,21 @@ karma balance to decide it.
 export const VOUCH_KARMA_AMOUNT = 1n;              // consensus — karma escrowed per vouch
 export const VOUCH_MIN_BALANCE = 11n;              // consensus — minimum balance to cast a vouch
 export const VOUCH_COOLDOWN_BLOCKS = 60;           // consensus — blocks before escrow is released
+export const VOUCH_CAST_HEIGHT_WINDOW = 5;         // consensus — a cast's createdAtBlock may lag its carrying block by at most this many blocks
 ```
 
 ### Genesis
 
 ```typescript
 export const GENESIS_KARMA_PER_MEMBER = 1000n;             // consensus
+export const SYSTEM_KARMA_INITIAL = 1_000_000n;            // consensus — the faucet identity's karma at genesis
+export const FAUCET_CREDITS_INITIAL = 100_000n * 10n ** 8n; // consensus — 100 000 credits in base units
 ```
+
+**The faucet identity's two seeds are universal constants, not profile fields.** The boxes are
+byte-identical everywhere they are seeded at all (→ Network profiles); whether they are seeded is
+`faucetPublicKey`'s presence (`NODE_INTERFACE → Faucet`). A per-network value would be a place devnet
+may behave unlike mainnet, with nothing to gain (`ARCHITECTURE → What varies per network`).
 
 **The genesis committee is a `NetworkProfile` field and nothing else.** `genesisCommitteeKeys` is read
 by `services/genesis-state.ts`, which seeds one karma box per entry out of the pool, and all three

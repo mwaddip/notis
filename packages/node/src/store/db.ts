@@ -126,9 +126,8 @@ const MIGRATIONS = [
   // (MEMPOOL_INTERFACE → Eviction, inside the credit class only).
   `CREATE TABLE IF NOT EXISTS mempool (
     rowid INTEGER PRIMARY KEY AUTOINCREMENT,
-    entry_type TEXT NOT NULL CHECK(entry_type IN ('utxo_tx', 'prune')),
+    entry_type TEXT NOT NULL CHECK(entry_type IN ('utxo_tx')),
     utxo_tx_bytes BLOB,
-    prune_entry_cbor BLOB,
     expires_at_height INTEGER NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     like_target TEXT,
@@ -140,7 +139,6 @@ const MIGRATIONS = [
     tx_inputs TEXT,
     tx_output_ids TEXT,
     tx_id TEXT,
-    prune_entry_id TEXT,
     max_valid_height INTEGER
   )`,
 
@@ -226,6 +224,11 @@ function migrateBlockTopology(database: Database.Database): void {
       pruned_at_height INTEGER,
       pruned_root TEXT
     );
+    CREATE TABLE IF NOT EXISTS block_topology_parents (
+      parent_id TEXT NOT NULL,
+      post_id TEXT NOT NULL,
+      PRIMARY KEY (parent_id, post_id)
+    );
     CREATE INDEX IF NOT EXISTS idx_block_topology_height
       ON block_topology(block_height);
     CREATE INDEX IF NOT EXISTS idx_block_topology_pruned
@@ -274,7 +277,6 @@ function migrateMempoolTxColumns(database: Database.Database): void {
   // never evicted; the pool drains within `MEMPOOL_EXPIRY_BLOCKS` regardless.
   if (!has('tx_fee')) database.exec(`ALTER TABLE mempool ADD COLUMN tx_fee INTEGER`);
   if (!has('tx_bytes')) database.exec(`ALTER TABLE mempool ADD COLUMN tx_bytes INTEGER`);
-  if (!has('prune_entry_id')) database.exec(`ALTER TABLE mempool ADD COLUMN prune_entry_id TEXT`);
 }
 
 /**
@@ -368,8 +370,6 @@ function createMempoolGateIndexes(database: Database.Database): void {
       ON mempool(tx_output_ids) WHERE tx_output_ids IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_mempool_tx_id
       ON mempool(tx_id) WHERE tx_id IS NOT NULL;
-    CREATE INDEX IF NOT EXISTS idx_mempool_prune_entry_id
-      ON mempool(prune_entry_id) WHERE prune_entry_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_mempool_fee_rate
       ON mempool(CAST(tx_fee AS REAL) / tx_bytes) WHERE tx_fee IS NOT NULL;
   `);

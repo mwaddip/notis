@@ -1342,6 +1342,8 @@ relied on. A mechanism that needs either brings its own parameter with its own r
 |-----------|-------------|
 | `genesisCommitteeKeys` | List of public keys in the genesis committee — a `NetworkProfile` field, with no `constants.ts` export beside it |
 | `GENESIS_KARMA_PER_MEMBER` | Initial karma per committee member |
+| `SYSTEM_KARMA_INITIAL` | The faucet identity's karma, seeded on the networks whose profile names a `faucetPublicKey` (`NODE_INTERFACE → Faucet`) |
+| `FAUCET_CREDITS_INITIAL` | The faucet identity's credits, seeded beside the karma |
 
 ---
 

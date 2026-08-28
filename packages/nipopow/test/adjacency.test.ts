@@ -8,10 +8,8 @@ import {
   devnetProfile,
 } from './helpers.js';
 
-// NIPOPOW_INTERFACE → verifyProof — pinned by the package's property test over mined chains
-// For many random mined chains, proveWithReader → verifyProof must pass
-// including rule 6's strict adjacency. If it ever fails, that is the unit's
-// most important finding.
+// NIPOPOW_INTERFACE → verifyProof. The prove-then-verify round trip over deterministic
+// chains at five lengths and five (m, k) pairs, rule 6's strict adjacency included.
 describe('strict-adjacency property test', () => {
   const profile = devnetProfile();
   const mkParams = [

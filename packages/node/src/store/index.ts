@@ -11,7 +11,6 @@ export {
   getPost,
   getMissingBodies,
   queryPostsPage,
-  getPendingPosts,
   confirmPost,
   unconfirmPost,
   deletePendingPost,

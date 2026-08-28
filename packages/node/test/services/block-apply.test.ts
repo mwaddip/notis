@@ -2242,6 +2242,60 @@ describe('block-apply funnel totality', () => {
     expect(blockApply.applyOrderingBlock(block2)).toBe(true);
   });
 
+  it('rejects a block whose prune input owner is not the root topology author', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const utxo = await importUtxo();
+    const posts = await importPosts();
+    const blockApply = await importBlockApply();
+
+    const author = makeTestIdentity();
+    const stranger = makeTestIdentity();
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'foreign-prune');
+    posts.insertPost(postId, commit, content);
+
+    expect(blockApply.applyOrderingBlock(await makeApplicableBlock({ utxoTxs: [postTx] }))).toBe(true);
+
+    // The stranger builds a prune for the author's post.
+    const strangerKarma = makeKarmaBox(100n, stranger.userId, 0, 97);
+    utxo.insertBox(strangerKarma);
+    const pruneTx: UtxoTransaction = {
+      inputs: [strangerKarma.id!],
+      outputs: [{ boxType: 'karma' as const, value: 100n, createdAtBlock: 0, owner: stranger.userId }],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+      prune: { rootPostHash: postId },
+    };
+    signTransaction(pruneTx, stranger.privateKey, hex(stranger.userId));
+
+    const block2 = await makeApplicableBlock({ height: 2, utxoTxs: [pruneTx] });
+    expect(blockApply.applyOrderingBlock(block2)).toBe(false);
+  });
+
+  it('rejects a block whose prune root has no topology author (unconfirmed root)', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const utxo = await importUtxo();
+    const blockApply = await importBlockApply();
+
+    const author = makeTestIdentity();
+    const unconfirmedRoot = 'dd'.repeat(32);
+
+    const karma = makeKarmaBox(100n, author.userId, 0, 96);
+    utxo.insertBox(karma);
+    const pruneTx: UtxoTransaction = {
+      inputs: [karma.id!],
+      outputs: [{ boxType: 'karma' as const, value: 100n, createdAtBlock: 0, owner: author.userId }],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+      prune: { rootPostHash: unconfirmedRoot },
+    };
+    signTransaction(pruneTx, author.privateKey, hex(author.userId));
+
+    const block = await makeApplicableBlock({ utxoTxs: [pruneTx] });
+    expect(blockApply.applyOrderingBlock(block)).toBe(false);
+  });
+
   // -----------------------------------------------------------------------
   // Interlink root (NODE_INTERFACE → Ordering block apply-time authorization)
   // -----------------------------------------------------------------------

@@ -121,6 +121,9 @@ export const LIKES_PER_KARMA_PAYOUT = 5;  // x: per x likes an author accrues x�
 export const VOUCH_KARMA_AMOUNT = 1n;         // Karma locked per vouch
 export const VOUCH_MIN_BALANCE = 11n;          // Must have >= this to vouch
 export const VOUCH_COOLDOWN_BLOCKS = 60;       // Blocks before karma returned → profile: vouchCooldownBlocks
+// NODE_INTERFACE → Vouch transition rules: a cast's createdAtBlock may lag its
+// carrying block by at most this many blocks.
+export const VOUCH_CAST_HEIGHT_WINDOW = 5;
 
 // Invites
 //
@@ -174,6 +177,10 @@ export const INVITE_BOND_VEST_PER_LIKES = 3;
 
 // Genesis
 export const GENESIS_KARMA_PER_MEMBER = 1000n; // → profile: genesisKarmaPerMember
+// TYPES_INTERFACE → Genesis: universal, not profile fields — the boxes are
+// byte-identical everywhere they are seeded (NODE_INTERFACE → Faucet).
+export const SYSTEM_KARMA_INITIAL = 1_000_000n;
+export const FAUCET_CREDITS_INITIAL = 100_000n * 10n ** 8n;
 // Credit emission (Ergo-style linear decay) — amounts in base units of 10^-8 credit
 export const CREDIT_FIXED_RATE_BLOCKS = 1_051_200;    // ~2 years at 60s blocks → profile: creditFixedRateBlocks
 export const CREDIT_INITIAL_REWARD = 42n * 10n ** 8n;  // 42 credits per block in fixed-rate period

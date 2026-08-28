@@ -10,6 +10,7 @@ import {
   STORAGE_RENT_PER_BYTE,
   POST_LOCK_REPLY_COST,
   PROTOCOL_VERSION,
+  VOUCH_CAST_HEIGHT_WINDOW,
   VOUCH_KARMA_AMOUNT,
   VOUCH_MIN_BALANCE,
 } from '@dagsocial/types';
@@ -30,12 +31,6 @@ import { ed25519PublicKeyToKeyObject, verifyPostCommitDomains, verifyPostWithdra
 // Type-only: erased at compile time, so the engine gains no runtime edge into
 // the store module graph. Same seam `DecayDeps` uses for the same record.
 import type { IdentityRecord } from '../store/identity-records.js';
-
-// A vouch output's `createdAtBlock` may not lag the carrying block by more
-// than this many heights. Without a lower bound a client sets
-// `createdAtBlock = 0` and the escrow releases at `0 + cooldown`, which is
-// effectively immediate on any chain past that height.
-const VOUCH_CAST_HEIGHT_WINDOW = 5;
 
 // ---------------------------------------------------------------------------
 // The karma transition set

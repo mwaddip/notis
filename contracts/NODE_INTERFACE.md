@@ -190,7 +190,7 @@ is identical on every node — and it is **the only key a like may earmark karma
 transition rules"). A stump carries it too, and so does the tombstone: topology survives pruning.
 `GET /posts/:id/thread` and the listing do not carry it.
 
-**PostJson time and order (decided 2026-08-20).** A post has no timestamp
+**PostJson time and order.** Decided 2026-08-20. A post has no timestamp
 (TYPES_INTERFACE → Layout — PostCommit). `PostJson` carries the post's `type` with the rest of its
 fields, plus three node-local columns: `blockHeight` and `blockIndex` — the confirming block
 and the post's committed position in it — and `blockCreatedAt`, the confirming block
@@ -1637,7 +1637,7 @@ There is **no other legal bond or invite shape**. In particular:
   with every other transaction; the block body has no prune section.
 - ⛔ **The subtree is derived, never carried.** At §8c the set is
   `getSubtreeTopology(rootPostHash)` — every `block_topology` row reachable from
-  the root through `parent_refs`, the root included, **as the table stands after
+  the root through its parent edges, the root included, **as the table stands after
   §8 populated it from this block's own posts** — so a reply confirmed in the
   prune's block is in the set, and a reply confirmed between the prune's signing
   and its inclusion invalidates nothing. Every node derives the same set from
@@ -2881,7 +2881,6 @@ Fresh schema — no Phase 1 migration.
 | `getPost(id)` | `(string) => StoredPost \| Stump \| PrunedTombstone \| null` — "Resolution order for a post id" |
 | `getMissingBodies(limit)` | `(number) => { id, contentHash }[]` — rows with `content IS NULL`, newest first (`block_height` desc, `block_index` desc); the backfill list |
 | `queryPostsPage({ author?, limit, after? })` | `({ author?: Uint8Array } & Page<PostKey>) => { rows: StoredPost[], next: PostKey \| null, pending: StoredPost[], pendingCount: number }` — `rows` one page of the live committed rows (placeholders included), newest first in committed order, strictly after `after`; `pending` the live pending rows, the author's when `author` is given, newest arrival first (`rowid` descending), cut to `limit`; `pendingCount` over all of them |
-| `getPendingPosts(limit)` | `(number) => StoredPost[]` — oldest first, by arrival |
 | `confirmPost(postId, blockHeight, blockIndex)` | `(string, number, number) => void` — height and committed position |
 | `unconfirmPost(postId)` | `(string) => void` — for fork rollbacks; clears height and position, keeps the body |
 | `deletePendingPost(postId)` | `(string) => void` — the pending row of a post transaction that left the pool unconfirmed (Post transactions → the pending-row rule) |
@@ -2889,7 +2888,7 @@ Fresh schema — no Phase 1 migration.
 | `restorePostRows(rows)` | `(DeletedPostRow[]) => void` — the inverse, from the journal |
 | `getPrunedTombstone(id)` | `(string) => PrunedTombstone \| null` — step 3 of the resolution order: a `block_topology` row whose parent chain reaches a stump |
 | `getParentRefs(postId)` | `(string) => PostId[]` |
-| `getAncestorsNearest(postId, limit)` | `(string, number) => { rows: StoredPost[], count: number }` — the nearest `limit` ancestors, oldest first, walking the parent chain upward from the post; `count` is the chain's whole depth |
+| `getAncestorsNearest(postId, limit)` | `(string, number) => { rows: StoredPost[], count: number }` — the nearest `limit` ancestors, oldest first, walking the parent chain upward from the post; `count` is the chain's whole depth. **The chain ends at the first ancestor with no `dag_posts` row** — a stump — so `count` never exceeds what `rows` can carry; one recursive CTE over `dag_parent_refs`, one lookup per level |
 | `getSubtreePage(postId, page)` | `(string, Page<PostKey>) => { rows: StoredPost[], next: PostKey \| null, count: number, pending: StoredPost[], pendingCount: number }` — `rows` one page of the subtree's committed rows (the recursive CTE, stated once) in committed order, `(block_height, block_index)` ascending, strictly after `after`; `count` over the whole subtree, pending included; `pending` the subtree's pending rows, newest arrival first, cut to `limit`; `pendingCount` over all of them. The CTE enumerates the subtree — O(subtree) on the `dag_parent_refs (parent_id)` index — and the page is `limit + 1` rows of that enumeration: the one page read whose cost is the set's, not the page's |
 
 > **`StoredPost` is the DAG `Post` with `content: string | null`, `contentHash`, and a required
@@ -2950,6 +2949,13 @@ applied_at_block INTEGER NOT NULL, PRIMARY KEY (target_post_id, liker_id))`. Wri
 read inside consensus). Content-layer consensus state, the `block_topology` tier:
 deterministic by replay, journalled with exact inverses, not in the `stateRoot`. The
 `dag_likes` table is **dropped**.
+
+**The topology's parent edges are a table of their own.** `block_topology_parents
+(parent_id, post_id, PRIMARY KEY (parent_id, post_id))` holds one row per entry of a
+topology row's `parent_refs`, written by `insertBlockTopology` with the row and deleted by
+`rollbackBlockTopology` with it — the column stays the record, the table is its index. The
+subtree walk (`getSubtreeTopology`, → Prune transactions) recurses on `parent_id = ?`, one
+index lookup per row of the set, so a prune's derived set costs the set and not the table.
 
 | Function | Signature |
 |----------|-----------|
@@ -3333,7 +3339,7 @@ Full semantics in `MEMPOOL_INTERFACE.md`.
 ```
 {
   rowid: number
-  entryType: "utxo_tx" | "prune"
+  entryType: "utxo_tx"
   utxoTxBytes: Uint8Array | null
   expiresAtHeight: number
   createdAt: string

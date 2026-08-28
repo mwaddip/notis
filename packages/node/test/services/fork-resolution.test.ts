@@ -27,6 +27,7 @@ import type { ForkResolutionNet } from '../../src/services/fork-resolution.js';
 import type Database from 'better-sqlite3';
 import type { Config } from '../../src/config.js';
 import {
+  hex,
   makeApplicableBlock,
   makeKarmaBox,
   makeLikeTx,
@@ -34,6 +35,7 @@ import {
   makeTestIdentity,
   mineNextBlock,
   signHeader,
+  signTransaction,
   solveHeaderPow, seedPostTx, fillerTx, activateProverOverStore, insertPoisonedBlock,
   buildMinedHeaderChain } from '../helpers.js';
 
@@ -1477,6 +1479,76 @@ describe('revertBlock', () => {
     expect(restoredBox!.id).toBe(oldBoxId);
 
     expect(utxo.getBox(newBoxId)).toBeNull();
+  });
+
+  it('a prune\'s re-insertion on revert restores posts and clears the stump', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+
+    const author = makeTestIdentity();
+    const posts = await importPosts();
+    const utxo = await importUtxo();
+
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'revert-prune');
+    posts.insertPost(postId, commit, content);
+
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+
+    // Block 1: confirms the post.
+    const mempool = await importMempoolFresh();
+    mempool.insertUtxoTx(postTx, 1000);
+    await mineNextBlock(bc);
+    expect(posts.getPost(postId)).toBeDefined();
+
+    // Block 2: prune the post.
+    const pruneKarma = makeKarmaBox(1n, author.userId, 0, 5001);
+    utxo.insertBox(pruneKarma);
+    const pruneTx: UtxoTransaction = {
+      inputs: [pruneKarma.id!],
+      outputs: [
+        { boxType: 'karma', value: 1n, createdAtBlock: 0, owner: author.userId } as never,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+      prune: { rootPostHash: postId },
+    };
+    signTransaction(pruneTx, author.privateKey, hex(author.userId));
+    mempool.insertUtxoTx(pruneTx, 1000);
+    await mineNextBlock(bc);
+
+    // Post is gone, stump exists.
+    const postAfterPrune = posts.getPost(postId);
+    expect(postAfterPrune && 'rootPostHash' in postAfterPrune).toBe(true);
+
+    // Revert block 2.
+    const forkResolution = await importForkResolution();
+    forkResolution.revertBlock(2);
+
+    // Post is back, stump is gone.
+    const postAfterRevert = posts.getPost(postId);
+    expect(postAfterRevert).toBeDefined();
+    expect(postAfterRevert && 'status' in postAfterRevert).toBe(true);
+
+    const stumps = db.getDb()
+      .prepare('SELECT * FROM dag_stumps WHERE root_post_hash = ?')
+      .all(postId);
+    expect(stumps).toHaveLength(0);
+
+    // The prune tx's UTXO reversal: the input is unspent again.
+    const inputRow = db.getDb()
+      .prepare('SELECT spent_at_block FROM utxo_boxes WHERE id = ?')
+      .get(pruneKarma.id!) as { spent_at_block: number | null } | undefined;
+    expect(inputRow).toBeDefined();
+    expect(inputRow!.spent_at_block).toBeNull();
+
+    // The prune tx's output is gone.
+    const { computeTxId } = await import('@dagsocial/types');
+    const pruneTxId = computeTxId(pruneTx);
+    const outputRow = db.getDb()
+      .prepare('SELECT id FROM utxo_boxes WHERE tx_id = ? AND output_index = 0')
+      .get(pruneTxId) as { id: string } | undefined;
+    expect(outputRow).toBeUndefined();
   });
 });
 

@@ -1638,7 +1638,7 @@ document.getElementById('postBtn').addEventListener('click', async () => {
     });
     if (!postRes.ok) {
       const err = await postRes.json();
-      setStatus(err.error || 'post failed', 'error');
+      setStatus(err.reason || err.error || 'post failed', 'error');
       return;
     }
     const posted = await postRes.json();

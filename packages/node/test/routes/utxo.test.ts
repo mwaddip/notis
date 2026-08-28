@@ -57,6 +57,7 @@ async function request(
   path: string,
   method: 'GET' | 'POST' = 'GET',
   body?: unknown,
+  height = 100,
 ): Promise<{ status: number; data: unknown }> {
   return new Promise((resolve) => {
     const deps = {
@@ -66,7 +67,7 @@ async function request(
       getCreditValue,
       getCreditBoxesPage,
       getBondBoxesPage,
-      getCurrentHeight: () => 100,
+      getCurrentHeight: () => height,
       decayCfg: DECAY_CFG,
       getUtxoEngineDeps: () => ({
         // The pending view, as server.ts wires the submission routes: a grant
@@ -222,42 +223,7 @@ describe('UTXO routes', () => {
       lifetimeLikesReceived: 0n,
     });
 
-    // Request at height 100 (stale threshold is 40320, so height 100 is not stale with activity at 1)
-    // Need a height much greater than staleThresholdBlocks + activity
-    const staleRequest = (): Promise<{ status: number; data: unknown }> =>
-      new Promise((resolve) => {
-        const deps = {
-          getKarmaTotal,
-          getKarmaBoxesPage,
-          getIdentityRecord,
-          getCreditValue,
-          getCreditBoxesPage,
-          getBondBoxesPage,
-          getCurrentHeight: () => 100000,
-          decayCfg: DECAY_CFG,
-          getUtxoEngineDeps: () => ({} as any),
-        };
-        const app = express();
-        app.use(express.json());
-        app.use(createRouter(deps));
-        const server = app.listen(0, () => {
-          const addr = server.address() as { port: number };
-          const req = http.request(
-            { hostname: 'localhost', port: addr.port, path: `/karma/${karmaUserIdHex}`, method: 'GET' },
-            (res) => {
-              let d = '';
-              res.on('data', (c) => (d += c));
-              res.on('end', () => {
-                server.close();
-                resolve({ status: res.statusCode ?? 0, data: JSON.parse(d) });
-              });
-            },
-          );
-          req.end();
-        });
-      });
-
-    const res = await staleRequest();
+    const res = await request(`/karma/${karmaUserIdHex}`, 'GET', undefined, 100000);
     expect(res.status).toBe(200);
     const body = res.data as Record<string, unknown>;
     expect(BigInt(body.effective as string)).toBeLessThan(BigInt(body.total as string));

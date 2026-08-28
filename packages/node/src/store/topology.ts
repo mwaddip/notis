@@ -15,10 +15,19 @@ export function insertBlockTopology(
   blockHeight: number,
 ): void {
   const db = getDb();
-  db.prepare(
-    `INSERT OR IGNORE INTO block_topology (post_id, parent_refs, author, block_height)
-     VALUES (?, ?, ?, ?)`,
-  ).run(postId, JSON.stringify(parentRefs), author, blockHeight);
+  db.transaction(() => {
+    db.prepare(
+      `INSERT OR IGNORE INTO block_topology (post_id, parent_refs, author, block_height)
+       VALUES (?, ?, ?, ?)`,
+    ).run(postId, JSON.stringify(parentRefs), author, blockHeight);
+    const edgeStmt = db.prepare(
+      `INSERT OR IGNORE INTO block_topology_parents (parent_id, post_id)
+       VALUES (?, ?)`,
+    );
+    for (const parentId of parentRefs) {
+      edgeStmt.run(parentId, postId);
+    }
+  })();
 }
 
 /**
@@ -64,18 +73,17 @@ export function getTopologyHeight(postId: string): number | null {
  * Returns the set of all post IDs in the subtree rooted at rootPostId
  * (including rootPostId itself).
  */
+// NODE_INTERFACE → "The topology's parent edges are a table of their own"
 export function getSubtreeTopology(rootPostId: string): Set<string> {
   const db = getDb();
   const rows = db.prepare(
     `WITH RECURSIVE subtree AS (
        SELECT post_id FROM block_topology WHERE post_id = ?
        UNION
-       SELECT bt.post_id FROM block_topology bt
-       JOIN subtree s ON EXISTS (
-         SELECT 1 FROM json_each(bt.parent_refs) WHERE value = s.post_id
-       )
+       SELECT e.post_id FROM block_topology_parents e
+       JOIN subtree s ON e.parent_id = s.post_id
      )
-     SELECT DISTINCT post_id FROM subtree`,
+     SELECT post_id FROM subtree`,
   ).all(rootPostId) as Array<{ post_id: string }>;
   return new Set(rows.map(r => r.post_id));
 }
@@ -86,9 +94,15 @@ export function getSubtreeTopology(rootPostId: string): Set<string> {
  */
 export function rollbackBlockTopology(blockHeight: number): void {
   const db = getDb();
-  db.prepare(
-    `DELETE FROM block_topology WHERE block_height = ?`,
-  ).run(blockHeight);
+  db.transaction(() => {
+    db.prepare(
+      `DELETE FROM block_topology_parents
+       WHERE post_id IN (SELECT post_id FROM block_topology WHERE block_height = ?)`,
+    ).run(blockHeight);
+    db.prepare(
+      `DELETE FROM block_topology WHERE block_height = ?`,
+    ).run(blockHeight);
+  })();
 }
 
 /**
