@@ -901,7 +901,7 @@ describe('posts store', () => {
     expect(page.next).not.toBeNull();
   });
 
-  // --- keyset pins (phase 3) ---
+  // --- keyset pins ---
 
   it('feed continuation across a head insert: no overlap, no gap', async () => {
     const { initDb } = await importDbFresh();
