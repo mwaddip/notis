@@ -1,7 +1,7 @@
 import type { PostType, Stump } from '@dagsocial/types';
 import type { PostStatus, StoredPost, PrunedTombstone } from '../store/posts.js';
 import { isStoredPost, isStump, isPrunedTombstone } from '../store/posts.js';
-import type { Page } from '../store/index.js';
+import type { Page, PostKey } from '../store/index.js';
 
 // ---------------------------------------------------------------------------
 // Dependencies
@@ -9,15 +9,21 @@ import type { Page } from '../store/index.js';
 
 export interface FeedServiceDeps {
   getPost: (id: string) => StoredPost | Stump | PrunedTombstone | null;
-  queryPosts: (opts: {
+  queryPostsPage: (opts: {
     author?: Uint8Array;
-    limit?: number;
-    offset?: number;
-  }) => StoredPost[];
+    limit: number;
+    after?: PostKey;
+  }) => { rows: StoredPost[]; next: PostKey | null; pending: StoredPost[]; pendingCount: number };
   getLikeRecordCount: (postId: string) => number;
   hasLikeRecord: (postId: string, likerId: Uint8Array) => boolean;
   getAncestorsNearest: (postId: string, limit: number) => { rows: StoredPost[]; count: number };
-  getSubtreePage: (postId: string, page: Page) => { rows: StoredPost[]; count: number };
+  getSubtreePage: (postId: string, page: Page<PostKey>) => {
+    rows: StoredPost[];
+    next: PostKey | null;
+    count: number;
+    pending: StoredPost[];
+    pendingCount: number;
+  };
   getBlockCreatedAt: (height: number) => number | null;
 }
 
@@ -66,12 +72,22 @@ export interface WithdrawnJson {
   withdrawnAtHeight: number;
 }
 
-export interface ThreadJson {
+export interface ThreadResult {
   post: PostJson | StumpJson | PrunedJson | WithdrawnJson | null;
   ancestors: Array<PostJson | WithdrawnJson>;
   ancestorCount: number;
   descendants: Array<PostJson | WithdrawnJson>;
   descendantCount: number;
+  next: PostKey | null;
+  pending: Array<PostJson | WithdrawnJson>;
+  pendingCount: number;
+}
+
+export interface FeedResult {
+  posts: Array<PostJson | WithdrawnJson>;
+  next: PostKey | null;
+  pending: Array<PostJson | WithdrawnJson>;
+  pendingCount: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -132,6 +148,7 @@ export function withdrawnToJson(post: StoredPost): WithdrawnJson {
   };
 }
 
+
 // ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
@@ -171,27 +188,52 @@ export class FeedService {
   queryPosts(opts: {
     author?: Uint8Array;
     limit: number;
-    offset: number;
+    after?: PostKey;
     viewer?: Uint8Array | null;
-  }): Array<PostJson | WithdrawnJson> {
-    const posts = this.deps.queryPosts({ author: opts.author, limit: opts.limit, offset: opts.offset });
-    return posts.map((post) => this.storedPostToJson(post, opts.viewer ?? null));
+  }): FeedResult {
+    const result = this.deps.queryPostsPage({ author: opts.author, limit: opts.limit, after: opts.after });
+    const viewer = opts.viewer ?? null;
+    return {
+      posts: result.rows.map((post) => this.storedPostToJson(post, viewer)),
+      next: result.next,
+      pending: result.pending.map((post) => this.storedPostToJson(post, viewer)),
+      pendingCount: result.pendingCount,
+    };
   }
 
-  getThread(id: string, page: Page, viewer: Uint8Array | null = null): ThreadJson | null {
+  getThread(
+    id: string,
+    page: Page<PostKey>,
+    viewer: Uint8Array | null = null,
+  ): ThreadResult | null {
     const result = this.deps.getPost(id);
     if (!result) return null;
 
     if (isStoredPost(result)) {
       if (result.withdrawnAtHeight !== null) {
-        return { post: withdrawnToJson(result), ancestors: [], ancestorCount: 0, descendants: [], descendantCount: 0 };
+        return {
+          post: withdrawnToJson(result),
+          ancestors: [], ancestorCount: 0,
+          descendants: [], descendantCount: 0,
+          next: null, pending: [], pendingCount: 0,
+        };
       }
     }
     if (isStump(result)) {
-      return { post: stumpToJson(result), ancestors: [], ancestorCount: 0, descendants: [], descendantCount: 0 };
+      return {
+        post: stumpToJson(result),
+        ancestors: [], ancestorCount: 0,
+        descendants: [], descendantCount: 0,
+        next: null, pending: [], pendingCount: 0,
+      };
     }
     if (isPrunedTombstone(result)) {
-      return { post: prunedToJson(result), ancestors: [], ancestorCount: 0, descendants: [], descendantCount: 0 };
+      return {
+        post: prunedToJson(result),
+        ancestors: [], ancestorCount: 0,
+        descendants: [], descendantCount: 0,
+        next: null, pending: [], pendingCount: 0,
+      };
     }
 
     const post = result;
@@ -210,6 +252,9 @@ export class FeedService {
       ancestorCount: ancestorResult.count,
       descendants,
       descendantCount: descendantResult.count,
+      next: descendantResult.next,
+      pending: descendantResult.pending.map((p) => this.storedPostToJson(p, viewer)),
+      pendingCount: descendantResult.pendingCount,
     };
   }
 }

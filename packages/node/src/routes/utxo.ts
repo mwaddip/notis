@@ -3,25 +3,25 @@ import type { UtxoTransaction, KarmaBox, CreditBox, BondBox } from '@dagsocial/t
 import { sendCredits } from '../services/credits.js';
 import type { UtxoEngineDeps } from '../services/utxo-engine.js';
 import type { IdentityRecord } from '../store/identity-records.js';
-import type { Page } from '../store/index.js';
+import type { Page, PageResult, BoxKey } from '../store/index.js';
 import type { DecayCfg } from '../services/decay.js';
 import { effectiveKarma } from '../services/decay.js';
 import { getNet } from '../services/net-instance.js';
 import { jsonToTx } from './json-to-tx.js';
 import { respondError } from './respond-error.js';
-import { parsePage, isPageError } from './page.js';
+import { parseLimit, isLimitError, parseAfter, isAfterError, formatKey } from './page.js';
 
 // ---------------------------------------------------------------------------
 // Dependency types
 // ---------------------------------------------------------------------------
 
 export interface UtxoDeps {
-  getKarmaValue(owner: Uint8Array): bigint;
-  getKarmaBoxesPage(owner: Uint8Array, page: Page): { rows: KarmaBox[]; count: number };
+  getKarmaTotal(owner: Uint8Array): bigint;
+  getKarmaBoxesPage(owner: Uint8Array, page: Page<BoxKey>): PageResult<KarmaBox, BoxKey>;
   getIdentityRecord(owner: Uint8Array): IdentityRecord | null;
   getCreditValue(owner: Uint8Array): bigint;
-  getCreditBoxesPage(owner: Uint8Array, page: Page): { rows: CreditBox[]; count: number };
-  getBondBoxesPage(inviterId: Uint8Array, page: Page): { rows: BondBox[]; count: number };
+  getCreditBoxesPage(owner: Uint8Array, page: Page<BoxKey>): PageResult<CreditBox, BoxKey>;
+  getBondBoxesPage(inviterId: Uint8Array, page: Page<string>): PageResult<BondBox, string>;
   getCurrentHeight(): number;
   getUtxoEngineDeps(): UtxoEngineDeps;
   decayCfg: DecayCfg;
@@ -52,19 +52,20 @@ export function createRouter(deps: UtxoDeps): Router {
     const userIdBytes = parseUserId(req.params['userId']!, res);
     if (!userIdBytes) return;
 
-    const page = parsePage(req.query as Record<string, unknown>);
-    if (isPageError(page)) {
-      res.status(400).json({ error: page.error });
-      return;
-    }
+    const limit = parseLimit(req.query as Record<string, unknown>);
+    if (isLimitError(limit)) { res.status(400).json({ error: limit.error }); return; }
+    const after = parseAfter(req.query as Record<string, unknown>, 'box');
+    if (isAfterError(after)) { res.status(400).json({ error: after.error }); return; }
 
-    const pageResult = deps.getKarmaBoxesPage(userIdBytes, page);
+    const pageResult = deps.getKarmaBoxesPage(userIdBytes, {
+      limit, after: after as BoxKey | undefined,
+    });
     if (pageResult.count === 0) {
       res.status(404).json({ error: 'No karma box found' });
       return;
     }
 
-    const total = deps.getKarmaValue(userIdBytes);
+    const total = deps.getKarmaTotal(userIdBytes);
     const record = deps.getIdentityRecord(userIdBytes);
     const height = deps.getCurrentHeight();
     const eff = effectiveKarma(total, record, height, deps.decayCfg);
@@ -78,6 +79,7 @@ export function createRouter(deps: UtxoDeps): Router {
         value: b.value.toString(),
       })),
       boxCount: pageResult.count,
+      next: pageResult.next ? formatKey('box', pageResult.next) : null,
       lastActivityBlock: record?.lastActivityBlock ?? 0,
       lastDecayBlock: record?.lastDecayBlock ?? 0,
       height,
@@ -89,14 +91,15 @@ export function createRouter(deps: UtxoDeps): Router {
     const userIdBytes = parseUserId(req.params['userId']!, res);
     if (!userIdBytes) return;
 
-    const page = parsePage(req.query as Record<string, unknown>);
-    if (isPageError(page)) {
-      res.status(400).json({ error: page.error });
-      return;
-    }
+    const limit = parseLimit(req.query as Record<string, unknown>);
+    if (isLimitError(limit)) { res.status(400).json({ error: limit.error }); return; }
+    const after = parseAfter(req.query as Record<string, unknown>, 'box');
+    if (isAfterError(after)) { res.status(400).json({ error: after.error }); return; }
 
     const total = deps.getCreditValue(userIdBytes);
-    const pageResult = deps.getCreditBoxesPage(userIdBytes, page);
+    const pageResult = deps.getCreditBoxesPage(userIdBytes, {
+      limit, after: after as BoxKey | undefined,
+    });
     if (pageResult.count === 0) {
       res.status(404).json({ error: 'No credit box found' });
       return;
@@ -111,6 +114,7 @@ export function createRouter(deps: UtxoDeps): Router {
         ...(b.lockedUntilBlock !== undefined ? { lockedUntilBlock: b.lockedUntilBlock } : {}),
       })),
       boxCount: pageResult.count,
+      next: pageResult.next ? formatKey('box', pageResult.next) : null,
     });
   });
 
@@ -160,13 +164,14 @@ export function createRouter(deps: UtxoDeps): Router {
     const userIdBytes = parseUserId(req.params['userId']!, res);
     if (!userIdBytes) return;
 
-    const page = parsePage(req.query as Record<string, unknown>);
-    if (isPageError(page)) {
-      res.status(400).json({ error: page.error });
-      return;
-    }
+    const limit = parseLimit(req.query as Record<string, unknown>);
+    if (isLimitError(limit)) { res.status(400).json({ error: limit.error }); return; }
+    const after = parseAfter(req.query as Record<string, unknown>, 'id');
+    if (isAfterError(after)) { res.status(400).json({ error: after.error }); return; }
 
-    const pageResult = deps.getBondBoxesPage(userIdBytes, page);
+    const pageResult = deps.getBondBoxesPage(userIdBytes, {
+      limit, after: after as string | undefined,
+    });
 
     res.json({
       bonds: pageResult.rows.map((b) => ({
@@ -176,6 +181,7 @@ export function createRouter(deps: UtxoDeps): Router {
         inviteePublicKey: Buffer.from(b.inviteePublicKey).toString('hex'),
       })),
       bondCount: pageResult.count,
+      next: pageResult.next,
     });
   });
 

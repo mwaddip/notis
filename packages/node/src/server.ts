@@ -224,7 +224,7 @@ export function createApp(config: Config): express.Express {
       verifyPost,
       insertPost: store.insertPost,
       getPost: store.getPost,
-      queryPosts: store.queryPosts,
+      queryPostsPage: store.queryPostsPage,
       getKarmaBoxes: store.getKarmaBoxes,
       getIdentityRecord: store.getIdentityRecord,
       decayCfg: decayConfig(),
@@ -289,7 +289,7 @@ export function createApp(config: Config): express.Express {
   app.use(
     '/',
     utxoRoutes({
-      getKarmaValue: store.getKarmaValue,
+      getKarmaTotal: store.getKarmaTotal,
       getKarmaBoxesPage: store.getKarmaBoxesPage,
       getIdentityRecord: store.getIdentityRecord,
       getCreditValue: store.getCreditValue,

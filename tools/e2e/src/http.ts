@@ -105,6 +105,7 @@ export interface PostResponse {
   parentRefs: string[];
   status: string;
   blockHeight: number | null;
+  blockIndex: number | null;
   likeCount: number;
   likedByViewer: boolean | null;
   confirmedAuthor: string | null;
@@ -245,4 +246,46 @@ export async function getStatus(
 ): Promise<{ vouchCooldownBlocks: number; blockHeight: number }> {
   const data = await jsonGet(node, '/status');
   return data as { vouchCooldownBlocks: number; blockHeight: number };
+}
+
+export interface PostsPage {
+  posts: PostResponse[];
+  next: string | null;
+  pending: PostResponse[];
+  pendingCount: number;
+}
+
+export async function getPosts(
+  node: NodeProcess,
+  query?: string,
+): Promise<PostsPage> {
+  const path = query ? `/posts?${query}` : '/posts';
+  const res = await fetch(`${node.url}${path}`);
+  const data = await res.json();
+  if (!res.ok) throw new NodeError(res.status, data as Record<string, unknown>);
+  return data as PostsPage;
+}
+
+export interface ThreadPage {
+  post: GetPostResponse;
+  ancestors: PostResponse[];
+  ancestorCount: number;
+  descendants: PostResponse[];
+  descendantCount: number;
+  next: string | null;
+  pending: PostResponse[];
+  pendingCount: number;
+}
+
+export async function getThread(
+  node: NodeProcess,
+  postId: string,
+  query?: string,
+): Promise<ThreadPage | null> {
+  const path = query ? `/posts/${postId}/thread?${query}` : `/posts/${postId}/thread`;
+  const res = await fetch(`${node.url}${path}`);
+  if (res.status === 404) return null;
+  const data = await res.json();
+  if (!res.ok) throw new NodeError(res.status, data as Record<string, unknown>);
+  return data as ThreadPage;
 }

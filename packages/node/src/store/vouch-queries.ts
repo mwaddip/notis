@@ -1,6 +1,8 @@
 import { getDb } from './db.js';
-import { getBox } from './utxo.js';
+import { getBox, rowToBox } from './utxo.js';
+import type { UtxoRow } from './utxo.js';
 import type { VouchBox } from '@dagsocial/types';
+import type { Page, PageResult } from './index.js';
 
 function pubkeyToHex(pk: Uint8Array): string {
   return Buffer.from(pk).toString('hex');
@@ -24,27 +26,39 @@ export function getVouchBox(
   return getBox(row.id) as VouchBox | null;
 }
 
-// NODE_INTERFACE → Vouches
+// NODE_INTERFACE → "Every list a view returns is a page"
 const VOUCH_TARGET_WHERE =
   `box_type = 'vouch' AND spent_at_block IS NULL AND json_extract(extra_data, '$.targetId') = ?`;
 export function getVouchesForTargetPage(
   targetId: Uint8Array,
-  page: { limit: number; offset: number },
-): { rows: VouchBox[]; count: number } {
+  page: Page<string>,
+): PageResult<VouchBox, string> {
   const db = getDb();
   const hex = pubkeyToHex(targetId);
-  const ids = db
+  const afterClause = page.after ? ` AND id > ?` : '';
+  const params: unknown[] = [hex];
+  if (page.after) params.push(page.after);
+  params.push(page.limit + 1);
+
+  const rows = db
     .prepare(
-      `SELECT id FROM utxo_boxes WHERE ${VOUCH_TARGET_WHERE} ORDER BY id LIMIT ? OFFSET ?`,
+      `SELECT * FROM utxo_boxes WHERE ${VOUCH_TARGET_WHERE}${afterClause} ORDER BY id LIMIT ?`,
     )
-    .all(hex, page.limit, page.offset) as Array<{ id: string }>;
-  const rows = ids
-    .map((r) => getBox(r.id))
-    .filter((b): b is VouchBox => b !== null && b.boxType === 'vouch');
+    .safeIntegers()
+    .all(...params) as UtxoRow[];
+
+  const hasMore = rows.length > page.limit;
+  const resultRows = hasMore ? rows.slice(0, page.limit) : rows;
+  const vouches = resultRows
+    .map((r) => rowToBox(r) as VouchBox);
+  const last = resultRows[resultRows.length - 1];
+  const next: string | null = hasMore && last ? last.id : null;
+
   const countRow = db
     .prepare(`SELECT COUNT(*) AS cnt FROM utxo_boxes WHERE ${VOUCH_TARGET_WHERE}`)
     .get(hex) as { cnt: number };
-  return { rows, count: countRow.cnt };
+
+  return { rows: vouches, next, count: countRow.cnt };
 }
 
 export function getVouchesByVoucher(voucherId: Uint8Array): VouchBox[] {

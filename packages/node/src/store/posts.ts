@@ -1,5 +1,6 @@
 import { getDb } from './db.js';
 import type { PostCommit, PostId, PostType, Stump } from '@dagsocial/types';
+import type { Page, PostKey } from './index.js';
 
 // ---------------------------------------------------------------------------
 // Row shapes
@@ -267,32 +268,55 @@ export function getPlaceholdersAt(height: number): Array<{ id: string; contentHa
   return rows.map(r => ({ id: r.id, contentHash: r.content_hash }));
 }
 
-export function queryPosts(opts: {
+// NODE_INTERFACE → "Every list a view returns is a page"
+export function queryPostsPage(opts: {
   author?: Uint8Array;
-  limit?: number;
-  offset?: number;
-}): StoredPost[] {
+  limit: number;
+  after?: PostKey;
+}): { rows: StoredPost[]; next: PostKey | null; pending: StoredPost[]; pendingCount: number } {
   const db = getDb();
-  const limit = opts.limit ?? 50;
-  const offset = opts.offset ?? 0;
 
-  let sql = 'SELECT * FROM dag_posts';
-  const params: unknown[] = [];
-
+  // Committed page: status = 'confirmed', newest first, keyset
+  let committedSql = `SELECT * FROM dag_posts WHERE status = 'confirmed'`;
+  const committedParams: unknown[] = [];
   if (opts.author) {
-    sql += ' WHERE author = ?';
-    params.push(Buffer.from(opts.author));
+    committedSql += ` AND author = ?`;
+    committedParams.push(Buffer.from(opts.author));
   }
+  if (opts.after) {
+    committedSql += ` AND (block_height, block_index) < (?, ?)`;
+    committedParams.push(opts.after.blockHeight, opts.after.blockIndex);
+  }
+  committedSql += ` ORDER BY block_height DESC, block_index DESC LIMIT ?`;
+  committedParams.push(opts.limit + 1);
 
-  sql += ` ORDER BY
-    CASE WHEN block_height IS NULL THEN 0 ELSE 1 END,
-    CASE WHEN block_height IS NULL THEN rowid ELSE NULL END DESC,
-    block_height DESC, block_index DESC
-    LIMIT ? OFFSET ?`;
-  params.push(limit, offset);
+  const committedRows = db.prepare(committedSql).all(...committedParams) as PostRow[];
+  const hasMore = committedRows.length > opts.limit;
+  const pageRows = hasMore ? committedRows.slice(0, opts.limit) : committedRows;
+  const rows = pageRows.map(rowToPost);
+  const last = pageRows[pageRows.length - 1];
+  const next: PostKey | null = hasMore && last
+    ? { blockHeight: last.block_height!, blockIndex: last.block_index! }
+    : null;
 
-  const rows = db.prepare(sql).all(...params) as PostRow[];
-  return rows.map(rowToPost);
+  // Pending window
+  let pendingSql = `SELECT * FROM dag_posts WHERE status = 'pending'`;
+  const pendingParams: unknown[] = [];
+  if (opts.author) {
+    pendingSql += ` AND author = ?`;
+    pendingParams.push(Buffer.from(opts.author));
+  }
+  const pendingCountSql = pendingSql.replace('SELECT *', 'SELECT COUNT(*) AS cnt');
+
+  pendingSql += ` ORDER BY rowid DESC LIMIT ?`;
+  pendingParams.push(opts.limit);
+
+  const pendingRows = db.prepare(pendingSql).all(...pendingParams) as PostRow[];
+  const pending = pendingRows.map(rowToPost);
+  const countRow = db.prepare(pendingCountSql).all(...pendingParams.slice(0, -1)) as Array<{ cnt: number }>;
+  const pendingCount = countRow[0]?.cnt ?? 0;
+
+  return { rows, next, pending, pendingCount };
 }
 
 export function getPendingPosts(limit: number): StoredPost[] {
@@ -461,31 +485,61 @@ const SUBTREE_CTE =
      JOIN subtree s ON dpr.parent_id = s.id
    )`;
 
-// NODE_INTERFACE → Posts DAG
+// NODE_INTERFACE → "Every list a view returns is a page"
 export function getSubtreePage(
   postId: string,
-  page: { limit: number; offset: number },
-): { rows: StoredPost[]; count: number } {
+  page: Page<PostKey>,
+): { rows: StoredPost[]; next: PostKey | null; count: number; pending: StoredPost[]; pendingCount: number } {
   const db = getDb();
-  const rows = db
-    .prepare(
-      `${SUBTREE_CTE}
-       SELECT dp.*, dp.rowid AS rn FROM dag_posts dp
-       JOIN subtree s ON dp.id = s.id
-       ORDER BY
-         CASE WHEN dp.status = 'confirmed' THEN 0 ELSE 1 END,
-         CASE WHEN dp.status = 'confirmed' THEN dp.block_height END,
-         CASE WHEN dp.status = 'confirmed' THEN dp.block_index END,
-         rn
-       LIMIT ? OFFSET ?`,
-    )
-    .all(postId, page.limit, page.offset) as PostRow[];
 
+  // Committed page: ascending, strictly after `after`
+  let committedSql =
+    `${SUBTREE_CTE}
+     SELECT dp.* FROM dag_posts dp
+     JOIN subtree s ON dp.id = s.id
+     WHERE dp.status = 'confirmed'`;
+  const committedParams: unknown[] = [postId];
+  if (page.after) {
+    committedSql += ` AND (dp.block_height, dp.block_index) > (?, ?)`;
+    committedParams.push(page.after.blockHeight, page.after.blockIndex);
+  }
+  committedSql += ` ORDER BY dp.block_height, dp.block_index LIMIT ?`;
+  committedParams.push(page.limit + 1);
+
+  const committedRows = db.prepare(committedSql).all(...committedParams) as PostRow[];
+  const hasMore = committedRows.length > page.limit;
+  const pageRows = hasMore ? committedRows.slice(0, page.limit) : committedRows;
+  const rows = pageRows.map(rowToPost);
+  const last = pageRows[pageRows.length - 1];
+  const next: PostKey | null = hasMore && last
+    ? { blockHeight: last.block_height!, blockIndex: last.block_index! }
+    : null;
+
+  // Pending window: subtree's pending rows, newest arrival first, cut to limit
+  const pendingRows = db.prepare(
+    `${SUBTREE_CTE}
+     SELECT dp.* FROM dag_posts dp
+     JOIN subtree s ON dp.id = s.id
+     WHERE dp.status = 'pending'
+     ORDER BY dp.rowid DESC
+     LIMIT ?`,
+  ).all(postId, page.limit) as PostRow[];
+  const pending = pendingRows.map(rowToPost);
+
+  const pendingCountRow = db.prepare(
+    `${SUBTREE_CTE}
+     SELECT COUNT(*) AS cnt FROM dag_posts dp
+     JOIN subtree s ON dp.id = s.id
+     WHERE dp.status = 'pending'`,
+  ).get(postId) as { cnt: number };
+  const pendingCount = pendingCountRow.cnt;
+
+  // Count over the whole subtree, pending included
   const countRow = db
     .prepare(`${SUBTREE_CTE} SELECT COUNT(*) AS cnt FROM subtree`)
     .get(postId) as { cnt: number };
 
-  return { rows: rows.map(rowToPost), count: countRow.cnt };
+  return { rows, next, count: countRow.cnt, pending, pendingCount };
 }
 
 export function getParentRefs(postId: string): string[] {

@@ -6,7 +6,7 @@ import {
   setPostBody,
   getPost,
   getMissingBodies,
-  queryPosts,
+  queryPostsPage,
   getPendingPosts,
   confirmPost,
   deletePostRows,
@@ -79,20 +79,22 @@ describe('posts store (integration)', () => {
     expect(missing2.some(m => m.id === id)).toBe(false);
   });
 
-  it('queryPosts returns live posts ordered newest first', () => {
+  it('queryPostsPage returns committed posts ordered newest first', () => {
     const { commit: c1, content: content1 } = makeCommit({ content: 'older' });
     const { commit: c2, content: content2 } = makeCommit({ content: 'newer' });
     insertPost(fixturePostId(c1), c1, content1);
+    confirmPost(fixturePostId(c1), 10, 0);
     insertPost(fixturePostId(c2), c2, content2);
+    confirmPost(fixturePostId(c2), 11, 0);
 
-    const results = queryPosts({});
-    const contents = results.map((p) => p.content);
+    const result = queryPostsPage({ limit: 50 });
+    const contents = result.rows.map((p) => p.content);
     const idxNewer = contents.indexOf('newer');
     const idxOlder = contents.indexOf('older');
     expect(idxNewer).toBeLessThan(idxOlder);
   });
 
-  it('queryPosts filters by author', () => {
+  it('queryPostsPage filters by author', () => {
     const suffix = Date.now().toString();
     const alice = uid('alice-int-' + suffix);
     const bob = uid('bob-int-' + suffix);
@@ -100,10 +102,12 @@ describe('posts store (integration)', () => {
     const { commit: ac, content: acContent } = makeCommit({ author: alice, content: 'alice post' });
     const { commit: bc, content: bcContent } = makeCommit({ author: bob, content: 'bob post' });
     insertPost(fixturePostId(ac), ac, acContent);
+    confirmPost(fixturePostId(ac), 12, 0);
     insertPost(fixturePostId(bc), bc, bcContent);
+    confirmPost(fixturePostId(bc), 12, 1);
 
-    const aliceResults = queryPosts({ author: alice });
-    expect(aliceResults.every((p) => Buffer.from(p.author).equals(Buffer.from(alice)))).toBe(true);
+    const aliceResult = queryPostsPage({ author: alice, limit: 50 });
+    expect(aliceResult.rows.every((p) => Buffer.from(p.author).equals(Buffer.from(alice)))).toBe(true);
   });
 
   it('post lifecycle: pending -> confirm -> not in pending', () => {
@@ -131,20 +135,23 @@ describe('posts store (integration)', () => {
     expect(getParentRefs(postId)).toEqual(refs);
   });
 
-  it('getSubtreePage returns all descendants across levels', () => {
+  it('getSubtreePage returns committed descendants across levels', () => {
     const { commit: rootCommit, content: rootContent } = makeCommit({ content: 'tree-root', parentRefs: [] });
     const rootId = fixturePostId(rootCommit);
     insertPost(rootId, rootCommit, rootContent);
+    confirmPost(rootId, 20, 0);
 
     const { commit: childCommit, content: childContent } = makeCommit({ content: 'tree-child', parentRefs: [rootId] });
     const childId = fixturePostId(childCommit);
     insertPost(childId, childCommit, childContent);
+    confirmPost(childId, 21, 0);
 
     const { commit: gcCommit, content: gcContent } = makeCommit({ content: 'tree-grandchild', parentRefs: [childId] });
     insertPost(fixturePostId(gcCommit), gcCommit, gcContent);
+    confirmPost(fixturePostId(gcCommit), 22, 0);
 
-    const result = getSubtreePage(rootId, { limit: 50, offset: 0 });
-    const contents = result.rows.map((p) => p.content).sort();
+    const result = getSubtreePage(rootId, { limit: 50 });
+    const contents = result.rows.map((p) => p.content);
     expect(contents).toEqual(['tree-child', 'tree-grandchild']);
   });
 

@@ -510,4 +510,9 @@ describe('vouch routes — the JSON edge', () => {
       expect((res.data as Record<string, unknown>)['status']).toBe('pending');
     });
   });
+
+  it('malformed after → 400 on /vouches?target=', async () => {
+    const res = await request(`/?target=${'aa'.repeat(32)}&after=zz`, 'GET');
+    expect(res.status).toBe(400);
+  });
 });

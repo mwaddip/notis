@@ -9,6 +9,7 @@ import {
 import { getIdentityRecord, putIdentityRecord } from './identity-records.js';
 import { countsAsCirculatingKarma } from '../karma-supply.js';
 import { computePostId } from '@dagsocial/types';
+import type { Page, PageResult, BoxKey } from './index.js';
 import type {
   PostId,
   AnyBox,
@@ -33,7 +34,7 @@ import type {
 // column arrives as bigint. `value` must stay bigint (loses precision above
 // 2^53 otherwise); block-height columns are converted back to number in
 // rowToBox.
-interface UtxoRow {
+export interface UtxoRow {
   id: string;
   box_type: string;
   value: bigint;
@@ -153,7 +154,7 @@ function settledHeight(box: AnyBox): number {
  * Columns id, box_type, value, created_at_block and owner are read directly;
  * everything else is parsed from the extra_data JSON column.
  */
-function rowToBox(row: UtxoRow): AnyBox {
+export function rowToBox(row: UtxoRow): AnyBox {
   const extra = row.extra_data ? JSON.parse(row.extra_data) : {};
   const prov = provenanceOf(row);
   const createdAtBlock = Number(row.created_at_block);
@@ -491,6 +492,12 @@ export function getKarmaBox(owner: Uint8Array): KarmaBox | null {
   return row ? (rowToBox(row) as KarmaBox) : null;
 }
 
+// NODE_INTERFACE → "Page<K> is { limit: number, after?: K }"
+const KARMA_UNSPENT_WHERE =
+  `owner = ? AND box_type = 'karma' AND spent_at_block IS NULL`;
+const CREDIT_UNSPENT_WHERE =
+  `owner = ? AND box_type = 'credit' AND spent_at_block IS NULL`;
+
 /**
  * Return all unspent karma boxes for the given owner, sorted by value
  * descending (largest-first for UTXO selection).
@@ -510,7 +517,7 @@ export function getKarmaBoxes(owner: Uint8Array): KarmaBox[] {
       // three permitted orderings; `value DESC` stays because callers select
       // coins from the front.
       `SELECT * FROM utxo_boxes
-       WHERE owner = ? AND box_type = 'karma' AND spent_at_block IS NULL
+       WHERE ${KARMA_UNSPENT_WHERE}
        ORDER BY value DESC, id`,
     )
     .safeIntegers()
@@ -539,13 +546,67 @@ export function getKarmaValue(owner: Uint8Array): bigint {
   return getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n);
 }
 
-// NODE_INTERFACE → UTXO
+// NODE_INTERFACE → "Every list a view returns is a page"
+function boxPageQuery(
+  db: ReturnType<typeof getDb>,
+  fragment: string,
+  ownerBuf: Buffer,
+  after: BoxKey | undefined,
+  limit: number,
+): UtxoRow[] {
+  if (!after) {
+    return db
+      .prepare(`SELECT * FROM utxo_boxes WHERE ${fragment} ORDER BY value DESC, id LIMIT ?`)
+      .safeIntegers()
+      .all(ownerBuf, limit + 1) as UtxoRow[];
+  }
+  return db
+    .prepare(
+      `SELECT * FROM (
+         SELECT * FROM utxo_boxes WHERE ${fragment} AND value = ? AND id > ? ORDER BY id LIMIT ?
+       ) UNION ALL SELECT * FROM (
+         SELECT * FROM utxo_boxes WHERE ${fragment} AND value < ? ORDER BY value DESC, id LIMIT ?
+       ) ORDER BY value DESC, id LIMIT ?`,
+    )
+    .safeIntegers()
+    .all(ownerBuf, after.value, after.id, limit + 1,
+         ownerBuf, after.value, limit + 1,
+         limit + 1) as UtxoRow[];
+}
+
 export function getKarmaBoxesPage(
   owner: Uint8Array,
-  page: { limit: number; offset: number },
-): { rows: KarmaBox[]; count: number } {
-  const all = getKarmaBoxes(owner);
-  return { rows: all.slice(page.offset, page.offset + page.limit), count: all.length };
+  page: Page<BoxKey>,
+): PageResult<KarmaBox, BoxKey> {
+  const db = getDb();
+  const ownerBuf = Buffer.from(owner);
+
+  const rows = boxPageQuery(db, KARMA_UNSPENT_WHERE, ownerBuf, page.after, page.limit);
+  const hasMore = rows.length > page.limit;
+  const resultRows = hasMore ? rows.slice(0, page.limit) : rows;
+  const boxes = resultRows.map(rowToBox) as KarmaBox[];
+  const last = resultRows[resultRows.length - 1];
+  const next: BoxKey | null = hasMore && last
+    ? { value: last.value, id: last.id }
+    : null;
+
+  const countRow = db
+    .prepare(`SELECT COUNT(*) AS cnt FROM utxo_boxes WHERE ${KARMA_UNSPENT_WHERE}`)
+    .get(ownerBuf) as { cnt: number };
+
+  return { rows: boxes, next, count: countRow.cnt };
+}
+
+// NODE_INTERFACE → "Every list a view returns is a page"
+export function getKarmaTotal(owner: Uint8Array): bigint {
+  const row = getDb()
+    .prepare(
+      `SELECT COALESCE(SUM(value), 0) AS s FROM utxo_boxes
+       WHERE ${KARMA_UNSPENT_WHERE}`,
+    )
+    .safeIntegers()
+    .get(Buffer.from(owner)) as { s: bigint };
+  return row.s;
 }
 
 /**
@@ -557,7 +618,7 @@ export function getCreditBoxes(owner: Uint8Array): CreditBox[] {
   const rows = db
     .prepare(
       `SELECT * FROM utxo_boxes
-       WHERE owner = ? AND box_type = 'credit' AND spent_at_block IS NULL
+       WHERE ${CREDIT_UNSPENT_WHERE}
        ORDER BY value DESC, id`,
     )
     .safeIntegers()
@@ -565,17 +626,41 @@ export function getCreditBoxes(owner: Uint8Array): CreditBox[] {
   return rows.map(rowToBox) as CreditBox[];
 }
 
+// NODE_INTERFACE → "Every list a view returns is a page"
 export function getCreditValue(owner: Uint8Array): bigint {
-  return getCreditBoxes(owner).reduce((sum, b) => sum + b.value, 0n);
+  const row = getDb()
+    .prepare(
+      `SELECT COALESCE(SUM(value), 0) AS s FROM utxo_boxes
+       WHERE ${CREDIT_UNSPENT_WHERE}`,
+    )
+    .safeIntegers()
+    .get(Buffer.from(owner)) as { s: bigint };
+  return row.s;
 }
 
-// NODE_INTERFACE → UTXO
+// NODE_INTERFACE → "Every list a view returns is a page"
 export function getCreditBoxesPage(
   owner: Uint8Array,
-  page: { limit: number; offset: number },
-): { rows: CreditBox[]; count: number } {
-  const all = getCreditBoxes(owner);
-  return { rows: all.slice(page.offset, page.offset + page.limit), count: all.length };
+  page: Page<BoxKey>,
+): PageResult<CreditBox, BoxKey> {
+  const db = getDb();
+  const ownerBuf = Buffer.from(owner);
+
+  const rows = boxPageQuery(db, CREDIT_UNSPENT_WHERE, ownerBuf, page.after, page.limit);
+
+  const hasMore = rows.length > page.limit;
+  const resultRows = hasMore ? rows.slice(0, page.limit) : rows;
+  const boxes = resultRows.map(rowToBox) as CreditBox[];
+  const last = resultRows[resultRows.length - 1];
+  const next: BoxKey | null = hasMore && last
+    ? { value: last.value, id: last.id }
+    : null;
+
+  const countRow = db
+    .prepare(`SELECT COUNT(*) AS cnt FROM utxo_boxes WHERE ${CREDIT_UNSPENT_WHERE}`)
+    .get(ownerBuf) as { cnt: number };
+
+  return { rows: boxes, next, count: countRow.cnt };
 }
 
 /**
@@ -676,25 +761,38 @@ export function getBondsInvitedAt(maxInvitedAt: number, limit: number): BondBox[
   return rows.map((r) => rowToBox(r) as BondBox);
 }
 
-// NODE_INTERFACE → UTXO
+// NODE_INTERFACE → "Every list a view returns is a page"
 const BOND_PAGE_WHERE =
   `box_type = 'bond' AND spent_at_block IS NULL AND json_extract(extra_data, '$.inviterId') = ?`;
 export function getBondBoxesPage(
   inviterId: Uint8Array,
-  page: { limit: number; offset: number },
-): { rows: BondBox[]; count: number } {
+  page: Page<string>,
+): PageResult<BondBox, string> {
   const db = getDb();
   const hex = pubkeyToHex(inviterId);
+  const afterClause = page.after ? ` AND id > ?` : '';
+  const params: unknown[] = [hex];
+  if (page.after) params.push(page.after);
+  params.push(page.limit + 1);
+
   const rows = db
     .prepare(
-      `SELECT * FROM utxo_boxes WHERE ${BOND_PAGE_WHERE} ORDER BY id LIMIT ? OFFSET ?`,
+      `SELECT * FROM utxo_boxes WHERE ${BOND_PAGE_WHERE}${afterClause} ORDER BY id LIMIT ?`,
     )
     .safeIntegers()
-    .all(hex, page.limit, page.offset) as UtxoRow[];
+    .all(...params) as UtxoRow[];
+
+  const hasMore = rows.length > page.limit;
+  const resultRows = hasMore ? rows.slice(0, page.limit) : rows;
+  const bonds = resultRows.map((r) => rowToBox(r) as BondBox);
+  const last = resultRows[resultRows.length - 1];
+  const next: string | null = hasMore && last ? last.id : null;
+
   const countRow = db
     .prepare(`SELECT COUNT(*) AS cnt FROM utxo_boxes WHERE ${BOND_PAGE_WHERE}`)
     .get(hex) as { cnt: number };
-  return { rows: rows.map((r) => rowToBox(r) as BondBox), count: countRow.cnt };
+
+  return { rows: bonds, next, count: countRow.cnt };
 }
 
 /**

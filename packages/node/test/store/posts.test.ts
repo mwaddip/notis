@@ -254,9 +254,9 @@ describe('posts store', () => {
     expect(missing[0]!.contentHash).toBe(hex(c2.contentHash));
   });
 
-  it('queryPosts with author filter', async () => {
+  it('queryPostsPage with author filter', async () => {
     const { initDb } = await importDbFresh();
-    const { insertPost, queryPosts } = await importPostsFresh();
+    const { insertPost, confirmPost, queryPostsPage } = await importPostsFresh();
 
     initDb(':memory:');
 
@@ -264,48 +264,51 @@ describe('posts store', () => {
     const { commit: bobCommit, content: bobContent } = makeCommit({ content: 'bob post', author: uid('bob') });
 
     insertPost(fixturePostId(aliceCommit), aliceCommit, aliceContent);
+    confirmPost(fixturePostId(aliceCommit), 1, 0);
     insertPost(fixturePostId(bobCommit), bobCommit, bobContent);
+    confirmPost(fixturePostId(bobCommit), 1, 1);
 
-    const aliceResults = queryPosts({ author: uid('alice') });
-    expect(aliceResults).toHaveLength(1);
-    expect(aliceResults[0]!.content).toBe('alice post');
+    const aliceResult = queryPostsPage({ author: uid('alice'), limit: 50 });
+    expect(aliceResult.rows).toHaveLength(1);
+    expect(aliceResult.rows[0]!.content).toBe('alice post');
 
-    const allResults = queryPosts({});
-    expect(allResults).toHaveLength(2);
+    const allResult = queryPostsPage({ limit: 50 });
+    expect(allResult.rows).toHaveLength(2);
   });
 
-  it('queryPosts with limit/offset pagination', async () => {
+  it('queryPostsPage pagination walks next', async () => {
     const { initDb } = await importDbFresh();
-    const { insertPost, queryPosts } = await importPostsFresh();
+    const { insertPost, confirmPost, queryPostsPage } = await importPostsFresh();
 
     initDb(':memory:');
 
     for (let i = 0; i < 5; i++) {
       const { commit, content } = makeCommit({ content: `post-${i}` });
       insertPost(fixturePostId(commit), commit, content);
+      confirmPost(fixturePostId(commit), 10, i);
     }
 
-    const all = queryPosts({});
-    expect(all).toHaveLength(5);
+    const page1 = queryPostsPage({ limit: 2 });
+    expect(page1.rows).toHaveLength(2);
+    expect(page1.rows[0]!.content).toBe('post-4');
+    expect(page1.rows[1]!.content).toBe('post-3');
+    expect(page1.next).not.toBeNull();
 
-    const page1 = queryPosts({ limit: 2, offset: 0 });
-    expect(page1).toHaveLength(2);
-    expect(page1[0]!.content).toBe('post-4');
-    expect(page1[1]!.content).toBe('post-3');
+    const page2 = queryPostsPage({ limit: 2, after: page1.next! });
+    expect(page2.rows).toHaveLength(2);
+    expect(page2.rows[0]!.content).toBe('post-2');
+    expect(page2.rows[1]!.content).toBe('post-1');
+    expect(page2.next).not.toBeNull();
 
-    const page2 = queryPosts({ limit: 2, offset: 2 });
-    expect(page2).toHaveLength(2);
-    expect(page2[0]!.content).toBe('post-2');
-    expect(page2[1]!.content).toBe('post-1');
-
-    const page3 = queryPosts({ limit: 2, offset: 4 });
-    expect(page3).toHaveLength(1);
-    expect(page3[0]!.content).toBe('post-0');
+    const page3 = queryPostsPage({ limit: 2, after: page2.next! });
+    expect(page3.rows).toHaveLength(1);
+    expect(page3.rows[0]!.content).toBe('post-0');
+    expect(page3.next).toBeNull();
   });
 
-  it('queryPosts: pending above confirmed, confirmed by (block_height, block_index)', async () => {
+  it('queryPostsPage: committed in rows, pending in pending field', async () => {
     const { initDb } = await importDbFresh();
-    const { insertPost, confirmPost, queryPosts } = await importPostsFresh();
+    const { insertPost, confirmPost, queryPostsPage } = await importPostsFresh();
 
     initDb(':memory:');
 
@@ -319,11 +322,13 @@ describe('posts store', () => {
     const { commit: pend, content: pendContent } = makeCommit({ content: 'pending' });
     insertPost(fixturePostId(pend), pend, pendContent);
 
-    const all = queryPosts({});
-    expect(all).toHaveLength(3);
-    expect(all[0]!.content).toBe('pending');
-    expect(all[1]!.content).toBe('late');
-    expect(all[2]!.content).toBe('early');
+    const result = queryPostsPage({ limit: 50 });
+    expect(result.rows).toHaveLength(2);
+    expect(result.rows[0]!.content).toBe('late');
+    expect(result.rows[1]!.content).toBe('early');
+    expect(result.pending).toHaveLength(1);
+    expect(result.pending[0]!.content).toBe('pending');
+    expect(result.pendingCount).toBe(1);
   });
 
   it('getPendingPosts returns oldest first', async () => {
@@ -401,27 +406,32 @@ describe('posts store', () => {
     expect(refs).toEqual(refs3);
   });
 
-  it('getSubtreePage returns all descendants (multi-level)', async () => {
+  it('getSubtreePage returns committed descendants (multi-level)', async () => {
     const { initDb } = await importDbFresh();
-    const { insertPost, getSubtreePage } = await importPostsFresh();
+    const { insertPost, confirmPost, getSubtreePage } = await importPostsFresh();
 
     initDb(':memory:');
 
     const { commit: rootCommit, content: rootContent } = makeCommit({ content: 'root', parentRefs: [] });
     const rootId = fixturePostId(rootCommit);
     insertPost(rootId, rootCommit, rootContent);
+    confirmPost(rootId, 1, 0);
 
     const { commit: childCommit, content: childContent } = makeCommit({ content: 'child', parentRefs: [rootId] });
     const childId = fixturePostId(childCommit);
     insertPost(childId, childCommit, childContent);
+    confirmPost(childId, 2, 0);
 
     const { commit: gcCommit, content: gcContent } = makeCommit({ content: 'grandchild', parentRefs: [childId] });
     insertPost(fixturePostId(gcCommit), gcCommit, gcContent);
+    confirmPost(fixturePostId(gcCommit), 3, 0);
 
-    const result = getSubtreePage(rootId, { limit: 50, offset: 0 });
+    const result = getSubtreePage(rootId, { limit: 50 });
     expect(result.count).toBe(2);
-    const contents = result.rows.map((p) => p.content).sort();
+    const contents = result.rows.map((p) => p.content);
     expect(contents).toEqual(['child', 'grandchild']);
+    expect(result.pending).toHaveLength(0);
+    expect(result.pendingCount).toBe(0);
   });
 
   it('deletePostRows deletes rows and returns them for the journal', async () => {
@@ -639,11 +649,11 @@ describe('posts store', () => {
     const { FeedService } = await import('../../src/services/feed-service.js');
     const feedService = new FeedService({
       getPost,
-      queryPosts: () => [],
+      queryPostsPage: () => ({ rows: [], next: null, pending: [], pendingCount: 0 }),
       getLikeRecordCount: () => 0,
       hasLikeRecord: () => false,
       getAncestorsNearest: () => ({ rows: [], count: 0 }),
-      getSubtreePage: () => ({ rows: [], count: 0 }),
+      getSubtreePage: () => ({ rows: [], next: null, count: 0, pending: [], pendingCount: 0 }),
       getBlockCreatedAt: () => null,
     });
 
@@ -707,7 +717,7 @@ describe('posts store', () => {
     const { FeedService } = await import('../../src/services/feed-service.js');
     const feedService = new FeedService({
       getPost,
-      queryPosts: () => [],
+      queryPostsPage: () => ({ rows: [], next: null, pending: [], pendingCount: 0 }),
       getLikeRecordCount: () => 0,
       hasLikeRecord: () => false,
       getAncestorsNearest,
@@ -715,7 +725,7 @@ describe('posts store', () => {
       getBlockCreatedAt: () => null,
     });
 
-    const thread = feedService.getThread(childId, { limit: 50, offset: 0 })!;
+    const thread = feedService.getThread(childId, { limit: 50 })!;
     expect(thread).not.toBeNull();
 
     // The subject post is live
@@ -732,9 +742,9 @@ describe('posts store', () => {
     expect((thread.descendants[0] as any).withdrawnAtHeight).toBe(6);
   });
 
-  it('a withdrawn post in queryPosts comes back as WithdrawnJson', async () => {
+  it('a withdrawn post in queryPostsPage comes back as WithdrawnJson', async () => {
     const { initDb, getDb } = await importDbFresh();
-    const { insertPost, confirmPost, getPost, queryPosts } = await importPostsFresh();
+    const { insertPost, confirmPost, getPost, queryPostsPage } = await importPostsFresh();
 
     initDb(':memory:');
 
@@ -748,16 +758,16 @@ describe('posts store', () => {
     const { FeedService } = await import('../../src/services/feed-service.js');
     const feedService = new FeedService({
       getPost,
-      queryPosts,
+      queryPostsPage,
       getLikeRecordCount: () => 0,
       hasLikeRecord: () => false,
       getAncestorsNearest: () => ({ rows: [], count: 0 }),
-      getSubtreePage: () => ({ rows: [], count: 0 }),
+      getSubtreePage: () => ({ rows: [], next: null, count: 0, pending: [], pendingCount: 0 }),
       getBlockCreatedAt: () => null,
     });
 
-    const posts = feedService.queryPosts({ limit: 50, offset: 0 });
-    const withdrawn = posts.find((p) => (p as any).id === postId);
+    const result = feedService.queryPosts({ limit: 50 });
+    const withdrawn = result.posts.find((p) => (p as any).id === postId);
     expect(withdrawn).toBeDefined();
     expect((withdrawn as any).kind).toBe('withdrawn');
     expect((withdrawn as any).withdrawnAtHeight).toBe(10);
@@ -846,12 +856,12 @@ describe('posts store', () => {
     insertPost(id3, c3, ct3);
     confirmPost(id3, 2, 1);
 
-    const result = getSubtreePage(rootId, { limit: 50, offset: 0 });
+    const result = getSubtreePage(rootId, { limit: 50 });
     expect(result.count).toBe(3);
     expect(result.rows.map(p => p.content)).toEqual(['child-a', 'grandchild', 'child-b']);
   });
 
-  it('getSubtreePage paginates and places pending descendants last', async () => {
+  it('getSubtreePage splits pending into its own field', async () => {
     const { initDb } = await importDbFresh();
     const { insertPost, confirmPost, getSubtreePage } = await importPostsFresh();
 
@@ -877,14 +887,197 @@ describe('posts store', () => {
     const id3 = fixturePostId(c3);
     insertPost(id3, c3, ct3);
 
-    // Full set: count 3, pending last
-    const full = getSubtreePage(rootId, { limit: 50, offset: 0 });
+    const full = getSubtreePage(rootId, { limit: 50 });
     expect(full.count).toBe(3);
-    expect(full.rows[2]!.content).toBe('pending-desc');
+    expect(full.rows).toHaveLength(2);
+    expect(full.pending).toHaveLength(1);
+    expect(full.pending[0]!.content).toBe('pending-desc');
+    expect(full.pendingCount).toBe(1);
 
-    // Page of 2: the count is still over the whole set
-    const page = getSubtreePage(rootId, { limit: 2, offset: 0 });
+    // Page of 1: committed only, count over all
+    const page = getSubtreePage(rootId, { limit: 1 });
     expect(page.count).toBe(3);
-    expect(page.rows).toHaveLength(2);
+    expect(page.rows).toHaveLength(1);
+    expect(page.next).not.toBeNull();
+  });
+
+  // --- keyset pins ---
+
+  it('feed continuation across a head insert: no overlap, no gap', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertPost, confirmPost, queryPostsPage } = await importPostsFresh();
+
+    initDb(':memory:');
+    for (let i = 0; i < 4; i++) {
+      const { commit, content } = makeCommit({ content: `p${i}` });
+      insertPost(fixturePostId(commit), commit, content);
+      confirmPost(fixturePostId(commit), 10, i);
+    }
+
+    const page1 = queryPostsPage({ limit: 2 });
+    expect(page1.rows).toHaveLength(2);
+    expect(page1.next).not.toBeNull();
+    const page1Ids = new Set(page1.rows.map(p => p.id));
+
+    const { commit: newA, content: newAC } = makeCommit({ content: 'new-a' });
+    insertPost(fixturePostId(newA), newA, newAC);
+    confirmPost(fixturePostId(newA), 20, 0);
+    const { commit: newB, content: newBC } = makeCommit({ content: 'new-b' });
+    insertPost(fixturePostId(newB), newB, newBC);
+    confirmPost(fixturePostId(newB), 20, 1);
+
+    const page2 = queryPostsPage({ limit: 2, after: page1.next! });
+    for (const p of page2.rows) expect(page1Ids.has(p.id)).toBe(false);
+    expect(page2.rows).toHaveLength(2);
+  });
+
+  it('subtree continuation across a prune: no skip', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertPost, confirmPost, deletePostRows, getSubtreePage } = await importPostsFresh();
+
+    initDb(':memory:');
+    const { commit: rootC, content: rootCt } = makeCommit({ content: 'root', parentRefs: [] });
+    const rootId = fixturePostId(rootC);
+    insertPost(rootId, rootC, rootCt);
+    confirmPost(rootId, 1, 0);
+
+    const childIds: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const { commit, content } = makeCommit({ content: `child-${i}`, parentRefs: [rootId] });
+      const id = fixturePostId(commit);
+      insertPost(id, commit, content);
+      confirmPost(id, 2, i);
+      childIds.push(id);
+    }
+
+    const page1 = getSubtreePage(rootId, { limit: 2 });
+    expect(page1.rows).toHaveLength(2);
+    expect(page1.next).not.toBeNull();
+
+    deletePostRows([childIds[0]!]);
+
+    const page2 = getSubtreePage(rootId, { limit: 2, after: page1.next! });
+    expect(page2.rows).toHaveLength(1);
+  });
+
+  it('exact next on feed: exactly limit → null; limit + 1 → key', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertPost, confirmPost, queryPostsPage } = await importPostsFresh();
+
+    initDb(':memory:');
+    for (let i = 0; i < 2; i++) {
+      const { commit, content } = makeCommit({ content: `e${i}` });
+      insertPost(fixturePostId(commit), commit, content);
+      confirmPost(fixturePostId(commit), 10, i);
+    }
+    const exact = queryPostsPage({ limit: 2 });
+    expect(exact.next).toBeNull();
+
+    const { commit: extra, content: extraC } = makeCommit({ content: 'extra' });
+    insertPost(fixturePostId(extra), extra, extraC);
+    confirmPost(fixturePostId(extra), 10, 2);
+    const withExtra = queryPostsPage({ limit: 2 });
+    expect(withExtra.next).not.toBeNull();
+  });
+
+  it('exact next on subtree: exactly limit → null; limit + 1 → key', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertPost, confirmPost, getSubtreePage } = await importPostsFresh();
+
+    initDb(':memory:');
+    const { commit: rootC, content: rootCt } = makeCommit({ content: 'root', parentRefs: [] });
+    const rootId = fixturePostId(rootC);
+    insertPost(rootId, rootC, rootCt);
+    confirmPost(rootId, 1, 0);
+
+    for (let i = 0; i < 2; i++) {
+      const { commit, content } = makeCommit({ content: `s${i}`, parentRefs: [rootId] });
+      insertPost(fixturePostId(commit), commit, content);
+      confirmPost(fixturePostId(commit), 2, i);
+    }
+    const exact = getSubtreePage(rootId, { limit: 2 });
+    expect(exact.next).toBeNull();
+
+    const { commit: extra, content: extraC } = makeCommit({ content: 'extra', parentRefs: [rootId] });
+    insertPost(fixturePostId(extra), extra, extraC);
+    confirmPost(fixturePostId(extra), 2, 2);
+    const withExtra = getSubtreePage(rootId, { limit: 2 });
+    expect(withExtra.next).not.toBeNull();
+  });
+
+  it('pending window larger than limit on feed', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertPost, queryPostsPage } = await importPostsFresh();
+
+    initDb(':memory:');
+    for (let i = 0; i < 3; i++) {
+      const { commit, content } = makeCommit({ content: `pend-${i}` });
+      insertPost(fixturePostId(commit), commit, content);
+    }
+    const result = queryPostsPage({ limit: 2 });
+    expect(result.pending).toHaveLength(2);
+    expect(result.pendingCount).toBe(3);
+    expect(result.pending[0]!.content).toBe('pend-2');
+  });
+
+  it('pending window larger than limit on subtree', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertPost, confirmPost, getSubtreePage } = await importPostsFresh();
+
+    initDb(':memory:');
+    const { commit: rootC, content: rootCt } = makeCommit({ content: 'root', parentRefs: [] });
+    const rootId = fixturePostId(rootC);
+    insertPost(rootId, rootC, rootCt);
+    confirmPost(rootId, 1, 0);
+
+    for (let i = 0; i < 3; i++) {
+      const { commit, content } = makeCommit({ content: `sub-pend-${i}`, parentRefs: [rootId] });
+      insertPost(fixturePostId(commit), commit, content);
+    }
+    const result = getSubtreePage(rootId, { limit: 2 });
+    expect(result.pending).toHaveLength(2);
+    expect(result.pendingCount).toBe(3);
+    expect(result.pending[0]!.content).toBe('sub-pend-2');
+  });
+
+  it('EXPLAIN QUERY PLAN: feed page ranges on row value', async () => {
+    const { initDb, getDb } = await importDbFresh();
+    initDb(':memory:');
+    const db = getDb();
+
+    const plan = db.prepare(
+      `EXPLAIN QUERY PLAN SELECT * FROM dag_posts WHERE status = 'confirmed' AND (block_height, block_index) < (?, ?) ORDER BY block_height DESC, block_index DESC LIMIT ?`,
+    ).all(10, 5, 11) as Array<{ detail: string }>;
+    const detail = plan.map(r => r.detail).join(' ');
+    expect(detail).toContain('(block_height,block_index)<(?,?)');
+
+    const authorPlan = db.prepare(
+      `EXPLAIN QUERY PLAN SELECT * FROM dag_posts WHERE status = 'confirmed' AND author = ? AND (block_height, block_index) < (?, ?) ORDER BY block_height DESC, block_index DESC LIMIT ?`,
+    ).all(Buffer.alloc(32), 10, 5, 11) as Array<{ detail: string }>;
+    const authorDetail = authorPlan.map(r => r.detail).join(' ');
+    expect(authorDetail).toContain('idx_dag_posts_author_confirmed');
+  });
+
+  it('EXPLAIN QUERY PLAN: subtree CTE uses idx_dag_parent_refs_parent', async () => {
+    const { initDb, getDb } = await importDbFresh();
+    initDb(':memory:');
+    const db = getDb();
+
+    const plan = db.prepare(
+      `EXPLAIN QUERY PLAN WITH RECURSIVE subtree AS (
+         SELECT dp.id FROM dag_posts dp
+         JOIN dag_parent_refs dpr ON dp.id = dpr.post_id
+         WHERE dpr.parent_id = ?
+         UNION
+         SELECT dp.id FROM dag_posts dp
+         JOIN dag_parent_refs dpr ON dp.id = dpr.post_id
+         JOIN subtree s ON dpr.parent_id = s.id
+       )
+       SELECT dp.* FROM dag_posts dp
+       JOIN subtree s ON dp.id = s.id
+       WHERE dp.status = 'confirmed'
+       ORDER BY dp.block_height, dp.block_index LIMIT ?`,
+    ).all('ab'.repeat(32), 11) as Array<{ detail: string }>;
+    expect(plan.some(r => r.detail.includes('idx_dag_parent_refs_parent'))).toBe(true);
   });
 });

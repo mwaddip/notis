@@ -17,9 +17,13 @@ export {
   getBlock,
   getBlockCurrent,
   getStatus,
+  getPosts,
+  getThread,
   NodeError,
   isWithdrawn,
   type PostResponse,
+  type PostsPage,
+  type ThreadPage,
   type WithdrawnResponse,
 } from './http.js';
 export { signAndRender, type BoxRef, type BuiltTx } from './tx/render.js';

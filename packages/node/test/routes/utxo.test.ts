@@ -8,6 +8,7 @@ import {
   getKarmaBox,
   getKarmaBoxesPage,
   getKarmaValue,
+  getKarmaTotal,
   getCreditBoxesPage,
   getCreditValue,
   getBondBoxesPage,
@@ -59,7 +60,7 @@ async function request(
 ): Promise<{ status: number; data: unknown }> {
   return new Promise((resolve) => {
     const deps = {
-      getKarmaValue,
+      getKarmaTotal,
       getKarmaBoxesPage,
       getIdentityRecord,
       getCreditValue,
@@ -226,7 +227,7 @@ describe('UTXO routes', () => {
     const staleRequest = (): Promise<{ status: number; data: unknown }> =>
       new Promise((resolve) => {
         const deps = {
-          getKarmaValue,
+          getKarmaTotal,
           getKarmaBoxesPage,
           getIdentityRecord,
           getCreditValue,
@@ -297,7 +298,7 @@ describe('UTXO routes', () => {
     expect(bond.inviteePublicKey).toBe('bb'.repeat(32));
   });
 
-  it('GET /invites/:userId answers { bonds: [], bondCount: 0 } for an inviter with no live bond', async () => {
+  it('GET /invites/:userId answers { bonds: [], bondCount: 0, next: null } for an inviter with no live bond', async () => {
     const kp = generateKeyPair();
     const hex = Buffer.from(kp.publicKey).toString('hex');
     const res = await request(`/invites/${hex}`);
@@ -305,6 +306,22 @@ describe('UTXO routes', () => {
     const body = res.data as Record<string, unknown>;
     expect(body.bonds).toEqual([]);
     expect(body.bondCount).toBe(0);
+    expect(body.next).toBeNull();
+  });
+
+  it('malformed after → 400 on /karma', async () => {
+    const res = await request(`/karma/${karmaUserIdHex}?after=malformed`);
+    expect(res.status).toBe(400);
+  });
+
+  it('malformed after → 400 on /credits', async () => {
+    const res = await request(`/credits/${creditUserIdHex}?after=malformed`);
+    expect(res.status).toBe(400);
+  });
+
+  it('malformed after → 400 on /invites', async () => {
+    const res = await request(`/invites/${inviteUserIdHex}?after=zz`);
+    expect(res.status).toBe(400);
   });
 
   // ---------------------------------------------------------------------------
@@ -339,7 +356,7 @@ describe('UTXO routes', () => {
 
     /** Build and sign the transfer the way the demo UI does. */
     function buildSignedTransfer(amount: bigint): UtxoTransaction {
-      const unlocked = getCreditBoxesPage(senderPubKey, { limit: 100, offset: 0 }).rows;
+      const unlocked = getCreditBoxesPage(senderPubKey, { limit: 100 }).rows;
       const selected = selectBoxes(unlocked, amount);
       const totalSelected = selected.reduce((s, b) => s + b.value, 0n);
       const change = totalSelected - amount;
@@ -482,7 +499,7 @@ describe('UTXO routes', () => {
 
       // The input box is still unspent — the HTTP call settles nothing.
       expect(getBox(seededBoxId)).not.toBeNull();
-      expect(getCreditBoxesPage(receiverPubKey, { limit: 1, offset: 0 }).count).toBe(0);
+      expect(getCreditBoxesPage(receiverPubKey, { limit: 1 }).count).toBe(0);
 
       // The pooled tx went out to peers.
       expect(broadcastTx).toHaveBeenCalledTimes(1);

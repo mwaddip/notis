@@ -100,7 +100,7 @@ async function importFeedReadPath() {
   const likes = await import('../../src/store/likes.js');
   const feed = await import('../../src/services/feed-service.js');
   return {
-    queryPosts: posts.queryPosts,
+    queryPostsPage: posts.queryPostsPage,
     getAncestorsNearest: posts.getAncestorsNearest,
     getSubtreePage: posts.getSubtreePage,
     getLikeRecordCount: likes.getLikeRecordCount,
@@ -389,7 +389,7 @@ describe('full-pipeline', () => {
     const ordering = await importOrdering();
     const feed = new f.FeedService({
       getPost: posts.getPost,
-      queryPosts: f.queryPosts,
+      queryPostsPage: f.queryPostsPage,
       getLikeRecordCount: f.getLikeRecordCount,
       hasLikeRecord: f.hasLikeRecord,
       getAncestorsNearest: f.getAncestorsNearest,

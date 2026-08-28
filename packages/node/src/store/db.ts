@@ -375,6 +375,29 @@ function createMempoolGateIndexes(database: Database.Database): void {
   `);
 }
 
+// NODE_INTERFACE → "A page read touches limit + 1 entries of one index that serves both its predicate and its order"
+function createPageIndexes(database: Database.Database): void {
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_utxo_boxes_owner_type_value
+      ON utxo_boxes(owner, box_type, value DESC, id)
+      WHERE spent_at_block IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_dag_posts_confirmed
+      ON dag_posts(block_height, block_index)
+      WHERE status = 'confirmed';
+    CREATE INDEX IF NOT EXISTS idx_dag_posts_author_confirmed
+      ON dag_posts(author, block_height, block_index)
+      WHERE status = 'confirmed';
+    CREATE INDEX IF NOT EXISTS idx_dag_parent_refs_parent
+      ON dag_parent_refs(parent_id);
+    CREATE INDEX IF NOT EXISTS idx_utxo_boxes_bond_inviter
+      ON utxo_boxes(json_extract(extra_data, '$.inviterId'), id)
+      WHERE box_type = 'bond' AND spent_at_block IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_utxo_boxes_vouch_target
+      ON utxo_boxes(json_extract(extra_data, '$.targetId'), id)
+      WHERE box_type = 'vouch' AND spent_at_block IS NULL;
+  `);
+}
+
 export function initDb(path: string): void {
   // JOURNAL_EVENTS → Phase Timing Events. `db_open_complete` is emitted at the
   // END of this function, not after the last `migrate*` call: the contract puts
@@ -395,6 +418,7 @@ export function initDb(path: string): void {
   migrateMempoolTxColumns(db);
   migrateDagPostsColumns(db);
   createMempoolGateIndexes(db);
+  createPageIndexes(db);
 
   emitDbOpenComplete(Date.now() - startedAt);
 }

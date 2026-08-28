@@ -1,4 +1,8 @@
-export interface Page { limit: number; offset: number }
+// NODE_INTERFACE → "Page<K> is { limit: number, after?: K }"
+export interface PostKey { blockHeight: number; blockIndex: number }
+export interface BoxKey { value: bigint; id: string }
+export interface Page<K> { limit: number; after?: K }
+export interface PageResult<T, K> { rows: T[]; next: K | null; count: number }
 
 export { initDb, getDb, closeDb } from './db.js';
 export {
@@ -6,7 +10,7 @@ export {
   setPostBody,
   getPost,
   getMissingBodies,
-  queryPosts,
+  queryPostsPage,
   getPendingPosts,
   confirmPost,
   unconfirmPost,
@@ -34,6 +38,7 @@ export {
   getKarmaBoxes,
   getKarmaBoxesPage,
   getKarmaValue,
+  getKarmaTotal,
   getCreditValue,
   getCreditBoxesPage,
   getGenesisProofBox,
