@@ -19,11 +19,12 @@ import type { UserId } from '@dagsocial/types';
  * `A <= height − threshold`, i.e. `height − A >= threshold`. A `>` is off by
  * one; `decay.ts` carries the full argument.
  *
- * **Who populates this.** `insertBox` bumps `lastActivityBlock` from the
- * open journal's height for every karma box with `nonActivity !== true`;
- * `commitDecayClocks` bumps `lastDecayBlock` when decay fires; and
- * `ensureSystemKarmaBox` writes genesis's own record, since it runs outside
- * block application where the choke point has no height to read.
+ * **Who populates this.** `recordKarmaActivity` bumps `lastActivityBlock`
+ * from the open journal's height when block application applies a user
+ * transaction whose inputs are karma boxes; `commitDecayClocks` bumps
+ * `lastDecayBlock` when decay fires; and `ensureSystemKarmaBox` writes
+ * genesis's own record, since it runs outside block application where the
+ * choke point has no height to read.
  *
  * **Key type is `UserId`** — the raw 32 Ed25519 public-key bytes, and there is
  * deliberately no separate identity type. Box `owner`/`likerId`/`inviterId`/

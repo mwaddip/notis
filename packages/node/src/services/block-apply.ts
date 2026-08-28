@@ -73,6 +73,7 @@ import {
   markPrunedTopology,
   getIdentityRecord,
   putIdentityRecord,
+  recordKarmaActivity,
   hasLikeRecord,
   insertLikeRecord,
   getLikeRecordCount,
@@ -1065,6 +1066,17 @@ function applyMutationPhase(
       applyTx(utxoDeps, item.tx, item.outputs, height);
       applied++;
 
+      // The spend is the activity (ARCHITECTURE → Karma decay). The karma arm
+      // pins one owner for all karma inputs; the first input's owner is that
+      // owner. The write lands after applyTx's box writes, so reverse replay
+      // restores it first (NODE_INTERFACE → Populating the record).
+      if (firstInput !== undefined) {
+        const firstBox = appliedTxs[appliedTxs.length - 1]?.inputBoxes[0];
+        if (firstBox?.boxType === 'karma') {
+          recordKarmaActivity((firstBox as KarmaBox).owner);
+        }
+      }
+
       if (likeToRecord !== null) {
         // Journalled side-record (inverse: deleteLikeRecord), plus the
         // in-memory accrual §11b settles.
@@ -1291,13 +1303,13 @@ function applyMutationPhase(
 
   // 11a-ii. The clock epoch: a new record's `lastActivityBlock` starts at the
   // claim height (NODE_INTERFACE → Identity Records; ARCHITECTURE → Karma
-  // decay, "the clock starts at onboarding"). The grant output carries
-  // `nonActivity: true`, so `insertBox` does not bump the clock — the epoch
-  // is this record write's, not a box bump's. A legal invitee has no record
-  // yet, so `after` is null and the fallback applies; a pre-existing record
-  // is a consensus bar violation upstream, not something this write papers
-  // over. Ascending invitee order, so two grants in one block write in an
-  // order the block fixes rather than one a map's iteration happens to produce.
+  // decay, "the clock starts at onboarding"). The grant is a settlement
+  // output, and only the user loop advances the clock — the epoch is this
+  // record write's, not a spend event's. A legal invitee has no record yet,
+  // so `after` is null and the fallback applies; a pre-existing record is a
+  // consensus bar violation upstream, not something this write papers over.
+  // Ascending invitee order, so two grants in one block write in an order the
+  // block fixes rather than one a map's iteration happens to produce.
   for (const inviteeHex of [...invitedThisBlock].sort()) {
     const invitee = new Uint8Array(Buffer.from(inviteeHex, 'hex'));
     const after = getIdentityRecord(invitee);
