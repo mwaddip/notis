@@ -1648,7 +1648,7 @@ document.getElementById('postBtn').addEventListener('click', async () => {
     setStatus('posted! ' + posted.postId.slice(0, 12) + '...', 'ok');
     document.getElementById('content').value = '';
     document.getElementById('parents').value = '';
-    loadFeed();
+    loadFeedPage(null);
     loadIdentityStatus();
   } catch (e) {
     setStatus('error: ' + e.message, 'error');
@@ -1667,6 +1667,7 @@ document.getElementById('feedFilterBtn').addEventListener('click', () => {
     hideProfileBar();
   }
   updateFilterBtn();
+  clearFeedMap();
   loadFeed();
 });
 
@@ -1675,6 +1676,7 @@ window.viewProfile = async (authorHex) => {
   feedFilter = authorHex;
   showProfileBar(authorHex, authorHex.slice(0, 16) + '...');
   updateFilterBtn();
+  clearFeedMap();
   loadFeed();
 };
 
@@ -1985,47 +1987,107 @@ function renderThread(roots, postMap, children, depth) {
   }).join('');
 }
 
-async function loadFeed() {
+// Committed posts keyed by "blockHeight:blockIndex"; pending from the latest fetch.
+const feedMap = new Map();
+let feedPending = [];
+let feedOldestNext = null;
+
+function feedKey(p) { return p.blockHeight + ':' + p.blockIndex; }
+function parseFeedKey(k) { const [h, i] = k.split(':'); return [Number(h), Number(i)]; }
+function compareFeedKeys(a, b) {
+  const [ah, ai] = parseFeedKey(a);
+  const [bh, bi] = parseFeedKey(b);
+  return bh - ah || bi - ai;
+}
+
+function mergeFeed(afterKey, rows, next) {
+  for (const p of rows) feedMap.set(feedKey(p), p);
+  if (afterKey !== null) {
+    const delKeys = [];
+    for (const k of feedMap.keys()) {
+      const cmpAfter = compareFeedKeys(k, afterKey);
+      if (cmpAfter >= 0) continue;
+      if (next !== null && compareFeedKeys(k, next) < 0) continue;
+      delKeys.push(k);
+    }
+    for (const k of delKeys) feedMap.delete(k);
+  } else {
+    const fetchedKeys = new Set(rows.map(feedKey));
+    const delKeys = [];
+    for (const k of feedMap.keys()) {
+      if (fetchedKeys.has(k)) continue;
+      if (next !== null && compareFeedKeys(k, next) < 0) continue;
+      delKeys.push(k);
+    }
+    for (const k of delKeys) feedMap.delete(k);
+  }
+}
+
+function clearFeedMap() {
+  feedMap.clear();
+  feedPending = [];
+  feedOldestNext = null;
+}
+
+function renderFeedFromMap() {
   const feed = document.getElementById('feed');
+  const allPosts = [...feedPending, ...[...feedMap.entries()].sort((a, b) => compareFeedKeys(a[0], b[0])).map(e => e[1])];
+  if (!allPosts.length) { feed.innerHTML = '<div class="empty">No posts yet. Write something!</div>'; return; }
+
+  const postMap = new Map();
+  const children = new Map();
+  for (const p of allPosts) postMap.set(p.id, p);
+  for (const p of allPosts) {
+    for (const parentId of (p.parentRefs || [])) {
+      if (postMap.has(parentId)) {
+        if (!children.has(parentId)) children.set(parentId, []);
+        children.get(parentId).push(p);
+      }
+    }
+  }
+
+  const rootPosts = allPosts.filter(p => {
+    if (!p.parentRefs || !p.parentRefs.length) return true;
+    return !p.parentRefs.some(pid => postMap.has(pid));
+  });
+
+  let html = renderThread(rootPosts, postMap, children, 0) ||
+    '<div class="empty">No root posts found. Try posting something!</div>';
+  if (feedOldestNext !== null) {
+    html += '<div style="text-align:center;margin:12px 0"><button id="loadMoreBtn" class="small">Load more</button></div>';
+  }
+  feed.innerHTML = html;
+  if (feedOldestNext !== null) {
+    document.getElementById('loadMoreBtn').addEventListener('click', () => loadFeedPage(feedOldestNext));
+  }
+  attachFeedHandlers(feed);
+}
+
+async function loadFeedPage(afterKey) {
   try {
     let url = API + '/posts?limit=50';
+    if (afterKey) url += '&after=' + afterKey;
     if (feedFilter !== 'all') url += '&author=' + feedFilter;
     if (userId) url += '&viewer=' + userId;
     const res = await fetch(url);
-    const posts = await res.json();
-    if (!posts.length) { feed.innerHTML = '<div class="empty">No posts yet. Write something!</div>'; return; }
-
-    // Build post map and children index
-    const postMap = new Map();
-    const children = new Map();
-    for (const p of posts) {
-      const id = p.id;
-      postMap.set(id, p);
+    const data = await res.json();
+    mergeFeed(afterKey || null, data.posts || [], data.next || null);
+    feedPending = data.pending || [];
+    if (afterKey) {
+      if (!data.next) feedOldestNext = null;
+      else feedOldestNext = data.next;
+    } else {
+      if (feedOldestNext === null && data.next) feedOldestNext = data.next;
     }
-    for (const p of posts) {
-      const id = p.id;
-      for (const parentId of p.parentRefs) {
-        if (postMap.has(parentId)) {
-          if (!children.has(parentId)) children.set(parentId, []);
-          children.get(parentId).push(p);
-        }
-      }
-    }
-
-    // Roots: posts whose parentRefs are empty or none are in the fetched set
-    const rootPosts = posts.filter(p => {
-      if (!p.parentRefs.length) return true;
-      return !p.parentRefs.some(pid => postMap.has(pid));
-    });
-
-    feed.innerHTML = renderThread(rootPosts, postMap, children, 0) ||
-      '<div class="empty">No root posts found. Try posting something!</div>';
-
-    // Attach reply/like/delete handlers
-    attachFeedHandlers(feed);
+    renderFeedFromMap();
   } catch (e) {
-    feed.innerHTML = '<div class="empty">Failed to load feed</div>';
+    document.getElementById('feed').innerHTML = '<div class="empty">Failed to load feed</div>';
   }
+}
+
+async function loadFeed() {
+  clearFeedMap();
+  await loadFeedPage(null);
 }
 
 // ===========================================================================
@@ -2034,14 +2096,159 @@ async function loadFeed() {
 
 /** Currently viewed thread post ID, or null if showing the normal feed. */
 let threadPostId = null;
+const threadDescMap = new Map();
+let threadPending = [];
+let threadOldestNext = null;
+let threadMeta = null;
 
-/**
- * Fetch and render a single post with its full thread context.
- * Pushes state to browser history for permalink sharing and back-button support.
- */
+function descKey(p) { return p.blockHeight + ':' + p.blockIndex; }
+function compareDescKeys(a, b) {
+  const [ah, ai] = a.split(':').map(Number);
+  const [bh, bi] = b.split(':').map(Number);
+  return ah - bh || ai - bi;
+}
+
+function mergeDesc(afterKey, rows, next) {
+  for (const p of rows) threadDescMap.set(descKey(p), p);
+  if (afterKey !== null) {
+    const delKeys = [];
+    for (const k of threadDescMap.keys()) {
+      const cmpAfter = compareDescKeys(k, afterKey);
+      if (cmpAfter <= 0) continue;
+      if (next !== null && compareDescKeys(k, next) > 0) continue;
+      delKeys.push(k);
+    }
+    for (const k of delKeys) threadDescMap.delete(k);
+  }
+}
+
+function clearThreadMap() {
+  threadDescMap.clear();
+  threadPending = [];
+  threadOldestNext = null;
+  threadMeta = null;
+}
+
+function renderThreadView(postId) {
+  const feed = document.getElementById('feed');
+  const thread = threadMeta;
+  if (!thread) return;
+
+  let ancestorsHtml = '';
+  if (thread.ancestors && thread.ancestors.length > 0) {
+    if (thread.ancestorCount > thread.ancestors.length) {
+      ancestorsHtml += `<div style="font-size:11px;color:var(--inkMute);margin-bottom:4px">${thread.ancestorCount - thread.ancestors.length} older</div>`;
+    }
+    const parts = [];
+    for (const a of thread.ancestors) {
+      parts.push(renderPost(a, a.id, 0, false));
+      parts.push('<div class="ancestor-connector">↓</div>');
+    }
+    ancestorsHtml += parts.join('');
+  }
+
+  const targetHtml = renderPost(thread.post, postId, 0, true);
+
+  const allDesc = [...threadPending, ...[...threadDescMap.entries()].sort((a, b) => compareDescKeys(a[0], b[0])).map(e => e[1])];
+  let descendantsHtml = '';
+  if (allDesc.length > 0) {
+    const allPosts = [...allDesc, thread.post];
+    const postMap = new Map();
+    const children = new Map();
+    for (const p of allPosts) postMap.set(p.id, p);
+    for (const p of allDesc) {
+      for (const parentId of (p.parentRefs || [])) {
+        if (postMap.has(parentId)) {
+          if (!children.has(parentId)) children.set(parentId, []);
+          children.get(parentId).push(p);
+        }
+      }
+    }
+    const rootDesc = allDesc.filter(p => {
+      if (!p.parentRefs || !p.parentRefs.length) return false;
+      return p.parentRefs.every(pid => !postMap.has(pid) || pid === postId);
+    });
+    if (rootDesc.length > 0) {
+      descendantsHtml = renderThread(rootDesc, postMap, children, 1);
+    }
+  }
+
+  const previewUrl = `${API}/preview/${encodeURIComponent(postId)}`;
+  const loadMoreHtml = threadOldestNext !== null
+    ? '<div style="text-align:center;margin:8px 0"><button id="loadMoreRepliesBtn" class="small">Load more replies</button></div>'
+    : '';
+
+  feed.innerHTML = `
+    <div class="thread-header">
+      <button id="threadBackBtn" class="small">← Back to feed</button>
+      <button id="copyLinkBtn" class="small" style="background:var(--border)">Copy link</button>
+      <span id="copyLinkMsg" style="font-size:11px;color:var(--greenText);display:none">Copied!</span>
+    </div>
+    ${ancestorsHtml}
+    ${targetHtml}
+    ${descendantsHtml ? '<div style="margin-top:8px"></div>' + descendantsHtml : ''}
+    ${loadMoreHtml}
+  `;
+
+  document.getElementById('threadBackBtn').addEventListener('click', () => {
+    window.history.back();
+  });
+
+  document.getElementById('copyLinkBtn').addEventListener('click', async () => {
+    try {
+      const fullUrl = new URL(previewUrl, window.location.href).toString();
+      await navigator.clipboard.writeText(fullUrl);
+      const msg = document.getElementById('copyLinkMsg');
+      msg.style.display = '';
+      setTimeout(() => { msg.style.display = 'none'; }, 2000);
+    } catch {
+      const input = document.createElement('input');
+      input.value = new URL(previewUrl, window.location.href).toString();
+      document.body.appendChild(input);
+      input.select();
+      document.execCommand('copy');
+      document.body.removeChild(input);
+    }
+  });
+
+  if (threadOldestNext !== null) {
+    document.getElementById('loadMoreRepliesBtn').addEventListener('click', () => loadThreadPage(postId, threadOldestNext));
+  }
+
+  attachFeedHandlers(feed);
+}
+
+async function loadThreadPage(postId, afterKey) {
+  try {
+    let url = API + '/posts/' + encodeURIComponent(postId) + '/thread?limit=50';
+    if (afterKey) url += '&after=' + afterKey;
+    if (userId) url += '&viewer=' + userId;
+    const res = await fetch(url);
+    if (!res.ok) return;
+    const thread = await res.json();
+
+    if (!threadMeta) {
+      threadMeta = { post: thread.post, ancestors: thread.ancestors, ancestorCount: thread.ancestorCount, descendantCount: thread.descendantCount };
+    }
+    threadMeta.descendantCount = thread.descendantCount;
+
+    mergeDesc(afterKey || null, thread.descendants || [], thread.next || null);
+    threadPending = thread.pending || [];
+    if (afterKey) {
+      if (!thread.next) threadOldestNext = null;
+      else threadOldestNext = thread.next;
+    } else {
+      if (threadOldestNext === null && thread.next) threadOldestNext = thread.next;
+    }
+
+    renderThreadView(postId);
+  } catch (e) {
+    document.getElementById('feed').innerHTML = '<div class="empty">Failed to load thread</div>';
+  }
+}
+
 async function loadThread(postId, pushState = true) {
   threadPostId = postId;
-  const feed = document.getElementById('feed');
 
   if (pushState) {
     const url = new URL(window.location.href);
@@ -2049,112 +2256,8 @@ async function loadThread(postId, pushState = true) {
     window.history.pushState({ postId }, '', url.toString());
   }
 
-  try {
-    let threadUrl = API + '/posts/' + encodeURIComponent(postId) + '/thread';
-    if (userId) threadUrl += '?viewer=' + userId;
-    const res = await fetch(threadUrl);
-    if (!res.ok) {
-      feed.innerHTML = '<div class="empty">Post not found.</div>';
-      return;
-    }
-    const thread = await res.json();
-
-    // Build ancestors HTML (straight line, oldest first → immediate parent)
-    let ancestorsHtml = '';
-    if (thread.ancestors && thread.ancestors.length > 0) {
-      if (thread.ancestorCount > thread.ancestors.length) {
-        ancestorsHtml += `<div style="font-size:11px;color:var(--inkMute);margin-bottom:4px">${thread.ancestorCount - thread.ancestors.length} older</div>`;
-      }
-      const parts = [];
-      for (const a of thread.ancestors) {
-        const aid = a.id;
-        parts.push(renderPost(a, aid, 0, false));
-        parts.push('<div class="ancestor-connector">↓</div>');
-      }
-      ancestorsHtml += parts.join('');
-    }
-
-    // Target post (highlighted)
-    const targetHtml = renderPost(thread.post, postId, 0, true);
-
-    // Build descendants threaded view
-    let descendantsHtml = '';
-    if (thread.descendants && thread.descendants.length > 0) {
-      const allDesc = [...thread.descendants];
-      // Include target in the map so children refs to target resolve
-      const allPosts = [...allDesc, thread.post];
-
-      const postMap = new Map();
-      const children = new Map();
-      for (const p of allPosts) {
-        const pid = p.id;
-        postMap.set(pid, p);
-      }
-      for (const p of allDesc) {
-        const pid = p.id;
-        for (const parentId of p.parentRefs) {
-          if (postMap.has(parentId)) {
-            if (!children.has(parentId)) children.set(parentId, []);
-            children.get(parentId).push(p);
-          }
-        }
-      }
-
-      // Roots of the descendant tree: posts whose parents are all outside the
-      // descendant set (i.e., their only parent in our map is the target post)
-      const rootDesc = allDesc.filter(p => {
-        if (!p.parentRefs.length) return false;
-        return p.parentRefs.every(pid => !postMap.has(pid) || pid === postId);
-      });
-
-      if (rootDesc.length > 0) {
-        descendantsHtml = renderThread(rootDesc, postMap, children, 1);
-      }
-    }
-
-    const previewUrl = `${API}/preview/${encodeURIComponent(postId)}`;
-
-    feed.innerHTML = `
-      <div class="thread-header">
-        <button id="threadBackBtn" class="small">← Back to feed</button>
-        <button id="copyLinkBtn" class="small" style="background:var(--border)">Copy link</button>
-        <span id="copyLinkMsg" style="font-size:11px;color:var(--greenText);display:none">Copied!</span>
-      </div>
-      ${ancestorsHtml}
-      ${targetHtml}
-      ${descendantsHtml ? '<div style="margin-top:8px"></div>' + descendantsHtml : ''}
-      ${thread.descendantCount > (thread.descendants ? thread.descendants.length : 0) ? `<div style="font-size:11px;color:var(--inkMute);margin-top:4px">${thread.descendantCount - thread.descendants.length} more replies</div>` : ''}
-    `;
-
-    // Back button handler
-    document.getElementById('threadBackBtn').addEventListener('click', () => {
-      window.history.back();
-    });
-
-    // Copy link handler
-    document.getElementById('copyLinkBtn').addEventListener('click', async () => {
-      try {
-        const fullUrl = new URL(previewUrl, window.location.href).toString();
-        await navigator.clipboard.writeText(fullUrl);
-        const msg = document.getElementById('copyLinkMsg');
-        msg.style.display = '';
-        setTimeout(() => { msg.style.display = 'none'; }, 2000);
-      } catch {
-        // Fallback for older browsers
-        const input = document.createElement('input');
-        input.value = new URL(previewUrl, window.location.href).toString();
-        document.body.appendChild(input);
-        input.select();
-        document.execCommand('copy');
-        document.body.removeChild(input);
-      }
-    });
-
-    // Attach reply/like/delete handlers (same pattern as loadFeed)
-    attachFeedHandlers(feed);
-  } catch (e) {
-    feed.innerHTML = '<div class="empty">Failed to load thread</div>';
-  }
+  clearThreadMap();
+  await loadThreadPage(postId, null);
 }
 
 // Expose for inline onclick handlers (module scripts don't create globals)
@@ -2201,9 +2304,8 @@ function attachFeedHandlers(container) {
 
       pendingLikes.delete(postId);
       btn.disabled = false;
-      // Refresh the current view
-      if (threadPostId) loadThread(threadPostId, false);
-      else loadFeed();
+      if (threadPostId) loadThreadPage(threadPostId, null);
+      else loadFeedPage(null);
     });
   });
 
@@ -2249,11 +2351,10 @@ function attachFeedHandlers(container) {
         const result = await res.json();
         console.log('Post deleted:', result);
         if (threadPostId) {
-          // If the deleted post was the thread target, go back to feed
           if (threadPostId === postId) window.history.back();
-          else loadThread(threadPostId, false);
+          else loadThreadPage(threadPostId, null);
         } else {
-          loadFeed();
+          loadFeedPage(null);
         }
       } catch (e) {
         console.error('Delete failed:', e);
@@ -2529,7 +2630,7 @@ window.addEventListener('popstate', (event) => {
 
 // Auto-refresh (skipped when viewing a thread)
 setInterval(() => {
-  if (!threadPostId) loadFeed();
+  if (!threadPostId) loadFeedPage(null);
   loadStatus();
   // Balances move only when a block settles a transaction, and no action of the
   // holder's does it — a faucet grant, an invite settlement and a like all
