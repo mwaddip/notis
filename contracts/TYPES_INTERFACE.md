@@ -1217,15 +1217,22 @@ BlockHeader {
 
 ⚠ **`createdAt` records when mining on this block started, not when it was found.** The node stamps it
 while building the template, and a template is built when the previous block was applied — so
-`createdAt(N)` is the moment block `N−1` entered this node's chain. **It is node-set, never
-miner-supplied**: `POST /mining/submit` carries a nonce and a height and nothing else, which is what
-keeps attacker-chosen timestamps off the honest path entirely.
+`createdAt(N)` is the moment block `N−1` entered this node's chain, clamped to `createdAt(N−1) + 1` when
+this node's clock lags (`MINING_INTERFACE → Header timestamp rules`, producer side). **It is node-set,
+never miner-supplied**: `POST /mining/submit` carries a nonce and a height and nothing else, which is
+what keeps attacker-chosen timestamps off the honest path entirely.
 
-**The consequence for anything reading it as a clock:** the difference between consecutive stamps is
-exactly the interarrival time of the block *between* them, one height out of phase. The **rate** is
-right; the **phase** lags by one block, and a schedule consuming this field must account for that
-offset rather than discover it. The field is domain-pinned as `isU64Safe` and validated against nothing
-— it is not a consensus input.
+**It is a consensus input.** The difficulty schedule reads it (`MINING_INTERFACE → Difficulty Schedule`)
+and two header-level rules bound it — strict order over the parent, and a future bound against the
+receiving node's clock that is an acceptance rule rather than a chain property (`MINING_INTERFACE →
+Header timestamp rules`). The difference between consecutive stamps is exactly the interarrival time of
+the block *between* them, one height out of phase: the **rate** is right, the **phase** lags by one
+block, and the schedule reads the parent's stamp with that lag immaterial over the hundreds of blocks
+its Δ spans. The domain pin is `isU64Safe`; the rules are `VALIDATION_INTERFACE → verifyCreatedAtOrder`
+and `→ verifyCreatedAtBound`.
+
+> ⚠ **AHEAD OF CODE — 2026-08-29.** Until the ASERT unit lands, the field is validated against nothing
+> but its domain pin, and the template stamps `Date.now()` unclamped.
 
 > ⛔ **`networkType` was proposed as a header field twice and is REJECTED — decided
 > 2026-08-10, reversing 2026-08-06.** It was never implemented; nothing is being removed from
@@ -1287,17 +1294,20 @@ maintains and verifies it whether or not it ever serves a proof.
 block's hash; `p_i` the hash of the most recent block among heights `2..h−1` whose level is at
 least `i`; `M` the highest level among them. The vector is dense by construction: `I(2) = [id(1)]`,
 and a chain of level-0 blocks keeps `[id(1)]`. A block's **level** is `VALIDATION_INTERFACE →
-level` — ∞ at height 1, otherwise the largest `μ ≥ 0` with `powHit · 2^μ ≤ target`, an integer
-computed from the header's own PoW and capped at `LEVEL_CAP`.
+level` — ∞ at height 1, otherwise the largest `μ ≥ 0` with `powHit · 2^μ ≤ yardstick`, where the
+yardstick is the network's **anchor** target, `orderingPowTarget(profile.orderingBlockPowTargetBits)`,
+fixed for the chain's life and never the header's own; an integer capped at `LEVEL_CAP`. A block whose
+hit exceeds the yardstick has **no level**: it is in no `p_i` and leaves the vector unchanged.
 
 **Update rule** — the vector is a function of the parent alone:
 
 ```
-updateInterlinks(prev: string[], prevHash: string, prevLevel: number): string[]
+updateInterlinks(prev: string[], prevHash: string, prevLevel: number | null): string[]
 ```
 
 `prev` is the parent's vector `I(h−1)`, `prevHash` its `blockHash`, `prevLevel` its level. When the
-parent is height 1 (`prevLevel === Infinity`) the result is `[prevHash]`. Otherwise, with
+parent is height 1 (`prevLevel === Infinity`) the result is `[prevHash]`. When the parent has no level
+(`prevLevel === null` — its hit exceeds the yardstick) the result is `prev`, unchanged. Otherwise, with
 `L = prevLevel`, positions `1..L` become `prevHash`, positions above `L` are kept, and the length
 grows to `L + 1` when `L ≥ prev.length`. Pure; returns a fresh array; never mutates `prev`.
 
@@ -1318,21 +1328,25 @@ vector — `interlinkRoot([])`, a real digest under the same rule, not a sentine
 run-length form: the bytes a proof carries are the bytes the header committed to.
 
 **Who verifies.** Every full node checks `header.interlinkRoot === interlinkRoot(updateInterlinks(
-I(parent), parentHash, level(parent)))` in the apply funnel (`NODE_INTERFACE` → Ordering block
-apply-time authorization) and over a peer's segment before any of its work counts
-(`VALIDATION_INTERFACE` → verifyHeaderChain, step 7); the block creator derives the template's root
-the same way from the tip. The vector is stored beside each block as a cache derivable from headers
+I(parent), parentHash, level(parent, anchorBits)))` in the apply funnel (`NODE_INTERFACE` → Ordering
+block apply-time authorization) and over a peer's segment before any of its work counts
+(`VALIDATION_INTERFACE` → verifyHeaderChain); the block creator derives the template's root the same
+way from the tip. The vector is stored beside each block as a cache derivable from headers
 (`NODE_INTERFACE` → Ordering blocks).
 
 **Genesis anchoring.** `I[0]` is the height-1 block's hash for every block above it. A profile that
 pins `genesisId` (→ Network profiles) fixes which block 1 that can be; an unpinned profile accepts
 any PoW-valid block 1, and two chains with different ones share no block.
 
-⚠ **A retarget changes this section.** The level is defined against a target that is a constant
-per profile at every height (`MINING_INTERFACE` → Difficulty Schedule). A difficulty adjustment, if
-one is ever designed, makes a proof carry the headers a verifier needs to recompute the schedule —
-Ergo's continuous mode — and is a `PROTOCOL_VERSION` bump with a new proof layout. Nothing here
-reserves for it.
+**A moving target changes no structure here.** The level is measured against the anchor target rather
+than the header's own precisely so that the difficulty schedule (`MINING_INTERFACE` → Difficulty
+Schedule) changes no layout and injects no headers into a proof: a superblock count stays a count of
+work in anchor units, and `NIPOPOW_INTERFACE → compareProofs` stays a work comparison. What moves when
+levels do is `interlinkRoot` — a committed byte, covered by the fresh chain the ASERT unit deploys on.
+
+> ⚠ **AHEAD OF CODE — 2026-08-29.** `level` measures against the header's own target and
+> `updateInterlinks` has no `null` arm until the ASERT unit lands; on a constant-target chain the two
+> definitions coincide, so no stored vector moves before the fresh chain.
 
 ### Ordering block
 
@@ -2626,8 +2640,15 @@ export interface NetworkProfile {
   readonly networkType: NetworkType;
   readonly magic: number;              // wire frame magic — one per network
 
-  // Difficulty
+  // Difficulty — the ASERT schedule's per-network numbers (MINING_INTERFACE → Difficulty Schedule).
+  // `orderingBlockPowTargetBits` is the ANCHOR's bits — block 1's target, and the yardstick every
+  // superblock level is measured against; the schedule moves inside [floor, ceiling];
+  // `orderingBlockIdealMs` is the interval the schedule aims at and the halflife's unit
+  // (halflife = RETARGET_HALFLIFE_BLOCKS · ideal). The mechanic is universal; only the numbers vary.
   readonly orderingBlockPowTargetBits: number;
+  readonly orderingBlockIdealMs: number;
+  readonly orderingBlockPowTargetFloorBits: number;
+  readonly orderingBlockPowTargetCeilingBits: number;
 
   // Block-denominated durations
   readonly karmaDecayIntervalBlocks: number;
@@ -2667,6 +2688,19 @@ export const MAGIC_DEVNET  = 0x44444147;  // "DDAG"
 /** The canonical set. `net` must derive its frame-magic check from this, never a local literal. */
 export const KNOWN_FRAME_MAGICS: readonly number[];
 ```
+
+**The difficulty band is per network; the schedule is not.** `orderingBlockPowTargetBits` is the
+anchor — block 1's target and the yardstick every superblock level is measured against (→ Interlink
+vector) — and `orderingBlockPowTargetFloorBits` / `…CeilingBits` bound where the ASERT schedule may
+move; `orderingBlockIdealMs` is the interval it aims at (`MINING_INTERFACE → Difficulty Schedule`). The
+values and their standing are `CONSTANTS → Per-network values`: 60 000 ms on all three; floor 5120 on
+mainnet and testnet, 2304 on devnet; ceiling 65536 on mainnet and testnet, 4096 on devnet. A profile
+whose floor sits below `ORDERING_BLOCK_POW_TARGET_FLOOR`, whose anchor lies outside its band, whose
+ceiling exceeds 65536 or whose ideal is not positive is refused at load (`NODE_INTERFACE →
+Configuration`) — a refusal, never a clamp.
+
+> ⚠ **AHEAD OF CODE — 2026-08-29.** The three fields are the ASERT unit's; `NetworkProfile` carries
+> `orderingBlockPowTargetBits` alone until it lands.
 
 **This is the sole definition of the network magics.** `@dagsocial/wire` exported duplicates
 until P2-A phase 5 deleted them. They live here rather than `NetworkType` living in wire
@@ -3128,21 +3162,32 @@ export const STORAGE_RENT_PER_BYTE = 605_378n;     // consensus — charged once
 ### Ordering block PoW
 
 ```typescript
-export const ORDERING_BLOCK_POW_TARGET_BITS = 5984;     // 23.375 bits — a 60s solve
-export const ORDERING_BLOCK_POW_TARGET_FLOOR = 2304;    // 9 whole bits
+export const ORDERING_BLOCK_POW_TARGET_BITS = 5984;     // 23.375 bits — a 60s solve; the ANCHOR's bits
+export const ORDERING_BLOCK_POW_TARGET_FLOOR = 2304;    // 9 whole bits — the resolution floor
+export const RETARGET_HALFLIFE_BLOCKS = 288;            // the ASERT halflife, in ideal intervals (MINING_INTERFACE → Difficulty Schedule)
+export const MAX_FUTURE_DRIFT_MS = 600_000;             // 10 min — the future bound on createdAt (MINING_INTERFACE → Header timestamp rules)
 ```
+
+**`RETARGET_HALFLIFE_BLOCKS` is the mechanic's own number and universal** — the reference's ratio of
+halflife to block time (BCH: 172 800 s at 600 s), stated in blocks so a profile's `orderingBlockIdealMs`
+gives its halflife in ms. **`MAX_FUTURE_DRIFT_MS` is an acceptance bound, universal** — under an
+absolute schedule it caps what a lying or fast clock buys at `drift / ideal` = 10 blocks, ever. Both are
+`PROVISIONAL` (`CONSTANTS → Ordering-block PoW`).
+
+> ⚠ **AHEAD OF CODE — 2026-08-29.** Neither constant exists in `types/src/constants.ts` until the
+> ASERT unit lands.
 
 **The derivation, so it reproduces:** 60 s × 181,262 H/s = 10,875,720 hashes; `log2` of that is
 **23.37461** bits; ×256 = **5983.90**, which rounds to **5984** — exactly 23.375 bits, or 23 + 3/8, a
 value the 1/256 representation carries without rounding. ⚠ **Provisional**: one machine, one thread,
 while the target is set by the network's total.
 
-⚠ **`ORDERING_BLOCK_POW_TARGET_BITS` is mainnet's and testnet's. Devnet sets its own
-`orderingBlockPowTargetBits` and it is deliberately lower** — the node test suite mines real PoW, and
-`expectedTarget()` reads the process config singleton, so an injected `Config` cannot lower it. Devnet is
-the profile the suite resolves; a raised value there costs the suite hours. **This is the one parameter
-on which devnet does not follow the constant**, and the divergence is load-bearing rather than
-incidental.
+⚠ **`ORDERING_BLOCK_POW_TARGET_BITS` is mainnet's and testnet's anchor. Devnet sets its own anchor,
+floor and ceiling, all deliberately lower** — the node test suite mines real PoW, and the schedule reads
+the process config singleton, so an injected `Config` cannot lower it. Devnet is the profile the suite
+resolves; a raised value there costs the suite hours. **The mechanic is the same on every network and
+the band is the cap** (`ARCHITECTURE → What varies per network`): devnet's ceiling of 4096 keeps a burst
+of test blocks inside sixteen whole bits, and the divergence is load-bearing rather than incidental.
 
 ⚠ **Both are in units of 1/256 of a bit** — `VALIDATION_INTERFACE → orderingPowTarget`. Divide by 256
 to read them as whole bits.

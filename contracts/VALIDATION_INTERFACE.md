@@ -180,9 +180,11 @@ rejects and sits there mining nothing — up, quiet, and producing no blocks, wh
 contract's fail-stop rules exist to prevent. **It is a refusal, not a clamp**: raising a below-floor
 value to the floor would mine a chain against a target nobody configured.
 
-⚠ **The producer check lives at config load, which is complete only while the target is constant in
-height.** A schedule that can *compute* a below-floor target needs the check where the target is
-produced — `expectedTarget` — and a load-time guard will look complete to whoever writes that schedule.
+**The producer check lives at config load, and the schedule keeps it complete.** `asertTargetBits`
+clamps every computed target to the profile band, and `loadConfig` refuses a band whose floor sits
+below `ORDERING_BLOCK_POW_TARGET_FLOOR` (`NODE_INTERFACE → Configuration`), so no target the schedule
+can produce falls beneath the resolution floor — the load-time guard is the check where the band is
+fixed, and the clamp is the check where the target is produced.
 
 `blockWork` returns `null` for exactly the inputs the expansion refuses, so the domain is stated once
 rather than re-derived. `cumulativeWork` **skips** such a header rather than throwing: the array
@@ -218,7 +220,7 @@ why it is stated with its date and its runtime.
 > ⚠ **The domain CONTAINS the claimed-work defect; it does not close it.** A peer claiming
 > `powTargetBits: 200` sits inside `[0, 256]`, allocates nothing and throws nothing, and still outweighs
 > an honest 12-bit chain by 2¹⁸⁸ — buying a reorg *attempt* on every comparison. Those blocks are
-> rejected at apply, which enforces `expectedTarget(height)`, so the chain does not move; the cost is
+> rejected at apply, which enforces the schedule over the stored parent, so the chain does not move; the cost is
 > wasted work, not a consensus break. **The root is comparing *claimed* work rather than verified work,
 > and it belongs to `@dagsocial/node`'s fork choice.** Recorded so it is not mistaken for closed.
 >
@@ -266,6 +268,69 @@ reaches a rule as a meaning.
 `verifyOrderingBlockPoW` is unaffected — ordering-block PoW is the consensus PoW and
 always was. **Consensus is honestly single-phase.**
 
+### asertTargetBits — the difficulty schedule
+
+```
+interface RetargetParams {
+  anchorBits: number;     // profile.orderingBlockPowTargetBits — block 1's target, the anchor's
+  idealMs: number;        // profile.orderingBlockIdealMs
+  halflifeMs: number;     // RETARGET_HALFLIFE_BLOCKS · idealMs
+  floorBits: number;      // profile.orderingBlockPowTargetFloorBits
+  ceilingBits: number;    // profile.orderingBlockPowTargetCeilingBits
+}
+
+asertTargetBits(
+  params: RetargetParams,
+  anchorCreatedAt: number,                        // block 1's createdAt, t_a
+  parent: { height: number; createdAt: number },  // the block below the one being scheduled
+): number
+```
+
+The target the block above `parent` must carry — `MINING_INTERFACE → Difficulty Schedule`'s rule,
+stated there and computed here:
+
+```
+Δ = (parent.createdAt − anchorCreatedAt) − idealMs · (parent.height − 1)
+B = clamp( anchorBits − floorDiv(Δ · 256, halflifeMs), floorBits, ceilingBits )
+```
+
+BigInt throughout; `floorDiv` rounds toward −∞ (`q = a / b; if (a % b !== 0n && a < 0n) q -= 1n`,
+`b > 0`). Pure, and total over its declared domain — safe non-negative integers for the stamps and the
+height, `parent.height ≥ 1`, a band with `floorBits ≤ anchorBits ≤ ceilingBits ≤ 65536` — which the
+callers own: `loadConfig` for the band (`NODE_INTERFACE → Configuration`), the funnel's domain gate for
+the header. The result lies in the band, so it is always inside `orderingPowTarget`'s domain.
+**The height-1 block is not scheduled**: its bits are `anchorBits` by definition, checked by the caller,
+and this function is never asked for it.
+
+Monotone in Δ and exact in log space — no exponentiation and no approximation; the only rounding is
+the 1/256-bit quantisation, and `floorDiv` fixes its direction (never easier than exact). The reference
+(`aserti3-2d`) works in target space with a cubic approximation and truncating division, so a
+cross-check against it under `MINING_INTERFACE → Difficulty Schedule`'s mapping agrees within one unit
+at a negative non-integer quotient; the package's vectors state that tolerance.
+
+### verifyCreatedAtOrder — the header timestamp order rule
+
+```
+verifyCreatedAtOrder(header: BlockHeader, parent: BlockHeader): boolean   // header.createdAt > parent.createdAt
+```
+
+`MINING_INTERFACE → Header timestamp rules`, the order rule — consensus: stated there and computed
+here. M-5 applies: a non-object, a `NaN`, a non-integer or a negative operand answers `false`; never
+throws.
+
+### verifyCreatedAtBound — the future bound
+
+```
+verifyCreatedAtBound(header: BlockHeader, nowMs: number, maxDriftMs: number): boolean   // header.createdAt ≤ nowMs + maxDriftMs
+```
+
+`MINING_INTERFACE → Header timestamp rules`, the future bound — an acceptance rule against the
+**caller's** clock, injected as `nowMs`; this package reads no clock. M-5 applies as above; never
+throws.
+
+> ⚠ **AHEAD OF CODE — 2026-08-29.** The three functions above and `RetargetParams` are the ASERT
+> unit's; none exists in `validation/src` yet.
+
 ### powHit — the digest a header's nonce produced
 
 ```
@@ -281,29 +346,43 @@ hit a verifier judges and the hit a level is computed from are one computation.
 ### level — the superblock level of a header
 
 ```
-level(header: BlockHeader): number | null
+level(header: BlockHeader, anchorBits: number): number | null
 levelOfHit(hit: Uint8Array, target: Uint8Array): number | null
 ```
 
 The NiPoPoW level (`TYPES_INTERFACE` → Interlink vector): **`Infinity` at height 1**; otherwise the
-largest integer `μ ≥ 0` with `hit · 2^μ ≤ target`, where `hit` is `powHit(header)` and `target` is
-`orderingPowTarget(header.powTargetBits)`, both read as unsigned big-endian integers; **`LEVEL_CAP`**
-(256) when `hit` is zero. `null` when either half is `null`, **and `null` when `hit > target`** — a
-header that fails PoW has no level, and no caller asks for one before `verifyOrderingBlockPoW` has
-answered. Integer arithmetic throughout — no floating point, no logarithm; a header
-`verifyOrderingBlockPoW` accepts always has `μ ≥ 0`, and `P(level ≥ i) = 2^-i` up to the 1/256-bit
-granularity of the target.
+largest integer `μ ≥ 0` with `hit · 2^μ ≤ yardstick`, where `hit` is `powHit(header)` and the
+**yardstick** is `orderingPowTarget(anchorBits)` — the network's anchor target,
+`profile.orderingBlockPowTargetBits`, fixed for the chain's life — both read as unsigned big-endian
+integers; **`LEVEL_CAP`** (256) when `hit` is zero. `null` when either half is `null`, **and `null` when
+`hit > yardstick`** — the header has **no level**: it is a superblock of no level, it leaves the
+interlink vector unchanged (`TYPES_INTERFACE → Interlink vector`), and it counts nowhere in a proof
+comparison. Integer arithmetic throughout — no floating point, no logarithm.
 
-`levelOfHit` is the arithmetic half, over the two 32-byte operands: `level(header)` is
-`levelOfHit(powHit(header), orderingPowTarget(header.powTargetBits))` after the height-1 rule, and
+**The yardstick is the anchor's target, never the header's own.** A header mined at its own target
+`T_b` registers level ≥ μ with probability `T_a / (2^μ · T_b)`, so the expected count of level-μ headers
+over any chain is `work / (2^μ · W_a)` — a count of superblocks is a count of work in anchor units
+whatever the headers' declared targets, which is what keeps `NIPOPOW_INTERFACE → compareProofs` a work
+comparison under a moving target. Under a constant target the two definitions coincide, every target
+being the anchor's. A chain harder than the yardstick registers every block at some floor level and
+under-counts beneath it; a chain easier than the yardstick registers a fraction of its blocks at each
+level, in proportion to their work.
+
+**PoW validity is a separate question.** A header's PoW is judged against its **own** declared bits —
+`verifyOrderingBlockPoW` is `meetsPowTarget(powHit(header), orderingPowTarget(header.powTargetBits))` —
+and every caller of `level` (the apply funnel, `verifyHeaderChain`, `NIPOPOW_INTERFACE → verifyProof`)
+asks that first, so a `null` at a call site means *below the yardstick*, never *invalid*. The schedule
+check that pins the declared bits (→ asertTargetBits) runs beside this function in every caller, never
+inside it.
+
+`levelOfHit` is the arithmetic half, over the two 32-byte operands: `level(header, anchorBits)` is
+`levelOfHit(powHit(header), orderingPowTarget(anchorBits))` after the height-1 rule, and
 `verifyHeaderChain` computes each header's level from the hit it already holds rather than hashing
 twice. Exported so the zero-hit case — unreachable by nonce search — is pinned directly, and so a
 mirror can assert the arithmetic without a header. `null` on a wrong-width operand; never throws.
 
-The target is the header's **own** `powTargetBits`, exactly as `verifyOrderingBlockPoW` reads it —
-the schedule check that pins that field to `expectedTarget(height)` runs beside this function in
-every caller (`verifyHeaderChain` step 5, the apply funnel), never inside it. This package owns no
-schedule.
+> ⚠ **AHEAD OF CODE — 2026-08-29.** `level` takes one argument and measures against the header's own
+> target until the ASERT unit lands; every call site gains the anchor bits with it.
 
 ### verifyOrderingBlockPoW
 
@@ -659,7 +738,7 @@ The domain, by field:
 | `validatorId` | `Uint8Array`, exactly 32 bytes | `b32` |
 | `powNonce` | non-negative safe integer | `vlqU` |
 | `powTargetBits` | non-negative safe integer | `vlqU` |
-| **`createdAt`** | **non-negative safe integer** — new in 1f | `vlqU` |
+| **`createdAt`** | non-negative safe integer — **and a consensus input**: the order and future-bound rules (→ verifyCreatedAtOrder, → verifyCreatedAtBound) and the difficulty schedule's clock (→ asertTargetBits) read it | `vlqU` |
 | `interlinkRoot` | `/^[0-9a-f]{64}$/` | `b32` |
 
 ⛔ **The table used to carry a `networkType` row, marked AHEAD OF CODE for Phase 3. That header field
@@ -684,18 +763,16 @@ well-formedness check with no membership tests left in it.
 in `net`, and `verifyOrderingBlockStructure` never touched it. Every other `vlqU` header field is
 pinned on both the gossip and apply paths; this one was pinned on neither.
 
-**It is a domain pin, not a clock policy.** `createdAt` is a producer-set wall-clock value that no
-node validates against anything, exactly as in every chain in the lineage, where it exists as a
-record for explorers. 1f constrains it *only* to what `vlqU` can encode faithfully. It deliberately
-adds **no monotonicity rule and no skew window** — those are consensus rule additions, not encoding
-constraints, and this contract's "never add checks the reference lacks" applies. Note also that the
-reason Bitcoin and Ergo *do* bound their timestamps — difficulty adjustment, and the timewarp class —
-has no analogue here: `expectedTarget(_height)` (`node/src/services/difficulty.ts`) **ignores its
-argument** and returns `config.orderingBlockPowTargetBits` — a constant, sourced from the network
-profile, with the height parameter reserved as the seam a real retarget will need — and a constant
-target has no adjustment algorithm for a timestamp to attack. **Revisit this
-paragraph if a retarget is ever designed**, because that is the change that makes `createdAt` a
-consensus input rather than a record.
+**The domain pin is the field's first gate, not its last.** `createdAt` is a consensus input: the
+difficulty schedule reads it (`MINING_INTERFACE → Difficulty Schedule`) and two header-level rules bound
+it — strict order over the parent (→ verifyCreatedAtOrder, consensus) and a future bound against the
+receiving node's clock (→ verifyCreatedAtBound, an acceptance rule). The reason Bitcoin and Ergo bound
+their timestamps — difficulty adjustment, and the timewarp class — has its analogue here, and
+`MINING_INTERFACE → Header timestamp rules` carries the cases. This table pins encodability and nothing
+more; the two rules live beside `verifyHeaderChain` and in the apply funnel, never in the domain check.
+
+> ⚠ **AHEAD OF CODE — 2026-08-29.** The two rules and the schedule are the ASERT unit's; until it
+> lands, `createdAt` is checked by nothing but this domain pin.
 
 **Byte fields are checked with `isBytes`, never a bare `.length`.** Phase 1e found `validatorId`,
 coinbase `owner` and `validatorSignature` checked by character count, so a *string* of the right
@@ -1048,23 +1125,35 @@ every non-genesis block (the genesis case has no previous block to link to).
 ```
 verifyHeaderChain(
   headers: BlockHeader[],                 // chronological; expected to start at anchor.height + 1
-  anchor: { prevBlockHash: string; height: number; interlinks: string[] },
-  scheduledTarget: (height: number) => number,
+  anchor: { prevBlockHash: string; height: number; interlinks: string[]; createdAt: number | null },
+  params: RetargetParams,                 // → asertTargetBits
+  anchorCreatedAt: number | null,         // block 1's createdAt, t_a — null at a fork at GENESIS_HEIGHT
+  nowMs: number,                          // the caller's clock, for the future bound
 ): { ok: true; work: bigint; hashes: string[] }
- | { ok: false; index: number; reason: 'domain' | 'version' | 'height' | 'link' | 'target' | 'pow' | 'interlinks' }
+ | { ok: false; index: number; reason: 'domain' | 'version' | 'height' | 'link' | 'time' | 'clock' | 'target' | 'pow' | 'interlinks' }
 ```
 
 **The header-level rules a chain must pass before any of its work counts**, applied to every header
 in order. For header `i`: `blockHash(header) !== null` (`domain` — the whole
 `verifyHeaderFieldDomains` domain, stated once by the hash) · `verifyProtocolVersion` (`version`) ·
 `height === anchor.height + 1 + i` (`height`) · `prevBlockHash` equals `anchor.prevBlockHash` for
-`i = 0` and `hashes[i − 1]` after (`link`) · `powTargetBits === scheduledTarget(height)` (`target`) ·
-`verifyOrderingBlockPoW(header)` (`pow`) · `interlinkRoot === interlinkRoot(expected[i])` (`interlinks`),
-where `expected[0]` is `anchor.interlinks` and `expected[i]` is `updateInterlinks(expected[i − 1],
-hashes[i − 1], level(headers[i − 1]))` after (`TYPES_INTERFACE` → Interlink vector) — step 7, and the
-one step that reads the header before it. The first failure answers `{ ok: false, index, reason }`
-for the whole segment — **refuse-whole, never skip**: skipping would let the peer choose which of its
-headers count, and a header that cannot be interpreted decides nothing. Nothing partial is exposed.
+`i = 0` and `hashes[i − 1]` after (`link`) · `createdAt` strictly above the previous header's, or above
+`anchor.createdAt` for `i = 0` when that is not `null` (`time`) · `createdAt ≤ nowMs +
+MAX_FUTURE_DRIFT_MS` (`clock`) · `powTargetBits === asertTargetBits(params, t_a, previous)`, where
+`previous` is `headers[i − 1]`, or for `i = 0` the anchor's own `height` and `createdAt` when
+`anchor.createdAt` is not `null`, and a height-1 header's bits must equal `params.anchorBits` instead
+(`target`) · `verifyOrderingBlockPoW(header)` (`pow`) · `interlinkRoot === interlinkRoot(expected[i])`
+(`interlinks`), where `expected[0]` is `anchor.interlinks` and `expected[i]` is
+`updateInterlinks(expected[i − 1], hashes[i − 1], level(headers[i − 1], params.anchorBits))` after
+(`TYPES_INTERFACE` → Interlink vector) — the one step that reads the header before it. The first failure
+answers `{ ok: false, index, reason }` for the whole segment — **refuse-whole, never skip**: skipping
+would let the peer choose which of its headers count, and a header that cannot be interpreted decides
+nothing. Nothing partial is exposed.
+
+**`t_a` is the branch's own block 1's stamp.** At a fork above `GENESIS_HEIGHT` both branches share
+block 1, so the caller passes its stored stamp; at a fork *at* `GENESIS_HEIGHT` the segment's own first
+header is height 1, its stamp becomes `t_a` for `i ≥ 1`, and it has no order check — `anchor.createdAt`
+and `anchorCreatedAt` are `null` together, and only together.
 
 On success, `work` is `cumulativeWork(headers)` — every header has passed `target` and `pow`, so no
 term is `null` — and `hashes[i]` is `blockHash(headers[i])`. An empty segment is `{ ok: true, work:
@@ -1076,19 +1165,25 @@ incumbent's and an empty `hashes` admits no block.
 build on — for a fork at `GENESIS_HEIGHT` it is `GENESIS_PREV_BLOCK_HASH` (TYPES_INTERFACE → Genesis
 parent hash), the same value apply's genesis branch checks a height-1 block against. Its `interlinks`
 is **the vector the segment's first header must commit to** — the caller computes it from the fork
-point's stored vector, `updateInterlinks(I(f), hash(f), level(f))`, or passes `[]` at `GENESIS_HEIGHT`
-(`NODE_INTERFACE` → Fork choice decides on verified headers, step 4). The function walks the expected
-vectors forward from there and reads no store.
+point's stored vector, `updateInterlinks(I(f), hash(f), level(f, anchorBits))`, or passes `[]` at
+`GENESIS_HEIGHT`; its `createdAt` is the fork block's stamp, or `null` there (`NODE_INTERFACE` → Fork
+choice decides on verified headers, step 4). The function walks the expected vectors and the schedule
+forward from there and reads no store.
 
-**The schedule is injected, not imported.** This package is stateless and owns no
-`expectedTarget`; the caller passes the network's schedule. A retarget therefore changes the
-caller's function and nothing here — the retarget seam is the parameter.
+**The schedule's parameters are injected, not imported.** This package owns the function
+(→ asertTargetBits) and no parameter: the caller passes the network's `RetargetParams` and its clock.
+A different estimator changes `asertTargetBits` and nothing in this walk.
 
 **These are exactly the header-level checks of the apply funnel** (`applyOrderingBlock`: structure's
-header domain and version, chain link, scheduled target, PoW, interlink root), run once over a peer's
-segment before
-it is scored and again by apply when it is applied. The validator signature is **not** among them:
-`validatorSignature` rides the block, not the header, so it stays a body-stage check.
+header domain and version, chain link, the two timestamp rules, the scheduled target over the stored
+parent, PoW, interlink root), run once over a peer's segment before it is scored and again by apply
+when it is applied. The validator signature is **not** among them: `validatorSignature` rides the
+block, not the header, so it stays a body-stage check. **`'clock'` is the one reason that is not a
+verdict on the chain** — `NODE_INTERFACE → Fork choice decides on verified headers` classifies it
+beside the window miss: refuse, no penalty, no mark.
+
+> ⚠ **AHEAD OF CODE — 2026-08-29.** `verifyHeaderChain` takes `scheduledTarget(height)` and no clock,
+> and its reason set lacks `'time'` and `'clock'`, until the ASERT unit lands.
 
 **M-5 applies.** Malformed input — non-object headers, a `NaN` height, an out-of-domain target —
 answers `ok: false`; the function never throws. `NODE_INTERFACE → Fork choice decides on verified

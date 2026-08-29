@@ -195,8 +195,10 @@ Units of 1/256 of a bit (`VALIDATION_INTERFACE → orderingPowTarget`).
 
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
-| `ORDERING_BLOCK_POW_TARGET_BITS` | `5984` | 23.375 bits — a 60 s solve at 181 262 H/s | consensus → profile | measured: 60 s × 181 262 H/s = 10 875 720 hashes, log₂ = 23.3746 bits, × 256 = 5983.9 → 5984. One machine, one thread, standing in for the network's total | PROVISIONAL | `TYPES_INTERFACE → Ordering block PoW` |
-| `ORDERING_BLOCK_POW_TARGET_FLOOR` | `2304` | 9 whole bits | consensus | the first whole bit above 2180, beneath which a 1/256-bit step buys zero work and difficulty moves while `cumulativeWork` does not | DERIVED | `VALIDATION_INTERFACE → blockWork / cumulativeWork` |
+| `ORDERING_BLOCK_POW_TARGET_BITS` | `5984` | **the anchor's bits** — 23.375 bits, a 60 s solve at 181 262 H/s; the schedule moves from here | consensus → profile | measured: 60 s × 181 262 H/s = 10 875 720 hashes, log₂ = 23.3746 bits, × 256 = 5983.9 → 5984. One machine, one thread, standing in for the network's total | PROVISIONAL | `TYPES_INTERFACE → Ordering block PoW` |
+| `ORDERING_BLOCK_POW_TARGET_FLOOR` | `2304` | 9 whole bits — the resolution floor every profile floor must clear | consensus | the first whole bit above 2180, beneath which a 1/256-bit step buys zero work and difficulty moves while `cumulativeWork` does not | DERIVED | `VALIDATION_INTERFACE → blockWork / cumulativeWork` |
+| `RETARGET_HALFLIFE_BLOCKS` | `288` | the ASERT halflife in ideal intervals — 4.8 h at 60 s | consensus | the reference's ratio of halflife to block time (BCH: 172 800 s / 600 s); the response time constant is ≈ 1.44 halflives, ~7 h to a halving of hashrate | PROVISIONAL | `MINING_INTERFACE → Difficulty Schedule` |
+| `MAX_FUTURE_DRIFT_MS` | `600_000` | 10 min — the future bound on `createdAt` | policy | an absolute schedule caps what a lying or fast clock buys at `skew / ideal` = 10 blocks ever; a slow honest clock bounces blocks for at most that long | PROVISIONAL | `MINING_INTERFACE → Header timestamp rules` |
 
 ### Interlinks
 
@@ -220,7 +222,10 @@ devnet differ where a cell says so. The identity fields — `magic`, `genesisCom
 
 | Field | mainnet | testnet | devnet | Axis | Argument (devnet's cell) | Status | Rule |
 |---|---|---|---|---|---|---|---|
-| `orderingBlockPowTargetBits` | `5984` | `5984` | `3072` | difficulty | the node suite mines real PoW against the profile it resolves: 5984 costs it ~141 minutes per run, 3072 is ~4K hashes a solve; and ≥ 2180 so the retarget is exercised above the dead zone | DERIVED | `TYPES_INTERFACE → Ordering block PoW` |
+| `orderingBlockPowTargetBits` | `5984` | `5984` | `3072` | difficulty — **the anchor's bits** | the node suite mines real PoW against the profile it resolves: 5984 costs it ~141 minutes per run, 3072 is ~4K hashes a solve; and ≥ 2180 so the schedule is exercised above the dead zone | DERIVED | `TYPES_INTERFACE → Ordering block PoW` |
+| `orderingBlockIdealMs` | `60_000` | `60_000` | `60_000` | timescale | the interval every "at 60 s" row in this register assumes; the schedule aims at it and the halflife is `RETARGET_HALFLIFE_BLOCKS` of it | DERIVED | `MINING_INTERFACE → Difficulty Schedule` |
+| `orderingBlockPowTargetFloorBits` | `5120` | `5120` | `2304` | cap | devnet sits at the resolution floor so its tests stay near-free; 20 bits on testnet and mainnet prices a paused chain's owed catch-up block at ~1.4 s of one core, and 8× easier than the anchor is the most a hashrate collapse can ask | PROVISIONAL | `MINING_INTERFACE → Difficulty Schedule` |
+| `orderingBlockPowTargetCeilingBits` | `65536` | `65536` | `4096` | cap | devnet's 16 whole bits (~65 K hashes a solve at worst) is the test-cost cap that lets it run the same mechanic; 65536 is the domain's top, "unbound", where hashrate may grow | PROVISIONAL | `MINING_INTERFACE → Difficulty Schedule` |
 | `karmaDecayIntervalBlocks` | `1440` | `1440` | `3` | timescale | a short-run value that makes decay fire inside a devnet run | CHOSEN | `TYPES_INTERFACE → Network profiles` |
 | `karmaStaleThresholdBlocks` | `40320` | `40320` | `500` | timescale | keeps staleness reachable inside a suite | CHOSEN | `TYPES_INTERFACE → Network profiles` |
 | `vouchCooldownBlocks` | `60` | `60` | `3` | timescale | the shortest wait that still spans block boundaries | DERIVED | `TYPES_INTERFACE → Network profiles` |
@@ -315,7 +320,7 @@ drift test's converse does not reach them and the rows are marked.
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
 | `m` (default) | `6` | the security parameter | policy | provisional | PROVISIONAL | `NIPOPOW_INTERFACE → Constants` |
-| `k` (default) | `20` | the suffix — "k-deep" means past a full node's reorg horizon | policy | = `MAX_REORG_DEPTH`; provisional | PROVISIONAL | `NIPOPOW_INTERFACE → Constants` |
+| `k` (default) | `20` | the suffix — "k-deep" means past a full node's reorg horizon; a block count, read in work under a moving target | policy | = `MAX_REORG_DEPTH`; provisional | PROVISIONAL | `NIPOPOW_INTERFACE → Constants` |
 
 ## Excluded
 
