@@ -1741,6 +1741,24 @@ describe('validateAndApplyTx', () => {
       expect(result.error).toContain('not confirmed');
     });
 
+    it('a like on a pending target is refused even with getPendingPostAuthor wired', () => {
+      const pendingTarget = 'cd'.repeat(32);
+      const pendingAuthor = new Uint8Array(32).fill(0xcd);
+      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
+      const pendingDeps: UtxoEngineDeps = {
+        ...deps,
+        getPendingPostAuthor: (postId: string) =>
+          postId === pendingTarget ? pendingAuthor : null,
+      };
+      const tx = buildSignedTx(
+        [karma.id!], [karmaOut(99n, ownerPubKey), marker()], ownerPrivKey, ownerPubKey, 1,
+        pendingTarget,
+      );
+      const result = validateTx(pendingDeps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('not confirmed');
+    });
+
     // --- input rules --------------------------------------------------------
 
     it('multi-input like: two karma boxes, one owner, one −1 output: valid', () => {
@@ -2467,6 +2485,26 @@ describe('validateAndApplyTx', () => {
       expect(result.error).toMatch(/not authored by the karma input/);
     });
 
+    it('a prune of a pending root is refused even with getPendingPostAuthor wired', () => {
+      const pendingRoot = 'dd'.repeat(32);
+      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
+      const pendingDeps: UtxoEngineDeps = {
+        ...deps,
+        getPendingPostAuthor: (postId: string) =>
+          postId === pendingRoot ? ownerPubKey : null,
+      };
+      const newKarma: CandidateOf<KarmaBox> = {
+        boxType: 'karma', value: 100n, createdAtBlock: 0, owner: ownerPubKey,
+      };
+      const prune = makePruneCommit(pendingRoot);
+      const tx = buildSignedTx(
+        [karma.id!], [newKarma], ownerPrivKey, ownerPubKey, 1, undefined, undefined, prune,
+      );
+      const result = validateTx(pendingDeps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toMatch(/not authored by the karma input/);
+    });
+
     it('rejects a prune whose rootPostHash is authored by a different key (stranger prune)', () => {
       const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
       const strangerRoot = 'ee'.repeat(32);
@@ -2570,6 +2608,26 @@ describe('validateAndApplyTx', () => {
       expect(result.valid).toBe(false);
       expect(result.error).toMatch(/not authored by the karma input/);
       topologyAuthors.delete(strangerPost);
+    });
+
+    it('a withdrawal of a pending post is refused even with getPendingPostAuthor wired', () => {
+      const pendingPost = 'f1'.repeat(32);
+      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
+      const pendingDeps: UtxoEngineDeps = {
+        ...deps,
+        getPendingPostAuthor: (postId: string) =>
+          postId === pendingPost ? ownerPubKey : null,
+      };
+      const newKarma: CandidateOf<KarmaBox> = {
+        boxType: 'karma', value: 100n, createdAtBlock: 0, owner: ownerPubKey,
+      };
+      const pw: PostWithdrawCommit = { postId: pendingPost };
+      const tx = buildSignedTx(
+        [karma.id!], [newKarma], ownerPrivKey, ownerPubKey, 1, undefined, undefined, undefined, pw,
+      );
+      const result = validateTx(pendingDeps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toMatch(/not authored by the karma input/);
     });
 
     it('a plain karma self-consolidation carrying no payload is still valid', () => {

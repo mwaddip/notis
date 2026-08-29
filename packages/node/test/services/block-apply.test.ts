@@ -49,7 +49,7 @@ import {
   seedProvenance,
   signHeader,
   signTransaction,
-  seedPostTx, fillerTx,
+  seedPostTx, fillerTx, makePostTx,
   coinbaseOf, withCoinbase,
   seedEmissionBox, seedKarmaPoolBox } from '../helpers.js';
 
@@ -2500,6 +2500,62 @@ describe('T4: activity clock in the user-transaction loop', () => {
 
     const authorRecordAfter = records.getIdentityRecord(author.userId);
     expect(authorRecordAfter!.lastActivityBlock).toBe(authorActivityBefore);
+  });
+
+  // -----------------------------------------------------------------------
+  // A thread and its reply apply in either body order (§8 before §11)
+  // -----------------------------------------------------------------------
+
+  it('a block carrying a thread and its reply applies: thread before reply', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const blockApply = await importBlockApply();
+    const utxo = await importUtxo();
+
+    const author = makeTestIdentity();
+    const threadResult = makePostTx(author, 'thread for body-order');
+    utxo.insertBox(threadResult.karmaBox);
+    const replyResult = makePostTx(
+      author, 'reply for body-order',
+      { parentRefs: [threadResult.postId] },
+      author.userId,
+    );
+    utxo.insertBox(replyResult.karmaBox);
+
+    const posts = await importPosts();
+    posts.insertPost(threadResult.postId, threadResult.commit, threadResult.content);
+    posts.insertPost(replyResult.postId, replyResult.commit, replyResult.content);
+
+    const block = await makeApplicableBlock({
+      utxoTxs: [threadResult.tx, replyResult.tx],
+    });
+    expect(blockApply.applyOrderingBlock(block)).toBe(true);
+  });
+
+  it('a block carrying a thread and its reply applies: reply before thread', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const blockApply = await importBlockApply();
+    const utxo = await importUtxo();
+
+    const author = makeTestIdentity();
+    const threadResult = makePostTx(author, 'thread for reverse-order');
+    utxo.insertBox(threadResult.karmaBox);
+    const replyResult = makePostTx(
+      author, 'reply for reverse-order',
+      { parentRefs: [threadResult.postId] },
+      author.userId,
+    );
+    utxo.insertBox(replyResult.karmaBox);
+
+    const posts = await importPosts();
+    posts.insertPost(threadResult.postId, threadResult.commit, threadResult.content);
+    posts.insertPost(replyResult.postId, replyResult.commit, replyResult.content);
+
+    const block = await makeApplicableBlock({
+      utxoTxs: [replyResult.tx, threadResult.tx],
+    });
+    expect(blockApply.applyOrderingBlock(block)).toBe(true);
   });
 });
 
