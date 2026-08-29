@@ -8,6 +8,9 @@ export {
   postVouch,
   deleteVouch,
   getVouches,
+  getVouchesTarget,
+  getVouchesVoucher,
+  getVouchCooldowns,
   postPrune,
   postPostWithdraw,
   postCreditTransfer,
@@ -25,6 +28,11 @@ export {
   type PostsPage,
   type ThreadPage,
   type WithdrawnResponse,
+  type StatusResponse,
+  type KarmaPage,
+  type VouchTargetPage,
+  type VouchVoucherPage,
+  type VouchCooldownPage,
 } from './http.js';
 export { signAndRender, type BoxRef, type BuiltTx } from './tx/render.js';
 export { buildInviteTx } from './tx/invite.js';

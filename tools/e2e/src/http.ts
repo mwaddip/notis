@@ -73,6 +73,13 @@ export interface KarmaPage {
   lastActivityBlock: number;
   lastDecayBlock: number;
   lifetimeLikesReceived: string;
+  memberSinceBlock: number;
+  memberBar: number;
+  memberVouches: number;
+  memberLikes: string;
+  invitesUsed: number;
+  member: boolean;
+  invitesAvailable: number | null;
   height: number;
 }
 
@@ -254,11 +261,74 @@ export async function adminGet(
   return data;
 }
 
+export interface StatusResponse {
+  vouchCooldownBlocks: number;
+  blockHeight: number;
+  totalKarma: string;
+  inviteBondMin: string;
+  inviteBondMax: string;
+  membership: {
+    memberCount: number;
+    memberBar: number;
+    memberLikesBar: number;
+  };
+}
+
 export async function getStatus(
   node: NodeProcess,
-): Promise<{ vouchCooldownBlocks: number; blockHeight: number; totalKarma: string }> {
-  const data = await jsonGet(node, '/status');
-  return data as { vouchCooldownBlocks: number; blockHeight: number; totalKarma: string };
+): Promise<StatusResponse> {
+  const res = await fetch(`${node.url}/status`);
+  const data = await res.json();
+  if (!res.ok) throw new NodeError(res.status, data as Record<string, unknown>);
+  return data as StatusResponse;
+}
+
+export interface VouchTargetPage {
+  vouches: { voucherId: string; targetId: string }[];
+  count: number;
+  next: string | null;
+}
+
+export interface VouchVoucherPage {
+  vouches: { boxId: string; value: string; createdAtBlock: number; voucherId: string; targetId: string }[];
+  count: number;
+  next: string | null;
+}
+
+export interface VouchCooldownPage {
+  cooldowns: { boxId: string; value: string; releaseAtBlock: number }[];
+  count: number;
+  next: string | null;
+}
+
+export async function getVouchesTarget(
+  node: NodeProcess,
+  targetHex: string,
+): Promise<VouchTargetPage> {
+  const res = await fetch(`${node.url}/vouches?target=${targetHex}`);
+  const data = await res.json();
+  if (!res.ok) throw new NodeError(res.status, data as Record<string, unknown>);
+  return data as VouchTargetPage;
+}
+
+export async function getVouchesVoucher(
+  node: NodeProcess,
+  voucherHex: string,
+): Promise<VouchVoucherPage> {
+  const res = await fetch(`${node.url}/vouches?voucher=${voucherHex}`);
+  const data = await res.json();
+  if (!res.ok) throw new NodeError(res.status, data as Record<string, unknown>);
+  return data as VouchVoucherPage;
+}
+
+export async function getVouchCooldowns(
+  node: NodeProcess,
+  voucherHex: string,
+): Promise<VouchCooldownPage> {
+  const res = await fetch(`${node.url}/vouches?voucher=${voucherHex}&cooldowns=1`);
+  const data = await res.json();
+  if (!res.ok) throw new NodeError(res.status, data as Record<string, unknown>);
+  return data as VouchCooldownPage;
 }
 
 export interface PostsPage {
