@@ -1530,6 +1530,7 @@ describe('demo UI invite builder ↔ the id the node derives', () => {
 
   it('the grant the page promises is the bond it names', () => {
     // Simulate /status having answered with the network's floor.
+    ui.INVITE_BOND_DEFAULT = config.inviteBondMin;
 
     const decoded = overTheWire(
       ui.buildCreateInviteTx(karmaState([ui.INVITE_BOND_DEFAULT + 1n]), INVITER_HEX, INVITEE_HEX),
@@ -1539,7 +1540,7 @@ describe('demo UI invite builder ↔ the id the node derives', () => {
   });
 
   it('a create the page builds hashes to the same txId the node derives', () => {
-
+    ui.INVITE_BOND_DEFAULT = config.inviteBondMin;
     const tx = ui.buildCreateInviteTx(
       karmaState([ui.INVITE_BOND_DEFAULT + 1n]), INVITER_HEX, INVITEE_HEX,
     );
@@ -1547,7 +1548,7 @@ describe('demo UI invite builder ↔ the id the node derives', () => {
   });
 
   it('the invite deducts the bond and only the bond', () => {
-
+    ui.INVITE_BOND_DEFAULT = config.inviteBondMin;
     const funded = ui.INVITE_BOND_DEFAULT * 2n;
     const decoded = overTheWire(
       ui.buildCreateInviteTx(karmaState([funded]), INVITER_HEX, INVITEE_HEX),

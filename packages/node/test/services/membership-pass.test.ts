@@ -204,3 +204,64 @@ describe('genesis network record (§8.8)', () => {
     db.closeDb();
   });
 });
+
+describe('journal round-trip — membership records and the network record (§8.9)', () => {
+  it('set a member (N+1) then revert — every record and the network record restored exactly', async () => {
+    vi.resetModules();
+    const db = await importDb();
+    db.initDb(':memory:');
+    const rawDb = db.getDb();
+    rawDb.prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+    const records = await importRecords();
+    const journal = await import('../../src/store/journal.js');
+
+    const identity = makeTestIdentity();
+
+    // Pre-block state: a resident with enough vouches and likes to cross the bar.
+    records.putIdentityRecord(identity.userId, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 1,
+      lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0, memberBar: 0, memberVouches: 1, memberLikes: 2n, invitesUsed: 0,
+    });
+    const preBlockRecord = records.getIdentityRecord(identity.userId)!;
+    const preBlockNetwork = records.getNetworkRecord();
+    expect(preBlockNetwork.memberCount).toBe(1);
+
+    // Open a journal and simulate the membership pass setting this identity.
+    journal.beginBlockJournal(5);
+    records.putIdentityRecord(identity.userId, {
+      ...preBlockRecord,
+      memberSinceBlock: 5,
+      memberBar: 1,
+    });
+    records.putNetworkRecord({ memberCount: 2 });
+
+    // Verify the writes took effect.
+    expect(records.getIdentityRecord(identity.userId)!.memberSinceBlock).toBe(5);
+    expect(records.getNetworkRecord().memberCount).toBe(2);
+
+    // Finish and persist the journal.
+    const finishedJournal = journal.finishBlockJournal();
+    rawDb.prepare(
+      'INSERT INTO block_journal (block_height, journal_cbor) VALUES (?, ?)',
+    ).run(5, (await import('cbor-x')).encode(finishedJournal));
+
+    // Revert the block.
+    const { revertBlock } = await import('../../src/services/fork-resolution.js');
+    revertBlock(5);
+
+    // The identity record is restored to its pre-block state.
+    const restored = records.getIdentityRecord(identity.userId)!;
+    expect(restored.memberSinceBlock).toBe(0);
+    expect(restored.memberBar).toBe(0);
+    expect(restored.memberVouches).toBe(1);
+    expect(restored.memberLikes).toBe(2n);
+
+    // The network record is restored too.
+    const restoredNetwork = records.getNetworkRecord();
+    expect(restoredNetwork.memberCount).toBe(1);
+
+    db.closeDb();
+  });
+});
