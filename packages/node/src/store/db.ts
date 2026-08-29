@@ -60,7 +60,7 @@ const MIGRATIONS = [
   //
   `CREATE TABLE IF NOT EXISTS utxo_boxes (
     id TEXT PRIMARY KEY,
-    box_type TEXT NOT NULL,           -- in enum8 tag order: 'karma' | 'credit' | 'genesis_proof' | 'bond' | 'post_lock' | 'vouch' | 'emission' | 'treasury' | 'fee' | 'karma_pool' | 'like_accrual' | 'vouch_escrow'
+    box_type TEXT NOT NULL,           -- in enum8 tag order: 'karma' | 'credit' | 'genesis_proof' | 'bond' | 'vouch' | 'emission' | 'treasury' | 'fee' | 'karma_pool' | 'like_accrual' | 'vouch_escrow' | 'karma_price'
     value INTEGER NOT NULL,
     created_at_block INTEGER NOT NULL,
     spent_at_block INTEGER,           -- NULL = unspent
@@ -348,9 +348,6 @@ function migrateBlockTopologyColumns(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_block_topology_pruned
       ON block_topology(pruned_at_height, post_id)
       WHERE pruned_at_height IS NOT NULL;
-    CREATE INDEX IF NOT EXISTS idx_utxo_boxes_post_lock_target
-      ON utxo_boxes(json_extract(extra_data, '$.targetPostId'))
-      WHERE box_type = 'post_lock' AND spent_at_block IS NULL;
   `);
 }
 

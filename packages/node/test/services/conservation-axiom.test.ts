@@ -70,15 +70,17 @@ const COOLDOWN = 2;
  */
 const KARMA_BEARING: Readonly<Record<keyof typeof BOX_TYPE_TAGS, boolean>> = {
   karma: true,
-  // Escrowed karma is held, not destroyed — the standing three.
+  // Escrowed karma is held, not destroyed.
   bond: true,
-  post_lock: true,
   vouch: true,
-  // The two this unit made reachable: a marker holds the liker's karma between
-  // the like and the settlement, a carry box holds an author's remainder across
-  // blocks, an escrow holds a voucher's stake for its cooldown.
+  // A marker holds the liker's karma between the like and the settlement, a
+  // carry box holds an author's remainder across blocks, an escrow holds a
+  // voucher's stake for its cooldown.
   like_accrual: true,
   vouch_escrow: true,
+  // A price box holds the post's price between the post transaction and the
+  // block's settlement, which returns it to the pool.
+  karma_price: true,
   // ⛔ The half `getTotalKarma` excludes on purpose. Karma that exists and is not
   // in circulation.
   karma_pool: true,

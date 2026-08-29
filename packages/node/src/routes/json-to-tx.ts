@@ -14,7 +14,7 @@ import { ClientError } from '../services/client-error.js';
  * gate that reaches that file.
  */
 export const BINARY_BOX_FIELDS = new Set([
-  'owner',            // KarmaBox, CreditBox, PostLockBox, VouchEscrowBox
+  'owner',            // KarmaBox, CreditBox, VouchEscrowBox
   // ⚠ **`BondBox` alone.** These read `InviteBox, BondBox` until the invite
   // collapsed into one transaction and the type was deleted; a list of holders
   // has to be re-read every time one goes, so this names the survivor rather
@@ -168,11 +168,11 @@ function jsonToPostWithdrawCommit(raw: unknown): PostWithdrawCommit {
 
 /**
  * Amount fields that are bigint at runtime but arrive as decimal strings (or
- * safe-integer numbers) over the JSON HTTP API: `value` on every box type,
- * `originalValue` on PostLockBox. Coerced before validation — leaving one as
- * a number would change its positional encoding and so the computed box id.
+ * safe-integer numbers) over the JSON HTTP API: `value` on every box type.
+ * Coerced before validation — leaving one as a number would change its
+ * positional encoding and so the computed box id.
  */
-const VALUE_BOX_FIELDS = new Set(['value', 'originalValue']);
+const VALUE_BOX_FIELDS = new Set(['value']);
 
 /**
  * Convert hex-encoded Uint8Array fields inside a single box object, coerce

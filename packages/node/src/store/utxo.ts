@@ -8,16 +8,13 @@ import {
 } from './journal.js';
 import { getIdentityRecord, putIdentityRecord } from './identity-records.js';
 import { countsAsCirculatingKarma } from '../karma-supply.js';
-import { computePostId } from '@dagsocial/types';
 import type { Page, PageResult, BoxKey } from './index.js';
 import type {
-  PostId,
   AnyBox,
   KarmaBox,
   CreditBox,
   GenesisProofBox,
   BondBox,
-  PostLockBox,
   VouchBox,
   EmissionBox,
   TreasuryBox,
@@ -60,8 +57,6 @@ interface CreditExtra {
 }
 
 interface GenesisProofExtra {
-  // Raw bytes as a number array, like `post_lock.owner`. The hex form above is
-  // for pubkeys; this payload is opaque to consensus and is not one.
   payload: number[];
 }
 
@@ -69,21 +64,6 @@ interface BondExtra {
   inviterId: string;          // hex-encoded pubkey in JSON (Uint8Array in code)
   inviteePublicKey: string;   // hex-encoded pubkey — names the paired invite, and
                               // what `getBondFor` and the settlement sweep join on
-}
-
-/**
- * ⛔ **`targetPostId` here is DERIVED STATE, not box content.** The consensus
- * box carries no such field — it cannot, because a post's id comes from the
- * transaction that creates the lock, so the field would have to be known before
- * the `TxId` that produces it (TYPES_INTERFACE → PostLockBox). This column is
- * the local index that makes `getPostLockBox(postId)` a keyed lookup, written at
- * apply by every node identically — the same shape P2-D used for like
- * settlement.
- */
-interface PostLockExtra {
-  originalValue: string;   // bigint as decimal string (JSON cannot carry bigint)
-  owner: number[];
-  targetPostId: string;    // derived — see above; never read back onto the box
 }
 
 interface VouchExtra {
@@ -213,18 +193,12 @@ export function rowToBox(row: UtxoRow): AnyBox {
       };
     }
 
-    case 'post_lock': {
-      const e = extra as PostLockExtra;
-      // `targetPostId` is deliberately NOT put back on the box: it is this
-      // store's index, and a box carrying it would be a second copy of state
-      // the transaction already determines.
+    case 'karma_price': {
       return {
         id: row.id,
-        boxType: 'post_lock',
+        boxType: 'karma_price',
         value: row.value,
         createdAtBlock,
-        originalValue: BigInt(e.originalValue),
-        owner: new Uint8Array(e.owner),
         ...prov,
       };
     }
@@ -1079,27 +1053,7 @@ export function recordKarmaActivity(owner: Uint8Array): void {
  * Common fields are stored directly; box-type-specific fields are serialised
  * into the extra_data JSON column.
  */
-/**
- * ⛔ **THE TWO DERIVATION ROUTES FOR A POST LOCK'S TARGET, stated together
- * because a reader who sees only one will "simplify" the other away.**
- *
- * A lock carries no `targetPostId` (TYPES_INTERFACE → PostLockBox), so the
- * index below is derived — and the derivation differs by which transaction
- * created the box:
- *
- *  1. **The original lock** is an output of the POST'S OWN transaction, so its
- *     provenance names that transaction and the target is
- *     `computePostId(box.txId, 0)`. Any node holding the box can recompute it.
- *  2. **The remainder lock** (a partially-vested lock, re-created after a tally)
- *     is an output of a SYNTHETIC MINT transaction, so its provenance names the
- *     mint and NOT the post. Route 1 would derive a wrong id from it. The caller
- *     passes the target explicitly; it is recoverable because
- *     `postlockRemainderContext(postId)` puts the post id in the mint subject.
- *
- * ⚠ **Route 1 does not cover route 2 and never will.** Collapsing them silently
- * re-points every remainder lock at an id derived from a mint.
- */
-export function insertBox(box: AnyBox, postLockTarget?: PostId): void {
+export function insertBox(box: AnyBox): void {
   // Never record an insert without its boxId — the apply funnel's totality
   // catch converts this throw into a block rejection.
   if (isBlockJournalOpen() && !box.id) {
@@ -1144,19 +1098,8 @@ export function insertBox(box: AnyBox, postLockTarget?: PostId): void {
       } satisfies BondExtra;
       break;
     }
-    case 'post_lock': {
-      const p = box as PostLockBox;
-      owner = Buffer.from(p.owner);
-      // Route 2 when the caller names the target, route 1 otherwise — see the
-      // two routes on `insertBox` above.
-      if (postLockTarget === undefined && !p.txId) {
-        throw new Error('insertBox: a post_lock box needs provenance or an explicit target');
-      }
-      extraData = {
-        originalValue: p.originalValue.toString(),
-        owner: Array.from(p.owner),
-        targetPostId: postLockTarget ?? computePostId(p.txId!, 0),
-      } satisfies PostLockExtra;
+    case 'karma_price': {
+      extraData = {};
       break;
     }
     case 'vouch': {

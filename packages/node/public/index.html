@@ -324,8 +324,9 @@ const MAX_PARENT_REFS = 1;
 // Denomination); block counts stay plain numbers. Mirrors @dagsocial/types
 // constants.ts.
 const LIKE_KARMA_COST = 1n;
-const POST_LOCK_THREAD_COST = 5n;
-const POST_LOCK_REPLY_COST = 3n;
+const POST_PRICE_THREAD = 5n;
+const POST_PRICE_REPLY = 3n;
+const REPLY_AUTHOR_SHARE = 1n;
 /**
  * The bond this page names on an invite, and therefore the karma the invitee
  * receives — **the grant EQUALS the bond** (ARCHITECTURE → Invite System).
@@ -662,7 +663,7 @@ function postWithdrawFieldBytes(pw) {
  * Filling it would give a new type the identity preimage of every historical
  * invite box.
  */
-const BOX_TYPE_TAGS = { karma: 0, credit: 1, genesis_proof: 3, bond: 4, post_lock: 5, vouch: 6, emission: 7, treasury: 8, fee: 9, karma_pool: 10, like_accrual: 11, vouch_escrow: 12 };
+const BOX_TYPE_TAGS = { karma: 0, credit: 1, genesis_proof: 3, bond: 4, vouch: 6, emission: 7, treasury: 8, fee: 9, karma_pool: 10, like_accrual: 11, vouch_escrow: 12, karma_price: 13 };
 
 /**
  * Byte-identical mirror of `canonicalBoxBytes` in @dagsocial/types
@@ -720,14 +721,8 @@ function boxTypeFields(box) {
         b32Either(box.inviterId, 32),
         b32Either(box.inviteePublicKey, 32),
       ]);
-    case 'post_lock':
-      // No `targetPostId`: a post's id comes from the transaction that creates
-      // this lock, so the field would have to be known before the `TxId` that
-      // produces it — unbuildable (TYPES_INTERFACE → PostLockBox).
-      return concatUint8Arrays([
-        vlqU64(box.originalValue),
-        b32Either(box.owner, 32),
-      ]);
+    case 'karma_price':
+      return new Uint8Array(0);
     case 'vouch':
       return concatUint8Arrays([
         b32Either(box.voucherId, 32),
@@ -995,27 +990,44 @@ async function fetchCreditBoxes() {
 // Tx construction helpers
 // ===========================================================================
 
-/** Build the karma-lock tx for post creation. At most one karma change output. */
-function buildPostTx(karmaBox, lockAmount, post, pubKeyHex) {
-  const selected = selectBoxes(karmaBox.boxes, lockAmount);
+/**
+ * Build the post-price tx. A thread pays POST_PRICE_THREAD into a
+ * KarmaPriceBox; a reply pays POST_PRICE_REPLY − REPLY_AUTHOR_SHARE into a
+ * KarmaPriceBox and REPLY_AUTHOR_SHARE into a LikeAccrualBox naming the
+ * parent's author (ARCHITECTURE → The post price).
+ */
+function buildPostTx(karmaBox, priceAmount, post, pubKeyHex, parentAuthorHex) {
+  const selected = selectBoxes(karmaBox.boxes, priceAmount);
   const selectedTotal = selected.reduce((sum, b) => sum + b.value, 0n);
-  const change = selectedTotal - lockAmount;
+  const change = selectedTotal - priceAmount;
 
-  const postLockOutput = {
-    boxType: 'post_lock',
-    value: lockAmount,
-    createdAtBlock: currentBlockHeight,
-    originalValue: lockAmount,
-    owner: pubKeyHex,
-  };
-
-  const outputs = [postLockOutput];
+  const outputs = [];
   if (change > 0n) {
-    outputs.unshift({
+    outputs.push({
       boxType: 'karma',
       value: change,
       createdAtBlock: currentBlockHeight,
       owner: pubKeyHex,
+    });
+  }
+
+  if (parentAuthorHex) {
+    outputs.push({
+      boxType: 'karma_price',
+      value: POST_PRICE_REPLY - REPLY_AUTHOR_SHARE,
+      createdAtBlock: currentBlockHeight,
+    });
+    outputs.push({
+      boxType: 'like_accrual',
+      value: REPLY_AUTHOR_SHARE,
+      createdAtBlock: currentBlockHeight,
+      author: parentAuthorHex,
+    });
+  } else {
+    outputs.push({
+      boxType: 'karma_price',
+      value: POST_PRICE_THREAD,
+      createdAtBlock: currentBlockHeight,
     });
   }
 
@@ -1616,11 +1628,27 @@ document.getElementById('postBtn').addEventListener('click', async () => {
       return;
     }
 
-    // 3. Determine lock amount
-    const lockAmount = parentRefs.length === 0 ? POST_LOCK_THREAD_COST : POST_LOCK_REPLY_COST;
-    if (karmaBox.effective < lockAmount) {
-      setStatus(`Insufficient karma: need ${lockAmount}, have ${karmaBox.effective}`, 'error');
+    // 3. Determine price amount
+    const priceAmount = parentRefs.length === 0 ? POST_PRICE_THREAD : POST_PRICE_REPLY;
+    if (karmaBox.effective < priceAmount) {
+      setStatus(`Insufficient karma: need ${priceAmount}, have ${karmaBox.effective}`, 'error');
       return;
+    }
+
+    // 3a. For a reply, resolve the parent's consensus author
+    let parentAuthorHex = null;
+    if (parentRefs.length > 0) {
+      const parentUrl = API + '/posts/' + encodeURIComponent(parentRefs[0]);
+      const parentRes = await fetch(parentUrl);
+      if (!parentRes.ok) {
+        setStatus('Parent post not found', 'error');
+        return;
+      }
+      parentAuthorHex = (await parentRes.json()).confirmedAuthor;
+      if (!parentAuthorHex) {
+        setStatus('Parent not confirmed yet — wait a block', 'error');
+        return;
+      }
     }
 
     // 4. Build the PostCommit — contentHash is the body's commitment
@@ -1636,7 +1664,7 @@ document.getElementById('postBtn').addEventListener('click', async () => {
     // 5. Build and sign ONE transaction carrying the commit
     setStatus('building post transaction...', 'busy');
     const pubKeyHex = buf2hex(pubKeyRaw);
-    const tx = buildPostTx(karmaBox, lockAmount, commit, pubKeyHex);
+    const tx = buildPostTx(karmaBox, priceAmount, commit, pubKeyHex, parentAuthorHex);
     const { txId, signature: txSig } = await signTxId(tx);
     tx.signatures[pubKeyHex] = txSig;
 

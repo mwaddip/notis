@@ -6,9 +6,10 @@ import {
   computeTxId,
   LIKE_KARMA_COST,
   MIN_BOX_VALUE_PER_BYTE,
-  POST_LOCK_THREAD_COST,
+  POST_PRICE_THREAD,
   STORAGE_RENT_PER_BYTE,
-  POST_LOCK_REPLY_COST,
+  POST_PRICE_REPLY,
+  REPLY_AUTHOR_SHARE,
   PROTOCOL_VERSION,
   VOUCH_CAST_HEIGHT_WINDOW,
   VOUCH_KARMA_AMOUNT,
@@ -17,7 +18,7 @@ import {
 import { isCreditSideTx } from './coinbase-split.js';
 import { effectiveKarma } from './decay.js';
 import type { DecayCfg } from './decay.js';
-import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, PostLockBox, PostCommit, PruneCommit, PostWithdrawCommit } from '@dagsocial/types';
+import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, KarmaPriceBox, PostCommit, PruneCommit, PostWithdrawCommit } from '@dagsocial/types';
 
 // `computeTxId` has exactly one implementation and it is types'. This engine
 // must never grow a local copy: the id it returns is both the hash
@@ -52,7 +53,7 @@ import type { IdentityRecord } from '../store/identity-records.js';
 const KARMA_TRANSITION_VERDICT: Record<AnyBox['boxType'], boolean> = {
   karma: true,
   bond: true,
-  post_lock: true,
+  karma_price: true,
   vouch: true,
   like_accrual: true,
   credit: false,
@@ -749,12 +750,13 @@ function checkTransitions(
     }
 
     // ------------------------------------------------------------------
-    // PostLockBox — consumed by block application only, refused at step 8
+    // KarmaPriceBox — consumed by block application only (NODE_INTERFACE →
+    // Legal box transitions)
     // ------------------------------------------------------------------
-    case 'post_lock': {
+    case 'karma_price': {
       return {
         valid: false,
-        error: `PostLockBox can only be consumed by block application (not user transactions)`,
+        error: `KarmaPriceBox can only be consumed by block application (not user transactions)`,
       };
     }
 
@@ -1346,18 +1348,11 @@ const OUTPUT_SHAPE: Record<OutputBoxType, OutputShapeEntry> = (() => {
       inviterId: 'bytes32',
       inviteePublicKey: 'bytes32',
     }),
-    // Reserved, never to be reused: `targetPostId`. A lock carries no such
-    // field — a post's id comes from the transaction that creates the lock, so
-    // the field would have to be known before the `TxId` that produces it
-    // (TYPES_INTERFACE → PostLockBox). The lock→post mapping is derived state
-    // held by the store.
-    post_lock: shape('user', {
-      boxType: null,
-      value: 'u64',
-      createdAtBlock: 'uint',
-      originalValue: 'u64',
-      owner: 'bytes32',
-    }),
+    // TYPES_INTERFACE → KarmaPriceBox. No owner and no trailing fields — block
+    // application is its only spender, and where the value goes is already
+    // decided: the settlement of the block that created it consumes it and
+    // returns its value to the pool.
+    karma_price: shape('user', { boxType: null, value: 'u64', createdAtBlock: 'uint' }),
     vouch: shape('user', {
       boxType: null,
       value: 'u64',
@@ -1365,12 +1360,9 @@ const OUTPUT_SHAPE: Record<OutputBoxType, OutputShapeEntry> = (() => {
       voucherId: 'bytes32',
       targetId: 'bytes32',
     }),
-    // The shared prefix and nothing else: a fee box names no owner, because
-    // block application is its only spender and the coinbase already decides
-    // which key the value reaches (TYPES_INTERFACE → FeeBox). No optional
-    // fields, because there is no tail for one to sit in. That a user-created
-    // box is consumed only by block application is the shape `bond` and
-    // `post_lock` already have (NODE_INTERFACE → Output shape).
+    // TYPES_INTERFACE → FeeBox. No owner and no trailing fields — the shape
+    // `bond`, `karma_price` and `like_accrual` already have
+    // (NODE_INTERFACE → Output shape).
     fee: shape('user', { boxType: null, value: 'u64', createdAtBlock: 'uint' }),
     like_accrual: shape('user', { boxType: null, value: 'u64', createdAtBlock: 'uint', author: 'bytes32' }),
     vouch_escrow: shape('user', {
@@ -1641,7 +1633,7 @@ const SPEND_TIMING: Readonly<Record<AnyBox['boxType'], SpendTiming>> = {
   credit: { unlockHeight: (b) => (b as CreditBox).lockedUntilBlock ?? null },
   genesis_proof: ALWAYS_SPENDABLE,
   bond: ALWAYS_SPENDABLE,
-  post_lock: ALWAYS_SPENDABLE,
+  karma_price: ALWAYS_SPENDABLE,
   vouch: ALWAYS_SPENDABLE,
   // NODE_INTERFACE → Spend timing: the settlement reads releaseAtBlock, not this gate.
   vouch_escrow: ALWAYS_SPENDABLE,
@@ -1755,7 +1747,7 @@ function creditAuthorization(storageRentPeriodBlocks: number): Authorization {
 }
 
 /**
- * `bond`, `post_lock` and `fee` are created by user transactions and consumed
+ * `bond`, `karma_price` and `fee` are created by user transactions and consumed
  * only by block application; `emission`, `treasury` and `karma_pool` are block
  * application's at both ends (NODE_INTERFACE → "Genesis proof boxes are never
  * in a transaction"). No transition admits any of them as an input, and this
@@ -1794,7 +1786,7 @@ function authorizationTable(
   },
 
   bond: BLOCK_APPLICATION_ONLY,
-  post_lock: BLOCK_APPLICATION_ONLY,
+  karma_price: BLOCK_APPLICATION_ONLY,
   fee: BLOCK_APPLICATION_ONLY,
   emission: BLOCK_APPLICATION_ONLY,
   treasury: BLOCK_APPLICATION_ONLY,

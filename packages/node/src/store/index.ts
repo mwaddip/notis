@@ -53,9 +53,6 @@ export {
   getVouchEscrowsReleasableAt,
   hasActiveVouchEscrow,
   getLikeCarryBox,
-  getUnspentPostLockBoxes,
-  getPostLockBox,
-  getPrunedLockCandidates,
   getUnspentBoxes,
   insertBox,
   consumeBox,
@@ -66,7 +63,7 @@ export {
   registerKarmaMembershipHook,
   recordKarmaActivity,
 } from './utxo.js';
-export type { KarmaMembershipHook, PrunedLockCandidate } from './utxo.js';
+export type { KarmaMembershipHook } from './utxo.js';
 
 export {
   insertLikeRecord,
