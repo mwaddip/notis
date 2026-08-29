@@ -2731,9 +2731,6 @@ so a chain whose only root is the faucet can flag its first member on one vouch.
 mechanic: `membershipBar` (→ Membership) is one function on every network. `network.test.ts`
 asserts each profile's own value rather than the spread.
 
-> ⚠ **AHEAD OF CODE — 2026-08-29.** No profile carries the field; the earned-invites unit's types
-> work adds it, and `CONSTANTS → Per-network values` its row.
-
 **Every constant not listed in `NetworkProfile` is universal across networks**, including
 consensus ones — the format limits (`MAX_CONTENT_BYTES`, `MAX_PARENT_REFS`,
 `PROTOCOL_VERSION`, `AVL_KEY_LENGTH`) and every karma and credit cost. The split is
@@ -2913,10 +2910,6 @@ long to recast (`ARCHITECTURE` → Vouch boxes), a lapsed member's `n` vouches a
 that many blocks and a cascade runs one generation per block on top (`ARCHITECTURE` →
 Membership). None moves value it does not owe.
 
-> ⚠ **AHEAD OF CODE — 2026-08-29.** `constants.ts` exports two caps; the third is the
-> earned-invites unit's types work, and node's `settlement-bound.test.ts` re-derives the
-> empty-body settlement with the lapse leg at its cap.
-
 ### State format
 
 ```typescript
@@ -3023,11 +3016,7 @@ locks their chosen bond per invite out of their own karma, so `K /
 INVITE_BOND_MIN` bounds their concurrent invites without a rule — the floor, since
 that is the cheapest invite they can build — and the budget is the rule that bounds
 them beside it: a member's `⌊memberVouches / D(N)⌋ − invitesUsed` (`ARCHITECTURE → The invite
-budget`); a root has none.
-
-> ⚠ **AHEAD OF CODE — 2026-08-29.** The tree's `INVITE_BOND_MIN` is `25n`; `100n` on mainnet and
-> testnet is the earned-invites unit's types work (user, 2026-08-29: accepted as provisional,
-> tuned on testnet; `G = B` keeps every ratio), devnet keeps `5n`. The threshold
+budget`); a root has none. The threshold
 goes with the early-unlock leg it served: a bond settles **once**, at
 `IdentityRecord.invitedAtBlock + INVITE_PROBATION_BLOCKS`, and nothing reads a
 karma balance to decide it.
@@ -3052,9 +3041,6 @@ platforms and not others. The pins are the table in `ARCHITECTURE → Membership
 2`, `icbrt(40) = 3`, `icbrt(1000) = 10`, `icbrt(10⁶) = 100`, `icbrt(10⁷) = 215` — plus the cube
 boundaries, `icbrt(r³) = r` and `icbrt(r³ − 1) = r − 1`, across the domain the multiplier
 reaches: `k · N` for `N` a `u32`.
-
-> ⚠ **AHEAD OF CODE — 2026-08-29.** None of the four exists; the earned-invites unit's types work
-> adds them.
 
 ### Vouch
 

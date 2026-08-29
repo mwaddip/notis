@@ -135,11 +135,6 @@ Three limits stand in a fixed order — `MAX_BLOCK_BODY_BYTES < MAX_SERVE_BODY_B
 |---|---|---|---|---|---|---|
 | `MEMBER_LIKES_MULTIPLIER` | `2` | `Y = 2 · D` — likes from members a newcomer needs beside the vouches | consensus | none stated for the number; testnet's to tune | PROVISIONAL | `ARCHITECTURE → Membership` |
 
-> ⚠ **AHEAD OF CODE — 2026-08-29.** `MEMBER_LIKES_MULTIPLIER`, `MAX_LAPSE_WITHDRAWALS_PER_BLOCK`
-> and `membershipBarMultiplier` name exports and a field `@dagsocial/types` does not yet carry,
-> and `INVITE_BOND_MIN` / `inviteBondMin` state `100n` where the tree holds `25n`; the drift test
-> is red on the four until the earned-invites unit's types work lands, and green after it.
-
 ### Invites
 
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
