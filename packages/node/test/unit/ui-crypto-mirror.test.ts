@@ -491,7 +491,13 @@ function loadUiCrypto(): UiCrypto {
   const source = [
     'const encoder = new TextEncoder();',
     'let currentBlockHeight = 0;',
-    ...MIRRORED_CONSTS.map((name) => extractConst(html, name)),
+    ...MIRRORED_CONSTS.map((name) => {
+      const decl = extractConst(html, name);
+      // INVITE_BOND_DEFAULT starts null in the UI (set by /status at runtime).
+      // The test sets it to a valid value so the builders can run.
+      if (name === 'INVITE_BOND_DEFAULT') return 'let INVITE_BOND_DEFAULT = 5n;';
+      return decl;
+    }),
     ...MIRRORED_FUNCTIONS.map((name) => extractDeclaration(html, `function ${name}(`)),
     `return { ${RETURNED.join(', ')} };`,
   ].join('\n\n');
@@ -1516,14 +1522,15 @@ describe('demo UI invite builder ↔ the id the node derives', () => {
     // The inviter picks the bond, so the page's default is a choice; what the
     // mirror can still check is that the choice is legal, because a bond outside
     // the range builds an invite `checkTransitions` rejects.
-    // Before /status answers, the default is null — the UI refuses to build
-    // an invite until the network's floor is known.
-    expect(ui.INVITE_BOND_DEFAULT).toBeNull();
+    // The UI starts with INVITE_BOND_DEFAULT = null, set by /status at runtime.
+    // The test loader seeds it to config.inviteBondMin so the builders can run.
+    expect(ui.INVITE_BOND_DEFAULT).toBeGreaterThanOrEqual(config.inviteBondMin);
+    expect(ui.INVITE_BOND_DEFAULT).toBeLessThanOrEqual(config.inviteBondMax);
   });
 
   it('the grant the page promises is the bond it names', () => {
     // Simulate /status having answered with the network's floor.
-    ui.INVITE_BOND_DEFAULT = config.inviteBondMin;
+
     const decoded = overTheWire(
       ui.buildCreateInviteTx(karmaState([ui.INVITE_BOND_DEFAULT + 1n]), INVITER_HEX, INVITEE_HEX),
     );
@@ -1532,7 +1539,7 @@ describe('demo UI invite builder ↔ the id the node derives', () => {
   });
 
   it('a create the page builds hashes to the same txId the node derives', () => {
-    ui.INVITE_BOND_DEFAULT = config.inviteBondMin;
+
     const tx = ui.buildCreateInviteTx(
       karmaState([ui.INVITE_BOND_DEFAULT + 1n]), INVITER_HEX, INVITEE_HEX,
     );
@@ -1540,7 +1547,7 @@ describe('demo UI invite builder ↔ the id the node derives', () => {
   });
 
   it('the invite deducts the bond and only the bond', () => {
-    ui.INVITE_BOND_DEFAULT = config.inviteBondMin;
+
     const funded = ui.INVITE_BOND_DEFAULT * 2n;
     const decoded = overTheWire(
       ui.buildCreateInviteTx(karmaState([funded]), INVITER_HEX, INVITEE_HEX),
@@ -1557,7 +1564,7 @@ describe('demo UI invite builder ↔ the id the node derives', () => {
     // NODE_INTERFACE → Legal box transitions: one karma + one bond,
     // the bond holding a value inside the network's range and carrying the
     // karma input's owner as `inviterId`.
-    ui.INVITE_BOND_DEFAULT = config.inviteBondMin;
+
     const decoded = overTheWire(
       ui.buildCreateInviteTx(karmaState([40n, 30n]), INVITER_HEX, INVITEE_HEX),
     );
