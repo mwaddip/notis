@@ -1,8 +1,10 @@
 import { Router, Response } from 'express';
 import type { UtxoTransaction, KarmaBox, CreditBox, BondBox } from '@dagsocial/types';
+import { membershipBar } from '@dagsocial/types';
 import { sendCredits } from '../services/credits.js';
 import type { UtxoEngineDeps } from '../services/utxo-engine.js';
-import type { IdentityRecord } from '../store/identity-records.js';
+import { isMember, isRoot } from '../services/utxo-engine.js';
+import type { IdentityRecord, NetworkRecord } from '../store/identity-records.js';
 import type { Page, PageResult, BoxKey } from '../store/index.js';
 import type { DecayCfg } from '../services/decay.js';
 import { effectiveKarma } from '../services/decay.js';
@@ -25,6 +27,8 @@ export interface UtxoDeps {
   getCurrentHeight(): number;
   getUtxoEngineDeps(): UtxoEngineDeps;
   decayCfg: DecayCfg;
+  getNetworkRecord(): NetworkRecord;
+  membershipBarMultiplier: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -66,6 +70,18 @@ export function createRouter(deps: UtxoDeps): Router {
     const height = deps.getCurrentHeight();
     const eff = effectiveKarma(total, record, height, deps.decayCfg);
 
+    const memberFlag = record !== null && isMember(record);
+    let invitesAvailable: number | null = 0;
+    if (record) {
+      if (isRoot(record)) {
+        invitesAvailable = null;
+      } else if (record.memberSinceBlock > 0) {
+        const nr = deps.getNetworkRecord();
+        const d = membershipBar(nr.memberCount, deps.membershipBarMultiplier);
+        invitesAvailable = Math.max(0, Math.floor(record.memberVouches / d) - record.invitesUsed);
+      }
+    }
+
     res.json({
       userId: req.params['userId'],
       total: total.toString(),
@@ -79,6 +95,13 @@ export function createRouter(deps: UtxoDeps): Router {
       lastActivityBlock: record?.lastActivityBlock ?? 0,
       lastDecayBlock: record?.lastDecayBlock ?? 0,
       lifetimeLikesReceived: (record?.lifetimeLikesReceived ?? 0n).toString(),
+      memberSinceBlock: record?.memberSinceBlock ?? 0,
+      memberBar: record?.memberBar ?? 0,
+      memberVouches: record?.memberVouches ?? 0,
+      memberLikes: (record?.memberLikes ?? 0n).toString(),
+      invitesUsed: record?.invitesUsed ?? 0,
+      member: memberFlag,
+      invitesAvailable,
       height,
     });
   });

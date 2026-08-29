@@ -147,6 +147,7 @@ export { loadAllPeers, putPeer, deletePeer, peerStorage } from './peers.js';
 export {
   getVouchBox,
   getVouchesForTargetPage,
+  getVouchesForVoucherPage,
   getVouchesByVoucher,
   getLapsedVouches,
 } from './vouch-queries.js';

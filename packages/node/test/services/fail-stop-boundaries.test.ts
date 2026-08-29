@@ -163,6 +163,10 @@ describe('route boundary (real wiring)', () => {
       networkType: 'testnet',
       inviteProbationBlocks: 43200,
       vouchCooldownBlocks: 60,
+      inviteBondMin: 100n,
+      inviteBondMax: 10000n,
+      getNetworkRecord: () => ({ memberCount: 1 }),
+      membershipBarMultiplier: 1,
     }));
 
     await new Promise<void>((resolve) => {

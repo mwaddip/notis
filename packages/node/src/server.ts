@@ -303,6 +303,8 @@ export function createApp(config: Config): express.Express {
       getCurrentHeight: store.getCurrentHeight,
       getUtxoEngineDeps: () => utxoEngineDeps,
       decayCfg: decayConfig(),
+      getNetworkRecord: store.getNetworkRecord,
+      membershipBarMultiplier: config.membershipBarMultiplier,
     }),
   );
 
@@ -401,6 +403,10 @@ export function createApp(config: Config): express.Express {
       networkType: config.networkType,
       inviteProbationBlocks: config.inviteProbationBlocks,
       vouchCooldownBlocks: config.vouchCooldownBlocks,
+      inviteBondMin: config.inviteBondMin,
+      inviteBondMax: config.inviteBondMax,
+      getNetworkRecord: store.getNetworkRecord,
+      membershipBarMultiplier: config.membershipBarMultiplier,
     }),
   );
 

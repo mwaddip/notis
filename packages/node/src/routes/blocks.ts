@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import type { OrderingBlock } from '@dagsocial/types';
+import { membershipBar, memberLikesBar } from '@dagsocial/types';
 import { postIdsOf } from '../services/block-posts.js';
+import type { NetworkRecord } from '../store/identity-records.js';
 
 // ---------------------------------------------------------------------------
 // The karma supply set
@@ -38,6 +40,10 @@ export interface BlocksDeps {
   inviteProbationBlocks: number;
   /** `NetworkProfile.vouchCooldownBlocks` — the escrow floor a client reproduces. */
   vouchCooldownBlocks: number;
+  inviteBondMin: bigint;
+  inviteBondMax: bigint;
+  getNetworkRecord(): NetworkRecord;
+  membershipBarMultiplier: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -137,6 +143,16 @@ export function createRouter(deps: BlocksDeps): Router {
       // a constant agrees on mainnet and is refused on devnet. Per-network
       // values are served, never known.
       vouchCooldownBlocks: deps.vouchCooldownBlocks,
+      inviteBondMin: deps.inviteBondMin.toString(),
+      inviteBondMax: deps.inviteBondMax.toString(),
+      membership: (() => {
+        const nr = deps.getNetworkRecord();
+        return {
+          memberCount: nr.memberCount,
+          memberBar: membershipBar(nr.memberCount, deps.membershipBarMultiplier),
+          memberLikesBar: memberLikesBar(nr.memberCount, deps.membershipBarMultiplier),
+        };
+      })(),
     });
   });
 

@@ -69,6 +69,8 @@ async function request(
       getBondBoxesPage,
       getCurrentHeight: () => height,
       decayCfg: DECAY_CFG,
+      getNetworkRecord: () => ({ memberCount: 1 }),
+      membershipBarMultiplier: 1,
       getUtxoEngineDeps: () => ({
         // The pending view, as server.ts wires the submission routes: a grant
         // spending the change box of one still pooled resolves its input here.
