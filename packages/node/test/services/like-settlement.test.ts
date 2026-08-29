@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   PROTOCOL_VERSION,
   LIKES_PER_KARMA_PAYOUT,
+  REPLY_AUTHOR_SHARE,
 } from '@dagsocial/types';
 import type {
   KarmaBox,
@@ -97,7 +98,7 @@ async function importRecords() {
   return (await import('../../src/store/identity-records.js')) as {
     getIdentityRecord: (
       id: Uint8Array,
-    ) => { lastActivityBlock: number; lastDecayBlock: number } | null;
+    ) => { lastActivityBlock: number; lastDecayBlock: number; lifetimeLikesReceived: bigint } | null;
   };
 }
 
@@ -797,6 +798,49 @@ describe('per-block like settlement (P2-D N2b)', () => {
     );
     const block3 = await makeApplicableBlock({ height: 3, utxoTxs: [likeTx] });
     expect(blockApply.applyOrderingBlock(block3)).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
+  // A reply moves REPLY_AUTHOR_SHARE into the parent author's accrual and
+  // neither lifetimeLikesReceived nor the like counter (§8.4 of the spec)
+  // -------------------------------------------------------------------------
+
+  it('a reply moves 1 karma into the parent author accrual and no counter; a like moves the counter', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    await importUtxo();
+    const posts = await importPosts();
+    const records = await importRecords();
+    const blockApply = await importBlockApply();
+
+    const author = makeTestIdentity();
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'parent post');
+    posts.insertPost(postId, commit, content);
+
+    const replier = makeTestIdentity();
+    const { tx: replyTx } = await seedPostTx(replier, 'reply post', { parentRefs: [postId] }, author.userId);
+
+    const liker = (await seedLikers(1, 5000))[0]!;
+    const likeTx = makeLikeTx(liker.id, liker.box, postId, author.userId);
+
+    await activateProver();
+    expect(blockApply.applyOrderingBlock(await confirmPostBlock(postTx))).toBe(true);
+
+    const beforeRecord = records.getIdentityRecord(author.userId);
+    const likesBefore = beforeRecord?.lifetimeLikesReceived ?? 0n;
+
+    expect(
+      blockApply.applyOrderingBlock(
+        await makeApplicableBlock({ height: 2, utxoTxs: [replyTx, likeTx] }),
+      ),
+    ).toBe(true);
+
+    const afterRecord = records.getIdentityRecord(author.userId);
+    expect(afterRecord).not.toBeNull();
+    expect(afterRecord!.lifetimeLikesReceived).toBe(likesBefore + 1n);
+
+    const carry = await carryOf(author.userId);
+    expect(carry >= REPLY_AUTHOR_SHARE).toBe(true);
   });
 
 });

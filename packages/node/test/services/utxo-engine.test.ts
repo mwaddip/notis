@@ -18,6 +18,8 @@ import {
   computeTxId,
   LIKE_KARMA_COST,
   POST_PRICE_THREAD,
+  POST_PRICE_REPLY,
+  REPLY_AUTHOR_SHARE,
   VOUCH_KARMA_AMOUNT,
   VOUCH_MIN_BALANCE,
   KARMA_STALE_THRESHOLD_BLOCKS,
@@ -965,6 +967,166 @@ describe('validateAndApplyTx', () => {
 
       expect(result.valid).toBe(true);
       expect(result.error).toBeUndefined();
+    });
+
+    // -----------------------------------------------------------------------
+    // Price shape refusals (§8 pins d)
+    // -----------------------------------------------------------------------
+
+    it('refuses a thread with price box of 4', () => {
+      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
+      const tx = buildSignedTx(
+        [karma.id!],
+        [{ boxType: 'karma', value: 96n, createdAtBlock: 0, owner: ownerPubKey } as never, { boxType: 'karma_price', value: 4n, createdAtBlock: 0 }],
+        ownerPrivKey, ownerPubKey, 1, undefined,
+        makePostCommit(ownerPubKey, 'wrong-price-4'),
+      );
+      const result = validateAndApplyTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toMatch(/Thread price must be exactly/);
+    });
+
+    it('refuses a thread with price box of 6', () => {
+      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
+      const tx = buildSignedTx(
+        [karma.id!],
+        [{ boxType: 'karma', value: 94n, createdAtBlock: 0, owner: ownerPubKey } as never, { boxType: 'karma_price', value: 6n, createdAtBlock: 0 }],
+        ownerPrivKey, ownerPubKey, 1, undefined,
+        makePostCommit(ownerPubKey, 'wrong-price-6'),
+      );
+      const result = validateAndApplyTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toMatch(/Thread price must be exactly/);
+    });
+
+    it('refuses a thread with two price boxes', () => {
+      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
+      const tx = buildSignedTx(
+        [karma.id!],
+        [
+          { boxType: 'karma', value: 95n, createdAtBlock: 0, owner: ownerPubKey } as never,
+          { boxType: 'karma_price', value: 3n, createdAtBlock: 0 },
+          { boxType: 'karma_price', value: 2n, createdAtBlock: 0 },
+        ],
+        ownerPrivKey, ownerPubKey, 1, undefined,
+        makePostCommit(ownerPubKey, 'two-price-boxes'),
+      );
+      const result = validateAndApplyTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toMatch(/exactly one karma_price/);
+    });
+
+    it('refuses a thread with no price box', () => {
+      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
+      const tx = buildSignedTx(
+        [karma.id!],
+        [{ boxType: 'karma', value: 100n, createdAtBlock: 0, owner: ownerPubKey } as never],
+        ownerPrivKey, ownerPubKey, 1, undefined,
+        makePostCommit(ownerPubKey, 'no-price-box'),
+      );
+      const result = validateAndApplyTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toMatch(/exactly one karma_price/);
+    });
+
+    it('refuses a reply whose price box carries 3 (the whole price)', () => {
+      const parentPost = 'c1'.repeat(32);
+      const parentAuthor = new Uint8Array(32).fill(0xc1);
+      topologyAuthors.set(parentPost, parentAuthor);
+      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
+      const commit = makePostCommit(ownerPubKey, 'reply-whole-price');
+      commit.parentRefs = [parentPost];
+      const tx = buildSignedTx(
+        [karma.id!],
+        [
+          { boxType: 'karma', value: 96n, createdAtBlock: 0, owner: ownerPubKey } as never,
+          { boxType: 'karma_price', value: POST_PRICE_REPLY, createdAtBlock: 0 },
+          { boxType: 'like_accrual', value: REPLY_AUTHOR_SHARE, createdAtBlock: 0, author: parentAuthor },
+        ],
+        ownerPrivKey, ownerPubKey, 1, undefined, commit,
+      );
+      const result = validateAndApplyTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toMatch(/Reply price box must be exactly/);
+    });
+
+    it('refuses a reply whose marker carries 2', () => {
+      const parentPost = 'c2'.repeat(32);
+      const parentAuthor = new Uint8Array(32).fill(0xc2);
+      topologyAuthors.set(parentPost, parentAuthor);
+      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
+      const commit = makePostCommit(ownerPubKey, 'reply-wrong-marker-value');
+      commit.parentRefs = [parentPost];
+      const tx = buildSignedTx(
+        [karma.id!],
+        [
+          { boxType: 'karma', value: 96n, createdAtBlock: 0, owner: ownerPubKey } as never,
+          { boxType: 'karma_price', value: POST_PRICE_REPLY - REPLY_AUTHOR_SHARE, createdAtBlock: 0 },
+          { boxType: 'like_accrual', value: 2n, createdAtBlock: 0, author: parentAuthor },
+        ],
+        ownerPrivKey, ownerPubKey, 1, undefined, commit,
+      );
+      const result = validateAndApplyTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toMatch(/Reply accrual marker must carry exactly/);
+    });
+
+    it('refuses a reply whose marker names a foreign author', () => {
+      const parentPost = 'c3'.repeat(32);
+      const parentAuthor = new Uint8Array(32).fill(0xc3);
+      topologyAuthors.set(parentPost, parentAuthor);
+      const foreignAuthor = new Uint8Array(32).fill(0xdd);
+      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
+      const commit = makePostCommit(ownerPubKey, 'reply-foreign-author');
+      commit.parentRefs = [parentPost];
+      const tx = buildSignedTx(
+        [karma.id!],
+        [
+          { boxType: 'karma', value: 97n, createdAtBlock: 0, owner: ownerPubKey } as never,
+          { boxType: 'karma_price', value: POST_PRICE_REPLY - REPLY_AUTHOR_SHARE, createdAtBlock: 0 },
+          { boxType: 'like_accrual', value: REPLY_AUTHOR_SHARE, createdAtBlock: 0, author: foreignAuthor },
+        ],
+        ownerPrivKey, ownerPubKey, 1, undefined, commit,
+      );
+      const result = validateAndApplyTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toMatch(/Reply marker names/);
+    });
+
+    it('refuses a reply whose parent is unconfirmed', () => {
+      const unconfirmedParent = 'dd'.repeat(32);
+      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
+      const commit = makePostCommit(ownerPubKey, 'reply-unconfirmed');
+      commit.parentRefs = [unconfirmedParent];
+      const tx = buildSignedTx(
+        [karma.id!],
+        [
+          { boxType: 'karma', value: 97n, createdAtBlock: 0, owner: ownerPubKey } as never,
+          { boxType: 'karma_price', value: POST_PRICE_REPLY - REPLY_AUTHOR_SHARE, createdAtBlock: 0 },
+          { boxType: 'like_accrual', value: REPLY_AUTHOR_SHARE, createdAtBlock: 0, author: new Uint8Array(32).fill(0xee) },
+        ],
+        ownerPrivKey, ownerPubKey, 1, undefined, commit,
+      );
+      const result = validateAndApplyTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toMatch(/is not confirmed, so it names no author/);
+    });
+
+    it('refuses a thread carrying a like_accrual marker', () => {
+      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
+      const commit = makePostCommit(ownerPubKey, 'thread-with-marker');
+      const tx = buildSignedTx(
+        [karma.id!],
+        [
+          { boxType: 'karma', value: 94n, createdAtBlock: 0, owner: ownerPubKey } as never,
+          { boxType: 'karma_price', value: POST_PRICE_THREAD, createdAtBlock: 0 },
+          { boxType: 'like_accrual', value: 1n, createdAtBlock: 0, author: new Uint8Array(32).fill(0xff) },
+        ],
+        ownerPrivKey, ownerPubKey, 1, undefined, commit,
+      );
+      const result = validateAndApplyTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toMatch(/LikeAccrualBox output is legal only on a like or a reply/);
     });
 
     it('accepts a conserving vouch tx K(v) -> K(v-1) + Vouch(1)', () => {
