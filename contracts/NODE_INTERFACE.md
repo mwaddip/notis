@@ -685,7 +685,7 @@ the chain) is not served. The prover behind it is `Nipopow prover` below.
 
 | Method | Path | Response |
 |--------|------|----------|
-| `GET` | `/status` | `{ networkType, blockHeight, postCount, pendingPosts, totalKarma, liquidKarma, totalCredits, inviteProbationBlocks, vouchCooldownBlocks, membership: { memberCount, memberBar, memberLikesBar } }` |
+| `GET` | `/status` | `{ networkType, blockHeight, postCount, pendingPosts, totalKarma, liquidKarma, totalCredits, inviteProbationBlocks, vouchCooldownBlocks, inviteBondMin, inviteBondMax, membership: { memberCount, memberBar, memberLikesBar } }` |
 
 > ⚠ **`totalKarma` is karma in existence; `liquidKarma` is karma its owner can spend now.**
 > `totalKarma` sums the karma-bearing types; `liquidKarma` sums `karma` alone. `credit` is the
@@ -695,7 +695,13 @@ the chain) is not served. The prover behind it is `Nipopow prover` below.
 > `VouchEscrowBox` whose `releaseAtBlock` the engine pins as `vouch.createdAtBlock +
 > vouchCooldownBlocks` ("Vouch transition rules"). `inviteProbationBlocks` is the probation window
 > the settlement dates from `IdentityRecord.invitedAtBlock` ("Bond transition rules"). Both are
-> per-network values, plain numbers, served rather than held as client constants.
+> per-network values, plain numbers, served rather than held as client constants. `inviteBondMin`
+> and `inviteBondMax` are served for the same reason — the range the invite-create arm admits a bond
+> in (→ Legal box transitions) is per-network, so a client building an invite reads the floor here
+> rather than holding one network's constant — as decimal strings, being `bigint` amounts.
+>
+> ⚠ **AHEAD OF CODE — 2026-08-29.** The two bond fields are the earned-invites unit's node work,
+> and the demo UI's invite builder reads its bond from them.
 
 > `membership` is the network record read once: `memberCount` is `N`, `memberBar` is `D(N)` and
 > `memberLikesBar` is `Y(N)` (`ARCHITECTURE → Membership`) — the bar a newcomer faces and the
