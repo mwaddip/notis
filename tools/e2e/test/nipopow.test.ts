@@ -6,6 +6,8 @@ import type { NodeProcess } from '../src/node-process.js';
 import {
   NETWORK_PROFILES,
   PROTOCOL_VERSION,
+  RETARGET_HALFLIFE_BLOCKS,
+  MAX_FUTURE_DRIFT_MS,
 } from '@dagsocial/types';
 import {
   verifyProof,
@@ -19,11 +21,22 @@ const K = 3;
 const REQUIRED_HEIGHT = M + K;
 
 const devnetProfile = NETWORK_PROFILES.devnet;
-const verifyProfile = {
-  expectedTarget: (_height: number) => devnetProfile.orderingBlockPowTargetBits,
-  genesisId: devnetProfile.genesisId,
-  protocolVersion: PROTOCOL_VERSION,
-};
+
+function makeVerifyProfile() {
+  return {
+    retarget: {
+      anchorBits: devnetProfile.orderingBlockPowTargetBits,
+      idealMs: devnetProfile.orderingBlockIdealMs,
+      halflifeMs: RETARGET_HALFLIFE_BLOCKS * devnetProfile.orderingBlockIdealMs,
+      floorBits: devnetProfile.orderingBlockPowTargetFloorBits,
+      ceilingBits: devnetProfile.orderingBlockPowTargetCeilingBits,
+    },
+    maxFutureDriftMs: MAX_FUTURE_DRIFT_MS,
+    nowMs: Date.now(),
+    genesisId: devnetProfile.genesisId,
+    protocolVersion: PROTOCOL_VERSION,
+  };
+}
 
 async function fetchProofRaw(
   node: NodeProcess,
@@ -72,8 +85,9 @@ describe('nipopow', () => {
     const proof1Bytes = await fetchProofBytes(node1, M, K);
     const proof2Bytes = await fetchProofBytes(node2, M, K);
 
-    const result1 = verifyProof(proof1Bytes, verifyProfile);
-    const result2 = verifyProof(proof2Bytes, verifyProfile);
+    const profile = makeVerifyProfile();
+    const result1 = verifyProof(proof1Bytes, profile);
+    const result2 = verifyProof(proof2Bytes, profile);
     expect(result1.ok).toBe(true);
     expect(result2.ok).toBe(true);
     if (!result1.ok || !result2.ok) return;
@@ -88,7 +102,7 @@ describe('nipopow', () => {
     const parsed1 = decodeNipopowProof(proof1Bytes);
     const parsed2 = decodeNipopowProof(proof2Bytes);
 
-    const cmp = compareProofs(parsed1, parsed2, M, verifyProfile);
+    const cmp = compareProofs(parsed1, parsed2, M, profile);
     expect(cmp.verdict).toBe('tie');
 
     // ---- step 3: suffixHead stateRoot matches the block at that height ----
