@@ -172,7 +172,7 @@ describe('verifyProof', () => {
   });
 
   describe('heights', () => {
-    it('refuses non-ascending heights', () => {
+    it('swapped prefix elements with reversed stamps → time', () => {
       const proof = clone(proveWithReader(reader, { m: 3, k: 5 }));
       if (proof.prefix.length >= 3) {
         const tmp = proof.prefix[1]!;
@@ -181,8 +181,44 @@ describe('verifyProof', () => {
       }
       const result = verifyProof(proof, profile);
       expect(result.ok).toBe(false);
-      // time check (rule 3) fires before heights check (rule 5) on a swap
-      if (!result.ok) expect(['heights', 'time']).toContain(result.reason);
+      if (!result.ok) expect(result.reason).toBe('time');
+    });
+
+    it('heights fault with ascending stamps → heights', () => {
+      // Two chains from one block 1: honest (60 s stamps) and stretched (200×
+      // idealMs stamps). An honest header at height 10 has stamp ~1.5 M; a
+      // stretched header at height 3 has stamp ~25 M. Placing honest h10 before
+      // stretched h3 gives ascending stamps (1.5 M < 25 M) but descending
+      // heights (10 > 3). The suffix comes entirely from the stretched chain
+      // so stamps keep ascending after the fault. Rule 5 fires as 'heights'
+      // because the time check sees only ascending stamps.
+      const honestChain = buildMinedChain({ count: 40 });
+      const stretched = buildMinedChain({ count: 20, stampIntervalMs: 200 * 60_000 });
+
+      const genesis = honestChain.popowHeaders[0]!;
+      const honestH10 = honestChain.popowHeaders[9]!;
+      const stretchedH3 = stretched.popowHeaders[2]!;
+
+      // Confirm the premise: ascending stamps, descending heights
+      expect(honestH10.header.height).toBeGreaterThan(stretchedH3.header.height);
+      expect(honestH10.header.createdAt).toBeLessThan(stretchedH3.header.createdAt);
+
+      // Suffix from the stretched chain: suffixHead at h16, tail h17..h20
+      const suffixHead = stretched.popowHeaders[15]!;
+      const suffixTail = stretched.headers.slice(16, 20);
+
+      const stitched = {
+        m: 1,
+        k: 5,
+        prefix: [genesis, honestH10, stretchedH3],
+        suffixHead,
+        suffixTail,
+      };
+
+      const wideProfile = { ...profile, nowMs: 10_000_000_000 };
+      const result = verifyProof(stitched, wideProfile);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reason).toBe('heights');
     });
   });
 

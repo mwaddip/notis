@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { compareProofs, bestArg } from '../src/compare.js';
 import { proveWithReader } from '../src/prover.js';
-import { blockHash, level } from '@dagsocial/validation';
+import { blockHash, blockWork, level } from '@dagsocial/validation';
+import type { BlockHeader } from '@dagsocial/types';
 import {
   buildMinedChain,
   makeReader,
@@ -110,27 +111,47 @@ describe('attack pins — NIPOPOW_INTERFACE → compareProofs', () => {
     const gC = blockHash(cheap.headers[0]!);
     expect(gH).toBe(gC);
 
-    // Count the cheap chain's registered headers (level not null)
-    const cheapAbove = cheap.headers.slice(1);
-    const registeredCount = cheapAbove.filter(h =>
+    // Work measured from the headers: blockWork(bits) = 2^256 / (target + 1)
+    function sumWork(headers: BlockHeader[]): bigint {
+      let w = 0n;
+      for (const h of headers) w += blockWork(h.powTargetBits) ?? 0n;
+      return w;
+    }
+
+    // The cheap chain's registered fraction should be roughly 1/8
+    const cheapAll = cheap.headers.slice(1);
+    const registeredCount = cheapAll.filter(h =>
       level(h, DEVNET_RETARGET.anchorBits) !== null,
     ).length;
-
-    // The registered fraction should be roughly 1/8 of the total
-    // (the first ~6 blocks are at transitional difficulty, rest at floor)
-    const registrationFraction = registeredCount / cheapAbove.length;
+    const registrationFraction = registeredCount / cheapAll.length;
     expect(registrationFraction).toBeLessThan(0.25);
     expect(registrationFraction).toBeGreaterThan(0.05);
 
-    // Compare proofs across different chain-length pairs (≥ 20 solver seeds):
-    // honest chain length 10+i, cheap chain length floor-adjusted to match work
+    // 20 trials: for each honest length, find the longest cheap prefix whose
+    // work ≤ the honest side's, then compare proofs
     let neverCheap = true;
     const trials = 20;
     for (let i = 0; i < trials; i++) {
       const hLen = 15 + i;
-      const cLen = 8 * hLen + 10;
-      if (hLen + k > honest.headers.length || cLen > cheap.headers.length) continue;
-      if (hLen < m + k || cLen < m + k) continue;
+      if (hLen + k > honest.headers.length) continue;
+      if (hLen < m + k) continue;
+
+      const honestAbove = honest.headers.slice(1, hLen);
+      const honestWork = sumWork(honestAbove);
+
+      // Find the longest cheap prefix whose work ≤ honest work
+      let cLen = 1;
+      let cheapWork = 0n;
+      for (let j = 1; j < cheap.headers.length; j++) {
+        const w = blockWork(cheap.headers[j]!.powTargetBits) ?? 0n;
+        if (cheapWork + w > honestWork) break;
+        cheapWork += w;
+        cLen = j + 1;
+      }
+      if (cLen < m + k) continue;
+
+      // The premise: cheap work ≤ honest work
+      expect(cheapWork).toBeLessThanOrEqual(honestWork);
 
       const hSlice = { ...honest, headers: honest.headers.slice(0, hLen), popowHeaders: honest.popowHeaders.slice(0, hLen), interlinksPerHeader: honest.interlinksPerHeader.slice(0, hLen) };
       const cSlice = { ...cheap, headers: cheap.headers.slice(0, cLen), popowHeaders: cheap.popowHeaders.slice(0, cLen), interlinksPerHeader: cheap.interlinksPerHeader.slice(0, cLen) };
@@ -145,11 +166,9 @@ describe('attack pins — NIPOPOW_INTERFACE → compareProofs', () => {
     }
     expect(neverCheap).toBe(true);
 
-    // The mechanism: a control bestArg using the OLD definition (own-target levels)
-    // picks the cheap chain — the attack succeeds under the old definition
-    const honestAbove = honest.headers.slice(1, 25);
-    const cheapAboveSlice = cheapAbove.slice(0, 200);
-    function controlBestArg(headers: typeof honest.headers, m: number): bigint {
+    // The mechanism: a control bestArg using the OLD definition (own-target
+    // levels) picks the cheap chain — the attack the yardstick defeats
+    function controlBestArg(headers: BlockHeader[], m: number): bigint {
       const levels = headers.map(h => level(h, h.powTargetBits));
       const count0 = levels.filter(lvl => lvl !== null).length;
       const acc: Array<[number, number]> = [[0, count0]];
@@ -165,24 +184,27 @@ describe('attack pins — NIPOPOW_INTERFACE → compareProofs', () => {
       }
       return best;
     }
-    // Under own-target levels, every PoW-valid header registers, so the cheap
-    // chain with more headers trivially out-scores the honest one
+    const honestAbove = honest.headers.slice(1, 25);
+    const cheapAboveSlice = cheapAll.slice(0, 200);
     const controlH = controlBestArg(honestAbove, m);
     const controlC = controlBestArg(cheapAboveSlice, m);
     expect(controlC).toBeGreaterThan(controlH);
   });
 
   it('(b) cheap chain with strictly more work wins', () => {
-    // honest = 25 blocks → 24 above the LCA, 24 anchor-work units.
-    // cheap  = 500 blocks → ~494 at the floor, ~494/8 + 2.5 ≈ 64 anchor-work
-    // units — 2.7× the honest work. The proof's prefix at each level is
-    // deeper, and bestArg recovers the work advantage.
     const honest = buildMinedChain({ count: 25 });
     const cheap = buildMinedChain({ count: 500, stampIntervalMs: 200 * 60_000 });
 
     const gH = blockHash(honest.headers[0]!);
     const gC = blockHash(cheap.headers[0]!);
     expect(gH).toBe(gC);
+
+    // Measure both works so a reader sees the ratio
+    let honestWork = 0n;
+    for (const h of honest.headers.slice(1)) honestWork += blockWork(h.powTargetBits) ?? 0n;
+    let cheapWork = 0n;
+    for (const h of cheap.headers.slice(1)) cheapWork += blockWork(h.powTargetBits) ?? 0n;
+    expect(cheapWork).toBeGreaterThan(honestWork);
 
     const hReader = makeReader(honest);
     const cReader = makeReader(cheap);
