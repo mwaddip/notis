@@ -143,7 +143,10 @@ describe('verifyHeaderChain', () => {
 
   it('returns ok with zero work for an empty segment', () => {
     const result = verifyHeaderChain([], anchor, P_dev, t_a, FAR_FUTURE);
-    expect(result).toEqual({ ok: true, work: 0n, hashes: [] });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.work).toBe(0n);
+    expect(result.hashes).toEqual([]);
   });
 
   // ---- Genesis anchor ----
@@ -556,7 +559,10 @@ describe('verifyHeaderChain', () => {
 
     it('non-array headers treated as empty segment', () => {
       const result = verifyHeaderChain(null as unknown as BlockHeader[], anchor, P_dev, t_a, FAR_FUTURE);
-      expect(result).toEqual({ ok: true, work: 0n, hashes: [] });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.work).toBe(0n);
+      expect(result.hashes).toEqual([]);
     });
   });
 
@@ -692,5 +698,137 @@ describe('verifyHeaderChain', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.work).toBe(cumulativeWork(headers));
+  });
+
+  // ---- next — the continuation anchor ----
+
+  describe('next — the continuation anchor', () => {
+    it('one call equals pages — above genesis', () => {
+      const headers = mineChain(anchor, 7);
+      const full = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      expect(full.ok).toBe(true);
+      if (!full.ok) return;
+
+      const page1 = verifyHeaderChain(headers.slice(0, 3), anchor, P_dev, t_a, FAR_FUTURE);
+      expect(page1.ok).toBe(true);
+      if (!page1.ok) return;
+
+      const page2 = verifyHeaderChain(headers.slice(3), page1.next, P_dev, page1.next.t_a, FAR_FUTURE);
+      expect(page2.ok).toBe(true);
+      if (!page2.ok) return;
+
+      expect(page1.work + page2.work).toBe(full.work);
+      expect([...page1.hashes, ...page2.hashes]).toEqual(full.hashes);
+      expect(page2.next).toEqual(full.next);
+    });
+
+    it('one call equals pages — genesis-anchored', () => {
+      const headers = mineChain(genesisAnchor, 7, P_dev, t_a);
+      const full = verifyHeaderChain(headers, genesisAnchor, P_dev, null, FAR_FUTURE);
+      expect(full.ok).toBe(true);
+      if (!full.ok) return;
+
+      const page1 = verifyHeaderChain(headers.slice(0, 3), genesisAnchor, P_dev, null, FAR_FUTURE);
+      expect(page1.ok).toBe(true);
+      if (!page1.ok) return;
+
+      // At genesis, page one's next.t_a is the height-1 header's stamp
+      expect(page1.next.t_a).toBe(headers[0]!.createdAt);
+
+      const page2 = verifyHeaderChain(headers.slice(3), page1.next, P_dev, page1.next.t_a, FAR_FUTURE);
+      expect(page2.ok).toBe(true);
+      if (!page2.ok) return;
+
+      expect(page1.work + page2.work).toBe(full.work);
+      expect([...page1.hashes, ...page2.hashes]).toEqual(full.hashes);
+      expect(page2.next).toEqual(full.next);
+    });
+
+    it('stale carried vector refuses interlinks', () => {
+      const headers = mineChain(anchor, 5);
+      const page1 = verifyHeaderChain(headers.slice(0, 3), anchor, P_dev, t_a, FAR_FUTURE);
+      expect(page1.ok).toBe(true);
+      if (!page1.ok) return;
+
+      const stale = { ...page1.next, interlinks: anchor.interlinks };
+      const result = verifyHeaderChain(headers.slice(3), stale, P_dev, stale.t_a, FAR_FUTURE);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.index).toBe(0);
+      expect(result.reason).toBe('interlinks');
+    });
+
+    it('tampered prevBlockHash in next refuses link', () => {
+      const headers = mineChain(anchor, 5);
+      const page1 = verifyHeaderChain(headers.slice(0, 3), anchor, P_dev, t_a, FAR_FUTURE);
+      expect(page1.ok).toBe(true);
+      if (!page1.ok) return;
+
+      const bad = { ...page1.next, prevBlockHash: 'ff'.repeat(32) };
+      const result = verifyHeaderChain(headers.slice(3), bad, P_dev, bad.t_a, FAR_FUTURE);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.reason).toBe('link');
+    });
+
+    it('wrong height in next refuses height', () => {
+      const headers = mineChain(anchor, 5);
+      const page1 = verifyHeaderChain(headers.slice(0, 3), anchor, P_dev, t_a, FAR_FUTURE);
+      expect(page1.ok).toBe(true);
+      if (!page1.ok) return;
+
+      const bad = { ...page1.next, height: page1.next.height + 1 };
+      const result = verifyHeaderChain(headers.slice(3), bad, P_dev, bad.t_a, FAR_FUTURE);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.reason).toBe('height');
+    });
+
+    it('createdAt above page first stamp refuses time', () => {
+      const headers = mineChain(anchor, 5);
+      const page1 = verifyHeaderChain(headers.slice(0, 3), anchor, P_dev, t_a, FAR_FUTURE);
+      expect(page1.ok).toBe(true);
+      if (!page1.ok) return;
+
+      const bad = { ...page1.next, createdAt: headers[4]!.createdAt + 1 };
+      const result = verifyHeaderChain(headers.slice(3), bad, P_dev, bad.t_a, FAR_FUTURE);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.reason).toBe('time');
+    });
+
+    it('empty segment next equals its anchor', () => {
+      const result = verifyHeaderChain([], anchor, P_dev, t_a, FAR_FUTURE);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.next).toEqual({
+        prevBlockHash: anchor.prevBlockHash,
+        height: anchor.height,
+        interlinks: anchor.interlinks,
+        createdAt: anchor.createdAt,
+        t_a,
+      });
+    });
+
+    it('empty segment next reads undefined anchorCreatedAt as null', () => {
+      const result = verifyHeaderChain([], anchor, P_dev, undefined as unknown as number | null, FAR_FUTURE);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.next.t_a).toBe(null);
+    });
+
+    it('next is absent from every failure', () => {
+      const headers = mineChain(anchor, 3);
+      headers[0] = mineHeader({
+        height: anchor.height + 1,
+        prevBlockHash: anchor.prevBlockHash,
+        protocolVersion: 99,
+        createdAt: headers[0]!.createdAt,
+        powTargetBits: headers[0]!.powTargetBits,
+      });
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      expect(result.ok).toBe(false);
+      expect(result).not.toHaveProperty('next');
+    });
   });
 });

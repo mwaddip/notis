@@ -1063,10 +1063,11 @@ export function verifyBlockChainLink(
 
 /**
  * The header-level rules a chain segment must pass before any of its work
- * counts. Discriminated on `ok`; callers read success first.
+ * counts. Discriminated on `ok`; the success arm carries the continuation
+ * anchor for the following page. VALIDATION_INTERFACE → verifyHeaderChain.
  */
 export type HeaderChainVerdict =
-  | { ok: true; work: bigint; hashes: string[] }
+  | { ok: true; work: bigint; hashes: string[]; next: { prevBlockHash: string; height: number; interlinks: string[]; createdAt: number | null; t_a: number | null } }
   | { ok: false; index: number; reason: 'domain' | 'version' | 'height' | 'link' | 'time' | 'clock' | 'target' | 'pow' | 'interlinks' };
 
 /**
@@ -1081,7 +1082,7 @@ export function verifyHeaderChain(
   nowMs: number,
 ): HeaderChainVerdict {
   if (!Array.isArray(headers) || headers.length === 0) {
-    return { ok: true, work: 0n, hashes: [] };
+    return { ok: true, work: 0n, hashes: [], next: { prevBlockHash: anchor.prevBlockHash, height: anchor.height, interlinks: anchor.interlinks, createdAt: anchor.createdAt ?? null, t_a: anchorCreatedAt ?? null } };
   }
 
   // A null anchor.createdAt with a non-null anchorCreatedAt, or the reverse,
@@ -1203,5 +1204,17 @@ export function verifyHeaderChain(
     hashes.push(hash);
   }
 
-  return { ok: true, work: cumulativeWork(headers), hashes };
+  const last = headers.length - 1;
+  return {
+    ok: true,
+    work: cumulativeWork(headers),
+    hashes,
+    next: {
+      prevBlockHash: hashes[last]!,
+      height: headers[last]!.height,
+      interlinks: expectedInterlinks,
+      createdAt: headers[last]!.createdAt,
+      t_a,
+    },
+  };
 }
