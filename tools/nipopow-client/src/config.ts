@@ -2,9 +2,14 @@ import {
   profileFor,
   PROTOCOL_VERSION,
   NETWORK_PROFILES,
+  RETARGET_HALFLIFE_BLOCKS,
+  MAX_FUTURE_DRIFT_MS,
 } from '@dagsocial/types';
 import type { NetworkProfile, NetworkType } from '@dagsocial/types';
 import { MAX_NIPOPOW_PARAM } from '@dagsocial/nipopow';
+import type { VerifyProfile } from '@dagsocial/nipopow';
+
+export type { VerifyProfile };
 
 export interface Config {
   nodeUrls: string[];
@@ -16,16 +21,19 @@ export interface Config {
   json: boolean;
 }
 
-export interface VerifierProfile {
-  expectedTarget: (height: number) => number;
-  genesisId: string;
-  protocolVersion: number;
-}
-
-// NIPOPOW_INTERFACE → verifyProof — the schedule is a constant per profile
-export function verifierProfile(profile: NetworkProfile): VerifierProfile {
+// NIPOPOW_INTERFACE → verifyProof — the retarget schedule is a constant per profile
+export function verifierProfile(profile: NetworkProfile, nowMs: number): VerifyProfile {
+  const idealMs = profile.orderingBlockIdealMs;
   return {
-    expectedTarget: () => profile.orderingBlockPowTargetBits,
+    retarget: {
+      anchorBits: profile.orderingBlockPowTargetBits,
+      idealMs,
+      halflifeMs: RETARGET_HALFLIFE_BLOCKS * idealMs,
+      floorBits: profile.orderingBlockPowTargetFloorBits,
+      ceilingBits: profile.orderingBlockPowTargetCeilingBits,
+    },
+    maxFutureDriftMs: MAX_FUTURE_DRIFT_MS,
+    nowMs,
     genesisId: profile.genesisId,
     protocolVersion: PROTOCOL_VERSION,
   };

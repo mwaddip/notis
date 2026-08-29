@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { parseConfig, ConfigError } from '../src/config.js';
+import { parseConfig, ConfigError, verifierProfile } from '../src/config.js';
+import { NETWORK_PROFILES, PROTOCOL_VERSION } from '@dagsocial/types';
 
 function env(overrides: Record<string, string> = {}) {
   return {
@@ -91,5 +92,37 @@ describe('parseConfig', () => {
   it('refuses unknown argument', () => {
     expect(() => parseConfig(['--bad'], env()))
       .toThrow(ConfigError);
+  });
+});
+
+describe('verifierProfile', () => {
+  it('devnet profile carries the devnet band and schedule', () => {
+    const vp = verifierProfile(NETWORK_PROFILES.devnet, 12345);
+    expect(vp.retarget).toEqual({
+      anchorBits: 3072,
+      idealMs: 60_000,
+      halflifeMs: 17_280_000,
+      floorBits: 2304,
+      ceilingBits: 4096,
+    });
+    expect(vp.maxFutureDriftMs).toBe(600_000);
+    expect(vp.nowMs).toBe(12345);
+    expect(vp.genesisId).toBe(NETWORK_PROFILES.devnet.genesisId);
+    expect(vp.protocolVersion).toBe(PROTOCOL_VERSION);
+  });
+
+  it('testnet profile carries the testnet band and schedule', () => {
+    const vp = verifierProfile(NETWORK_PROFILES.testnet, 99999);
+    expect(vp.retarget).toEqual({
+      anchorBits: 5984,
+      idealMs: 60_000,
+      halflifeMs: 17_280_000,
+      floorBits: 5120,
+      ceilingBits: 65536,
+    });
+    expect(vp.maxFutureDriftMs).toBe(600_000);
+    expect(vp.nowMs).toBe(99999);
+    expect(vp.genesisId).toBe(NETWORK_PROFILES.testnet.genesisId);
+    expect(vp.protocolVersion).toBe(PROTOCOL_VERSION);
   });
 });

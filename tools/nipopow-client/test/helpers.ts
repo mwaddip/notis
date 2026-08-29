@@ -7,8 +7,11 @@ import {
   AVL_KEY_LENGTH,
   boxRecordBytes,
   computeCandidateBoxId,
+  RETARGET_HALFLIFE_BLOCKS,
+  NETWORK_PROFILES,
+  profileFor,
 } from '@dagsocial/types';
-import type { BlockHeader, BoxCandidate, TxId } from '@dagsocial/types';
+import type { BlockHeader, BoxCandidate, TxId, NetworkProfile } from '@dagsocial/types';
 import {
   verifyOrderingBlockPoW,
   blockHash,
@@ -16,7 +19,9 @@ import {
   levelOfHit,
   powHit,
   orderingPowTarget,
+  asertTargetBits,
 } from '@dagsocial/validation';
+import type { RetargetParams } from '@dagsocial/validation';
 import {
   proveWithReader,
   encodeNipopowProof,
@@ -26,6 +31,18 @@ import { BatchAVLProver } from '@ergots/avltree';
 import type { HttpFetch } from '../src/http.js';
 
 export const DEVNET_POW_TARGET_BITS = 3072;
+const DEVNET_IDEAL_MS = 60_000;
+const DEFAULT_ANCHOR_STAMP = 1_000_000;
+
+function retargetForAnchor(anchorBits: number, idealMs: number): RetargetParams {
+  return {
+    anchorBits,
+    idealMs,
+    halflifeMs: RETARGET_HALFLIFE_BLOCKS * idealMs,
+    floorBits: NETWORK_PROFILES.devnet.orderingBlockPowTargetFloorBits,
+    ceilingBits: NETWORK_PROFILES.devnet.orderingBlockPowTargetCeilingBits,
+  };
+}
 
 function solveHeaderPow(header: BlockHeader): number {
   for (let nonce = 0; ; nonce++) {
@@ -33,8 +50,8 @@ function solveHeaderPow(header: BlockHeader): number {
   }
 }
 
-function solveForLevel(header: BlockHeader, minLevel: number): number {
-  const target = orderingPowTarget(header.powTargetBits);
+function solveForLevel(header: BlockHeader, minLevel: number, anchorBits: number): number {
+  const target = orderingPowTarget(anchorBits);
   if (target === null) throw new Error('invalid target');
   for (let nonce = 0; ; nonce++) {
     const candidate = { ...header, powNonce: nonce };
@@ -50,19 +67,26 @@ export interface MinedChain {
   headers: BlockHeader[];
   interlinksPerHeader: string[][];
   popowHeaders: PoPowHeader[];
+  anchorStamp: number;
 }
 
+// Headers follow the ASERT schedule; stamps are on schedule so bits stay at the anchor's.
 export function buildMinedChain(opts: {
   count: number;
-  powTargetBits?: number;
+  anchorBits?: number;
+  anchorStamp?: number;
+  idealMs?: number;
   forceLevels?: Map<number, number>;
   stateRoot?: string;
   validatorId?: Uint8Array;
 }): MinedChain {
   const { count, forceLevels } = opts;
-  const powTargetBits = opts.powTargetBits ?? DEVNET_POW_TARGET_BITS;
+  const anchorBits = opts.anchorBits ?? DEVNET_POW_TARGET_BITS;
+  const idealMs = opts.idealMs ?? DEVNET_IDEAL_MS;
+  const anchorStamp = opts.anchorStamp ?? DEFAULT_ANCHOR_STAMP;
   const stateRoot = opts.stateRoot ?? EMPTY_STATE_ROOT;
   const validatorId = opts.validatorId ?? new Uint8Array(32);
+  const retarget = retargetForAnchor(anchorBits, idealMs);
   const headers: BlockHeader[] = [];
   const interlinksPerHeader: string[][] = [];
   const popowHeaders: PoPowHeader[] = [];
@@ -75,6 +99,12 @@ export function buildMinedChain(opts: {
     const expected = height === 1
       ? []
       : updateInterlinks(prevInterlinks, prevHash, prevLevel);
+
+    const createdAt = anchorStamp + idealMs * (height - 1);
+    const bits = height === 1
+      ? anchorBits
+      : asertTargetBits(retarget, anchorStamp, headers[i - 1]!);
+
     const header: BlockHeader = {
       protocolVersion: PROTOCOL_VERSION,
       height,
@@ -83,21 +113,21 @@ export function buildMinedChain(opts: {
       stateRoot,
       validatorId,
       powNonce: 0,
-      powTargetBits,
-      createdAt: i,
+      powTargetBits: bits,
+      createdAt,
       interlinkRoot: interlinkRoot(expected),
     };
 
     const wantLevel = forceLevels?.get(height);
     if (wantLevel !== undefined && wantLevel > 0) {
-      header.powNonce = solveForLevel(header, wantLevel);
+      header.powNonce = solveForLevel(header, wantLevel, anchorBits);
     } else {
       header.powNonce = solveHeaderPow(header);
     }
 
     const hash = blockHash(header);
     if (hash === null) throw new Error(`unhashable at height ${height}`);
-    const lvl = headerLevel(header);
+    const lvl = headerLevel(header, anchorBits);
     if (lvl === null) throw new Error(`null level at height ${height}`);
 
     headers.push(header);
@@ -108,7 +138,7 @@ export function buildMinedChain(opts: {
     prevInterlinks = expected;
     prevLevel = lvl;
   }
-  return { headers, interlinksPerHeader, popowHeaders };
+  return { headers, interlinksPerHeader, popowHeaders, anchorStamp };
 }
 
 function makeReader(chain: MinedChain): PopowHeaderReader {
@@ -138,22 +168,19 @@ function makeReader(chain: MinedChain): PopowHeaderReader {
   };
 }
 
-export function devnetProfile() {
-  return {
-    expectedTarget: (_height: number) => DEVNET_POW_TARGET_BITS,
-    genesisId: '',
-    protocolVersion: PROTOCOL_VERSION,
-  };
+export function devnetProfile(): NetworkProfile {
+  return profileFor('devnet');
 }
 
-export function devnetProfileWithGenesisId(chain: MinedChain) {
+export function devnetProfileWithGenesisId(chain: MinedChain): NetworkProfile {
   const gHash = blockHash(chain.headers[0]!);
   if (gHash === null) throw new Error('unhashable genesis');
-  return {
-    expectedTarget: (_height: number) => DEVNET_POW_TARGET_BITS,
-    genesisId: gHash,
-    protocolVersion: PROTOCOL_VERSION,
-  };
+  return { ...profileFor('devnet'), genesisId: gHash } as NetworkProfile;
+}
+
+export function clockAfterChain(chain: MinedChain): () => number {
+  const tipStamp = chain.headers[chain.headers.length - 1]!.createdAt;
+  return () => tipStamp + 1;
 }
 
 export function proofHexForChain(chain: MinedChain, m: number, k: number): string {

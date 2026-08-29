@@ -1,4 +1,4 @@
-import { parseConfig, verifierProfile, ConfigError } from './config.js';
+import { parseConfig, ConfigError } from './config.js';
 import { resolveTip } from './tip.js';
 import { proveBoxes } from './boxes.js';
 import type { Config } from './config.js';
@@ -20,12 +20,12 @@ async function main(): Promise<void> {
     throw e;
   }
 
-  const profile = verifierProfile(config.profile);
   const tipResult = await resolveTip(
     config.nodeUrls,
     config.m,
     config.k,
-    profile,
+    config.profile,
+    Date.now,
     globalThis.fetch,
   );
 

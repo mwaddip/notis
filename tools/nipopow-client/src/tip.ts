@@ -1,9 +1,9 @@
 import { verifyProof, compareProofs, decodeNipopowProof } from '@dagsocial/nipopow';
 import type { NipopowProof, VerifyResult, CompareResult, PoPowHeader } from '@dagsocial/nipopow';
-import type { BlockHeader } from '@dagsocial/types';
+import type { BlockHeader, NetworkProfile } from '@dagsocial/types';
 import type { HttpFetch } from './http.js';
 import { fetchJson } from './http.js';
-import type { VerifierProfile } from './config.js';
+import { verifierProfile } from './config.js';
 
 export interface NodeTipResult {
   url: string;
@@ -27,7 +27,8 @@ export async function resolveTip(
   nodeUrls: string[],
   m: number,
   k: number,
-  profile: VerifierProfile,
+  networkProfile: NetworkProfile,
+  now: () => number,
   httpFetch: HttpFetch,
 ): Promise<TipResult> {
   const nodes: NodeTipResult[] = [];
@@ -72,7 +73,7 @@ export async function resolveTip(
       continue;
     }
 
-    const vr = verifyProof(proof, profile);
+    const vr = verifyProof(proof, verifierProfile(networkProfile, now()));
     if (!vr.ok) {
       nodes.push({
         url,
@@ -105,7 +106,7 @@ export async function resolveTip(
 
   for (let i = 1; i < verified.length; i++) {
     const next = verified[i]!;
-    const cr: CompareResult = compareProofs(best.proof!, next.proof!, m, profile);
+    const cr: CompareResult = compareProofs(best.proof!, next.proof!, m, verifierProfile(networkProfile, now()));
 
     if (cr.verdict === 'b') {
       best = next;

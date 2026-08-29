@@ -5,8 +5,10 @@ import {
   createFakeNode,
   devnetProfile,
   proofHexForChain,
+  clockAfterChain,
 } from './helpers.js';
 import { blockHash } from '@dagsocial/validation';
+import { MAX_FUTURE_DRIFT_MS } from '@dagsocial/types';
 
 const M = 6;
 const K = 6;
@@ -16,6 +18,7 @@ describe('tip resolution', () => {
   it('two nodes on one chain → tip agreed, tie, exit 0', async () => {
     const chain = buildMinedChain({ count: CHAIN_LEN });
     const profile = devnetProfile();
+    const now = clockAfterChain(chain);
     const nodeA = createFakeNode({ url: 'http://a:3000', chain, m: M, k: K });
     const nodeB = createFakeNode({ url: 'http://b:3001', chain, m: M, k: K });
 
@@ -24,7 +27,7 @@ describe('tip resolution', () => {
       return nodeB.fetch(url);
     };
 
-    const result = await resolveTip(['http://a:3000', 'http://b:3001'], M, K, profile, combinedFetch);
+    const result = await resolveTip(['http://a:3000', 'http://b:3001'], M, K, profile, now, combinedFetch);
     expect(result.winner).not.toBeNull();
     expect(result.tip).not.toBeNull();
     expect(result.splits).toEqual([]);
@@ -34,6 +37,7 @@ describe('tip resolution', () => {
 
   it('three nodes, one with a flipped byte → refused, other two decide', async () => {
     const chain = buildMinedChain({ count: CHAIN_LEN });
+    const now = clockAfterChain(chain);
     const profile = devnetProfile();
 
     const goodProof = proofHexForChain(chain, M, K);
@@ -54,7 +58,7 @@ describe('tip resolution', () => {
 
     const result = await resolveTip(
       ['http://a:3000', 'http://b:3001', 'http://c:3002'],
-      M, K, profile, combinedFetch,
+      M, K, profile, now, combinedFetch,
     );
     expect(result.winner).not.toBeNull();
     const refused = result.nodes.filter(n => !n.verified);
@@ -67,6 +71,9 @@ describe('tip resolution', () => {
     const forkA = buildMinedChain({ count: CHAIN_LEN + 5 });
     const forkB = buildMinedChain({ count: CHAIN_LEN });
     const profile = devnetProfile();
+    const tipA = forkA.headers[forkA.headers.length - 1]!.createdAt;
+    const tipB = forkB.headers[forkB.headers.length - 1]!.createdAt;
+    const now = () => Math.max(tipA, tipB) + 1;
 
     const nodeA = createFakeNode({ url: 'http://a:3000', chain: forkA, m: M, k: K });
     const nodeB = createFakeNode({ url: 'http://b:3001', chain: forkB, m: M, k: K });
@@ -76,7 +83,7 @@ describe('tip resolution', () => {
       return nodeB.fetch(url);
     };
 
-    const result = await resolveTip(['http://a:3000', 'http://b:3001'], M, K, profile, combinedFetch);
+    const result = await resolveTip(['http://a:3000', 'http://b:3001'], M, K, profile, now, combinedFetch);
     expect(result.winner).not.toBeNull();
     expect(result.splits).toEqual([]);
   });
@@ -94,6 +101,10 @@ describe('tip resolution', () => {
     const hashB = blockHash(chainB.headers[0]!);
     if (hashA === hashB) throw new Error('chains have same genesis — test invalid');
 
+    const tipA = chainA.headers[chainA.headers.length - 1]!.createdAt;
+    const tipB = chainB.headers[chainB.headers.length - 1]!.createdAt;
+    const now = () => Math.max(tipA, tipB) + 1;
+
     const nodeA = createFakeNode({ url: 'http://a:3000', chain: chainA, m: M, k: K });
     const nodeB = createFakeNode({ url: 'http://b:3001', chain: chainB, m: M, k: K });
 
@@ -102,7 +113,7 @@ describe('tip resolution', () => {
       return nodeB.fetch(url);
     };
 
-    const result = await resolveTip(['http://a:3000', 'http://b:3001'], M, K, profile, combinedFetch);
+    const result = await resolveTip(['http://a:3000', 'http://b:3001'], M, K, profile, now, combinedFetch);
     expect(result.splits.length).toBeGreaterThan(0);
     expect(result.splits[0]!.reason).toBe('no-common-ancestor');
   });
@@ -110,9 +121,10 @@ describe('tip resolution', () => {
   it('one node without --allow-single → only one verified', async () => {
     const chain = buildMinedChain({ count: CHAIN_LEN });
     const profile = devnetProfile();
+    const now = clockAfterChain(chain);
     const nodeA = createFakeNode({ url: 'http://a:3000', chain, m: M, k: K });
 
-    const result = await resolveTip(['http://a:3000'], M, K, profile, nodeA.fetch);
+    const result = await resolveTip(['http://a:3000'], M, K, profile, now, nodeA.fetch);
     expect(result.nodes.length).toBe(1);
     expect(result.nodes[0]!.verified).toBe(true);
     expect(result.winner).not.toBeNull();
@@ -126,8 +138,60 @@ describe('tip resolution', () => {
     } as unknown as Response);
 
     const profile = devnetProfile();
-    const result = await resolveTip(['http://a:3000', 'http://b:3001'], M, K, profile, httpFetch);
+    const result = await resolveTip(['http://a:3000', 'http://b:3001'], M, K, profile, Date.now, httpFetch);
     expect(result.nodes.every(n => !n.verified)).toBe(true);
     expect(result.winner).toBeNull();
+  });
+
+  it('proof whose tip is beyond now + drift → refused with clock, advanced clock verifies', async () => {
+    const chain = buildMinedChain({ count: CHAIN_LEN });
+    const profile = devnetProfile();
+    const tipStamp = chain.headers[chain.headers.length - 1]!.createdAt;
+
+    const nodeA = createFakeNode({ url: 'http://a:3000', chain, m: M, k: K });
+    const nodeB = createFakeNode({ url: 'http://b:3001', chain, m: M, k: K });
+
+    const combinedFetch = async (url: string) => {
+      if (url.startsWith('http://a:3000')) return nodeA.fetch(url);
+      return nodeB.fetch(url);
+    };
+
+    const staleNow = () => tipStamp - MAX_FUTURE_DRIFT_MS - 1;
+    const staleResult = await resolveTip(
+      ['http://a:3000', 'http://b:3001'],
+      M, K, profile, staleNow, combinedFetch,
+    );
+    expect(staleResult.nodes.every(n => !n.verified)).toBe(true);
+    expect(staleResult.nodes[0]!.refuseReason).toContain('clock');
+
+    const freshNow = () => tipStamp + 1;
+    const freshResult = await resolveTip(
+      ['http://a:3000', 'http://b:3001'],
+      M, K, profile, freshNow, combinedFetch,
+    );
+    expect(freshResult.nodes.every(n => n.verified)).toBe(true);
+    expect(freshResult.winner).not.toBeNull();
+  });
+
+  it('tournament fold still picks heavier proof when clock is valid for both', async () => {
+    const forkA = buildMinedChain({ count: CHAIN_LEN + 5 });
+    const forkB = buildMinedChain({ count: CHAIN_LEN });
+    const profile = devnetProfile();
+    const tipA = forkA.headers[forkA.headers.length - 1]!.createdAt;
+    const tipB = forkB.headers[forkB.headers.length - 1]!.createdAt;
+    const now = () => Math.max(tipA, tipB) + 1;
+
+    const nodeA = createFakeNode({ url: 'http://a:3000', chain: forkA, m: M, k: K });
+    const nodeB = createFakeNode({ url: 'http://b:3001', chain: forkB, m: M, k: K });
+
+    const combinedFetch = async (url: string) => {
+      if (url.startsWith('http://a:3000')) return nodeA.fetch(url);
+      return nodeB.fetch(url);
+    };
+
+    const result = await resolveTip(['http://a:3000', 'http://b:3001'], M, K, profile, now, combinedFetch);
+    expect(result.winner).not.toBeNull();
+    expect(result.winner!.url).toBe('http://a:3000');
+    expect(result.splits).toEqual([]);
   });
 });
