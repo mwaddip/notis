@@ -23,6 +23,13 @@ import type { IdentityRecord, NetworkRecord } from '../store/identity-records.js
  * set: "box" versus "not a box" is a single bit test, and the box-type space
  * stays open for future box kinds without ever colliding with an entity
  * discriminator.
+ *
+ * `enum8(boxType)` is the box numbering, and this package must never carry a
+ * second one. Composing a local tag with the record's own writes the box type
+ * twice in adjacent bytes under two schemes nothing forces to agree; the rule
+ * the numbering protects — a tag is never *renumbered*, because `boxType` is
+ * the first byte of every box's identity preimage (`TYPES_INTERFACE` →
+ * Primitives) — is exactly what a second table would silently break.
  */
 export const IDENTITY_RECORD_TAG = 0x80;
 
@@ -110,6 +117,9 @@ const IDENTITY_RECORD: StructCodec<IdentityRecord> = {
   read(r) {
     const tag = readU8(r);
     if (tag !== IDENTITY_RECORD_TAG) {
+      // ReaderError rather than a bare Error: `decodeStruct` passes it through
+      // as-is, where anything else is wrapped as a `reader-fault`. Same shape
+      // as `enum8`'s unknown-tag rejection on the box arm.
       throw new ReaderError(
         `identityRecord: not an identity record: tag 0x${tag.toString(16)}`,
         'invalid-tag',

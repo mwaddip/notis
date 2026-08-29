@@ -480,6 +480,9 @@ function proverFeedFromJournal(
         latestNetwork = { key: nrKey, network: { memberCount: m.memberCount } };
         break;
       default: {
+        // Compile-time exhaustiveness: a new committed entity kind that nobody
+        // feeds to the prover is silently absent from the stateRoot, and no
+        // test can catch that — this assignment is the only enforcement.
         const _exhaustive: never = m;
         void _exhaustive;
         break;
@@ -1262,6 +1265,10 @@ function applyMutationPhase(
       lastActivityBlock: after?.lastActivityBlock ?? height,
       lastDecayBlock: after?.lastDecayBlock ?? 0,
       invitedAtBlock: height,
+      // Carried through rather than written, and it is always 0 here: a legal
+      // invitee is not an account yet, so it has never held karma, never posted
+      // and never been liked. The read is what keeps that a consequence of the
+      // bar rather than an assumption this line makes.
       lifetimeLikesReceived: after?.lifetimeLikesReceived ?? 0n,
       memberSinceBlock: after?.memberSinceBlock ?? 0,
       memberBar: after?.memberBar ?? 0,
@@ -1304,6 +1311,8 @@ function applyMutationPhase(
     putIdentityRecord(author, {
       lastActivityBlock: after?.lastActivityBlock ?? 0,
       lastDecayBlock: after?.lastDecayBlock ?? 0,
+      // Carried through: the grant path owns it, and an author being paid for
+      // likes in the same block they were invited is reachable.
       invitedAtBlock: after?.invitedAtBlock ?? 0,
       lifetimeLikesReceived: (after?.lifetimeLikesReceived ?? 0n) + received,
       memberSinceBlock: after?.memberSinceBlock ?? 0,
