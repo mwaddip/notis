@@ -3676,7 +3676,7 @@ RecordMutation {                   // Spec G phase B — identity records
 NetworkMutation {                  // the network record — the member count
   kind: 'network'
   memberCount: number              // the value written
-  replaced: number                 // prior value — always present: the record exists from seeding on
+  replaced: NetworkRecord          // the prior value — always present: the record exists from seeding on
 }
 
 JournalMutation = BoxMutation | RecordMutation | NetworkMutation
@@ -3871,8 +3871,8 @@ also identity records and the network record (see "Three entity kinds" below).
   boxes and silently dropped them). The derivation switches on `kind` and
   **must be exhaustive** — see "One log, not parallel arrays" above
 - **Canonically ordered (M-12):** `applyBlockMutations` sorts internally —
-  all removes, then all inserts, then all record puts — the network record's
-  among them, one key — each lexicographically by hex key — so every caller inherits the canonical order; callers MUST NOT
+  all removes, then all inserts, then all record puts, each lexicographically
+  by hex key, then the network record's put — so every caller inherits the canonical order; callers MUST NOT
   rely on their input order reaching the prover. `bootstrapAvlProver` sorts
   the unspent set by boxId the same way. Same mutation set in any input order
   → same digest. ⚠ **That equivalence is unconditional for boxes but holds for
