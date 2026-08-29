@@ -208,6 +208,15 @@ describe('verifyHeaderChain', () => {
       const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
       expect(result).toEqual({ ok: false, index: 1, reason: 'version' });
     });
+
+    it('at last position', () => {
+      const headers = mineChain(anchor, 3);
+      const h = { ...headers[2]!, protocolVersion: 2 };
+      h.powNonce = solveHeaderPow(h);
+      headers[2] = h;
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      expect(result).toEqual({ ok: false, index: 2, reason: 'version' });
+    });
   });
 
   // ---- reason: height ----
@@ -215,14 +224,35 @@ describe('verifyHeaderChain', () => {
   describe('reason: height', () => {
     it('gap — height skips from anchor', () => {
       const headers = mineChain(anchor, 3);
-      const h = mineHeader({
-        height: anchor.height + 3,
-        prevBlockHash: anchor.prevBlockHash,
-        createdAt: headers[0]!.createdAt,
-      });
+      const h = mineHeader({ height: anchor.height + 3, prevBlockHash: anchor.prevBlockHash, createdAt: headers[0]!.createdAt });
       headers[0] = h;
       const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
       expect(result).toEqual({ ok: false, index: 0, reason: 'height' });
+    });
+
+    it('duplicate — same height twice in the middle', () => {
+      const headers = mineChain(anchor, 3);
+      const h = { ...headers[1]!, height: headers[0]!.height };
+      h.powNonce = solveHeaderPow(h);
+      headers[1] = h;
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      expect(result).toEqual({ ok: false, index: 1, reason: 'height' });
+    });
+
+    it('wrong start — height does not continue from anchor', () => {
+      const wrongAnchor = { prevBlockHash: 'aa'.repeat(32), height: 5, interlinks: ['bb'.repeat(32)], createdAt: t_a + 4 * P_dev.idealMs };
+      const headers = mineChain(anchor, 3);
+      const result = verifyHeaderChain(headers, wrongAnchor, P_dev, t_a, FAR_FUTURE);
+      expect(result).toEqual({ ok: false, index: 0, reason: 'height' });
+    });
+
+    it('at last position — height repeats', () => {
+      const headers = mineChain(anchor, 3);
+      const h = { ...headers[2]!, height: headers[1]!.height };
+      h.powNonce = solveHeaderPow(h);
+      headers[2] = h;
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      expect(result).toEqual({ ok: false, index: 2, reason: 'height' });
     });
   });
 
@@ -240,6 +270,32 @@ describe('verifyHeaderChain', () => {
       headers[0] = h;
       const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
       expect(result).toEqual({ ok: false, index: 0, reason: 'link' });
+    });
+
+    it('against hashes[i-1] at middle position', () => {
+      const headers = mineChain(anchor, 3);
+      const h = mineHeader({
+        height: anchor.height + 2,
+        prevBlockHash: 'cc'.repeat(32),
+        createdAt: headers[1]!.createdAt,
+        powTargetBits: headers[1]!.powTargetBits,
+      });
+      headers[1] = h;
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      expect(result).toEqual({ ok: false, index: 1, reason: 'link' });
+    });
+
+    it('against hashes[i-1] at last position', () => {
+      const headers = mineChain(anchor, 3);
+      const h = mineHeader({
+        height: anchor.height + 3,
+        prevBlockHash: 'dd'.repeat(32),
+        createdAt: headers[2]!.createdAt,
+        powTargetBits: headers[2]!.powTargetBits,
+      });
+      headers[2] = h;
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      expect(result).toEqual({ ok: false, index: 2, reason: 'link' });
     });
   });
 
@@ -342,7 +398,7 @@ describe('verifyHeaderChain', () => {
       expect(result).toEqual({ ok: false, index: 0, reason: 'target' });
     });
 
-    it('at a middle position', () => {
+    it('at middle position', () => {
       const headers = mineChain(anchor, 3);
       const h = mineHeader({
         height: headers[1]!.height,
@@ -381,6 +437,13 @@ describe('verifyHeaderChain', () => {
       });
       headers[0] = h;
       const result = verifyHeaderChain(headers, genesisAnchor, P_dev, null, FAR_FUTURE);
+      expect(result).toEqual({ ok: false, index: 0, reason: 'target' });
+    });
+
+    it('out-of-domain anchorBits → target at index 0', () => {
+      const headers = mineChain(anchor, 1);
+      const badParams = { ...P_dev, anchorBits: 70000 };
+      const result = verifyHeaderChain(headers, anchor, badParams, t_a, FAR_FUTURE);
       expect(result).toEqual({ ok: false, index: 0, reason: 'target' });
     });
   });
@@ -422,6 +485,19 @@ describe('verifyHeaderChain', () => {
     });
   });
 
+  // ---- Cross-check: pow step IS verifyOrderingBlockPoW ----
+
+  it('a header passing everything but with a tampered nonce fails as pow at its index', () => {
+    const headers = mineChain(anchor, 2);
+    const original = headers[1]!;
+    expect(verifyOrderingBlockPoW(original)).toBe(true);
+    const tampered = { ...original, powNonce: original.powNonce + 1 };
+    expect(verifyOrderingBlockPoW(tampered)).toBe(false);
+    headers[1] = tampered;
+    const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+    expect(result).toEqual({ ok: false, index: 1, reason: 'pow' });
+  });
+
   // ---- Genesis anchor: both nulls, headers[0] is height 1 ----
 
   describe('genesis anchor', () => {
@@ -451,6 +527,28 @@ describe('verifyHeaderChain', () => {
       expect(result).toEqual({ ok: false, index: 0, reason: 'domain' });
     });
 
+    it('string header answers domain', () => {
+      const headers = ['not a header' as unknown as BlockHeader];
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      expect(result).toEqual({ ok: false, index: 0, reason: 'domain' });
+    });
+
+    it('header with NaN height answers domain (blockHash refuses it)', () => {
+      const h = makeHeader({ height: NaN as unknown as number, prevBlockHash: anchor.prevBlockHash });
+      const result = verifyHeaderChain([h], anchor, P_dev, t_a, FAR_FUTURE);
+      expect(result).toEqual({ ok: false, index: 0, reason: 'domain' });
+    });
+
+    it('header with NaN powTargetBits answers domain (blockHash refuses it)', () => {
+      const h = makeHeader({
+        height: anchor.height + 1,
+        prevBlockHash: anchor.prevBlockHash,
+        powTargetBits: NaN as unknown as number,
+      });
+      const result = verifyHeaderChain([h], anchor, P_dev, t_a, FAR_FUTURE);
+      expect(result).toEqual({ ok: false, index: 0, reason: 'domain' });
+    });
+
     it('null header answers domain', () => {
       const result = verifyHeaderChain([null as unknown as BlockHeader], anchor, P_dev, t_a, FAR_FUTURE);
       expect(result).toEqual({ ok: false, index: 0, reason: 'domain' });
@@ -470,6 +568,7 @@ describe('verifyHeaderChain', () => {
     const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
     expect(result.ok).toBe(false);
     if (result.ok) return;
+    expect(result).toEqual({ ok: false, index: 1, reason: 'pow' });
     expect('work' in result).toBe(false);
     expect('hashes' in result).toBe(false);
   });
@@ -499,14 +598,67 @@ describe('verifyHeaderChain', () => {
       expect(result).toEqual({ ok: false, index: 1, reason: 'interlinks' });
     });
 
-    it('malformed anchor vector → interlinks at index 0', () => {
+    it('a root from a different vector → refused', () => {
+      const headers = mineChain(anchor, 1);
+      const h0hash = blockHash(headers[0]!)!;
+      const wrongRoot = interlinkRoot(['cc'.repeat(32), 'dd'.repeat(32)]);
+      const bits1 = asertTargetBits(P_dev, t_a, headers[0]!);
+      const h1 = mineHeader({
+        height: anchor.height + 2,
+        prevBlockHash: h0hash,
+        interlinkRoot: wrongRoot,
+        powTargetBits: bits1,
+        createdAt: headers[0]!.createdAt + P_dev.idealMs,
+      });
+      const result = verifyHeaderChain([headers[0]!, h1], anchor, P_dev, t_a, FAR_FUTURE);
+      expect(result).toEqual({ ok: false, index: 1, reason: 'interlinks' });
+    });
+
+    it('an anchor vector that is not the chain\'s → refused at index 0', () => {
+      const headers = mineChain(anchor, 2);
+      const wrongAnchor = { ...anchor, interlinks: ['cc'.repeat(32), 'dd'.repeat(32)] };
+      const result = verifyHeaderChain(headers, wrongAnchor, P_dev, t_a, FAR_FUTURE);
+      expect(result).toEqual({ ok: false, index: 0, reason: 'interlinks' });
+    });
+
+    it('genesis anchor [] accepted for a height-1 header committing to interlinkRoot([])', () => {
+      const headers = mineChain(genesisAnchor, 1, P_dev, t_a);
+      expect(headers[0]!.interlinkRoot).toBe(interlinkRoot([]));
+      const result = verifyHeaderChain(headers, genesisAnchor, P_dev, null, FAR_FUTURE);
+      expect(result.ok).toBe(true);
+    });
+
+    it('a non-genesis anchor with a non-empty vector threads through', () => {
+      const headers = mineChain(anchor, 3);
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.hashes).toHaveLength(3);
+    });
+
+    it('malformed anchor vector — not an array → interlinks at index 0', () => {
       const badAnchor = { ...anchor, interlinks: 'not-an-array' as unknown as string[] };
       const headers = mineChain(anchor, 1);
       const result = verifyHeaderChain(headers, badAnchor, P_dev, t_a, FAR_FUTURE);
       expect(result).toEqual({ ok: false, index: 0, reason: 'interlinks' });
     });
 
-    it('empty vector above genesis → interlinks at index 0', () => {
+    it('malformed anchor vector — entry not hex(32) → interlinks at index 0', () => {
+      const badAnchor = { ...anchor, interlinks: ['not-hex'] };
+      const headers = mineChain(anchor, 1);
+      const result = verifyHeaderChain(headers, badAnchor, P_dev, t_a, FAR_FUTURE);
+      expect(result).toEqual({ ok: false, index: 0, reason: 'interlinks' });
+    });
+
+    it('malformed anchor vector — too many entries → interlinks at index 0', () => {
+      const tooMany = Array.from({ length: 258 }, () => 'aa'.repeat(32));
+      const badAnchor = { ...anchor, interlinks: tooMany };
+      const headers = mineChain(anchor, 1);
+      const result = verifyHeaderChain(headers, badAnchor, P_dev, t_a, FAR_FUTURE);
+      expect(result).toEqual({ ok: false, index: 0, reason: 'interlinks' });
+    });
+
+    it('empty vector above genesis → interlinks at index 0, never throws', () => {
       const emptyAboveGenesis = {
         prevBlockHash: 'aa'.repeat(32),
         height: 5,
@@ -524,11 +676,11 @@ describe('verifyHeaderChain', () => {
       expect(result).toEqual({ ok: false, index: 0, reason: 'interlinks' });
     });
 
-    it('genesis anchor [] accepted for a height-1 header', () => {
-      const headers = mineChain(genesisAnchor, 1, P_dev, t_a);
-      expect(headers[0]!.interlinkRoot).toBe(interlinkRoot([]));
-      const result = verifyHeaderChain(headers, genesisAnchor, P_dev, null, FAR_FUTURE);
-      expect(result.ok).toBe(true);
+    it('malformed anchor never throws', () => {
+      for (const bad of [null, undefined, 42, 'str', [42], [null]]) {
+        const badAnchor = { ...anchor, interlinks: bad as unknown as string[] };
+        expect(() => verifyHeaderChain([], badAnchor, P_dev, t_a, FAR_FUTURE)).not.toThrow();
+      }
     });
   });
 

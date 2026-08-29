@@ -1101,6 +1101,9 @@ export function verifyHeaderChain(
   }
 
   const yardstick = orderingPowTarget(params.anchorBits);
+  if (yardstick === null) {
+    return { ok: false, index: 0, reason: 'target' };
+  }
   let t_a: number | null = anchorCreatedAt ?? null;
 
   const hashes: string[] = [];
@@ -1194,9 +1197,7 @@ export function verifyHeaderChain(
       return { ok: false, index: i, reason: 'interlinks' };
     }
 
-    const headerLevel = header.height === 1
-      ? Infinity
-      : (yardstick !== null ? levelOfHit(hit, yardstick) : null);
+    const headerLevel = header.height === 1 ? Infinity : levelOfHit(hit, yardstick);
     expectedInterlinks = updateInterlinks(expectedInterlinks, hash, headerLevel);
 
     hashes.push(hash);
