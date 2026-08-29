@@ -248,11 +248,6 @@ the sync path.
 Block creation`), so a node whose clock lags its peers still produces valid blocks; stamps stay
 node-set and `POST /mining/submit` is unchanged.
 
-> ⚠ **AHEAD OF CODE — 2026-08-29.** The schedule, the two timestamp rules and every enforcement site
-> above are the ASERT unit's. `expectedTarget(_height)` in `node/src/services/difficulty.ts` still
-> answers the profile constant, and `createdAt` is checked by nothing but its domain pin. Retire this
-> marker in the unit's contract pass.
-
 ## Mining API
 
 **Exposure (audit M-7):** the `/mining` routes are mounted **only** when
@@ -625,7 +620,7 @@ the network profile (`TYPES_INTERFACE §Network profiles`), selected together by
 > it. The schedule above makes invariant 7 true as written: a target is a function of the headers
 > below the block. The reorg guard that note named as expiring "with ASERT" had already been replaced
 > by a work comparison over verified headers (`NODE_INTERFACE → Fork choice decides on verified
-> headers`, step 7). ⚠ **AHEAD OF CODE — 2026-08-29** until the unit's pass retires both markers.
+> headers`, step 7).
 
 8. The mining API is never served unauthenticated: external mode requires a
    configured `MINING_SECRET` (enforced at startup, not per-request), every

@@ -298,7 +298,10 @@ BigInt throughout; `floorDiv` rounds toward −∞ (`q = a / b; if (a % b !== 0n
 `b > 0`). Pure, and total over its declared domain — safe non-negative integers for the stamps and the
 height, `parent.height ≥ 1`, a band with `floorBits ≤ anchorBits ≤ ceilingBits ≤ 65536` — which the
 callers own: `loadConfig` for the band (`NODE_INTERFACE → Configuration`), the funnel's domain gate for
-the header. The result lies in the band, so it is always inside `orderingPowTarget`'s domain.
+the header. The result lies in the band, so it is always inside `orderingPowTarget`'s domain; a **malformed**
+argument — a non-object, a `NaN` or negative stamp, a non-integer height — answers `0`, a value no
+valid header carries (every header's bits clear `ORDERING_BLOCK_POW_TARGET_FLOOR`), so a comparison
+against it fails closed.
 **The height-1 block is not scheduled**: its bits are `anchorBits` by definition, checked by the caller,
 and this function is never asked for it.
 
@@ -327,9 +330,6 @@ verifyCreatedAtBound(header: BlockHeader, nowMs: number, maxDriftMs: number): bo
 `MINING_INTERFACE → Header timestamp rules`, the future bound — an acceptance rule against the
 **caller's** clock, injected as `nowMs`; this package reads no clock. M-5 applies as above; never
 throws.
-
-> ⚠ **AHEAD OF CODE — 2026-08-29.** The three functions above and `RetargetParams` are the ASERT
-> unit's; none exists in `validation/src` yet.
 
 ### powHit — the digest a header's nonce produced
 
@@ -380,9 +380,6 @@ inside it.
 `verifyHeaderChain` computes each header's level from the hit it already holds rather than hashing
 twice. Exported so the zero-hit case — unreachable by nonce search — is pinned directly, and so a
 mirror can assert the arithmetic without a header. `null` on a wrong-width operand; never throws.
-
-> ⚠ **AHEAD OF CODE — 2026-08-29.** `level` takes one argument and measures against the header's own
-> target until the ASERT unit lands; every call site gains the anchor bits with it.
 
 ### verifyOrderingBlockPoW
 
@@ -770,9 +767,6 @@ receiving node's clock (→ verifyCreatedAtBound, an acceptance rule). The reaso
 their timestamps — difficulty adjustment, and the timewarp class — has its analogue here, and
 `MINING_INTERFACE → Header timestamp rules` carries the cases. This table pins encodability and nothing
 more; the two rules live beside `verifyHeaderChain` and in the apply funnel, never in the domain check.
-
-> ⚠ **AHEAD OF CODE — 2026-08-29.** The two rules and the schedule are the ASERT unit's; until it
-> lands, `createdAt` is checked by nothing but this domain pin.
 
 **Byte fields are checked with `isBytes`, never a bare `.length`.** Phase 1e found `validatorId`,
 coinbase `owner` and `validatorSignature` checked by character count, so a *string* of the right
@@ -1181,9 +1175,6 @@ when it is applied. The validator signature is **not** among them: `validatorSig
 block, not the header, so it stays a body-stage check. **`'clock'` is the one reason that is not a
 verdict on the chain** — `NODE_INTERFACE → Fork choice decides on verified headers` classifies it
 beside the window miss: refuse, no penalty, no mark.
-
-> ⚠ **AHEAD OF CODE — 2026-08-29.** `verifyHeaderChain` takes `scheduledTarget(height)` and no clock,
-> and its reason set lacks `'time'` and `'clock'`, until the ASERT unit lands.
 
 **M-5 applies.** Malformed input — non-object headers, a `NaN` height, an out-of-domain target —
 answers `ok: false`; the function never throws. `NODE_INTERFACE → Fork choice decides on verified

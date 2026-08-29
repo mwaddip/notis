@@ -1231,9 +1231,6 @@ block, and the schedule reads the parent's stamp with that lag immaterial over t
 its Δ spans. The domain pin is `isU64Safe`; the rules are `VALIDATION_INTERFACE → verifyCreatedAtOrder`
 and `→ verifyCreatedAtBound`.
 
-> ⚠ **AHEAD OF CODE — 2026-08-29.** Until the ASERT unit lands, the field is validated against nothing
-> but its domain pin, and the template stamps `Date.now()` unclamped.
-
 > ⛔ **`networkType` was proposed as a header field twice and is REJECTED — decided
 > 2026-08-10, reversing 2026-08-06.** It was never implemented; nothing is being removed from
 > code. **The header is ten fields**, `interlinkRoot` the tenth (→ Interlink vector). Read this
@@ -1343,10 +1340,6 @@ than the header's own precisely so that the difficulty schedule (`MINING_INTERFA
 Schedule) changes no layout and injects no headers into a proof: a superblock count stays a count of
 work in anchor units, and `NIPOPOW_INTERFACE → compareProofs` stays a work comparison. What moves when
 levels do is `interlinkRoot` — a committed byte, covered by the fresh chain the ASERT unit deploys on.
-
-> ⚠ **AHEAD OF CODE — 2026-08-29.** `level` measures against the header's own target and
-> `updateInterlinks` has no `null` arm until the ASERT unit lands; on a constant-target chain the two
-> definitions coincide, so no stored vector moves before the fresh chain.
 
 ### Ordering block
 
@@ -2699,9 +2692,6 @@ whose floor sits below `ORDERING_BLOCK_POW_TARGET_FLOOR`, whose anchor lies outs
 ceiling exceeds 65536 or whose ideal is not positive is refused at load (`NODE_INTERFACE →
 Configuration`) — a refusal, never a clamp.
 
-> ⚠ **AHEAD OF CODE — 2026-08-29.** The three fields are the ASERT unit's; `NetworkProfile` carries
-> `orderingBlockPowTargetBits` alone until it lands.
-
 **This is the sole definition of the network magics.** `@dagsocial/wire` exported duplicates
 until P2-A phase 5 deleted them. They live here rather than `NetworkType` living in wire
 because **wire has zero runtime dependencies and keeps them**: `@dagsocial/types` cannot
@@ -3173,9 +3163,6 @@ halflife to block time (BCH: 172 800 s at 600 s), stated in blocks so a profile'
 gives its halflife in ms. **`MAX_FUTURE_DRIFT_MS` is an acceptance bound, universal** — under an
 absolute schedule it caps what a lying or fast clock buys at `drift / ideal` = 10 blocks, ever. Both are
 `PROVISIONAL` (`CONSTANTS → Ordering-block PoW`).
-
-> ⚠ **AHEAD OF CODE — 2026-08-29.** Neither constant exists in `types/src/constants.ts` until the
-> ASERT unit lands.
 
 **The derivation, so it reproduces:** 60 s × 181,262 H/s = 10,875,720 hashes; `log2` of that is
 **23.37461** bits; ×256 = **5983.90**, which rounds to **5984** — exactly 23.375 bits, or 23 + 3/8, a

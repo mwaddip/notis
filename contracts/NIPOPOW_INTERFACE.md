@@ -95,10 +95,6 @@ element. What the difficulty schedule (`MINING_INTERFACE → Difficulty Schedule
 `interlinkRoot` — a committed byte the fresh chain covers — not this contract's objects, codecs or
 version.
 
-> ⚠ **AHEAD OF CODE — 2026-08-29.** `verifyProof` checks every header's bits against a constant
-> schedule and `compareProofs` measures levels against each header's own target until the ASERT unit
-> lands.
-
 ---
 
 ## Codecs
@@ -218,7 +214,8 @@ on bytes a client has not screened, but it re-derives nothing a passed verdict e
   chain of equal work does not out-compare an honest one, and that a lower-difficulty chain of more
   work wins. A lying pointer can skip honest blocks and lower a score, never raise one.
 
-`bestArg(headers: BlockHeader[], m: number): bigint` is exported beside it.
+`bestArg(headers: BlockHeader[], m: number, anchorBits: number): bigint` is exported beside it — the
+anchor bits are the yardstick its levels are measured against.
 
 ---
 

@@ -2911,9 +2911,6 @@ The schedule's parameters come from the profile through `Config` (→ Configurat
 needs no undo entry, because a target is a function of headers a reverted chain no longer has. There
 is **no wall-clock retargeting**: no node reads a clock to compute a target.
 
-> ⚠ **AHEAD OF CODE — 2026-08-29.** The funnel checks `expectedTarget(height)`, a profile constant,
-> and applies neither timestamp rule until the ASERT unit lands.
-
 ### Per-block like settlement (P2-D — replaced the epoch tally)
 
 Runs at the end of **every** block's mutation phase, through the block's settlement
@@ -4489,9 +4486,6 @@ FOR"), never a quiet abort that leaves the node on the lighter chain.
 `orderingBlockIdealMs` is not positive (`TYPES_INTERFACE → Network profiles`). `Config` carries the
 four as the schedule's `RetargetParams` — `halflifeMs = RETARGET_HALFLIFE_BLOCKS · orderingBlockIdealMs`
 derived here — for the funnel, the creator and fork resolution (→ Difficulty schedule).
-
-> ⚠ **AHEAD OF CODE — 2026-08-29.** `loadConfig` checks the anchor against the resolution floor and
-> nothing else of the band until the ASERT unit lands.
 
 All config via environment variables with defaults.
 
