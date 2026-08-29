@@ -431,7 +431,7 @@ export function boxRecordBytes(candidate: BoxCandidate, txId: TxId, index: numbe
  * holds these bytes and has to parse them back; a reader written over there
  * would put the box layout in two packages, and the two would be free to
  * disagree about field order with nothing to catch it
- * (NODE_INTERFACE → Two entity kinds, from the other direction). Every other wire struct in this repo is a pair; this one is too.
+ * (NODE_INTERFACE → Three entity kinds, from the other direction). Every other wire struct in this repo is a pair; this one is too.
  *
  * Goes through `decodeStruct`, so it carries the whole four-part boundary check
  * (TYPES_INTERFACE → The boundary check): schema projection, exhaustion, and

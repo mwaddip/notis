@@ -83,13 +83,13 @@ const encoder = new TextEncoder();
  * of the separation between them — the discipline `computeBoxId` and
  * `computeMintTxId` already follow.
  */
-const POST_ID_DOMAIN = encoder.encode('dagsocial/post-id/1');
+export const POST_ID_DOMAIN = encoder.encode('dagsocial/post-id/1');
 
 /**
  * Domain separator for the content hash — TYPES_INTERFACE → Hashing functions.
  * Hash-side only, never on the wire.
  */
-const POST_CONTENT_DOMAIN = encoder.encode('dagsocial/post-content/1');
+export const POST_CONTENT_DOMAIN = encoder.encode('dagsocial/post-content/1');
 
 /**
  * The body's 32-byte commitment:

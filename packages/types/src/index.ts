@@ -85,7 +85,7 @@ export { leafHash, nodeHash, buildMerkleRoot, hexToBuf } from './merkle.js';
 //
 // `postFieldBytes` is a preimage layout other packages build against, and a
 // second statement of it is free to drift.
-export { postFieldBytes, computePostId, computeContentHash, POST_TYPE } from './post.js';
+export { postFieldBytes, computePostId, computeContentHash, POST_TYPE, POST_ID_DOMAIN, POST_CONTENT_DOMAIN } from './post.js';
 export type { PostCommit, Post, PostId, PostType } from './post.js';
 
 // UTXO
@@ -171,7 +171,7 @@ export type {
 // holds the AVL values, and an AVL box value **IS `boxRecordBytes` exactly** —
 // no wrapper, no second tag. Its first byte is already the `boxType` `enum8`
 // from the layout above, so a node-side box-type numbering would be a second
-// numbering of one thing. See `NODE_INTERFACE` → Two entity kinds.
+// numbering of one thing. See `NODE_INTERFACE` → Three entity kinds.
 //
 // `ByteReader` / `ByteWriter` / `ReaderError` come with it, re-exported from
 // `@dagsocial/wire`, which `@dagsocial/node` does not depend on. Two reasons,

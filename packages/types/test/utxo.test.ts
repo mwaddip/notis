@@ -16,6 +16,8 @@ import {
   MINT_ID_DOMAIN,
   IDENTITY_KEY_DOMAIN,
   NETWORK_KEY_DOMAIN,
+  POST_ID_DOMAIN,
+  POST_CONTENT_DOMAIN,
   BOX_TYPE_TAGS,
   INVITE_BOND_MIN,
   INVITE_BOND_MAX,
@@ -1716,12 +1718,8 @@ describe('computeMintTxId', () => {
   });
 });
 
-// The two module-private domain tags, reconstructed from the contract's
-// strings so the seven-way distinctness check covers all seven derivation
-// domain tags (TYPES_INTERFACE → Domain tags are network-agnostic).
-const POST_ID_DOMAIN = new TextEncoder().encode('dagsocial/post-id/1');
-const POST_CONTENT_DOMAIN = new TextEncoder().encode('dagsocial/post-content/1');
-
+// TYPES_INTERFACE → Domain tags are network-agnostic: all seven derivation
+// domain tags, imported from the barrel.
 const ALL_DERIVATION_TAGS = [
   BOX_ID_DOMAIN, TX_ID_DOMAIN, MINT_ID_DOMAIN, IDENTITY_KEY_DOMAIN,
   NETWORK_KEY_DOMAIN, POST_ID_DOMAIN, POST_CONTENT_DOMAIN,
