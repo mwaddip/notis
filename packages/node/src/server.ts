@@ -343,8 +343,8 @@ export function createApp(config: Config): express.Express {
             )
             .get() as { c: number }
         ).c,
-      // Karma in existence, escrow included: karma locked in a post lock, a
-      // bond, an invite or a vouch is held, not destroyed. The types come from
+      // Karma in existence, escrow included: karma held in a bond, a vouch
+      // escrow or a like accrual is held, not destroyed. The types come from
       // `KARMA_SUPPLY_TYPES`, which answers that question and only that one —
       // it is independent of the transition set the engine's karma arm admits
       // as outputs, and a karma-bearing type is added to each separately

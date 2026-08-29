@@ -26,7 +26,7 @@ async function importDbFresh() {
 
 async function importUtxoFresh() {
   return (await import('../../src/store/utxo.js')) as {
-    insertBox: (box: AnyBox, postLockTarget?: string) => void;
+    insertBox: (box: AnyBox) => void;
     getBox: (boxId: string) => AnyBox | null;
   };
 }

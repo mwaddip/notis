@@ -909,7 +909,6 @@ export function ceilingOf(tx: UtxoTransaction): number | null {
 type FieldType =
   | 'u64'
   | 'bytes32'
-  | 'hex32'
   | 'uint'
   | 'u32'
   | 'string';
@@ -928,29 +927,6 @@ const FIELD_TYPE_CHECK: Record<FieldType, { ok: (v: unknown) => boolean; expecte
   bytes32: {
     ok: (v) => v instanceof Uint8Array && v.length === 32,
     expected: 'a 32-byte Uint8Array',
-  },
-  /**
-   * A 32-byte id carried as **hex text** in memory — `post_lock.targetPostId`,
-   * and it is the only one. Distinct from `bytes32`, which is the same 32 bytes
-   * held as a `Uint8Array`; the pair is the whole reason this needs its own
-   * entry rather than reusing one.
-   *
-   * ⚠ **This entry holds a no-panic violation shut, it is not a style gap.**
-   * `canonicalBoxBytes` writes the field with `writeHexNOrThrow(…, 32)`, which
-   * throws on anything that is not exactly 64 lowercase hex. Type it `'string'`
-   * here and a `post_lock` output carrying `targetPostId: 'hello'` clears step 5
-   * and then makes `computeTxId` **throw** at `validateTx`'s last line — turning
-   * an invalid transaction into an exception on an adversary-supplied value.
-   * VALIDATION_INTERFACE → "No-panic" forbids exactly that.
-   *
-   * The width belongs here and not in the encoder: a throwing writer's domain is
-   * established upstream (TYPES_INTERFACE → "Totality"), and adding a guard
-   * inside `canonicalBoxBytes` is what the format forbids. The schema is the
-   * upstream.
-   */
-  hex32: {
-    ok: (v) => typeof v === 'string' && HEX64.test(v),
-    expected: '64 lowercase hex characters',
   },
   // Never -0: `JSON.parse('-0')` is `-0` and `jsonToTx` passes values
   // through. The positional readers (`readVlqU`) cannot produce -0.
@@ -1608,7 +1584,7 @@ function checkShapeAgainst(outputs: AnyBoxCandidate[], settlement: boolean): Utx
  * (NODE_INTERFACE → `validateTx` step 7). Every user-transaction shape has
  * somewhere for its value to go: a like's cost lands in a `LikeAccrualBox`,
  * an unvouch's stake in a `VouchEscrowBox`, an invite's bond in a `BondBox`,
- * a post's lock in a `PostLockBox`, and a credit transfer's fee in a
+ * a post's price in a `KarmaPriceBox`, and a credit transfer's fee in a
  * `FeeBox`. Karma and credits are minted or burned only in
  * block-application paths, never inside a user transaction.
  *

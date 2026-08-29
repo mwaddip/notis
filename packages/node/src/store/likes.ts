@@ -51,9 +51,8 @@ export function hasLikeRecord(targetPostId: string, likerId: UserId): boolean {
 }
 
 /**
- * Lifetime like count for a live post — feeds post-lock vesting and the API
- * `likeCount`. Records die with the post on prune, so a pruned post counts
- * zero by construction.
+ * Lifetime like count for a live post — feeds the API `likeCount`. Records
+ * die with the post on prune, so a pruned post counts zero by construction.
  */
 export function getLikeRecordCount(postId: string): number {
   const row = getDb()

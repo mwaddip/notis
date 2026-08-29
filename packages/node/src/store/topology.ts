@@ -109,7 +109,7 @@ export function rollbackBlockTopology(blockHeight: number): void {
  * Mark the named topology rows as pruned at the given height by the given root.
  * Rows survive a prune — `deletePostRows` touches `dag_posts` and
  * `dag_parent_refs` only (NODE_INTERFACE → Prune transactions). The two columns
- * are the release leg's queue (NODE_INTERFACE → The settlement transaction).
+ * are the tombstone's source.
  */
 export function markPrunedTopology(
   postIds: string[],

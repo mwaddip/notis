@@ -33,7 +33,6 @@ import {
 //     whole block;
 //   - author settlement arithmetic (carry, integer payout, the
 //     grouping-independence property) and mint identity;
-//   - post-lock vesting per block;
 //   - exact inverses for every new mutation class (apply → revert → re-apply
 //     round-trips through the real reorg path, digest identity included).
 //
@@ -596,11 +595,6 @@ describe('per-block like settlement (P2-D N2b)', () => {
   // -------------------------------------------------------------------------
 
 
-  // -------------------------------------------------------------------------
-  // Post-lock vesting
-  // -------------------------------------------------------------------------
-
-  // Vesting tests (PostLockBox, computeVestAmount, planPostLockSettlement)
   // -------------------------------------------------------------------------
   // Apply-then-revert, per new mutation class (active prover: DB identity,
   // digest identity, re-apply identity)

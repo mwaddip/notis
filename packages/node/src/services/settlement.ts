@@ -318,6 +318,15 @@ function derive(
     if (entry) entry.total += marker.value;
     else byAuthor.set(key, { author: marker.author, total: marker.value });
   }
+  // 3b′. The price leg — every KarmaPriceBox the body's post transactions
+  // created, in committed transaction order. Their sum returns to the pool
+  // (NODE_INTERFACE → The settlement transaction). Value is carried in the
+  // body, not read from the store: on the creator side the box is in the
+  // pool, not yet applied.
+  for (const price of body.priceBoxes) {
+    inputs.push(price.id);
+    poolSink += price.value;
+  }
   // Then each credited author's carry box, ascending author-hex — the order the
   // contract pins for emitting an author's outputs.
   const authorsInOrder = [...byAuthor.keys()].sort();
@@ -378,16 +387,6 @@ function derive(
   for (const plan of decayPlans) {
     for (const id of plan.consumedBoxIds) inputs.push(id);
     poolSink += plan.burnAmount;
-  }
-
-  // 3f. The price leg — every KarmaPriceBox the body's post transactions
-  // created, in committed transaction order. Their sum returns to the pool
-  // (NODE_INTERFACE → The settlement transaction). Value is carried in the
-  // body, not read from the store: on the creator side the box is in the
-  // pool, not yet applied.
-  for (const price of body.priceBoxes) {
-    inputs.push(price.id);
-    poolSink += price.value;
   }
 
   // ---- 4. The karma pool, settled once ----

@@ -1273,7 +1273,7 @@ function applyMutationPhase(
   // decay clock.
   //
   // Order pinned by the contract: embedded txs → settlement → author counters →
-  // post-lock vesting → decay clocks.
+  // decay clocks.
 
   // The lifetime like counter, ascending author-hex order.
   //
