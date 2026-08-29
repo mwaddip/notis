@@ -436,10 +436,14 @@ computes different ids.
 | `MINT_ID_DOMAIN` | synthetic mint transaction id |
 | `IDENTITY_KEY_DOMAIN` | per-identity record key in the AVL tree |
 | `NETWORK_KEY_DOMAIN` | the network record's key in the AVL tree — the tag alone is the preimage (`NODE_INTERFACE` → Network record) |
+| `POST_ID_DOMAIN` | post id (→ Post identity) |
+| `POST_CONTENT_DOMAIN` | a post's content hash (→ Post) |
 | `INTERLINK_DOMAIN` | the interlink vector's commitment in a block header (→ Interlink vector) |
 
 Box ids, tx ids, identity-record keys and the network key share one 32-byte keyspace and the AVL
-tree holds three entity kinds, so the separation must be in the preimage. (`computePostId` already works
+tree holds three entity kinds, so the separation must be in the preimage; post ids and content
+hashes are 32 bytes of the same digest and carry their tags for the same reason. All seven are
+exported, so a test over their distinctness reads the code's tags and not a copy. (`computePostId` already works
 this way via `POST_ID_DOMAIN`; box ids previously had no tag.)
 
 #### Canonical encoding
