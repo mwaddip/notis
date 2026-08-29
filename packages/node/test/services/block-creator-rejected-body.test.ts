@@ -147,6 +147,7 @@ async function storeBackedDeps() {
       storageRentPeriodBlocks: 40,
       getBoxProvenance: () => null,
     getTopologyAuthor: () => null,
+    getPendingPostAuthor: () => null,
     runInTransaction: (fn: () => void) => {
       getDb().transaction(fn)();
     },

@@ -145,6 +145,13 @@ export interface UtxoEngineDeps {
    * build time too.
    */
   getTopologyAuthor: (postId: string) => Uint8Array | null;
+  /**
+   * NODE_INTERFACE → Post transactions → "A reply's parent may still be pending
+   * at admission." The post arm's fallback after `getTopologyAuthor` returns
+   * null: the pending `dag_posts` row's author. Admission deps wire the real
+   * query; apply deps set `() => null` — at apply only `block_topology` is read.
+   */
+  getPendingPostAuthor: (postId: string) => Uint8Array | null;
   /** Wrap fn in a better-sqlite3 transaction. */
   runInTransaction: (fn: () => void) => void;
   /**
@@ -430,12 +437,15 @@ function checkTransitions(
                 `karma, got ${marker.value}`,
             };
           }
+          // NODE_INTERFACE → Post transactions → "A reply's parent may still be
+          // pending at admission."
           const parentId = post.parentRefs[0]!;
-          const parentAuthor = deps.getTopologyAuthor(parentId);
+          const parentAuthor = deps.getTopologyAuthor(parentId)
+            ?? deps.getPendingPostAuthor(parentId);
           if (parentAuthor === null) {
             return {
               valid: false,
-              error: `Reply parent ${parentId} is not confirmed, so it names no author`,
+              error: `Reply parent ${parentId} names no author`,
             };
           }
           if (Buffer.from(marker.author).toString('hex') !==

@@ -416,6 +416,7 @@ describe('validateTx step 0 — the envelope gate in place', () => {
       storageRentPeriodBlocks: 40,
       getBoxProvenance: () => null,
       getTopologyAuthor: () => LIKE_AUTHOR,
+      getPendingPostAuthor: () => null,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
       },

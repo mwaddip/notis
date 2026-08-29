@@ -540,6 +540,13 @@ export function getSubtreePage(
   return { rows, next, count: countRow.cnt, pending, pendingCount };
 }
 
+export function getPendingPostAuthor(postId: string): Uint8Array | null {
+  const row = getDb()
+    .prepare("SELECT author FROM dag_posts WHERE id = ? AND status = 'pending'")
+    .get(postId) as { author: Buffer } | undefined;
+  return row ? new Uint8Array(row.author) : null;
+}
+
 export function getParentRefs(postId: string): string[] {
   const rows = getDb()
     .prepare('SELECT parent_id FROM dag_parent_refs WHERE post_id = ?')

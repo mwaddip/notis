@@ -34,6 +34,7 @@ import {
   getKarmaValue,
   hasActiveVouchEscrow,
   getTopologyAuthorBytes,
+  getPendingPostAuthor,
   getIdentityRecord,
   getPost,
   isLivePost,
@@ -182,6 +183,7 @@ net.onTx((tx, content, fromPeerId) => {
     // same rule again: a relayed like whose marker names the wrong author must
     // be refused here as well as at the block path.
     getTopologyAuthor: getTopologyAuthorBytes,
+    getPendingPostAuthor,
     // The invite-create not-already-an-account bar (NODE_INTERFACE → "Bond
     // transition rules") — same rule again: a relayed invite naming an existing
     // account must be refused here as well as at the block path.

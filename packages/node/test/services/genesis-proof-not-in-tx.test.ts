@@ -115,6 +115,7 @@ describe('a genesis_proof box may never be a transaction INPUT', () => {
       storageRentPeriodBlocks: 40,
       getBoxProvenance: () => null,
       getTopologyAuthor: () => null,
+      getPendingPostAuthor: () => null,
       runInTransaction: (fn: () => void) => { (db.transaction(fn) as () => void)(); },
     };
     proof = seedProvenance<GenesisProofBox>({

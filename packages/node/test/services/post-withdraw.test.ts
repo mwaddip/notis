@@ -590,6 +590,7 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
       storageRentPeriodBlocks: 0,
       getBoxProvenance: () => null,
       getTopologyAuthor: () => null,
+      getPendingPostAuthor: () => null,
       runInTransaction: (fn: () => void) => fn(),
       executePrune: () => ({ txId: 'b'.repeat(64) }),
       executePostWithdraw: () => ({ txId: 'c'.repeat(64) }),

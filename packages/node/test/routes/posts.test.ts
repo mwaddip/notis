@@ -9,7 +9,7 @@ import express from 'express';
 import http from 'http';
 import { generateKeyPairSync, createPrivateKey } from 'crypto';
 import { initDb, closeDb, getDb } from '../../src/store/db.js';
-import { insertPost, getPost, queryPostsPage, getAncestorsNearest, getSubtreePage, deletePostRows, confirmPost, withdrawPost } from '../../src/store/posts.js';
+import { insertPost, getPost, queryPostsPage, getAncestorsNearest, getSubtreePage, deletePostRows, confirmPost, withdrawPost, getPendingPostAuthor } from '../../src/store/posts.js';
 import { getCurrentHeight, getBlockCreatedAt } from '../../src/store/ordering.js';
 import {
   getKarmaBox,
@@ -29,6 +29,8 @@ import {
   PROTOCOL_VERSION,
   computePostId,
   POST_PRICE_THREAD,
+  POST_PRICE_REPLY,
+  REPLY_AUTHOR_SHARE,
   KARMA_STALE_THRESHOLD_BLOCKS,
   KARMA_DECAY_INTERVAL_BLOCKS,
   KARMA_DECAY_AMOUNT,
@@ -40,6 +42,7 @@ import type {
   KarmaBox,
   PostCommit,
   KarmaPriceBox,
+  LikeAccrualBox,
   UtxoTransaction,
 } from '@dagsocial/types';
 import { createRouter } from '../../src/routes/posts.js';
@@ -86,6 +89,7 @@ async function request(
       inviteBondMin: config.inviteBondMin,
       inviteBondMax: config.inviteBondMax,
       getTopologyAuthor: () => null,
+      getPendingPostAuthor,
       getCurrentHeight,
       admitTx: insertUtxoTx,
       runInTransaction: (fn: () => void) => db.transaction(fn)(),
@@ -123,6 +127,7 @@ async function request(
             storageRentPeriodBlocks: 40,
             getBoxProvenance: () => null,
             getTopologyAuthor: () => null,
+            getPendingPostAuthor,
             runInTransaction: (fn: () => void) => {
               (db.transaction(fn) as () => void)();
             },
@@ -304,6 +309,90 @@ describe('posts routes', () => {
     expect(entries[0]!.expiresAtHeight).toBe(body.expiresAtHeight);
 
     expect(body.postId).toBe(computePostId(body.txId as string, 0));
+  });
+
+  it('POST /posts admits a reply whose parent is pending in the pool', async () => {
+    const kp = generateKeyPair();
+    const userId = kp.publicKey;
+    const userIdHex = Buffer.from(userId).toString('hex');
+    const privKeyObj = createPrivateKey({
+      key: Buffer.from(kp.secretKey),
+      format: 'der',
+      type: 'pkcs8',
+    });
+
+    const karmaBox = seedProvenance<KarmaBox>({
+      boxType: 'karma',
+      value: 100n,
+      createdAtBlock: 0,
+      owner: userId,
+    }, 1);
+    insertBox({ ...karmaBox, id: karmaBox.id });
+
+    // Insert a pending thread to be the reply's parent.
+    const threadContent = 'pending thread';
+    const threadCommit: PostCommit = {
+      contentHash: computeContentHash(threadContent),
+      author: userId,
+      parentRefs: [],
+      protocolVersion: PROTOCOL_VERSION,
+      type: 'regular',
+    };
+    const threadId = fixturePostId(threadCommit);
+    insertPost(threadId, threadCommit, threadContent);
+
+    const replyContent = 'reply to pending';
+    const replyCommit: PostCommit = {
+      contentHash: computeContentHash(replyContent),
+      author: userId,
+      parentRefs: [threadId],
+      protocolVersion: PROTOCOL_VERSION,
+      type: 'regular',
+    };
+
+    const changeKarma = seedProvenance<KarmaBox>({
+      boxType: 'karma',
+      value: 100n - POST_PRICE_REPLY,
+      createdAtBlock: 0,
+      owner: userId,
+    }, 1);
+    const priceBox: CandidateOf<KarmaPriceBox> = {
+      boxType: 'karma_price',
+      value: POST_PRICE_REPLY - REPLY_AUTHOR_SHARE,
+      createdAtBlock: 0,
+    };
+    const accrualBox: CandidateOf<LikeAccrualBox> = {
+      boxType: 'like_accrual',
+      value: REPLY_AUTHOR_SHARE,
+      createdAtBlock: 0,
+      author: userId,
+    };
+
+    const replyTx: UtxoTransaction = {
+      inputs: [karmaBox.id!],
+      outputs: [changeKarma, priceBox, accrualBox],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+      post: replyCommit,
+    };
+    signTransaction(replyTx, privKeyObj, userIdHex);
+
+    const postJson = {
+      contentHash: Buffer.from(replyCommit.contentHash).toString('hex'),
+      author: userIdHex,
+      parentRefs: [threadId],
+      protocolVersion: PROTOCOL_VERSION,
+      type: 'regular',
+    };
+    const txJson = { ...txToJson(replyTx), post: postJson };
+
+    const mockVerify = () => ({ valid: true as const });
+    const res = await request('/', 'POST', { tx: txJson, content: replyContent },
+      { verifyPost: mockVerify as typeof verifyPost });
+
+    expect(res.status).toBe(200);
+    const body = res.data as Record<string, unknown>;
+    expect(body.status).toBe('pending');
   });
 
   // -----------------------------------------------------------------------

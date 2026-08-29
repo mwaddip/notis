@@ -740,6 +740,8 @@ function applyMutationPhase(
     // `dag_posts.author` (ARCHITECTURE → Likes). The same read §11's apply arm
     // makes, so the marker's pin and the like-record's author cannot disagree.
     getTopologyAuthor: getTopologyAuthorBytes,
+    // NODE_INTERFACE → Post transactions: at apply only `block_topology` is read.
+    getPendingPostAuthor: () => null,
     // The invite-create not-already-an-account bar (NODE_INTERFACE → "Bond
     // transition rules") — same rule again.
     getIdentityRecord,

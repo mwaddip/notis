@@ -212,6 +212,7 @@ export function createApp(config: Config): express.Express {
     storageRentPeriodBlocks: config.storageRentPeriodBlocks,
     getBoxProvenance: store.getBoxProvenance,
     getTopologyAuthor: store.getTopologyAuthorBytes,
+    getPendingPostAuthor: store.getPendingPostAuthor,
     runInTransaction: (fn: () => void) => getDb().transaction(fn)(),
   };
 

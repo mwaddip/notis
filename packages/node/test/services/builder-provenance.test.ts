@@ -116,6 +116,7 @@ describe('invite id prediction carries transaction provenance', () => {
     storageRentPeriodBlocks: 40,
     getBoxProvenance: () => null,
     getTopologyAuthor: () => null,
+    getPendingPostAuthor: () => null,
     runInTransaction: (fn: () => void) => fn(),
   });
 

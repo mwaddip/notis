@@ -161,6 +161,7 @@ describe('validateAndApplyTx', () => {
       getBoxProvenance: () => null,
       getTopologyAuthor: (postId: string) =>
         topologyAuthors.get(postId) ?? null,
+      getPendingPostAuthor: () => null,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
       },
@@ -1093,11 +1094,11 @@ describe('validateAndApplyTx', () => {
       expect(result.error).toMatch(/Reply marker names/);
     });
 
-    it('refuses a reply whose parent is unconfirmed', () => {
-      const unconfirmedParent = 'dd'.repeat(32);
+    it('refuses a reply whose parent is in neither topology nor pending', () => {
+      const unknownParent = 'dd'.repeat(32);
       const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
-      const commit = makePostCommit(ownerPubKey, 'reply-unconfirmed');
-      commit.parentRefs = [unconfirmedParent];
+      const commit = makePostCommit(ownerPubKey, 'reply-unknown-parent');
+      commit.parentRefs = [unknownParent];
       const tx = buildSignedTx(
         [karma.id!],
         [
@@ -1109,7 +1110,31 @@ describe('validateAndApplyTx', () => {
       );
       const result = validateAndApplyTx(deps, tx, 10);
       expect(result.valid).toBe(false);
-      expect(result.error).toMatch(/is not confirmed, so it names no author/);
+      expect(result.error).toMatch(/names no author/);
+    });
+
+    it('admits a reply whose parent is pending via getPendingPostAuthor', () => {
+      const pendingParent = 'e1'.repeat(32);
+      const pendingParentAuthor = new Uint8Array(32).fill(0xe1);
+      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
+      const commit = makePostCommit(ownerPubKey, 'reply-to-pending');
+      commit.parentRefs = [pendingParent];
+      const pendingDeps: UtxoEngineDeps = {
+        ...deps,
+        getPendingPostAuthor: (postId: string) =>
+          postId === pendingParent ? pendingParentAuthor : null,
+      };
+      const tx = buildSignedTx(
+        [karma.id!],
+        [
+          { boxType: 'karma', value: 97n, createdAtBlock: 0, owner: ownerPubKey } as never,
+          { boxType: 'karma_price', value: POST_PRICE_REPLY - REPLY_AUTHOR_SHARE, createdAtBlock: 0 },
+          { boxType: 'like_accrual', value: REPLY_AUTHOR_SHARE, createdAtBlock: 0, author: pendingParentAuthor },
+        ],
+        ownerPrivKey, ownerPubKey, 1, undefined, commit,
+      );
+      const result = validateAndApplyTx(pendingDeps, tx, 10);
+      expect(result.valid).toBe(true);
     });
 
     it('refuses a thread carrying a like_accrual marker', () => {

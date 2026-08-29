@@ -27,6 +27,7 @@ export {
   isStump,
   isPrunedTombstone,
   getPlaceholdersAt,
+  getPendingPostAuthor,
 } from './posts.js';
 export type { PostStatus, StoredPost, PrunedTombstone, DeletedPostRow } from './posts.js';
 

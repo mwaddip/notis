@@ -498,6 +498,7 @@ describe('escrow settlement leg', () => {
         storageRentPeriodBlocks: 40,
         getBoxProvenance: () => null,
         getTopologyAuthor: () => null,
+        getPendingPostAuthor: () => null,
         runInTransaction: (fn) => fn(),
       },
       tx,

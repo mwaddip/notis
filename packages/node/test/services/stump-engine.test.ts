@@ -107,6 +107,7 @@ async function buildDeps(): Promise<UtxoEngineDeps> {
     storageRentPeriodBlocks: 0,
     getBoxProvenance: store.getBoxProvenance,
     getTopologyAuthor: store.getTopologyAuthorBytes,
+    getPendingPostAuthor: () => null,
     runInTransaction: (fn: () => void) => dbMod.getDb().transaction(fn)(),
   };
 }

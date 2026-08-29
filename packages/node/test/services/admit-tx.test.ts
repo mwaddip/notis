@@ -253,6 +253,7 @@ describe('rent admission refusal', () => {
       storageRentPeriodBlocks: RENT_PERIOD,
       getBoxProvenance: utxo.getBoxProvenance,
       getTopologyAuthor: () => null,
+      getPendingPostAuthor: () => null,
       runInTransaction: (fn) => fn(),
     };
 

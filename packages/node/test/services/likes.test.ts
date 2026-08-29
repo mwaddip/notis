@@ -128,6 +128,7 @@ describe('likes service (P2-D: the like is a burn transaction)', () => {
       storageRentPeriodBlocks: 40,
       getBoxProvenance: () => null,
       getTopologyAuthor: () => POST_AUTHOR,
+      getPendingPostAuthor: () => null,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
       },

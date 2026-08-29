@@ -466,6 +466,7 @@ describe('the invite at block application', () => {
       storageRentPeriodBlocks: 40,
       getBoxProvenance: () => null,
       getTopologyAuthor: () => null,
+      getPendingPostAuthor: () => null,
       runInTransaction: (fn: () => void) => fn(),
     }, second, 2);
     expect(result.valid).toBe(false);

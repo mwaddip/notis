@@ -38,6 +38,7 @@ const STUB_DEPS: UtxoEngineDeps = {
   storageRentPeriodBlocks: 0,
   getBoxProvenance: () => null,
   getTopologyAuthor: () => null,
+  getPendingPostAuthor: () => null,
   runInTransaction: (fn: () => void) => fn(),
 };
 
