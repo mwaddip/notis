@@ -66,7 +66,7 @@ function mineChain(
     const root = interlinkRoot(expectedInterlinks);
     const h = mineHeader({ height: anchor.height + 1 + i, prevBlockHash: prevHash, interlinkRoot: root });
     const hash = blockHash(h)!;
-    const lev = level(h)!;
+    const lev = level(h, h.powTargetBits)!;
     expectedInterlinks = updateInterlinks(expectedInterlinks, hash, lev);
     prevHash = hash;
     headers.push(h);
@@ -327,7 +327,7 @@ describe('verifyHeaderChain', () => {
         interlinkRoot: interlinkRoot(vec),
       });
       const h0Hash = blockHash(h0)!;
-      vec = updateInterlinks(vec, h0Hash, level(h0)!);
+      vec = updateInterlinks(vec, h0Hash, level(h0, h0.powTargetBits)!);
       const h1 = mineHeader({
         height: anchor.height + 2,
         prevBlockHash: h0Hash,
@@ -335,7 +335,7 @@ describe('verifyHeaderChain', () => {
         interlinkRoot: interlinkRoot(vec),
       });
       const h1Hash = blockHash(h1)!;
-      vec = updateInterlinks(vec, h1Hash, level(h1)!);
+      vec = updateInterlinks(vec, h1Hash, level(h1, h1.powTargetBits)!);
       const h2 = mineHeader({
         height: anchor.height + 3,
         prevBlockHash: h1Hash,
@@ -352,7 +352,7 @@ describe('verifyHeaderChain', () => {
         height: anchor.height + 2,
         prevBlockHash: h0Hash,
         powTargetBits: TARGET_A,
-        interlinkRoot: interlinkRoot(updateInterlinks(anchor.interlinks, h0Hash, level(h0)!)),
+        interlinkRoot: interlinkRoot(updateInterlinks(anchor.interlinks, h0Hash, level(h0, h0.powTargetBits)!)),
       });
       const headersMismatch = [h0, h1Wrong, h2];
       const fail = verifyHeaderChain(headersMismatch, anchor, schedule);

@@ -1020,17 +1020,20 @@ export function levelOfHit(hit: Uint8Array, target: Uint8Array): number | null {
 }
 
 /**
- * The superblock level of a header (VALIDATION_INTERFACE → level).
- * `Infinity` at height 1; otherwise `levelOfHit(powHit(header), target)`.
- * `null` when either half is `null`.
+ * The superblock level of a header against the network's anchor target —
+ * the yardstick (VALIDATION_INTERFACE → level; TYPES_INTERFACE → Interlink
+ * vector). `Infinity` at height 1; otherwise
+ * `levelOfHit(powHit(header), orderingPowTarget(anchorBits))`.
+ * `null` when the hit exceeds the yardstick, when either half is `null`,
+ * or when `anchorBits` is outside `orderingPowTarget`'s domain.
  */
-export function level(header: BlockHeader): number | null {
+export function level(header: BlockHeader, anchorBits: number): number | null {
   if (isObject(header) && (header as Record<string, unknown>).height === 1) return Infinity;
   const hit = powHit(header);
   if (hit === null) return null;
-  const target = orderingPowTarget(header.powTargetBits);
-  if (target === null) return null;
-  return levelOfHit(hit, target);
+  const yardstick = orderingPowTarget(anchorBits);
+  if (yardstick === null) return null;
+  return levelOfHit(hit, yardstick);
 }
 
 // ---------------------------------------------------------------------------

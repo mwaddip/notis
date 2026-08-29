@@ -130,13 +130,13 @@ describe('levelOfHit', () => {
 });
 
 // ---------------------------------------------------------------------------
-// level — independent computation
+// level — the yardstick (VALIDATION_INTERFACE → level)
 // ---------------------------------------------------------------------------
 
 describe('level', () => {
   it('height 1 → Infinity regardless of hit', () => {
     const h = mineHeader({ height: 1, prevBlockHash: '00'.repeat(32) });
-    expect(level(h)).toBe(Infinity);
+    expect(level(h, DEVNET_TARGET)).toBe(Infinity);
   });
 
   it('asserted by an independent BigInt computation on mined headers', () => {
@@ -148,41 +148,99 @@ describe('level', () => {
         powNonce: 0,
       });
       const hit = powHit(h)!;
-      const target = orderingPowTarget(h.powTargetBits)!;
+      const yardstick = orderingPowTarget(DEVNET_TARGET)!;
       expect(hit).not.toBeNull();
-      expect(target).not.toBeNull();
+      expect(yardstick).not.toBeNull();
 
       let hitBig = 0n;
       for (const b of hit) hitBig = (hitBig << 8n) | BigInt(b);
-      let targetBig = 0n;
-      for (const b of target) targetBig = (targetBig << 8n) | BigInt(b);
+      let ysBig = 0n;
+      for (const b of yardstick) ysBig = (ysBig << 8n) | BigInt(b);
 
       if (hitBig === 0n) {
-        expect(level(h)).toBe(LEVEL_CAP);
+        expect(level(h, DEVNET_TARGET)).toBe(LEVEL_CAP);
         continue;
       }
-      if (hitBig > targetBig) {
-        expect(level(h)).toBeNull();
+      if (hitBig > ysBig) {
+        expect(level(h, DEVNET_TARGET)).toBeNull();
         continue;
       }
-      // Independent computation: largest μ >= 0 with hit << μ <= target
       let mu = 0;
-      while ((hitBig << BigInt(mu + 1)) <= targetBig) mu++;
-      expect(level(h)).toBe(mu);
+      while ((hitBig << BigInt(mu + 1)) <= ysBig) mu++;
+      expect(level(h, DEVNET_TARGET)).toBe(mu);
     }
   });
 
   it('returns null when powHit would return null', () => {
-    expect(level(makeHeader({ height: 2, prevBlockHash: 'aa'.repeat(32), powNonce: NaN }))).toBeNull();
+    expect(level(makeHeader({ height: 2, prevBlockHash: 'aa'.repeat(32), powNonce: NaN }), DEVNET_TARGET)).toBeNull();
   });
 
-  it('returns null when orderingPowTarget would return null', () => {
-    expect(level(makeHeader({ height: 2, prevBlockHash: 'aa'.repeat(32), powTargetBits: 70000 }))).toBeNull();
+  it('returns null when anchorBits is outside orderingPowTarget domain', () => {
+    expect(level(makeHeader({ height: 2, prevBlockHash: 'aa'.repeat(32) }), 70000)).toBeNull();
   });
 
   it('never throws', () => {
     for (const bad of [null, undefined, 42, 'str', {}, []]) {
-      expect(() => level(bad as any)).not.toThrow();
+      expect(() => level(bad as any, DEVNET_TARGET)).not.toThrow();
     }
+  });
+
+  // ---- Yardstick: a harder yardstick than the header's own target ----
+
+  describe('yardstick harder than header target', () => {
+    const HARDER_YARDSTICK = 3328;
+
+    it('a header mined at 3072 against yardstick 3328: hit in (2^243, 2^244] → null', () => {
+      const ysTarget = orderingPowTarget(HARDER_YARDSTICK)!;
+      let ysBig = 0n;
+      for (const b of ysTarget) ysBig = (ysBig << 8n) | BigInt(b);
+
+      let foundNull = false;
+      for (let attempt = 0; attempt < 200 && !foundNull; attempt++) {
+        const h = mineHeader({ height: 2 + attempt, prevBlockHash: 'aa'.repeat(32) });
+        const hit = powHit(h)!;
+        let hitBig = 0n;
+        for (const b of hit) hitBig = (hitBig << 8n) | BigInt(b);
+        if (hitBig > ysBig) {
+          expect(level(h, HARDER_YARDSTICK)).toBeNull();
+          foundNull = true;
+        }
+      }
+      expect(foundNull).toBe(true);
+    });
+
+    it('a header mined at 3072 against yardstick 3328: hit below yardstick → level ≥ 0', () => {
+      const ysTarget = orderingPowTarget(HARDER_YARDSTICK)!;
+      let ysBig = 0n;
+      for (const b of ysTarget) ysBig = (ysBig << 8n) | BigInt(b);
+
+      let foundLevel = false;
+      for (let attempt = 0; attempt < 200 && !foundLevel; attempt++) {
+        const h = mineHeader({ height: 2 + attempt, prevBlockHash: 'bb'.repeat(32) });
+        const hit = powHit(h)!;
+        let hitBig = 0n;
+        for (const b of hit) hitBig = (hitBig << 8n) | BigInt(b);
+        if (hitBig <= ysBig) {
+          const lev = level(h, HARDER_YARDSTICK);
+          expect(lev).not.toBeNull();
+          expect(lev).toBeGreaterThanOrEqual(0);
+          foundLevel = true;
+        }
+      }
+      expect(foundLevel).toBe(true);
+    });
+
+    it('a header mined at 3328 against yardstick 3072 always → level ≥ 1', () => {
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const h = mineHeader({
+          height: 2 + attempt,
+          prevBlockHash: 'cc'.repeat(32),
+          powTargetBits: HARDER_YARDSTICK,
+        });
+        const lev = level(h, DEVNET_TARGET);
+        expect(lev).not.toBeNull();
+        expect(lev).toBeGreaterThanOrEqual(1);
+      }
+    });
   });
 });
