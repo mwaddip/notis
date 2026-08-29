@@ -112,25 +112,52 @@ describe('asertTargetBits', () => {
     }
   });
 
-  // ---- Reference cross-check against BCH aserti3-2d ----
+  // ---- Reference cross-check: aserti3-2d ported in target space ----
   //
-  // The BCH reference works in target space; we work in bits space. The mapping
-  // (spec §2.1): our block 1 is the reference's anchor-parent, block 2 its
-  // anchor, so height_delta + 1 = parent.height − 1. The reference's exponent
-  // is Δ · 65536 / halflife (truncating toward zero); ours is Δ · 256 / halflife
-  // (flooring toward −∞). The two can differ by one unit at a negative
-  // non-integer quotient; the cross-check verifies the reference target lies
-  // within one 1/256-bit unit of ours in target space.
-  //
-  // The reference's `next_target_aserti3_2d` uses a cubic approximation of
-  // 2^(frac/65536) in target space. To avoid porting the polynomial, this
-  // cross-check uses our own `orderingPowTarget` (which computes 2^(−B/256) via
-  // an independent fixed-point table) to render the reference's exponent into a
-  // target: `E / 256` gives the reference's bits offset, and the target at that
-  // offset is compared against ours. The cubic's approximation error (< 1 ulp
-  // in 2^16 fixed point) is absorbed by the one-unit tolerance.
+  // The BCH reference (`next_target_aserti3_2d`, spec 2020-11-15) works in
+  // target space with a cubic approximation of 2^x; we work in bits space
+  // with no approximation. The mapping (spec §2.1): our block 1 is the
+  // reference's anchor-parent, our block 2 its anchor. For each unclamped
+  // vector the reference target must lie within one 1/256-bit unit of ours:
+  // `orderingPowTarget(B − 1) ≥ T_ref ≥ orderingPowTarget(B + 1)`.
 
   describe('reference cross-check', () => {
+    function targetToBigInt(t: Uint8Array): bigint {
+      let v = 0n;
+      for (const b of t) v = (v << 8n) | BigInt(b);
+      return v;
+    }
+
+    function nextTargetAserti3_2d(
+      anchorTarget: bigint,
+      timeDelta: bigint,
+      heightDelta: bigint,
+      halflife: bigint,
+      idealBlockTime: bigint,
+    ): bigint {
+      const RADIX = 65536n;
+      let exponent = (timeDelta - idealBlockTime * (heightDelta + 1n)) * RADIX / halflife;
+      const numShifts = exponent >> 16n;
+      exponent = exponent - numShifts * RADIX;
+      const factor = ((195766423245049n * exponent
+        + 971821376n * exponent * exponent
+        + 5127n * exponent * exponent * exponent
+        + (1n << 47n)) >> 48n) + RADIX;
+      let nextTarget = anchorTarget * factor;
+      if (numShifts < 0n) {
+        nextTarget >>= -numShifts;
+      } else {
+        nextTarget <<= numShifts;
+      }
+      nextTarget >>= 16n;
+      if (nextTarget <= 0n) return 1n;
+      return nextTarget;
+    }
+
+    const anchorTarget = targetToBigInt(orderingPowTarget(P.anchorBits)!);
+    const halflife = BigInt(P.halflifeMs);
+    const ideal = BigInt(P.idealMs);
+
     const vectors = [
       { height: 1, createdAt: t_a },
       { height: 1441, createdAt: t_a + 86_400_000 },
@@ -144,30 +171,15 @@ describe('asertTargetBits', () => {
     ];
 
     for (const parent of vectors) {
-      it(`height=${parent.height} createdAt offset=${parent.createdAt - t_a}`, () => {
+      it(`height=${parent.height} offset=${parent.createdAt - t_a}`, () => {
         const B = asertTargetBits(P, t_a, parent);
-
-        // Reference exponent: Δ · 65536 / halflife, truncating toward zero
-        const delta = BigInt(parent.createdAt - t_a) - BigInt(P.idealMs) * (BigInt(parent.height) - 1n);
-        const refExponent = delta * 65536n / BigInt(P.halflifeMs);
-
-        // Our q: floorDiv(Δ · 256, halflife)
-        const num256 = delta * 256n;
-        const div = BigInt(P.halflifeMs);
-        let q = num256 / div;
-        if (num256 % div !== 0n && num256 < 0n) q -= 1n;
-
-        // The reference's bits offset: refExponent / 256 (truncating)
-        const refQ = refExponent / 256n;
-
-        // The two can differ by at most 1 at a negative non-integer quotient
-        const diff = q - refQ;
-        expect(Number(diff >= 0n ? diff : -diff)).toBeLessThanOrEqual(1);
-
-        // Verify in target space: the target at our B and the target at refBits
-        // agree within one unit
-        const refBits = Number(BigInt(P.anchorBits) - refQ);
-        expect(Math.abs(B - refBits)).toBeLessThanOrEqual(1);
+        const timeDelta = BigInt(parent.createdAt) - BigInt(t_a);
+        const heightDelta = BigInt(parent.height) - 2n;
+        const T_ref = nextTargetAserti3_2d(anchorTarget, timeDelta, heightDelta, halflife, ideal);
+        const T_hi = targetToBigInt(orderingPowTarget(B - 1)!);
+        const T_lo = targetToBigInt(orderingPowTarget(B + 1)!);
+        expect(T_ref).toBeLessThanOrEqual(T_hi);
+        expect(T_ref).toBeGreaterThanOrEqual(T_lo);
       });
     }
   });
