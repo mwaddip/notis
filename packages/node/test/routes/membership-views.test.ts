@@ -1,5 +1,7 @@
 // ---------------------------------------------------------------------------
-// Phase 4b — route tests for earned-invites views through the live HTTP API.
+// Membership views through the live routes — NODE_INTERFACE → UTXO queries,
+// NODE_INTERFACE → Status, NODE_INTERFACE → Vouches, NODE_INTERFACE →
+// Invites, NODE_INTERFACE → Three entity kinds.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';

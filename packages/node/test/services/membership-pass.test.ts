@@ -21,7 +21,8 @@ async function importRecords() {
 }
 
 describe('membership pass', () => {
-  // §8.7a: two members set in the same block do not count for each other.
+  // Two members set in the same block do not count for each other —
+  // ARCHITECTURE → Membership, NODE_INTERFACE → Membership pass.
   it('two members set in the same block get the same memberSinceBlock and neither counts for the other', async () => {
     vi.resetModules();
     const db = await importDb();
@@ -77,7 +78,8 @@ describe('membership pass', () => {
     db.closeDb();
   });
 
-  // §8.2: the bar is fixed at set time.
+  // The bar is fixed at set time — ARCHITECTURE → Membership,
+  // NODE_INTERFACE → Membership pass.
   it('a member flagged at D=1 keeps membership when N grows to make D=3', async () => {
     vi.resetModules();
     const db = await importDb();
@@ -108,7 +110,8 @@ describe('membership pass', () => {
     db.closeDb();
   });
 
-  // §8.4: counter isolation — a reply moves neither counter.
+  // Counter isolation — a reply moves neither counter.
+  // ARCHITECTURE → The like transaction.
   it('a like from a member bumps both counters, a like from a resident bumps only lifetimeLikesReceived', async () => {
     vi.resetModules();
     const db = await importDb();
@@ -164,13 +167,12 @@ describe('membership pass', () => {
   });
 });
 
-describe('genesis network record (§8.8)', () => {
+describe('genesis network record', () => {
   it('the network key is present in the genesis tree', async () => {
     vi.resetModules();
     const db = await importDb();
     db.initDb(':memory:');
-    // Seed the network record directly for testing without seedGenesisState
-    // (which is blocked on genesis root pins).
+    // Seed the network record directly — the case needs no genesis.
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const records = await importRecords();
@@ -205,7 +207,7 @@ describe('genesis network record (§8.8)', () => {
   });
 });
 
-describe('journal round-trip — membership records and the network record (§8.9)', () => {
+describe('journal round-trip — membership records and the network record', () => {
   it('set a member (N+1) then revert — every record and the network record restored exactly', async () => {
     vi.resetModules();
     const db = await importDb();

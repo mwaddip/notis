@@ -115,10 +115,9 @@ describe('membership cascade across blocks', () => {
     vi.resetModules();
   });
 
-  // §8.1: the cell well-founded on its humans. A root unvouches the first
-  // sock → it lapses; the next block's settlement withdraws its vouches
-  // through the lapse leg and the younger sock lapses in the same block's
-  // pass. This pins the b6b3eef fix: lapse-leg targets reach the pass.
+  // The lapse leg's consumptions reach the membership pass in the same
+  // block — NODE_INTERFACE → Membership pass, NODE_INTERFACE → The
+  // settlement transaction.
   it('the cascade withdraws a cell layer by layer', async () => {
     vi.resetModules();
     const db = await importDb();
@@ -200,9 +199,9 @@ describe('membership cascade across blocks', () => {
     db.closeDb();
   });
 
-  // §8.7: the escrow the lapse leg emits carries releaseAtBlock = cast +
-  // cooldown, the escrow leg returns it, and hasActiveVouchEscrow bars a
-  // recast while it stands.
+  // The escrow the lapse leg emits carries releaseAtBlock = cast + cooldown,
+  // the escrow leg returns it, and hasActiveVouchEscrow bars a recast while
+  // it stands — NODE_INTERFACE → The settlement transaction.
   it('releaseAtBlock = cast + cooldown, the escrow leg returns the stake', async () => {
     vi.resetModules();
     const db = await importDb();
@@ -263,9 +262,9 @@ describe('membership cascade across blocks', () => {
     db.closeDb();
   });
 
-  // §8.7: a member who re-qualifies before the lapse leg reaches a box
-  // keeps it — the predicate is derived from state and a re-qualified
-  // voucher passes member().
+  // A member who re-qualifies before the lapse leg reaches a box keeps it
+  // — the predicate is derived from state — NODE_INTERFACE → The settlement
+  // transaction.
   it('a re-qualified member keeps its vouch boxes', async () => {
     vi.resetModules();
     const db = await importDb();
@@ -311,8 +310,8 @@ describe('membership cascade across blocks', () => {
     db.closeDb();
   });
 
-  // §8.9: set a member (N+1), revertBlock it, every record and the
-  // network record restored.
+  // Set a member (N+1), revertBlock it, every record and the network
+  // record restored — NODE_INTERFACE → Block Journal.
   it('revertBlock restores membership records and the network record', async () => {
     vi.resetModules();
     const db = await importDb();

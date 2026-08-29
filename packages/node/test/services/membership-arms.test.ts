@@ -78,7 +78,7 @@ function computeTxHash(tx: UtxoTransaction): Uint8Array {
   return Buffer.from(computeTxId(tx), 'hex');
 }
 
-describe('membership arms (§8 consensus rules)', () => {
+describe('membership arms', () => {
   let db: Database.Database;
   let ownerPubKey: Uint8Array;
   let ownerPrivKey: KeyObject;
@@ -247,10 +247,10 @@ describe('membership arms (§8 consensus rules)', () => {
   }
 
   // -------------------------------------------------------------------------
-  // §8.3 — the invite budget
+  // ARCHITECTURE → The invite budget
   // -------------------------------------------------------------------------
 
-  describe('invite budget (§8.3)', () => {
+  describe('invite budget', () => {
     it('the k-th invite needs k·D(N_now) vouches', () => {
       // D(27, 1) = 3. Member with bar=3, 7 vouches → floor(7/3) = 2 available.
       setNetworkMemberCount(27);
@@ -318,10 +318,10 @@ describe('membership arms (§8 consensus rules)', () => {
   });
 
   // -------------------------------------------------------------------------
-  // §8.7a — vouch-cast arm
+  // NODE_INTERFACE → Vouch transition rules
   // -------------------------------------------------------------------------
 
-  describe('vouch-cast arm (§8.7a)', () => {
+  describe('vouch-cast arm', () => {
     it('a resident cast is refused', () => {
       seedRecord(ownerPubKey);
       const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
@@ -415,10 +415,10 @@ describe('membership arms (§8 consensus rules)', () => {
   });
 
   // -------------------------------------------------------------------------
-  // §8.8a — vouch target with no record
+  // NODE_INTERFACE → Vouch transition rules
   // -------------------------------------------------------------------------
 
-  describe('vouch target (§8.8a)', () => {
+  describe('vouch target', () => {
     it('a vouch naming a key with no record is refused and the key is still invitable', () => {
       seedAsRoot(ownerPubKey);
       const karma = createAndInsertKarma(ownerPubKey, 500n, 1);
@@ -441,10 +441,10 @@ describe('membership arms (§8 consensus rules)', () => {
   });
 
   // -------------------------------------------------------------------------
-  // §8.8 — round trip
+  // NODE_INTERFACE → Vouch transition rules, NODE_INTERFACE → Block Journal
   // -------------------------------------------------------------------------
 
-  describe('round trip (§8.8)', () => {
+  describe('round trip', () => {
     it('the unvouch round trip through applyTx restores the count', () => {
       seedAsRoot(ownerPubKey);
       const { publicKey: targetPub } = generateKeyPairSync('ed25519');
