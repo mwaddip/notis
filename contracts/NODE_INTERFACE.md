@@ -512,7 +512,7 @@ against live content).
 
 | Method | Path | Response | Errors |
 |--------|------|----------|--------|
-| `GET` | `/karma/:userId?limit=50&after=<value>:<boxId>` | `{ userId: hex, total, effective, boxes: [{ boxId, value }], boxCount, next, lastActivityBlock, lastDecayBlock, height }` — `total` the face sum over every unspent karma box (`getKarmaTotal`, the view's `SUM` over the set `getKarmaValue` sums), `effective` that sum after virtual decay (`effectiveKarma`, the call every karma-sufficiency check on the node makes), `boxes` one page in `value DESC, id` strictly after `after`, `boxCount` over the whole set, `next` the key to continue from. **An identity with no unspent karma box answers the empty page** — `boxes: []`, `boxCount 0`, `total "0"`, `effective "0"`, `next null`, its clocks from the record (`0` where none), `height` — an exact spend leaves a live identity holding no box, and a page of zero is a page ("Every list a view returns is a page") | 400 if `userId` is not 64 chars or a present `limit`/`after` does not parse |
+| `GET` | `/karma/:userId?limit=50&after=<value>:<boxId>` | `{ userId: hex, total, effective, boxes: [{ boxId, value }], boxCount, next, lastActivityBlock, lastDecayBlock, lifetimeLikesReceived, height }` — `total` the face sum over every unspent karma box (`getKarmaTotal`, the view's `SUM` over the set `getKarmaValue` sums), `effective` that sum after virtual decay (`effectiveKarma`, the call every karma-sufficiency check on the node makes), `boxes` one page in `value DESC, id` strictly after `after`, `boxCount` over the whole set, `next` the key to continue from. **An identity with no unspent karma box answers the empty page** — `boxes: []`, `boxCount 0`, `total "0"`, `effective "0"`, `next null`, its clocks and `lifetimeLikesReceived` (a decimal string, the record's counter — `"0"` where none) from the record, `height` — an exact spend leaves a live identity holding no box, and a page of zero is a page ("Every list a view returns is a page"). ⚠ **AHEAD OF CODE — 2026-08-29:** the view serves the two clocks and not the counter until PR A's node unit adds it | 400 if `userId` is not 64 chars or a present `limit`/`after` does not parse |
 | `GET` | `/credits/:userId?limit=50&after=<value>:<boxId>` | `{ userId: hex, total, boxes: [{ boxId, value, lockedUntilBlock? }], boxCount, next }` — `total` over every unspent credit box (`getCreditValue`), `boxes` one page in `value DESC, id` strictly after `after`, `boxCount` over the whole set, `next` the key to continue from; an identity with no unspent credit box answers the empty page — `boxes: []`, `boxCount 0`, `total "0"`, `next null` | 400 if `userId` is not 64 chars or a present `limit`/`after` does not parse |
 | `GET` | `/invites/:userId?limit=50&after=<boxId>` | `{ bonds: [{ id, value, inviterId, inviteePublicKey }], bondCount, next }` — the inviter's **unspent** bonds, one page ascending box id strictly after `after`, `bondCount` over the whole set, `next` the key to continue from; a bond IS the open invite, so a settled one is not listed and there is no second list | 400 if `userId` is not 64 chars or a present `limit`/`after` does not parse; an inviter holding no live bond answers `{ bonds: [], bondCount: 0, next: null }` |
 
@@ -1591,8 +1591,20 @@ There is **no other legal bond or invite shape**. In particular:
   resolved from `block_topology`, exactly as a like's target author is, and a reply to a stump or
   a withdrawn post pays that row's author. ⛔ **The reply's marker moves no like counter**:
   `lifetimeLikesReceived` is bumped from like transactions and from nothing else.
-  > ⚠ **AHEAD OF CODE — 2026-08-29.** The post arm pins a `PostLockBox` today; the price shape, the
-  > widened marker pin and the settlement's price leg are PR A's node unit.
+- **A reply's parent may still be pending at admission.** The marker names the parent's author, and
+  `validateTx` resolves it from `block_topology` — and, where the parent has no row yet because it
+  is in this node's pool, from the parent's own pending row, whose `author` is the commit its
+  transaction carries and which that transaction's post arm binds to its signer. **At apply only
+  `block_topology` is read**: a parent confirmed in the applying block has its row before the loop
+  (§8 populates topology from the block's own posts), an earlier one has it already, and a parent
+  in neither refuses the reply (*"names no author"*). The fallback is the reply's alone — a like's
+  target, a prune's root and a withdrawal's post must be confirmed at admission exactly as before.
+  This is what keeps a reply able to spend its own thread's change with no block between the two
+  (`TYPES_INTERFACE → Monotonic creation height`, the chaining a block interval must allow).
+  > ⚠ **AHEAD OF CODE — 2026-08-29.** The engine's admission deps hand the post arm
+  > `getTopologyAuthor` alone, so a reply to a pending parent is refused at admission; PR A's node
+  > unit adds the pending-row fallback on the admission deps (`server.ts`, `index.ts`), leaves the
+  > apply deps topology-only, and pins both directions.
 - ⛔ **The relay gate is a cached MEMBERSHIP check, not a balance read.** `net`
   drops a post from an author who holds no karma **at all**, consulting an
   in-memory set rather than the store. The set moves only when an identity first
