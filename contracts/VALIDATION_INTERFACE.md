@@ -208,7 +208,7 @@ terms each below the wall sum past it — which is why the bound is the digest w
 near the arithmetic limit. **The term count is bounded by the caller's own request**: `requestHeaders`
 passes its `maxCount` to `decodeHeaders`, and `lpItemsCodec` checks
 `min(maxCount, MAX_CHAIN_RESPONSE_ITEMS)` — 400 — **before the first element is read**, so a peer
-answering a `MAX_REORG_DEPTH * 2` request with 18,900 headers is refused rather than summed. The bound
+answering a 400-header page request with 18,900 headers is refused rather than summed. The bound
 here is still the digest width and not that count: a per-term bound never was the thing holding, and
 tying this argument to a response cap in another package would make it decay on that package's
 schedule.
@@ -1123,7 +1123,8 @@ verifyHeaderChain(
   params: RetargetParams,                 // → asertTargetBits
   anchorCreatedAt: number | null,         // block 1's createdAt, t_a — null at a fork at GENESIS_HEIGHT
   nowMs: number,                          // the caller's clock, for the future bound
-): { ok: true; work: bigint; hashes: string[] }
+): { ok: true; work: bigint; hashes: string[];
+     next: { prevBlockHash: string; height: number; interlinks: string[]; createdAt: number | null; t_a: number | null } }
  | { ok: false; index: number; reason: 'domain' | 'version' | 'height' | 'link' | 'time' | 'clock' | 'target' | 'pow' | 'interlinks' }
 ```
 
@@ -1150,10 +1151,20 @@ header is height 1, its stamp becomes `t_a` for `i ≥ 1`, and it has no order c
 and `anchorCreatedAt` are `null` together, and only together.
 
 On success, `work` is `cumulativeWork(headers)` — every header has passed `target` and `pow`, so no
-term is `null` — and `hashes[i]` is `blockHash(headers[i])`. An empty segment is `{ ok: true, work:
-0n, hashes: [] }`: a segment that adds nothing to the anchor carries no work. A non-array `headers`
-is read as the empty segment — the same verdict, and it grants nothing: zero work never exceeds the
-incumbent's and an empty `hashes` admits no block.
+term is `null` — and `hashes[i]` is `blockHash(headers[i])`. **`next` is the anchor the following
+page must build on**: `prevBlockHash = hashes[last]`, `height = headers[last].height`, `interlinks =
+updateInterlinks(expected[last], hashes[last], level(headers[last], params.anchorBits))` — the vector
+the walk computed for the step it never took —, `createdAt = headers[last].createdAt`, and `t_a` the
+`anchorCreatedAt` the caller passed, or at a fork at `GENESIS_HEIGHT` the first header's stamp. A
+caller that verifies a chain in one call and in pages carrying `next` gets the same `work` and the
+same `hashes`, and reads no store between pages (`NODE_INTERFACE → Fork choice decides on verified
+headers`, step 5). An empty segment is `{ ok: true, work: 0n, hashes: [], next }` with `next` the
+caller's own anchor and `t_a`: a segment that adds nothing to the anchor carries no work. A non-array
+`headers` is read as the empty segment — the same verdict, and it grants nothing: zero work never
+exceeds the incumbent's and an empty `hashes` admits no block.
+
+> ⚠ **AHEAD OF CODE — 2026-08-29.** The verdict carries no `next`; a caller paging a branch would have
+> to recompute the vector. The reorg-horizon unit's validation dispatch.
 
 **The anchor is the fork point.** Its `prevBlockHash` is the hash of the block the segment must
 build on — for a fork at `GENESIS_HEIGHT` it is `GENESIS_PREV_BLOCK_HASH` (TYPES_INTERFACE → Genesis

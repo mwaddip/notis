@@ -4275,55 +4275,83 @@ with the chain untouched:
 
 1. **Counterparty.** The peer that relayed or served the block, if it is Active; else the head of
    the Active list (NET_INTERFACE → Pull Requests).
-2. **Their headers.** `requestHeaders(block.height, MAX_REORG_DEPTH · 2)`, newest-first. No
-   headers → no decision, no penalty: "has nothing" is legitimate.
-3. **The fork point.** `findForkPoint` — refuse-whole on an unhashable entry, `GENESIS_HEIGHT` when
-   the chains share only the genesis state, `null` when the divergence is deeper than
-   `MAX_REORG_DEPTH`. `null` → no decision, no penalty: a deep fork is indistinguishable from an
-   honest peer.
-4. **The anchor and the segment.** Anchor = `{ prevBlockHash, height: f, interlinks, createdAt }`
+2. **The memo.** `net.peerTipHeight(peer)` equals the tip this peer's branch was last scored lighter
+   at → return: nothing to re-score ("Re-scoring is memoised", below).
+3. **The fork walk.** Their headers paged **down from our tip** — `requestHeaders(ourTip, 400)`, then
+   from the lowest height seen − 1 — each compared to our `block_hash` at its height, a point read;
+   the highest match is `f`. Heights examined: `ourTip … max(ourTip − maxReorgDepth + 1, 1)`. No
+   match: `f = GENESIS_HEIGHT` when `ourTip ≤ maxReorgDepth` (the chains share only the genesis
+   state), else `null` → no decision, no penalty: a fork past the horizon is indistinguishable from an
+   honest peer. No headers at all → no decision, no penalty: "has nothing" is legitimate. An
+   **unhashable** header in a page refuses the page whole and penalises `misbehavior` — `'domain'`,
+   one step early — and never falls through to genesis.
+4. **The anchor and our work.** Anchor = `{ prevBlockHash, height: f, interlinks, createdAt }`
    where `prevBlockHash` is the hash of our block at `f`, or `GENESIS_PREV_BLOCK_HASH` at `f = 0`;
    `interlinks` is the vector the block at `f + 1` must commit to — `updateInterlinks(getInterlinks(f),
    hash(f), level(our header at f, anchorBits))`, or `[]` at `f = 0`; `createdAt` is our block at `f`'s
-   stamp, or `null` at `f = 0`; segment = their headers above `f`, chronological. Beside the anchor:
-   the profile's `RetargetParams`, block 1's stored stamp `t_a` (or `null` at `f = 0`, where the
-   segment's own first header supplies it), and this node's clock.
-5. **Verification.** `verifyHeaderChain(segment, anchor, params, t_a, now)` (VALIDATION_INTERFACE →
-   verifyHeaderChain). A refusal is classified: `index 0` · `reason 'height'` · `f === 0` is a
-   **window miss** — their chain stands more than `MAX_REORG_DEPTH · 2` above a genesis-rooted fork
-   and the request, not the answer, was short; no penalty, and the pull path retries from our
-   tip + 1. **`reason 'clock'` at any index is a future-bound refusal** — a verdict of this node's
-   clock, not on the chain: no penalty, no mark, and the sync path re-delivers the branch inside the
-   bound (`MINING_INTERFACE → Header timestamp rules`). Every other `(index, reason)` — `'time'`
-   included — is a served chain that is not one: refuse and penalise (NET_INTERFACE → Peer Penalty
-   System, `misbehavior`).
-6. **Memory.** Any verified hash present in `refused_headers` (Store Interface → Refused headers)
-   refuses the segment and penalises (`misbehavior`) — before any work is compared or block
-   fetched.
-7. **Work.** `verdict.work <= cumulativeWork(ours above f)` → keep ours. Strictly greater wins; a
-   tie keeps the incumbent.
-8. **Their blocks.** `requestBlocks(f + 1, f + n)` for `n = segment.length` — the range is the
-   verified segment's, never a peer-claimed tip height.
+   stamp, or `null` at `f = 0`. Beside the anchor: the profile's `RetargetParams`, block 1's stored
+   stamp `t_a` (or `null` at `f = 0`, where the branch's own first header supplies it), and this
+   node's clock. `ourWork = cumulativeWork(our headers f + 1 … ourTip)`, read once.
+5. **The scoring walk.** Their branch above `f`, **upward in pages**: the fork walk's pages already
+   hold `f + 1 … min(ourTip, theirTip)`; above that `requestHeaders(top + 400, 400)` trimmed to the
+   heights not yet verified — the serve arm clamps to the peer's tip, so a page whose top sits below
+   the request is their tip, and an empty trimmed page ends the branch. Each page, chronological, goes
+   through `verifyHeaderChain(page, anchor, params, t_a, now)` (VALIDATION_INTERFACE →
+   verifyHeaderChain) with the anchor the previous page's verdict returned (`next`). A refusal is
+   classified: **`reason 'clock'` at any index is a future-bound refusal** — a verdict of this node's
+   clock, not on the chain: no penalty, no mark, no memo, and the sync path re-delivers the branch
+   inside the bound (`MINING_INTERFACE → Header timestamp rules`). Every other `(index, reason)` —
+   `'time'`, a hole (`'height'`), a header off its own chain (`'link'`) included — is a served chain
+   that is not one: refuse and penalise (NET_INTERFACE → Peer Penalty System, `misbehavior`).
+6. **Memory.** Any verified hash in a page present in `refused_headers` (Store Interface → Refused
+   headers) refuses the branch and penalises (`misbehavior`) — before any further page, before any
+   block is fetched.
+7. **Work — the stop rules**, after every page: accumulated `work > ourWork` (strictly greater; a tie
+   keeps the incumbent) → the headers verified so far are the target, `n` their count — **page-aligned,
+   at most 399 blocks past the shortest heavier prefix**; their tip reached with `work ≤ ourWork` →
+   keep ours, no penalty, the memo written; our tip moved between pages → abort, no penalty. **The walk
+   needs no cap**: every verified header passed `'target'`, so it carries at least the floor's work and
+   the sum exceeds ours within `⌈ourWork / floorWork⌉ + 1` headers — a branch longer than that is
+   heavier by then, and a branch is bounded by its own length, which cost its author real PoW.
+8. **Their blocks.** `requestBlocks(f + 1, f + n)` in pages: each page is checked as it lands — one
+   or more blocks, heights consecutive from the first still missing, every `blockHash(header)` equal
+   to the verified hash at its height — then the next page from the first height still missing. A page
+   adding nothing → refuse, penalise `transient` (non-delivery), chain untouched. A wrong hash or
+   height → refuse, penalise `misbehavior`, nothing reverted. The range is the verified branch's,
+   never a peer-claimed tip height.
 9. **Tip re-read.** Our tip moved during the awaits → abort, no penalty.
-10. **Identity.** Fewer than `n` blocks → refuse, penalise `transient` (non-delivery). Any block whose
-    header hash is not `hashes[i]` → refuse, penalise `misbehavior`. Nothing is reverted before
-    this step.
-11. **The switch.** `reorg(f, blocks)`, atomic: on a rejected block it throws
+10. **The switch.** `reorg(f, blocks)`, atomic: on a rejected block it throws
     `ReorgBlockRejectedError { height, hash }` after the transaction has rolled back and the prover
     is restored.
-12. **The mark.** `resolveFork` catches that error and, **after** the rollback, records the rejected
+11. **The mark.** `resolveFork` catches that error and, **after** the rollback, records the rejected
     block's hash in `refused_headers` in its own write, and penalises `misbehavior`. A mark written
     inside the reorg transaction would roll back with it.
 
-**What is remembered, and what is not.** Header-stage refusals (steps 5, 6, 10) are cheap to
-re-check and are remembered nowhere — the peer is penalised and the segment is gone; a `'clock'`
+**The horizon's price is memory.** All `n` blocks are held before the switch — the transaction is
+synchronous and cannot await a page — so a reorg holds up to `n × MAX_BLOCK_BODY_BYTES`, with `n ≤
+⌈ourWork / floorWork⌉ + 400`: on testnet (`maxReorgDepth` 240, the floor about ten times easier than
+the anchor) up to ~2 900 blocks, kilobytes each in practice, 2 MB each at the cap. **`n` is not
+capped**: a cap below the shortest heavier prefix would strand the node exactly where the horizon is
+meant to reach.
+
+**Re-scoring is memoised.** A node beside a taller-but-lighter peer is handed the same non-extending
+block every sync round — the machine re-announces what we refused (NET_INTERFACE → Sync Integrity) —
+and a walk costs up to seven pages. `resolveFork` keeps `{ peer → the tip it was scored lighter at }`,
+read against `net.peerTipHeight(peer)` at step 2, **cleared whenever our own tip moves** (every
+verdict's baseline is gone), written only by step 7's "keep ours" — never by a `'clock'` refusal or an
+abort — and keyed on the peer because the walk asks the *relayer* for headers: the branch scored is the
+relayer's, whatever block it relayed. A future-bound refusal never reaches this function (an extending
+block goes to apply), so its re-delivery path is untouched.
+
+**What is remembered, and what is not.** Header-stage refusals (steps 3, 5, 6, 8) are cheap to
+re-check and are remembered nowhere — the peer is penalised and the pages are gone; a `'clock'`
 refusal is not even penalised, being a verdict of this node's clock, and the paragraph's rule below is
 why it must never mark. A body-stage
-rejection (step 11) is the expensive case and the one remembered: verified headers over an invalid
+rejection (step 10) is the expensive case and the one remembered: verified headers over an invalid
 body. **The mark records a consensus rejection and nothing else** — a rejection that depends on
 local configuration or policy must not mark, because a persisted mark is only as right as the node
 that wrote it; the schedule is checked at step 5 precisely so that a wrong-profile node never
-reaches step 11. "Depends on" is about the verdict, not about enforcement: the funnel's one
+reaches step 10. "Depends on" is about the verdict, not about enforcement: the funnel's one
 configuration-gated check — `stateRoot` under `VERIFY_STATE_ROOT` — switches whether *this* node
 enforces a consensus rule, not what the rule says, so a node that enforces it marks a chain whose
 root is wrong for every node, and a node that does not never reaches the mark. Every other
@@ -4335,16 +4363,24 @@ neither applied nor resolved; a block that extends our tip, or arrives at height
 anything else enters `resolveFork` with the delivering peer as counterparty. The pull handler's
 return is the batch's **continue** signal — `true` for applied or already held, `false` for rejected
 or for a non-extending block — and `net` stops the batch at the first `false` (NET_INTERFACE → Sync
-Handler Registration). A pull trigger therefore always sits at our tip + 1, where the
-`MAX_REORG_DEPTH · 2` window always reaches an anchor within `MAX_REORG_DEPTH`.
+Handler Registration). The trigger's own height decides nothing: the fork walk starts at **our** tip
+whatever height the block arrived at, so a gossiped block far above us and a pull trigger at our
+tip + 1 cost the same walk.
 
 **Concurrency.** Resolutions may overlap — gossip already allows it, and the pull path adds
 triggers, not a class. Two resolutions serialise at step 9: `reorg` is synchronous and nothing awaits
 between the re-read and the call, so the second always sees the first's height and aborts.
 
 **Apply stays the authority.** `reorg` runs every block through `applyOrderingBlock`, so the
-header-level rules run twice — once over the segment, once in the funnel. The funnel is unchanged
+header-level rules run twice — once over the pages, once in the funnel. The funnel is unchanged
 and remains the single consensus gate (`Ordering block apply-time authorization`).
+
+> ⚠ **AHEAD OF CODE — 2026-08-29.** `resolveFork` asks `requestHeaders(block.height, MAX_REORG_DEPTH ·
+> 2)` once, newest-first from the trigger's height, and scores that window: a branch lighter in its
+> first 21 headers and heavier as a whole is refused (the safe direction, never a reorg to a lighter
+> chain), a fork deeper than 20 answers `null`, a "window miss" (`index 0 · 'height' · f = 0`) is
+> classified beside `'clock'`, `requestBlocks` is one call, and there is no memo. The reorg-horizon
+> unit's node dispatch.
 
 ### Fork resolution bottoms out at the genesis state
 

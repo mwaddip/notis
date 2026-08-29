@@ -142,7 +142,7 @@ stumps, not archives.
 Ordering blocks are mined with PoW at a height-scheduled difficulty (on-chain
 time is block height, never wall clock). Fork choice is cumulative work. The
 `@dagsocial/net` package runs libp2p with Gossipsub for ordering blocks and
-UTXO transactions, plus a header-first sync protocol: a fresh node downloads
+UTXO transactions, plus a sync protocol that moves whole ordering blocks: a fresh node downloads
 ordering blocks only — block entries carry enough topology and authorship to
 verify all settlement without any post content.
 
@@ -330,7 +330,7 @@ pnpm typecheck      # Type-check all packages, src and test trees
 - **`@dagsocial/wire`** — stream framing (VLQ, blake2b checksums, magic
   bytes), shared by net and node.
 - **`@dagsocial/net`** — libp2p + Gossipsub relay with two-stage validation,
-  header-first sync, peer discovery and scoring.
+  whole-block sync, peer discovery and scoring.
 - **`@dagsocial/node`** — Express server, UTXO engine, SQLite store, AVL+ state
   root, block creator, the per-block settlement transaction, decay, demo UI.
 
@@ -362,7 +362,7 @@ Built: the dual ledger, ordering-block consensus with a derived per-block
 settlement, verifiable pruning, likes as per-block karma spends, invites with
 bonds, vouches, karma decay against a fixed supply pool, credit emission,
 transaction fees, AVL+ state root with light-client proofs, libp2p networking
-with header-first sync, split mining, demo UI.
+with whole-block sync and header-scored fork choice, split mining, demo UI.
 
 Deferred to future protocol versions: credit sinks (ads, boosts, tips), reply
 earning, karma-proportional PoW, storage pruning for lean nodes, view keys,

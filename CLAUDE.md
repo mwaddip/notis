@@ -41,7 +41,7 @@ Six packages, in dependency order:
 - `@dagsocial/wire` — stream framing (VLQ, blake2b checksums, magic bytes).
 - `@dagsocial/validation` — pure stateless checks: PoW, signatures, block structure, Merkle roots.
 - `@dagsocial/nipopow` — NiPoPoW proofs over ordering-block headers: the proof codecs, `verifyProof`, `compareProofs`, `proveWithReader`. **Pure functions only.**
-- `@dagsocial/net` — libp2p + Gossipsub relay, header-first sync, peer management.
+- `@dagsocial/net` — libp2p + Gossipsub relay, whole-block sync, peer management.
 - `@dagsocial/node` — Express server, PoW, verifier, SQLite store, UTXO engine, AVL+ state root, block creator, demo UI.
 
 Two tools live under `tools/` — in the workspace by the `tools/*` glob, so in `pnpm -r test`:

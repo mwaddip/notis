@@ -7,7 +7,7 @@
 ## Scope
 
 libp2p-based peer-to-peer networking for DAGsocial. Owns: wire framing,
-handshake, header-first historical sync, peer discovery,
+handshake, historical sync of whole ordering blocks (fork choice scores header pages), peer discovery,
 ordering block gossip, UTXO transaction relay, and peer penalty management.
 
 Depends on `@dagsocial/wire` for ByteReader/ByteWriter/VLQ/frame encode-decode
@@ -155,7 +155,7 @@ to the envelope structure (not the message bodies).
 | Code | Name | Direction | Description |
 |------|------|-----------|-------------|
 | 1 | `Handshake` | both | Exchange after libp2p identify |
-| 2 | `SyncInfo` | both | Chain tip + recent header anchors |
+| 2 | `SyncInfo` | both | Chain tip height |
 | 3 | `Inv` | both | "I have these objects" — type + ID list |
 | 4 | `ModifierRequest` | → | "Send me these objects" |
 | 5 | `ModifierResponse` | ← | Serialized objects |
@@ -307,7 +307,7 @@ that message only, never the loop.
 **Resource limits (untrusted counts and sizes).** Inbound array counts are capped **inside the
 codecs, before the first element is read**: `ids` / `modifiers` at `MAX_INV_IDS` — and at least 1,
 an empty `Inv`, `ModifierRequest` or `ModifierResponse` being malformed (no honest sender emits
-one) — `anchors` at `MAX_SYNC_ANCHORS`, `peers` at `MAX_PEERS_ENTRIES`, `capabilities` at
+one) — `peers` at `MAX_PEERS_ENTRIES`, `capabilities` at
 `MAX_CAPABILITY_ENTRIES`. The cap applies to what a peer *sends us*, not only to what we send.
 Raw stream reads are bounded by `MAX_STREAM_BYTES` (never buffer an unbounded
 attacker-controlled stream). Per-request serve work is bounded: handling a request must not be
@@ -375,51 +375,36 @@ body defects as deliberate:
 
 ---
 
-## Historical Sync (Header-First)
+## Historical Sync
 
-Sync uses four framed messages multiplexed over `/dagsocial/sync/1`.
+Sync moves **whole ordering blocks**: four framed messages multiplexed over `/dagsocial/sync/1` — a
+peer's tip height, an announcement of the block ids it holds above ours, a request for those ids, and
+the blocks themselves, byte-bounded. Every block a peer serves passes the node's apply funnel exactly
+as a gossiped one does (→ Sync Integrity). **Headers are read on one path only — fork choice**, which
+pages a competing peer's headers to find the fork point and to score the branch by verified work
+before a single block of it is fetched (NODE_INTERFACE → Fork choice decides on verified headers;
+→ Pull Requests). There is no header store and no headers-first download: a node holds headers for
+the blocks it applied and for nothing else.
+
 All messages are positional bodies wrapped in frames; layouts below.
 
-> ⚠ **PARTIAL — the section title itself is not accurate.** Sync is **not header-first**
-> and has **no body-download phase**; the watermark and durability protocol described
-> below is unimplemented. Two specific mechanisms documented here do not exist:
->
-> - **Common-ancestor discovery.** `anchors` are built (`getAnchors` in `net/src/node.ts`), sent
->   (`net/src/sync-machine.ts`), decoded (`net/src/sync-codec.ts`) and capped — and **never
->   read** by the receiver: the cap check counts them, nothing consumes their values. There is
->   no ancestor search. **Verified 2026-08-11.** Fork resolution instead asks a peer for a header
->   range over codes 14–17. Wiring anchors up would let divergence be discovered from the
->   `SyncInfo` both nodes already exchange — sketched, and not planned.
->
-> ⚠ **The "not header-first" claim above is also made in four places outside this file, and they
-> are not covered by this marker:** `CLAUDE.md:27`, `README.md:146`, `:331`, `:364`, and **this
-> contract's own opening line (`:10`)** all describe header-first sync as implemented. Fix them
-> together. `ARCHITECTURE.md` needs nothing — the phrase does not appear in it, despite two
-> separate items having booked it as the home of this prose. **When correcting a claim, re-derive
-> where it actually lives rather than inheriting the pointer.**
->
-> Per-mechanism status is marked below.
+> ⚠ **AHEAD OF CODE — 2026-08-29.** `SyncInfo` still carries `tipBlockId` and up to `MAX_SYNC_ANCHORS`
+> anchors — sent, decoded, read by nothing — and fork choice still asks for one forty-header window
+> from the trigger's height rather than paging from our tip. The reorg-horizon unit's net and node
+> dispatches.
 
 ### SyncInfo (code 2)
 
 ```
-vlqU(tipHeight) ‖ hexN(tipBlockId, 32) ‖ arr( vlqU(height) ‖ hexN(blockId, 32) )
+vlqU(tipHeight)
 ```
 
-`tipHeight` and every anchor `height` are ≤ `MAX_ADVERTISED_HEIGHT`. At most `MAX_SYNC_ANCHORS`
-(4) anchors — the locator set below is the whole domain — and zero is legal (a genesis-height
-chain has nothing to anchor). A node with no blocks at all sends `tipHeight` 0 with `tipBlockId`
-= `GENESIS_PREV_BLOCK_HASH` — the same all-zeros id genesis's `prevBlockHash` carries — a
-sentinel compared by nothing today.
+`tipHeight` is ≤ `MAX_ADVERTISED_HEIGHT`. A node with no blocks at all sends `0`.
 
-The receiver reads `tipHeight` — the whole of the sync decision. `tipBlockId` and the anchors'
-contents are carried for the header store and compared by nothing today. No cumulative-work field is carried: the sync decision is `tipHeight`'s alone,
-and fork choice compares work over the verified segment it is handed (`NODE_INTERFACE → Fork
-choice decides on verified headers`), never over a peer's claim about its own chain.
-
-Anchors at heights `[tipHeight, tipHeight - 16, tipHeight - 128, tipHeight - 512]`
-(fewer if chain is shorter). They are the locator for the best common point that a persistent
-header store would search — unbuilt, so no receiver runs that search today.
+The receiver reads `tipHeight` — the whole of the message and the whole of the sync decision. No
+cumulative-work field is carried and no block id: the sync decision is `tipHeight`'s alone, and fork
+choice compares work over the header pages it verifies itself (`NODE_INTERFACE → Fork choice decides
+on verified headers`), never over a peer's claim about its own chain.
 
 ### Inv (code 3)
 
@@ -524,9 +509,8 @@ one exchange and stay at one exchange per poll period — never an unbounded pin
 send on *entering* `syncing` and the progress send (Sync bullet below) are not replies and
 are bounded by their own triggers: one per phase transition, one per advancing batch.
 
-An empty anchor list means a from-genesis peer — continuation starts at
-height 1. This bidirectional pattern ensures nodes serve peers behind them,
-not just consume.
+A peer reporting height 0 gets a continuation from height 1. This bidirectional pattern ensures
+nodes serve peers behind them, not just consume.
 
 ### Sync State Machine
 
@@ -548,13 +532,17 @@ pick_sync_peer() → sync_from_peer() → backfill() → synced()
   to inbound-only when no outbound candidate exists — eclipse resistance prefers the
   connections we chose; the fallback keeps a node nobody dials syncing. A candidate is only
   ever above our own height, switch targets included.
-  ⚠ **Height is the pick's measure, and under a moving target height is not work**
-  (`MINING_INTERFACE → Difficulty Schedule`): a partitioned lone miner's branch has its difficulty
-  fall to its hashrate and grows at the main chain's height rate with a fraction of its work, so a
-  fresh joiner that dials both can pick the light chain and — its fork deeper than `MAX_REORG_DEPTH` —
-  never leave it. Headers-first sync scoring a peer's header chain by verified work before any body
-  is pulled is the closing mechanism, unbuilt (→ Historical Sync); until it lands the operator
-  remedy is a fresh database and a bootstrap to a known-good peer
+  ⚠ **Height is the pick's measure, and it is a liveness heuristic, not chain choice.** Under the
+  absolute schedule (`MINING_INTERFACE → Difficulty Schedule`) a branch's height at time *t* is
+  `schedule(t) + RETARGET_HALFLIFE_BLOCKS · log₂(h / H_a)` — its lag is fixed by its hashrate `h`
+  against the anchor's — so of two branches sharing an anchor the taller is the heavier in steady
+  state; height and work disagree only in a transient (a chain resuming after a pause mines its owed
+  blocks at the floor and is taller hours before it is heavier). **A pick is never final inside the
+  horizon**: whichever chain a joiner syncs first, the first non-extending block it is handed from the
+  other opens fork choice, which scores that branch to its tip and reorgs to it when it is heavier
+  (`NODE_INTERFACE → Fork choice decides on verified headers`), down to `maxReorgDepth` below the tip
+  (`TYPES_INTERFACE → Chain reorganisation`). Past the horizon a wrong pick is permanent, and the
+  operator remedy is a fresh database and a bootstrap to a known-good peer
 - **Sync:** send SyncInfo, process Inv → request headers, validate, append
   to chain, repeat. A batch that strictly advanced the chain sends the next SyncInfo to the
   sync peer immediately (it bypasses the per-peer floor; its bound is the advance itself), so
@@ -623,34 +611,6 @@ pick_sync_peer() → sync_from_peer() → backfill() → synced()
   receipt of bytes or non-advancing modifiers. A peer feeding junk
   therefore stalls out and is rotated away within one stall window; it
   cannot pin sync indefinitely.
-
-### Watermarks
-
-Three watermarks tracked:
-
-| Watermark | Meaning |
-|-----------|---------|
-| `downloadedHeight` | Highest height with all headers stored |
-| `stateAppliedHeight` | Highest height where ordering blocks applied to UTXO state |
-| `chainHeight` | Best chain tip height |
-
-During sync, advance `downloadedHeight`. A block carries its whole body, so
-blocks apply as they arrive, advancing `stateAppliedHeight`.
-
-Invariant: `stateAppliedHeight <= downloadedHeight <= chainHeight`.
-
-### Cross-DB Durability
-
-Flush ordering on sync checkpoint:
-
-1. `validator.flush()` — state DB fsync (`Durability::Immediate`)
-2. `store.setValidatedHeight(height)` — modifiers DB chain_meta write
-3. `store.flush()` — modifiers DB fsync
-
-Order is load-bearing. Crash between (1) and (2): state ahead of recorded
-height — startup reconciliation trusts state within a threshold window.
-Crash between (2) and (3): modifiers DB already has validated_height
-durably recorded.
 
 ### Block Body Download
 
@@ -1077,7 +1037,7 @@ the CBOR would have been the band-aid; the root cause was the second dialect, so
 - ⚠ **Zero bytes and `vlqU(0)` are DISTINCT and consumers depend on it.** Zero bytes is the handler's
   *"I cannot answer"*; `vlqU(0)` is *"no items"*. Collapsing them is a live defect — see below.
 - **`MAX_CHAIN_RESPONSE_ITEMS = 400`, enforced on BOTH sides**, and the receive cap is
-  `min(requested, 400)` **checked before the first element is read**. A peer answering a 40-header
+  `min(requested, 400)` **checked before the first element is read**. A peer answering a 400-header
   request with 18,900 headers is not answering the question, and the count is a `vlqU` the peer
   chooses. ⚠ **`readArr` is the wrong primitive here** — it bounds only at `MAX_ARRAY_LENGTH` (2²⁴),
   three orders of magnitude above the 400 this path allows, and it cannot enforce a caller's cap
@@ -1216,24 +1176,31 @@ membership test is the thing standing between a relayed hint and a counterparty 
 | `requestHeaders(start, max, peerId)` | `(number, number, string) => Promise<BlockHeader[]>` | Request block headers for fork resolution (codes 14/15) |
 | `requestBlocks(start, end, peerId)` | `(number, number, string) => Promise<OrderingBlock[]>` | Request full blocks for reorg (codes 16/17) |
 | `requestPostBodies(wanted, peerId)` | `({ id: string; contentHash: Uint8Array }[], string) => Promise<{ id: string; content: string }[]>` | Request post bodies by id from one peer (`ModifierRequest` type 103 on the sync stream, codes 4/5); the caller supplies each id's commitment. Answers carry only the ids the peer holds; each body is decoded and verified against its commitment before it is returned — a mismatch or an undecodable body is a misbehaviour penalty and is dropped — and **the verified bodies are returned to the caller, which stores them** (the node's placeholder pulls after `synced`); `onPostBody` is the `backfill` phase's delivery path, not this call's |
+| `peerTipHeight(peerId)` | `(string) => number \| null` | The height the sync machine retains for an Active peer — the handshake `chainHeight`, refreshed by every inbound `SyncInfo` (→ Sync State Machine, Pick); `null` for a peer it does not retain. Fork resolution's re-score memo reads it (NODE_INTERFACE → Fork choice decides on verified headers): a branch scored lighter is not walked again until this number moves. A read of retained state, no message |
 
 ⚠ **Both chain queries THROW rather than return empty** on an unexpected frame
 code or a malformed body — a decoded-but-empty answer is a statement ("no blocks"),
 a throw is not, and the caller must be able to tell them apart. `requestBlocks`'
-result reaches `reorg(forkHeight, newBlocks)` only after node has checked it
-against the verified header segment — one block per header, each hashing to the
-verified hash at its height (NODE_INTERFACE → Fork choice decides on verified
-headers); a short or substituted answer is refused there and penalised through
+result reaches `reorg(forkHeight, newBlocks)` only after node has checked every page of it
+against the verified hashes — heights consecutive from the first still missing, each block
+hashing to the verified hash at its height (NODE_INTERFACE → Fork choice decides on verified
+headers); a page adding nothing or a substituted block is refused there and penalised through
 `penalizePeer` (Peer Penalty System).
 
-**Fork resolution asks for a segment, not a tip.** `requestHeaders(start, MAX_REORG_DEPTH · 2)`
-from the triggering block's height down is scored as a verified prefix of the peer's chain; the
-block range then requested is `forkHeight + 1 … forkHeight + n` for the `n` headers that verified,
-never a height the peer claimed. ⚠ **A prefix is scored, not the branch**: under a moving target
-(`MINING_INTERFACE → Difficulty Schedule`) a competing branch whose first `MAX_REORG_DEPTH · 2`
-headers are lighter than our chain above the fork can be heavier as a whole and be refused — correct
-in the safe direction, never a reorg to a lighter chain — and closed by headers-first sync scoring
-the branch to its tip (→ Historical Sync, unbuilt).
+**Fork resolution pages, and asks for nothing it has not verified.** The fork point is found by
+paging the peer's headers **down from our own tip** — `requestHeaders(ourTip, MAX_CHAIN_RESPONSE_ITEMS)`,
+then from the lowest height seen − 1 — over at most `⌈maxReorgDepth / 400⌉` pages; the competing
+branch is then scored **upward** in pages of the same query, each verified against the anchor the
+previous page returned, until it is heavier than ours above the fork or it ends (NODE_INTERFACE → Fork
+choice decides on verified headers). The block range then requested is `forkHeight + 1 … forkHeight +
+n` for the `n` headers verified, fetched in pages of `requestBlocks`, each page checked for identity as
+it lands — never a height the peer claimed. The descending serve arm and its clamp to the peer's tip
+(→ `GetHeaders` / `GetBlocks` responses) are what the upward walk relies on: a request above the tip
+answers from the tip down, so the trimmed page is the next 400 or the remainder.
+
+> ⚠ **AHEAD OF CODE — 2026-08-29.** `resolveFork` asks `requestHeaders(block.height, 40)` once from the
+> trigger's height and scores that window; `requestBlocks` is one call; `peerTipHeight` does not exist.
+> The reorg-horizon unit's node and net dispatches.
 
 **The gossip source is what fork resolution asks.** `resolveFork` takes the peer that relayed the
 competing block and uses it as the counterparty when it is still in `getConnectedPeers()`, falling back
@@ -1248,7 +1215,7 @@ offer.
 | `setBlocksHandler(cb)` | `((block: OrderingBlock, fromPeerId: string) => boolean) => void` | Handler for blocks received during sync. `fromPeerId` is the peer whose response carried the block. The return is the batch's **continue** signal — `true` for a block the handler applied or already held, `false` for one it rejected or one that extends nothing (node then resolves the fork with `fromPeerId` as counterparty) — and `appendBlocks` **stops the batch at the first `false`**: the blocks after it are chained to the one that did not apply. Progress is still measured by chain height (audit M-10), never by this return |
 | `setHeadersHandler(cb)` | `((height: number) => OrderingBlock \| null) => void` | Provider for `GetHeaders` / `GetBlocks` (codes 14, 16) and for the blocks a `ModifierResponse` serves (`serializeOrderingBlock` re-encodes the provider's block). Returns the whole block, not the header: one provider serves both query responses — `Headers` reads `.header`, `Blocks` returns the block. **Never the tip height, never a block id** — those are the rows below |
 | `setChainHeightProvider(cb)` | `(() => number) => void` | Provider for the chain tip height — the one number behind the handshake `chainHeight`, `SyncInfo.tipHeight`, every `peerHeight > ourHeight` comparison, the stall-progress measure and the served chain query's tip. **One read is one provider call**: `SyncStore.chainHeight()` returns the provider's value and never walks the chain through the headers provider (ARCHITECTURE → Correct and cheap are separate obligations). Unset → `0`, as a node with no chain. The node hands over its store's `MAX(height)` — the same tip its block creator and fork resolution read — so the height `net` advertises is the height the node mines on |
-| `setBlockIdProvider(cb)` | `((height: number) => string \| null) => void` | Provider for the block id at a height — behind the tip id and anchors every `SyncInfo` carries and the ids an Inv continuation announces to a peer behind us. The id is the store's own, written at block application; `net` never computes an id from a header. **One id is one provider call**, a point read that decodes no block (ARCHITECTURE → Correct and cheap are separate obligations). Unset → `null` — no tip id, no anchors, nothing to announce |
+| `setBlockIdProvider(cb)` | `((height: number) => string \| null) => void` | Provider for the block id at a height — behind the ids an Inv continuation announces to a peer behind us. The id is the store's own, written at block application; `net` never computes an id from a header. **One id is one provider call**, a point read that decodes no block (ARCHITECTURE → Correct and cheap are separate obligations). Unset → `null` — nothing to announce |
 | `setHeightByBlockIdProvider(cb)` | `((id: string) => number \| null) => void` | Provider for the height holding a block id, or `null` for an id not on our chain — the read that filters an inbound `Inv` (an id we hold or already requested is not re-requested) and resolves a `ModifierRequest`'s ids to the heights it serves from. **One id is one provider call, never a chain walk**: a message of k ids costs k point lookups, and no message rebuilds an id index of the whole chain (ARCHITECTURE → Correct and cheap are separate obligations). Unset → `null` — every id unknown, nothing served |
 | `onSyncComplete(cb)` | `(() => void) => void` | Fired on every entry into the `synced` phase |
 | `setPostBodyProvider(cb)` | `((postId: string) => string \| null) => void` | Provider for the `MODIFIER_POST_BODY` serve arm: the body this node holds for the id, or `null` — served locally or omitted, never relayed (→ Local-Serve-Before-Relay). |
@@ -1400,8 +1367,6 @@ import `NetworkProfile`, and reads no environment variable for them.
 - Stream protocols carry framed messages; Gossipsub topics carry the object's
   own positional wire encoding, unframed
 - Sync is bidirectional — nodes serve peers behind them, not just consume
-- Watermark invariant: `stateAppliedHeight <= downloadedHeight <= chainHeight`
-- Flush ordering: state → validated_height → modifiers (same order every time)
 - Unknown message codes and peer capabilities are preserved, not rejected
 - PeerDb self-address filter prevents self-dial loops
 - Bogus addresses filtered silently; malformed Peers trigger permanent ban
