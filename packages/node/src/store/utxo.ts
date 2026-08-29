@@ -785,6 +785,39 @@ export function getVouchEscrowsFor(voucherId: Uint8Array): VouchEscrowBox[] {
   return rows.map((r) => rowToBox(r) as VouchEscrowBox);
 }
 
+const ESCROW_FOR_WHERE =
+  `box_type = 'vouch_escrow' AND spent_at_block IS NULL AND json_extract(extra_data, '$.owner') = ?`;
+export function getVouchEscrowsForPage(
+  voucherId: Uint8Array,
+  page: { limit: number; after?: string },
+): { rows: VouchEscrowBox[]; next: string | null; count: number } {
+  const db = getDb();
+  const hex = pubkeyToHex(voucherId);
+  const afterClause = page.after ? ` AND id > ?` : '';
+  const params: unknown[] = [hex];
+  if (page.after) params.push(page.after);
+  params.push(page.limit + 1);
+
+  const rows = db
+    .prepare(
+      `SELECT * FROM utxo_boxes WHERE ${ESCROW_FOR_WHERE}${afterClause} ORDER BY id LIMIT ?`,
+    )
+    .safeIntegers()
+    .all(...params) as UtxoRow[];
+
+  const hasMore = rows.length > page.limit;
+  const resultRows = hasMore ? rows.slice(0, page.limit) : rows;
+  const escrows = resultRows.map((r) => rowToBox(r) as VouchEscrowBox);
+  const last = resultRows[resultRows.length - 1];
+  const next: string | null = hasMore && last ? last.id : null;
+
+  const countRow = db
+    .prepare(`SELECT COUNT(*) AS cnt FROM utxo_boxes WHERE ${ESCROW_FOR_WHERE}`)
+    .get(hex) as { cnt: number };
+
+  return { rows: escrows, next, count: countRow.cnt };
+}
+
 /**
  * Does this voucher hold an unreleased escrow?
  *

@@ -51,6 +51,7 @@ export {
   getBondsInvitedAt,
   getBondBoxesPage,
   getVouchEscrowsFor,
+  getVouchEscrowsForPage,
   getVouchEscrowsReleasableAt,
   hasActiveVouchEscrow,
   getLikeCarryBox,

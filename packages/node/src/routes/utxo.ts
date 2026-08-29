@@ -75,7 +75,7 @@ export function createRouter(deps: UtxoDeps): Router {
     if (record) {
       if (isRoot(record)) {
         invitesAvailable = null;
-      } else if (record.memberSinceBlock > 0) {
+      } else if (isMember(record)) {
         const nr = deps.getNetworkRecord();
         const d = membershipBar(nr.memberCount, deps.membershipBarMultiplier);
         invitesAvailable = Math.max(0, Math.floor(record.memberVouches / d) - record.invitesUsed);

@@ -338,7 +338,7 @@ const REPLY_AUTHOR_SHARE = 1n;
  * default rather than a rule, and it is the one value the mirror checks the
  * node would accept.
  */
-let INVITE_BOND_DEFAULT = 25n;
+let INVITE_BOND_DEFAULT = null;
 /**
  * The vouch stake, pinned at cast — NODE_INTERFACE → "Vouch transition rules".
  * A vouch is one vote and always stakes exactly this, so it is not a client
@@ -2628,6 +2628,10 @@ document.getElementById('createInviteBtn').addEventListener('click', async () =>
     // Advisory — `createInvite` owns the verdict, and it also owns the one
     // rejection this page cannot predict: the named key already being an
     // account. The bond is the whole cost; the claim mints the rest.
+    if (INVITE_BOND_DEFAULT === null) {
+      result.innerHTML = `<span class="result-msg err">Invite bond not loaded — /status did not answer</span>`;
+      return;
+    }
     if (karmaBox.effective < INVITE_BOND_DEFAULT) {
       result.innerHTML = `<span class="result-msg err">Insufficient karma: the bond is ${INVITE_BOND_DEFAULT}, you hold ${karmaBox.effective}</span>`;
       return;
