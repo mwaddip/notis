@@ -72,6 +72,7 @@ export interface KarmaPage {
   next: string | null;
   lastActivityBlock: number;
   lastDecayBlock: number;
+  lifetimeLikesReceived: string;
   height: number;
 }
 

@@ -105,6 +105,7 @@ describe('post-price', () => {
     for (const node of mesh.nodes) {
       const ak = await getKarma(node, alice.publicKeyHex);
       expect(BigInt(ak.total)).toBe(aliceBefore - POST_PRICE_THREAD);
+      expect(ak.lifetimeLikesReceived).toBe('0');
     }
 
     // ---- circulation drops by POST_PRICE_THREAD ----
@@ -177,6 +178,8 @@ describe('post-price', () => {
       expect(BigInt(ak.total)).toBe(
         aliceTotalBeforeAccrual + BigInt(LIKES_PER_KARMA_PAYOUT - 1),
       );
+      // ARCHITECTURE → The post price: "it moves no like counter"
+      expect(ak.lifetimeLikesReceived).toBe('0');
     }
 
     // ---- the reply accruals moved no like counter ----
@@ -212,6 +215,8 @@ describe('post-price', () => {
       if (isPost(p!)) {
         expect(p.likeCount).toBe(1);
       }
+      const ak = await getKarma(node, alice.publicKeyHex);
+      expect(ak.lifetimeLikesReceived).toBe('1');
     }
   });
 });

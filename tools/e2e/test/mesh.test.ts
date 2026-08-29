@@ -99,7 +99,8 @@ describe('mesh', () => {
       expect(BigInt(bk.total)).toBe(bondAmount);
     }
 
-    // ---- thread ----
+    // ---- thread + reply: a reply spends its thread's change with no block
+    // between — NODE_INTERFACE → Post transactions ----
     const aliceK = (await getKarma(miner, alice.publicKeyHex))!;
     const thread = buildThreadTx(
       alice,
@@ -108,6 +109,16 @@ describe('mesh', () => {
       aliceK.height,
     );
     const threadRes = await postPost(miner, thread.json, thread.content);
+
+    const reply = buildReplyTx(
+      alice,
+      [thread.outputs[0]!],
+      'reply to mesh',
+      threadRes.postId,
+      alice.publicKeyHex,
+      aliceK.height,
+    );
+    const replyRes = await postPost(miner, reply.json, reply.content);
 
     await confirm(
       async () => {
@@ -136,28 +147,6 @@ describe('mesh', () => {
         if (isPost(p!)) expect(p.blockHeight).toBe(firstThread.blockHeight);
       }
     }
-
-    // ---- reply: parent must be confirmed so the node resolves the author ----
-    const aliceKForReply = (await getKarma(miner, alice.publicKeyHex))!;
-    const reply = buildReplyTx(
-      alice,
-      karmaBoxes(aliceKForReply),
-      'reply to mesh',
-      threadRes.postId,
-      alice.publicKeyHex,
-      aliceKForReply.height,
-    );
-    const replyRes = await postPost(miner, reply.json, reply.content);
-
-    await confirm(
-      async () => {
-        const p = await getPost(miner, replyRes.postId);
-        return p !== null && isPost(p) && p.status === 'confirmed';
-      },
-      miner,
-      mesh.miningSecret,
-    );
-    await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
 
     const replyPosts = await Promise.all(
       mesh.nodes.map((n) => getPost(n, replyRes.postId)),
