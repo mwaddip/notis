@@ -403,10 +403,6 @@ created, never decremented. The bond settles `INVITE_PROBATION_BLOCKS` after
 creation, so nothing stays open. `expiresAtHeight` on the response is the
 **mempool** entry's expiry.
 
-> ⚠ **AHEAD OF CODE — 2026-08-29.** The route and the arm check the bond, the karma and the
-> invitee's record; neither reads the inviter's standing. Step 0, the 400 and `invitesUsed` are
-> the earned-invites unit's node work.
-
 ### Vouches
 
 | Method | Path | Handler | Description |
@@ -425,11 +421,6 @@ pair-scoped mirror). Each is a consensus rule of the cast arm (→ Vouch transit
 escrow gate — no cast while an unspent escrow names the voucher — is also the arm's, mirrored
 here the same way. There is no one-vouch-at-a-time rule and no voucher-scoped pending check: a
 member holds as many live vouches as they have karma to stake.
-
-> ⚠ **AHEAD OF CODE — 2026-08-29.** The tree's `castVouch` refuses any second live vouch and any
-> pending one keyed on the voucher alone, and admits a resident, a self-vouch and an unknown
-> target. The four refusals, the paged `?voucher=` arms and the pair-keyed `hasPendingVouch` are
-> the earned-invites unit's node work.
 
 > ✅ **The demo UI builds and signs both transactions.** `buildVouchTx` and `buildUnvouchTx` in
 > `node/public/index.html` construct them, `signTxId` signs, and both handlers POST `{ tx }`.
@@ -556,9 +547,6 @@ predicate `memberSinceBlock > 0 ∧ memberVouches ≥ memberBar` evaluated by th
 (a bar that rose after invites were spent can put the difference below zero), `0` for a resident —
 a lapsed member included — and **`null` for a root** — unbounded, not zero. A client deriving either from the
 five fields holds a second implementation of a consensus predicate, the mirror class.
-
-> ⚠ **AHEAD OF CODE — 2026-08-29.** The view serves the four-field record. The seven fields are
-> the earned-invites unit's node work.
 
 ### Credits
 
@@ -701,16 +689,12 @@ the chain) is not served. The prover behind it is `Nipopow prover` below.
 > in (→ Legal box transitions) is per-network, so a client building an invite reads the floor here
 > rather than holding one network's constant — as decimal strings, being `bigint` amounts.
 >
-> ⚠ **AHEAD OF CODE — 2026-08-29.** The two bond fields are the earned-invites unit's node work,
-> and the demo UI's invite builder reads its bond from them.
 
 > `membership` is the network record read once: `memberCount` is `N`, `memberBar` is `D(N)` and
 > `memberLikesBar` is `Y(N)` (`ARCHITECTURE → Membership`) — the bar a newcomer faces and the
 > divisor of every member's invite budget, served so a client shows them rather than reproducing
 > `icbrt` and the profile's multiplier.
 >
-> ⚠ **AHEAD OF CODE — 2026-08-29.** No network record exists; the field is the earned-invites
-> unit's node work.
 
 #### Three karma sets, and none derives from another
 
@@ -1883,9 +1867,6 @@ There is **no other legal bond or invite shape**. In particular:
   `getBondsSettlingAt`'s shape. `checkTransitions` needs no karma-sum read
   and no settle height.
 
-> ⚠ **AHEAD OF CODE — 2026-08-29.** The tree's arm admits any karma holder as inviter and keeps
-> no `invitesUsed`. The budget rule and the counter are the earned-invites unit's node work.
-
 ### Karma transition rules (P2-B phase 4)
 
 ⛔ **The set of box types this arm admits as outputs is the TRANSITION set, and it is not the set
@@ -2051,10 +2032,6 @@ inside the network's reported supply.
   bound. There is no cap on a voucher's live vouches; the escrow gate above is
   what rate-limits re-vouching after any withdrawal.
 
-> ⚠ **AHEAD OF CODE — 2026-08-29.** The tree's cast arm admits any karma holder, any 32-byte
-> target, a self-vouch and a duplicate pair, and no counter exists. The four rules and
-> `memberVouches` are the earned-invites unit's node work.
-
 ### Membership pass
 
 Membership is a predicate on the identity record — `member(m) ⟺ memberSinceBlock > 0 ∧
@@ -2108,11 +2085,6 @@ makes the lapsed member's vouches eligible for the lapse leg of the **next** blo
 (→ The settlement transaction), which consumes them and lowers younger members' counts, whose
 lapse that block's pass records; the following settlement withdraws theirs. A counted vouch
 always runs old → young, so the cascade terminates and never reaches a root.
-
-> ⚠ **AHEAD OF CODE — 2026-08-29.** The tree has no pass, no network record and no membership
-> fields. The pass, the record and the pinned end-of-block order are the earned-invites unit's
-> node work; `node/test/services/membership.test.ts` pins the set, the fixed bar, the age rule,
-> the lapse, the re-qualification, the cascade and the journal round trip.
 
 ### Karma decay (virtual, squared on touch)
 
@@ -2547,10 +2519,6 @@ is stored. Each consumption subtracts one from the target's `memberVouches` iff 
 the same function the unvouch uses, and the membership pass of the same block records the lapses
 that follow (→ Membership pass). The list is captured before the apply loop on both sides, like
 the escrows and decay.
-
-> ⚠ **AHEAD OF CODE — 2026-08-29.** The tree's settlement has no lapse leg. The leg, in the
-> positions above on both sides, is the earned-invites unit's node work, and
-> `settlement-leg-order.test.ts` re-pins both orders with it firing.
 
 ⛔ **`CoinbaseOutput` is not a block-body concept.** Coinbase outputs are outputs of this
 transaction; the block body has no `coinbaseOutputs` field and `utxoTxRoot` has no `'coinbase'`
@@ -3330,12 +3298,7 @@ still-live reason.
 
 **Lifecycle:** created on first karma receipt, on the first like received (the
 lifetime-counter write), or at genesis seeding for a root; **never deleted** in normal
-operation — only by rollback.
-
-> ⚠ **AHEAD OF CODE — 2026-08-29.** The encoder writes five fields and the table holds five
-> columns. Rows 6–10, the columns and the writers are the earned-invites unit's node work; all three
-> `genesisStateRoot` pins move with the layout and the network record, and the types unit re-pins
-> them by three independent derivations. Deleting at zero balance would keep the tree
+operation — only by rollback. Deleting at zero balance would keep the tree
 smaller but would require revert to resurrect records with their exact prior
 values; unbounded-but-simple is the deliberate choice at this stage.
 
@@ -3497,10 +3460,6 @@ NULL)` — one row, present from seeding on.
 
 *Alternative considered:* a `memberCount` field on the karma pool box. Rejected — the pool box
 is "no owner, no trailing fields" by contract and a population count is not a value.
-
-> ⚠ **AHEAD OF CODE — 2026-08-29.** Nothing in the tree carries this entity. The record, its key,
-> its value, its journal entry, its genesis seeding and its proof-endpoint kind are the
-> earned-invites unit's node work; `NETWORK_KEY_DOMAIN` is its types work.
 
 ### Vouch escrows
 
@@ -4148,10 +4107,6 @@ silently order-dependent digest. *(Gap found by the phase B session; pinned
 here because the contract previously stated both rules without saying which
 function owns the collapse.)*
 
-> ⚠ **AHEAD OF CODE — 2026-08-29.** The tree holds two kinds; `0x81`, the third arm of the
-> kind-dispatching decoder and `kind: 'network'` at the proof endpoint are the earned-invites
-> unit's node work, and the light client's AVL decoder meets the tag in the same unit.
-
 `applyBlockMutations`' `recordPuts` parameter is **optional and defaults to
 empty**, so the many existing four-argument call sites keep working. That
 default is a convenience for tests only: **every production caller MUST pass the
@@ -4266,11 +4221,6 @@ and compared to the pin as above. **Then**, on the boot path, a node whose netwo
 never set a member. The order is what keeps mainnet's `genesisStateRoot` derivable and pinnable
 while its committee is still empty: the pin test seeds and reads the root; only a running node
 trips.
-
-> ⚠ **AHEAD OF CODE — 2026-08-29.** The tree seeds no root record and no network record and
-> refuses nothing on an empty committee. The earned-invites unit's node work; all three
-> `genesisStateRoot` pins move — the record layout on the two faucet networks, the network record
-> on every network — and the types unit re-pins them by three independent derivations.
 
 ⚠ **Two things this does NOT cover.** A store whose genesis is already committed is never
 re-checked, so flipping `NETWORK_TYPE` against one is caught at the chain link when it meets

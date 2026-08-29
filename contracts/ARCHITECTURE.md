@@ -644,11 +644,6 @@ until it is released, exactly as their own unvouch would. Nothing node-local rem
 the leg reads the vouch boxes and identity records of pre-body state (NODE_INTERFACE → The
 settlement transaction), and a voucher who re-qualifies before the leg reaches a box keeps it.
 
-> ⚠ **AHEAD OF CODE — 2026-08-29.** The tree admits a cast from any karma holder, bounds a voucher
-> to one live vouch in the service layer, admits any 32 bytes as a target and leaves self-vouch to
-> policy; it has no lapse leg. The four cast rules, the counter and the lapse leg are the
-> earned-invites unit's node work, `MAX_LAPSE_WITHDRAWALS_PER_BLOCK` its types work.
-
 #### Box lifecycle
 
 All box transitions are atomic — a transaction consuming N boxes and creating M
@@ -1246,13 +1241,6 @@ forever; any diversity view beyond `GET /vouches?target=` — a client's, not th
 governance and voting — deferred, kept buildable by version-keyed validation (§Protocol
 Versioning).
 
-> ⚠ **AHEAD OF CODE — 2026-08-29.** The tree has no tier: any karma holder invites and vouches,
-> `IdentityRecord` carries four fields, no network record exists and nothing computes `D`. The
-> earned-invites unit builds it — types (`icbrt`, `membershipBar`, the constants, the profile
-> field, the domain tag), node (the record's five fields, the network record, the two arms, the
-> lapse leg, the membership pass, the views), types again (the genesis roots) and e2e — and this
-> marker retires in its contract pass.
-
 ---
 
 ## Invite System
@@ -1334,10 +1322,6 @@ the circle is **`+0.4·B`** (§Invite parameters) and `S` runs the next cycle. W
 inviting, `S` is a leaf: to reuse its `3.4B` the circle must like `M` back at the 20 % burn and
 closes at `−0.28·B`, and without recycling the leaf count is bounded by `M`'s own karma. Any karma
 inflow that requires no distinct human's decision is farmable; the vouch is the human's decision.
-
-> ⚠ **AHEAD OF CODE — 2026-08-29.** The tree's invite-create arm reads the bond range, the karma
-> and the invitee's record and nothing about the inviter's standing; `invitesUsed` does not exist.
-> The budget check and the counter are the earned-invites unit's node work.
 
 ### What the grant carries, and what it does not
 
@@ -1520,11 +1504,6 @@ committee is still empty; only a running node trips. The committee set itself is
 not a register row: `CONSTANTS → Excluded` lists it with the identity fields, because it names a
 network rather than tunes one.
 
-> ⚠ **AHEAD OF CODE — 2026-08-29.** The tree's seeding writes no root fields and no network
-> record, and a chain starts on an empty committee with nothing failing loudly. The roots, the
-> record and the refusal are the earned-invites unit's node work; all three profiles carry an
-> empty committee, so the faucet is the one root on the two networks that seed it.
-
 **A committee credit grant and a committee dissolution period are not part of the design as it
 stands.** Their parameters — `GENESIS_CREDITS_PER_MEMBER` / `genesisCreditsPerMember` and
 `BOOTSTRAP_PERIOD_BLOCKS` / `bootstrapPeriodBlocks` — were removed 2026-08-21 (user ruling): no
@@ -1559,6 +1538,7 @@ outstanding against the live node, which still runs a pre-Spec-B chain:
 | Spec G | box ids (provenance-derived) |
 | P2-D | sub-block and block-body CBOR shape, post-lock box ids |
 | **the post price** (2026-08-29) | the box-type tag table (`post_lock` retired, `karma_price` added); every settlement that carried a lock leg |
+| **earned invites** (2026-08-29) | `IdentityRecord` rows 6–10, the network record (a leaf on every network) and all three genesis roots; every settlement that carries a lapse leg; the mempool's `vouch_target` column |
 | **positional wire format** (Phases 0–8, shipped 2026-08-11) | **every committed byte** |
 
 > ⚠ **Wiping the AVL store alone is a fork trigger. Wipe chain and AVL store together, always.**
@@ -2640,6 +2620,10 @@ backfill — and a pruned post has no row (NODE_INTERFACE → Store Interface �
   > built rather than a gap. See §Likes.
 - Invite system: karma-bonded invites naming the invitee's key; the block's
   settlement grants the starting karma (§Invite System)
+- Membership: earned by older members' standing vouches and members' likes against a bar that
+  grows as the cube root of the member count, derived from the identity record and never stored;
+  only members and roots invite and vouch, a member's invites are a budget, and the settlement
+  withdraws a lapsed member's vouches (§Membership)
 - The post price: a post pays `POST_PRICE_THREAD` / `POST_PRICE_REPLY` into a `KarmaPriceBox` the
   block's settlement returns to the pool; a reply pays `REPLY_AUTHOR_SHARE` of it to the parent's
   author through the like accrual (§The post price)
