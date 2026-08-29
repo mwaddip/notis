@@ -127,12 +127,14 @@ refuses those — so the path should never trip it, and it is defended anyway.
 ```
 hasPendingLike(targetPostId: string, likerId: string): boolean
 countPendingInvites(inviterId: string): number
-hasPendingVouch(voucherId: string): boolean
+hasPendingVouch(voucherId: string, targetId: string): boolean
 ```
 
 SQL `EXISTS`/`COUNT` over the gate-metadata columns — never a bounded scan.
 These gates see every row regardless of pool size. Hex parameters compare
-against the columns exactly as stored.
+against the columns exactly as stored. `hasPendingVouch` is keyed on the pair: it mirrors one
+live vouch per `(voucher, target)` (`NODE_INTERFACE` → Vouch transition rules), and a voucher's
+other pending casts are no reason to refuse one.
 
 ### getPendingEntries
 

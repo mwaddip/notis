@@ -554,9 +554,19 @@ VouchBox {
 }
 ```
 
-A vouch is a 1-karma endorsement from one identity to another. Casting a vouch
+A vouch is a 1-karma endorsement from one **member** to another identity — the act of
+standing behind someone, and what membership is made of (§Membership). Casting a vouch
 consumes 1 karma from the voucher's KarmaBox and creates a VouchBox. The karma
 is escrowed — not burned, not transferred to the target.
+
+**Only a member casts, on an identity that holds a record, never on themselves, and once per
+pair** — four consensus rules of the cast arm (NODE_INTERFACE → Vouch transition rules). A
+resident's endorsement of anyone is their likes. There is **no cap** on how many identities one
+member stands behind at once (user, 2026-08-29): a member holds as many live vouches as they
+have karma to stake, one per `(voucher, target)` pair, since a duplicate pair would count one
+endorsement twice. A vouch naming a key with no `IdentityRecord` is refused because counting it
+would write that key's record, and a record is the invite bar (§Invite System) — one stranger's
+1-karma stake must not bar a key from ever being invited.
 
 **Withdrawal is instant, and that is a requirement rather than a side effect.**
 A voucher who concludes their target is untrustworthy stops endorsing at once:
@@ -582,7 +592,7 @@ unspent escrow names the voucher, and the escrow stands until the settlement at
 cooldown window however briefly each vouch is held — the anti-spam property,
 priced identically for a rapid cycler and a long-term voucher.
 
-Each identity may vouch for at most one target at a time. The minimum karma
+The minimum karma
 balance to cast a vouch is `VOUCH_MIN_BALANCE` (11) — **a balance, summed across
 the voucher's karma boxes, not the value of any single one.** Both halves hold
 in the engine: the cast arm reads the summed `getKarmaValue` at apply, so the
@@ -618,6 +628,26 @@ settlement transaction).
 ⛔ **The value is the BOX'S, never `VOUCH_KARMA_AMOUNT`.** The round trip is
 conservation-structural, not true by coincidence, and it must not depend on the
 cast's pin holding for the box in hand.
+
+**The settlement withdraws a lapsed member's vouches.** A vouch stands only while its voucher is
+a member: when a member lapses (§Membership), every live vouch they cast is withdrawn by the
+settlement — at most `MAX_LAPSE_WITHDRAWALS_PER_BLOCK` per block, ascending box id, in the
+unvouch shape exactly (TYPES_INTERFACE → Settlement caps):
+
+```
+lapse leg     VouchBox(V) → VouchEscrowBox(V, owner = voucherId,
+                                           releaseAtBlock = vouch.createdAtBlock + cooldown)
+```
+
+The stake returns to the voucher by the escrow leg above, and the escrow bars them from casting
+until it is released, exactly as their own unvouch would. Nothing node-local remembers a lapse:
+the leg reads the vouch boxes and identity records of pre-body state (NODE_INTERFACE → The
+settlement transaction), and a voucher who re-qualifies before the leg reaches a box keeps it.
+
+> ⚠ **AHEAD OF CODE — 2026-08-29.** The tree admits a cast from any karma holder, bounds a voucher
+> to one live vouch in the service layer, admits any 32 bytes as a target and leaves self-vouch to
+> policy; it has no lapse leg. The four cast rules, the counter and the lapse leg are the
+> earned-invites unit's node work, `MAX_LAPSE_WITHDRAWALS_PER_BLOCK` its types work.
 
 #### Box lifecycle
 
@@ -959,7 +989,10 @@ sidecars and no standalone like pool.
   at most `(x−1)/x` of it.
 
 Applying the transaction writes the `(liker, target)` **like-record** (journalled) and
-increments the target author's like count for this block.
+increments the target author's like count for this block — and, where the liker is a member at
+apply (`member(liker)` on the liker's record as it stands when the like applies), the author's
+member-like count, which `IdentityRecord.memberLikes` accumulates beside `lifetimeLikesReceived`
+(§Membership). A reply's marker moves neither count.
 
 ### Per-block accrual and settlement
 
@@ -1090,11 +1123,144 @@ tracked reservations (`TYPES_INTERFACE` → Tracked reservations).
 
 ---
 
+## Membership
+
+Membership is standing: **earned** by other members' live vouches and by members' likes,
+**held** while the vouches counted toward it stand, and **lost** only when they are withdrawn. It
+is never granted — no accept, no ballot, no electorate — and it is derived from committed state,
+never stored as a flag. Membership is what the invite right rests on: only members and roots
+invite, and a member's invites are a budget backed by the endorsements they hold (§Invite System).
+
+### Tiers
+
+| | post | like / be liked | hold karma | vouch | invite |
+|---|---|---|---|---|---|
+| **resident** — invited, not yet endorsed | ✓ | ✓ | ✓ | ✗ | ✗ |
+| **member** — endorsed, below | ✓ | ✓ | ✓ | ✓ | ✓, within the budget |
+| **root** — a genesis committee key, or the faucet identity where one is seeded | ✓ | ✓ | ✓ | ✓ | ✓, bounded by bond karma alone |
+
+A resident may stay a resident forever, and a lapsed member is a resident again. Two things a
+resident cannot do: invite, and vouch — the member's act of standing behind someone.
+
+### The bar — one formula, two numbers
+
+```
+N      = the member count, roots included — committed state, the network record (NODE_INTERFACE → Network record)
+D(N)   = max(1, icbrt(k · N))                k = membershipBarMultiplier (per network; mainnet 10)
+Y(N)   = MEMBER_LIKES_MULTIPLIER · D(N)      likes received from members (2 · D)
+```
+
+`icbrt` is the integer cube root — the largest `r` with `r³ ≤ n`, integer arithmetic throughout —
+one exported `@dagsocial/types` function the node calls wherever `D` is read (TYPES_INTERFACE →
+Membership). Two anchors fix mainnet's `k = 10`: ten vouches at a hundred members, a hundred at a
+hundred thousand (user, 2026-08-28).
+
+| members `N` | `D` | `Y` |
+|---|---|---|
+| 1 (a lone root) | 2 | 4 |
+| 4 (a committee) | 3 | 6 |
+| 100 | 10 | 20 |
+| 1 000 | 21 | 42 |
+| 10 000 | 46 | 92 |
+| 100 000 | 100 | 200 |
+| 1 000 000 | 215 | 430 |
+
+⛔ **`N` is the member count, never the identity count.** A resident costs one bond and returns
+`+0.4·B` to its minter (§Invite parameters), so an identity-keyed `N` would let a cell raise
+everyone else's bar for free. A member costs `D` older members' standing endorsements; inflating
+`N` by 10 % moves `D` by 3 %.
+
+⚠ **Cube root, not the two neighbours.** A fraction of members, or `√N`, is unreachable — 316
+vouches at 100 000; a logarithm or a constant leaves a cell's seeding at a flat handful of fooled
+people forever. `∛` grows the absolute bar without outrunning a real person's reach.
+
+### Earned, standing, and well-founded by age
+
+- **Which vouches count — a vouch counts toward NEWER members** (user, 2026-08-29). A live vouch
+  `v → m` is *counted* toward `m` iff `m` has never been a member (`memberSinceBlock = 0`) or `v`
+  became a member before `m` did (`v.memberSinceBlock < m.memberSinceBlock`). Both ages are
+  written once and never reset, so whether a vouch counts is fixed for its whole life from two
+  immutable fields — no per-vouch state. Two members set in the same block do not count for each
+  other, and a member younger than you does not count toward *your* bar. A root's age is the
+  genesis mint height, below every height a member can be set at (NODE_INTERFACE → Membership
+  pass).
+- **Set.** The first time `memberVouches ≥ D(N)` and `memberLikes ≥ Y(N)` both hold at the
+  block's membership pass (NODE_INTERFACE → Membership pass), with `N` read from pre-body state,
+  the record takes `memberSinceBlock = height` — **the age, permanent** — and `memberBar = D(N)`,
+  **fixed at set time.** ⛔ A rising `D` binds newcomers only; re-evaluating members against the
+  current `D` would un-flag thousands at once.
+- **Derived, never stored:** `member(m) ⟺ memberSinceBlock > 0 ∧ memberVouches ≥ memberBar`.
+  The record holds the inputs and every reader evaluates the predicate; no flag can drift from
+  it. Roots have `memberBar = 0` and never lapse — the base every chain of endorsement rests on.
+- **Lapse ⟺ the predicate turns false**, and it can turn false in exactly one way: counted
+  vouches are retracted — by their vouchers' own unvouch, or by the settlement withdrawing a
+  lapsed voucher's vouches (§Vouch boxes). Likes are monotonic and nothing else moves the
+  counter. A lapsed member is a resident: they post, like and hold karma, and neither invite nor
+  vouch.
+- **Re-qualification** — older members vouch again and the predicate turns true — restores
+  membership with the same age and the same bar. `N` follows every transition.
+- **The cascade.** The settlement withdraws every live vouch cast by an identity that is not a
+  member, capped per block. A counted vouch always runs old → young, so a lapse can only lower
+  *younger* members' counts: the cascade terminates, runs one generation per block, and never
+  reaches the roots.
+- **Inviting touches no vouch**, received or given, and a spent invite is never revoked.
+
+**Why a fooled cohort cannot make a permanent cell.** Every vouch that counts runs from an older
+member to a younger one, so a cell's first socks can be held up by nothing but real, older
+members — the humans it fooled. `P₁` needs `D` of them; `P₂` needs `D − 1` plus `P₁`; from
+`P_{D+1}` on the cell supports its younger layers by itself, and **while the humans stand it
+grows without bound** — ⚠ the trade the no-cap ruling makes, stated rather than papered over.
+What it cannot do is outlive them: the moment any first-layer sock drops below its bar it lapses,
+its vouches are withdrawn, and everything that leaned on it follows, layer by layer. Seeding
+costs `D` distinct humans fooled into backing socks (`D = 10` at launch, `100` at 100 000
+members), every one of whose vouch lists is public; keeping it alive costs keeping them fooled;
+any one of them can end it.
+
+**The honest cost:** endorsements from members younger than you do not protect your membership.
+A member whose older endorsers all actively withdraw lapses despite younger support, and can be
+restored only by older members — the roots among them, who never lapse. Rare, visible, recorded.
+
+### Roots
+
+Every `genesisCommitteeKeys` entry is a root, and so is the faucet identity on the networks that
+seed one (§Genesis): a record written at seeding with `memberSinceBlock` = the genesis mint
+height and `memberBar = 0`. A root vouches and invites with no budget check — its invites are
+bounded by its bond karma alone — which is what lets a committee, or the faucet, seed a chain.
+**An empty root set is a startup failure**: `N = 0`, no member can ever be set, and the node
+refuses to serve after seeding (NODE_INTERFACE → The genesis state root is checked fail-stop).
+
+### Membership parameters
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `membershipBarMultiplier` | mainnet `10` · testnet `1` · devnet `1` | `k` — a **cap** in §What varies per network's sense; `1` lets a chain whose only root is the faucet flag its first member on one vouch (`D(1) = 1`; at `10`, `D(1) = 2` and a lone root could never flag anyone) |
+| `MEMBER_LIKES_MULTIPLIER` | `2` | `Y = 2 · D` — likes from members a newcomer needs beside the vouches |
+| `MAX_LAPSE_WITHDRAWALS_PER_BLOCK` | `64` | vouches of lapsed members the settlement withdraws per block (TYPES_INTERFACE → Settlement caps) |
+
+`CONSTANTS → Membership` records each standing; the numbers are provisional and testnet's to tune.
+
+**Not built, recorded so it is not re-proposed:** a cap `c < D` on live vouches per voucher,
+which would bound a cell at `2H/D` whatever its humans did — declined (user, 2026-08-29); a
+refresh rule for endorsers who never return — a vouch cast by a member who goes quiet counts
+forever; any diversity view beyond `GET /vouches?target=` — a client's, not the node's;
+governance and voting — deferred, kept buildable by version-keyed validation (§Protocol
+Versioning).
+
+> ⚠ **AHEAD OF CODE — 2026-08-29.** The tree has no tier: any karma holder invites and vouches,
+> `IdentityRecord` carries four fields, no network record exists and nothing computes `D`. The
+> earned-invites unit builds it — types (`icbrt`, `membershipBar`, the constants, the profile
+> field, the domain tag), node (the record's five fields, the network record, the two arms, the
+> lapse leg, the membership pass, the views), types again (the genesis roots) and e2e — and this
+> marker retires in its contract pass.
+
+---
+
 ## Invite System
 
-The network is invite-only. An existing account must stake for every new
-account, and the invite is the only path by which a new key receives karma — a
-**pool spend**, never a creation (§The conservation axiom). *"The network's only
+The network is invite-only. A **member** must stake for every new account — only members and
+roots invite (§Membership), and a member's invites are a budget backed by the standing vouches
+they hold (§The invite budget) — and the invite is the only path by which a new key receives
+karma — a **pool spend**, never a creation (§The conservation axiom). *"The network's only
 source of karma"* survives only as a statement about **circulation**; genesis is
 the only source of supply.
 
@@ -1137,6 +1303,42 @@ nothing.
 Being barred costs an uninvited party nothing: with no karma they have never
 posted, so the identity carries nothing and a new keypair costs a keygen.
 
+### The invite budget
+
+```
+invitesAvailable(m) = ⌊ memberVouches(m) / D(N) ⌋ − invitesUsed(m)
+```
+
+- **Creating a bond requires the inviter to be a root, or a member with `invitesAvailable ≥ 1`**
+  — a consensus rule of the invite-create arm beside the arm's other rules (NODE_INTERFACE →
+  Bond transition rules), and block application increments `IdentityRecord.invitesUsed` when the
+  bond is created. **Spent invites are never revoked**: the `k`-th invite needs `k · D(N)`
+  counted vouches at the moment it is made — the `(amount_invited + 1) × current_minimum` rule
+  (user, 2026-08-28) — and a bar that later rises, or a vouch later withdrawn, takes nothing back.
+- **Roots have no budget check.** A root's invites are bounded by its bond karma alone, which is
+  what lets the faucet and the committee seed a chain (§Membership).
+- **The bond is unchanged** (user, 2026-08-29): `karma(K) → karma(K − B) + BondBox(B, inviter,
+  invitee)`, the settlement grants `B` from the pool, the bond vests at `V · B` of the invitee's
+  likes and forfeits the rest at `invitedAtBlock + inviteProbationBlocks` (§Bond outcomes). Two
+  limits on inviting coexist: the budget binds a popular member, `K / B` binds a poor one, and
+  neither is farmable for profit.
+- **What bounds a cell is §Membership's well-foundedness, not this budget.** While its seeding
+  humans stand a cell may grow, and when they withdraw it lapses whole. The budget's job is
+  narrower: every invite anyone ever makes is backed by `D` standing endorsements from older
+  members at that moment.
+
+**Why the tier, in one sum.** Under any rule that lets a fresh account invite, a master `M`
+invites a sock `S` with bond `B`, the pool grants `S` the bond's value, `M` likes `S`'s posts
+`V·B = 3B` times, `S` receives `0.8 × 3B = 2.4B`, the pool `0.6B`, and the bond returns to `M` —
+the circle is **`+0.4·B`** (§Invite parameters) and `S` runs the next cycle. With only members
+inviting, `S` is a leaf: to reuse its `3.4B` the circle must like `M` back at the 20 % burn and
+closes at `−0.28·B`, and without recycling the leaf count is bounded by `M`'s own karma. Any karma
+inflow that requires no distinct human's decision is farmable; the vouch is the human's decision.
+
+> ⚠ **AHEAD OF CODE — 2026-08-29.** The tree's invite-create arm reads the bond range, the karma
+> and the invitee's record and nothing about the inviter's standing; `invitesUsed` does not exist.
+> The budget check and the counter are the earned-invites unit's node work.
+
 ### What the grant carries, and what it does not
 
 **Bob's signature is not part of the flow, and it was never the sybil defence.**
@@ -1158,9 +1360,9 @@ and bars the key from any further invite.
 Alice could regret, so cancelling was a race she might lose rather than a
 guarantee she held.
 
-**The rate limit is `K / B` invites per `INVITE_PROBATION_BLOCKS`** — the bond
-locks for probation and resolves by outcome (below). ✅ **Nothing locks
-forever.**
+**The karma limit is `K / B` invites per `INVITE_PROBATION_BLOCKS`** — the bond
+locks for probation and resolves by outcome (below) — and the budget (§The invite
+budget) binds beside it. ✅ **Nothing locks forever.**
 
 ⛔ **Two inviters naming the same key in one block must not both grant.**
 Apply-time refuses the second — and a block whose embedded transactions do not
@@ -1302,21 +1504,26 @@ separate keys if desired.
 
 ## Genesis
 
-> ⚠ **PARTLY IMPLEMENTED — the karma seeding runs; the committee's purpose is a statement, not a
-> mechanism.** `seedGenesisCommittee` creates one karma box per `genesisCommitteeKeys` entry,
-> **drawn out of the pool** (`genesis-committee` mints, store seeding — there is no genesis
-> ordering block). All three network profiles carry an **empty** committee today, so the grant
-> loop runs zero times, and **nothing fails loudly if a chain starts with an empty committee**.
->
-> **Genesis is where an unset consensus parameter is least recoverable** — it is baked into
-> the first block and every state root after it. Before any launch: decide the committee
-> set, decide whether an empty committee is a startup failure, and pin both. A launch decision,
-> not a default — and not a register row: `CONSTANTS → Excluded` lists the committee with the
-> identity fields, because it names a network rather than tunes one.
-
 Bootstrap uses a **genesis committee**: genesis seeding creates one karma box per genesis
-committee key, **drawn out of the pool**, and the committee's sole purpose is to invite the first
-cohort of users and bootstrap ordering block production.
+committee key, **drawn out of the pool** (`genesis-committee` mints, store seeding — there is no
+genesis ordering block), and writes each key's identity record as a **root** — `memberSinceBlock`
+the genesis mint height, `memberBar = 0` (§Membership). The faucet identity is seeded the same
+way on the networks whose profile names one (NODE_INTERFACE → Faucet). The roots are the members
+every chain of endorsement rests on: they vouch and invite with no budget, and the network record
+is seeded with their count.
+
+**An empty root set is a startup failure.** A chain with no root has `N = 0` and no member can
+ever be set, so a node whose seeded network record holds `memberCount = 0` refuses to serve —
+**after** seeding and the genesis-root check, not inside them (NODE_INTERFACE → The genesis state
+root is checked fail-stop), so a `genesisStateRoot` stays derivable and pinnable on a network whose
+committee is still empty; only a running node trips. The committee set itself is a launch fact,
+not a register row: `CONSTANTS → Excluded` lists it with the identity fields, because it names a
+network rather than tunes one.
+
+> ⚠ **AHEAD OF CODE — 2026-08-29.** The tree's seeding writes no root fields and no network
+> record, and a chain starts on an empty committee with nothing failing loudly. The roots, the
+> record and the refusal are the earned-invites unit's node work; all three profiles carry an
+> empty committee, so the faucet is the one root on the two networks that seed it.
 
 **A committee credit grant and a committee dissolution period are not part of the design as it
 stands.** Their parameters — `GENESIS_CREDITS_PER_MEMBER` / `genesisCreditsPerMember` and
@@ -1573,7 +1780,7 @@ not be independently readable.
 `CREDIT_MINER_REWARD_DELAY` · `CREDIT_FIXED_RATE_BLOCKS` ·
 `CREDIT_EPOCH_BLOCKS` · `CREDIT_EMISSION_TOTAL` · `GENESIS_KARMA_PER_MEMBER` · `INVITE_BOND_MIN` · `INVITE_BOND_MAX` ·
 `genesisCommitteeKeys` · `genesisProofPayload` · `genesisStateRoot` · `genesisId` · `faucetPublicKey` ·
-`storageRentPeriodBlocks`
+`storageRentPeriodBlocks` · `membershipBarMultiplier`
 
 **Every name is spelled by its definition site, and the case says which one.** A `SCREAMING_CASE` name
 is a `constants.ts` export that a profile field reads; a `camelCase` name is a `NetworkProfile` field
@@ -1597,10 +1804,18 @@ axis rather than opening a fourth.
 > leave the rent path unexercised; and a period below the suite's own ceiling lets a producer collect
 > the faucet's genesis credits underneath a running scenario. Devnet's **40** sits between the two.
 
+> ⚠ **`membershipBarMultiplier` is field-only and a cap.** `k` scales the membership bar
+> `D(N) = max(1, icbrt(k · N))` (§Membership); the formula is the mechanic and universal, the
+> multiplier is a number. Mainnet's **10** is fixed by the two anchors; testnet's and devnet's
+> **1** let a chain whose only root is the faucet flag its first member on one vouch — at `10`,
+> `D(1) = 2` and a lone root could never flag anyone. A relaxed cap, not a different mechanic: the
+> bar grows as the cube root of the member count on every network.
+
 **Universal — every other constant, including consensus ones:** the format limits
 (`MAX_CONTENT_BYTES`, `MAX_PARENT_REFS`, `PROTOCOL_VERSION`, `AVL_KEY_LENGTH`) and **every
 karma and credit cost** (`LIKE_KARMA_COST`, `LIKES_PER_KARMA_PAYOUT`, `POST_PRICE_*`, `REPLY_AUTHOR_SHARE`,
-`VOUCH_KARMA_AMOUNT`, `INVITE_BOND_VEST_PER_LIKES`, `KARMA_MINIMUM`, `KARMA_DECAY_AMOUNT`,
+`VOUCH_KARMA_AMOUNT`, `INVITE_BOND_VEST_PER_LIKES`, `MEMBER_LIKES_MULTIPLIER`, `KARMA_MINIMUM`,
+`KARMA_DECAY_AMOUNT`,
 `COINBASE_TREASURY_PCT` and the other coinbase slice percentages,
 `CREDIT_INITIAL_REWARD`, `CREDIT_REWARD_REDUCTION`). ⚠ **The decay pair is universal, and that
 fixes the epoch COUNT on every network** — at `R = 42` and `d = 1` the decay runs 41 epochs
@@ -1883,12 +2098,17 @@ forever. A node rejects objects with an unsupported protocol version.
 - An account comes into existence via first UTXO box appearance
 - An invite names one public key and is claimable only by it. There is no secret,
   no preimage and no bearer form
-- An invite can be cancelled by its inviter until it is claimed, and never expires
-  otherwise
+- An invite cannot be cancelled; its bond settles once, at or past the probation deadline
+  (§Bond outcomes)
 - An invite may only name a key that is **not already an account**, so a key is
   invited at most once ever
+- Only a root or a member creates an invite, and a member's invites are a budget:
+  `⌊memberVouches / D(N)⌋ − invitesUsed ≥ 1` at creation (§The invite budget)
 - Invite bonds vest against the invitee's lifetime likes and the unvested part is
   **burned** at the probation deadline
+- Membership is derived, never stored: `member(m) ⟺ memberSinceBlock > 0 ∧ memberVouches ≥
+  memberBar`; a vouch counts toward a member only from an older member; only members vouch, once
+  per `(voucher, target)`, never on themselves, and only on a key holding a record (§Membership)
 - ~~Usernames: first-claim-wins, DAG-native, prunable by holder~~
   > ⚠ **SUPERSEDED (2026-08-06). Verified 2026-08-11 — no `username` code in any `src` tree.**
   > Usernames become a **UTXO asset**: tradeable for
