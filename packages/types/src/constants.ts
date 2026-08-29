@@ -156,7 +156,7 @@ export const INVITE_MIN_KARMA = KARMA_POSTING_MINIMUM;
  * unspendable box; equality makes that cost exactly what it strands, with no
  * second number free to drift below the first.
  */
-export const INVITE_BOND_MIN = 25n;            // → profile: inviteBondMin
+export const INVITE_BOND_MIN = 100n;           // → profile: inviteBondMin
 export const INVITE_BOND_MAX = 250n;           // → profile: inviteBondMax
 /** Blocks from the invite's own creation height to bond settlement. */
 export const INVITE_PROBATION_BLOCKS = 43200;  // 30 days at 60s → profile: inviteProbationBlocks
