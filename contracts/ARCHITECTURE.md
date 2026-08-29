@@ -103,7 +103,7 @@ ordinary UTXO transaction riding `utxoTxIds` with everything else, and each bloc
 carries the settlement transaction stated below.
 
 **There are no sub-blocks and no per-post PoW** (§Blocks and ordering). A post's
-admission is its transaction's: priced by the karma post-lock, authenticated by the
+admission is its transaction's: priced by the post price, authenticated by the
 transaction's signature, ordered by the block that includes it.
 
 > ## Every block carries ONE SETTLEMENT TRANSACTION, and it is where protocol effects live
@@ -200,16 +200,16 @@ across an applied chain.
 ### How a source and a sink get named — the three shapes, and there are only three
 
 ⛔ **Most paths conserve inside themselves and need no shape at all.** A bond's vested
-part, post-lock vesting, a prune refund and the coinbase all take their value from a box being
+part, an escrow return and the coinbase all take their value from a box being
 consumed in the same operation that pays it out.
 
 For the paths where value genuinely enters or leaves circulation, exactly three shapes are available:
 
 | Shape | When it applies | Example |
 |---|---|---|
-| **the value is already in a box** the transaction consumes | the party holds it | bond return, escrow return, post-lock vesting, unvouch escrow |
+| **the value is already in a box** the transaction consumes | the party holds it | bond return, escrow return, unvouch escrow |
 | **block application spends the pool** | no user transaction is involved | decay, bond forfeiture, the invite grant |
-| **a marker box** the user's transaction outputs, carrying the value | a user transaction moves value to a party it cannot name a box for | the like accrual — **and nothing else** |
+| **a marker box** the user's transaction outputs, carrying the value | a user transaction moves value to a party it cannot name a box for | the like accrual (an author's earmark — a like's cost, or a reply's `REPLY_AUTHOR_SHARE`) and the karma price (the pool's — §The post price) — **and nothing else** |
 
 ⛔ **A MARKER MUST CARRY ITS VALUE.** A zero-value marker means the units it stands for ceased to
 exist between the transaction and the settlement, which is exactly what *"not even as an intermediary
@@ -336,7 +336,7 @@ to eliminate.
 #### Post admission — there is no post-level PoW
 
 Post PoW, its challenge handshake, and the sub-block mechanism are retired. A post is
-created by a transaction: admission is priced by the karma post-lock, authenticated by
+created by a transaction: admission is priced by the post price, authenticated by
 the transaction's signature, and ordered by the block that includes it.
 
 #### Subtree pruning (deletion)
@@ -357,10 +357,9 @@ author" is, is itself consensus data: every confirmed post's `author` is the sig
 creating transaction, recorded at confirmation in `block_topology`, and a prune is valid only
 if the karma input's owner equals that recorded author (audit H-3) — so a signature from
 anyone else, however valid for its own key, authorizes nothing. No validator
-attestation is required — settlement is deterministically computable from the
-UTXO state (the subtree's PostLockBoxes) plus the like-records it deletes
-(P2-D). Any node can verify the prune independently, with or without the DAG
-content.
+attestation is required — the prune's effect is deterministically computable from
+the like-records it deletes and the topology rows it marks. Any node can verify the
+prune independently, with or without the DAG content.
 
 Pruning is irreversible. Once content is pruned, it cannot be recovered.
 What propagates is the prune transaction — by gossip like any other, and again inside the
@@ -805,21 +804,13 @@ Stump {
    stump — then the subtree's DAG rows, bodies included, are deleted by the
    set, each captured into the block's journal first so a reverted prune
    restores them exactly (NODE_INTERFACE → Prune transactions)
-8. **The subtree's `PostLockBox`es are released by later blocks' settlements**, at most
-   `MAX_POST_LOCK_RELEASES_PER_BLOCK` per block in `(pruned height, post id)` order — refunding
-   **every lock owner except the pruning author**, whose own locks go to the pool — so a
-   subtree of any size prunes in one block and its locks drain at the cap
-   (NODE_INTERFACE → The settlement transaction)
 
 No validator attestation is needed — the author's signature authorizes the
 prune, and the settlement is deterministically computable from UTXO state.
 
-**Destroying your own post costs you its bond; destroying someone else's reply
-returns theirs.** `PostLockBox.owner` against the entry's `authorId` decides
-which, from committed state alone — no `block_topology` read. Refunding the
-pruner made post → prune → repost a free loop that recycled the same karma
-forever, and the same rule sets **withdrawal's** price: a withdrawn post's
-remaining lock goes to the pool and nothing is refunded.
+**A prune refunds nothing and burns nothing further.** Every post in the subtree paid its
+price when it was posted (§The post price), so post → prune → repost pays the price every time
+and recycles nothing, and a withdrawal costs nothing beyond what posting already cost.
 
 ⚠ **The descendant-count price is NOT part of this rule.** Charging the pruner
 for the replies they destroy is a separate consensus transition and is not
@@ -954,13 +945,13 @@ sidecars and no standalone like pool.
 **Apply-time rules** (consensus, not gateway courtesy):
 
 - The target post must be **confirmed and live** at apply height — meaning **at the point in the
-  block's phase order where likes apply**, which is the transaction loop, before the post-lock
-  settlement phase. Likes on posts already stumped, tombstoned or withdrawn **in an earlier
+  block's phase order where likes apply**, which is the transaction loop, before the prune and
+  withdrawal phase. Likes on posts already stumped, tombstoned or withdrawn **in an earlier
   block** are **rejected by stated rule**, not as an emergent property — without this rule,
   dropping like-records at prune (below) would reopen duplicate likes on stumps.
   ⚠ **A like and a settlement of the same post in ONE block is legal**, and the phase order is
   why: the like applies first and counts, then the phase stumps or empties the post
-  (NODE_INTERFACE → The post-lock settlement phase).
+  (NODE_INTERFACE → The prune and withdrawal phase).
 - The target's author is resolved from **`block_topology`**, never `dag_posts.author`
   (placeholder rows carry a zeroed author).
 - `(liker, target)` must not already exist in the like-records — one like per account per
@@ -974,8 +965,9 @@ increments the target author's like count for this block.
 ### Per-block accrual and settlement
 
 There is no epoch. **A like moves its `LIKE_KARMA_COST` into a box earmarked for the author** —
-the like transaction outputs a `LikeAccrualBox` marker — and the block's settlement transaction
-settles every accrual at the end of the mutation phase. Every step names a source and a sink,
+the like transaction outputs a `LikeAccrualBox` marker — and a reply moves `REPLY_AUTHOR_SHARE`
+of its price into the same kind of marker for the author of the post it answers (§The post
+price); the block's settlement transaction settles every accrual at the end of the mutation phase. Every step names a source and a sink,
 so nothing is created and nothing destroyed: the liker's karma goes to the accrual box, the
 accrual box goes to the author and the pool.
 
@@ -996,8 +988,8 @@ therefore emits a **fresh marker per like**, and only the settlement touches the
 likes in one block, so `LIKES_PER_KARMA_PAYOUT` bounds the *carry*, never the markers. What keeps
 that off the block is that the settlement **derives** its marker inputs rather than listing them.
 
-For an author with `n` markers this block and a carry box holding `r`, in ascending author-hex
-order, where `x = LIKES_PER_KARMA_PAYOUT`:
+For an author with `n` markers this block — likes received and replies to their posts alike —
+and a carry box holding `r`, in ascending author-hex order, where `x = LIKES_PER_KARMA_PAYOUT`:
 
 ```
 settlement   markers×n + carry(r) → authorKarma(+q·(x−1)) + pool(+q) + carry(r′)
@@ -1038,8 +1030,7 @@ inverses, **not** in the `stateRoot`.
   post cannot be liked (the rejection rule above).
 - **They survive withdraw.** A withdrawal empties the post and keeps its row, its topology
   and its identity (NODE_INTERFACE → Withdrawal transactions); nothing in the withdrawal
-  leg touches `like_records`, and the phase reads the count once, to fold the vest into the
-  lock it consumes (NODE_INTERFACE → The post-lock settlement phase). A withdrawn post
+  phase touches `like_records` (NODE_INTERFACE → The prune and withdrawal phase). A withdrawn post
   cannot be liked, so from that block its records are a closed set: the withdrawn view
   serves no `likeCount` and no `likedByViewer`, and the rows do one more job — a later prune of the
   thread counts them into the stump's `upvoteCount` and deletes them with the subtree's.
@@ -1047,37 +1038,42 @@ inverses, **not** in the `stateRoot`.
 - Growth is bounded by likes on posts **not yet pruned**, never by every like ever given: a
   prune removes its subtree's records, and a withdrawn post accepts no new ones.
 
-### Post karma locking
+### The post price
 
-Posting still locks a bond — the anti-dodge mechanism (`PostLockBox`, amounts unchanged).
-The lock is created exactly as before, by the client-built karma-lock transaction that
-accompanies every post (`KarmaBox → KarmaBox + PostLockBox`) — P2-D changes only how it
-vests. **Vesting moves to per-block.** At end of block, for every post that received likes
-this block and has a live `PostLockBox`:
+Posting pays. A post transaction outputs a **`KarmaPriceBox`** holding the post's price, which the
+settlement of the same block returns to the pool (NODE_INTERFACE → The settlement transaction); a
+reply pays part of its price to the author of the post it answers, through the `LikeAccrualBox`
+marker a like uses:
 
 ```
-totalLikes      = like-record count for the post    (lifetime, on a live post)
-alreadyUnlocked = originalValue − value
-shouldUnlock    = totalLikes / POST_LOCK_UNLOCK_PER_LIKES                  // integer, truncating
-toUnlock        = min(value, shouldUnlock − alreadyUnlocked)
+thread   karma(K) → karma(K − POST_PRICE_THREAD) + KarmaPriceBox(POST_PRICE_THREAD)
+reply    karma(K) → karma(K − POST_PRICE_REPLY)  + KarmaPriceBox(POST_PRICE_REPLY − REPLY_AUTHOR_SHARE)
+                                                 + LikeAccrualBox(REPLY_AUTHOR_SHARE, author = the parent's block_topology author)
+settlement   KarmaPriceBox(p) → pool(+p)         consumed in the block that created it
 ```
 
-⛔ **A lock being settled in this block vests INSIDE the settlement plan, not here.** Prune and
-withdrawal consume the `PostLockBox`, so the loop below would find nothing to vest from; the plan
-releases what this block's likes earned as a refund to the lock's owner and reduces the pool
-figure by the same amount. Without that fold-in the vest is lost whenever a like and a settlement
-share a block, and **the path-independence stated above would depend on how a producer packs
-blocks** — the same likes paying differently for no rule anyone stated.
+- **The price is a resource price, never a judgement** (user, 2026-08-14, restated as the rule): it
+  prices occupying the DAG and the churn a free release would enable. A post people liked has paid
+  it; a post nobody saw has paid the same.
+- **Nothing returns.** A prune or a withdrawal refunds nothing and burns nothing further, so
+  post → prune → repost pays the price every time (§Subtree pruning).
+- **The reply's share rides the accrual.** `REPLY_AUTHOR_SHARE` lands in the parent author's
+  accrual and pays out with their likes at `x−1` per `x` (§Per-block accrual and settlement), so
+  the author nets `(x−1)/x` of it and the rest of the price leaves circulation. It is attention,
+  not endorsement: **it moves no like counter** — not `IdentityRecord.lifetimeLikesReceived`, which
+  the bond settles against, nor any count a rule reads as likes. A reply pays the parent's author
+  whether the parent is live, withdrawn or a stump — every confirmed id has a topology author.
+- **Self-replies get no special case.** The author pays the price and their own accrual receives
+  the share — a net loss, as a self-like is.
+- **A `KarmaPriceBox` is the karma-side twin of `FeeBox`**: what a karma action pays, named as an
+  output so the transaction conserves, with no owner, consumed only by the settlement
+  (TYPES_INTERFACE → KarmaPriceBox). It is the transition any later karma price takes — the
+  prune's descendant charge, when it lands.
 
-`toUnlock > 0` runs `transferKarma`: the `PostLockBox` is consumed as the source, `toUnlock`
-lands in the author's karma (`postlock-unlock`), and the reduced box is the remainder
-(`postlock-remainder`) unless fully unlocked — a transfer that names both ends and refuses to
-create or destroy (§The conservation axiom). The formula is the retired epoch schedule
-evaluated per block; posts are processed in ascending post-id order. **This is the one karma
-path outside the settlement transaction, and it belongs outside**: the lock vests into its own
-owner's karma, so the pool is uninvolved.
-
-No user transaction can spend a `PostLockBox` — block application is its only spender.
+> ⚠ **AHEAD OF CODE — 2026-08-29.** The tree locks a `PostLockBox` per post and vests it per block.
+> `KarmaPriceBox`, the price shape in the post arm, the settlement's price leg and the reply's
+> share are PR A's, and the lock apparatus — the type, per-block vesting, the release leg, the
+> `postlock-*` mint reasons — retires with them.
 
 ### Like parameters
 
@@ -1085,17 +1081,18 @@ No user transaction can spend a `PostLockBox` — block application is its only 
 |-----------|-------|-------------|
 | `LIKE_KARMA_COST` | `1n` | Karma burned by the liker per like |
 | `LIKES_PER_KARMA_PAYOUT` | `5` | `x`: per `x` likes an author accrues `x−1`; 1 is burned |
-| `POST_LOCK_THREAD_COST` | `5n` | Karma locked for new threads |
-| `POST_LOCK_REPLY_COST` | `3n` | Karma locked for replies |
-| `POST_LOCK_UNLOCK_PER_LIKES` | `10` | Every N lifetime likes unlocks 1 karma |
+| `POST_PRICE_THREAD` | `5n` | Karma a thread pays to the pool |
+| `POST_PRICE_REPLY` | `3n` | Karma a reply pays; `REPLY_AUTHOR_SHARE` of it reaches the parent's author |
+| `REPLY_AUTHOR_SHARE` | `1n` | The part of a reply's price the parent's author accrues |
 
 All universal constants — never per-network (§Network Identity: compress time, never
-economics). Every value in this table is a placeholder; `CONSTANTS → Post lock and likes`
-records that standing beside the value, and the register is where it changes.
+economics). The like rows are placeholders and the price rows are ruled; `CONSTANTS → Post
+price and likes` records each standing beside its value, and the register is where it changes.
 
 **Retired, do not rebuild:** the like box · the free-like tier (`dag_likes` rows as
-likes) · unlike and every refund path · the epoch interval. The boxType string `'like'`
-is a tracked reservation (`TYPES_INTERFACE` → Tracked reservations).
+likes) · unlike and every refund path · the epoch interval · the post lock (`PostLockBox`,
+per-block vesting, the release leg). The boxType strings `'like'` and `'post_lock'` are
+tracked reservations (`TYPES_INTERFACE` → Tracked reservations).
 
 ---
 
@@ -1360,6 +1357,7 @@ outstanding against the live node, which still runs a pre-Spec-B chain:
 | P3 | `stateRoot` semantics |
 | Spec G | box ids (provenance-derived) |
 | P2-D | sub-block and block-body CBOR shape, post-lock box ids |
+| **the post price** (2026-08-29) | the box-type tag table (`post_lock` retired, `karma_price` added); every settlement that carried a lock leg |
 | **positional wire format** (Phases 0–8, shipped 2026-08-11) | **every committed byte** |
 
 > ⚠ **Wiping the AVL store alone is a fork trigger. Wipe chain and AVL store together, always.**
@@ -1418,7 +1416,7 @@ before multi-node operation rather than after it.
 3. **Account creation:** The granted karma box and the invitee's identity record
    are the account — there is no claim transaction
 4. **Posting:** User builds a post packet — the transaction carries the `PostCommit`
-   (structure and content commitment) and the karma post-lock prices it; the body
+   (structure and content commitment) and the karma price marker prices it; the body
    rides beside it, outside every id → mempool (`utxo_tx`) and the DAG's pending row,
    admitted together or refused together
 5. **Liking:** User spends karma → like transaction → mempool (standalone)
@@ -1427,8 +1425,7 @@ before multi-node operation rather than after it.
    finalizes → state applied atomically
 7. **Like settlement:** Every block, at the end of the mutation phase — the
    settlement transaction consumes the block's markers and each credited
-   author's carry box, pays authors and the pool, and emits carry successors;
-   post-lock vesting evaluated (§Likes)
+   author's carry box, pays authors and the pool, and emits carry successors (§Likes)
 8. **Pruning:** Author signs prune intent → stump constructed with deterministic
    karma deltas → committed in ordering block → the subtree's DAG rows deleted
    (journalled), the stump written
@@ -1608,7 +1605,7 @@ axis rather than opening a fourth.
 
 **Universal — every other constant, including consensus ones:** the format limits
 (`MAX_CONTENT_BYTES`, `MAX_PARENT_REFS`, `PROTOCOL_VERSION`, `AVL_KEY_LENGTH`) and **every
-karma and credit cost** (`LIKE_KARMA_COST`, `LIKES_PER_KARMA_PAYOUT`, `POST_LOCK_*`,
+karma and credit cost** (`LIKE_KARMA_COST`, `LIKES_PER_KARMA_PAYOUT`, `POST_PRICE_*`, `REPLY_AUTHOR_SHARE`,
 `VOUCH_KARMA_AMOUNT`, `INVITE_BOND_VEST_PER_LIKES`, `KARMA_MINIMUM`, `KARMA_DECAY_AMOUNT`,
 `COINBASE_TREASURY_PCT` and the other coinbase slice percentages,
 `CREDIT_INITIAL_REWARD`, `CREDIT_REWARD_REDUCTION`). ⚠ **The decay pair is universal, and that
@@ -1911,10 +1908,10 @@ forever. A node rejects objects with an unsupported protocol version.
   after the genesis seeding (§The conservation axiom). What moves is **circulation**: the
   settlement transaction spends the pool and receives into it, and it is the pool's **only**
   spender — one settlement per block, so two spends never contend (NODE_INTERFACE → The
-  settlement transaction). Exactly three transfers return karma to the pool — **decay**,
+  settlement transaction). Exactly four transfers return karma to the pool — **decay**,
   **the like remainder** (per `x = LIKES_PER_KARMA_PAYOUT` likes, `x−1` recirculates to the
-  author and 1 goes to the pool) and **bond forfeiture** (the unvested remainder at a bond's
-  settlement, the pruner's own locks riding the same rule) — and the **invite grant** draws
+  author and 1 goes to the pool), **bond forfeiture** (the unvested remainder at a bond's
+  settlement) and **the post price** (§The post price) — and the **invite grant** draws
   from it: `G` enters circulation when a bond is created, and the unvested part leaves when
   it settles. Circulation grows only as fast as the network admits members who earn likes,
   and shrinks when it admits members who do not — on top of decay and the like remainder,
@@ -1948,14 +1945,15 @@ forever. A node rejects objects with an unsupported protocol version.
   **NODE_INTERFACE's `validateTx` step 7 is the authoritative statement** — derive from it,
   never maintain a parallel list here. Each cost lands in a box the transaction itself
   outputs, so every user transaction balances on its own; all other value movement happens
-  only in block-application paths — the settlement transaction and post-lock vesting — never
-  inside a user transaction.
+  only in one block-application path — the settlement transaction — never inside a user
+  transaction.
   > **Credits and karma both conserve strictly, and there are no deficits.** A fee is a
   > `FeeBox` output the transaction names (TYPES_INTERFACE → FeeBox), so what the miner
   > takes is inside the output sum rather than a gap between two sums; a like's cost rides
-  > its `LikeAccrualBox` marker the same way. The like rule is a statement about **shape**,
-  > enforced both ways in the engine's like arm: `likeTarget` present ⟺ exactly one accrual
-  > marker of `LIKE_KARMA_COST` naming the target's author — and the pin must be tested,
+  > its `LikeAccrualBox` marker the same way, and a post's price its `KarmaPriceBox`. The marker
+  > rule is a statement about **shape**, enforced both ways in the engine: a `LikeAccrualBox`
+  > output ⟺ exactly one of `likeTarget` (naming the target's author at `LIKE_KARMA_COST`) or a
+  > parented `post` (naming the parent's author at `REPLY_AUTHOR_SHARE`) — and the pin must be tested,
   > because a balanced marker announces nothing by itself (NODE_INTERFACE → The like accrual
   > marker is an exemption from the rule above). Conservation is **enforced**:
   > `checkValueConservation` per transaction, full
@@ -2428,17 +2426,15 @@ backfill — and a pruned post has no row (NODE_INTERFACE → Store Interface �
   > built rather than a gap. See §Likes.
 - Invite system: karma-bonded invites naming the invitee's key; the block's
   settlement grants the starting karma (§Invite System)
-- ~~Post karma locking with gradual unlock at epoch boundaries~~
-  > ⚠ **PARTIAL. Verified 2026-08-11** — `PostLockBox` is a live interface in
-  > `types/src/utxo.ts` and a member of the `AnyBox` union. The post bond is real and stays — it is
-  > the anti-dodge
-  > mechanism. But **"at epoch boundaries" is superseded**: vesting moves to per-block with
-  > the epoch's removal, and block application is the box's only spender.
+- The post price: a post pays `POST_PRICE_THREAD` / `POST_PRICE_REPLY` into a `KarmaPriceBox` the
+  block's settlement returns to the pool; a reply pays `REPLY_AUTHOR_SHARE` of it to the parent's
+  author through the like accrual (§The post price)
+  > ⚠ **AHEAD OF CODE — 2026-08-29.** The tree locks a `PostLockBox` and vests it per block; PR A
+  > replaces the lock with the price.
 - Ordering blocks with validator PoW; posts and likes ride them as ordinary
   transactions
-- Verifiable prune: a karma transaction carrying a `PruneCommit`, Ed25519-signed, UTXO-deterministic
-  settlement (the settlement transaction consumes PostLockBoxes and refunds
-  lock owners other than the pruner; like-records deleted)
+- Verifiable prune: a karma transaction carrying a `PruneCommit`, Ed25519-signed, its effect
+  deterministic from committed topology (like-records deleted, rows marked; nothing refunded)
 - AVL+ state root: authenticated dictionary over UTXO set, stateRoot in block
   headers, `GET /api/v1/proof/:boxId` for light-client proofs
 - block_topology table (post_id, parent_refs, author, block_height — all
