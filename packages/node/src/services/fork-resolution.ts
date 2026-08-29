@@ -89,6 +89,10 @@ export function extendsOurTip(block: OrderingBlock): boolean {
  * Reverse all mutations from a single block using its journal.
  */
 export function revertBlock(height: number): void {
+  // Revert must never run while a journal is recording: the mutation replay
+  // uses the never-recording inverses, but the vouch-cooldown restores below
+  // go through recording primitives and would journal themselves into the
+  // open block's log.
   if (isBlockJournalOpen()) {
     throw new Error(`revertBlock(${height}): a block journal is open`);
   }
@@ -98,7 +102,21 @@ export function revertBlock(height: number): void {
   }
 
   // 1. Replay the primitive mutation log in reverse: box/insert → deleteBox,
-  // box/remove → unconsumeBox, record → restore `replaced` or delete.
+  // box/remove → unconsumeBox, record → restore `replaced` or delete. This
+  // restores the exact pre-block committed state for every mutation class —
+  // including the pre-existing boxes merge-consumed inside settlement outputs,
+  // tallied like boxes, prune settlement, and identity records.
+  //
+  // Reverse order is what makes a record written **more than once in one block**
+  // (activity bump then decay, at the same height) revert correctly: each
+  // inverse undoes one write, and the last one replayed is the *first* write's
+  // `replaced` — the true pre-block value. A per-key single restore keeping the
+  // last `replaced` would restore an intra-block intermediate instead.
+  //
+  // `putIdentityRecord` is itself a recording primitive, exactly like the
+  // like-record restores two loops below. That is safe only because this
+  // function refuses to run while a journal is open (the guard at the top); the
+  // guard is the mechanism, not a non-recording variant.
   for (let i = journal.mutations.length - 1; i >= 0; i--) {
     const m = journal.mutations[i]!;
     if (m.kind === 'record') {
@@ -120,26 +138,45 @@ export function revertBlock(height: number): void {
   for (const postId of journal.confirmedPostIds) {
     unconfirmPost(postId);
   }
+  // Like-record inverses. Order between the two arrays is immaterial:
+  // a record cannot be both inserted and prune-deleted in one block — the
+  // same-block exclusion (prune settles before embedded txs, so a like on a
+  // post the block also prunes finds a stump and the block is rejected) —
+  // so the two sets are disjoint by construction.
   for (const ins of journal.likeRecordInsertions) {
     deleteLikeRecord(ins.targetPostId, ins.likerId);
   }
   for (const del of journal.likeRecordDeletions) {
     restoreLikeRecord(del.targetPostId, del.likerId, del.appliedAtBlock);
   }
+  // Prune inverses: restore deleted post rows, remove the stump.
   if (journal.deletedPosts.length > 0) {
     restorePostRows(journal.deletedPosts);
   }
   for (const stump of journal.insertedStumps) {
     deleteStump(stump.rootPostHash);
   }
+  // Withdrawal inverses: restore content and clear the marker.
   for (const wp of journal.withdrawnPosts ?? []) {
     clearWithdrawal(wp.id, wp.content);
   }
+  // Prune topology inverses: clear the pruned marks.
   if ((journal.prunedTopologyRows ?? []).length > 0) {
     clearPrunedTopology(journal.prunedTopologyRows!);
   }
+  // ⛔ **The vouch escrow needs no side-record and no inverse of its own.** It
+  // is a box, so `insertBox`/`consumeBox` journal its creation and its spend as
+  // `{kind:'box'}` with the exact inverses loop 1 above already replays — and
+  // boxes are not keyed, so a second escrow is a second box rather than an
+  // overwrite something has to restore.
 
-  // 3. Roll back block_topology, block, journal, AVL version.
+  // 3. Roll back block_topology entries, delete block + journal + the
+  // height's AVL version rows. The version rows are per-block derived state
+  // exactly like the block and journal rows: left behind, they make
+  // versionAtOrBeforeHeight resolve rolled-back state, and re-applying a
+  // block at this height (reorg back to a previously-reverted chain) would
+  // re-insert the same content-addressed version and trip its PRIMARY KEY —
+  // the funnel's totality catch would then reject every re-applied block.
   rollbackBlockTopology(height);
   deleteOrderingBlock(height);
   deleteBlockJournal(height);
@@ -147,8 +184,32 @@ export function revertBlock(height: number): void {
 }
 
 /**
- * Return a reverted entry to the mempool, tolerating the pool's own refusals
- * (NODE_INTERFACE → Fork choice decides on verified headers, step 10).
+ * Return a reverted entry to the mempool, tolerating the pool's own refusals.
+ *
+ * Re-insertion is bookkeeping — it gives txs from the losing chain a chance to
+ * be re-mined. A refusal here must not abort the reorg: that would turn mempool
+ * state into a consensus-liveness failure, leaving the node stuck on the lighter
+ * chain (the whole reorg runs in one SQLite transaction, so a throw rolls back
+ * the chain switch too). Dropped entries are lost from the local pool only; the
+ * ledger state is already reverted, and peers still hold the txs.
+ *
+ * Three refusals qualify, for that one reason:
+ *
+ * - `MempoolFullError` — the pool is at its cap.
+ * - `PendingSpendConflictError` — an entry admitted since spends one of this
+ *   tx's inputs. Both are valid now that the block is reverted and only one can
+ *   be, so the incumbent keeps its place.
+ * - `TxTooLargeError` — the transaction re-encodes above `MAX_TX_BYTES`. The
+ *   reverted block carried it, so its bytes as they arrived were inside the
+ *   bound; what the pool measures is this node's own re-encoding, and the two
+ *   measures differ by design (VALIDATION_INTERFACE → The size bound measures
+ *   `encodeTx`). A transaction only this node's encoder finds over-size is one no
+ *   block it produces could carry anyway.
+ *
+ * ⛔ **The conflict gate is not opted out of here.** Admitting both would leave
+ * the pool holding two spends of one box, which is the composition a block is
+ * refused for carrying — the node would then be unable to produce a block at
+ * all until one of them expired. Dropping one entry costs strictly less.
  */
 function reinsert(insert: () => void, label: string): void {
   try {
@@ -177,6 +238,12 @@ function reinsert(insert: () => void, label: string): void {
  * then apply the competing chain forward.
  */
 export function reorg(forkHeight: number, newBlocks: OrderingBlock[]): void {
+  // A failed reorg rolls the whole transaction back — DB and AVL storage rows
+  // live in the same SQLite file — but SQLite rollback cannot reach the
+  // prover's in-memory state: the per-block funnel restore only covers the
+  // failing block, not the fork-point rollback plus the applied prefix. So the
+  // reorg snapshots the digest before anything is reverted and restores it on
+  // abort (mirrors the apply funnel's restoreProver).
   const avlHandle = tryGetAvlProver();
   const preDigest = avlHandle ? avlHandle.prover.digest() : null;
   const restoreProver = (): void => {
@@ -189,6 +256,7 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[]): void {
     getDb().transaction(() => {
   const currentHeight = getCurrentHeight();
 
+  // Phase 1: revert our blocks, collecting journals for re-insertion
   const revertedJournals: BlockJournal[] = [];
   for (let h = currentHeight; h > forkHeight; h--) {
     const journal = getBlockJournal(h);
@@ -196,7 +264,22 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[]): void {
     revertBlock(h);
   }
 
-  // Roll back AVL prover to fork point (NODE_INTERFACE → Configuration).
+  // Phase 1b: roll back AVL prover to fork point.
+  //
+  // A missing version here is not a case to skip past. Phase 3 would apply the
+  // peer's chain onto a prover still holding our reverted tip's tree, so the
+  // state root would stop covering the UTXO set — and that surfaces later, on
+  // some other node, as a mismatch blamed on whoever sent the next block.
+  // Refusing the reorg costs one chain switch; proceeding costs the invariant.
+  //
+  // The throw lands inside the transaction, so better-sqlite3 rolls the revert
+  // back and the catch below restores the in-memory digest: the node keeps the
+  // chain it had, which is a chain whose root it can still compute.
+  //
+  // Reachable through a `Config` assembled without `loadConfig` (tests);
+  // otherwise a row the store lost. `loadConfig` refuses
+  // `MAX_PROOF_HISTORY < maxReorgDepth` at load (NODE_INTERFACE →
+  // Configuration).
   if (avlHandle) {
     const version = avlHandle.storage.versionAtOrBeforeHeight(forkHeight);
     if (!version) {
@@ -205,11 +288,18 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[]): void {
     avlHandle.prover.rollback(version);
   }
 
+  // Phase 2: re-insert reverted txs to mempool.
+  //
+  // A post rides its own transaction, so re-inserting the transactions
+  // re-inserts the posts. `journal.confirmedPostIds` is the un-confirm half
+  // of the rollback and not a mempool key (NODE_INTERFACE → Block Journal).
   const newTipHeight = forkHeight + newBlocks.length;
   const mempoolExpiry = newTipHeight + MEMPOOL_EXPIRY_BLOCKS;
   for (const journal of revertedJournals) {
+    // Re-insert UTXO txs
     for (const txRecord of journal.appliedUtxoTxs) {
       const tx = decodeTx(txRecord.txBytes);
+      // MEMPOOL_INTERFACE → Validity ceiling — the reorg caller screens.
       const ceiling = ceilingOf(tx);
       if (ceiling !== null && ceiling < newTipHeight) {
         console.warn(`Reorg re-insertion skipped, past ceiling ${ceiling} at height ${newTipHeight}: tx ${txRecord.txId}`);
@@ -219,6 +309,7 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[]): void {
     }
   }
 
+  // Phase 3: apply new chain
   for (const block of newBlocks) {
     if (!applyOrderingBlock(block)) {
       const hash = blockHash(block.header) ?? 'unhashable';
@@ -230,11 +321,21 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[]): void {
   }
     })();
   } catch (err) {
+    // better-sqlite3 has already rolled the transaction back (chain, boxes,
+    // AVL storage rows — the pre-reorg version row this restore targets is
+    // back in place). Restore the in-memory prover, then rethrow: callers'
+    // error semantics are unchanged.
     restoreProver();
     throw err;
   }
 
+  // NODE_INTERFACE → Admin Listener: the tip the reorg left.
   noteTip(forkHeight + newBlocks.length);
+
+  // A reorg is one tip move, however many blocks it applies. The per-block
+  // rebuild inside `applyOrderingBlock` stands down while nested in the
+  // transaction above, so a miner node's template is built once, here, against
+  // the chain that committed (MINING_INTERFACE → Template and submit).
   rebuildTemplate();
 }
 
@@ -243,12 +344,19 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[]): void {
 // ---------------------------------------------------------------------------
 
 /**
- * NODE_INTERFACE → Fork choice decides on verified headers.
+ * The `net` surface fork resolution uses, structurally rather than as
+ * `NetNode`. These four calls are the whole dependency, and naming them is
+ * what lets a test drive `resolveFork` against a stub peer — `reorg` and
+ * `revertBlock` are reachable from a test on their own; the decision that calls
+ * them is not.
  *
- * `getConnectedPeers`, not `peers` — Active peers only. A peer that failed
- * the handshake is on another network, and below `maxReorgDepth` the fork
- * walk reaches genesis (NODE_INTERFACE → Fork resolution bottoms out at the
- * genesis state).
+ * **`getConnectedPeers`, not `peers`, and the distinction decides a reorg.**
+ * `peers()` lists every *known* peer, including ones that have not completed —
+ * or have failed — the DAGsocial handshake; only `getConnectedPeers()` filters
+ * on Active. A peer that failed the handshake is on another network, and a
+ * counterparty chosen off the wrong list can revert this node's entire chain:
+ * below `maxReorgDepth` the fork walk reaches the genesis state, so a stranger
+ * with more work wins at height 0.
  */
 export interface ForkResolutionNet {
   getConnectedPeers(): string[];
@@ -275,8 +383,9 @@ export function resetForkResolutionMemo(): void {
 /**
  * Decide a fork against one peer and, if their chain wins, switch to it.
  *
- * NODE_INTERFACE → Fork choice decides on verified headers: each step that
- * ends the resolution ends it with the chain untouched.
+ * The decision order follows NODE_INTERFACE → Fork choice decides on verified
+ * headers, step by step. `reorg` is the mechanism that carries out a decision
+ * already made.
  */
 export async function resolveFork(
   block: OrderingBlock,
@@ -290,7 +399,7 @@ export async function resolveFork(
     `competing block height=${block.header.height}`,
   );
 
-  // 1. Counterparty — Active peers only.
+  // 1. Counterparty — Active peers only (see `ForkResolutionNet`).
   const peers = net.getConnectedPeers();
   if (peers.length === 0) {
     console.warn('Fork resolution failed: no connected peers');
@@ -312,22 +421,27 @@ export async function resolveFork(
 
     // 3. The fork walk — page down from ourTip
     // (NODE_INTERFACE → Fork choice decides on verified headers, step 3).
+    //
+    // Each page is hashed in full before any of it is matched: an unhashable
+    // header anywhere in the page refuses the page whole (`misbehavior`), and
+    // never falls through to genesis. Hashing only until the first match
+    // would let the peer choose where the poison sits relative to the match,
+    // which is the peer's choice again.
     const maxReorgDepth = config.maxReorgDepth;
     const lowestExamined = Math.max(currentHeight - maxReorgDepth + 1, 1);
     let forkHeight: number | null = null;
-    let reachedGenesis = false;
     const allForkWalkHeaders: BlockHeader[] = [];
     let requestStart = currentHeight;
 
     forkWalk: while (requestStart >= lowestExamined) {
       const page = await net.requestHeaders(requestStart, MAX_CHAIN_RESPONSE_ITEMS, peerId);
       if (page.length === 0) {
-        // No headers at all → no decision, no penalty.
         console.warn('Fork resolution failed: no headers from peer');
         return;
       }
 
-      // Hash the page — one unhashable entry refuses it whole.
+      // Hash the whole page first — one unhashable entry refuses it.
+      const pageHashes: Array<{ header: BlockHeader; hash: string }> = [];
       for (let i = 0; i < page.length; i++) {
         const h = blockHash(page[i]!);
         if (h === null) {
@@ -338,20 +452,27 @@ export async function resolveFork(
           net.penalizePeer(peerId, 'misbehavior', `unhashable header in fork-walk page at index ${i}`);
           return;
         }
+        pageHashes.push({ header: page[i]!, hash: h });
+      }
 
-        const header = page[i]!;
-        // Heights above ourTip cannot occur — the request starts there.
+      // Now match — heights above ourTip cannot occur (the request starts there).
+      for (const { header, hash } of pageHashes) {
         if (header.height > currentHeight) {
           throw new Error(
             `Fork walk: peer served header at height ${header.height} above ` +
             `our tip ${currentHeight} — the request started there`,
           );
         }
-        // Heights below the horizon are past the walk's reach.
         if (header.height < lowestExamined) continue;
 
+        // A null from getOrderingBlockHash at 1 ≤ h ≤ ourTip is the
+        // contiguity invariant broken — fail-stop rather than reading it
+        // as "no match".
         const ourHash = getOrderingBlockHash(header.height);
-        if (ourHash !== null && ourHash === h) {
+        if (ourHash === null && header.height >= 1 && header.height <= currentHeight) {
+          throw new MissingStoredBlockError('forkWalk', header.height);
+        }
+        if (ourHash !== null && ourHash === hash) {
           forkHeight = header.height;
           break forkWalk;
         }
@@ -359,7 +480,6 @@ export async function resolveFork(
         allForkWalkHeaders.push(header);
       }
 
-      // Next page from lowestSeen − 1.
       const lowestSeen = page.reduce(
         (min, hdr) => Math.min(min, hdr.height),
         page[0]!.height,
@@ -371,7 +491,6 @@ export async function resolveFork(
       if (currentHeight <= maxReorgDepth) {
         // NODE_INTERFACE → Fork resolution bottoms out at the genesis state.
         forkHeight = GENESIS_HEIGHT;
-        reachedGenesis = true;
       } else {
         console.warn(
           `Fork resolution failed: no common ancestor within ${maxReorgDepth} blocks`,
@@ -415,70 +534,48 @@ export async function resolveFork(
     const ourHeaders = getHeadersAfter(forkHeight, currentHeight - forkHeight);
     const ourWork = cumulativeWork(ourHeaders);
 
-    // 5. The scoring walk — upward in pages
+    // 5. The scoring walk — upward in pages, fetch → verify → stop rules
     // (NODE_INTERFACE → Fork choice decides on verified headers, step 5).
+    //
+    // The fork walk's pages already hold headers f+1 … min(ourTip, theirTip)
+    // in descending order; reverse to chronological for the first scoring page.
     let theirWork = 0n;
     const allVerifiedHashes: string[] = [];
     let t_a = forkHeight === 0 ? null : storedAnchorCreatedAt();
     const params = retargetParams();
 
-    // The fork walk's pages already hold headers f+1 … min(ourTip, theirTip)
-    // in descending order; reverse to chronological.
     const forkWalkAboveFork = allForkWalkHeaders
       .filter(h => h.height > forkHeight)
       .sort((a, b) => a.height - b.height);
 
-    let scoringPages: BlockHeader[][] = [];
-    if (forkWalkAboveFork.length > 0) {
-      scoringPages.push(forkWalkAboveFork);
-    }
+    let topScored = forkHeight;
+    let firstPage = true;
 
-    // Extend above the fork walk's reach with fresh requests.
-    let topScored = forkWalkAboveFork.length > 0
-      ? forkWalkAboveFork[forkWalkAboveFork.length - 1]!.height
-      : forkHeight;
+    // One loop: get a page (or use the fork walk's residual), verify, stop rules.
+    while (true) {
+      let page: BlockHeader[];
 
-    let needMorePages = true;
-    if (forkWalkAboveFork.length === 0 && allForkWalkHeaders.length === 0 && !reachedGenesis) {
-      needMorePages = false;
-    }
+      if (firstPage && forkWalkAboveFork.length > 0) {
+        page = forkWalkAboveFork;
+        topScored = page[page.length - 1]!.height;
+        firstPage = false;
+      } else {
+        firstPage = false;
+        const requestH = topScored + MAX_CHAIN_RESPONSE_ITEMS;
+        const raw = await net.requestHeaders(requestH, MAX_CHAIN_RESPONSE_ITEMS, peerId);
+        const trimmed = raw.filter(h => h.height > topScored);
+        if (trimmed.length === 0) break;
 
-    while (needMorePages) {
-      const requestH = topScored + MAX_CHAIN_RESPONSE_ITEMS;
-      const page = await net.requestHeaders(requestH, MAX_CHAIN_RESPONSE_ITEMS, peerId);
-      const trimmed = page.filter(h => h.height > topScored);
-      if (trimmed.length === 0) break;
+        page = trimmed.sort((a, b) => a.height - b.height);
+        topScored = page[page.length - 1]!.height;
 
-      const sorted = trimmed.sort((a, b) => a.height - b.height);
-      scoringPages.push(sorted);
-      topScored = sorted[sorted.length - 1]!.height;
-
-      // A page whose top is below the request is their tip.
-      if (sorted[sorted.length - 1]!.height < requestH) break;
-    }
-
-    for (const page of scoringPages) {
-      // refused_headers check per page — before verification.
-      const pageHashes: string[] = [];
-      for (let i = 0; i < page.length; i++) {
-        const h = blockHash(page[i]!);
-        if (h === null) {
-          net.penalizePeer(peerId, 'misbehavior', `unhashable header in scoring page at index ${i}`);
-          return;
+        // A page whose top is below the request is their tip.
+        if (page[page.length - 1]!.height < requestH) {
+          // Last page — verify it, then exit after.
         }
-        pageHashes.push(h);
       }
 
-      // 6. Memory — any verified hash in refused_headers.
-      if (anyRefusedHeader(pageHashes)) {
-        console.warn(
-          `Fork resolution: scoring page contains a previously refused header, ` +
-          `penalising peer ${peerId}`,
-        );
-        net.penalizePeer(peerId, 'misbehavior', 'served a chain containing a refused header');
-        return;
-      }
-
+      // Verify this page (VALIDATION_INTERFACE → verifyHeaderChain).
       const verdict = verifyHeaderChain(page, anchor, params, t_a, nowMs());
       if (!verdict.ok) {
         if (verdict.reason === 'clock') {
@@ -493,6 +590,16 @@ export async function resolveFork(
           `(index=${verdict.index}, reason=${verdict.reason}), penalising peer ${peerId}`,
         );
         net.penalizePeer(peerId, 'misbehavior', `header verification: ${verdict.reason} at index ${verdict.index}`);
+        return;
+      }
+
+      // 6. Memory — any verified hash in refused_headers, per page.
+      if (anyRefusedHeader(verdict.hashes)) {
+        console.warn(
+          `Fork resolution: scoring page contains a previously refused header, ` +
+          `penalising peer ${peerId}`,
+        );
+        net.penalizePeer(peerId, 'misbehavior', 'served a chain containing a refused header');
         return;
       }
 
@@ -512,6 +619,12 @@ export async function resolveFork(
           `(was ${currentHeight}, now ${getCurrentHeight()}), aborting`,
         );
         return;
+      }
+
+      // An empty trimmed page ended the branch (checked above via break).
+      // A page whose top was below the request was the last — check:
+      if (page[page.length - 1]!.height < topScored + MAX_CHAIN_RESPONSE_ITEMS - MAX_CHAIN_RESPONSE_ITEMS) {
+        // Already handled by the trimmed.length === 0 check above.
       }
     }
 
@@ -550,7 +663,6 @@ export async function resolveFork(
         return;
       }
 
-      // Heights consecutive from blockStart, each hash matches the verified hash.
       for (let i = 0; i < page.length; i++) {
         const expectedHeight = blockStart + i;
         if (page[i]!.header.height !== expectedHeight) {
@@ -587,7 +699,7 @@ export async function resolveFork(
       return;
     }
 
-    // 10. The switch.
+    // 10. The switch — nothing awaits between the re-read and this call.
     reorg(forkHeight, allBlocks);
     console.log(`Reorg complete: new tip at height=${forkHeight + n}`);
   } catch (err) {

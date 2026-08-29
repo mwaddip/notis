@@ -2283,7 +2283,7 @@ describe('resolveFork — tampered headers refused before any block request', ()
     vi.resetModules();
   });
 
-  it('window miss (f=0, segment starting above height 1) → refused, no penalty', async () => {
+  it('far headers with no overlap → genesis fallback, scoring starts at height 1', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
@@ -2298,9 +2298,10 @@ describe('resolveFork — tampered headers refused before any block request', ()
     await mineNextBlock(bc);
     expect(ordering.getCurrentHeight()).toBe(1);
 
-    // Peer headers are at very high heights (no overlap except genesis)
-    // This makes the fork walk return GENESIS_HEIGHT (0), and the segment
-    // starts at height > 1, which is a window miss.
+    // Peer headers are at heights far above our tip. The fork walk's first
+    // page holds nothing at or below our tip, so no match is found; with
+    // ourTip ≤ maxReorgDepth, genesis is the common ancestor and the scoring
+    // walk starts at height 1.
     const farHeaders: BlockHeader[] = [];
     for (let h = 50; h >= 42; h--) {
       farHeaders.push({
