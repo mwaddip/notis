@@ -7,6 +7,7 @@ import { getBlockCreatedAt } from '../store/index.js';
 import { getCurrentHeight } from '../store/index.js';
 import { MissingStoredBlockError } from './corrupt-state.js';
 
+/** NODE_INTERFACE → Configuration */
 export function retargetParams(): RetargetParams {
   return {
     anchorBits: config.orderingBlockPowTargetBits,
@@ -29,7 +30,7 @@ export function anchorCreatedAt(): number {
     if (tip > 0) {
       throw new MissingStoredBlockError('anchorCreatedAt', 1);
     }
-    throw new MissingStoredBlockError('anchorCreatedAt', 1);
+    throw new Error('anchorCreatedAt called on an empty chain');
   }
   return stamp;
 }

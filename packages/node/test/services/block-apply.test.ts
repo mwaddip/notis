@@ -15,8 +15,9 @@ import {
   VOUCH_KARMA_AMOUNT,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   MAX_BLOCK_BODY_BYTES,
+  MAX_FUTURE_DRIFT_MS,
 } from '@dagsocial/types';
-import { verifyOrderingBlockPoW } from '@dagsocial/validation';
+import { verifyOrderingBlockPoW, asertTargetBits } from '@dagsocial/validation';
 import type {
   KarmaBox,
   CreditBox,
@@ -370,7 +371,7 @@ describe('block-apply journal recording', () => {
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const blockApply = await importBlockApply();
-    const { expectedTarget } = await import('../../src/services/difficulty.js');
+    const { config } = await import('../../src/config.js');
 
     // A block that passes the genesis and difficulty-schedule checks and then
     // fails on the solution: the target is the scheduled one, the nonce is the
@@ -386,7 +387,7 @@ describe('block-apply journal recording', () => {
         stateRoot: EMPTY_STATE_ROOT,
         validatorId: miner.userId,
         powNonce: 0,
-        powTargetBits: expectedTarget(1),
+        powTargetBits: config.orderingBlockPowTargetBits,
         createdAt: Date.now(),
         interlinkRoot: '00'.repeat(32),
       },
@@ -423,7 +424,7 @@ describe('block-apply journal recording', () => {
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const blockApply = await importBlockApply();
-    const { expectedTarget } = await import('../../src/services/difficulty.js');
+    const { config } = await import('../../src/config.js');
 
     const miner = makeTestIdentity();
     const block: OrderingBlock = {
@@ -434,13 +435,9 @@ describe('block-apply journal recording', () => {
         utxoTxRoot: '0000000000000000000000000000000000000000000000000000000000000000',
         stateRoot: EMPTY_STATE_ROOT,
         validatorId: miner.userId,
-        // The scheduled target, not a number. Two gates read this field —
-        // `verifyOrderingBlockStructure`'s floor, which runs *before* the
-        // height check, and M-2's schedule equality after it — and either one
-        // rejects with `false` and no journal, exactly what this test asserts.
-        // A fixture that trips the floor therefore passes on the wrong gate.
+        // The anchor bits — rejected before the schedule check (height != 1).
         powNonce: 0,
-        powTargetBits: expectedTarget(99),
+        powTargetBits: config.orderingBlockPowTargetBits,
         createdAt: Date.now(),
         interlinkRoot: '00'.repeat(32),
       },
@@ -473,7 +470,7 @@ describe('block-apply journal recording', () => {
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const blockApply = await importBlockApply();
-    const { expectedTarget } = await import('../../src/services/difficulty.js');
+    const { config } = await import('../../src/config.js');
 
     const miner = makeTestIdentity();
     const block: OrderingBlock = {
@@ -484,9 +481,8 @@ describe('block-apply journal recording', () => {
         utxoTxRoot: '0000000000000000000000000000000000000000000000000000000000000000',
         stateRoot: EMPTY_STATE_ROOT,
         validatorId: miner.userId,
-        // Same reason as the height case above.
         powNonce: 0,
-        powTargetBits: expectedTarget(1),
+        powTargetBits: config.orderingBlockPowTargetBits,
         createdAt: Date.now(),
         interlinkRoot: '00'.repeat(32),
       },
@@ -1857,7 +1853,7 @@ describe('block-apply consensus schedules', () => {
   });
 
   // -----------------------------------------------------------------------
-  // M-2: powTargetBits must equal expectedTarget(height)
+  // M-2: powTargetBits must equal the schedule (the anchor at height 1)
   // -----------------------------------------------------------------------
 
   it('rejects a block whose powTargetBits is below the schedule', async () => {
@@ -1865,23 +1861,16 @@ describe('block-apply consensus schedules', () => {
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
-    const { expectedTarget } = await import('../../src/services/difficulty.js');
-    // The constant, not its present value: the floor is a consensus parameter
-    // and this test is about the gap between it and the schedule, not about
-    // which number it currently holds.
+    const { config } = await import('../../src/config.js');
     const floorTarget = ORDERING_BLOCK_POW_TARGET_FLOOR;
-    expect(floorTarget).toBeLessThan(expectedTarget(1));
+    expect(floorTarget).toBeLessThan(config.orderingBlockPowTargetBits);
 
-    // The M-2 attack, in full: a self-declared floor target with a PoW solution
-    // that genuinely satisfies it. Nothing here is malformed — the block is
-    // internally consistent and costs whatever the floor costs to produce.
     const block = await makeApplicableBlock({ powTargetBits: floorTarget });
     expect(verifyOrderingBlockPoW(block.header)).toBe(true);
 
     const blockApply = await importBlockApply();
     expect(blockApply.applyOrderingBlock(block)).toBe(false);
 
-    // Rolled back whole: no block, no height, no coinbase mint.
     const ordering = await importOrdering();
     expect(ordering.getOrderingBlock(1)).toBeNull();
     expect(ordering.getCurrentHeight()).toBe(0);
@@ -1895,9 +1884,9 @@ describe('block-apply consensus schedules', () => {
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
-    const { expectedTarget } = await import('../../src/services/difficulty.js');
+    const { config } = await import('../../src/config.js');
     const block = await makeApplicableBlock();
-    expect(block.header.powTargetBits).toBe(expectedTarget(1));
+    expect(block.header.powTargetBits).toBe(config.orderingBlockPowTargetBits);
 
     const blockApply = await importBlockApply();
     expect(blockApply.applyOrderingBlock(block)).toBe(true);
@@ -2048,6 +2037,217 @@ describe('block-apply consensus schedules', () => {
 
     const journal = await importJournalStore();
     expect(journal.getBlockJournal(1)).toBeNull();
+  });
+
+  // -----------------------------------------------------------------------
+  // ASERT: the retired-class fixture — block 3 must carry scheduledTargetBits
+  // -----------------------------------------------------------------------
+
+  it('rejects block 3 declaring the anchor bits when the schedule moved', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+    const { scheduledTargetBits, setClock, nowMs } = await import('../../src/services/difficulty.js');
+    const { config: cfg } = await import('../../src/config.js');
+
+    const t1 = 1_000_000;
+    setClock(() => t1);
+
+    const block1 = await makeApplicableBlock({ createdAt: t1 });
+    const ba = await importBlockApply();
+    expect(ba.applyOrderingBlock(block1)).toBe(true);
+
+    // Block 2 stamped 10 days later — moves the schedule to the floor
+    const t2 = t1 + 10 * 86_400_000;
+    setClock(() => t2);
+    const block2 = await makeApplicableBlock({ height: 2, createdAt: t2 });
+    expect(ba.applyOrderingBlock(block2)).toBe(true);
+
+    const scheduled3 = scheduledTargetBits(block2.header);
+    expect(scheduled3).not.toBe(cfg.orderingBlockPowTargetBits);
+
+    const t3 = t2 + 60_000;
+    setClock(() => t3);
+
+    // Block 3 with anchor's bits — rejected
+    const badBlock = await makeApplicableBlock({
+      height: 3,
+      powTargetBits: cfg.orderingBlockPowTargetBits,
+      createdAt: t3,
+    });
+    expect(ba.applyOrderingBlock(badBlock)).toBe(false);
+
+    // Block 3 with scheduled bits — applied
+    const goodBlock = await makeApplicableBlock({
+      height: 3,
+      powTargetBits: scheduled3,
+      createdAt: t3,
+    });
+    expect(ba.applyOrderingBlock(goodBlock)).toBe(true);
+    setClock(null);
+  });
+
+  // -----------------------------------------------------------------------
+  // ASERT: timestamp order rule
+  // -----------------------------------------------------------------------
+
+  it('rejects a block whose createdAt equals the parent (order rule)', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+    const { setClock } = await import('../../src/services/difficulty.js');
+    const t1 = 1_000_000;
+    setClock(() => t1);
+
+    const block1 = await makeApplicableBlock({ createdAt: t1 });
+    const ba = await importBlockApply();
+    expect(ba.applyOrderingBlock(block1)).toBe(true);
+
+    // Block 2 stamped equal to block 1
+    const block2eq = await makeApplicableBlock({ height: 2, createdAt: t1 });
+    expect(ba.applyOrderingBlock(block2eq)).toBe(false);
+
+    const ordering = await importOrdering();
+    expect(ordering.getCurrentHeight()).toBe(1);
+    setClock(null);
+  });
+
+  it('rejects a block whose createdAt is below the parent (order rule)', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+    const { setClock } = await import('../../src/services/difficulty.js');
+    const t1 = 1_000_000;
+    setClock(() => t1);
+
+    const block1 = await makeApplicableBlock({ createdAt: t1 });
+    const ba = await importBlockApply();
+    expect(ba.applyOrderingBlock(block1)).toBe(true);
+
+    // Block 2 stamped below block 1
+    const block2below = await makeApplicableBlock({ height: 2, createdAt: t1 - 1 });
+    expect(ba.applyOrderingBlock(block2below)).toBe(false);
+
+    const ordering = await importOrdering();
+    expect(ordering.getCurrentHeight()).toBe(1);
+    setClock(null);
+  });
+
+  // -----------------------------------------------------------------------
+  // ASERT: future bound — no penalty, no refused_headers row
+  // -----------------------------------------------------------------------
+
+  it('rejects a block beyond the future bound and writes no refused_headers row', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+    const { setClock } = await import('../../src/services/difficulty.js');
+    const t = 1_000_000;
+    setClock(() => t);
+
+    // Block 1 stamped beyond the bound
+    const block1 = await makeApplicableBlock({ createdAt: t + MAX_FUTURE_DRIFT_MS + 1 });
+    const ba = await importBlockApply();
+    expect(ba.applyOrderingBlock(block1)).toBe(false);
+
+    // No refused_headers row
+    const { anyRefusedHeader } = await import('../../src/store/index.js');
+    const { blockHash: bh } = await import('@dagsocial/validation');
+    const hash = bh(block1.header);
+    if (hash) expect(anyRefusedHeader([hash])).toBe(false);
+
+    // Advance the clock — same block object applies
+    setClock(() => t + MAX_FUTURE_DRIFT_MS + 2);
+    expect(ba.applyOrderingBlock(block1)).toBe(true);
+    setClock(null);
+  });
+
+  it('accepts a block stamped exactly at the future bound', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+    const { setClock } = await import('../../src/services/difficulty.js');
+    const t = 1_000_000;
+    setClock(() => t);
+
+    const block = await makeApplicableBlock({ createdAt: t + MAX_FUTURE_DRIFT_MS });
+    const ba = await importBlockApply();
+    expect(ba.applyOrderingBlock(block)).toBe(true);
+
+    const ordering = await importOrdering();
+    expect(ordering.getCurrentHeight()).toBe(1);
+    setClock(null);
+  });
+
+  // -----------------------------------------------------------------------
+  // ASERT: interlink root over a parent with no level
+  // -----------------------------------------------------------------------
+
+  it('accepts a child of a parent whose level is null (no-level vector carried forward)', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+    const { setClock, scheduledTargetBits: schedBits } = await import('../../src/services/difficulty.js');
+    const { config: cfg } = await import('../../src/config.js');
+    const { level: levelFn } = await import('@dagsocial/validation');
+    const ba = await importBlockApply();
+
+    // Block 1 at t1
+    const t1 = 1_000_000;
+    setClock(() => t1);
+    const block1 = await makeApplicableBlock({ createdAt: t1 });
+    expect(ba.applyOrderingBlock(block1)).toBe(true);
+
+    // Block 2 stamped 10 days late — a slow chain. The schedule evaluates
+    // over this parent for block 3, so block 3's bits clamp to the floor
+    // (easier, lower bits). A floor-target block's PoW hit can exceed the
+    // anchor yardstick, making its level null.
+    const t2 = t1 + 10 * 86_400_000;
+    setClock(() => t2);
+    const block2 = await makeApplicableBlock({ height: 2, createdAt: t2 });
+    expect(ba.applyOrderingBlock(block2)).toBe(true);
+
+    // Block 3's schedule clamps to the floor (easier)
+    const sched3 = schedBits(block2.header);
+    expect(sched3).toBe(cfg.orderingBlockPowTargetFloorBits);
+
+    // Mine block 3 repeatedly (varying the miner identity to vary the
+    // hash preimage) until we find one whose level is null — the hit
+    // falls between the floor target and the anchor yardstick. On devnet
+    // (floor 2304, anchor 3072) this is about a 1-in-8 chance per solve.
+    const t3 = t2 + 60_000;
+    setClock(() => t3);
+    let block3: Awaited<ReturnType<typeof makeApplicableBlock>> | null = null;
+    for (let attempt = 0; attempt < 200; attempt++) {
+      const candidate = await makeApplicableBlock({
+        height: 3,
+        createdAt: t3,
+        miner: makeTestIdentity(),
+      });
+      if (levelFn(candidate.header, cfg.orderingBlockPowTargetBits) === null) {
+        block3 = candidate;
+        break;
+      }
+    }
+    expect(block3).not.toBeNull();
+    expect(block3!.header.powTargetBits).toBe(cfg.orderingBlockPowTargetFloorBits);
+    expect(ba.applyOrderingBlock(block3!)).toBe(true);
+
+    // Block 4 — the vector carried forward unchanged, so the child accepts
+    const t4 = t3 + 60_000;
+    setClock(() => t4);
+    const block4 = await makeApplicableBlock({ height: 4, createdAt: t4 });
+    expect(ba.applyOrderingBlock(block4)).toBe(true);
+
+    const ordering = await importOrdering();
+    expect(ordering.getCurrentHeight()).toBe(4);
+    setClock(null);
   });
 });
 
@@ -2400,7 +2600,7 @@ describe('block-apply funnel totality', () => {
     const { computeUtxoTxRoot, buildBlockSettlement } = await import(
       '../../src/services/block-creator.js'
     );
-    const { expectedTarget } = await import('../../src/services/difficulty.js');
+    const { config } = await import('../../src/config.js');
     const { encodeTx, interlinkRoot } = await import('@dagsocial/types');
     await seedEmissionBox();
     await seedKarmaPoolBox();
@@ -2418,7 +2618,7 @@ describe('block-apply funnel totality', () => {
       stateRoot: EMPTY_STATE_ROOT,
       validatorId: miner.userId,
       powNonce: 0,
-      powTargetBits: expectedTarget(1),
+      powTargetBits: config.orderingBlockPowTargetBits,
       createdAt: Date.now(),
       interlinkRoot: 'ff'.repeat(32),
     };

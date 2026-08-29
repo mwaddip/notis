@@ -887,6 +887,7 @@ export async function activateProverOverStore(
 export async function makeApplicableBlock(
   opts: {
     powTargetBits?: number;
+    createdAt?: number;
     lockedUntilBlock?: number;
     /** Override the post-block state root — a block committing to state it
      *  does not produce. */
@@ -917,7 +918,7 @@ export async function makeApplicableBlock(
   const { computeUtxoTxRoot, buildBlockSettlement } = await import(
     '../src/services/block-creator.js'
   );
-  const { expectedTarget } = await import('../src/services/difficulty.js');
+  const { scheduledTargetBits, nowMs } = await import('../src/services/difficulty.js');
 
   await seedEmissionBox();
   // ⛔ **A block that touches the pool cannot be built without one, and most
@@ -930,6 +931,7 @@ export async function makeApplicableBlock(
 
   const height = opts.height ?? 1;
   let prevBlockHash = ZERO_HASH;
+  let prevStoredBlock: OrderingBlock | null = null;
   if (height > 1) {
     const { getOrderingBlock } = await import('../src/store/ordering.js');
     const prev = getOrderingBlock(height - 1) as OrderingBlock | null;
@@ -942,6 +944,7 @@ export async function makeApplicableBlock(
       );
     }
     prevBlockHash = prevHash;
+    prevStoredBlock = prev;
   }
   const miner = opts.miner ?? makeTestIdentity();
   const embeddedTxs = opts.utxoTxs ?? [];
@@ -985,11 +988,10 @@ export async function makeApplicableBlock(
   } else {
     const { getInterlinks } = await import('../src/store/ordering.js');
     const { level: levelFn } = await import('@dagsocial/validation');
-    const { getOrderingBlock: getBlock } = await import('../src/store/ordering.js');
-    const prevBlk = getBlock(height - 1)!;
+    const { config } = await import('../src/config.js');
     const storedIl = getInterlinks(height - 1);
-    const prevLvl = levelFn(prevBlk.header);
-    if (storedIl !== null && prevLvl !== null) {
+    const prevLvl = levelFn(prevStoredBlock!.header, config.orderingBlockPowTargetBits);
+    if (storedIl !== null) {
       headerInterlinkRoot = interlinkRoot(updateInterlinks(storedIl, prevBlockHash, prevLvl));
     } else {
       headerInterlinkRoot = interlinkRoot([]);
@@ -1003,8 +1005,10 @@ export async function makeApplicableBlock(
     stateRoot: EMPTY_STATE_ROOT,
     validatorId: miner.userId,
     powNonce: 0,
-    powTargetBits: opts.powTargetBits ?? expectedTarget(height),
-    createdAt: Date.now(),
+    powTargetBits: opts.powTargetBits ?? (height === 1
+      ? (await import('../src/config.js')).config.orderingBlockPowTargetBits
+      : scheduledTargetBits(prevStoredBlock!.header)),
+    createdAt: opts.createdAt ?? Math.max(nowMs(), (prevStoredBlock?.header.createdAt ?? 0) + 1),
     interlinkRoot: headerInterlinkRoot,
   } as BlockHeader;
 

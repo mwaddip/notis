@@ -132,8 +132,8 @@ describe('difficulty schedule', () => {
       expect(() => difficulty.anchorCreatedAt()).toThrow(/no block at height 1/);
     });
 
-    it('throws on an empty chain', () => {
-      expect(() => difficulty.anchorCreatedAt()).toThrow(/no block at height 1/);
+    it('throws a plain Error on an empty chain — a caller bug, not corruption', () => {
+      expect(() => difficulty.anchorCreatedAt()).toThrow(/empty chain/);
     });
   });
 
