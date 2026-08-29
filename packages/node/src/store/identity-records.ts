@@ -289,10 +289,7 @@ export function getNetworkRecord(): NetworkRecord {
  */
 export function putNetworkRecord(record: NetworkRecord): void {
   const replaced = isBlockJournalOpen()
-    ? (() => {
-        try { return getNetworkRecord(); }
-        catch { return undefined; }
-      })()
+    ? getNetworkRecord()
     : undefined;
   getDb()
     .prepare(

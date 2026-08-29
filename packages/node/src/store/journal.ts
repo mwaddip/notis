@@ -36,7 +36,7 @@ export interface RecordMutation {
 export interface NetworkMutation {
   kind: 'network';
   memberCount: number;
-  replaced?: NetworkRecord;
+  replaced: NetworkRecord;
 }
 
 /**
@@ -277,14 +277,15 @@ export function recordIdentityRecordPut(
 /** Record a network-record write (putNetworkRecord). */
 export function recordNetworkRecordPut(
   record: NetworkRecord,
-  replaced?: NetworkRecord,
+  replaced: NetworkRecord | undefined,
 ): void {
   if (openJournal === null) return;
-  const entry: NetworkMutation = { kind: 'network', memberCount: record.memberCount };
-  if (replaced !== undefined) {
-    entry.replaced = replaced;
-  }
-  openJournal.mutations.push(entry);
+  if (replaced === undefined) return;
+  openJournal.mutations.push({
+    kind: 'network',
+    memberCount: record.memberCount,
+    replaced,
+  });
 }
 
 /** Record an applied like-record insertion (insertLikeRecord). */

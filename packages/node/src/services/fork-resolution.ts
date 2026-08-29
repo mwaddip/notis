@@ -253,9 +253,7 @@ export function revertBlock(height: number): void {
         deleteIdentityRecord(m.identityId);
       }
     } else if (m.kind === 'network') {
-      if (m.replaced !== undefined) {
-        putNetworkRecord(m.replaced);
-      }
+      putNetworkRecord(m.replaced);
     } else if (m.op === 'insert') {
       deleteBox(m.boxId);
     } else {
