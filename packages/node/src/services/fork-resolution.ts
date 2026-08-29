@@ -568,11 +568,6 @@ export async function resolveFork(
 
         page = trimmed.sort((a, b) => a.height - b.height);
         topScored = page[page.length - 1]!.height;
-
-        // A page whose top is below the request is their tip.
-        if (page[page.length - 1]!.height < requestH) {
-          // Last page — verify it, then exit after.
-        }
       }
 
       // Verify this page (VALIDATION_INTERFACE → verifyHeaderChain).
@@ -619,12 +614,6 @@ export async function resolveFork(
           `(was ${currentHeight}, now ${getCurrentHeight()}), aborting`,
         );
         return;
-      }
-
-      // An empty trimmed page ended the branch (checked above via break).
-      // A page whose top was below the request was the last — check:
-      if (page[page.length - 1]!.height < topScored + MAX_CHAIN_RESPONSE_ITEMS - MAX_CHAIN_RESPONSE_ITEMS) {
-        // Already handled by the trimmed.length === 0 check above.
       }
     }
 
