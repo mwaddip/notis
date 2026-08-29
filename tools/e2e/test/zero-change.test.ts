@@ -19,7 +19,7 @@ import {
   selectBoxes,
   computeContentHash,
   PROTOCOL_VERSION,
-  POST_LOCK_THREAD_COST,
+  POST_PRICE_THREAD,
 } from '@dagsocial/types';
 
 const FILE_INDEX = 14;
@@ -66,12 +66,12 @@ describe('zero-change', () => {
       mesh.miningSecret,
     );
 
-    // ---- alice's grant equals the bond ----
+    // ---- alice's grant equals the price ----
     const aliceK = await getKarma(miner, alice.publicKeyHex);
     expect(BigInt(aliceK.total)).toBe(bondAmount);
-    expect(bondAmount).toBe(POST_LOCK_THREAD_COST);
+    expect(bondAmount).toBe(POST_PRICE_THREAD);
 
-    // ---- exact spend: thread cost exhausts alice's karma ----
+    // ---- exact spend: thread price exhausts alice's karma ----
     const thread = buildThreadTx(
       alice,
       karmaBoxes(aliceK),
@@ -109,7 +109,7 @@ describe('zero-change', () => {
     const sorted = [...faucetBoxes].sort((a, b) =>
       b.value > a.value ? 1 : b.value < a.value ? -1 : 0,
     );
-    const selected = selectBoxes(sorted, POST_LOCK_THREAD_COST);
+    const selected = selectBoxes(sorted, POST_PRICE_THREAD);
     const selectedTotal = selected.reduce((sum, b) => sum + b.value, 0n);
 
     const faucetOwner = Buffer.from(DEVNET_FAUCET.publicKeyHex, 'hex');
@@ -121,16 +121,14 @@ describe('zero-change', () => {
         { boxType: 'karma', value: 0n, createdAtBlock: faucetAfter.height, owner: faucetOwner },
         {
           boxType: 'karma',
-          value: selectedTotal - POST_LOCK_THREAD_COST,
+          value: selectedTotal - POST_PRICE_THREAD,
           createdAtBlock: faucetAfter.height,
           owner: faucetOwner,
         },
         {
-          boxType: 'post_lock',
-          value: POST_LOCK_THREAD_COST,
-          originalValue: POST_LOCK_THREAD_COST,
+          boxType: 'karma_price',
+          value: POST_PRICE_THREAD,
           createdAtBlock: faucetAfter.height,
-          owner: faucetOwner,
         },
       ],
       signatures: {},

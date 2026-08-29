@@ -17,6 +17,7 @@ import {
   isPost,
 } from '../src/http.js';
 import type { BoxRef } from '../src/tx/render.js';
+import { POST_PRICE_THREAD, POST_PRICE_REPLY } from '@dagsocial/types';
 
 const FILE_INDEX = 0;
 
@@ -98,7 +99,7 @@ describe('mesh', () => {
       expect(BigInt(bk.total)).toBe(bondAmount);
     }
 
-    // ---- thread + reply ----
+    // ---- thread ----
     const aliceK = (await getKarma(miner, alice.publicKeyHex))!;
     const thread = buildThreadTx(
       alice,
@@ -107,15 +108,6 @@ describe('mesh', () => {
       aliceK.height,
     );
     const threadRes = await postPost(miner, thread.json, thread.content);
-
-    const reply = buildReplyTx(
-      alice,
-      [thread.outputs[0]!],
-      'reply to mesh',
-      threadRes.postId,
-      aliceK.height,
-    );
-    const replyRes = await postPost(miner, reply.json, reply.content);
 
     await confirm(
       async () => {
@@ -144,6 +136,28 @@ describe('mesh', () => {
         if (isPost(p!)) expect(p.blockHeight).toBe(firstThread.blockHeight);
       }
     }
+
+    // ---- reply: parent must be confirmed so the node resolves the author ----
+    const aliceKForReply = (await getKarma(miner, alice.publicKeyHex))!;
+    const reply = buildReplyTx(
+      alice,
+      karmaBoxes(aliceKForReply),
+      'reply to mesh',
+      threadRes.postId,
+      alice.publicKeyHex,
+      aliceKForReply.height,
+    );
+    const replyRes = await postPost(miner, reply.json, reply.content);
+
+    await confirm(
+      async () => {
+        const p = await getPost(miner, replyRes.postId);
+        return p !== null && isPost(p) && p.status === 'confirmed';
+      },
+      miner,
+      mesh.miningSecret,
+    );
+    await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
 
     const replyPosts = await Promise.all(
       mesh.nodes.map((n) => getPost(n, replyRes.postId)),
@@ -180,8 +194,7 @@ describe('mesh', () => {
     );
     await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
 
-    // Alice's karma: bond (50) − thread (5) − reply (3) = 42, unchanged by one like
-    const aliceKarmaExpected = bondAmount - 5n - 3n;
+    const aliceKarmaExpected = bondAmount - POST_PRICE_THREAD - POST_PRICE_REPLY; // ARCHITECTURE → Like parameters
     for (const node of mesh.nodes) {
       const p = (await getPost(node, threadRes.postId))!;
       expect(isPost(p)).toBe(true);

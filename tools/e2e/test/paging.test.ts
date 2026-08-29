@@ -45,9 +45,9 @@ describe('paging', () => {
     const block1 = await fetch(`${node.url}/blocks/1`);
     expect(block1.ok).toBe(true);
 
-    // ---- invite alice (bond covers 10 thread locks = 50n) ----
-    // POST_LOCK_THREAD_COST = 5n, POST_LOCK_REPLY_COST = 3n;
-    // 10 thread locks = 50n; actual spend: 6 threads × 5 + 4 replies × 3 = 42n
+    // ARCHITECTURE → Like parameters
+    // POST_PRICE_THREAD = 5n, POST_PRICE_REPLY = 3n;
+    // actual spend: 6 threads × 5 + 4 replies × 3 = 42n
     const alice = fresh();
     const bondAmount = 50n;
 
@@ -184,7 +184,7 @@ describe('paging', () => {
 
     // ---- the thread: replies to p1 ----
     aliceK = (await getKarma(node, alice.publicKeyHex))!;
-    const r1Tx = buildReplyTx(alice, karmaBoxes(aliceK), 'reply one', p1Res.postId, aliceK.height);
+    const r1Tx = buildReplyTx(alice, karmaBoxes(aliceK), 'reply one', p1Res.postId, alice.publicKeyHex, aliceK.height);
     const r1Res = await postPost(node, r1Tx.json, r1Tx.content);
     await confirm(
       async () => {
@@ -196,7 +196,7 @@ describe('paging', () => {
     );
 
     aliceK = (await getKarma(node, alice.publicKeyHex))!;
-    const r2Tx = buildReplyTx(alice, karmaBoxes(aliceK), 'reply two', p1Res.postId, aliceK.height);
+    const r2Tx = buildReplyTx(alice, karmaBoxes(aliceK), 'reply two', p1Res.postId, alice.publicKeyHex, aliceK.height);
     const r2Res = await postPost(node, r2Tx.json, r2Tx.content);
     await confirm(
       async () => {
@@ -208,7 +208,7 @@ describe('paging', () => {
     );
 
     aliceK = (await getKarma(node, alice.publicKeyHex))!;
-    const r3Tx = buildReplyTx(alice, karmaBoxes(aliceK), 'reply three', p1Res.postId, aliceK.height);
+    const r3Tx = buildReplyTx(alice, karmaBoxes(aliceK), 'reply three', p1Res.postId, alice.publicKeyHex, aliceK.height);
     const r3Res = await postPost(node, r3Tx.json, r3Tx.content);
     await confirm(
       async () => {
@@ -232,7 +232,7 @@ describe('paging', () => {
 
     // ---- reply r4, confirm, continue thread ----
     aliceK = (await getKarma(node, alice.publicKeyHex))!;
-    const r4Tx = buildReplyTx(alice, karmaBoxes(aliceK), 'reply four', p1Res.postId, aliceK.height);
+    const r4Tx = buildReplyTx(alice, karmaBoxes(aliceK), 'reply four', p1Res.postId, alice.publicKeyHex, aliceK.height);
     const r4Res = await postPost(node, r4Tx.json, r4Tx.content);
     await confirm(
       async () => {

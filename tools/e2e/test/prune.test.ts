@@ -6,10 +6,6 @@ import { buildInviteTx } from '../src/tx/invite.js';
 import { buildThreadTx, buildReplyTx } from '../src/tx/post.js';
 import { buildPruneTx } from '../src/tx/prune.js';
 import {
-  MAX_POST_LOCK_RELEASES_PER_BLOCK,
-  POST_LOCK_REPLY_COST,
-} from '@dagsocial/types';
-import {
   postInvite,
   postPost,
   postPrune,
@@ -66,16 +62,10 @@ describe('prune', () => {
     );
     await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
 
-    // ---- alice posts a thread with two replies ----
+    // ---- alice posts a thread, confirm before replying ----
     const aliceK = (await getKarma(miner, alice.publicKeyHex))!;
     const thread = buildThreadTx(alice, karmaBoxes(aliceK), 'prune root', aliceK.height);
     const threadRes = await postPost(miner, thread.json, thread.content);
-
-    const reply1 = buildReplyTx(alice, [thread.outputs[0]!], 'reply 1', threadRes.postId, aliceK.height);
-    const reply1Res = await postPost(miner, reply1.json, reply1.content);
-
-    const reply2 = buildReplyTx(alice, [reply1.outputs[0]!], 'reply 2', threadRes.postId, aliceK.height);
-    const reply2Res = await postPost(miner, reply2.json, reply2.content);
 
     // ---- bob posts a thread (for the non-author test later) ----
     const bobK = (await getKarma(miner, bob.publicKeyHex))!;
@@ -85,6 +75,23 @@ describe('prune', () => {
     await confirm(
       async () => {
         const p = await getPost(miner, threadRes.postId);
+        return p !== null && isPost(p) && p.status === 'confirmed';
+      },
+      miner, mesh.miningSecret,
+    );
+    await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
+
+    // ---- alice replies to her confirmed thread ----
+    const aliceKR = (await getKarma(miner, alice.publicKeyHex))!;
+    const reply1 = buildReplyTx(alice, karmaBoxes(aliceKR), 'reply 1', threadRes.postId, alice.publicKeyHex, aliceKR.height);
+    const reply1Res = await postPost(miner, reply1.json, reply1.content);
+
+    const reply2 = buildReplyTx(alice, [reply1.outputs[0]!], 'reply 2', threadRes.postId, alice.publicKeyHex, aliceKR.height);
+    const reply2Res = await postPost(miner, reply2.json, reply2.content);
+
+    await confirm(
+      async () => {
+        const p = await getPost(miner, reply2Res.postId);
         return p !== null && isPost(p) && p.status === 'confirmed';
       },
       miner, mesh.miningSecret,
@@ -234,17 +241,27 @@ describe('prune', () => {
     );
     await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
 
-    // ---- alice posts a thread with one reply ----
+    // ---- alice posts a thread, confirm, then reply ----
     const aliceK = (await getKarma(miner, alice.publicKeyHex))!;
     const thread = buildThreadTx(alice, karmaBoxes(aliceK), 't5 root', aliceK.height);
     const threadRes = await postPost(miner, thread.json, thread.content);
 
-    const reply1 = buildReplyTx(alice, [thread.outputs[0]!], 't5 reply1', threadRes.postId, aliceK.height);
-    await postPost(miner, reply1.json, reply1.content);
-
     await confirm(
       async () => {
         const p = await getPost(miner, threadRes.postId);
+        return p !== null && isPost(p) && p.status === 'confirmed';
+      },
+      miner, mesh.miningSecret,
+    );
+    await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
+
+    const aliceKR = (await getKarma(miner, alice.publicKeyHex))!;
+    const reply1 = buildReplyTx(alice, karmaBoxes(aliceKR), 't5 reply1', threadRes.postId, alice.publicKeyHex, aliceKR.height);
+    const reply1Res = await postPost(miner, reply1.json, reply1.content);
+
+    await confirm(
+      async () => {
+        const p = await getPost(miner, reply1Res.postId);
         return p !== null && isPost(p) && p.status === 'confirmed';
       },
       miner, mesh.miningSecret,
@@ -257,7 +274,7 @@ describe('prune', () => {
 
     // ---- in one block: bob replies to the thread AND alice prunes it ----
     const bobK = (await getKarma(miner, bob.publicKeyHex))!;
-    const bobReply = buildReplyTx(bob, karmaBoxes(bobK), 't5 bob reply', threadRes.postId, bobK.height);
+    const bobReply = buildReplyTx(bob, karmaBoxes(bobK), 't5 bob reply', threadRes.postId, alice.publicKeyHex, bobK.height);
     const bobReplyRes = await postPost(miner, bobReply.json, bobReply.content);
 
     const aliceK2 = (await getKarma(miner, alice.publicKeyHex))!;
@@ -301,10 +318,9 @@ describe('prune', () => {
     await mesh.teardown();
   });
 
-  it('release over blocks: post-lock releases drain in (pruned_at_height, post_id) order, capped per block', async () => {
-    // NODE_INTERFACE → The post-lock settlement phase
-    // TYPES_INTERFACE → Settlement caps
-    const REPLY_COUNT = MAX_POST_LOCK_RELEASES_PER_BLOCK + 2; // 66 > 64
+  it('prune refunds nothing: the subtree prunes in one block and no replier gains karma afterwards', async () => {
+    // ARCHITECTURE → The post price: nothing returns
+    const REPLY_COUNT = 4;
 
     mesh = await createMesh({ fileIndex: FILE_INDEX, nodeCount: 2 });
     const miner = mesh.nodes[0]!;
@@ -313,7 +329,7 @@ describe('prune', () => {
     await mine(miner, mesh.miningSecret, 1);
     await waitHeight(mesh.nodes, 1);
 
-    // ---- invite alice (author) + REPLY_COUNT distinct repliers ----
+    // ---- invite alice (author) + repliers ----
     const alice = fresh();
     const repliers: Identity[] = [];
     const bondAmount = 25n;
@@ -342,7 +358,7 @@ describe('prune', () => {
 
     // ---- alice posts a thread ----
     const aliceK = (await getKarma(miner, alice.publicKeyHex))!;
-    const thread = buildThreadTx(alice, karmaBoxes(aliceK), 'release root', aliceK.height);
+    const thread = buildThreadTx(alice, karmaBoxes(aliceK), 'prune-refund root', aliceK.height);
     const threadRes = await postPost(miner, thread.json, thread.content);
 
     await confirm(
@@ -355,11 +371,11 @@ describe('prune', () => {
     await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
 
     // ---- each replier replies to alice's thread ----
-    // NODE_INTERFACE → Post transactions: each reply creates a post_lock box
+    // ARCHITECTURE → The post price
     const replyPostIds: string[] = [];
     for (const replier of repliers) {
       const rK = (await getKarma(miner, replier.publicKeyHex))!;
-      const reply = buildReplyTx(replier, karmaBoxes(rK), `reply by ${replier.publicKeyHex.slice(0, 8)}`, threadRes.postId, rK.height);
+      const reply = buildReplyTx(replier, karmaBoxes(rK), `reply by ${replier.publicKeyHex.slice(0, 8)}`, threadRes.postId, alice.publicKeyHex, rK.height);
       const res = await postPost(miner, reply.json, reply.content);
       replyPostIds.push(res.postId);
     }
@@ -398,18 +414,32 @@ describe('prune', () => {
       },
       miner, mesh.miningSecret,
     );
-    const pruneHeight = (await getBlockCurrent(miner)).height;
-    await waitHeight(mesh.nodes, pruneHeight);
+    await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
 
-    // ---- in the prune's block: all replies are gone, all repliers' karma unchanged ----
+    // ---- all replies are stumped/pruned, stump and topology intact ----
     for (const node of mesh.nodes) {
       const root = await getPost(node, threadRes.postId);
       expect(isStump(root!)).toBe(true);
+      if (isStump(root!)) {
+        expect(root.replyCount).toBe(REPLY_COUNT);
+      }
       for (const rid of replyPostIds) {
         const r = await getPost(node, rid);
         expect(isPruned(r!)).toBe(true);
       }
     }
+
+    // ---- repliers' karma unchanged: nothing returns ----
+    // ARCHITECTURE → The post price: nothing returns
+    for (const replier of repliers) {
+      const k = await getKarma(miner, replier.publicKeyHex);
+      const before = karmaBefore.get(replier.publicKeyHex)!;
+      expect(BigInt(k!.total)).toBe(before);
+    }
+
+    // ---- mine two more blocks: repliers' karma still unchanged ----
+    await mine(miner, mesh.miningSecret, 2);
+    await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
 
     for (const replier of repliers) {
       const k = await getKarma(miner, replier.publicKeyHex);
@@ -417,53 +447,12 @@ describe('prune', () => {
       expect(BigInt(k!.total)).toBe(before);
     }
 
-    // ---- mine one block: first batch of releases ----
-    await mine(miner, mesh.miningSecret, 1);
-    await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
-
-    // All candidate post_ids: replier locks + alice's thread lock.
-    // NODE_INTERFACE → The post-lock settlement phase: order is
-    // (pruned_at_height, post_id); all share pruned_at_height, so post_id
-    // ascending is the tiebreaker. Alice's thread lock is a candidate whose
-    // value goes to the pool (lock.owner === actor).
-    const allCandidateIds = [threadRes.postId, ...replyPostIds].sort();
-    const firstBatchIds = new Set(allCandidateIds.slice(0, MAX_POST_LOCK_RELEASES_PER_BLOCK));
-    const aliceInFirstBatch = firstBatchIds.has(threadRes.postId);
-    const expectedReplierRefundsFirst = MAX_POST_LOCK_RELEASES_PER_BLOCK - (aliceInFirstBatch ? 1 : 0);
-
-    let releasedFirst = 0;
-    for (const replier of repliers) {
-      const k = await getKarma(miner, replier.publicKeyHex);
-      const before = karmaBefore.get(replier.publicKeyHex)!;
-      if (BigInt(k!.total) > before) releasedFirst++;
-    }
-    expect(releasedFirst).toBe(expectedReplierRefundsFirst);
-
-    // ---- mine another block: remaining releases ----
-    await mine(miner, mesh.miningSecret, 1);
-    await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
-
-    let releasedTotal = 0;
-    for (const replier of repliers) {
-      const k = await getKarma(miner, replier.publicKeyHex);
-      const before = karmaBefore.get(replier.publicKeyHex)!;
-      if (BigInt(k!.total) > before) releasedTotal++;
-    }
-    expect(releasedTotal).toBe(REPLY_COUNT);
-
-    // ---- karma conservation: each replier got POST_LOCK_REPLY_COST back ----
-    for (const replier of repliers) {
-      const k = await getKarma(miner, replier.publicKeyHex);
-      const before = karmaBefore.get(replier.publicKeyHex)!;
-      expect(BigInt(k!.total)).toBe(before + POST_LOCK_REPLY_COST);
-    }
-
-    // ---- alice's own lock: value goes to the pool, never returns ----
-    // NODE_INTERFACE → The post-lock settlement phase
+    // ---- the pruner's karma: the prune is a self-transfer ----
+    // NODE_INTERFACE → Prune transactions
     const aliceKAfter = await getKarma(miner, alice.publicKeyHex);
     const aliceTotalAfter = aliceKAfter ? BigInt(aliceKAfter.total) : 0n;
-    expect(aliceTotalAfter).toBeLessThanOrEqual(aliceTotalBefore);
+    expect(aliceTotalAfter).toBe(aliceTotalBefore);
 
     await mesh.teardown();
-  }, 120_000);
+  });
 });

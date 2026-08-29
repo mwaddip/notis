@@ -2,8 +2,9 @@ import {
   selectBoxes,
   computeContentHash,
   PROTOCOL_VERSION,
-  POST_LOCK_THREAD_COST,
-  POST_LOCK_REPLY_COST,
+  POST_PRICE_THREAD,
+  POST_PRICE_REPLY,
+  REPLY_AUTHOR_SHARE,
 } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import type { Identity } from '../identities.js';
@@ -19,7 +20,7 @@ export function buildThreadTx(
   content: string,
   height: number,
 ): PostTx {
-  return buildPostTx(author, boxes, content, [], POST_LOCK_THREAD_COST, height);
+  return buildPostTx(author, boxes, content, [], POST_PRICE_THREAD, height);
 }
 
 export function buildReplyTx(
@@ -27,9 +28,10 @@ export function buildReplyTx(
   boxes: BoxRef[],
   content: string,
   parentPostId: string,
+  parentAuthorHex: string,
   height: number,
 ): PostTx {
-  return buildPostTx(author, boxes, content, [parentPostId], POST_LOCK_REPLY_COST, height);
+  return buildPostTx(author, boxes, content, [parentPostId], POST_PRICE_REPLY, height, parentAuthorHex);
 }
 
 function buildPostTx(
@@ -37,26 +39,41 @@ function buildPostTx(
   boxes: BoxRef[],
   content: string,
   parentRefs: string[],
-  lockCost: bigint,
+  price: bigint,
   height: number,
+  parentAuthorHex?: string,
 ): PostTx {
   const sorted = [...boxes].sort((a, b) => (b.value > a.value ? 1 : b.value < a.value ? -1 : 0));
-  const selected = selectBoxes(sorted, lockCost);
+  const selected = selectBoxes(sorted, price);
   const selectedTotal = selected.reduce((sum, b) => sum + b.value, 0n);
-  const changeValue = selectedTotal - lockCost;
+  const changeValue = selectedTotal - price;
 
   const owner = Buffer.from(author.publicKeyHex, 'hex');
   const outputs: UtxoTransaction['outputs'] = [];
   if (changeValue > 0n) {
     outputs.push({ boxType: 'karma', value: changeValue, createdAtBlock: height, owner });
   }
-  outputs.push({
-    boxType: 'post_lock',
-    value: lockCost,
-    originalValue: lockCost,
-    createdAtBlock: height,
-    owner,
-  });
+
+  if (parentAuthorHex) {
+    // ARCHITECTURE → The post price
+    outputs.push({
+      boxType: 'karma_price',
+      value: POST_PRICE_REPLY - REPLY_AUTHOR_SHARE,
+      createdAtBlock: height,
+    });
+    outputs.push({
+      boxType: 'like_accrual',
+      value: REPLY_AUTHOR_SHARE,
+      createdAtBlock: height,
+      author: Buffer.from(parentAuthorHex, 'hex'),
+    });
+  } else {
+    outputs.push({
+      boxType: 'karma_price',
+      value: POST_PRICE_THREAD,
+      createdAtBlock: height,
+    });
+  }
 
   const tx: UtxoTransaction = {
     inputs: selected.map((b) => b.boxId),

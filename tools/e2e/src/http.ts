@@ -255,9 +255,9 @@ export async function adminGet(
 
 export async function getStatus(
   node: NodeProcess,
-): Promise<{ vouchCooldownBlocks: number; blockHeight: number }> {
+): Promise<{ vouchCooldownBlocks: number; blockHeight: number; totalKarma: string }> {
   const data = await jsonGet(node, '/status');
-  return data as { vouchCooldownBlocks: number; blockHeight: number };
+  return data as { vouchCooldownBlocks: number; blockHeight: number; totalKarma: string };
 }
 
 export interface PostsPage {
