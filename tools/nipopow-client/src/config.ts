@@ -21,7 +21,7 @@ export interface Config {
   json: boolean;
 }
 
-// NIPOPOW_INTERFACE → verifyProof — the retarget schedule is a constant per profile
+// NIPOPOW_INTERFACE → verifyProof — the schedule's parameters are the profile band
 export function verifierProfile(profile: NetworkProfile, nowMs: number): VerifyProfile {
   const idealMs = profile.orderingBlockIdealMs;
   return {
