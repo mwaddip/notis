@@ -1,7 +1,5 @@
 export interface SyncInfo {
   tipHeight: number;
-  tipBlockId: string;
-  anchors: { height: number; blockId: string }[];
 }
 
 export interface Inv {
@@ -23,6 +21,4 @@ export interface SyncState {
   phase: 'idle' | 'syncing' | 'backfill' | 'synced';
   syncPeerId: string | null;
   stalledPeers: Set<string>;
-  downloadedHeight: number;
-  stateAppliedHeight: number;
 }

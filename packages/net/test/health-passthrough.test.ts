@@ -50,11 +50,7 @@ function stubStore(overrides: Partial<SyncStore> = {}): SyncStore {
     getOrderingBlockId: () => null,
     heightByBlockId: () => null,
     chainHeight: () => 0,
-    getAnchors: () => [],
-    appendHeaders: () => {},
     appendBlocks: () => {},
-    setValidatedHeight: () => {},
-    flush: () => {},
     ...overrides,
   };
 }
@@ -363,9 +359,8 @@ describe('onSyncComplete fires on every entry into synced', () => {
     expect(machine.getState().phase).toBe('syncing');
 
     height = 100;
-    const H32 = '0'.repeat(64);
     machine.handleMessage('peer1', MSG_SYNC_INFO, encodeStruct(syncInfoCodec,
-      { tipHeight: 100, tipBlockId: H32, anchors: [] },
+      { tipHeight: 100 },
     ));
     machine.flush();
     expect(machine.getState().phase).toBe('synced');
@@ -377,7 +372,7 @@ describe('onSyncComplete fires on every entry into synced', () => {
 
     height = 200;
     machine.handleMessage('peer2', MSG_SYNC_INFO, encodeStruct(syncInfoCodec,
-      { tipHeight: 200, tipBlockId: H32, anchors: [] },
+      { tipHeight: 200 },
     ));
     machine.flush();
     expect(machine.getState().phase).toBe('synced');

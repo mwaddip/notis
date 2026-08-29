@@ -1,4 +1,3 @@
-import { GENESIS_PREV_BLOCK_HASH } from '@dagsocial/types';
 import type { NetConfig } from './types.js';
 import {
   MSG_HANDSHAKE,
@@ -37,16 +36,8 @@ export interface SyncStore {
   heightByBlockId(id: string): number | null;
   /** Current best-chain tip height — one provider call, O(1) (ARCHITECTURE → Correct and cheap are separate obligations). */
   chainHeight(): number;
-  /** Anchors for sync (height + block ID pairs across the chain). */
-  getAnchors(): { height: number; blockId: string }[];
-  /** Persist received headers. */
-  appendHeaders(headers: unknown[]): void;
   /** Persist received full blocks. */
   appendBlocks(blocks: unknown[], peerId: string): void;
-  /** Mark a height as fully validated (headers + body + signatures). */
-  setValidatedHeight(height: number): void;
-  /** Flush pending writes to durable storage. */
-  flush(): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -123,8 +114,6 @@ export class SyncMachine {
     phase: 'idle',
     syncPeerId: null,
     stalledPeers: new Set(),
-    downloadedHeight: 0,
-    stateAppliedHeight: 0,
   };
 
   private lastProgressMs: number = 0;
@@ -817,14 +806,6 @@ export class SyncMachine {
       }
     }
 
-    this.state.downloadedHeight = Math.max(
-      this.state.downloadedHeight,
-      newHeight,
-    );
-    this.state.stateAppliedHeight = Math.max(
-      this.state.stateAppliedHeight,
-      newHeight,
-    );
   }
 
   // -----------------------------------------------------------------------
@@ -1034,21 +1015,19 @@ export class SyncMachine {
     return outBest ?? anyBest;
   }
 
+  /** NET_INTERFACE → Pull Requests, `peerTipHeight`. */
+  peerHeight(peerId: string): number | null {
+    return this.peerHeights.get(peerId) ?? null;
+  }
+
   // -----------------------------------------------------------------------
   // Internal — helpers
   // -----------------------------------------------------------------------
 
+  /** NET_INTERFACE → SyncInfo. */
   private sendSyncInfo(peerId: string): void {
     const tipHeight = this.store.chainHeight();
-    const tipBlockId = this.store.getOrderingBlockId(tipHeight) ?? GENESIS_PREV_BLOCK_HASH;
-
-    const info: SyncInfo = {
-      tipHeight,
-      tipBlockId,
-      anchors: this.store.getAnchors(),
-    };
-
-    this.sendToPeer(peerId, encodeSyncInfo(this.magic, info));
+    this.sendToPeer(peerId, encodeSyncInfo(this.magic, { tipHeight }));
     const now = Date.now();
     this.lastSyncInfoMs = now;
     this.lastSentTip.set(peerId, tipHeight);

@@ -197,28 +197,6 @@ export class LazySyncStore implements SyncStore {
     return this._chainHeightProvider?.() ?? 0;
   }
 
-  getAnchors(): { height: number; blockId: string }[] {
-    if (!this._blockIdProvider) return [];
-    const h = this.chainHeight();
-    if (h < 1) return [];
-    const anchors: { height: number; blockId: string }[] = [];
-    const seen = new Set<number>();
-    for (const candidate of [h, h - 16, h - 128, h - 512]) {
-      if (candidate < 1) continue;
-      if (seen.has(candidate)) continue;
-      seen.add(candidate);
-      const id = this.getOrderingBlockId(candidate);
-      if (id) anchors.push({ height: candidate, blockId: id });
-    }
-    return anchors;
-  }
-
-  appendHeaders(_headers: unknown[]): void {
-    // Mutations are handled by the node layer directly via applyOrderingBlock.
-    // The sync machine may call this; it's a no-op here because the node layer
-    // owns persistence.
-  }
-
   appendBlocks(_blocks: unknown[], peerId: string): void {
     if (!this._blocksHandler) return;
     for (const raw of _blocks) {
@@ -261,13 +239,6 @@ export class LazySyncStore implements SyncStore {
     }
   }
 
-  setValidatedHeight(_height: number): void {
-    // Node layer tracks validation state.
-  }
-
-  flush(): void {
-    // Node layer flushes via its own DB lifecycle.
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1394,6 +1365,11 @@ export class NetNode {
   /** NET_INTERFACE → API → Node Lifecycle. */
   syncPhase(): 'idle' | 'syncing' | 'backfill' | 'synced' {
     return this.syncMachine?.getState().phase ?? 'idle';
+  }
+
+  /** NET_INTERFACE → Pull Requests. */
+  peerTipHeight(peerId: string): number | null {
+    return this.syncMachine?.peerHeight(peerId) ?? null;
   }
 
   /** NET_INTERFACE → Sync Handler Registration. */

@@ -29,11 +29,7 @@ function stubStore(overrides: Partial<SyncStore> = {}): SyncStore {
     getOrderingBlockId: () => null,
     heightByBlockId: () => null,
     chainHeight: () => 0,
-    getAnchors: () => [],
-    appendHeaders: () => {},
     appendBlocks: () => {},
-    setValidatedHeight: () => {},
-    flush: () => {},
     ...overrides,
   };
 }
@@ -130,11 +126,6 @@ describe('SyncMachine', () => {
       expect(machine.getState().stalledPeers.size).toBe(0);
     });
 
-    it('has zero downloaded and applied heights', () => {
-      const { machine } = makeMachine();
-      expect(machine.getState().downloadedHeight).toBe(0);
-      expect(machine.getState().stateAppliedHeight).toBe(0);
-    });
   });
 
   // -----------------------------------------------------------------------
@@ -189,8 +180,6 @@ describe('SyncMachine', () => {
       peerActive(machine, 'peer1', 200);
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
-        tipBlockId: H32,
-        anchors: [],
       });
       expect(machine.getState().phase).toBe('synced');
 
@@ -222,8 +211,6 @@ describe('SyncMachine', () => {
       const { machine } = makeMachine({ store: { chainHeight: () => 0 } });
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
-        tipBlockId: H32,
-        anchors: [],
       });
       expect(machine.getState().phase).toBe('syncing');
       expect(machine.getState().syncPeerId).toBe('peer1');
@@ -238,8 +225,6 @@ describe('SyncMachine', () => {
       });
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 5,
-        tipBlockId: H32_A,
-        anchors: [],
       });
       // NET_INTERFACE → Serve Side: SyncInfo reply then Inv, both to the sender
       expect(sent.length).toBe(2);
@@ -256,8 +241,6 @@ describe('SyncMachine', () => {
       // Now peer reports equal height
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
-        tipBlockId: H32,
-        anchors: [],
       });
       expect(machine.getState().phase).toBe('synced');
     });
@@ -269,8 +252,6 @@ describe('SyncMachine', () => {
 
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
-        tipBlockId: H32,
-        anchors: [],
       });
       expect(machine.getState().phase).toBe('synced');
       expect(machine.getState().stalledPeers.size).toBe(0);
@@ -280,8 +261,6 @@ describe('SyncMachine', () => {
       const { machine } = makeMachine({ store: { chainHeight: () => 100 } });
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
-        tipBlockId: H32,
-        anchors: [],
       });
       expect(machine.getState().phase).toBe('idle');
     });
@@ -292,16 +271,12 @@ describe('SyncMachine', () => {
       peerActive(machine, 'peer1', 200);
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
-        tipBlockId: H32,
-        anchors: [],
       });
       expect(machine.getState().phase).toBe('synced');
 
       // A different peer reports higher height via SyncInfo
       sendSyncInfo(machine, 'peer2', {
         tipHeight: 300,
-        tipBlockId: H32_A,
-        anchors: [],
       });
       expect(machine.getState().phase).toBe('syncing');
       expect(machine.getState().syncPeerId).toBe('peer2');
@@ -312,8 +287,6 @@ describe('SyncMachine', () => {
       machine.getState().stalledPeers.add('peer1');
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
-        tipBlockId: H32,
-        anchors: [],
       });
       expect(machine.getState().stalledPeers.has('peer1')).toBe(false);
     });
@@ -664,8 +637,6 @@ describe('SyncMachine', () => {
       peerActive(machine, 'peer1', 200);
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
-        tipBlockId: H32,
-        anchors: [],
       });
       expect(machine.getState().phase).toBe('synced');
       sent.length = 0;
@@ -723,8 +694,6 @@ describe('SyncMachine', () => {
       peerActive(machine, 'peer1', 200);
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
-        tipBlockId: H32,
-        anchors: [],
       });
       expect(machine.getState().phase).toBe('synced');
 
@@ -787,21 +756,18 @@ describe('SyncMachine', () => {
   // -----------------------------------------------------------------------
 
   describe('sendSyncInfo content', () => {
-    it('includes tip height, block id, and anchors', () => {
+    it('sends the tip height alone', () => {
       const { machine, sent } = makeMachine({
-        store: {
-          chainHeight: () => 42,
-          getOrderingBlockId: (h: number) => (h === 42 ? H32 : null),
-          getAnchors: () => [{ height: 0, blockId: H32_B }],
-        },
+        store: { chainHeight: () => 42 },
       });
 
       peerActive(machine, 'peer1', 100);
 
       expect(sent.length).toBe(1);
-      // We can't easily decode the framed SyncInfo from the raw bytes in the test,
-      // but the send happened with the right peer.
       expect(sent[0]!.peerId).toBe('peer1');
+      const { body } = decodeFrame(testConfig.magic!, sent[0]!.data);
+      const decoded = decodeSyncInfo(body);
+      expect(decoded).toEqual({ tipHeight: 42 });
     });
   });
 
@@ -966,7 +932,7 @@ describe('SyncMachine', () => {
       });
       bodyStore.set(ID_A, CONTENT_A);
 
-      machine.handleMessage('sync-peer', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 100, tipBlockId: H32, anchors: [] }));
+      machine.handleMessage('sync-peer', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 100 }));
       machine.flush();
 
       expect(machine.getState().phase).toBe('backfill');
@@ -980,7 +946,7 @@ describe('SyncMachine', () => {
         missingBodies: [],
       });
 
-      machine.handleMessage('sync-peer', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 100, tipBlockId: H32, anchors: [] }));
+      machine.handleMessage('sync-peer', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 100 }));
       machine.flush();
 
       expect(machine.getState().phase).toBe('synced');
@@ -1004,7 +970,7 @@ describe('SyncMachine', () => {
       machine.flush();
       height = 50;
 
-      machine.handleMessage('peer1', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 50, tipBlockId: H32, anchors: [] }));
+      machine.handleMessage('peer1', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 50 }));
       machine.flush();
 
       expect(machine.getState().phase).toBe('synced');
@@ -1020,7 +986,7 @@ describe('SyncMachine', () => {
       });
       bodyStore.set(ID_A, CONTENT_A);
 
-      machine.handleMessage('sync-peer', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 100, tipBlockId: H32, anchors: [] }));
+      machine.handleMessage('sync-peer', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 100 }));
       machine.flush();
       expect(machine.getState().phase).toBe('backfill');
 
@@ -1036,7 +1002,7 @@ describe('SyncMachine', () => {
         missingBodies: [{ id: ID_A, contentHash: HASH_A }],
       });
 
-      machine.handleMessage('sync-peer', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 100, tipBlockId: H32, anchors: [] }));
+      machine.handleMessage('sync-peer', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 100 }));
       machine.flush();
 
       expect(machine.getState().phase).toBe('backfill');
@@ -1072,7 +1038,7 @@ describe('SyncMachine', () => {
         return results;
       });
 
-      machine.handleMessage('sync-peer', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 100, tipBlockId: H32, anchors: [] }));
+      machine.handleMessage('sync-peer', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 100 }));
       machine.flush();
       expect(machine.getState().phase).toBe('backfill');
 
@@ -1090,7 +1056,7 @@ describe('SyncMachine', () => {
         connectedPeers: ['sync-peer', 'peer2'],
       });
 
-      machine.handleMessage('sync-peer', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 100, tipBlockId: H32, anchors: [] }));
+      machine.handleMessage('sync-peer', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 100 }));
       machine.flush();
       expect(machine.getState().phase).toBe('backfill');
       expect(machine.getState().syncPeerId).toBe('sync-peer');
@@ -1113,7 +1079,7 @@ describe('SyncMachine', () => {
       });
       // bodyStore has no entries → pull returns empty
 
-      machine.handleMessage('sync-peer', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 100, tipBlockId: H32, anchors: [] }));
+      machine.handleMessage('sync-peer', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 100 }));
       machine.flush();
       expect(machine.getState().phase).toBe('backfill');
 
@@ -1134,7 +1100,7 @@ describe('SyncMachine', () => {
       });
       bodyStore.set(ID_A, CONTENT_A);
 
-      machine.handleMessage('sync-peer', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 100, tipBlockId: H32, anchors: [] }));
+      machine.handleMessage('sync-peer', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, { tipHeight: 100 }));
       machine.flush();
       expect(machine.getState().phase).toBe('backfill');
 
@@ -1253,13 +1219,11 @@ describe('SyncMachine', () => {
 
       machine.handleMessage('peer1', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, {
         tipHeight: 5,
-        tipBlockId: H32,
-        anchors: [],
       }));
       machine.flush();
 
-      // SyncInfo reply reads tip (10), then servePeer reads 6..10
-      expect(reads).toEqual([10, 6, 7, 8, 9, 10]);
+      // servePeer reads 6..10; SyncInfo reply reads no block id
+      expect(reads).toEqual([6, 7, 8, 9, 10]);
       // NET_INTERFACE → Serve Side: reply then Inv
       expect(sent).toHaveLength(2);
       expect(violations).toHaveLength(0);
@@ -1477,22 +1441,6 @@ describe('SyncMachine', () => {
       expect(violations[0]!.reason).toContain('malformed ModifierResponse');
     });
 
-    it('drops a SyncInfo with more than MAX_SYNC_ANCHORS anchors', () => {
-      const { machine, sent, violations } = makeReportingMachine({ chainHeight: () => 10 });
-
-      machine.handleMessage('attacker', MSG_SYNC_INFO, encodeStruct(syncInfoCodec, {
-        tipHeight: 5,
-        tipBlockId: H32,
-        anchors: Array.from({ length: 5 }, (_, i) => ({ height: i, blockId: H32 })),
-      }));
-      machine.flush();
-
-      expect(sent).toHaveLength(0);
-      expect(machine.getState().phase).toBe('idle');
-      expect(violations).toHaveLength(1);
-      expect(violations[0]!.reason).toContain('malformed SyncInfo');
-    });
-
     // --- cost rule: k ids cost k point lookups, no index rebuild -----
     //
     // NET_INTERFACE → Sync Handler Registration: one id is one provider call,
@@ -1636,24 +1584,7 @@ describe('SyncMachine', () => {
       const { body } = decodeFrame(testConfig.magic!, syncInfoMsg!.data);
       const decoded = decodeSyncInfo(body);
       expect(decoded).not.toBeNull();
-      expect(decoded!.tipBlockId).toBe(H32);
-    });
-
-    it('anchors are empty when id provider is unset', () => {
-      const { machine, sent } = makeMachine({
-        store: { chainHeight: () => 5, getOrderingBlockId: () => null, getAnchors: () => [] },
-      });
-      peerActive(machine, 'peer1', 10);
-
-      const syncInfoMsg = sent.find(m => {
-        const { code } = decodeFrame(testConfig.magic!, m.data);
-        return code === MSG_SYNC_INFO;
-      });
-      expect(syncInfoMsg).toBeDefined();
-      const { body } = decodeFrame(testConfig.magic!, syncInfoMsg!.data);
-      const decoded = decodeSyncInfo(body);
-      expect(decoded).not.toBeNull();
-      expect(decoded!.anchors).toEqual([]);
+      expect(decoded!.tipHeight).toBe(5);
     });
 
     it('Inv ids are all unknown when heightByBlockId provider is unset', () => {
@@ -1794,8 +1725,6 @@ describe('SyncMachine', () => {
 
       sendSyncInfo(machine, 'behindPeer', {
         tipHeight: 10,
-        tipBlockId: H32,
-        anchors: [],
       });
 
       // SyncInfo reply + Inv, both to behindPeer (NOT to syncPeer)
@@ -1823,8 +1752,6 @@ describe('SyncMachine', () => {
       });
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 100,
-        tipBlockId: H32,
-        anchors: [],
       });
 
       // Only SyncInfo reply, no Inv (not behind)
@@ -1845,8 +1772,6 @@ describe('SyncMachine', () => {
 
       sendSyncInfo(machine, 'peer1', {
         tipHeight: 50,
-        tipBlockId: H32,
-        anchors: [],
       });
 
       // At least the SyncInfo reply fires (peer is ahead, so pick also sends)
@@ -1870,7 +1795,7 @@ describe('SyncMachine', () => {
         store: {
           chainHeight: () => height,
           getOrderingBlockId: () => H32_B,
-          getAnchors: () => [],
+
         },
       });
       machine.onSynced(() => { syncedFired.push(1); });
@@ -1883,11 +1808,7 @@ describe('SyncMachine', () => {
       sent.length = 0;
 
       // The equal-height reply from the sync peer → backfill → synced
-      sendSyncInfo(machine, 'peer1', {
-        tipHeight: 100,
-        tipBlockId: H32_B,
-        anchors: [],
-      });
+      sendSyncInfo(machine, 'peer1', { tipHeight: 100 });
 
       expect(machine.getState().phase).toBe('synced');
       expect(syncedFired).toHaveLength(1);
@@ -1912,18 +1833,18 @@ describe('SyncMachine', () => {
         store: {
           chainHeight: () => 100,
           getOrderingBlockId: () => H32,
-          getAnchors: () => [],
+
         },
       });
 
       // First SyncInfo from peer1 — movement (first report) → reply
-      sendSyncInfo(machine, 'peer1', { tipHeight: 100, tipBlockId: H32, anchors: [] });
+      sendSyncInfo(machine, 'peer1', { tipHeight: 100 });
       const afterFirst = sent.length;
       expect(afterFirst).toBe(1);
 
       // Second identical SyncInfo within the floor — suppressed
       vi.advanceTimersByTime(5_000);
-      sendSyncInfo(machine, 'peer1', { tipHeight: 100, tipBlockId: H32, anchors: [] });
+      sendSyncInfo(machine, 'peer1', { tipHeight: 100 });
       expect(sent.length).toBe(afterFirst);
     });
 
@@ -1932,16 +1853,16 @@ describe('SyncMachine', () => {
         store: {
           chainHeight: () => 100,
           getOrderingBlockId: () => H32,
-          getAnchors: () => [],
+
         },
       });
 
-      sendSyncInfo(machine, 'peer1', { tipHeight: 100, tipBlockId: H32, anchors: [] });
+      sendSyncInfo(machine, 'peer1', { tipHeight: 100 });
       const afterFirst = sent.length;
 
       // Sender's tip changed → movement → reply at once (pick may add a send)
       vi.advanceTimersByTime(1_000);
-      sendSyncInfo(machine, 'peer1', { tipHeight: 101, tipBlockId: H32_A, anchors: [] });
+      sendSyncInfo(machine, 'peer1', { tipHeight: 101 });
       // The reply fires (movement); pick may enter syncing and send another
       expect(sent.length).toBeGreaterThan(afterFirst);
       // The reply is addressed to the sender
@@ -1954,17 +1875,17 @@ describe('SyncMachine', () => {
         store: {
           chainHeight: () => height,
           getOrderingBlockId: () => H32,
-          getAnchors: () => [],
+
         },
       });
 
-      sendSyncInfo(machine, 'peer1', { tipHeight: 100, tipBlockId: H32, anchors: [] });
+      sendSyncInfo(machine, 'peer1', { tipHeight: 100 });
       const afterFirst = sent.length;
 
       // Our tip advanced
       height = 101;
       vi.advanceTimersByTime(1_000);
-      sendSyncInfo(machine, 'peer1', { tipHeight: 100, tipBlockId: H32, anchors: [] });
+      sendSyncInfo(machine, 'peer1', { tipHeight: 100 });
 
       // Our movement → reply + Inv (peer now behind)
       expect(sent.length).toBeGreaterThan(afterFirst);
@@ -1975,23 +1896,23 @@ describe('SyncMachine', () => {
         store: {
           chainHeight: () => 100,
           getOrderingBlockId: () => H32_B,
-          getAnchors: () => [],
+
         },
       });
 
       // First SyncInfo from peer1 — first report → movement → reply
-      sendSyncInfo(machine, 'peer1', { tipHeight: 100, tipBlockId: H32_B, anchors: [] });
+      sendSyncInfo(machine, 'peer1', { tipHeight: 100 });
       const afterFirst = sent.length;
       expect(afterFirst).toBe(1);
 
       // Peer1 echoes the same values within the floor → suppressed
       vi.advanceTimersByTime(1_000);
-      sendSyncInfo(machine, 'peer1', { tipHeight: 100, tipBlockId: H32_B, anchors: [] });
+      sendSyncInfo(machine, 'peer1', { tipHeight: 100 });
       expect(sent.length).toBe(afterFirst);
 
       // After MIN_SYNCINFO_INTERVAL_MS the floor expires → one more reply
       vi.advanceTimersByTime(15_000);
-      sendSyncInfo(machine, 'peer1', { tipHeight: 100, tipBlockId: H32_B, anchors: [] });
+      sendSyncInfo(machine, 'peer1', { tipHeight: 100 });
       expect(sent.length).toBe(afterFirst + 1);
     });
   });
@@ -2038,7 +1959,7 @@ describe('SyncMachine', () => {
         store: {
           chainHeight: () => height,
           getOrderingBlockId: () => H32,
-          getAnchors: () => [],
+
         },
       });
 
@@ -2051,7 +1972,7 @@ describe('SyncMachine', () => {
 
       // Finish syncing from peerA
       height = 100;
-      sendSyncInfo(machine, 'peerA', { tipHeight: 100, tipBlockId: H32, anchors: [] });
+      sendSyncInfo(machine, 'peerA', { tipHeight: 100 });
 
       // enterSynced → pickSyncPeer → peerD above us → adopt
       expect(machine.getState().phase).toBe('syncing');
@@ -2202,7 +2123,7 @@ describe('SyncMachine', () => {
         store: {
           chainHeight: () => height,
           getOrderingBlockId: () => null,
-          getAnchors: () => [],
+
         },
       });
 
@@ -2229,7 +2150,7 @@ describe('SyncMachine', () => {
         store: {
           chainHeight: () => 100,
           getOrderingBlockId: () => H32,
-          getAnchors: () => [],
+
         },
       });
 
@@ -2240,8 +2161,6 @@ describe('SyncMachine', () => {
       // NET_INTERFACE → Sync State Machine, Backfill: only the sync peer's equal triggers it
       sendSyncInfo(machine, 'peerX', {
         tipHeight: 100,
-        tipBlockId: H32,
-        anchors: [],
       });
 
       expect(machine.getState().phase).toBe('syncing');
@@ -2259,14 +2178,14 @@ describe('SyncMachine', () => {
         store: {
           chainHeight: () => height,
           getOrderingBlockId: () => H32,
-          getAnchors: () => [],
+
         },
       });
 
       // Sync from a temporary peer and reach synced
       peerActive(machine, 'tmp', 10, 'outbound');
       height = 10;
-      sendSyncInfo(machine, 'tmp', { tipHeight: 10, tipBlockId: H32, anchors: [] });
+      sendSyncInfo(machine, 'tmp', { tipHeight: 10 });
       expect(machine.getState().phase).toBe('synced');
 
       // While synced, register both candidates above us
@@ -2293,6 +2212,38 @@ describe('SyncMachine', () => {
       peerActive(machine, 'inPeer1', 100, 'inbound');
       expect(machine.getState().phase).toBe('syncing');
       expect(machine.getState().syncPeerId).toBe('inPeer1');
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // peerHeight — NET_INTERFACE → Pull Requests, `peerTipHeight`
+  // -----------------------------------------------------------------------
+
+  describe('peerHeight', () => {
+    it('returns the handshake height after onPeerActive', () => {
+      const { machine } = makeMachine({ store: { chainHeight: () => 0 } });
+      peerActive(machine, 'peer1', 100);
+      expect(machine.peerHeight('peer1')).toBe(100);
+    });
+
+    it('returns the updated height after an inbound SyncInfo', () => {
+      const { machine } = makeMachine({ store: { chainHeight: () => 0 } });
+      peerActive(machine, 'peer1', 100);
+      sendSyncInfo(machine, 'peer1', { tipHeight: 200 });
+      expect(machine.peerHeight('peer1')).toBe(200);
+    });
+
+    it('returns null after the peer disconnects', () => {
+      const { machine } = makeMachine({ store: { chainHeight: () => 0 } });
+      peerActive(machine, 'peer1', 100);
+      machine.onPeerDisconnect('peer1');
+      machine.flush();
+      expect(machine.peerHeight('peer1')).toBeNull();
+    });
+
+    it('returns null for a stranger', () => {
+      const { machine } = makeMachine();
+      expect(machine.peerHeight('unknown')).toBeNull();
     });
   });
 });

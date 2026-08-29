@@ -59,7 +59,6 @@ export {
   MAX_CAPABILITY_ENTRIES,
   MAX_NAME_BYTES,
   MAX_ADDRESS_BYTES,
-  MAX_SYNC_ANCHORS,
 } from './msg-guards.js';
 export { isBogusAddress } from './bogus-addr.js';
 export { PeerDb } from './peerdb.js';
