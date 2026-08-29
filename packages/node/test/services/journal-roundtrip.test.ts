@@ -319,6 +319,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
   it('coinbase: the settlement\'s credit output and the emission it spent are both reverted', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const minerB = makeTestIdentity();
     const utxo = await importUtxo();
@@ -361,6 +362,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
   it('user-tx: credit transfer inputs unspent and outputs gone after revert', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const sender = makeTestIdentity();
     const recipient = makeTestIdentity();
@@ -424,6 +426,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
   it('prune: the stump, the deleted posts and the topology marks all revert', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const author = makeTestIdentity();
     const utxo = await importUtxo();
@@ -488,6 +491,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
   it('the settlement consumes a matured escrow and the round-trip holds', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const voucher = makeTestIdentity();
     makeTestIdentity();
@@ -558,6 +562,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
 
       const db = await importDb();
       db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
       const idle = makeTestIdentity();
       const utxo = await importUtxo();

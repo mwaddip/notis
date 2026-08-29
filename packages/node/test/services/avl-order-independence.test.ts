@@ -142,6 +142,7 @@ describe('AVL digest order-independence across nodes (P2 acceptance)', () => {
     // ---- Node A: boxes in creation order; builds the chain. ----
     const dbA = await importDb();
     dbA.initDb(':memory:');
+    dbA.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxoA = await importUtxo();
     // ⚠ **Before `activateProver`, so the box is in the bootstrap feed.** Block
     // 1 spends the emission box, and a remove against a key the tree never held
@@ -179,6 +180,7 @@ describe('AVL digest order-independence across nodes (P2 acceptance)', () => {
     vi.resetModules();
     const dbB = await importDb();
     dbB.initDb(':memory:');
+    dbB.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxoB = await importUtxo();
     // Same box, same id — `ensureEmissionBox` is a total function of the
     // profile — which is what lets B apply A's blocks at all. Seeded before the

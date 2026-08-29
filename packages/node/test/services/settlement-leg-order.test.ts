@@ -139,9 +139,11 @@ const deps: SettlementDeps = {
   },
   getBondsSettlingAt: () => [bondBox as BondBox],
   getEscrowsReleasableAt: () => [escrowBox as VouchEscrowBox],
+  getLapsedVouches: () => [],
   getLifetimeLikes: (invitee) =>
     hex(invitee) === hex(bondInvitee.userId) ? 9n : 0n,
   getDecayPlans: () => [decayPlan],
+  vouchCooldownBlocks: 2,
 };
 
 // Derived from the constants, for the output-value assertions below.

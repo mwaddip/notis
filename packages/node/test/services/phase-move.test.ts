@@ -86,6 +86,7 @@ describe('phase-move: like(P) + prune(P) in one block', () => {
   it('accepts a block carrying a like and a prune of the same post', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
     const posts = await importPosts();
     const blockApply = await importBlockApply();
@@ -117,6 +118,7 @@ describe('phase-move: stump upvoteCount includes own block likes', () => {
   it('a stump created from a prune in the same block as a like counts that like', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
     const posts = await importPosts();
     const blockApply = await importBlockApply();
@@ -153,6 +155,7 @@ describe('phase-move: creator/applier settlement agreement', () => {
   it('a block with like(P) + prune(P) built by the creator is accepted by the applier', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
     const posts = await importPosts();
     const blockApply = await importBlockApply();

@@ -198,6 +198,7 @@ describe('the conservation axiom holds over a chain', () => {
   async function seedWorld() {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
 
     const inviter = makeTestIdentity();
@@ -615,6 +616,7 @@ describe('genesis supply is within the ceiling', () => {
     vi.resetModules();
     const db = await import('../../src/store/db.js');
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     try {
       const prover = await import('../../src/state/avl-prover.js');
       const genesis = await import('../../src/services/genesis-state.js');

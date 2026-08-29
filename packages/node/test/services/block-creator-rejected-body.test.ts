@@ -264,6 +264,7 @@ describe('block creator vs a body its own mutation phase rejects', () => {
   it('startBlockCreator evicts the stale entry, rebuilds, and holds a template', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const { utxo, mempool, voucher, spent } = await seedStaleVouchCast();
 
@@ -313,6 +314,7 @@ describe('block creator vs a body its own mutation phase rejects', () => {
     // the fatal arm must not have collapsed this one into it.
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const avlMod = await importAvl();
     expect(avlMod.tryGetAvlProver()).toBeNull();
@@ -346,6 +348,7 @@ describe('block creator vs a body its own mutation phase rejects', () => {
     // library crashing on its own state), which no fixture can express.
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     // applyBlockMutations is the speculation's last in-transaction call and
     // runs only after the mutation phase succeeded — so the injected Error is
@@ -391,6 +394,7 @@ describe('block creator vs a body its own mutation phase rejects', () => {
   it('a body whose utxoTxs do not align with utxoTxIds is rejected, not thrown on', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const utxo = await importUtxo();
     utxo.insertBox(makeKarmaBox(24n, makeTestIdentity().userId, 0));
@@ -440,6 +444,7 @@ describe('block creator vs a body its own mutation phase rejects', () => {
     // same shape `corrupt-state.test.ts` uses for the other three subclasses.
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     // Armed after the candidate is built, so the block itself is honest: the
     // first speculation runs the real prover, and only the direct call below
@@ -535,6 +540,7 @@ describe('block creator vs a body its own mutation phase rejects', () => {
 
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     await seedStaleVouchCast();
     await activateProver();
 
@@ -561,6 +567,7 @@ describe('block creator vs a body its own mutation phase rejects', () => {
 
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
     utxo.insertBox(makeKarmaBox(24n, makeTestIdentity().userId, 0));
     await activateProver();

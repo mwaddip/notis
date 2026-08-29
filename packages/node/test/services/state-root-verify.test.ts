@@ -98,6 +98,7 @@ describe('stateRoot verification (P3 acceptance)', () => {
   it('rejects a block whose stateRoot is wrong, leaving the DB and prover untouched', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     // A seeded box so the tree is non-empty and the digest is a real root.
     const holder = makeTestIdentity();
@@ -148,6 +149,7 @@ describe('stateRoot verification (P3 acceptance)', () => {
   it('rejects a block that carries the pre-block digest (the H-6 regression)', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const handle = await activateProver();
     const blockApply = await importBlockApply();
@@ -167,6 +169,7 @@ describe('stateRoot verification (P3 acceptance)', () => {
   it('rejects a block carrying EMPTY_STATE_ROOT when a prover is running', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const handle = await activateProver();
     const blockApply = await importBlockApply();

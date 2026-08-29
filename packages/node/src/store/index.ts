@@ -148,6 +148,7 @@ export {
   getVouchBox,
   getVouchesForTargetPage,
   getVouchesByVoucher,
+  getLapsedVouches,
 } from './vouch-queries.js';
 
 export {

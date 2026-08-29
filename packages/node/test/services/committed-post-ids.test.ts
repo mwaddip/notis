@@ -55,6 +55,7 @@ describe('post ids are derived from the block\'s committed transactions', () => 
   it('journals exactly the ids the block creates, so revert un-confirms what apply confirmed', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const handle = db.getDb();
 
     const author = makeTestIdentity();
@@ -96,6 +97,7 @@ describe('post ids are derived from the block\'s committed transactions', () => 
     // journal an empty list, not `undefined` and not the previous block's.
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const block = await makeApplicableBlock();
     const blockApply = await importBlockApply();

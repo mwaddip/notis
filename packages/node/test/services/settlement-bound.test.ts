@@ -97,6 +97,7 @@ describe('T1 — escrow cap and multi-block drain', () => {
   it('150 escrows drain over 3 blocks in ascending (releaseAtBlock, box id) order', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
     const blockApply = await importBlockApply();
 
@@ -162,6 +163,7 @@ describe('T2 — like storm', () => {
   it('more likes than the OLD bound fit the new bound; more than the NEW bound exceeds it', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
     const topology = await importTopology();
     const blockApply = await importBlockApply();
@@ -238,6 +240,7 @@ describe('T3 — liveness relation', () => {
   it('a settlement with all state-driven legs at cap fits MAX_SETTLEMENT_BYTES', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
     const blockApply = await importBlockApply();
     const bc = await importBlockCreator();

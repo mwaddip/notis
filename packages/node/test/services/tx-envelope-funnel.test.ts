@@ -40,6 +40,7 @@ async function importDb() {
   return (await import('../../src/store/db.js')) as {
     initDb: (path: string) => void;
     closeDb: () => void;
+    getDb: () => import('better-sqlite3').Database;
   };
 }
 
@@ -106,6 +107,7 @@ describe('block funnel — the embedded-tx proof obligation', () => {
   it('a malformed envelope rejects the block, and the valid tx beside it does not land', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
 
     const alice = makeTestIdentity();
@@ -185,6 +187,7 @@ describe('block funnel — the embedded-tx proof obligation', () => {
     // subsumes depends on the ENTRY PATH; node has both a store and an HTTP edge).
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
 
     const alice = makeTestIdentity();
@@ -238,6 +241,7 @@ describe('block funnel — the embedded-tx proof obligation', () => {
     // different bytes.
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
 
     const alice = makeTestIdentity();
@@ -294,6 +298,7 @@ describe('block funnel — the embedded-tx proof obligation', () => {
     // producer needs no re-mine and no re-sign.
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
 
     const alice = makeTestIdentity();
@@ -363,6 +368,7 @@ describe('block funnel — the embedded-tx proof obligation', () => {
     // blanket refusal.
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
 
     const alice = makeTestIdentity();

@@ -33,6 +33,7 @@ async function importDb() {
   return (await import('../../src/store/db.js')) as {
     initDb: (path: string) => void;
     closeDb: () => void;
+    getDb: () => import('better-sqlite3').Database;
   };
 }
 
@@ -82,6 +83,7 @@ describe('the fee box never reaches the prover', () => {
 
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
 
     const sender = makeTestIdentity();

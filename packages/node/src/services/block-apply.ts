@@ -37,6 +37,7 @@ import {
   checkTxEnvelope,
   materializeOutput,
   validateTx,
+  isMember,
 } from './utxo-engine.js';
 import {
   getKarmaBox,
@@ -74,6 +75,7 @@ import {
   getInterlinks,
   getVouchBox,
   getNetworkRecord,
+  getLapsedVouches,
 } from '../store/index.js';
 import { getDb } from '../store/db.js';
 import {
@@ -101,16 +103,22 @@ import {
   GENESIS_PREV_BLOCK_HASH,
   PROTOCOL_VERSION,
   MAX_ESCROW_RETURNS_PER_BLOCK,
+  MAX_LAPSE_WITHDRAWALS_PER_BLOCK,
   computeTxId,
   interlinkRoot,
   updateInterlinks,
+  membershipBar as membershipBarFn,
+  memberLikesBar,
 } from '@dagsocial/types';
 import type {
   AnyBox,
   KarmaBox,
+  VouchBox,
   OrderingBlock,
   UtxoTransaction,
 } from '@dagsocial/types';
+import type { IdentityRecord } from '../store/identity-records.js';
+import { putNetworkRecord } from '../store/identity-records.js';
 
 /**
  * Signals "this block is invalid" from inside the transaction that wraps block
@@ -875,6 +883,13 @@ function applyMutationPhase(
   // speculative (creator) run accrues and settles identically and its rollback
   // discards everything with it.
   const likesPerAuthor = new Map<string, number>(); // author hex → likes this block
+  const memberLikesPerAuthor = new Map<string, number>(); // author hex → member-likes this block
+  // Identities the membership pass evaluates — every vouch target whose box was
+  // cast or consumed, every author whose memberLikes rose. Captured during the
+  // apply loop; the pass runs after the like counters.
+  const membershipTouched = new Set<string>();
+  // Pre-block records for touched identities — the first write's `replaced`.
+  const preBlockRecords = new Map<string, IdentityRecord | null>();
 
   // What the settlement is derived from, accumulated as each transaction is
   // applied (MINING_INTERFACE → Coinbase Application). Gathered here rather than
@@ -928,6 +943,7 @@ function applyMutationPhase(
   // side only. A prune in this block's body marks rows during §8c, after the
   // capture, so its locks are candidates from h + 1.
   const escrows = getVouchEscrowsReleasableAt(height, MAX_ESCROW_RETURNS_PER_BLOCK);
+  const lapsedVouches = getLapsedVouches(MAX_LAPSE_WITHDRAWALS_PER_BLOCK);
 
   // Multi-pass: try to apply txs, retrying those whose inputs aren't
   // available yet (may have been created by an earlier tx in this block).
@@ -1065,6 +1081,29 @@ function applyMutationPhase(
 
       perTxOutputs.set(item.txId, item.outputs);
 
+      // Track vouch targets for the membership pass. Capture the pre-block
+      // record BEFORE applyTx modifies it — both inputs (consumed) and outputs
+      // (created), so the pass sees the true pre-block value.
+      for (const inputId of item.tx.inputs) {
+        const inputBox = getBox(inputId);
+        if (inputBox && inputBox.boxType === 'vouch') {
+          const targetHex = Buffer.from((inputBox as VouchBox).targetId).toString('hex');
+          membershipTouched.add(targetHex);
+          if (!preBlockRecords.has(targetHex)) {
+            preBlockRecords.set(targetHex, getIdentityRecord((inputBox as VouchBox).targetId));
+          }
+        }
+      }
+      for (const out of item.outputs) {
+        if (out.boxType === 'vouch') {
+          const targetHex = Buffer.from((out as VouchBox).targetId).toString('hex');
+          membershipTouched.add(targetHex);
+          if (!preBlockRecords.has(targetHex)) {
+            preBlockRecords.set(targetHex, getIdentityRecord((out as VouchBox).targetId));
+          }
+        }
+      }
+
       applyTx(utxoDeps, item.tx, item.outputs, height);
       applied++;
 
@@ -1077,13 +1116,19 @@ function applyMutationPhase(
       }
 
       if (likeToRecord !== null) {
-        // Journalled side-record (inverse: deleteLikeRecord), plus the
-        // in-memory accrual §11b settles.
         insertLikeRecord(likeToRecord.targetPostId, likeToRecord.likerId, height);
         likesPerAuthor.set(
           likeToRecord.authorHex,
           (likesPerAuthor.get(likeToRecord.authorHex) ?? 0) + 1,
         );
+        // ARCHITECTURE → Membership: memberLikes bumped iff member(liker).
+        const likerRecord = getIdentityRecord(likeToRecord.likerId);
+        if (likerRecord && isMember(likerRecord)) {
+          memberLikesPerAuthor.set(
+            likeToRecord.authorHex,
+            (memberLikesPerAuthor.get(likeToRecord.authorHex) ?? 0) + 1,
+          );
+        }
       }
 
       // Remove from the local mempool if present. This is the whole of the
@@ -1218,7 +1263,7 @@ function applyMutationPhase(
 
   const emission = computeBlockReward(height);
   const settlementCheck = checkSettlement(
-    settlementDepsWith(() => decayPlans, escrows),
+    settlementDepsWith(() => decayPlans, escrows, lapsedVouches),
     height,
     emission,
     config.creditMinerRewardDelay,
@@ -1324,9 +1369,58 @@ function applyMutationPhase(
       memberSinceBlock: after?.memberSinceBlock ?? 0,
       memberBar: after?.memberBar ?? 0,
       memberVouches: after?.memberVouches ?? 0,
-      memberLikes: after?.memberLikes ?? 0n,
+      memberLikes: (after?.memberLikes ?? 0n) + BigInt(memberLikesPerAuthor.get(authorHex) ?? 0),
       invitesUsed: after?.invitesUsed ?? 0,
     });
+  }
+
+  // 12. The membership pass (NODE_INTERFACE → Membership pass).
+  //
+  // Between the like counters and the decay clocks. Reads N, D(N), Y(N) once
+  // from the network record of pre-body state. Over the identities the block
+  // touched, ascending hex. Set / lapse / re-qualify. N written once at the end.
+  // No value moves.
+  // Add authors whose memberLikes rose to the membership pass's touched set.
+  for (const authorHex of memberLikesPerAuthor.keys()) {
+    membershipTouched.add(authorHex);
+  }
+
+  {
+    const N = getNetworkRecord().memberCount;
+    const D = membershipBarFn(N, config.membershipBarMultiplier);
+    const Y = memberLikesBar(N, config.membershipBarMultiplier);
+
+    let newN = N;
+    for (const idHex of [...membershipTouched].sort()) {
+      const id = new Uint8Array(Buffer.from(idHex, 'hex'));
+      const pre = preBlockRecords.get(idHex) ?? getIdentityRecord(id);
+      const current = getIdentityRecord(id);
+      if (!current) continue;
+
+      const wasMember = pre !== null && pre.memberSinceBlock > 0 && pre.memberVouches >= pre.memberBar;
+
+      if (current.memberSinceBlock === 0 &&
+          current.memberVouches >= D &&
+          current.memberLikes >= BigInt(Y)) {
+        putIdentityRecord(id, {
+          ...current,
+          memberSinceBlock: height,
+          memberBar: D,
+        });
+        newN++;
+      } else if (current.memberSinceBlock > 0 && current.memberBar > 0) {
+        const isMemberNow = current.memberVouches >= current.memberBar;
+        if (wasMember && !isMemberNow) {
+          newN--;
+        } else if (!wasMember && isMemberNow) {
+          newN++;
+        }
+      }
+    }
+
+    if (newN !== N) {
+      putNetworkRecord({ memberCount: newN });
+    }
   }
 
   // 12. Advance the decay clock for every identity the settlement charged.

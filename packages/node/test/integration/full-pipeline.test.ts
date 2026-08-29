@@ -301,6 +301,7 @@ describe('full-pipeline', () => {
     const dbModule = await importDb();
     dbModule.initDb(':memory:');
     const db = dbModule.getDb();
+    db.prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     // ---- Setup ----
     const author = makeTestIdentity();
@@ -418,6 +419,7 @@ describe('full-pipeline', () => {
     const dbModule = await importDb();
     dbModule.initDb(':memory:');
     const db = dbModule.getDb();
+    db.prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     // ---- Setup ----
     const author = makeTestIdentity();

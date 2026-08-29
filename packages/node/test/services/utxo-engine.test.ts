@@ -1332,12 +1332,15 @@ describe('validateAndApplyTx', () => {
 
     it('accepts an unvouch — the stake escrows into a VouchEscrowBox', () => {
       const { publicKey: targetPub } = generateKeyPairSync('ed25519');
+      const targetPubRaw = rawPublicKey(targetPub);
+      seedAsRoot(ownerPubKey);
+      seedRecord(targetPubRaw);
       const vouchBox: CandidateOf<VouchBox> = {
         boxType: 'vouch',
         value: VOUCH_KARMA_AMOUNT,
         createdAtBlock: 8,
         voucherId: ownerPubKey,
-        targetId: rawPublicKey(targetPub),
+        targetId: targetPubRaw,
       };
       const seededVouchBox = seedProvenance<VouchBox>(vouchBox, 1);
       const vouchBoxId = seededVouchBox.id;
@@ -1364,6 +1367,9 @@ describe('validateAndApplyTx', () => {
 
     it('unvouch escrow dates from the vouch cast, not the unvouch height', () => {
       const { publicKey: targetPub } = generateKeyPairSync('ed25519');
+      const targetPubRaw = rawPublicKey(targetPub);
+      seedAsRoot(ownerPubKey);
+      seedRecord(targetPubRaw);
       const CAST_HEIGHT = 5;
       const UNVOUCH_HEIGHT = 20;
       const vouchBox: CandidateOf<VouchBox> = {
@@ -1371,7 +1377,7 @@ describe('validateAndApplyTx', () => {
         value: VOUCH_KARMA_AMOUNT,
         createdAtBlock: CAST_HEIGHT,
         voucherId: ownerPubKey,
-        targetId: rawPublicKey(targetPub),
+        targetId: targetPubRaw,
       };
       const seeded = seedProvenance<VouchBox>(vouchBox, 1);
       storeInsertBox(seeded);
@@ -1417,6 +1423,9 @@ describe('validateAndApplyTx', () => {
 
     it('VouchBox is spendable at any height — withdrawal is never timing-gated', () => {
       const { publicKey: targetPub } = generateKeyPairSync('ed25519');
+      const targetPubRaw = rawPublicKey(targetPub);
+      seedAsRoot(ownerPubKey);
+      seedRecord(targetPubRaw);
       const CAST_HEIGHT = 100;
       const SPEND_HEIGHT = 101;
       const vouchBox: CandidateOf<VouchBox> = {
@@ -1424,7 +1433,7 @@ describe('validateAndApplyTx', () => {
         value: VOUCH_KARMA_AMOUNT,
         createdAtBlock: CAST_HEIGHT,
         voucherId: ownerPubKey,
-        targetId: rawPublicKey(targetPub),
+        targetId: targetPubRaw,
       };
       const seeded = seedProvenance<VouchBox>(vouchBox, 1);
       storeInsertBox(seeded);

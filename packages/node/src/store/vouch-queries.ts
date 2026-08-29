@@ -61,6 +61,30 @@ export function getVouchesForTargetPage(
   return { rows: vouches, next, count: countRow.cnt };
 }
 
+/**
+ * Unspent vouch boxes whose voucher's identity record fails member() —
+ * ascending box id, at most `limit`. The settlement's lapse leg
+ * (NODE_INTERFACE → The settlement transaction).
+ */
+export function getLapsedVouches(limit: number): VouchBox[] {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      `SELECT u.* FROM utxo_boxes u
+       JOIN identity_records ir
+         ON ir.identity_id = unhex(json_extract(u.extra_data, '$.voucherId'))
+       WHERE u.box_type = 'vouch'
+         AND u.spent_at_block IS NULL
+         AND ir.member_since_block > 0
+         AND ir.member_vouches < ir.member_bar
+       ORDER BY u.id
+       LIMIT ?`,
+    )
+    .safeIntegers()
+    .all(limit) as UtxoRow[];
+  return rows.map((r) => rowToBox(r) as VouchBox);
+}
+
 export function getVouchesByVoucher(voucherId: Uint8Array): VouchBox[] {
   const db = getDb();
   const rows = db

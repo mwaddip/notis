@@ -13,6 +13,7 @@ import {
   STORAGE_RENT_PER_BYTE,
   MAX_BOND_SETTLEMENTS_PER_BLOCK,
   MAX_ESCROW_RETURNS_PER_BLOCK,
+  MAX_LAPSE_WITHDRAWALS_PER_BLOCK,
   MAX_SETTLEMENT_BYTES,
   boxRecordBytes,
   decodeTx,
@@ -65,7 +66,7 @@ import {
 } from './settlement.js';
 import { deriveKarmaDecay } from './decay.js';
 import type { DecayDeps, DecayPlan } from './decay.js';
-import type { KarmaBox, VouchEscrowBox } from '@dagsocial/types';
+import type { KarmaBox, VouchBox, VouchEscrowBox } from '@dagsocial/types';
 import { materializeOutput } from './utxo-engine.js';
 import {
   MissingStoredBlockError,
@@ -86,6 +87,7 @@ import {
   getEmissionBox,
   getIdentityRecord,
   getVouchEscrowsReleasableAt,
+  getLapsedVouches,
   getRentEligibleCreditBoxes,
   getKarmaBoxes,
   getLikeCarryBox,
@@ -397,8 +399,9 @@ export function createOrderingBlock(): OrderingBlock | null {
       });
       const postBody = collectPostBodyKarma(decoded);
       const escrows = getVouchEscrowsReleasableAt(newHeight, MAX_ESCROW_RETURNS_PER_BLOCK);
+      const lapsed = getLapsedVouches(MAX_LAPSE_WITHDRAWALS_PER_BLOCK);
       const built = buildSettlement(
-        settlementDepsWith(() => deriveKarmaDecay(decayDeps, postBody, newHeight, decayConfig()), escrows),
+        settlementDepsWith(() => deriveKarmaDecay(decayDeps, postBody, newHeight, decayConfig()), escrows, lapsed),
         newHeight,
         computeBlockReward(newHeight),
         nodeConfig.creditMinerRewardDelay,
@@ -905,6 +908,7 @@ export function decayConfig(): {
 export function settlementDepsWith(
   plans: () => DecayPlan[],
   escrows: VouchEscrowBox[],
+  lapsedVouches: VouchBox[] = [],
 ): SettlementDeps {
   return {
     getEmissionBox,
@@ -917,9 +921,11 @@ export function settlementDepsWith(
       return invitedAt <= 0 ? [] : getBondsInvitedAt(invitedAt, MAX_BOND_SETTLEMENTS_PER_BLOCK);
     },
     getEscrowsReleasableAt: () => escrows,
+    getLapsedVouches: () => lapsedVouches,
     getLifetimeLikes: (invitee: Uint8Array) =>
       getIdentityRecord(invitee)?.lifetimeLikesReceived ?? 0n,
     getDecayPlans: plans,
+    vouchCooldownBlocks: nodeConfig.vouchCooldownBlocks,
   };
 }
 
@@ -1002,8 +1008,9 @@ export function buildBlockSettlement(
   });
   const postBody = collectPostBodyKarma(decoded);
   const escrows = getVouchEscrowsReleasableAt(height, MAX_ESCROW_RETURNS_PER_BLOCK);
+  const lapsed = getLapsedVouches(MAX_LAPSE_WITHDRAWALS_PER_BLOCK);
   return buildSettlement(
-    settlementDepsWith(() => deriveKarmaDecay(decayDeps, postBody, height, decayConfig()), escrows),
+    settlementDepsWith(() => deriveKarmaDecay(decayDeps, postBody, height, decayConfig()), escrows, lapsed),
     height,
     computeBlockReward(height),
     nodeConfig.creditMinerRewardDelay,

@@ -159,6 +159,7 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
     vi.resetModules();
     db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     bc = await importBlockCreator();
     apply = await importBlockApply();
     posts = await importPosts();

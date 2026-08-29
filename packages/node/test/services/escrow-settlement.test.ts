@@ -163,6 +163,7 @@ describe('escrow settlement leg', () => {
   it('(a) escrow at releaseAtBlock == h is consumed and returned as karma', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const utxo = await importUtxo();
     const voucher = makeTestIdentity();
@@ -205,6 +206,7 @@ describe('escrow settlement leg', () => {
   it('(b) escrow above the current height is not consumed', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const utxo = await importUtxo();
     const voucher = makeTestIdentity();
@@ -298,6 +300,7 @@ describe('escrow settlement leg', () => {
   it('(d) two escrows are consumed in ascending box id order', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const utxo = await importUtxo();
     const voucher1 = makeTestIdentity();
@@ -351,6 +354,7 @@ describe('escrow settlement leg', () => {
   it('(e) the settlement conserves value with escrow returns', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const utxo = await importUtxo();
     const voucher = makeTestIdentity();
@@ -482,6 +486,7 @@ describe('escrow settlement leg', () => {
   it('(g) a user transaction spending an escrow is refused', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const utxo = await importUtxo();
     const voucher = makeTestIdentity();

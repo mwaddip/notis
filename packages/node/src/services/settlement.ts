@@ -78,6 +78,7 @@ import type {
   KarmaPoolBox,
   LikeAccrualBox,
   TreasuryBox,
+  VouchBox,
   VouchEscrowBox,
   UtxoTransaction,
 } from '@dagsocial/types';
@@ -162,8 +163,11 @@ export interface SettlementDeps {
   getBondsSettlingAt: (height: number) => BondBox[];
   /** Unspent escrows at or past `releaseAtBlock`, ascending box id, pre-body. */
   getEscrowsReleasableAt: (height: number) => VouchEscrowBox[];
+  /** Unspent vouch boxes whose voucher's record fails member(), ascending box id, pre-body. */
+  getLapsedVouches: () => VouchBox[];
   /** `IdentityRecord.lifetimeLikesReceived` — the one field a bond settles against. */
   getLifetimeLikes: (invitee: Uint8Array) => bigint;
+  vouchCooldownBlocks: number;
   /** What every stale identity owes, in the decay pass's stated owner order. */
   getDecayPlans: () => DecayPlan[];
 }
@@ -379,6 +383,24 @@ function derive(
     escrowReturns.push({ owner: escrow.owner, value: escrow.value });
   }
 
+  // 3d′. Lapse withdrawals (NODE_INTERFACE → The settlement transaction, the
+  // lapse-leg paragraph). Each lapsed vouch is an input; each emits a
+  // vouch_escrow output — the vouch's value, owner its voucher, releaseAtBlock
+  // = vouch.createdAtBlock + vouchCooldownBlocks. Value moves box to box.
+  const lapsedVouches = deps.getLapsedVouches();
+  const lapseWithdrawals: Array<{
+    voucher: Uint8Array; value: bigint; releaseAtBlock: number;
+  }> = [];
+  for (const vouch of lapsedVouches) {
+    if (!vouch.id) return { error: 'lapsed vouch box carries no id' };
+    inputs.push(vouch.id);
+    lapseWithdrawals.push({
+      voucher: vouch.voucherId,
+      value: vouch.value,
+      releaseAtBlock: vouch.createdAtBlock + deps.vouchCooldownBlocks,
+    });
+  }
+
   // 3e. Decay. ⛔ **The burn's sink is the pool** (ARCHITECTURE → The
   // conservation axiom: "burn" means *move back to the supply pool*). The
   // mechanism is untouched — the same eager per-identity pass, staleness
@@ -463,6 +485,15 @@ function derive(
     if (ret.value > 0n) {
       outputs.push({ boxType: 'karma', value: ret.value, owner: ret.owner, createdAtBlock: height });
     }
+  }
+  for (const lw of lapseWithdrawals) {
+    outputs.push({
+      boxType: 'vouch_escrow',
+      value: lw.value,
+      owner: lw.voucher,
+      releaseAtBlock: lw.releaseAtBlock,
+      createdAtBlock: height,
+    });
   }
   for (const plan of decayPlans) {
     if (plan.newValue > 0n) {

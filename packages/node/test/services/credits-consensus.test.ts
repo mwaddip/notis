@@ -190,6 +190,7 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
     vi.resetModules();
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
     const identityRecords = await importIdentityRecords();
     const credits = await importCredits();
@@ -296,6 +297,7 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
     // ---- world A: the running node, which is also the honest network's view
     let db = await importDb();
     db.initDb(FORK_DB);
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     let utxo = await importUtxo();
     const identityRecords = await importIdentityRecords();
     const credits = await importCredits();
@@ -408,6 +410,7 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
     vi.resetModules();
     db = await importDb();
     db.initDb(FORK_DB);
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     db.getDb().exec('DELETE FROM avl_tree_nodes; DELETE FROM avl_tree_versions;');
 
     const avlB = await importAvl();

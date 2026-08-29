@@ -220,6 +220,7 @@ describe('block-apply journal recording', () => {
   it('coinbase mint records credit box inserts in journal', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
@@ -262,6 +263,7 @@ describe('block-apply journal recording', () => {
   it('post confirm records confirmedPostIds in journal', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const author = makeTestIdentity();
 
@@ -294,6 +296,7 @@ describe('block-apply journal recording', () => {
   it('UTXO tx apply records appliedUtxoTxs in journal', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const posts = await importPosts();
     const utxo = await importUtxo();
@@ -364,6 +367,7 @@ describe('block-apply journal recording', () => {
   it('block rejected for invalid PoW leaves no journal', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const blockApply = await importBlockApply();
     const { expectedTarget } = await import('../../src/services/difficulty.js');
@@ -416,6 +420,7 @@ describe('block-apply journal recording', () => {
   it('block rejected for wrong height at genesis leaves no journal', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const blockApply = await importBlockApply();
     const { expectedTarget } = await import('../../src/services/difficulty.js');
@@ -465,6 +470,7 @@ describe('block-apply journal recording', () => {
   it('block rejected for wrong prevBlockHash at genesis leaves no journal', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const blockApply = await importBlockApply();
     const { expectedTarget } = await import('../../src/services/difficulty.js');
@@ -512,6 +518,7 @@ describe('block-apply journal recording', () => {
   it('block refused for coinbase value mismatch leaves no journal', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const blockApply = await importBlockApply();
 
     // One credit less than the miner slice, lock unchanged — step 4's total
@@ -545,6 +552,7 @@ describe('block-apply journal recording', () => {
   it('control — the same block applies when the coinbase is correct', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const blockApply = await importBlockApply();
 
     expect(blockApply.applyOrderingBlock(await makeApplicableBlock())).toBe(true);
@@ -561,6 +569,7 @@ describe('block-apply journal recording', () => {
   it('block refused for zero-value coinbase output', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const blockApply = await importBlockApply();
     const miner = makeTestIdentity();
 
@@ -609,6 +618,7 @@ describe('block-apply journal recording', () => {
     it('accepts a coinbase claiming the fees of the block it carries', async () => {
       const db = await importDb();
       db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
       const utxo = await importUtxo();
       const blockApply = await importBlockApply();
 
@@ -637,6 +647,7 @@ describe('block-apply journal recording', () => {
     it('rejects a coinbase claiming more than emission plus fees', async () => {
       const db = await importDb();
       db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
       const utxo = await importUtxo();
       const blockApply = await importBlockApply();
       await import('../../src/services/block-creator.js');
@@ -662,6 +673,7 @@ describe('block-apply journal recording', () => {
     it('rejects a coinbase that leaves the fees unclaimed', async () => {
       const db = await importDb();
       db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
       const utxo = await importUtxo();
       const blockApply = await importBlockApply();
       await import('../../src/services/block-creator.js');
@@ -693,6 +705,7 @@ describe('block-apply journal recording', () => {
     it('claims the fees of a transaction spending a box the same block creates', async () => {
       const db = await importDb();
       db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
       const utxo = await importUtxo();
       const blockApply = await importBlockApply();
       await import('../../src/services/block-creator.js');
@@ -728,6 +741,7 @@ describe('block-apply journal recording', () => {
     it('does not count a zero-output karma-side spend as a fee', async () => {
       const db = await importDb();
       db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
       const utxo = await importUtxo();
       const blockApply = await importBlockApply();
       await import('../../src/services/block-creator.js');
@@ -735,6 +749,17 @@ describe('block-apply journal recording', () => {
       const voucher = makeTestIdentity();
       const target = makeTestIdentity();
       const miner = makeTestIdentity();
+      const idRecords = await import('../../src/store/identity-records.js');
+      idRecords.putIdentityRecord(voucher.userId, {
+        lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+        lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+        memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+      });
+      idRecords.putIdentityRecord(target.userId, {
+        lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 1,
+        lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0,
+        memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+      });
       const vouchBox = seedProvenance(
         {
           boxType: 'vouch' as const,
@@ -783,6 +808,7 @@ describe('block-apply journal recording', () => {
     it('rejects a zero-value coinbase output beside a correct total', async () => {
       const db = await importDb();
       db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
       await importUtxo();
       const blockApply = await importBlockApply();
       await import('../../src/services/block-creator.js');
@@ -807,6 +833,7 @@ describe('block-apply journal recording', () => {
     it('rejects a coinbase that keeps the forfeited bonus', async () => {
       const db = await importDb();
       db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
       await importUtxo();
       const blockApply = await importBlockApply();
       const { computeBlockReward } = await import('../../src/services/block-creator.js');
@@ -834,6 +861,7 @@ describe('block-apply journal recording', () => {
     it('refuses a settlement emitting a box type its body does not derive', async () => {
       const db = await importDb();
       db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
       await importUtxo();
       const blockApply = await importBlockApply();
       const { computeBlockReward } = await import('../../src/services/block-creator.js');
@@ -875,6 +903,7 @@ describe('block-apply journal recording', () => {
   it('no block journal is left open after successful block application', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
@@ -891,6 +920,7 @@ describe('block-apply journal recording', () => {
   it('records decay burns in journal', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const utxo = await importUtxo();
 
@@ -985,6 +1015,7 @@ describe('block-apply journal recording', () => {
   it('the settlement returns a matured escrow as karma', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const utxo = await importUtxo();
 
@@ -1052,6 +1083,7 @@ describe('block-apply embedded tx re-validation', () => {
   it('rejects the whole block when an embedded tx spends a live box unsigned', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const utxo = await importUtxo();
     const mempool = await importMempoolFresh();
@@ -1093,6 +1125,7 @@ describe('block-apply embedded tx re-validation', () => {
   it('rejects the whole block when an embedded tx mints value', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const utxo = await importUtxo();
     const mempool = await importMempoolFresh();
@@ -1147,6 +1180,7 @@ describe('block-apply embedded tx re-validation', () => {
   it('applies a block whose embedded txs are all valid', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const utxo = await importUtxo();
     const posts = await importPosts();
@@ -1207,6 +1241,7 @@ describe('block-apply embedded tx re-validation', () => {
   it('still defers and retries a tx that consumes a box created in the same block', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const utxo = await importUtxo();
     const posts = await importPosts();
@@ -1305,6 +1340,7 @@ describe('block-apply embedded tx re-validation', () => {
     // its own. The first spends the box, the second's input is then dead.
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const utxo = await importUtxo();
     const { computeTxId } = await import('@dagsocial/types');
@@ -1348,6 +1384,7 @@ describe('block-apply embedded tx re-validation', () => {
     // have accepted a different set from the same bytes.
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const utxo = await importUtxo();
     const owner = makeTestIdentity();
@@ -1537,6 +1574,7 @@ describe('block-apply mint provenance', () => {
   it('a split coinbase mints one box per output, each with its own txId', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const utxo = await importUtxo();
     const blockApply = await importBlockApply();
@@ -1605,6 +1643,7 @@ describe('block-apply mint provenance', () => {
 
       const db = await importDb();
       db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
       const utxo = await importUtxo();
       const journalStore = await importJournalStore();
@@ -1679,6 +1718,7 @@ describe('block-apply mint provenance', () => {
 
       const db = await importDb();
       db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
       const utxo = await importUtxo();
       const records = await import('../../src/store/identity-records.js');
@@ -1739,6 +1779,7 @@ describe('block-apply mint provenance', () => {
 
       const db = await importDb();
       db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
       const utxo = await importUtxo();
       const records = await import('../../src/store/identity-records.js');
@@ -1822,6 +1863,7 @@ describe('block-apply consensus schedules', () => {
   it('rejects a block whose powTargetBits is below the schedule', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const { expectedTarget } = await import('../../src/services/difficulty.js');
     // The constant, not its present value: the floor is a consensus parameter
@@ -1851,6 +1893,7 @@ describe('block-apply consensus schedules', () => {
   it('accepts a block whose powTargetBits equals the schedule', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const { expectedTarget } = await import('../../src/services/difficulty.js');
     const block = await makeApplicableBlock();
@@ -1870,6 +1913,7 @@ describe('block-apply consensus schedules', () => {
   it('rejects a block whose coinbase output is unlocked', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     // lockedUntilBlock 0 — spendable the moment it is minted, bypassing the
     // scheduled maturity. The value is correct, so the emission check above
@@ -1893,6 +1937,7 @@ describe('block-apply consensus schedules', () => {
   it('rejects a block whose coinbase lock is one block short of maturity', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     // Off by one, not obviously wrong, and still ahead of the block height the
     // gossip validator bounds against — so only an equality check catches it.
@@ -1910,6 +1955,7 @@ describe('block-apply consensus schedules', () => {
   it('accepts a block whose coinbase lock matches the maturity delay', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const block = await makeApplicableBlock({
       lockedUntilBlock: 1 + config.creditMinerRewardDelay,
@@ -1937,6 +1983,7 @@ describe('block-apply consensus schedules', () => {
   it('rejects a block whose validator signature is corrupted', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const block = await makeApplicableBlock();
     // Nothing in the header moves, so the PoW solution stays valid and the
@@ -1964,6 +2011,7 @@ describe('block-apply consensus schedules', () => {
   it('rejects a block carrying the all-zero placeholder signature', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     // What every hand-built block used to carry, and what an unsigned forgery
     // costs nothing to produce.
@@ -1980,6 +2028,7 @@ describe('block-apply consensus schedules', () => {
   it('rejects a block signed by a key other than the one its validatorId names', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     // The H-1 attack in full: the forger does the (testnet-cheap) PoW and
     // publishes under another validator's identity. Every other check passes —
@@ -2039,6 +2088,7 @@ describe('block-apply H-3 post authorship and prune binding', () => {
   it('accepts a block whose entry matches the local post (control)', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const author = makeTestIdentity();
     const parentA = 'a1'.repeat(32);
@@ -2094,6 +2144,7 @@ describe('block-apply funnel totality', () => {
   it('returns false and rolls back when apply throws for a reason no check anticipated', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     // A failure from the last step of apply, past every consensus check and
     // past every state mutation the block makes: the block row is written and
@@ -2137,6 +2188,7 @@ describe('block-apply funnel totality', () => {
   it('applies the same block with no stub in place (control)', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const blockApply = await importBlockApply();
     const block = await makeApplicableBlock();
@@ -2161,6 +2213,7 @@ describe('block-apply funnel totality', () => {
   it("a peer's block clears a confirmed transaction sitting deep in the pool", async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const mempool = await importMempoolFresh();
     const blockApply = await importBlockApply();
@@ -2193,6 +2246,7 @@ describe('block-apply funnel totality', () => {
   it('successful apply pushes dagTipHeight', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
     const metrics = await import('../../src/metrics.js');
@@ -2210,6 +2264,7 @@ describe('block-apply funnel totality', () => {
   it('rejects a block carrying a post and a prune of that post (maturity bind)', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
     const posts = await importPosts();
     const blockApply = await importBlockApply();
@@ -2237,6 +2292,7 @@ describe('block-apply funnel totality', () => {
   it('accepts a prune in a block AFTER the post was confirmed (maturity bind satisfied)', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
     const posts = await importPosts();
     const blockApply = await importBlockApply();
@@ -2266,6 +2322,7 @@ describe('block-apply funnel totality', () => {
   it('rejects a block whose prune input owner is not the root topology author', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
     const posts = await importPosts();
     const blockApply = await importBlockApply();
@@ -2296,6 +2353,7 @@ describe('block-apply funnel totality', () => {
   it('rejects a block whose prune root has no topology author (unconfirmed root)', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
     const blockApply = await importBlockApply();
 
@@ -2324,6 +2382,7 @@ describe('block-apply funnel totality', () => {
   it('height 1 commits to interlinkRoot([])', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const ba = await importBlockApply();
     const { interlinkRoot } = await import('@dagsocial/types');
     const block = await makeApplicableBlock();
@@ -2334,6 +2393,7 @@ describe('block-apply funnel totality', () => {
   it('a block with a tampered interlinkRoot is rejected before any mutation', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const ba = await importBlockApply();
     const { solveHeaderPow } = await import('../helpers.js');
     const miner = makeTestIdentity();
@@ -2382,6 +2442,7 @@ describe('block-apply funnel totality', () => {
   it('genesis pin: empty genesisId accepts any block 1', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const ba = await importBlockApply();
     expect(config.profile.genesisId).toBe('');
     const block = await makeApplicableBlock();
@@ -2391,6 +2452,7 @@ describe('block-apply funnel totality', () => {
   it('genesis pin: pinned-match accepted', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const ba = await importBlockApply();
     const { blockHash } = await import('@dagsocial/validation');
     const block = await makeApplicableBlock();
@@ -2406,6 +2468,7 @@ describe('block-apply funnel totality', () => {
   it('genesis pin: pinned-mismatch rejected', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     // Mock config BEFORE block-apply imports it, so the funnel sees the pin.
     vi.doMock('../../src/config.js', () => ({
       config: { ...testConfig, profile: { ...config.profile, genesisId: 'ab'.repeat(32) } },
@@ -2436,6 +2499,7 @@ describe('T4: activity clock in the user-transaction loop', () => {
   it('a karma-spending post with a change output advances lastActivityBlock', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const author = makeTestIdentity();
     const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'T4 clock post');
@@ -2459,6 +2523,7 @@ describe('T4: activity clock in the user-transaction loop', () => {
   it('a like exact-spend (no karma output) advances lastActivityBlock', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const liker = makeTestIdentity();
     const author = makeTestIdentity();
@@ -2494,6 +2559,7 @@ describe('T4: activity clock in the user-transaction loop', () => {
   it('a settlement output to an owner does not advance their clock', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const author = makeTestIdentity();
     const liker = makeTestIdentity();
@@ -2533,6 +2599,7 @@ describe('T4: activity clock in the user-transaction loop', () => {
   it('a block carrying a thread and its reply applies: thread before reply', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const blockApply = await importBlockApply();
     const utxo = await importUtxo();
 
@@ -2559,6 +2626,7 @@ describe('T4: activity clock in the user-transaction loop', () => {
   it('a block carrying a thread and its reply applies: reply before thread', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const blockApply = await importBlockApply();
     const utxo = await importUtxo();
 
