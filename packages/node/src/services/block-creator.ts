@@ -45,7 +45,7 @@ import type {
 // path of server-role nodes, where the injected one is never assigned.
 import { config as nodeConfig } from '../config.js';
 import type { Config } from '../config.js';
-import { expectedTarget } from './difficulty.js';
+import { scheduledTargetBits, nowMs } from './difficulty.js';
 import { getNet } from './net-instance.js';
 import {
   applyOrderingBlock,
@@ -595,9 +595,6 @@ export function createOrderingBlock(): OrderingBlock | null {
     //     Block Creator Integration step 4).
     confirmedRowids = new Set<number>(includedRowids);
 
-    // 14. Difficulty — fixed by the height schedule, and enforced at apply
-    const powTargetBits = expectedTarget(newHeight);
-
     // 16. Previous block hash. `prevBlock` is our own stored tip: `currentHeight`
     // is `MAX(height)` over the same table, so on a non-empty chain the row is
     // there by construction, and its header passed the apply gate on the way in.
@@ -622,6 +619,11 @@ export function createOrderingBlock(): OrderingBlock | null {
       );
     }
 
+    // 14. MINING_INTERFACE → Difficulty Schedule
+    const powTargetBits = currentHeight === 0
+      ? config.orderingBlockPowTargetBits
+      : scheduledTargetBits(prevBlock!.header);
+
     // 18. Compute the Merkle root
     const utxoTxRoot = computeUtxoTxRoot(utxoTxTree);
 
@@ -639,13 +641,9 @@ export function createOrderingBlock(): OrderingBlock | null {
           new UnhashableStoredHeaderError('createOrderingBlock/interlinks', currentHeight),
         );
       }
-      const prevLevel = level(prevBlock.header);
-      if (prevLevel === null) {
-        failStopIfCorruptChain(
-          new UnhashableStoredHeaderError('createOrderingBlock/level', currentHeight),
-        );
-      }
-      templateInterlinks = updateInterlinks(storedInterlinks!, prevBlockHash!, prevLevel!);
+      // VALIDATION_INTERFACE → level: null is no level, not a fail-stop
+      const prevLevel = level(prevBlock.header, config.orderingBlockPowTargetBits);
+      templateInterlinks = updateInterlinks(storedInterlinks!, prevBlockHash!, prevLevel);
     } else {
       templateInterlinks = [];
     }
@@ -658,7 +656,8 @@ export function createOrderingBlock(): OrderingBlock | null {
       validatorId,
       powNonce: 0,
       powTargetBits,
-      createdAt: Date.now(),
+      // MINING_INTERFACE → Header timestamp rules, producer side
+      createdAt: Math.max(nowMs(), (prevBlock?.header.createdAt ?? 0) + 1),
       interlinkRoot: interlinkRoot(templateInterlinks),
     };
     const candidate: OrderingBlock = {

@@ -330,8 +330,10 @@ function applyBlockBody(block: OrderingBlock): boolean {
     return false;
   }
 
-  // 3. PoW target — MINING_INTERFACE → Difficulty Schedule: the target is a
-  // function of the stored parent and the anchor, not of height.
+  // 3. PoW target — MINING_INTERFACE → Difficulty Schedule. Checked before the
+  // PoW solution: `verifyOrderingBlockPoW` judges the solution against the
+  // header's own `powTargetBits`, so a producer writing the floor into its
+  // header mines a near-free block that satisfies its own claim.
   const scheduledTarget = currentHeight === 0
     ? config.orderingBlockPowTargetBits
     : scheduledTargetBits(prevBlock!.header);

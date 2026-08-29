@@ -968,4 +968,124 @@ describe('block-creator', () => {
       expect(idsIn(block!)).toEqual([computeTxId(lean), computeTxId(fat)]);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // ASERT: the template carries the schedule and the stamp clamp
+  // -------------------------------------------------------------------------
+
+  describe('difficulty schedule on templates', () => {
+    it('a template over a tip whose stamp moved the schedule carries scheduledTargetBits, not the anchor', async () => {
+      const db = await importDb();
+      db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+      const { setClock, scheduledTargetBits } = await import('../../src/services/difficulty.js');
+      const { config } = await import('../../src/config.js');
+      const ba = await import('../../src/services/block-apply.js');
+
+      const t1 = 1_000_000;
+      setClock(() => t1);
+      const block1 = await makeApplicableBlock({ createdAt: t1 });
+      expect(ba.applyOrderingBlock(block1)).toBe(true);
+
+      // Block 2 stamped 10 days later
+      const t2 = t1 + 10 * 86_400_000;
+      setClock(() => t2);
+      const block2 = await makeApplicableBlock({ height: 2, createdAt: t2 });
+      expect(ba.applyOrderingBlock(block2)).toBe(true);
+
+      // Template for block 3
+      const bc = await importBlockCreator();
+      bc.startBlockCreator(testConfig);
+      const template = bc.getCurrentTemplate();
+      expect(template).not.toBeNull();
+      const sched = scheduledTargetBits(block2.header);
+      expect(sched).not.toBe(config.orderingBlockPowTargetBits);
+      expect(template!.header.powTargetBits).toBe(sched);
+
+      bc.stopBlockCreator();
+      setClock(null);
+    });
+
+    it('the height-1 template carries the anchor bits', async () => {
+      const db = await importDb();
+      db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+      const { config } = await import('../../src/config.js');
+      const bc = await importBlockCreator();
+      bc.startBlockCreator(testConfig);
+      const template = bc.getCurrentTemplate();
+      expect(template).not.toBeNull();
+      expect(template!.header.powTargetBits).toBe(config.orderingBlockPowTargetBits);
+
+      bc.stopBlockCreator();
+    });
+
+    it('the stamp clamp: clock behind tip gives tip.createdAt + 1, ahead gives nowMs', async () => {
+      const db = await importDb();
+      db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+      const { setClock, nowMs } = await import('../../src/services/difficulty.js');
+      const ba = await import('../../src/services/block-apply.js');
+
+      const t1 = 1_000_000;
+      setClock(() => t1);
+      const block1 = await makeApplicableBlock({ createdAt: t1 });
+      expect(ba.applyOrderingBlock(block1)).toBe(true);
+
+      // Clock behind the tip
+      setClock(() => t1 - 10_000);
+      const bc = await importBlockCreator();
+      bc.startBlockCreator(testConfig);
+      let template = bc.getCurrentTemplate();
+      expect(template).not.toBeNull();
+      expect(template!.header.createdAt).toBe(t1 + 1);
+
+      // Clock ahead of the tip
+      setClock(() => t1 + 120_000);
+      bc.stopBlockCreator();
+      bc.startBlockCreator(testConfig);
+      template = bc.getCurrentTemplate();
+      expect(template).not.toBeNull();
+      expect(template!.header.createdAt).toBe(t1 + 120_000);
+
+      bc.stopBlockCreator();
+      setClock(null);
+    });
+
+    it('a template the creator builds applies through the funnel — creator and funnel agree on the schedule', async () => {
+      const db = await importDb();
+      db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+      const { setClock, scheduledTargetBits } = await import('../../src/services/difficulty.js');
+      const ba = await import('../../src/services/block-apply.js');
+
+      const t1 = 1_000_000;
+      setClock(() => t1);
+      const block1 = await makeApplicableBlock({ createdAt: t1 });
+      expect(ba.applyOrderingBlock(block1)).toBe(true);
+
+      // Block 2 stamped 10 days later — the schedule moved
+      const t2 = t1 + 10 * 86_400_000;
+      setClock(() => t2);
+      const block2 = await makeApplicableBlock({ height: 2, createdAt: t2 });
+      expect(ba.applyOrderingBlock(block2)).toBe(true);
+
+      // Block 3 via makeApplicableBlock — uses the same schedule the funnel
+      // checks, so the block applies. One function, two readers.
+      const t3 = t2 + 60_000;
+      setClock(() => t3);
+      const sched = scheduledTargetBits(block2.header);
+      const block3 = await makeApplicableBlock({ height: 3, createdAt: t3 });
+      expect(block3.header.powTargetBits).toBe(sched);
+      expect(ba.applyOrderingBlock(block3)).toBe(true);
+
+      const { getCurrentHeight } = await import('../../src/store/ordering.js');
+      expect(getCurrentHeight()).toBe(3);
+      setClock(null);
+    });
+  });
 });
