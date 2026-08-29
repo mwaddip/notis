@@ -13,6 +13,8 @@ import { describe, it, expect } from 'vitest';
 import {
   ORDERING_BLOCK_POW_TARGET_BITS,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
+  RETARGET_HALFLIFE_BLOCKS,
+  MAX_FUTURE_DRIFT_MS,
   MAX_REORG_DEPTH,
   GENESIS_PREV_BLOCK_HASH,
   NETWORK_PROFILES,
@@ -85,6 +87,22 @@ describe('PoW difficulty constants', () => {
     expect(NETWORK_PROFILES.devnet.orderingBlockPowTargetBits).toBeLessThan(
       NETWORK_PROFILES.testnet.orderingBlockPowTargetBits,
     );
+  });
+
+  // MINING_INTERFACE → Difficulty Schedule: the halflife in ideal intervals,
+  // universal across networks. 288 × 60_000 ms = 17_280_000 ms (4.8 h).
+  it('RETARGET_HALFLIFE_BLOCKS is the ASERT halflife in ideal intervals', () => {
+    expect(RETARGET_HALFLIFE_BLOCKS).toBe(288);
+    expect(typeof RETARGET_HALFLIFE_BLOCKS).toBe('number');
+    expect(RETARGET_HALFLIFE_BLOCKS * 60_000).toBe(17_280_000);
+  });
+
+  // MINING_INTERFACE → Header timestamp rules: the future bound on createdAt.
+  // 600_000 / 60_000 = 10 — a lying clock buys at most 10 blocks, ever.
+  it('MAX_FUTURE_DRIFT_MS is the future bound on createdAt', () => {
+    expect(MAX_FUTURE_DRIFT_MS).toBe(600_000);
+    expect(typeof MAX_FUTURE_DRIFT_MS).toBe('number');
+    expect(MAX_FUTURE_DRIFT_MS / 60_000).toBe(10);
   });
 });
 
