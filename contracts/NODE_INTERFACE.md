@@ -4518,7 +4518,11 @@ none is added.
 rather than clamping.** `checkpointProver` prunes AVL versions below `height - maxProofHistory` while
 the fork walk reaches back `maxReorgDepth` and can answer height 0, so a smaller retention window would
 prune inside the horizon the walk still answers within. The profile's own `maxReorgDepth` must be a
-positive safe integer — refused at load, never clamped. The check is a negated `>=`, so
+positive safe integer — refused at load, never clamped.
+
+> ⚠ **AHEAD OF CODE — 2026-08-29.** `loadConfig` reads no `maxReorgDepth` and checks the AVL history
+> against nothing (the `types` constant it compared against is deleted). The reorg-horizon unit's node
+> dispatch. The check is a negated `>=`, so
 `NaN` — what `parseInt` answers for a non-numeric env value — is refused rather than admitted. With
 the floor held at load, `reorg` finding no version at or before a fork height the walk answers within
 is `MissingStateVersionError` — a row the store lost, fail-stop ("What the funnel's totality catch is
