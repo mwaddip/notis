@@ -79,14 +79,25 @@ export const MAX_NIPOPOW_PREFIX = 16_384;  // prefix entries — provisional
 
 **The prefix bound's arithmetic, so it reproduces:** the prover keeps at most ~2m headers per
 level (the m-th-from-last anchoring at each level plus the level below's members above it) over
-at most 33 levels below 2³² blocks — 8 448 at `m = 128`; the reader bound is 2¹⁴, above that
-maximum with headroom. Both numbers are provisional (`CONSTANTS → nipopow`). At `m = k = 6` on a
-million-block chain a proof is ~240 PoPowHeaders, ~200 KB.
+≈ log₂(work / W_a) levels — levels are measured against the anchor target, so a chain 2⁷ above its
+anchor and below 2³² blocks holds ≤ 39 of them: 9 984 at `m = 128`; the reader bound is 2¹⁴, above
+that with headroom, and `LEVEL_CAP` bounds the level count absolutely. Both numbers are provisional
+(`CONSTANTS → nipopow`). At `m = k = 6` on a million-block chain a proof is ~240 PoPowHeaders, ~200 KB.
+**`k` is a block count, and under a moving target a k-deep suffix is read in work** — the reference's
+own note; `k = MAX_REORG_DEPTH` stands with that caveat (`CONSTANTS → Client defaults`).
 
-⚠ **A retarget changes this contract.** The proof carries no difficulty headers because the target
-is a constant per profile at every height (`MINING_INTERFACE → Difficulty Schedule`); a difficulty
-adjustment is a `PROTOCOL_VERSION` bump and a new proof layout (`TYPES_INTERFACE → Interlink
-vector` states the same for the vector). Nothing here reserves for it.
+**A moving target changes no layout here.** The proof carries no difficulty headers, and needs none:
+a superblock level is measured against the network's anchor target rather than the header's own
+(`VALIDATION_INTERFACE → level`), so a count of superblocks is a count of work in anchor units whatever
+a header declares and → compareProofs stays a work comparison; the suffix tail's targets are recomputed
+exactly (→ verifyProof, rule 3) because the suffix is contiguous and block 1 is every proof's first
+element. What the difficulty schedule (`MINING_INTERFACE → Difficulty Schedule`) moves is
+`interlinkRoot` — a committed byte the fresh chain covers — not this contract's objects, codecs or
+version.
+
+> ⚠ **AHEAD OF CODE — 2026-08-29.** `verifyProof` checks every header's bits against a constant
+> schedule and `compareProofs` measures levels against each header's own target until the ASERT unit
+> lands.
 
 ---
 
@@ -110,13 +121,19 @@ codec layer's own errors (`TYPES_INTERFACE → Serialization`); `verifyProof` ca
 ```
 verifyProof(
   proof: Uint8Array | NipopowProof,
-  profile: { expectedTarget: (height: number) => number; genesisId: string; protocolVersion: number },
+  profile: {
+    retarget: RetargetParams;        // VALIDATION_INTERFACE → asertTargetBits — the anchor's bits are the yardstick
+    maxFutureDriftMs: number;        // MAX_FUTURE_DRIFT_MS
+    nowMs: number;                   // the client's clock, injected
+    genesisId: string;
+    protocolVersion: number;
+  },
 ): VerifyResult
 
 VerifyResult =
   | { ok: true; headers: BlockHeader[]; tip: BlockHeader; tipHeight: number; suffixHead: PoPowHeader }
   | { ok: false; reason: 'parse-failed' | 'shape' | 'anchor' | 'domain' | 'version' | 'target'
-                       | 'pow' | 'interlinks' | 'heights' | 'connections'; index?: number }
+                       | 'pow' | 'time' | 'clock' | 'interlinks' | 'heights' | 'connections'; index?: number }
 ```
 
 **The rules a proof must pass, in order; the first failure answers `{ ok: false, reason, index }`
@@ -131,9 +148,18 @@ at fault.
    equals `blockHash(prefix[0].header)` (`anchor`). The rule is one whether or not the profile pins
    — the pin only decides *which* block 1 is acceptable (`TYPES_INTERFACE → Network profiles`).
 3. **Every header** — prefix, suffixHead and tail alike: `verifyHeaderFieldDomains` (`domain`),
-   `protocolVersion === profile.protocolVersion` (`version`), `powTargetBits ===
-   profile.expectedTarget(height)` (`target`) — **from the client's schedule, never from the
-   header** — and `verifyOrderingBlockPoW` (`pow`).
+   `protocolVersion === profile.protocolVersion` (`version`), `powTargetBits` inside the profile band
+   `[floorBits, ceilingBits]` (`target`), and `verifyOrderingBlockPoW` against the header's **own**
+   declared bits (`pow`). **Every suffix-tail header** additionally carries exactly the scheduled
+   target — `asertTargetBits(profile.retarget, t_a, previous)` with `t_a` the first prefix element's
+   `createdAt` and `previous` the header before it in the suffix (`target`) — computable because the
+   suffix is parent-linked and block 1 is every proof's first element; `suffixHead`'s parent is not in
+   the proof, so its target is band-bounded like a prefix header's. Declared bits are never trusted as
+   work: a level is measured against the anchor target (`VALIDATION_INTERFACE → level`), so a cheap
+   target buys no score. **Time:** `createdAt` strictly increases across the flattened sequence
+   (`time`) — an honest chain is monotone in time, so its every subsequence is — and the tip's
+   `createdAt ≤ profile.nowMs + profile.maxFutureDriftMs` (`clock`), the acceptance rule a full node
+   applies, so a proof cannot claim more real time than exists.
 4. **Every PoPowHeader:** `interlinkRoot(interlinks) === header.interlinkRoot` (`interlinks`).
 5. **Heights** strictly increase across the flattened sequence (`heights`).
 6. **Connections, strict adjacency** (`connections`). Each element of `prefix ++ [suffixHead]` from
@@ -175,11 +201,22 @@ on bytes a client has not screened, but it re-derives nothing a passed verdict e
   no common header are `incomparable / no-common-ancestor` — under a pinned `genesisId` every
   valid proof shares block 1, so this arm is reachable only on an unpinned network.
 - **Above the LCA:** `chainX = headers with height > lca.height`;
-  `bestArg(chain, m) = max over μ ≥ 0 of 2^μ · |{ h ∈ chain : level(h) ≥ μ }|`, counting a level
-  `μ ≥ 1` only while it holds at least `m` headers (`μ = 0` counts every header). `scoreA >
-  scoreB` → `'a'`; `<` → `'b'`; equal → `'tie'` (the client keeps the proof it already holds).
-- Levels come from each header's own PoW (`VALIDATION_INTERFACE → level`): a lying pointer can
-  skip honest blocks and lower a score, never raise one.
+  `bestArg(chain, m) = max over μ ≥ 0 of 2^μ · |{ h ∈ chain : level(h, anchorBits) ≥ μ }|`, counting a
+  level `μ ≥ 1` only while it holds at least `m` headers (`μ = 0` counts every header **that has a
+  level**; a header below the yardstick counts nowhere). `scoreA > scoreB` → `'a'`; `<` → `'b'`;
+  equal → `'tie'` (the client keeps the proof it already holds).
+- **The score is work, whatever the headers declare.** Levels are measured against the network's
+  anchor target (`VALIDATION_INTERFACE → level`), so a header mined at its own target `T_b` reaches
+  level ≥ μ with probability `T_a / (2^μ · T_b)` and a count at level μ estimates `work / (2^μ · W_a)`;
+  `max_μ` recovers the work of a chain harder than the yardstick at the level where every block
+  registers. **This is our construction, not a citation.** Ergo measures levels against the header's
+  own target and verifies no prefix header's difficulty; the published variable-difficulty
+  construction keeps own-target levels and adds an online round. The argument is the query-level one:
+  a random-oracle query is a level-μ hit with a probability that depends on no target, so at every
+  fully-registering level the counts are the constant-difficulty model's random variables. A
+  cheap-target chain therefore buys no score — the package's property tests pin that a cheap-target
+  chain of equal work does not out-compare an honest one, and that a lower-difficulty chain of more
+  work wins. A lying pointer can skip honest blocks and lower a score, never raise one.
 
 `bestArg(headers: BlockHeader[], m: number): bigint` is exported beside it.
 
@@ -244,9 +281,11 @@ light client:
    transactions, the state transitions, the genesis state — is trusted to the PoW majority: a
    chain no honest full node accepts is an attacker's chain and loses on work. The SPV assumption,
    stated rather than assumed.
-2. **The PoW target is the client's profile schedule, never a header field.** Rule 3 reads
-   `expectedTarget(height)` from the profile the client was built with; a header's `powTargetBits`
-   is checked against it, never trusted from it.
+2. **A header's declared target is never trusted as work.** Rule 3 checks every header's PoW against
+   its own declared bits and the bits against the profile band, recomputes the suffix tail's targets
+   from the schedule the client was built with, and measures every level against the profile's anchor
+   target — so what a proof scores is work in the client's own unit, and a header's `powTargetBits`
+   decides its validity, never its weight.
 3. **Chain choice is the best proof among the nodes asked.** A client that asks one node can be
    eclipsed by it; asking two or more independent nodes and comparing is the client's own
    mitigation — no proof carries evidence about the nodes that were not asked.

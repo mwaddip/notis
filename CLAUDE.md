@@ -162,7 +162,8 @@ makes a title plain.
 
 - Post content: 1–300 UTF-8 bytes (`MAX_CONTENT_BYTES`)
 - Parent refs: 0–1 per post (`MAX_PARENT_REFS`)
-- **On-chain time is block height**, never wall clock
+- **On-chain time is block height**, never wall clock — one named exemption: the ordering-block
+  difficulty schedule reads header `createdAt` stamps (`MINING_INTERFACE` → Difficulty Schedule)
 - Signatures: raw Ed25519 (64 bytes), base64 on wire. Verified with `crypto.verify(null, …)` and a KeyObject
 - Hashing: `blake2b512` with `.subarray(0, 32)` for every 32-byte output
 - Wire format: positional binary. HTTP API: JSON

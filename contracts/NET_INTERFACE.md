@@ -547,7 +547,14 @@ pick_sync_peer() → sync_from_peer() → backfill() → synced()
   backfill's own rotation does. Among candidates the pick prefers outbound peers, falling back
   to inbound-only when no outbound candidate exists — eclipse resistance prefers the
   connections we chose; the fallback keeps a node nobody dials syncing. A candidate is only
-  ever above our own height, switch targets included
+  ever above our own height, switch targets included.
+  ⚠ **Height is the pick's measure, and under a moving target height is not work**
+  (`MINING_INTERFACE → Difficulty Schedule`): a partitioned lone miner's branch has its difficulty
+  fall to its hashrate and grows at the main chain's height rate with a fraction of its work, so a
+  fresh joiner that dials both can pick the light chain and — its fork deeper than `MAX_REORG_DEPTH` —
+  never leave it. Headers-first sync scoring a peer's header chain by verified work before any body
+  is pulled is the closing mechanism, unbuilt (→ Historical Sync); until it lands the operator
+  remedy is a fresh database and a bootstrap to a known-good peer
 - **Sync:** send SyncInfo, process Inv → request headers, validate, append
   to chain, repeat. A batch that strictly advanced the chain sends the next SyncInfo to the
   sync peer immediately (it bypasses the per-peer floor; its bound is the advance itself), so
@@ -1139,8 +1146,8 @@ ban); well-formed but invalid → misbehavior penalty (100). Uses
 | tx | `decodeTxPacket`; `verifyTxStructure`; protocol version; the packet rule (`tx.post` present ⟺ `content` present); `verifyPostBody(content, tx.post.contentHash)` for a post-bearing tx; then the cached karma-membership gate — the author holds karma at all (`NODE_INTERFACE` → Post transactions). Order as under Gossip Topics |
 
 Stage 1 is stateless. It does **not** check the difficulty schedule
-(`powTargetBits === expectedTarget(height)`), chain linkage, validator
-signatures, or state roots — those are apply-time checks in
+(`powTargetBits` against the schedule over the stored parent, `MINING_INTERFACE → Difficulty
+Schedule`), the header timestamp rules, chain linkage, validator signatures, or state roots — those are apply-time checks in
 `@dagsocial/node`, enforced for every entry path (gossip, sync, reorg) by
 the block-apply funnel. The relay PoW gate exists to make mesh propagation
 cost-bearing: no zero-work ordering block may be re-gossiped (audit M-9).
@@ -1222,7 +1229,11 @@ headers); a short or substituted answer is refused there and penalised through
 **Fork resolution asks for a segment, not a tip.** `requestHeaders(start, MAX_REORG_DEPTH · 2)`
 from the triggering block's height down is scored as a verified prefix of the peer's chain; the
 block range then requested is `forkHeight + 1 … forkHeight + n` for the `n` headers that verified,
-never a height the peer claimed.
+never a height the peer claimed. ⚠ **A prefix is scored, not the branch**: under a moving target
+(`MINING_INTERFACE → Difficulty Schedule`) a competing branch whose first `MAX_REORG_DEPTH · 2`
+headers are lighter than our chain above the fork can be heavier as a whole and be refused — correct
+in the safe direction, never a reorg to a lighter chain — and closed by headers-first sync scoring
+the branch to its tip (→ Historical Sync, unbuilt).
 
 **The gossip source is what fork resolution asks.** `resolveFork` takes the peer that relayed the
 competing block and uses it as the counterparty when it is still in `getConnectedPeers()`, falling back
