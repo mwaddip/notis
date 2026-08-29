@@ -1347,6 +1347,18 @@ The checks:
 2. **Closed key set**: `inputs`, `outputs`, `signatures`, `protocolVersion`,
    optionally `likeTarget`, `post`, `prune` and `postWithdraw`. Any other key
    rejects.
+   ⛔ **AT MOST ONE PAYLOAD FIELD.** `likeTarget`, `post`, `prune` and `postWithdraw` are
+   mutually exclusive — a transaction carrying two of them rejects here, before any transition arm
+   runs, and the rejection names both fields. The arms recognise a transaction's kind by payload
+   presence and each pins its own shape and nothing else's, so a second payload would ride through
+   the first's arm unexamined: `postsOf` confirms every `tx.post` whatever arm validated the
+   transaction, and the post arm is the only place a commit's `author` is bound to the karma's owner
+   — a like carrying a `PostCommit` would confirm the post, under any author the commit names, for
+   the price of the like. The rule is the envelope's because it is structural: no state is read to
+   decide it.
+   > ⚠ **AHEAD OF CODE — 2026-08-29.** `checkTxEnvelope` refuses no combination of the four; PR A's
+   > node unit adds the check and pins every pair, the like-and-post pair with and without a price
+   > box and with a foreign author on the commit.
    > ⛔ **A NEW PAYLOAD FIELD IS TWO ENTRIES HERE, NOT ONE.** `decodeTx` writes
    > every field unconditionally, holding `undefined` where the tag said absent,
    > so a field must also join the set of keys **permitted to hold `undefined`**.

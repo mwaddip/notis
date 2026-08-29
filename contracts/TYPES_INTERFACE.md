@@ -1102,8 +1102,9 @@ field whose presence is biconditional with a rule. It takes `opt()`'s presence t
 by `postFieldBytes(commit)`, appended **only when present**, after `likeTarget`'s
 contribution. The body is bound to the transaction by `contentHash` alone; on gossip it rides
 beside the transaction's bytes as the packet's trailing `opt` (→ Layout — UtxoTransaction,
-the packet codec), outside `txIdBytes` and outside every id. **The two are mutually exclusive in practice** — a transaction is a
-like or a post, never both — but the encoding does not rely on that: each carries
+the packet codec), outside `txIdBytes` and outside every id. **The payload fields are mutually exclusive by rule** — a transaction is a like, a post, a
+prune or a withdrawal, never two of them (`NODE_INTERFACE → Transaction envelope shape`) — and the
+encoding does not rely on it either: each carries
 its own tag, so the tail stays unambiguous however the fields combine.
 
 ⛔ **A presence tag is unambiguous by construction; an in-band marker is
