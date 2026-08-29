@@ -24,6 +24,7 @@ import {
   NodeError,
 } from '../src/http.js';
 import type { BoxRef } from '../src/tx/render.js';
+import { POST_PRICE_THREAD } from '@dagsocial/types';
 
 const FILE_INDEX = 16;
 
@@ -259,7 +260,11 @@ describe('membership', () => {
     }
 
     // ---- GET /vouches?voucher=A is a page ----
-    for (const node of mesh.nodes) {
+    const aVouchPage = await getVouchesVoucher(miner, A.publicKeyHex);
+    expect(aVouchPage.count).toBe(1);
+    expect(aVouchPage.next).toBeNull();
+    const aVouchCreatedAtBlock = aVouchPage.vouches[0]!.createdAtBlock;
+    for (const node of mesh.nodes.slice(1)) {
       const v = await getVouchesVoucher(node, A.publicKeyHex);
       expect(v.count).toBe(1);
       expect(v.next).toBeNull();
@@ -319,6 +324,9 @@ describe('membership', () => {
     for (const node of mesh.nodes) {
       const cd = await getVouchCooldowns(node, A.publicKeyHex);
       expect(cd.cooldowns.length).toBe(1);
+      expect(cd.cooldowns[0]!.releaseAtBlock).toBe(
+        aVouchCreatedAtBlock + statusPre.vouchCooldownBlocks,
+      );
     }
 
     // ---- B lapses in the same block's pass — one generation per block ----
@@ -351,9 +359,10 @@ describe('membership', () => {
       expect(cd.cooldowns).toHaveLength(0);
     }
 
-    // ---- totalKarma moved ----
+    // ---- totalKarma delta: grants enter supply, prices exit it ----
     // NODE_INTERFACE → Status: totalKarma
     const statusFinal = await getStatus(miner);
-    expect(BigInt(statusFinal.totalKarma)).not.toBe(BigInt(status0.totalKarma));
+    const expectedDelta = bondAmount + bBondAmount - 4n * POST_PRICE_THREAD;
+    expect(BigInt(statusFinal.totalKarma) - BigInt(status0.totalKarma)).toBe(expectedDelta);
   });
 });
