@@ -15,6 +15,7 @@ import {
   TX_ID_DOMAIN,
   MINT_ID_DOMAIN,
   IDENTITY_KEY_DOMAIN,
+  NETWORK_KEY_DOMAIN,
   BOX_TYPE_TAGS,
   INVITE_BOND_MIN,
   INVITE_BOND_MAX,
@@ -1715,11 +1716,21 @@ describe('computeMintTxId', () => {
   });
 });
 
+// The two module-private domain tags, reconstructed from the contract's
+// strings so the seven-way distinctness check covers all seven derivation
+// domain tags (TYPES_INTERFACE → Domain tags are network-agnostic).
+const POST_ID_DOMAIN = new TextEncoder().encode('dagsocial/post-id/1');
+const POST_CONTENT_DOMAIN = new TextEncoder().encode('dagsocial/post-content/1');
+
+const ALL_DERIVATION_TAGS = [
+  BOX_ID_DOMAIN, TX_ID_DOMAIN, MINT_ID_DOMAIN, IDENTITY_KEY_DOMAIN,
+  NETWORK_KEY_DOMAIN, POST_ID_DOMAIN, POST_CONTENT_DOMAIN,
+];
+
 describe('domain separation', () => {
-  it('the four domain tags are pairwise distinct', () => {
-    const tags = [BOX_ID_DOMAIN, TX_ID_DOMAIN, MINT_ID_DOMAIN, IDENTITY_KEY_DOMAIN]
-      .map((t) => Buffer.from(t).toString('hex'));
-    expect(new Set(tags).size).toBe(4);
+  it('the seven derivation domain tags are pairwise distinct', () => {
+    const tags = ALL_DERIVATION_TAGS.map((t) => Buffer.from(t).toString('hex'));
+    expect(new Set(tags).size).toBe(7);
   });
 
   it('a mint id never equals a box id built from the same material', () => {
@@ -1749,16 +1760,16 @@ describe('transactions', () => {
     // Dropping `TX_ID_DOMAIN` from `computeTxId` was killed ONLY by frozen
     // goldens and the UI mirror — three assertions, all of the form "this id
     // equals this constant". Nothing pinned what the tag is *for*: that box ids,
-    // transaction ids, mint txIds and identity-record keys share one 32-byte
-    // keyspace and must be provably disjoint (TYPES_INTERFACE → Domain tags).
+    // transaction ids, mint txIds, identity-record keys and the network key
+    // share one 32-byte keyspace and must be provably disjoint
+    // (TYPES_INTERFACE → Domain tags).
     //
     // A golden catches removal only because the golden was regenerated after the
     // tag was added. These pin the property, so a future id that forgets its tag
     // fails on meaning rather than on a number someone might "fix".
 
     it('every domain tag is distinct', () => {
-      const tags = [BOX_ID_DOMAIN, TX_ID_DOMAIN, MINT_ID_DOMAIN, IDENTITY_KEY_DOMAIN]
-        .map((t) => Buffer.from(t).toString('hex'));
+      const tags = ALL_DERIVATION_TAGS.map((t) => Buffer.from(t).toString('hex'));
       expect(new Set(tags).size).toBe(tags.length);
     });
 
@@ -1766,8 +1777,7 @@ describe('transactions', () => {
       // Same argument the MintReason set rests on: the tag is followed directly
       // by caller bytes with no length prefix, so a prefix relation would let
       // one preimage be read as another domain's.
-      const tags = [BOX_ID_DOMAIN, TX_ID_DOMAIN, MINT_ID_DOMAIN, IDENTITY_KEY_DOMAIN]
-        .map((t) => Buffer.from(t).toString('hex'));
+      const tags = ALL_DERIVATION_TAGS.map((t) => Buffer.from(t).toString('hex'));
       for (const a of tags) {
         for (const b of tags) {
           if (a !== b) expect(a.startsWith(b)).toBe(false);

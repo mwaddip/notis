@@ -108,6 +108,7 @@ export {
   TX_ID_DOMAIN,
   MINT_ID_DOMAIN,
   IDENTITY_KEY_DOMAIN,
+  NETWORK_KEY_DOMAIN,
   BOX_TYPE_TAGS,
 } from './utxo.js';
 export type {

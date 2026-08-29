@@ -55,6 +55,7 @@ export const BOX_ID_DOMAIN = encoder.encode('dagsocial/box-id/1');
 export const TX_ID_DOMAIN = encoder.encode('dagsocial/tx-id/1');
 export const MINT_ID_DOMAIN = encoder.encode('dagsocial/mint-tx-id/1');
 export const IDENTITY_KEY_DOMAIN = encoder.encode('dagsocial/identity-key/1');
+export const NETWORK_KEY_DOMAIN = encoder.encode('dagsocial/network-key/1');
 
 /**
  * The `boxType` tag table — **the single source of the box-type numbering.**
