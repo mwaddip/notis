@@ -337,9 +337,13 @@ const extractDeclaration = (src: string, header: string): string =>
 
 /** Return a single-line `const NAME = …;` declaration. */
 function extractConst(src: string, name: string): string {
-  const header = `const ${name} =`;
-  const start = src.indexOf(header);
-  if (start === -1) throw new Error(`index.html no longer declares: ${header}`);
+  let header = `const ${name} =`;
+  let start = src.indexOf(header);
+  if (start === -1) {
+    header = `let ${name} =`;
+    start = src.indexOf(header);
+  }
+  if (start === -1) throw new Error(`index.html no longer declares: const ${name} =`);
   const end = src.indexOf('\n', start);
   return src.slice(start, end === -1 ? undefined : end);
 }

@@ -20,6 +20,7 @@ import type {
   KarmaPoolBox,
   LikeAccrualBox,
   TreasuryBox,
+  VouchBox,
   VouchEscrowBox,
 } from '@dagsocial/types';
 import {
@@ -45,6 +46,7 @@ const likeAuthor  = makeTestIdentity();
 const bondInviter = makeTestIdentity();
 const bondInvitee = makeTestIdentity();
 const escrowOwner = makeTestIdentity();
+const lapseOwner  = makeTestIdentity();
 const decayOwner  = makeTestIdentity();
 const newInvitee  = makeTestIdentity();
 
@@ -87,6 +89,12 @@ const escrowBox = seedProvenance<VouchEscrowBox>({
   owner: escrowOwner.userId, releaseAtBlock: HEIGHT,
 }, 1, labelNonce('leg-order-escrow'));
 
+const lapsedVouchBox = seedProvenance<VouchBox>({
+  boxType: 'vouch', value: 1n, createdAtBlock: 3,
+  voucherId: lapseOwner.userId,
+  targetId: newInvitee.userId,
+}, 1, labelNonce('leg-order-lapsed-vouch'));
+
 const decayKarmaBox = seedProvenance<KarmaBox>({
   boxType: 'karma', value: 10n, createdAtBlock: 0,
   owner: decayOwner.userId,
@@ -104,7 +112,7 @@ const priceBox = seedProvenance<KarmaPriceBox>({
 
 const boxMap = new Map<string, AnyBox>();
 for (const box of [emissionBox, treasuryBox, poolBox, markerBox, carryBox,
-                    bondBox, escrowBox, decayKarmaBox, feeBox, priceBox]) {
+                    bondBox, escrowBox, lapsedVouchBox, decayKarmaBox, feeBox, priceBox]) {
   boxMap.set(box.id!, box as AnyBox);
 }
 
@@ -139,7 +147,7 @@ const deps: SettlementDeps = {
   },
   getBondsSettlingAt: () => [bondBox as BondBox],
   getEscrowsReleasableAt: () => [escrowBox as VouchEscrowBox],
-  getLapsedVouches: () => [],
+  getLapsedVouches: () => [lapsedVouchBox as VouchBox],
   getLifetimeLikes: (invitee) =>
     hex(invitee) === hex(bondInvitee.userId) ? 9n : 0n,
   getDecayPlans: () => [decayPlan],
@@ -179,6 +187,7 @@ describe('settlement leg order', () => {
       carryBox.id,
       bondBox.id,
       escrowBox.id,
+      lapsedVouchBox.id,
       decayKarmaBox.id,
       poolBox.id,
       feeBox.id,
@@ -190,7 +199,7 @@ describe('settlement leg order', () => {
     //   invite grants → like payouts + carry → bond vested →
     //   escrow returns → decay replacements → coinbase credit
     const outs = tx.outputs;
-    expect(outs).toHaveLength(10);
+    expect(outs).toHaveLength(11);
 
     expect(outs[0]!.boxType).toBe('emission');
     // 1000 − min(100, 1000) + unearned(23) = 923
@@ -222,11 +231,18 @@ describe('settlement leg order', () => {
     expect((outs[7] as KarmaBox).owner).toEqual(escrowOwner.userId);
     expect(outs[7]!.value).toBe(10n);
 
-    expect(outs[8]!.boxType).toBe('karma');
-    expect((outs[8] as KarmaBox).owner).toEqual(decayOwner.userId);
-    expect(outs[8]!.value).toBe(8n);
+    // The lapse leg's escrow output: vouch_escrow, value = vouch.value,
+    // owner = voucher, releaseAtBlock = createdAtBlock + cooldown.
+    expect(outs[8]!.boxType).toBe('vouch_escrow');
+    expect((outs[8] as VouchEscrowBox).owner).toEqual(lapseOwner.userId);
+    expect(outs[8]!.value).toBe(1n);
+    expect((outs[8] as VouchEscrowBox).releaseAtBlock).toBe(3 + 2); // createdAtBlock + vouchCooldownBlocks
 
-    expect(outs[9]!.boxType).toBe('credit');
+    expect(outs[9]!.boxType).toBe('karma');
+    expect((outs[9] as KarmaBox).owner).toEqual(decayOwner.userId);
+    expect(outs[9]!.value).toBe(8n);
+
+    expect(outs[10]!.boxType).toBe('credit');
 
     // Builder and verifier share derive(), so checkSettlement passing is
     // necessary but not sufficient — the positional assertions above are

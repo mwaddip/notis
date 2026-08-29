@@ -7,7 +7,9 @@ import {
   serializeIdentityRecord,
   deserializeIdentityRecord,
   deserializeAvlValue,
+  serializeNetworkRecord,
   IDENTITY_RECORD_TAG,
+  NETWORK_RECORD_TAG,
 } from '../../src/state/serialize-box.js';
 import {
   createAvlProver,
@@ -21,7 +23,7 @@ import { fixtureProvenance } from '../helpers.js';
 
 /**
  * Identity records as the AVL tree's second entity kind — NODE_INTERFACE →
- * "Two entity kinds" and Layout — IdentityRecord.
+ * Three entity kinds and Layout — IdentityRecord.
  */
 
 function makeAvlDb(): Database.Database {
@@ -469,6 +471,23 @@ describe('the always-present fields in the record encoding', () => {
       { key, record: { lastActivityBlock: 42, lastDecayBlock: 7, invitedAtBlock: 0, lifetimeLikesReceived: 3n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 } },
     ]);
     expect(Buffer.from(d1).toString('hex')).not.toBe(Buffer.from(d2).toString('hex'));
+  });
+});
+
+describe('network record — the third entity kind (§9)', () => {
+  it('deserializeBox refuses 0x81 (the network record tag)', () => {
+    const bytes = serializeNetworkRecord({ memberCount: 42 });
+    expect(bytes[0]).toBe(NETWORK_RECORD_TAG);
+    expect(() => deserializeBox(bytes)).toThrow('network record');
+  });
+
+  it('deserializeAvlValue on 0x81 returns kind: network', () => {
+    const bytes = serializeNetworkRecord({ memberCount: 7 });
+    const val = deserializeAvlValue(bytes);
+    expect(val.kind).toBe('network');
+    if (val.kind === 'network') {
+      expect(val.network.memberCount).toBe(7);
+    }
   });
 });
 

@@ -10,11 +10,13 @@ import {
   MAX_SETTLEMENT_BYTES,
   MAX_ESCROW_RETURNS_PER_BLOCK,
   MAX_BOND_SETTLEMENTS_PER_BLOCK,
+  MAX_LAPSE_WITHDRAWALS_PER_BLOCK,
   LIKE_KARMA_COST,
   encodeTx,
 } from '@dagsocial/types';
 import type {
   KarmaBox,
+  VouchBox,
   VouchEscrowBox,
   UtxoTransaction,
   OrderingBlock,
@@ -237,11 +239,12 @@ describe('T3 — liveness relation', () => {
   beforeEach(() => { vi.resetModules(); });
   afterEach(() => { vi.resetModules(); });
 
-  it('a settlement with all state-driven legs at cap fits MAX_SETTLEMENT_BYTES', async () => {
+  it('a settlement with all three state-driven legs at cap fits MAX_SETTLEMENT_BYTES', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
+    const records = await import('../../src/store/identity-records.js');
     const blockApply = await importBlockApply();
     const bc = await importBlockCreator();
 
@@ -249,7 +252,7 @@ describe('T3 — liveness relation', () => {
     const block1 = await makeApplicableBlock({ utxoTxs: [] });
     expect(blockApply.applyOrderingBlock(block1)).toBe(true);
 
-    // Seed 64 bonds and 64 escrows with distinct owners — the two capped legs
+    // Seed 64 bonds, 64 escrows, and 64 lapsed vouches — the three capped legs
     const BOND_HEIGHT = 2;
     const probation = config.inviteProbationBlocks;
     const settleHeight = BOND_HEIGHT + probation;
@@ -279,6 +282,26 @@ describe('T3 — liveness relation', () => {
       utxo.insertBox(box);
     }
 
+    for (let i = 0; i < MAX_LAPSE_WITHDRAWALS_PER_BLOCK; i++) {
+      const voucher = makeTestIdentity();
+      const target = makeTestIdentity();
+      // The voucher's record fails member(): memberSinceBlock > 0 but
+      // memberVouches (0) < memberBar (1).
+      records.putIdentityRecord(voucher.userId, {
+        lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+        lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 1,
+        memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+      });
+      const box = seedProvenance<VouchBox>({
+        boxType: 'vouch' as const,
+        value: 1n,
+        createdAtBlock: 1,
+        voucherId: voucher.userId,
+        targetId: target.userId,
+      }, 4000 + i);
+      utxo.insertBox(box);
+    }
+
     // Build the settlement at settleHeight with an empty body
     const miner = makeTestIdentity();
     const result = bc.buildBlockSettlement([], settleHeight, miner.userId, miner.userId);
@@ -286,6 +309,7 @@ describe('T3 — liveness relation', () => {
     expect('tx' in result).toBe(true);
     if ('tx' in result) {
       const encoded = encodeTx(result.tx);
+      console.log(`Empty-body settlement with 3 capped legs: ${encoded.length} bytes`);
       expect(encoded.length).toBeLessThanOrEqual(MAX_SETTLEMENT_BYTES);
     }
   });

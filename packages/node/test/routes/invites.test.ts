@@ -73,7 +73,7 @@ function loadUiBuilders(): UiBuilders {
     [
       'let currentBlockHeight = 0;',
       lift('const PROTOCOL_VERSION ='),
-      lift('const INVITE_BOND_DEFAULT ='),
+      lift('let INVITE_BOND_DEFAULT ='),
       lift('function jsonBigint('),
       lift('function selectBoxes('),
       lift('function buildCreateInviteTx('),
