@@ -76,6 +76,7 @@ describe('sync codec decode boundary', () => {
   for (const [name, decodeFn] of Object.entries(decoders)) {
     it(`${name} returns null on truncated bytes`, () => {
       expect(decodeFn(new Uint8Array([]))).toBeNull();
+      // SyncInfo is one vlqU — [0x01] is vlqU(1), a valid height-1 body, not truncated.
       if (name !== 'decodeSyncInfo') {
         expect(decodeFn(new Uint8Array([0x01]))).toBeNull();
       }

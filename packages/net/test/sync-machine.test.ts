@@ -1795,7 +1795,6 @@ describe('SyncMachine', () => {
         store: {
           chainHeight: () => height,
           getOrderingBlockId: () => H32_B,
-
         },
       });
       machine.onSynced(() => { syncedFired.push(1); });
@@ -1833,7 +1832,6 @@ describe('SyncMachine', () => {
         store: {
           chainHeight: () => 100,
           getOrderingBlockId: () => H32,
-
         },
       });
 
@@ -1853,7 +1851,6 @@ describe('SyncMachine', () => {
         store: {
           chainHeight: () => 100,
           getOrderingBlockId: () => H32,
-
         },
       });
 
@@ -1875,7 +1872,6 @@ describe('SyncMachine', () => {
         store: {
           chainHeight: () => height,
           getOrderingBlockId: () => H32,
-
         },
       });
 
@@ -1896,7 +1892,6 @@ describe('SyncMachine', () => {
         store: {
           chainHeight: () => 100,
           getOrderingBlockId: () => H32_B,
-
         },
       });
 
@@ -1959,7 +1954,6 @@ describe('SyncMachine', () => {
         store: {
           chainHeight: () => height,
           getOrderingBlockId: () => H32,
-
         },
       });
 
@@ -2123,7 +2117,6 @@ describe('SyncMachine', () => {
         store: {
           chainHeight: () => height,
           getOrderingBlockId: () => null,
-
         },
       });
 
@@ -2150,7 +2143,6 @@ describe('SyncMachine', () => {
         store: {
           chainHeight: () => 100,
           getOrderingBlockId: () => H32,
-
         },
       });
 
@@ -2178,7 +2170,6 @@ describe('SyncMachine', () => {
         store: {
           chainHeight: () => height,
           getOrderingBlockId: () => H32,
-
         },
       });
 
