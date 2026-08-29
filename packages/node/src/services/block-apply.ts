@@ -99,7 +99,6 @@ import { networkRecordKey } from '../store/identity-records.js';
 import {
   encodeTx,
   decodeTx,
-  MAX_REORG_DEPTH,
   MAX_FUTURE_DRIFT_MS,
   GENESIS_PREV_BLOCK_HASH,
   PROTOCOL_VERSION,
@@ -432,8 +431,8 @@ function applyBlockBody(block: OrderingBlock): boolean {
   // Retention is the real floor under revert depth — `revertBlock` throws
   // without a journal — so it tracks the depth `findForkPoint` can walk back
   // to rather than restating the number.
-  purgeOldJournals(block.header.height - MAX_REORG_DEPTH);
-  purgeRefusedHeaders(block.header.height - MAX_REORG_DEPTH);
+  purgeOldJournals(block.header.height - config.maxReorgDepth);
+  purgeRefusedHeaders(block.header.height - config.maxReorgDepth);
 
   // The one site where an absence is simply printed. `applyOrderingBlock` ran
   // `verifyOrderingBlockStructure` over this header before calling us, so it is

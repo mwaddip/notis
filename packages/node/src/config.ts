@@ -4,7 +4,6 @@ import {
   KARMA_MINIMUM,
   AVL_KEY_LENGTH,
   MAX_BLOCK_BODY_BYTES,
-  MAX_REORG_DEPTH,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   profileFor,
 } from '@dagsocial/types';
@@ -102,6 +101,9 @@ export interface Config {
   karmaMinimum: bigint;
   // Storage rent
   storageRentPeriodBlocks: number;
+  // Chain reorganisation — the profile's reorg horizon
+  // (TYPES_INTERFACE → Chain reorganisation).
+  maxReorgDepth: number;
   // AVL state root
   verifyStateRoot: boolean;
   maxProofHistory: number;
@@ -161,6 +163,7 @@ export function loadConfig(): Readonly<Config> {
     karmaDecayAmount: KARMA_DECAY_AMOUNT,
     karmaMinimum: KARMA_MINIMUM,
     storageRentPeriodBlocks: profile.storageRentPeriodBlocks,
+    maxReorgDepth: profile.maxReorgDepth,
     // AVL state root. On by default since Spec B P3: producer and verifier now
     // agree by construction — the header carries the POST-block digest (H-6),
     // both feeds are canonically ordered (M-12), and the mutation set is
@@ -183,6 +186,7 @@ export function loadConfig(): Readonly<Config> {
   assertInviteBondRangeInhabited(cfg);
   assertFaucetPublicKeyWellFormed(cfg);
   assertOrderingTargetAboveFloor(cfg);
+  assertReorgDepthValid(cfg);
   assertProofHistoryCoversReorgDepth(cfg);
 
   return Object.freeze(cfg);
@@ -253,30 +257,42 @@ function parseBlockBodyBudget(raw: string | undefined): number {
 }
 
 /**
+ * The profile's `maxReorgDepth` is a positive safe integer — refused at load,
+ * never clamped (NODE_INTERFACE → Configuration).
+ *
+ * Written as a negated chain so `NaN` and non-integers refuse: `Number.isSafeInteger`
+ * is false for `NaN`, and the positive check excludes zero.
+ */
+function assertReorgDepthValid(cfg: Config): void {
+  if (!(Number.isSafeInteger(cfg.maxReorgDepth) && cfg.maxReorgDepth > 0)) {
+    throw new Error(
+      `maxReorgDepth ${cfg.maxReorgDepth} for network "${cfg.networkType}" ` +
+        'is not a positive safe integer',
+    );
+  }
+}
+
+/**
  * `MAX_PROOF_HISTORY` must cover every height a reorg can walk back to.
  *
- * `checkpointProver` prunes AVL versions below `height - maxProofHistory`, while
- * `findForkPoint` walks back a fixed `MAX_REORG_DEPTH` and can answer height 0.
- * A `maxProofHistory` under that depth prunes inside the window the walk still
- * answers within: `reorg` then finds no version at or before its fork height and
- * throws, and the node keeps a chain it should have switched away from. The two
- * numbers must be ordered, and nothing but this check orders them.
- *
- * Refusal, never clamping — the same rule `assertOrderingTargetAboveFloor`
- * follows: raising a too-small value to `MAX_REORG_DEPTH` would retain history
- * against a bound nobody configured, and failing at load puts the verdict where
- * a human is reading it.
+ * `checkpointProver` prunes AVL versions below `height - maxProofHistory`,
+ * while the fork walk pages back `maxReorgDepth` and can answer height 0.
+ * A `maxProofHistory` under that depth prunes inside the window the walk
+ * still answers within: `reorg` then finds no version at or before its fork
+ * height and throws, and the node keeps a chain it should have switched away
+ * from. The two numbers must be ordered, and nothing but this check orders
+ * them.
  *
  * Written as a negated `>=` rather than a `<` so the check is total on the
  * parse: `parseInt` yields `NaN` for a non-numeric `MAX_PROOF_HISTORY`, and
- * `NaN < MAX_REORG_DEPTH` is false — a `<` would pass the one value that makes
+ * `NaN < maxReorgDepth` is false — a `<` would pass the one value that makes
  * every pruning height `NaN`.
  */
 function assertProofHistoryCoversReorgDepth(cfg: Config): void {
-  if (!(cfg.maxProofHistory >= MAX_REORG_DEPTH)) {
+  if (!(cfg.maxProofHistory >= cfg.maxReorgDepth)) {
     throw new Error(
-      `MAX_PROOF_HISTORY ${cfg.maxProofHistory} is below MAX_REORG_DEPTH ` +
-        `${MAX_REORG_DEPTH} — AVL versions inside the reorg window would be ` +
+      `MAX_PROOF_HISTORY ${cfg.maxProofHistory} is below maxReorgDepth ` +
+        `${cfg.maxReorgDepth} — AVL versions inside the reorg window would be ` +
         'pruned, and a reorg reaching one of them would abort with the node ' +
         'still on its own chain',
     );
