@@ -220,7 +220,7 @@ reason `'target'`).
 | Rule | Statement | Class |
 |---|---|---|
 | **Order** | `createdAt(N) > createdAt(N−1)` for N ≥ 2 — strict, Ergo's header rule 205 | **consensus** — a violation is a bad chain: refuse; in a fork segment refuse-whole and penalise `misbehavior` (reason `'time'`) |
-| **Future bound** | `createdAt(N) ≤ now + MAX_FUTURE_DRIFT_MS`, `now` the receiving node's clock | **acceptance**, not consensus — the block may be valid a minute later: refuse, **no penalty, no `refused_headers` mark** (`NODE_INTERFACE → Fork choice decides on verified headers`, what is remembered); in a fork segment reason `'clock'`, classified beside the window miss |
+| **Future bound** | `createdAt(N) ≤ now + MAX_FUTURE_DRIFT_MS`, `now` the receiving node's clock | **acceptance**, not consensus — the block may be valid a minute later: refuse, **no penalty, no `refused_headers` mark** (`NODE_INTERFACE → Fork choice decides on verified headers`, what is remembered); in a fork segment reason `'clock'`, the one refusal that is not a verdict on the chain |
 
 Block 1 has no parent and no order check; the future bound applies to it as to every block.
 

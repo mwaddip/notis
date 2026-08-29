@@ -1284,14 +1284,14 @@ tree collapse into clean rejections:
 > **Reach is the live argument, not the halt.** `rowToOrderingBlock` is the one decoder of
 > `ordering_blocks`, and its callers are every consumer of the chain: both block entries
 > (`handleOrderingBlock`'s held check and `extendsOurTip`, then `applyOrderingBlock`'s chain-link
-> read), fork resolution (`findForkPoint`, `revertBlock`, `resolveFork`'s anchor and work walk), the
+> read), fork resolution (`revertBlock`, `resolveFork`'s anchor and its read of our headers above the fork), the
 > block creator's tip read, the two `/blocks` routes, and the provider handed to
 > `net.setHeadersHandler`, through which every served chain query and every block a
 > `ModifierResponse` serves decodes stored rows — a handshake decodes none: its `chainHeight` is the
-> `setChainHeightProvider` read, `MAX(height)`; a `SyncInfo` decodes none: its tip id and anchors are
-> `setBlockIdProvider` reads of the stored `block_hash` column, and an inbound `Inv` or
-> `ModifierRequest` resolves its ids through `setHeightByBlockIdProvider` point lookups the same way
-> — only the blocks actually served decode. Only apply's read passes through a catch that could promote anything;
+> `setChainHeightProvider` read, `MAX(height)`; a `SyncInfo` decodes none: it carries the tip height
+> alone, the fork walk compares a peer's headers against the stored `block_hash` column by point read,
+> and an inbound `Inv` or `ModifierRequest` resolves its ids through `setHeightByBlockIdProvider`
+> point lookups the same way — only the blocks actually served decode. Only apply's read passes through a catch that could promote anything;
 > the store frame names the fault so that all of them raise one class — and **every outer frame is a
 > boundary**: the gossip and the pull registrations of `handleOrderingBlock` both wrap it in
 > `failStopIfCorruptChain` (Relay handlers; Sync handlers); the launched `resolveFork` promise carries
@@ -4385,8 +4385,7 @@ and remains the single consensus gate (`Ordering block apply-time authorization`
 ### Fork resolution bottoms out at the genesis state
 
 **Reaching height 0 in the ancestor walk IS a common ancestor**, at depth = our height.
-`findForkPoint` returns `GENESIS_HEIGHT` (`0`) where it previously returned `null` for chains
-that share no block. Heights still start at 1, so height 0 holds no block and no hash — what it
+The fork walk answers `GENESIS_HEIGHT` (`0`) for chains that share no block. Heights still start at 1, so height 0 holds no block and no hash — what it
 holds is the genesis *state*, which every node on a network shares byte for byte because the
 section above makes any other one fail-stop. There is nothing for a peer to lie about: a
 height-1 block has its `prevBlockHash` checked against `GENESIS_PREV_BLOCK_HASH` (TYPES_INTERFACE
@@ -4992,7 +4991,7 @@ funnel:
   headers provider (NET_INTERFACE → Sync Handler Registration)
 - **`setBlockIdProvider(getOrderingBlockHash)`**: the block id at a height — the store's
   `block_hash` column, written by `createOrderingBlock` from the node's own decoded header at the
-  table's single INSERT — behind every `SyncInfo`'s tip id and anchors and every Inv continuation.
+  table's single INSERT — behind every Inv continuation.
   Handed over unwrapped: a column read decodes no row, so there is nothing for
   `failStopIfCorruptChain` to promote
 - **`setHeightByBlockIdProvider(getHeightByBlockHash)`**: the height holding a block id — an indexed

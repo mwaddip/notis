@@ -1181,15 +1181,15 @@ A different estimator changes `asertTargetBits` and nothing in this walk.
 
 **These are exactly the header-level checks of the apply funnel** (`applyOrderingBlock`: structure's
 header domain and version, chain link, the two timestamp rules, the scheduled target over the stored
-parent, PoW, interlink root), run once over a peer's segment before it is scored and again by apply
+parent, PoW, interlink root), run once over a peer's branch, page by page, before it is scored and again by apply
 when it is applied. The validator signature is **not** among them: `validatorSignature` rides the
 block, not the header, so it stays a body-stage check. **`'clock'` is the one reason that is not a
 verdict on the chain** — `NODE_INTERFACE → Fork choice decides on verified headers` classifies it
-beside the window miss: refuse, no penalty, no mark.
+apart from every other refusal: refuse, no penalty, no mark, no memo.
 
 **M-5 applies.** Malformed input — non-object headers, a `NaN` height, an out-of-domain target —
 answers `ok: false`; the function never throws. `NODE_INTERFACE → Fork choice decides on verified
-headers` states how the caller classifies a refusal (window miss versus misbehaviour).
+headers` states how the caller classifies a refusal (`'clock'` versus misbehaviour).
 
 ---
 
