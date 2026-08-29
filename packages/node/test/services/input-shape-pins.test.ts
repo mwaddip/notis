@@ -110,6 +110,10 @@ describe('P2-B phase 4 — input-shape pins', () => {
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
       },
+      getVouchBox: () => null,
+      getNetworkRecord: () => ({ memberCount: 1 }),
+      membershipBarMultiplier: 1,
+      putIdentityRecord: () => {},
     };
   }
 

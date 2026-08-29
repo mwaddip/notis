@@ -1,10 +1,11 @@
 import {
   computeTxId,
   MEMPOOL_EXPIRY_BLOCKS,
+  membershipBar,
 } from '@dagsocial/types';
 import type { BondBox, KarmaBox, UtxoTransaction } from '@dagsocial/types';
 import { effectiveKarma } from './decay.js';
-import { materializeOutput, validateTx } from './utxo-engine.js';
+import { isMember, isRoot, materializeOutput, validateTx } from './utxo-engine.js';
 import { admitTx } from './admit-tx.js';
 import type { UtxoEngineDeps } from './utxo-engine.js';
 import { ClientError } from './client-error.js';
@@ -50,6 +51,26 @@ export function createInvite(
     throw new ClientError('No karma box input found in transaction');
   }
 
+  // ---- 0. The inviter is a root, or a member with an invite available ----
+  const inviterRecord = deps.getIdentityRecord(karmaInput.owner);
+  if (!inviterRecord) {
+    throw new ClientError('Inviter holds no identity record');
+  }
+  if (!isRoot(inviterRecord)) {
+    if (!isMember(inviterRecord)) {
+      throw new ClientError('Only a root or a member may invite');
+    }
+    const nr = deps.getNetworkRecord();
+    const d = membershipBar(nr.memberCount, deps.membershipBarMultiplier);
+    const available = Math.floor(inviterRecord.memberVouches / d) - inviterRecord.invitesUsed;
+    if (available < 1) {
+      throw new ClientError(
+        `No invites available (vouches: ${inviterRecord.memberVouches}, ` +
+        `D: ${d}, used: ${inviterRecord.invitesUsed})`,
+      );
+    }
+  }
+
   // ---- 2. Verify outputs: exactly 1 bond, at most 1 karma, nothing else ----
   const karmaOutputs = tx.outputs.filter((o) => o.boxType === 'karma');
   const bondOutputs = tx.outputs.filter((o) => o.boxType === 'bond');
@@ -74,7 +95,6 @@ export function createInvite(
   // conservation, which is the message this layer exists to replace.
   const bondValue = (bondOutputs[0] as BondBox).value;
   const inviterFace = deps.getKarmaValue(karmaInput.owner);
-  const inviterRecord = deps.getIdentityRecord(karmaInput.owner);
   const inviterBalance = effectiveKarma(
     inviterFace, inviterRecord, currentBlockHeight, deps.decayCfg,
   );

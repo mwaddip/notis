@@ -89,6 +89,10 @@ async function request(
         getIdentityRecord,
         getKarmaBoxes: (owner: Uint8Array) => [getKarmaBox(owner)].filter(Boolean) as KarmaBox[],
         runInTransaction: (fn: () => void) => fn(),
+        getVouchBox: () => null,
+        getNetworkRecord: () => ({ memberCount: 1 }),
+        membershipBarMultiplier: 1,
+        putIdentityRecord: () => {},
       }),
     };
     const app = express();

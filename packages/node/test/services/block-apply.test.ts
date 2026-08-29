@@ -132,6 +132,12 @@ async function importUtxo() {
   };
 }
 
+async function importIdentityRecords() {
+  return (await import('../../src/store/identity-records.js')) as {
+    putIdentityRecord: (id: Uint8Array, record: import('../../src/store/identity-records.js').IdentityRecord) => void;
+  };
+}
+
 async function importBlockApply() {
   return (await import(
     '../../src/services/block-apply.js'
@@ -1424,12 +1430,23 @@ describe('block-apply embedded tx re-validation', () => {
   it('the vouch minimum-balance gate sums the voucher karma across boxes at the block path', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const utxo = await importUtxo();
     const mempool = await importMempoolFresh();
+    const idRec = await importIdentityRecords();
 
     const voucher = makeTestIdentity();
     const target = makeTestIdentity();
+    const rootRec = {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    };
+    idRec.putIdentityRecord(voucher.userId, rootRec);
+    idRec.putIdentityRecord(target.userId, {
+      ...rootRec, memberSinceBlock: 0, invitedAtBlock: 1,
+    });
 
     // 6 + 6 = 12 ≥ VOUCH_MIN_BALANCE (11), but neither box alone reaches it —
     // a single-box read sees 6 < 11 whichever row it lands on, and the cast is
@@ -1458,18 +1475,25 @@ describe('block-apply embedded tx re-validation', () => {
   });
 
   it('the same cast settles with the voucher karma in one box (control)', async () => {
-    // Non-vacuity for the split fixture above: 12 in a single box clears the
-    // minimum under summed AND single-box reads, so this control passing while
-    // the split test fails is what isolates a mutation to partitioning rather
-    // than to the vouch flow being broken generally.
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const utxo = await importUtxo();
     const mempool = await importMempoolFresh();
+    const idRec = await importIdentityRecords();
 
     const voucher = makeTestIdentity();
     const target = makeTestIdentity();
+    const rootRec = {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    };
+    idRec.putIdentityRecord(voucher.userId, rootRec);
+    idRec.putIdentityRecord(target.userId, {
+      ...rootRec, memberSinceBlock: 0, invitedAtBlock: 1,
+    });
 
     const whole = makeKarmaBox(12n, voucher.userId, 0);
     utxo.insertBox(whole);

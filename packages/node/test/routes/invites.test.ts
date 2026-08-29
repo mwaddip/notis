@@ -14,7 +14,7 @@ import { createPrivateKey, sign as cryptoSign, type KeyObject } from 'crypto';
 import { initDb, closeDb, getDb } from '../../src/store/db.js';
 import {
   getKarmaBox, getKarmaBoxes, getBox as storeGetBox, insertBox as storeInsertBox } from '../../src/store/utxo.js';
-import { getIdentityRecord as storeGetIdentityRecord } from '../../src/store/identity-records.js';
+import { getIdentityRecord as storeGetIdentityRecord, putIdentityRecord as storePutIdentityRecord } from '../../src/store/identity-records.js';
 import { getCurrentHeight } from '../../src/store/ordering.js';
 import {
   createInvite,
@@ -122,6 +122,10 @@ async function request(
       getTopologyAuthor: () => null,
       getPendingPostAuthor: () => null,
       runInTransaction: (fn: () => void) => { (db.transaction(fn) as () => void)(); },
+      getVouchBox: () => null,
+      getNetworkRecord: () => ({ memberCount: 1 }),
+      membershipBarMultiplier: 1,
+      putIdentityRecord: () => {},
       createInvite,
       getCurrentHeight,
     };
@@ -166,6 +170,7 @@ describe('invites routes', () => {
   beforeAll(() => {
     try { unlinkSync(TEST_DB); } catch { /* ignore */ }
     initDb(TEST_DB);
+    getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     inviterKp = generateKeyPair();
     inviterId = inviterKp.publicKey;
@@ -175,7 +180,11 @@ describe('invites routes', () => {
       format: 'der',
       type: 'pkcs8',
     });
-
+    storePutIdentityRecord(inviterId, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
   });
 
   afterAll(() => {

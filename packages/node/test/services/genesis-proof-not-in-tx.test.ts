@@ -117,6 +117,10 @@ describe('a genesis_proof box may never be a transaction INPUT', () => {
       getTopologyAuthor: () => null,
       getPendingPostAuthor: () => null,
       runInTransaction: (fn: () => void) => { (db.transaction(fn) as () => void)(); },
+      getVouchBox: () => null,
+      getNetworkRecord: () => ({ memberCount: 1 }),
+      membershipBarMultiplier: 1,
+      putIdentityRecord: () => {},
     };
     proof = seedProvenance<GenesisProofBox>({
       boxType: 'genesis_proof' as const,

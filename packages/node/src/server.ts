@@ -214,6 +214,10 @@ export function createApp(config: Config): express.Express {
     getTopologyAuthor: store.getTopologyAuthorBytes,
     getPendingPostAuthor: store.getPendingPostAuthor,
     runInTransaction: (fn: () => void) => getDb().transaction(fn)(),
+    getVouchBox: store.getVouchBox,
+    getNetworkRecord: store.getNetworkRecord,
+    membershipBarMultiplier: config.membershipBarMultiplier,
+    putIdentityRecord: store.putIdentityRecord,
   };
 
   // ---- Routes ----

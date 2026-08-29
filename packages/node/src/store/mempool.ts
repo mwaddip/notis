@@ -330,6 +330,7 @@ interface GateMetadata {
   likeLiker: string | null;
   inviteInviter: string | null;
   vouchVoucher: string | null;
+  vouchTarget: string | null;
 }
 
 /**
@@ -353,6 +354,7 @@ function gateMetadata(tx: UtxoTransaction): GateMetadata {
     likeLiker: null,
     inviteInviter: null,
     vouchVoucher: null,
+    vouchTarget: null,
   };
 
   if (tx.likeTarget !== undefined) {
@@ -369,6 +371,7 @@ function gateMetadata(tx: UtxoTransaction): GateMetadata {
       meta.inviteInviter = Buffer.from((output as BondBox).inviterId).toString('hex');
     } else if (output.boxType === 'vouch' && meta.vouchVoucher === null) {
       meta.vouchVoucher = Buffer.from((output as VouchBox).voucherId).toString('hex');
+      meta.vouchTarget = Buffer.from((output as VouchBox).targetId).toString('hex');
     }
   }
 
@@ -446,9 +449,10 @@ export function insertUtxoTx(
   const result = db.prepare(
     `INSERT INTO mempool (entry_type, utxo_tx_bytes, expires_at_height,
                           like_target, like_liker, invite_inviter, vouch_voucher,
+                          vouch_target,
                           tx_inputs, tx_output_ids, tx_id, tx_fee, tx_bytes,
                           max_valid_height)
-     VALUES ('utxo_tx', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES ('utxo_tx', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     Buffer.from(encoded),
     expiresAtHeight,
@@ -456,6 +460,7 @@ export function insertUtxoTx(
     meta.likeLiker,
     meta.inviteInviter,
     meta.vouchVoucher,
+    meta.vouchTarget,
     JSON.stringify(inputs),
     JSON.stringify(outputBoxIds(tx, txId)),
     txId,
@@ -494,11 +499,11 @@ export function countPendingInvites(inviterId: string): number {
   return row.n;
 }
 
-export function hasPendingVouch(voucherId: string): boolean {
+export function hasPendingVouch(voucherId: string, targetId: string): boolean {
   const db = getDb();
   const row = db.prepare(
-    `SELECT 1 FROM mempool WHERE vouch_voucher = ? LIMIT 1`,
-  ).get(voucherId);
+    `SELECT 1 FROM mempool WHERE vouch_voucher = ? AND vouch_target = ? LIMIT 1`,
+  ).get(voucherId, targetId);
   return row !== undefined;
 }
 

@@ -151,6 +151,10 @@ async function storeBackedDeps() {
     runInTransaction: (fn: () => void) => {
       getDb().transaction(fn)();
     },
+      getVouchBox: () => null,
+      getNetworkRecord: () => ({ memberCount: 1 }),
+      membershipBarMultiplier: 1,
+      putIdentityRecord: () => {},
   };
 }
 
@@ -196,11 +200,24 @@ function makeVouchCastTx(
  * not the liveness skip — is what fails.
  */
 async function seedStaleVouchCast() {
+  const { getDb } = await importDb();
+  getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
   const utxo = await importUtxo();
   const mempool = await importMempool();
+  const records = await import('../../src/store/identity-records.js');
 
   const voucher = makeTestIdentity();
   const target = makeTestIdentity();
+  records.putIdentityRecord(voucher.userId, {
+    lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+    lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+    memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+  });
+  records.putIdentityRecord(target.userId, {
+    lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 1,
+    lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0,
+    memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+  });
 
   // 6 + 6 = 12, above VOUCH_MIN_BALANCE (11) at pool time. Split across two
   // boxes on purpose: the cast names only the first, so consuming the second is

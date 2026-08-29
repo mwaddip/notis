@@ -75,21 +75,3 @@ export function getVouchesByVoucher(voucherId: Uint8Array): VouchBox[] {
     .filter((b): b is VouchBox => b !== null && b.boxType === 'vouch');
 }
 
-/**
- * Does this identity hold an active VouchBox for *any* target? One vouch at a
- * time is an invariant (ARCHITECTURE → Vouch boxes; audit L-4). The predicate
- * is identity-scoped, so a voucher cannot hold concurrent VouchBoxes by
- * targeting different identities.
- */
-export function hasAnyActiveVouch(voucherId: Uint8Array): boolean {
-  const db = getDb();
-  const row = db
-    .prepare(
-      `SELECT 1 FROM utxo_boxes
-       WHERE box_type = 'vouch' AND spent_at_block IS NULL
-         AND json_extract(extra_data, '$.voucherId') = ?
-       LIMIT 1`,
-    )
-    .get(pubkeyToHex(voucherId));
-  return row !== undefined;
-}

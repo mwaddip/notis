@@ -56,6 +56,9 @@ import {
   consumeBox as storeConsumeBox,
   hasActiveVouchEscrow as storeHasActiveVouchEscrow,
   getBondFor,
+  getVouchBox as storeGetVouchBox,
+  putIdentityRecord as storePutIdentityRecord,
+  getNetworkRecord as storeGetNetworkRecord,
 } from '../../src/store/index.js';
 import { applyTx, validateTx } from '../../src/services/utxo-engine.js';
 import { castVouch } from '../../src/services/vouch.js';
@@ -124,10 +127,32 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
       },
+      getVouchBox: storeGetVouchBox,
+      getNetworkRecord: storeGetNetworkRecord,
+      membershipBarMultiplier: 1,
+      putIdentityRecord: storePutIdentityRecord,
     };
   }
 
   let deps: ReturnType<typeof makeDeps>;
+
+  function seedNetworkRecord(memberCount = 1): void {
+    db.prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, ?)').run(memberCount);
+  }
+
+  function seedMember(pub: Uint8Array, memberSinceBlock = 1): void {
+    storePutIdentityRecord(pub, {
+      lastActivityBlock: memberSinceBlock,
+      lastDecayBlock: 0,
+      invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n,
+      memberSinceBlock,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
+    });
+  }
 
   beforeEach(() => {
     initDb(':memory:');
@@ -135,6 +160,9 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
     voucher = makeKeys();
     target = makeKeys();
     deps = makeDeps();
+    seedNetworkRecord();
+    seedMember(voucher.pub);
+    seedMember(target.pub);
   });
 
   afterEach(() => {
@@ -279,11 +307,9 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
   });
 
   it('V2 front door: castVouch rejects a signer that is not the voucherId', () => {
-    // Accepted on HEAD: castVouch never compared the signer to voucherId, so
-    // the theft was reachable through the service layer, not only through a
-    // block. The consensus pin closes both doors at once.
     const foreign = makeKeys();
-    seedKarma(foreign.pub, 20n, 1); // castVouch reads the voucherId's balance
+    seedKarma(foreign.pub, 20n, 1);
+    seedMember(foreign.pub);
     const karma = seedKarma(voucher.pub, 100n);
     const tx = buildVouchCast(karma, voucher, { voucherIdInBox: foreign.pub, height: 10 });
 
@@ -409,13 +435,8 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
   }
 
   it('V4: rejects an invite whose bond holds nothing', () => {
-    // Conservation alone permits a 0-value bond: the karma output simply keeps
-    // the difference. Without the floor the settlement grants the invitee a
-    // karma box out of the pool for no stake at all — and the grant EQUALS the
-    // bond, which is what makes it arbitrage-free (ARCHITECTURE → Invite
-    // System). At 0 the grant is 0 too, so the arbitrage is gone but the free
-    // identity is not: the floor is what prices it.
     const inviter = makeKeys();
+    seedMember(inviter.pub);
     const karma = seedKarma(inviter.pub, 100n);
     const createTx = buildInviteCreate(inviter, karma, makeKeys().pub, 0n);
 
@@ -426,6 +447,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
 
   it('V4: rejects an invite create whose bond is under the floor', () => {
     const inviter = makeKeys();
+    seedMember(inviter.pub);
     const karma = seedKarma(inviter.pub, 100n);
     const createTx = buildInviteCreate(
       inviter, karma, makeKeys().pub, config.inviteBondMin - 1n,
@@ -437,10 +459,8 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
   });
 
   it('V4: rejects an invite create whose bond is over the ceiling', () => {
-    // The boundary the old equality had no analogue for. The grant is a pool
-    // draw sized by the inviter, so without a ceiling one invite could name
-    // more of the supply than the pool holds.
     const inviter = makeKeys();
+    seedMember(inviter.pub);
     const karma = seedKarma(inviter.pub, config.inviteBondMax + 100n);
     const createTx = buildInviteCreate(
       inviter, karma, makeKeys().pub, config.inviteBondMax + 1n,
@@ -453,6 +473,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
 
   it('V4 service path: createInvite rejects a bond under the floor', () => {
     const inviter = makeKeys();
+    seedMember(inviter.pub);
     const karma = seedKarma(inviter.pub, 100n);
     const createTx = buildInviteCreate(inviter, karma, makeKeys().pub, 1n);
 
@@ -462,12 +483,9 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
   });
 
   it('V4: no transaction can spend a bond back out, whoever signs', () => {
-    // The other half. A funded bond is worth nothing as a cost if either party
-    // can reclaim it: no user transition consumes one, so neither the inviter's
-    // signature nor the invitee's satisfies it, and the settlement that does
-    // release it is block application's alone.
     const inviter = makeKeys();
     const invitee = makeKeys();
+    seedMember(inviter.pub);
     const karma = seedKarma(inviter.pub, 100n);
     const createTx = buildInviteCreate(inviter, karma, invitee.pub, FIXTURE_BOND_KARMA);
     const created = validateTx(deps, createTx, 1);
@@ -495,6 +513,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
 
   it('V4 non-vacuity: the same create with a fully-funded bond is accepted', () => {
     const inviter = makeKeys();
+    seedMember(inviter.pub);
     const karma = seedKarma(inviter.pub, 100n);
     const createTx = buildInviteCreate(
       inviter, karma, makeKeys().pub, FIXTURE_BOND_KARMA,

@@ -53,6 +53,8 @@ import {
   peerStorage,
   getKarmaOwners,
   registerKarmaMembershipHook,
+  getVouchBox,
+  putIdentityRecord,
 } from './store/index.js';
 import { MEMPOOL_EXPIRY_BLOCKS, computePostId } from '@dagsocial/types';
 import { initBackfill } from './services/backfill.js';
@@ -207,6 +209,10 @@ net.onTx((tx, content, fromPeerId) => {
     storageRentPeriodBlocks: config.storageRentPeriodBlocks,
     getBoxProvenance,
     runInTransaction: (fn: () => void) => fn(),
+    getVouchBox,
+    getNetworkRecord,
+    membershipBarMultiplier: config.membershipBarMultiplier,
+    putIdentityRecord,
   };
   const currentHeight = getCurrentHeight();
   const validationStart = performance.now();

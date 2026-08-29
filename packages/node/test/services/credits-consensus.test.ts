@@ -225,6 +225,10 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
       getTopologyAuthor: () => null,
       getPendingPostAuthor: () => null,
       runInTransaction: (fn: () => void) => fn(),
+      getVouchBox: () => null,
+      getNetworkRecord: () => ({ memberCount: 1 }),
+      membershipBarMultiplier: 1,
+      putIdentityRecord: () => {},
     };
 
     // Pool the transfer — nothing settles yet.
@@ -343,6 +347,10 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
       getTopologyAuthor: () => null,
       getPendingPostAuthor: () => null,
       runInTransaction: (fn: () => void) => fn(),
+      getVouchBox: () => null,
+      getNetworkRecord: () => ({ memberCount: 1 }),
+      membershipBarMultiplier: 1,
+      putIdentityRecord: () => {},
     };
     const tx = buildSignedTransfer(
       utxo.getCreditBoxes(alicePub),

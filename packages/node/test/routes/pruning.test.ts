@@ -40,6 +40,10 @@ const STUB_DEPS: UtxoEngineDeps = {
   getTopologyAuthor: () => null,
   getPendingPostAuthor: () => null,
   runInTransaction: (fn: () => void) => fn(),
+      getVouchBox: () => null,
+      getNetworkRecord: () => ({ memberCount: 1 }),
+      membershipBarMultiplier: 1,
+      putIdentityRecord: () => {},
 };
 
 async function request(

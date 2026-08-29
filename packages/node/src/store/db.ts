@@ -144,6 +144,7 @@ const MIGRATIONS = [
     like_liker TEXT,
     invite_inviter TEXT,
     vouch_voucher TEXT,
+    vouch_target TEXT,
     tx_fee INTEGER,
     tx_bytes INTEGER,
     tx_inputs TEXT,

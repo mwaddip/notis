@@ -131,6 +131,10 @@ async function request(
             runInTransaction: (fn: () => void) => {
               (db.transaction(fn) as () => void)();
             },
+      getVouchBox: () => null,
+      getNetworkRecord: () => ({ memberCount: 1 }),
+      membershipBarMultiplier: 1,
+      putIdentityRecord: () => {},
           },
           tx,
           height,

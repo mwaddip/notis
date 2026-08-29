@@ -255,6 +255,10 @@ describe('rent admission refusal', () => {
       getTopologyAuthor: () => null,
       getPendingPostAuthor: () => null,
       runInTransaction: (fn) => fn(),
+      getVouchBox: () => null,
+      getNetworkRecord: () => ({ memberCount: 1 }),
+      membershipBarMultiplier: 1,
+      putIdentityRecord: () => {},
     };
 
     const result = engine.validateTx(deps, tx, height);

@@ -72,6 +72,8 @@ import {
   purgeRefusedHeaders,
   getBoxProvenance,
   getInterlinks,
+  getVouchBox,
+  getNetworkRecord,
 } from '../store/index.js';
 import { getDb } from '../store/db.js';
 import {
@@ -757,6 +759,10 @@ function applyMutationPhase(
     runInTransaction: (fn: () => void) => {
       getDb().transaction(fn)();
     },
+    getVouchBox,
+    getNetworkRecord,
+    membershipBarMultiplier: config.membershipBarMultiplier,
+    putIdentityRecord,
   };
 
   // The proof obligation (NODE_INTERFACE → "Embedded transactions: a mismatch

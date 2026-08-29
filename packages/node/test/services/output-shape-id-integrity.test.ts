@@ -40,6 +40,9 @@ import {
   getKarmaBoxes,
   insertBox as storeInsertBox,
   consumeBox as storeConsumeBox,
+  getVouchBox as storeGetVouchBox,
+  putIdentityRecord as storePutIdentityRecord,
+  getNetworkRecord as storeGetNetworkRecord,
 } from '../../src/store/index.js';
 import { validateTx, applyTx } from '../../src/services/utxo-engine.js';
 import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
@@ -59,9 +62,15 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
   beforeEach(() => {
     initDb(':memory:');
     db = getDb();
+    db.prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const { publicKey, privateKey } = generateKeyPairSync('ed25519');
     ownerPubKey = rawPublicKey(publicKey);
     ownerPrivKey = privateKey;
+    storePutIdentityRecord(ownerPubKey, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
     deps = {
       getBox: (id: string): AnyBox | null => {
         const box = storeGetBox(id);
@@ -94,6 +103,10 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
       },
+      getVouchBox: storeGetVouchBox,
+      getNetworkRecord: storeGetNetworkRecord,
+      membershipBarMultiplier: 1,
+      putIdentityRecord: storePutIdentityRecord,
     };
   });
 
@@ -263,12 +276,18 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
 
   it('honest karma → karma + vouch applies and round-trips id-clean', () => {
     const karma = seedKarma(100n);
+    const target = new Uint8Array(32).fill(0xcc);
+    storePutIdentityRecord(target, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 1,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
     const vouch = {
       boxType: 'vouch',
       value: VOUCH_KARMA_AMOUNT,
       createdAtBlock: 10,
       voucherId: ownerPubKey,
-      targetId: new Uint8Array(32).fill(0xcc),
+      targetId: target,
     };
     const change = karmaChange(100n - VOUCH_KARMA_AMOUNT);
     const tx = signedTx([karma.id!], [change, vouch]);

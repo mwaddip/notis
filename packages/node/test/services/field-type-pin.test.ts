@@ -59,6 +59,7 @@ import {
   getDb,
   getBox as storeGetBox,
   getIdentityRecord as storeGetIdentityRecord,
+  putIdentityRecord as storePutIdentityRecord,
   getKarmaBox,
   getKarmaBoxes,
   insertBox as storeInsertBox,
@@ -100,9 +101,15 @@ describe('field-type pin', () => {
   beforeEach(() => {
     initDb(':memory:');
     db = getDb();
+    db.prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const { publicKey, privateKey } = generateKeyPairSync('ed25519');
     ownerPubKey = rawPublicKey(publicKey);
     ownerPrivKey = privateKey;
+    storePutIdentityRecord(ownerPubKey, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
     deps = {
       getBox: (id: string): AnyBox | null => {
         const box = storeGetBox(id);
@@ -135,6 +142,10 @@ describe('field-type pin', () => {
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
       },
+      getVouchBox: () => null,
+      getNetworkRecord: () => ({ memberCount: 1 }),
+      membershipBarMultiplier: 1,
+      putIdentityRecord: () => {},
     };
   });
 
@@ -391,6 +402,11 @@ describe('field-type pin', () => {
     it('honest invite (typed 32-byte key, conserving) validates', () => {
       const inviter = makeTestIdentity();
       const invitee = makeTestIdentity();
+      storePutIdentityRecord(inviter.userId, {
+        lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+        lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+        memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+      });
       const karma = makeKarmaBox(FIXTURE_BOND_KARMA + 10n, inviter.userId, 0, 61);
       storeInsertBox(karma);
 
