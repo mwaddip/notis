@@ -176,17 +176,14 @@ describe('the conservation axiom holds over a chain', () => {
     expect(Object.keys(KARMA_BEARING).sort()).toEqual(Object.keys(BOX_TYPE_TAGS).sort());
   });
 
-  it('the conservation set is NOT the supply set, and differs on exactly the pool', async () => {
-    // ⚠ The two lists are one member apart, and this says so out loud rather
-    // than leaving a reader to compare them by eye. If they ever coincide, one of
-    // them is wrong.
+  it('the conservation set is NOT the supply set, and differs on exactly the pool and karma_price', async () => {
     const { KARMA_SUPPLY_TYPES } = await import('../../src/karma-supply.js');
     const conservation = Object.entries(KARMA_BEARING)
       .filter(([, bearing]) => bearing)
       .map(([t]) => t)
       .sort();
     const supply = ([...KARMA_SUPPLY_TYPES] as string[]).sort();
-    expect(conservation.filter((t) => !supply.includes(t))).toEqual(['karma_pool']);
+    expect(conservation.filter((t) => !supply.includes(t))).toEqual(['karma_pool', 'karma_price']);
     expect(supply.filter((t) => !conservation.includes(t))).toEqual([]);
   });
 

@@ -17,7 +17,7 @@ import {
   computeBoxId,
   computeTxId,
   LIKE_KARMA_COST,
-  POST_LOCK_THREAD_COST,
+  POST_PRICE_THREAD,
   VOUCH_KARMA_AMOUNT,
   VOUCH_MIN_BALANCE,
   KARMA_STALE_THRESHOLD_BLOCKS,
@@ -33,7 +33,7 @@ import type {
   PruneCommit,
   BondBox,
   PostCommit,
-  PostLockBox,
+  KarmaPriceBox,
   VouchBox,
   AnyBoxCandidate,
   CandidateOf,
@@ -937,34 +937,29 @@ describe('validateAndApplyTx', () => {
     // -----------------------------------------------------------------------
     // Legitimate tx shapes must keep passing
     // -----------------------------------------------------------------------
-    it('accepts a conserving post-lock tx K(v) -> K(v-5) + PostLock(5)', () => {
+    it('accepts a conserving thread tx K(v) -> K(v-5) + KarmaPrice(5)', () => {
       const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
 
       const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma',
-        value: 100n - POST_LOCK_THREAD_COST,
+        value: 100n - POST_PRICE_THREAD,
         createdAtBlock: 0,
         owner: ownerPubKey,
       };
-      const postLock: CandidateOf<PostLockBox> = {
-        boxType: 'post_lock',
-        value: POST_LOCK_THREAD_COST,
+      const priceBox: CandidateOf<KarmaPriceBox> = {
+        boxType: 'karma_price',
+        value: POST_PRICE_THREAD,
         createdAtBlock: 0,
-        originalValue: POST_LOCK_THREAD_COST,
-        owner: ownerPubKey,
       };
 
-      // The lock's payload: `post` present ⟺ exactly one `PostLockBox` at the
-      // cost for that post's shape, and the author owns the karma being spent
-      // (NODE_INTERFACE → Post transactions).
       const tx = buildSignedTx(
         [karma.id!],
-        [newKarma, postLock],
+        [newKarma, priceBox],
         ownerPrivKey,
         ownerPubKey,
         1,
         undefined,
-        makePostCommit(ownerPubKey, 'conserving lock payload'),
+        makePostCommit(ownerPubKey, 'conserving price payload'),
       );
       const result = validateAndApplyTx(deps, tx, 10);
 
@@ -1525,7 +1520,7 @@ describe('validateAndApplyTx', () => {
       );
       const result = validateTx(deps, tx, 10);
       expect(result.valid).toBe(false);
-      expect(result.error).toContain('only legal on a like transaction');
+      expect(result.error).toContain('legal only on a like or a reply');
     });
 
     it('⛔ a marker naming an author other than the target\'s is refused', () => {
@@ -1650,16 +1645,14 @@ describe('validateAndApplyTx', () => {
 
     it('like with karma + another box type: invalid', () => {
       const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
-      const postLock: CandidateOf<PostLockBox> = {
-        boxType: 'post_lock',
+      const priceBox: CandidateOf<KarmaPriceBox> = {
+        boxType: 'karma_price',
         value: 5n,
         createdAtBlock: 0,
-        originalValue: 5n,
-        owner: ownerPubKey,
-      } as PostLockBox;
+      };
       const tx = buildSignedTx(
         [karma.id!],
-        [karmaOut(94n, ownerPubKey), postLock, marker()],
+        [karmaOut(94n, ownerPubKey), priceBox, marker()],
         ownerPrivKey, ownerPubKey, 1, TARGET,
       );
       const result = validateTx(deps, tx, 10);
@@ -1709,18 +1702,16 @@ describe('validateAndApplyTx', () => {
 
     // --- T3: exact-spend post, invite, vouch accepted with no karma output -
 
-    it('T3: an exact-spend post is accepted with no karma output', () => {
-      const karma = createAndInsertKarma(ownerPubKey, POST_LOCK_THREAD_COST, 1);
-      const postLock: AnyBoxCandidate = {
-        boxType: 'post_lock',
-        value: POST_LOCK_THREAD_COST,
+    it('T3: an exact-spend thread is accepted with no karma output', () => {
+      const karma = createAndInsertKarma(ownerPubKey, POST_PRICE_THREAD, 1);
+      const priceBox: AnyBoxCandidate = {
+        boxType: 'karma_price',
+        value: POST_PRICE_THREAD,
         createdAtBlock: 0,
-        originalValue: POST_LOCK_THREAD_COST,
-        owner: ownerPubKey,
       };
       const tx = buildSignedTx(
         [karma.id!],
-        [postLock],
+        [priceBox],
         ownerPrivKey, ownerPubKey,
         1,
         undefined,
@@ -1822,32 +1813,25 @@ describe('validateAndApplyTx', () => {
       expect(result.error).toContain('unknown boxType like');
     });
 
-    it('spending a PostLockBox with the owner signature is refused: no user transition consumes one (T2a)', () => {
-      const postLock: CandidateOf<PostLockBox> = {
-        boxType: 'post_lock',
-        value: POST_LOCK_THREAD_COST,
+    it('spending a KarmaPriceBox is refused: no user transition consumes one (T2a)', () => {
+      const priceBox: CandidateOf<KarmaPriceBox> = {
+        boxType: 'karma_price',
+        value: POST_PRICE_THREAD,
         createdAtBlock: 0,
-        originalValue: POST_LOCK_THREAD_COST,
-        owner: ownerPubKey,
       };
-      const seededPostLock = seedProvenance<PostLockBox>(postLock, 1);
-      const postLockId = seededPostLock.id;
-      storeInsertBox(seededPostLock);
+      const seededPrice = seedProvenance<KarmaPriceBox>(priceBox, 1);
+      const priceId = seededPrice.id;
+      storeInsertBox(seededPrice);
 
-      // The owner's own signature does not open a post_lock box. Conservation
-      // holds (5 in, 5 out), and the transition table would also reject a
-      // post_lock input — so what this pins is the authorization arm
-      // specifically: the refusal must name the box TYPE, which is the key the
-      // per-transition lookup reads.
       const tx = buildSignedTx(
-        [postLockId],
-        [karmaOut(POST_LOCK_THREAD_COST, ownerPubKey)],
+        [priceId],
+        [karmaOut(POST_PRICE_THREAD, ownerPubKey)],
         ownerPrivKey, ownerPubKey,
       );
       const result = validateTx(deps, tx, 10);
       expect(result.valid).toBe(false);
       expect(result.error).toContain('No user transition consumes');
-      expect(result.error).toContain('a post_lock box is consumed only by block application');
+      expect(result.error).toContain('a karma_price box is consumed only by block application');
     });
   });
 
@@ -2415,69 +2399,4 @@ describe('validateAndApplyTx', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // The post_lock owner pin (D1-3)
-  // -------------------------------------------------------------------------
-  describe('post_lock owner pin', () => {
-    it('refuses a post transaction whose post_lock.owner is a stranger key', () => {
-      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
-      const { publicKey: strangerPub } = generateKeyPairSync('ed25519');
-      const strangerPubRaw = new Uint8Array(
-        strangerPub.export({ type: 'spki', format: 'der' }).subarray(12),
-      );
-      const newKarma: CandidateOf<KarmaBox> = {
-        boxType: 'karma',
-        value: 100n - POST_LOCK_THREAD_COST,
-        createdAtBlock: 0,
-        owner: ownerPubKey,
-      };
-      const postLock: CandidateOf<PostLockBox> = {
-        boxType: 'post_lock',
-        value: POST_LOCK_THREAD_COST,
-        createdAtBlock: 0,
-        originalValue: POST_LOCK_THREAD_COST,
-        owner: strangerPubRaw,
-      };
-      const tx = buildSignedTx(
-        [karma.id!],
-        [newKarma, postLock],
-        ownerPrivKey,
-        ownerPubKey,
-        1,
-        undefined,
-        makePostCommit(ownerPubKey, 'stranger-owned lock'),
-      );
-      const result = validateTx(deps, tx, 10);
-      expect(result.valid).toBe(false);
-      expect(result.error).toMatch(/Post lock owner must be the karma input/);
-    });
-
-    it('accepts a post transaction whose post_lock.owner is the karma owner', () => {
-      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
-      const newKarma: CandidateOf<KarmaBox> = {
-        boxType: 'karma',
-        value: 100n - POST_LOCK_THREAD_COST,
-        createdAtBlock: 0,
-        owner: ownerPubKey,
-      };
-      const postLock: CandidateOf<PostLockBox> = {
-        boxType: 'post_lock',
-        value: POST_LOCK_THREAD_COST,
-        createdAtBlock: 0,
-        originalValue: POST_LOCK_THREAD_COST,
-        owner: ownerPubKey,
-      };
-      const tx = buildSignedTx(
-        [karma.id!],
-        [newKarma, postLock],
-        ownerPrivKey,
-        ownerPubKey,
-        1,
-        undefined,
-        makePostCommit(ownerPubKey, 'own-lock payload'),
-      );
-      const result = validateAndApplyTx(deps, tx, 10);
-      expect(result.valid).toBe(true);
-    });
-  });
 });

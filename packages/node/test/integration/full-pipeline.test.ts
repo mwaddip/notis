@@ -187,7 +187,7 @@ function makeKarmaBox(value: bigint, owner: Uint8Array, seed: number): KarmaBox 
 
 interface EngineDeps {
   getBox: (id: string) => AnyBox | null;
-  insertBox: (box: AnyBox, postLockTarget?: string) => void;
+  insertBox: (box: AnyBox) => void;
   consumeBox: (id: string, atBlock: number) => void;
   getKarmaBox: (owner: Uint8Array) => KarmaBox | null;
   getKarmaValue: (owner: Uint8Array) => bigint;

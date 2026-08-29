@@ -417,14 +417,8 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
   });
 
   // -----------------------------------------------------------------------
-  // Prune settlement — consumes every PostLockBox in the subtree, merge-mints
-  // a refund to the owners other than the pruning author, whose own lock burns
-  // (ARCHITECTURE → "Prune lifecycle"), and deletes the subtree's like-records
-  // (P2-D N3b: no liker leg — a like's karma was burned at cast and nothing is
-  // refunded); revert restores the settled rows and the records exactly.
-  // A mixed subtree, so the round-trip covers both legs: the reply author's
-  // merge-mint and the pruner's mintless burn. (Extends the Phase B
-  // block-apply revert test with digest + re-apply identity.)
+  // Prune — deletes the subtree's like-records and marks topology; revert
+  // restores the deleted rows and the records exactly.
   // -----------------------------------------------------------------------
 
   it('prune: the stump, the deleted posts and the topology marks all revert', async () => {

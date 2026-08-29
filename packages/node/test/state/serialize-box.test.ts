@@ -3,7 +3,7 @@ import { createHash } from 'crypto';
 import { serializeBox, deserializeBox, deserializeBoxWithId } from '../../src/state/serialize-box.js';
 import { seedProvenance } from '../helpers.js';
 import { BOX_ID_DOMAIN, BOX_TYPE_TAGS, CodecError, ReaderError, computeBoxId } from '@dagsocial/types';
-import type { AnyBox, KarmaBox, CreditBox, GenesisProofBox, BondBox, PostLockBox, VouchBox } from '@dagsocial/types';
+import type { AnyBox, KarmaBox, CreditBox, GenesisProofBox, BondBox, KarmaPriceBox, VouchBox } from '@dagsocial/types';
 
 /**
  * Every fixture below is a GENUINE box: `seedProvenance` gives it real
@@ -130,21 +130,11 @@ describe('serializeBox', () => {
     expect(deserializeBoxWithId(box.id, serializeBox(box))).toEqual(box);
   });
 
-  it('roundtrips a PostLockBox', () => {
-    const box = seedProvenance<PostLockBox>({
-      boxType: 'post_lock' as const,
-      // ⚠ `value` and `originalValue` MUST differ, and so must `owner` and
-      // `targetPostId`. Each is an adjacent same-width pair in the layout
-      // (TYPES_INTERFACE → Layout — Boxes), and the positional format carries no
-      // key names, so field ORDER is the only thing distinguishing the halves of
-      // a pair. Equal values make a transposition of that pair encode and decode
-      // identically, and the round-trip below passes on a swapped writer.
+  it('roundtrips a KarmaPriceBox', () => {
+    const box = seedProvenance<KarmaPriceBox>({
+      boxType: 'karma_price' as const,
       value: 5n,
       createdAtBlock: 0,
-      originalValue: 9n,
-      owner: new Uint8Array(32).fill(0x44),
-      // `b32` in the id preimage, so `'post-2'` has no encoding — the id this
-      // fixture derives from itself could not be computed.
     });
     expect(deserializeBoxWithId(box.id, serializeBox(box))).toEqual(box);
   });
@@ -284,18 +274,15 @@ describe('serializeBox golden bytes (Layout — Boxes)', () => {
     );
   });
 
-  it('post_lock — value then originalValue, and they must differ', () => {
-    const box: PostLockBox = {
-      boxType: 'post_lock', value: 5n, createdAtBlock: 0, originalValue: 9n,
-      owner: new Uint8Array(32).fill(0x44),
+  it('karma_price — shared prefix only, no trailing fields', () => {
+    const box: AnyBox = {
+      boxType: 'karma_price', value: 5n, createdAtBlock: 0,
       txId: TXID, index: INDEX,
     };
     expect(hexOf(serializeBox(box))).toBe(
-      '05' +            // enum8(post_lock) = 5
-      '05' +            // vlqU64(value = 5)        ← shared prefix, written first
+      '0d' +            // enum8(karma_price) = 13
+      '05' +            // vlqU64(value = 5)
       '00' +            // vlqU(createdAtBlock = 0)
-      '09' +            // vlqU64(originalValue = 9) ← per-type tail starts here
-      '44'.repeat(32) + // b32(owner)  ← differs from owner on purpose
       PROV,
     );
   });
@@ -349,9 +336,8 @@ describe('boxId is a total function of the AVL value', () => {
       boxType: 'bond', value: 5n, createdAtBlock: 0, inviterId: new Uint8Array(32).fill(0x33),
       inviteePublicKey: new Uint8Array(32).fill(0x99),
     })],
-    ['post_lock', seedProvenance<PostLockBox>({
-      boxType: 'post_lock', value: 5n, createdAtBlock: 0, originalValue: 9n,
-      owner: new Uint8Array(32).fill(0x44),
+    ['karma_price', seedProvenance<KarmaPriceBox>({
+      boxType: 'karma_price', value: 5n, createdAtBlock: 0,
     })],
     ['vouch', seedProvenance<VouchBox>({
       boxType: 'vouch', value: 1n, createdAtBlock: 0, voucherId: new Uint8Array(32).fill(0x55),

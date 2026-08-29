@@ -5,7 +5,7 @@ import {
   signTransaction,
   solveHeaderPow,
   makePostTx, seedPostTx, fillerTx, coinbaseOf,
-  seedEmissionBox } from '../helpers.js';
+  seedEmissionBox, makeApplicableBlock } from '../helpers.js';
 import {
   describe,
   it,
@@ -118,7 +118,7 @@ async function importMempoolFresh() {
 
 async function importUtxo() {
   return (await import('../../src/store/utxo.js')) as {
-    insertBox: (box: unknown, postLockTarget?: string) => void;
+    insertBox: (box: unknown) => void;
     getKarmaBox: (owner: Uint8Array) => KarmaBox | null;
     consumeBox: (boxId: string, consumedAtBlock: number) => void;
   };
@@ -474,6 +474,9 @@ describe('block-creator', () => {
     const utxo = await importUtxo();
     const mempool = await importMempoolFresh();
     const bc = await importBlockCreator();
+    const blockApply = (await import('../../src/services/block-apply.js')).applyOrderingBlock;
+    const block0 = await makeApplicableBlock({ utxoTxs: [] });
+    blockApply(block0);
 
     // Set up identity
     const author = makeTestIdentity();
@@ -538,6 +541,9 @@ describe('block-creator', () => {
     const utxo = await importUtxo();
     const mempool = await importMempoolFresh();
     const bc = await importBlockCreator();
+    const blockApply = (await import('../../src/services/block-apply.js')).applyOrderingBlock;
+    const block0 = await makeApplicableBlock({ utxoTxs: [] });
+    blockApply(block0);
 
     // Set up identity
     const author = makeTestIdentity();

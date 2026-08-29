@@ -28,7 +28,7 @@ async function importUtxoFresh() {
   return (await import('../../src/store/utxo.js')) as {
     getBox: (boxId: string) => AnyBox | null;
     getUnspentBoxes: () => AnyBox[];
-    insertBox: (box: AnyBox, postLockTarget?: string) => void;
+    insertBox: (box: AnyBox) => void;
   };
 }
 

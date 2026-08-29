@@ -129,10 +129,9 @@ async function loadModules() {
   const utxo = await import('../../src/store/utxo.js');
   const journal = await import('../../src/store/journal.js');
   const records = await import('../../src/store/identity-records.js');
-  const transfer = await import('../../src/services/karma-transfer.js');
   const decay = await import('../../src/services/decay.js');
   const provenance = await import('../../src/mint-provenance.js');
-  return { db, utxo, journal, records, transfer, decay, provenance };
+  return { db, utxo, journal, records, decay, provenance };
 }
 
 type Modules = Awaited<ReturnType<typeof loadModules>>;
@@ -239,42 +238,12 @@ export async function runScenario(scenario: Scenario): Promise<ScenarioCapture> 
         switch (step.op) {
           case 'mint': {
             const owner = ownerBytes(step.owner);
-            // ⛔ **A transfer, not a mint**, and the harness has to name a
-            // source like every production caller does: a `PostLockBox` holding
-            // exactly the step's amount, consumed in the same operation
-            // (ARCHITECTURE → The conservation axiom). The scenario's intent —
-            // "this identity now holds N karma at this height" — is unchanged.
-            const source = {
-              boxType: 'post_lock' as const,
+            const box = seedProvenance<KarmaBox>({
+              boxType: 'karma',
               value: step.amount,
-              createdAtBlock: height,
-              originalValue: step.amount,
               owner,
-              // ⛔ **A per-owner subject, because two `mint` steps at one
-              // height would otherwise derive one synthetic txId and trip
-              // `UNIQUE(tx_id, output_index)`.** The subject is a post id by
-              // type, so the owner's own bytes stand in — this is fixture
-              // provenance for a box nothing else reads.
-              txId: m.provenance.mintTxIdFor(
-                m.provenance.postlockRemainderContext(
-                  Buffer.from(owner).toString('hex'),
-                ),
-                height,
-              ),
-              index: m.provenance.MINT_OUTPUT_INDEX,
-            };
-            const seeded = { ...source, id: computeBoxId(source) };
-            m.utxo.insertBox(seeded);
-            m.transfer.transferKarma(
-              [seeded],
-              [{
-                owner,
-                amount: step.amount,
-                ctx: m.provenance.postlockUnlockContext(Buffer.from(owner).toString('hex')),
-              }],
-              null,
-              height,
-            );
+            }, height, labelNonce(`mint-${step.owner}`));
+            m.utxo.insertBox(box);
             m.utxo.recordKarmaActivity(owner);
             break;
           }

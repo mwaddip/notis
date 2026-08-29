@@ -1,24 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
-  computeMintTxId,
-  computeBoxId,
-  canonicalBoxBytes,
   PROTOCOL_VERSION,
   LIKES_PER_KARMA_PAYOUT,
-  POST_LOCK_REPLY_COST,
-  POST_LOCK_THREAD_COST,
-  POST_LOCK_UNLOCK_PER_LIKES,
 } from '@dagsocial/types';
 import type {
   KarmaBox,
-  PostLockBox,
   OrderingBlock,
   UtxoTransaction,
 } from '@dagsocial/types';
 import type Database from 'better-sqlite3';
 import {
   hex,
-  lockBoxOf,
   makeApplicableBlock,
   makeKarmaBox,
   makeLikeTx,
@@ -77,11 +69,10 @@ async function importForkResolution() {
 
 async function importUtxo() {
   return (await import('../../src/store/utxo.js')) as {
-    insertBox: (box: unknown, postLockTarget?: string) => void;
+    insertBox: (box: unknown) => void;
     getBox: (boxId: string) => { id?: string; value: bigint } | null;
     getKarmaBox: (owner: Uint8Array) => KarmaBox | null;
     getKarmaValue: (owner: Uint8Array) => bigint;
-    getPostLockBox: (targetPostId: string) => PostLockBox | null;
     getLikeCarryBox: (
       author: Uint8Array,
       exclude: Set<string>,
@@ -346,13 +337,10 @@ describe('per-block like settlement (P2-D N2b)', () => {
     }
 
     // 13 = 2·5 + 3 → paid 2·(5−1) = 8, carry 3 — whatever the grouping. The
-    // author's karma is that payout merged into the post transaction's change,
-    // plus the karma 13 likes vest out of the post's own lock (13/10 = 1):
-    // vesting is per-post and grouping-independent for the same reason the
-    // payout is, so it belongs in the total this compares across splits.
+    // author's karma is that payout merged into the post transaction's change.
     for (const o of outcomes) {
       expect(o.paid).toBe(
-        (13n / X) * (X - 1n) + POST_CHANGE + 13n / BigInt(POST_LOCK_UNLOCK_PER_LIKES),
+        (13n / X) * (X - 1n) + POST_CHANGE,
       );
       expect(o.carry).toBe(13n % X);
     }
@@ -611,147 +599,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
   // Post-lock vesting
   // -------------------------------------------------------------------------
 
-  it('vesting crosses POST_LOCK_UNLOCK_PER_LIKES in the block it crosses, not before', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-    const utxo = await importUtxo();
-    const posts = await importPosts();
-    const likeRecords = await importLikeRecords();
-    const blockApply = await importBlockApply();
-
-    const author = makeTestIdentity();
-    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'vesting crossing target');
-    posts.insertPost(postId, commit, content);
-
-    expect(blockApply.applyOrderingBlock(await confirmPostBlock(postTx))).toBe(true);
-    // The lock the post transaction minted — a thread, so POST_LOCK_THREAD_COST.
-    const lockBox = lockBoxOf(postTx);
-    expect(utxo.getPostLockBox(postId)!.id).toBe(lockBox.id);
-
-    // 9 likes: 9 / 10 = 0 → no vest, lock untouched.
-    const nine = await seedLikers(POST_LOCK_UNLOCK_PER_LIKES - 1);
-    expect(
-      blockApply.applyOrderingBlock(
-        await makeApplicableBlock({
-          height: 2,
-          utxoTxs: nine.map((l) => makeLikeTx(l.id, l.box, postId, author.userId)),
-        }),
-      ),
-    ).toBe(true);
-    expect(utxo.getBox(lockBox.id!)).not.toBeNull();
-
-    // The 10th like crosses the threshold → unlock 1 in THIS block.
-    const [tenth] = await seedLikers(1, 50);
-    expect(
-      blockApply.applyOrderingBlock(
-        await makeApplicableBlock({
-          height: 3,
-          utxoTxs: [makeLikeTx(tenth!.id, tenth!.box, postId, author.userId)],
-        }),
-      ),
-    ).toBe(true);
-
-    expect(likeRecords.getLikeRecordCount(postId)).toBe(POST_LOCK_UNLOCK_PER_LIKES);
-    expect(utxo.getBox(lockBox.id!)).toBeNull();
-    const remainder = utxo.getPostLockBox(postId);
-    expect(remainder).not.toBeNull();
-    expect(remainder!.value).toBe(POST_LOCK_THREAD_COST - 1n);
-    expect(remainder!.originalValue).toBe(POST_LOCK_THREAD_COST);
-    expect(remainder!.txId).toBe(computeMintTxId(3, 'postlock-remainder', Buffer.from(postId)));
-
-    // Author karma: the post's 1 karma of change; block 2 paid 4 (9 likes →
-    // carry 4); block 3 total 4+1=5 → payout 4 (merging what is there) then
-    // unlock 1 → 10n, provenance = the LAST merge, the postlock-unlock mint
-    // (settlement order: payout before vesting).
-    const authorBox = utxo.getKarmaBox(author.userId);
-    expect(authorBox!.value).toBe(POST_CHANGE + 4n + 4n + 1n);
-    expect(authorBox!.txId).toBe(computeMintTxId(3, 'postlock-unlock', Buffer.from(postId)));
-  });
-
-  it('a fully-unlocked lock is consumed without a remainder box', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-    const utxo = await importUtxo();
-    const posts = await importPosts();
-    const blockApply = await importBlockApply();
-
-    const author = makeTestIdentity();
-    // A REPLY, because the lock's value is the cost for the post's shape and
-    // this case needs one the likes can unlock ENTIRELY:
-    // POST_LOCK_REPLY_COST unlocks in POST_LOCK_REPLY_COST × 10 likes.
-    const { commit, tx: postTx, postId, content } = await seedPostTx(
-      author, 'full unlock target', { parentRefs: ['ab'.repeat(32)] },
-    );
-    posts.insertPost(postId, commit, content);
-
-    expect(blockApply.applyOrderingBlock(await confirmPostBlock(postTx))).toBe(true);
-    const lockBox = lockBoxOf(postTx);
-    expect((utxo.getBox(lockBox.id!) as PostLockBox).value).toBe(POST_LOCK_REPLY_COST);
-
-    const LIKES = POST_LOCK_UNLOCK_PER_LIKES * Number(POST_LOCK_REPLY_COST);
-    const likers = await seedLikers(LIKES);
-    expect(
-      blockApply.applyOrderingBlock(
-        await makeApplicableBlock({
-          height: 2,
-          utxoTxs: likers.map((l) => makeLikeTx(l.id, l.box, postId, author.userId)),
-        }),
-      ),
-    ).toBe(true);
-
-    // toUnlock = min(3, 30/10 − 0) = 3 = value → consumed, nothing re-minted.
-    expect(utxo.getBox(lockBox.id!)).toBeNull();
-    expect(utxo.getPostLockBox(postId)).toBeNull();
-    // 30 likes → payout (30/5)·4 = 24, then the unlock 3 merges in.
-    const payout = (BigInt(LIKES) / X) * (X - 1n);
-    expect(utxo.getKarmaValue(author.userId)).toBe(
-      POST_CHANGE + payout + POST_LOCK_REPLY_COST,
-    );
-  });
-
-  it('T2a: the vesting remainder is content-true, and no guard string is in the id', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-    const utxo = await importUtxo();
-    const posts = await importPosts();
-    const blockApply = await importBlockApply();
-
-    const author = makeTestIdentity();
-    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'remainder pin target');
-    posts.insertPost(postId, commit, content);
-
-    expect(blockApply.applyOrderingBlock(await confirmPostBlock(postTx))).toBe(true);
-
-    // 10 likes → unlock 1 of POST_LOCK_THREAD_COST → application re-mints the
-    // remainder.
-    const likers = await seedLikers(POST_LOCK_UNLOCK_PER_LIKES);
-    expect(
-      blockApply.applyOrderingBlock(
-        await makeApplicableBlock({
-          height: 2,
-          utxoTxs: likers.map((l) => makeLikeTx(l.id, l.box, postId, author.userId)),
-        }),
-      ),
-    ).toBe(true);
-
-    const remainder = utxo.getPostLockBox(postId);
-    expect(remainder).not.toBeNull();
-
-    // The stored id was hashed over the producer's bytes, and it must equal the
-    // hash of the content the store reconstructs.
-    expect(computeBoxId(remainder!)).toBe(remainder!.id);
-
-    // Both halves are pinned here (TYPES_INTERFACE → Layout — Boxes), because
-    // "no such field is hashed" is only half a claim: a stray key on the object
-    // does not move the id —
-    // `canonicalBoxBytes` writes the fields its layout declares and no other…
-    const withStrayKey = { ...remainder!, guard: 'epoch_tally' } as unknown as PostLockBox;
-    expect(computeBoxId(withStrayKey)).toBe(computeBoxId(remainder!));
-    // …and no guard string is in the bytes rather than merely inert.
-    expect(Buffer.from(canonicalBoxBytes(remainder!)).toString('hex'))
-      .not.toContain(Buffer.from('block_apply').toString('hex'));
-  });
-
+  // Vesting tests (PostLockBox, computeVestAmount, planPostLockSettlement)
   // -------------------------------------------------------------------------
   // Apply-then-revert, per new mutation class (active prover: DB identity,
   // digest identity, re-apply identity)
@@ -847,43 +695,6 @@ describe('per-block like settlement (P2-D N2b)', () => {
 
     await assertRoundTrip(db, handle, pre, classBlock);
     expect(utxo.getKarmaValue(author.userId)).toBe(100n + POST_CHANGE + 4n); // re-applied
-  });
-
-  it('round-trip: the vesting swap (consume + unlock mint + remainder re-mint) reverts exactly', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-    const utxo = await importUtxo();
-    const posts = await importPosts();
-
-    const author = makeTestIdentity();
-    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'round-trip vesting target');
-    posts.insertPost(postId, commit, content);
-    const likers = await seedLikers(POST_LOCK_UNLOCK_PER_LIKES);
-
-    const handle = await activateProver();
-    const blockApply = await importBlockApply();
-
-    expect(blockApply.applyOrderingBlock(await confirmPostBlock(postTx))).toBe(true);
-    // The lock the post transaction minted, live before the swap under test.
-    const lockBox = lockBoxOf(postTx);
-    expect(utxo.getBox(lockBox.id!)).not.toBeNull();
-    const pre = takeSnapshot(db, handle, 1);
-
-    const classBlock = await makeApplicableBlock({
-      height: 2,
-      utxoTxs: likers.map((l) => makeLikeTx(l.id, l.box, postId, author.userId)),
-    });
-    expect(blockApply.applyOrderingBlock(classBlock)).toBe(true);
-
-    // The swap happened: lock consumed, a remainder one karma short of the
-    // cost, author at change + payout 8 + unlock 1.
-    expect(utxo.getBox(lockBox.id!)).toBeNull();
-    expect(utxo.getPostLockBox(postId)!.value).toBe(POST_LOCK_THREAD_COST - 1n);
-    expect(utxo.getKarmaValue(author.userId)).toBe(POST_CHANGE + 8n + 1n);
-
-    await assertRoundTrip(db, handle, pre, classBlock);
-    // Reverted-then-reapplied state again shows the swap.
-    expect(utxo.getPostLockBox(postId)!.value).toBe(POST_LOCK_THREAD_COST - 1n);
   });
 
   it('revertBlock restores prune-deleted like-records (all three columns) and removes inserted ones', async () => {
@@ -988,70 +799,4 @@ describe('per-block like settlement (P2-D N2b)', () => {
     expect(blockApply.applyOrderingBlock(block3)).toBe(false);
   });
 
-  it('prune(P) + 10 likes in one block: vest once, delete all records', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-    const utxo = await importUtxo();
-    const posts = await importPosts();
-    await importRecords();
-    const blockApply = await importBlockApply();
-    const likes = await import('../../src/store/likes.js');
-
-    const author = makeTestIdentity();
-    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'prune-like-same');
-    posts.insertPost(postId, commit, content);
-
-    // Block 1: confirms the post.
-    expect(blockApply.applyOrderingBlock(await confirmPostBlock(postTx))).toBe(true);
-
-    // Block 2: 10 likes + prune(P). 10 likes cross POST_LOCK_UNLOCK_PER_LIKES
-    // so §8c's vest fires with toUnlock = 1n.
-    const likers = await seedLikers(10, 7001);
-    const likeTxs = likers.map(l => makeLikeTx(l.id, l.box, postId, author.userId));
-
-    const pruneKarma = makeKarmaBox(1n, author.userId, 0, 7099);
-    utxo.insertBox(pruneKarma);
-    const authorKarmaBefore = utxo.getKarmaValue(author.userId);
-    const pruneTx: UtxoTransaction = {
-      inputs: [pruneKarma.id!],
-      outputs: [
-        { boxType: 'karma', value: 1n, createdAtBlock: 0, owner: author.userId } as never,
-      ],
-      signatures: {},
-      protocolVersion: PROTOCOL_VERSION,
-      prune: { rootPostHash: postId },
-    };
-    signTransaction(pruneTx, author.privateKey, hex(author.userId));
-
-    const block2 = await makeApplicableBlock({
-      height: 2,
-      utxoTxs: [...likeTxs, pruneTx],
-    });
-    expect(blockApply.applyOrderingBlock(block2)).toBe(true);
-
-    // (a) The post's lock moved by exactly 1n.
-    const lockBox = utxo.getPostLockBox(postId);
-    expect(lockBox).not.toBeNull();
-    expect(lockBox!.value).toBe(POST_LOCK_THREAD_COST - 1n);
-    expect(lockBox!.originalValue).toBe(POST_LOCK_THREAD_COST);
-
-    // (b) The vest's destination: the author's karma gained exactly
-    // vest(1n) + accrual(8n) = 9n. The prune self-transfer conserves.
-    const authorKarmaAfter = utxo.getKarmaValue(author.userId);
-    expect(authorKarmaAfter - authorKarmaBefore).toBe(9n);
-
-    // (c) upvote_count is 10 and every record is gone.
-    const stump = db.getDb()
-      .prepare('SELECT upvote_count FROM dag_stumps WHERE root_post_hash = ?')
-      .get(postId) as { upvote_count: number } | undefined;
-    expect(stump).toBeDefined();
-    expect(stump!.upvote_count).toBe(10);
-    for (const l of likers) {
-      expect(likes.hasLikeRecord(postId, l.id.userId)).toBe(false);
-    }
-
-    // (d) §11b vested nothing twice: the lock is 4n not 3n — if §8c's vest
-    // AND §11b's vest both fired the lock would be 3n (two unlocks of 1n).
-    expect(lockBox!.value).toBe(4n);
-  });
 });

@@ -32,7 +32,7 @@ async function importUtxoFresh() {
     getKarmaBoxes: (owner: Uint8Array) => KarmaBox[];
     getCreditBoxes: (owner: Uint8Array) => CreditBox[];
     getBondFor: (inviteePublicKey: Uint8Array) => BondBox | null;
-    insertBox: (box: AnyBox, postLockTarget?: string) => void;
+    insertBox: (box: AnyBox) => void;
     consumeBox: (boxId: string, consumedAtBlock: number) => void;
     BoxNotLiveError: new (boxId: string) => Error & { readonly boxId: string };
   };

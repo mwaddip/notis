@@ -84,14 +84,13 @@ function settle(
       getLikeCarryBox: () => null,
       getBondsSettlingAt: () => [],
       getEscrowsReleasableAt: () => [],
-      getReleaseCandidates: () => [],
       getLifetimeLikes: () => 0n,
       getDecayPlans: () => [],
     },
     height,
     emission,
     s.config.config.creditMinerRewardDelay,
-    { fees: opts.fees ?? 0n, rent: 0n, actors: opts.actors ?? 0, feeBoxIds: [], invites: [], markers: [], postLockSettlements: [] },
+    { fees: opts.fees ?? 0n, rent: 0n, actors: opts.actors ?? 0, feeBoxIds: [], invites: [], markers: [], priceBoxes: [] },
     makeTestIdentity().userId,
   );
   if ('error' in built) return false;

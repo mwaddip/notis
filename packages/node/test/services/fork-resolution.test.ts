@@ -121,7 +121,7 @@ async function importMempoolFresh() {
 
 async function importUtxo() {
   return (await import('../../src/store/utxo.js')) as {
-    insertBox: (box: unknown, postLockTarget?: string) => void;
+    insertBox: (box: unknown) => void;
     getKarmaBox: (owner: Uint8Array) => KarmaBox | null;
     getBox: (boxId: string) => unknown;
     consumeBox: (boxId: string, consumedAtBlock: number) => void;

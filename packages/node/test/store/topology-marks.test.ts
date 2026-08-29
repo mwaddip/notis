@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { seedProvenance, uid, uidHex } from '../helpers.js';
-import type { PostLockBox, VouchEscrowBox, BondBox } from '@dagsocial/types';
+import type { VouchEscrowBox, BondBox } from '@dagsocial/types';
 
 // ---------------------------------------------------------------------------
 // Dynamic import helpers (module-level singleton state resets between tests)
@@ -18,23 +18,6 @@ async function importAll() {
 // ---------------------------------------------------------------------------
 // Box factories
 // ---------------------------------------------------------------------------
-
-function makePostLockBox(
-  targetPostId: string,
-  owner: Uint8Array,
-  value = 5n,
-  nonce = 0,
-): PostLockBox {
-  const candidate = {
-    boxType: 'post_lock' as const,
-    value,
-    createdAtBlock: 1,
-    originalValue: value,
-    owner,
-    targetPostId,
-  };
-  return seedProvenance<PostLockBox>(candidate, 1, nonce);
-}
 
 function makeEscrowBox(
   value: bigint,
@@ -117,83 +100,6 @@ describe('topology marks (pruned_at_height / pruned_root)', () => {
     s.markPrunedTopology([], 1, 'root');
     const j = s.finishBlockJournal();
     expect(j.prunedTopologyRows).toEqual([]);
-  });
-});
-
-describe('getPrunedLockCandidates', () => {
-  beforeEach(() => { vi.resetModules(); });
-  afterEach(() => { vi.resetModules(); });
-
-  it('skips a spent lock, skips an unmarked post, honours the limit', async () => {
-    const s = await importAll();
-    s.initDb(':memory:');
-
-    const author = uid('author');
-
-    s.insertBlockTopology('marked1', [], uidHex('author'), 5);
-    s.insertBlockTopology('marked2', [], uidHex('author'), 5);
-    s.insertBlockTopology('unmarked', [], uidHex('author'), 5);
-
-    s.beginBlockJournal(10);
-    s.markPrunedTopology(['marked1', 'marked2'], 10, 'marked1');
-    s.finishBlockJournal();
-
-    const lock1 = makePostLockBox('marked1', author, 5n, 1);
-    const lock2 = makePostLockBox('marked2', author, 3n, 2);
-    const lockUnmarked = makePostLockBox('unmarked', author, 4n, 3);
-    s.insertBox(lock1, 'marked1');
-    s.insertBox(lock2, 'marked2');
-    s.insertBox(lockUnmarked, 'unmarked');
-
-    // Spend lock1 to make it ineligible
-    s.consumeBox(lock1.id!, 10);
-
-    const all = s.getPrunedLockCandidates(10);
-    expect(all).toHaveLength(1);
-    expect(all[0]!.postId).toBe('marked2');
-    expect(all[0]!.prunedAtHeight).toBe(10);
-    expect(all[0]!.prunedRoot).toBe('marked1');
-
-    // Limit = 0 returns nothing
-    expect(s.getPrunedLockCandidates(0)).toHaveLength(0);
-  });
-
-  it('orders by (pruned_at_height, post_id) with two heights and unordered ids', async () => {
-    const s = await importAll();
-    s.initDb(':memory:');
-
-    const author = uid('author');
-
-    // Insert out of order: z before a, height 20 before 10
-    s.insertBlockTopology('zzz', [], uidHex('author'), 5);
-    s.insertBlockTopology('aaa', [], uidHex('author'), 5);
-    s.insertBlockTopology('mmm', [], uidHex('author'), 5);
-
-    s.beginBlockJournal(20);
-    s.markPrunedTopology(['zzz'], 20, 'zzz');
-    s.finishBlockJournal();
-
-    s.beginBlockJournal(10);
-    s.markPrunedTopology(['aaa', 'mmm'], 10, 'aaa');
-    s.finishBlockJournal();
-
-    const lockZ = makePostLockBox('zzz', author, 5n, 1);
-    const lockA = makePostLockBox('aaa', author, 5n, 2);
-    const lockM = makePostLockBox('mmm', author, 5n, 3);
-    s.insertBox(lockZ, 'zzz');
-    s.insertBox(lockA, 'aaa');
-    s.insertBox(lockM, 'mmm');
-
-    const result = s.getPrunedLockCandidates(10);
-    expect(result).toHaveLength(3);
-    // Height 10 before 20
-    expect(result[0]!.prunedAtHeight).toBe(10);
-    expect(result[1]!.prunedAtHeight).toBe(10);
-    expect(result[2]!.prunedAtHeight).toBe(20);
-    // Within height 10: aaa < mmm
-    expect(result[0]!.postId).toBe('aaa');
-    expect(result[1]!.postId).toBe('mmm');
-    expect(result[2]!.postId).toBe('zzz');
   });
 });
 
@@ -361,27 +267,3 @@ describe('journal round-trip for prunedTopologyRows', () => {
   });
 });
 
-describe('getPrunedLockCandidates query plan', () => {
-  beforeEach(() => { vi.resetModules(); });
-  afterEach(() => { vi.resetModules(); });
-
-  it('does not scan utxo_boxes', async () => {
-    const s = await importAll();
-    s.initDb(':memory:');
-    const db = s.getDb();
-    const plan = db.prepare(
-      `EXPLAIN QUERY PLAN
-       SELECT b.*, t.post_id AS target_post_id, t.pruned_at_height, t.pruned_root
-       FROM utxo_boxes b
-       JOIN block_topology t
-         ON t.post_id = json_extract(b.extra_data, '$.targetPostId')
-       WHERE b.box_type = 'post_lock'
-         AND b.spent_at_block IS NULL
-         AND t.pruned_at_height IS NOT NULL
-       ORDER BY t.pruned_at_height, t.post_id
-       LIMIT ?`,
-    ).all(64) as Array<{ detail: string }>;
-    const details = plan.map(r => r.detail).join('\n');
-    expect(details).not.toContain('SCAN utxo_boxes');
-  });
-});

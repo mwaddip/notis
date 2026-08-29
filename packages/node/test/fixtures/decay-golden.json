@@ -93,7 +93,7 @@
           "height": 40,
           "owner": "alice",
           "burnAmount": "30",
-          "consumedCount": 1,
+          "consumedCount": 2,
           "balanceAfter": "50"
         }
       ],
@@ -118,7 +118,7 @@
           "height": 35,
           "owner": "alice",
           "burnAmount": "25",
-          "consumedCount": 1,
+          "consumedCount": 2,
           "balanceAfter": "55"
         }
       ],
@@ -178,7 +178,7 @@
           "height": 30,
           "owner": "bob",
           "burnAmount": "25",
-          "consumedCount": 1,
+          "consumedCount": 2,
           "balanceAfter": "80"
         }
       ],

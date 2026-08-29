@@ -327,12 +327,12 @@ describe('the invite at block application', () => {
     expect(grantedBox.length).toBe(1);
 
     const postCommit = makePostCommit(invitee.userId, 'first post');
-    const { POST_LOCK_THREAD_COST } = types;
+    const { POST_PRICE_THREAD } = types;
     const postTx: UtxoTransaction = {
       inputs: [grantedBox[0]!.id!],
       outputs: [
-        { boxType: 'karma', value: grantedKarma - POST_LOCK_THREAD_COST, createdAtBlock: claimHeight, owner: invitee.userId } as never,
-        { boxType: 'post_lock', value: POST_LOCK_THREAD_COST, createdAtBlock: claimHeight, originalValue: POST_LOCK_THREAD_COST, owner: invitee.userId } as never,
+        { boxType: 'karma', value: grantedKarma - POST_PRICE_THREAD, createdAtBlock: claimHeight, owner: invitee.userId } as never,
+        { boxType: 'karma_price', value: POST_PRICE_THREAD, createdAtBlock: claimHeight } as never,
       ],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
@@ -347,11 +347,8 @@ describe('the invite at block application', () => {
     const postBlock = await mineOne();
     expect(postBlock).not.toBeNull();
 
-    // Face value after posting: granted minus the thread lock cost. No decay
-    // squaring happened — the full granted amount is still there, less only
-    // the lock.
     const afterPost = utxo.getKarmaValue(invitee.userId);
-    expect(afterPost).toBe(grantedKarma - POST_LOCK_THREAD_COST);
+    expect(afterPost).toBe(grantedKarma - POST_PRICE_THREAD);
 
     // The mechanism: lastActivityBlock is still the claim height (the post
     // advances it to block 2, which is even more recent).

@@ -28,7 +28,7 @@ import {
   computeContentHash,
   PROTOCOL_VERSION,
   computePostId,
-  POST_LOCK_THREAD_COST,
+  POST_PRICE_THREAD,
   KARMA_STALE_THRESHOLD_BLOCKS,
   KARMA_DECAY_INTERVAL_BLOCKS,
   KARMA_DECAY_AMOUNT,
@@ -39,7 +39,7 @@ import type {
   CandidateOf,
   KarmaBox,
   PostCommit,
-  PostLockBox,
+  KarmaPriceBox,
   UtxoTransaction,
 } from '@dagsocial/types';
 import { createRouter } from '../../src/routes/posts.js';
@@ -248,18 +248,15 @@ describe('posts routes', () => {
 
     const newKarma = seedProvenance<KarmaBox>({
       boxType: 'karma',
-      value: 100n - POST_LOCK_THREAD_COST,
+      value: 100n - POST_PRICE_THREAD,
       createdAtBlock: 0,
       owner: userId,
     }, 1);
 
-
-    const postLockBox: CandidateOf<PostLockBox> = {
-      boxType: 'post_lock',
-      value: POST_LOCK_THREAD_COST,
+    const priceBox: CandidateOf<KarmaPriceBox> = {
+      boxType: 'karma_price',
+      value: POST_PRICE_THREAD,
       createdAtBlock: 0,
-      originalValue: POST_LOCK_THREAD_COST,
-      owner: userId,
     };
 
     const content = 'hello mempool';
@@ -273,7 +270,7 @@ describe('posts routes', () => {
 
     const postTx: UtxoTransaction = {
       inputs: [karmaBoxId],
-      outputs: [newKarma, postLockBox],
+      outputs: [newKarma, priceBox],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
       post: commit,
