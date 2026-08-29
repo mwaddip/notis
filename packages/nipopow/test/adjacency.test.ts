@@ -7,6 +7,7 @@ import {
   makeReader,
   devnetProfile,
   DEVNET_POW_TARGET_BITS,
+  DEVNET_RETARGET,
 } from './helpers.js';
 
 // NIPOPOW_INTERFACE → verifyProof. The prove-then-verify round trip over deterministic
@@ -77,5 +78,47 @@ describe('strict-adjacency property test', () => {
     const result = verifyProof(proof, profile);
     expect(result.ok).toBe(true);
     totalIterations++;
+  });
+
+  // A chain with no-level headers: stretched stamps walk the target below the
+  // anchor, so some PoW-valid hits exceed the yardstick → null level → vector
+  // unchanged across that header. TYPES_INTERFACE → Interlink vector.
+  it('chain with no-level headers proves and verifies, vector unchanged', () => {
+    // 200× idealMs stamps: target walks to floor (2304) by block 7.
+    // At 2304, ~7/8 of PoW-valid hits exceed the anchor yardstick (3072) → null level
+    const chain = buildMinedChain({ count: 50, stampIntervalMs: 200 * 60_000 });
+
+    // Confirm the chain has at least one no-level header
+    const levels = chain.headers.map(h => level(h, DEVNET_RETARGET.anchorBits));
+    const nullCount = levels.filter(lvl => lvl === null).length;
+    expect(nullCount).toBeGreaterThan(0);
+
+    // The interlink vector is unchanged across a no-level header
+    for (let i = 1; i < chain.headers.length; i++) {
+      if (levels[i] === null) {
+        continue;
+      }
+    }
+    // Verify that no-level headers have the same interlinks as the previous header
+    for (let i = 1; i < chain.popowHeaders.length; i++) {
+      const prev = chain.popowHeaders[i - 1]!;
+      const cur = chain.popowHeaders[i]!;
+      if (levels[i - 1] === null) {
+        // The vector was NOT updated by the no-level parent
+        // Actually, updateInterlinks uses the PARENT's level, so if parent has null level,
+        // the CURRENT block's vector is unchanged from the parent's
+        expect(cur.interlinks).toEqual(prev.interlinks);
+      }
+    }
+
+    // Prove and verify
+    const stretchProfile = {
+      ...profile,
+      nowMs: 1_000_000_000,
+    };
+    const reader = makeReader(chain);
+    const proof = proveWithReader(reader, { m: 3, k: 5 });
+    const result = verifyProof(proof, stretchProfile);
+    expect(result.ok).toBe(true);
   });
 });
