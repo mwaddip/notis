@@ -512,7 +512,7 @@ against live content).
 
 | Method | Path | Response | Errors |
 |--------|------|----------|--------|
-| `GET` | `/karma/:userId?limit=50&after=<value>:<boxId>` | `{ userId: hex, total, effective, boxes: [{ boxId, value }], boxCount, next, lastActivityBlock, lastDecayBlock, lifetimeLikesReceived, height }` — `total` the face sum over every unspent karma box (`getKarmaTotal`, the view's `SUM` over the set `getKarmaValue` sums), `effective` that sum after virtual decay (`effectiveKarma`, the call every karma-sufficiency check on the node makes), `boxes` one page in `value DESC, id` strictly after `after`, `boxCount` over the whole set, `next` the key to continue from. **An identity with no unspent karma box answers the empty page** — `boxes: []`, `boxCount 0`, `total "0"`, `effective "0"`, `next null`, its clocks and `lifetimeLikesReceived` (a decimal string, the record's counter — `"0"` where none) from the record, `height` — an exact spend leaves a live identity holding no box, and a page of zero is a page ("Every list a view returns is a page"). ⚠ **AHEAD OF CODE — 2026-08-29:** the view serves the two clocks and not the counter until PR A's node unit adds it | 400 if `userId` is not 64 chars or a present `limit`/`after` does not parse |
+| `GET` | `/karma/:userId?limit=50&after=<value>:<boxId>` | `{ userId: hex, total, effective, boxes: [{ boxId, value }], boxCount, next, lastActivityBlock, lastDecayBlock, lifetimeLikesReceived, height }` — `total` the face sum over every unspent karma box (`getKarmaTotal`, the view's `SUM` over the set `getKarmaValue` sums), `effective` that sum after virtual decay (`effectiveKarma`, the call every karma-sufficiency check on the node makes), `boxes` one page in `value DESC, id` strictly after `after`, `boxCount` over the whole set, `next` the key to continue from. **An identity with no unspent karma box answers the empty page** — `boxes: []`, `boxCount 0`, `total "0"`, `effective "0"`, `next null`, its clocks and `lifetimeLikesReceived` (a decimal string, the record's counter — `"0"` where none) from the record, `height` — an exact spend leaves a live identity holding no box, and a page of zero is a page ("Every list a view returns is a page") | 400 if `userId` is not 64 chars or a present `limit`/`after` does not parse |
 | `GET` | `/credits/:userId?limit=50&after=<value>:<boxId>` | `{ userId: hex, total, boxes: [{ boxId, value, lockedUntilBlock? }], boxCount, next }` — `total` over every unspent credit box (`getCreditValue`), `boxes` one page in `value DESC, id` strictly after `after`, `boxCount` over the whole set, `next` the key to continue from; an identity with no unspent credit box answers the empty page — `boxes: []`, `boxCount 0`, `total "0"`, `next null` | 400 if `userId` is not 64 chars or a present `limit`/`after` does not parse |
 | `GET` | `/invites/:userId?limit=50&after=<boxId>` | `{ bonds: [{ id, value, inviterId, inviteePublicKey }], bondCount, next }` — the inviter's **unspent** bonds, one page ascending box id strictly after `after`, `bondCount` over the whole set, `next` the key to continue from; a bond IS the open invite, so a settled one is not listed and there is no second list | 400 if `userId` is not 64 chars or a present `limit`/`after` does not parse; an inviter holding no live bond answers `{ bonds: [], bondCount: 0, next: null }` |
 
@@ -1356,9 +1356,6 @@ The checks:
    — a like carrying a `PostCommit` would confirm the post, under any author the commit names, for
    the price of the like. The rule is the envelope's because it is structural: no state is read to
    decide it.
-   > ⚠ **AHEAD OF CODE — 2026-08-29.** `checkTxEnvelope` refuses no combination of the four; PR A's
-   > node unit adds the check and pins every pair, the like-and-post pair with and without a price
-   > box and with a foreign author on the commit.
    > ⛔ **A NEW PAYLOAD FIELD IS TWO ENTRIES HERE, NOT ONE.** `decodeTx` writes
    > every field unconditionally, holding `undefined` where the tag said absent,
    > so a field must also join the set of keys **permitted to hold `undefined`**.
@@ -1601,10 +1598,6 @@ There is **no other legal bond or invite shape**. In particular:
   target, a prune's root and a withdrawal's post must be confirmed at admission exactly as before.
   This is what keeps a reply able to spend its own thread's change with no block between the two
   (`TYPES_INTERFACE → Monotonic creation height`, the chaining a block interval must allow).
-  > ⚠ **AHEAD OF CODE — 2026-08-29.** The engine's admission deps hand the post arm
-  > `getTopologyAuthor` alone, so a reply to a pending parent is refused at admission; PR A's node
-  > unit adds the pending-row fallback on the admission deps (`server.ts`, `index.ts`), leaves the
-  > apply deps topology-only, and pins both directions.
 - ⛔ **The relay gate is a cached MEMBERSHIP check, not a balance read.** `net`
   drops a post from an author who holds no karma **at all**, consulting an
   in-memory set rather than the store. The set moves only when an identity first
@@ -1767,10 +1760,6 @@ There is **no other legal bond or invite shape**. In particular:
 - **What each pass does is stated where its transaction is**: Withdrawal transactions (the
   row emptied, `withdrawn_at_height` set), Prune transactions (the set derived, like-records
   deleted and tallied, the stump inserted, rows deleted, topology marked).
-
-> ⚠ **AHEAD OF CODE — 2026-08-29.** The phase in the tree is the post-lock settlement phase — it
-> consumes the locks a withdrawal names and folds the vest into a plan. PR A's node unit removes
-> the lock legs and keeps the phase's position.
 
 ### Bond transition rules
 
@@ -2095,12 +2084,7 @@ forms, so a mirror implementation derives the same ids:
 
 **Two reasons, and the set is closed by the one producer class.** A settlement output needs
 no reason — it has a transaction — so a new reason enters only with a new genesis box or a new
-conserving-in-place direct producer, of which there are none.
-
-> ⚠ **AHEAD OF CODE — 2026-08-29.** `MINT_REASON` carries `postlock-unlock` and `postlock-remainder`;
-> PR A's types unit deletes both — numbers and names free, as the rule below says — and node's
-> `mint-provenance.ts` loses their arms with the vesting that used them.
- Tags are `@dagsocial/types`' (`MINT_REASON`); this table
+conserving-in-place direct producer, of which there are none. Tags are `@dagsocial/types`' (`MINT_REASON`); this table
 deliberately does not repeat them. **Reasons retired before mainnet are deleted outright —
 numbers and names both free, no reservation list** (user, 2026-08-19); a **live** tag is never
 renumbered (TYPES_INTERFACE → Primitives).
@@ -2395,10 +2379,6 @@ is no cursor to store. ⚠ **The two caps and the empty-body settlement are the 
 relation** (`TYPES_INTERFACE` → Size caps): whatever the chain state holds, the settlement of an
 empty body fits `MAX_SETTLEMENT_BYTES`, so a block exists at every height.
 
-> ⚠ **AHEAD OF CODE — 2026-08-29.** The tree's settlement consumes the locks a withdrawal names and
-> releases pruned locks at `MAX_POST_LOCK_RELEASES_PER_BLOCK`, and has no price leg; PR A's node
-> unit moves both orders to the lists above and `settlement-leg-order.test.ts` re-pins them.
-
 ⛔ **The two orders are consensus.** `derive()` builds the input list and the output list leg by leg in exactly these sequences, and a verifier recomputes both and compares the block's settlement to them position by position — the input list whole, the derived outputs element-wise; the coinbase is constrained, never derived (→ "Determinism is this mechanism's whole risk", the derived / producer-chosen table, where output ordering is a derived field). A leg moved is every settlement's bytes moved, on both sides identically. `node/test/services/settlement-leg-order.test.ts` pins both sequences with one fixture that fires every leg at once.
 
 ⚠ **The escrow leg reads PRE-BODY state, and returns at or past `releaseAtBlock`, not at it.**
@@ -2431,7 +2411,7 @@ rule bounds nothing** about how many invites, likes or sweeps a block holds. **W
 is the settlement's own size**: `MAX_SETTLEMENT_BYTES` (`TYPES_INTERFACE` → Size caps) weighs the
 whole transaction, so a block carries as many likes as their marker inputs fit beside its other
 legs — the producer keeps the body-driven legs inside it by selection (`MEMPOOL_INTERFACE` → The
-fill budget is bytes; `getPendingEntries` is a count), and the three capped legs above keep the
+fill budget is bytes; `getPendingEntries` is a count), and the two capped legs above keep the
 state-driven ones inside it whatever the producer selects.
 
 #### ⛔ Its marker inputs are DERIVED, not serialized
@@ -4603,12 +4583,11 @@ rather than an exception absorbed by the funnel's totality handler.
 **It does that by calling `checkOutputShape`, not by growing a second check.** That schema already
 pins exactly the domains consensus accepts — `u64` as a bigint in `[0, BOX_VALUE_BOUND)`
 (TYPES_INTERFACE → "Box value domain": narrower than the writer's `[0, 2⁶⁴)`, because the store is
-signed), `hex32` as 64
-lowercase hex, `uint`/`u32` as safe non-negative integers excluding `-0` — and it is already total on
+signed), `uint`/`u32` as safe non-negative integers excluding `-0` — and it is already total on
 any JS value. A narrower check written for this call site would be a second spelling of one schema,
 which is the fork surface this contract rejects everywhere else. **The obligation is the whole
 schema, not the `bigint` alone**: the spec names the `value` field because that is where it was
-found, and any `hex32` field written by `writeHexNOrThrow` reaches a throwing writer by the
+found, and any 64-hex field written by `writeHexNOrThrow` reaches a throwing writer by the
 identical route.
 
 ⚠ **The example this paragraph used to give — `post_lock.targetPostId` — no longer exists.** The

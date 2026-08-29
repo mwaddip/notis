@@ -584,11 +584,10 @@ clock it nominally represented now lives in the committed per-identity record
 preimage. A mint's `txId` is `computeMintTxId(height, reason, subject)`, whose `reason` tag
 names why the karma was created; a user-path box carries the transaction that made it.
 
-⚠ **`transferKarma` (node) consolidates its credits** — a credited owner's existing karma
-boxes are consumed and one box holding the total is inserted — and `getKarmaBoxes` orders by
-value with no tie-break. That is identity-harmless, because nothing the merge chooses between
-reaches the id preimage. Settlement karma outputs do **not** consolidate: they land beside
-whatever karma the owner already holds.
+⚠ **Settlement karma outputs do not consolidate** — they land beside whatever karma the owner
+already holds. The one block-application path that consumes an owner's boxes and re-emits one is
+decay's squaring (`ARCHITECTURE → Karma decay`), and nothing it chooses between reaches an id
+preimage: `getKarmaBoxes` orders by `value DESC, id`, a total order.
 
 ### CreditBox
 
@@ -719,10 +718,6 @@ have had to be known before the id that produces it. ⛔ **No box may name an ou
 transaction; a mapping of that shape is derived state, written at apply by every node identically.**
 That rule is what this heading is cited for.
 
-> ⚠ **AHEAD OF CODE — 2026-08-29.** `PostLockBox` is a live interface in `types/src/utxo.ts` and a member
-> of `AnyBox`; PR A's types unit retires it with its golden vectors and its codec arm, and node's
-> unit deletes every reader.
-
 ### KarmaPriceBox
 
 ```
@@ -751,11 +746,6 @@ returns their sum to the pool (`NODE_INTERFACE → The settlement transaction`).
   conservation **yes** — it holds karma until the settlement returns it.
 - **It is the transition any later karma price takes** — the prune's descendant charge, when it
   lands, is a `KarmaPriceBox` on the prune transaction.
-
-> ⚠ **AHEAD OF CODE — 2026-08-29.** Nothing in the tree carries this type. PR A's types unit adds the
-> interface, tag `13` in `BOX_TYPE_TAGS`, the codec arm and a golden vector; node's unit adds the
-> schema row, the three set verdicts, the transition and the settlement leg; the demo UI's mirror
-> gains the case.
 
 ### VouchBox
 
@@ -1167,7 +1157,7 @@ recompute the hash and check the signature.
 | `computeBoxId(box)` | `(BoxBase) => BoxId` | Box id from `candidate ‖ txId ‖ index`. Total function of a stored box — no second argument, so `stored.id === computeBoxId(stored)` is checkable anywhere |
 | `computeCandidateBoxId(candidate, txId, index)` | `(BoxCandidate, TxId, number) => BoxId` | Same derivation, for a candidate not yet materialized. Used by creators and by clients predicting an id at signing time |
 | `computeTxId(tx)` | `(UtxoTransaction) => TxId` | Transaction id over candidates |
-| `computeMintTxId(height, reason, subject)` | `(number, MintReason, Uint8Array) => TxId` | Synthetic transaction id for boxes with no creating transaction — genesis seeding and post-lock vesting; everything else is a settlement output with an ordinary id. `subject` encoding is defined per reason — see `NODE_INTERFACE.md` |
+| `computeMintTxId(height, reason, subject)` | `(number, MintReason, Uint8Array) => TxId` | Synthetic transaction id for boxes with no creating transaction — genesis seeding; everything else is a settlement output with an ordinary id. `subject` encoding is defined per reason — see `NODE_INTERFACE.md` |
 | `canonicalBoxBytes(candidate)` | `(BoxCandidate) => Uint8Array` | The single canonical identity encoding. Exported so tests and mirror implementations (demo UI, light client) assert against the encoder that computes ids, not a lookalike |
 | `selectBoxes(boxes, requiredAmount)` | `(T[], bigint) => T[]` where `T extends { value: bigint }` | Largest-first UTXO selection — a greedy prefix of the **given** order until `requiredAmount` is covered; throws when the boxes' total falls short. **Precondition: the caller supplies boxes sorted by value descending** — the function imposes no order of its own, so its determinism is exactly its caller's. A transaction-builder helper (the faucet's invite and transfer builders are the consumers); no block-application path calls it |
 
@@ -2897,9 +2887,6 @@ largest settlement an empty body can carry.
 bond may vest more in the meantime (`ARCHITECTURE` → Bond outcomes), a cooling voucher waits that
 long to recast (`ARCHITECTURE` → Vouch boxes). Neither moves value it does not owe.
 
-> ⚠ **AHEAD OF CODE — 2026-08-29.** `constants.ts` exports `MAX_POST_LOCK_RELEASES_PER_BLOCK` and the
-> settlement carries the release leg it caps; PR A retires both.
-
 ### State format
 
 ```typescript
@@ -2969,9 +2956,6 @@ export const REPLY_AUTHOR_SHARE = 1n;            // consensus — the part of a 
 relation is the rule, the numbers are `CONSTANTS → Post price and likes`. `KARMA_POSTING_MINIMUM`
 (→ Karma) no longer states the minimum to post — the price does, by conservation — and survives
 only as `INVITE_MIN_KARMA`'s alias.
-
-> ⚠ **AHEAD OF CODE — 2026-08-29.** `constants.ts` exports `POST_LOCK_THREAD_COST`, `POST_LOCK_REPLY_COST`
-> and `POST_LOCK_UNLOCK_PER_LIKES`; PR A's types unit replaces them with the three above.
 
 ### Likes
 

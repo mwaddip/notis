@@ -191,11 +191,10 @@ implementations:**
 takes an amount and no source cannot fail, because there is nothing for it to check against —
 and an operation decrementing the emission box elsewhere would not save it: the axiom bars the
 *function*, not merely the aggregate from drifting. The tree satisfies this: no mint or burn
-function exists. Value moves through exactly two operations, each naming source and destination
-in one call — the block's settlement transaction (every pool-, emission- and treasury-touching
-effect; NODE_INTERFACE → The settlement transaction) and `transferKarma` (the
-conserving-in-place paths) — and `test/services/conservation-axiom.test.ts` asserts the sum
-across an applied chain.
+function exists. Value moves through exactly one operation, naming source and destination in
+one call — the block's settlement transaction (every pool-, emission- and treasury-touching
+effect, and every other block-application effect; NODE_INTERFACE → The settlement transaction)
+— and `test/services/conservation-axiom.test.ts` asserts the sum across an applied chain.
 
 ### How a source and a sink get named — the three shapes, and there are only three
 
@@ -1069,11 +1068,6 @@ settlement   KarmaPriceBox(p) → pool(+p)         consumed in the block that cr
   output so the transaction conserves, with no owner, consumed only by the settlement
   (TYPES_INTERFACE → KarmaPriceBox). It is the transition any later karma price takes — the
   prune's descendant charge, when it lands.
-
-> ⚠ **AHEAD OF CODE — 2026-08-29.** The tree locks a `PostLockBox` per post and vests it per block.
-> `KarmaPriceBox`, the price shape in the post arm, the settlement's price leg and the reply's
-> share are PR A's, and the lock apparatus — the type, per-block vesting, the release leg, the
-> `postlock-*` mint reasons — retires with them.
 
 ### Like parameters
 
@@ -2429,8 +2423,6 @@ backfill — and a pruned post has no row (NODE_INTERFACE → Store Interface �
 - The post price: a post pays `POST_PRICE_THREAD` / `POST_PRICE_REPLY` into a `KarmaPriceBox` the
   block's settlement returns to the pool; a reply pays `REPLY_AUTHOR_SHARE` of it to the parent's
   author through the like accrual (§The post price)
-  > ⚠ **AHEAD OF CODE — 2026-08-29.** The tree locks a `PostLockBox` and vests it per block; PR A
-  > replaces the lock with the price.
 - Ordering blocks with validator PoW; posts and likes ride them as ordinary
   transactions
 - Verifiable prune: a karma transaction carrying a `PruneCommit`, Ed25519-signed, its effect

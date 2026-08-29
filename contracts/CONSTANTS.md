@@ -88,7 +88,7 @@ Three limits stand in a fixed order — `MAX_BLOCK_BODY_BYTES < MAX_SERVE_BODY_B
 |---|---|---|---|---|---|---|
 | `MAX_BLOCK_BODY_BYTES` | `2_000_000` | 2 MB per block; 1.05 TB/yr at 60 s blocks | consensus | none stated for the number; the two net caps above it derive from it | CHOSEN | `TYPES_INTERFACE → Size caps` |
 | `MAX_TX_BYTES` | `10_000` | ~148 credit inputs | consensus | argued for *existence* — a transaction may not be valid, poolable and unminable at once — not for the number | CHOSEN | `TYPES_INTERFACE → Size caps` |
-| `MAX_SETTLEMENT_BYTES` | `100_000` | 5 % of the body; ≈ 2 700 like markers after the capped legs | consensus | two relations are the rule (fits a legal body; an empty-body settlement at every cap fits it — 70 + 3 × 64 × 70 = 13 510); the number is provisional | PROVISIONAL | `TYPES_INTERFACE → Size caps` |
+| `MAX_SETTLEMENT_BYTES` | `100_000` | 5 % of the body; ≈ 2 700 like markers after the capped legs | consensus | two relations are the rule (fits a legal body; an empty-body settlement at every cap fits it — 70 + 2 × 64 × 70 = 9 030); the number is provisional | PROVISIONAL | `TYPES_INTERFACE → Size caps` |
 
 ### Settlement caps
 
@@ -110,10 +110,6 @@ Three limits stand in a fixed order — `MAX_BLOCK_BODY_BYTES < MAX_SERVE_BODY_B
 ### Post price and likes
 
 `ARCHITECTURE → Like parameters` marks the like rows as placeholders; the price rows are ruled.
-
-> ⚠ **AHEAD OF CODE — 2026-08-29.** The three price rows name exports `@dagsocial/types` does not yet
-> carry, and the tree still exports the three lock constants and `MAX_POST_LOCK_RELEASES_PER_BLOCK`;
-> the drift test reads red until PR A's types unit lands.
 
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
