@@ -12,7 +12,6 @@ import {
   BOX_VALUE_BOUND,
   INVITE_BOND_VEST_PER_LIKES,
   LIKES_PER_KARMA_PAYOUT,
-  MAX_REORG_DEPTH,
   CREDIT_INITIAL_REWARD,
   CREDIT_REWARD_REDUCTION,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
@@ -34,6 +33,7 @@ const REQUIRED_PROFILE_FIELDS = [
   'vouchCooldownBlocks',
   'inviteProbationBlocks',
   'creditMinerRewardDelay',
+  'maxReorgDepth',
   'creditFixedRateBlocks',
   'creditEpochBlocks',
   'creditEmissionTotal',
@@ -157,7 +157,7 @@ describe('NETWORK_PROFILES', () => {
     // join them, and the list is what makes each difference declared rather than
     // discovered. `inviteBondMin` is deliberately absent — testnet inherits
     // mainnet's floor.
-    const relaxedCaps = new Set(['inviteBondMax', 'membershipBarMultiplier']);
+    const relaxedCaps = new Set(['inviteBondMax', 'maxReorgDepth', 'membershipBarMultiplier']);
     const { mainnet, testnet } = NETWORK_PROFILES;
     // ⛔ Derived from the profiles, never from a literal list. A hardcoded set
     // goes on passing while a field added to either profile sits uncompared, so
@@ -246,13 +246,31 @@ describe('NETWORK_PROFILES', () => {
       .toBe(2 * NETWORK_PROFILES.mainnet.creditFixedRateBlocks);
   });
 
-  // The deepest e2e height is 27 (MAX_REORG_DEPTH + 7). A period below that
-  // ceiling lets a producer collect the faucet's genesis credits underneath a
-  // running scenario. ⚠ Raising MAX_REORG_DEPTH eats the headroom silently.
+  // Above the deepest height any e2e scenario reaches (~47 — the fork chapter
+  // strands at maxReorgDepth + 7), with headroom. The drift test pins both values.
   it('devnet rent period clears the deepest e2e height with headroom', () => {
     const devnet = NETWORK_PROFILES.devnet;
-    expect(devnet.storageRentPeriodBlocks).toBe(40);
-    expect(devnet.storageRentPeriodBlocks).toBeGreaterThan(MAX_REORG_DEPTH + 7);
+    expect(devnet.storageRentPeriodBlocks).toBe(100);
+    expect(devnet.storageRentPeriodBlocks).toBeGreaterThan(devnet.maxReorgDepth + 7);
+  });
+
+  // TYPES_INTERFACE → Chain reorganisation: the reorg horizon bounds the fork walk,
+  // the journal retention window, the refused-header purge and the AVL history floor.
+  // Each profile's own literal; testnet's four hours is the largest.
+  it('maxReorgDepth is 60 on mainnet, 240 on testnet, 40 on devnet', () => {
+    expect(NETWORK_PROFILES.mainnet.maxReorgDepth).toBe(60);
+    expect(NETWORK_PROFILES.testnet.maxReorgDepth).toBe(240);
+    expect(NETWORK_PROFILES.devnet.maxReorgDepth).toBe(40);
+  });
+
+  it('every maxReorgDepth is a positive safe integer, testnet the largest', () => {
+    const profiles = Object.values(NETWORK_PROFILES);
+    for (const p of profiles) {
+      expect(Number.isSafeInteger(p.maxReorgDepth)).toBe(true);
+      expect(p.maxReorgDepth).toBeGreaterThan(0);
+    }
+    const largest = Math.max(...profiles.map(p => p.maxReorgDepth));
+    expect(NETWORK_PROFILES.testnet.maxReorgDepth).toBe(largest);
   });
 
   // ARCHITECTURE → What varies per network: the multiplier is a cap, field-only.

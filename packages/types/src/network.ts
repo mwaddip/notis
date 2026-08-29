@@ -53,6 +53,10 @@ export interface NetworkProfile {
   readonly inviteProbationBlocks: number;
   readonly creditMinerRewardDelay: number;
 
+  // Chain reorganisation — the reorg horizon: how far below the tip a fork may be followed
+  // (→ Chain reorganisation). A duration in blocks; the mechanic is universal, the number per network.
+  readonly maxReorgDepth: number;
+
   // Emission schedule. `creditEmissionTotal` is the EmissionBox's genesis value,
   // CARRIED rather than derived (TYPES_INTERFACE → EmissionBox). It must be
   // STRICTLY below the curve's own sum for this profile's F and E at the
@@ -179,6 +183,9 @@ const MAINNET_PROFILE: NetworkProfile = Object.freeze({
   inviteProbationBlocks: INVITE_PROBATION_BLOCKS,
   creditMinerRewardDelay: CREDIT_MINER_REWARD_DELAY,
 
+  // TYPES_INTERFACE → Chain reorganisation
+  maxReorgDepth: 60,
+
   creditFixedRateBlocks: CREDIT_FIXED_RATE_BLOCKS,
   creditEpochBlocks: CREDIT_EPOCH_BLOCKS,
   creditEmissionTotal: CREDIT_EMISSION_TOTAL,
@@ -229,6 +236,9 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   // Generated 2026-08-18. The secret is NOT in this repo; it is deployed to the
   // faucet service as a config value.
   faucetPublicKey: '7d501686ebf18b2618c5a9394445bd14922a72478d2a4c36a82a8cfc2a66cce7',
+  // TYPES_INTERFACE → Chain reorganisation
+  maxReorgDepth: 240,
+
   // Relaxed so a tester arrives with enough karma to post and like freely. A cap,
   // not a mechanic — the vesting formula is unchanged.
   inviteBondMax: 1000n,
@@ -287,17 +297,16 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   inviteProbationBlocks: 540,
   creditMinerRewardDelay: 10, // small enough to spend, large enough to observe immaturity
 
+  // TYPES_INTERFACE → Chain reorganisation
+  maxReorgDepth: 40,
+
   creditFixedRateBlocks: 1000, // ~÷1000 so the fixed-rate → decay transition is reachable
   creditEpochBlocks: 400, // fixed-rate ≈ 2.5× epoch (mainnet: ≈ 2.24×)
   creditEmissionTotal: 362_000n * 10n ** 8n, // below devnet's curve (386,400)
 
-  // **Above the deepest height any e2e scenario reaches** (27 = MAX_REORG_DEPTH + 7,
-  // from `fork.test.ts`'s `dTarget = aTarget + 5` where `aTarget = MAX_REORG_DEPTH + 2`).
-  // A period below that ceiling lets a block producer collect the faucet's genesis credits
-  // underneath a running scenario, failing tests for reasons unrelated to what they assert.
-  // 40 gives thirteen blocks of headroom. ⚠ Raising MAX_REORG_DEPTH eats the headroom
-  // silently.
-  storageRentPeriodBlocks: 40,
+  // Above the deepest height any e2e scenario reaches (~47 — the fork chapter
+  // strands at maxReorgDepth + 7), with headroom. ARCHITECTURE → What varies per network.
+  storageRentPeriodBlocks: 100,
 
   // ⚠ **A PUBLICLY KNOWN TEST KEY.** Its secret is in tracked source and reaches
   // CI, which is correct for an ephemeral network and is why it is not testnet's.

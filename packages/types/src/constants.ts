@@ -304,21 +304,6 @@ export const RETARGET_HALFLIFE_BLOCKS = 288;
 /** The future bound on `createdAt`, in ms. MINING_INTERFACE → Header timestamp rules. */
 export const MAX_FUTURE_DRIFT_MS = 600_000;
 
-// Chain reorganisation
-/**
- * How far back a reorg reaches.
- *
- * TYPES_INTERFACE → Chain reorganisation lists the load-bearing consumers and
- * their roles. **Journal retention is the hard bound on how deep a reorg can
- * physically go; the fork walk is policy** — past the retention window the
- * journals are gone and no fork-walk bound reaches them.
- *
- * It lives in this package rather than in node because node's `config.ts`
- * cannot reach a constant declared in `services/fork-resolution.ts` — that
- * module imports `config` itself, so the edge would close a cycle.
- */
-export const MAX_REORG_DEPTH = 20;
-
 /**
  * The `prevBlockHash` a height-1 block carries: 32 zero bytes as 64 hex
  * characters. Heights start at 1, so no header is ever hashed to this value;
