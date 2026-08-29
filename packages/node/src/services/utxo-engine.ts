@@ -18,7 +18,7 @@ import {
 import { isCreditSideTx } from './coinbase-split.js';
 import { effectiveKarma } from './decay.js';
 import type { DecayCfg } from './decay.js';
-import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, KarmaPriceBox, PostCommit, PruneCommit, PostWithdrawCommit } from '@dagsocial/types';
+import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, PostCommit, PruneCommit, PostWithdrawCommit } from '@dagsocial/types';
 
 // `computeTxId` has exactly one implementation and it is types'. This engine
 // must never grow a local copy: the id it returns is both the hash
@@ -232,10 +232,12 @@ function checkTransitions(
   //
   // Ahead of the switch rather than inside the karma arm, so it holds for every
   // input type and not only for the one that can legitimately emit a marker.
-  if (likeTarget === undefined && outputs.some((o) => o.boxType === 'like_accrual')) {
+  const hasParentedPost = post !== undefined && post.parentRefs.length > 0;
+  if (likeTarget === undefined && !hasParentedPost &&
+      outputs.some((o) => o.boxType === 'like_accrual')) {
     return {
       valid: false,
-      error: `a LikeAccrualBox output is only legal on a like transaction`,
+      error: `a LikeAccrualBox output is legal only on a like or a reply`,
     };
   }
   // A like transaction (`likeTarget` present) has exactly one legal shape — the
@@ -260,7 +262,7 @@ function checkTransitions(
     case 'karma': {
       const karmaOutputs = outputs.filter((o) => o.boxType === 'karma');
       const bondOutputs = outputs.filter((o) => o.boxType === 'bond');
-      const postLockOutputs = outputs.filter((o) => o.boxType === 'post_lock');
+      const priceOutputs = outputs.filter((o) => o.boxType === 'karma_price');
       const vouchOutputs = outputs.filter((o) => o.boxType === 'vouch');
       const accrualOutputs = outputs.filter((o) => o.boxType === 'like_accrual');
 
@@ -369,65 +371,94 @@ function checkTransitions(
               `but ${likeTarget}'s author is ${Buffer.from(author).toString('hex')}`,
           };
         }
-      } else if (postLockOutputs.length > 0) {
-        // karma → karma + post_lock (post creation lock)
-        if (postLockOutputs.length !== 1 || bondOutputs.length > 0 || vouchOutputs.length > 0) {
-          return {
-            valid: false,
-            error: `Invalid post-lock transition: exactly 1 karma + 1 post_lock output expected`,
-          };
-        }
-        // ⛔ **The post biconditional** (NODE_INTERFACE → Post transactions), in
-        // the shape the like carve already set: `post` present ⟺ exactly one
-        // PostLockBox whose value is the cost for that post's shape. Both
-        // directions are checked, because only the pair makes it a
-        // biconditional — a lock with no payload is a lock nothing will ever
-        // unlock, and a payload with no lock is a post that cost nothing.
-        if (post === undefined) {
-          return {
-            valid: false,
-            error: 'A post_lock output requires the transaction to carry its post payload',
-          };
-        }
-        const expectedLock =
-          post.parentRefs.length === 0 ? POST_LOCK_THREAD_COST : POST_LOCK_REPLY_COST;
-        const lockValue = (postLockOutputs[0] as PostLockBox).value;
-        if (lockValue !== expectedLock) {
-          return {
-            valid: false,
-            error: `Post lock must be exactly ${expectedLock} karma, got ${lockValue}`,
-          };
-        }
-        // The author is the owner of the karma being spent — asserted here
-        // because the payload is otherwise opaque to the engine, and authorship
-        // is what prune and the feed key on.
+      } else if (post !== undefined) {
+        // NODE_INTERFACE → Legal box transitions (Thread and Reply rows).
         if (!Buffer.from(post.author).equals(Buffer.from(inputKarma.owner))) {
           return {
             valid: false,
             error: 'Post author must own the karma the transaction spends',
           };
         }
-        // The lock's owner is pinned to the karma input's owner. Without this
-        // a transaction puts a stranger's key on the lock, and the prune
-        // settlement refunds that stranger — the same property the vouch guard
-        // at voucherId protects (NODE_INTERFACE → Legal box transitions).
-        if (Buffer.from((postLockOutputs[0] as PostLockBox).owner).toString('hex') !== inputOwnerHex) {
-          return {
-            valid: false,
-            error: 'Post lock owner must be the karma input\'s owner',
-          };
+        if (post.parentRefs.length === 0) {
+          // Thread: exactly one KarmaPriceBox of POST_PRICE_THREAD and no marker.
+          if (priceOutputs.length !== 1 || accrualOutputs.length !== 0 ||
+              karmaOutputs.length > 1 ||
+              outputs.length !== 1 + karmaOutputs.length) {
+            return {
+              valid: false,
+              error:
+                `Invalid thread transition: exactly one karma_price output, ` +
+                `no like_accrual, at most one karma output expected`,
+            };
+          }
+          if (priceOutputs[0]!.value !== POST_PRICE_THREAD) {
+            return {
+              valid: false,
+              error:
+                `Thread price must be exactly ${POST_PRICE_THREAD} karma, ` +
+                `got ${priceOutputs[0]!.value}`,
+            };
+          }
+        } else {
+          // Reply: one KarmaPriceBox of POST_PRICE_REPLY − REPLY_AUTHOR_SHARE,
+          // one LikeAccrualBox of REPLY_AUTHOR_SHARE naming the parent's author.
+          if (priceOutputs.length !== 1 || accrualOutputs.length !== 1 ||
+              karmaOutputs.length > 1 ||
+              outputs.length !== 2 + karmaOutputs.length) {
+            return {
+              valid: false,
+              error:
+                `Invalid reply transition: exactly one karma_price, one ` +
+                `like_accrual, at most one karma output expected`,
+            };
+          }
+          const expectedPrice = POST_PRICE_REPLY - REPLY_AUTHOR_SHARE;
+          if (priceOutputs[0]!.value !== expectedPrice) {
+            return {
+              valid: false,
+              error:
+                `Reply price box must be exactly ${expectedPrice} karma, ` +
+                `got ${priceOutputs[0]!.value}`,
+            };
+          }
+          const marker = accrualOutputs[0] as LikeAccrualBox;
+          if (marker.value !== REPLY_AUTHOR_SHARE) {
+            return {
+              valid: false,
+              error:
+                `Reply accrual marker must carry exactly ${REPLY_AUTHOR_SHARE} ` +
+                `karma, got ${marker.value}`,
+            };
+          }
+          const parentId = post.parentRefs[0]!;
+          const parentAuthor = deps.getTopologyAuthor(parentId);
+          if (parentAuthor === null) {
+            return {
+              valid: false,
+              error: `Reply parent ${parentId} is not confirmed, so it names no author`,
+            };
+          }
+          if (Buffer.from(marker.author).toString('hex') !==
+              Buffer.from(parentAuthor).toString('hex')) {
+            return {
+              valid: false,
+              error:
+                `Reply marker names ${Buffer.from(marker.author).toString('hex')}, ` +
+                `but parent's author is ${Buffer.from(parentAuthor).toString('hex')}`,
+            };
+          }
         }
-      } else if (post !== undefined) {
-        // The biconditional's other direction: a payload with no lock.
+      } else if (priceOutputs.length > 0) {
+        // The biconditional's reverse: a price box with no post payload.
         return {
           valid: false,
-          error: 'A post payload requires exactly one post_lock output',
+          error: 'A karma_price output requires the transaction to carry its post payload',
         };
       } else if (vouchOutputs.length > 0) {
         // karma → karma + vouch
         if (vouchOutputs.length !== 1 ||
             bondOutputs.length > 0 ||
-            postLockOutputs.length > 0) {
+            priceOutputs.length > 0) {
           return {
             valid: false,
             error: `Invalid vouch transition: exactly 1 karma + 1 vouch output expected`,

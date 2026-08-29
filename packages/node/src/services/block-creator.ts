@@ -13,7 +13,6 @@ import {
   STORAGE_RENT_PER_BYTE,
   MAX_BOND_SETTLEMENTS_PER_BLOCK,
   MAX_ESCROW_RETURNS_PER_BLOCK,
-  MAX_POST_LOCK_RELEASES_PER_BLOCK,
   MAX_SETTLEMENT_BYTES,
   boxRecordBytes,
   decodeTx,
@@ -63,10 +62,8 @@ import {
   emptyBody,
   type SettlementBody,
   type SettlementDeps,
-  type ResolvedReleaseCandidate,
 } from './settlement.js';
 import { deriveKarmaDecay } from './decay.js';
-import { planPostLockSettlement } from './settle-post-lock-utxo.js';
 import type { DecayDeps, DecayPlan } from './decay.js';
 import type { KarmaBox, VouchEscrowBox } from '@dagsocial/types';
 import { materializeOutput } from './utxo-engine.js';
@@ -95,9 +92,6 @@ import {
   getTreasuryBox,
   getKarmaPoolBox,
   putIdentityRecord,
-  getLikeRecordCount,
-  getPrunedLockCandidates,
-  getTopologyAuthorBytes,
   getInterlinks,
 } from '../store/index.js';
 
@@ -403,9 +397,8 @@ export function createOrderingBlock(): OrderingBlock | null {
       });
       const postBody = collectPostBodyKarma(decoded);
       const escrows = getVouchEscrowsReleasableAt(newHeight, MAX_ESCROW_RETURNS_PER_BLOCK);
-      const releases = captureReleaseCandidates();
       const built = buildSettlement(
-        settlementDepsWith(() => deriveKarmaDecay(decayDeps, postBody, newHeight, decayConfig()), escrows, releases),
+        settlementDepsWith(() => deriveKarmaDecay(decayDeps, postBody, newHeight, decayConfig()), escrows),
         newHeight,
         computeBlockReward(newHeight),
         nodeConfig.creditMinerRewardDelay,
@@ -909,24 +902,9 @@ export function decayConfig(): {
  * sides snapshot the releasable set before the apply loop and hand it in
  * (NODE_INTERFACE → The settlement transaction).
  */
-/**
- * Capture and resolve the release candidates — the actor for each is the
- * topology author of its pruned root, resolved here so `derive` stays
- * store-free.
- */
-export function captureReleaseCandidates(): ResolvedReleaseCandidate[] {
-  const raw = getPrunedLockCandidates(MAX_POST_LOCK_RELEASES_PER_BLOCK);
-  return raw.map((c) => ({
-    box: c.box,
-    postId: c.postId,
-    actor: getTopologyAuthorBytes(c.prunedRoot)!,
-  }));
-}
-
 export function settlementDepsWith(
   plans: () => DecayPlan[],
   escrows: VouchEscrowBox[],
-  releaseCandidates: ResolvedReleaseCandidate[],
 ): SettlementDeps {
   return {
     getEmissionBox,
@@ -939,7 +917,6 @@ export function settlementDepsWith(
       return invitedAt <= 0 ? [] : getBondsInvitedAt(invitedAt, MAX_BOND_SETTLEMENTS_PER_BLOCK);
     },
     getEscrowsReleasableAt: () => escrows,
-    getReleaseCandidates: () => releaseCandidates,
     getLifetimeLikes: (invitee: Uint8Array) =>
       getIdentityRecord(invitee)?.lifetimeLikesReceived ?? 0n,
     getDecayPlans: plans,
@@ -992,8 +969,6 @@ export function predictSettlementBody(
   const body = emptyBody();
   const embedded: EmbeddedTx[] = [];
   const bodyLikesPerPost = new Map<string, number>();
-  const pendingWithdrawals: Array<{ postId: string; author: Uint8Array }> = [];
-
   for (let i = 0; i < txs.length; i++) {
     const tx = txs[i]!;
     const inputBoxes = (tx.inputs ?? [])
@@ -1007,19 +982,6 @@ export function predictSettlementBody(
       bodyLikesPerPost.set(tx.likeTarget, (bodyLikesPerPost.get(tx.likeTarget) ?? 0) + 1);
     }
 
-    if (tx.postWithdraw && inputBoxes.length > 0) {
-      const author = (inputBoxes[0] as KarmaBox).owner;
-      pendingWithdrawals.push({ postId: tx.postWithdraw.postId, author });
-    }
-
-  }
-
-  // Settlement plans: withdrawals in committed transaction order.
-  for (const w of pendingWithdrawals) {
-    const likeCounts = new Map<string, number>();
-    likeCounts.set(w.postId, getLikeRecordCount(w.postId) + (bodyLikesPerPost.get(w.postId) ?? 0));
-    const plan = planPostLockSettlement(w.postId, w.author, [w.postId], likeCounts);
-    body.postLockSettlements.push(plan);
   }
 
   body.actors = countKarmaActors(embedded, validator);
@@ -1046,9 +1008,8 @@ export function buildBlockSettlement(
   });
   const postBody = collectPostBodyKarma(decoded);
   const escrows = getVouchEscrowsReleasableAt(height, MAX_ESCROW_RETURNS_PER_BLOCK);
-  const releases = captureReleaseCandidates();
   return buildSettlement(
-    settlementDepsWith(() => deriveKarmaDecay(decayDeps, postBody, height, decayConfig()), escrows, releases),
+    settlementDepsWith(() => deriveKarmaDecay(decayDeps, postBody, height, decayConfig()), escrows),
     height,
     computeBlockReward(height),
     nodeConfig.creditMinerRewardDelay,

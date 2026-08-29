@@ -1,13 +1,6 @@
 import * as validation from '@dagsocial/validation';
-import { transferKarma } from './karma-transfer.js';
-import {
-  postlockRemainderContext,
-  postlockUnlockContext,
-} from '../mint-provenance.js';
 import { commitDecayClocks, deriveKarmaDecay } from './decay.js';
 import { hasActiveVouchEscrow } from '../store/utxo.js';
-import { computeVestAmount, planPostLockSettlement } from './settle-post-lock-utxo.js';
-import type { PostLockSettlement } from './settle-post-lock-utxo.js';
 import {
   CorruptChainStateError,
   MissingStoredBlockError,
@@ -16,7 +9,6 @@ import {
 } from './corrupt-state.js';
 import { config } from '../config.js';
 import {
-  captureReleaseCandidates,
   collectPostBodyKarma,
   computeBlockReward,
   computeUtxoTxRoot,
@@ -76,8 +68,6 @@ import {
   recordKarmaActivity,
   hasLikeRecord,
   insertLikeRecord,
-  getLikeRecordCount,
-  getPostLockBox,
   getVouchEscrowsReleasableAt,
   purgeRefusedHeaders,
   getBoxProvenance,
@@ -646,10 +636,6 @@ function applyMutationPhase(
   block: OrderingBlock,
   height: number,
 ): boolean {
-  // What each of this block's prune entries owes, in prune-entry order. Filled
-  // by §5 and consumed by §11a — the settlement pays every leg.
-  const postLockPlans: PostLockSettlement[] = [];
-
   // ⛔ **DECAY AND ESCROWS ARE DERIVED FROM PRE-BODY STATE, AND THEY HAVE
   // TO BE.** Decay is computed after decoding (the touched set comes from the
   // decoded transactions' inputs) but before the apply loop, so the UTXO
@@ -926,7 +912,6 @@ function applyMutationPhase(
   // side only. A prune in this block's body marks rows during §8c, after the
   // capture, so its locks are candidates from h + 1.
   const escrows = getVouchEscrowsReleasableAt(height, MAX_ESCROW_RETURNS_PER_BLOCK);
-  const releaseCandidates = captureReleaseCandidates();
 
   // Multi-pass: try to apply txs, retrying those whose inputs aren't
   // available yet (may have been created by an earlier tx in this block).
@@ -1119,11 +1104,6 @@ function applyMutationPhase(
     queue.push(...remaining);
   }
 
-  // The claimed set — post-lock box ids consumed by withdrawals. A withdrawal
-  // and a prune both targeting one post: the withdrawal forfeits the lock, the
-  // prune marks the topology row but the lock is already claimed.
-  const claimedPostLockIds = new Set<string>();
-
   // 8b. Process withdrawal transactions from this block.
   const withdrawnThisBlock = new Set<string>();
   const blockWithdrawals = withdrawalsOf(block, getTopologyAuthorBytes);
@@ -1155,24 +1135,16 @@ function applyMutationPhase(
     }
     withdrawnThisBlock.add(postId);
 
-    const likeCounts = new Map<string, number>();
-    likeCounts.set(postId, getLikeRecordCount(postId));
-    const plan = planPostLockSettlement(postId, bw.author, [postId], likeCounts);
-    postLockPlans.push(plan);
-    for (const id of plan.lockBoxIds) claimedPostLockIds.add(id);
-
     const priorContent = existing.content;
     recordWithdrawnPost(postId, priorContent);
     withdrawPost(postId, height);
   }
 
-  // 8c. Prune transactions — derived set, deferred locks
-  // (NODE_INTERFACE → Prune transactions).
+  // 8c. Prune transactions — derived set (NODE_INTERFACE → Prune transactions).
   //
   // The set is derived from `getSubtreeTopology(rootPostHash)` as topology
   // stands after §8 populated it from this block, so a same-block reply is
-  // in the set. No lock is consumed in this block — `markPrunedTopology`
-  // records the rows and the release leg settles them from `h + 1`.
+  // in the set.
   const blockPrunes = prunesOf(block, getTopologyAuthorBytes);
   for (const bp of blockPrunes) {
     const { prune } = bp;
@@ -1189,33 +1161,6 @@ function applyMutationPhase(
 
     // The set is derived, not from the payload.
     const subtreePostIds = [...getSubtreeTopology(prune.rootPostHash)];
-
-    // Same-block vest: for each post in `likesPerPost ∩ set` holding a live
-    // lock, vest this block's likes before the like-records are deleted.
-    // §11b will find a count of 0 or no lock and vest nothing twice.
-    for (const postId of subtreePostIds) {
-      if (!likesPerPost.has(postId)) continue;
-      const lockBox = getPostLockBox(postId);
-      if (!lockBox || !lockBox.id) continue;
-      const toUnlock = computeVestAmount(lockBox, getLikeRecordCount(postId));
-      if (toUnlock <= 0n) continue;
-      transferKarma(
-        [lockBox],
-        [{ owner: lockBox.owner, amount: toUnlock, ctx: postlockUnlockContext(postId) }],
-        {
-          shape: (value) => ({
-            boxType: 'post_lock',
-            value,
-            createdAtBlock: height,
-            originalValue: lockBox.originalValue,
-            owner: lockBox.owner,
-          }),
-          ctx: postlockRemainderContext(postId),
-          postLockTarget: postId,
-        },
-        height,
-      );
-    }
 
     const likeTally = deleteLikeRecordsForPosts(subtreePostIds);
 
@@ -1258,11 +1203,10 @@ function applyMutationPhase(
     if (outputs) contributeToBody(settlementBody, outputs, rentTxIds.has(txId));
   }
   settlementBody.actors = countKarmaActors(appliedTxs, block.header.validatorId);
-  settlementBody.postLockSettlements = postLockPlans;
 
   const emission = computeBlockReward(height);
   const settlementCheck = checkSettlement(
-    settlementDepsWith(() => decayPlans, escrows, releaseCandidates),
+    settlementDepsWith(() => decayPlans, escrows),
     height,
     emission,
     config.creditMinerRewardDelay,
@@ -1361,49 +1305,6 @@ function applyMutationPhase(
       invitedAtBlock: after?.invitedAtBlock ?? 0,
       lifetimeLikesReceived: (after?.lifetimeLikesReceived ?? 0n) + received,
     });
-  }
-
-  // Post-lock vesting, ascending post-id order, for posts liked this block that
-  // hold a live PostLockBox. Evaluated per block, from the post's lifetime like
-  // count — so the result is independent of how the likes were spread across
-  // blocks.
-  //
-  // Posts settled by §8c above have their vest folded
-  // into the settlement plan; the settlement at §11a consumed their lock box,
-  // so `getPostLockBox` returns null and the loop skips them naturally.
-  for (const postId of [...likesPerPost.keys()].sort()) {
-    const lockBox = getPostLockBox(postId);
-    if (!lockBox || !lockBox.id) continue;
-    const toUnlock = computeVestAmount(lockBox, getLikeRecordCount(postId));
-    if (toUnlock <= 0n) continue;
-    // ⛔ **The `PostLockBox` is the source, and naming it is the whole change**
-    // (ARCHITECTURE → How a source and a sink get named, first shape). The
-    // unlocked karma returns to the lock's owner — the author who locked it:
-    // committed value-layer state, not a `dag_posts` read — and whatever the
-    // schedule has not yet released stays in a reduced lock whose value
-    // `transferKarma` computes. A fully-unlocked lock is consumed without a
-    // remainder. One remainder per post per block, so
-    // `(height, 'postlock-remainder', postId)` cannot repeat.
-    transferKarma(
-      [lockBox],
-      [{ owner: lockBox.owner, amount: toUnlock, ctx: postlockUnlockContext(postId) }],
-      {
-        shape: (value) => ({
-          boxType: 'post_lock',
-          value,
-          createdAtBlock: height,
-          originalValue: lockBox.originalValue,
-          owner: lockBox.owner,
-        }),
-        ctx: postlockRemainderContext(postId),
-        // ⛔ Derivation route 2 (`insertBox`): this box's provenance names the
-        // MINT, not the post, so the target must be passed. Deriving it from
-        // the remainder's `txId` would produce an id computed from a synthetic
-        // mint.
-        postLockTarget: postId,
-      },
-      height,
-    );
   }
 
   // 12. Advance the decay clock for every identity the settlement charged.

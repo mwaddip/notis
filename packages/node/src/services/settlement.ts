@@ -83,8 +83,6 @@ import type {
 } from '@dagsocial/types';
 import { splitCoinbase } from './coinbase-split.js';
 import type { DecayPlan } from './decay.js';
-import type { PostLockSettlement } from './settle-post-lock-utxo.js';
-import type { PrunedLockCandidate } from '../store/utxo.js';
 
 // ---------------------------------------------------------------------------
 // The body a settlement is derived from
@@ -126,8 +124,12 @@ export interface SettlementBody {
    * (NODE_INTERFACE → Per-block like settlement).
    */
   markers: Array<{ id: string; author: Uint8Array; value: bigint }>;
-  /** What each of the block's prune transactions owes, in committed order. */
-  postLockSettlements: PostLockSettlement[];
+  /**
+   * Every `KarmaPriceBox` the body's post transactions created, in committed
+   * transaction order. The settlement consumes them and returns their sum to
+   * the pool (NODE_INTERFACE → The settlement transaction).
+   */
+  priceBoxIds: string[];
 }
 
 /**
@@ -160,19 +162,10 @@ export interface SettlementDeps {
   getBondsSettlingAt: (height: number) => BondBox[];
   /** Unspent escrows at or past `releaseAtBlock`, ascending box id, pre-body. */
   getEscrowsReleasableAt: (height: number) => VouchEscrowBox[];
-  /** Pruned locks eligible for release, ascending `(pruned_at_height, post_id)`, pre-body, actor resolved at capture. */
-  getReleaseCandidates: () => ResolvedReleaseCandidate[];
   /** `IdentityRecord.lifetimeLikesReceived` — the one field a bond settles against. */
   getLifetimeLikes: (invitee: Uint8Array) => bigint;
   /** What every stale identity owes, in the decay pass's stated owner order. */
   getDecayPlans: () => DecayPlan[];
-}
-
-/** A pruned lock candidate with its actor already resolved at capture. */
-export interface ResolvedReleaseCandidate {
-  box: PrunedLockCandidate['box'];
-  postId: string;
-  actor: Uint8Array;
 }
 
 /** What a settlement's construction or check answers with. */
@@ -387,29 +380,13 @@ function derive(
     poolSink += plan.burnAmount;
   }
 
-  // 3f. Post-lock withdrawal settlements, in committed transaction order.
-  for (const plan of body.postLockSettlements) {
-    for (const id of plan.lockBoxIds) inputs.push(id);
-    poolSink += plan.toPool;
-  }
-
-  // 3g. The release leg — pruned locks whose topology row is marked, deferred
-  // from the prune's block (NODE_INTERFACE → The post-lock settlement phase).
-  // Actor's own locks go to the pool; others get a per-owner refund.
-  const candidates = deps.getReleaseCandidates();
-  const releaseRefunds = new Map<string, { owner: Uint8Array; amount: bigint }>();
-  for (const c of candidates) {
-    if (!c.box.id) continue;
-    inputs.push(c.box.id);
-    const ownerHex = hexOf(c.box.owner);
-    const actorHex = hexOf(c.actor);
-    if (ownerHex === actorHex) {
-      poolSink += c.box.value;
-    } else {
-      const existing = releaseRefunds.get(ownerHex);
-      if (existing) existing.amount += c.box.value;
-      else releaseRefunds.set(ownerHex, { owner: c.box.owner, amount: c.box.value });
-    }
+  // 3f. The price leg — every KarmaPriceBox the body's post transactions
+  // created, in committed transaction order. Their sum returns to the pool
+  // (NODE_INTERFACE → The settlement transaction).
+  for (const priceBoxId of body.priceBoxIds) {
+    inputs.push(priceBoxId);
+    const box = deps.getBox(priceBoxId);
+    if (box) poolSink += box.value;
   }
 
   // ---- 4. The karma pool, settled once ----
@@ -497,20 +474,6 @@ function derive(
       });
     }
   }
-  for (const plan of body.postLockSettlements) {
-    for (const refund of plan.refunds) {
-      outputs.push({ boxType: 'karma', value: refund.amount, owner: refund.owner, createdAtBlock: height });
-    }
-  }
-  // Release refunds, ascending owner hex (NODE_INTERFACE → The settlement
-  // transaction). No vest term — §8c vested the prune block's likes already.
-  for (const ownerHex of [...releaseRefunds.keys()].sort()) {
-    const refund = releaseRefunds.get(ownerHex)!;
-    if (refund.amount > 0n) {
-      outputs.push({ boxType: 'karma', value: refund.amount, owner: refund.owner, createdAtBlock: height });
-    }
-  }
-
   return {
     derived: {
       inputs,
@@ -859,6 +822,7 @@ export function settlementMarginalBytes(tx: UtxoTransaction): number {
     // terms already over-count against — an author with `k` likes reserves `k`
     // inputs and needs `k + 1`, and the sizer has the last word either way.
     else if (out.boxType === 'like_accrual') bytes += INPUT_BYTES;
+    else if (out.boxType === 'karma_price') bytes += INPUT_BYTES;
   }
   return bytes;
 }
@@ -886,21 +850,17 @@ export function contributeToBody(body: SettlementBody, outputs: AnyBox[], isRent
       const bond = out as BondBox;
       body.invites.push({ invitee: bond.inviteePublicKey, amount: bond.value });
     } else if (out.boxType === 'like_accrual') {
-      // ⛔ **Only a like transaction can put one here**, and the engine's
-      // biconditional is what makes that true in both directions: `likeTarget`
-      // present ⟺ exactly one marker of `LIKE_KARMA_COST` naming the target's
-      // author (NODE_INTERFACE → Karma transition rules). Without the converse
-      // an ordinary karma transfer could emit a marker, balance, and be paid out
-      // here — so this loop's correctness is the engine's, not its own.
       const marker = out as LikeAccrualBox;
       body.markers.push({ id: marker.id!, author: marker.author, value: marker.value });
+    } else if (out.boxType === 'karma_price') {
+      body.priceBoxIds.push(out.id!);
     }
   }
 }
 
 /** A body with nothing in it yet. */
 export function emptyBody(): SettlementBody {
-  return { fees: 0n, rent: 0n, actors: 0, feeBoxIds: [], invites: [], markers: [], postLockSettlements: [] };
+  return { fees: 0n, rent: 0n, actors: 0, feeBoxIds: [], invites: [], markers: [], priceBoxIds: [] };
 }
 
 /**
