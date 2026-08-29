@@ -1,19 +1,55 @@
+import { RETARGET_HALFLIFE_BLOCKS } from '@dagsocial/types';
+import { asertTargetBits } from '@dagsocial/validation';
+import type { RetargetParams } from '@dagsocial/validation';
+import type { BlockHeader } from '@dagsocial/types';
 import { config } from '../config.js';
+import { getBlockCreatedAt } from '../store/index.js';
+import { getCurrentHeight } from '../store/index.js';
+import { MissingStoredBlockError } from './corrupt-state.js';
+
+export function retargetParams(): RetargetParams {
+  return {
+    anchorBits: config.orderingBlockPowTargetBits,
+    idealMs: config.orderingBlockIdealMs,
+    halflifeMs: RETARGET_HALFLIFE_BLOCKS * config.orderingBlockIdealMs,
+    floorBits: config.orderingBlockPowTargetFloorBits,
+    ceilingBits: config.orderingBlockPowTargetCeilingBits,
+  };
+}
 
 /**
- * The ordering-block PoW target for a given height.
- *
- * On-chain time is block height, so the difficulty schedule is a pure function
- * of height: two honest nodes compute the same target for the same block, for
- * all time, with no reference to a wall clock. The target is fixed — a
- * hashrate-tracking retarget needs a deterministic on-chain time source (e.g.
- * median-of-header-timestamps with future bounds) and is deferred.
- *
- * The value comes from the shared config singleton rather than a caller-supplied
- * config so the block producer and `applyOrderingBlock` cannot disagree: this is
- * a network-wide consensus parameter, and a block mined against one value is
- * rejected by any node holding another.
+ * Block 1's stored `createdAt` — the ASERT anchor timestamp.
+ * NODE_INTERFACE → Difficulty schedule: `t_a` is `ordering_blocks.created_at`
+ * at height 1. A chain with a tip and no block 1 is a store that lost a row.
  */
-export function expectedTarget(_height: number): number {
-  return config.orderingBlockPowTargetBits;
+export function anchorCreatedAt(): number {
+  const stamp = getBlockCreatedAt(1);
+  if (stamp === null) {
+    const tip = getCurrentHeight();
+    if (tip > 0) {
+      throw new MissingStoredBlockError('anchorCreatedAt', 1);
+    }
+    throw new MissingStoredBlockError('anchorCreatedAt', 1);
+  }
+  return stamp;
+}
+
+/**
+ * The target the block above `parent` must carry — the schedule evaluated
+ * over the stored anchor. MINING_INTERFACE → Difficulty Schedule.
+ */
+export function scheduledTargetBits(parent: BlockHeader): number {
+  return asertTargetBits(retargetParams(), anchorCreatedAt(), parent);
+}
+
+// NODE_INTERFACE → Difficulty schedule: the clock seam. `nowMs()` returns
+// `Date.now()` unless a test has set `setClock(fn)`.
+let clockFn: (() => number) | null = null;
+
+export function nowMs(): number {
+  return clockFn !== null ? clockFn() : Date.now();
+}
+
+export function setClock(fn: (() => number) | null): void {
+  clockFn = fn;
 }

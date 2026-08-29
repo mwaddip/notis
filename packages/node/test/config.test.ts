@@ -336,45 +336,101 @@ describe('config', () => {
     });
   });
 
-  // The producer half of the ordering-block floor. `verifyOrderingBlockStructure`
-  // refuses an arriving header below it (VALIDATION_INTERFACE →
-  // orderingPowTarget); `expectedTarget()` returns the configured value
-  // unchecked, so a profile below the floor builds templates this node's own
-  // verifier — and every peer's — refuses: a node that stays up, mines, and
-  // never produces. The profile table is the only source, so the profile is
-  // what this mocks.
-  describe('9. ordering-block target floor', () => {
-    // Refusal, never clamping: silently raising a below-floor value mines the
-    // chain against a target nobody configured. `config.ts` ends in
-    // `export const config = loadConfig()`, so the refusal lands on the import.
-    function importWithOrderingTarget(orderingBlockPowTargetBits: number) {
+  // NODE_INTERFACE → Configuration: the difficulty band is refused at load,
+  // never clamped. Each comparison is negated so `NaN` refuses too.
+  describe('9. ordering-block difficulty band', () => {
+    function importWithBand(overrides: Record<string, unknown>) {
       vi.doMock('@dagsocial/types', async (importOriginal) => {
         const actual = await importOriginal<typeof import('@dagsocial/types')>();
         return {
           ...actual,
           profileFor: (networkType: string) => ({
             ...actual.profileFor(networkType as never),
-            orderingBlockPowTargetBits,
+            ...overrides,
           }),
         };
       });
       return import('../src/config.js');
     }
 
-    it('refuses to start on a profile whose ordering target is below the floor', async () => {
+    it('refuses a floor below ORDERING_BLOCK_POW_TARGET_FLOOR', async () => {
       await expect(
-        importWithOrderingTarget(ORDERING_BLOCK_POW_TARGET_FLOOR - 1),
+        importWithBand({ orderingBlockPowTargetFloorBits: ORDERING_BLOCK_POW_TARGET_FLOOR - 1 }),
       ).rejects.toThrow(/below the ordering-block floor/i);
     });
 
-    // The floor is admissible, so the comparison is `<` and not `<=`.
+    it('refuses an anchor below the floor', async () => {
+      await expect(
+        importWithBand({ orderingBlockPowTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR - 1 }),
+      ).rejects.toThrow(/below floorBits/i);
+    });
+
+    it('refuses an anchor above the ceiling', async () => {
+      await expect(
+        importWithBand({
+          orderingBlockPowTargetBits: 65537,
+          orderingBlockPowTargetCeilingBits: 65536,
+        }),
+      ).rejects.toThrow(/below anchorBits/i);
+    });
+
+    it('refuses a ceiling above 65536', async () => {
+      await expect(
+        importWithBand({ orderingBlockPowTargetCeilingBits: 65537 }),
+      ).rejects.toThrow(/exceeds 65536/i);
+    });
+
+    it('refuses a non-positive idealMs', async () => {
+      await expect(
+        importWithBand({ orderingBlockIdealMs: 0 }),
+      ).rejects.toThrow(/not positive/i);
+    });
+
+    it('refuses NaN in each band field', async () => {
+      await expect(importWithBand({ orderingBlockPowTargetFloorBits: NaN }))
+        .rejects.toThrow(/below the ordering-block floor/i);
+      vi.resetModules(); vi.doUnmock('@dagsocial/types');
+      await expect(importWithBand({ orderingBlockPowTargetBits: NaN }))
+        .rejects.toThrow(/below floorBits/i);
+      vi.resetModules(); vi.doUnmock('@dagsocial/types');
+      await expect(importWithBand({ orderingBlockPowTargetCeilingBits: NaN }))
+        .rejects.toThrow(/below anchorBits/i);
+      vi.resetModules(); vi.doUnmock('@dagsocial/types');
+      await expect(importWithBand({ orderingBlockIdealMs: NaN }))
+        .rejects.toThrow(/not positive/i);
+    });
+
     it('accepts a profile sitting exactly on the floor', async () => {
-      const { loadConfig } = await importWithOrderingTarget(
-        ORDERING_BLOCK_POW_TARGET_FLOOR,
-      );
+      const { loadConfig } = await importWithBand({
+        orderingBlockPowTargetFloorBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
+        orderingBlockPowTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
+      });
       expect(loadConfig().orderingBlockPowTargetBits).toBe(
         ORDERING_BLOCK_POW_TARGET_FLOOR,
       );
+    });
+
+    it('copies the three schedule fields from the profile per network', async () => {
+      // Devnet
+      process.env['NETWORK_TYPE'] = 'devnet';
+      const devMod = await import('../src/config.js');
+      const dev = devMod.loadConfig();
+      expect(dev.orderingBlockIdealMs).toBe(NETWORK_PROFILES.devnet.orderingBlockIdealMs);
+      expect(dev.orderingBlockPowTargetFloorBits).toBe(NETWORK_PROFILES.devnet.orderingBlockPowTargetFloorBits);
+      expect(dev.orderingBlockPowTargetCeilingBits).toBe(NETWORK_PROFILES.devnet.orderingBlockPowTargetCeilingBits);
+
+      vi.resetModules(); vi.doUnmock('@dagsocial/types'); clearTestEnv();
+
+      // Testnet
+      process.env['NETWORK_TYPE'] = 'testnet';
+      const testMod = await import('../src/config.js');
+      const tn = testMod.loadConfig();
+      expect(tn.orderingBlockIdealMs).toBe(NETWORK_PROFILES.testnet.orderingBlockIdealMs);
+      expect(tn.orderingBlockPowTargetFloorBits).toBe(NETWORK_PROFILES.testnet.orderingBlockPowTargetFloorBits);
+      expect(tn.orderingBlockPowTargetCeilingBits).toBe(NETWORK_PROFILES.testnet.orderingBlockPowTargetCeilingBits);
+
+      // Devnet and testnet disagree on ceiling
+      expect(dev.orderingBlockPowTargetCeilingBits).not.toBe(tn.orderingBlockPowTargetCeilingBits);
     });
   });
 

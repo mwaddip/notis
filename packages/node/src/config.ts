@@ -63,6 +63,9 @@ export interface Config {
   // Mining
   miningSecret: string;          // bearer token for mining API, required non-empty on a miner
   orderingBlockPowTargetBits: number;
+  orderingBlockIdealMs: number;
+  orderingBlockPowTargetFloorBits: number;
+  orderingBlockPowTargetCeilingBits: number;
   /** Blocks before a coinbase output is spendable. Apply-time consensus check (MINING invariant 3). */
   creditMinerRewardDelay: number;
   // Emission schedule shape. `computeBlockReward` is a consensus function on
@@ -135,6 +138,9 @@ export function loadConfig(): Readonly<Config> {
     // Mining
     miningSecret: process.env['MINING_SECRET'] ?? '',
     orderingBlockPowTargetBits: profile.orderingBlockPowTargetBits,
+    orderingBlockIdealMs: profile.orderingBlockIdealMs,
+    orderingBlockPowTargetFloorBits: profile.orderingBlockPowTargetFloorBits,
+    orderingBlockPowTargetCeilingBits: profile.orderingBlockPowTargetCeilingBits,
     creditMinerRewardDelay: profile.creditMinerRewardDelay,
     creditFixedRateBlocks: profile.creditFixedRateBlocks,
     creditEpochBlocks: profile.creditEpochBlocks,
@@ -278,25 +284,41 @@ function assertProofHistoryCoversReorgDepth(cfg: Config): void {
 }
 
 /**
- * The producer half of the ordering-block floor.
- * `verifyOrderingBlockStructure` refuses an arriving header below
- * `ORDERING_BLOCK_POW_TARGET_FLOOR` (VALIDATION_INTERFACE → orderingPowTarget),
- * and `expectedTarget()` returns this field unchecked — so a profile below the
- * floor builds templates this node's own verifier, and every peer's, refuses. A
- * node that stays up, mines, and never produces: silence in the direction that
- * costs the chain.
- *
- * Refusal, never clamping. Raising a below-floor value to the floor would mine
- * the chain against a target nobody configured; failing at load puts the verdict
- * where a human is reading it.
+ * The difficulty band is refused at load, never clamped.
+ * NODE_INTERFACE → Configuration: `floorBits >= ORDERING_BLOCK_POW_TARGET_FLOOR`,
+ * `floorBits <= anchorBits <= ceilingBits`, `ceilingBits <= 65536`,
+ * `idealMs > 0`. Each comparison is negated so `NaN` refuses.
  */
 function assertOrderingTargetAboveFloor(cfg: Config): void {
-  if (cfg.orderingBlockPowTargetBits < ORDERING_BLOCK_POW_TARGET_FLOOR) {
+  const net = cfg.networkType;
+  if (!(cfg.orderingBlockPowTargetFloorBits >= ORDERING_BLOCK_POW_TARGET_FLOOR)) {
+    throw new Error(
+      `orderingBlockPowTargetFloorBits ${cfg.orderingBlockPowTargetFloorBits} for network ` +
+        `"${net}" is below the ordering-block floor ${ORDERING_BLOCK_POW_TARGET_FLOOR}`,
+    );
+  }
+  if (!(cfg.orderingBlockPowTargetBits >= cfg.orderingBlockPowTargetFloorBits)) {
     throw new Error(
       `orderingBlockPowTargetBits ${cfg.orderingBlockPowTargetBits} for network ` +
-        `"${cfg.networkType}" is below the ordering-block floor ` +
-        `${ORDERING_BLOCK_POW_TARGET_FLOOR} — every header this node built ` +
-        'would be refused by its own verifier',
+        `"${net}" is below floorBits ${cfg.orderingBlockPowTargetFloorBits}`,
+    );
+  }
+  if (!(cfg.orderingBlockPowTargetCeilingBits >= cfg.orderingBlockPowTargetBits)) {
+    throw new Error(
+      `orderingBlockPowTargetCeilingBits ${cfg.orderingBlockPowTargetCeilingBits} for network ` +
+        `"${net}" is below anchorBits ${cfg.orderingBlockPowTargetBits}`,
+    );
+  }
+  if (!(cfg.orderingBlockPowTargetCeilingBits <= 65536)) {
+    throw new Error(
+      `orderingBlockPowTargetCeilingBits ${cfg.orderingBlockPowTargetCeilingBits} for network ` +
+        `"${net}" exceeds 65536`,
+    );
+  }
+  if (!(cfg.orderingBlockIdealMs > 0)) {
+    throw new Error(
+      `orderingBlockIdealMs ${cfg.orderingBlockIdealMs} for network ` +
+        `"${net}" is not positive`,
     );
   }
 }
