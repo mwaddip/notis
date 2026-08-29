@@ -207,7 +207,34 @@ describe('the conservation axiom holds over a chain', () => {
     const target = makeTestIdentity();
     const author = makeTestIdentity();
 
-    // The inviter's stake, the voucher's balance, and one liker per like.
+    // Seed actors as roots so vouch and invite arms pass the membership check.
+    const { putIdentityRecord } = await import('../../src/store/identity-records.js');
+    for (const actor of [inviter, voucher]) {
+      putIdentityRecord(actor.userId, {
+        lastActivityBlock: 1,
+        lastDecayBlock: 0,
+        invitedAtBlock: 0,
+        lifetimeLikesReceived: 0n,
+        memberSinceBlock: 1,
+        memberBar: 0,
+        memberVouches: 0,
+        memberLikes: 0n,
+        invitesUsed: 0,
+      });
+    }
+    // The vouch target needs a record (NODE_INTERFACE → Vouch transition rules).
+    putIdentityRecord(target.userId, {
+      lastActivityBlock: 1,
+      lastDecayBlock: 0,
+      invitedAtBlock: 1,
+      lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
+    });
+
     const inviterKarma = makeKarmaBox(200n, inviter.userId, 0, 901);
     const voucherKarma = makeKarmaBox(50n, voucher.userId, 0, 902);
     utxo.insertBox(inviterKarma);
