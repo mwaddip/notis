@@ -9,6 +9,7 @@ export {
   MAX_SETTLEMENT_BYTES,
   MAX_BOND_SETTLEMENTS_PER_BLOCK,
   MAX_ESCROW_RETURNS_PER_BLOCK,
+  MAX_LAPSE_WITHDRAWALS_PER_BLOCK,
   BOX_VALUE_BOUND,
   AVL_KEY_LENGTH,
   KARMA_POSTING_MINIMUM,
@@ -21,6 +22,7 @@ export {
   REPLY_AUTHOR_SHARE,
   LIKE_KARMA_COST,
   LIKES_PER_KARMA_PAYOUT,
+  MEMBER_LIKES_MULTIPLIER,
   VOUCH_KARMA_AMOUNT,
   VOUCH_MIN_BALANCE,
   VOUCH_COOLDOWN_BLOCKS,
@@ -133,6 +135,9 @@ export type {
   UtxoTransaction,
   TxId,
 } from './utxo.js';
+
+// Membership — TYPES_INTERFACE → Membership; ARCHITECTURE → Membership
+export { icbrt, membershipBar, memberLikesBar } from './membership.js';
 
 // Stumps / prune / post-withdrawal
 export { postWithdrawFieldBytes, pruneFieldBytes } from './stump.js';

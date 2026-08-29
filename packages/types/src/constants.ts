@@ -61,6 +61,7 @@ export const MAX_SETTLEMENT_BYTES = 100_000;     // consensus — the encoded se
 // TYPES_INTERFACE → Settlement caps
 export const MAX_BOND_SETTLEMENTS_PER_BLOCK = 64;
 export const MAX_ESCROW_RETURNS_PER_BLOCK = 64;
+export const MAX_LAPSE_WITHDRAWALS_PER_BLOCK = 64;
 
 /**
  * The accepted domain of a box `value` — TYPES_INTERFACE → Box value domain.
@@ -116,6 +117,9 @@ export const REPLY_AUTHOR_SHARE = 1n;       // consensus — the part of a reply
 // Likes — one-way burns settled per block (ARCHITECTURE → Per-block accrual and settlement)
 export const LIKE_KARMA_COST = 1n;        // Karma burned by the liker per like (bigint)
 export const LIKES_PER_KARMA_PAYOUT = 5;  // x: per x likes an author accrues x−1; 1 is burned
+
+// Membership — ARCHITECTURE → Membership; TYPES_INTERFACE → Membership
+export const MEMBER_LIKES_MULTIPLIER = 2; // Y(N) = MEMBER_LIKES_MULTIPLIER · D(N)
 
 // Vouch
 export const VOUCH_KARMA_AMOUNT = 1n;         // Karma locked per vouch
