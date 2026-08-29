@@ -129,7 +129,7 @@ export interface SettlementBody {
    * transaction order. The settlement consumes them and returns their sum to
    * the pool (NODE_INTERFACE → The settlement transaction).
    */
-  priceBoxIds: string[];
+  priceBoxes: Array<{ id: string; value: bigint }>;
 }
 
 /**
@@ -382,11 +382,12 @@ function derive(
 
   // 3f. The price leg — every KarmaPriceBox the body's post transactions
   // created, in committed transaction order. Their sum returns to the pool
-  // (NODE_INTERFACE → The settlement transaction).
-  for (const priceBoxId of body.priceBoxIds) {
-    inputs.push(priceBoxId);
-    const box = deps.getBox(priceBoxId);
-    if (box) poolSink += box.value;
+  // (NODE_INTERFACE → The settlement transaction). Value is carried in the
+  // body, not read from the store: on the creator side the box is in the
+  // pool, not yet applied.
+  for (const price of body.priceBoxes) {
+    inputs.push(price.id);
+    poolSink += price.value;
   }
 
   // ---- 4. The karma pool, settled once ----
@@ -853,14 +854,14 @@ export function contributeToBody(body: SettlementBody, outputs: AnyBox[], isRent
       const marker = out as LikeAccrualBox;
       body.markers.push({ id: marker.id!, author: marker.author, value: marker.value });
     } else if (out.boxType === 'karma_price') {
-      body.priceBoxIds.push(out.id!);
+      body.priceBoxes.push({ id: out.id!, value: out.value });
     }
   }
 }
 
 /** A body with nothing in it yet. */
 export function emptyBody(): SettlementBody {
-  return { fees: 0n, rent: 0n, actors: 0, feeBoxIds: [], invites: [], markers: [], priceBoxIds: [] };
+  return { fees: 0n, rent: 0n, actors: 0, feeBoxIds: [], invites: [], markers: [], priceBoxes: [] };
 }
 
 /**

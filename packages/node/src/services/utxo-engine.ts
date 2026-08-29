@@ -1241,6 +1241,26 @@ export function checkTxEnvelope(tx: unknown): UtxoResult {
     };
   }
 
+  // ---- 7b. At most one payload field (NODE_INTERFACE → Transaction envelope
+  // shape). A transaction carries likeTarget, post, prune or postWithdraw —
+  // never two. Without this a like carrying a PostCommit confirms the post
+  // under any author the commit names, for LIKE_KARMA_COST.
+  {
+    const payloads: string[] = [];
+    if (tx.likeTarget !== undefined) payloads.push('likeTarget');
+    if (tx.post !== undefined) payloads.push('post');
+    if (tx.prune !== undefined) payloads.push('prune');
+    if (tx.postWithdraw !== undefined) payloads.push('postWithdraw');
+    if (payloads.length > 1) {
+      return {
+        valid: false,
+        error:
+          `Invalid tx envelope: at most one payload field allowed, ` +
+          `got ${payloads.join(' and ')}`,
+      };
+    }
+  }
+
   // ---- 8. likeTarget: absent, or a post id ----
   //
   // Presence is `!== undefined`, the same test `computeTxId` applies — see
