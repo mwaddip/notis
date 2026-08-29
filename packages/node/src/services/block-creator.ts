@@ -968,7 +968,6 @@ export function predictSettlementBody(
 
   const body = emptyBody();
   const embedded: EmbeddedTx[] = [];
-  const bodyLikesPerPost = new Map<string, number>();
   for (let i = 0; i < txs.length; i++) {
     const tx = txs[i]!;
     const inputBoxes = (tx.inputs ?? [])
@@ -977,11 +976,6 @@ export function predictSettlementBody(
     embedded.push({ tx, inputBoxes });
     const isRent = isCreditSideTx(tx) && Object.keys(tx.signatures).length === 0;
     contributeToBody(body, materialized[i]!, isRent);
-
-    if (tx.likeTarget !== undefined) {
-      bodyLikesPerPost.set(tx.likeTarget, (bodyLikesPerPost.get(tx.likeTarget) ?? 0) + 1);
-    }
-
   }
 
   body.actors = countKarmaActors(embedded, validator);

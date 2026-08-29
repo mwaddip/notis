@@ -858,7 +858,6 @@ function applyMutationPhase(
   // speculative (creator) run accrues and settles identically and its rollback
   // discards everything with it.
   const likesPerAuthor = new Map<string, number>(); // author hex → likes this block
-  const likesPerPost = new Map<string, number>(); // post id → likes this block
 
   // What the settlement is derived from, accumulated as each transaction is
   // applied (MINING_INTERFACE → Coinbase Application). Gathered here rather than
@@ -1067,10 +1066,6 @@ function applyMutationPhase(
         likesPerAuthor.set(
           likeToRecord.authorHex,
           (likesPerAuthor.get(likeToRecord.authorHex) ?? 0) + 1,
-        );
-        likesPerPost.set(
-          likeToRecord.targetPostId,
-          (likesPerPost.get(likeToRecord.targetPostId) ?? 0) + 1,
         );
       }
 
