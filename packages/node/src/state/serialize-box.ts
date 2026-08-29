@@ -191,7 +191,7 @@ export function deserializeNetworkRecord(bytes: Uint8Array): NetworkRecord {
  * The box `id` is NOT restored — callers must supply it separately (it is the
  * AVL key, and `deserializeBoxWithId` is the helper that reattaches it).
  *
- * Rejects the record tag rather than mis-decoding it. The tree holds two entity
+ * Rejects the record tag rather than mis-decoding it. The tree holds three entity
  * kinds and their keys are indistinguishable from outside — both are 32 bytes of
  * hash output — so a caller that can see either value MUST dispatch on the tag
  * via `deserializeAvlValue`, not assume "box". `0x80` is outside `enum8`'s tag

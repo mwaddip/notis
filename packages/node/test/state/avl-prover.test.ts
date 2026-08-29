@@ -250,7 +250,7 @@ describe('canonical prover-feed ordering (M-12)', () => {
     expect(Buffer.from(d1!).equals(Buffer.from(d2!))).toBe(true);
   });
 
-  // --- Two entity kinds through bootstrap -----------------------------------
+  // --- Three entity kinds through bootstrap ---------------------------------
 
   it('bootstrapAvlProver: shuffled records → identical digest', () => {
     const h1 = createAvlProver(db);

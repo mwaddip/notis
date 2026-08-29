@@ -76,10 +76,10 @@ describe('GET /api/v1/proof/:boxId', () => {
     expect(res.body.proof).toBeTruthy(); // exclusion proof still returned
   });
 
-  // --- Two entity kinds -----------------------------------------------------
+  // --- Three entity kinds ---------------------------------------------------
 
   it('serves an identity record instead of throwing on it', async () => {
-    // NODE_INTERFACE → "Two entity kinds". Keys are indistinguishable from
+    // NODE_INTERFACE → Three entity kinds. Keys are indistinguishable from
     // outside — both kinds are 32 bytes of hash output — so a client asking for
     // a record key is reachable, and an endpoint that decoded every value as a
     // box would 500 on committed state it is required to serve.

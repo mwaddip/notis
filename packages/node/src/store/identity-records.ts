@@ -101,7 +101,7 @@ export interface IdentityRecord {
  *
  * Records and boxes share one 32-byte AVL keyspace, and an `identityId` is 32
  * *attacker-chosen* bytes (a public key): used raw, someone could grind a
- * keypair whose pubkey equals a live box id and collide the two entity kinds in
+ * keypair whose pubkey equals a live box id and collide the three entity kinds in
  * the tree. Hashing under a domain tag makes that infeasible, and is what makes
  * the two kinds provably disjoint — by domain separation, not by luck.
  */
