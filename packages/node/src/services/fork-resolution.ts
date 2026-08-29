@@ -548,19 +548,26 @@ export async function resolveFork(
       .filter(h => h.height > forkHeight)
       .sort((a, b) => a.height - b.height);
 
+    // Slice the residual into ≤ MAX_CHAIN_RESPONSE_ITEMS pages so the
+    // "page-aligned, at most 399 blocks past the shortest heavier prefix"
+    // bound holds for the residual too.
+    const residualPages: BlockHeader[][] = [];
+    for (let i = 0; i < forkWalkAboveFork.length; i += MAX_CHAIN_RESPONSE_ITEMS) {
+      residualPages.push(forkWalkAboveFork.slice(i, i + MAX_CHAIN_RESPONSE_ITEMS));
+    }
+
     let topScored = forkHeight;
-    let firstPage = true;
+    let residualIndex = 0;
 
     // One loop: get a page (or use the fork walk's residual), verify, stop rules.
     while (true) {
       let page: BlockHeader[];
 
-      if (firstPage && forkWalkAboveFork.length > 0) {
-        page = forkWalkAboveFork;
+      if (residualIndex < residualPages.length) {
+        page = residualPages[residualIndex]!;
         topScored = page[page.length - 1]!.height;
-        firstPage = false;
+        residualIndex++;
       } else {
-        firstPage = false;
         const requestH = topScored + MAX_CHAIN_RESPONSE_ITEMS;
         const raw = await net.requestHeaders(requestH, MAX_CHAIN_RESPONSE_ITEMS, peerId);
         const trimmed = raw.filter(h => h.height > topScored);
