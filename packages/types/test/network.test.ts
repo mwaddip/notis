@@ -37,6 +37,7 @@ const REQUIRED_PROFILE_FIELDS = [
   'genesisKarmaPerMember',
   'inviteBondMin',
   'inviteBondMax',
+  'membershipBarMultiplier',
   'genesisProofPayload',
   'genesisStateRoot',
   'genesisId',
@@ -152,7 +153,7 @@ describe('NETWORK_PROFILES', () => {
     // join them, and the list is what makes each difference declared rather than
     // discovered. `inviteBondMin` is deliberately absent — testnet inherits
     // mainnet's floor.
-    const relaxedCaps = new Set(['inviteBondMax']);
+    const relaxedCaps = new Set(['inviteBondMax', 'membershipBarMultiplier']);
     const { mainnet, testnet } = NETWORK_PROFILES;
     // ⛔ Derived from the profiles, never from a literal list. A hardcoded set
     // goes on passing while a field added to either profile sits uncompared, so
@@ -248,6 +249,15 @@ describe('NETWORK_PROFILES', () => {
     const devnet = NETWORK_PROFILES.devnet;
     expect(devnet.storageRentPeriodBlocks).toBe(40);
     expect(devnet.storageRentPeriodBlocks).toBeGreaterThan(MAX_REORG_DEPTH + 7);
+  });
+
+  // ARCHITECTURE → What varies per network: the multiplier is a cap, field-only.
+  // Each profile's own literal, since testnet differs from mainnet and inherits
+  // by spread otherwise.
+  it('membershipBarMultiplier is 10 on mainnet, 1 on testnet and devnet', () => {
+    expect(NETWORK_PROFILES.mainnet.membershipBarMultiplier).toBe(10);
+    expect(NETWORK_PROFILES.testnet.membershipBarMultiplier).toBe(1);
+    expect(NETWORK_PROFILES.devnet.membershipBarMultiplier).toBe(1);
   });
 
   it('probation outlasts the stale threshold on every profile', () => {

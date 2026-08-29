@@ -56,6 +56,10 @@ export interface NetworkProfile {
   // Storage rent — the period between collections, in blocks
   readonly storageRentPeriodBlocks: number;
 
+  // Membership — k in D(N) = max(1, icbrt(k · N)); a cap, field-only
+  // (ARCHITECTURE → What varies per network)
+  readonly membershipBarMultiplier: number;
+
   // Genesis
   readonly genesisCommitteeKeys: readonly string[];
   readonly genesisKarmaPerMember: bigint;
@@ -173,6 +177,8 @@ const MAINNET_PROFILE: NetworkProfile = Object.freeze({
   // the period is timescale and per-network.
   storageRentPeriodBlocks: 2_102_400,
 
+  membershipBarMultiplier: 10,
+
   genesisCommitteeKeys: Object.freeze([] as string[]),
   genesisKarmaPerMember: GENESIS_KARMA_PER_MEMBER,
 
@@ -214,6 +220,8 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   // Relaxed so a tester arrives with enough karma to post and like freely. A cap,
   // not a mechanic — the vesting formula is unchanged.
   inviteBondMax: 1000n,
+
+  membershipBarMultiplier: 1,
 
   genesisCommitteeKeys: Object.freeze([] as string[]),
   // Overridden explicitly, and it must be: the spread above would otherwise
@@ -293,6 +301,8 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   // has both boundaries to fail against.
   inviteBondMin: 5n,
   inviteBondMax: INVITE_BOND_MAX,
+
+  membershipBarMultiplier: 1,
 
   genesisCommitteeKeys: Object.freeze([] as string[]),
   genesisKarmaPerMember: GENESIS_KARMA_PER_MEMBER,
