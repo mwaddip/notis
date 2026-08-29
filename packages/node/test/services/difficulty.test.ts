@@ -6,7 +6,7 @@ import {
   interlinkRoot,
 } from '@dagsocial/types';
 import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
-import { asertTargetBits, blockHash } from '@dagsocial/validation';
+import { asertTargetBits } from '@dagsocial/validation';
 import type { RetargetParams } from '@dagsocial/validation';
 import { makeTestIdentity, solveHeaderPow, ZERO_HASH } from '../helpers.js';
 
@@ -55,7 +55,7 @@ function seedBlock(
   };
   header.powNonce = solveHeaderPow(header);
   ordering.createOrderingBlock(
-    { header, utxoTxTree: { txIds: [], txBlobs: [], pruneIds: [], pruneBlobs: [] }, validatorSignature: new Uint8Array(64) },
+    { header, utxoTxTree: { utxoTxIds: [], utxoTxs: [] }, validatorSignature: new Uint8Array(64) },
     [ZERO_HASH],
   );
   return header;
@@ -105,7 +105,7 @@ describe('difficulty schedule', () => {
         prevBlockHash: ZERO_HASH,
         utxoTxRoot: ZERO_HASH,
         stateRoot: EMPTY_STATE_ROOT,
-        validatorId: '00'.repeat(32),
+        validatorId: new Uint8Array(32),
         powNonce: 0,
         powTargetBits: anchorBits,
         createdAt: t2,

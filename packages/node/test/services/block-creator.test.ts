@@ -1027,7 +1027,7 @@ describe('block-creator', () => {
       db.initDb(':memory:');
       db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
-      const { setClock, nowMs } = await import('../../src/services/difficulty.js');
+      const { setClock } = await import('../../src/services/difficulty.js');
       const ba = await import('../../src/services/block-apply.js');
 
       const t1 = 1_000_000;

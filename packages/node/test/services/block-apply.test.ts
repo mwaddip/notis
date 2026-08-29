@@ -17,7 +17,7 @@ import {
   MAX_BLOCK_BODY_BYTES,
   MAX_FUTURE_DRIFT_MS,
 } from '@dagsocial/types';
-import { verifyOrderingBlockPoW, asertTargetBits } from '@dagsocial/validation';
+import { verifyOrderingBlockPoW } from '@dagsocial/validation';
 import type {
   KarmaBox,
   CreditBox,
@@ -2048,7 +2048,7 @@ describe('block-apply consensus schedules', () => {
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
-    const { scheduledTargetBits, setClock, nowMs } = await import('../../src/services/difficulty.js');
+    const { scheduledTargetBits, setClock } = await import('../../src/services/difficulty.js');
     const { config: cfg } = await import('../../src/config.js');
 
     const t1 = 1_000_000;

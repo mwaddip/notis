@@ -3419,6 +3419,7 @@ describe('resolveFork — interlink root verification (step 7)', () => {
       count: 3,
       params: rp(),
       anchorCreatedAt: sharedH1.createdAt,
+      anchorStamp: sharedH1.createdAt,
       startStamp: sharedH1.createdAt + testConfig.orderingBlockIdealMs,
     });
 
@@ -3557,6 +3558,7 @@ describe('resolveFork — ASERT timestamp rules and schedule', () => {
       count: 3,
       params: rp(),
       anchorCreatedAt: sharedH1.createdAt,
+      anchorStamp: sharedH1.createdAt,
       startStamp: sharedH1.createdAt + 60_000,
       spacingMs: 0,
     });
@@ -3610,6 +3612,7 @@ describe('resolveFork — ASERT timestamp rules and schedule', () => {
       count: 3,
       params: rp(),
       anchorCreatedAt: getAnchorCa(),
+      anchorStamp: sharedH1.createdAt,
       startStamp: futureStamp,
     });
 
@@ -3642,7 +3645,6 @@ describe('resolveFork — ASERT timestamp rules and schedule', () => {
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const { setClock } = await import('../../src/services/difficulty.js');
-    const { retargetParams: rp, anchorCreatedAt: getAnchorCa } = await import('../../src/services/difficulty.js');
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
     const ordering = await importOrdering();
@@ -3658,12 +3660,8 @@ describe('resolveFork — ASERT timestamp rules and schedule', () => {
     await mineNextBlock(bc);
     expect(ordering.getCurrentHeight()).toBe(2);
 
-    // Build a competing chain from height 2 with stamps that move the schedule
-    // away from the anchor, but declare the anchor bits anyway
     const sharedH1 = ordering.getOrderingBlock(1)!.header;
     const sharedHash = blockHash(sharedH1)!;
-    const sharedLevel = headerLevel(sharedH1, testConfig.orderingBlockPowTargetBits);
-    const anchorIl = updateInterlinks([], sharedHash, sharedLevel);
 
     // A chain stamped very late (schedule moves to floor) but declaring anchor bits
     const lateStamp = t1 + 10 * 86_400_000;
@@ -3693,5 +3691,56 @@ describe('resolveFork — ASERT timestamp rules and schedule', () => {
     expect(net.penalties).toEqual([
       expect.objectContaining({ kind: 'misbehavior' }),
     ]);
+  });
+
+  it('a reorg onto a branch whose targets moved with its stamps applies every block through the funnel', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const t1 = 1_000_000;
+    setClock(() => t1);
+    await mineNextBlock(bc);
+    expect(ordering.getCurrentHeight()).toBe(1);
+
+    // Mine the competing branch of 4 at slow pace — the schedule eases
+    const slowSpacing = 600_000;
+    const competingBlocks: OrderingBlock[] = [];
+    for (let i = 0; i < 4; i++) {
+      setClock(() => t1 + slowSpacing * (i + 1));
+      await mineNextBlock(bc);
+      competingBlocks.push(ordering.getOrderingBlock(2 + i)!);
+    }
+    expect(ordering.getCurrentHeight()).toBe(5);
+
+    // The schedule eased — later headers carry lower bits (easier)
+    expect(competingBlocks[3]!.header.powTargetBits)
+      .toBeLessThanOrEqual(competingBlocks[0]!.header.powTargetBits);
+
+    // Revert to height 1 and mine our shorter chain (2 blocks)
+    for (let h = 5; h > 1; h--) forkResolution.revertBlock(h);
+    expect(ordering.getCurrentHeight()).toBe(1);
+    setClock(() => t1 + 60_000);
+    await mineNextBlock(bc);
+    setClock(() => t1 + 120_000);
+    await mineNextBlock(bc);
+    expect(ordering.getCurrentHeight()).toBe(3);
+
+    // Serve the competing chain — more work than our 2-block side
+    const theirHeaders = [...competingBlocks].reverse().map(b => b.header)
+      .concat(ordering.getOrderingBlock(1)!.header);
+    setClock(() => t1 + slowSpacing * 5);
+    const net = stubNet(theirHeaders, competingBlocks);
+    await forkResolution.resolveFork(competingBlocks[3]!, net, 'peer-slow-branch');
+
+    expect(ordering.getCurrentHeight()).toBe(5);
+    expect(net.penalties).toEqual([]);
   });
 });

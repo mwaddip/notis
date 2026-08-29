@@ -1197,12 +1197,13 @@ export function buildMinedHeaderChain(opts: {
   count: number;
   params: import('@dagsocial/validation').RetargetParams;
   anchorCreatedAt: number | null;
+  anchorStamp: number;
   startStamp: number;
   spacingMs?: number;
 }): { headers: BlockHeader[]; interlinksPerHeader: string[][] } {
   const {
     anchorPrevBlockHash, anchorInterlinks, startHeight, count,
-    params, startStamp,
+    params, startStamp, anchorStamp,
   } = opts;
   const spacingMs = opts.spacingMs ?? params.idealMs;
   const headers: BlockHeader[] = [];
@@ -1222,7 +1223,7 @@ export function buildMinedHeaderChain(opts: {
       if (t_a === null) t_a = stamp;
     } else {
       const prevHeader = i === 0
-        ? { height: startHeight - 1, createdAt: startStamp - spacingMs }
+        ? { height: startHeight - 1, createdAt: anchorStamp }
         : headers[i - 1]!;
       bits = asertTargetBits(params, t_a!, prevHeader);
     }

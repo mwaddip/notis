@@ -13,7 +13,8 @@ import {
 import { createRouter } from '../../src/routes/nipopow.js';
 import { createPopowHeaderReader } from '../../src/services/nipopow.js';
 import { buildMinedHeaderChain } from '../helpers.js';
-import { GENESIS_PREV_BLOCK_HASH, PROTOCOL_VERSION } from '@dagsocial/types';
+import { GENESIS_PREV_BLOCK_HASH, PROTOCOL_VERSION, MAX_FUTURE_DRIFT_MS } from '@dagsocial/types';
+import { retargetParams } from '../../src/services/difficulty.js';
 import { decodeNipopowProof, verifyProof } from '@dagsocial/nipopow';
 import { unlinkSync } from 'fs';
 
@@ -65,7 +66,10 @@ describe('nipopow route', () => {
       anchorInterlinks: [],
       startHeight: 1,
       count: CHAIN_LEN,
-      powTargetBits: 3072,
+      params: retargetParams(),
+      anchorCreatedAt: null,
+      anchorStamp: 0,
+      startStamp: 1_000_000,
     });
 
     for (let i = 0; i < headers.length; i++) {
@@ -167,7 +171,9 @@ describe('nipopow route', () => {
     expect(proof.k).toBe(3);
 
     const result = verifyProof(proof, {
-      expectedTarget: () => 3072,
+      retarget: retargetParams(),
+      maxFutureDriftMs: MAX_FUTURE_DRIFT_MS,
+      nowMs: Date.now() + 86_400_000,
       genesisId: '',
       protocolVersion: PROTOCOL_VERSION,
     });
