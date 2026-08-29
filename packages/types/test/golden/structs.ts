@@ -130,7 +130,6 @@ export type BoxContent =
   | { boxType: 'genesis_proof'; value: bigint; createdAtBlock: number; payload: Uint8Array }
   /** The same trailing fields as `vouch`; the tag is what separates the two. */
   | { boxType: 'bond'; value: bigint; createdAtBlock: number; inviterId: Uint8Array; inviteePublicKey: Uint8Array }
-  | { boxType: 'post_lock'; value: bigint; createdAtBlock: number; originalValue: bigint; owner: Uint8Array }
   | { boxType: 'vouch'; value: bigint; createdAtBlock: number; voucherId: Uint8Array; targetId: Uint8Array }
   /** A `b32` beside a bare `vlqU` — the only arm that mixes the two. */
   | { boxType: 'vouch_escrow'; value: bigint; createdAtBlock: number; owner: Uint8Array; releaseAtBlock: number }
@@ -145,7 +144,8 @@ export type BoxContent =
   | { boxType: 'emission'; value: bigint; createdAtBlock: number }
   | { boxType: 'treasury'; value: bigint; createdAtBlock: number }
   | { boxType: 'fee'; value: bigint; createdAtBlock: number }
-  | { boxType: 'karma_pool'; value: bigint; createdAtBlock: number };
+  | { boxType: 'karma_pool'; value: bigint; createdAtBlock: number }
+  | { boxType: 'karma_price'; value: bigint; createdAtBlock: number };
 
 // TYPES_INTERFACE → Layout — Boxes, "independent in its numbers, not in its
 // coverage": the corpus's BoxContent['boxType'] and production's
@@ -173,7 +173,6 @@ export const BOX_TAG_BY_TYPE = {
   credit: 1,
   genesis_proof: 3,
   bond: 4,
-  post_lock: 5,
   vouch: 6,
   emission: 7,
   treasury: 8,
@@ -181,6 +180,7 @@ export const BOX_TAG_BY_TYPE = {
   karma_pool: 10,
   like_accrual: 11,
   vouch_escrow: 12,
+  karma_price: 13,
 } as const satisfies Record<BoxContent['boxType'], number>;
 
 /** Reverse lookup derived from `BOX_TAG_BY_TYPE` — `read()` uses this. */
@@ -224,14 +224,6 @@ const boxContentCodec: ValueCodec<BoxContent> = {
           inviterId: hex(j.inviterId as string),
           inviteePublicKey: hex(j.inviteePublicKey as string),
         };
-      case 'post_lock':
-        return {
-          boxType: 'post_lock',
-          value,
-          createdAtBlock,
-          originalValue: BigInt(j.originalValue as string),
-          owner: hex(j.owner as string),
-        };
       case 'vouch':
         return {
           boxType: 'vouch',
@@ -258,6 +250,8 @@ const boxContentCodec: ValueCodec<BoxContent> = {
         return { boxType: 'fee', value, createdAtBlock };
       case 'karma_pool':
         return { boxType: 'karma_pool', value, createdAtBlock };
+      case 'karma_price':
+        return { boxType: 'karma_price', value, createdAtBlock };
       default:
         throw new Error(`boxContent: unknown boxType ${String(j.boxType)}`);
     }
@@ -320,14 +314,6 @@ const boxContentCodec: ValueCodec<BoxContent> = {
           boxType, value, createdAtBlock,
           inviterId: readBytesN(r, 32), inviteePublicKey: readBytesN(r, 32),
         };
-      case 'post_lock':
-        return {
-          boxType,
-          value,
-          createdAtBlock,
-          originalValue: readVlqU64(r),
-          owner: readBytesN(r, 32),
-        };
       case 'vouch':
         return {
           boxType, value, createdAtBlock,
@@ -349,6 +335,7 @@ const boxContentCodec: ValueCodec<BoxContent> = {
       case 'treasury':
       case 'fee':
       case 'karma_pool':
+      case 'karma_price':
         // The box is complete at the prefix. An independent reader is where a
         // phantom trailing field would show up as a decode failure rather than
         // as agreement between a writer and a reader that share the mistake.

@@ -480,10 +480,8 @@ invites, vouches, credits, prune).
    (**unconditional** — a node holding no DAG content records the same stump; the insert is
    journalled, so a reverted prune removes it), the **deletion** of the subtree's `dag_posts`
    and `dag_parent_refs` rows **by the derived set** — never by a local DAG walk; ids with no
-   local row are simply absent — and the **marking** of the set's `block_topology` rows, from
-   which later blocks' settlements release the subtree's `PostLockBox`es at the leg's cap,
-   refunding **every lock owner except the pruning author**, whose own locks go to the pool
-   (→ Prune transactions; → The settlement transaction). Every deleted row (skeleton, body,
+   local row are simply absent — and the **marking** of the set's `block_topology` rows, the
+   tombstone's source (→ Prune transactions). Every deleted row (skeleton, body,
    status, height, index, parent refs) is captured into the block's journal as a side-record
    **before** deletion (Block Journal → `deletedPosts`), so a reverted prune restores it exactly;
    below `MAX_REORG_DEPTH` the journal is dropped and the node holds no byte of the subtree's
@@ -514,7 +512,7 @@ against live content).
 
 | Method | Path | Response | Errors |
 |--------|------|----------|--------|
-| `GET` | `/karma/:userId?limit=50&after=<value>:<boxId>` | `{ userId: hex, total, effective, boxes: [{ boxId, value }], boxCount, next, lastActivityBlock, lastDecayBlock, height }` — `total` the face sum over every unspent karma box (`getKarmaTotal`, the view's `SUM` over the set `getKarmaValue` sums), `effective` that sum after virtual decay (`effectiveKarma`, the call every karma-sufficiency check on the node makes), `boxes` one page in `value DESC, id` strictly after `after`, `boxCount` over the whole set, `next` the key to continue from. **An identity with no unspent karma box answers the empty page** — `boxes: []`, `boxCount 0`, `total "0"`, `effective "0"`, `next null`, its clocks from the record (`0` where none), `height` — an exact spend leaves a live identity holding no box, and a page of zero is a page ("Every list a view returns is a page") | 400 if `userId` is not 64 chars or a present `limit`/`after` does not parse |
+| `GET` | `/karma/:userId?limit=50&after=<value>:<boxId>` | `{ userId: hex, total, effective, boxes: [{ boxId, value }], boxCount, next, lastActivityBlock, lastDecayBlock, lifetimeLikesReceived, height }` — `total` the face sum over every unspent karma box (`getKarmaTotal`, the view's `SUM` over the set `getKarmaValue` sums), `effective` that sum after virtual decay (`effectiveKarma`, the call every karma-sufficiency check on the node makes), `boxes` one page in `value DESC, id` strictly after `after`, `boxCount` over the whole set, `next` the key to continue from. **An identity with no unspent karma box answers the empty page** — `boxes: []`, `boxCount 0`, `total "0"`, `effective "0"`, `next null`, its clocks and `lifetimeLikesReceived` (a decimal string, the record's counter — `"0"` where none) from the record, `height` — an exact spend leaves a live identity holding no box, and a page of zero is a page ("Every list a view returns is a page") | 400 if `userId` is not 64 chars or a present `limit`/`after` does not parse |
 | `GET` | `/credits/:userId?limit=50&after=<value>:<boxId>` | `{ userId: hex, total, boxes: [{ boxId, value, lockedUntilBlock? }], boxCount, next }` — `total` over every unspent credit box (`getCreditValue`), `boxes` one page in `value DESC, id` strictly after `after`, `boxCount` over the whole set, `next` the key to continue from; an identity with no unspent credit box answers the empty page — `boxes: []`, `boxCount 0`, `total "0"`, `next null` | 400 if `userId` is not 64 chars or a present `limit`/`after` does not parse |
 | `GET` | `/invites/:userId?limit=50&after=<boxId>` | `{ bonds: [{ id, value, inviterId, inviteePublicKey }], bondCount, next }` — the inviter's **unspent** bonds, one page ascending box id strictly after `after`, `bondCount` over the whole set, `next` the key to continue from; a bond IS the open invite, so a settled one is not listed and there is no second list | 400 if `userId` is not 64 chars or a present `limit`/`after` does not parse; an inviter holding no live bond answers `{ bonds: [], bondCount: 0, next: null }` |
 
@@ -804,8 +802,8 @@ Verification order (fail-fast):
    character restrictions (no control, zero-width, or bidi characters)
 2. **Parent refs count** — at most `MAX_PARENT_REFS`
 3. **Protocol version** — strict equality with `PROTOCOL_VERSION`
-4. **Karma** — the author's **summed** karma must cover the lock: threads (no
-   parentRefs) ≥ `POST_LOCK_THREAD_COST`, replies ≥ `POST_LOCK_REPLY_COST`.
+4. **Karma** — the author's **summed** karma must cover the price: threads (no
+   parentRefs) ≥ `POST_PRICE_THREAD`, replies ≥ `POST_PRICE_REPLY`.
    ⚠ An early, friendlier rejection, NOT the enforcement point — the engine's
    post biconditional is what a block re-validates
 5. **Parent refs existence** — every referenced id resolves to a post or stump
@@ -950,7 +948,7 @@ with a clock today:
 | `credit` | `lockedUntilBlock` | spendable — most credit boxes carry no lock; only the coinbase's do |
 
 Every other type is always spendable *at this gate*: the timed boxes
-(`bond`, `post_lock`, `emission`, `treasury`, `karma_pool`, `like_accrual`,
+(`bond`, `karma_price`, `emission`, `treasury`, `karma_pool`, `like_accrual`,
 `vouch_escrow`) are `BLOCK_APPLICATION_ONLY`, so their timing is enforced by no
 user transaction being able to name them at all — `vouch_escrow.releaseAtBlock`
 is read by the settlement leg that returns it, not by this gate. This table
@@ -1096,18 +1094,17 @@ schema for its `boxType`**:
   or absent, nothing else may vary). A key the schema does not name is a
   reject, not a strip: a stripped key would change the bytes the client signed.
   > **`fee` is user-created and consumable only by block application**, which is
-  > the shape `bond` and `post_lock` already have: a user transaction creates the
+  > the shape `bond`, `like_accrual` and `karma_price` have: a user transaction creates the
   > box, and only block application may consume it. The schema below has a row for
-  > every boxType a user transaction may emit — `fee` makes seven. `genesis_proof`,
-  > `emission` and `treasury` have none, because no transaction may create them.
+  > every boxType a user transaction may emit. `genesis_proof`,
+  > `emission`, `treasury` and `karma_pool` have none, because no transaction may create them.
 - **Field types are pinned** (field-type pin). Every present field's runtime
   type matches its `TYPES_INTERFACE` box definition:
   - `bigint`, `0 ≤ v < BOX_VALUE_BOUND` (TYPES_INTERFACE → "Box value domain"):
-    `value` (every boxType) **and `originalValue`
-    (post_lock — the read-poison field)**. The bound is absorbed from
+    `value` (every boxType). The bound is absorbed from
     `checkOutputValues`, which retired with this pin (one owner per rule;
     `json-to-tx`'s `assertValidBoxValue` stays as the HTTP-edge twin).
-  - 32-byte `Uint8Array`: `owner` (karma, credit, post_lock), `inviterId` and
+  - 32-byte `Uint8Array`: `owner` (karma, credit), `inviterId` and
     `inviteePublicKey` (invite, bond), `voucherId`, `targetId` (vouch). The
     empty state went with the commit transition, so `inviteePublicKey`'s length
     is no longer a transition-arm question and `bytes0or32` has no user.
@@ -1286,7 +1283,7 @@ tree collapse into clean rejections:
 > Adding a new escape from this catch is a consensus-visible decision and needs the same argument:
 > show the condition cannot be caused by untrusted input.
 2. **Apply-time throws** — fields no arm reads reach `insertBox`, which
-   `Buffer.from`s them mid-block-apply (e.g. a numeric `post_lock.owner`).
+   `Buffer.from`s them mid-block-apply (e.g. a numeric `vouch.targetId`).
 3. **Read-time throws** — a stored lie poisons the row: `rowToBox` does
    `BigInt(e.originalValue)`, so `originalValue: "x"` crashes **every later
    read of that box**. Measured on the pre-pin tree: the poison block APPLIED
@@ -1350,6 +1347,15 @@ The checks:
 2. **Closed key set**: `inputs`, `outputs`, `signatures`, `protocolVersion`,
    optionally `likeTarget`, `post`, `prune` and `postWithdraw`. Any other key
    rejects.
+   ⛔ **AT MOST ONE PAYLOAD FIELD.** `likeTarget`, `post`, `prune` and `postWithdraw` are
+   mutually exclusive — a transaction carrying two of them rejects here, before any transition arm
+   runs, and the rejection names both fields. The arms recognise a transaction's kind by payload
+   presence and each pins its own shape and nothing else's, so a second payload would ride through
+   the first's arm unexamined: `postsOf` confirms every `tx.post` whatever arm validated the
+   transaction, and the post arm is the only place a commit's `author` is bound to the karma's owner
+   — a like carrying a `PostCommit` would confirm the post, under any author the commit names, for
+   the price of the like. The rule is the envelope's because it is structural: no state is read to
+   decide it.
    > ⛔ **A NEW PAYLOAD FIELD IS TWO ENTRIES HERE, NOT ONE.** `decodeTx` writes
    > every field unconditionally, holding `undefined` where the tag said absent,
    > so a field must also join the set of keys **permitted to hold `undefined`**.
@@ -1538,8 +1544,9 @@ the treasury.
 | Consumed | Created | Condition |
 |----------|---------|-----------|
 | KarmaBox | KarmaBox | Same owner, balance change (earn/spend) |
-| KarmaBox | KarmaBox + LikeAccrualBox | **Like**: `likeTarget` present ⟺ exactly one `LikeAccrualBox` output of exactly `LIKE_KARMA_COST` whose `author` is the target's author from `block_topology` — **and the converse**, a `LikeAccrualBox` output ⟺ `likeTarget` present. At most one karma output, same owner as all inputs — omitted when the change would be zero; target live; `(liker, target)` not recorded. **Value conserved** |
-| KarmaBox | KarmaBox + PostLockBox | **Post** (unit 2): `post` present ⟺ exactly one `PostLockBox` output whose value is `POST_LOCK_THREAD_COST` for a post with no `parentRefs` and `POST_LOCK_REPLY_COST` otherwise. Karma outputs same owner; value conserved — a post carries **no** deficit and **no** surplus. The signing key is the post's author. ⛔ **The lock's `owner` is pinned to the karma input's owner**, the sibling of the vouch arm's `voucherId` pin and for the same reason: an unpinned owner lets a transaction put a stranger's key on the lock, and the prune settlement then refunds that stranger while post-lock vesting pays them the author's earned karma — a karma transfer with no invite, the property the whole invite/bond mechanism protects |
+| KarmaBox | KarmaBox + LikeAccrualBox | **Like**: `likeTarget` present ⟺ exactly one `LikeAccrualBox` output of exactly `LIKE_KARMA_COST` whose `author` is the target's author from `block_topology` — **and the converse**, a `LikeAccrualBox` output ⟺ exactly one of `likeTarget` present or `post` present with a parent (the Reply row). At most one karma output, same owner as all inputs — omitted when the change would be zero; target live; `(liker, target)` not recorded. **Value conserved** |
+| KarmaBox | KarmaBox + KarmaPriceBox | **Thread**: `post` present with no `parentRefs` ⟺ exactly one `KarmaPriceBox` output of exactly `POST_PRICE_THREAD` and no `LikeAccrualBox`. At most one karma output, same owner as all inputs — omitted when the change would be zero; the signing key is the post's author. **Value conserved** — a post carries **no** deficit and **no** surplus |
+| KarmaBox | KarmaBox + KarmaPriceBox + LikeAccrualBox | **Reply**: `post` present with one parent ⟺ exactly one `KarmaPriceBox` output of exactly `POST_PRICE_REPLY − REPLY_AUTHOR_SHARE` **and** exactly one `LikeAccrualBox` output of exactly `REPLY_AUTHOR_SHARE` whose `author` is the parent's author from `block_topology`. The karma output as above; the signing key is the post's author. **Value conserved** |
 | KarmaBox | KarmaBox | **Prune** (→ Prune transactions): `prune` present ⟹ all-karma inputs sharing one owner, exactly one karma output, **total output equal to total input**, `inputKarma.owner` is the root's `block_topology` author, and `verifyPruneCommitDomains(tx.prune)` passes. ⛔ **An IMPLICATION, not a biconditional** — the converse would forbid the bare self-consolidation the row above admits, so recognition is by payload presence and never by shape |
 | KarmaBox | KarmaBox + BondBox | **Invite**: karma outputs same owner, value conserved; `inviteBondMin ≤ bond.value ≤ inviteBondMax` (per-network caps) and the settlement grants **exactly `bond.value`**; `bond.inviterId` = the karma input owner; `inviteePublicKey` holds **no `IdentityRecord`**, and **no other bond in this block names it** |
 | KarmaBox | KarmaBox + VouchBox | Vouch cast: karma outputs same owner; `vouch.value == VOUCH_KARMA_AMOUNT`; `vouch.voucherId` == the karma input's owner; the voucher's **summed** karma balance ≥ `VOUCH_MIN_BALANCE`; no unspent escrow names the voucher; `vouch.createdAtBlock` within `[height − VOUCH_CAST_HEIGHT_WINDOW, height]` (the upper bound is step 6's; the window bounds backdating, which would shorten the cooldown the escrow derives from it) |
@@ -1547,7 +1554,7 @@ the treasury.
 | VouchEscrowBox | KarmaBox | **Block application only**: the settlement of the first block at or past `releaseAtBlock` consumes the escrow and returns its value to `owner` as karma (§The settlement transaction) — **no user transaction can spend a `VouchEscrowBox`**. Withdrawal itself is never gated — only the stake's return waits, and it waits in the escrow |
 | LikeAccrualBox | — | **Settlement only.** No user transition admits one as an input |
 | CreditBox | CreditBox(s) and/or FeeBox | Any owner, value conserved. **At most one FeeBox**, and it may not hold `0` — zero fee means no box. A transaction whose only output is the FeeBox is legal |
-| PostLockBox | PostLockBox(+KarmaBox) | Block application only (per-block vesting) — no user transaction can spend a `PostLockBox` |
+| KarmaPriceBox | — | **Settlement only.** No user transition admits one as an input; the settlement of the block that created it consumes it and returns its value to the pool |
 | BondBox | KarmaBox / — | Block application only: settlement at the probation deadline — **no user transaction can spend a `BondBox`** |
 | KarmaPoolBox | KarmaPoolBox + … | **Settlement only** — the pool's sole spender, spent in blocks whose settlement moves karma and left alone otherwise |
 
@@ -1572,9 +1579,25 @@ There is **no other legal bond or invite shape**. In particular:
 
 ### Post transactions (unit 2)
 
-- **A post is a transaction, and that is the whole of its admission.** It locks
-  the author's karma and conserves value; there is no separate post signature,
+- **A post is a transaction, and that is the whole of its admission.** It pays
+  the post's price and conserves value; there is no separate post signature,
   no PoW and no challenge. The author is the transaction's signer.
+- **A post pays its price into a `KarmaPriceBox`**, and a reply pays `REPLY_AUTHOR_SHARE` of it
+  to the parent's author through a `LikeAccrualBox` — the Thread and Reply rows under Legal box
+  transitions state the shapes, `ARCHITECTURE → The post price` the rule. The parent's author is
+  resolved from `block_topology`, exactly as a like's target author is, and a reply to a stump or
+  a withdrawn post pays that row's author. ⛔ **The reply's marker moves no like counter**:
+  `lifetimeLikesReceived` is bumped from like transactions and from nothing else.
+- **A reply's parent may still be pending at admission.** The marker names the parent's author, and
+  `validateTx` resolves it from `block_topology` — and, where the parent has no row yet because it
+  is in this node's pool, from the parent's own pending row, whose `author` is the commit its
+  transaction carries and which that transaction's post arm binds to its signer. **At apply only
+  `block_topology` is read**: a parent confirmed in the applying block has its row before the loop
+  (§8 populates topology from the block's own posts), an earlier one has it already, and a parent
+  in neither refuses the reply (*"names no author"*). The fallback is the reply's alone — a like's
+  target, a prune's root and a withdrawal's post must be confirmed at admission exactly as before.
+  This is what keeps a reply able to spend its own thread's change with no block between the two
+  (`TYPES_INTERFACE → Monotonic creation height`, the chaining a block interval must allow).
 - ⛔ **The relay gate is a cached MEMBERSHIP check, not a balance read.** `net`
   drops a post from an author who holds no karma **at all**, consulting an
   in-memory set rather than the store. The set moves only when an identity first
@@ -1641,18 +1664,15 @@ There is **no other legal bond or invite shape**. In particular:
   prune's block is in the set, and a reply confirmed between the prune's signing
   and its inclusion invalidates nothing. Every node derives the same set from
   committed state; a node holding no DAG content reaches the same verdict.
-- ⛔ **The prune's block deletes and marks; it settles no lock.** §8c, per prune
-  in committed order: the maturity bind; **this block's own likes on subtree
-  posts vest** — for each post in the block's like set that is in the subtree and
-  holds a live `PostLockBox`, the per-block vest (§11b's primitive, bounded by the
-  block's like transactions) runs before the like-records go; the like-records
+- ⛔ **The prune's block deletes and marks, and settles nothing.** §8c, per prune
+  in committed order: the maturity bind; the like-records
   are deleted and tallied; the stump is inserted (`replyCount` = set size − 1,
   `upvoteCount` = the tally); `dag_posts` and `dag_parent_refs` rows are deleted
   by the set; and **every `block_topology` row in the set is marked**
-  `pruned_at_height = h`, `pruned_root = rootPostHash`. The marks are the release
-  leg's queue (→ The settlement transaction) and are journalled (→ Block
-  Journal). No `PostLockBox` is consumed here — a subtree of any size prunes in
-  one block, and its locks drain at the leg's cap.
+  `pruned_at_height = h`, `pruned_root = rootPostHash`. The marks are the
+  tombstone's source and are journalled (→ Block Journal). Nothing is refunded and
+  nothing further is burned — every post in the set paid its price at posting
+  (ARCHITECTURE → The post price) — so a subtree of any size prunes in one block.
 - ⛔ **`prune` is an IMPLICATION, never a biconditional.** `prune` present ⟹ the
   shape above **and** `inputKarma.owner` is the root's `block_topology` author
   **and** `verifyPruneCommitDomains(tx.prune)` passes. **The reverse must never
@@ -1670,7 +1690,7 @@ There is **no other legal bond or invite shape**. In particular:
   `block_topology.block_height` must be **strictly less** than the applying
   height. Producer-independent and decidable from committed state alone, and it
   forbids nothing legitimate — an author who changes their mind waits one block
-  and prunes properly, paying the lock. Reachable through the ordinary API, so
+  and prunes properly. Reachable through the ordinary API, so
   the intent route enforces the same rule at submit. **The same bind governs
   withdrawal.**
 - **`verifyPruneCommitDomains` is the single statement of the payload's
@@ -1722,42 +1742,24 @@ There is **no other legal bond or invite shape**. In particular:
   `POST /posts/:id/withdraw`, then `validateTx`, `admitTx`, `net.broadcastTx`.
   **A withdrawal submitted to a node that never mines reaches consensus.**
 
-### The post-lock settlement phase
+### The prune and withdrawal phase
 
-- **One phase settles every `PostLockBox` a block consumes**, after the
-  transaction apply loop and before the settlement transaction is built.
+- **One phase applies every prune's and withdrawal's DAG effect a block carries**, after the
+  transaction apply loop and before the settlement transaction is built. It moves no value: a
+  post's price was paid by the post transaction (ARCHITECTURE → The post price), and there is
+  no lock to settle.
 - ⛔ **It runs AFTER the loop, and that is load-bearing.** The like arm rejects a
-  like on a stumped post, so a phase running before the loop would make a block
+  like on a stumped or withdrawn post, so a phase running before the loop would make a block
   carrying like(P) and prune(P) invalid — two unrelated users' individually valid
   transactions that no producer could combine into one block. After the loop the
   like arm sees a live post and the pair is valid, with no producer-side filter.
-- **Withdrawals first, then prunes, each in committed transaction order.** A
-  reply withdrawn by its own author in the block its thread is pruned
-  **forfeits** its bond: the withdrawal's settlement leg consumes the lock in
-  this block, and the prune pass consumes nothing, so the later release leg
-  finds that lock spent and refunds nothing — content withdrawn and stake
-  forfeited, whichever pass runs first. The order is kept for the phase's own
-  legibility, not for the outcome.
-- ⛔ **The prune pass consumes no lock, so the claimed set is withdrawal's alone.**
-  A withdrawal's lock is consumed by this block's settlement; a lock the prune
-  pass marks is released by a later block's settlement (→ The settlement
-  transaction), and a lock a withdrawal consumed is spent and is never a
-  candidate. Two withdrawals of one post in one block are refused above; nothing
-  else can name one lock twice.
-- **The vest is folded into the plan for a withdrawal.** A lock being settled
-  releases what this block's likes earned before the remainder is burned, as a
-  refund to the lock's owner with the pool figure reduced by the same amount — no
-  new leg, no intermediate box. Without it the vest is lost whenever a like and a
-  settlement share a block, which would make a stated path-independence depend on
-  how a producer packs blocks. **A prune has no plan to fold into**: its block
-  vests the same likes through §11b's primitive at §8c (→ Prune transactions),
-  and a released lock's `value` is already net of every vest, because §11b vests
-  per block from the lifetime count and no like lands on a stumped post.
-- ⛔ **The plan is a pure function of its inputs.** It is derived twice — by the
-  creator from pre-body state and by the applier from post-body state — so the
-  lifetime like count is a **parameter**, stated as *the count as of after this
-  block's likes apply*. A plan that read the count itself would disagree between
-  the two callers with no compiler signal.
+- **Withdrawals first, then prunes, each in committed transaction order.** A reply
+  withdrawn by its own author in the block its thread is pruned is emptied and then
+  deleted with the subtree; the order is kept for the phase's legibility, not for the
+  outcome — neither pass refunds or burns anything.
+- **What each pass does is stated where its transaction is**: Withdrawal transactions (the
+  row emptied, `withdrawn_at_height` set), Prune transactions (the set derived, like-records
+  deleted and tallied, the stump inserted, rows deleted, topology marked).
 
 ### Bond transition rules
 
@@ -1832,7 +1834,9 @@ There is **no other legal bond or invite shape**. In particular:
 ### Karma transition rules (P2-B phase 4)
 
 ⛔ **The set of box types this arm admits as outputs is the TRANSITION set, and it is not the set
-`totalKarma` sums** — see "Three karma sets, and none derives from another" under Status. ⚠ **A
+`totalKarma` sums** — see "Three karma sets, and none derives from another" under Status.
+`karma_price` is in it — a post's price is a karma output of the post transaction — and in the
+conservation set, and **not** in the supply set: it is karma on its way out of circulation. ⚠ **A
 karma-bearing type may belong to neither**, so "which list?" is the wrong question: ask both
 independently. A single shared list is what would put a box holding the maximum representable karma
 inside the network's reported supply.
@@ -1878,9 +1882,11 @@ inside the network's reported supply.
 > **Both directions are required, and the second has no predecessor:**
 >
 > 1. `likeTarget` present ⟺ exactly one `LikeAccrualBox` output of exactly `LIKE_KARMA_COST` whose
->    `author` is the target post's author, resolved from `block_topology`;
-> 2. **a `LikeAccrualBox` output present ⟺ `likeTarget` present**, and the marker names that target's
->    author.
+>    `author` is the target post's author, resolved from `block_topology`; and `post` present with a
+>    parent ⟺ exactly one of exactly `REPLY_AUTHOR_SHARE` whose `author` is the parent's, resolved
+>    the same way (→ Post transactions);
+> 2. **a `LikeAccrualBox` output present ⟺ exactly one of `likeTarget` present or `post` present with
+>    a parent**, and the marker names the author that transaction pays, at that transaction's amount.
 >
 > ⚠ **Without (2) this is the `voucherId` defect above, in a new box.**
 > `myKarma(K) → myKarma(K−n) + LikeAccrualBox(n, author=Bob)` **conserves**, carries no `likeTarget`,
@@ -1889,7 +1895,7 @@ inside the network's reported supply.
 >
 > ⛔ **No user transition admits a `LikeAccrualBox` as an INPUT.** Only the settlement transaction
 > consumes one, so `author` is attribution and never authorization — the standing `BondBox` and
-> `PostLockBox` already have.
+> `KarmaPriceBox` already have.
 >
 > ⚠ **The author is resolved from `block_topology`, never `dag_posts.author`** — the rule §Likes
 > already states, and the marker inherits it. A placeholder row carries a zeroed author, so a marker
@@ -2031,14 +2037,11 @@ clock** — and `lastDecayBlock` when a squaring fires.
 
 Every box id derives from its creating transaction (`TYPES_INTERFACE.md` → BoxId), and almost
 every box block application creates is an output of the block's settlement transaction — a real
-transaction whose outputs take ordinary transaction-derived ids. **Exactly two producer classes
-create boxes with no transaction behind them**, and only they derive a synthetic id per mint
+transaction whose outputs take ordinary transaction-derived ids. **Exactly one producer class
+creates boxes with no transaction behind them**, and only it derives a synthetic id per mint
 *event*:
 
-- **genesis seeding** (`store/system.ts`) — the store is seeded before any block exists;
-- **post-lock vesting** (`transferKarma`, block application) — the one conserving-in-place
-  karma path: a `PostLockBox` vests into its own owner's karma and a reduced lock, the pool is
-  uninvolved, and so it has no place in the block's one pool spend.
+- **genesis seeding** (`store/system.ts`) — the store is seeded before any block exists.
 
 ```
 mintTxId = blake2b512( MINT_ID_DOMAIN ‖ vlqU(height) ‖ enum8(reason) ‖ lp(subject) )[0:32]
@@ -2076,21 +2079,17 @@ forms, so a mirror implementation derives the same ids:
 
 | `reason` | Subject | Encoding | Bytes | Site |
 |----------|---------|----------|-------|------|
-| `postlock-unlock` | `targetPostId` | `utf8(hex)` | 64 | post-lock vesting (block application) → `transferKarma`, the author's unlocked karma |
-| `postlock-remainder` | `targetPostId` | `utf8(hex)` | 64 | post-lock vesting (block application) → `transferKarma`, the reduced-`PostLockBox` remainder |
 | `genesis` | which genesis box | `u32BE(k)`: `0` = faucet karma stake, `1` = faucet credits, `2` = genesis proof, `3` = emission, `4` = karma pool | 4 | genesis seeding — `ensureSystemKarmaBox` / `ensureFaucetCreditBox` / `ensureGenesisProofBox` / `ensureEmissionBox` / `ensureKarmaPoolBox`. Selectors `0` and `1` exist only where the profile names a faucet identity; `2`–`4` on every network |
 | `genesis-committee` | the committee member | raw | 32 | genesis seeding — `seedGenesisCommittee`, one karma box per `genesisCommitteeKeys` entry, drawn out of the pool |
 
-**Four reasons, and the set is closed by the two producer classes.** A settlement output needs
+**Two reasons, and the set is closed by the one producer class.** A settlement output needs
 no reason — it has a transaction — so a new reason enters only with a new genesis box or a new
-conserving-in-place direct producer. Tags are `@dagsocial/types`' (`MINT_REASON`); this table
+conserving-in-place direct producer, of which there are none. Tags are `@dagsocial/types`' (`MINT_REASON`); this table
 deliberately does not repeat them. **Reasons retired before mainnet are deleted outright —
 numbers and names both free, no reservation list** (user, 2026-08-19); a **live** tag is never
 renumbered (TYPES_INTERFACE → Primitives).
 
-**Why `(height, reason, subject)` cannot repeat, per row.** Post-lock vesting runs at most once
-per post per block and both postlock reasons key on the post id, so each `(height, post)` pair
-yields at most one unlock and one remainder. Genesis seeding runs once, on an empty store; each
+**Why `(height, reason, subject)` cannot repeat, per row.** Genesis seeding runs once, on an empty store; each
 `genesis` selector names exactly one box, and a committee key appears at most once in
 `genesisCommitteeKeys`.
 
@@ -2103,19 +2102,17 @@ correct-but-undescribed encoding fails no test and rots on its own schedule — 
 this table exists to prevent.
 
 **No reason increases karma supply.** Supply is fixed at genesis: the `genesis` rows are its
-creation, `genesis-committee` grants are drawn out of the pool in the same seeding, and the two
-postlock reasons recirculate karma the `PostLockBox` already held. Everything that moves value
+creation and `genesis-committee` grants are drawn out of the pool in the same seeding. Everything that moves value
 after genesis is either a user transaction or the block's settlement transaction
 (`ARCHITECTURE` → UTXO conservation), and neither needs a mint reason: their outputs carry
 ordinary transaction ids.
 
-⛔ **Value movement is never a call site's discipline.** The two operations that move karma —
-the settlement transaction and `transferKarma` — each name source and destination in one
-operation and fail closed in both directions (`transferKarma` throws `KarmaNotConservedError`;
-a settlement that does not conserve is a rejected block). A path that touches the pool, the
-emission box or the treasury is the settlement's; `transferKarma` serves the paths that
-conserve inside themselves. **The property is the primitive's, not its callers'** — the same
-standing `consumeBox`'s liveness check has.
+⛔ **Value movement is never a call site's discipline.** The one operation that moves karma —
+the settlement transaction — names source and destination in one operation and fails closed:
+a settlement that does not conserve is a rejected block. Every path that touches the pool, the
+emission box or the treasury is the settlement's, and no path conserves inside itself outside
+it. **The property is the primitive's, not its callers'** — the same standing `consumeBox`'s
+liveness check has.
 
 ⚠ **The conservation invariant holds at every height and between every pair of transactions
 inside a block:** `sum(every karma-bearing box) + pool` is constant from genesis
@@ -2126,9 +2123,8 @@ error.
 
 Three rules about subjects that are decided, not open:
 
-- **Distinct recipients-at-height need distinct `(reason, subject)` pairs.** The live instance:
-  `postlock-unlock` and `postlock-remainder` can both mint against the same post at the same
-  height with **identical subjects** — the reason tag alone separates them.
+- **Distinct recipients-at-height need distinct `(reason, subject)` pairs.** No live instance
+  shares a height and a subject across two reasons; the rule binds the next producer class.
 - ⛔ **Prefix-freeness of reason strings does not hold, and nothing rests on it.** `genesis` is a
   proper prefix of `genesis-committee`. **The reason reaches the preimage as `enum8(reason)` —
   one byte from a closed table — never as its string**, so cross-reason injectivity is
@@ -2154,10 +2150,8 @@ the pool's `4` cost.
 
 ### `index` is always 0 for mints
 
-Each mint event emits exactly one box, so its `index` is `0`. A vesting that
-unlocks karma and leaves a remainder is **two events under two reasons**, not one
-two-output transaction; genesis seeding is one event per selector and one per
-committee member. The `index` field exists so mint and transaction derivation
+Each mint event emits exactly one box, so its `index` is `0`. Genesis seeding is one event
+per selector and one per committee member. The `index` field exists so mint and transaction derivation
 share one code path.
 
 ### Which producers attach provenance, and which deliberately do not
@@ -2373,19 +2367,15 @@ the karma pool, the emission box and the treasury box, and the only consumer of 
 
 | | |
 |---|---|
-| **Consumes, in this order** | the emission box (when this height releases) · the treasury box (when this block accrues to it) · every marker box the block's like transactions emitted, in committed transaction order · the carry box of every author the block credits, ascending author hex · **at most `MAX_BOND_SETTLEMENTS_PER_BLOCK`** `BondBox`es whose invitee's `invitedAtBlock` is at or past `height − inviteProbationBlocks` in pre-body state, ascending `(invitedAtBlock, box id)` · **at most `MAX_ESCROW_RETURNS_PER_BLOCK`** `VouchEscrowBox`es at or past their `releaseAtBlock` in pre-body state, ascending `(releaseAtBlock, box id)` · the karma boxes decay charges · the locks a withdrawal transaction names, in committed transaction order · **at most `MAX_POST_LOCK_RELEASES_PER_BLOCK`** `PostLockBox`es whose post's `block_topology` row is marked pruned, in pre-body state, ascending `(pruned_at_height, post_id)` · the karma pool box (when this block draws or returns) · every `FeeBox` the body's transactions created, in committed transaction order |
-| **Emits, in this order** | the successors of the three protocol boxes — emission, treasury, karma pool · the invite grants · like payouts and carry successors · the vested part of each settling bond, back to its inviter · each released escrow's value, back to its owner · decay replacements · withdrawal refunds · post-lock releases, one karma output per owner ascending owner hex · the coinbase's credit outputs |
+| **Consumes, in this order** | the emission box (when this height releases) · the treasury box (when this block accrues to it) · every `LikeAccrualBox` marker the block's like and reply transactions emitted, in committed transaction order · every `KarmaPriceBox` the block's post transactions created, in committed transaction order · the carry box of every author the block credits, ascending author hex · **at most `MAX_BOND_SETTLEMENTS_PER_BLOCK`** `BondBox`es whose invitee's `invitedAtBlock` is at or past `height − inviteProbationBlocks` in pre-body state, ascending `(invitedAtBlock, box id)` · **at most `MAX_ESCROW_RETURNS_PER_BLOCK`** `VouchEscrowBox`es at or past their `releaseAtBlock` in pre-body state, ascending `(releaseAtBlock, box id)` · the karma boxes decay charges · the karma pool box (when this block draws or returns) · every `FeeBox` the body's transactions created, in committed transaction order |
+| **Emits, in this order** | the successors of the three protocol boxes — emission, treasury, karma pool · the invite grants · like payouts and carry successors · the vested part of each settling bond, back to its inviter · each released escrow's value, back to its owner · decay replacements · the coinbase's credit outputs |
 
-⛔ **A leg the body does not drive is capped, and the remainder waits.** Bonds, escrows and
-post-lock releases are read from chain state, so no producer can shrink them by selecting a
+⛔ **A leg the body does not drive is capped, and the remainder waits.** Bonds and escrows
+are read from chain state, so no producer can shrink them by selecting a
 smaller body; each takes at most its cap per block in the stated total order — the order key is
 unique, so every verifier takes the same items — and a candidate stays eligible **at or past** its
-height until a block consumes it. **The release leg**: a candidate is an unspent `PostLockBox`
-whose target post's `block_topology` row carries `pruned_at_height` (→ Prune transactions); the
-actor is that row's `pruned_root`'s topology author, equal to the stump's `authorId`; the actor's
-own locks go to the pool and every other lock's `value` returns to its owner as karma,
-aggregated per owner. A spent lock leaves the queue by being spent — there
-is no cursor to store. ⚠ **The three caps and the empty-body settlement are the liveness
+height until a block consumes it. A consumed candidate leaves the queue by being spent — there
+is no cursor to store. ⚠ **The two caps and the empty-body settlement are the liveness
 relation** (`TYPES_INTERFACE` → Size caps): whatever the chain state holds, the settlement of an
 empty body fits `MAX_SETTLEMENT_BYTES`, so a block exists at every height.
 
@@ -2409,11 +2399,8 @@ user transaction spends an escrow (`BLOCK_APPLICATION_ONLY`).
 transaction; the block body has no `coinbaseOutputs` field and `utxoTxRoot` has no `'coinbase'`
 leaf class (TYPES_INTERFACE → Ordering block).
 
-⚠ **"Every protocol effect" admits exactly one exception: post-lock vesting.** A `PostLockBox`
-vests into its own owner's karma and a reduced lock — the pool is uninvolved, so it runs as a
-direct block-application transfer (`transferKarma`) with synthetic mint ids (§Box Identity and
-Mint Provenance) rather than as settlement outputs. Every effect that touches the pool, the
-emission box, the treasury or a fee box rides the settlement.
+✅ **"Every protocol effect" admits no exception.** Every box block application creates is an
+output of the settlement transaction; no direct block-application transfer exists.
 
 #### Why exactly one
 
@@ -2424,7 +2411,7 @@ rule bounds nothing** about how many invites, likes or sweeps a block holds. **W
 is the settlement's own size**: `MAX_SETTLEMENT_BYTES` (`TYPES_INTERFACE` → Size caps) weighs the
 whole transaction, so a block carries as many likes as their marker inputs fit beside its other
 legs — the producer keeps the body-driven legs inside it by selection (`MEMPOOL_INTERFACE` → The
-fill budget is bytes; `getPendingEntries` is a count), and the three capped legs above keep the
+fill budget is bytes; `getPendingEntries` is a count), and the two capped legs above keep the
 state-driven ones inside it whatever the producer selects.
 
 #### ⛔ Its marker inputs are DERIVED, not serialized
@@ -2515,10 +2502,9 @@ greps as ordered, and it leaves ties resolved by whatever the engine returns.
 DESC, id`. The coin-selection preference survives and the tie is decided. **Replacing a meaningful
 order with `id` alone would trade a fork for a behaviour change.**
 
-⚠ **A single-row read needs it too, and for a different reason.** `getPostLockBox` had neither
-`ORDER BY` nor `LIMIT`, and `.get()` took whatever came first — it feeds prune settlement and
-post-lock vesting. One lock per post is the invariant, so the order changes nothing **while the
-invariant holds**. ⛔ **Its job is to bound what happens when the invariant is violated upstream:
+⚠ **A single-row read needs it too, and for a different reason.** A `.get()` with neither
+`ORDER BY` nor `LIMIT` takes whatever comes first; where one row per key is the invariant, the
+order changes nothing **while the invariant holds**. ⛔ **Its job is to bound what happens when the invariant is violated upstream:
 with an order, a duplicate yields the same wrong box on every node — a defect. Without one, it yields
 different boxes on different nodes — a fork.** Ordering is what keeps someone else's bug from
 becoming a chain split.
@@ -2811,14 +2797,15 @@ shape, validated by the engine):
    invalid and the block is rejected
 2. Writes the like-record via `insertLikeRecord` (journalled side-record)
 3. Applies the transaction's outputs like any other — the `LikeAccrualBox` marker among
-   them — and counts the like per author and per post for the end-of-phase steps
+   them — and counts the like per author for the end-of-phase steps
 
 **At end of mutation phase, after all embedded txs** (order pinned: embedded txs →
-the settlement transaction → lifetime-like counters → post-lock vesting → decay clocks):
+the settlement transaction → lifetime-like counters → decay clocks):
 
 4. **Author settlement — outputs of the settlement transaction.** For each author with
    likes this block, in ascending author-hex order, the settlement consumes their `n`
-   markers (in committed transaction order) and their carry box holding `r`, and emits:
+   markers — likes received and replies to their posts alike, in committed transaction order —
+   and their carry box holding `r`, and emits:
    ```
    markers×n + carry(r) → authorKarma(+q·(x−1)) + pool(+q) + carry(r′)
        total = n + r,   q = ⌊total / x⌋,   r′ = total mod x,   x = LIKES_PER_KARMA_PAYOUT
@@ -2832,25 +2819,12 @@ the settlement transaction → lifetime-like counters → post-lock vesting → 
    `IdentityRecord.lifetimeLikesReceived` is bumped in the bookkeeping step after the
    settlement, and only ever adds. All integer arithmetic; a float intermediate is a
    consensus fork.
-5. **Post-lock vesting** — for each post with a non-zero per-post counter and a live
-   `PostLockBox`, in ascending post-id order:
-   ```
-   totalLikes      = getLikeRecordCount(postId)          // lifetime, live post
-   alreadyUnlocked = originalValue − value
-   shouldUnlock    = totalLikes / POST_LOCK_UNLOCK_PER_LIKES   // integer division
-   toUnlock        = min(value, shouldUnlock − alreadyUnlocked)
-   ```
-   If `toUnlock > 0`: `transferKarma` consumes the box, credits `toUnlock` to the lock's
-   owner (`postlock-unlock`) and shapes the reduced lock as the remainder
-   (`postlock-remainder`) unless fully unlocked — the `PostLockBox` is the source, the
-   pool is uninvolved, and the transfer throws rather than create or destroy.
-
 **Determinism:** iteration orders are pinned (author hex, post id), and the settlement's
 marker inputs follow committed transaction order — every order is one the block fixes.
 All arithmetic `bigint`/integer — a float intermediate is a consensus fork.
 
 **A like and a settlement of the same post SHARE a block.** A block may carry a like on post `P`
-together with a prune covering `P` or a withdrawal of `P`. The post-lock settlement phase runs
+together with a prune covering `P` or a withdrawal of `P`. The prune and withdrawal phase runs
 **after** the transaction loop, so the like arm finds `P` live, the like applies and counts, and
 the phase then stumps or empties it. ⛔ **The two transactions come from two unrelated users and
 each is independently valid**, so any rule rejecting the pair would make a block a producer
@@ -2862,7 +2836,7 @@ false for a stump, a tombstone and a withdrawn post alike, and that rule is unch
 what stops a dropped like-record reopening duplicate likes (ARCHITECTURE → Likes).
 
 **Blocks with no likes** run neither loop — no record writes, no like leg in the
-settlement, no vesting. An author's carry box sits unchanged (and in the `stateRoot`,
+settlement. An author's carry box sits unchanged (and in the `stateRoot`,
 because every box is) until their next liked block.
 
 ---
@@ -2969,7 +2943,7 @@ index lookup per row of the set, so a prune's derived set costs the set and not 
 |----------|-----------|
 | `insertLikeRecord(targetPostId, likerId, blockHeight)` | `(PostId, UserId, number) => void` — **block application only**; records a `likeRecordInsertions` journal side-record; throws on the primary key — the structural dedup |
 | `hasLikeRecord(targetPostId, likerId)` | `(PostId, UserId) => boolean` |
-| `getLikeRecordCount(postId)` | `(PostId) => number` — lifetime likes on a live post; feeds post-lock vesting and API `likeCount` |
+| `getLikeRecordCount(postId)` | `(PostId) => number` — lifetime likes on a live post; feeds API `likeCount` |
 | `deleteLikeRecordsForPosts(postIds)` | `(PostId[]) => void` — **prune settlement only**; captures every deleted row as a `likeRecordDeletions` journal side-record before deleting |
 | `deleteLikeRecord(targetPostId, likerId)` | `(PostId, UserId) => void` — fork-rollback inverse (never records) |
 | `restoreLikeRecord(targetPostId, likerId, appliedAtBlock)` | `(PostId, UserId, number) => void` — fork-rollback inverse (never records) |
@@ -2992,8 +2966,6 @@ index lookup per row of the set, so a prune's derived set costs the set and not 
 | `getBondsInvitedAt(invitedAtBlock)` | `(number) => BondBox[]` — bonds whose invitee's record carries exactly this `invitedAtBlock`. The caller subtracts `INVITE_PROBATION_BLOCKS` from the settle height, so the store stays free of network parameters. ⛔ **The query MUST require `invitedAtBlock > 0`**: `0` is every never-invited identity, so at the single height where `settleHeight == INVITE_PROBATION_BLOCKS` the argument is `0` and an unguarded match sweeps the whole table |
 | `getBondBoxesPage(inviterId, page)` | `(UserId, Page<string>) => { rows: BondBox[], next: string \| null, count: number }` — the inviter's **unspent** bonds (`spent_at_block IS NULL`), ascending `id` strictly after `after` (`id > ?`); `count` over the whole set |
 | `getVouchesForTargetPage(targetId, page)` | `(UserId, Page<string>) => { rows: VouchBox[], next: string \| null, count: number }` — the identity's unspent vouch boxes (`store/vouch-queries.ts`), ascending `id` strictly after `after`, the rows selected in the page statement; `count` over the whole set |
-| `getUnspentPostLockBoxes()` | `() => PostLockBox[]` |
-| `getPostLockBox(targetPostId)` | `(string) => PostLockBox \| null` |
 | `insertBox(box)` | `(AnyBox) => void` — writes the provenance columns; records `{kind:'box', op:'insert', boxId, box}` while a block journal is open |
 | `consumeBox(boxId, consumedAtBlock)` | `(string, number) => void` — mark a **live** box spent; records `{kind:'box', op:'remove', boxId}` while a block journal is open. ⛔ **Throws `BoxNotLiveError` when no live row matched.** The `UPDATE` carries `AND spent_at_block IS NULL` and checks the row count, so the journal entry follows a real spend instead of a caller's assumption. ⚠ **Not a `CorruptChainStateError`** — a caller naming a box the store does not hold live is a rejection, not a reason to stop the node |
 | `unconsumeBox(boxId)` | `(string) => void` — un-mark spent (fork-rollback inverse; never records) |
@@ -3556,8 +3528,7 @@ and trips its PRIMARY KEY, permanently rejecting the block.
 Apply-then-revert MUST restore the exact pre-block UTXO set and AVL digest
 for every mutation class: the settlement transaction's every leg (coinbase
 credits, protocol-box successors, invite grants, like markers and carry,
-decay replacements, prune refunds, fee-box consumption), post-lock vesting's
-transfer, like-record inserts and prune-time deletes (rows restored
+decay replacements, fee-box consumption), like-record inserts and prune-time deletes (rows restored
 exactly), prune settlement, user txs, and **identity records**. Reorg
 re-insertion reads `appliedUtxoTxs` (txBytes) alone — **a prune is one of those
 transactions**, so it needs no second channel; `confirmedPostIds` is not a mempool key.
@@ -4612,12 +4583,11 @@ rather than an exception absorbed by the funnel's totality handler.
 **It does that by calling `checkOutputShape`, not by growing a second check.** That schema already
 pins exactly the domains consensus accepts — `u64` as a bigint in `[0, BOX_VALUE_BOUND)`
 (TYPES_INTERFACE → "Box value domain": narrower than the writer's `[0, 2⁶⁴)`, because the store is
-signed), `hex32` as 64
-lowercase hex, `uint`/`u32` as safe non-negative integers excluding `-0` — and it is already total on
+signed), `uint`/`u32` as safe non-negative integers excluding `-0` — and it is already total on
 any JS value. A narrower check written for this call site would be a second spelling of one schema,
 which is the fork surface this contract rejects everywhere else. **The obligation is the whole
 schema, not the `bigint` alone**: the spec names the `value` field because that is where it was
-found, and any `hex32` field written by `writeHexNOrThrow` reaches a throwing writer by the
+found, and any 64-hex field written by `writeHexNOrThrow` reaches a throwing writer by the
 identical route.
 
 ⚠ **The example this paragraph used to give — `post_lock.targetPostId` — no longer exists.** The
@@ -4635,7 +4605,7 @@ mode flag: there is no "skip the checks" parameter on the apply path.
 | Phase | Contents | Runs in speculative computation? |
 |-------|----------|----------------------------------|
 | **Validation** | chain-link, protocol version, PoW target + PoW, interlink root, validator signature, Merkle roots, coinbase value + maturity, block storage, `clearTemplate` | No — the header does not exist yet |
-| **Mutation** | coinbase mint, post confirmation, DAG scores, topology, prune verification + settlement, embedded UTXO txs, per-block like settlement + post-lock vesting, decay, vouch cooldowns | Yes — verbatim, at an explicitly passed height |
+| **Mutation** | coinbase mint, post confirmation, DAG scores, topology, prune verification + settlement, embedded UTXO txs, per-block like settlement, decay, vouch cooldowns | Yes — verbatim, at an explicitly passed height |
 | **Commit** | AVL feed + `stateRoot` verification + checkpoint, journal persistence | No — the speculative run reads the digest and rolls back |
 
 The mutation phase takes its height as an argument rather than reading

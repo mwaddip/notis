@@ -27,6 +27,7 @@ export {
   isStump,
   isPrunedTombstone,
   getPlaceholdersAt,
+  getPendingPostAuthor,
 } from './posts.js';
 export type { PostStatus, StoredPost, PrunedTombstone, DeletedPostRow } from './posts.js';
 
@@ -53,9 +54,6 @@ export {
   getVouchEscrowsReleasableAt,
   hasActiveVouchEscrow,
   getLikeCarryBox,
-  getUnspentPostLockBoxes,
-  getPostLockBox,
-  getPrunedLockCandidates,
   getUnspentBoxes,
   insertBox,
   consumeBox,
@@ -66,7 +64,7 @@ export {
   registerKarmaMembershipHook,
   recordKarmaActivity,
 } from './utxo.js';
-export type { KarmaMembershipHook, PrunedLockCandidate } from './utxo.js';
+export type { KarmaMembershipHook } from './utxo.js';
 
 export {
   insertLikeRecord,

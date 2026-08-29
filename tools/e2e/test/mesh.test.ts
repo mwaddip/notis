@@ -17,6 +17,7 @@ import {
   isPost,
 } from '../src/http.js';
 import type { BoxRef } from '../src/tx/render.js';
+import { POST_PRICE_THREAD, POST_PRICE_REPLY } from '@dagsocial/types';
 
 const FILE_INDEX = 0;
 
@@ -98,7 +99,8 @@ describe('mesh', () => {
       expect(BigInt(bk.total)).toBe(bondAmount);
     }
 
-    // ---- thread + reply ----
+    // ---- thread + reply: a reply spends its thread's change with no block
+    // between — NODE_INTERFACE → Post transactions ----
     const aliceK = (await getKarma(miner, alice.publicKeyHex))!;
     const thread = buildThreadTx(
       alice,
@@ -113,6 +115,7 @@ describe('mesh', () => {
       [thread.outputs[0]!],
       'reply to mesh',
       threadRes.postId,
+      alice.publicKeyHex,
       aliceK.height,
     );
     const replyRes = await postPost(miner, reply.json, reply.content);
@@ -180,8 +183,7 @@ describe('mesh', () => {
     );
     await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
 
-    // Alice's karma: bond (50) − thread (5) − reply (3) = 42, unchanged by one like
-    const aliceKarmaExpected = bondAmount - 5n - 3n;
+    const aliceKarmaExpected = bondAmount - POST_PRICE_THREAD - POST_PRICE_REPLY; // ARCHITECTURE → Like parameters
     for (const node of mesh.nodes) {
       const p = (await getPost(node, threadRes.postId))!;
       expect(isPost(p)).toBe(true);

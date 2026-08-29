@@ -88,7 +88,7 @@ Three limits stand in a fixed order — `MAX_BLOCK_BODY_BYTES < MAX_SERVE_BODY_B
 |---|---|---|---|---|---|---|
 | `MAX_BLOCK_BODY_BYTES` | `2_000_000` | 2 MB per block; 1.05 TB/yr at 60 s blocks | consensus | none stated for the number; the two net caps above it derive from it | CHOSEN | `TYPES_INTERFACE → Size caps` |
 | `MAX_TX_BYTES` | `10_000` | ~148 credit inputs | consensus | argued for *existence* — a transaction may not be valid, poolable and unminable at once — not for the number | CHOSEN | `TYPES_INTERFACE → Size caps` |
-| `MAX_SETTLEMENT_BYTES` | `100_000` | 5 % of the body; ≈ 2 700 like markers after the capped legs | consensus | two relations are the rule (fits a legal body; an empty-body settlement at every cap fits it — 70 + 3 × 64 × 70 = 13 510); the number is provisional | PROVISIONAL | `TYPES_INTERFACE → Size caps` |
+| `MAX_SETTLEMENT_BYTES` | `100_000` | 5 % of the body; ≈ 2 700 like markers after the capped legs | consensus | two relations are the rule (fits a legal body; an empty-body settlement at every cap fits it — 70 + 2 × 64 × 70 = 9 030); the number is provisional | PROVISIONAL | `TYPES_INTERFACE → Size caps` |
 
 ### Settlement caps
 
@@ -96,7 +96,6 @@ Three limits stand in a fixed order — `MAX_BLOCK_BODY_BYTES < MAX_SERVE_BODY_B
 |---|---|---|---|---|---|---|
 | `MAX_BOND_SETTLEMENTS_PER_BLOCK` | `64` | bonds settled per block | consensus | a backlog of `n` drains in ⌈n / 64⌉ blocks; 64 is provisional | PROVISIONAL | `TYPES_INTERFACE → Settlement caps` |
 | `MAX_ESCROW_RETURNS_PER_BLOCK` | `64` | escrows returned per block | consensus | same | PROVISIONAL | `TYPES_INTERFACE → Settlement caps` |
-| `MAX_POST_LOCK_RELEASES_PER_BLOCK` | `64` | pruned locks released per block | consensus | same | PROVISIONAL | `TYPES_INTERFACE → Settlement caps` |
 
 ### Karma
 
@@ -108,15 +107,15 @@ Three limits stand in a fixed order — `MAX_BLOCK_BODY_BYTES < MAX_SERVE_BODY_B
 | `KARMA_DECAY_AMOUNT` | `5n` | 5 karma per period | consensus | none stated | CHOSEN | `ARCHITECTURE → Karma decay` |
 | `KARMA_MINIMUM` | `10n` | the decay floor | consensus | none stated | CHOSEN | `ARCHITECTURE → Karma decay` |
 
-### Post lock and likes
+### Post price and likes
 
-`ARCHITECTURE → Like parameters` marks the whole table as placeholders.
+`ARCHITECTURE → Like parameters` marks the like rows as placeholders; the price rows are ruled.
 
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
-| `POST_LOCK_THREAD_COST` | `5n` | karma locked per thread | consensus | placeholder | PROVISIONAL | `ARCHITECTURE → Like parameters` |
-| `POST_LOCK_REPLY_COST` | `3n` | karma locked per reply | consensus | placeholder | PROVISIONAL | `ARCHITECTURE → Like parameters` |
-| `POST_LOCK_UNLOCK_PER_LIKES` | `10` | one karma unlocked per 10 lifetime likes | consensus | placeholder | PROVISIONAL | `ARCHITECTURE → Like parameters` |
+| `POST_PRICE_THREAD` | `5n` | karma a thread pays to the pool | consensus | user ruling, 2026-08-29 | RULED | `ARCHITECTURE → The post price` |
+| `POST_PRICE_REPLY` | `3n` | karma a reply pays | consensus | user ruling, 2026-08-29 | RULED | `ARCHITECTURE → The post price` |
+| `REPLY_AUTHOR_SHARE` | `1n` | the part of a reply's price the parent's author accrues | consensus | user ruling, 2026-08-29 — a 33 % channel to the parent, below the like's 80 %, so no arbitrage | RULED | `ARCHITECTURE → The post price` |
 | `LIKE_KARMA_COST` | `1n` | 1 karma per like | consensus | the indivisible unit — no smaller like is expressible; the `B · (1 − V/L)` supply arithmetic holds under exactly this value | PROVISIONAL | `ARCHITECTURE → Like parameters` |
 | `LIKES_PER_KARMA_PAYOUT` | `5` | `x`: an author accrues `x − 1` per `x` likes, 1 burns | consensus | `1/x` = 20 % burn is the deflation dial; placeholder | PROVISIONAL | `ARCHITECTURE → Like parameters` |
 

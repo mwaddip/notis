@@ -78,6 +78,7 @@ export function createRouter(deps: UtxoDeps): Router {
       next: pageResult.next ? formatKey('box', pageResult.next) : null,
       lastActivityBlock: record?.lastActivityBlock ?? 0,
       lastDecayBlock: record?.lastDecayBlock ?? 0,
+      lifetimeLikesReceived: (record?.lifetimeLikesReceived ?? 0n).toString(),
       height,
     });
   });

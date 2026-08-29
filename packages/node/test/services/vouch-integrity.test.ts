@@ -120,6 +120,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
       storageRentPeriodBlocks: 40,
       getBoxProvenance: () => null,
       getTopologyAuthor: () => null,
+      getPendingPostAuthor: () => null,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
       },

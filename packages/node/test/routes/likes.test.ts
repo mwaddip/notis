@@ -79,6 +79,7 @@ async function request(
       storageRentPeriodBlocks: 40,
       getBoxProvenance: () => null,
       getTopologyAuthor: () => POST_AUTHOR,
+      getPendingPostAuthor: () => null,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
       },

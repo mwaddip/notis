@@ -118,9 +118,9 @@ const CASES: Record<AnyBox['boxType'], Case> = {
     outputs: (h) => [karmaOut(h.userId, 25n)],
     signer: null,
   },
-  post_lock: {
-    box: (h) => ({
-      boxType: 'post_lock', value: 10n, originalValue: 10n, owner: h.userId,
+  karma_price: {
+    box: () => ({
+      boxType: 'karma_price', value: 10n,
       createdAtBlock: 0,
     }),
     outputs: (h) => [karmaOut(h.userId, 10n)],
@@ -196,6 +196,7 @@ describe('authorization is a property of the transition', () => {
       storageRentPeriodBlocks: 40,
       getBoxProvenance: () => null,
       getTopologyAuthor: () => null,
+      getPendingPostAuthor: () => null,
       runInTransaction: (fn: () => void) => { (db.transaction(fn) as () => void)(); },
     };
     holder = makeTestIdentity();

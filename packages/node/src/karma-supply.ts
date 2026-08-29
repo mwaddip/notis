@@ -32,7 +32,6 @@ import type { AnyBox } from '@dagsocial/types';
 const KARMA_SUPPLY_VERDICT: Record<AnyBox['boxType'], boolean> = {
   karma: true,
   bond: true,
-  post_lock: true,
   vouch: true,
   like_accrual: true,
   vouch_escrow: true,
@@ -42,6 +41,7 @@ const KARMA_SUPPLY_VERDICT: Record<AnyBox['boxType'], boolean> = {
   fee: false,
   genesis_proof: false,
   karma_pool: false,
+  karma_price: false,
 };
 
 /**

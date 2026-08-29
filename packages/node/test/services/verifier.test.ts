@@ -5,8 +5,8 @@ import {
 } from 'crypto';
 import {
   PROTOCOL_VERSION,
-  POST_LOCK_THREAD_COST,
-  POST_LOCK_REPLY_COST,
+  POST_PRICE_THREAD,
+  POST_PRICE_REPLY,
   KARMA_STALE_THRESHOLD_BLOCKS,
   KARMA_DECAY_INTERVAL_BLOCKS,
   KARMA_DECAY_AMOUNT,
@@ -84,7 +84,7 @@ describe('verifyPost', () => {
     const store = makeStore();
     store.identities.set(userId, { userId, publicKey: pubKeyRaw, createdAt: Date.now() });
     store.karmaBoxes.set(Buffer.from(pubKeyRaw).toString('hex'), [
-      { value: POST_LOCK_THREAD_COST },
+      { value: POST_PRICE_THREAD },
     ]);
     const commit = makeCommit();
     const deps = createMockDeps(store);
@@ -119,7 +119,7 @@ describe('verifyPost', () => {
     const store = makeStore();
     store.identities.set(userId, { userId, publicKey: pubKeyRaw, createdAt: Date.now() });
     store.karmaBoxes.set(Buffer.from(pubKeyRaw).toString('hex'), [
-      { value: POST_LOCK_REPLY_COST },
+      { value: POST_PRICE_REPLY },
     ]);
     const ABSENT_PARENT = 'de'.repeat(32);
     const commit = makeCommit({ parentRefs: [ABSENT_PARENT] });
@@ -133,7 +133,7 @@ describe('verifyPost', () => {
     const store = makeStore();
     store.identities.set(userId, { userId, publicKey: pubKeyRaw, createdAt: Date.now() });
     store.karmaBoxes.set(Buffer.from(pubKeyRaw).toString('hex'), [
-      { value: POST_LOCK_REPLY_COST },
+      { value: POST_PRICE_REPLY },
     ]);
     const parentId = 'ab'.repeat(32);
     store.posts.set(parentId, {
@@ -152,7 +152,7 @@ describe('verifyPost', () => {
     const store = makeStore();
     store.identities.set(userId, { userId, publicKey: pubKeyRaw, createdAt: Date.now() });
     store.karmaBoxes.set(Buffer.from(pubKeyRaw).toString('hex'), [
-      { value: POST_LOCK_REPLY_COST },
+      { value: POST_PRICE_REPLY },
     ]);
     const stumpId = 'cd'.repeat(32);
     store.posts.set(stumpId, {
@@ -167,7 +167,7 @@ describe('verifyPost', () => {
   it('rejects a parent ref that names a tombstone', () => {
     const store = makeStore();
     store.karmaBoxes.set(Buffer.from(pubKeyRaw).toString('hex'), [
-      { value: POST_LOCK_REPLY_COST },
+      { value: POST_PRICE_REPLY },
     ]);
     const tombId = 'ef'.repeat(32);
     store.posts.set(tombId, {
@@ -195,7 +195,7 @@ describe('verifyPost', () => {
     const store = makeStore();
     store.identities.set(userId, { userId, publicKey: pubKeyRaw, createdAt: Date.now() });
     store.karmaBoxes.set(Buffer.from(pubKeyRaw).toString('hex'), [
-      { value: POST_LOCK_THREAD_COST },
+      { value: POST_PRICE_THREAD },
     ]);
     const commit = makeCommit({ parentRefs: [] });
     const deps = createMockDeps(store);

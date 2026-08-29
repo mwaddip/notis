@@ -15,7 +15,7 @@ import { generateKeyPairSync, sign as cryptoSign, type KeyObject } from 'crypto'
 import {
   computeBoxId,
   computeTxId,
-  POST_LOCK_THREAD_COST,
+  POST_PRICE_THREAD,
   VOUCH_KARMA_AMOUNT,
   KARMA_STALE_THRESHOLD_BLOCKS,
   KARMA_DECAY_INTERVAL_BLOCKS,
@@ -90,6 +90,7 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
       storageRentPeriodBlocks: 40,
       getBoxProvenance: () => null,
       getTopologyAuthor: () => null,
+      getPendingPostAuthor: () => null,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
       },
@@ -126,7 +127,7 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
     return box;
   }
 
-  // `post` rides here rather than at the call sites because a `PostLockBox`
+  // `post` rides here rather than at the call sites because a `KarmaPriceBox`
   // output without it fails the engine's post biconditional (NODE_INTERFACE →
   // Post transactions).
   function signedTx(inputs: string[], outputs: unknown[], post?: PostCommit): UtxoTransaction {
@@ -164,47 +165,41 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
     };
   }
 
-  it('a post_lock carrying a guard key is rejected, nothing applied', () => {
-    // No box declares `guard` (NODE_INTERFACE → Legal box transitions), so a
-    // `guard` key is a stray key like any other and cannot reach the id
-    // preimage.
+  it('a karma_price carrying a guard key is rejected, nothing applied', () => {
     const karma = seedKarma(100n);
-    const lyingLock = {
-      boxType: 'post_lock',
-      value: POST_LOCK_THREAD_COST,
+    const lyingPrice = {
+      boxType: 'karma_price',
+      value: POST_PRICE_THREAD,
       createdAtBlock: 0,
-      originalValue: POST_LOCK_THREAD_COST,
-      owner: ownerPubKey,
       guard: 'block_apply',
     };
     const r = validateTx(
       deps,
-      signedTx([karma.id!], [karmaChange(100n - POST_LOCK_THREAD_COST), lyingLock]),
+      signedTx([karma.id!], [karmaChange(100n - POST_PRICE_THREAD), lyingPrice],
+        makePostCommit(ownerPubKey, 'guard key payload')),
       10,
     );
     expect(r.valid).toBe(false);
     expect(r.error).toMatch(/unexpected key 'guard'/);
-    // The input is untouched and no post_lock row exists.
     expect(deps.getBox(karma.id!)).not.toBeNull();
-    const locks = db
-      .prepare("SELECT COUNT(*) AS n FROM utxo_boxes WHERE box_type = 'post_lock'")
+    const prices = db
+      .prepare("SELECT COUNT(*) AS n FROM utxo_boxes WHERE box_type = 'karma_price'")
       .get() as { n: number | bigint };
-    expect(Number(locks.n)).toBe(0);
+    expect(Number(prices.n)).toBe(0);
   });
 
   it('before-leg probe 2, now closed: stray key is rejected, nothing applied', () => {
     const karma = seedKarma(100n);
-    const strayLock = {
-      boxType: 'post_lock',
-      value: POST_LOCK_THREAD_COST,
+    const strayPrice = {
+      boxType: 'karma_price',
+      value: POST_PRICE_THREAD,
       createdAtBlock: 0,
-      originalValue: POST_LOCK_THREAD_COST,
-      owner: ownerPubKey,
       note: 'x',
     };
     const r = validateTx(
       deps,
-      signedTx([karma.id!], [karmaChange(100n - POST_LOCK_THREAD_COST), strayLock]),
+      signedTx([karma.id!], [karmaChange(100n - POST_PRICE_THREAD), strayPrice],
+        makePostCommit(ownerPubKey, 'stray key payload')),
       10,
     );
     expect(r.valid).toBe(false);
@@ -212,19 +207,17 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
     expect(deps.getBox(karma.id!)).not.toBeNull();
   });
 
-  it('honest karma → karma + post_lock applies and round-trips id-clean', () => {
+  it('honest karma → karma + karma_price applies and round-trips id-clean', () => {
     const karma = seedKarma(100n);
-    const lock = {
-      boxType: 'post_lock',
-      value: POST_LOCK_THREAD_COST,
+    const price = {
+      boxType: 'karma_price',
+      value: POST_PRICE_THREAD,
       createdAtBlock: 0,
-      originalValue: POST_LOCK_THREAD_COST,
-      owner: ownerPubKey,
     };
     const tx = signedTx(
       [karma.id!],
-      [karmaChange(100n - POST_LOCK_THREAD_COST), lock],
-      makePostCommit(ownerPubKey, 'honest lock payload'),
+      [karmaChange(100n - POST_PRICE_THREAD), price],
+      makePostCommit(ownerPubKey, 'honest price payload'),
     );
     const r = validateTx(deps, tx, 10);
     expect(r.valid, r.error).toBe(true);
@@ -293,35 +286,27 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
   // wrong-typed field forever behind a clean id (4c).
   // -------------------------------------------------------------------------
 
-  it('class-4a mutant, now closed: hex-string post_lock owner is rejected, nothing applied', () => {
+  it('class-4a mutant, now closed: stray owner on karma_price is rejected, nothing applied', () => {
     const karma = seedKarma(100n);
-    const lyingLock: Record<string, unknown> = {
-      boxType: 'post_lock',
-      value: POST_LOCK_THREAD_COST,
+    const lyingPrice: Record<string, unknown> = {
+      boxType: 'karma_price',
+      value: POST_PRICE_THREAD,
       createdAtBlock: 0,
-      originalValue: POST_LOCK_THREAD_COST,
       owner: ownerPubKey,
     };
-    const tx = signedTx([karma.id!], [karmaChange(100n - POST_LOCK_THREAD_COST), lyingLock]);
-    // The lie is stamped AFTER signing. `owner` is `b32` from a `Uint8Array` in
-    // the box-id preimage, so a hex *string* has no encoding at all now and
-    // `signedTx` would throw before `checkOutputShape` saw it. That is itself
-    // the class-4a defect closing a second time, one layer lower: what used to
-    // be "stored, then reconstructed to different bytes" is now "cannot be
-    // hashed". The gate is still what this test measures, so the fixture has to
-    // reach it — `checkOutputShape` is step 4, signature reads are step 6.
-    lyingLock['owner'] = Buffer.from(ownerPubKey).toString('hex'); // 64-char string, not bytes
-    const r = validateTx(deps, tx, 10);
+    const r = validateTx(
+      deps,
+      signedTx([karma.id!], [karmaChange(100n - POST_PRICE_THREAD), lyingPrice],
+        makePostCommit(ownerPubKey, 'class-4a payload')),
+      10,
+    );
     expect(r.valid).toBe(false);
-    expect(r.error).toMatch(/\(post_lock\): field 'owner' must be a 32-byte Uint8Array/);
-    // On the pre-pin tree this box was stored and its row reconstructed to
-    // DIFFERENT bytes (Array.from over the string, chars coerced to numbers) —
-    // computeBoxId(rowToBox(row)) !== row.id, permanently. Now: no row at all.
+    expect(r.error).toMatch(/unexpected key 'owner'/);
     expect(deps.getBox(karma.id!)).not.toBeNull();
-    const locks = db
-      .prepare("SELECT COUNT(*) AS n FROM utxo_boxes WHERE box_type = 'post_lock'")
+    const prices = db
+      .prepare("SELECT COUNT(*) AS n FROM utxo_boxes WHERE box_type = 'karma_price'")
       .get() as { n: number | bigint };
-    expect(Number(locks.n)).toBe(0);
+    expect(Number(prices.n)).toBe(0);
   });
 
   it('class-4b mutant, now closed: -0 in a number field is rejected (cbor float at insert, JSON 0 on read)', () => {

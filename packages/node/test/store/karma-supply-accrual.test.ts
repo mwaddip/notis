@@ -69,9 +69,7 @@ function boxOfType(boxType: AnyBox['boxType'], value: bigint, tag = ''): AnyBox 
       base['inviterId'] = OWNER;
       base['inviteePublicKey'] = OTHER;
       break;
-    case 'post_lock':
-      base['owner'] = OWNER;
-      base['originalValue'] = value;
+    case 'karma_price':
       break;
     case 'vouch':
       base['voucherId'] = OWNER;
@@ -116,24 +114,16 @@ function boxOfType(boxType: AnyBox['boxType'], value: bigint, tag = ''): AnyBox 
 const COUNTS_AS_CIRCULATING: Record<AnyBox['boxType'], boolean> = {
   karma: true,
   bond: true,
-  post_lock: true,
   vouch: true,
   credit: false,
   emission: false,
   treasury: false,
   fee: false,
   genesis_proof: false,
-  // ⛔ Karma-bearing and still `false`. The pool holds what is NOT in
-  // circulation, so counting it would have the supply account for itself.
   karma_pool: false,
-  // ⛔ **Both `true`, each on its own evidence.** A marker holds the liker's
-  // karma between the like and the settlement, a carry box holds an author's
-  // remainder across blocks, and an escrow holds a voucher's stake for the length
-  // of its cooldown. All three are karma a holder is waiting on rather than karma
-  // that stopped existing — the standing of `bond`, `post_lock` and `vouch`
-  // (TYPES_INTERFACE → LikeAccrualBox / VouchEscrowBox).
   like_accrual: true,
   vouch_escrow: true,
+  karma_price: false,
 };
 
 describe('the karma supply is accounted at the box mutation choke point', () => {
@@ -217,7 +207,7 @@ describe('the karma supply is accounted at the box mutation choke point', () => 
     s.beginBlockJournal(1);
     s.consumeBox(spent.id!, 1);
     s.insertBox(boxOfType('karma', 15n));
-    s.insertBox(boxOfType('post_lock', 25n));
+    s.insertBox(boxOfType('bond', 25n));
     expect(s.openBlockJournalKarmaSupplyDelta()).toBe(0n);
   });
 

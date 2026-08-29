@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import type { AnyBox, AnyBoxCandidate, CandidateOf, CreditBox, KarmaBox, BondBox, PostLockBox, VouchBox, VouchEscrowBox, LikeAccrualBox, EmissionBox, TreasuryBox, FeeBox, KarmaPoolBox } from '@dagsocial/types';
+import type { AnyBox, AnyBoxCandidate, CandidateOf, CreditBox, KarmaBox, BondBox, KarmaPriceBox, VouchBox, VouchEscrowBox, LikeAccrualBox, EmissionBox, TreasuryBox, FeeBox, KarmaPoolBox } from '@dagsocial/types';
 import type Database from 'better-sqlite3';
 
 /**
@@ -26,7 +26,7 @@ async function importDbFresh() {
 
 async function importUtxoFresh() {
   return (await import('../../src/store/utxo.js')) as {
-    insertBox: (box: AnyBox, postLockTarget?: string) => void;
+    insertBox: (box: AnyBox) => void;
     getBox: (boxId: string) => AnyBox | null;
   };
 }
@@ -175,10 +175,9 @@ describe('transaction output provenance (Spec G phase C3)', () => {
         boxType: 'bond', value: 3n, createdAtBlock: 0, inviterId: user(0xe7),
         inviteePublicKey: user(0xe8),
       } satisfies CandidateOf<BondBox>],
-      post_lock: [{
-        boxType: 'post_lock', value: 5n, createdAtBlock: 0,
-        originalValue: 10n, owner: user(0xeb),
-      } satisfies CandidateOf<PostLockBox>],
+      karma_price: [{
+        boxType: 'karma_price', value: 5n, createdAtBlock: 0,
+      } satisfies CandidateOf<KarmaPriceBox>],
       vouch: [{
         boxType: 'vouch', value: 1n, createdAtBlock: 0, voucherId: user(0xe9),
         targetId: user(0xea),

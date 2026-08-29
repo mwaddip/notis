@@ -174,7 +174,7 @@ there is nothing a `(post, expectedId)` signature could check.
 
 ⚠ **`utf8(txId)`, not decoded bytes.** `TxId` is typed as a hex string, and this contract's
 standing rule (→ Pinned byte forms) is that a **standalone derivation** takes it as the UTF-8
-bytes of its hex text — as the `postlock-*` mint subjects do. The
+bytes of its hex text — as a hex-text mint subject would. The
 decoded-bytes form belongs to the positional struct encoders, which establish their domain
 upstream; this function has no upstream and must stay total on an attacker-supplied `txId`.
 
@@ -279,8 +279,9 @@ Two shapes, not one:
 
 ```
 interface BoxCandidate {              // the shared BASE — no per-type fields
-  boxType: "karma" | "credit" | "invite" | "genesis_proof" | "bond" | "post_lock" | "vouch"
-         | "emission" | "treasury" | "fee"
+  boxType: "karma" | "credit" | "invite" | "genesis_proof" | "bond" | "vouch"
+         | "emission" | "treasury" | "fee" | "karma_pool" | "like_accrual" | "vouch_escrow"
+         | "karma_price"
   value: bigint                // integer base units — uniform bigint (see "Value denomination")
 }
 
@@ -367,9 +368,8 @@ lets one party make another's box collectible at once.
 
 #### Mint identity
 
-Boxes created by block application rather than by a user transaction (coinbase, karma mints,
-decay, post-lock vesting, genesis) derive a **synthetic transaction id**, so there is exactly
-one derivation path:
+Boxes created with no user transaction behind them (genesis seeding) derive a **synthetic
+transaction id**, so there is exactly one derivation path:
 
 ```
 mintTxId = blake2b512( MINT_ID_DOMAIN ‖ vlqU(height) ‖ enum8(reason) ‖ lp(subject) )[0:32]
@@ -403,8 +403,8 @@ computes different ids.
     written by `writeHexNOrThrow`, which decodes. This covers `computeTxId`'s `inputs`
     (via `txIdBytes`), `postFieldBytes`' `parentRefs`, and `boxRecordBytes`' `txId`.
   - **A free byte string concatenated into a hash enters as the UTF-8 bytes of its
-    64-character hex text.** This covers `computePostId`'s `txId` and the `postlock-unlock`
-    and `postlock-remainder` mint subjects. **`reason` does NOT enter
+    64-character hex text.** This covers `computePostId`'s `txId`; the live mint subjects are
+    fixed-width selectors and raw keys, not hex text. **`reason` does NOT enter
     this way** — it is an `enum8` tag byte, not ASCII text (corrected 2026-08-16).
 
   ⛔ **The dividing line is a FIXED WIDTH, and that is why it is principled rather than
@@ -572,7 +572,8 @@ Karma boxes are non-tradeable. They can only be consumed by the owner to:
 - Create a bond box (inviting — ARCHITECTURE → Invite System)
 - Fund a like — the `LIKE_KARMA_COST` rides the transaction's own `LikeAccrualBox` marker
 - Create a new karma box for the same owner (balance change)
-- Create a post lock box (when posting)
+- Pay a post's price into a `KarmaPriceBox` — and a reply's `REPLY_AUTHOR_SHARE` into a
+  `LikeAccrualBox` for the parent's author (ARCHITECTURE → The post price)
 - Create a vouch box (staking for another member)
 
 `lastTouchBlock` was removed by Spec G — it had no reader anywhere in `src`, and the activity
@@ -583,11 +584,10 @@ clock it nominally represented now lives in the committed per-identity record
 preimage. A mint's `txId` is `computeMintTxId(height, reason, subject)`, whose `reason` tag
 names why the karma was created; a user-path box carries the transaction that made it.
 
-⚠ **`transferKarma` (node) consolidates its credits** — a credited owner's existing karma
-boxes are consumed and one box holding the total is inserted — and `getKarmaBoxes` orders by
-value with no tie-break. That is identity-harmless, because nothing the merge chooses between
-reaches the id preimage. Settlement karma outputs do **not** consolidate: they land beside
-whatever karma the owner already holds.
+⚠ **Settlement karma outputs do not consolidate** — they land beside whatever karma the owner
+already holds. The one block-application path that consumes an owner's boxes and re-emits one is
+decay's squaring (`ARCHITECTURE → Karma decay`), and nothing it chooses between reaches an id
+preimage: `getKarmaBoxes` orders by `value DESC, id`, a total order.
 
 ### CreditBox
 
@@ -689,9 +689,7 @@ too — the window runs from the **claim**, not the creation, and the claim heig
 is already recorded as `IdentityRecord.invitedAtBlock` (`NODE_INTERFACE` →
 Identity Records), so carrying it here would be a second copy of committed state.
 
-**There is no `originalValue`,** and the contrast with `PostLockBox` below is the
-reason. A post lock vests per block, so its current and initial values differ and
-both have to be carried. A bond settles **once**, for
+**There is no `originalValue`.** A bond settles **once**, for
 `min(floor(IdentityRecord.lifetimeLikesReceived / INVITE_BOND_VEST_PER_LIKES), value)`
 — a pure function of a monotonic counter, which makes a single evaluation
 arithmetically identical to accumulated instalments. No partial state exists to
@@ -700,54 +698,54 @@ record.
 **Nothing spends a bond.** Creation and settlement both move it through block
 application — the create transaction outputs it, the settlement transaction
 consumes it at the probation deadline — so no transition admits it into a user
-transaction, the same standing `PostLockBox` has. `inviteePublicKey` is also
+transaction, the same standing `KarmaPriceBox` has. `inviteePublicKey` is also
 what the settlement reads to address the grant, and the probation window runs
 from the invite's own height (`IdentityRecord.invitedAtBlock`) — recorded on the
 identity record, so carrying it here would be a second copy of committed state.
 
-### PostLockBox
+### PostLockBox — RETIRED (2026-08-29)
+
+**There is no post lock.** A post pays a price rather than locking a bond (→ KarmaPriceBox;
+`ARCHITECTURE → The post price`), so no box holds an author's karma against their post, nothing
+vests per block and nothing is released at a prune. The boxType string **`'post_lock'` and tag `5`
+are a tracked reservation** (→ Tracked reservations), reserved while this record and its in-code
+citations stand.
+
+**The lesson the type carried survives it.** A lock could not name its target post: a post's id
+derives from the transaction that creates it (`computePostId(txId, index)`), the lock was an output
+of that same transaction, and `canonicalBoxBytes` is inside the `TxId` preimage — so the field would
+have had to be known before the id that produces it. ⛔ **No box may name an output of its own
+transaction; a mapping of that shape is derived state, written at apply by every node identically.**
+That rule is what this heading is cited for.
+
+### KarmaPriceBox
 
 ```
-PostLockBox extends BoxBase {
-  boxType: "post_lock"
-  value: bigint                // Current locked karma (decreases per block as likes accumulate)
-  originalValue: bigint        // Initial lock amount (POST_LOCK_THREAD_COST or POST_LOCK_REPLY_COST)
-  owner: Uint8Array            // 32 raw bytes — post author's Ed25519 public key
+KarmaPriceBox extends BoxBase {
+  boxType: "karma_price"
+  value: bigint                // ≥ 1n — what the transaction pays to the pool
 }
 ```
 
-⛔ **There is no `targetPostId`, and the reason is CIRCULARITY.** A post's id comes
-from the transaction that creates it (`computePostId(txId, index)`). The lock is an
-**output of that same transaction**, and `canonicalBoxBytes` is inside the `TxId`
-preimage — so the field would have to be known before the `TxId` that produces it.
-**The transaction would be unbuildable.** This is the same circularity that makes
-`outputs` carry *candidates*: a transaction cannot name its own outputs' ids, so ids
-are derived once `TxId` is known.
+The karma-side twin of `FeeBox`: what a karma action pays, named as an output so the transaction
+conserves (`ARCHITECTURE → How a source and a sink get named`, third shape — a marker to a party the
+transaction cannot name a box for; here the pool). **No owner, and therefore no trailing fields** —
+block application is its only spender, and where the value goes is already decided: the settlement
+of the block that created it consumes every price box the body's post transactions emitted and
+returns their sum to the pool (`NODE_INTERFACE → The settlement transaction`).
 
-It would also be a **second copy of committed state**: a lock's target is recomputable
-from the transaction that created it, so carrying it adds a field that can disagree
-with the thing it describes and buys nothing.
-
-⚠ **Do not re-add it.** The field looks obviously useful and is unbuildable. Node holds
-the lock→post mapping as **derived state**, written at apply by every node identically
-— the shape P2-D already blesses ("derived state computed identically by every node at
-apply — nothing to carry in the block").
-
-⛔ **TWO derivation routes, and one does not cover the other.**
-
-| lock | provenance names | target derived from |
-|---|---|---|
-| the original lock | the **post's own transaction** | `computePostId(box.txId, 0)` |
-| a `postlock-remainder` lock | a **synthetic mint** (`computeMintTxId`) | the mint **subject**, which carries the post id |
-
-A remainder lock's provenance names the mint, **not** the post, so route 1 derives a
-wrong id from it. Node's `insertBox` states both routes adjacently and refuses a
-`post_lock` that supplies neither.
-
-Post lock karma vests **per block** (P2-D — there is no epoch): every
-`POST_LOCK_UNLOCK_PER_LIKES` (10) lifetime likes on the target post unlocks
-1 karma back to the author, evaluated at the end of any block in which the
-post received likes (`ARCHITECTURE §Likes → Post karma locking`).
+- **A post transaction carries exactly one**, holding `POST_PRICE_THREAD` for a thread and
+  `POST_PRICE_REPLY − REPLY_AUTHOR_SHARE` for a reply — the share rides a `LikeAccrualBox`. The
+  shape rule is consensus and lives in `NODE_INTERFACE` (Legal box transitions).
+- ⛔ **A zero-value price box is not created**: zero means no box (→ Box value domain), and no
+  price is zero.
+- **No user transition admits one as an input.** Like the accrual marker, it is block
+  application's alone.
+- **Sets** (`NODE_INTERFACE → Three karma sets, and none derives from another`): transition
+  **yes** — a karma spend creates it; supply **no** — it is karma on its way out of circulation;
+  conservation **yes** — it holds karma until the settlement returns it.
+- **It is the transition any later karma price takes** — the prune's descendant charge, when it
+  lands, is a `KarmaPriceBox` on the prune transaction.
 
 ### VouchBox
 
@@ -815,8 +813,8 @@ same step, which is why they share a type rather than being told apart by one:
 | **marker** | the like transaction, as an output | consumed by the same block's settlement | one per like |
 | **carry box** | the settlement | across blocks, until a payout consumes it | one per author, `value < LIKES_PER_KARMA_PAYOUT` |
 
-⛔ **`author` IS ATTRIBUTION, NOT AUTHORIZATION** — the same distinction `BondBox.inviterId` and
-`PostLockBox.owner` carry. **No signature by `author` unlocks this box.** Only the settlement
+⛔ **`author` IS ATTRIBUTION, NOT AUTHORIZATION** — the same distinction `BondBox.inviterId`
+carries. **No signature by `author` unlocks this box.** Only the settlement
 transaction consumes it, so no user transition admits one as an input.
 
 ⛔ **A LIKE MUST NOT NAME A SHARED BOX.** Two likers of the same author in one block would name the
@@ -1094,8 +1092,9 @@ field whose presence is biconditional with a rule. It takes `opt()`'s presence t
 by `postFieldBytes(commit)`, appended **only when present**, after `likeTarget`'s
 contribution. The body is bound to the transaction by `contentHash` alone; on gossip it rides
 beside the transaction's bytes as the packet's trailing `opt` (→ Layout — UtxoTransaction,
-the packet codec), outside `txIdBytes` and outside every id. **The two are mutually exclusive in practice** — a transaction is a
-like or a post, never both — but the encoding does not rely on that: each carries
+the packet codec), outside `txIdBytes` and outside every id. **The payload fields are mutually exclusive by rule** — a transaction is a like, a post, a
+prune or a withdrawal, never two of them (`NODE_INTERFACE → Transaction envelope shape`) — and the
+encoding does not rely on it either: each carries
 its own tag, so the tail stays unambiguous however the fields combine.
 
 ⛔ **A presence tag is unambiguous by construction; an in-band marker is
@@ -1119,9 +1118,10 @@ position among the transaction's post-bearing outputs**; today exactly one post
 rides one transaction, so it is `0` — the parameter exists so that stays a stated
 rule rather than an assumption baked into a call site.
 
-The consensus rule — `post` present ⟺ the transaction locks
-`POST_LOCK_{THREAD,REPLY}_COST` into a `PostLockBox` and conserves value — lives
-in `NODE_INTERFACE.md`, as the like biconditional does.
+The consensus rule — `post` present ⟺ the transaction pays `POST_PRICE_THREAD` (a thread)
+or `POST_PRICE_REPLY` (a reply, `REPLY_AUTHOR_SHARE` of it into a `LikeAccrualBox` for the
+parent's author) into a `KarmaPriceBox` and conserves value — lives in `NODE_INTERFACE.md`,
+as the like biconditional does.
 
 **`likeTarget`** names the liked post from inside the signed bytes — a relay cannot
 re-point a like. Its preimage contribution is `opt()`'s presence tag followed by `b32` —
@@ -1157,7 +1157,7 @@ recompute the hash and check the signature.
 | `computeBoxId(box)` | `(BoxBase) => BoxId` | Box id from `candidate ‖ txId ‖ index`. Total function of a stored box — no second argument, so `stored.id === computeBoxId(stored)` is checkable anywhere |
 | `computeCandidateBoxId(candidate, txId, index)` | `(BoxCandidate, TxId, number) => BoxId` | Same derivation, for a candidate not yet materialized. Used by creators and by clients predicting an id at signing time |
 | `computeTxId(tx)` | `(UtxoTransaction) => TxId` | Transaction id over candidates |
-| `computeMintTxId(height, reason, subject)` | `(number, MintReason, Uint8Array) => TxId` | Synthetic transaction id for boxes with no creating transaction — genesis seeding and post-lock vesting; everything else is a settlement output with an ordinary id. `subject` encoding is defined per reason — see `NODE_INTERFACE.md` |
+| `computeMintTxId(height, reason, subject)` | `(number, MintReason, Uint8Array) => TxId` | Synthetic transaction id for boxes with no creating transaction — genesis seeding; everything else is a settlement output with an ordinary id. `subject` encoding is defined per reason — see `NODE_INTERFACE.md` |
 | `canonicalBoxBytes(candidate)` | `(BoxCandidate) => Uint8Array` | The single canonical identity encoding. Exported so tests and mirror implementations (demo UI, light client) assert against the encoder that computes ids, not a lookalike |
 | `selectBoxes(boxes, requiredAmount)` | `(T[], bigint) => T[]` where `T extends { value: bigint }` | Largest-first UTXO selection — a greedy prefix of the **given** order until `requiredAmount` is covered; throws when the boxes' total falls short. **Precondition: the caller supplies boxes sorted by value descending** — the function imposes no order of its own, so its determinism is exactly its caller's. A transaction-builder helper (the faucet's invite and transfer builders are the consumers); no block-application path calls it |
 
@@ -1786,8 +1786,8 @@ construction throw, not a type error.
 Shared prefix: `enum8(boxType)` ‖ **`vlqU64(value)`**.
 
 ⚠ **`value` is `vlqU64`, not `vlqU` — corrected 2026-08-10, and the distinction is a domain, not a
-width.** This cell and the `post_lock.originalValue` cell below both said `vlqU` while the code has
-always called `writeVlqU64OrThrow` (`utxo.ts:128`, `:167`); both fields are `bigint`. **The bytes are
+width.** This cell said `vlqU` while the code has always called `writeVlqU64OrThrow`; the
+field is `bigint`. **The bytes are
 identical over the overlapping range, so nothing was broken** — which is exactly why it survived. But
 `vlqU` is total by sentinel and collapses anything past `MAX_SAFE_INTEGER`, while `vlqU64` **throws**
 outside `[0, 2⁶⁴)`, and spec §2.5 names the `OrThrow` writers precisely so that a totality exception
@@ -1802,7 +1802,7 @@ from this table — a use that reads every cell as an instruction rather than as
 | 2 | `invite` |
 | 3 | `genesis_proof` |
 | 4 | `bond` |
-| 5 | `post_lock` |
+| 5 | ⛔ **reserved** — `'post_lock'` (→ Tracked reservations) |
 | 6 | `vouch` |
 | 7 | `emission` |
 | 8 | `treasury` |
@@ -1810,6 +1810,7 @@ from this table — a use that reads every cell as an instruction rather than as
 | 10 | `karma_pool` |
 | 11 | `like_accrual` |
 | 12 | `vouch_escrow` |
+| 13 | `karma_price` |
 | **255** | ⛔ **PERMANENTLY UNASSIGNED — the probe value. Never give it a type.** |
 
 > ## Tracked reservations (remnant-bounded — tag rules, condition 3)
@@ -1819,6 +1820,7 @@ from this table — a use that reads every cell as an instruction rather than as
 > | Reserved | Held by |
 > |---|---|
 > | tag `2` + boxType `'invite'` | §InviteBox record and its in-code citations; the tag-2 reject vectors; `node/store/db.ts`'s tag-order comment |
+> | tag `5` + boxType `'post_lock'` | §PostLockBox's retired record and its in-code citations; the tag-5 reject vector |
 > | boxType `'like'` | the live illegal-transition rule (`utxo-engine`'s like clause) and its reject vectors |
 > | leaf domain `'coinbase'` | the live coinbase concept (`coinbase-split.ts`, `COINBASE_*` constants) — the string is permanently collision-prone while the concept lives |
 > | leaf domain `'prune'` | the live prune concept (`PruneCommit`, `pruneFieldBytes`, `PrunedTombstone`, `executePrune`, `prunesOf`, `routes/prune-withdraw.ts`) — a prune is a transaction, not a Merkle leaf, and the string stays collision-prone while the concept lives |
@@ -1827,7 +1829,7 @@ from this table — a use that reads every cell as an instruction rather than as
 > ## ⛔ TAG 2 IS A TRACKED HOLE
 >
 > `invite` is deleted (§InviteBox) and its number is reserved **while the tracked-reservations
-> row above holds** — the lowest-free-tag rule then governs it like any hole. A hole **inside**
+> row above holds** — as is `post_lock`'s tag `5` (§PostLockBox) — the lowest-free-tag rule then governs it like any hole. A hole **inside**
 > the assigned range is a distinct decode case from a tag past the end, and both need a reject
 > vector.
 >
@@ -1860,7 +1862,6 @@ from this table — a use that reads every cell as an instruction rather than as
 | `invite` | `b32(inviterId)` ‖ `b32(inviteePublicKey)` |
 | `genesis_proof` | `lp(payload)` |
 | `bond` | `b32(inviterId)` ‖ **`b32(inviteePublicKey)`** |
-| `post_lock` | **`vlqU64(originalValue)`** ‖ `b32(owner)` |
 | `vouch` | `b32(voucherId)` ‖ `b32(targetId)` |
 | `emission` | *(none)* |
 | `treasury` | *(none)* |
@@ -1868,6 +1869,7 @@ from this table — a use that reads every cell as an instruction rather than as
 | `karma_pool` | *(none)* |
 | `like_accrual` | `b32(author)` |
 | `vouch_escrow` | `b32(owner)` ‖ `vlqU(releaseAtBlock)` |
+| `karma_price` | *(none)* |
 
 > ## ⛔ WHAT A NEW BOX TYPE COSTS, AND WHY A GREP FOR THE TYPE MISSES THE WORST SITE
 >
@@ -1920,7 +1922,7 @@ from this table — a use that reads every cell as an instruction rather than as
 > transaction consumes one. Naming the field `owner` would invite exactly the reading the type exists
 > to refuse.
 
-⚠ **`emission`, `treasury`, `fee` and `karma_pool` have an empty tail, and an empty cell in this
+⚠ **`emission`, `treasury`, `fee`, `karma_pool` and `karma_price` have an empty tail, and an empty cell in this
 table is a layout, not an omission.** Their content encoding is the shared prefix alone —
 `enum8(boxType)` ‖ `vlqU64(value)` — because none of them names an owner. The `enum8` tag is the
 whole of what separates them from each other, exactly as it separates `invite` from `bond`, and
@@ -1988,8 +1990,7 @@ the schema type of the field it writes.** Run over the box arms 2026-08-09:
 
 | Field | Writer | Schema type | |
 |---|---|---|---|
-| `karma.owner`, `credit.owner`, `invite.inviterId`, `invite.inviteePublicKey`, `bond.inviterId`, `bond.inviteePublicKey`, `post_lock.owner`, `vouch.voucherId`, `vouch.targetId` | `writeBytesNOrThrow(…, 32)` | `bytes32` | ✓ |
-| `post_lock.originalValue` | `writeVlqU64OrThrow` | `u64` | ✓ |
+| `karma.owner`, `credit.owner`, `invite.inviterId`, `invite.inviteePublicKey`, `bond.inviterId`, `bond.inviteePublicKey`, `vouch.voucherId`, `vouch.targetId` | `writeBytesNOrThrow(…, 32)` | `bytes32` | ✓ |
 **The `✗` row was `post_lock.targetPostId`, and it is closed by DELETION rather than by a
 domain pin.** The field is gone (→ PostLockBox): it was unbuildable under provenance-derived
 post ids, so the throwing writer it fed has no input left to be adversarial about. There is no
@@ -2766,12 +2767,12 @@ threshold / percentage / bits** constants stay `number`.
   `CREDIT_INITIAL_REWARD`, `CREDIT_REWARD_REDUCTION`, and the node/UI faucet credit amounts.
 - **Karma amounts → `bigint` literals, NOT rescaled** (karma is indivisible):
   `KARMA_POSTING_MINIMUM`, `KARMA_DECAY_AMOUNT`, `KARMA_MINIMUM`,
-  `POST_LOCK_THREAD_COST`, `POST_LOCK_REPLY_COST`, `LIKE_KARMA_COST`,
+  `POST_PRICE_THREAD`, `POST_PRICE_REPLY`, `REPLY_AUTHOR_SHARE`, `LIKE_KARMA_COST`,
   `INVITE_MIN_KARMA`, `INVITE_BOND_MIN`, `INVITE_BOND_MAX`,
   `VOUCH_KARMA_AMOUNT`, `VOUCH_MIN_BALANCE`,
   `GENESIS_KARMA_PER_MEMBER`.
 - **Stay `number`:** all `*_BLOCKS`, `*_TARGET_BITS`/`*_FLOOR`,
-  `LIKES_PER_KARMA_PAYOUT` (a count), `POST_LOCK_UNLOCK_PER_LIKES`, `MAX_*`,
+  `LIKES_PER_KARMA_PAYOUT` (a count), `MAX_*`,
   `CREDIT_MINER_REWARD_DELAY` (a block count, NOT an amount), and every coinbase
   percentage — `COINBASE_TREASURY_PCT`, `COINBASE_MINER_FLOOR_PCT`,
   `COINBASE_BACKER_PCT`, `COINBASE_BONUS_PCT`, `MEMPOOL_CREDIT_SHARE_PCT`.
@@ -2820,7 +2821,7 @@ enforces on one field; these bound whole structures and no codec consults them.
 **The settlement has its own bound because it is derived.** `MAX_TX_BYTES` exists so a transaction
 cannot be valid, poolable and unminable at once (below); a settlement is never pooled, and its size
 is a function of the body and of chain state — one 32-byte input per like marker, per fee box, per
-settling bond, per releasable escrow, per released post lock; one karma output per paid author or
+settling bond, per releasable escrow, per price box; one karma output per paid author or
 owner (measured: 70 bytes with the four protocol outputs and nothing else, +32 per input, +38 per
 karma output). **The settlement, not the encoding, sets the per-block ceiling on likes**: the bound
 divided by the marker input's 32 bytes, less what the block's other legs take.
@@ -2871,22 +2872,20 @@ budget occupies a mempool slot that no block can ever drain.
 ```typescript
 export const MAX_BOND_SETTLEMENTS_PER_BLOCK = 64;     // consensus — bonds settled per block, at or past their deadline
 export const MAX_ESCROW_RETURNS_PER_BLOCK = 64;       // consensus — vouch escrows returned per block, at or past release
-export const MAX_POST_LOCK_RELEASES_PER_BLOCK = 64;   // consensus — pruned posts' locks released per block
 ```
 
-**A settlement leg the body does not drive is capped, and carries forward.** Three legs read chain
-state rather than the block's transactions — bonds whose probation has ended, escrows whose
-cooldown has ended, and the post locks of pruned subtrees — so no producer can trim them by
-selecting a smaller body. Each consumes at most its cap per block, in a total order, and leaves the
-rest for the next block; a candidate is eligible **at or past** its height, never only at it, so
-nothing is skipped by waiting (`NODE_INTERFACE` → The settlement transaction). The three caps are
-what make the liveness relation under → Size caps a constant rather than a hope: their sum, at the
-measured per-item cost, is the largest settlement an empty body can carry.
+**A settlement leg the body does not drive is capped, and carries forward.** Two legs read chain
+state rather than the block's transactions — bonds whose probation has ended and escrows whose
+cooldown has ended — so no producer can trim them by selecting a smaller body. Each consumes at
+most its cap per block, in a total order, and leaves the rest for the next block; a candidate is
+eligible **at or past** its height, never only at it, so nothing is skipped by waiting
+(`NODE_INTERFACE` → The settlement transaction). The two caps are what make the liveness relation
+under → Size caps a constant rather than a hope: their sum, at the measured per-item cost, is the
+largest settlement an empty body can carry.
 
 **Bounded delay, stated.** Under a backlog of `n` candidates a leg drains in ⌈`n` / cap⌉ blocks; a
 bond may vest more in the meantime (`ARCHITECTURE` → Bond outcomes), a cooling voucher waits that
-long to recast (`ARCHITECTURE` → Vouch boxes), a pruned reply's author waits that long for the
-refund. None of the three moves value it does not owe.
+long to recast (`ARCHITECTURE` → Vouch boxes). Neither moves value it does not owe.
 
 ### State format
 
@@ -2945,13 +2944,18 @@ export const KARMA_MINIMUM = 10n;                    // consensus — floor, dec
 > 2026-08-19).** This correction is about the unit alone; the ruling is stated at → Network
 > profiles, and `CONSTANTS → Karma` records the standing of every value in this block.
 
-### Post lock
+### Post price
 
 ```typescript
-export const POST_LOCK_THREAD_COST = 5;           // Karma locked for new threads
-export const POST_LOCK_REPLY_COST = 3;            // Karma locked for replies
-export const POST_LOCK_UNLOCK_PER_LIKES = 10;     // Every N likes unlocks 1 karma
+export const POST_PRICE_THREAD = 5n;             // consensus — karma a thread pays to the pool
+export const POST_PRICE_REPLY = 3n;              // consensus — karma a reply pays
+export const REPLY_AUTHOR_SHARE = 1n;            // consensus — the part of a reply's price the parent's author accrues
 ```
+
+`REPLY_AUTHOR_SHARE < POST_PRICE_REPLY`, so a reply always returns something to the pool — the
+relation is the rule, the numbers are `CONSTANTS → Post price and likes`. `KARMA_POSTING_MINIMUM`
+(→ Karma) no longer states the minimum to post — the price does, by conservation — and survives
+only as `INVITE_MIN_KARMA`'s alias.
 
 ### Likes
 

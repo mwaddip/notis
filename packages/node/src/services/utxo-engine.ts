@@ -6,9 +6,10 @@ import {
   computeTxId,
   LIKE_KARMA_COST,
   MIN_BOX_VALUE_PER_BYTE,
-  POST_LOCK_THREAD_COST,
+  POST_PRICE_THREAD,
   STORAGE_RENT_PER_BYTE,
-  POST_LOCK_REPLY_COST,
+  POST_PRICE_REPLY,
+  REPLY_AUTHOR_SHARE,
   PROTOCOL_VERSION,
   VOUCH_CAST_HEIGHT_WINDOW,
   VOUCH_KARMA_AMOUNT,
@@ -17,7 +18,7 @@ import {
 import { isCreditSideTx } from './coinbase-split.js';
 import { effectiveKarma } from './decay.js';
 import type { DecayCfg } from './decay.js';
-import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, PostLockBox, PostCommit, PruneCommit, PostWithdrawCommit } from '@dagsocial/types';
+import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, PostCommit, PruneCommit, PostWithdrawCommit } from '@dagsocial/types';
 
 // `computeTxId` has exactly one implementation and it is types'. This engine
 // must never grow a local copy: the id it returns is both the hash
@@ -52,7 +53,7 @@ import type { IdentityRecord } from '../store/identity-records.js';
 const KARMA_TRANSITION_VERDICT: Record<AnyBox['boxType'], boolean> = {
   karma: true,
   bond: true,
-  post_lock: true,
+  karma_price: true,
   vouch: true,
   like_accrual: true,
   credit: false,
@@ -144,6 +145,13 @@ export interface UtxoEngineDeps {
    * build time too.
    */
   getTopologyAuthor: (postId: string) => Uint8Array | null;
+  /**
+   * NODE_INTERFACE → Post transactions → "A reply's parent may still be pending
+   * at admission." The post arm's fallback after `getTopologyAuthor` returns
+   * null: the pending `dag_posts` row's author. Admission deps wire the real
+   * query; apply deps set `() => null` — at apply only `block_topology` is read.
+   */
+  getPendingPostAuthor: (postId: string) => Uint8Array | null;
   /** Wrap fn in a better-sqlite3 transaction. */
   runInTransaction: (fn: () => void) => void;
   /**
@@ -231,10 +239,12 @@ function checkTransitions(
   //
   // Ahead of the switch rather than inside the karma arm, so it holds for every
   // input type and not only for the one that can legitimately emit a marker.
-  if (likeTarget === undefined && outputs.some((o) => o.boxType === 'like_accrual')) {
+  const hasParentedPost = post !== undefined && post.parentRefs.length > 0;
+  if (likeTarget === undefined && !hasParentedPost &&
+      outputs.some((o) => o.boxType === 'like_accrual')) {
     return {
       valid: false,
-      error: `a LikeAccrualBox output is only legal on a like transaction`,
+      error: `a LikeAccrualBox output is legal only on a like or a reply`,
     };
   }
   // A like transaction (`likeTarget` present) has exactly one legal shape — the
@@ -259,7 +269,7 @@ function checkTransitions(
     case 'karma': {
       const karmaOutputs = outputs.filter((o) => o.boxType === 'karma');
       const bondOutputs = outputs.filter((o) => o.boxType === 'bond');
-      const postLockOutputs = outputs.filter((o) => o.boxType === 'post_lock');
+      const priceOutputs = outputs.filter((o) => o.boxType === 'karma_price');
       const vouchOutputs = outputs.filter((o) => o.boxType === 'vouch');
       const accrualOutputs = outputs.filter((o) => o.boxType === 'like_accrual');
 
@@ -368,65 +378,97 @@ function checkTransitions(
               `but ${likeTarget}'s author is ${Buffer.from(author).toString('hex')}`,
           };
         }
-      } else if (postLockOutputs.length > 0) {
-        // karma → karma + post_lock (post creation lock)
-        if (postLockOutputs.length !== 1 || bondOutputs.length > 0 || vouchOutputs.length > 0) {
-          return {
-            valid: false,
-            error: `Invalid post-lock transition: exactly 1 karma + 1 post_lock output expected`,
-          };
-        }
-        // ⛔ **The post biconditional** (NODE_INTERFACE → Post transactions), in
-        // the shape the like carve already set: `post` present ⟺ exactly one
-        // PostLockBox whose value is the cost for that post's shape. Both
-        // directions are checked, because only the pair makes it a
-        // biconditional — a lock with no payload is a lock nothing will ever
-        // unlock, and a payload with no lock is a post that cost nothing.
-        if (post === undefined) {
-          return {
-            valid: false,
-            error: 'A post_lock output requires the transaction to carry its post payload',
-          };
-        }
-        const expectedLock =
-          post.parentRefs.length === 0 ? POST_LOCK_THREAD_COST : POST_LOCK_REPLY_COST;
-        const lockValue = (postLockOutputs[0] as PostLockBox).value;
-        if (lockValue !== expectedLock) {
-          return {
-            valid: false,
-            error: `Post lock must be exactly ${expectedLock} karma, got ${lockValue}`,
-          };
-        }
-        // The author is the owner of the karma being spent — asserted here
-        // because the payload is otherwise opaque to the engine, and authorship
-        // is what prune and the feed key on.
+      } else if (post !== undefined) {
+        // NODE_INTERFACE → Legal box transitions (Thread and Reply rows).
         if (!Buffer.from(post.author).equals(Buffer.from(inputKarma.owner))) {
           return {
             valid: false,
             error: 'Post author must own the karma the transaction spends',
           };
         }
-        // The lock's owner is pinned to the karma input's owner. Without this
-        // a transaction puts a stranger's key on the lock, and the prune
-        // settlement refunds that stranger — the same property the vouch guard
-        // at voucherId protects (NODE_INTERFACE → Legal box transitions).
-        if (Buffer.from((postLockOutputs[0] as PostLockBox).owner).toString('hex') !== inputOwnerHex) {
-          return {
-            valid: false,
-            error: 'Post lock owner must be the karma input\'s owner',
-          };
+        if (post.parentRefs.length === 0) {
+          // Thread: exactly one KarmaPriceBox of POST_PRICE_THREAD and no marker.
+          if (priceOutputs.length !== 1 || accrualOutputs.length !== 0 ||
+              karmaOutputs.length > 1 ||
+              outputs.length !== 1 + karmaOutputs.length) {
+            return {
+              valid: false,
+              error:
+                `Invalid thread transition: exactly one karma_price output, ` +
+                `no like_accrual, at most one karma output expected`,
+            };
+          }
+          if (priceOutputs[0]!.value !== POST_PRICE_THREAD) {
+            return {
+              valid: false,
+              error:
+                `Thread price must be exactly ${POST_PRICE_THREAD} karma, ` +
+                `got ${priceOutputs[0]!.value}`,
+            };
+          }
+        } else {
+          // Reply: one KarmaPriceBox of POST_PRICE_REPLY − REPLY_AUTHOR_SHARE,
+          // one LikeAccrualBox of REPLY_AUTHOR_SHARE naming the parent's author.
+          if (priceOutputs.length !== 1 || accrualOutputs.length !== 1 ||
+              karmaOutputs.length > 1 ||
+              outputs.length !== 2 + karmaOutputs.length) {
+            return {
+              valid: false,
+              error:
+                `Invalid reply transition: exactly one karma_price, one ` +
+                `like_accrual, at most one karma output expected`,
+            };
+          }
+          const expectedPrice = POST_PRICE_REPLY - REPLY_AUTHOR_SHARE;
+          if (priceOutputs[0]!.value !== expectedPrice) {
+            return {
+              valid: false,
+              error:
+                `Reply price box must be exactly ${expectedPrice} karma, ` +
+                `got ${priceOutputs[0]!.value}`,
+            };
+          }
+          const marker = accrualOutputs[0] as LikeAccrualBox;
+          if (marker.value !== REPLY_AUTHOR_SHARE) {
+            return {
+              valid: false,
+              error:
+                `Reply accrual marker must carry exactly ${REPLY_AUTHOR_SHARE} ` +
+                `karma, got ${marker.value}`,
+            };
+          }
+          // NODE_INTERFACE → Post transactions → "A reply's parent may still be
+          // pending at admission."
+          const parentId = post.parentRefs[0]!;
+          const parentAuthor = deps.getTopologyAuthor(parentId)
+            ?? deps.getPendingPostAuthor(parentId);
+          if (parentAuthor === null) {
+            return {
+              valid: false,
+              error: `Reply parent ${parentId} names no author`,
+            };
+          }
+          if (Buffer.from(marker.author).toString('hex') !==
+              Buffer.from(parentAuthor).toString('hex')) {
+            return {
+              valid: false,
+              error:
+                `Reply marker names ${Buffer.from(marker.author).toString('hex')}, ` +
+                `but parent's author is ${Buffer.from(parentAuthor).toString('hex')}`,
+            };
+          }
         }
-      } else if (post !== undefined) {
-        // The biconditional's other direction: a payload with no lock.
+      } else if (priceOutputs.length > 0) {
+        // The biconditional's reverse: a price box with no post payload.
         return {
           valid: false,
-          error: 'A post payload requires exactly one post_lock output',
+          error: 'A karma_price output requires the transaction to carry its post payload',
         };
       } else if (vouchOutputs.length > 0) {
         // karma → karma + vouch
         if (vouchOutputs.length !== 1 ||
             bondOutputs.length > 0 ||
-            postLockOutputs.length > 0) {
+            priceOutputs.length > 0) {
           return {
             valid: false,
             error: `Invalid vouch transition: exactly 1 karma + 1 vouch output expected`,
@@ -749,12 +791,13 @@ function checkTransitions(
     }
 
     // ------------------------------------------------------------------
-    // PostLockBox — consumed by block application only, refused at step 8
+    // KarmaPriceBox — consumed by block application only (NODE_INTERFACE →
+    // Legal box transitions)
     // ------------------------------------------------------------------
-    case 'post_lock': {
+    case 'karma_price': {
       return {
         valid: false,
-        error: `PostLockBox can only be consumed by block application (not user transactions)`,
+        error: `KarmaPriceBox can only be consumed by block application (not user transactions)`,
       };
     }
 
@@ -876,7 +919,6 @@ export function ceilingOf(tx: UtxoTransaction): number | null {
 type FieldType =
   | 'u64'
   | 'bytes32'
-  | 'hex32'
   | 'uint'
   | 'u32'
   | 'string';
@@ -895,29 +937,6 @@ const FIELD_TYPE_CHECK: Record<FieldType, { ok: (v: unknown) => boolean; expecte
   bytes32: {
     ok: (v) => v instanceof Uint8Array && v.length === 32,
     expected: 'a 32-byte Uint8Array',
-  },
-  /**
-   * A 32-byte id carried as **hex text** in memory — `post_lock.targetPostId`,
-   * and it is the only one. Distinct from `bytes32`, which is the same 32 bytes
-   * held as a `Uint8Array`; the pair is the whole reason this needs its own
-   * entry rather than reusing one.
-   *
-   * ⚠ **This entry holds a no-panic violation shut, it is not a style gap.**
-   * `canonicalBoxBytes` writes the field with `writeHexNOrThrow(…, 32)`, which
-   * throws on anything that is not exactly 64 lowercase hex. Type it `'string'`
-   * here and a `post_lock` output carrying `targetPostId: 'hello'` clears step 5
-   * and then makes `computeTxId` **throw** at `validateTx`'s last line — turning
-   * an invalid transaction into an exception on an adversary-supplied value.
-   * VALIDATION_INTERFACE → "No-panic" forbids exactly that.
-   *
-   * The width belongs here and not in the encoder: a throwing writer's domain is
-   * established upstream (TYPES_INTERFACE → "Totality"), and adding a guard
-   * inside `canonicalBoxBytes` is what the format forbids. The schema is the
-   * upstream.
-   */
-  hex32: {
-    ok: (v) => typeof v === 'string' && HEX64.test(v),
-    expected: '64 lowercase hex characters',
   },
   // Never -0: `JSON.parse('-0')` is `-0` and `jsonToTx` passes values
   // through. The positional readers (`readVlqU`) cannot produce -0.
@@ -1208,6 +1227,26 @@ export function checkTxEnvelope(tx: unknown): UtxoResult {
     };
   }
 
+  // ---- 7b. At most one payload field (NODE_INTERFACE → Transaction envelope
+  // shape). A transaction carries likeTarget, post, prune or postWithdraw —
+  // never two. Without this a like carrying a PostCommit confirms the post
+  // under any author the commit names, for LIKE_KARMA_COST.
+  {
+    const payloads: string[] = [];
+    if (tx.likeTarget !== undefined) payloads.push('likeTarget');
+    if (tx.post !== undefined) payloads.push('post');
+    if (tx.prune !== undefined) payloads.push('prune');
+    if (tx.postWithdraw !== undefined) payloads.push('postWithdraw');
+    if (payloads.length > 1) {
+      return {
+        valid: false,
+        error:
+          `Invalid tx envelope: at most one payload field allowed, ` +
+          `got ${payloads.join(' and ')}`,
+      };
+    }
+  }
+
   // ---- 8. likeTarget: absent, or a post id ----
   //
   // Presence is `!== undefined`, the same test `computeTxId` applies — see
@@ -1346,18 +1385,11 @@ const OUTPUT_SHAPE: Record<OutputBoxType, OutputShapeEntry> = (() => {
       inviterId: 'bytes32',
       inviteePublicKey: 'bytes32',
     }),
-    // Reserved, never to be reused: `targetPostId`. A lock carries no such
-    // field — a post's id comes from the transaction that creates the lock, so
-    // the field would have to be known before the `TxId` that produces it
-    // (TYPES_INTERFACE → PostLockBox). The lock→post mapping is derived state
-    // held by the store.
-    post_lock: shape('user', {
-      boxType: null,
-      value: 'u64',
-      createdAtBlock: 'uint',
-      originalValue: 'u64',
-      owner: 'bytes32',
-    }),
+    // TYPES_INTERFACE → KarmaPriceBox. No owner and no trailing fields — block
+    // application is its only spender, and where the value goes is already
+    // decided: the settlement of the block that created it consumes it and
+    // returns its value to the pool.
+    karma_price: shape('user', { boxType: null, value: 'u64', createdAtBlock: 'uint' }),
     vouch: shape('user', {
       boxType: null,
       value: 'u64',
@@ -1365,12 +1397,9 @@ const OUTPUT_SHAPE: Record<OutputBoxType, OutputShapeEntry> = (() => {
       voucherId: 'bytes32',
       targetId: 'bytes32',
     }),
-    // The shared prefix and nothing else: a fee box names no owner, because
-    // block application is its only spender and the coinbase already decides
-    // which key the value reaches (TYPES_INTERFACE → FeeBox). No optional
-    // fields, because there is no tail for one to sit in. That a user-created
-    // box is consumed only by block application is the shape `bond` and
-    // `post_lock` already have (NODE_INTERFACE → Output shape).
+    // TYPES_INTERFACE → FeeBox. No owner and no trailing fields — the shape
+    // `bond`, `karma_price` and `like_accrual` already have
+    // (NODE_INTERFACE → Output shape).
     fee: shape('user', { boxType: null, value: 'u64', createdAtBlock: 'uint' }),
     like_accrual: shape('user', { boxType: null, value: 'u64', createdAtBlock: 'uint', author: 'bytes32' }),
     vouch_escrow: shape('user', {
@@ -1565,7 +1594,7 @@ function checkShapeAgainst(outputs: AnyBoxCandidate[], settlement: boolean): Utx
  * (NODE_INTERFACE → `validateTx` step 7). Every user-transaction shape has
  * somewhere for its value to go: a like's cost lands in a `LikeAccrualBox`,
  * an unvouch's stake in a `VouchEscrowBox`, an invite's bond in a `BondBox`,
- * a post's lock in a `PostLockBox`, and a credit transfer's fee in a
+ * a post's price in a `KarmaPriceBox`, and a credit transfer's fee in a
  * `FeeBox`. Karma and credits are minted or burned only in
  * block-application paths, never inside a user transaction.
  *
@@ -1641,7 +1670,7 @@ const SPEND_TIMING: Readonly<Record<AnyBox['boxType'], SpendTiming>> = {
   credit: { unlockHeight: (b) => (b as CreditBox).lockedUntilBlock ?? null },
   genesis_proof: ALWAYS_SPENDABLE,
   bond: ALWAYS_SPENDABLE,
-  post_lock: ALWAYS_SPENDABLE,
+  karma_price: ALWAYS_SPENDABLE,
   vouch: ALWAYS_SPENDABLE,
   // NODE_INTERFACE → Spend timing: the settlement reads releaseAtBlock, not this gate.
   vouch_escrow: ALWAYS_SPENDABLE,
@@ -1755,7 +1784,7 @@ function creditAuthorization(storageRentPeriodBlocks: number): Authorization {
 }
 
 /**
- * `bond`, `post_lock` and `fee` are created by user transactions and consumed
+ * `bond`, `karma_price` and `fee` are created by user transactions and consumed
  * only by block application; `emission`, `treasury` and `karma_pool` are block
  * application's at both ends (NODE_INTERFACE → "Genesis proof boxes are never
  * in a transaction"). No transition admits any of them as an input, and this
@@ -1794,7 +1823,7 @@ function authorizationTable(
   },
 
   bond: BLOCK_APPLICATION_ONLY,
-  post_lock: BLOCK_APPLICATION_ONLY,
+  karma_price: BLOCK_APPLICATION_ONLY,
   fee: BLOCK_APPLICATION_ONLY,
   emission: BLOCK_APPLICATION_ONLY,
   treasury: BLOCK_APPLICATION_ONLY,

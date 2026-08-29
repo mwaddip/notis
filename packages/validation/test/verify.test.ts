@@ -488,7 +488,7 @@ describe('verifyTxStructure — genesis_proof outputs', () => {
     karma: karmaOut,
     credit: { boxType: 'credit', value: 5n, createdAtBlock: 0, owner: new Uint8Array(32) },
     bond: { boxType: 'bond', value: 5n, createdAtBlock: 0, inviterId: new Uint8Array(32), inviteePublicKey: new Uint8Array(32) },
-    post_lock: { boxType: 'post_lock', value: 5n, createdAtBlock: 0, originalValue: 5n, owner: new Uint8Array(32) },
+    karma_price: { boxType: 'karma_price', value: 5n, createdAtBlock: 0 },
     vouch: { boxType: 'vouch', value: 1n, createdAtBlock: 0, voucherId: new Uint8Array(32), targetId: new Uint8Array(32) },
     like_accrual: { boxType: 'like_accrual', value: 1n, createdAtBlock: 0, author: new Uint8Array(32) },
     vouch_escrow: { boxType: 'vouch_escrow', value: 1n, createdAtBlock: 0, owner: new Uint8Array(32), releaseAtBlock: 42 },

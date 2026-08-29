@@ -13,8 +13,9 @@ import {
   u32BE,
   PROTOCOL_VERSION,
   LIKE_KARMA_COST,
-  POST_LOCK_THREAD_COST,
-  POST_LOCK_REPLY_COST,
+  POST_PRICE_THREAD,
+  POST_PRICE_REPLY,
+  REPLY_AUTHOR_SHARE,
   EMPTY_STATE_ROOT,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   interlinkRoot,
@@ -143,16 +144,18 @@ export function makePostCommit(authorId: Uint8Array, content = 'test post', over
  * fixture is a `UNIQUE(tx_id, output_index)` failure rather than a silent second
  * box.
  *
- * The transaction satisfies the engine's post biconditional
- * (`utxo-engine.checkTransitions`): one karma input, one karma change output and
- * one `PostLockBox` at the cost for this post's shape — `POST_LOCK_REPLY_COST`
- * when it carries parent refs, `POST_LOCK_THREAD_COST` when it does not — owned
- * by the author, who owns the karma being spent.
+ * The transaction satisfies the engine's post biconditional: one karma input,
+ * at most one karma change output, one `KarmaPriceBox` and — for a reply — one
+ * `LikeAccrualBox` naming the parent's author (NODE_INTERFACE → Legal box
+ * transitions, Thread and Reply rows).
+ *
+ * `parentAuthor` is required when `overrides.parentRefs` names a parent.
  */
 export function makePostTx(
   author: TestIdentity,
   content = 'test post',
   overrides: Partial<PostCommit> = {},
+  parentAuthor?: Uint8Array,
 ): { post: Post; commit: PostCommit; tx: UtxoTransaction; postId: string; karmaBox: KarmaBox; content: string } {
   const commit: PostCommit = { ...makePostCommit(author.userId, content), ...overrides };
   const post: Post = {
@@ -162,21 +165,20 @@ export function makePostTx(
     protocolVersion: commit.protocolVersion,
     type: commit.type,
   };
-  const lock =
-    commit.parentRefs.length === 0 ? POST_LOCK_THREAD_COST : POST_LOCK_REPLY_COST;
-  const karmaBox = makeKarmaBox(lock + 1n, author.userId, 0, fixtureNonce(content));
+  const isReply = commit.parentRefs.length > 0;
+  const price = isReply ? POST_PRICE_REPLY : POST_PRICE_THREAD;
+  const karmaBox = makeKarmaBox(price + 1n, author.userId, 0, fixtureNonce(content));
+  const outputs: AnyBox[] = [
+    { boxType: 'karma', value: 1n, createdAtBlock: 0, owner: author.userId } as never,
+    { boxType: 'karma_price', value: isReply ? POST_PRICE_REPLY - REPLY_AUTHOR_SHARE : POST_PRICE_THREAD, createdAtBlock: 0 } as never,
+  ];
+  if (isReply) {
+    if (!parentAuthor) throw new Error('makePostTx: a reply needs parentAuthor');
+    outputs.push({ boxType: 'like_accrual', value: REPLY_AUTHOR_SHARE, createdAtBlock: 0, author: parentAuthor } as never);
+  }
   const tx: UtxoTransaction = {
     inputs: [karmaBox.id!],
-    outputs: [
-      { boxType: 'karma', value: 1n, createdAtBlock: 0, owner: author.userId } as never,
-      {
-        boxType: 'post_lock',
-        value: lock,
-        createdAtBlock: 0,
-        originalValue: lock,
-        owner: author.userId,
-      } as never,
-    ],
+    outputs,
     signatures: {},
     protocolVersion: PROTOCOL_VERSION,
     post: commit,
@@ -200,8 +202,9 @@ export async function seedPostTx(
   author: TestIdentity,
   content = 'test post',
   overrides: Partial<PostCommit> = {},
+  parentAuthor?: Uint8Array,
 ): Promise<{ post: Post; commit: PostCommit; tx: UtxoTransaction; postId: string; karmaBox: KarmaBox; content: string }> {
-  const made = makePostTx(author, content, overrides);
+  const made = makePostTx(author, content, overrides, parentAuthor);
   const { insertBox } = await import('../src/store/utxo.js');
   insertBox(made.karmaBox);
   return made;
@@ -579,14 +582,9 @@ export function feeBoxOf(tx: UtxoTransaction): AnyBox | null {
 }
 
 /**
- * The `PostLockBox` a `makePostTx` transaction creates, with its stored id —
- * output 1, where `changeBoxOf` takes output 0.
- *
- * Same routing through `materializeOutput`, for the same reason: prune
- * settlement finds this box by the id apply gave it, so a fixture that derived
- * the id another way would assert against its own arithmetic.
+ * The `KarmaPriceBox` a `makePostTx` transaction creates — output 1.
  */
-export function lockBoxOf(tx: UtxoTransaction): AnyBox {
+export function priceBoxOf(tx: UtxoTransaction): AnyBox {
   return materializeOutput(tx.outputs[1]!, computeTxId(tx), 1);
 }
 

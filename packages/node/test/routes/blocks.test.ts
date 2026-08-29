@@ -279,7 +279,6 @@ describe('blocks routes', () => {
     const seeded: Array<[string, bigint]> = [
       ['karma', 7n],
       ['bond', 13n],
-      ['post_lock', 5n],
       ['vouch', 1n],
       // The two this unit made reachable: a marker or carry box holds karma
       // between a like and its payout, an escrow holds an unvouched stake

@@ -12,7 +12,6 @@ import {
 } from '@dagsocial/types';
 import type {
   KarmaBox,
-  PostLockBox,
   OrderingBlock,
   UtxoTransaction,
 } from '@dagsocial/types';
@@ -98,11 +97,10 @@ async function importJournalStore() {
 
 async function importUtxo() {
   return (await import('../../src/store/utxo.js')) as {
-    insertBox: (box: unknown, postLockTarget?: string) => void;
+    insertBox: (box: unknown) => void;
     getBox: (boxId: string) => unknown;
     getKarmaBox: (owner: Uint8Array) => KarmaBox | null;
     getKarmaValue: (owner: Uint8Array) => bigint;
-    getPostLockBox: (postId: string) => PostLockBox | null;
     getUnspentBoxes: () => AnyBox[];
   };
 }
@@ -236,7 +234,7 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
     // Block 2: reply by replyAuthor
     const { tx: replyTx, postId: replyId } = await seedPostTx(replyAuthor, 'reply', {
       parentRefs: [rootId],
-    });
+    }, rootAuthor.userId);
     const block2 = await makeApplicableBlock({
       miner,
       utxoTxs: [replyTx],
@@ -490,7 +488,7 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
     // Block 2: B replies P with parentRefs: [R]
     const { tx: replyTx, postId: replyId } = await seedPostTx(B, 'reply', {
       parentRefs: [rootId],
-    });
+    }, A.userId);
     const block2 = await makeApplicableBlock({
       miner,
       utxoTxs: [replyTx],
@@ -592,6 +590,7 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
       storageRentPeriodBlocks: 0,
       getBoxProvenance: () => null,
       getTopologyAuthor: () => null,
+      getPendingPostAuthor: () => null,
       runInTransaction: (fn: () => void) => fn(),
       executePrune: () => ({ txId: 'b'.repeat(64) }),
       executePostWithdraw: () => ({ txId: 'c'.repeat(64) }),

@@ -22,7 +22,6 @@ import type {
   CreditBox,
   VouchBox,
   VouchEscrowBox,
-  PostLockBox,
   BlockHeader,
   OrderingBlock,
   UtxoTransaction,
@@ -50,7 +49,7 @@ import {
   seedProvenance,
   signHeader,
   signTransaction,
-  seedPostTx, fillerTx,
+  seedPostTx, fillerTx, makePostTx,
   coinbaseOf, withCoinbase,
   seedEmissionBox, seedKarmaPoolBox } from '../helpers.js';
 
@@ -123,7 +122,7 @@ async function importMempoolFresh() {
 
 async function importUtxo() {
   return (await import('../../src/store/utxo.js')) as {
-    insertBox: (box: unknown, postLockTarget?: string) => void;
+    insertBox: (box: unknown) => void;
     getKarmaBox: (owner: Uint8Array) => KarmaBox | null;
     getKarmaValue: (owner: Uint8Array) => bigint;
     getCreditBoxes: (owner: Uint8Array) => AnyBox[];
@@ -1096,9 +1095,9 @@ describe('block-apply embedded tx re-validation', () => {
     const attackerBox = makeKarmaBox(100n, attacker.userId, 0);
     utxo.insertBox(attackerBox);
 
-    // Correctly signed by the owner and a legal karma → karma + post_lock
+    // Correctly signed by the owner and a legal karma → karma + karma_price
     // shape, but the outputs total 105 against a 100 karma input: the change
-    // box keeps the full balance and the PostLockBox is conjured from nothing.
+    // box keeps the full balance and the KarmaPriceBox is conjured from nothing.
     const inflating: UtxoTransaction = {
       inputs: [attackerBox.id!],
       outputs: [
@@ -1109,14 +1108,10 @@ describe('block-apply embedded tx re-validation', () => {
           owner: attacker.userId,
         } as KarmaBox,
         {
-          boxType: 'post_lock',
+          boxType: 'karma_price',
           value: 5n,
           createdAtBlock: 0,
-          originalValue: 5n,
-          owner: attacker.userId,
-          // `b32` in the box-id preimage — `'target_post'` has no encoding, and
-          // the tx has to be *hashable* for the value check to be what rejects it.
-        } as PostLockBox,
+        } as never,
       ],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
@@ -1724,7 +1719,7 @@ describe('block-apply mint provenance', () => {
       const utxo = await importUtxo();
       const records = await import('../../src/store/identity-records.js');
       const mempool = await import('../../src/store/mempool.js');
-      const { POST_LOCK_THREAD_COST, KARMA_DECAY_AMOUNT, KARMA_MINIMUM } =
+      const { POST_PRICE_THREAD, KARMA_DECAY_AMOUNT, KARMA_MINIMUM } =
         await import('@dagsocial/types');
 
       const stale = makeTestIdentity();
@@ -1744,8 +1739,8 @@ describe('block-apply mint provenance', () => {
       const postTx: UtxoTransaction = {
         inputs: [karmaBox.id!],
         outputs: [
-          { boxType: 'karma', value: 50n - POST_LOCK_THREAD_COST, createdAtBlock: 0, owner: stale.userId } as never,
-          { boxType: 'post_lock', value: POST_LOCK_THREAD_COST, createdAtBlock: 0, originalValue: POST_LOCK_THREAD_COST, owner: stale.userId } as never,
+          { boxType: 'karma', value: 50n - POST_PRICE_THREAD, createdAtBlock: 0, owner: stale.userId } as never,
+          { boxType: 'karma_price', value: POST_PRICE_THREAD, createdAtBlock: 0 } as never,
         ],
         signatures: {},
         protocolVersion: PROTOCOL_VERSION,
@@ -1757,7 +1752,7 @@ describe('block-apply mint provenance', () => {
       const block = await mineNextBlock(bc);
       expect(block).not.toBeNull();
 
-      const postBodyChange = 50n - POST_LOCK_THREAD_COST;
+      const postBodyChange = 50n - POST_PRICE_THREAD;
       const periods = 4;
       const owed = BigInt(periods) * KARMA_DECAY_AMOUNT;
       const floor = postBodyChange < KARMA_MINIMUM ? postBodyChange : KARMA_MINIMUM;
@@ -1769,7 +1764,7 @@ describe('block-apply mint provenance', () => {
       expect(records.getIdentityRecord(stale.userId)!.lastDecayBlock).toBe(4);
 
       const poolAfter = getKarmaPoolBox()!.value;
-      expect(poolAfter - poolBefore).toBe(burn);
+      expect(poolAfter - poolBefore).toBe(burn + POST_PRICE_THREAD);
     } finally {
       vi.doUnmock('../../src/config.js');
     }
@@ -2023,8 +2018,12 @@ describe('block-apply H-3 post authorship and prune binding', () => {
 
     const author = makeTestIdentity();
     const parentA = 'a1'.repeat(32);
-    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'child post', { parentRefs: [parentA] },
-    );
+    const parentAuthor = makeTestIdentity();
+
+    const topology = await import('../../src/store/topology.js');
+    topology.insertBlockTopology(parentA, [], Buffer.from(parentAuthor.userId).toString('hex'), 0);
+
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'child post', { parentRefs: [parentA] }, parentAuthor.userId);
 
     const posts = await importPosts();
     posts.insertPost(postId, commit, content);
@@ -2501,6 +2500,62 @@ describe('T4: activity clock in the user-transaction loop', () => {
 
     const authorRecordAfter = records.getIdentityRecord(author.userId);
     expect(authorRecordAfter!.lastActivityBlock).toBe(authorActivityBefore);
+  });
+
+  // -----------------------------------------------------------------------
+  // A thread and its reply apply in either body order (§8 before §11)
+  // -----------------------------------------------------------------------
+
+  it('a block carrying a thread and its reply applies: thread before reply', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const blockApply = await importBlockApply();
+    const utxo = await importUtxo();
+
+    const author = makeTestIdentity();
+    const threadResult = makePostTx(author, 'thread for body-order');
+    utxo.insertBox(threadResult.karmaBox);
+    const replyResult = makePostTx(
+      author, 'reply for body-order',
+      { parentRefs: [threadResult.postId] },
+      author.userId,
+    );
+    utxo.insertBox(replyResult.karmaBox);
+
+    const posts = await importPosts();
+    posts.insertPost(threadResult.postId, threadResult.commit, threadResult.content);
+    posts.insertPost(replyResult.postId, replyResult.commit, replyResult.content);
+
+    const block = await makeApplicableBlock({
+      utxoTxs: [threadResult.tx, replyResult.tx],
+    });
+    expect(blockApply.applyOrderingBlock(block)).toBe(true);
+  });
+
+  it('a block carrying a thread and its reply applies: reply before thread', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    const blockApply = await importBlockApply();
+    const utxo = await importUtxo();
+
+    const author = makeTestIdentity();
+    const threadResult = makePostTx(author, 'thread for reverse-order');
+    utxo.insertBox(threadResult.karmaBox);
+    const replyResult = makePostTx(
+      author, 'reply for reverse-order',
+      { parentRefs: [threadResult.postId] },
+      author.userId,
+    );
+    utxo.insertBox(replyResult.karmaBox);
+
+    const posts = await importPosts();
+    posts.insertPost(threadResult.postId, threadResult.commit, threadResult.content);
+    posts.insertPost(replyResult.postId, replyResult.commit, replyResult.content);
+
+    const block = await makeApplicableBlock({
+      utxoTxs: [replyResult.tx, threadResult.tx],
+    });
+    expect(blockApply.applyOrderingBlock(block)).toBe(true);
   });
 });
 

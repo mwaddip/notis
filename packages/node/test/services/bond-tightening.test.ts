@@ -110,6 +110,7 @@ describe('bond transitions (audit F-consensus-1)', () => {
       storageRentPeriodBlocks: 40,
       getBoxProvenance: () => null,
       getTopologyAuthor: () => null,
+      getPendingPostAuthor: () => null,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
       },

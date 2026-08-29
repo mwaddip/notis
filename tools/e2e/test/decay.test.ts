@@ -16,7 +16,7 @@ import {
   NETWORK_PROFILES,
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,
-  POST_LOCK_THREAD_COST,
+  POST_PRICE_THREAD,
 } from '@dagsocial/types';
 import type { BoxRef } from '../src/tx/render.js';
 
@@ -147,9 +147,9 @@ describe('decay', () => {
     const postEffective = BigInt(karmaAfterPost.effective);
 
     // ARCHITECTURE → Karma decay: squaring materializes the decay on touch.
-    // The user tx deducted POST_LOCK_THREAD_COST from face total (50n → 45n),
+    // The user tx deducted POST_PRICE_THREAD from face total (50n → 45n),
     // then the settlement squared 45n to effective (10n, clamped at KARMA_MINIMUM).
-    const postBodyFace = aliceTotal - POST_LOCK_THREAD_COST;
+    const postBodyFace = aliceTotal - POST_PRICE_THREAD;
     const squaredValue = expectedEffective(postBodyFace, karmaStale.height, claimHeight, 0);
     expect(postTotal).toBe(squaredValue);
     // activity reset the clock — effective equals the post-squaring total

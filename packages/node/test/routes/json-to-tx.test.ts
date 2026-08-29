@@ -108,26 +108,6 @@ describe('jsonToTx box value validation (audit L-11, Spec B P0)', () => {
     expect(() => jsonToTx(raw)).toThrow(/box value must be a non-negative/);
   });
 
-  it('coerces PostLockBox originalValue alongside value', () => {
-    const raw = {
-      inputs: ['cd'.repeat(32)],
-      outputs: [
-        {
-          boxType: 'post_lock',
-          value: '5',
-          originalValue: '5',
-          owner: ownerHex,
-        },
-      ],
-      signatures: {},
-      protocolVersion: PROTOCOL_VERSION,
-    };
-    const tx = jsonToTx(raw);
-    const out = tx.outputs[0]! as { value: bigint; originalValue: bigint };
-    expect(out.value).toBe(5n);
-    expect(out.originalValue).toBe(5n);
-  });
-
   it('a JSON body carrying postWithdraw survives jsonToTx with the payload intact', () => {
     const postId = 'ff'.repeat(32);
     const raw = {

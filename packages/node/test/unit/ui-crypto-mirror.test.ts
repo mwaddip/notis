@@ -39,7 +39,7 @@ import { jsonToTx } from '../../src/routes/json-to-tx.js';
 import { extractDeclaration as extractDeclarationFrom } from './extract-declaration.js';
 import type {
   CandidateOf,
-  PostCommit, KarmaBox, CreditBox, GenesisProofBox, BondBox, PostLockBox, VouchBox,
+  PostCommit, KarmaBox, CreditBox, GenesisProofBox, BondBox, KarmaPriceBox, VouchBox,
   EmissionBox, TreasuryBox, FeeBox, KarmaPoolBox, LikeAccrualBox, VouchEscrowBox,
   AnyBox, UtxoTransaction,
 } from '@dagsocial/types';
@@ -214,9 +214,8 @@ const GOLDEN_BOND_BOX: BondBox = {
   txId: COVERAGE_TX_ID, index: 1,
 };
 
-const GOLDEN_POST_LOCK_BOX: PostLockBox = {
-  boxType: 'post_lock', value: 8n, createdAtBlock: 0,
-  originalValue: 10n, owner: GOLDEN_AUTHOR,
+const GOLDEN_KARMA_PRICE_BOX: KarmaPriceBox = {
+  boxType: 'karma_price', value: 5n, createdAtBlock: 0,
   txId: COVERAGE_TX_ID, index: 2,
 };
 
@@ -293,7 +292,7 @@ const BOX_TYPE_FIXTURES = {
   karma: GOLDEN_KARMA_BOX,
   credit: GOLDEN_CREDIT_BOX,
   bond: GOLDEN_BOND_BOX,
-  post_lock: GOLDEN_POST_LOCK_BOX,
+  karma_price: GOLDEN_KARMA_PRICE_BOX,
   vouch: GOLDEN_VOUCH_BOX,
   emission: GOLDEN_EMISSION_BOX,
   treasury: GOLDEN_TREASURY_BOX,
@@ -388,7 +387,7 @@ const MIRRORED_FUNCTIONS: readonly string[] =
 const MIRRORED_CONSTS = [
   'POST_CONTENT_DOMAIN', 'POST_ID_DOMAIN', 'BOX_ID_DOMAIN', 'TX_ID_DOMAIN', 'VLQ_SENTINEL', 'U32_SENTINEL', 'BOX_TYPE_TAGS', 'POST_TYPE_TAGS',
   'PROTOCOL_VERSION', 'VOUCH_KARMA_AMOUNT', 'VOUCH_MIN_BALANCE',
-  'LIKE_KARMA_COST', 'POST_LOCK_THREAD_COST',
+  'LIKE_KARMA_COST', 'POST_PRICE_THREAD', 'POST_PRICE_REPLY', 'REPLY_AUTHOR_SHARE',
   'INVITE_BOND_DEFAULT',
   'pendingKarmaChange',
 ] as const;
@@ -453,9 +452,10 @@ interface UiCrypto {
   ) => Record<string, unknown>;
   buildPostTx: (
     karmaBox: { total: bigint; boxes: Array<{ boxId: string; value: bigint }> },
-    lockAmount: bigint,
+    priceAmount: bigint,
     commit: Record<string, unknown>,
     pubKeyHex: string,
+    parentAuthorHex?: string | null,
   ) => UtxoTransaction;
   buildLikeTx: (
     karmaBox: { total: bigint; boxes: Array<{ boxId: string; value: bigint }> },
@@ -773,7 +773,7 @@ describe('demo UI ↔ @dagsocial/types box encoding mirror (positional)', () => 
     // that dropped the tag from giving two boxes with the same parties one id.
     const b = hexOf(canonicalBoxBytes(GOLDEN_BOND_BOX));
     const tagless = b.slice(2);
-    for (const other of [GOLDEN_KARMA_BOX, GOLDEN_VOUCH_BOX, GOLDEN_POST_LOCK_BOX]) {
+    for (const other of [GOLDEN_KARMA_BOX, GOLDEN_VOUCH_BOX, GOLDEN_KARMA_PRICE_BOX]) {
       expect(hexOf(canonicalBoxBytes(other))).not.toBe(b);
     }
     expect(b.slice(0, 2)).not.toBe('02');

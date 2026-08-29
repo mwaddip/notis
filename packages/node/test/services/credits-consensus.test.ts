@@ -223,6 +223,7 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
       storageRentPeriodBlocks: 40,
       getBoxProvenance: () => null,
       getTopologyAuthor: () => null,
+      getPendingPostAuthor: () => null,
       runInTransaction: (fn: () => void) => fn(),
     };
 
@@ -340,6 +341,7 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
       storageRentPeriodBlocks: 40,
       getBoxProvenance: () => null,
       getTopologyAuthor: () => null,
+      getPendingPostAuthor: () => null,
       runInTransaction: (fn: () => void) => fn(),
     };
     const tx = buildSignedTransfer(

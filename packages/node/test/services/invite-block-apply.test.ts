@@ -319,7 +319,7 @@ describe('the invite at block application', () => {
     expect(grantedKarma).toBe(FIXTURE_BOND_KARMA);
 
     // Block 2 (within the threshold): the invitee posts — a self-action that
-    // touches their karma via the post-lock. Build the tx against the
+    // touches their karma via the post price. Build the tx against the
     // GRANTED karma box, not a pre-seeded fixture. The settlement must NOT
     // square them because they are not stale: claimHeight + 1 is well within
     // KARMA_STALE_THRESHOLD_BLOCKS of the claim.
@@ -327,12 +327,12 @@ describe('the invite at block application', () => {
     expect(grantedBox.length).toBe(1);
 
     const postCommit = makePostCommit(invitee.userId, 'first post');
-    const { POST_LOCK_THREAD_COST } = types;
+    const { POST_PRICE_THREAD } = types;
     const postTx: UtxoTransaction = {
       inputs: [grantedBox[0]!.id!],
       outputs: [
-        { boxType: 'karma', value: grantedKarma - POST_LOCK_THREAD_COST, createdAtBlock: claimHeight, owner: invitee.userId } as never,
-        { boxType: 'post_lock', value: POST_LOCK_THREAD_COST, createdAtBlock: claimHeight, originalValue: POST_LOCK_THREAD_COST, owner: invitee.userId } as never,
+        { boxType: 'karma', value: grantedKarma - POST_PRICE_THREAD, createdAtBlock: claimHeight, owner: invitee.userId } as never,
+        { boxType: 'karma_price', value: POST_PRICE_THREAD, createdAtBlock: claimHeight } as never,
       ],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
@@ -347,11 +347,8 @@ describe('the invite at block application', () => {
     const postBlock = await mineOne();
     expect(postBlock).not.toBeNull();
 
-    // Face value after posting: granted minus the thread lock cost. No decay
-    // squaring happened — the full granted amount is still there, less only
-    // the lock.
     const afterPost = utxo.getKarmaValue(invitee.userId);
-    expect(afterPost).toBe(grantedKarma - POST_LOCK_THREAD_COST);
+    expect(afterPost).toBe(grantedKarma - POST_PRICE_THREAD);
 
     // The mechanism: lastActivityBlock is still the claim height (the post
     // advances it to block 2, which is even more recent).
@@ -469,6 +466,7 @@ describe('the invite at block application', () => {
       storageRentPeriodBlocks: 40,
       getBoxProvenance: () => null,
       getTopologyAuthor: () => null,
+      getPendingPostAuthor: () => null,
       runInTransaction: (fn: () => void) => fn(),
     }, second, 2);
     expect(result.valid).toBe(false);
@@ -658,8 +656,8 @@ describe('the invite at block application', () => {
 
     expect(inviterKarma).toBe(0n);
     expect(utxo.getBox(bond.id!)).toBeNull();
-    // Nothing minted at all, not a zero-value box: `transferKarma` skips a
-    // zero-value credit, so a fully-forfeit bond leaves the inviter with no
+    // Nothing minted at all, not a zero-value box: the settlement skips a
+    // zero-value output, so a fully-forfeit bond leaves the inviter with no
     // karma box.
     expect(utxo.getKarmaBox(inviter.userId)).toBeNull();
   });

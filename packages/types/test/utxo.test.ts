@@ -192,10 +192,6 @@ describe('boxes', () => {
         payload: new Uint8Array([1, 2, 3]), txId: FIXTURE_TX_ID, index: 10,
       },
       bond: makeBondBox(),
-      post_lock: {
-        boxType: 'post_lock', value: 5n, createdAtBlock: FIXTURE_HEIGHT, originalValue: 10n,
-        owner, txId: FIXTURE_TX_ID, index: 7,
-      },
       vouch: makeVouchBox(),
       vouch_escrow: makeVouchEscrowBox(),
       like_accrual: makeLikeAccrualBox(),
@@ -203,6 +199,7 @@ describe('boxes', () => {
       treasury: { boxType: 'treasury', value: 100n, createdAtBlock: FIXTURE_HEIGHT, txId: FIXTURE_TX_ID, index: 12 },
       fee: { boxType: 'fee', value: 100n, createdAtBlock: FIXTURE_HEIGHT, txId: FIXTURE_TX_ID, index: 13 },
       karma_pool: { boxType: 'karma_pool', value: 100n, createdAtBlock: FIXTURE_HEIGHT, txId: FIXTURE_TX_ID, index: 14 },
+      karma_price: { boxType: 'karma_price', value: 5n, createdAtBlock: FIXTURE_HEIGHT, txId: FIXTURE_TX_ID, index: 15 },
     } satisfies Record<BoxCandidate['boxType'], unknown>;
 
     for (const [boxType, box] of Object.entries(BOX_FOR_ID)) {
@@ -507,8 +504,6 @@ function u32BEMirror(n: number): Uint8Array {
  * only by hand.
  */
 const MINT_REASON_GOLDENS: Readonly<Record<MintReason, string>> = {
-  'postlock-unlock':      '420485f93ec603eb241379a85728bd80070b3f5f0a8389cb052941604ddbf32f',
-  'postlock-remainder':   '635cc8bfe23cd52f6bc5f045845defaef5f796a61be57f08f7932f60a0967f4d',
   genesis:                '9010dd1d6fe6029eb8e856fe38467836781ce43ddad1ce01c0af7afc0bc7b7b2',
   'genesis-committee':    '0cf15bc43dcc566062faad29d7e9569aa12f43e034ecd8babd19bffd85715d12',
 };
@@ -692,7 +687,7 @@ describe('bond and vouch share a trailing layout, separated by the tag', () => {
     expect(computeBoxId(GOLDEN_KARMA_BOX)).toBe(GOLDEN_KARMA_BOX_ID);
     expect(computeBoxId(GOLDEN_CREDIT_BOX)).toBe(GOLDEN_CREDIT_BOX_ID);
     expect(computeTxId(GOLDEN_TX)).toBe(GOLDEN_TX_ID);
-    // post_lock / genesis_proof have no inline golden here; theirs are the
+    // genesis_proof / karma_price have no inline golden here; theirs are the
     // vectors in `test/golden/boxes.json`, asserted by the corpus suite in both
     // directions.
   });
@@ -1035,7 +1030,6 @@ const TAILED_CANDIDATES: AnyBoxCandidate[] = [
   { boxType: 'credit', value: 0n, createdAtBlock: 0, owner },
   { boxType: 'genesis_proof', value: 0n, createdAtBlock: 0, payload: new Uint8Array(0) },
   { boxType: 'bond', value: 0n, createdAtBlock: 0, inviterId: inviter, inviteePublicKey: INVITEE_KEY },
-  { boxType: 'post_lock', value: 0n, createdAtBlock: 0, originalValue: 0n, owner },
   { boxType: 'vouch', value: 1n, createdAtBlock: 0, voucherId: owner, targetId: inviter },
   { boxType: 'vouch_escrow', value: 0n, createdAtBlock: 0, owner, releaseAtBlock: 0 },
   { boxType: 'like_accrual', value: 0n, createdAtBlock: 0, author: inviter },
@@ -1487,9 +1481,6 @@ describe('boxRecordFromBytes', () => {
       boxType: 'bond' as const, value: 20n, createdAtBlock: FIXTURE_HEIGHT, inviterId: inviter,
       inviteePublicKey: new Uint8Array(32).fill(0xcc),
     }]],
-    post_lock: [['post_lock', {
-      boxType: 'post_lock' as const, value: 5n, createdAtBlock: FIXTURE_HEIGHT, originalValue: 10n, owner,
-    }]],
     vouch: [['vouch', {
       boxType: 'vouch' as const, value: 1n, createdAtBlock: FIXTURE_HEIGHT,
       voucherId: owner, targetId: inviter,
@@ -1521,6 +1512,7 @@ describe('boxRecordFromBytes', () => {
     // state is `BOX_VALUE_BOUND - 1` (TYPES_INTERFACE → KarmaPoolBox), so the
     // row that round-trips is the one carrying the nine-byte value.
     karma_pool: [['karma_pool', { boxType: 'karma_pool' as const, value: BOX_VALUE_BOUND - 1n, createdAtBlock: FIXTURE_HEIGHT }]],
+    karma_price: [['karma_price', { boxType: 'karma_price' as const, value: 5n, createdAtBlock: FIXTURE_HEIGHT }]],
   } satisfies Record<BoxCandidate['boxType'], readonly (readonly [string, AnyBoxCandidate])[]>;
 
   const ALL_BOX_TYPE_PAIRS: [string, AnyBoxCandidate][] =
@@ -1601,9 +1593,11 @@ describe('boxRecordFromBytes', () => {
     // deriving it from the table would make it follow any future reassignment,
     // which is the one thing the reservation forbids.
     const RESERVED_INVITE_TAG = 2;
+    const RESERVED_POST_LOCK_TAG = 5;
     const FIRST_UNASSIGNED_BOX_TAG = Math.max(...Object.values(BOX_TYPE_TAGS)) + 1;
     expect(Object.values(BOX_TYPE_TAGS)).not.toContain(RESERVED_INVITE_TAG);
-    for (const tag of [RESERVED_INVITE_TAG, FIRST_UNASSIGNED_BOX_TAG, 0xff]) {
+    expect(Object.values(BOX_TYPE_TAGS)).not.toContain(RESERVED_POST_LOCK_TAG);
+    for (const tag of [RESERVED_INVITE_TAG, RESERVED_POST_LOCK_TAG, FIRST_UNASSIGNED_BOX_TAG, 0xff]) {
       const badTag = bytes.slice();
       badTag[0] = tag;
       let thrown: unknown;
@@ -1623,7 +1617,7 @@ describe('computeMintTxId', () => {
   it('varies with height, reason and subject independently', () => {
     const base = computeMintTxId(70000, 'genesis', GOLDEN_OWNER);
     expect(computeMintTxId(70001, 'genesis', GOLDEN_OWNER)).not.toBe(base);
-    expect(computeMintTxId(70000, 'postlock-unlock', GOLDEN_OWNER)).not.toBe(base);
+    expect(computeMintTxId(70000, 'genesis-committee', GOLDEN_OWNER)).not.toBe(base);
     expect(computeMintTxId(70000, 'genesis', new Uint8Array(32).fill(0xff))).not.toBe(base);
   });
 
@@ -1692,7 +1686,7 @@ describe('computeMintTxId', () => {
     // values, which the goldens above already freeze.
     const shortSubject = new Uint8Array(1);
     const a = computeMintTxId(1, 'genesis', shortSubject);
-    const b = computeMintTxId(1, 'postlock-unlock', shortSubject);
+    const b = computeMintTxId(1, 'genesis-committee', shortSubject);
     expect(a).not.toBe(b);
     // An unknown reason takes enum8's reserved 0xff rather than throwing — the
     // no-panic property, preserved through the encoding change.
@@ -2272,9 +2266,6 @@ describe('the box-type tables', () => {
       boxType: 'bond', value: 20n, createdAtBlock: FIXTURE_HEIGHT, inviterId: inviter,
       inviteePublicKey: new Uint8Array(32).fill(0xcc),
     },
-    post_lock: {
-      boxType: 'post_lock', value: 5n, createdAtBlock: FIXTURE_HEIGHT, originalValue: 10n, owner,
-    },
     vouch: {
       boxType: 'vouch', value: 1n, createdAtBlock: FIXTURE_HEIGHT,
       voucherId: owner, targetId: inviter,
@@ -2293,6 +2284,7 @@ describe('the box-type tables', () => {
     treasury: { boxType: 'treasury', value: 100n, createdAtBlock: FIXTURE_HEIGHT },
     fee: { boxType: 'fee', value: 100n, createdAtBlock: FIXTURE_HEIGHT },
     karma_pool: { boxType: 'karma_pool', value: 100n, createdAtBlock: FIXTURE_HEIGHT },
+    karma_price: { boxType: 'karma_price', value: 5n, createdAtBlock: FIXTURE_HEIGHT },
   };
 
   // The table IS the numbering the encoder writes rather than a restatement of
@@ -2330,9 +2322,9 @@ describe('the box-type tables', () => {
   // asserted (TYPES_INTERFACE → Primitives, the reassignment conditions).
   it('pins the table', () => {
     expect({ ...BOX_TYPE_TAGS }).toEqual({
-      karma: 0, credit: 1, genesis_proof: 3, bond: 4, post_lock: 5, vouch: 6,
+      karma: 0, credit: 1, genesis_proof: 3, bond: 4, vouch: 6,
       emission: 7, treasury: 8, fee: 9, karma_pool: 10,
-      like_accrual: 11, vouch_escrow: 12,
+      like_accrual: 11, vouch_escrow: 12, karma_price: 13,
     });
   });
 

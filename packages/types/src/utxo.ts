@@ -90,7 +90,6 @@ export const BOX_TYPE_TAGS = Object.freeze({
   credit: 1,
   genesis_proof: 3,
   bond: 4,
-  post_lock: 5,
   vouch: 6,
   emission: 7,
   treasury: 8,
@@ -98,6 +97,7 @@ export const BOX_TYPE_TAGS = Object.freeze({
   karma_pool: 10,
   like_accrual: 11,
   vouch_escrow: 12,
+  karma_price: 13,
 } as const satisfies Readonly<Record<BoxCandidate['boxType'], number>>);
 
 /** The `enum8` codec over that table — one table, both directions. */
@@ -120,7 +120,6 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', BOX_TYPE_TAGS);
  *   | credit        | b32(owner) ‖ opt(lockedUntilBlock)                         |
  *   | genesis_proof | lp(payload)                                               |
  *   | bond          | b32(inviterId) ‖ b32(inviteePublicKey)                     |
- *   | post_lock     | vlqU64(originalValue) ‖ b32(owner)                         |
  *   | vouch         | b32(voucherId) ‖ b32(targetId)                            |
  *   | emission      | (none)                                                    |
  *   | treasury      | (none)                                                    |
@@ -128,12 +127,14 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', BOX_TYPE_TAGS);
  *   | karma_pool    | (none)                                                    |
  *   | like_accrual  | b32(author)                                               |
  *   | vouch_escrow  | b32(owner) ‖ vlqU(releaseAtBlock)                          |
+ *   | karma_price   | (none)                                                    |
  *
- * **`emission`, `treasury`, `fee` and `karma_pool` stop after the prefix**, and
- * an empty cell above is a layout rather than an omission (TYPES_INTERFACE →
- * Layout — Boxes). None of the four names an owner, so there is no trailing
- * field to write and **the smallest legal box of any type is three bytes** — the
- * tag, a zero value and a zero height, each one group wide.
+ * **`emission`, `treasury`, `fee`, `karma_pool` and `karma_price` stop after
+ * the prefix**, and an empty cell above is a layout rather than an omission
+ * (TYPES_INTERFACE → Layout — Boxes). None of the five names an owner, so
+ * there is no trailing field to write and **the smallest legal box of any type
+ * is three bytes** — the tag, a zero value and a zero height, each one group
+ * wide.
  *
  * **Provenance is structurally absent**, not stripped at runtime: there is no
  * branch here that could write `id`/`txId`/`index`, so "provenance is not in
@@ -184,8 +185,7 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', BOX_TYPE_TAGS);
  * domain has to be established upstream — node's output-shape schema,
  * `validateTx` step 4.
  *
- * ⚠ **`vlqU64`, not `vlqU`, for `value` — and the prefix now holds one of each,
- * adjacent.** `value` and `post_lock.originalValue` are `bigint`, so they take
+ * ⚠ **`vlqU64`, not `vlqU`, for `value`.** `value` is `bigint`, so it takes
  * `writeVlqU64OrThrow`; `createdAtBlock` is a `number`, so it takes `writeVlqU`.
  * The bytes are identical over the overlapping range, so the difference is
  * invisible in a golden vector and cannot be inferred from a field's type:
@@ -228,10 +228,6 @@ function writeBoxTypeFields(w: ByteWriter, box: AnyBoxCandidate): void {
       writeBytesNOrThrow(w, box.inviterId, 32);
       writeBytesNOrThrow(w, box.inviteePublicKey, 32);
       return;
-    case 'post_lock':
-      writeVlqU64OrThrow(w, box.originalValue);
-      writeBytesNOrThrow(w, box.owner, 32);
-      return;
     case 'vouch':
       writeBytesNOrThrow(w, box.voucherId, 32);
       writeBytesNOrThrow(w, box.targetId, 32);
@@ -255,8 +251,9 @@ function writeBoxTypeFields(w: ByteWriter, box: AnyBoxCandidate): void {
     case 'treasury':
     case 'fee':
     case 'karma_pool':
+    case 'karma_price':
       // The tail is empty by layout, not by oversight (TYPES_INTERFACE →
-      // Layout — Boxes). None of the four names an owner — block application
+      // Layout — Boxes). None of the five names an owner — block application
       // is the only spender — so the content encoding is the shared prefix
       // alone. Stated as its own arm rather than left to `default`, which is
       // the unknown-tag sentinel below and would write these bytes for a
@@ -344,14 +341,6 @@ function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
         inviterId: readBytesN(r, 32),
         inviteePublicKey: readBytesN(r, 32),
       };
-    case 'post_lock':
-      return {
-        boxType,
-        value,
-        createdAtBlock,
-        originalValue: readVlqU64(r),
-        owner: readBytesN(r, 32),
-      };
     case 'vouch':
       return {
         boxType,
@@ -379,7 +368,8 @@ function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
     case 'treasury':
     case 'fee':
     case 'karma_pool':
-      // Nothing follows the prefix on any of the four arms, so the box is
+    case 'karma_price':
+      // Nothing follows the prefix on any of the five arms, so the box is
       // complete at the point the tag and value have been read.
       // `boxRecordFromBytes`' exhaustion check is what makes that a decoding
       // rather than a silent stop: bytes past this point are `trailing-bytes`,
@@ -515,9 +505,9 @@ export function computeCandidateBoxId(candidate: BoxCandidate, txId: TxId, index
 }
 
 /**
- * Synthetic ids exist for genesis seeding and post-lock vesting only;
- * everything else is a settlement output with an ordinary transaction id
- * (NODE_INTERFACE → Box Identity and Mint Provenance).
+ * Synthetic ids exist for genesis seeding only; everything else is a
+ * settlement output with an ordinary transaction id (NODE_INTERFACE → Box
+ * Identity and Mint Provenance).
  *
  * The discriminant is semantic, never positional: deriving it from journal
  * position would put ordering back into *identity*, which is the failure
@@ -533,8 +523,6 @@ export function computeCandidateBoxId(candidate: BoxCandidate, txId: TxId, index
  * txId (NODE_INTERFACE → Reason and subject table).
  */
 export type MintReason =
-  | 'postlock-unlock'
-  | 'postlock-remainder'
   | 'genesis'
   | 'genesis-committee';
 
@@ -562,8 +550,6 @@ export type MintReason =
  * signal.
  */
 const MINT_REASON = enum8<MintReason>('mintReason', {
-  'postlock-unlock': 3,
-  'postlock-remainder': 4,
   genesis: 6,
   'genesis-committee': 13,
 });
@@ -628,11 +614,12 @@ export function computeBoxId(box: Omit<BoxBase, 'id'>): BoxId {
  * hashes. No `id`, no provenance.
  */
 export interface BoxCandidate {
-  // `'like'` and `'invite'` are tracked reservations (TYPES_INTERFACE →
-  // Tracked reservations). Tag 2 is a tracked hole (TYPES_INTERFACE →
-  // Tracked reservations); `BOX_TYPE_TAGS` leaves it out.
-  boxType: 'karma' | 'credit' | 'genesis_proof' | 'bond' | 'post_lock' | 'vouch'
-    | 'emission' | 'treasury' | 'fee' | 'karma_pool' | 'like_accrual' | 'vouch_escrow';
+  // `'like'`, `'invite'` and `'post_lock'` are tracked reservations
+  // (TYPES_INTERFACE → Tracked reservations). Tags 2 and 5 are tracked
+  // holes; `BOX_TYPE_TAGS` leaves them out.
+  boxType: 'karma' | 'credit' | 'genesis_proof' | 'bond' | 'vouch'
+    | 'emission' | 'treasury' | 'fee' | 'karma_pool' | 'like_accrual' | 'vouch_escrow'
+    | 'karma_price';
   value: bigint;        // integer base units, uniform across box types; value < 2^64 is the `vlqU` wire domain
   // ⚠ **`< 2^64` above is the ENCODABLE domain, and it is wider than the
   // accepted one.** Consensus admits `[0, BOX_VALUE_BOUND)` (`constants.ts`),
@@ -756,16 +743,13 @@ export interface GenesisProofBox extends BoxBase {
  * `IdentityRecord.invitedAtBlock` (NODE_INTERFACE → Identity Records), so
  * carrying it here would be a second copy of committed state.
  *
- * **There is no `originalValue`,** and the contrast with `PostLockBox` is the
- * reason: a post lock vests per block, so its current and initial values differ.
- * A bond settles **once**, for `min(floor(inviteeLifetimeLikes /
- * INVITE_BOND_VEST_PER_LIKES), value)` — a pure function of a lifetime count, so
- * one evaluation is arithmetically identical to accumulated instalments and no
- * partial state exists to record.
+ * **There is no `originalValue`.** A bond settles **once**, for
+ * `min(floor(inviteeLifetimeLikes / INVITE_BOND_VEST_PER_LIKES), value)` — a
+ * pure function of a lifetime count, so one evaluation is arithmetically
+ * identical to accumulated instalments and no partial state exists to record.
  *
  * **Nothing spends a bond.** Creation and settlement both move it through block
- * application, so no transition admits it into a user transaction — the same
- * standing `PostLockBox` has.
+ * application, so no transition admits it into a user transaction.
  */
 export interface BondBox extends BoxBase {
   boxType: 'bond';
@@ -774,34 +758,20 @@ export interface BondBox extends BoxBase {
   inviteePublicKey: Uint8Array;    // 32 raw bytes — set at creation, the key the grant is addressed to
 }
 
-// --- Post Lock ---
+// --- Karma price ---
 
 /**
- * ⛔ **There is no `targetPostId`, and the reason is CIRCULARITY — not tidiness.**
+ * What a karma action pays, named as an output so the transaction conserves —
+ * TYPES_INTERFACE → KarmaPriceBox; ARCHITECTURE → The post price.
  *
- * A post's id comes from the transaction that creates it,
- * `computePostId(txId, index)`. The lock is an **output of that same
- * transaction**, and `canonicalBoxBytes` is inside the `TxId` preimage — so a
- * `targetPostId` field would have to be known before the `TxId` that produces
- * it. **The transaction would be unbuildable.** This is the same circularity
- * that makes `outputs` carry *candidates*: a transaction cannot name its own
- * outputs' ids, so ids are derived once `TxId` is known.
- *
- * It would also be a second copy of committed state. The lock's target is
- * recomputable — `computePostId(box.txId, 0)` for the lock a post transaction
- * creates — so carrying it adds a field that can disagree with the thing it
- * describes and buys nothing.
- *
- * ⚠ **Do not re-add it.** It looks obviously useful and it is unbuildable. Node
- * keeps the lock→post mapping as **derived state**, written at apply by every
- * node identically (NODE_INTERFACE → "post-lock vesting"), which is the same shape
- * P2-D used for like settlement.
+ * The karma-side twin of `FeeBox`: no owner, and therefore no trailing fields.
+ * Block application is its only spender; the settlement of the block that
+ * created it consumes every price box the body's post transactions emitted and
+ * returns their sum to the pool.
  */
-export interface PostLockBox extends BoxBase {
-  boxType: 'post_lock';
-  value: bigint;              // Current locked karma (vests per block as likes accumulate)
-  originalValue: bigint;      // Initial lock amount (POST_LOCK_THREAD_COST or POST_LOCK_REPLY_COST)
-  owner: Uint8Array;          // 32 raw bytes — post author's Ed25519 public key
+export interface KarmaPriceBox extends BoxBase {
+  boxType: 'karma_price';
+  value: bigint;              // ≥ 1n — what the transaction pays to the pool
 }
 
 // --- Vouch ---
@@ -835,7 +805,7 @@ export interface VouchBox extends BoxBase {
  *
  * **`owner` is where the karma returns, and nothing else.** Block application is
  * the only spender, so no signature by it unlocks the box — the standing
- * `BondBox.inviterId` and `PostLockBox.owner` already have.
+ * `BondBox.inviterId` already has.
  */
 export interface VouchEscrowBox extends BoxBase {
   boxType: 'vouch_escrow';
@@ -861,9 +831,9 @@ export interface VouchEscrowBox extends BoxBase {
  *   |            | LIKES_PER_KARMA_PAYOUT`
  *
  * ⛔ **`author` IS ATTRIBUTION, NOT AUTHORIZATION** — the same distinction
- * `BondBox.inviterId` and `PostLockBox.owner` carry. **No signature by `author`
- * unlocks this box.** Only the settlement transaction consumes it, so no user
- * transition admits one as an input.
+ * `BondBox.inviterId` carries. **No signature by `author` unlocks this box.**
+ * Only the settlement transaction consumes it, so no user transition admits one
+ * as an input.
  *
  * ⛔ **A MARKER CARRIES ITS VALUE.** A zero-value marker would mean the units it
  * stands for ceased to exist between the transaction and the settlement, which is
@@ -1040,10 +1010,10 @@ export type AnyBox =
   | CreditBox
   | GenesisProofBox
   | BondBox
-  | PostLockBox
   | VouchBox
   | VouchEscrowBox
   | LikeAccrualBox
+  | KarmaPriceBox
   | EmissionBox
   | TreasuryBox
   | FeeBox
@@ -1055,10 +1025,10 @@ export type AnyBoxCandidate =
   | CandidateOf<CreditBox>
   | CandidateOf<GenesisProofBox>
   | CandidateOf<BondBox>
-  | CandidateOf<PostLockBox>
   | CandidateOf<VouchBox>
   | CandidateOf<VouchEscrowBox>
   | CandidateOf<LikeAccrualBox>
+  | CandidateOf<KarmaPriceBox>
   | CandidateOf<EmissionBox>
   | CandidateOf<TreasuryBox>
   | CandidateOf<FeeBox>
@@ -1114,7 +1084,9 @@ export interface UtxoTransaction {
    * rewrite the post any more than it can re-point a like.
    *
    * This package defines only the field and its encoding; the biconditional —
-   * present ⟺ the tx locks `POST_LOCK_{THREAD,REPLY}_COST` into a `PostLockBox`
+   * present ⟺ the tx pays `POST_PRICE_THREAD` (thread) or
+   * `POST_PRICE_REPLY − REPLY_AUTHOR_SHARE` (reply) into a `KarmaPriceBox`,
+   * with a reply's share riding a `LikeAccrualBox` for the parent's author,
    * and conserves value — is consensus validation and lives in node's UTXO
    * engine.
    */

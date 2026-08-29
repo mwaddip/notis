@@ -1,16 +1,13 @@
 import { computeMintTxId, u32BE } from '@dagsocial/types';
-import type { MintReason, PostId, TxId } from '@dagsocial/types';
+import type { MintReason, TxId } from '@dagsocial/types';
 
 /**
- * Synthetic transaction ids for the two producer classes that create boxes
- * with no real transaction behind them (NODE_INTERFACE → Box Identity and
- * Mint Provenance): genesis seeding and post-lock vesting.
+ * Synthetic transaction ids for genesis seeding — the one producer class that
+ * creates boxes with no real transaction behind them (NODE_INTERFACE → Box
+ * Identity and Mint Provenance).
  *
  * Every other block-application effect is an output of the settlement
- * transaction and derives an ordinary transaction id. Threading the reason
- * in as a value keeps derivation at one site: `computeMintTxId` commits to
- * height, and a caller that passed both a height and a pre-derived txId
- * could pass two different heights with nothing forcing a match.
+ * transaction and derives an ordinary transaction id.
  */
 export interface MintContext {
   readonly reason: MintReason;
@@ -20,7 +17,7 @@ export interface MintContext {
 /**
  * Every mint event emits exactly one box, so its position within its own
  * synthetic transaction is always 0 (NODE_INTERFACE → Box Identity and Mint
- * Provenance). Named rather than inlined so the four producers cannot drift.
+ * Provenance). Named rather than inlined so the producers cannot drift.
  */
 export const MINT_OUTPUT_INDEX = 0;
 
@@ -30,8 +27,6 @@ export const GENESIS_FAUCET_CREDITS = 1;
 export const GENESIS_PROOF = 2;
 export const GENESIS_EMISSION = 3;
 export const GENESIS_KARMA_POOL = 4;
-
-const utf8 = new TextEncoder();
 
 // `u32BE` is *imported* from types and must never be mirrored here. These bytes
 // land in a `subject`, which types hashes as opaque input, so a second copy
@@ -49,24 +44,11 @@ const utf8 = new TextEncoder();
 // instead of at every call site.
 //
 // Each returns a whole `MintContext` rather than bare bytes, so "right subject,
-// wrong reason" is unrepresentable at a call site. The pairing is load-bearing
-// wherever two same-height mints land on one recipient: `postlock-unlock` and
-// `postlock-remainder` carry identical subjects at the same height — the
-// reason tag alone separates them.
+// wrong reason" is unrepresentable at a call site.
 //
 // Byte forms follow TYPES_INTERFACE → "Pinned byte forms": a hex-typed value
 // (`PostId`) enters as the UTF-8 bytes of its hex text, a `Uint8Array`-typed
 // value (pubkeys) as its raw bytes.
-
-/** `postlock-unlock` — 64 bytes: the vested post's id as hex text. */
-export function postlockUnlockContext(targetPostId: PostId): MintContext {
-  return { reason: 'postlock-unlock', subject: utf8.encode(targetPostId) };
-}
-
-/** `postlock-remainder` — 64 bytes. The replacement PostLockBox after a tally. */
-export function postlockRemainderContext(targetPostId: PostId): MintContext {
-  return { reason: 'postlock-remainder', subject: utf8.encode(targetPostId) };
-}
 
 /**
  * `genesis` — 4 bytes: which genesis box.
@@ -109,8 +91,8 @@ export function genesisCommitteeContext(member: Uint8Array): MintContext {
 /**
  * The single site where a mint's synthetic transaction id is derived.
  *
- * Genesis seeding and post-lock vesting route through here; every other
- * block-application effect is a settlement output with an ordinary txId.
+ * Genesis seeding routes through here; every other block-application effect is
+ * a settlement output with an ordinary txId.
  */
 export function mintTxIdFor(ctx: MintContext, blockHeight: number): TxId {
   return computeMintTxId(blockHeight, ctx.reason, ctx.subject);

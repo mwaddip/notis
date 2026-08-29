@@ -61,7 +61,6 @@ export const MAX_SETTLEMENT_BYTES = 100_000;     // consensus — the encoded se
 // TYPES_INTERFACE → Settlement caps
 export const MAX_BOND_SETTLEMENTS_PER_BLOCK = 64;
 export const MAX_ESCROW_RETURNS_PER_BLOCK = 64;
-export const MAX_POST_LOCK_RELEASES_PER_BLOCK = 64;
 
 /**
  * The accepted domain of a box `value` — TYPES_INTERFACE → Box value domain.
@@ -108,10 +107,11 @@ export const KARMA_DECAY_INTERVAL_BLOCKS = 1440;   // 24 hours at 60s blocks →
 export const KARMA_DECAY_AMOUNT = 5n;              // karma burned per interval
 export const KARMA_MINIMUM = 10n;                  // floor — decay never reduces below this
 
-// Post lock
-export const POST_LOCK_THREAD_COST = 5n;  // Karma locked for new threads
-export const POST_LOCK_REPLY_COST = 3n;   // Karma locked for replies
-export const POST_LOCK_UNLOCK_PER_LIKES = 10;  // Every N likes unlocks 1 karma
+// Post price — a post pays a price rather than locking a bond
+// (ARCHITECTURE → The post price; CONSTANTS → Post price and likes)
+export const POST_PRICE_THREAD = 5n;        // consensus — karma a thread pays to the pool
+export const POST_PRICE_REPLY = 3n;         // consensus — karma a reply pays
+export const REPLY_AUTHOR_SHARE = 1n;       // consensus — the part of a reply's price the parent's author accrues
 
 // Likes — one-way burns settled per block (ARCHITECTURE → Per-block accrual and settlement)
 export const LIKE_KARMA_COST = 1n;        // Karma burned by the liker per like (bigint)

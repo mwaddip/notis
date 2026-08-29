@@ -85,6 +85,7 @@ async function request(
         storageRentPeriodBlocks: 40,
         getBoxProvenance: () => null,
         getTopologyAuthor: () => null,
+        getPendingPostAuthor: () => null,
         getIdentityRecord,
         getKarmaBoxes: (owner: Uint8Array) => [getKarmaBox(owner)].filter(Boolean) as KarmaBox[],
         runInTransaction: (fn: () => void) => fn(),
@@ -212,6 +213,7 @@ describe('UTXO routes', () => {
     expect(body.boxCount).toBe(2);
     const boxValues = (body.boxes as unknown[]).map((b: unknown) => (b as Record<string, unknown>).value);
     expect(boxValues).toEqual(expect.arrayContaining(['42', '58']));
+    expect(body.lifetimeLikesReceived).toBe('0');
   });
 
   it('GET /karma/:userId with effective < total for a stale identity', async () => {
@@ -235,6 +237,34 @@ describe('UTXO routes', () => {
       invitedAtBlock: 0,
       lifetimeLikesReceived: 0n,
     });
+  });
+
+  it('GET /karma/:userId serves lifetimeLikesReceived as a decimal string', async () => {
+    putIdentityRecord(karmaUserId, {
+      lastActivityBlock: 0,
+      lastDecayBlock: 0,
+      invitedAtBlock: 0,
+      lifetimeLikesReceived: 7n,
+    });
+    const res = await request(`/karma/${karmaUserIdHex}`);
+    expect(res.status).toBe(200);
+    const body = res.data as Record<string, unknown>;
+    expect(body.lifetimeLikesReceived).toBe('7');
+
+    putIdentityRecord(karmaUserId, {
+      lastActivityBlock: 0,
+      lastDecayBlock: 0,
+      invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n,
+    });
+  });
+
+  it('GET /karma/:userId serves lifetimeLikesReceived "0" when no record', async () => {
+    const noRecordHex = 'ff'.repeat(32);
+    const res = await request(`/karma/${noRecordHex}`);
+    expect(res.status).toBe(200);
+    const body = res.data as Record<string, unknown>;
+    expect(body.lifetimeLikesReceived).toBe('0');
   });
 
   it('GET /credits/:userId returns credit balance with boxCount', async () => {

@@ -4,7 +4,6 @@ import {
 } from '@dagsocial/types';
 import type {
   KarmaBox,
-  PostLockBox,
   OrderingBlock,
   UtxoTransaction,
 } from '@dagsocial/types';
@@ -43,9 +42,8 @@ async function importPosts() {
 
 async function importUtxo() {
   return (await import('../../src/store/utxo.js')) as {
-    insertBox: (box: unknown, postLockTarget?: string) => void;
+    insertBox: (box: unknown) => void;
     getBox: (boxId: string) => unknown;
-    getPostLockBox: (targetPostId: string) => PostLockBox | null;
     getKarmaValue: (owner: Uint8Array) => bigint;
   };
 }
@@ -53,13 +51,6 @@ async function importUtxo() {
 async function importStumps() {
   return (await import('../../src/store/stumps.js')) as {
     getStump: (stumpId: string) => { upvoteCount: number } | null;
-  };
-}
-
-async function importLikes() {
-  return (await import('../../src/store/likes.js')) as {
-    insertLikeRecord: (targetPostId: string, likerId: Uint8Array, blockHeight: number) => void;
-    getLikeRecordCount: (postId: string) => number;
   };
 }
 
@@ -122,68 +113,6 @@ describe('phase-move: like(P) + prune(P) in one block', () => {
   });
 });
 
-describe('phase-move: vest path-independence', () => {
-  it('a post whose Nth like and prune land in one block vests the same as separate blocks', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-    const utxo = await importUtxo();
-    const posts = await importPosts();
-    const blockApply = await importBlockApply();
-    const likes = await importLikes();
-
-    const author = makeTestIdentity();
-
-    // Scenario: build a post with 9 existing likes, then the 10th like + prune in one block.
-    // POST_LOCK_UNLOCK_PER_LIKES = 10, so the 10th like triggers a vest of 1 karma.
-    // POST_LOCK_THREAD_COST = 5n, so the lock starts at 5.
-    // shouldUnlock = 10 / 10 = 1. alreadyUnlocked = 0. vest = 1.
-    const { tx: postTx, postId, content, commit } = await seedPostTx(author, 'vest-path');
-    posts.insertPost(postId, commit, content);
-    const block1 = await makeApplicableBlock({ utxoTxs: [postTx] });
-    expect(blockApply.applyOrderingBlock(block1)).toBe(true);
-
-    // Seed 9 like records from previous blocks
-    for (let i = 0; i < 9; i++) {
-      const l = makeTestIdentity();
-      likes.insertLikeRecord(postId, l.userId, 1);
-    }
-
-    // Read the author's karma before the 10th like + prune block
-    const karmaBefore = utxo.getKarmaValue(author.userId);
-
-    // Block 2: 10th like + prune
-    const liker = makeTestIdentity();
-    const likerKarma = makeKarmaBox(100n, liker.userId, 0, 300);
-    utxo.insertBox(likerKarma);
-    const likeTx = makeLikeTx(liker, likerKarma, postId, author.userId);
-
-    const pruneKarma = makeKarmaBox(100n, author.userId, 0, 301);
-    utxo.insertBox(pruneKarma);
-    const pruneTx = makePruneTx(author, postId, pruneKarma);
-
-    const block2 = await makeApplicableBlock({ height: 2, utxoTxs: [likeTx, pruneTx] });
-    expect(blockApply.applyOrderingBlock(block2)).toBe(true);
-
-    // The prune block vests the same-block like through §8c but defers the
-    // lock release — the lock survives the prune block and is a candidate for
-    // the next block's settlement release leg.
-    const lockAfterPrune = utxo.getPostLockBox(postId);
-    expect(lockAfterPrune).not.toBeNull();
-
-    // Block 3: empty body — the settlement's release leg consumes the lock.
-    const block3 = await makeApplicableBlock({ height: 3, utxoTxs: [] });
-    expect(blockApply.applyOrderingBlock(block3)).toBe(true);
-
-    const lockAfterRelease = utxo.getPostLockBox(postId);
-    // The lock is consumed by the release leg — §8c vested, the release leg
-    // refunds or pools the remainder.
-    expect(lockAfterRelease).toBeNull();
-
-    const karmaAfter = utxo.getKarmaValue(author.userId);
-    expect(karmaAfter).toBeGreaterThan(karmaBefore);
-  });
-});
-
 describe('phase-move: stump upvoteCount includes own block likes', () => {
   it('a stump created from a prune in the same block as a like counts that like', async () => {
     const db = await importDb();
@@ -238,9 +167,8 @@ describe('phase-move: creator/applier settlement agreement', () => {
     expect(blockApply.applyOrderingBlock(block1)).toBe(true);
 
     // Block 2: like + prune — makeApplicableBlock uses the creator's
-    // buildBlockSettlement (which calls planPostLockSettlement), and
-    // applyOrderingBlock independently derives its own settlement.
-    // If the two disagree, the block is rejected.
+    // buildBlockSettlement, and applyOrderingBlock independently derives its
+    // own settlement. If the two disagree, the block is rejected.
     const likerKarma = makeKarmaBox(100n, liker.userId, 0, 500);
     utxo.insertBox(likerKarma);
     const likeTx = makeLikeTx(liker, likerKarma, postId, author.userId);

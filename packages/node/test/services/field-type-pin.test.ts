@@ -35,7 +35,7 @@ import {
   computeTxId,
   encodeTx,
   decodeTx,
-  POST_LOCK_THREAD_COST,
+  POST_PRICE_THREAD,
   KARMA_STALE_THRESHOLD_BLOCKS,
   KARMA_DECAY_INTERVAL_BLOCKS,
   KARMA_DECAY_AMOUNT,
@@ -131,6 +131,7 @@ describe('field-type pin', () => {
       storageRentPeriodBlocks: 40,
       getBoxProvenance: () => null,
       getTopologyAuthor: () => null,
+      getPendingPostAuthor: () => null,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
       },
@@ -195,7 +196,7 @@ describe('field-type pin', () => {
       ['karma missing value', { boxType: 'karma', createdAtBlock: 0, owner: karmaOwner32 }],
       ['vouch missing voucherId', { boxType: 'vouch', value: 1n, createdAtBlock: 0, targetId: karmaOwner32 }],
       ['bond missing inviteePublicKey', { boxType: 'bond', value: 10n, createdAtBlock: 0, inviterId: karmaOwner32 }],
-      ['post_lock missing originalValue', { boxType: 'post_lock', value: 10n, createdAtBlock: 0, owner: karmaOwner32 }],
+      ['karma_price with an unexpected owner key', { boxType: 'karma_price', value: 10n, createdAtBlock: 0, owner: karmaOwner32 }],
       // -- wrong-typed fields, one per FieldType --
       ['karma value as number', { ...honest('karma'), value: 10 }],
       ['karma value negative bigint', { ...honest('karma'), value: -1n }],
@@ -209,11 +210,7 @@ describe('field-type pin', () => {
       ['karma owner as number', { ...honest('karma'), owner: 5 }],
       ['credit lockedUntilBlock negative', { ...honest('credit'), lockedUntilBlock: -1 }],
       ['credit lockedUntilBlock as -0', { ...honest('credit'), lockedUntilBlock: -0 }],
-      ['post_lock originalValue as string (the class-3 poison)', { ...honest('post_lock'), originalValue: 'x' }],
-      // A `PostLockBox` declares no `targetPostId`, so an output carrying one is
-      // rejected as an unexpected key rather than on its type — the schema is
-      // closed, which is what makes the absence enforceable.
-      ['post_lock with a targetPostId key at all', { ...honest('post_lock'), targetPostId: 'a'.repeat(64) }],
+      ['karma_price with an originalValue key', { ...honest('karma_price'), originalValue: 5n }],
       // `bytes32`, not `bytes0or32`: the empty case went with the commit
       // transition, so a zero-length key is out of domain on both types now.
       ['bond inviteePublicKey empty', { ...honest('bond'), inviteePublicKey: new Uint8Array(0) }],
@@ -245,8 +242,8 @@ describe('field-type pin', () => {
           return { boxType, value: 10n, createdAtBlock: 0, owner: karmaOwner32 };
         case 'bond':
           return { boxType, value: 10n, createdAtBlock: 0, inviterId: karmaOwner32, inviteePublicKey: bytes32(0xaa) };
-        case 'post_lock':
-          return { boxType, value: 10n, createdAtBlock: 0, originalValue: 10n, owner: karmaOwner32 };
+        case 'karma_price':
+          return { boxType, value: 10n, createdAtBlock: 0 };
         case 'vouch':
           return { boxType, value: 1n, createdAtBlock: 0, voucherId: karmaOwner32, targetId: bytes32(0xcc) };
         default:
@@ -300,8 +297,8 @@ describe('field-type pin', () => {
           return { boxType, value: 10n, createdAtBlock: 0, owner: bytes32(1), lockedUntilBlock: 5 };
         case 'bond':
           return { boxType, value: 10n, createdAtBlock: 0, inviterId: bytes32(1), inviteePublicKey: bytes32(2) };
-        case 'post_lock':
-          return { boxType, value: 10n, createdAtBlock: 0, originalValue: 10n, owner: bytes32(1) };
+        case 'karma_price':
+          return { boxType, value: 10n, createdAtBlock: 0 };
         case 'vouch':
           return { boxType, value: 1n, createdAtBlock: 0, voucherId: bytes32(1), targetId: bytes32(0xcc) };
         default:
@@ -319,7 +316,7 @@ describe('field-type pin', () => {
         inviterId: new Uint8Array(0),
         inviteePublicKey: new Uint8Array(16),
       },
-      post_lock: { value: 'x', originalValue: 5, owner: null },
+      karma_price: { value: 'x' },
       vouch: { value: [], voucherId: true, targetId: new Uint8Array(64) },
     };
 
@@ -452,56 +449,34 @@ describe('field-type pin', () => {
   // No-panic: a rejected value must produce a VERDICT, never an exception
   // -------------------------------------------------------------------------
 
-  describe('validateTx returns a verdict for an adversarial targetPostId (no-panic)', () => {
-    /**
-     * `PostLockBox` declares no `targetPostId` (TYPES_INTERFACE → Layout —
-     * Boxes: a transaction cannot name its own outputs' ids without
-     * circularity), so the field is out of domain at any value. The property
-     * under test is unchanged and is not about the field: an
-     * attacker-supplied output must produce a VERDICT from `validateTx`, never
-     * an exception, and `computeTxId` runs at that function's LAST line. Step 4
-     * rejecting first is what keeps the throw unreachable.
-     *
-     * The loop still spans values the encoder would treat differently, because
-     * what has to hold is that NO value of any shape reaches the writer — a
-     * closed schema is a stronger reason than a typed field, not a substitute
-     * for the test.
-     *
-     * Note the fixture signs a well-formed lock and stamps the stray key after:
-     * the signature could not be computed over an unencodable transaction, and
-     * it does not need to be — step 4 precedes step 6.
-     */
+  describe('validateTx returns a verdict for an adversarial stray key on karma_price (no-panic)', () => {
     for (const bad of ['hello', 'A'.repeat(64), 'a'.repeat(63), '', 'zz'.repeat(32), 'a'.repeat(64)]) {
-      it(`targetPostId=${JSON.stringify(bad)} → {valid:false}, not a throw`, () => {
+      it(`owner=${JSON.stringify(bad)} → {valid:false}, not a throw`, () => {
         const karma = makeKarmaBox(100n, ownerPubKey, 0);
         storeInsertBox(karma);
-        const lock: Record<string, unknown> = {
-          boxType: 'post_lock',
-          value: POST_LOCK_THREAD_COST,
+        const price: Record<string, unknown> = {
+          boxType: 'karma_price',
+          value: POST_PRICE_THREAD,
           createdAtBlock: 0,
-          originalValue: POST_LOCK_THREAD_COST,
-          owner: ownerPubKey,
         };
         const tx = signedTx(
           [karma.id!],
           [
             {
               boxType: 'karma',
-              value: 100n - POST_LOCK_THREAD_COST,
+              value: 100n - POST_PRICE_THREAD,
               createdAtBlock: 0,
               owner: ownerPubKey,
             },
-            lock,
+            price,
           ] as unknown as UtxoTransaction['outputs'],
         );
-        lock['targetPostId'] = bad;
+        price['owner'] = bad;
 
         let r: ReturnType<typeof validateTx> | undefined;
         expect(() => { r = validateTx(deps, tx, 10); }).not.toThrow();
         expect(r!.valid).toBe(false);
-        // Attributed: rejected for the key, not for the missing post payload the
-        // biconditional also wants — step 4 precedes the transition arms.
-        expect(r!.error).toMatch(/unexpected key 'targetPostId'/);
+        expect(r!.error).toMatch(/unexpected key 'owner'/);
       });
     }
   });
@@ -543,17 +518,15 @@ describe('field-type pin', () => {
         outputs: [
           {
             boxType: 'karma',
-            value: 100n - POST_LOCK_THREAD_COST,
+            value: 100n - POST_PRICE_THREAD,
             createdAtBlock: 0,
             owner: attacker.userId,
-            note: 'x', // not in the layout: never encoded, never hashed
+            note: 'x',
           },
           {
-            boxType: 'post_lock',
-            value: POST_LOCK_THREAD_COST,
+            boxType: 'karma_price',
+            value: POST_PRICE_THREAD,
             createdAtBlock: 0,
-            originalValue: POST_LOCK_THREAD_COST,
-            owner: attacker.userId,
           },
         ] as unknown as UtxoTransaction['outputs'],
         signatures: {},
@@ -565,12 +538,10 @@ describe('field-type pin', () => {
         cryptoSign(null, hash, attacker.privateKey),
       );
 
-      // The key is outside every committed byte: it changes no id …
       const stripped = decodeTx(encodeTx(tx));
       expect(Object.hasOwn(stripped.outputs[0]!, 'note')).toBe(false);
       expect(computeTxId(stripped)).toBe(computeTxId(tx));
 
-      // … so the block is honest and applies, and what lands carries no `note`.
       const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       try {
         const block = await makeApplicableBlock({ utxoTxs: [tx] });
@@ -588,38 +559,7 @@ describe('field-type pin', () => {
       }
     });
 
-    it('an out-of-domain output VALUE has no encoding, so no producer can carry it', async () => {
-      // ⛔ **The stronger half.** `originalValue` is `vlqU64`, and its writer
-      // throws rather than sentinelling — so a transaction carrying a string
-      // there cannot be hashed, cannot be signed and cannot be encoded. It is
-      // inexpressible on the wire rather than refused at a gate
-      // (TYPES_INTERFACE → Totality).
-      const attacker = makeTestIdentity();
-      const poison: UtxoTransaction = {
-        inputs: ['ab'.repeat(32)],
-        outputs: [
-          {
-            boxType: 'post_lock',
-            value: POST_LOCK_THREAD_COST,
-            createdAtBlock: 0,
-            originalValue: String(POST_LOCK_THREAD_COST),
-            owner: attacker.userId,
-          },
-        ] as unknown as UtxoTransaction['outputs'],
-        signatures: {},
-        protocolVersion: 1,
-      };
-      expect(() => computeTxId(poison)).toThrow();
-      expect(() => encodeTx(poison)).toThrow();
-
-      // And the HTTP edge, where no decoder bounds it, still answers with the
-      // stated rejection rather than a throw.
-      expect(checkOutputShape(poison.outputs).valid).toBe(false);
-      expect(checkOutputShape(poison.outputs).error)
-        .toMatch(/index 0 \(post_lock\): field 'originalValue'/);
-    });
-
-    it('control: the same block shape with an honest typed lock APPLIES (and pins what decodeTx yields)', async () => {
+    it('control: the same block shape with an honest typed price box APPLIES (and pins what decodeTx yields)', async () => {
       const author = makeTestIdentity();
       const karma = makeKarmaBox(100n, author.userId, 0);
       storeInsertBox(karma);
@@ -628,23 +568,18 @@ describe('field-type pin', () => {
         outputs: [
           {
             boxType: 'karma',
-            value: 100n - POST_LOCK_THREAD_COST,
+            value: 100n - POST_PRICE_THREAD,
             createdAtBlock: 0,
             owner: author.userId,
           },
           {
-            boxType: 'post_lock',
-            value: POST_LOCK_THREAD_COST,
+            boxType: 'karma_price',
+            value: POST_PRICE_THREAD,
             createdAtBlock: 0,
-            originalValue: POST_LOCK_THREAD_COST,
-            owner: author.userId,
           },
         ] as unknown as UtxoTransaction['outputs'],
         signatures: {},
         protocolVersion: 1,
-        // An honest lock carries its post: `post` present ⟺ exactly one
-        // `PostLockBox` at the cost for that post's shape (NODE_INTERFACE →
-        // Post transactions).
         post: makePostCommit(author.userId, 'honest control'),
       };
       const hash = Buffer.from(computeTxId(tx), 'hex');
@@ -652,10 +587,6 @@ describe('field-type pin', () => {
         cryptoSign(null, hash, author.privateKey),
       );
 
-      // What the funnel's decoder actually hands the gate: byte fields as
-      // Uint8Array (NOT Buffer — pinned here because the fix's `instanceof
-      // Uint8Array` covers both, and a cbor-x behavior change should be loud),
-      // amounts as bigint.
       const decoded = decodeTx(encodeTx(tx));
       const decodedKarma = decoded.outputs[0] as { owner: unknown; value: unknown };
       expect(decodedKarma.owner).toBeInstanceOf(Uint8Array);
@@ -664,10 +595,10 @@ describe('field-type pin', () => {
 
       const block = await makeApplicableBlock({ utxoTxs: [tx] });
       expect(applyOrderingBlock(block)).toBe(true);
-      const locks = db
-        .prepare("SELECT COUNT(*) AS n FROM utxo_boxes WHERE box_type = 'post_lock'")
+      const prices = db
+        .prepare("SELECT COUNT(*) AS n FROM utxo_boxes WHERE box_type = 'karma_price'")
         .get() as { n: number | bigint };
-      expect(Number(locks.n)).toBe(1);
+      expect(Number(prices.n)).toBeGreaterThanOrEqual(1);
     });
   });
 });

@@ -16,6 +16,7 @@ import type {
   BondBox,
   EmissionBox,
   KarmaBox,
+  KarmaPriceBox,
   KarmaPoolBox,
   LikeAccrualBox,
   TreasuryBox,
@@ -95,11 +96,15 @@ const feeBox = seedProvenance<AnyBox>({
   boxType: 'fee', value: 10n, createdAtBlock: HEIGHT,
 } as AnyBox, HEIGHT, labelNonce('leg-order-fee'));
 
+const priceBox = seedProvenance<KarmaPriceBox>({
+  boxType: 'karma_price', value: 5n, createdAtBlock: HEIGHT,
+}, HEIGHT, labelNonce('leg-order-price'));
+
 // ---- Lookup for checkSettlement's conservation check ----
 
 const boxMap = new Map<string, AnyBox>();
 for (const box of [emissionBox, treasuryBox, poolBox, markerBox, carryBox,
-                    bondBox, escrowBox, decayKarmaBox, feeBox]) {
+                    bondBox, escrowBox, decayKarmaBox, feeBox, priceBox]) {
   boxMap.set(box.id!, box as AnyBox);
 }
 
@@ -119,7 +124,7 @@ const body: SettlementBody = {
   feeBoxIds: [feeBox.id!],
   invites: [{ invitee: newInvitee.userId, amount: 15n }],
   markers: [{ id: markerBox.id!, author: likeAuthor.userId, value: 3n }],
-  postLockSettlements: [],
+  priceBoxes: [{ id: priceBox.id!, value: 5n }],
 };
 
 const deps: SettlementDeps = {
@@ -134,7 +139,6 @@ const deps: SettlementDeps = {
   },
   getBondsSettlingAt: () => [bondBox as BondBox],
   getEscrowsReleasableAt: () => [escrowBox as VouchEscrowBox],
-  getReleaseCandidates: () => [],
   getLifetimeLikes: (invitee) =>
     hex(invitee) === hex(bondInvitee.userId) ? 9n : 0n,
   getDecayPlans: () => [decayPlan],
@@ -162,13 +166,14 @@ describe('settlement leg order', () => {
     // ---- Inputs: exact order ----
     //
     //   emission → treasury → markers (committed tx order) →
-    //   carry (ascending author hex) → bonds (ascending box id) →
-    //   escrows (ascending box id) → decay consumed →
-    //   [postLockSettlements — empty here] → pool → fees (committed tx order)
+    //   price boxes (committed tx order) → carry (ascending author hex) →
+    //   bonds (ascending box id) → escrows (ascending box id) →
+    //   decay consumed → pool → fees (committed tx order)
     expect(tx.inputs).toEqual([
       emissionBox.id,
       treasuryBox.id,
       markerBox.id,
+      priceBox.id,
       carryBox.id,
       bondBox.id,
       escrowBox.id,

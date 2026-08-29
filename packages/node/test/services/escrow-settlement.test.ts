@@ -66,7 +66,7 @@ async function importBlockCreator() {
 
 async function importUtxo() {
   return (await import('../../src/store/utxo.js')) as {
-    insertBox: (box: unknown, postLockTarget?: string) => void;
+    insertBox: (box: unknown) => void;
     getBox: (boxId: string) => unknown;
     getKarmaBoxes: (owner: Uint8Array) => KarmaBox[];
     getKarmaValue: (owner: Uint8Array) => bigint;
@@ -498,6 +498,7 @@ describe('escrow settlement leg', () => {
         storageRentPeriodBlocks: 40,
         getBoxProvenance: () => null,
         getTopologyAuthor: () => null,
+        getPendingPostAuthor: () => null,
         runInTransaction: (fn) => fn(),
       },
       tx,

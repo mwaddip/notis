@@ -72,10 +72,8 @@ function makePostTx(commit: PostCommit = makeCommit(), input: string = BOX_1): U
         owner: new Uint8Array(32),
       } as KarmaBox,
       {
-        boxType: 'post_lock',
-        value: 25n,
-        originalValue: 25n,
-        owner: new Uint8Array(32),
+        boxType: 'karma_price',
+        value: 5n,
       } as AnyBox,
     ],
     signatures: {},

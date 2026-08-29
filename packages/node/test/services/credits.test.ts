@@ -67,6 +67,7 @@ const engineDeps: UtxoEngineDeps = {
       storageRentPeriodBlocks: 40,
       getBoxProvenance: () => null,
   getTopologyAuthor: () => null,
+  getPendingPostAuthor: () => null,
   runInTransaction: (fn) => fn(),
 };
 

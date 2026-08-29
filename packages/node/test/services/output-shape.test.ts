@@ -22,7 +22,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { generateKeyPairSync, sign as cryptoSign, type KeyObject } from 'crypto';
 import {
   computeTxId,
-  POST_LOCK_THREAD_COST,
+  POST_PRICE_THREAD,
   VOUCH_KARMA_AMOUNT,
   KARMA_STALE_THRESHOLD_BLOCKS,
   KARMA_DECAY_INTERVAL_BLOCKS,
@@ -97,13 +97,11 @@ function honestCandidate(
         inviterId: owner,
         inviteePublicKey: new Uint8Array(32).fill(0xaa),
       };
-    case 'post_lock':
+    case 'karma_price':
       return {
-        boxType: 'post_lock',
+        boxType: 'karma_price',
         value: 10n,
         createdAtBlock: 0,
-        originalValue: 10n,
-        owner,
       };
     case 'vouch':
       return {
@@ -170,7 +168,7 @@ const CREATABLE: Record<OutputBoxType, true> = {
   karma: true,
   credit: true,
   bond: true,
-  post_lock: true,
+  karma_price: true,
   vouch: true,
   fee: true,
   like_accrual: true,
@@ -239,7 +237,7 @@ describe('checkOutputShape (direct)', () => {
       karma: 'owner',
       credit: 'owner',
       bond: 'inviteePublicKey',
-      post_lock: 'originalValue',
+      karma_price: 'value',
       vouch: 'targetId',
       fee: 'value',
       like_accrual: 'author',
@@ -271,9 +269,9 @@ describe('checkOutputShape (direct)', () => {
   it('rejects a REQUIRED key present with value undefined', () => {
     // The half that survives: an absent required field is a missing field, not
     // an absent optional, and it is refused by the required-key loop.
-    const r = shapeOf([{ ...honestCandidate('post_lock', owner), originalValue: undefined }]);
+    const r = shapeOf([{ ...honestCandidate('karma', owner), owner: undefined }]);
     expect(r.valid).toBe(false);
-    expect(r.error).toMatch(/missing required key 'originalValue'/);
+    expect(r.error).toMatch(/missing required key 'owner'/);
   });
 
   it('rejects a guard key on every boxType — no box carries one', () => {
@@ -291,10 +289,10 @@ describe('checkOutputShape (direct)', () => {
   it('names the offending output index in the error', () => {
     const r = shapeOf([
       honestCandidate('karma', owner),
-      { ...honestCandidate('post_lock', owner), notAField: true },
+      { ...honestCandidate('karma_price', owner), notAField: true },
     ]);
     expect(r.valid).toBe(false);
-    expect(r.error).toMatch(/index 1 \(post_lock\)/);
+    expect(r.error).toMatch(/index 1 \(karma_price\)/);
   });
 });
 
@@ -342,6 +340,7 @@ describe('validateTx output shape (integration)', () => {
       storageRentPeriodBlocks: 40,
       getBoxProvenance: () => null,
       getTopologyAuthor: () => null,
+      getPendingPostAuthor: () => null,
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
       },
@@ -378,10 +377,9 @@ describe('validateTx output shape (integration)', () => {
     return box;
   }
 
-  // `post` rides here rather than at the call sites because a `PostLockBox`
+  // `post` rides here rather than at the call sites because a `KarmaPriceBox`
   // output without it fails the engine's post biconditional (NODE_INTERFACE →
-  // Post transactions) — a second deviation in any fixture whose subject is the
-  // output schema.
+  // Post transactions).
   function signedTx(inputs: string[], outputs: unknown[], post?: PostCommit): UtxoTransaction {
     const tx: UtxoTransaction = {
       inputs,
@@ -445,21 +443,19 @@ describe('validateTx output shape (integration)', () => {
     expect(r2.valid, r2.error).toBe(true);
   });
 
-  it('accepts karma → karma + post_lock (honest)', () => {
+  it('accepts karma → karma + karma_price (honest thread)', () => {
     const karma = seedKarma(100n);
-    const lock = {
-      boxType: 'post_lock',
-      value: POST_LOCK_THREAD_COST,
+    const price = {
+      boxType: 'karma_price',
+      value: POST_PRICE_THREAD,
       createdAtBlock: 0,
-      originalValue: POST_LOCK_THREAD_COST,
-      owner: ownerPubKey,
     };
     const r = validateTx(
       deps,
       signedTx(
         [karma.id!],
-        [karmaChange(100n - POST_LOCK_THREAD_COST), lock],
-        makePostCommit(ownerPubKey, 'honest lock payload'),
+        [karmaChange(100n - POST_PRICE_THREAD), price],
+        makePostCommit(ownerPubKey, 'honest price payload'),
       ),
       10,
     );
@@ -513,48 +509,25 @@ describe('validateTx output shape (integration)', () => {
 
   // ---- key-set rejects through the full pipeline ----
 
-  it('rejects a stray key through validateTx', () => {
+  it('rejects a stray key through validateTx (karma_price with note)', () => {
     const karma = seedKarma(100n);
-    const strayLock = {
-      boxType: 'post_lock',
-      value: POST_LOCK_THREAD_COST,
+    const strayPrice = {
+      boxType: 'karma_price',
+      value: POST_PRICE_THREAD,
       createdAtBlock: 0,
-      originalValue: POST_LOCK_THREAD_COST,
-      owner: ownerPubKey,
       note: 'x',
     };
     const r = validateTx(
       deps,
-      signedTx([karma.id!], [karmaChange(100n - POST_LOCK_THREAD_COST), strayLock]),
+      signedTx(
+        [karma.id!],
+        [karmaChange(100n - POST_PRICE_THREAD), strayPrice],
+        makePostCommit(ownerPubKey, 'stray key payload'),
+      ),
       10,
     );
     expect(r.valid).toBe(false);
     expect(r.error).toMatch(/unexpected key 'note'/);
-  });
-
-  it('rejects a missing required key through validateTx (post_lock without originalValue)', () => {
-    const karma = seedKarma(100n);
-    const lock: Record<string, unknown> = {
-      boxType: 'post_lock',
-      value: POST_LOCK_THREAD_COST,
-      createdAtBlock: 0,
-      originalValue: POST_LOCK_THREAD_COST,
-      owner: ownerPubKey,
-    };
-    const tx = signedTx(
-      [karma.id!],
-      [karmaChange(100n - POST_LOCK_THREAD_COST), lock],
-      makePostCommit(ownerPubKey, 'lock payload'),
-    );
-    // The key is removed AFTER signing: `originalValue` is `vlqU64` in the
-    // box-id preimage, so a box without it has no encoding and `signedTx` would
-    // die at `computeTxId` before `checkOutputShape` — the gate under test —
-    // ever ran. `checkOutputShape` is `validateTx` step 4 and signatures are
-    // read at step 6, so the rejection asserted below still happens first.
-    delete lock['originalValue'];
-    const r = validateTx(deps, tx, 10);
-    expect(r.valid).toBe(false);
-    expect(r.error).toMatch(/missing required key 'originalValue'/);
   });
 
   it('an optional key holding undefined passes through validateTx as ABSENT', () => {

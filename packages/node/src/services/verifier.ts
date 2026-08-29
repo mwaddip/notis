@@ -1,6 +1,6 @@
 import {
-  POST_LOCK_THREAD_COST,
-  POST_LOCK_REPLY_COST,
+  POST_PRICE_THREAD,
+  POST_PRICE_REPLY,
 } from '@dagsocial/types';
 import type { PostCommit, Stump } from '@dagsocial/types';
 import type { StoredPost, PrunedTombstone } from '../store/posts.js';
@@ -71,7 +71,7 @@ export function verifyPost(
   const record = deps.getIdentityRecord(commit.author);
   const available = effectiveKarma(faceTotal, record, deps.currentHeight, deps.decayCfg);
   const requiredKarma =
-    commit.parentRefs.length === 0 ? POST_LOCK_THREAD_COST : POST_LOCK_REPLY_COST;
+    commit.parentRefs.length === 0 ? POST_PRICE_THREAD : POST_PRICE_REPLY;
   if (available < requiredKarma) {
     return {
       valid: false,

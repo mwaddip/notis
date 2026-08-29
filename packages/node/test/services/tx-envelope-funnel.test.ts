@@ -45,7 +45,7 @@ async function importDb() {
 
 async function importUtxo() {
   return (await import('../../src/store/utxo.js')) as {
-    insertBox: (box: unknown, postLockTarget?: string) => void;
+    insertBox: (box: unknown) => void;
     getBox: (boxId: string) => AnyBox | null;
   };
 }
@@ -216,11 +216,11 @@ describe('block funnel — the embedded-tx proof obligation', () => {
     const poison = karmaSelfSpend(alice, aliceBox);
     poison.outputs = [
       {
-        boxType: 'post_lock',
+        boxType: 'vouch_escrow',
         value: 100n,
         createdAtBlock: 0,
-        originalValue: '100', // vlqU64 THROWS on a string
-        owner: alice.userId,
+        owner: new Uint8Array(5), // writeBytesNOrThrow expects 32
+        releaseAtBlock: 100,
       },
     ] as unknown as UtxoTransaction['outputs'];
 
@@ -393,5 +393,86 @@ describe('block funnel — the embedded-tx proof obligation', () => {
     expect(ordering.getOrderingBlock(1)).toBeNull();
     expect(ordering.getCurrentHeight()).toBe(0);
     expect(utxo.getBox(aliceBox.id!)).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Envelope exclusivity — at most one payload field
+// (NODE_INTERFACE → Transaction envelope shape)
+// ---------------------------------------------------------------------------
+
+describe('envelope exclusivity — at most one payload field', () => {
+  const INPUT = 'a'.repeat(64);
+  const base = {
+    inputs: [INPUT],
+    outputs: [],
+    signatures: {},
+    protocolVersion: PROTOCOL_VERSION,
+  };
+  const LIKE_TARGET = 'b'.repeat(64);
+  const POST_COMMIT = {
+    contentHash: new Uint8Array(32),
+    author: new Uint8Array(32),
+    parentRefs: [],
+    protocolVersion: PROTOCOL_VERSION,
+    type: 'regular' as const,
+  };
+  const PRUNE = { rootPostHash: 'c'.repeat(64) };
+  const WITHDRAW = { postId: 'd'.repeat(64) };
+
+  it('like + post (with a price box) is refused', () => {
+    const tx = { ...base, likeTarget: LIKE_TARGET, post: POST_COMMIT };
+    const r = checkTxEnvelope(tx);
+    expect(r.valid).toBe(false);
+    expect(r.error).toMatch(/likeTarget/);
+    expect(r.error).toMatch(/post/);
+  });
+
+  it('like + post (without a price box) is refused', () => {
+    const tx = { ...base, outputs: [], likeTarget: LIKE_TARGET, post: POST_COMMIT };
+    const r = checkTxEnvelope(tx);
+    expect(r.valid).toBe(false);
+    expect(r.error).toMatch(/likeTarget.*post|post.*likeTarget/);
+  });
+
+  it('like + post (foreign author on the commit) is refused at the envelope', () => {
+    const foreignPost = { ...POST_COMMIT, author: new Uint8Array(32).fill(0xff) };
+    const tx = { ...base, likeTarget: LIKE_TARGET, post: foreignPost };
+    const r = checkTxEnvelope(tx);
+    expect(r.valid).toBe(false);
+    expect(r.error).toMatch(/likeTarget/);
+    expect(r.error).toMatch(/post/);
+  });
+
+  it('like + prune is refused', () => {
+    const tx = { ...base, likeTarget: LIKE_TARGET, prune: PRUNE };
+    const r = checkTxEnvelope(tx);
+    expect(r.valid).toBe(false);
+    expect(r.error).toMatch(/likeTarget/);
+    expect(r.error).toMatch(/prune/);
+  });
+
+  it('post + prune is refused', () => {
+    const tx = { ...base, post: POST_COMMIT, prune: PRUNE };
+    const r = checkTxEnvelope(tx);
+    expect(r.valid).toBe(false);
+    expect(r.error).toMatch(/post/);
+    expect(r.error).toMatch(/prune/);
+  });
+
+  it('post + withdraw is refused', () => {
+    const tx = { ...base, post: POST_COMMIT, postWithdraw: WITHDRAW };
+    const r = checkTxEnvelope(tx);
+    expect(r.valid).toBe(false);
+    expect(r.error).toMatch(/post/);
+    expect(r.error).toMatch(/postWithdraw/);
+  });
+
+  it('prune + withdraw is refused', () => {
+    const tx = { ...base, prune: PRUNE, postWithdraw: WITHDRAW };
+    const r = checkTxEnvelope(tx);
+    expect(r.valid).toBe(false);
+    expect(r.error).toMatch(/prune/);
+    expect(r.error).toMatch(/postWithdraw/);
   });
 });
