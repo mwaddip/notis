@@ -90,7 +90,8 @@ import type { BlockJournal } from '../store/journal.js';
 import { tryGetAvlProver, applyBlockMutations, checkpointProver } from '../state/avl-prover.js';
 import { emitPostIndexed } from '../journal.js';
 import { countedVerifyOrderingBlockPoW, noteTip } from '../metrics.js';
-import type { RecordPut } from '../state/avl-prover.js';
+import type { RecordPut, NetworkPut } from '../state/avl-prover.js';
+import { networkRecordKey } from '../store/identity-records.js';
 import {
   encodeTx,
   decodeTx,
@@ -377,9 +378,9 @@ function applyBlockBody(block: OrderingBlock): boolean {
   const journal = finishBlockJournal();
   const handle = tryGetAvlProver();
   if (handle) {
-    const { consumed, created, recordPuts } = proverFeedFromJournal(journal);
+    const { consumed, created, recordPuts, networkPuts } = proverFeedFromJournal(journal);
     const computedDigest = applyBlockMutations(
-      handle.prover, block.header.height, consumed, created, recordPuts,
+      handle.prover, block.header.height, consumed, created, recordPuts, networkPuts,
     );
 
     // Verify against block header (gated). The prover is restored by the
@@ -434,7 +435,7 @@ function applyBlockBody(block: OrderingBlock): boolean {
  */
 function proverFeedFromJournal(
   journal: BlockJournal,
-): { consumed: string[]; created: AnyBox[]; recordPuts: RecordPut[] } {
+): { consumed: string[]; created: AnyBox[]; recordPuts: RecordPut[]; networkPuts: NetworkPut[] } {
   // Netting is per-kind and the two rules do NOT share a code path: boxes
   // cancel insert+remove pairs; records collapse to the last write per key.
   const cancelled = new Set<number>();
@@ -462,6 +463,8 @@ function proverFeedFromJournal(
   // last. The journal keeps both entries regardless — rollback needs the
   // first's `replaced`.
   const recordByKey = new Map<string, RecordPut>();
+  let latestNetwork: NetworkPut | null = null;
+  const nrKey = networkRecordKey();
   for (let i = 0; i < journal.mutations.length; i++) {
     if (cancelled.has(i)) continue;
     const m = journal.mutations[i]!;
@@ -473,19 +476,22 @@ function proverFeedFromJournal(
       case 'record':
         recordByKey.set(m.key, { key: m.key, record: m.record });
         break;
+      case 'network':
+        latestNetwork = { key: nrKey, network: { memberCount: m.memberCount } };
+        break;
       default: {
-        // Compile-time exhaustiveness, deliberately not a runtime throw: a new
-        // committed entity kind that nobody feeds to the prover is silently
-        // absent from the stateRoot, and no test can catch that — producer and
-        // verifier omit it identically and agree on a digest over incomplete
-        // state. This assignment is the only enforcement that invariant has.
         const _exhaustive: never = m;
         void _exhaustive;
         break;
       }
     }
   }
-  return { consumed, created, recordPuts: [...recordByKey.values()] };
+  return {
+    consumed,
+    created,
+    recordPuts: [...recordByKey.values()],
+    networkPuts: latestNetwork ? [latestNetwork] : [],
+  };
 }
 
 /**
@@ -568,11 +574,11 @@ export function computePostBlockStateRoot(
     getDb().transaction((): void => {
       beginBlockJournal(height);
       if (!applyMutationPhase(block, height)) throw new BlockRejected();
-      const { consumed, created, recordPuts } = proverFeedFromJournal(finishBlockJournal());
+      const { consumed, created, recordPuts, networkPuts } = proverFeedFromJournal(finishBlockJournal());
       // The digest rides out on the throw: nothing this run did may survive.
       throw new SpeculativeRollback(
         Buffer.from(
-          applyBlockMutations(handle.prover, height, consumed, created, recordPuts),
+          applyBlockMutations(handle.prover, height, consumed, created, recordPuts, networkPuts),
         ).toString('hex'),
       );
     })();
@@ -1256,11 +1262,12 @@ function applyMutationPhase(
       lastActivityBlock: after?.lastActivityBlock ?? height,
       lastDecayBlock: after?.lastDecayBlock ?? 0,
       invitedAtBlock: height,
-      // Carried through rather than written, and it is always 0 here: a legal
-      // invitee is not an account yet, so it has never held karma, never posted
-      // and never been liked. The read is what keeps that a consequence of the
-      // bar rather than an assumption this line makes.
       lifetimeLikesReceived: after?.lifetimeLikesReceived ?? 0n,
+      memberSinceBlock: after?.memberSinceBlock ?? 0,
+      memberBar: after?.memberBar ?? 0,
+      memberVouches: after?.memberVouches ?? 0,
+      memberLikes: after?.memberLikes ?? 0n,
+      invitesUsed: after?.invitesUsed ?? 0,
     });
   }
 
@@ -1297,10 +1304,13 @@ function applyMutationPhase(
     putIdentityRecord(author, {
       lastActivityBlock: after?.lastActivityBlock ?? 0,
       lastDecayBlock: after?.lastDecayBlock ?? 0,
-      // Carried through: the grant path owns it, and an author being paid for
-      // likes in the same block they were invited is reachable.
       invitedAtBlock: after?.invitedAtBlock ?? 0,
       lifetimeLikesReceived: (after?.lifetimeLikesReceived ?? 0n) + received,
+      memberSinceBlock: after?.memberSinceBlock ?? 0,
+      memberBar: after?.memberBar ?? 0,
+      memberVouches: after?.memberVouches ?? 0,
+      memberLikes: after?.memberLikes ?? 0n,
+      invitesUsed: after?.invitesUsed ?? 0,
     });
   }
 

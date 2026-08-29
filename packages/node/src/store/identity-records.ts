@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
-import { IDENTITY_KEY_DOMAIN } from '@dagsocial/types';
+import { IDENTITY_KEY_DOMAIN, NETWORK_KEY_DOMAIN } from '@dagsocial/types';
 import { getDb } from './db.js';
-import { isBlockJournalOpen, recordIdentityRecordPut } from './journal.js';
+import { isBlockJournalOpen, recordIdentityRecordPut, recordNetworkRecordPut } from './journal.js';
 import type { UserId } from '@dagsocial/types';
 
 /**
@@ -83,6 +83,16 @@ export interface IdentityRecord {
    * sentinel.
    */
   lifetimeLikesReceived: bigint;
+  /** u32 — 0 = never a member; else the height the bar was first met — the AGE, never reset. */
+  memberSinceBlock: number;
+  /** u32 — D(N) at first set, never reset; 0 on a root. */
+  memberBar: number;
+  /** u32 — live counted vouches naming this identity. */
+  memberVouches: number;
+  /** Likes received from members; never decremented. */
+  memberLikes: bigint;
+  /** u32 — bonds this identity has created; never decremented. */
+  invitesUsed: number;
 }
 
 /**
@@ -109,7 +119,8 @@ export function getIdentityRecord(identityId: UserId): IdentityRecord | null {
   const row = getDb()
     .prepare(
       `SELECT last_activity_block, last_decay_block, invited_at_block,
-              lifetime_likes_received
+              lifetime_likes_received, member_since_block, member_bar,
+              member_vouches, member_likes, invites_used
        FROM identity_records WHERE identity_id = ?`,
     )
     .safeIntegers()
@@ -118,6 +129,9 @@ export function getIdentityRecord(identityId: UserId): IdentityRecord | null {
         last_activity_block: bigint; last_decay_block: bigint;
         invited_at_block: bigint;
         lifetime_likes_received: bigint;
+        member_since_block: bigint; member_bar: bigint;
+        member_vouches: bigint; member_likes: bigint;
+        invites_used: bigint;
       }
       | undefined;
   if (!row) return null;
@@ -126,6 +140,11 @@ export function getIdentityRecord(identityId: UserId): IdentityRecord | null {
     lastDecayBlock: Number(row.last_decay_block),
     invitedAtBlock: Number(row.invited_at_block),
     lifetimeLikesReceived: row.lifetime_likes_received,
+    memberSinceBlock: Number(row.member_since_block),
+    memberBar: Number(row.member_bar),
+    memberVouches: Number(row.member_vouches),
+    memberLikes: row.member_likes,
+    invitesUsed: Number(row.invites_used),
   };
 }
 
@@ -145,7 +164,9 @@ export function getAllIdentityRecords(): Array<{ identityId: UserId; record: Ide
   const rows = getDb()
     .prepare(
       `SELECT identity_id, last_activity_block, last_decay_block,
-              invited_at_block, lifetime_likes_received
+              invited_at_block, lifetime_likes_received,
+              member_since_block, member_bar, member_vouches,
+              member_likes, invites_used
        FROM identity_records ORDER BY identity_id`,
     )
     .safeIntegers()
@@ -155,6 +176,11 @@ export function getAllIdentityRecords(): Array<{ identityId: UserId; record: Ide
       last_decay_block: bigint;
       invited_at_block: bigint;
       lifetime_likes_received: bigint;
+      member_since_block: bigint;
+      member_bar: bigint;
+      member_vouches: bigint;
+      member_likes: bigint;
+      invites_used: bigint;
     }>;
   return rows.map((row) => ({
     identityId: new Uint8Array(row.identity_id),
@@ -163,6 +189,11 @@ export function getAllIdentityRecords(): Array<{ identityId: UserId; record: Ide
       lastDecayBlock: Number(row.last_decay_block),
       invitedAtBlock: Number(row.invited_at_block),
       lifetimeLikesReceived: row.lifetime_likes_received,
+      memberSinceBlock: Number(row.member_since_block),
+      memberBar: Number(row.member_bar),
+      memberVouches: Number(row.member_vouches),
+      memberLikes: row.member_likes,
+      invitesUsed: Number(row.invites_used),
     },
   }));
 }
@@ -187,8 +218,10 @@ export function putIdentityRecord(identityId: UserId, record: IdentityRecord): v
     .prepare(
       `INSERT OR REPLACE INTO identity_records
          (identity_id, last_activity_block, last_decay_block,
-          invited_at_block, lifetime_likes_received)
-       VALUES (?, ?, ?, ?, ?)`,
+          invited_at_block, lifetime_likes_received,
+          member_since_block, member_bar, member_vouches,
+          member_likes, invites_used)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       Buffer.from(identityId),
@@ -196,6 +229,11 @@ export function putIdentityRecord(identityId: UserId, record: IdentityRecord): v
       record.lastDecayBlock,
       record.invitedAtBlock,
       record.lifetimeLikesReceived,
+      record.memberSinceBlock,
+      record.memberBar,
+      record.memberVouches,
+      record.memberLikes,
+      record.invitesUsed,
     );
   recordIdentityRecordPut(identityRecordKey(identityId), identityId, record, replaced);
 }
@@ -210,4 +248,56 @@ export function deleteIdentityRecord(identityId: UserId): void {
   getDb()
     .prepare('DELETE FROM identity_records WHERE identity_id = ?')
     .run(Buffer.from(identityId));
+}
+
+// ---------------------------------------------------------------------------
+// Network record — NODE_INTERFACE → Network record
+// ---------------------------------------------------------------------------
+
+export interface NetworkRecord {
+  memberCount: number;
+}
+
+/**
+ * The network record's AVL key: `blake2b512(NETWORK_KEY_DOMAIN)[0:32]`, hex.
+ * The tag alone is the preimage — the identity key's hashing rule with nothing
+ * after the tag. Three entity kinds, three disjoint domain tags.
+ */
+export function networkRecordKey(): string {
+  return createHash('blake2b512')
+    .update(NETWORK_KEY_DOMAIN)
+    .digest()
+    .subarray(0, 32)
+    .toString('hex');
+}
+
+/** The one row; throws where none exists (a store never seeded). */
+export function getNetworkRecord(): NetworkRecord {
+  const row = getDb()
+    .prepare('SELECT member_count FROM network_record WHERE id = 1')
+    .get() as { member_count: number } | undefined;
+  if (!row) {
+    throw new Error('getNetworkRecord: no network record — store was never seeded');
+  }
+  return { memberCount: row.member_count };
+}
+
+/**
+ * Upsert the network record. While a block journal is open, captures the row
+ * it replaces and records a NetworkMutation — the same pattern as
+ * putIdentityRecord.
+ */
+export function putNetworkRecord(record: NetworkRecord): void {
+  const replaced = isBlockJournalOpen()
+    ? (() => {
+        try { return getNetworkRecord(); }
+        catch { return undefined; }
+      })()
+    : undefined;
+  getDb()
+    .prepare(
+      `INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, ?)`,
+    )
+    .run(record.memberCount);
+  recordNetworkRecordPut(record, replaced);
 }

@@ -97,7 +97,7 @@ async function importRecords() {
   return (await import('../../src/store/identity-records.js')) as {
     getIdentityRecord: (
       id: Uint8Array,
-    ) => { lastActivityBlock: number; lastDecayBlock: number; lifetimeLikesReceived: bigint } | null;
+    ) => { lastActivityBlock: number; lastDecayBlock: number; lifetimeLikesReceived: bigint, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 } | null;
   };
 }
 

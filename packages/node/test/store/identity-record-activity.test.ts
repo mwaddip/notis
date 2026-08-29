@@ -131,7 +131,7 @@ describe('recordKarmaActivity advances the activity clock', () => {
     recordKarmaActivity(alice);
     finishBlockJournal();
 
-    expect(getIdentityRecord(alice)).toEqual({ lastActivityBlock: 42, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    expect(getIdentityRecord(alice)).toEqual({ lastActivityBlock: 42, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
   });
 
   it('insertBox alone does NOT advance the activity clock', async () => {
@@ -185,7 +185,7 @@ describe('recordKarmaActivity advances the activity clock', () => {
     recordKarmaActivity(alice);
     finishBlockJournal();
 
-    expect(getIdentityRecord(alice)).toEqual({ lastActivityBlock: 0, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    expect(getIdentityRecord(alice)).toEqual({ lastActivityBlock: 0, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
   });
 
   it('a later activity bump preserves lastDecayBlock', async () => {
@@ -196,13 +196,13 @@ describe('recordKarmaActivity advances the activity clock', () => {
     initDb(':memory:');
 
     const alice = owner('alice');
-    putIdentityRecord(alice, { lastActivityBlock: 5, lastDecayBlock: 33, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    putIdentityRecord(alice, { lastActivityBlock: 5, lastDecayBlock: 33, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
 
     beginBlockJournal(77);
     recordKarmaActivity(alice);
     finishBlockJournal();
 
-    expect(getIdentityRecord(alice)).toEqual({ lastActivityBlock: 77, lastDecayBlock: 33, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    expect(getIdentityRecord(alice)).toEqual({ lastActivityBlock: 77, lastDecayBlock: 33, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
   });
 
   it('each identity gets its own clock', async () => {
@@ -221,8 +221,8 @@ describe('recordKarmaActivity advances the activity clock', () => {
     recordKarmaActivity(bob);
     finishBlockJournal();
 
-    expect(getIdentityRecord(alice)).toEqual({ lastActivityBlock: 3, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
-    expect(getIdentityRecord(bob)).toEqual({ lastActivityBlock: 9, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    expect(getIdentityRecord(alice)).toEqual({ lastActivityBlock: 3, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
+    expect(getIdentityRecord(bob)).toEqual({ lastActivityBlock: 9, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
   });
 
   it('the bump is journaled', async () => {
@@ -242,7 +242,7 @@ describe('recordKarmaActivity advances the activity clock', () => {
         kind: 'record',
         key: identityRecordKey(alice),
         identityId: alice,
-        record: { lastActivityBlock: 4, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n },
+        record: { lastActivityBlock: 4, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 },
       },
     ]);
   });
@@ -255,7 +255,7 @@ describe('recordKarmaActivity advances the activity clock', () => {
     initDb(':memory:');
 
     const alice = owner('alice');
-    putIdentityRecord(alice, { lastActivityBlock: 2, lastDecayBlock: 1, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    putIdentityRecord(alice, { lastActivityBlock: 2, lastDecayBlock: 1, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
 
     beginBlockJournal(6);
     recordKarmaActivity(alice);
@@ -264,8 +264,8 @@ describe('recordKarmaActivity advances the activity clock', () => {
     const records = journal.mutations.filter((m) => m.kind === 'record');
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({
-      record: { lastActivityBlock: 6, lastDecayBlock: 1, invitedAtBlock: 0, lifetimeLikesReceived: 0n },
-      replaced: { lastActivityBlock: 2, lastDecayBlock: 1, invitedAtBlock: 0, lifetimeLikesReceived: 0n },
+      record: { lastActivityBlock: 6, lastDecayBlock: 1, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 },
+      replaced: { lastActivityBlock: 2, lastDecayBlock: 1, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 },
     });
   });
 

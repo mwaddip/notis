@@ -8,11 +8,14 @@ import {
   seedGenesisCommittee,
 } from '../store/system.js';
 import { emissionTotal } from './block-creator.js';
-import { getAllIdentityRecords, identityRecordKey } from '../store/identity-records.js';
+import {
+  getAllIdentityRecords, identityRecordKey,
+  putNetworkRecord, getNetworkRecord, networkRecordKey,
+} from '../store/identity-records.js';
 import { getCurrentHeight } from '../store/ordering.js';
 import { getUnspentBoxes } from '../store/utxo.js';
 import { bootstrapAvlProver, getAvlProver } from '../state/avl-prover.js';
-import type { RecordPut } from '../state/avl-prover.js';
+import type { RecordPut, NetworkPut } from '../state/avl-prover.js';
 import { config } from '../config.js';
 import { hexToBuf } from '@dagsocial/types';
 import type { AnyBox } from '@dagsocial/types';
@@ -283,6 +286,12 @@ export function seedGenesisState(): void {
         GENESIS_HEIGHT,
       );
 
+      // The network record: the root count (committee + faucet where present).
+      const rootCount =
+        config.profile.genesisCommitteeKeys.length +
+        (faucetPubKeyHex !== undefined ? 1 : 0);
+      putNetworkRecord({ memberCount: rootCount });
+
       // Every network too, and for the emission box's reason sharpened: every
       // karma mint draws from this box, so a network seeded without it can mint
       // no karma at all.
@@ -321,13 +330,13 @@ export function seedGenesisState(): void {
         key: identityRecordKey(r.identityId),
         record: r.record,
       }));
+      const nr = getNetworkRecord();
+      const networkPuts: NetworkPut[] = [
+        { key: networkRecordKey(), network: nr },
+      ];
 
-      // Exactly one height-0 version may exist. The `PersistentBatchAVLProver`
-      // constructor already wrote the empty tree's, and `version()` resolves ties
-      // on height arbitrarily — leaving both would let a restart load the empty
-      // tree back over the genesis one.
       handle.storage.deleteVersionAtHeight(GENESIS_HEIGHT);
-      bootstrapAvlProver(handle, boxes, GENESIS_HEIGHT, records);
+      bootstrapAvlProver(handle, boxes, GENESIS_HEIGHT, records, networkPuts);
 
       // The postcondition of the two lines above: the genesis this node just
       // built is the genesis its network pins. Inside the transaction, so a

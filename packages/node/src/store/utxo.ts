@@ -961,6 +961,11 @@ export function recordKarmaActivity(owner: Uint8Array): void {
     lastDecayBlock: existing?.lastDecayBlock ?? 0,
     invitedAtBlock: existing?.invitedAtBlock ?? 0,
     lifetimeLikesReceived: existing?.lifetimeLikesReceived ?? 0n,
+    memberSinceBlock: existing?.memberSinceBlock ?? 0,
+    memberBar: existing?.memberBar ?? 0,
+    memberVouches: existing?.memberVouches ?? 0,
+    memberLikes: existing?.memberLikes ?? 0n,
+    invitesUsed: existing?.invitesUsed ?? 0,
   });
 }
 

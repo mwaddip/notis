@@ -14,27 +14,23 @@ import {
 import type { AnyBox, StructCodec } from '@dagsocial/types';
 // Type-only: erased at compile time, so state/ does not gain a runtime edge
 // into the store module graph.
-import type { IdentityRecord } from '../store/identity-records.js';
+import type { IdentityRecord, NetworkRecord } from '../store/identity-records.js';
 
 /**
- * Identity-record discriminator (`NODE_INTERFACE` → "Two entity kinds").
+ * Identity-record discriminator (`NODE_INTERFACE` → "Three entity kinds").
  *
  * Deliberately **outside** the box discriminator's range, with the high bit
  * set: "box" versus "not a box" is a single bit test, and the box-type space
  * stays open for future box kinds without ever colliding with an entity
  * discriminator.
- *
- * ⚠ **`enum8(boxType)` — `0` karma … `9` fee — is the box numbering, and
- * this package must never carry a second one.** Composing a local tag with the
- * record's own, `tag ‖ boxRecordBytes`, writes the box type twice in adjacent
- * bytes under two schemes nothing forces to agree, and they need not differ by
- * a constant: a number assigned at a different position shifts one type and not
- * its neighbours. The rule the numbering protects — a tag is never *renumbered*,
- * because `boxType` is the first byte of every box's identity preimage
- * (`TYPES_INTERFACE` → Primitives) — is exactly what a second table would
- * silently break.
  */
 export const IDENTITY_RECORD_TAG = 0x80;
+
+/**
+ * Network-record discriminator (`NODE_INTERFACE` → "Three entity kinds").
+ * Sits beside `0x80` — high bit set, not a box.
+ */
+export const NETWORK_RECORD_TAG = 0x81;
 
 /**
  * Serialize an AnyBox to its AVL value bytes.
@@ -105,13 +101,15 @@ const IDENTITY_RECORD: StructCodec<IdentityRecord> = {
     writeVlqU(w, record.lastDecayBlock);
     writeVlqU(w, record.invitedAtBlock);
     writeVlqU64OrThrow(w, record.lifetimeLikesReceived);
+    writeVlqU(w, record.memberSinceBlock);
+    writeVlqU(w, record.memberBar);
+    writeVlqU(w, record.memberVouches);
+    writeVlqU64OrThrow(w, record.memberLikes);
+    writeVlqU(w, record.invitesUsed);
   },
   read(r) {
     const tag = readU8(r);
     if (tag !== IDENTITY_RECORD_TAG) {
-      // ReaderError rather than a bare Error: `decodeStruct` passes it through
-      // as-is, where anything else is wrapped as a `reader-fault`. Same shape
-      // as `enum8`'s unknown-tag rejection on the box arm.
       throw new ReaderError(
         `identityRecord: not an identity record: tag 0x${tag.toString(16)}`,
         'invalid-tag',
@@ -122,6 +120,11 @@ const IDENTITY_RECORD: StructCodec<IdentityRecord> = {
       lastDecayBlock: readVlqU(r),
       invitedAtBlock: readVlqU(r),
       lifetimeLikesReceived: readVlqU64(r),
+      memberSinceBlock: readVlqU(r),
+      memberBar: readVlqU(r),
+      memberVouches: readVlqU(r),
+      memberLikes: readVlqU64(r),
+      invitesUsed: readVlqU(r),
     };
   },
 };
@@ -140,6 +143,36 @@ export function serializeIdentityRecord(record: IdentityRecord): Uint8Array {
 /** Deserialize bytes produced by `serializeIdentityRecord`. */
 export function deserializeIdentityRecord(bytes: Uint8Array): IdentityRecord {
   return decodeStruct(IDENTITY_RECORD, bytes);
+}
+
+/**
+ * Network-record AVL value — `NODE_INTERFACE` → Network record.
+ * `u8 0x81 ‖ vlqU(memberCount)`.
+ */
+const NETWORK_RECORD: StructCodec<NetworkRecord> = {
+  name: 'networkRecord',
+  write(w, record) {
+    writeU8OrThrow(w, NETWORK_RECORD_TAG);
+    writeVlqU(w, record.memberCount);
+  },
+  read(r) {
+    const tag = readU8(r);
+    if (tag !== NETWORK_RECORD_TAG) {
+      throw new ReaderError(
+        `networkRecord: not a network record: tag 0x${tag.toString(16)}`,
+        'invalid-tag',
+      );
+    }
+    return { memberCount: readVlqU(r) };
+  },
+};
+
+export function serializeNetworkRecord(record: NetworkRecord): Uint8Array {
+  return encodeStruct(NETWORK_RECORD, record);
+}
+
+export function deserializeNetworkRecord(bytes: Uint8Array): NetworkRecord {
+  return decodeStruct(NETWORK_RECORD, bytes);
 }
 
 /**
@@ -163,6 +196,9 @@ export function deserializeBox(bytes: Uint8Array): Omit<AnyBox, 'id'> {
   if (bytes.length > 0 && bytes[0] === IDENTITY_RECORD_TAG) {
     throw new Error('Value is an identity record, not a box');
   }
+  if (bytes.length > 0 && bytes[0] === NETWORK_RECORD_TAG) {
+    throw new Error('Value is a network record, not a box');
+  }
 
   const { candidate, txId, index } = boxRecordFromBytes(bytes);
   return {
@@ -175,7 +211,8 @@ export function deserializeBox(bytes: Uint8Array): Omit<AnyBox, 'id'> {
 /** A decoded AVL value, discriminated by its tag byte. */
 export type AvlValue =
   | { kind: 'box'; box: Omit<AnyBox, 'id'> }
-  | { kind: 'record'; record: IdentityRecord };
+  | { kind: 'record'; record: IdentityRecord }
+  | { kind: 'network'; network: NetworkRecord };
 
 /**
  * Kind-dispatching decoder — what any caller that can see either entity uses.
@@ -191,6 +228,9 @@ export function deserializeAvlValue(bytes: Uint8Array): AvlValue {
   if (bytes.length === 0) throw new Error('Truncated AVL value');
   if (bytes[0] === IDENTITY_RECORD_TAG) {
     return { kind: 'record', record: deserializeIdentityRecord(bytes) };
+  }
+  if (bytes[0] === NETWORK_RECORD_TAG) {
+    return { kind: 'network', network: deserializeNetworkRecord(bytes) };
   }
   return { kind: 'box', box: deserializeBox(bytes) };
 }

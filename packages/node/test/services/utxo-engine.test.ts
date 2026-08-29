@@ -704,6 +704,11 @@ describe('validateAndApplyTx', () => {
         lastDecayBlock: 0,
         invitedAtBlock: 0,
         lifetimeLikesReceived: 900n,
+        memberSinceBlock: 0,
+        memberBar: 0,
+        memberVouches: 0,
+        memberLikes: 0n,
+        invitesUsed: 0,
       });
       const tx = signBy(inviteTx(), inviterPubKey, inviterPrivKey);
       const result = validateTx(deps, tx, 10);

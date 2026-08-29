@@ -2,6 +2,7 @@ import { loadConfig } from './config.js';
 import { initDb, getDb, closeDb } from './store/db.js';
 import { setMempoolCap } from './store/mempool.js';
 import { seedGenesisState } from './services/genesis-state.js';
+import { getNetworkRecord } from './store/identity-records.js';
 import { startBlockCreator, stopBlockCreator } from './services/block-creator.js';
 import { createApp, createAdminApp } from './server.js';
 import {
@@ -107,6 +108,21 @@ try {
   console.error(err instanceof Error ? err.message : String(err));
   closeDb();
   process.exit(1);
+}
+
+// NODE_INTERFACE → "The genesis state root is checked fail-stop"
+// A chain with no root has N = 0 and no member can ever be set.
+{
+  const nr = getNetworkRecord();
+  if (nr.memberCount === 0) {
+    console.error(
+      `Network "${config.networkType}" has memberCount = 0 after seeding — no root ` +
+      'exists, so no member can ever be set and the network cannot function. ' +
+      'Add at least one genesis committee key or a faucet identity to the profile.',
+    );
+    closeDb();
+    process.exit(1);
+  }
 }
 
 // 2. Create NetNode

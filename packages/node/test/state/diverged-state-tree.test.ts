@@ -31,6 +31,11 @@ const REC: IdentityRecord = {
   lastDecayBlock: 7,
   invitedAtBlock: 0,
   lifetimeLikesReceived: 0n,
+  memberSinceBlock: 0,
+  memberBar: 0,
+  memberVouches: 0,
+  memberLikes: 0n,
+  invitesUsed: 0,
 };
 
 /** A karma box with a chosen id — provenance filled the way a real one carries it. */

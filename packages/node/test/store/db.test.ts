@@ -20,6 +20,7 @@ const EXPECTED_TABLES = [
   'dag_stumps',
   'like_records',
   'mempool',
+  'network_record',
   'ordering_blocks',
   'block_journal',
   'system_config',
@@ -163,9 +164,14 @@ describe('db lifecycle', () => {
     expect(idRecCols.map((c) => c.name).sort()).toEqual([
       'identity_id',
       'invited_at_block',
+      'invites_used',
       'last_activity_block',
       'last_decay_block',
       'lifetime_likes_received',
+      'member_bar',
+      'member_likes',
+      'member_since_block',
+      'member_vouches',
     ]);
     // ⚠ Every column but the primary key. `identity_id BLOB PRIMARY KEY` is
     // declared without `NOT NULL`, which SQLite reports as `notnull: 0` — the

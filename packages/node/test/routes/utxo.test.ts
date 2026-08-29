@@ -223,6 +223,11 @@ describe('UTXO routes', () => {
       lastDecayBlock: 1,
       invitedAtBlock: 0,
       lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
     });
 
     const res = await request(`/karma/${karmaUserIdHex}`, 'GET', undefined, 100000);
@@ -236,6 +241,11 @@ describe('UTXO routes', () => {
       lastDecayBlock: 0,
       invitedAtBlock: 0,
       lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
     });
   });
 
@@ -245,6 +255,11 @@ describe('UTXO routes', () => {
       lastDecayBlock: 0,
       invitedAtBlock: 0,
       lifetimeLikesReceived: 7n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
     });
     const res = await request(`/karma/${karmaUserIdHex}`);
     expect(res.status).toBe(200);
@@ -256,6 +271,11 @@ describe('UTXO routes', () => {
       lastDecayBlock: 0,
       invitedAtBlock: 0,
       lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
     });
   });
 
@@ -317,6 +337,11 @@ describe('UTXO routes', () => {
       lastDecayBlock: 3,
       invitedAtBlock: 1,
       lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
     });
     const res = await request(`/karma/${hex}`);
     expect(res.status).toBe(200);

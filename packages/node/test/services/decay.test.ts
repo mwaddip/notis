@@ -37,7 +37,7 @@ const TEST_CFG = {
 };
 
 function clock(lastActivityBlock: number, lastDecayBlock = 0): IdentityRecord {
-  return { lastActivityBlock, lastDecayBlock, invitedAtBlock: 0, lifetimeLikesReceived: 0n };
+  return { lastActivityBlock, lastDecayBlock, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 };
 }
 
 /**

@@ -667,6 +667,11 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
       lastDecayBlock: 0,
       invitedAtBlock: 2,
       lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
     });
     handle.prover.prover.generateProof();
 
@@ -679,6 +684,11 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
       lastDecayBlock: 0,
       invitedAtBlock: 2,
       lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
     });
   });
 });

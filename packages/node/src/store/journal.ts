@@ -4,7 +4,7 @@ import type { AnyBox, Stump, UserId } from '@dagsocial/types';
 import type { DeletedPostRow } from './posts.js';
 // Type-only: erased at compile time, so this does not create a runtime cycle
 // with identity-records.ts, which imports the recording hook below.
-import type { IdentityRecord } from './identity-records.js';
+import type { IdentityRecord, NetworkRecord } from './identity-records.js';
 
 // ---------------------------------------------------------------------------
 // Journal types (node-owned — NODE_INTERFACE → Block Journal)
@@ -32,6 +32,13 @@ export interface RecordMutation {
   replaced?: IdentityRecord;
 }
 
+/** One network-record write, in application order. */
+export interface NetworkMutation {
+  kind: 'network';
+  memberCount: number;
+  replaced?: NetworkRecord;
+}
+
 /**
  * A mutation of any **committed** entity.
  *
@@ -51,7 +58,7 @@ export interface RecordMutation {
  * entry that is both journaled *and* committed, and that is the whole
  * distinction.
  */
-export type JournalMutation = BoxMutation | RecordMutation;
+export type JournalMutation = BoxMutation | RecordMutation | NetworkMutation;
 
 /**
  * Single source of truth for undoing a block and feeding the AVL prover.
@@ -261,6 +268,19 @@ export function recordIdentityRecordPut(
 ): void {
   if (openJournal === null) return;
   const entry: RecordMutation = { kind: 'record', key, identityId, record };
+  if (replaced !== undefined) {
+    entry.replaced = replaced;
+  }
+  openJournal.mutations.push(entry);
+}
+
+/** Record a network-record write (putNetworkRecord). */
+export function recordNetworkRecordPut(
+  record: NetworkRecord,
+  replaced?: NetworkRecord,
+): void {
+  if (openJournal === null) return;
+  const entry: NetworkMutation = { kind: 'network', memberCount: record.memberCount };
   if (replaced !== undefined) {
     entry.replaced = replaced;
   }

@@ -246,6 +246,11 @@ describe('invites service', () => {
       lastDecayBlock: 0,
       invitedAtBlock: 3,
       lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
     });
     const karma = createKarmaBox(inviterId, 100n, 1);
     const tx = buildCreateTx(karma, inviteePubKey);
@@ -264,8 +269,13 @@ describe('invites service', () => {
     storePutIdentityRecord(inviteePubKey, {
       lastActivityBlock: 3,
       lastDecayBlock: 0,
-      invitedAtBlock: 0,          // never invited
-      lifetimeLikesReceived: 900n, // and long since past a full vest
+      invitedAtBlock: 0,
+      lifetimeLikesReceived: 900n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
     });
     const karma = createKarmaBox(inviterId, 100n, 1);
     const tx = buildCreateTx(karma, inviteePubKey);

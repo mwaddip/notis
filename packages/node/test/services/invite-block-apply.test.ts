@@ -233,6 +233,11 @@ describe('the invite at block application', () => {
       lastDecayBlock: before?.lastDecayBlock ?? 0,
       invitedAtBlock,
       lifetimeLikesReceived: before?.lifetimeLikesReceived ?? 0n,
+      memberSinceBlock: before?.memberSinceBlock ?? 0,
+      memberBar: before?.memberBar ?? 0,
+      memberVouches: before?.memberVouches ?? 0,
+      memberLikes: before?.memberLikes ?? 0n,
+      invitesUsed: before?.invitesUsed ?? 0,
     });
   }
 
@@ -384,6 +389,11 @@ describe('the invite at block application', () => {
       lastDecayBlock: 0,
       invitedAtBlock: claimHeight,
       lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
     });
 
     const cfg = {
@@ -618,7 +628,7 @@ describe('the invite at block application', () => {
     await startProbation(invitee, invitedAtBlock);
     const started = records.getIdentityRecord(invitee.userId)!;
     expect(started.invitedAtBlock).toBe(invitedAtBlock);
-    records.putIdentityRecord(invitee.userId, { ...started, lifetimeLikesReceived: likes });
+    records.putIdentityRecord(invitee.userId, { ...started, lifetimeLikesReceived: likes, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
 
     const deadline = invitedAtBlock + PROBATION;
     let height = invitedAtBlock;
@@ -707,6 +717,11 @@ describe('the invite at block application', () => {
       lastDecayBlock: 0,
       invitedAtBlock: 0,
       lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
     });
     expect(records.getIdentityRecord(invitee.userId)!.invitedAtBlock).toBe(0);
 

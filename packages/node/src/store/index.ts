@@ -155,8 +155,11 @@ export {
   getIdentityRecord,
   putIdentityRecord,
   deleteIdentityRecord,
+  getNetworkRecord,
+  putNetworkRecord,
+  networkRecordKey,
 } from './identity-records.js';
-export type { IdentityRecord } from './identity-records.js';
+export type { IdentityRecord, NetworkRecord } from './identity-records.js';
 
 export {
   insertRefusedHeader,

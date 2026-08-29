@@ -1,11 +1,11 @@
 import { BatchAVLProver, PersistentBatchAVLProver } from '@ergots/avltree';
 import { SqliteAvlStorage } from './avl-storage.js';
-import { serializeBox, serializeIdentityRecord } from './serialize-box.js';
+import { serializeBox, serializeIdentityRecord, serializeNetworkRecord } from './serialize-box.js';
 import { getDb } from '../store/db.js';
 import { config } from '../config.js';
 import { DivergedStateTreeError } from '../services/corrupt-state.js';
 import type { AnyBox } from '@dagsocial/types';
-import type { IdentityRecord } from '../store/identity-records.js';
+import type { IdentityRecord, NetworkRecord } from '../store/identity-records.js';
 
 /** Sentinel key for block height metadata in additionalData. */
 export const HEIGHT_SENTINEL = new Uint8Array(32); // all zeros
@@ -65,6 +65,13 @@ export interface RecordPut {
   record: IdentityRecord;
 }
 
+/** One network-record write destined for the tree, keyed by its AVL key. */
+export interface NetworkPut {
+  /** hex — H(NETWORK_KEY_DOMAIN). */
+  key: string;
+  network: NetworkRecord;
+}
+
 /**
  * Build a prover's tree from a full set of committed state.
  *
@@ -96,6 +103,7 @@ export function bootstrapAvlProver(
   unspentBoxes: AnyBox[],
   currentHeight: number,
   records: RecordPut[],
+  networkPuts: NetworkPut[] = [],
 ): void {
   // Sorted here rather than in getUnspentBoxes' SQL: the canonical order is a
   // property of the prover feed, so it lives at this boundary and every other
@@ -124,6 +132,18 @@ export function bootstrapAvlProver(
     if (!result.success) {
       throw new DivergedStateTreeError(
         'bootstrapAvlProver', currentHeight, 'Insert', put.key,
+      );
+    }
+  }
+  for (const np of [...networkPuts].sort((a, b) => byHexBoxId(a.key, b.key))) {
+    const result = handle.prover.performOneOperation({
+      tag: 'Insert',
+      key: hexToBytes(np.key),
+      value: serializeNetworkRecord(np.network),
+    });
+    if (!result.success) {
+      throw new DivergedStateTreeError(
+        'bootstrapAvlProver', currentHeight, 'Insert', np.key,
       );
     }
   }
@@ -166,6 +186,7 @@ export function applyBlockMutations(
   consumed: string[],
   created: AnyBox[],
   recordPuts: RecordPut[] = [],
+  networkPuts: NetworkPut[] = [],
 ): Uint8Array {
   // Canonical order (M-12): all removes, then all inserts, then all record
   // puts, each lexicographically by hex key.
@@ -222,6 +243,14 @@ export function applyBlockMutations(
       tag: 'InsertOrUpdate',
       key: hexToBytes(put.key),
       value: serializeIdentityRecord(put.record),
+    });
+  }
+
+  for (const np of [...networkPuts].sort((a, b) => byHexBoxId(a.key, b.key))) {
+    prover.performOneOperation({
+      tag: 'InsertOrUpdate',
+      key: hexToBytes(np.key),
+      value: serializeNetworkRecord(np.network),
     });
   }
 

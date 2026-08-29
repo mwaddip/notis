@@ -41,7 +41,7 @@ describe('GET /api/v1/proof/:boxId', () => {
     };
     // One tree holds both entity kinds, so the fixture does too.
     applyBlockMutations(handle.prover, 1, [], [box], [
-      { key: RECORD_KEY, record: { lastActivityBlock: 7, lastDecayBlock: 3, invitedAtBlock: 0, lifetimeLikesReceived: 0n } },
+      { key: RECORD_KEY, record: { lastActivityBlock: 7, lastDecayBlock: 3, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 } },
     ]);
     checkpointProver(handle, 1);
 
@@ -90,7 +90,7 @@ describe('GET /api/v1/proof/:boxId', () => {
     expect(res.body.kind).toBe('record');
     // `lifetimeLikesReceived` rides JSON as a decimal string — the same
     // discipline as box `value`; JSON.stringify throws on bigint.
-    expect(res.body.value).toEqual({ lastActivityBlock: 7, lastDecayBlock: 3, invitedAtBlock: 0, lifetimeLikesReceived: '0' });
+    expect(res.body.value).toEqual({ lastActivityBlock: 7, lastDecayBlock: 3, invitedAtBlock: 0, lifetimeLikesReceived: '0', memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: '0', invitesUsed: 0 });
     expect(res.body.proof).toBeTruthy();
     expect(res.body.stateRoot).toBeTruthy();
   });
@@ -122,7 +122,7 @@ describe('GET /api/v1/proof/:boxId', () => {
     // with its own `decodeValue` call, so covering the tip proves nothing here.
     const handle = createAvlProver(db);
     applyBlockMutations(handle.prover, 2, [], [], [
-      { key: RECORD_KEY, record: { lastActivityBlock: 9, lastDecayBlock: 9, invitedAtBlock: 0, lifetimeLikesReceived: 0n } },
+      { key: RECORD_KEY, record: { lastActivityBlock: 9, lastDecayBlock: 9, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 } },
     ]);
     checkpointProver(handle, 2);
 
@@ -131,13 +131,13 @@ describe('GET /api/v1/proof/:boxId', () => {
     registerProofEndpoint(app2, handle);
 
     const atTip = await request(app2).get('/api/v1/proof/' + RECORD_KEY).expect(200);
-    expect(atTip.body.value).toEqual({ lastActivityBlock: 9, lastDecayBlock: 9, invitedAtBlock: 0, lifetimeLikesReceived: '0' });
+    expect(atTip.body.value).toEqual({ lastActivityBlock: 9, lastDecayBlock: 9, invitedAtBlock: 0, lifetimeLikesReceived: '0', memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: '0', invitesUsed: 0 });
 
     const historical = await request(app2)
       .get('/api/v1/proof/' + RECORD_KEY + '?atHeight=1')
       .expect(200);
     expect(historical.body.kind).toBe('record');
-    expect(historical.body.value).toEqual({ lastActivityBlock: 7, lastDecayBlock: 3, invitedAtBlock: 0, lifetimeLikesReceived: '0' });
+    expect(historical.body.value).toEqual({ lastActivityBlock: 7, lastDecayBlock: 3, invitedAtBlock: 0, lifetimeLikesReceived: '0', memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: '0', invitesUsed: 0 });
   });
 
   // --- S4: the historical window restores under `finally` --------------------
@@ -148,7 +148,7 @@ describe('GET /api/v1/proof/:boxId', () => {
     // strand the shared prover at the historical digest.
     const handle = createAvlProver(db);
     applyBlockMutations(handle.prover, 2, [], [], [
-      { key: RECORD_KEY, record: { lastActivityBlock: 9, lastDecayBlock: 9, invitedAtBlock: 0, lifetimeLikesReceived: 0n } },
+      { key: RECORD_KEY, record: { lastActivityBlock: 9, lastDecayBlock: 9, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 } },
     ]);
     checkpointProver(handle, 2);
 
