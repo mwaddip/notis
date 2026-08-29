@@ -3326,9 +3326,9 @@ lifetime-counter write), or at genesis seeding for a root; **never deleted** in 
 operation — only by rollback.
 
 > ⚠ **AHEAD OF CODE — 2026-08-29.** The encoder writes five fields and the table holds five
-> columns. Rows 6–10, the columns and the writers are the earned-invites unit's node work; every
-> `genesisStateRoot` moves with the layout, and the types unit re-pins them by three independent
-> derivations. Deleting at zero balance would keep the tree
+> columns. Rows 6–10, the columns and the writers are the earned-invites unit's node work; all three
+> `genesisStateRoot` pins move with the layout and the network record, and the types unit re-pins
+> them by three independent derivations. Deleting at zero balance would keep the tree
 smaller but would require revert to resurrect records with their exact prior
 values; unbounded-but-simple is the deliberate choice at this stage.
 
@@ -4261,9 +4261,9 @@ while its committee is still empty: the pin test seeds and reads the root; only 
 trips.
 
 > ⚠ **AHEAD OF CODE — 2026-08-29.** The tree seeds no root record and no network record and
-> refuses nothing on an empty committee. The earned-invites unit's node work; both non-mainnet
-> `genesisStateRoot` pins move with the record layout and the new record, and the types unit
-> re-pins them by three independent derivations.
+> refuses nothing on an empty committee. The earned-invites unit's node work; all three
+> `genesisStateRoot` pins move — the record layout on the two faucet networks, the network record
+> on every network — and the types unit re-pins them by three independent derivations.
 
 ⚠ **Two things this does NOT cover.** A store whose genesis is already committed is never
 re-checked, so flipping `NETWORK_TYPE` against one is caught at the chain link when it meets
