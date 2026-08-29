@@ -89,17 +89,15 @@
       "note": "Two adjacent b32 key fields under tag 04 - the same tail box/vouch carries under tag 06, so that pair is one layout with two tags and enum8(boxType) is field 1 for exactly that reason. 66 bytes. THE BOND IS THE REQUEST: the settlement emits this bond's own value to this invitee key, so the pairing is structural and no ticket box exists to name. A bond is byte-identical from creation to the block that consumes it, and no probation field is carried because the window is dated from IdentityRecord.invitedAtBlock. Built at createdAtBlock 300, the prefix's third field, 2 VLQ byte(s)."
     },
     {
-      "name": "box/post-lock",
+      "name": "box/karma-price",
       "codec": "boxContent",
       "value": {
-        "boxType": "post_lock",
-        "value": "3",
-        "createdAtBlock": 300,
-        "originalValue": "5",
-        "owner": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+        "boxType": "karma_price",
+        "value": "5",
+        "createdAtBlock": 300
       },
-      "bytes": "0503ac0205000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
-      "note": "The lock's target is NOT in the box. A post id comes from the transaction that creates the lock, so a targetPostId field would have to be known before the TxId that produces it \u2014 unbuildable. Node derives the mapping at apply. originalValue is vlqU64 (bigint, throwing) and precedes owner. Built at createdAtBlock 300, the prefix's third field, 2 VLQ byte(s)."
+      "bytes": "0d05ac02",
+      "note": "The karma-side twin of FeeBox: what a karma action pays, named as an output so the transaction conserves. No owner, no trailing fields \u2014 block application is its only spender. enum8(13) \u2016 vlqU64(5) \u2016 vlqU(300). 4 bytes. TYPES_INTERFACE \u2192 KarmaPriceBox."
     },
     {
       "name": "box/vouch",

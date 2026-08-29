@@ -14,10 +14,10 @@
         "payload": "",
         "amount": "0",
         "offset": 0,
-        "mintReason": "postlock-unlock",
+        "mintReason": "genesis",
         "extra": null
       },
-      "bytes": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000300",
+      "bytes": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000600",
       "note": "72 bytes: 1 + 32 + 1 + 32 + 1 + 1 + 1 + 1 + 1 + 1. Every field at its zero value, so the struct's own shape is what the byte count pins."
     },
     {
@@ -32,10 +32,10 @@
         "payload": "deadbeef",
         "amount": "18446744073709551615",
         "offset": -1,
-        "mintReason": "postlock-unlock",
+        "mintReason": "genesis",
         "extra": null
       },
-      "bytes": "01000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff02c3a904deadbeefffffffffffffffffff01010300",
+      "bytes": "01000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff02c3a904deadbeefffffffffffffffffff01010600",
       "note": "87 bytes. `amount` is u64-max — the ten bytes that are the sentinel elsewhere and a legal value here. `offset` is -1, the value ZigZag maps to a single byte."
     },
     {
@@ -64,21 +64,21 @@
     {
       "name": "probe/non-minimal-first-field",
       "codec": "probe",
-      "bytes": "80000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000300",
+      "bytes": "80000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000600",
       "failure": "non-canonical",
       "note": "probe/minimal with `version` written as the padded `80 00` instead of `00`. Decodes to a byte-identical Probe — steps 1 and 2 both pass — and only the re-encode compare separates it."
     },
     {
       "name": "probe/non-minimal-eighth-field",
       "codec": "probe",
-      "bytes": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000080000300",
+      "bytes": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000080000600",
       "failure": "non-canonical",
       "note": "The same padding on `offset`, 69 bytes in. Buried mid-struct behind two 32-byte fields, which is where a per-field canonicity check would be easiest to forget."
     },
     {
       "name": "probe/trailing-byte",
       "codec": "probe",
-      "bytes": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000300ff",
+      "bytes": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000600ff",
       "failure": "trailing-bytes",
       "note": "probe/minimal with one byte appended. Step 2 — the struct is fully satisfied before the input runs out."
     }

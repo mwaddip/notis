@@ -197,9 +197,7 @@ const asNumber = (json: unknown): number => parseSpecials(json) as number;
 const asString = (json: unknown): string => parseSpecials(json) as string;
 
 /** The `MintReason` tag table (`utxo.ts`). */
-export const MINT_REASON = enum8<'postlock-unlock' | 'postlock-remainder' | 'genesis' | 'genesis-committee'>('mintReason', {
-  'postlock-unlock': 3,
-  'postlock-remainder': 4,
+export const MINT_REASON = enum8<'genesis' | 'genesis-committee'>('mintReason', {
   genesis: 6,
   'genesis-committee': 13,
 });

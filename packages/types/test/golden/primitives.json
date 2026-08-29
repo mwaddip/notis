@@ -430,10 +430,10 @@
       "bytes": "01808001"
     },
     {
-      "name": "enum8/mintReason-postlock-unlock",
+      "name": "enum8/mintReason-genesis-committee",
       "codec": { "enum8": "mintReason" },
-      "value": "postlock-unlock",
-      "bytes": "03"
+      "value": "genesis-committee",
+      "bytes": "0d"
     },
     {
       "name": "enum8/mintReason-genesis",

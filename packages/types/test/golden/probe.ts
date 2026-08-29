@@ -47,7 +47,7 @@ export interface Probe {
   payload: Uint8Array;
   amount: bigint;
   offset: number;
-  mintReason: 'postlock-unlock' | 'postlock-remainder' | 'genesis' | 'genesis-committee';
+  mintReason: 'genesis' | 'genesis-committee';
   extra: number | null;
 }
 
