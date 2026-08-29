@@ -300,6 +300,7 @@ describe('extendsOurTip', () => {
   it('returns true when prevBlockHash matches our tip', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const author = makeTestIdentity();
 
@@ -348,6 +349,7 @@ describe('extendsOurTip', () => {
   it('returns false when prevBlockHash does not match our tip', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const author = makeTestIdentity();
 
@@ -388,6 +390,7 @@ describe('extendsOurTip', () => {
   it('returns false when no tip exists (empty chain)', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const forkResolution = await importForkResolution();
     const candidate: OrderingBlock = {
@@ -428,6 +431,7 @@ describe('findForkPoint', () => {
   it('finds common ancestor between two chains', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const author = makeTestIdentity();
 
@@ -491,6 +495,7 @@ describe('findForkPoint', () => {
     // which the two tests below pin from either side.
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const author = makeTestIdentity();
 
@@ -534,6 +539,7 @@ describe('findForkPoint', () => {
   it('returns null when depth exceeds MAX_REORG_DEPTH', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const forkResolution = await importForkResolution();
 
@@ -597,6 +603,7 @@ describe('findForkPoint', () => {
     // correct bound from an absent one.
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const author = makeTestIdentity();
 
@@ -656,6 +663,7 @@ describe('findForkPoint', () => {
     // whole walk is inside the window.
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const author = makeTestIdentity();
 
@@ -717,6 +725,7 @@ describe('findForkPoint', () => {
   async function threeBlockChain() {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const author = makeTestIdentity();
 
@@ -820,6 +829,7 @@ describe('a stored header that cannot be hashed', () => {
   async function storeCorruptTip() {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const ordering = await importOrdering();
 
     // Structurally valid in every respect `verifyOrderingBlockStructure`
@@ -939,6 +949,7 @@ describe('a stored header that cannot be hashed', () => {
     // notes below describe.
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const ordering = await importOrdering();
     const { verifyHeaderFieldDomains } = await import('@dagsocial/validation');
 
@@ -1042,6 +1053,7 @@ describe('a stored header that cannot be hashed', () => {
   async function storeThreeBlocks() {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const ordering = await importOrdering();
 
     const build = (height: number): OrderingBlock => ({
@@ -1154,6 +1166,7 @@ describe('a stored header that cannot be hashed', () => {
     // answers, and this measures that answering is what it does.
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const miner = makeTestIdentity();
     const block = await makeApplicableBlock({ miner });
@@ -1208,6 +1221,7 @@ describe('revertBlock', () => {
   it('reverts coinbase credits', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
@@ -1229,6 +1243,7 @@ describe('revertBlock', () => {
   it('reverts post confirmations', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const author = makeTestIdentity();
 
@@ -1261,6 +1276,7 @@ describe('revertBlock', () => {
   it('a missing journal is a MissingJournalError', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const forkResolution = await importForkResolution();
     const { MissingJournalError, CorruptChainStateError } =
@@ -1277,6 +1293,7 @@ describe('revertBlock', () => {
   it('reverts UTXO transactions: outputs deleted, inputs unspent', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const posts = await importPosts();
     const utxo = await importUtxo();
@@ -1359,6 +1376,7 @@ describe('revertBlock', () => {
   it('refuses to run while a block journal is open', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
@@ -1383,6 +1401,7 @@ describe('revertBlock', () => {
   it('rolls back decay burns', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const utxo = await importUtxo();
 
@@ -1483,6 +1502,7 @@ describe('revertBlock', () => {
   it('a prune\'s re-insertion on revert restores posts and clears the stump', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const author = makeTestIdentity();
     const posts = await importPosts();
@@ -1568,6 +1588,7 @@ describe('reorg', () => {
   it('reverts blocks and re-inserts txs to mempool', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const author = makeTestIdentity();
 
@@ -1619,6 +1640,7 @@ describe('reorg', () => {
     // reorg drops it and completes.
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
 
     const posts = await importPosts();
@@ -1670,6 +1692,7 @@ describe('reorg', () => {
   it('reorg then rebuild: state matches new chain', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const author = makeTestIdentity();
 
@@ -1716,6 +1739,7 @@ describe('reorg', () => {
   it('reorg with new blocks applies competing chain', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const author = makeTestIdentity();
 
@@ -1781,6 +1805,7 @@ describe('reorg', () => {
 
       const db = await importDb();
       db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
       const author = makeTestIdentity();
 
@@ -1826,6 +1851,7 @@ describe('reorg', () => {
   it('control — the same reorg re-inserts entries when the pool has room', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const author = makeTestIdentity();
 
@@ -1860,6 +1886,7 @@ describe('reorg', () => {
     // without a prover, so nothing else exercises this.
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const proverMod = await import('../../src/state/avl-prover.js');
     proverMod.createAvlProver();
     await import('../../src/store/system.js');
@@ -1931,6 +1958,7 @@ describe('reorg abort', () => {
   it('failed mid-reorg apply leaves chain, DB, and prover digest at the pre-reorg state', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     // Activate the AVL prover singleton against the test DB — the same
     // instance tryGetAvlProver() hands to block-apply and reorg(). Over the
@@ -1994,6 +2022,7 @@ describe('reorg abort', () => {
   it('failed mid-reorg apply leaves dagTipHeight at the pre-reorg tip', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     await activateProverOverStore();
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
@@ -2144,6 +2173,7 @@ describe('resolveFork — the reorg applies exactly the verified chain it scored
   it('an empty block response refuses with a transient penalty', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const scenario = await buildForkScenario();
     const ordering = await importOrdering();
     const forkResolution = await importForkResolution();
@@ -2168,6 +2198,7 @@ describe('resolveFork — the reorg applies exactly the verified chain it scored
   it('a short-but-nonempty response refuses with a transient penalty', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const scenario = await buildForkScenario();
     const ordering = await importOrdering();
     const forkResolution = await importForkResolution();
@@ -2194,6 +2225,7 @@ describe('resolveFork — the reorg applies exactly the verified chain it scored
   it('a genuinely longer chain still replaces ours', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const scenario = await buildForkScenario();
     const ordering = await importOrdering();
     const forkResolution = await importForkResolution();
@@ -2245,6 +2277,7 @@ describe('resolveFork — the counterparty is an Active peer', () => {
   it('refuses to reorg to a peer that never completed the handshake', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const scenario = await buildForkScenario();
     const ordering = await importOrdering();
     const forkResolution = await importForkResolution();
@@ -2285,6 +2318,7 @@ describe('resolveFork — the counterparty is an Active peer', () => {
   it('control: the same chain from an Active peer is adopted', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const scenario = await buildForkScenario();
     const ordering = await importOrdering();
     const forkResolution = await importForkResolution();
@@ -2301,6 +2335,7 @@ describe('resolveFork — the counterparty is an Active peer', () => {
   it('asks the peer that relayed the block, not the head of the list', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const scenario = await buildForkScenario();
     const ordering = await importOrdering();
     const forkResolution = await importForkResolution();
@@ -2322,6 +2357,7 @@ describe('resolveFork — the counterparty is an Active peer', () => {
   it('falls back to an Active peer when the relaying peer is no longer connected', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const scenario = await buildForkScenario();
     const ordering = await importOrdering();
     const forkResolution = await importForkResolution();
@@ -2344,6 +2380,7 @@ describe('resolveFork — the counterparty is an Active peer', () => {
   it('falls back for a source that is no peer id at all', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const scenario = await buildForkScenario();
     const ordering = await importOrdering();
     const forkResolution = await importForkResolution();
@@ -2389,6 +2426,7 @@ describe('reorg — a missing AVL version at the fork height', () => {
   async function chainOnAProver() {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const proverMod = await import('../../src/state/avl-prover.js');
     proverMod.createAvlProver();
     await import('../../src/store/system.js');
@@ -2468,6 +2506,7 @@ describe('reorg — a missing block journal', () => {
   it('a deleted journal is a fail-stop, and chain/DB/prover are at the pre-reorg state', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const proverMod = await import('../../src/state/avl-prover.js');
     proverMod.createAvlProver();
     const genesis = await import('../../src/services/genesis-state.js');
@@ -2521,6 +2560,7 @@ describe('resolveFork — identity mismatch', () => {
   it('headers of chain A scored, valid blocks of chain B delivered → refused, misbehavior', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
     const ordering = await importOrdering();
@@ -2585,6 +2625,7 @@ describe('resolveFork — #5(b) pinned closed', () => {
   it('headers claiming a wrong target are refused at verification, no block request', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
     const ordering = await importOrdering();
@@ -2645,6 +2686,7 @@ describe('resolveFork — tampered headers refused before any block request', ()
   it('window miss (f=0, segment starting above height 1) → refused, no penalty', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
     const ordering = await importOrdering();
@@ -2702,6 +2744,7 @@ describe('resolveFork — work rule', () => {
   it('equal work keeps our chain — ties keep the incumbent', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
     const ordering = await importOrdering();
@@ -2749,6 +2792,7 @@ describe('resolveFork — refused headers', () => {
   it('a header-stage refusal writes no mark', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
     const rh = await importRefusedHeaders();
@@ -2792,6 +2836,7 @@ describe('resolveFork — refused headers', () => {
   it('purge on apply removes marks below tip − MAX_REORG_DEPTH', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
     const rh = await importRefusedHeaders();
@@ -2827,6 +2872,7 @@ describe('handleOrderingBlock — entry', () => {
   it('an extending block applies and returns true', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
     const handleBlock = await importHandleBlock();
@@ -2846,6 +2892,7 @@ describe('handleOrderingBlock — entry', () => {
   it('a block already held is a no-op — no apply, no header request, returns true', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
     const handleBlock = await importHandleBlock();
@@ -2870,6 +2917,7 @@ describe('handleOrderingBlock — entry', () => {
     // blockHash(unhashable) === null would collide.
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
     const handleBlock = await importHandleBlock();
@@ -2903,6 +2951,7 @@ describe('handleOrderingBlock — entry', () => {
   it('a non-extending pulled block returns false and triggers resolution', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const scenario = await buildForkScenario();
     await importOrdering();
     const handleBlock = await importHandleBlock();
@@ -2941,6 +2990,7 @@ describe('resolveFork — one tampered header per reason', () => {
   async function setupChainOfThree() {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
     const ordering = await importOrdering();
@@ -3040,6 +3090,7 @@ describe('resolveFork — body-stage refusal → mark → re-serve → continuat
   it('full mark lifecycle: forge → mark → re-serve refused → continuation refused → unrelated adopted', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
     const ordering = await importOrdering();
@@ -3214,6 +3265,7 @@ describe('reorg — ceiling screen', () => {
     try {
       const db = await importDb();
       db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
       const author = makeTestIdentity();
       const posts = await importPosts();
@@ -3253,6 +3305,7 @@ describe('reorg — ceiling screen', () => {
     try {
       const db = await importDb();
       db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
       const author = makeTestIdentity();
       const posts = await importPosts();
@@ -3292,6 +3345,7 @@ describe('reorg — ceiling screen', () => {
     try {
       const db = await importDb();
       db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
       const author = makeTestIdentity();
       const posts = await importPosts();
@@ -3338,6 +3392,7 @@ describe('resolveFork — interlink root verification (step 7)', () => {
   it('a segment with a wrong interlinkRoot is refused with reason interlinks before any block fetch', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
     const ordering = await importOrdering();
@@ -3386,6 +3441,7 @@ describe('resolveFork — interlink root verification (step 7)', () => {
   it('a competing chain with correct interlink roots reorgs successfully, and stored interlinks match recomputation', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
     const ordering = await importOrdering();

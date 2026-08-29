@@ -88,7 +88,7 @@ Three limits stand in a fixed order — `MAX_BLOCK_BODY_BYTES < MAX_SERVE_BODY_B
 |---|---|---|---|---|---|---|
 | `MAX_BLOCK_BODY_BYTES` | `2_000_000` | 2 MB per block; 1.05 TB/yr at 60 s blocks | consensus | none stated for the number; the two net caps above it derive from it | CHOSEN | `TYPES_INTERFACE → Size caps` |
 | `MAX_TX_BYTES` | `10_000` | ~148 credit inputs | consensus | argued for *existence* — a transaction may not be valid, poolable and unminable at once — not for the number | CHOSEN | `TYPES_INTERFACE → Size caps` |
-| `MAX_SETTLEMENT_BYTES` | `100_000` | 5 % of the body; ≈ 2 700 like markers after the capped legs | consensus | two relations are the rule (fits a legal body; an empty-body settlement at every cap fits it — 70 + 2 × 64 × 70 = 9 030); the number is provisional | PROVISIONAL | `TYPES_INTERFACE → Size caps` |
+| `MAX_SETTLEMENT_BYTES` | `100_000` | 5 % of the body; ≈ 2 700 like markers after the capped legs | consensus | two relations are the rule (fits a legal body; an empty-body settlement at every cap fits it — 8 903 bytes measured with the three capped legs at 64, `settlement-bound.test.ts`); the number is provisional | PROVISIONAL | `TYPES_INTERFACE → Size caps` |
 
 ### Settlement caps
 
@@ -96,6 +96,7 @@ Three limits stand in a fixed order — `MAX_BLOCK_BODY_BYTES < MAX_SERVE_BODY_B
 |---|---|---|---|---|---|---|
 | `MAX_BOND_SETTLEMENTS_PER_BLOCK` | `64` | bonds settled per block | consensus | a backlog of `n` drains in ⌈n / 64⌉ blocks; 64 is provisional | PROVISIONAL | `TYPES_INTERFACE → Settlement caps` |
 | `MAX_ESCROW_RETURNS_PER_BLOCK` | `64` | escrows returned per block | consensus | same | PROVISIONAL | `TYPES_INTERFACE → Settlement caps` |
+| `MAX_LAPSE_WITHDRAWALS_PER_BLOCK` | `64` | vouches of lapsed members withdrawn per block | consensus | same; a cascade runs one generation per block on top | PROVISIONAL | `TYPES_INTERFACE → Settlement caps` |
 
 ### Karma
 
@@ -128,12 +129,18 @@ Three limits stand in a fixed order — `MAX_BLOCK_BODY_BYTES < MAX_SERVE_BODY_B
 | `VOUCH_COOLDOWN_BLOCKS` | `60` | 1 h at 60 s | consensus → profile | none stated | CHOSEN | `ARCHITECTURE → Vouch boxes` |
 | `VOUCH_CAST_HEIGHT_WINDOW` | `5` | a vouch output's `createdAtBlock` may lag its carrying block by at most 5 | consensus | protocol-level, the same on every network — never a profile field; none stated for the number | CHOSEN | `NODE_INTERFACE → Vouch transition rules` |
 
+### Membership
+
+| Name | Value | Reads as | Kind | Argument | Status | Rule |
+|---|---|---|---|---|---|---|
+| `MEMBER_LIKES_MULTIPLIER` | `2` | `Y = 2 · D` — likes from members a newcomer needs beside the vouches | consensus | none stated for the number; testnet's to tune | PROVISIONAL | `ARCHITECTURE → Membership` |
+
 ### Invites
 
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
 | `INVITE_MIN_KARMA` | `1n` | = `KARMA_POSTING_MINIMUM` | consensus | an alias | DERIVED | `TYPES_INTERFACE → Invites` |
-| `INVITE_BOND_MIN` | `25n` | the cheapest bond, and the smallest grant | consensus → profile | placeholder weight | PROVISIONAL | `TYPES_INTERFACE → Invites` |
+| `INVITE_BOND_MIN` | `100n` | the cheapest bond, and the smallest grant | consensus → profile | accepted 2026-08-29 as provisional, tuned on testnet; `G = B` keeps every ratio | PROVISIONAL | `TYPES_INTERFACE → Invites` |
 | `INVITE_BOND_MAX` | `250n` | the largest bond | consensus → profile | placeholder weight | PROVISIONAL | `TYPES_INTERFACE → Invites` |
 | `INVITE_PROBATION_BLOCKS` | `43200` | 30 days at 60 s | consensus → profile | decided 2026-08-14: an absolute one-month clock from the invite, so an inviter's exposure is time-bounded | DECIDED | `ARCHITECTURE → Bond outcomes` |
 | `INVITE_BOND_VEST_PER_LIKES` | `3` | `V`: likes received per karma of bond vested | consensus | decided 2026-08-18 as the supply dial: with `L = 5` a completed invite moves `0.4 · B` into circulation. ⚠ The cost-gated-emission floor (burn-to-vest ≥ grant) is met at `V = 5`, where that figure is zero; 3 sits below it by choice | DECIDED | `ARCHITECTURE → Invite System` |
@@ -143,7 +150,7 @@ Three limits stand in a fixed order — `MAX_BLOCK_BODY_BYTES < MAX_SERVE_BODY_B
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
 | `GENESIS_KARMA_PER_MEMBER` | `1000n` | karma per committee key, out of the pool | consensus → profile | none stated | CHOSEN | `ARCHITECTURE → Genesis` |
-| `SYSTEM_KARMA_INITIAL` | `1_000_000n` | the faucet identity's karma at genesis, on the networks whose profile names a `faucetPublicKey` | consensus | capacity is this divided by the bond it chooses — 1 000 invites at testnet's ceiling, 40 000 at the floor; it does not replenish | CHOSEN | `NODE_INTERFACE → Faucet` |
+| `SYSTEM_KARMA_INITIAL` | `1_000_000n` | the faucet identity's karma at genesis, on the networks whose profile names a `faucetPublicKey` | consensus | capacity is this divided by the bond it chooses — 1 000 invites at testnet's ceiling, 10 000 at the floor; it does not replenish | CHOSEN | `NODE_INTERFACE → Faucet` |
 | `FAUCET_CREDITS_INITIAL` | `10_000_000_000_000n` | 100 000 credits, seeded beside the karma | consensus | none stated | CHOSEN | `NODE_INTERFACE → Faucet` |
 
 ### Credit emission
@@ -224,8 +231,9 @@ devnet differ where a cell says so. The identity fields — `magic`, `genesisCom
 | `creditEmissionTotal` | `42_264_000_000_000_000n` | `42_264_000_000_000_000n` | `36_200_000_000_000n` | timescale | strictly below devnet's own curve sum of 386 400 credits — the rule every profile's total obeys | DERIVED | `TYPES_INTERFACE → EmissionBox` |
 | `storageRentPeriodBlocks` | `2_102_400` | `2_102_400` | `40` | timescale | mainnet: 4 years, exactly `2 × creditFixedRateBlocks`, Ergo's wall clock. Devnet: above the deepest height any e2e scenario reaches (27), with thirteen blocks of headroom | DERIVED | `ARCHITECTURE → What varies per network` |
 | `genesisKarmaPerMember` | `1000n` | `1000n` | `1000n` | genesis | carried from the constant on all three | CHOSEN | `ARCHITECTURE → Genesis` |
-| `inviteBondMin` | `25n` | `25n` | `5n` | cap | a bond of `B` vests in `V · B` likes, so the floor decides whether a fixture can drive one to the end: 5 costs 15 likes | DERIVED | `TYPES_INTERFACE → Invites` |
+| `inviteBondMin` | `100n` | `100n` | `5n` | cap | a bond of `B` vests in `V · B` likes, so the floor decides whether a fixture can drive one to the end: 5 costs 15 likes | DERIVED | `TYPES_INTERFACE → Invites` |
 | `inviteBondMax` | `250n` | `1000n` | `250n` | cap | testnet's is relaxed so a tester arrives with enough karma to post and like freely — a cap, not a mechanic; devnet keeps mainnet's so the range check has both ends to fail against | DECIDED | `TYPES_INTERFACE → Invites` |
+| `membershipBarMultiplier` | `10` | `1` | `1` | cap | devnet's `1` lets a chain whose only root is the faucet flag its first member on one vouch — `D(1) = 1`, where `10` gives `D(1) = 2` and a lone root could never flag anyone; mainnet's `10` is fixed by the user's two anchors (2026-08-28): `D = 10` at 100 members, `100` at 100 000 | DERIVED | `ARCHITECTURE → Membership` |
 
 ## Bounds outside types
 

@@ -151,6 +151,10 @@ async function storeBackedDeps() {
     runInTransaction: (fn: () => void) => {
       getDb().transaction(fn)();
     },
+      getVouchBox: () => null,
+      getNetworkRecord: () => ({ memberCount: 1 }),
+      membershipBarMultiplier: 1,
+      putIdentityRecord: () => {},
   };
 }
 
@@ -196,11 +200,24 @@ function makeVouchCastTx(
  * not the liveness skip — is what fails.
  */
 async function seedStaleVouchCast() {
+  const { getDb } = await importDb();
+  getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
   const utxo = await importUtxo();
   const mempool = await importMempool();
+  const records = await import('../../src/store/identity-records.js');
 
   const voucher = makeTestIdentity();
   const target = makeTestIdentity();
+  records.putIdentityRecord(voucher.userId, {
+    lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+    lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+    memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+  });
+  records.putIdentityRecord(target.userId, {
+    lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 1,
+    lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0,
+    memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+  });
 
   // 6 + 6 = 12, above VOUCH_MIN_BALANCE (11) at pool time. Split across two
   // boxes on purpose: the cast names only the first, so consuming the second is
@@ -247,6 +264,7 @@ describe('block creator vs a body its own mutation phase rejects', () => {
   it('startBlockCreator evicts the stale entry, rebuilds, and holds a template', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const { utxo, mempool, voucher, spent } = await seedStaleVouchCast();
 
@@ -296,6 +314,7 @@ describe('block creator vs a body its own mutation phase rejects', () => {
     // the fatal arm must not have collapsed this one into it.
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const avlMod = await importAvl();
     expect(avlMod.tryGetAvlProver()).toBeNull();
@@ -329,6 +348,7 @@ describe('block creator vs a body its own mutation phase rejects', () => {
     // library crashing on its own state), which no fixture can express.
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     // applyBlockMutations is the speculation's last in-transaction call and
     // runs only after the mutation phase succeeded — so the injected Error is
@@ -374,6 +394,7 @@ describe('block creator vs a body its own mutation phase rejects', () => {
   it('a body whose utxoTxs do not align with utxoTxIds is rejected, not thrown on', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const utxo = await importUtxo();
     utxo.insertBox(makeKarmaBox(24n, makeTestIdentity().userId, 0));
@@ -423,6 +444,7 @@ describe('block creator vs a body its own mutation phase rejects', () => {
     // same shape `corrupt-state.test.ts` uses for the other three subclasses.
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     // Armed after the candidate is built, so the block itself is honest: the
     // first speculation runs the real prover, and only the direct call below
@@ -518,6 +540,7 @@ describe('block creator vs a body its own mutation phase rejects', () => {
 
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     await seedStaleVouchCast();
     await activateProver();
 
@@ -544,6 +567,7 @@ describe('block creator vs a body its own mutation phase rejects', () => {
 
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
     utxo.insertBox(makeKarmaBox(24n, makeTestIdentity().userId, 0));
     await activateProver();

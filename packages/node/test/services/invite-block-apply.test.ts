@@ -166,11 +166,18 @@ describe('the invite at block application', () => {
   ) {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
+    const records = await importRecords();
     await seedKarmaPoolBox();
 
     const inviter = makeTestIdentity();
     const invitee = makeTestIdentity();
+    records.putIdentityRecord(inviter.userId, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
 
     const [bond] = seedAsOneTx([
       {
@@ -233,6 +240,11 @@ describe('the invite at block application', () => {
       lastDecayBlock: before?.lastDecayBlock ?? 0,
       invitedAtBlock,
       lifetimeLikesReceived: before?.lifetimeLikesReceived ?? 0n,
+      memberSinceBlock: before?.memberSinceBlock ?? 0,
+      memberBar: before?.memberBar ?? 0,
+      memberVouches: before?.memberVouches ?? 0,
+      memberLikes: before?.memberLikes ?? 0n,
+      invitesUsed: before?.invitesUsed ?? 0,
     });
   }
 
@@ -247,16 +259,20 @@ describe('the invite at block application', () => {
   // -------------------------------------------------------------------------
 
   it('the settlement grants the invitee out of the pool and records the height', async () => {
-    // ⛔ **The grant is a POOL SPEND, not a mint** (ARCHITECTURE → The
-    // conservation axiom). One bond, one grant: the pairing is structural, so
-    // the settlement reads the bond the body created and needs no marker.
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
+    const records = await importRecords();
     await seedKarmaPoolBox();
 
     const inviter = makeTestIdentity();
     const invitee = makeTestIdentity();
+    records.putIdentityRecord(inviter.userId, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
     const karma = makeKarmaBox(FIXTURE_BOND_KARMA + 10n, inviter.userId, 0, 77);
     utxo.insertBox(karma);
     await activateProverOverStore();
@@ -264,7 +280,6 @@ describe('the invite at block application', () => {
     const poolBefore = utxo.getKarmaPoolBox()!.value;
 
     const mempool = await importMempool();
-    const records = await importRecords();
     mempool.insertUtxoTx(inviteTx(inviter, invitee, karma), 1000);
     const block = await mineOne();
     expect(block).not.toBeNull();
@@ -294,18 +309,24 @@ describe('the invite at block application', () => {
     // and the granted face value survives intact minus the act's own cost.
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
+    const records = await importRecords();
     await seedKarmaPoolBox();
 
     const inviter = makeTestIdentity();
     const invitee = makeTestIdentity();
+    records.putIdentityRecord(inviter.userId, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
     const karma = makeKarmaBox(FIXTURE_BOND_KARMA + 10n, inviter.userId, 0, 77);
     utxo.insertBox(karma);
 
     await activateProverOverStore();
 
     const mempool = await importMempool();
-    const records = await importRecords();
     const types = await import('@dagsocial/types');
 
     // Block 1: the invite.
@@ -384,6 +405,11 @@ describe('the invite at block application', () => {
       lastDecayBlock: 0,
       invitedAtBlock: claimHeight,
       lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
     });
 
     const cfg = {
@@ -420,27 +446,31 @@ describe('the invite at block application', () => {
   });
 
   it('the grant bars the key from any further invite', async () => {
-    // The settlement's grant is the record-CREATING event for every legal
-    // invitee, and a key that holds a record is already an account — so one
-    // grant is what makes a second invite for the same key unrepresentable in a
-    // LATER block.
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
+    const records = await importRecords();
     await seedKarmaPoolBox();
 
     const inviter = makeTestIdentity();
     const invitee = makeTestIdentity();
+    const rootRec = {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    };
+    records.putIdentityRecord(inviter.userId, rootRec);
     const karma = makeKarmaBox(FIXTURE_BOND_KARMA + 10n, inviter.userId, 0, 78);
     utxo.insertBox(karma);
     const secondInviter = makeTestIdentity();
+    records.putIdentityRecord(secondInviter.userId, rootRec);
     const karma2 = makeKarmaBox(FIXTURE_BOND_KARMA + 10n, secondInviter.userId, 0, 79);
     utxo.insertBox(karma2);
     await activateProverOverStore();
 
     const mempool = await importMempool();
     const engine = await import('../../src/services/utxo-engine.js');
-    const records = await importRecords();
 
     mempool.insertUtxoTx(inviteTx(inviter, invitee, karma), 1000);
     expect(await mineOne()).not.toBeNull();
@@ -468,6 +498,10 @@ describe('the invite at block application', () => {
       getTopologyAuthor: () => null,
       getPendingPostAuthor: () => null,
       runInTransaction: (fn: () => void) => fn(),
+      getVouchBox: (await import('../../src/store/vouch-queries.js')).getVouchBox,
+      getNetworkRecord: records.getNetworkRecord,
+      membershipBarMultiplier: 1,
+      putIdentityRecord: records.putIdentityRecord,
     }, second, 2);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('may not name an existing account');
@@ -484,7 +518,9 @@ describe('the invite at block application', () => {
   it('grants each invitee exactly the bond that named them', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
+    const records = await importRecords();
     await seedKarmaPoolBox();
 
     const small = config.inviteBondMin;
@@ -495,6 +531,13 @@ describe('the invite at block application', () => {
     const b = makeTestIdentity();
     const inviteeA = makeTestIdentity();
     const inviteeB = makeTestIdentity();
+    const rootRec = {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    };
+    records.putIdentityRecord(a.userId, rootRec);
+    records.putIdentityRecord(b.userId, rootRec);
     const karmaA = makeKarmaBox(large + 10n, a.userId, 0, 91);
     const karmaB = makeKarmaBox(large + 10n, b.userId, 0, 92);
     utxo.insertBox(karmaA);
@@ -568,22 +611,25 @@ describe('the invite at block application', () => {
   });
 
   it('non-vacuity: the same two invites in SEPARATE blocks — the first applies', async () => {
-    // Without this the rejection above could be the body failing for any other
-    // reason. One invite alone applies and grants; the second is then refused by
-    // the record-existence gate instead, which is the LATER-block half.
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
+    const records = await importRecords();
     await seedKarmaPoolBox();
 
     const invitee = makeTestIdentity();
     const a = makeTestIdentity();
+    records.putIdentityRecord(a.userId, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
     const karmaA = makeKarmaBox(FIXTURE_BOND_KARMA + 10n, a.userId, 0, 83);
     utxo.insertBox(karmaA);
     await activateProverOverStore();
 
     const blockApply = await import('../../src/services/block-apply.js');
-    const records = await importRecords();
 
     const block = await makeApplicableBlock({ utxoTxs: [inviteTx(a, invitee, karmaA)] });
     expect(blockApply.applyOrderingBlock(block)).toBe(true);
@@ -618,7 +664,7 @@ describe('the invite at block application', () => {
     await startProbation(invitee, invitedAtBlock);
     const started = records.getIdentityRecord(invitee.userId)!;
     expect(started.invitedAtBlock).toBe(invitedAtBlock);
-    records.putIdentityRecord(invitee.userId, { ...started, lifetimeLikesReceived: likes });
+    records.putIdentityRecord(invitee.userId, { ...started, lifetimeLikesReceived: likes, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
 
     const deadline = invitedAtBlock + PROBATION;
     let height = invitedAtBlock;
@@ -707,6 +753,11 @@ describe('the invite at block application', () => {
       lastDecayBlock: 0,
       invitedAtBlock: 0,
       lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
     });
     expect(records.getIdentityRecord(invitee.userId)!.invitedAtBlock).toBe(0);
 
@@ -897,6 +948,7 @@ describe('the invite at block application — decay adjacency', () => {
     // deadline height; an empty block cannot reach it.
     const db = await import('../../src/store/db.js');
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await import('../../src/store/utxo.js');
     const records = await import('../../src/store/identity-records.js');
     const mempool = await import('../../src/store/mempool.js');
@@ -921,6 +973,11 @@ describe('the invite at block application — decay adjacency', () => {
 
     const inviter = makeTestIdentity();
     const invitee = makeTestIdentity();
+    records.putIdentityRecord(inviter.userId, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
     // ⛔ **The invite rides a real block here**, because the invitee's karma has
     // to come from the settlement's grant: decay acts on karma boxes, and a
     // hand-seeded bond leaves the invitee holding nothing for it to act on.

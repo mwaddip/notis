@@ -71,6 +71,9 @@ import {
   getKarmaBoxes,
   insertBox as storeInsertBox,
   consumeBox as storeConsumeBox,
+  getVouchBox as storeGetVouchBox,
+  putIdentityRecord as storePutIdentityRecord,
+  getNetworkRecord as storeGetNetworkRecord,
 } from '../../src/store/index.js';
 import { checkTxEnvelope, validateTx } from '../../src/services/utxo-engine.js';
 import { config } from '../../src/config.js';
@@ -420,6 +423,10 @@ describe('validateTx step 0 — the envelope gate in place', () => {
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
       },
+      getVouchBox: storeGetVouchBox,
+      getNetworkRecord: storeGetNetworkRecord,
+      membershipBarMultiplier: 1,
+      putIdentityRecord: storePutIdentityRecord,
     };
   }
 
@@ -441,6 +448,7 @@ describe('validateTx step 0 — the envelope gate in place', () => {
   beforeEach(() => {
     initDb(':memory:');
     db = getDb();
+    db.prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     deps = makeDeps();
     owner = makeKeys();
     seeded = seedKarma(owner.pub, 100n);

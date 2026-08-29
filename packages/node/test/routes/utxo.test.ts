@@ -69,6 +69,8 @@ async function request(
       getBondBoxesPage,
       getCurrentHeight: () => height,
       decayCfg: DECAY_CFG,
+      getNetworkRecord: () => ({ memberCount: 1 }),
+      membershipBarMultiplier: 1,
       getUtxoEngineDeps: () => ({
         // The pending view, as server.ts wires the submission routes: a grant
         // spending the change box of one still pooled resolves its input here.
@@ -89,6 +91,10 @@ async function request(
         getIdentityRecord,
         getKarmaBoxes: (owner: Uint8Array) => [getKarmaBox(owner)].filter(Boolean) as KarmaBox[],
         runInTransaction: (fn: () => void) => fn(),
+        getVouchBox: () => null,
+        getNetworkRecord: () => ({ memberCount: 1 }),
+        membershipBarMultiplier: 1,
+        putIdentityRecord: () => {},
       }),
     };
     const app = express();
@@ -223,6 +229,11 @@ describe('UTXO routes', () => {
       lastDecayBlock: 1,
       invitedAtBlock: 0,
       lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
     });
 
     const res = await request(`/karma/${karmaUserIdHex}`, 'GET', undefined, 100000);
@@ -236,6 +247,11 @@ describe('UTXO routes', () => {
       lastDecayBlock: 0,
       invitedAtBlock: 0,
       lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
     });
   });
 
@@ -245,6 +261,11 @@ describe('UTXO routes', () => {
       lastDecayBlock: 0,
       invitedAtBlock: 0,
       lifetimeLikesReceived: 7n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
     });
     const res = await request(`/karma/${karmaUserIdHex}`);
     expect(res.status).toBe(200);
@@ -256,6 +277,11 @@ describe('UTXO routes', () => {
       lastDecayBlock: 0,
       invitedAtBlock: 0,
       lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
     });
   });
 
@@ -317,6 +343,11 @@ describe('UTXO routes', () => {
       lastDecayBlock: 3,
       invitedAtBlock: 1,
       lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
     });
     const res = await request(`/karma/${hex}`);
     expect(res.status).toBe(200);

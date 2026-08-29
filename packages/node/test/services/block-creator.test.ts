@@ -241,6 +241,7 @@ describe('block-creator', () => {
   it('createOrderingBlock produces genesis block even with nothing pending', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
 
@@ -263,6 +264,7 @@ describe('block-creator', () => {
   it('pending post transaction triggers block creation', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     // Set up identity
     const author = makeTestIdentity();
@@ -301,6 +303,7 @@ describe('block-creator', () => {
   it('block carries the post transactions it created posts from', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const author = makeTestIdentity();
 
@@ -334,6 +337,7 @@ describe('block-creator', () => {
   it('post confirmed after block creation', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const author = makeTestIdentity();
 
@@ -368,6 +372,7 @@ describe('block-creator', () => {
   it('template assembly carries exactly the live utxoTxTree keys', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const posts = await importPosts();
     const utxo = await importUtxo();
     const mempool = await importMempoolFresh();
@@ -403,6 +408,7 @@ describe('block-creator', () => {
   it('a block at a former epoch boundary (height % 60 === 0) carries no tally and applies like any other height', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const bc = await importBlockCreator();
     const ordering = await importOrdering();
 
@@ -432,6 +438,7 @@ describe('block-creator', () => {
   it('getCurrentHeight increments after block creation', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const author = makeTestIdentity();
 
@@ -470,6 +477,7 @@ describe('block-creator', () => {
   it('populates utxoTxIds from mempool standalone UTXO entries', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const posts = await importPosts();
     const utxo = await importUtxo();
     const mempool = await importMempoolFresh();
@@ -537,6 +545,7 @@ describe('block-creator', () => {
   it('batch-linked UTXO transactions appear in utxoTxIds', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     await importPosts();
     const utxo = await importUtxo();
     const mempool = await importMempoolFresh();
@@ -618,6 +627,7 @@ describe('block-creator', () => {
     // MINING_INTERFACE → Template and submit.
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const bc = await importBlockCreator();
 
     bc.startBlockCreator(testConfig);
@@ -658,6 +668,7 @@ describe('block-creator', () => {
     it('stops at the budget and leaves the rest of the pool pending', async () => {
       const db = await importDb();
       db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
       const mempool = await importMempoolFresh();
       const bc = await importBlockCreator();
 
@@ -726,6 +737,7 @@ describe('block-creator', () => {
     it('fills past any fixed count when the budget still has room', async () => {
       const db = await importDb();
       db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
       const bc = await importBlockCreator();
 
       // ⛔ Deeper than the count this creator used to draw (1000) and than any
@@ -747,6 +759,7 @@ describe('block-creator', () => {
     it('clamps a budget above MAX_BLOCK_BODY_BYTES rather than honouring it', async () => {
       const db = await importDb();
       db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
       const bc = await importBlockCreator();
       const { encodeTx } = await import('@dagsocial/types');
 
@@ -867,6 +880,7 @@ describe('block-creator', () => {
     it('offers the budget to karma-side entries before credit transactions', async () => {
       const db = await importDb();
       db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
       const mempool = await importMempoolFresh();
       const bc = await importBlockCreator();
 
@@ -913,6 +927,7 @@ describe('block-creator', () => {
     it('orders credit transactions by fee rate, not by arrival', async () => {
       const db = await importDb();
       db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
       const mempool = await importMempoolFresh();
       const bc = await importBlockCreator();
 
@@ -936,6 +951,7 @@ describe('block-creator', () => {
     it('ranks a fat transaction by rate, so an equal fee over more bytes loses', async () => {
       const db = await importDb();
       db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
       const mempool = await importMempoolFresh();
       const bc = await importBlockCreator();
 

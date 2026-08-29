@@ -14,7 +14,7 @@ import { createPrivateKey, sign as cryptoSign, type KeyObject } from 'crypto';
 import { initDb, closeDb, getDb } from '../../src/store/db.js';
 import {
   getKarmaBox, getKarmaBoxes, getBox as storeGetBox, insertBox as storeInsertBox } from '../../src/store/utxo.js';
-import { getIdentityRecord as storeGetIdentityRecord } from '../../src/store/identity-records.js';
+import { getIdentityRecord as storeGetIdentityRecord, putIdentityRecord as storePutIdentityRecord } from '../../src/store/identity-records.js';
 import { getCurrentHeight } from '../../src/store/ordering.js';
 import {
   createInvite,
@@ -73,7 +73,8 @@ function loadUiBuilders(): UiBuilders {
     [
       'let currentBlockHeight = 0;',
       lift('const PROTOCOL_VERSION ='),
-      lift('const INVITE_BOND_DEFAULT ='),
+      // The UI starts with null (set by /status); seed the devnet floor.
+      'let INVITE_BOND_DEFAULT = 5n;',
       lift('function jsonBigint('),
       lift('function selectBoxes('),
       lift('function buildCreateInviteTx('),
@@ -122,6 +123,10 @@ async function request(
       getTopologyAuthor: () => null,
       getPendingPostAuthor: () => null,
       runInTransaction: (fn: () => void) => { (db.transaction(fn) as () => void)(); },
+      getVouchBox: () => null,
+      getNetworkRecord: () => ({ memberCount: 1 }),
+      membershipBarMultiplier: 1,
+      putIdentityRecord: () => {},
       createInvite,
       getCurrentHeight,
     };
@@ -166,6 +171,7 @@ describe('invites routes', () => {
   beforeAll(() => {
     try { unlinkSync(TEST_DB); } catch { /* ignore */ }
     initDb(TEST_DB);
+    getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     inviterKp = generateKeyPair();
     inviterId = inviterKp.publicKey;
@@ -175,7 +181,11 @@ describe('invites routes', () => {
       format: 'der',
       type: 'pkcs8',
     });
-
+    storePutIdentityRecord(inviterId, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
   });
 
   afterAll(() => {
@@ -295,11 +305,9 @@ describe('invites routes', () => {
     }
 
     it('POST /invites accepts what the Create Invite button sends', async () => {
-      // Funded with bond + mint, so the two readings are distinguishable: a
-      // builder deducting both leaves a zero change output — which still
-      // balances, and so would still be accepted here. The change assertion
-      // below is what separates them.
-      const funded = FIXTURE_BOND_KARMA * 2n;
+      // The UI reads its bond from /status's inviteBondMin (5n on devnet).
+      const uiBond = 5n;
+      const funded = uiBond * 2n;
       const karma = seedKarma(funded, labelNonce('ui-create'));
       const invitee = inviteeKeys();
 
@@ -316,15 +324,12 @@ describe('invites routes', () => {
       expect(typeof data.bondBoxId).toBe('string');
       expect(data.inviteBoxId).toBeUndefined();
 
-      // ⛔ **Two outputs, not three.** The page must build `karma + bond` and
-      // nothing else: an invite box is not a type any more, so a builder still
-      // emitting one is refused at the output schema.
       const outputs = jsonToTx(body).outputs as [KarmaBox, BondBox];
       expect(outputs).toHaveLength(2);
       const [change, bond] = outputs;
-      expect(change.value).toBe(funded - FIXTURE_BOND_KARMA);
+      expect(change.value).toBe(funded - uiBond);
       expect(bond.boxType).toBe('bond');
-      expect(bond.value).toBe(FIXTURE_BOND_KARMA);
+      expect(bond.value).toBe(uiBond);
     });
 
   });

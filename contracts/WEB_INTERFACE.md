@@ -44,7 +44,10 @@ Browser-based client for DAGsocial. Owns: UI (compose, feed, identity), client-s
 - Generate or import Ed25519 identity (keypair stored in browser — localStorage or IndexedDB)
 - Compose posts (300-byte limit enforced client-side before submission)
 - View feed of confirmed posts (polling or future WebSocket/SSE)
-- Full post lifecycle: build the post transaction (content + karma lock) → sign → submit
+- Full post lifecycle: build the post transaction (content + the post's price) → sign → submit
+- Standing on the profile — resident, member or root — and a member's invites available, read
+  from `GET /karma/:userId`; the identity's vouchers and vouches from `GET /vouches`
+- Cast and withdraw vouches; create invites within the budget (`ARCHITECTURE → Membership`)
 
 ## Client-Side Operations
 
@@ -63,7 +66,10 @@ All endpoints consumed from `@dagsocial/node` HTTP API per NODE_INTERFACE.md:
 | Register identity | `POST /identity/import` |
 | Submit post | `POST /posts` |
 | Read feed | `GET /posts?limit=30` |
-| Node status | `GET /status` |
+| Node status | `GET /status` — the membership bar rides `membership` |
+| Standing and balance | `GET /karma/:userId` |
+| Vouch, unvouch | `POST /vouches`, `DELETE /vouches/:targetId` |
+| Invite | `POST /invites` |
 
 ## Dependencies
 

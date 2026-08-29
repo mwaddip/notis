@@ -61,6 +61,62 @@ export function getVouchesForTargetPage(
   return { rows: vouches, next, count: countRow.cnt };
 }
 
+/**
+ * Unspent vouch boxes whose voucher's identity record fails member() —
+ * ascending box id, at most `limit`. The settlement's lapse leg
+ * (NODE_INTERFACE → The settlement transaction).
+ */
+export function getLapsedVouches(limit: number): VouchBox[] {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      `SELECT u.* FROM utxo_boxes u
+       JOIN identity_records ir
+         ON ir.identity_id = unhex(json_extract(u.extra_data, '$.voucherId'))
+       WHERE u.box_type = 'vouch'
+         AND u.spent_at_block IS NULL
+         AND NOT (ir.member_since_block > 0 AND ir.member_vouches >= ir.member_bar)
+       ORDER BY u.id
+       LIMIT ?`,
+    )
+    .safeIntegers()
+    .all(limit) as UtxoRow[];
+  return rows.map((r) => rowToBox(r) as VouchBox);
+}
+
+const VOUCH_VOUCHER_WHERE =
+  `box_type = 'vouch' AND spent_at_block IS NULL AND json_extract(extra_data, '$.voucherId') = ?`;
+export function getVouchesForVoucherPage(
+  voucherId: Uint8Array,
+  page: Page<string>,
+): PageResult<VouchBox, string> {
+  const db = getDb();
+  const hex = pubkeyToHex(voucherId);
+  const afterClause = page.after ? ` AND id > ?` : '';
+  const params: unknown[] = [hex];
+  if (page.after) params.push(page.after);
+  params.push(page.limit + 1);
+
+  const rows = db
+    .prepare(
+      `SELECT * FROM utxo_boxes WHERE ${VOUCH_VOUCHER_WHERE}${afterClause} ORDER BY id LIMIT ?`,
+    )
+    .safeIntegers()
+    .all(...params) as UtxoRow[];
+
+  const hasMore = rows.length > page.limit;
+  const resultRows = hasMore ? rows.slice(0, page.limit) : rows;
+  const vouches = resultRows.map((r) => rowToBox(r) as VouchBox);
+  const last = resultRows[resultRows.length - 1];
+  const next: string | null = hasMore && last ? last.id : null;
+
+  const countRow = db
+    .prepare(`SELECT COUNT(*) AS cnt FROM utxo_boxes WHERE ${VOUCH_VOUCHER_WHERE}`)
+    .get(hex) as { cnt: number };
+
+  return { rows: vouches, next, count: countRow.cnt };
+}
+
 export function getVouchesByVoucher(voucherId: Uint8Array): VouchBox[] {
   const db = getDb();
   const rows = db
@@ -75,21 +131,3 @@ export function getVouchesByVoucher(voucherId: Uint8Array): VouchBox[] {
     .filter((b): b is VouchBox => b !== null && b.boxType === 'vouch');
 }
 
-/**
- * Does this identity hold an active VouchBox for *any* target? One vouch at a
- * time is an invariant (ARCHITECTURE → Vouch boxes; audit L-4). The predicate
- * is identity-scoped, so a voucher cannot hold concurrent VouchBoxes by
- * targeting different identities.
- */
-export function hasAnyActiveVouch(voucherId: Uint8Array): boolean {
-  const db = getDb();
-  const row = db
-    .prepare(
-      `SELECT 1 FROM utxo_boxes
-       WHERE box_type = 'vouch' AND spent_at_block IS NULL
-         AND json_extract(extra_data, '$.voucherId') = ?
-       LIMIT 1`,
-    )
-    .get(pubkeyToHex(voucherId));
-  return row !== undefined;
-}

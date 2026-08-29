@@ -159,6 +159,7 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
     vi.resetModules();
     db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     bc = await importBlockCreator();
     apply = await importBlockApply();
     posts = await importPosts();
@@ -592,6 +593,10 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
       getTopologyAuthor: () => null,
       getPendingPostAuthor: () => null,
       runInTransaction: (fn: () => void) => fn(),
+      getVouchBox: () => null,
+      getNetworkRecord: () => ({ memberCount: 1 }),
+      membershipBarMultiplier: 1,
+      putIdentityRecord: () => {},
       executePrune: () => ({ txId: 'b'.repeat(64) }),
       executePostWithdraw: () => ({ txId: 'c'.repeat(64) }),
       getCurrentHeight: () => 10,

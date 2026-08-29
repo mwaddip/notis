@@ -11,8 +11,9 @@ import type {
   KarmaBox,
   UtxoTransaction,
 } from '@dagsocial/types';
-import { initDb, closeDb } from '../../src/store/db.js';
+import { initDb, closeDb, getDb } from '../../src/store/db.js';
 import { insertBox, getBox, getKarmaBoxes } from '../../src/store/utxo.js';
+import { putIdentityRecord } from '../../src/store/identity-records.js';
 import { createInvite } from '../../src/services/invites.js';
 import { validateTx, materializeOutput } from '../../src/services/utxo-engine.js';
 import {
@@ -43,6 +44,7 @@ describe('invite id prediction carries transaction provenance', () => {
 
   beforeEach(() => {
     initDb(':memory:');
+    getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     inviter = generateKeyPair();
     inviterId = inviter.publicKey;
     invitee = generateKeyPair().publicKey;
@@ -50,6 +52,11 @@ describe('invite id prediction carries transaction provenance', () => {
       key: Buffer.from(inviter.secretKey),
       format: 'der',
       type: 'pkcs8',
+    });
+    putIdentityRecord(inviterId, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
     });
   });
 
@@ -95,6 +102,12 @@ describe('invite id prediction carries transaction provenance', () => {
     return tx;
   }
 
+  const ROOT_RECORD = {
+    lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+    lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+    memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+  };
+
   const deps = () => ({
     getBox,
     insertBox,
@@ -102,7 +115,8 @@ describe('invite id prediction carries transaction provenance', () => {
     getKarmaBox: () => null,
     getKarmaValue: (owner: Uint8Array) =>
       getKarmaBoxes(owner).reduce((sum, b) => sum + b.value, 0n),
-    getIdentityRecord: () => null,
+    getIdentityRecord: (id: Uint8Array) =>
+      Buffer.from(id).equals(Buffer.from(inviterId)) ? ROOT_RECORD : null,
     hasActiveVouchEscrow: () => false,
     vouchCooldownBlocks: 1000,
     inviteBondMin: 1n,
@@ -118,6 +132,10 @@ describe('invite id prediction carries transaction provenance', () => {
     getTopologyAuthor: () => null,
     getPendingPostAuthor: () => null,
     runInTransaction: (fn: () => void) => fn(),
+    getVouchBox: () => null,
+    getNetworkRecord: () => ({ memberCount: 1 }),
+    membershipBarMultiplier: 1,
+    putIdentityRecord: () => {},
   });
 
   it('predicts ids at the outputs real positions, not from a counter', () => {

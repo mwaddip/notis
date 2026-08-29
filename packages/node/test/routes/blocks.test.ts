@@ -115,6 +115,10 @@ async function request(
       networkType: 'testnet',
       inviteProbationBlocks: 43200,
       vouchCooldownBlocks: 60,
+      inviteBondMin: 100n,
+      inviteBondMax: 10000n,
+      getNetworkRecord: () => ({ memberCount: 1 }),
+      membershipBarMultiplier: 1,
     };
 
     const app = express();

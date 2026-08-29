@@ -109,6 +109,10 @@ async function buildDeps(): Promise<UtxoEngineDeps> {
     getTopologyAuthor: store.getTopologyAuthorBytes,
     getPendingPostAuthor: () => null,
     runInTransaction: (fn: () => void) => dbMod.getDb().transaction(fn)(),
+    getVouchBox: store.getVouchBox,
+    getNetworkRecord: store.getNetworkRecord,
+    membershipBarMultiplier: 1,
+    putIdentityRecord: store.putIdentityRecord,
   };
 }
 

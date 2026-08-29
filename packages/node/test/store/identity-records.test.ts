@@ -53,9 +53,9 @@ describe('identity records store (Spec G phase B)', () => {
     initDb(':memory:');
 
     const id = uidBytes();
-    putIdentityRecord(id, { lastActivityBlock: 42, lastDecayBlock: 7, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    putIdentityRecord(id, { lastActivityBlock: 42, lastDecayBlock: 7, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
 
-    expect(getIdentityRecord(id)).toEqual({ lastActivityBlock: 42, lastDecayBlock: 7, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    expect(getIdentityRecord(id)).toEqual({ lastActivityBlock: 42, lastDecayBlock: 7, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
   });
 
   it('heights come back as numbers, not bigints', async () => {
@@ -64,7 +64,7 @@ describe('identity records store (Spec G phase B)', () => {
     initDb(':memory:');
 
     const id = uidBytes();
-    putIdentityRecord(id, { lastActivityBlock: 5, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    putIdentityRecord(id, { lastActivityBlock: 5, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
 
     const got = getIdentityRecord(id)!;
     expect(typeof got.lastActivityBlock).toBe('number');
@@ -77,10 +77,10 @@ describe('identity records store (Spec G phase B)', () => {
     initDb(':memory:');
 
     const id = uidBytes();
-    putIdentityRecord(id, { lastActivityBlock: 10, lastDecayBlock: 1, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
-    putIdentityRecord(id, { lastActivityBlock: 20, lastDecayBlock: 2, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    putIdentityRecord(id, { lastActivityBlock: 10, lastDecayBlock: 1, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
+    putIdentityRecord(id, { lastActivityBlock: 20, lastDecayBlock: 2, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
 
-    expect(getIdentityRecord(id)).toEqual({ lastActivityBlock: 20, lastDecayBlock: 2, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    expect(getIdentityRecord(id)).toEqual({ lastActivityBlock: 20, lastDecayBlock: 2, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
 
     const { cnt } = getDb()
       .prepare('SELECT COUNT(*) AS cnt FROM identity_records')
@@ -95,11 +95,11 @@ describe('identity records store (Spec G phase B)', () => {
 
     const a = uidBytes();
     const b = uidBytes();
-    putIdentityRecord(a, { lastActivityBlock: 1, lastDecayBlock: 1, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
-    putIdentityRecord(b, { lastActivityBlock: 2, lastDecayBlock: 2, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    putIdentityRecord(a, { lastActivityBlock: 1, lastDecayBlock: 1, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
+    putIdentityRecord(b, { lastActivityBlock: 2, lastDecayBlock: 2, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
 
-    expect(getIdentityRecord(a)).toEqual({ lastActivityBlock: 1, lastDecayBlock: 1, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
-    expect(getIdentityRecord(b)).toEqual({ lastActivityBlock: 2, lastDecayBlock: 2, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    expect(getIdentityRecord(a)).toEqual({ lastActivityBlock: 1, lastDecayBlock: 1, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
+    expect(getIdentityRecord(b)).toEqual({ lastActivityBlock: 2, lastDecayBlock: 2, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
   });
 
   it('the key is the identity bytes, not the identity object', async () => {
@@ -108,7 +108,7 @@ describe('identity records store (Spec G phase B)', () => {
     initDb(':memory:');
 
     const id = uidBytes();
-    putIdentityRecord(id, { lastActivityBlock: 9, lastDecayBlock: 3, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    putIdentityRecord(id, { lastActivityBlock: 9, lastDecayBlock: 3, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
 
     // A distinct Uint8Array with identical bytes must resolve the same row.
     expect(getIdentityRecord(new Uint8Array(id))).toEqual({
@@ -116,6 +116,11 @@ describe('identity records store (Spec G phase B)', () => {
       lastDecayBlock: 3,
       invitedAtBlock: 0,
       lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
     });
   });
 
@@ -126,7 +131,7 @@ describe('identity records store (Spec G phase B)', () => {
     initDb(':memory:');
 
     const id = uidBytes();
-    putIdentityRecord(id, { lastActivityBlock: 3, lastDecayBlock: 3, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    putIdentityRecord(id, { lastActivityBlock: 3, lastDecayBlock: 3, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
     deleteIdentityRecord(id);
 
     expect(getIdentityRecord(id)).toBeNull();
@@ -148,12 +153,12 @@ describe('identity records store (Spec G phase B)', () => {
 
     const a = uidBytes();
     const b = uidBytes();
-    putIdentityRecord(a, { lastActivityBlock: 1, lastDecayBlock: 1, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
-    putIdentityRecord(b, { lastActivityBlock: 2, lastDecayBlock: 2, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    putIdentityRecord(a, { lastActivityBlock: 1, lastDecayBlock: 1, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
+    putIdentityRecord(b, { lastActivityBlock: 2, lastDecayBlock: 2, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
     deleteIdentityRecord(a);
 
     expect(getIdentityRecord(a)).toBeNull();
-    expect(getIdentityRecord(b)).toEqual({ lastActivityBlock: 2, lastDecayBlock: 2, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    expect(getIdentityRecord(b)).toEqual({ lastActivityBlock: 2, lastDecayBlock: 2, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
   });
 
   it('a zero clock is stored and read back as zero, not treated as absent', async () => {
@@ -162,9 +167,9 @@ describe('identity records store (Spec G phase B)', () => {
     initDb(':memory:');
 
     const id = uidBytes();
-    putIdentityRecord(id, { lastActivityBlock: 0, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    putIdentityRecord(id, { lastActivityBlock: 0, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
 
-    expect(getIdentityRecord(id)).toEqual({ lastActivityBlock: 0, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    expect(getIdentityRecord(id)).toEqual({ lastActivityBlock: 0, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
   });
 });
 
@@ -200,8 +205,8 @@ describe('getAllIdentityRecords (Spec G phase D)', () => {
 
     const a = uidBytes();
     const b = uidBytes();
-    putIdentityRecord(a, { lastActivityBlock: 3, lastDecayBlock: 1, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
-    putIdentityRecord(b, { lastActivityBlock: 9, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    putIdentityRecord(a, { lastActivityBlock: 3, lastDecayBlock: 1, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
+    putIdentityRecord(b, { lastActivityBlock: 9, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
 
     const all = getAllIdentityRecords();
     expect(all).toHaveLength(2);
@@ -219,12 +224,22 @@ describe('getAllIdentityRecords (Spec G phase D)', () => {
       lastDecayBlock: 1,
       invitedAtBlock: 0,
       lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
     });
     expect(byHex.get(Buffer.from(b).toString('hex'))).toEqual({
       lastActivityBlock: 9,
       lastDecayBlock: 0,
       invitedAtBlock: 0,
       lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
     });
   });
 
@@ -235,7 +250,7 @@ describe('getAllIdentityRecords (Spec G phase D)', () => {
 
     // `.safeIntegers()` hands back bigints; a bigint reaching `serializeIdentityRecord`
     // would CBOR-encode differently and move the digest.
-    putIdentityRecord(uidBytes(), { lastActivityBlock: 5, lastDecayBlock: 2, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    putIdentityRecord(uidBytes(), { lastActivityBlock: 5, lastDecayBlock: 2, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
 
     const [entry] = getAllIdentityRecords();
     expect(typeof entry!.record.lastActivityBlock).toBe('number');
@@ -248,11 +263,11 @@ describe('getAllIdentityRecords (Spec G phase D)', () => {
     initDb(':memory:');
 
     const id = uidBytes();
-    putIdentityRecord(id, { lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
-    putIdentityRecord(id, { lastActivityBlock: 8, lastDecayBlock: 4, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    putIdentityRecord(id, { lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
+    putIdentityRecord(id, { lastActivityBlock: 8, lastDecayBlock: 4, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
 
     expect(getAllIdentityRecords()).toEqual([
-      { identityId: id, record: { lastActivityBlock: 8, lastDecayBlock: 4, invitedAtBlock: 0, lifetimeLikesReceived: 0n } },
+      { identityId: id, record: { lastActivityBlock: 8, lastDecayBlock: 4, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 } },
     ]);
   });
 });
@@ -277,10 +292,10 @@ describe('lifetimeLikesReceived at the row boundary', () => {
     initDb(':memory:');
 
     const id = uidBytes();
-    putIdentityRecord(id, { lastActivityBlock: 10, lastDecayBlock: 2, invitedAtBlock: 0, lifetimeLikesReceived: 4n });
+    putIdentityRecord(id, { lastActivityBlock: 10, lastDecayBlock: 2, invitedAtBlock: 0, lifetimeLikesReceived: 4n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
 
     const got = getIdentityRecord(id)!;
-    expect(got).toEqual({ lastActivityBlock: 10, lastDecayBlock: 2, invitedAtBlock: 0, lifetimeLikesReceived: 4n });
+    expect(got).toEqual({ lastActivityBlock: 10, lastDecayBlock: 2, invitedAtBlock: 0, lifetimeLikesReceived: 4n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
     expect(typeof got.lifetimeLikesReceived).toBe('bigint');
     expect(typeof got.lastActivityBlock).toBe('number');
   });
@@ -293,7 +308,7 @@ describe('lifetimeLikesReceived at the row boundary', () => {
     };
     initDb(':memory:');
 
-    records.putIdentityRecord(uidBytes(), { lastActivityBlock: 5, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    records.putIdentityRecord(uidBytes(), { lastActivityBlock: 5, lastDecayBlock: 0, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
 
     const [entry] = records.getAllIdentityRecords();
     expect(entry!.record.lifetimeLikesReceived).toBe(0n);
@@ -306,14 +321,19 @@ describe('lifetimeLikesReceived at the row boundary', () => {
     initDb(':memory:');
 
     const id = uidBytes();
-    putIdentityRecord(id, { lastActivityBlock: 7, lastDecayBlock: 3, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
-    putIdentityRecord(id, { lastActivityBlock: 7, lastDecayBlock: 3, invitedAtBlock: 0, lifetimeLikesReceived: 3n });
+    putIdentityRecord(id, { lastActivityBlock: 7, lastDecayBlock: 3, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
+    putIdentityRecord(id, { lastActivityBlock: 7, lastDecayBlock: 3, invitedAtBlock: 0, lifetimeLikesReceived: 3n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
 
     expect(getIdentityRecord(id)).toEqual({
       lastActivityBlock: 7,
       lastDecayBlock: 3,
       invitedAtBlock: 0,
       lifetimeLikesReceived: 3n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
     });
   });
 
@@ -323,14 +343,19 @@ describe('lifetimeLikesReceived at the row boundary', () => {
     initDb(':memory:');
 
     const id = uidBytes();
-    putIdentityRecord(id, { lastActivityBlock: 1, lastDecayBlock: 1, invitedAtBlock: 0, lifetimeLikesReceived: 0n });
+    putIdentityRecord(id, { lastActivityBlock: 1, lastDecayBlock: 1, invitedAtBlock: 0, lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 });
     // The key set is the assertion: a re-added carry under any name shows up
     // here, where a check for one absent name would not see it.
     expect(Object.keys(getIdentityRecord(id)!).sort()).toEqual([
       'invitedAtBlock',
+      'invitesUsed',
       'lastActivityBlock',
       'lastDecayBlock',
       'lifetimeLikesReceived',
+      'memberBar',
+      'memberLikes',
+      'memberSinceBlock',
+      'memberVouches',
     ]);
   });
 });

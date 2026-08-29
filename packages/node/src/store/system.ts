@@ -92,15 +92,20 @@ export function ensureSystemKarmaBox(systemPubKey: Uint8Array, currentHeight: nu
   // With no journal open this records nothing to roll back, which is correct —
   // genesis is not a block. The row still reaches the `stateRoot` on any node
   // that bootstraps its prover from the store.
+  // The system identity was never invited, and genesis is the one event that
+  // could not have been a claim — a claim is a user transaction and the first
+  // block is height 1. It has received no likes either: genesis mints boxes,
+  // and only per-block like settlement moves the counter.
   putIdentityRecord(box.owner, {
     lastActivityBlock: genesisHeight,
     lastDecayBlock: 0,
-    // The system identity was never invited, and genesis is the one event that
-    // could not have been a claim — a claim is a user transaction and the first
-    // block is height 1. It has received no likes either: genesis mints boxes,
-    // and only per-block like settlement moves the counter.
     invitedAtBlock: 0,
     lifetimeLikesReceived: 0n,
+    memberSinceBlock: genesisHeight,
+    memberBar: 0,
+    memberVouches: 0,
+    memberLikes: 0n,
+    invitesUsed: 0,
   });
   return box;
 }
@@ -300,8 +305,13 @@ export function seedGenesisCommittee(
     putIdentityRecord(member, {
       lastActivityBlock: genesisHeight,
       lastDecayBlock: 0,
-        invitedAtBlock: 0,
+      invitedAtBlock: 0,
       lifetimeLikesReceived: 0n,
+      memberSinceBlock: genesisHeight,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
     });
   }
 

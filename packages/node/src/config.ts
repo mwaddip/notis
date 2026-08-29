@@ -75,6 +75,8 @@ export interface Config {
   // Vouch and invite timing
   vouchCooldownBlocks: number;
   inviteProbationBlocks: number;
+  /** k — the multiplier in D(N) = max(1, icbrt(k · N)). Per-network cap. */
+  membershipBarMultiplier: number;
   /**
    * The faucet identity this network's genesis seeds, or absent where it seeds
    * none. **The absence IS the gate** — mainnet omits it, so no faucet identity
@@ -141,6 +143,7 @@ export function loadConfig(): Readonly<Config> {
     // decay pair below.
     vouchCooldownBlocks: profile.vouchCooldownBlocks,
     inviteProbationBlocks: profile.inviteProbationBlocks,
+    membershipBarMultiplier: profile.membershipBarMultiplier,
     faucetPublicKey: profile.faucetPublicKey,
     inviteBondMin: profile.inviteBondMin,
     inviteBondMax: profile.inviteBondMax,

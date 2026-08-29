@@ -37,6 +37,7 @@ import {
   checkTxEnvelope,
   materializeOutput,
   validateTx,
+  isMember,
 } from './utxo-engine.js';
 import {
   getKarmaBox,
@@ -72,6 +73,9 @@ import {
   purgeRefusedHeaders,
   getBoxProvenance,
   getInterlinks,
+  getVouchBox,
+  getNetworkRecord,
+  getLapsedVouches,
 } from '../store/index.js';
 import { getDb } from '../store/db.js';
 import {
@@ -90,7 +94,8 @@ import type { BlockJournal } from '../store/journal.js';
 import { tryGetAvlProver, applyBlockMutations, checkpointProver } from '../state/avl-prover.js';
 import { emitPostIndexed } from '../journal.js';
 import { countedVerifyOrderingBlockPoW, noteTip } from '../metrics.js';
-import type { RecordPut } from '../state/avl-prover.js';
+import type { RecordPut, NetworkPut } from '../state/avl-prover.js';
+import { networkRecordKey } from '../store/identity-records.js';
 import {
   encodeTx,
   decodeTx,
@@ -98,16 +103,22 @@ import {
   GENESIS_PREV_BLOCK_HASH,
   PROTOCOL_VERSION,
   MAX_ESCROW_RETURNS_PER_BLOCK,
+  MAX_LAPSE_WITHDRAWALS_PER_BLOCK,
   computeTxId,
   interlinkRoot,
   updateInterlinks,
+  membershipBar as membershipBarFn,
+  memberLikesBar,
 } from '@dagsocial/types';
 import type {
   AnyBox,
   KarmaBox,
+  VouchBox,
   OrderingBlock,
   UtxoTransaction,
 } from '@dagsocial/types';
+import type { IdentityRecord } from '../store/identity-records.js';
+import { putNetworkRecord } from '../store/identity-records.js';
 
 /**
  * Signals "this block is invalid" from inside the transaction that wraps block
@@ -377,9 +388,9 @@ function applyBlockBody(block: OrderingBlock): boolean {
   const journal = finishBlockJournal();
   const handle = tryGetAvlProver();
   if (handle) {
-    const { consumed, created, recordPuts } = proverFeedFromJournal(journal);
+    const { consumed, created, recordPuts, networkPuts } = proverFeedFromJournal(journal);
     const computedDigest = applyBlockMutations(
-      handle.prover, block.header.height, consumed, created, recordPuts,
+      handle.prover, block.header.height, consumed, created, recordPuts, networkPuts,
     );
 
     // Verify against block header (gated). The prover is restored by the
@@ -434,7 +445,7 @@ function applyBlockBody(block: OrderingBlock): boolean {
  */
 function proverFeedFromJournal(
   journal: BlockJournal,
-): { consumed: string[]; created: AnyBox[]; recordPuts: RecordPut[] } {
+): { consumed: string[]; created: AnyBox[]; recordPuts: RecordPut[]; networkPuts: NetworkPut[] } {
   // Netting is per-kind and the two rules do NOT share a code path: boxes
   // cancel insert+remove pairs; records collapse to the last write per key.
   const cancelled = new Set<number>();
@@ -462,6 +473,8 @@ function proverFeedFromJournal(
   // last. The journal keeps both entries regardless — rollback needs the
   // first's `replaced`.
   const recordByKey = new Map<string, RecordPut>();
+  let latestNetwork: NetworkPut | null = null;
+  const nrKey = networkRecordKey();
   for (let i = 0; i < journal.mutations.length; i++) {
     if (cancelled.has(i)) continue;
     const m = journal.mutations[i]!;
@@ -473,19 +486,25 @@ function proverFeedFromJournal(
       case 'record':
         recordByKey.set(m.key, { key: m.key, record: m.record });
         break;
+      case 'network':
+        latestNetwork = { key: nrKey, network: { memberCount: m.memberCount } };
+        break;
       default: {
-        // Compile-time exhaustiveness, deliberately not a runtime throw: a new
-        // committed entity kind that nobody feeds to the prover is silently
-        // absent from the stateRoot, and no test can catch that — producer and
-        // verifier omit it identically and agree on a digest over incomplete
-        // state. This assignment is the only enforcement that invariant has.
+        // Compile-time exhaustiveness: a new committed entity kind that nobody
+        // feeds to the prover is silently absent from the stateRoot, and no
+        // test can catch that — this assignment is the only enforcement.
         const _exhaustive: never = m;
         void _exhaustive;
         break;
       }
     }
   }
-  return { consumed, created, recordPuts: [...recordByKey.values()] };
+  return {
+    consumed,
+    created,
+    recordPuts: [...recordByKey.values()],
+    networkPuts: latestNetwork ? [latestNetwork] : [],
+  };
 }
 
 /**
@@ -568,11 +587,11 @@ export function computePostBlockStateRoot(
     getDb().transaction((): void => {
       beginBlockJournal(height);
       if (!applyMutationPhase(block, height)) throw new BlockRejected();
-      const { consumed, created, recordPuts } = proverFeedFromJournal(finishBlockJournal());
+      const { consumed, created, recordPuts, networkPuts } = proverFeedFromJournal(finishBlockJournal());
       // The digest rides out on the throw: nothing this run did may survive.
       throw new SpeculativeRollback(
         Buffer.from(
-          applyBlockMutations(handle.prover, height, consumed, created, recordPuts),
+          applyBlockMutations(handle.prover, height, consumed, created, recordPuts, networkPuts),
         ).toString('hex'),
       );
     })();
@@ -748,6 +767,10 @@ function applyMutationPhase(
     runInTransaction: (fn: () => void) => {
       getDb().transaction(fn)();
     },
+    getVouchBox,
+    getNetworkRecord,
+    membershipBarMultiplier: config.membershipBarMultiplier,
+    putIdentityRecord,
   };
 
   // The proof obligation (NODE_INTERFACE → "Embedded transactions: a mismatch
@@ -860,6 +883,13 @@ function applyMutationPhase(
   // speculative (creator) run accrues and settles identically and its rollback
   // discards everything with it.
   const likesPerAuthor = new Map<string, number>(); // author hex → likes this block
+  const memberLikesPerAuthor = new Map<string, number>(); // author hex → member-likes this block
+  // Identities the membership pass evaluates — every vouch target whose box was
+  // cast or consumed, every author whose memberLikes rose. Captured during the
+  // apply loop; the pass runs after the like counters.
+  const membershipTouched = new Set<string>();
+  // Pre-block records for touched identities — the first write's `replaced`.
+  const preBlockRecords = new Map<string, IdentityRecord | null>();
 
   // What the settlement is derived from, accumulated as each transaction is
   // applied (MINING_INTERFACE → Coinbase Application). Gathered here rather than
@@ -913,6 +943,7 @@ function applyMutationPhase(
   // side only. A prune in this block's body marks rows during §8c, after the
   // capture, so its locks are candidates from h + 1.
   const escrows = getVouchEscrowsReleasableAt(height, MAX_ESCROW_RETURNS_PER_BLOCK);
+  const lapsedVouches = getLapsedVouches(MAX_LAPSE_WITHDRAWALS_PER_BLOCK);
 
   // Multi-pass: try to apply txs, retrying those whose inputs aren't
   // available yet (may have been created by an earlier tx in this block).
@@ -1050,6 +1081,29 @@ function applyMutationPhase(
 
       perTxOutputs.set(item.txId, item.outputs);
 
+      // Track vouch targets for the membership pass. Capture the pre-block
+      // record BEFORE applyTx modifies it — both inputs (consumed) and outputs
+      // (created), so the pass sees the true pre-block value.
+      for (const inputId of item.tx.inputs) {
+        const inputBox = getBox(inputId);
+        if (inputBox && inputBox.boxType === 'vouch') {
+          const targetHex = Buffer.from((inputBox as VouchBox).targetId).toString('hex');
+          membershipTouched.add(targetHex);
+          if (!preBlockRecords.has(targetHex)) {
+            preBlockRecords.set(targetHex, getIdentityRecord((inputBox as VouchBox).targetId));
+          }
+        }
+      }
+      for (const out of item.outputs) {
+        if (out.boxType === 'vouch') {
+          const targetHex = Buffer.from((out as VouchBox).targetId).toString('hex');
+          membershipTouched.add(targetHex);
+          if (!preBlockRecords.has(targetHex)) {
+            preBlockRecords.set(targetHex, getIdentityRecord((out as VouchBox).targetId));
+          }
+        }
+      }
+
       applyTx(utxoDeps, item.tx, item.outputs, height);
       applied++;
 
@@ -1069,6 +1123,14 @@ function applyMutationPhase(
           likeToRecord.authorHex,
           (likesPerAuthor.get(likeToRecord.authorHex) ?? 0) + 1,
         );
+        // ARCHITECTURE → Membership: memberLikes bumped iff member(liker).
+        const likerRecord = getIdentityRecord(likeToRecord.likerId);
+        if (likerRecord && isMember(likerRecord)) {
+          memberLikesPerAuthor.set(
+            likeToRecord.authorHex,
+            (memberLikesPerAuthor.get(likeToRecord.authorHex) ?? 0) + 1,
+          );
+        }
       }
 
       // Remove from the local mempool if present. This is the whole of the
@@ -1203,7 +1265,7 @@ function applyMutationPhase(
 
   const emission = computeBlockReward(height);
   const settlementCheck = checkSettlement(
-    settlementDepsWith(() => decayPlans, escrows),
+    settlementDepsWith(() => decayPlans, escrows, lapsedVouches),
     height,
     emission,
     config.creditMinerRewardDelay,
@@ -1238,6 +1300,17 @@ function applyMutationPhase(
   // pool on every reorg, where the next fill would draw it in as a user entry.
   // Its box mutations are journalled by the store choke point like every other,
   // so the rollback inverse is unaffected.
+  // The lapse leg's vouch consumptions lower targets' memberVouches through
+  // applyTx below — capture each target before the apply so the membership pass
+  // evaluates them.
+  for (const v of lapsedVouches) {
+    const targetHex = Buffer.from(v.targetId).toString('hex');
+    membershipTouched.add(targetHex);
+    if (!preBlockRecords.has(targetHex)) {
+      preBlockRecords.set(targetHex, getIdentityRecord(v.targetId));
+    }
+  }
+
   applyTx(utxoDeps, settlement.tx, settlement.outputs, height);
 
   // 11a-ii. The clock epoch: a new record's `lastActivityBlock` starts at the
@@ -1261,6 +1334,11 @@ function applyMutationPhase(
       // and never been liked. The read is what keeps that a consequence of the
       // bar rather than an assumption this line makes.
       lifetimeLikesReceived: after?.lifetimeLikesReceived ?? 0n,
+      memberSinceBlock: after?.memberSinceBlock ?? 0,
+      memberBar: after?.memberBar ?? 0,
+      memberVouches: after?.memberVouches ?? 0,
+      memberLikes: after?.memberLikes ?? 0n,
+      invitesUsed: after?.invitesUsed ?? 0,
     });
   }
 
@@ -1301,10 +1379,64 @@ function applyMutationPhase(
       // likes in the same block they were invited is reachable.
       invitedAtBlock: after?.invitedAtBlock ?? 0,
       lifetimeLikesReceived: (after?.lifetimeLikesReceived ?? 0n) + received,
+      memberSinceBlock: after?.memberSinceBlock ?? 0,
+      memberBar: after?.memberBar ?? 0,
+      memberVouches: after?.memberVouches ?? 0,
+      memberLikes: (after?.memberLikes ?? 0n) + BigInt(memberLikesPerAuthor.get(authorHex) ?? 0),
+      invitesUsed: after?.invitesUsed ?? 0,
     });
   }
 
-  // 12. Advance the decay clock for every identity the settlement charged.
+  // 12. The membership pass (NODE_INTERFACE → Membership pass).
+  //
+  // Between the like counters and the decay clocks. Reads N, D(N), Y(N) once
+  // from the network record of pre-body state. Over the identities the block
+  // touched, ascending hex. Set / lapse / re-qualify. N written once at the end.
+  // No value moves.
+  // Add authors whose memberLikes rose to the membership pass's touched set.
+  for (const authorHex of memberLikesPerAuthor.keys()) {
+    membershipTouched.add(authorHex);
+  }
+
+  {
+    const N = getNetworkRecord().memberCount;
+    const D = membershipBarFn(N, config.membershipBarMultiplier);
+    const Y = memberLikesBar(N, config.membershipBarMultiplier);
+
+    let newN = N;
+    for (const idHex of [...membershipTouched].sort()) {
+      const id = new Uint8Array(Buffer.from(idHex, 'hex'));
+      const pre = preBlockRecords.get(idHex) ?? getIdentityRecord(id);
+      const current = getIdentityRecord(id);
+      if (!current) continue;
+
+      const wasMember = pre !== null && pre.memberSinceBlock > 0 && pre.memberVouches >= pre.memberBar;
+
+      if (current.memberSinceBlock === 0 &&
+          current.memberVouches >= D &&
+          current.memberLikes >= BigInt(Y)) {
+        putIdentityRecord(id, {
+          ...current,
+          memberSinceBlock: height,
+          memberBar: D,
+        });
+        newN++;
+      } else if (current.memberSinceBlock > 0 && current.memberBar > 0) {
+        const isMemberNow = current.memberVouches >= current.memberBar;
+        if (wasMember && !isMemberNow) {
+          newN--;
+        } else if (!wasMember && isMemberNow) {
+          newN++;
+        }
+      }
+    }
+
+    if (newN !== N) {
+      putNetworkRecord({ memberCount: newN });
+    }
+  }
+
+  // 13. Advance the decay clock for every identity the settlement charged.
   //
   // ⚠ **Only firings reach here.** A stale identity sitting at the karma floor
   // produces no plan and keeps its clock where it was, rather than silently

@@ -2,7 +2,7 @@ import { makeTestConfig } from './helpers.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import http from 'http';
 import type { AddressInfo } from 'net';
-import { initDb, closeDb } from '../src/store/db.js';
+import { initDb, getDb, closeDb } from '../src/store/db.js';
 import { createApp } from '../src/server.js';
 import type { Config } from '../src/config.js';
 import { MAX_BLOCK_BODY_BYTES, profileFor } from '@dagsocial/types';
@@ -40,6 +40,7 @@ describe('server', () => {
 
   beforeAll(async () => {
     initDb(':memory:');
+    getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const app = createApp(makeConfig());
     server = app.listen(0);
     const addr = server.address() as AddressInfo;

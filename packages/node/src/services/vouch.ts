@@ -5,12 +5,11 @@ import {
 } from '@dagsocial/types';
 import type { VouchBox, VouchEscrowBox, UtxoTransaction } from '@dagsocial/types';
 import {
-  hasAnyActiveVouch,
   hasPendingVouch,
 } from '../store/index.js';
 import { isValidVouchTarget } from '@dagsocial/validation';
 import { effectiveKarma } from './decay.js';
-import { validateTx } from './utxo-engine.js';
+import { isMember, validateTx } from './utxo-engine.js';
 import { admitTx } from './admit-tx.js';
 import type { UtxoEngineDeps } from './utxo-engine.js';
 import { ClientError } from './client-error.js';
@@ -30,16 +29,35 @@ export function castVouch(
     throw new ClientError('Invalid vouch target: must be a 32-byte public key');
   }
 
+  // NODE_INTERFACE → Vouch transition rules: only a member casts.
+  const voucherRecord = deps.getIdentityRecord(voucherId);
+  if (!voucherRecord || !isMember(voucherRecord)) {
+    throw new ClientError('Only a member may vouch');
+  }
+
+  // The target holds an IdentityRecord.
+  const targetRecord = deps.getIdentityRecord(targetId);
+  if (!targetRecord) {
+    throw new ClientError('Vouch target holds no identity record');
+  }
+
+  // No self-vouch.
   if (Buffer.from(voucherId).equals(Buffer.from(targetId))) {
     throw new ClientError('Cannot vouch for yourself');
   }
 
-  // The threshold is a balance, summed across the voucher's karma boxes
-  // (ARCHITECTURE → "Vouch boxes"). `checkTransitions` holds the same predicate
-  // at apply, so this is the named early refusal rather than the rule's only
-  // statement — the same pairing as the cooldown gate below.
+  // One live vouch per (voucher, target) pair — confirmed and pending.
+  if (deps.getVouchBox(voucherId, targetId)) {
+    throw new ClientError('A live vouch already exists for this (voucher, target) pair');
+  }
+  const voucherHex = Buffer.from(voucherId).toString('hex');
+  const targetHex = Buffer.from(targetId).toString('hex');
+  if (hasPendingVouch(voucherHex, targetHex)) {
+    throw new ClientError('A vouch for this pair is already pending');
+  }
+
+  // The balance check and escrow gate are consensus-enforced in checkTransitions.
   const voucherFace = deps.getKarmaValue(voucherId);
-  const voucherRecord = deps.getIdentityRecord(voucherId);
   const balance = effectiveKarma(voucherFace, voucherRecord, currentBlockHeight, deps.decayCfg);
   if (balance < VOUCH_MIN_BALANCE) {
     throw new ClientError(
@@ -47,16 +65,6 @@ export function castVouch(
     );
   }
 
-  // One vouch at a time, across all targets (ARCHITECTURE → Vouch boxes, audit
-  // L-4). The predicate is identity-scoped, so a voucher cannot hold concurrent
-  // VouchBoxes by targeting different identities. The mempool arm closes the
-  // same hole for a vouch that is submitted but not yet confirmed.
-  if (hasAnyActiveVouch(voucherId)) {
-    throw new ClientError('Already vouching for an identity — unvouch first');
-  }
-  if (hasPendingVouch(Buffer.from(voucherId).toString('hex'))) {
-    throw new ClientError('Vouch already pending — wait for it to confirm');
-  }
   // ⛔ Keyed on the voucher, because the escrow carries no target
   // (TYPES_INTERFACE → VouchEscrowBox). `checkTransitions` holds the same
   // predicate at apply, so this is the named early refusal rather than the

@@ -153,9 +153,10 @@ describe('seedGenesisState', () => {
       record: r.record,
     }));
 
+    const nr = s.records.getNetworkRecord();
+    const networkPuts = [{ key: s.records.networkRecordKey(), network: nr }];
+
     const mirrorDb = new Database(':memory:');
-    // The AVL tables are created by `initDb`'s migrations, which this bare
-    // handle has not run; the prover only needs its own two.
     mirrorDb.exec(`
       CREATE TABLE avl_tree_versions (
         version BLOB PRIMARY KEY, height INTEGER NOT NULL,
@@ -165,7 +166,7 @@ describe('seedGenesisState', () => {
         label BLOB NOT NULL, node_data BLOB NOT NULL, PRIMARY KEY (version, label));
     `);
     const mirror = s.prover.createAvlProver(mirrorDb);
-    s.prover.bootstrapAvlProver(mirror, boxes, 0, records);
+    s.prover.bootstrapAvlProver(mirror, boxes, 0, records, networkPuts);
     expect(Buffer.from(mirror.prover.digest()!).toString('hex')).toBe(root);
 
     mirrorDb.close();
@@ -173,11 +174,6 @@ describe('seedGenesisState', () => {
   });
 
   it('the feed ORDER is not consensus-visible — a reversed feed reaches the same root', async () => {
-    // AVL+ shape is order-dependent, so the genesis root is only reproducible if
-    // the order is specified rather than inherited from whatever sequence the
-    // seeders happened to run in. The order is the canonical prover-feed order
-    // (M-12): sorted by hex box id, inside `bootstrapAvlProver`. This is the
-    // assertion that the caller's order cannot reach the tree.
     const { root, s } = await seededRoot(':memory:');
     const boxes = s.utxo.getUnspentBoxes();
     expect(boxes.length).toBeGreaterThan(1);
@@ -185,6 +181,8 @@ describe('seedGenesisState', () => {
       key: s.records.identityRecordKey(r.identityId),
       record: r.record,
     }));
+    const nr = s.records.getNetworkRecord();
+    const networkPuts = [{ key: s.records.networkRecordKey(), network: nr }];
 
     const mirrorDb = new Database(':memory:');
     mirrorDb.exec(`
@@ -196,7 +194,7 @@ describe('seedGenesisState', () => {
         label BLOB NOT NULL, node_data BLOB NOT NULL, PRIMARY KEY (version, label));
     `);
     const mirror = s.prover.createAvlProver(mirrorDb);
-    s.prover.bootstrapAvlProver(mirror, [...boxes].reverse(), 0, [...records].reverse());
+    s.prover.bootstrapAvlProver(mirror, [...boxes].reverse(), 0, [...records].reverse(), networkPuts);
     expect(Buffer.from(mirror.prover.digest()!).toString('hex')).toBe(root);
 
     mirrorDb.close();
@@ -459,6 +457,9 @@ describe('seedGenesisState — a store that is not empty', () => {
     expect(boxes.length).toBe(5);
     expect(records.length).toBe(1);
 
+    const nr = s.records.getNetworkRecord();
+    const networkPuts = [{ key: s.records.networkRecordKey(), network: nr }];
+
     const mirrorDb = new Database(':memory:');
     mirrorDb.exec(`
       CREATE TABLE avl_tree_versions (
@@ -469,7 +470,7 @@ describe('seedGenesisState — a store that is not empty', () => {
         label BLOB NOT NULL, node_data BLOB NOT NULL, PRIMARY KEY (version, label));
     `);
     const mirror = s.prover.createAvlProver(mirrorDb);
-    s.prover.bootstrapAvlProver(mirror, boxes, 0, records);
+    s.prover.bootstrapAvlProver(mirror, boxes, 0, records, networkPuts);
     expect(Buffer.from(mirror.prover.digest()!).toString('hex')).toBe(root);
 
     mirrorDb.close();

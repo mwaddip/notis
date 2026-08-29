@@ -198,6 +198,10 @@ describe('authorization is a property of the transition', () => {
       getTopologyAuthor: () => null,
       getPendingPostAuthor: () => null,
       runInTransaction: (fn: () => void) => { (db.transaction(fn) as () => void)(); },
+      getVouchBox: () => null,
+      getNetworkRecord: () => ({ memberCount: 1 }),
+      membershipBarMultiplier: 1,
+      putIdentityRecord: () => {},
     };
     holder = makeTestIdentity();
     other = makeTestIdentity();

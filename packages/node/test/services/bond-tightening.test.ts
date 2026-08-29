@@ -49,6 +49,7 @@ import {
   getDb,
   getBox as storeGetBox,
   getIdentityRecord as storeGetIdentityRecord,
+  putIdentityRecord as storePutIdentityRecord,
   getKarmaBox,
   getKarmaBoxes,
   insertBox as storeInsertBox,
@@ -114,6 +115,10 @@ describe('bond transitions (audit F-consensus-1)', () => {
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
       },
+      getVouchBox: () => null,
+      getNetworkRecord: () => ({ memberCount: 1 }),
+      membershipBarMultiplier: 1,
+      putIdentityRecord: () => {},
     };
   }
 
@@ -122,8 +127,14 @@ describe('bond transitions (audit F-consensus-1)', () => {
   beforeEach(() => {
     initDb(':memory:');
     db = getDb();
+    db.prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     inviter = makeKeys();
     invitee = makeKeys();
+    storePutIdentityRecord(inviter.pub, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
     deps = makeDeps();
   });
 

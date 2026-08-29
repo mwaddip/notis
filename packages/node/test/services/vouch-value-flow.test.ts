@@ -64,6 +64,7 @@ async function importDb() {
   return (await import('../../src/store/db.js')) as {
     initDb: (path: string) => void;
     closeDb: () => void;
+    getDb: () => import('better-sqlite3').Database;
   };
 }
 
@@ -82,6 +83,12 @@ async function importUtxo() {
     insertBox: (box: unknown) => void;
     getBox: (boxId: string) => unknown;
     getKarmaBoxes: (owner: Uint8Array) => KarmaBox[];
+  };
+}
+
+async function importIdentityRecords() {
+  return (await import('../../src/store/identity-records.js')) as {
+    putIdentityRecord: (id: Uint8Array, record: import('../../src/store/identity-records.js').IdentityRecord) => void;
   };
 }
 
@@ -185,6 +192,7 @@ describe('P2-B phase 2 — vouch escrow money flow', () => {
     // only reachable as pre-pin history, which still settles exactly.)
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const utxo = await importUtxo();
     const mempool = await importMempool();
@@ -192,6 +200,17 @@ describe('P2-B phase 2 — vouch escrow money flow', () => {
 
     const voucher = makeTestIdentity();
     const target = makeTestIdentity();
+    const idRecords = await importIdentityRecords();
+    idRecords.putIdentityRecord(voucher.userId, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
+    idRecords.putIdentityRecord(target.userId, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 1,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
 
     // The voucher's ONLY asset, ever: a vouch box holding zero karma.
     const zeroVouch = makeVouchBox(0n, voucher.userId, target.userId);
@@ -240,6 +259,7 @@ describe('P2-B phase 2 — vouch escrow money flow', () => {
     // fails re-validation inside block application, which rejects the block.
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const utxo = await importUtxo();
     const mempool = await importMempool();

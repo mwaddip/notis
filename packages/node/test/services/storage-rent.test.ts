@@ -19,7 +19,8 @@ import {
   getKarmaBox,
   getKarmaValue,
 } from '../../src/store/utxo.js';
-import { getIdentityRecord } from '../../src/store/identity-records.js';
+import { getIdentityRecord, putIdentityRecord, getNetworkRecord } from '../../src/store/identity-records.js';
+import { getVouchBox } from '../../src/store/vouch-queries.js';
 import { validateTx } from '../../src/services/utxo-engine.js';
 import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
 import { splitCoinbase } from '../../src/services/coinbase-split.js';
@@ -55,6 +56,10 @@ const deps: UtxoEngineDeps = {
   getTopologyAuthor: () => null,
   getPendingPostAuthor: () => null,
   runInTransaction: (fn) => fn(),
+  getVouchBox,
+  getNetworkRecord,
+  membershipBarMultiplier: 1,
+  putIdentityRecord,
 };
 
 describe('storage rent', () => {

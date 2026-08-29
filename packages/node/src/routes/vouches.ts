@@ -6,8 +6,8 @@ import { jsonToTx } from './json-to-tx.js';
 import { respondError } from './respond-error.js';
 import {
   getVouchesForTargetPage,
-  getVouchesByVoucher,
-  getVouchEscrowsFor,
+  getVouchesForVoucherPage,
+  getVouchEscrowsForPage,
 } from '../store/index.js';
 import { parseLimit, isLimitError, parseAfter, isAfterError } from './page.js';
 
@@ -105,17 +105,26 @@ export function createRouter(deps: VouchesDeps): Router {
     const cooldownsParam = req.query.cooldowns as string | undefined;
 
     if (cooldownsParam !== undefined && voucher) {
+      const limit = parseLimit(req.query as Record<string, unknown>);
+      if (isLimitError(limit)) { res.status(400).json({ error: limit.error }); return; }
+      const after = parseAfter(req.query as Record<string, unknown>, 'id');
+      if (isAfterError(after)) { res.status(400).json({ error: after.error }); return; }
       const voucherBytes = new Uint8Array(Buffer.from(voucher, 'hex'));
       // ⛔ **No `targetId`, because a `VouchEscrowBox` carries none**
       // (TYPES_INTERFACE → VouchEscrowBox). It holds the voucher, the staked
       // value and the release height, so the response reports what committed
       // state says rather than a field reconstructed from somewhere else.
-      const escrows = getVouchEscrowsFor(voucherBytes);
+      const result = getVouchEscrowsForPage(voucherBytes, {
+        limit, after: after as string | undefined,
+      });
       res.status(200).json({
-        cooldowns: escrows.map((e) => ({
+        cooldowns: result.rows.map((e) => ({
+          boxId: e.id!,
           value: e.value.toString(),
           releaseAtBlock: e.releaseAtBlock,
         })),
+        count: result.count,
+        next: result.next,
       });
       return;
     }
@@ -141,30 +150,30 @@ export function createRouter(deps: VouchesDeps): Router {
     }
 
     if (voucher) {
+      const limit = parseLimit(req.query as Record<string, unknown>);
+      if (isLimitError(limit)) { res.status(400).json({ error: limit.error }); return; }
+      const after = parseAfter(req.query as Record<string, unknown>, 'id');
+      if (isAfterError(after)) { res.status(400).json({ error: after.error }); return; }
       const voucherBytes = new Uint8Array(Buffer.from(voucher, 'hex'));
-      const vouches = getVouchesByVoucher(voucherBytes);
+      const result = getVouchesForVoucherPage(voucherBytes, {
+        limit, after: after as string | undefined,
+      });
       res.status(200).json({
-        vouches: vouches.map((v) => ({
+        vouches: result.rows.map((v) => ({
           // The VouchBox's id. An unvouch spends a NAMED box, and no read
           // surface exposed one — so a client could hold an active vouch and
-          // still be unable to build the transaction that ends it. Available
-          // without a join: `getVouchesByVoucher` already resolves each row
-          // through `getBox`, and `rowToBox` sets `id` on every box it builds
-          // (the "every stored box has an id" invariant), so the assertion is
-          // on the store's guarantee, not on hope.
+          // still be unable to build the transaction that ends it.
           boxId: v.id!,
-          // ⛔ **The stake, because the escrow must carry the CONSUMED BOX'S
+          // ⛔ **The stake, because the escrow must carry the CONSUMED BOX's
           // value and never `VOUCH_KARMA_AMOUNT`** (TYPES_INTERFACE →
-          // VouchEscrowBox). A client that used the constant would build a
-          // conserving transaction for every box the cast pin holds for and a
-          // non-conserving one for any that it does not — which is exactly the
-          // coincidence the rule exists to remove.
+          // VouchEscrowBox).
           value: v.value.toString(),
           createdAtBlock: v.createdAtBlock,
           voucherId: Buffer.from(v.voucherId).toString('hex'),
           targetId: Buffer.from(v.targetId).toString('hex'),
         })),
-        count: vouches.length,
+        count: result.count,
+        next: result.next,
       });
       return;
     }

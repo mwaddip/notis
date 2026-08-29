@@ -57,6 +57,7 @@ import {
   insertBox,
   consumeBox,
   getIdentityRecord,
+  putIdentityRecord,
   hasActiveVouchEscrow,
 } from '../../src/store/index.js';
 import { castVouch, initiateUnvouch } from '../../src/services/vouch.js';
@@ -180,6 +181,10 @@ describe('vouch routes — the JSON edge', () => {
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
       },
+      getVouchBox: () => null,
+      getNetworkRecord: () => ({ memberCount: 1 }),
+      membershipBarMultiplier: 1,
+      putIdentityRecord: () => {},
     };
   }
 
@@ -306,8 +311,19 @@ describe('vouch routes — the JSON edge', () => {
   beforeEach(() => {
     initDb(':memory:');
     db = getDb();
+    db.prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     voucher = makeKeys();
     target = makeKeys();
+    putIdentityRecord(voucher.pub, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
+    putIdentityRecord(target.pub, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 1,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
   });
 
   afterEach(() => {

@@ -163,6 +163,7 @@ describe('escrow settlement leg', () => {
   it('(a) escrow at releaseAtBlock == h is consumed and returned as karma', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const utxo = await importUtxo();
     const voucher = makeTestIdentity();
@@ -205,6 +206,7 @@ describe('escrow settlement leg', () => {
   it('(b) escrow above the current height is not consumed', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const utxo = await importUtxo();
     const voucher = makeTestIdentity();
@@ -239,11 +241,22 @@ describe('escrow settlement leg', () => {
   it('(c) born-overdue escrow returns at h+1, not h', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const utxo = await importUtxo();
     const mempool = await importMempool();
+    const records = await import('../../src/store/identity-records.js');
     const voucher = makeTestIdentity();
     const target = makeTestIdentity();
+    const rootRec = {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    };
+    records.putIdentityRecord(voucher.userId, rootRec);
+    records.putIdentityRecord(target.userId, {
+      ...rootRec, memberSinceBlock: 0, invitedAtBlock: 1,
+    });
 
     const karma = makeKarmaBox(VOUCH_KARMA_AMOUNT, voucher.userId, 0);
     utxo.insertBox(karma);
@@ -287,6 +300,7 @@ describe('escrow settlement leg', () => {
   it('(d) two escrows are consumed in ascending box id order', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const utxo = await importUtxo();
     const voucher1 = makeTestIdentity();
@@ -340,6 +354,7 @@ describe('escrow settlement leg', () => {
   it('(e) the settlement conserves value with escrow returns', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const utxo = await importUtxo();
     const voucher = makeTestIdentity();
@@ -385,13 +400,23 @@ describe('escrow settlement leg', () => {
   it('(f) after the escrow returns, hasActiveVouchEscrow clears and a recast is accepted', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const utxo = await importUtxo();
     const mempool = await importMempool();
+    const records = await import('../../src/store/identity-records.js');
     const { VOUCH_MIN_BALANCE } = await import('@dagsocial/types');
     const voucher = makeTestIdentity();
     const target = makeTestIdentity();
     const target2 = makeTestIdentity();
+    const rootRec = {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    };
+    records.putIdentityRecord(voucher.userId, rootRec);
+    records.putIdentityRecord(target.userId, { ...rootRec, memberSinceBlock: 0, invitedAtBlock: 1 });
+    records.putIdentityRecord(target2.userId, { ...rootRec, memberSinceBlock: 0, invitedAtBlock: 1 });
 
     // Seed karma above VOUCH_MIN_BALANCE so the voucher can cast twice.
     const seedKarma = VOUCH_MIN_BALANCE + VOUCH_KARMA_AMOUNT;
@@ -461,6 +486,7 @@ describe('escrow settlement leg', () => {
   it('(g) a user transaction spending an escrow is refused', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const utxo = await importUtxo();
     const voucher = makeTestIdentity();
@@ -500,6 +526,10 @@ describe('escrow settlement leg', () => {
         getTopologyAuthor: () => null,
         getPendingPostAuthor: () => null,
         runInTransaction: (fn) => fn(),
+      getVouchBox: () => null,
+      getNetworkRecord: () => ({ memberCount: 1 }),
+      membershipBarMultiplier: 1,
+      putIdentityRecord: () => {},
       },
       tx,
       10,

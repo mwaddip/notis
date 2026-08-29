@@ -58,6 +58,8 @@ import {
   getKarmaBoxes,
   insertBox as storeInsertBox,
   consumeBox as storeConsumeBox,
+  getVouchBox as storeGetVouchBox,
+  getNetworkRecord as storeGetNetworkRecord,
 } from '../../src/store/index.js';
 import { validateTx, applyTx } from '../../src/services/utxo-engine.js';
 import type { UtxoEngineDeps, UtxoResult } from '../../src/services/utxo-engine.js';
@@ -165,6 +167,10 @@ describe('validateAndApplyTx', () => {
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
       },
+      getVouchBox: storeGetVouchBox,
+      getNetworkRecord: storeGetNetworkRecord,
+      membershipBarMultiplier: 1,
+      putIdentityRecord: storePutIdentityRecord,
     };
   }
 
@@ -174,13 +180,12 @@ describe('validateAndApplyTx', () => {
     // Create a fresh in-memory database and initialise schema
     initDb(':memory:');
     db = getDb();
+    db.prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
-    // Generate owner keypair (reused across tests)
     const { publicKey, privateKey } = generateKeyPairSync('ed25519');
     ownerPubKey = rawPublicKey(publicKey);
     ownerPrivKey = privateKey;
     ownerUserId = ownerPubKey;
-
 
     deps = makeDeps();
   });
@@ -188,6 +193,36 @@ describe('validateAndApplyTx', () => {
   afterEach(() => {
     closeDb();
   });
+
+  /** Seed an identity as a root (memberSinceBlock > 0, memberBar = 0). */
+  function seedAsRoot(id: Uint8Array, height = 1): void {
+    storePutIdentityRecord(id, {
+      lastActivityBlock: height,
+      lastDecayBlock: 0,
+      invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n,
+      memberSinceBlock: height,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
+    });
+  }
+
+  /** Seed a bare identity record (a resident — has a record but not a member). */
+  function seedRecord(id: Uint8Array, height = 1): void {
+    storePutIdentityRecord(id, {
+      lastActivityBlock: height,
+      lastDecayBlock: 0,
+      invitedAtBlock: height,
+      lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
+    });
+  }
 
   /** Create a KarmaBox, give it fixture provenance and its derived id, insert it. */
   function createAndInsertKarma(
@@ -282,6 +317,7 @@ describe('validateAndApplyTx', () => {
   // 2. Valid karma→karma+bond (the invite)
   // -------------------------------------------------------------------------
   it('valid karma to karma+bond (the invite)', () => {
+    seedAsRoot(ownerPubKey);
     const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
 
     const invitee = new Uint8Array(32).fill(0xaa);
@@ -601,6 +637,7 @@ describe('validateAndApplyTx', () => {
       strangerPrivKey = strangerKeys.privateKey;
 
       karmaBoxId = createAndInsertKarma(inviterPubKey, FUNDED, 41).id!;
+      seedAsRoot(inviterPubKey);
     });
 
     /** karma(FUNDED) → karma(FUNDED − bond) + bond. */
@@ -704,6 +741,11 @@ describe('validateAndApplyTx', () => {
         lastDecayBlock: 0,
         invitedAtBlock: 0,
         lifetimeLikesReceived: 900n,
+        memberSinceBlock: 0,
+        memberBar: 0,
+        memberVouches: 0,
+        memberLikes: 0n,
+        invitesUsed: 0,
       });
       const tx = signBy(inviteTx(), inviterPubKey, inviterPrivKey);
       const result = validateTx(deps, tx, 10);
@@ -1156,8 +1198,10 @@ describe('validateAndApplyTx', () => {
 
     it('accepts a conserving vouch tx K(v) -> K(v-1) + Vouch(1)', () => {
       const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
+      seedAsRoot(ownerPubKey);
       const { publicKey: targetPub } = generateKeyPairSync('ed25519');
       const targetPubRaw = rawPublicKey(targetPub);
+      seedRecord(targetPubRaw);
 
       const newKarma: CandidateOf<KarmaBox> = {
         boxType: 'karma',
@@ -1186,6 +1230,7 @@ describe('validateAndApplyTx', () => {
     });
 
     it('accepts a conserving invite K(v) -> K(v-25) + Bond(25)', () => {
+      seedAsRoot(ownerPubKey);
       const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
 
       const newKarma: CandidateOf<KarmaBox> = {
@@ -1287,12 +1332,15 @@ describe('validateAndApplyTx', () => {
 
     it('accepts an unvouch — the stake escrows into a VouchEscrowBox', () => {
       const { publicKey: targetPub } = generateKeyPairSync('ed25519');
+      const targetPubRaw = rawPublicKey(targetPub);
+      seedAsRoot(ownerPubKey);
+      seedRecord(targetPubRaw);
       const vouchBox: CandidateOf<VouchBox> = {
         boxType: 'vouch',
         value: VOUCH_KARMA_AMOUNT,
         createdAtBlock: 8,
         voucherId: ownerPubKey,
-        targetId: rawPublicKey(targetPub),
+        targetId: targetPubRaw,
       };
       const seededVouchBox = seedProvenance<VouchBox>(vouchBox, 1);
       const vouchBoxId = seededVouchBox.id;
@@ -1319,6 +1367,9 @@ describe('validateAndApplyTx', () => {
 
     it('unvouch escrow dates from the vouch cast, not the unvouch height', () => {
       const { publicKey: targetPub } = generateKeyPairSync('ed25519');
+      const targetPubRaw = rawPublicKey(targetPub);
+      seedAsRoot(ownerPubKey);
+      seedRecord(targetPubRaw);
       const CAST_HEIGHT = 5;
       const UNVOUCH_HEIGHT = 20;
       const vouchBox: CandidateOf<VouchBox> = {
@@ -1326,7 +1377,7 @@ describe('validateAndApplyTx', () => {
         value: VOUCH_KARMA_AMOUNT,
         createdAtBlock: CAST_HEIGHT,
         voucherId: ownerPubKey,
-        targetId: rawPublicKey(targetPub),
+        targetId: targetPubRaw,
       };
       const seeded = seedProvenance<VouchBox>(vouchBox, 1);
       storeInsertBox(seeded);
@@ -1372,6 +1423,9 @@ describe('validateAndApplyTx', () => {
 
     it('VouchBox is spendable at any height — withdrawal is never timing-gated', () => {
       const { publicKey: targetPub } = generateKeyPairSync('ed25519');
+      const targetPubRaw = rawPublicKey(targetPub);
+      seedAsRoot(ownerPubKey);
+      seedRecord(targetPubRaw);
       const CAST_HEIGHT = 100;
       const SPEND_HEIGHT = 101;
       const vouchBox: CandidateOf<VouchBox> = {
@@ -1379,7 +1433,7 @@ describe('validateAndApplyTx', () => {
         value: VOUCH_KARMA_AMOUNT,
         createdAtBlock: CAST_HEIGHT,
         voucherId: ownerPubKey,
-        targetId: rawPublicKey(targetPub),
+        targetId: targetPubRaw,
       };
       const seeded = seedProvenance<VouchBox>(vouchBox, 1);
       storeInsertBox(seeded);
@@ -1397,7 +1451,9 @@ describe('validateAndApplyTx', () => {
     });
 
     it('refuses a vouch cast backdated by more than VOUCH_CAST_HEIGHT_WINDOW', () => {
+      seedAsRoot(ownerPubKey);
       const { publicKey: targetPub } = generateKeyPairSync('ed25519');
+      seedRecord(rawPublicKey(targetPub));
       const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
       const HEIGHT = 20;
       const vouchOut: CandidateOf<VouchBox> = {
@@ -1424,7 +1480,9 @@ describe('validateAndApplyTx', () => {
     });
 
     it('accepts a vouch cast backdated by exactly VOUCH_CAST_HEIGHT_WINDOW', () => {
+      seedAsRoot(ownerPubKey);
       const { publicKey: targetPub } = generateKeyPairSync('ed25519');
+      seedRecord(rawPublicKey(targetPub));
       const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
       const HEIGHT = 20;
       const vouchOut: CandidateOf<VouchBox> = {
@@ -1928,6 +1986,7 @@ describe('validateAndApplyTx', () => {
     });
 
     it('T3: an exact-spend invite is accepted with bond alone; inviterId pins through the input', () => {
+      seedAsRoot(ownerPubKey);
       const karma = createAndInsertKarma(ownerPubKey, FIXTURE_BOND_KARMA, 1);
       const bondBox: AnyBoxCandidate = {
         boxType: 'bond',
@@ -1958,12 +2017,14 @@ describe('validateAndApplyTx', () => {
     });
 
     it('T3: an exact-spend vouch is accepted with vouch alone; voucherId pins through the input', () => {
+      seedAsRoot(ownerPubKey);
       // The balance check reads getKarmaValue (all unspent boxes), so a second
       // box clears VOUCH_MIN_BALANCE while the input is exactly the stake.
       createAndInsertKarma(ownerPubKey, VOUCH_MIN_BALANCE, 2);
       const karma = createAndInsertKarma(ownerPubKey, VOUCH_KARMA_AMOUNT, 1);
       const { publicKey: targetPub } = generateKeyPairSync('ed25519');
       const targetPubRaw = rawPublicKey(targetPub);
+      seedRecord(targetPubRaw);
       const vouchBox: AnyBoxCandidate = {
         boxType: 'vouch',
         value: VOUCH_KARMA_AMOUNT,

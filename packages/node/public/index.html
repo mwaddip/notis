@@ -236,6 +236,8 @@ hr{border:none;border-top:1px solid var(--border);margin:6px 0}
   <div class="status-bar" id="identityStatus" style="margin-top:8px">
     <div><span>Karma:</span> <strong id="identityKarma">—</strong></div>
     <div><span>Credits:</span> <strong id="identityCredits">—</strong></div>
+    <div><span>Tier:</span> <strong id="identityTier">—</strong></div>
+    <div id="invitesAvailableWrap" style="display:none"><span>Invites:</span> <strong id="identityInvites">0</strong></div>
   </div>
   <!-- The faucet is another member, not a privileged service: it holds an
        ordinary owner key and signs the same transactions anyone else can. Karma
@@ -336,7 +338,7 @@ const REPLY_AUTHOR_SHARE = 1n;
  * default rather than a rule, and it is the one value the mirror checks the
  * node would accept.
  */
-const INVITE_BOND_DEFAULT = 25n;
+let INVITE_BOND_DEFAULT = null;
 /**
  * The vouch stake, pinned at cast — NODE_INTERFACE → "Vouch transition rules".
  * A vouch is one vote and always stakes exactly this, so it is not a client
@@ -1764,10 +1766,17 @@ function hideProfileBar() {
  * leaves the button it enables unable to act.
  */
 async function fetchOwnVouch(targetId) {
-  const res = await fetch(API + '/vouches?voucher=' + encodeURIComponent(userId));
-  if (!res.ok) return null;
-  const data = await res.json();
-  return (data.vouches || []).find(v => v.targetId === targetId) || null;
+  let url = API + '/vouches?voucher=' + encodeURIComponent(userId);
+  while (url) {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const found = (data.vouches || []).find(v => v.targetId === targetId);
+    if (found) return found;
+    if (!data.next) break;
+    url = API + '/vouches?voucher=' + encodeURIComponent(userId) + '&after=' + encodeURIComponent(data.next);
+  }
+  return null;
 }
 
 async function checkVouchStatus(targetId) {
@@ -2394,6 +2403,18 @@ async function loadIdentityStatus() {
   if (!userId) return;
   const karmaEl = document.getElementById('identityKarma');
   const creditsEl = document.getElementById('identityCredits');
+  const tierEl = document.getElementById('identityTier');
+  const invitesWrap = document.getElementById('invitesAvailableWrap');
+  const invitesEl = document.getElementById('identityInvites');
+
+  // Read inviteBondMin from /status so the invite builder uses the network's floor.
+  try {
+    const statusRes = await fetch(API + '/status');
+    if (statusRes.ok) {
+      const statusData = await statusRes.json();
+      if (statusData.inviteBondMin) INVITE_BOND_DEFAULT = BigInt(statusData.inviteBondMin);
+    }
+  } catch {}
 
   try {
     const res = await fetch(API + '/karma/' + encodeURIComponent(userId));
@@ -2403,13 +2424,38 @@ async function loadIdentityStatus() {
       const eff = BigInt(data.effective);
       karmaEl.textContent = face === eff ? eff.toString() : `${eff} (${face})`;
       karmaEl.style.color = eff > 0n ? 'var(--greenText)' : 'var(--inkMute)';
+
+      // Tier display
+      if (data.memberSinceBlock > 0 && data.memberBar === 0) {
+        tierEl.textContent = 'root';
+        tierEl.style.color = 'var(--gold)';
+      } else if (data.member) {
+        tierEl.textContent = 'member';
+        tierEl.style.color = 'var(--greenText)';
+      } else {
+        tierEl.textContent = 'resident';
+        tierEl.style.color = 'var(--inkMute)';
+      }
+
+      // Invites available
+      if (data.invitesAvailable !== null && data.invitesAvailable !== undefined) {
+        invitesWrap.style.display = '';
+        invitesEl.textContent = String(data.invitesAvailable);
+      } else if (data.invitesAvailable === null) {
+        invitesWrap.style.display = '';
+        invitesEl.textContent = '∞';
+      } else {
+        invitesWrap.style.display = 'none';
+      }
     } else {
       karmaEl.textContent = '0';
       karmaEl.style.color = 'var(--inkMute)';
+      tierEl.textContent = '—';
     }
   } catch {
     karmaEl.textContent = '—';
     karmaEl.style.color = 'var(--inkMute)';
+    tierEl.textContent = '—';
   }
 
   try {
@@ -2582,6 +2628,10 @@ document.getElementById('createInviteBtn').addEventListener('click', async () =>
     // Advisory — `createInvite` owns the verdict, and it also owns the one
     // rejection this page cannot predict: the named key already being an
     // account. The bond is the whole cost; the claim mints the rest.
+    if (INVITE_BOND_DEFAULT === null) {
+      result.innerHTML = `<span class="result-msg err">Invite bond not loaded — /status did not answer</span>`;
+      return;
+    }
     if (karmaBox.effective < INVITE_BOND_DEFAULT) {
       result.innerHTML = `<span class="result-msg err">Insufficient karma: the bond is ${INVITE_BOND_DEFAULT}, you hold ${karmaBox.effective}</span>`;
       return;

@@ -55,6 +55,7 @@ export const BOX_ID_DOMAIN = encoder.encode('dagsocial/box-id/1');
 export const TX_ID_DOMAIN = encoder.encode('dagsocial/tx-id/1');
 export const MINT_ID_DOMAIN = encoder.encode('dagsocial/mint-tx-id/1');
 export const IDENTITY_KEY_DOMAIN = encoder.encode('dagsocial/identity-key/1');
+export const NETWORK_KEY_DOMAIN = encoder.encode('dagsocial/network-key/1');
 
 /**
  * The `boxType` tag table — **the single source of the box-type numbering.**
@@ -430,7 +431,7 @@ export function boxRecordBytes(candidate: BoxCandidate, txId: TxId, index: numbe
  * holds these bytes and has to parse them back; a reader written over there
  * would put the box layout in two packages, and the two would be free to
  * disagree about field order with nothing to catch it
- * (NODE_INTERFACE → Two entity kinds, from the other direction). Every other wire struct in this repo is a pair; this one is too.
+ * (NODE_INTERFACE → Three entity kinds, from the other direction). Every other wire struct in this repo is a pair; this one is too.
  *
  * Goes through `decodeStruct`, so it carries the whole four-part boundary check
  * (TYPES_INTERFACE → The boundary check): schema projection, exhaustion, and

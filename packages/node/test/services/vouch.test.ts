@@ -34,6 +34,9 @@ import {
   getIdentityRecord as storeGetIdentityRecord,
   hasActiveVouchEscrow as storeHasActiveVouchEscrow,
   getPendingEntries,
+  getVouchBox as storeGetVouchBox,
+  putIdentityRecord as storePutIdentityRecord,
+  getNetworkRecord as storeGetNetworkRecord,
 } from '../../src/store/index.js';
 import { castVouch, initiateUnvouch } from '../../src/services/vouch.js';
 import { config } from '../../src/config.js';
@@ -184,6 +187,10 @@ describe('vouch service', () => {
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
       },
+      getVouchBox: storeGetVouchBox,
+      getNetworkRecord: storeGetNetworkRecord,
+      membershipBarMultiplier: 1,
+      putIdentityRecord: storePutIdentityRecord,
     };
   }
 
@@ -222,6 +229,24 @@ describe('vouch service', () => {
     return tx;
   }
 
+  function seedNetworkRecord(memberCount = 1): void {
+    db.prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, ?)').run(memberCount);
+  }
+
+  function seedMember(pub: Uint8Array, memberSinceBlock = 1): void {
+    storePutIdentityRecord(pub, {
+      lastActivityBlock: memberSinceBlock,
+      lastDecayBlock: 0,
+      invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n,
+      memberSinceBlock,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
+    });
+  }
+
   beforeEach(() => {
     initDb(':memory:');
     db = getDb();
@@ -238,6 +263,9 @@ describe('vouch service', () => {
     targetPubKeyHex = Buffer.from(targetPubKey).toString('hex');
 
     deps = makeDeps();
+    seedNetworkRecord();
+    seedMember(voucherPubKey);
+    seedMember(targetPubKey);
   });
 
   afterEach(() => {
@@ -407,39 +435,33 @@ describe('vouch service', () => {
       };
 
       expect(() => castVouch(deps, tx, 10)).toThrow(
-        'Already vouching for an identity',
+        'A live vouch already exists for this (voucher, target) pair',
       );
     });
 
-    // -------------------------------------------------------------------
-    // Single active vouch, across all targets (audit L-4). The check used
-    // to be pair-scoped, so one identity could hold many concurrent
-    // VouchBoxes just by picking a different target each time.
-    // -------------------------------------------------------------------
-
-    it('rejects a second vouch aimed at a different target', () => {
+    it('a second vouch aimed at a different target is allowed', () => {
       createKarmaBox(voucherPubKey, 100n, 1);
       createVouchBox(voucherPubKey, targetPubKey, 5);
 
-      const otherTarget = rawPublicKey(generateKeyPairSync('ed25519').publicKey);
-      const tx = vouchTxFor(voucherPubKey, otherTarget);
-
-      expect(() => castVouch(deps, tx, 10)).toThrow(
-        'Already vouching for an identity',
+      const otherKeys = generateKeyPairSync('ed25519');
+      const otherTarget = rawPublicKey(otherKeys.publicKey);
+      seedMember(otherTarget);
+      const tx = signedVouchTx(
+        createKarmaBox(voucherPubKey, 100n, 6).id!,
+        voucherPubKey, otherTarget, 10,
       );
+      expect(castVouch(deps, tx, 10).status).toBe('pending');
     });
 
-    it('rejects a second vouch while the first is still pending in the mempool', () => {
+    it('rejects a second vouch for the same pair while the first is still pending', () => {
       const karma = createKarmaBox(voucherPubKey, 100n, 1);
 
-      // First vouch — validated and queued, no VouchBox in the UTXO set yet.
       const firstTx = signedVouchTx(karma.id!, voucherPubKey, targetPubKey, 5);
       expect(castVouch(deps, firstTx, 5).status).toBe('pending');
 
-      const otherTarget = rawPublicKey(generateKeyPairSync('ed25519').publicKey);
-      const secondTx = vouchTxFor(voucherPubKey, otherTarget);
+      const secondTx = vouchTxFor(voucherPubKey, targetPubKey);
 
-      expect(() => castVouch(deps, secondTx, 6)).toThrow('Vouch already pending');
+      expect(() => castVouch(deps, secondTx, 6)).toThrow('A vouch for this pair is already pending');
     });
 
     it('control — a voucher with no active or pending vouch is accepted', () => {
@@ -454,6 +476,7 @@ describe('vouch service', () => {
 
       const otherKeys = generateKeyPairSync('ed25519');
       const otherPub = rawPublicKey(otherKeys.publicKey);
+      seedMember(otherPub);
       const otherKarma = createKarmaBox(otherPub, 100n, 1);
       const tx = signedVouchTx(otherKarma.id!, otherPub, targetPubKey, 10, otherKeys.privateKey);
 
@@ -464,10 +487,11 @@ describe('vouch service', () => {
       // Give voucher enough karma
       createKarmaBox(voucherPubKey, 100n, 1);
 
-      // Set up a different target that has an active cooldown
       const cooldownTarget = (() => {
         const keys = generateKeyPairSync('ed25519');
-        return rawPublicKey(keys.publicKey);
+        const pub = rawPublicKey(keys.publicKey);
+        seedMember(pub);
+        return pub;
       })();
 
       // ⛔ An unreleased escrow BOX for this voucher — the gate is keyed on the

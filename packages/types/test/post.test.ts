@@ -406,7 +406,7 @@ describe('constants', () => {
   it('invite constants are defined', () => {
     // The bond an inviter picks from, and the grant equals whichever value they
     // pick. There is no separate grant constant to pin.
-    expect(INVITE_BOND_MIN).toBe(25n);
+    expect(INVITE_BOND_MIN).toBe(100n);
     expect(INVITE_BOND_MAX).toBe(250n);
     expect(INVITE_PROBATION_BLOCKS).toBe(43200); // 30 days at 60s blocks
     expect(INVITE_BOND_VEST_PER_LIKES).toBe(3);

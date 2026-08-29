@@ -97,7 +97,7 @@ async function importRecords() {
   return (await import('../../src/store/identity-records.js')) as {
     getIdentityRecord: (
       id: Uint8Array,
-    ) => { lastActivityBlock: number; lastDecayBlock: number; lifetimeLikesReceived: bigint } | null;
+    ) => { lastActivityBlock: number; lastDecayBlock: number; lifetimeLikesReceived: bigint, memberSinceBlock: 0, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0 } | null;
   };
 }
 
@@ -252,6 +252,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
   it('4 likes pay 0 and carry 4; the 5th in the next block pays 4 and zeroes the carry', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
     const posts = await importPosts();
     await importRecords();
@@ -306,6 +307,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
       vi.resetModules();
       const db = await importDb();
       db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
       const utxo = await importUtxo();
       const posts = await importPosts();
       await importRecords();
@@ -353,6 +355,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
   it('two authors in one block receive two settlement outputs sharing one txId', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
     const posts = await importPosts();
     const blockApply = await importBlockApply();
@@ -399,6 +402,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
   it('likes on two posts of one author in one block produce one settlement output', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
     const posts = await importPosts();
     const blockApply = await importBlockApply();
@@ -456,6 +460,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
   it('two like txs for one (liker, target) in one block reject the whole block', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
     const posts = await importPosts();
     const likeRecords = await importLikeRecords();
@@ -491,6 +496,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
   it('a like confirmed in block N rejects the same (liker, target) in block N+1 — the N1→N2 window is closed', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
     const posts = await importPosts();
     const likeRecords = await importLikeRecords();
@@ -535,6 +541,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
   it('a spare-signature like tx embedded directly in a block applies, with the liker = the karma input owner', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
     const posts = await importPosts();
     const likeRecords = await importLikeRecords();
@@ -603,6 +610,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
   it('round-trip: record inserts and the carry write (paid 0) revert exactly', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
     const posts = await importPosts();
     await importRecords();
@@ -645,6 +653,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
   it('round-trip: the payout mint restores merge-consumed pre-existing karma and the prior carry', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
     const posts = await importPosts();
     await importRecords();
@@ -700,6 +709,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
     // same record).
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const likes = await import('../../src/store/likes.js');
     const journalStore = await importJournalStore();
     const forkResolution = await importForkResolution();
@@ -749,6 +759,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
   it('a like on a pruned target rejects the block — the stump is created by the real prune path', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
     const posts = await importPosts();
     await importRecords();
@@ -802,6 +813,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
   it('a reply moves 1 karma into the parent author accrual and no counter; a like moves the counter', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     await importUtxo();
     const posts = await importPosts();
     const records = await importRecords();

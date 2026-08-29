@@ -69,6 +69,10 @@ const engineDeps: UtxoEngineDeps = {
   getTopologyAuthor: () => null,
   getPendingPostAuthor: () => null,
   runInTransaction: (fn) => fn(),
+      getVouchBox: () => null,
+      getNetworkRecord: () => ({ memberCount: 1 }),
+      membershipBarMultiplier: 1,
+      putIdentityRecord: () => {},
 };
 
 describe('sendCredits (validate + pool — P2-B phase 3)', () => {

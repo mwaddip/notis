@@ -98,7 +98,17 @@ const MIGRATIONS = [
     last_activity_block INTEGER NOT NULL,
     last_decay_block INTEGER NOT NULL,
     invited_at_block INTEGER NOT NULL DEFAULT 0,
-    lifetime_likes_received INTEGER NOT NULL DEFAULT 0
+    lifetime_likes_received INTEGER NOT NULL DEFAULT 0,
+    member_since_block INTEGER NOT NULL DEFAULT 0,
+    member_bar INTEGER NOT NULL DEFAULT 0,
+    member_vouches INTEGER NOT NULL DEFAULT 0,
+    member_likes INTEGER NOT NULL DEFAULT 0,
+    invites_used INTEGER NOT NULL DEFAULT 0
+  )`,
+
+  `CREATE TABLE IF NOT EXISTS network_record (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    member_count INTEGER NOT NULL
   )`,
 
   // Like-records (NODE_INTERFACE → "Like-records"): (liker, targetPostId) pairs,
@@ -134,6 +144,7 @@ const MIGRATIONS = [
     like_liker TEXT,
     invite_inviter TEXT,
     vouch_voucher TEXT,
+    vouch_target TEXT,
     tx_fee INTEGER,
     tx_bytes INTEGER,
     tx_inputs TEXT,

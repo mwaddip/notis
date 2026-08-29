@@ -46,11 +46,11 @@ interface AvlProofResponse {
   atHeight: number;
   stateRoot: string;
   proof: string;
-  kind: 'box' | 'record' | null;
+  kind: 'box' | 'record' | 'network' | null;
   value: unknown;
 }
 
-// NODE_INTERFACE → Two entity kinds — the AVL value carries provenance
+// NODE_INTERFACE → Three entity kinds — the AVL value carries provenance
 export async function proveBoxes(
   nodeUrl: string,
   user: string,
@@ -141,10 +141,11 @@ async function proveOneBox(
     };
   }
 
-  if (resp.kind === 'record') {
+  // NODE_INTERFACE → Three entity kinds
+  if (resp.kind != null && resp.kind !== 'box') {
     return {
       boxId, boxClass, value: 0n, status: 'unproven',
-      verdict: 'unproven: node returned a record for a box id (finding)',
+      verdict: `unproven: node returned kind '${resp.kind}' for a box id (finding)`,
     };
   }
 
@@ -174,7 +175,7 @@ async function proveOneBox(
     };
   }
 
-  // NODE_INTERFACE → Two entity kinds — the value carries the full record
+  // NODE_INTERFACE → Three entity kinds — the value carries the full record
   let record;
   try {
     record = boxRecordFromBytes(avlResult.value);

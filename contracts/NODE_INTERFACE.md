@@ -147,11 +147,11 @@ from a first page by `next` alone; the counts beside a page (`descendantCount`, 
 is ignored like any unknown parameter. **Pending posts have no committed position**, so the cursor
 walks committed rows only, and every page of `GET /posts` and of the thread carries `pending` —
 that list's pending rows, newest arrival first, cut to `limit` — beside `pendingCount` over all of
-them. The paged lists: `GET /posts`, the thread's `descendants`, `/vouches?target=`, and the
-`boxes` and `bonds` of `/karma/:userId`, `/credits/:userId` and `/invites/:userId` (→ UTXO
-queries). The thread's `ancestors` is not paged — the nearest `limit`, oldest first. Every other
-list a view returns is bounded by rule: `/vouches?voucher=` by the single active vouch, its
-cooldown arm by the cooldown, a block's body by its caps.
+them. The paged lists: `GET /posts`, the thread's `descendants`, `/vouches?target=`,
+`/vouches?voucher=` and its cooldown arm, and the `boxes` and `bonds` of `/karma/:userId`,
+`/credits/:userId` and `/invites/:userId` (→ UTXO queries). The thread's `ancestors` is not paged
+— the nearest `limit`, oldest first. Every other list a view returns is bounded by rule: a block's
+body by its caps.
 
 **`viewer` names the identity a read is for.** Optional on `GET /posts`, `GET /posts/:id` and
 `GET /posts/:id/thread`, 64 hex chars (400 otherwise). When it is present, every `PostJson` in the
@@ -368,7 +368,7 @@ gateway DoS for the price of one extra signature.
 |--------|------|---------|----------|--------|
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
-| `POST` | `/invites` | `{ tx: UtxoTransaction }` — inviter-signed create tx naming the invitee's public key | `{ status: "pending", txId, expiresAtHeight, bondBoxId }` | 400 if insufficient karma, 400 if that key is already an account |
+| `POST` | `/invites` | `{ tx: UtxoTransaction }` — inviter-signed create tx naming the invitee's public key | `{ status: "pending", txId, expiresAtHeight, bondBoxId }` | 400 if insufficient karma, 400 if that key is already an account, 400 if the inviter is neither a root nor a member with an invite available |
 
 **There is one step, and no secret in it** (`ARCHITECTURE` → Invite System). The
 invitee shares their public key out of band; the inviter submits one transaction,
@@ -376,6 +376,10 @@ and the block's settlement grants the invitee the bond's value from the pool.
 
 **Create flow:**
 
+0. Verify the inviter is a root, or a member with `invitesAvailable ≥ 1` —
+   `⌊memberVouches / D(N)⌋ − invitesUsed`, `D` from the network record (`ARCHITECTURE → The
+   invite budget`). A courtesy ahead of the engine's rule (→ Bond transition rules), like every
+   check below: the refusal names the reason, and the verdict is the arm's
 1. Verify the inviter holds ≥ **this transaction's own bond value** in available
    karma. ⛔ **Against the bond named, never against a constant** — the inviter
    picks it, so a fixed threshold passes someone who cannot afford the invite
@@ -394,7 +398,8 @@ and the block's settlement grants the invitee the bond's value from the pool.
 
 Block application writes `invitedAtBlock` at the grant, which starts the
 probation clock; the key becomes an account in the same step, which is what bars
-any further invite naming it. The bond settles `INVITE_PROBATION_BLOCKS` after
+any further invite naming it; and the inviter's `invitesUsed` is incremented when the bond is
+created, never decremented. The bond settles `INVITE_PROBATION_BLOCKS` after
 creation, so nothing stays open. `expiresAtHeight` on the response is the
 **mempool** entry's expiry.
 
@@ -405,23 +410,24 @@ creation, so nothing stays open. `expiresAtHeight` on the response is the
 | `POST` | `/vouches` | `castVouch` | Signed UTXO tx (KarmaBox to KarmaBox + VouchBox) |
 | `DELETE` | `/vouches/:targetId` | `initiateUnvouch` | Signed UTXO tx (VouchBox to none) |
 | `GET` | `/vouches?target=X&limit=50&after=<boxId>` | `getVouchesForTargetPage` | `{ vouches: [{ voucherId, targetId }], count, next }` — one page of the identity's vouchers, ascending box id, strictly after `after`; `count` over the whole set, `next` the key to continue from (HTTP API → "Every list a view returns is a page") |
-| `GET` | `/vouches?voucher=X` | `getVouchesByVoucher` | List who identity vouches for |
-| `GET` | `/vouches?voucher=X&cooldowns=1` | `getVouchCooldowns` | Active cooldowns |
+| `GET` | `/vouches?voucher=X&limit=50&after=<boxId>` | `getVouchesByVoucherPage` | `{ vouches: [{ boxId, value, voucherId, targetId, createdAtBlock }], count, next }` — one page of the identity's live vouches, ascending box id strictly after `after`; `count` over the whole set, `next` the key to continue from. The one arm carrying `boxId`: the unvouch builder names the box it spends |
+| `GET` | `/vouches?voucher=X&cooldowns=1&limit=50&after=<boxId>` | `getVouchCooldownsPage` | `{ cooldowns: [{ boxId, value, releaseAtBlock }], count, next }` — one page of the identity's unspent escrows, ascending box id strictly after `after` |
 
-**Single active vouch (L-4):** each identity may vouch for at most one target
-at a time (ARCHITECTURE invariant). `castVouch` rejects when the voucher has
-ANY active VouchBox — not merely one for the same target — or any pending
-vouch transaction in the mempool (`hasPendingVouch`). The pair-scoped
-cooldown check (no re-vouch of the same target during its cooldown) is
-**also a consensus rule as of P2-B phase 2** — the service check is now the
-mempool-side mirror of the apply-time gate, not the only enforcement (see
-"Vouch transition rules"). The single-active-vouch and pending-vouch checks
-above remain service-layer policy.
+**Members vouch, without a cap.** `castVouch` refuses with a named `400`, ahead of the engine and
+changing no verdict: a voucher who is not a member (`ARCHITECTURE → Membership`); a target that
+holds no `IdentityRecord`; a self-vouch; a live vouch for the same `(voucher, target)` pair — in
+the UTXO set, or pending in this node's pool (`hasPendingVouch(voucherId, targetId)`, the
+pair-scoped mirror). Each is a consensus rule of the cast arm (→ Vouch transition rules); the
+escrow gate — no cast while an unspent escrow names the voucher — is also the arm's, mirrored
+here the same way. There is no one-vouch-at-a-time rule and no voucher-scoped pending check: a
+member holds as many live vouches as they have karma to stake.
 
 > ✅ **The demo UI builds and signs both transactions.** `buildVouchTx` and `buildUnvouchTx` in
 > `node/public/index.html` construct them, `signTxId` signs, and both handlers POST `{ tx }`.
 > Unvouch resolves the VouchBox id from `GET /vouches?voucher=` — the only arm carrying `boxId` —
 > **at click time**, since a box can be spent between opening a profile and pressing the button.
+> The profile shows the identity's standing — resident, member or root — and a member's invites
+> available, read from `GET /karma/:userId`; the vouch button does not refuse a second target.
 >
 > ⚠ **The page's builders are pinned to the consensus rule, not merely present.**
 > `test/unit/ui-crypto-mirror.test.ts` lifts both out of the page **by name** and pins
@@ -512,7 +518,7 @@ against live content).
 
 | Method | Path | Response | Errors |
 |--------|------|----------|--------|
-| `GET` | `/karma/:userId?limit=50&after=<value>:<boxId>` | `{ userId: hex, total, effective, boxes: [{ boxId, value }], boxCount, next, lastActivityBlock, lastDecayBlock, lifetimeLikesReceived, height }` — `total` the face sum over every unspent karma box (`getKarmaTotal`, the view's `SUM` over the set `getKarmaValue` sums), `effective` that sum after virtual decay (`effectiveKarma`, the call every karma-sufficiency check on the node makes), `boxes` one page in `value DESC, id` strictly after `after`, `boxCount` over the whole set, `next` the key to continue from. **An identity with no unspent karma box answers the empty page** — `boxes: []`, `boxCount 0`, `total "0"`, `effective "0"`, `next null`, its clocks and `lifetimeLikesReceived` (a decimal string, the record's counter — `"0"` where none) from the record, `height` — an exact spend leaves a live identity holding no box, and a page of zero is a page ("Every list a view returns is a page") | 400 if `userId` is not 64 chars or a present `limit`/`after` does not parse |
+| `GET` | `/karma/:userId?limit=50&after=<value>:<boxId>` | `{ userId: hex, total, effective, boxes: [{ boxId, value }], boxCount, next, lastActivityBlock, lastDecayBlock, lifetimeLikesReceived, memberSinceBlock, memberBar, memberVouches, memberLikes, invitesUsed, member, invitesAvailable, height }` — `total` the face sum over every unspent karma box (`getKarmaTotal`, the view's `SUM` over the set `getKarmaValue` sums), `effective` that sum after virtual decay (`effectiveKarma`, the call every karma-sufficiency check on the node makes), `boxes` one page in `value DESC, id` strictly after `after`, `boxCount` over the whole set, `next` the key to continue from. **An identity with no unspent karma box answers the empty page** — `boxes: []`, `boxCount 0`, `total "0"`, `effective "0"`, `next null`, its clocks, `lifetimeLikesReceived` and `memberLikes` (decimal strings, the record's counters — `"0"` where none) and the membership fields from the record, `height` — an exact spend leaves a live identity holding no box, and a page of zero is a page ("Every list a view returns is a page") | 400 if `userId` is not 64 chars or a present `limit`/`after` does not parse |
 | `GET` | `/credits/:userId?limit=50&after=<value>:<boxId>` | `{ userId: hex, total, boxes: [{ boxId, value, lockedUntilBlock? }], boxCount, next }` — `total` over every unspent credit box (`getCreditValue`), `boxes` one page in `value DESC, id` strictly after `after`, `boxCount` over the whole set, `next` the key to continue from; an identity with no unspent credit box answers the empty page — `boxes: []`, `boxCount 0`, `total "0"`, `next null` | 400 if `userId` is not 64 chars or a present `limit`/`after` does not parse |
 | `GET` | `/invites/:userId?limit=50&after=<boxId>` | `{ bonds: [{ id, value, inviterId, inviteePublicKey }], bondCount, next }` — the inviter's **unspent** bonds, one page ascending box id strictly after `after`, `bondCount` over the whole set, `next` the key to continue from; a bond IS the open invite, so a settled one is not listed and there is no second list | 400 if `userId` is not 64 chars or a present `limit`/`after` does not parse; an inviter holding no live bond answers `{ bonds: [], bondCount: 0, next: null }` |
 
@@ -532,6 +538,15 @@ consensus valuation, which is the mirror class. The three plain numbers beside t
 `lastActivityBlock` and `lastDecayBlock`, the owner's identity-record clocks (`0` where no record
 exists), and `height`, the chain height at the time of the response — are that valuation's inputs,
 served so a client can show when the next period falls.
+
+**`/karma/:userId` answers standing, and the client evaluates nothing.** `memberSinceBlock`,
+`memberBar`, `memberVouches` and `invitesUsed` are the record's plain numbers, `memberLikes` its
+second counter as a decimal string (`0` and `"0"` where no record exists); `member` is the derived
+predicate `memberSinceBlock > 0 ∧ memberVouches ≥ memberBar` evaluated by the node (`ARCHITECTURE
+→ Membership`), and `invitesAvailable` is `⌊memberVouches / D(N)⌋ − invitesUsed` for a member, clamped at `0`
+(a bar that rose after invites were spent can put the difference below zero), `0` for a resident —
+a lapsed member included — and **`null` for a root** — unbounded, not zero. A client deriving either from the
+five fields holds a second implementation of a consensus predicate, the mirror class.
 
 ### Credits
 
@@ -621,6 +636,10 @@ faucet is a client of the invite grant rather than a transition of its own.
 `initSystemKeypair`, the `system_keypair` row and `isSystemBox` are gone, along with the same-owner
 karma exemption `isSystemBox` gated. No consensus rule resolves against a configured key.
 
+**The faucet identity is a root** (`ARCHITECTURE → Membership`): its record is seeded with
+`memberBar = 0`, so it vouches and invites with no budget check and never lapses — which is how a
+chain whose committee is empty admits its first member.
+
 **Idempotency is consensus state, not a ledger.** An invite may name only a key holding no identity
 record, checked in the invite transition — so an identity is granted once, ever, from state that is in
 the AVL root and reads the same way on every node. The `faucet_grants` table is gone: a node-local row
@@ -655,7 +674,7 @@ the chain) is not served. The prover behind it is `Nipopow prover` below.
 
 | Method | Path | Response |
 |--------|------|----------|
-| `GET` | `/status` | `{ networkType, blockHeight, postCount, pendingPosts, totalKarma, liquidKarma, totalCredits, inviteProbationBlocks, vouchCooldownBlocks }` |
+| `GET` | `/status` | `{ networkType, blockHeight, postCount, pendingPosts, totalKarma, liquidKarma, totalCredits, inviteProbationBlocks, vouchCooldownBlocks, inviteBondMin, inviteBondMax, membership: { memberCount, memberBar, memberLikesBar } }` |
 
 > ⚠ **`totalKarma` is karma in existence; `liquidKarma` is karma its owner can spend now.**
 > `totalKarma` sums the karma-bearing types; `liquidKarma` sums `karma` alone. `credit` is the
@@ -665,7 +684,17 @@ the chain) is not served. The prover behind it is `Nipopow prover` below.
 > `VouchEscrowBox` whose `releaseAtBlock` the engine pins as `vouch.createdAtBlock +
 > vouchCooldownBlocks` ("Vouch transition rules"). `inviteProbationBlocks` is the probation window
 > the settlement dates from `IdentityRecord.invitedAtBlock` ("Bond transition rules"). Both are
-> per-network values, plain numbers, served rather than held as client constants.
+> per-network values, plain numbers, served rather than held as client constants. `inviteBondMin`
+> and `inviteBondMax` are served for the same reason — the range the invite-create arm admits a bond
+> in (→ Legal box transitions) is per-network, so a client building an invite reads the floor here
+> rather than holding one network's constant — as decimal strings, being `bigint` amounts.
+>
+
+> `membership` is the network record read once: `memberCount` is `N`, `memberBar` is `D(N)` and
+> `memberLikesBar` is `Y(N)` (`ARCHITECTURE → Membership`) — the bar a newcomer faces and the
+> divisor of every member's invite budget, served so a client shows them rather than reproducing
+> `icbrt` and the profile's multiplier.
+>
 
 #### Three karma sets, and none derives from another
 
@@ -1548,8 +1577,8 @@ the treasury.
 | KarmaBox | KarmaBox + KarmaPriceBox | **Thread**: `post` present with no `parentRefs` ⟺ exactly one `KarmaPriceBox` output of exactly `POST_PRICE_THREAD` and no `LikeAccrualBox`. At most one karma output, same owner as all inputs — omitted when the change would be zero; the signing key is the post's author. **Value conserved** — a post carries **no** deficit and **no** surplus |
 | KarmaBox | KarmaBox + KarmaPriceBox + LikeAccrualBox | **Reply**: `post` present with one parent ⟺ exactly one `KarmaPriceBox` output of exactly `POST_PRICE_REPLY − REPLY_AUTHOR_SHARE` **and** exactly one `LikeAccrualBox` output of exactly `REPLY_AUTHOR_SHARE` whose `author` is the parent's author from `block_topology`. The karma output as above; the signing key is the post's author. **Value conserved** |
 | KarmaBox | KarmaBox | **Prune** (→ Prune transactions): `prune` present ⟹ all-karma inputs sharing one owner, exactly one karma output, **total output equal to total input**, `inputKarma.owner` is the root's `block_topology` author, and `verifyPruneCommitDomains(tx.prune)` passes. ⛔ **An IMPLICATION, not a biconditional** — the converse would forbid the bare self-consolidation the row above admits, so recognition is by payload presence and never by shape |
-| KarmaBox | KarmaBox + BondBox | **Invite**: karma outputs same owner, value conserved; `inviteBondMin ≤ bond.value ≤ inviteBondMax` (per-network caps) and the settlement grants **exactly `bond.value`**; `bond.inviterId` = the karma input owner; `inviteePublicKey` holds **no `IdentityRecord`**, and **no other bond in this block names it** |
-| KarmaBox | KarmaBox + VouchBox | Vouch cast: karma outputs same owner; `vouch.value == VOUCH_KARMA_AMOUNT`; `vouch.voucherId` == the karma input's owner; the voucher's **summed** karma balance ≥ `VOUCH_MIN_BALANCE`; no unspent escrow names the voucher; `vouch.createdAtBlock` within `[height − VOUCH_CAST_HEIGHT_WINDOW, height]` (the upper bound is step 6's; the window bounds backdating, which would shorten the cooldown the escrow derives from it) |
+| KarmaBox | KarmaBox + BondBox | **Invite**: karma outputs same owner, value conserved; `inviteBondMin ≤ bond.value ≤ inviteBondMax` (per-network caps) and the settlement grants **exactly `bond.value`**; `bond.inviterId` = the karma input owner; `inviteePublicKey` holds **no `IdentityRecord`**, and **no other bond in this block names it**; `bond.inviterId` is a root, or a member with `⌊memberVouches / D(N)⌋ − invitesUsed ≥ 1` on its record at apply, `N` from pre-body state (→ Bond transition rules, → Membership pass) |
+| KarmaBox | KarmaBox + VouchBox | Vouch cast: karma outputs same owner; `vouch.value == VOUCH_KARMA_AMOUNT`; `vouch.voucherId` == the karma input's owner; the voucher is a member — `member(voucher)` on its record at apply (→ Membership pass); `vouch.targetId ≠ vouch.voucherId`; the target holds an `IdentityRecord`; no unspent `vouch` box carries the same `(voucherId, targetId)`; the voucher's **summed** karma balance ≥ `VOUCH_MIN_BALANCE`; no unspent escrow names the voucher; `vouch.createdAtBlock` within `[height − VOUCH_CAST_HEIGHT_WINDOW, height]` (the upper bound is step 6's; the window bounds backdating, which would shorten the cooldown the escrow derives from it) |
 | VouchBox | VouchEscrowBox | **Unvouch**: exactly one VouchBox input, voucher-signed; exactly one escrow output with `value ==` the consumed box's, `owner == voucherId`, and `releaseAtBlock == vouch.createdAtBlock + vouchCooldownBlocks` — an exact pin, derivable from the consumed box alone. The cooldown runs from the **cast**, so a long-held endorsement costs no extra lockup and no withdrawal pattern returns the stake early. Value conserved |
 | VouchEscrowBox | KarmaBox | **Block application only**: the settlement of the first block at or past `releaseAtBlock` consumes the escrow and returns its value to `owner` as karma (§The settlement transaction) — **no user transaction can spend a `VouchEscrowBox`**. Withdrawal itself is never gated — only the stake's return waits, and it waits in the escrow |
 | LikeAccrualBox | — | **Settlement only.** No user transition admits one as an input |
@@ -1763,16 +1792,15 @@ There is **no other legal bond or invite shape**. In particular:
 
 ### Bond transition rules
 
-- **A bond is never spent, only settled.** Creation, the probation clock,
-  forfeiture and the cancellation return are all block application's, so no
+- **A bond is never spent, only settled.** Creation, the probation clock and
+  forfeiture are all block application's, so no
   transition admits a bond into a user transaction and no signature reaches it.
   This is what closes audit F-consensus-1 by construction rather than by a rule: there
   is no shape in which any party — inviter or invitee — can direct a
   bond's value anywhere.
-- **The bond's value only ever reaches `bond.inviterId` or the burn.**
-  Settlement mints the vested part to the inviter and destroys the rest;
-  cancellation returns the whole of it. No path pays a bond to the
-  invitee.
+- **The bond's value only ever reaches `bond.inviterId` or the pool.**
+  Settlement returns the vested part to the inviter and the remainder to the
+  pool. No path pays a bond to the invitee.
 - **Settlement happens once, at or past the deadline, and reads only likes.**
   `IdentityRecord.invitedAtBlock + INVITE_PROBATION_BLOCKS` is the height a
   bond becomes eligible; the settlement takes at most
@@ -1786,11 +1814,9 @@ There is **no other legal bond or invite shape**. In particular:
   read, at that height or any other — the earlier spend-time predicate
   measured what an invitee *held*, which the invite's own mint satisfied
   before they had done anything.
-- **The probation clock starts at the claim, not at creation.** An invite
-  that is never claimed never starts one, so an inviter's bond is locked
-  for exactly as long as they leave the invite open. `invitedAtBlock` is
-  written by block application when the claim applies, which is the same
-  event that mints the karma — one height, recorded once, read by the
+- **The probation clock starts at the grant.** `invitedAtBlock` is written by
+  block application when the settlement grants the invitee, which is the same
+  event that creates the record — one height, recorded once, read by the
   settlement sweep.
 - **Forfeiture needs no conservation exception.** A bond is destroyed by
   settlement, which is block application, and the gate governs
@@ -1825,8 +1851,18 @@ There is **no other legal bond or invite shape**. In particular:
   legal invitee, and `lifetimeLikesReceived` necessarily `0` at that
   point. Being barred costs an uninvited party one key generation, since
   the identity carries nothing.
+- ⛔ **Only a root or a member creates a bond, and a member's invites are a budget.** The
+  invite-create arm reads the inviter's record at apply: a root (`memberSinceBlock > 0`,
+  `memberBar = 0`) passes unconditionally; a member passes iff
+  `⌊memberVouches / D(N)⌋ − invitesUsed ≥ 1`, with `D(N)` from the network record of pre-body
+  state (→ Membership pass); a resident is refused. Applying the transaction increments
+  `invitesUsed` on the inviter's record, carrying every other field through, and nothing ever
+  decrements it — a spent invite is never revoked (`ARCHITECTURE → The invite budget`). Two
+  invites by one member in one block read the record as the first left it, so the second needs
+  the second slot.
 - **Engine inputs these rules need:** the invite-create arm reads
-  `getIdentityRecord` for the uniqueness check, and block application
+  `getIdentityRecord` for the uniqueness check and for the inviter's standing, and the network
+  record for `D`; block application
   gains a settlement sweep keyed on `invitedAtBlock` —
   `getBondsSettlingAt`'s shape. `checkTransitions` needs no karma-sum read
   and no settle height.
@@ -1965,16 +2001,90 @@ inside the network's reported supply.
   box id, is an input of the block's settlement and its value a karma output to
   `owner`. No user transaction spends an escrow — `vouch_escrow` is block
   application's, like `bond`.
-- **Self-vouch stays service-layer policy, not consensus.** At consensus a
-  self-vouch is a value-neutral round trip of the actor's own karma, and vouch
-  *score* is interpretation-layer (the node records; clients rank). Recorded
-  so it is not promoted without a reason.
+- ⛔ **Only a member casts.** The arm evaluates `member(voucher)` on the voucher's record as it
+  stands at apply (→ Membership pass); a resident's cast is refused. A resident's endorsement of
+  anyone is their likes.
+- ⛔ **The target holds an `IdentityRecord`.** The `+1` below is a record write, and a record is
+  the invite bar (→ Bond transition rules): a vouch naming an uninvited key would create its
+  record and bar that key from ever being invited — one stranger's 1-karma stake locking anyone
+  out. The arm admits no bare 32 bytes as a target.
+- ⛔ **No self-vouch, at consensus.** A vouch toward oneself would be one counted endorsement
+  toward the voucher's own bar and invite budget, so `vouch.targetId ≠ vouch.voucherId` is the
+  arm's rule.
+- ⛔ **One live vouch per `(voucher, target)` pair.** Distinct endorsers are the whole point of
+  the bar, and a duplicate would count one twice; a cast is refused while an unspent `vouch` box
+  carries the same pair. The pair-scoped cooldown — no re-vouch of the same target while its
+  escrow stands — is the escrow gate above and stands beside this.
+- ⛔ **The counter has two writers and one predicate.** `IdentityRecord.memberVouches` on the
+  target counts the live vouches naming it that are *counted* — `counted(v → m) ⟺
+  m.memberSinceBlock = 0 ∨ v.memberSinceBlock < m.memberSinceBlock`, two immutable ages
+  (`ARCHITECTURE → Membership`). The cast's apply adds one iff counted; the consumption of a
+  `vouch` box subtracts one iff counted — whichever transaction consumes it, the user's unvouch
+  or the settlement's lapse leg — through one function that every consuming path calls. Fork
+  rollback restores the record through the journal's `replaced` value, never by a second
+  arithmetic step. Because the target's age is written only by the membership pass, after the
+  transaction loop, and a voucher's age is strictly below any block it casts in, the predicate
+  gives one answer for a box's whole life.
 - **An unvouch consumes exactly one VouchBox and produces exactly one
   escrow**, enforced in `checkTransitions` — consuming several stakes in one
   transaction has no meaning in the design, so it is inexpressible rather
   than handled, the same reasoning as the bond settlement's single-input
-  bound. The one-vouch-at-a-time rule remains service-layer only; the escrow
-  gate above is what bounds a voucher's concurrent stakes at consensus.
+  bound. There is no cap on a voucher's live vouches; the escrow gate above is
+  what rate-limits re-vouching after any withdrawal.
+
+### Membership pass
+
+Membership is a predicate on the identity record — `member(m) ⟺ memberSinceBlock > 0 ∧
+memberVouches ≥ memberBar` (`ARCHITECTURE → Membership`) — and the pass is the bookkeeping that
+sets the two immutable fields and keeps the network record's `N` equal to the number of
+identities the predicate holds for. **It moves no value.**
+
+**Where it runs.** Block application's end-of-block order is pinned: the transaction loop → the
+settlement transaction → the like counters → **the membership pass** → the decay clocks (→
+Per-block like settlement). The pass therefore sees every `memberVouches` write of the block —
+casts in the loop, consumptions in the loop and in the settlement's lapse leg — and every
+`memberLikes` write.
+
+**What it reads.** `N`, `D(N) = max(1, icbrt(k · N))` and `Y(N) = MEMBER_LIKES_MULTIPLIER · D(N)`
+from the network record of **pre-body** state — one read, so two crossings in one block face the
+same bar, and the same on both sides (→ "Every state-derived quantity is derived from pre-body
+state"). `k` is the profile's `membershipBarMultiplier`; `icbrt` and `membershipBar` are
+`@dagsocial/types` exports (TYPES_INTERFACE → Membership), the one implementation every reader of
+`D` calls.
+
+**Over whom.** The identities the block touched — every vouch target whose box was cast or
+consumed this block, every author whose `memberLikes` rose — in ascending identity hex. For each,
+`member(m)` is evaluated on the record as it stood before the block's writes and as it stands
+after them:
+
+1. `memberSinceBlock = 0`, and now `memberVouches ≥ D(N)` and `memberLikes ≥ Y(N)` → **set**:
+   `memberSinceBlock = height`, `memberBar = D(N)`, every other field carried through; `N + 1`.
+2. `memberSinceBlock > 0`, a member before the block and not after → **lapse**: `N − 1`, and
+   nothing else is written — the predicate is the state, and it turned false at the consuming
+   transaction's apply.
+3. `memberSinceBlock > 0`, not a member before and a member after → **re-qualified**: `N + 1`.
+   The age and the bar are untouched.
+
+`N` is written once, at the end, through `putNetworkRecord`; every record write goes through
+`putIdentityRecord`. Both are journalled, so a reverted block restores every record and the
+network record exactly (→ Block Journal).
+
+**The same-block cases, stated.** A cast and its target's set in one block: the cast applies in
+the loop with `m.memberSinceBlock = 0`, so it is counted, and the set writes an age strictly
+above the voucher's — a voucher was a member at apply, so its own age is at most `height − 1`,
+or the genesis mint height for a root — so `counted` is unchanged after the set. A voucher's own
+set and its cast in one block cannot occur: the cast requires `member(voucher)` at apply, before
+the pass. Two sets in one block take the same age and do not count for each other from then on,
+and neither has ever counted toward the other: a non-member cannot cast. A root's age is the
+genesis mint height; a non-root's record is first written by a settlement grant at that height
+or later and can be vouched only from the following block's body, so every set height is strictly
+above every root's age.
+
+**The cascade is one generation per block, and the pass is why.** A lapse in this block's pass
+makes the lapsed member's vouches eligible for the lapse leg of the **next** block's settlement
+(→ The settlement transaction), which consumes them and lowers younger members' counts, whose
+lapse that block's pass records; the following settlement withdraws theirs. A counted vouch
+always runs old → young, so the cascade terminates and never reaches a root.
 
 ### Karma decay (virtual, squared on touch)
 
@@ -2367,15 +2477,15 @@ the karma pool, the emission box and the treasury box, and the only consumer of 
 
 | | |
 |---|---|
-| **Consumes, in this order** | the emission box (when this height releases) · the treasury box (when this block accrues to it) · every `LikeAccrualBox` marker the block's like and reply transactions emitted, in committed transaction order · every `KarmaPriceBox` the block's post transactions created, in committed transaction order · the carry box of every author the block credits, ascending author hex · **at most `MAX_BOND_SETTLEMENTS_PER_BLOCK`** `BondBox`es whose invitee's `invitedAtBlock` is at or past `height − inviteProbationBlocks` in pre-body state, ascending `(invitedAtBlock, box id)` · **at most `MAX_ESCROW_RETURNS_PER_BLOCK`** `VouchEscrowBox`es at or past their `releaseAtBlock` in pre-body state, ascending `(releaseAtBlock, box id)` · the karma boxes decay charges · the karma pool box (when this block draws or returns) · every `FeeBox` the body's transactions created, in committed transaction order |
-| **Emits, in this order** | the successors of the three protocol boxes — emission, treasury, karma pool · the invite grants · like payouts and carry successors · the vested part of each settling bond, back to its inviter · each released escrow's value, back to its owner · decay replacements · the coinbase's credit outputs |
+| **Consumes, in this order** | the emission box (when this height releases) · the treasury box (when this block accrues to it) · every `LikeAccrualBox` marker the block's like and reply transactions emitted, in committed transaction order · every `KarmaPriceBox` the block's post transactions created, in committed transaction order · the carry box of every author the block credits, ascending author hex · **at most `MAX_BOND_SETTLEMENTS_PER_BLOCK`** `BondBox`es whose invitee's `invitedAtBlock` is at or past `height − inviteProbationBlocks` in pre-body state, ascending `(invitedAtBlock, box id)` · **at most `MAX_ESCROW_RETURNS_PER_BLOCK`** `VouchEscrowBox`es at or past their `releaseAtBlock` in pre-body state, ascending `(releaseAtBlock, box id)` · **at most `MAX_LAPSE_WITHDRAWALS_PER_BLOCK`** `VouchBox`es whose `voucherId` is not a member in pre-body state, ascending box id · the karma boxes decay charges · the karma pool box (when this block draws or returns) · every `FeeBox` the body's transactions created, in committed transaction order |
+| **Emits, in this order** | the successors of the three protocol boxes — emission, treasury, karma pool · the invite grants · like payouts and carry successors · the vested part of each settling bond, back to its inviter · each released escrow's value, back to its owner · one `VouchEscrowBox` per lapse withdrawal — the vouch's value, `owner` its voucher, `releaseAtBlock = vouch.createdAtBlock + vouchCooldownBlocks` · decay replacements · the coinbase's credit outputs |
 
-⛔ **A leg the body does not drive is capped, and the remainder waits.** Bonds and escrows
-are read from chain state, so no producer can shrink them by selecting a
+⛔ **A leg the body does not drive is capped, and the remainder waits.** Bonds, escrows and
+lapsed vouches are read from chain state, so no producer can shrink them by selecting a
 smaller body; each takes at most its cap per block in the stated total order — the order key is
 unique, so every verifier takes the same items — and a candidate stays eligible **at or past** its
 height until a block consumes it. A consumed candidate leaves the queue by being spent — there
-is no cursor to store. ⚠ **The two caps and the empty-body settlement are the liveness
+is no cursor to store. ⚠ **The three caps and the empty-body settlement are the liveness
 relation** (`TYPES_INTERFACE` → Size caps): whatever the chain state holds, the settlement of an
 empty body fits `MAX_SETTLEMENT_BYTES`, so a block exists at every height.
 
@@ -2395,6 +2505,21 @@ before the apply loop on both sides, like decay (below), and handed to the deriv
 taken at the check, after the body applied, would see the body's own escrow on one side only. No
 user transaction spends an escrow (`BLOCK_APPLICATION_ONLY`).
 
+⚠ **The lapse leg reads PRE-BODY state too, and its predicate is the record's.** The settlement
+of height `h` consumes **at most `MAX_LAPSE_WITHDRAWALS_PER_BLOCK`** of the unspent `vouch` boxes
+whose `voucherId` fails `member(voucher)` — `memberSinceBlock > 0 ∧ memberVouches ≥ memberBar` on
+the identity record — in the state the block builds on, ascending box id, and emits for each one
+a `VouchEscrowBox` of the vouch's value to the voucher with `releaseAtBlock =
+vouch.createdAtBlock + vouchCooldownBlocks`: the unvouch shape exactly (→ Vouch transition
+rules), so the stake returns by the escrow leg and the escrow bars a recast as the voucher's own
+withdrawal would. A member who lapses in this block's body is withdrawn from `h + 1` on; a voucher
+who re-qualifies before the leg reaches a box keeps it; a candidate stays eligible until a block
+consumes it or its voucher re-qualifies, and the predicate is derivable from state, so no cursor
+is stored. Each consumption subtracts one from the target's `memberVouches` iff counted, through
+the same function the unvouch uses, and the membership pass of the same block records the lapses
+that follow (→ Membership pass). The list is captured before the apply loop on both sides, like
+the escrows and decay.
+
 ⛔ **`CoinbaseOutput` is not a block-body concept.** Coinbase outputs are outputs of this
 transaction; the block body has no `coinbaseOutputs` field and `utxoTxRoot` has no `'coinbase'`
 leaf class (TYPES_INTERFACE → Ordering block).
@@ -2411,7 +2536,7 @@ rule bounds nothing** about how many invites, likes or sweeps a block holds. **W
 is the settlement's own size**: `MAX_SETTLEMENT_BYTES` (`TYPES_INTERFACE` → Size caps) weighs the
 whole transaction, so a block carries as many likes as their marker inputs fit beside its other
 legs — the producer keeps the body-driven legs inside it by selection (`MEMPOOL_INTERFACE` → The
-fill budget is bytes; `getPendingEntries` is a count), and the two capped legs above keep the
+fill budget is bytes; `getPendingEntries` is a count), and the three capped legs above keep the
 state-driven ones inside it whatever the producer selects.
 
 #### ⛔ Its marker inputs are DERIVED, not serialized
@@ -2797,10 +2922,12 @@ shape, validated by the engine):
    invalid and the block is rejected
 2. Writes the like-record via `insertLikeRecord` (journalled side-record)
 3. Applies the transaction's outputs like any other — the `LikeAccrualBox` marker among
-   them — and counts the like per author for the end-of-phase steps
+   them — and counts the like per author for the end-of-phase steps, and, where the liker
+   satisfies `member(liker)` on the liker's record as it stands at apply (→ Membership pass),
+   per author for the member-like count as well
 
 **At end of mutation phase, after all embedded txs** (order pinned: embedded txs →
-the settlement transaction → lifetime-like counters → decay clocks):
+the settlement transaction → the like counters → the membership pass → decay clocks):
 
 4. **Author settlement — outputs of the settlement transaction.** For each author with
    likes this block, in ascending author-hex order, the settlement consumes their `n`
@@ -2817,7 +2944,8 @@ the settlement transaction → lifetime-like counters → decay clocks):
    no counter field exists; a holder cannot distinguish "destroyed" from "returned to a
    pool nothing can spend", and the accounting identity is what conservation checks.
    `IdentityRecord.lifetimeLikesReceived` is bumped in the bookkeeping step after the
-   settlement, and only ever adds. All integer arithmetic; a float intermediate is a
+   settlement, and only ever adds; `memberLikes` is bumped beside it by the member-like count,
+   and only ever adds. All integer arithmetic; a float intermediate is a
    consensus fork.
 **Determinism:** iteration orders are pinned (author hex, post id), and the settlement's
 marker inputs follow committed transaction order — every order is one the block fixes.
@@ -3038,7 +3166,13 @@ IdentityRecord {
   lastDecayBlock: number        // u32 — bumped when decay fires
   invitedAtBlock: number        // u32 — height the invite grant applied; 0 = never invited
   lifetimeLikesReceived: bigint // likes this identity has ever received; never decremented
+  memberSinceBlock: number      // u32 — 0 = never a member; else the height the bar was first met — the AGE, never reset; a root's is the genesis mint height
+  memberBar: number             // u32 — D(N) at first set, never reset; 0 on a root
+  memberVouches: number         // u32 — live counted vouches naming this identity
+  memberLikes: bigint           // likes received from members; never decremented
+  invitesUsed: number           // u32 — bonds this identity has created; never decremented
 }
+member(m) ⟺ memberSinceBlock > 0 ∧ memberVouches ≥ memberBar        — derived, stored nowhere
 ```
 
 ⛔ **The outstanding like accrual is deliberately NOT a field here.** The carry sits in a
@@ -3069,14 +3203,24 @@ destroy your own stake, never someone else's"* forbids — the rule that also ma
 prune return other authors' post bonds. Likes carry economic weight now, so they
 fall under it.
 
-⛔ **Two fields on this record can be silently destroyed by a careless writer.**
+**Five fields hold standing** (`ARCHITECTURE → Membership`): `memberSinceBlock` is the age — `0`
+never a member, else the height the bar was first met, written once and never reset;
+`memberBar` is `D(N)` at that moment, `0` on a root; `memberVouches` counts the live counted
+vouches naming the identity; `memberLikes` counts likes received from members; `invitesUsed`
+counts the bonds the identity has created. `member(m)` is evaluated from them and stored nowhere.
+
+⛔ **Seven fields on this record can be silently destroyed by a careless writer.**
 The record is a full-row upsert and the type forces every field *present*, so a
-writer passing `0` compiles and passes typecheck while erasing a probation clock
-or a like history. **Every writer other than the one that owns a field carries the
+writer passing `0` compiles and passes typecheck while erasing a probation clock,
+a like history or a membership. **Every writer other than the one that owns a field carries the
 stored value through unchanged** — `invitedAtBlock` and `lastActivityBlock`'s
-**epoch** are owned by the grant path (the claim write initializes the activity
-clock to the claim height; advancement is block application's — §Populating the record),
-`lifetimeLikesReceived` by the lifetime-counter bookkeeping.
+**epoch** are owned by the grant path (the grant write initializes the activity
+clock to the grant height; advancement is block application's — §Populating the record),
+`lifetimeLikesReceived` by the lifetime-counter bookkeeping, `memberSinceBlock` and `memberBar`
+by the membership pass — once, at first set, never again — `memberVouches` by the vouch counter's
+one function (cast `+1`, consumption `−1`, each iff counted — → Vouch transition rules),
+`memberLikes` by the like counters beside `lifetimeLikesReceived`, `invitesUsed` by the
+invite-create apply.
 
 **AVL key** — `blake2b512( IDENTITY_KEY_DOMAIN ‖ identityId )[0:32]`, **never
 the raw `identityId`.** Records and boxes share one 32-byte AVL keyspace, and
@@ -3087,7 +3231,10 @@ is what makes the two kinds provably disjoint.
 
 **Table:** `identity_records (identity_id BLOB PRIMARY KEY, last_activity_block
 INTEGER NOT NULL, last_decay_block INTEGER NOT NULL, invited_at_block INTEGER
-NOT NULL DEFAULT 0, lifetime_likes_received INTEGER NOT NULL DEFAULT 0)`. The
+NOT NULL DEFAULT 0, lifetime_likes_received INTEGER NOT NULL DEFAULT 0,
+member_since_block INTEGER NOT NULL DEFAULT 0, member_bar INTEGER NOT NULL DEFAULT 0,
+member_vouches INTEGER NOT NULL DEFAULT 0, member_likes INTEGER NOT NULL DEFAULT 0,
+invites_used INTEGER NOT NULL DEFAULT 0)`. The
 SQL table keys on the raw 32 bytes; the AVL key is derived. Both are total
 functions of the identity, so the two representations cannot drift.
 
@@ -3099,23 +3246,28 @@ functions of the identity, so the two representations cannot drift.
 
 | # | Field | Encoding |
 |---|---|---|
-| 1 | tag | `u8` — **`0x80`**, the record discriminator (see "Two entity kinds") |
+| 1 | tag | `u8` — **`0x80`**, the record discriminator (see "Three entity kinds") |
 | 2 | `lastActivityBlock` | `vlqU` |
 | 3 | `lastDecayBlock` | `vlqU` |
 | 4 | `invitedAtBlock` | `vlqU` |
 | 5 | `lifetimeLikesReceived` | `vlqU64` |
+| 6 | `memberSinceBlock` | `vlqU` |
+| 7 | `memberBar` | `vlqU` |
+| 8 | `memberVouches` | `vlqU` |
+| 9 | `memberLikes` | `vlqU64` |
+| 10 | `invitesUsed` | `vlqU` |
 
 **The tag is part of the layout, not a wrapper around it** — the box arm works the same way, where
 `enum8(boxType)` is field 1 of `boxContentBytes` rather than a prefix bolted on outside it. One
 encoder, one byte string, no composition step where a caller could disagree about ordering.
 
-**Domains, and where they are established.** `lastActivityBlock`, `lastDecayBlock` and
-`invitedAtBlock` are `u32` block
-heights; `vlqU` is total *by sentinel*, so an out-of-domain height cannot panic the encoder — it
-**collides**, exactly as `createdAt` did in the header before 1f. `lifetimeLikesReceived` is
-`vlqU64` and `writeVlqU64OrThrow` **throws** outside `[0, 2⁶⁴)`; the domain belongs upstream of
-the encoder — the lifetime-counter bookkeeping is its only writer, it is unbounded by design and
-bounded only by the writer's `2⁶⁴`. One like per block for the life of the chain does not
+**Domains, and where they are established.** `lastActivityBlock`, `lastDecayBlock`,
+`invitedAtBlock` and `memberSinceBlock` are `u32` block heights, `memberBar`, `memberVouches` and
+`invitesUsed` are `u32` counts; `vlqU` is total *by sentinel*, so an out-of-domain value cannot
+panic the encoder — it **collides**, exactly as `createdAt` did in the header before 1f.
+`lifetimeLikesReceived` and `memberLikes` are `vlqU64` and `writeVlqU64OrThrow` **throws**
+outside `[0, 2⁶⁴)`; the domain belongs upstream of the encoder — the like counters are their only
+writers, they are unbounded by design and bounded only by the writer's `2⁶⁴`. One like per block for the life of the chain does not
 approach that, and the field is a **count**, never an amount — a saturating or wrapping write
 here would silently re-price every bond that settles afterwards. **A domain check at the encoder
 would be the band-aid; if the field ever gains a second writer, that writer owns the domain.**
@@ -3129,10 +3281,11 @@ would be the band-aid; if the field ever gains a second writer, that writer owns
 
 ⚠ **Two cbor-era hazards on this record are retired by construction, and the field discipline is
 NOT.** Conditional presence and key order were both consensus-visible under cbor-x (§1a, §1b). A
-positional layout has no keys and no map header, so neither is expressible. **`invitedAtBlock` and
-`lifetimeLikesReceived` must still always be written, zero included** — not because absence would
+positional layout has no keys and no map header, so neither is expressible. **Every field from
+`invitedAtBlock` on must still always be written, zero included** — not because absence would
 fork the bytes any more, but because the fields are part of the record and a layout writes every
-field. Likewise `bigint` stays `lifetimeLikesReceived`'s type: under `vlqU64` a `number` and a
+field. Likewise `bigint` stays the type of `lifetimeLikesReceived` and `memberLikes`: under
+`vlqU64` a `number` and a
 `bigint` of equal value encode identically, so the type no longer guards the *bytes* — it guards
 the `safeIntegers` row boundary against a silent `Number()` coercion, which is a different and
 still-live reason.
@@ -3143,8 +3296,8 @@ still-live reason.
 | `putIdentityRecord(identityId, record)` | `(UserId, IdentityRecord) => void` — upsert; while a block journal is open, captures the row it replaces and records `{kind:'record', key, record, replaced?}` |
 | `deleteIdentityRecord(identityId)` | `(UserId) => void` — fork-rollback inverse only; never records |
 
-**Lifecycle:** created on first karma receipt or on the first like received (the
-lifetime-counter write), **never deleted** in normal
+**Lifecycle:** created on first karma receipt, on the first like received (the
+lifetime-counter write), or at genesis seeding for a root; **never deleted** in normal
 operation — only by rollback. Deleting at zero balance would keep the tree
 smaller but would require revert to resurrect records with their exact prior
 values; unbounded-but-simple is the deliberate choice at this stage.
@@ -3183,6 +3336,14 @@ box keyspace, which is a distinct concern from how the bytes are typed.
 - **`lifetimeLikesReceived`** — bumped only by the lifetime-counter bookkeeping
   after the settlement, for every author who received likes in the block; only
   ever adds.
+- **`memberSinceBlock`, `memberBar`** — written by the membership pass at first set, once, and
+  never again (→ Membership pass); a root's at genesis seeding.
+- **`memberVouches`** — the vouch counter's one function: `+1` at a counted cast's apply, `−1` at
+  a counted vouch box's consumption, by the unvouch or the settlement's lapse leg (→ Vouch
+  transition rules).
+- **`memberLikes`** — bumped beside `lifetimeLikesReceived` by the like counters, by the likes
+  whose liker was a member at apply; only ever adds.
+- **`invitesUsed`** — `+1` at the invite-create arm's apply; only ever adds.
 
 **Two heights meet at `insertBox`, and they answer different questions.**
 
@@ -3264,6 +3425,42 @@ needs a test.
 > the chain.** There is no recovery path that reconstructs a matching tree
 > from boxes. Wiping both together is the only supported reset.
 
+### Network record
+
+The third committed entity: one record holding the member count `N` (`ARCHITECTURE →
+Membership`), which feeds `D(N)` and therefore validity, so it must be committed and O(1) to read.
+
+```
+NetworkRecord {
+  memberCount: number           // u32 — the number of identities for which member(m) holds
+}
+```
+
+**AVL key** — `blake2b512( NETWORK_KEY_DOMAIN )[0:32]`: the domain tag alone is the preimage, the
+identity key's hashing rule with nothing after the tag, so the three kinds are disjoint by domain
+separation (TYPES_INTERFACE → Domain tags). **Value** — `u8` **`0x81`** ‖ `vlqU(memberCount)`:
+the high bit says "not a box", as `0x80` does (→ Three entity kinds), and the layout is positional
+like the record's (→ Layout — IdentityRecord). `deserializeBox` refuses the tag as it refuses
+`0x80`; the kind-dispatching decoder gains an arm; the proof endpoint serves it as
+`kind: 'network'`.
+
+**Written** by the membership pass alone, once per block that changes `N`, through
+`putNetworkRecord` — journalled on `putIdentityRecord`'s pattern (→ Block Journal): the value it
+replaces is captured, the put recorded, rollback exact. **Seeded** at genesis with the root count,
+inside the seeding transaction, and fed to the empty tree with the boxes and the identity records
+(→ The genesis state root is checked fail-stop); every `genesisStateRoot` covers it.
+
+**Table:** `network_record (id INTEGER PRIMARY KEY CHECK (id = 1), member_count INTEGER NOT
+NULL)` — one row, present from seeding on.
+
+| Function | Signature |
+|----------|-----------|
+| `getNetworkRecord()` | `() => NetworkRecord` — the one row; throws where none exists, which is a store that was never seeded |
+| `putNetworkRecord(record)` | `(NetworkRecord) => void` — while a block journal is open, captures the row it replaces and records `{kind:'network', memberCount, replaced}` |
+
+*Alternative considered:* a `memberCount` field on the karma pool box. Rejected — the pool box
+is "no owner, no trailing fields" by contract and a population count is not a value.
+
 ### Vouch escrows
 
 **There is no vouch-cooldown store machinery.** An unvouched stake waits in a
@@ -3278,6 +3475,7 @@ transaction). The escrow's create and spend are journalled by `insertBox` /
 | `hasActiveVouchEscrow(voucherId)` | `(UserId) => boolean` — true while any unspent `vouch_escrow` box names the voucher as `owner`. **Consensus input**: the cast gate (§Vouch transition rules) |
 | `getVouchEscrowsFor(voucherId)` | `(UserId) => VouchEscrowBox[]` — the API's cooldown listing (`GET /vouches?voucher=X&cooldowns=1`) |
 | `getVouchEscrowsReleasableAt(height)` | `(number) => VouchEscrowBox[]` — every unspent `vouch_escrow` with `releaseAtBlock <= height`, **ascending box id**. **Consensus input**: the settlement's escrow leg; read from pre-body state on both sides (§The settlement transaction), never at the check |
+| `getLapsedVouches(limit)` | `(number) => VouchBox[]` — the unspent `vouch` boxes whose `voucherId`'s identity record fails `member(voucher)`, **ascending box id**, at most `limit`. **Consensus input**: the settlement's lapse leg; read from pre-body state on both sides (§The settlement transaction), never at the check |
 
 ⛔ **A block-application effect keyed on node-local SQL that no committed root
 covers is a fork waiting to happen** (§the settlement transaction's determinism
@@ -3309,7 +3507,7 @@ block has confirmed. Idempotent insert (first block to confirm a postId wins);
 | `purgeExpired(currentHeight)` | `(number) => number` | Remove entries past expiry, returns count |
 | `hasPendingLike(targetPostId, likerId)` | `(string, string) => boolean` | SQL EXISTS over gate metadata — unbounded (M-8) |
 | `countPendingInvites(inviterId)` | `(string) => number` | SQL COUNT over gate metadata — unbounded (M-8) |
-| `hasPendingVouch(voucherId)` | `(string) => boolean` | SQL EXISTS over gate metadata (L-4) |
+| `hasPendingVouch(voucherId, targetId)` | `(string, string) => boolean` | SQL EXISTS over gate metadata — the pending mirror of one live vouch per `(voucher, target)` pair (§Vouches) |
 | `removeEntry(rowid)` | `(number) => void` | Remove confirmed entry by rowid |
 | `setMempoolCap(n)` | `(number) => void` | Set the pool bound; `index.ts` calls it once at startup with `config.maxMempoolEntries` (`MEMPOOL_INTERFACE → setMempoolCap`) |
 
@@ -3435,7 +3633,13 @@ RecordMutation {                   // Spec G phase B — identity records
   replaced?: IdentityRecord        // prior value — absent iff the key did not exist
 }
 
-JournalMutation = BoxMutation | RecordMutation
+NetworkMutation {                  // the network record — the member count
+  kind: 'network'
+  memberCount: number              // the value written
+  replaced: NetworkRecord          // the prior value — always present: the record exists from seeding on
+}
+
+JournalMutation = BoxMutation | RecordMutation | NetworkMutation
 
 BlockJournal {
   blockHeight: number
@@ -3489,7 +3693,8 @@ both journaled *and* committed, and that is the whole distinction.
 the top of block application. While open, the store mutation primitives record
 automatically: `insertBox` appends `{kind:'box', op:'insert', boxId, box}`;
 `consumeBox` appends `{kind:'box', op:'remove', boxId}`; `putIdentityRecord`
-appends `{kind:'record', …}`, capturing the row it replaces;
+appends `{kind:'record', …}`, capturing the row it replaces; `putNetworkRecord` appends
+`{kind:'network', …}` the same way;
 `insertLikeRecord` and
 `deleteLikeRecordsForPosts` append their side-records, capturing the affected row(s)
 before writing. Services and call sites MUST NOT maintain parallel mutation
@@ -3516,7 +3721,8 @@ journal absent for a height inside retention is `MissingJournalError` —
 fail-stop, never a refused reorg ("What the funnel's totality catch is FOR").
 Replays `mutations` in reverse order — `box`/`insert` → `deleteBox(boxId)`,
 `box`/`remove` → `unconsumeBox(boxId)`, `record` → `putIdentityRecord` with
-`replaced` when present, otherwise `deleteIdentityRecord` — then the
+`replaced` when present, otherwise `deleteIdentityRecord`, `network` →
+`putNetworkRecord(replaced)` — then the
 side-record inverses, then
 `rollbackBlockTopology`, block + journal deletion, **and the height's AVL
 version rows** (`SqliteAvlStorage.deleteVersionAtHeight`). The version rows
@@ -3529,7 +3735,7 @@ Apply-then-revert MUST restore the exact pre-block UTXO set and AVL digest
 for every mutation class: the settlement transaction's every leg (coinbase
 credits, protocol-box successors, invite grants, like markers and carry,
 decay replacements, fee-box consumption), like-record inserts and prune-time deletes (rows restored
-exactly), prune settlement, user txs, and **identity records**. Reorg
+exactly), prune settlement, user txs, **identity records** and the network record. Reorg
 re-insertion reads `appliedUtxoTxs` (txBytes) alone — **a prune is one of those
 transactions**, so it needs no second channel; `confirmedPostIds` is not a mempool key.
 
@@ -3564,7 +3770,7 @@ writes the stump again when it re-settles.
 
 The `packages/node/src/state/` module provides an authenticated dictionary over
 **committed state** using AVL+ trees — the UTXO set, and from Spec G phase B
-also identity records (see "Two entity kinds" below).
+also identity records and the network record (see "Three entity kinds" below).
 
 - **avl-storage:** Persistent AVL+ tree, stateRoot computed at each block
   application and included in block headers
@@ -3626,7 +3832,7 @@ also identity records (see "Two entity kinds" below).
   **must be exhaustive** — see "One log, not parallel arrays" above
 - **Canonically ordered (M-12):** `applyBlockMutations` sorts internally —
   all removes, then all inserts, then all record puts, each lexicographically
-  by hex key — so every caller inherits the canonical order; callers MUST NOT
+  by hex key, then the network record's put — so every caller inherits the canonical order; callers MUST NOT
   rely on their input order reaching the prover. `bootstrapAvlProver` sorts
   the unspent set by boxId the same way. Same mutation set in any input order
   → same digest. ⚠ **That equivalence is unconditional for boxes but holds for
@@ -3657,11 +3863,12 @@ also identity records (see "Two entity kinds" below).
   comparison stands in for it, so a retarget changes the schedule the verifier is handed and nothing
   about this rule.
 
-#### Two entity kinds (Spec G phase B)
+#### Three entity kinds
 
-The tree holds **boxes** (key = `boxId`) and **identity records**
+The tree holds **boxes** (key = `boxId`), **identity records**
 (key = `H(IDENTITY_KEY_DOMAIN ‖ identityId)`; see Store Interface → Identity
-Records). Three things follow, and all three are consensus-critical.
+Records) and **the network record** (key = `H(NETWORK_KEY_DOMAIN)`; see Store Interface →
+Network record). Three things follow, and all three are consensus-critical.
 
 **1. The value bytes must be self-describing.** The first byte is the
 discriminator; `deserializeBox` MUST reject a non-box tag rather than mis-decode
@@ -3669,13 +3876,14 @@ it, and a kind-dispatching decoder is what any value-reading caller uses.
 
 ⚠ **The box discriminator is `enum8(boxType)` from `TYPES_INTERFACE` →
 Layout — Boxes — NOT a second numbering owned by this package. Decided
-2026-08-10 (Phase 5).** The record tag stays `0x80`, high bit set, so "box"
-versus "not a box" is still a single bit test and the box-type space stays open.
+2026-08-10 (Phase 5).** The record tag stays `0x80`, high bit set, and the network record's `0x81` sits beside it, so
+"box" versus "not a box" is still a single bit test and the box-type space stays open.
 
 | | Discriminator space |
 |---|---|
-| Box | `enum8(boxType)`: `0` karma, `1` credit, `2` invite, **`3` genesis_proof**, `4` bond, `5` post_lock, `6` vouch |
+| Box | `enum8(boxType)` — the numbering `BOX_TYPE_TAGS` exports (`TYPES_INTERFACE` → Layout — Boxes) |
 | Identity record | `0x80` |
+| Network record | `0x81` |
 
 **This replaces a second, disagreeing numbering that this package used to
 carry** (`0x01` karma … `0x07` vouch, with `0x03` reserved). The two were
@@ -3832,7 +4040,7 @@ a record-shaped value would throw under a box-only decoder. Keys are
 indistinguishable from outside — both kinds are 32 bytes of hash output — so a
 client *can* ask for one. Landed in phase D, alongside populating the record.
 
-The response carries **`kind: 'box' | 'record' | null`**. This is required, not
+The response carries **`kind: 'box' | 'record' | 'network' | null`**. This is required, not
 cosmetic: the proof verifies the value bytes whichever kind they are, so without
 an explicit discriminant a light client would verify a valid proof and then read
 a record as a box with every field `undefined` — treating committed state as a
@@ -3849,7 +4057,7 @@ every later block until restart. The lookup-and-proof window therefore runs in
 a `try` whose `finally` restores the live version; the `catch`'s 500 is the
 response, never the state.
 
-*(The route parameter is still named `boxId` while addressing two entity kinds.
+*(The route parameter is still named `boxId` while addressing three entity kinds.
 Renaming it is a public API change and deliberately not done here.)*
 
 **3. Disjointness rests on provenance, not on height.** That box ids commit to
@@ -3871,12 +4079,12 @@ holds:
   were already netted out upstream. So the two groups are disjoint, and the
   split can never reorder ops on a single key. This is *stronger* than the old
   argument, which only ruled out same-block recurrence.
-- *Boxes vs records.* Disjoint by domain separation, not by luck — box ids and
-  record keys are hashes under different domain tags. This is why the record
+- *Boxes, records and the network record.* Disjoint by domain separation, not by luck — box
+  ids, record keys and the network key are hashes under three domain tags. This is why the record
   key is hashed rather than the raw 32-byte pubkey, which an attacker chooses.
 
-**Record ops use `InsertOrUpdate`.** A record put is a create on first write and
-an update afterwards, and the feed does not know which — `InsertOrUpdate`
+**Record ops use `InsertOrUpdate`**, the network record's among them. A record put is a create
+on first write and an update afterwards, and the feed does not know which — `InsertOrUpdate`
 collapses that distinction so the prover feed needs no existence lookup. Two
 puts to the same key in one block collapse to the **last** value (last write
 wins, identical final tree); the journal keeps both entries because rollback
@@ -3985,7 +4193,8 @@ read behind one.
 
 `seedGenesisState` computes the height-0 AVL+ root over the boxes it seeded and compares it to
 the profile's `genesisStateRoot`. Its set is the proof box and the `EmissionBox` on every
-network, plus the system karma and faucet credit boxes on the faucet-bearing ones. **A mismatch
+network, plus the system karma and faucet credit boxes on the faucet-bearing ones, the
+committee's karma boxes, every root's identity record and the network record. **A mismatch
 throws and the node does not start**
 (`assertGenesisRoot`, exported so it is reachable without a boot). Refusal rather than a
 warning follows `loadConfig`'s below-floor ordering target: proceeding silently means running a
@@ -4000,9 +4209,18 @@ checks. Ergo checks its `genesisStateDigestHex` in the same place, at initialisa
 than on every start.
 
 **Inside the seeding transaction, not after it.** The throw rolls back the boxes, the identity
-record, the tree rows and the flag together, so a divergent genesis is never committed.
-Checked after the commit it would fail exactly once: the next start finds the flag set, skips
-seeding, and runs on the divergent state with nothing left to check it.
+records, the network record, the tree rows and the flag together, so a divergent genesis is never
+committed. Checked after the commit it would fail exactly once: the next start finds the flag set,
+skips seeding, and runs on the divergent state with nothing left to check it.
+
+**The root count is checked after the pin, and outside the seeding transaction.** Seeding writes
+a root record per committee key and for the faucet identity where one is seeded, and the network
+record with their count (`ARCHITECTURE → Membership`); the genesis root is derived over all of it
+and compared to the pin as above. **Then**, on the boot path, a node whose network record holds
+`memberCount = 0` refuses to serve, with the three-step exit below — a chain with no root can
+never set a member. The order is what keeps mainnet's `genesisStateRoot` derivable and pinnable
+while its committee is still empty: the pin test seeds and reads the root; only a running node
+trips.
 
 ⚠ **Two things this does NOT cover.** A store whose genesis is already committed is never
 re-checked, so flipping `NETWORK_TYPE` against one is caught at the chain link when it meets

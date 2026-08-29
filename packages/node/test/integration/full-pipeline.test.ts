@@ -34,6 +34,7 @@ import {
 import type {
   KarmaBox,
   BondBox,
+  VouchBox,
   UtxoTransaction,
   AnyBox,
 } from '@dagsocial/types';
@@ -206,6 +207,10 @@ interface EngineDeps {
   getBoxProvenance: () => null,
   getTopologyAuthor: (postId: string) => Uint8Array | null;
   runInTransaction: (fn: () => void) => void;
+  getVouchBox: (voucherId: Uint8Array, targetId: Uint8Array) => VouchBox | null;
+  getNetworkRecord: () => { memberCount: number };
+  membershipBarMultiplier: number;
+  putIdentityRecord: (identityId: Uint8Array, record: IdentityRecord) => void;
 }
 
 function makeEngineDeps(
@@ -257,6 +262,10 @@ function makeEngineDeps(
     runInTransaction: (fn: () => void) => {
       (db.transaction(fn) as () => void)();
     },
+    getVouchBox: () => null,
+    getNetworkRecord: () => ({ memberCount: 1 }),
+    membershipBarMultiplier: 1,
+    putIdentityRecord: () => {},
   };
 }
 
@@ -292,6 +301,7 @@ describe('full-pipeline', () => {
     const dbModule = await importDb();
     dbModule.initDb(':memory:');
     const db = dbModule.getDb();
+    db.prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     // ---- Setup ----
     const author = makeTestIdentity();
@@ -409,6 +419,7 @@ describe('full-pipeline', () => {
     const dbModule = await importDb();
     dbModule.initDb(':memory:');
     const db = dbModule.getDb();
+    db.prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     // ---- Setup ----
     const author = makeTestIdentity();
@@ -505,13 +516,18 @@ describe('full-pipeline', () => {
     const dbModule = await importDb();
     dbModule.initDb(':memory:');
     const db = dbModule.getDb();
+    db.prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     // ---- Setup ----
     const inviter = makeTestIdentity();
+    const records = await import('../../src/store/identity-records.js');
+    records.putIdentityRecord(inviter.userId, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
 
     const utxo = await importUtxo();
-    // ⛔ The settlement spends the pool to grant the invitee, so a chain without
-    // one cannot produce the block at all.
     await seedKarmaPoolBox();
     const karmaBox = makeKarmaBox(100n, inviter.userId, 0);
     utxo.insertBox(karmaBox);
@@ -587,8 +603,15 @@ describe('full-pipeline', () => {
     const dbModule = await importDb();
     dbModule.initDb(':memory:');
     const db = dbModule.getDb();
+    db.prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const inviter = makeTestIdentity();
+    const records = await import('../../src/store/identity-records.js');
+    records.putIdentityRecord(inviter.userId, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
     const utxo = await importUtxo();
     const invitesSvc = await importInvitesService();
     const deps = makeEngineDeps(db, utxo, await importIdentityRecords());

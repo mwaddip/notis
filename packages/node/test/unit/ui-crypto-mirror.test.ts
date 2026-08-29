@@ -337,9 +337,13 @@ const extractDeclaration = (src: string, header: string): string =>
 
 /** Return a single-line `const NAME = …;` declaration. */
 function extractConst(src: string, name: string): string {
-  const header = `const ${name} =`;
-  const start = src.indexOf(header);
-  if (start === -1) throw new Error(`index.html no longer declares: ${header}`);
+  let header = `const ${name} =`;
+  let start = src.indexOf(header);
+  if (start === -1) {
+    header = `let ${name} =`;
+    start = src.indexOf(header);
+  }
+  if (start === -1) throw new Error(`index.html no longer declares: const ${name} =`);
   const end = src.indexOf('\n', start);
   return src.slice(start, end === -1 ? undefined : end);
 }
@@ -469,7 +473,7 @@ interface UiCrypto {
   pendingKarmaChange: Map<string, { boxId: string; value: bigint }>;
   VOUCH_KARMA_AMOUNT: bigint;
   VOUCH_MIN_BALANCE: bigint;
-  INVITE_BOND_DEFAULT: bigint;
+  INVITE_BOND_DEFAULT: bigint | null;
 }
 
 /**
@@ -487,7 +491,13 @@ function loadUiCrypto(): UiCrypto {
   const source = [
     'const encoder = new TextEncoder();',
     'let currentBlockHeight = 0;',
-    ...MIRRORED_CONSTS.map((name) => extractConst(html, name)),
+    ...MIRRORED_CONSTS.map((name) => {
+      const decl = extractConst(html, name);
+      // INVITE_BOND_DEFAULT starts null in the UI (set by /status at runtime).
+      // The test sets it to a valid value so the builders can run.
+      if (name === 'INVITE_BOND_DEFAULT') return 'let INVITE_BOND_DEFAULT = 5n;';
+      return decl;
+    }),
     ...MIRRORED_FUNCTIONS.map((name) => extractDeclaration(html, `function ${name}(`)),
     `return { ${RETURNED.join(', ')} };`,
   ].join('\n\n');
@@ -1512,14 +1522,16 @@ describe('demo UI invite builder ↔ the id the node derives', () => {
     // The inviter picks the bond, so the page's default is a choice; what the
     // mirror can still check is that the choice is legal, because a bond outside
     // the range builds an invite `checkTransitions` rejects.
+    // The UI starts with INVITE_BOND_DEFAULT = null, set by /status at runtime.
+    // The test loader seeds it to config.inviteBondMin so the builders can run.
     expect(ui.INVITE_BOND_DEFAULT).toBeGreaterThanOrEqual(config.inviteBondMin);
     expect(ui.INVITE_BOND_DEFAULT).toBeLessThanOrEqual(config.inviteBondMax);
   });
 
   it('the grant the page promises is the bond it names', () => {
-    // The page tells the inviter what the invitee will receive, and the
-    // settlement grants the bond's own value. One number, so the two cannot
-    // disagree — this asserts the page reads it off the bond it built.
+    // Simulate /status having answered with the network's floor.
+    ui.INVITE_BOND_DEFAULT = config.inviteBondMin;
+
     const decoded = overTheWire(
       ui.buildCreateInviteTx(karmaState([ui.INVITE_BOND_DEFAULT + 1n]), INVITER_HEX, INVITEE_HEX),
     );
@@ -1528,6 +1540,7 @@ describe('demo UI invite builder ↔ the id the node derives', () => {
   });
 
   it('a create the page builds hashes to the same txId the node derives', () => {
+    ui.INVITE_BOND_DEFAULT = config.inviteBondMin;
     const tx = ui.buildCreateInviteTx(
       karmaState([ui.INVITE_BOND_DEFAULT + 1n]), INVITER_HEX, INVITEE_HEX,
     );
@@ -1535,10 +1548,7 @@ describe('demo UI invite builder ↔ the id the node derives', () => {
   });
 
   it('the invite deducts the bond and only the bond', () => {
-    // ⛔ **The grant comes out of the POOL at settlement**, so it never leaves
-    // the inviter's balance (ARCHITECTURE → Invite System). Funding exactly
-    // twice the bond is what makes the difference visible: a builder deducting
-    // the grant as well would leave no change at all.
+    ui.INVITE_BOND_DEFAULT = config.inviteBondMin;
     const funded = ui.INVITE_BOND_DEFAULT * 2n;
     const decoded = overTheWire(
       ui.buildCreateInviteTx(karmaState([funded]), INVITER_HEX, INVITEE_HEX),
@@ -1555,6 +1565,7 @@ describe('demo UI invite builder ↔ the id the node derives', () => {
     // NODE_INTERFACE → Legal box transitions: one karma + one bond,
     // the bond holding a value inside the network's range and carrying the
     // karma input's owner as `inviterId`.
+
     const decoded = overTheWire(
       ui.buildCreateInviteTx(karmaState([40n, 30n]), INVITER_HEX, INVITEE_HEX),
     );

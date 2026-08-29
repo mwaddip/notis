@@ -32,6 +32,7 @@ async function importDb() {
   return (await import('../../src/store/db.js')) as unknown as {
     initDb: (path: string) => void;
     closeDb: () => void;
+    getDb: () => import('better-sqlite3').Database;
   };
 }
 
@@ -167,6 +168,7 @@ describe('credit emission terminates', () => {
   it('a block at the terminus carries no coinbase outputs at all', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     await seedChainAt(LAST_PAYING_HEIGHT);
 
     // No transactions, so no fees: the block's income is `0 + 0`, `splitCoinbase`
@@ -195,6 +197,7 @@ describe('credit emission terminates', () => {
   it('the same empty block one height lower still pays (control)', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     await seedChainAt(LAST_PAYING_HEIGHT - 1);
 
     // Identical body, identical absence of fees. What differs is the height, so

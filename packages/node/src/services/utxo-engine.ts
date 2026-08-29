@@ -14,6 +14,7 @@ import {
   VOUCH_CAST_HEIGHT_WINDOW,
   VOUCH_KARMA_AMOUNT,
   VOUCH_MIN_BALANCE,
+  membershipBar,
 } from '@dagsocial/types';
 import { isCreditSideTx } from './coinbase-split.js';
 import { effectiveKarma } from './decay.js';
@@ -31,7 +32,7 @@ import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, Bon
 import { ed25519PublicKeyToKeyObject, verifyPostCommitDomains, verifyPostWithdrawCommitDomains, verifyPruneCommitDomains, verifyProtocolVersion } from '@dagsocial/validation';
 // Type-only: erased at compile time, so the engine gains no runtime edge into
 // the store module graph. Same seam `DecayDeps` uses for the same record.
-import type { IdentityRecord } from '../store/identity-records.js';
+import type { IdentityRecord, NetworkRecord } from '../store/identity-records.js';
 
 // ---------------------------------------------------------------------------
 // The karma transition set
@@ -73,6 +74,21 @@ export const KARMA_TRANSITION_TYPES: ReadonlyArray<AnyBox['boxType']> = Object.f
   (Object.keys(KARMA_TRANSITION_VERDICT) as AnyBox['boxType'][])
     .filter((k) => KARMA_TRANSITION_VERDICT[k]),
 );
+
+/**
+ * `member(m) ⟺ memberSinceBlock > 0 ∧ memberVouches ≥ memberBar`
+ * (ARCHITECTURE → Membership). Derived, stored nowhere.
+ */
+export function isMember(record: IdentityRecord): boolean {
+  return record.memberSinceBlock > 0 && record.memberVouches >= record.memberBar;
+}
+
+/**
+ * A root: memberSinceBlock > 0 ∧ memberBar = 0.
+ */
+export function isRoot(record: IdentityRecord): boolean {
+  return record.memberSinceBlock > 0 && record.memberBar === 0;
+}
 
 // ---------------------------------------------------------------------------
 // Dependency interface
@@ -168,6 +184,13 @@ export interface UtxoEngineDeps {
   decayCfg: DecayCfg;
   storageRentPeriodBlocks: number;
   getBoxProvenance: (boxId: string) => { txId: string; index: number } | null;
+  /** An unspent vouch box for the (voucher, target) pair, or null. */
+  getVouchBox: (voucherId: Uint8Array, targetId: Uint8Array) => VouchBox | null;
+  /** The network record — the member count that feeds D(N). */
+  getNetworkRecord: () => NetworkRecord;
+  /** The profile's membershipBarMultiplier (k in D(N) = max(1, icbrt(k·N))). */
+  membershipBarMultiplier: number;
+  putIdentityRecord: (identityId: Uint8Array, record: IdentityRecord) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -521,6 +544,37 @@ function checkTransitions(
             error: `Vouch cast is locked: this voucher holds an unreleased escrow`,
           };
         }
+        // NODE_INTERFACE → Vouch transition rules: only a member casts.
+        const voucherRec = deps.getIdentityRecord(vouchOut.voucherId);
+        if (!voucherRec || !isMember(voucherRec)) {
+          return {
+            valid: false,
+            error: `Vouch cast requires the voucher to be a member`,
+          };
+        }
+        // The target holds an IdentityRecord (NODE_INTERFACE → Vouch transition rules).
+        const targetRec = deps.getIdentityRecord(vouchOut.targetId);
+        if (!targetRec) {
+          return {
+            valid: false,
+            error: `Vouch target holds no identity record`,
+          };
+        }
+        // No self-vouch (NODE_INTERFACE → Vouch transition rules).
+        if (Buffer.from(vouchOut.voucherId).toString('hex') ===
+            Buffer.from(vouchOut.targetId).toString('hex')) {
+          return {
+            valid: false,
+            error: `Cannot vouch for yourself`,
+          };
+        }
+        // One live vouch per (voucher, target) pair.
+        if (deps.getVouchBox(vouchOut.voucherId, vouchOut.targetId)) {
+          return {
+            valid: false,
+            error: `A live vouch already exists for this (voucher, target) pair`,
+          };
+        }
         // The voucher's balance clears VOUCH_MIN_BALANCE (ARCHITECTURE →
         // "Vouch boxes"). Summed over every unspent karma box the voucher
         // holds, not over this transaction's inputs: a voucher may stake from
@@ -618,6 +672,33 @@ function checkTransitions(
             error:
               `An invite may not name an existing account: ${inviteeHex} already ` +
               `holds an identity record`,
+          };
+        }
+        // NODE_INTERFACE → Bond transition rules: only a root or a member with
+        // an invite available creates a bond.
+        const inviterRecord = deps.getIdentityRecord(bondOut.inviterId);
+        if (!inviterRecord) {
+          return {
+            valid: false,
+            error: `Inviter holds no identity record`,
+          };
+        }
+        if (isRoot(inviterRecord)) {
+          // Roots have no budget check — bounded by bond karma alone.
+        } else if (isMember(inviterRecord)) {
+          const nr = deps.getNetworkRecord();
+          const d = membershipBar(nr.memberCount, deps.membershipBarMultiplier);
+          const available = Math.floor(inviterRecord.memberVouches / d) - inviterRecord.invitesUsed;
+          if (available < 1) {
+            return {
+              valid: false,
+              error: `Inviter has no invites available (vouches: ${inviterRecord.memberVouches}, D: ${d}, used: ${inviterRecord.invitesUsed})`,
+            };
+          }
+        } else {
+          return {
+            valid: false,
+            error: `Only a root or a member may invite`,
           };
         }
       } else if (prune !== undefined) {
@@ -2136,17 +2217,68 @@ export function applyTx(
   currentBlockHeight: number,
 ): void {
   deps.runInTransaction(() => {
+    // NODE_INTERFACE → Vouch transition rules: a consumed vouch box subtracts
+    // one from the target's memberVouches iff counted. Read the box BEFORE
+    // consumeBox marks it spent.
     for (const id of tx.inputs) {
+      const box = deps.getBox(id);
+      if (box && box.boxType === 'vouch') {
+        const vouch = box as VouchBox;
+        adjustVouchCount(deps, vouch, -1);
+      }
       deps.consumeBox(id, currentBlockHeight);
     }
     for (const box of outputsWithIds) {
-      // The box goes in exactly as `materializeOutput` built it. Spreading it
-      // is wrong: any key added or reordered here changes the id, since
-      // `computeBoxId` hashes the box itself. `insertBox` fills the
-      // `created_at_block` store column from the box's own `createdAtBlock`
-      // (NODE_INTERFACE → Populating the record).
       deps.insertBox(box);
+      // A vouch output adds one to the target's memberVouches iff counted.
+      if (box.boxType === 'vouch') {
+        adjustVouchCount(deps, box as VouchBox, +1);
+      }
+      // A bond output increments the inviter's invitesUsed.
+      if (box.boxType === 'bond') {
+        const bond = box as BondBox;
+        const rec = deps.getIdentityRecord(bond.inviterId);
+        if (rec) {
+          deps.putIdentityRecord(bond.inviterId, {
+            ...rec,
+            invitesUsed: rec.invitesUsed + 1,
+          });
+        }
+      }
     }
+  });
+}
+
+/**
+ * counted(v → m) ⟺ m.memberSinceBlock = 0 ∨ v.memberSinceBlock < m.memberSinceBlock
+ * (ARCHITECTURE → Membership).
+ */
+function isVouchCounted(
+  voucherRecord: IdentityRecord,
+  targetRecord: IdentityRecord,
+): boolean {
+  return targetRecord.memberSinceBlock === 0 ||
+    voucherRecord.memberSinceBlock < targetRecord.memberSinceBlock;
+}
+
+function adjustVouchCount(
+  deps: UtxoEngineDeps,
+  vouch: VouchBox,
+  delta: 1 | -1,
+): void {
+  const voucherRecord = deps.getIdentityRecord(vouch.voucherId);
+  const targetRecord = deps.getIdentityRecord(vouch.targetId);
+  if (!voucherRecord || !targetRecord) {
+    throw new Error(
+      `adjustVouchCount: missing identity record — voucher ${!!voucherRecord}, ` +
+      `target ${!!targetRecord}. Both are guaranteed by the cast arm and records ` +
+      `are never deleted; this is corrupt state.`,
+    );
+  }
+  if (!isVouchCounted(voucherRecord, targetRecord)) return;
+  deps.putIdentityRecord(vouch.targetId, {
+    ...targetRecord,
+    memberVouches: targetRecord.memberVouches + delta,
   });
 }
 

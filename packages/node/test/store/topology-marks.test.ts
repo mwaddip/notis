@@ -122,18 +122,33 @@ describe('getBondsInvitedAt — range, limit, order', () => {
       lastActivityBlock: 5,
       lastDecayBlock: 5,
       lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
     });
     s.putIdentityRecord(invitee2, {
       invitedAtBlock: 3,
       lastActivityBlock: 3,
       lastDecayBlock: 3,
       lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
     });
     s.putIdentityRecord(invitee3, {
       invitedAtBlock: 0,
       lastActivityBlock: 0,
       lastDecayBlock: 0,
       lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
     });
 
     const bond1 = makeBondBox(inviter, invitee1, 25n, 1);
@@ -174,6 +189,11 @@ describe('getBondsInvitedAt — range, limit, order', () => {
       lastActivityBlock: 0,
       lastDecayBlock: 0,
       lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
     });
     const bond = makeBondBox(inviter, invitee, 25n);
     s.insertBox(bond);

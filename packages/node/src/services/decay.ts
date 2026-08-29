@@ -26,6 +26,11 @@ const NEVER_ACTIVE: IdentityRecord = {
   lastDecayBlock: 0,
   invitedAtBlock: 0,
   lifetimeLikesReceived: 0n,
+  memberSinceBlock: 0,
+  memberBar: 0,
+  memberVouches: 0,
+  memberLikes: 0n,
+  invitesUsed: 0,
 };
 
 /**
@@ -235,6 +240,11 @@ export function commitDecayClocks(
       lastDecayBlock: currentHeight,
       invitedAtBlock: record?.invitedAtBlock ?? 0,
       lifetimeLikesReceived: record?.lifetimeLikesReceived ?? 0n,
+      memberSinceBlock: record?.memberSinceBlock ?? 0,
+      memberBar: record?.memberBar ?? 0,
+      memberVouches: record?.memberVouches ?? 0,
+      memberLikes: record?.memberLikes ?? 0n,
+      invitesUsed: record?.invitesUsed ?? 0,
     });
   }
 }

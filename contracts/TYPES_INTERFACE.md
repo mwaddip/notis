@@ -435,10 +435,15 @@ computes different ids.
 | `TX_ID_DOMAIN` | transaction id |
 | `MINT_ID_DOMAIN` | synthetic mint transaction id |
 | `IDENTITY_KEY_DOMAIN` | per-identity record key in the AVL tree |
+| `NETWORK_KEY_DOMAIN` | the network record's key in the AVL tree — the tag alone is the preimage (`NODE_INTERFACE` → Network record) |
+| `POST_ID_DOMAIN` | post id (→ Post identity) |
+| `POST_CONTENT_DOMAIN` | a post's content hash (→ Post) |
 | `INTERLINK_DOMAIN` | the interlink vector's commitment in a block header (→ Interlink vector) |
 
-Box ids, tx ids and identity-record keys share one 32-byte keyspace and the AVL tree now holds
-two entity kinds, so the separation must be in the preimage. (`computePostId` already works
+Box ids, tx ids, identity-record keys and the network key share one 32-byte keyspace and the AVL
+tree holds three entity kinds, so the separation must be in the preimage; post ids and content
+hashes are 32 bytes of the same digest and carry their tags for the same reason. All seven are
+exported, so a test over their distinctness reads the code's tags and not a copy. (`computePostId` already works
 this way via `POST_ID_DOMAIN`; box ids previously had no tag.)
 
 #### Canonical encoding
@@ -757,6 +762,11 @@ VouchBox extends BoxBase {
   targetId: UserId             // 32 raw bytes — who is being vouched for
 }
 ```
+
+A vouch is cast by a member only, on an identity that holds a record, never on themselves, once
+per `(voucherId, targetId)` pair — the cast arm's rules (`NODE_INTERFACE` → Vouch transition
+rules) — and it counts toward the target's membership when the voucher is the older member
+(`ARCHITECTURE` → Membership). No constant caps a member's live vouches.
 
 ### VouchEscrowBox
 
@@ -1753,7 +1763,7 @@ construction throw, not a type error.
 > in *different positions* (`enum8` held `3` between `invite` and `bond` — since reassigned to
 > `genesis_proof`; the AVL tag reserved `0x03` between `credit` and `invite`), so they did not even
 > differ by a constant. **`enum8`'s
-> numbering wins**; see `NODE_INTERFACE` → "Two entity kinds" for the full record and why renumbering
+> numbering wins**; see `NODE_INTERFACE` → "Three entity kinds" for the full record and why renumbering
 > is safe exactly once.
 >
 > **This makes an existing contractual claim exact rather than approximate.** `NODE_INTERFACE` §1a
@@ -2636,6 +2646,9 @@ export interface NetworkProfile {
   // Storage rent — the PERIOD is per-network; the rate is a universal constant
   readonly storageRentPeriodBlocks: number;
 
+  // Membership — k in D(N) = max(1, icbrt(k · N)); a cap, field-only (ARCHITECTURE → What varies per network)
+  readonly membershipBarMultiplier: number;
+
   // Genesis
   readonly genesisCommitteeKeys: readonly string[];
   readonly genesisKarmaPerMember: bigint;
@@ -2712,6 +2725,12 @@ Ordering block apply-time authorization, genesis pin) and a NiPoPoW proof must a
 pinning it moves no bytes. Field-only and per-network like the other genesis fields; `network.test.ts`
 asserts each profile's own value rather than the spread.
 
+**`membershipBarMultiplier` is field-only, and the case says so.** It scales the membership bar
+(`ARCHITECTURE → Membership`) — mainnet `10`, fixed by the two anchors; testnet and devnet `1`,
+so a chain whose only root is the faucet can flag its first member on one vouch. A cap, not a
+mechanic: `membershipBar` (→ Membership) is one function on every network. `network.test.ts`
+asserts each profile's own value rather than the spread.
+
 **Every constant not listed in `NetworkProfile` is universal across networks**, including
 consensus ones — the format limits (`MAX_CONTENT_BYTES`, `MAX_PARENT_REFS`,
 `PROTOCOL_VERSION`, `AVL_KEY_LENGTH`) and every karma and credit cost. The split is
@@ -2733,8 +2752,8 @@ here because this is where it is cited from: `KARMA_STALE_THRESHOLD_BLOCKS`'s du
 
 ### Domain tags are network-agnostic — deliberately
 
-The six derivation domain tags — `BOX_ID_DOMAIN`, `TX_ID_DOMAIN`, `MINT_ID_DOMAIN`,
-`IDENTITY_KEY_DOMAIN`, `POST_ID_DOMAIN`, `POST_CONTENT_DOMAIN` — **do
+The seven derivation domain tags — `BOX_ID_DOMAIN`, `TX_ID_DOMAIN`, `MINT_ID_DOMAIN`,
+`IDENTITY_KEY_DOMAIN`, `NETWORK_KEY_DOMAIN`, `POST_ID_DOMAIN`, `POST_CONTENT_DOMAIN` — **do
 not carry the network, and must not be changed to.** No derivation function takes a network argument, and this package holds no
 module-level network state.
 
@@ -2772,7 +2791,7 @@ threshold / percentage / bits** constants stay `number`.
   `VOUCH_KARMA_AMOUNT`, `VOUCH_MIN_BALANCE`,
   `GENESIS_KARMA_PER_MEMBER`.
 - **Stay `number`:** all `*_BLOCKS`, `*_TARGET_BITS`/`*_FLOOR`,
-  `LIKES_PER_KARMA_PAYOUT` (a count), `MAX_*`,
+  `LIKES_PER_KARMA_PAYOUT` (a count), `MEMBER_LIKES_MULTIPLIER` (a count), `MAX_*`,
   `CREDIT_MINER_REWARD_DELAY` (a block count, NOT an amount), and every coinbase
   percentage — `COINBASE_TREASURY_PCT`, `COINBASE_MINER_FLOOR_PCT`,
   `COINBASE_BACKER_PCT`, `COINBASE_BONUS_PCT`, `MEMPOOL_CREDIT_SHARE_PCT`.
@@ -2821,9 +2840,9 @@ enforces on one field; these bound whole structures and no codec consults them.
 **The settlement has its own bound because it is derived.** `MAX_TX_BYTES` exists so a transaction
 cannot be valid, poolable and unminable at once (below); a settlement is never pooled, and its size
 is a function of the body and of chain state — one 32-byte input per like marker, per fee box, per
-settling bond, per releasable escrow, per price box; one karma output per paid author or
-owner (measured: 70 bytes with the four protocol outputs and nothing else, +32 per input, +38 per
-karma output). **The settlement, not the encoding, sets the per-block ceiling on likes**: the bound
+settling bond, per releasable escrow, per price box, per lapsed vouch; one karma output per paid
+author or owner, one escrow output per lapsed vouch (measured: 70 bytes with the four protocol
+outputs and nothing else, +32 per input, +38 per karma output). **The settlement, not the encoding, sets the per-block ceiling on likes**: the bound
 divided by the marker input's 32 bytes, less what the block's other legs take.
 
 **Two relations are the rule; the numbers are provisional** (`CONSTANTS → Size caps`).
@@ -2872,20 +2891,24 @@ budget occupies a mempool slot that no block can ever drain.
 ```typescript
 export const MAX_BOND_SETTLEMENTS_PER_BLOCK = 64;     // consensus — bonds settled per block, at or past their deadline
 export const MAX_ESCROW_RETURNS_PER_BLOCK = 64;       // consensus — vouch escrows returned per block, at or past release
+export const MAX_LAPSE_WITHDRAWALS_PER_BLOCK = 64;    // consensus — vouches of lapsed members withdrawn per block
 ```
 
-**A settlement leg the body does not drive is capped, and carries forward.** Two legs read chain
-state rather than the block's transactions — bonds whose probation has ended and escrows whose
-cooldown has ended — so no producer can trim them by selecting a smaller body. Each consumes at
-most its cap per block, in a total order, and leaves the rest for the next block; a candidate is
-eligible **at or past** its height, never only at it, so nothing is skipped by waiting
-(`NODE_INTERFACE` → The settlement transaction). The two caps are what make the liveness relation
+**A settlement leg the body does not drive is capped, and carries forward.** Three legs read chain
+state rather than the block's transactions — bonds whose probation has ended, escrows whose
+cooldown has ended, and vouches whose voucher is no longer a member — so no producer can trim them
+by selecting a smaller body. Each consumes at most its cap per block, in a total order, and leaves
+the rest for the next block; a candidate is eligible **at or past** its height, or while its
+predicate holds, never only at one height, so nothing is skipped by waiting
+(`NODE_INTERFACE` → The settlement transaction). The three caps are what make the liveness relation
 under → Size caps a constant rather than a hope: their sum, at the measured per-item cost, is the
 largest settlement an empty body can carry.
 
 **Bounded delay, stated.** Under a backlog of `n` candidates a leg drains in ⌈`n` / cap⌉ blocks; a
 bond may vest more in the meantime (`ARCHITECTURE` → Bond outcomes), a cooling voucher waits that
-long to recast (`ARCHITECTURE` → Vouch boxes). Neither moves value it does not owe.
+long to recast (`ARCHITECTURE` → Vouch boxes), a lapsed member's `n` vouches are withdrawn over
+that many blocks and a cascade runs one generation per block on top (`ARCHITECTURE` →
+Membership). None moves value it does not owe.
 
 ### State format
 
@@ -2969,7 +2992,7 @@ export const LIKES_PER_KARMA_PAYOUT = 5;       // x: per x likes an author accru
 
 ```typescript
 export const INVITE_MIN_KARMA = KARMA_POSTING_MINIMUM;  // consensus
-export const INVITE_BOND_MIN = 25n;                // consensus → profile: inviteBondMin
+export const INVITE_BOND_MIN = 100n;               // consensus → profile: inviteBondMin
 export const INVITE_BOND_MAX = 250n;               // consensus → profile: inviteBondMax
 export const INVITE_PROBATION_BLOCKS = 43200;      // consensus — 30 days at 60s → profile: inviteProbationBlocks
 export const INVITE_BOND_VEST_PER_LIKES = 3;       // consensus — likes the invitee must receive per 1 karma vested
@@ -2991,10 +3014,33 @@ They are 3 and 5; a single constant serving both would re-price one silently.
 The pending-invite cap needs no successor because the balance is one. An inviter
 locks their chosen bond per invite out of their own karma, so `K /
 INVITE_BOND_MIN` bounds their concurrent invites without a rule — the floor, since
-that is the cheapest invite they can build. The threshold
+that is the cheapest invite they can build — and the budget is the rule that bounds
+them beside it: a member's `⌊memberVouches / D(N)⌋ − invitesUsed` (`ARCHITECTURE → The invite
+budget`); a root has none. The threshold
 goes with the early-unlock leg it served: a bond settles **once**, at
 `IdentityRecord.invitedAtBlock + INVITE_PROBATION_BLOCKS`, and nothing reads a
 karma balance to decide it.
+
+### Membership
+
+```typescript
+export const MEMBER_LIKES_MULTIPLIER = 2;          // consensus — Y(N) = MEMBER_LIKES_MULTIPLIER · D(N)
+
+// membership.ts — pure, integer arithmetic throughout, no floating point in the path
+export function icbrt(n: number): number;          // the largest r with r³ ≤ n; n a non-negative safe integer, else throws
+export function membershipBar(memberCount: number, multiplier: number): number;    // D(N) = max(1, icbrt(multiplier · N))
+export function memberLikesBar(memberCount: number, multiplier: number): number;   // Y(N) = MEMBER_LIKES_MULTIPLIER · membershipBar(N, k)
+```
+
+`D` and `Y` are consensus inputs — the vouch arm, the invite arm and the membership pass read
+them (`NODE_INTERFACE` → Membership pass) — so they are **one implementation**, here, that every
+reader calls rather than restates (`VALIDATION_INTERFACE` → "One implementation per rule"); the
+demo UI reads the node's `member` and `invitesAvailable` and computes neither. `icbrt` is exact:
+`Math.cbrt` is not, and a float that lands one below a perfect cube moves the bar by one on some
+platforms and not others. The pins are the table in `ARCHITECTURE → Membership` — `icbrt(10) =
+2`, `icbrt(40) = 3`, `icbrt(1000) = 10`, `icbrt(10⁶) = 100`, `icbrt(10⁷) = 215` — plus the cube
+boundaries, `icbrt(r³) = r` and `icbrt(r³ − 1) = r − 1`, across the domain the multiplier
+reaches: `k · N` for `N` a `u32`.
 
 ### Vouch
 
@@ -3004,6 +3050,10 @@ export const VOUCH_MIN_BALANCE = 11n;              // consensus — minimum bala
 export const VOUCH_COOLDOWN_BLOCKS = 60;           // consensus — blocks before escrow is released
 export const VOUCH_CAST_HEIGHT_WINDOW = 5;         // consensus — a cast's createdAtBlock may lag its carrying block by at most this many blocks
 ```
+
+The cast's other rules — a member casts, on a key holding a record, never on themselves, once
+per pair — carry no constant (`NODE_INTERFACE` → Vouch transition rules); nothing caps a member's
+live vouches.
 
 ### Genesis
 
@@ -3019,9 +3069,12 @@ byte-identical everywhere they are seeded at all (→ Network profiles); whether
 may behave unlike mainnet, with nothing to gain (`ARCHITECTURE → What varies per network`).
 
 **The genesis committee is a `NetworkProfile` field and nothing else.** `genesisCommitteeKeys` is read
-by `services/genesis-state.ts`, which seeds one karma box per entry out of the pool, and all three
+by `services/genesis-state.ts`, which seeds one karma box per entry out of the pool and writes each
+key's identity record as a root (`ARCHITECTURE → Membership`), and all three
 profiles carry it. No `constants.ts` export stands beside it: one constant serves one value, and three
-networks name three committees. Every profile's array is empty and the value is TBD at genesis.
+networks name three committees. Every profile's array is empty and the value is TBD at genesis; a
+chain with no root — an empty committee on a network with no faucet — refuses to serve after seeding
+(`NODE_INTERFACE → The genesis state root is checked fail-stop`).
 
 A committee credit grant and a committee dissolution period have no constant and no profile field:
 nothing read `GENESIS_CREDITS_PER_MEMBER` / `genesisCreditsPerMember` or `BOOTSTRAP_PERIOD_BLOCKS` /

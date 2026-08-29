@@ -56,6 +56,10 @@ export interface NetworkProfile {
   // Storage rent — the period between collections, in blocks
   readonly storageRentPeriodBlocks: number;
 
+  // Membership — k in D(N) = max(1, icbrt(k · N)); a cap, field-only
+  // (ARCHITECTURE → What varies per network)
+  readonly membershipBarMultiplier: number;
+
   // Genesis
   readonly genesisCommitteeKeys: readonly string[];
   readonly genesisKarmaPerMember: bigint;
@@ -173,6 +177,8 @@ const MAINNET_PROFILE: NetworkProfile = Object.freeze({
   // the period is timescale and per-network.
   storageRentPeriodBlocks: 2_102_400,
 
+  membershipBarMultiplier: 10,
+
   genesisCommitteeKeys: Object.freeze([] as string[]),
   genesisKarmaPerMember: GENESIS_KARMA_PER_MEMBER,
 
@@ -187,15 +193,16 @@ const MAINNET_PROFILE: NetworkProfile = Object.freeze({
   // no-premine evidence later is a value change on a network that has not
   // launched, not a format change. hex("dagsocial/mainnet/genesis-proof/mock")
   genesisProofPayload: '646167736f6369616c2f6d61696e6e65742f67656e657369732d70726f6f662f6d6f636b',
-  // Over THREE leaves — the proof box, the emission box and the karma pool box.
-  // The faucet's karma and credit boxes are the ones this profile does not seed,
-  // because it names no `faucetPublicKey`; the emission and pool boxes are seeded
-  // everywhere on purpose, because every block's coinbase is released from the one
-  // and every karma mint draws from the other (TYPES_INTERFACE → EmissionBox,
-  // KarmaPoolBox). The other two networks seed SIX leaves — those two boxes, these
-  // three, and the faucet identity's record — which is why this root's trailing
-  // height byte (`02`) differs from theirs (`03`).
-  genesisStateRoot: '5cc05fea25e2a7d3a4a14f10431d245a884817be1327d6286d227b3087d056bf02',
+  // Over FOUR leaves — the proof box, the emission box, the karma pool box and
+  // the network record. The faucet's karma and credit boxes are the ones this
+  // profile does not seed, because it names no `faucetPublicKey`; the emission
+  // and pool boxes are seeded everywhere on purpose, because every block's
+  // coinbase is released from the one and every karma mint draws from the other
+  // (TYPES_INTERFACE → EmissionBox, KarmaPoolBox). The other two networks seed
+  // SEVEN leaves — those three boxes, these four, and the faucet identity's
+  // record — which is why this root's trailing height byte (`03`) differs from
+  // theirs (`04`).
+  genesisStateRoot: 'e2a156c44ddb8cc40587b28fc3ce7a8c01c2657f94e5752a063d9b13912b322703',
   genesisId: '',
 } satisfies NetworkProfile);
 
@@ -215,6 +222,8 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   // not a mechanic — the vesting formula is unchanged.
   inviteBondMax: 1000n,
 
+  membershipBarMultiplier: 1,
+
   genesisCommitteeKeys: Object.freeze([] as string[]),
   // Overridden explicitly, and it must be: the spread above would otherwise
   // hand testnet mainnet's payload, making the two genesis states byte-identical
@@ -224,7 +233,7 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   // Overridden for the same reason as the payload above, and it is the same
   // single failure: the spread would hand testnet mainnet's root, and a root is
   // exactly what a node checks its own seeded state against.
-  genesisStateRoot: '84f9ab3f69f5b79e698b3783a00cdeeb90a2c830e0c51d203c7a76dfcd710aae03',
+  genesisStateRoot: 'd5be2f66c8d10f0408f726b982a1c1282b9577587aefc1cab6808f0a218bf45403',
   genesisId: '',
 } satisfies NetworkProfile);
 
@@ -294,6 +303,8 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   inviteBondMin: 5n,
   inviteBondMax: INVITE_BOND_MAX,
 
+  membershipBarMultiplier: 1,
+
   genesisCommitteeKeys: Object.freeze([] as string[]),
   genesisKarmaPerMember: GENESIS_KARMA_PER_MEMBER,
   // hex("dagsocial/devnet/genesis-proof/mock") — mock, see mainnet above
@@ -304,7 +315,7 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   // the faucet identity, since the two profiles name DIFFERENT
   // `faucetPublicKey`s and therefore seed differently-owned karma and credit
   // boxes.
-  genesisStateRoot: '7e95c8554057f0c098d700d0079d15f51d2025d59dc75fb8abd9f1b232c29ab803',
+  genesisStateRoot: '438480fde1b5ca026f9d2498fe0a0049c9b5e89e003e6ebcb7807da12d2c1dc304',
   genesisId: '',
 } satisfies NetworkProfile);
 

@@ -61,6 +61,7 @@ export const MAX_SETTLEMENT_BYTES = 100_000;     // consensus — the encoded se
 // TYPES_INTERFACE → Settlement caps
 export const MAX_BOND_SETTLEMENTS_PER_BLOCK = 64;
 export const MAX_ESCROW_RETURNS_PER_BLOCK = 64;
+export const MAX_LAPSE_WITHDRAWALS_PER_BLOCK = 64;
 
 /**
  * The accepted domain of a box `value` — TYPES_INTERFACE → Box value domain.
@@ -117,6 +118,9 @@ export const REPLY_AUTHOR_SHARE = 1n;       // consensus — the part of a reply
 export const LIKE_KARMA_COST = 1n;        // Karma burned by the liker per like (bigint)
 export const LIKES_PER_KARMA_PAYOUT = 5;  // x: per x likes an author accrues x−1; 1 is burned
 
+// Membership — ARCHITECTURE → Membership; TYPES_INTERFACE → Membership
+export const MEMBER_LIKES_MULTIPLIER = 2; // Y(N) = MEMBER_LIKES_MULTIPLIER · D(N)
+
 // Vouch
 export const VOUCH_KARMA_AMOUNT = 1n;         // Karma locked per vouch
 export const VOUCH_MIN_BALANCE = 11n;          // Must have >= this to vouch
@@ -152,7 +156,7 @@ export const INVITE_MIN_KARMA = KARMA_POSTING_MINIMUM;
  * unspendable box; equality makes that cost exactly what it strands, with no
  * second number free to drift below the first.
  */
-export const INVITE_BOND_MIN = 25n;            // → profile: inviteBondMin
+export const INVITE_BOND_MIN = 100n;           // → profile: inviteBondMin
 export const INVITE_BOND_MAX = 250n;           // → profile: inviteBondMax
 /** Blocks from the invite's own creation height to bond settlement. */
 export const INVITE_PROBATION_BLOCKS = 43200;  // 30 days at 60s → profile: inviteProbationBlocks

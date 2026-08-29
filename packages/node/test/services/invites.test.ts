@@ -36,6 +36,8 @@ import {
   putIdentityRecord as storePutIdentityRecord,
   consumeBox as storeConsumeBox,
   getPendingEntries,
+  getVouchBox as storeGetVouchBox,
+  getNetworkRecord as storeGetNetworkRecord,
 } from '../../src/store/index.js';
 import { createInvite } from '../../src/services/invites.js';
 import { validateTx } from '../../src/services/utxo-engine.js';
@@ -117,6 +119,10 @@ describe('invites service', () => {
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
       },
+      getVouchBox: storeGetVouchBox,
+      getNetworkRecord: storeGetNetworkRecord,
+      membershipBarMultiplier: 1,
+      putIdentityRecord: storePutIdentityRecord,
     };
   }
 
@@ -136,6 +142,13 @@ describe('invites service', () => {
     inviteePubKey = rawPublicKey(inviteeKeys.publicKey);
 
     deps = makeDeps();
+    db.prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    // Seed the inviter as a root so the budget check passes.
+    storePutIdentityRecord(inviterPubKey, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
   });
 
   afterEach(() => {
@@ -246,6 +259,11 @@ describe('invites service', () => {
       lastDecayBlock: 0,
       invitedAtBlock: 3,
       lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
     });
     const karma = createKarmaBox(inviterId, 100n, 1);
     const tx = buildCreateTx(karma, inviteePubKey);
@@ -264,8 +282,13 @@ describe('invites service', () => {
     storePutIdentityRecord(inviteePubKey, {
       lastActivityBlock: 3,
       lastDecayBlock: 0,
-      invitedAtBlock: 0,          // never invited
-      lifetimeLikesReceived: 900n, // and long since past a full vest
+      invitedAtBlock: 0,
+      lifetimeLikesReceived: 900n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
     });
     const karma = createKarmaBox(inviterId, 100n, 1);
     const tx = buildCreateTx(karma, inviteePubKey);

@@ -36,7 +36,11 @@ import {
   insertStump,
   getBox as storeGetBox,
   getIdentityRecord as storeGetIdentityRecord,
-  hasPendingLike, insertUtxoTx } from '../../src/store/index.js';
+  hasPendingLike, insertUtxoTx,
+  getVouchBox as storeGetVouchBox,
+  putIdentityRecord as storePutIdentityRecord,
+  getNetworkRecord as storeGetNetworkRecord,
+} from '../../src/store/index.js';
 import { castLike } from '../../src/services/likes.js';
 import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
 import { config } from '../../src/config.js';
@@ -132,6 +136,10 @@ describe('likes service (P2-D: the like is a burn transaction)', () => {
       runInTransaction: (fn: () => void) => {
         (db.transaction(fn) as () => void)();
       },
+      getVouchBox: storeGetVouchBox,
+      getNetworkRecord: storeGetNetworkRecord,
+      membershipBarMultiplier: 1,
+      putIdentityRecord: storePutIdentityRecord,
     };
   }
 
@@ -147,6 +155,7 @@ describe('likes service (P2-D: the like is a burn transaction)', () => {
     likerPubKeyHex = Buffer.from(likerPubKey).toString('hex');
     likerId = likerPubKey;
     deps = makeDeps();
+    db.prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
   });
 
   afterEach(() => {

@@ -22,7 +22,7 @@ async function importMempoolFresh() {
     removeEntry: (rowid: number) => void;
     hasPendingLike: (targetPostId: string, likerId: string) => boolean;
     countPendingInvites: (inviterId: string) => number;
-    hasPendingVouch: (voucherId: string) => boolean;
+    hasPendingVouch: (voucherId: string, targetId: string) => boolean;
     hasPendingSpend: (boxIds: string[]) => string | null;
     findPendingOutput: (boxId: string) => { id?: string } | null;
     getBoxWithPending: (boxId: string) => { id?: string } | null;
@@ -38,7 +38,7 @@ async function importMempoolWithRow() {
     ...mem,
     getDbRow: () =>
       (getDb() as any)
-        .prepare('SELECT like_target, like_liker, invite_inviter, vouch_voucher FROM mempool')
+        .prepare('SELECT like_target, like_liker, invite_inviter, vouch_voucher, vouch_target FROM mempool')
         .get() as Record<string, string | null>,
   };
 }
@@ -401,13 +401,14 @@ describe('mempool store', () => {
       expect(countPendingInvites(LIKER_A)).toBe(0);
     });
 
-    it('hasPendingVouch is keyed on the voucher alone', async () => {
+    it('hasPendingVouch is keyed on the (voucher, target) pair', async () => {
       const { insertUtxoTx, hasPendingVouch } = await importMempoolFresh();
 
       insertUtxoTx(vouchTx(VOUCHER_A, TARGET_ID) as any, 100);
 
-      expect(hasPendingVouch(VOUCHER_A)).toBe(true);
-      expect(hasPendingVouch(VOUCHER_B)).toBe(false);
+      expect(hasPendingVouch(VOUCHER_A, TARGET_ID)).toBe(true);
+      expect(hasPendingVouch(VOUCHER_B, TARGET_ID)).toBe(false);
+      expect(hasPendingVouch(VOUCHER_A, VOUCHER_B)).toBe(false);
     });
 
     it('leaves gate columns null for a tx with no gated outputs', async () => {
@@ -418,6 +419,7 @@ describe('mempool store', () => {
       expect(row.like_liker).toBeNull();
       expect(row.invite_inviter).toBeNull();
       expect(row.vouch_voucher).toBeNull();
+      expect(row.vouch_target).toBeNull();
     });
 
     it('populates like_target/like_liker from the tx field and the signer (P2-D)', async () => {

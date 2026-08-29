@@ -319,6 +319,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
   it('coinbase: the settlement\'s credit output and the emission it spent are both reverted', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const minerB = makeTestIdentity();
     const utxo = await importUtxo();
@@ -361,6 +362,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
   it('user-tx: credit transfer inputs unspent and outputs gone after revert', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const sender = makeTestIdentity();
     const recipient = makeTestIdentity();
@@ -424,6 +426,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
   it('prune: the stump, the deleted posts and the topology marks all revert', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const author = makeTestIdentity();
     const utxo = await importUtxo();
@@ -488,6 +491,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
   it('the settlement consumes a matured escrow and the round-trip holds', async () => {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const voucher = makeTestIdentity();
     makeTestIdentity();
@@ -558,6 +562,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
 
       const db = await importDb();
       db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
       const idle = makeTestIdentity();
       const utxo = await importUtxo();
@@ -600,6 +605,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     //   2. The invite loop (§11a-ii) → `putIdentityRecord(invitedAtBlock: H)`
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const inviter = makeTestIdentity();
     const invitee = makeTestIdentity();
@@ -607,6 +613,11 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     utxo.insertBox(makeKarmaBox(100n, inviter.userId, 0));
 
     const recordStore = await import('../../src/store/identity-records.js');
+    recordStore.putIdentityRecord(inviter.userId, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
 
     const handle = await activateProver();
     const bc = await importBlockCreator();
@@ -667,6 +678,11 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
       lastDecayBlock: 0,
       invitedAtBlock: 2,
       lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
     });
     handle.prover.prover.generateProof();
 
@@ -679,6 +695,11 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
       lastDecayBlock: 0,
       invitedAtBlock: 2,
       lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
     });
   });
 });

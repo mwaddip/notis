@@ -198,6 +198,7 @@ describe('the conservation axiom holds over a chain', () => {
   async function seedWorld() {
     const db = await importDb();
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
 
     const inviter = makeTestIdentity();
@@ -206,7 +207,34 @@ describe('the conservation axiom holds over a chain', () => {
     const target = makeTestIdentity();
     const author = makeTestIdentity();
 
-    // The inviter's stake, the voucher's balance, and one liker per like.
+    // Seed actors as roots so vouch and invite arms pass the membership check.
+    const { putIdentityRecord } = await import('../../src/store/identity-records.js');
+    for (const actor of [inviter, voucher]) {
+      putIdentityRecord(actor.userId, {
+        lastActivityBlock: 1,
+        lastDecayBlock: 0,
+        invitedAtBlock: 0,
+        lifetimeLikesReceived: 0n,
+        memberSinceBlock: 1,
+        memberBar: 0,
+        memberVouches: 0,
+        memberLikes: 0n,
+        invitesUsed: 0,
+      });
+    }
+    // The vouch target needs a record (NODE_INTERFACE → Vouch transition rules).
+    putIdentityRecord(target.userId, {
+      lastActivityBlock: 1,
+      lastDecayBlock: 0,
+      invitedAtBlock: 1,
+      lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
+    });
+
     const inviterKarma = makeKarmaBox(200n, inviter.userId, 0, 901);
     const voucherKarma = makeKarmaBox(50n, voucher.userId, 0, 902);
     utxo.insertBox(inviterKarma);
@@ -615,6 +643,7 @@ describe('genesis supply is within the ceiling', () => {
     vi.resetModules();
     const db = await import('../../src/store/db.js');
     db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     try {
       const prover = await import('../../src/state/avl-prover.js');
       const genesis = await import('../../src/services/genesis-state.js');

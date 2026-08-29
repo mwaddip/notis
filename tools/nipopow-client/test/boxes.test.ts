@@ -278,4 +278,34 @@ describe('box proving', () => {
     expect(result.failed).toBe(true);
     expect(result.boxes[0]!.verdict).toContain('record');
   });
+
+  it('kind: network for a box id → finding, unproven', async () => {
+    const candidate = karmaCandidate(50n);
+    const boxId = computeCandidateBoxId(candidate, FAKE_TXID, 0);
+
+    const avl = buildAvlFixture([{ candidate, txId: FAKE_TXID, index: 0 }]);
+    const chain = buildMinedChain({ count: CHAIN_LEN, stateRoot: avl.digest });
+    const suffixHead = suffixHeadForChain(chain, M, K);
+
+    const node = createFakeNode({
+      url: 'http://a:3000',
+      chain,
+      m: M,
+      k: K,
+      avl,
+      karmaBoxes: { userId: FAKE_USER, boxes: [{ boxId, value: 50 }] },
+      overrideAvlResponses: new Map([[boxId, {
+        boxId,
+        atHeight: suffixHead.header.height,
+        stateRoot: suffixHead.header.stateRoot,
+        proof: Buffer.from(new Uint8Array(0)).toString('base64'),
+        kind: 'network',
+        value: null,
+      }]]),
+    });
+
+    const result = await proveBoxes('http://a:3000', FAKE_USER, suffixHead, node.fetch);
+    expect(result.failed).toBe(true);
+    expect(result.boxes[0]!.verdict).toContain('network');
+  });
 });

@@ -17,7 +17,7 @@ function jsonSafeFields(fields: Record<string, unknown>): Record<string, unknown
 
 /** What a key resolved to, in a form the JSON response can carry. */
 interface DecodedValue {
-  kind: 'box' | 'record' | null;
+  kind: 'box' | 'record' | 'network' | null;
   value: Record<string, unknown> | null;
 }
 
@@ -41,6 +41,9 @@ function decodeValue(id: string, bytes: Uint8Array): DecodedValue {
   const decoded = deserializeAvlValue(bytes);
   if (decoded.kind === 'record') {
     return { kind: 'record', value: jsonSafeFields({ ...decoded.record }) };
+  }
+  if (decoded.kind === 'network') {
+    return { kind: 'network', value: jsonSafeFields({ ...decoded.network }) };
   }
   return { kind: 'box', value: jsonSafeFields({ id, ...decoded.box }) };
 }
