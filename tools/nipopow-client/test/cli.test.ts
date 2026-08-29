@@ -6,6 +6,7 @@ import {
   buildAvlFixture,
   createFakeNode,
   devnetProfile,
+  clockAfterChain,
 } from './helpers.js';
 import { computeCandidateBoxId } from '@dagsocial/types';
 import type { AnyBoxCandidate, TxId } from '@dagsocial/types';
@@ -33,6 +34,7 @@ describe('end-to-end: tip + boxes', () => {
     const avl = buildAvlFixture([{ candidate, txId: FAKE_TXID, index: 0 }]);
     const chain = buildMinedChain({ count: CHAIN_LEN, stateRoot: avl.digest });
     const profile = devnetProfile();
+    const now = clockAfterChain(chain);
 
     const nodeA = createFakeNode({
       url: 'http://a:3000',
@@ -48,7 +50,7 @@ describe('end-to-end: tip + boxes', () => {
 
     const tipResult = await resolveTip(
       ['http://a:3000', 'http://b:3001'],
-      M, K, profile, combinedFetch,
+      M, K, profile, now, combinedFetch,
     );
 
     expect(tipResult.winner).not.toBeNull();
@@ -107,6 +109,7 @@ describe('end-to-end: tip + boxes', () => {
     ]);
     const chain = buildMinedChain({ count: CHAIN_LEN, stateRoot: avl.digest });
     const profile = devnetProfile();
+    const now = clockAfterChain(chain);
 
     const nodeA = createFakeNode({
       url: 'http://a:3000',
@@ -123,7 +126,7 @@ describe('end-to-end: tip + boxes', () => {
 
     const tipResult = await resolveTip(
       ['http://a:3000', 'http://b:3001'],
-      M, K, profile, combinedFetch,
+      M, K, profile, now, combinedFetch,
     );
 
     expect(tipResult.winner).not.toBeNull();

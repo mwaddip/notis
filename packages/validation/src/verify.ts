@@ -10,6 +10,7 @@ import {
   ED25519_SPKI_PREFIX,
   LEVEL_CAP,
   MAX_INTERLINKS,
+  MAX_FUTURE_DRIFT_MS,
   interlinkRoot,
   updateInterlinks,
 } from '@dagsocial/types';
@@ -291,10 +292,9 @@ const HEADER_DOMAIN: readonly HeaderDomainRule[] = [
     ok: (v) => isU64Safe(v) && (v as number) <= 65536,
     error: 'Block header powTargetBits must be an integer in [0, 65536]',
   },
-  // vlqU. A domain pin, not a clock policy: no monotonicity rule and no skew
-  // window — those are consensus rule additions, and "never add checks the
-  // reference lacks" applies. `createdAt` stays a producer-set record that no
-  // node validates against anything, as in every chain in the lineage.
+  // vlqU — a consensus input: the order and future-bound rules
+  // (→ verifyCreatedAtOrder, → verifyCreatedAtBound) and the difficulty
+  // schedule (→ asertTargetBits) read it.
   { field: 'createdAt', ok: isU64Safe, error: 'Block header createdAt must be a non-negative safe integer' },
   // b32 — the interlink vector's commitment (TYPES_INTERFACE → Interlink vector)
   { field: 'interlinkRoot', ok: isHex32, error: 'Block header interlinkRoot must be 64 lowercase hex characters' },
@@ -457,6 +457,93 @@ export function cumulativeWork(headers: BlockHeader[]): bigint {
     if (work !== null) sum += work;
   }
   return sum;
+}
+
+// ---------------------------------------------------------------------------
+// RetargetParams / asertTargetBits — VALIDATION_INTERFACE → asertTargetBits
+// ---------------------------------------------------------------------------
+
+/**
+ * The schedule's injected parameters. The caller owns every value; this
+ * package owns the function. VALIDATION_INTERFACE → asertTargetBits.
+ */
+export interface RetargetParams {
+  anchorBits: number;
+  idealMs: number;
+  halflifeMs: number;
+  floorBits: number;
+  ceilingBits: number;
+}
+
+/**
+ * The target the block above `parent` must carry — the ASERT difficulty
+ * schedule in log space over the 1/256-bit representation.
+ * VALIDATION_INTERFACE → asertTargetBits;
+ * MINING_INTERFACE → Difficulty Schedule.
+ */
+export function asertTargetBits(
+  params: RetargetParams,
+  anchorCreatedAt: number,
+  parent: { height: number; createdAt: number },
+): number {
+  if (!isObject(params) || !isObject(parent)) return 0;
+  const pHeight = (parent as Record<string, unknown>).height;
+  const pCreatedAt = (parent as Record<string, unknown>).createdAt;
+  if (!isU64Safe(pHeight as number) || !isU64Safe(pCreatedAt as number) || !isU64Safe(anchorCreatedAt)) return 0;
+
+  const delta = (BigInt(pCreatedAt as number) - BigInt(anchorCreatedAt))
+    - BigInt(params.idealMs) * (BigInt(pHeight as number) - 1n);
+  const numerator = delta * 256n;
+  const divisor = BigInt(params.halflifeMs);
+  let q = numerator / divisor;
+  if (numerator % divisor !== 0n && numerator < 0n) q -= 1n;
+
+  let bits = BigInt(params.anchorBits) - q;
+  const floor = BigInt(params.floorBits);
+  const ceiling = BigInt(params.ceilingBits);
+  if (bits < floor) bits = floor;
+  if (bits > ceiling) bits = ceiling;
+  return Number(bits);
+}
+
+// ---------------------------------------------------------------------------
+// verifyCreatedAtOrder — VALIDATION_INTERFACE → verifyCreatedAtOrder
+// ---------------------------------------------------------------------------
+
+/**
+ * `header.createdAt > parent.createdAt` — the timestamp order rule.
+ * MINING_INTERFACE → Header timestamp rules, the order rule.
+ */
+export function verifyCreatedAtOrder(
+  header: BlockHeader,
+  parent: BlockHeader,
+): boolean {
+  if (!isObject(header) || !isObject(parent)) return false;
+  const hCa = (header as Record<string, unknown>).createdAt;
+  const pCa = (parent as Record<string, unknown>).createdAt;
+  if (!isU64Safe(hCa as number) || !isU64Safe(pCa as number)) return false;
+  return (hCa as number) > (pCa as number);
+}
+
+// ---------------------------------------------------------------------------
+// verifyCreatedAtBound — VALIDATION_INTERFACE → verifyCreatedAtBound
+// ---------------------------------------------------------------------------
+
+/**
+ * `header.createdAt ≤ nowMs + maxDriftMs` — the future bound.
+ * MINING_INTERFACE → Header timestamp rules, the future bound.
+ */
+export function verifyCreatedAtBound(
+  header: BlockHeader,
+  nowMs: number,
+  maxDriftMs: number,
+): boolean {
+  if (!isObject(header)) return false;
+  const ca = (header as Record<string, unknown>).createdAt;
+  if (!isU64Safe(ca as number)) return false;
+  if (typeof nowMs !== 'number' || !Number.isFinite(nowMs) || !Number.isInteger(nowMs)) return false;
+  if (typeof maxDriftMs !== 'number' || !Number.isFinite(maxDriftMs) || !Number.isInteger(maxDriftMs)) return false;
+  return (ca as number) <= nowMs + maxDriftMs;
 }
 
 // ---------------------------------------------------------------------------
@@ -934,17 +1021,20 @@ export function levelOfHit(hit: Uint8Array, target: Uint8Array): number | null {
 }
 
 /**
- * The superblock level of a header (VALIDATION_INTERFACE → level).
- * `Infinity` at height 1; otherwise `levelOfHit(powHit(header), target)`.
- * `null` when either half is `null`.
+ * The superblock level of a header against the network's anchor target —
+ * the yardstick (VALIDATION_INTERFACE → level; TYPES_INTERFACE → Interlink
+ * vector). `Infinity` at height 1; otherwise
+ * `levelOfHit(powHit(header), orderingPowTarget(anchorBits))`.
+ * `null` when the hit exceeds the yardstick, when either half is `null`,
+ * or when `anchorBits` is outside `orderingPowTarget`'s domain.
  */
-export function level(header: BlockHeader): number | null {
+export function level(header: BlockHeader, anchorBits: number): number | null {
   if (isObject(header) && (header as Record<string, unknown>).height === 1) return Infinity;
   const hit = powHit(header);
   if (hit === null) return null;
-  const target = orderingPowTarget(header.powTargetBits);
-  if (target === null) return null;
-  return levelOfHit(hit, target);
+  const yardstick = orderingPowTarget(anchorBits);
+  if (yardstick === null) return null;
+  return levelOfHit(hit, yardstick);
 }
 
 // ---------------------------------------------------------------------------
@@ -977,26 +1067,32 @@ export function verifyBlockChainLink(
  */
 export type HeaderChainVerdict =
   | { ok: true; work: bigint; hashes: string[] }
-  | { ok: false; index: number; reason: 'domain' | 'version' | 'height' | 'link' | 'target' | 'pow' | 'interlinks' };
+  | { ok: false; index: number; reason: 'domain' | 'version' | 'height' | 'link' | 'time' | 'clock' | 'target' | 'pow' | 'interlinks' };
 
 /**
- * Verify a contiguous header segment against an anchor and a target schedule.
- * VALIDATION_INTERFACE → verifyHeaderChain.
+ * Verify a contiguous header segment against an anchor, the retarget
+ * parameters and the caller's clock. VALIDATION_INTERFACE → verifyHeaderChain.
  */
 export function verifyHeaderChain(
   headers: BlockHeader[],
-  anchor: { prevBlockHash: string; height: number; interlinks: string[] },
-  scheduledTarget: (height: number) => number,
+  anchor: { prevBlockHash: string; height: number; interlinks: string[]; createdAt: number | null },
+  params: RetargetParams,
+  anchorCreatedAt: number | null,
+  nowMs: number,
 ): HeaderChainVerdict {
   if (!Array.isArray(headers) || headers.length === 0) {
     return { ok: true, work: 0n, hashes: [] };
   }
 
-  // Validate anchor interlinks before entering the loop: a malformed vector
-  // would throw inside `interlinkRoot` (which calls `encodeInterlinks`), and
-  // an empty vector above genesis would throw in `updateInterlinks` when
-  // the first header's finite level reaches it. Only the genesis anchor
-  // (height 0) may carry an empty vector.
+  // A null anchor.createdAt with a non-null anchorCreatedAt, or the reverse,
+  // is malformed input.
+  const anchorCaNull = anchor.createdAt === null || anchor.createdAt === undefined;
+  const tANull = anchorCreatedAt === null || anchorCreatedAt === undefined;
+  if (anchorCaNull !== tANull) {
+    return { ok: false, index: 0, reason: 'time' };
+  }
+
+  // Validate anchor interlinks before entering the loop.
   if (!Array.isArray(anchor.interlinks) ||
       anchor.interlinks.length > MAX_INTERLINKS ||
       anchor.interlinks.some(e => !isHex32(e)) ||
@@ -1004,14 +1100,19 @@ export function verifyHeaderChain(
     return { ok: false, index: 0, reason: 'interlinks' };
   }
 
+  const yardstick = orderingPowTarget(params.anchorBits);
+  if (yardstick === null) {
+    return { ok: false, index: 0, reason: 'target' };
+  }
+  let t_a: number | null = anchorCreatedAt ?? null;
+
   const hashes: string[] = [];
   let expectedInterlinks = anchor.interlinks;
 
   for (let i = 0; i < headers.length; i++) {
     const header = headers[i]!;
 
-    // 1. Domain — blockHash returns null on exactly the headers
-    //    verifyHeaderFieldDomains rejects; a non-object header fails here.
+    // 1. Domain
     const hash = blockHash(header);
     if (hash === null) {
       return { ok: false, index: i, reason: 'domain' };
@@ -1028,19 +1129,61 @@ export function verifyHeaderChain(
       return { ok: false, index: i, reason: 'height' };
     }
 
-    // 4. Link — prevBlockHash against anchor at i=0, hashes[i-1] after
+    // 4. Link
     const expectedPrev = i === 0 ? anchor.prevBlockHash : hashes[i - 1]!;
     if (header.prevBlockHash !== expectedPrev) {
       return { ok: false, index: i, reason: 'link' };
     }
 
-    // 5. Target — powTargetBits must equal the schedule for this height
-    if (header.powTargetBits !== scheduledTarget(expectedHeight)) {
-      return { ok: false, index: i, reason: 'target' };
+    // 5. Time — createdAt strictly above the previous header's (or the
+    //    anchor's for i = 0 when it is not null). Height 1 has no order check.
+    if (header.height !== 1) {
+      if (i === 0) {
+        if (anchor.createdAt !== null && anchor.createdAt !== undefined) {
+          if (!isU64Safe(header.createdAt) || !isU64Safe(anchor.createdAt) || header.createdAt <= anchor.createdAt) {
+            return { ok: false, index: i, reason: 'time' };
+          }
+        }
+      } else {
+        const prev = headers[i - 1]!;
+        if (!isU64Safe(header.createdAt) || !isU64Safe(prev.createdAt) || header.createdAt <= prev.createdAt) {
+          return { ok: false, index: i, reason: 'time' };
+        }
+      }
     }
 
-    // 6. PoW — compute the hit once, use for both the PoW check and the
-    //    level computation for the next header's vector.
+    // 6. Clock — the future bound against the caller's clock
+    if (!verifyCreatedAtBound(header, nowMs, MAX_FUTURE_DRIFT_MS)) {
+      return { ok: false, index: i, reason: 'clock' };
+    }
+
+    // 7. Target — the ASERT schedule
+    if (header.height === 1) {
+      if (header.powTargetBits !== params.anchorBits) {
+        return { ok: false, index: i, reason: 'target' };
+      }
+      // At a genesis fork, headers[0] at height 1 establishes t_a for i ≥ 1
+      if (t_a === null) {
+        t_a = header.createdAt;
+      }
+    } else {
+      if (t_a === null) {
+        return { ok: false, index: i, reason: 'target' };
+      }
+      let previous: { height: number; createdAt: number };
+      if (i === 0 && anchor.createdAt !== null && anchor.createdAt !== undefined) {
+        previous = { height: anchor.height, createdAt: anchor.createdAt };
+      } else if (i > 0) {
+        previous = headers[i - 1]!;
+      } else {
+        return { ok: false, index: i, reason: 'target' };
+      }
+      if (header.powTargetBits !== asertTargetBits(params, t_a, previous)) {
+        return { ok: false, index: i, reason: 'target' };
+      }
+    }
+
+    // 8. PoW
     const hit = powHit(header);
     if (hit === null) return { ok: false, index: i, reason: 'pow' };
     const target = orderingPowTarget(header.powTargetBits);
@@ -1048,17 +1191,14 @@ export function verifyHeaderChain(
       return { ok: false, index: i, reason: 'pow' };
     }
 
-    // 7. Interlink root — VALIDATION_INTERFACE → verifyHeaderChain step 7
+    // 9. Interlink root — the yardstick level
     const expectedRoot = interlinkRoot(expectedInterlinks);
     if (header.interlinkRoot !== expectedRoot) {
       return { ok: false, index: i, reason: 'interlinks' };
     }
 
-    // Advance the expected interlink vector for the next header.
-    // Height 1 → Infinity (VALIDATION_INTERFACE → level); otherwise the
-    // arithmetic level from the hit already computed for step 6.
-    const headerLevel = header.height === 1 ? Infinity : levelOfHit(hit, target!);
-    expectedInterlinks = updateInterlinks(expectedInterlinks, hash, headerLevel!);
+    const headerLevel = header.height === 1 ? Infinity : levelOfHit(hit, yardstick);
+    expectedInterlinks = updateInterlinks(expectedInterlinks, hash, headerLevel);
 
     hashes.push(hash);
   }

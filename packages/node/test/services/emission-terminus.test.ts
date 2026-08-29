@@ -67,36 +67,36 @@ async function importBlockApply() {
  */
 async function seedChainAt(height: number): Promise<void> {
   const ordering = await importOrdering();
-  const { expectedTarget } = await import('../../src/services/difficulty.js');
+  const { config } = await import('../../src/config.js');
   const { interlinkRoot } = await import('@dagsocial/types');
   const seedMiner = makeTestIdentity();
-
-  // The seeded interlinks must be non-empty so `updateInterlinks` at height+1
-  // does not throw on a finite level. A single-entry vector is the genesis case.
   const seedInterlinks = [ZERO_HASH];
-  const header = {
-    protocolVersion: PROTOCOL_VERSION,
-    height,
-    prevBlockHash: ZERO_HASH,
-    utxoTxRoot: ZERO_HASH,
-    stateRoot: EMPTY_STATE_ROOT,
-    validatorId: seedMiner.userId,
-    powNonce: 0,
-    powTargetBits: expectedTarget(height),
-    createdAt: Date.now(),
-    interlinkRoot: interlinkRoot(seedInterlinks),
-  };
-  header.powNonce = solveHeaderPow(header as import('@dagsocial/types').BlockHeader);
-  ordering.createOrderingBlock({
-    header,
-    utxoTxTree: {
-      utxoTxIds: [],
-      utxoTxs: [],
-      coinbaseOutputs: [],
-    },
-    validatorSignature: new Uint8Array(64),
-  } as unknown as import('@dagsocial/types').OrderingBlock, seedInterlinks);
 
+  function seedOne(h: number) {
+    // The anchor's bits — this is a seed, not a scheduled block
+    const hdr = {
+      protocolVersion: PROTOCOL_VERSION,
+      height: h,
+      prevBlockHash: ZERO_HASH,
+      utxoTxRoot: ZERO_HASH,
+      stateRoot: EMPTY_STATE_ROOT,
+      validatorId: seedMiner.userId,
+      powNonce: 0,
+      powTargetBits: config.orderingBlockPowTargetBits,
+      createdAt: 1_000_000 + h,
+      interlinkRoot: interlinkRoot(seedInterlinks),
+    };
+    hdr.powNonce = solveHeaderPow(hdr as import('@dagsocial/types').BlockHeader);
+    ordering.createOrderingBlock({
+      header: hdr,
+      utxoTxTree: { utxoTxIds: [], utxoTxs: [] },
+      validatorSignature: new Uint8Array(64),
+    } as unknown as import('@dagsocial/types').OrderingBlock, seedInterlinks);
+  }
+
+  // anchorCreatedAt() reads block 1's stamp, so seed it if absent
+  if (height > 1) seedOne(1);
+  seedOne(height);
   expect(ordering.getCurrentHeight()).toBe(height);
 }
 

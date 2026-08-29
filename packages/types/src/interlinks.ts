@@ -71,13 +71,22 @@ export function interlinkRoot(vector: string[]): string {
 // Update rule — TYPES_INTERFACE → Interlink vector, update rule
 // ---------------------------------------------------------------------------
 
+/** TYPES_INTERFACE → Interlink vector. */
 export function updateInterlinks(
   prev: string[],
   prevHash: string,
-  prevLevel: number,
+  prevLevel: number | null,
 ): string[] {
   if (prevLevel === Infinity) {
     return [prevHash];
+  }
+  if (prevLevel === null) {
+    if (prev.length === 0) {
+      throw new RangeError(
+        'updateInterlinks: prev must be non-empty when prevLevel is null',
+      );
+    }
+    return prev.slice();
   }
   if (
     !Number.isInteger(prevLevel) ||
@@ -85,7 +94,7 @@ export function updateInterlinks(
     prevLevel > LEVEL_CAP
   ) {
     throw new RangeError(
-      `updateInterlinks: prevLevel must be Infinity or an integer in [0, ${LEVEL_CAP}], got ${prevLevel}`,
+      `updateInterlinks: prevLevel must be Infinity, null, or an integer in [0, ${LEVEL_CAP}], got ${prevLevel}`,
     );
   }
   if (prev.length === 0) {

@@ -50,7 +50,8 @@ import {
   UnhashableStoredHeaderError,
   ReorgBlockRejectedError,
 } from './corrupt-state.js';
-import { expectedTarget } from './difficulty.js';
+import { retargetParams, anchorCreatedAt as storedAnchorCreatedAt, nowMs } from './difficulty.js';
+import { config } from '../config.js';
 
 /**
  * The hash of a header from our own chain.
@@ -542,25 +543,26 @@ export async function resolveFork(
       return;
     }
 
-    // 4. Anchor and chronological segment above the fork.
+    // 4. Anchor and chronological segment above the fork
+    // (NODE_INTERFACE → Fork choice decides on verified headers, step 4).
     let anchorPrevBlockHash: string;
     let anchorInterlinks: string[];
+    let anchorCreatedAt: number | null;
     if (forkHeight === 0) {
       anchorPrevBlockHash = GENESIS_PREV_BLOCK_HASH;
       anchorInterlinks = [];
+      anchorCreatedAt = null;
     } else {
       const forkBlock = getOrderingBlock(forkHeight);
       if (!forkBlock) throw new MissingStoredBlockError('resolveFork anchor', forkHeight);
       anchorPrevBlockHash = ourChainHash(forkBlock.header, 'resolveFork anchor');
-      // NODE_INTERFACE → Fork choice decides on verified headers, step 4
+      anchorCreatedAt = forkBlock.header.createdAt;
       const storedInterlinks = getInterlinks(forkHeight);
       if (storedInterlinks === null) {
         throw new UnhashableStoredHeaderError('resolveFork/interlinks', forkHeight);
       }
-      const forkLevel = level(forkBlock.header);
-      if (forkLevel === null) {
-        throw new UnhashableStoredHeaderError('resolveFork/level', forkHeight);
-      }
+      // VALIDATION_INTERFACE → level: null is no level, not a fail-stop
+      const forkLevel = level(forkBlock.header, config.orderingBlockPowTargetBits);
       anchorInterlinks = updateInterlinks(
         storedInterlinks, anchorPrevBlockHash, forkLevel,
       );
@@ -569,13 +571,20 @@ export async function resolveFork(
       prevBlockHash: anchorPrevBlockHash,
       height: forkHeight,
       interlinks: anchorInterlinks,
+      createdAt: anchorCreatedAt,
     };
     const segment = theirHeaders
       .filter((h) => h.height > forkHeight)
       .reverse();
 
     // 5. Verification (VALIDATION_INTERFACE → verifyHeaderChain).
-    const verdict = verifyHeaderChain(segment, anchor, expectedTarget);
+    const verdict = verifyHeaderChain(
+      segment,
+      anchor,
+      retargetParams(),
+      forkHeight === 0 ? null : storedAnchorCreatedAt(),
+      nowMs(),
+    );
     if (!verdict.ok) {
       const isWindowMiss = verdict.index === 0
         && verdict.reason === 'height'
@@ -585,13 +594,22 @@ export async function resolveFork(
           `Fork resolution: window miss — segment starts above a genesis-rooted ` +
           `fork (index=${verdict.index}, reason=${verdict.reason}), no penalty`,
         );
-      } else {
-        console.warn(
-          `Fork resolution: header verification failed ` +
-          `(index=${verdict.index}, reason=${verdict.reason}), penalising peer ${peerId}`,
-        );
-        net.penalizePeer(peerId, 'misbehavior', `header verification: ${verdict.reason} at index ${verdict.index}`);
+        return;
       }
+      // MINING_INTERFACE → Header timestamp rules: a future-bound refusal is
+      // an acceptance verdict, not a consensus one — no penalty, no mark
+      if (verdict.reason === 'clock') {
+        console.warn(
+          `Fork resolution: future-bound refusal, no penalty ` +
+          `(index=${verdict.index})`,
+        );
+        return;
+      }
+      console.warn(
+        `Fork resolution: header verification failed ` +
+        `(index=${verdict.index}, reason=${verdict.reason}), penalising peer ${peerId}`,
+      );
+      net.penalizePeer(peerId, 'misbehavior', `header verification: ${verdict.reason} at index ${verdict.index}`);
       return;
     }
 

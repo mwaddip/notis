@@ -1,17 +1,12 @@
 import type { BlockHeader } from '@dagsocial/types';
 import { blockHash, level } from '@dagsocial/validation';
 import { verifyProof } from './verify.js';
+import type { VerifyProfile } from './verify.js';
 import type { NipopowProof, PoPowHeader } from './codec.js';
 
 export type CompareResult =
   | { verdict: 'a' | 'b' | 'tie'; scoreA: bigint; scoreB: bigint; lca: BlockHeader }
   | { verdict: 'incomparable'; reason: 'no-common-ancestor' | 'm-mismatch' | 'invalid' };
-
-interface CompareProfile {
-  expectedTarget: (height: number) => number;
-  genesisId: string;
-  protocolVersion: number;
-}
 
 function headersChain(proof: NipopowProof): BlockHeader[] {
   return [
@@ -36,11 +31,12 @@ function lowestCommonAncestor(left: BlockHeader[], right: BlockHeader[]): BlockH
   return lca;
 }
 
-// NIPOPOW_INTERFACE → compareProofs — bestArg: max over μ ≥ 0 of 2^μ · |{ h ∈ chain : level(h) ≥ μ }|,
-// counting a level μ ≥ 1 only while it holds at least m headers
-export function bestArg(headers: BlockHeader[], m: number): bigint {
-  const levels = headers.map(h => level(h));
-  const acc: Array<[number, number]> = [[0, headers.length]];
+// NIPOPOW_INTERFACE → compareProofs — bestArg: max over μ ≥ 0 of 2^μ · |{ h ∈ chain : level(h, anchorBits) ≥ μ }|,
+// counting μ ≥ 1 only while it holds at least m headers; μ = 0 counts headers that have a level
+export function bestArg(headers: BlockHeader[], m: number, anchorBits: number): bigint {
+  const levels = headers.map(h => level(h, anchorBits));
+  const registeredCount = levels.filter(lvl => lvl !== null).length;
+  const acc: Array<[number, number]> = [[0, registeredCount]];
   let mu = 1;
   for (;;) {
     const count = levels.filter(lvl => lvl !== null && lvl >= mu).length;
@@ -64,7 +60,7 @@ export function compareProofs(
   a: NipopowProof,
   b: NipopowProof,
   m: number,
-  profile: CompareProfile,
+  profile: VerifyProfile,
 ): CompareResult {
   const aResult = verifyProof(a, profile);
   const bResult = verifyProof(b, profile);
@@ -88,8 +84,8 @@ export function compareProofs(
   const aAbove = aChain.filter(h => h.height > lcaHeight);
   const bAbove = bChain.filter(h => h.height > lcaHeight);
 
-  const scoreA = bestArg(aAbove, m);
-  const scoreB = bestArg(bAbove, m);
+  const scoreA = bestArg(aAbove, m, profile.retarget.anchorBits);
+  const scoreB = bestArg(bAbove, m, profile.retarget.anchorBits);
 
   if (scoreA > scoreB) return { verdict: 'a', scoreA, scoreB, lca };
   if (scoreB > scoreA) return { verdict: 'b', scoreA, scoreB, lca };

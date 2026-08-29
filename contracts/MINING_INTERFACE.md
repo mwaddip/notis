@@ -169,45 +169,84 @@ verifyOrderingBlockPoW(header: BlockHeader): boolean
 
 ## Difficulty Schedule
 
-`powTargetBits` is a **deterministic function of block height** — never of wall
-clock. On-chain time is block height (ARCHITECTURE invariant), so the difficulty
-target may not depend on `Date.now()` or a header timestamp, and every node must
-compute the same expected target for a given height, for all time.
+`powTargetBits` is a **deterministic function of the chain's own headers** — never of a clock. The
+schedule reads the header's `createdAt` stamps, which the header timestamp rules below make a consensus
+input; no node reads its own clock to compute a target, so every node computes the same target for the
+same chain, for all time. It is **ASERT**, absolute and anchored at block 1, in log space over the
+1/256-bit representation (`VALIDATION_INTERFACE → asertTargetBits` is the function; this section is the
+rule):
 
-Phase 1 uses a **fixed target**, sourced from the network profile:
-
-```ts
-expectedTarget(height) = profile.orderingBlockPowTargetBits   // constant in height, Phase 1
+```
+anchor:   block 1 — B_a = profile.orderingBlockPowTargetBits, t_a = createdAt(1)
+block 1:  powTargetBits === B_a
+block N ≥ 2, parent P = block N−1:
+   Δ    = (createdAt(P) − t_a) − ideal · (N − 2)                  // ms actual − ms expected, anchor → parent
+   B_N  = clamp( B_a − floorDiv(Δ · 256, halflife), floorBits, ceilingBits )
 ```
 
-> ✅ **RESOLVED — the `NOT IMPLEMENTED` marker here was stale, corrected 2026-08-10,
-> re-verified 2026-08-11.** It
-> read "the profile does not exist yet"; it does (`TYPES_INTERFACE §Network profiles`), and
-> `node/src/config.ts` sources `orderingBlockPowTargetBits` from it, so the value is no longer a
-> per-process environment read. ⚠ **The `VIOLATED` note under invariants 4/5/7 still describes
-> the environment-read world and has not been re-ruled** — do not read the two as agreeing.
->
-> **Precision about what the defect was, because the obvious reading sends you the wrong
-> way.** A constant *is* a function of height — a valid one. The defect was never that
-> `expectedTarget` ignores its argument; it was that the value it returned came from the
-> environment, which made it a function of *the operator* as well. Profile-sourcing closes
-> invariants 4, 5 and 7 **without introducing any height schedule.** Do not build a retarget
-> here. The unused `height` parameter stays as the seam a real schedule will need, and it
-> stays unused until that schedule is designed.
+All arithmetic is BigInt; `floorDiv` rounds toward −∞ — a fast chain's negative quotient rounds
+*harder*, a slow chain's positive quotient rounds to *no easing yet*, so the schedule is never easier
+than exact. `ideal` is `profile.orderingBlockIdealMs`; `halflife` is `RETARGET_HALFLIFE_BLOCKS · ideal`;
+the bounds are `profile.orderingBlockPowTargetFloorBits` and `…CeilingBits`, absolute and clamped after
+the computation, never a per-step clamp (`TYPES_INTERFACE → Network profiles`; the numbers and their
+standing in `CONSTANTS → Ordering-block PoW`). The schedule reads the **parent's** stamp, not the block's
+own — the reference's shape (`aserti3-2d` evaluates on the parent), so a check against it is exact: our
+block 1 plays the reference's anchor-parent and our block 2 its anchor, and `N − 2` is its
+`height_delta + 1`.
 
-There is no wall-clock retargeting. Rationale: the previous scheme
-(`prevTarget × actualDuration / expectedDuration`, clamped ±50%) fired only every
-`CREDIT_EPOCH_BLOCKS` (~90 days) and made the target a function of local wall
-time, so two honest nodes could compute different targets and a miner could
-self-declare a floor target for near-free blocks. A real hashrate-tracking
-retarget needs a deterministic on-chain time source (e.g. median-of-header-
-timestamps with future bounds); that is deferred, and ordering-block difficulty
-is expected to evolve (possibly karma-proportional) in a later phase. Until then
-the target is fixed by schedule and enforced.
+**The schedule is absolute, so a paused chain owes every missed block.** Height never drifts from time
+— the property every "at 60 s" duration in this repo rests on — and its other face is that a chain idle
+for days walks to the floor and, on resumption, mines the owed blocks at floor difficulty, coinbase
+included. The per-network floor prices that catch-up (20 bits on testnet and mainnet — about 1.4 s of
+one core per owed block); the floor is the lever, not a different estimator (ruled 2026-08-29).
 
-**Enforcement (apply — all paths: gossip, sync, reorg):** a block whose
-`header.powTargetBits !== expectedTarget(height)` is rejected. This is a consensus
-check, not a sanity floor — the target is fixed by schedule, not miner-chosen.
+**There is no wall-clock retargeting**, and there never was a sound one: the previous scheme
+(`prevTarget × actualDuration / expectedDuration` per credit epoch) measured `actualDuration` on each
+node's local clock, so two honest nodes could compute different targets. ASERT reads the chain's own
+stamps and nothing outside it. The one place a local clock enters is the future bound below, which is
+an acceptance rule and not a target input.
+
+**Enforcement (apply — all paths: gossip, sync, reorg):** a block whose `header.powTargetBits` differs
+from the schedule evaluated over the **stored parent** is rejected — a consensus check, not a sanity
+floor. A height-1 block's bits must equal `B_a`. Fork choice recomputes every competing header's target
+from that branch's own headers and never trusts a declared one (`VALIDATION_INTERFACE → verifyHeaderChain`,
+reason `'target'`).
+
+### Header timestamp rules
+
+`createdAt` is a consensus input. Two rules, both header-level, both in the apply funnel and in
+`verifyHeaderChain` (`VALIDATION_INTERFACE → verifyCreatedAtOrder`, `→ verifyCreatedAtBound`):
+
+| Rule | Statement | Class |
+|---|---|---|
+| **Order** | `createdAt(N) > createdAt(N−1)` for N ≥ 2 — strict, Ergo's header rule 205 | **consensus** — a violation is a bad chain: refuse; in a fork segment refuse-whole and penalise `misbehavior` (reason `'time'`) |
+| **Future bound** | `createdAt(N) ≤ now + MAX_FUTURE_DRIFT_MS`, `now` the receiving node's clock | **acceptance**, not consensus — the block may be valid a minute later: refuse, **no penalty, no `refused_headers` mark** (`NODE_INTERFACE → Fork choice decides on verified headers`, what is remembered); in a fork segment reason `'clock'`, classified beside the window miss |
+
+Block 1 has no parent and no order check; the future bound applies to it as to every block.
+
+**Why the bound is an acceptance rule.** The target a chain implies is deterministic; whether this node
+accepts a block *now* depends on its clock, and two honest nodes can disagree now and agree a minute
+later. No hashrate-tracking retarget avoids the touchpoint: a chain-only rule bounding each stamp's
+increment over its parent limits how *fast* chain time can run ahead of real time, not how *far*, and
+an attacker who keeps pushing walks difficulty to the floor. A future-refused block is recovered by the
+sync path — the producer's next `SyncInfo` shows a taller tip, the receiver's `heightByBlockId` lacks
+the id, and the `Inv → ModifierRequest` round re-delivers it inside the bound (`NET_INTERFACE → Sync
+State Machine`). Replay never trips it: a stored block is in the past by the time it is re-applied on
+restart or in a reorg.
+
+**What the bound buys an attacker, and no more.** Every honest receiver holds chain time at
+`real + skew`, and under an absolute schedule the chain can be at most `skew / ideal` = 10 blocks ahead
+of schedule *ever* — a total, not a rate; those blocks enjoy a target eased by `2^(skew / halflife)`,
+about 1.024. Strict order carries an inflated stamp forward but cannot compound it, because the bound is
+against real time. Stamping `parent + 1` to stall chain time lasts until the next honest block stamps
+real time; timewarp needs epoch boundaries, and ASERT has none. An honest node ahead by more than the
+drift has its blocks delayed to sync latency; one behind refuses fresh blocks only when it lags by more
+than the drift plus a block's age — a stamp is at least one solve old on arrival — and converges through
+the sync path.
+
+**Producer side.** The template stamps `createdAt = max(now, createdAt(tip) + 1)` (`NODE_INTERFACE →
+Block creation`), so a node whose clock lags its peers still produces valid blocks; stamps stay
+node-set and `POST /mining/submit` is unchanged.
 
 ## Mining API
 
@@ -566,76 +605,23 @@ the network profile (`TYPES_INTERFACE §Network profiles`), selected together by
    output's `lockedUntilBlock` **equals `height + CREDIT_MINER_REWARD_DELAY`** —
    enforced at apply on all paths (gossip, sync, reorg), not only in the gossip
    validator. A block with any other coinbase lock is rejected.
-4. `powTargetBits` **equals `expectedTarget(height)`** (a deterministic function of
-   height), enforced at apply on all paths — not a self-declared value with a
-   sanity floor. A mismatch rejects the block.
-5. Difficulty is height-deterministic; there is no wall-clock adjustment.
-6. Block hash covers PoW fields — changing `powNonce` or `powTargetBits` invalidates the block
-7. Old blocks verify against the scheduled difficulty for their height; since the
-   schedule is a pure function of height, that is the same value on every node and
-   for all time.
+4. `powTargetBits` **equals the schedule evaluated over the stored parent** (→ Difficulty
+   Schedule), enforced at apply on all paths — not a self-declared value with a sanity floor.
+   A mismatch rejects the block; a height-1 block's bits equal the anchor's.
+5. Difficulty is a function of the chain's own headers; no node reads a clock to compute a
+   target. The future bound is an acceptance rule, not a target input (→ Header timestamp rules).
+6. Block hash covers PoW fields — changing `powNonce`, `powTargetBits` or `createdAt` invalidates the block
+7. Old blocks verify against the schedule their own chain implies; since the schedule is a pure
+   function of the headers below a block, that is the same value on every node and for all time.
 
-> ✅ **RESOLVED — closed by P2-A, re-verified 2026-08-11.** `node/src/config.ts` sources
-> `orderingBlockPowTargetBits` from the network profile, so it is no longer a per-process
-> environment value and both consequences below are closed: there is no per-process
-> `ORDERING_BLOCK_POW_TARGET_BITS` for two nodes to diverge on, and changing the value now
-> means changing `NETWORK_TYPE`, which is a different network by definition. `expectedTarget`
-> still discards its height argument — that is intended and is not the defect; see §Difficulty.
->
-> *Historical, kept because the reasoning is the record:*
->
-> ⚠ **VIOLATED — invariants 4, 5 and 7. The rules are correct; the implementation is not.
-> Re-verified 2026-08-11: the core violation stands, and one of its two consequences has
-> closed.** `expectedTarget(_height)` in `node/src/services/difficulty.ts` **discards its
-> height argument** and returns `config.orderingBlockPowTargetBits` — three lines, no schedule.
->
-> 1. ✅ **Cross-node — CLOSED.** This said *"two nodes with different
->    `ORDERING_BLOCK_POW_TARGET_BITS` reject each other's blocks on every block."* That
->    environment variable no longer exists: P2-A removed it, and the value is now
->    **profile-sourced** (`node/src/config.ts` takes it from `profile.orderingBlockPowTargetBits`).
->    Two nodes on the same network agree by construction, and two on different networks carry
->    different frame magic and never peer. **The per-process divergence this described is gone.**
-> 2. ⚠ **Retroactive — STILL OPEN, and it is the worse one.** Because height is ignored,
->    changing the value re-targets *history*: on the next resync, reorg, or
->    restart-and-revalidate, every previously-accepted block is re-checked against the new
->    value and rejected. Invariant 7's "the same value on every node and for all time" is
->    precisely what does not hold. Profile-sourcing narrowed the blast radius from
->    per-process to per-release; **it did not make the check height-keyed.** A schedule keyed
->    to height would have that property; a single constant, wherever it is read from, cannot.
->
-> ⚠ **`expectedTarget` being constant is load-bearing elsewhere.** The reorg guard checks
-> **height** as a proxy for the **work** criterion, and the two coincide *only* because this
-> function returns a network constant. Whoever lands retargeting owns both — carried register
-> #5, and `NODE_INTERFACE` states the same expiry on its reorg bullet.
->
-> These invariants are **kept as written** — they state the intended rule, and Phase 2
-> makes them true. Do not weaken them to match the code.
->
-> **Resolution (P2-A):** sourcing the target from the network profile closes all three.
-> Consequence 1 goes because the value is no longer per-operator; consequence 2 goes
-> because it is fixed for the life of the chain. **No height schedule is required or
-> wanted** — see the note under §Difficulty Schedule.
+> ⛔ **SUPERSEDED — 2026-08-29, the ASERT unit.** Under P2-A's profile-sourced constant,
+> `expectedTarget(_height)` discarded its argument, so invariant 7 held only within one chain's life
+> — the constant's move from 3072 to 5984 (2026-08-12) re-targeted history and a fresh chain absorbed
+> it. The schedule above makes invariant 7 true as written: a target is a function of the headers
+> below the block. The reorg guard that note named as expiring "with ASERT" had already been replaced
+> by a work comparison over verified headers (`NODE_INTERFACE → Fork choice decides on verified
+> headers`, step 7).
 
-⚠ **The block above holds both answers, and the reader has to be told which is current.**
-Consequence 2 is marked `STILL OPEN` in item 2 and `goes` in the Resolution paragraph four lines
-later. **Item 2 is the true one**, and the retarget track is now exercising it deliberately:
-
-- **`ORDERING_BLOCK_POW_TARGET_BITS` moves from 3072 to 5983**, so every block stored under the old
-  value fails `applyOrderingBlock`'s scheduled-target check on resync, reorg or
-  restart-and-revalidate. **The mitigation is a fresh chain, not a mechanism** — the value change and
-  the wipe are one operation. Consequence 2 is realised rather than resolved.
-- **"No height schedule is required or wanted" is superseded.** One is wanted: `expectedTarget` becomes
-  a real function of height under the ASERT unit, and that is what actually closes invariant 7. Until
-  then invariant 7's *"the same value on every node and for all time"* holds only within one chain's
-  life, which is what the wipe re-establishes.
-- **Devnet no longer follows the constant** — its `orderingBlockPowTargetBits` stays trivially solvable
-  because the node test suite mines real PoW against whatever profile it resolves, and
-  `expectedTarget` reads the config singleton where an injected `Config` cannot reach.
-  `TYPES_INTERFACE → Ordering block PoW`.
-
-⚠ **The reorg-guard expiry in the note above is NOT discharged here.** `expectedTarget` is still a
-constant in height after this unit, so the height-for-work proxy still coincides. **It breaks with
-ASERT**, and carried register #5 still owns it.
 8. The mining API is never served unauthenticated: external mode requires a
    configured `MINING_SECRET` (enforced at startup, not per-request), every
    request is bearer-authenticated with a constant-time comparison, and the

@@ -2727,7 +2727,9 @@ unassigned config *is* a server-role node: it applies blocks and builds no templ
 14. Build coinbase outputs — the **miner's slice only**. The treasury's accrues to the
     `TreasuryBox` and the released emission comes out of the `EmissionBox`; both
     successors are derived here too, and neither rides in the block
-15. Adjust difficulty at epoch boundaries (credit epochs, not like epochs)
+15. Set the template's `powTargetBits` to the schedule over the tip header and its `createdAt` to
+    `max(now, tip.createdAt + 1)` (`MINING_INTERFACE → Difficulty Schedule`, `→ Header timestamp
+    rules`); a height-1 template carries the anchor's bits
 15b. Compute `stateRoot` — the **post-block** digest (see "Post-block
     stateRoot" below). Never the creator's current (pre-block) digest. A
     `body-rejected` speculation evicts the body's rows (step 13) and returns to
@@ -2896,13 +2898,18 @@ must always have somewhere to land; above exhaustion it releases nothing until o
 
 ### Difficulty schedule
 
-`powTargetBits` is a deterministic function of block height — Phase 1 is a
-fixed target (`expectedTarget(height) = ORDERING_BLOCK_POW_TARGET_BITS`),
-enforced at apply on every path: a block whose header target differs from the
-schedule is rejected. There is **no wall-clock retargeting** — the previous
-duration-ratio adjustment was removed because it made the target a function of
-local wall time (audit M-2). Normative spec: `MINING_INTERFACE.md`
-("Difficulty Schedule").
+`powTargetBits` is the ASERT schedule over the chain's own headers (`MINING_INTERFACE → Difficulty
+Schedule`, the normative rule), enforced at apply on every path: the funnel evaluates
+`asertTargetBits` over the **stored parent** it already fetched for the chain-link check and rejects a
+block whose header target differs; a height-1 block's bits must equal the anchor's. Beside it the
+funnel applies the two header timestamp rules (`MINING_INTERFACE → Header timestamp rules`): the order
+rule against the stored parent, and the future bound against this node's clock, read through a seam a
+test can set. **A future-bound refusal is an acceptance verdict, not a consensus one** — the block is
+neither penalised nor marked in `refused_headers`, and the sync path re-delivers it inside the bound.
+The schedule's parameters come from the profile through `Config` (→ Configuration); block 1's stamp,
+`t_a`, is the stored `ordering_blocks.created_at` at height 1 — nothing new is stored, and a reorg
+needs no undo entry, because a target is a function of headers a reverted chain no longer has. There
+is **no wall-clock retargeting**: no node reads a clock to compute a target.
 
 ### Per-block like settlement (P2-D — replaced the epoch tally)
 
@@ -4265,17 +4272,22 @@ with the chain untouched:
    the chains share only the genesis state, `null` when the divergence is deeper than
    `MAX_REORG_DEPTH`. `null` → no decision, no penalty: a deep fork is indistinguishable from an
    honest peer.
-4. **The anchor and the segment.** Anchor = `{ prevBlockHash, height: f, interlinks }` where
-   `prevBlockHash` is the hash of our block at `f`, or `GENESIS_PREV_BLOCK_HASH` at `f = 0`, and
+4. **The anchor and the segment.** Anchor = `{ prevBlockHash, height: f, interlinks, createdAt }`
+   where `prevBlockHash` is the hash of our block at `f`, or `GENESIS_PREV_BLOCK_HASH` at `f = 0`;
    `interlinks` is the vector the block at `f + 1` must commit to — `updateInterlinks(getInterlinks(f),
-   hash(f), level(our header at f))`, or `[]` at `f = 0`; segment = their headers above `f`,
-   chronological.
-5. **Verification.** `verifyHeaderChain(segment, anchor, expectedTarget)` (VALIDATION_INTERFACE →
+   hash(f), level(our header at f, anchorBits))`, or `[]` at `f = 0`; `createdAt` is our block at `f`'s
+   stamp, or `null` at `f = 0`; segment = their headers above `f`, chronological. Beside the anchor:
+   the profile's `RetargetParams`, block 1's stored stamp `t_a` (or `null` at `f = 0`, where the
+   segment's own first header supplies it), and this node's clock.
+5. **Verification.** `verifyHeaderChain(segment, anchor, params, t_a, now)` (VALIDATION_INTERFACE →
    verifyHeaderChain). A refusal is classified: `index 0` · `reason 'height'` · `f === 0` is a
    **window miss** — their chain stands more than `MAX_REORG_DEPTH · 2` above a genesis-rooted fork
    and the request, not the answer, was short; no penalty, and the pull path retries from our
-   tip + 1. Every other `(index, reason)` is a served chain that is not one: refuse and penalise
-   (NET_INTERFACE → Peer Penalty System, `misbehavior`).
+   tip + 1. **`reason 'clock'` at any index is a future-bound refusal** — a verdict of this node's
+   clock, not on the chain: no penalty, no mark, and the sync path re-delivers the branch inside the
+   bound (`MINING_INTERFACE → Header timestamp rules`). Every other `(index, reason)` — `'time'`
+   included — is a served chain that is not one: refuse and penalise (NET_INTERFACE → Peer Penalty
+   System, `misbehavior`).
 6. **Memory.** Any verified hash present in `refused_headers` (Store Interface → Refused headers)
    refuses the segment and penalises (`misbehavior`) — before any work is compared or block
    fetched.
@@ -4295,7 +4307,9 @@ with the chain untouched:
     inside the reorg transaction would roll back with it.
 
 **What is remembered, and what is not.** Header-stage refusals (steps 5, 6, 10) are cheap to
-re-check and are remembered nowhere — the peer is penalised and the segment is gone. A body-stage
+re-check and are remembered nowhere — the peer is penalised and the segment is gone; a `'clock'`
+refusal is not even penalised, being a verdict of this node's clock, and the paragraph's rule below is
+why it must never mark. A body-stage
 rejection (step 11) is the expensive case and the one remembered: verified headers over an invalid
 body. **The mark records a consensus rejection and nothing else** — a rejection that depends on
 local configuration or policy must not mark, because a persisted mark is only as right as the node
@@ -4466,6 +4480,13 @@ the floor held at load, `reorg` finding no version at or before a fork height th
 is `MissingStateVersionError` — a row the store lost, fail-stop ("What the funnel's totality catch is
 FOR"), never a quiet abort that leaves the node on the lighter chain.
 
+**The difficulty band is refused at load too, never clamped.** `loadConfig` refuses a profile whose
+`orderingBlockPowTargetFloorBits` sits below `ORDERING_BLOCK_POW_TARGET_FLOOR`, whose anchor
+`orderingBlockPowTargetBits` lies outside `[floor, ceiling]`, whose ceiling exceeds 65536, or whose
+`orderingBlockIdealMs` is not positive (`TYPES_INTERFACE → Network profiles`). `Config` carries the
+four as the schedule's `RetargetParams` — `halflifeMs = RETARGET_HALFLIFE_BLOCKS · orderingBlockIdealMs`
+derived here — for the funnel, the creator and fork resolution (→ Difficulty schedule).
+
 All config via environment variables with defaults.
 
 **Every variable carries a `Class`. The class is normative, not descriptive.**
@@ -4517,7 +4538,7 @@ its actual reach.
 | ~~`KARMA_DECAY_INTERVAL_BLOCKS`~~ | **removed** | ~~`720`~~ | → profile field `karmaDecayIntervalBlocks`. Value corrected to `1440` by P2-A (60s blocks) |
 | ~~`KARMA_STALE_THRESHOLD_BLOCKS`~~ | **removed** | ~~`20160`~~ | → profile field `karmaStaleThresholdBlocks`. Value corrected to `40320` by P2-A (60s blocks) |
 | ~~`KARMA_MINIMUM`~~ | **removed** | ~~`10`~~ | → universal constant `KARMA_MINIMUM` (`@dagsocial/types`) |
-| ~~`ORDERING_BLOCK_POW_TARGET_BITS`~~ | **removed** | ~~`12`~~ | → profile field `orderingBlockPowTargetBits`. Closed MINING invariants 4, 5 and 7 — `expectedTarget(height)` now sources the profile, and its unused `height` parameter is the seam a real retarget will need |
+| ~~`ORDERING_BLOCK_POW_TARGET_BITS`~~ | **removed** | ~~`12`~~ | → profile field `orderingBlockPowTargetBits`, the ASERT schedule's anchor; the schedule itself is universal (`MINING_INTERFACE → Difficulty Schedule`) |
 | ~~`CREDIT_TREASURY_PCT`~~ | **removed** | ~~`10`~~ | → universal constant `COINBASE_TREASURY_PCT` (`@dagsocial/types`). The **env key** keeps this name; only the constant renamed, so a rename sweep that rewrites the string here changes what `config.test.ts` guards |
 | ~~`TREASURY_PUBKEY`~~ | **removed** | ~~`""`~~ | Gone entirely, with no destination. The treasury's share accrues to a `TreasuryBox` that block application holds no release path for, so no key names it — see MINING_INTERFACE → Coinbase Application |
 | ~~`CREDIT_INITIAL_REWARD`~~ | **removed** | ~~`10000000000`~~ | → universal constant `CREDIT_INITIAL_REWARD` (`@dagsocial/types`), which `block-creator.ts` imports directly. The dead `Config.creditInitialReward` field it left behind was pruned 2026-08-07 (audit **A5**, closed) |
@@ -4549,10 +4570,12 @@ its actual reach.
 | `LISTEN_ADDRS` | `operational` | `/ip4/0.0.0.0/tcp/0` | libp2p listen addresses |
 | `PUBLIC_URL` | `operational` | `/` | Base path where the demo UI is served |
 
-> ⚠ **Every "at 60 seconds" duration annotation is nominal, not guaranteed.** The block time is
-> an *emergent* property of `ORDERING_BLOCK_POW_TARGET_BITS` and hashrate — there is no producer
-> timer — so the real interval drifts with the participant set until a retarget tracks it, and
-> every block-denominated duration drifts with it.
+> ⚠ **Every "at 60 seconds" duration annotation is nominal in the short run and exact in the long
+> run.** The block time is an *emergent* property of the target and hashrate — there is no producer
+> timer — and the ASERT schedule tracks it toward `orderingBlockIdealMs` with an absolute anchor, so
+> the interval wanders within a halflife's response and never accumulates drift; a block-denominated
+> duration is therefore right on average and approximate over any short window
+> (`MINING_INTERFACE → Difficulty Schedule`).
 
 ---
 
@@ -4856,15 +4879,17 @@ unless `verifyValidatorSignature(block.header, block.validatorSignature)` (from
 block under another validator's identity. The check is pure and deterministic —
 it recomputes `blockHash(block.header)` and verifies the raw Ed25519 signature
 against `block.header.validatorId` — so every node reaches the same verdict. It
-sits alongside the height-scheduled PoW-target and coinbase-maturity checks
+sits alongside the scheduled PoW-target, timestamp and coinbase-maturity checks
 already enforced in this funnel, and precedes any mutation so a bad-signature
 block rolls back to a no-op.
 
 **Interlink root.** The block is rejected unless `header.interlinkRoot ===
-interlinkRoot(updateInterlinks(I(parent), parentHash, level(parent)))` — `I(parent)` from the store's
-`interlinks` column (Store Interface → Ordering blocks), `parentHash` the recomputed `blockHash` of the
-stored parent header (the corrupt-header tripwire, not the column read), `level(parent)` from
-`@dagsocial/validation`; at height 1 the expected vector is `[]`. Pure and deterministic, so every node
+interlinkRoot(updateInterlinks(I(parent), parentHash, level(parent, anchorBits)))` — `I(parent)` from
+the store's `interlinks` column (Store Interface → Ordering blocks), `parentHash` the recomputed
+`blockHash` of the stored parent header (the corrupt-header tripwire, not the column read),
+`level(parent, anchorBits)` from `@dagsocial/validation` measured against the profile's anchor target
+(`VALIDATION_INTERFACE → level`) — a parent with no level leaves the vector unchanged; at height 1 the
+expected vector is `[]`. Pure and deterministic, so every node
 reaches the same verdict, and the vector it verified is what `createOrderingBlock` stores. The same
 rule runs over a peer's segment in `verifyHeaderChain` before fork choice scores it (`TYPES_INTERFACE`
 → Interlink vector).

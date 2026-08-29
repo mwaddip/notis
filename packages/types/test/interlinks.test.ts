@@ -203,4 +203,24 @@ describe('updateInterlinks', () => {
   it('throws RangeError for empty prev with finite level', () => {
     expect(() => updateInterlinks([], ID_A, 0)).toThrow(RangeError);
   });
+
+  // TYPES_INTERFACE → Interlink vector: null prevLevel — the parent's hit exceeds
+  // the yardstick, so it has no level and the vector is unchanged.
+  it('null returns a fresh copy equal to prev', () => {
+    const prev = [ID_A];
+    const result = updateInterlinks(prev, ID_B, null);
+    expect(result).toEqual([ID_A]);
+    expect(result).not.toBe(prev);
+  });
+
+  it('null over a multi-entry prev changes none of them', () => {
+    const prev = [ID_A, ID_B, ID_C];
+    const result = updateInterlinks(prev, ID_D, null);
+    expect(result).toEqual([ID_A, ID_B, ID_C]);
+    expect(result).not.toBe(prev);
+  });
+
+  it('throws RangeError for empty prev with null level', () => {
+    expect(() => updateInterlinks([], ID_A, null)).toThrow(RangeError);
+  });
 });

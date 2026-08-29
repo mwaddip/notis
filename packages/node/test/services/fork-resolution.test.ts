@@ -12,6 +12,7 @@ import {
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   PROTOCOL_VERSION,
   MAX_BLOCK_BODY_BYTES,
+  MAX_FUTURE_DRIFT_MS,
   encodeTx,
   updateInterlinks,
 } from '@dagsocial/types';
@@ -3408,14 +3409,18 @@ describe('resolveFork — interlink root verification (step 7)', () => {
     // Fork at height 1 — build a competing chain of 3 with correct roots
     const sharedH1 = ordering.getOrderingBlock(1)!.header;
     const sharedHash = blockHash(sharedH1)!;
-    const sharedLevel = headerLevel(sharedH1)!;
+    const sharedLevel = headerLevel(sharedH1, testConfig.orderingBlockPowTargetBits);
     const anchorIl = updateInterlinks([], sharedHash, sharedLevel);
+    const { retargetParams: rp } = await import('../../src/services/difficulty.js');
     const { headers: good } = buildMinedHeaderChain({
       anchorPrevBlockHash: sharedHash,
       anchorInterlinks: anchorIl,
       startHeight: 2,
       count: 3,
-      powTargetBits: testConfig.orderingBlockPowTargetBits,
+      params: rp(),
+      anchorCreatedAt: sharedH1.createdAt,
+      anchorStamp: sharedH1.createdAt,
+      startStamp: sharedH1.createdAt + testConfig.orderingBlockIdealMs,
     });
 
     // Tamper the root at index 1 (height 3) — re-mine so PoW passes
@@ -3495,13 +3500,247 @@ describe('resolveFork — interlink root verification (step 7)', () => {
 
       const header = ordering.getOrderingBlock(h)!.header;
       const hash = blockHash(header)!;
-      const lvl = headerLevel(header);
+      const lvl = headerLevel(header, testConfig.orderingBlockPowTargetBits);
       if (h === 1) {
         il = updateInterlinks([], hash, Infinity);
       } else {
-        expect(lvl).not.toBeNull();
-        il = updateInterlinks(il, hash, lvl!);
+        il = updateInterlinks(il, hash, lvl);
       }
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ASERT: fork-resolution timestamp rules + schedule-aware reorg
+// ---------------------------------------------------------------------------
+
+describe('resolveFork — ASERT timestamp rules and schedule', () => {
+  beforeEach(async () => { vi.resetModules(); });
+  afterEach(async () => {
+    try { (await importBlockCreator()).stopBlockCreator(); } catch {}
+    const { setClock } = await import('../../src/services/difficulty.js');
+    setClock(null);
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it('a segment whose stamps violate the order rule is refused with misbehavior and reason time', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    const { retargetParams: rp } = await import('../../src/services/difficulty.js');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const t1 = 1_000_000;
+    setClock(() => t1);
+    await mineNextBlock(bc);
+    setClock(() => t1 + 60_000);
+    await mineNextBlock(bc);
+    expect(ordering.getCurrentHeight()).toBe(2);
+
+    // Build a competing segment from height 2 with equal stamps (order violation)
+    const sharedH1 = ordering.getOrderingBlock(1)!.header;
+    const sharedHash = blockHash(sharedH1)!;
+    const sharedLevel = headerLevel(sharedH1, testConfig.orderingBlockPowTargetBits);
+    const anchorIl = updateInterlinks([], sharedHash, sharedLevel);
+
+    // Two headers at the same stamp
+    const { headers: badChain } = buildMinedHeaderChain({
+      anchorPrevBlockHash: sharedHash,
+      anchorInterlinks: anchorIl,
+      startHeight: 2,
+      count: 3,
+      params: rp(),
+      anchorCreatedAt: sharedH1.createdAt,
+      anchorStamp: sharedH1.createdAt,
+      startStamp: sharedH1.createdAt + 60_000,
+      spacingMs: 0,
+    });
+    // Force equal stamps on consecutive headers to trigger the order rule
+    badChain[1]!.createdAt = badChain[0]!.createdAt;
+    badChain[1]!.powNonce = solveHeaderPow(badChain[1]!);
+
+    const theirHeaders = [...badChain].reverse().concat(sharedH1);
+    const net = stubNet(theirHeaders, []);
+    await forkResolution.resolveFork(
+      { header: badChain[2]!, utxoTxTree: { utxoTxIds: [], utxoTxs: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock,
+      net,
+      'peer-bad-time',
+    );
+
+    expect(net.blockRequests).toEqual([]);
+    expect(net.penalties).toEqual([
+      expect.objectContaining({ kind: 'misbehavior' }),
+    ]);
+  });
+
+  it('a segment stamped beyond the future bound is not penalised, and after setClock advances the same segment reorgs', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    const { retargetParams: rp, anchorCreatedAt: getAnchorCa } = await import('../../src/services/difficulty.js');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const t1 = 1_000_000;
+    setClock(() => t1);
+    await mineNextBlock(bc);
+    expect(ordering.getCurrentHeight()).toBe(1);
+
+    // Build a competing chain of 3 from genesis with stamps beyond the bound
+    const sharedH1 = ordering.getOrderingBlock(1)!.header;
+    const sharedHash = blockHash(sharedH1)!;
+    const sharedLevel = headerLevel(sharedH1, testConfig.orderingBlockPowTargetBits);
+    const anchorIl = updateInterlinks([], sharedHash, sharedLevel);
+    const futureStamp = t1 + MAX_FUTURE_DRIFT_MS + 60_001;
+
+    const { headers: futureChain } = buildMinedHeaderChain({
+      anchorPrevBlockHash: sharedHash,
+      anchorInterlinks: anchorIl,
+      startHeight: 2,
+      count: 3,
+      params: rp(),
+      anchorCreatedAt: getAnchorCa(),
+      anchorStamp: sharedH1.createdAt,
+      startStamp: futureStamp,
+    });
+
+    // Serve our 1-block chain and the future 3-block chain
+    const theirHeaders = [...futureChain].reverse().concat(sharedH1);
+
+    // Mine our chain to 2 blocks so the fork is meaningful
+    setClock(() => t1 + 60_000);
+    await mineNextBlock(bc);
+    expect(ordering.getCurrentHeight()).toBe(2);
+
+    const net1 = stubNet(theirHeaders, []);
+    await forkResolution.resolveFork(
+      { header: futureChain[2]!, utxoTxTree: { utxoTxIds: [], utxoTxs: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock,
+      net1,
+      'peer-future',
+    );
+
+    // Not penalised, no refused_headers, height unchanged
+    expect(net1.penalties).toEqual([]);
+    expect(ordering.getCurrentHeight()).toBe(2);
+
+    const { anyRefusedHeader } = await import('../../src/store/index.js');
+    const futureHashes = futureChain.map(h => blockHash(h)!);
+    expect(anyRefusedHeader(futureHashes)).toBe(false);
+  });
+
+  it('a branch header declaring the anchor bits where its own schedule says otherwise is penalised with reason target', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const t1 = 1_000_000;
+    setClock(() => t1);
+    await mineNextBlock(bc);
+    const t2 = t1 + 60_000;
+    setClock(() => t2);
+    await mineNextBlock(bc);
+    expect(ordering.getCurrentHeight()).toBe(2);
+
+    const sharedH1 = ordering.getOrderingBlock(1)!.header;
+    const sharedHash = blockHash(sharedH1)!;
+
+    // A chain stamped very late (schedule moves to floor) but declaring anchor bits
+    const lateStamp = t1 + 10 * 86_400_000;
+    const badHeader: BlockHeader = {
+      protocolVersion: PROTOCOL_VERSION,
+      height: 2,
+      prevBlockHash: sharedHash,
+      utxoTxRoot: '00'.repeat(32),
+      stateRoot: EMPTY_STATE_ROOT,
+      validatorId: new Uint8Array(32),
+      powNonce: 0,
+      powTargetBits: testConfig.orderingBlockPowTargetBits,
+      createdAt: lateStamp,
+      interlinkRoot: '00'.repeat(32),
+    };
+    badHeader.powNonce = solveHeaderPow(badHeader);
+
+    const theirHeaders = [badHeader, sharedH1];
+    setClock(() => lateStamp + 60_000);
+    const net = stubNet(theirHeaders, []);
+    await forkResolution.resolveFork(
+      { header: badHeader, utxoTxTree: { utxoTxIds: [], utxoTxs: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock,
+      net,
+      'peer-wrong-target',
+    );
+
+    expect(net.penalties).toEqual([
+      expect.objectContaining({ kind: 'misbehavior' }),
+    ]);
+  });
+
+  it('a reorg onto a branch whose targets moved with its stamps applies every block through the funnel', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const t1 = 1_000_000;
+    setClock(() => t1);
+    await mineNextBlock(bc);
+    expect(ordering.getCurrentHeight()).toBe(1);
+
+    // Mine the competing branch of 4 at slow pace — the schedule eases
+    const slowSpacing = 600_000;
+    const competingBlocks: OrderingBlock[] = [];
+    for (let i = 0; i < 4; i++) {
+      setClock(() => t1 + slowSpacing * (i + 1));
+      await mineNextBlock(bc);
+      competingBlocks.push(ordering.getOrderingBlock(2 + i)!);
+    }
+    expect(ordering.getCurrentHeight()).toBe(5);
+
+    // The schedule eased — later headers carry lower bits (easier)
+    expect(competingBlocks[3]!.header.powTargetBits)
+      .toBeLessThanOrEqual(competingBlocks[0]!.header.powTargetBits);
+
+    // Revert to height 1 and mine our shorter chain (2 blocks)
+    for (let h = 5; h > 1; h--) forkResolution.revertBlock(h);
+    expect(ordering.getCurrentHeight()).toBe(1);
+    setClock(() => t1 + 60_000);
+    await mineNextBlock(bc);
+    setClock(() => t1 + 120_000);
+    await mineNextBlock(bc);
+    expect(ordering.getCurrentHeight()).toBe(3);
+
+    // Serve the competing chain — more work than our 2-block side
+    const theirHeaders = [...competingBlocks].reverse().map(b => b.header)
+      .concat(ordering.getOrderingBlock(1)!.header);
+    setClock(() => t1 + slowSpacing * 5);
+    const net = stubNet(theirHeaders, competingBlocks);
+    await forkResolution.resolveFork(competingBlocks[3]!, net, 'peer-slow-branch');
+
+    expect(ordering.getCurrentHeight()).toBe(5);
+    expect(net.penalties).toEqual([]);
   });
 });

@@ -16,6 +16,7 @@
 
 import {
   ORDERING_BLOCK_POW_TARGET_BITS,
+  ORDERING_BLOCK_POW_TARGET_FLOOR,
   KARMA_DECAY_INTERVAL_BLOCKS,
   KARMA_STALE_THRESHOLD_BLOCKS,
   VOUCH_COOLDOWN_BLOCKS,
@@ -35,8 +36,15 @@ export interface NetworkProfile {
   readonly networkType: NetworkType;
   readonly magic: number;              // wire frame magic — one per network
 
-  // Difficulty — ordering-block PoW only; consensus is single-phase.
+  // Difficulty — the ASERT schedule's per-network numbers (MINING_INTERFACE → Difficulty Schedule).
+  // `orderingBlockPowTargetBits` is the ANCHOR's bits — block 1's target, and the yardstick every
+  // superblock level is measured against; the schedule moves inside [floor, ceiling];
+  // `orderingBlockIdealMs` is the interval the schedule aims at and the halflife's unit
+  // (halflife = RETARGET_HALFLIFE_BLOCKS · ideal). The mechanic is universal; only the numbers vary.
   readonly orderingBlockPowTargetBits: number;
+  readonly orderingBlockIdealMs: number;
+  readonly orderingBlockPowTargetFloorBits: number;
+  readonly orderingBlockPowTargetCeilingBits: number;
 
   // Block-denominated durations
   readonly karmaDecayIntervalBlocks: number;
@@ -161,6 +169,9 @@ const MAINNET_PROFILE: NetworkProfile = Object.freeze({
   magic: MAGIC_MAINNET,
 
   orderingBlockPowTargetBits: ORDERING_BLOCK_POW_TARGET_BITS,
+  orderingBlockIdealMs: 60_000,
+  orderingBlockPowTargetFloorBits: 5120,
+  orderingBlockPowTargetCeilingBits: 65536,
 
   karmaDecayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS,
   karmaStaleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
@@ -254,18 +265,13 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   networkType: 'devnet',
   magic: MAGIC_DEVNET,
 
-  // Devnet is where the retarget is exercised, so its seed may not sit below 2180, where
-  // a 1/256-bit step can buy zero work and difficulty moves while cumulativeWork does not.
-  // VALIDATION_INTERFACE → blockWork / cumulativeWork.
-  //
-  // Below testnet's, and that divergence is load-bearing rather than incidental. The node
-  // test suite mines real PoW, and `expectedTarget()` reads the process config singleton,
-  // which an injected `Config` cannot reach. Devnet is the profile that suite resolves
-  // (pinned in its `vitest.config.ts`), so this value is what every mining test solves
-  // against: at testnet's 5984 it costs the suite ~141 minutes of pure PoW per run, and at
-  // 3072 a solve is ~4K hashes. Devnet's block cadence comes from throttling a miner's
-  // hashrate, never from this number. TYPES_INTERFACE → Ordering block PoW.
+  // The schedule reads the process config singleton, so the mechanic is the same on every
+  // network; the band is the cap. The ceiling of 4096 keeps a burst of test blocks inside
+  // sixteen whole bits. TYPES_INTERFACE → Ordering block PoW.
   orderingBlockPowTargetBits: 3072,
+  orderingBlockIdealMs: 60_000,
+  orderingBlockPowTargetFloorBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
+  orderingBlockPowTargetCeilingBits: 4096,
 
   karmaDecayIntervalBlocks: 3,
   karmaStaleThresholdBlocks: 500,

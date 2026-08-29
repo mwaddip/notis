@@ -13,6 +13,7 @@ import {
   GENESIS_PREV_BLOCK_HASH,
   encodeInterlinks,
 } from '@dagsocial/types';
+import { retargetParams } from '../../src/services/difficulty.js';
 import { UnreadableStoredBlockError } from '../../src/services/corrupt-state.js';
 import { unlinkSync } from 'fs';
 
@@ -34,7 +35,10 @@ describe('nipopow reader store reads', () => {
       anchorInterlinks: [],
       startHeight: 1,
       count: CHAIN_LEN,
-      powTargetBits: 3072,
+      params: retargetParams(),
+      anchorCreatedAt: null,
+      anchorStamp: 0,
+      startStamp: 1_000_000,
     });
 
     chainHashes = headers.map((h) => {

@@ -22,7 +22,7 @@ import {
   updateInterlinks,
   encodeInterlinks,
 } from '@dagsocial/types';
-import { verifyOrderingBlockPoW, blockHash, level as headerLevel } from '@dagsocial/validation';
+import { verifyOrderingBlockPoW, blockHash, level as headerLevel, asertTargetBits } from '@dagsocial/validation';
 import { materializeOutput } from '../src/services/utxo-engine.js';
 import { config } from '../src/config.js';
 import type { Config } from '../src/config.js';
@@ -887,6 +887,7 @@ export async function activateProverOverStore(
 export async function makeApplicableBlock(
   opts: {
     powTargetBits?: number;
+    createdAt?: number;
     lockedUntilBlock?: number;
     /** Override the post-block state root — a block committing to state it
      *  does not produce. */
@@ -917,7 +918,7 @@ export async function makeApplicableBlock(
   const { computeUtxoTxRoot, buildBlockSettlement } = await import(
     '../src/services/block-creator.js'
   );
-  const { expectedTarget } = await import('../src/services/difficulty.js');
+  const { scheduledTargetBits, nowMs } = await import('../src/services/difficulty.js');
 
   await seedEmissionBox();
   // ⛔ **A block that touches the pool cannot be built without one, and most
@@ -930,6 +931,7 @@ export async function makeApplicableBlock(
 
   const height = opts.height ?? 1;
   let prevBlockHash = ZERO_HASH;
+  let prevStoredBlock: OrderingBlock | null = null;
   if (height > 1) {
     const { getOrderingBlock } = await import('../src/store/ordering.js');
     const prev = getOrderingBlock(height - 1) as OrderingBlock | null;
@@ -942,6 +944,7 @@ export async function makeApplicableBlock(
       );
     }
     prevBlockHash = prevHash;
+    prevStoredBlock = prev;
   }
   const miner = opts.miner ?? makeTestIdentity();
   const embeddedTxs = opts.utxoTxs ?? [];
@@ -985,11 +988,10 @@ export async function makeApplicableBlock(
   } else {
     const { getInterlinks } = await import('../src/store/ordering.js');
     const { level: levelFn } = await import('@dagsocial/validation');
-    const { getOrderingBlock: getBlock } = await import('../src/store/ordering.js');
-    const prevBlk = getBlock(height - 1)!;
+    const { config } = await import('../src/config.js');
     const storedIl = getInterlinks(height - 1);
-    const prevLvl = levelFn(prevBlk.header);
-    if (storedIl !== null && prevLvl !== null) {
+    const prevLvl = levelFn(prevStoredBlock!.header, config.orderingBlockPowTargetBits);
+    if (storedIl !== null) {
       headerInterlinkRoot = interlinkRoot(updateInterlinks(storedIl, prevBlockHash, prevLvl));
     } else {
       headerInterlinkRoot = interlinkRoot([]);
@@ -1003,8 +1005,10 @@ export async function makeApplicableBlock(
     stateRoot: EMPTY_STATE_ROOT,
     validatorId: miner.userId,
     powNonce: 0,
-    powTargetBits: opts.powTargetBits ?? expectedTarget(height),
-    createdAt: Date.now(),
+    powTargetBits: opts.powTargetBits ?? (height === 1
+      ? (await import('../src/config.js')).config.orderingBlockPowTargetBits
+      : scheduledTargetBits(prevStoredBlock!.header)),
+    createdAt: opts.createdAt ?? Math.max(nowMs(), (prevStoredBlock?.header.createdAt ?? 0) + 1),
     interlinkRoot: headerInterlinkRoot,
   } as BlockHeader;
 
@@ -1191,17 +1195,39 @@ export function buildMinedHeaderChain(opts: {
   anchorInterlinks: string[];
   startHeight: number;
   count: number;
-  powTargetBits: number;
+  params: import('@dagsocial/validation').RetargetParams;
+  anchorCreatedAt: number | null;
+  anchorStamp: number;
+  startStamp: number;
+  spacingMs?: number;
 }): { headers: BlockHeader[]; interlinksPerHeader: string[][] } {
-  const { anchorPrevBlockHash, anchorInterlinks, startHeight, count, powTargetBits } = opts;
+  const {
+    anchorPrevBlockHash, anchorInterlinks, startHeight, count,
+    params, startStamp, anchorStamp,
+  } = opts;
+  const spacingMs = opts.spacingMs ?? params.idealMs;
   const headers: BlockHeader[] = [];
   const interlinksPerHeader: string[][] = [];
   let prevHash = anchorPrevBlockHash;
   let prevInterlinks = anchorInterlinks;
-  let prevLevel: number = Infinity;
+  let prevLevel: number | null = Infinity;
+  let t_a = opts.anchorCreatedAt;
 
   for (let i = 0; i < count; i++) {
     const height = startHeight + i;
+    const stamp = startStamp + i * spacingMs;
+
+    let bits: number;
+    if (height === 1) {
+      bits = params.anchorBits;
+      if (t_a === null) t_a = stamp;
+    } else {
+      const prevHeader = i === 0
+        ? { height: startHeight - 1, createdAt: anchorStamp }
+        : headers[i - 1]!;
+      bits = asertTargetBits(params, t_a!, prevHeader);
+    }
+
     const expected = height === 1
       ? []
       : updateInterlinks(prevInterlinks, prevHash, prevLevel);
@@ -1213,15 +1239,14 @@ export function buildMinedHeaderChain(opts: {
       stateRoot: EMPTY_STATE_ROOT,
       validatorId: new Uint8Array(32),
       powNonce: 0,
-      powTargetBits,
-      createdAt: i,
+      powTargetBits: bits,
+      createdAt: stamp,
       interlinkRoot: interlinkRoot(expected),
     };
     header.powNonce = solveHeaderPow(header);
     const hash = blockHash(header);
     if (hash === null) throw new Error(`buildMinedHeaderChain: unhashable at height ${height}`);
-    const lvl = headerLevel(header);
-    if (lvl === null) throw new Error(`buildMinedHeaderChain: null level at height ${height}`);
+    const lvl = headerLevel(header, params.anchorBits);
 
     headers.push(header);
     interlinksPerHeader.push(expected);

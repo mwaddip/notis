@@ -284,21 +284,25 @@ export const STORAGE_RENT_PER_BYTE = 605_378n;     // consensus — charged once
 // Ordering block PoW — difficulty in units of 1/256 of a bit, domain [0, 65536]
 // (VALIDATION_INTERFACE → orderingPowTarget).
 //
-// 5984/256 = 23.375 bits — 23 + 3/8, which these units carry exactly — or ≈10.88M
-// hashes, a 60s solve at one core's measured rate. No whole bit expresses that
-// interval: 23 is 46s and 24 is 93s. TYPES_INTERFACE → Ordering block PoW carries
-// the derivation.
+// The anchor's bits — block 1's target, and the yardstick every superblock level
+// is measured against (TYPES_INTERFACE → Interlink vector). 5984/256 = 23.375
+// bits — 23 + 3/8, which these units carry exactly. TYPES_INTERFACE → Ordering
+// block PoW carries the derivation.
 // ⚠ Provisional: one machine, one thread, standing in for a quantity the
 // network's total hashrate sets.
 //
-// Mainnet's and testnet's only. Devnet sets its own and deliberately lower —
-// the reason is in network.ts.
+// Mainnet's and testnet's anchor. Devnet sets its own anchor, deliberately
+// lower — the reason is in network.ts.
 export const ORDERING_BLOCK_POW_TARGET_BITS = 5984;     // → profile: orderingBlockPowTargetBits
 // 9 bits — the first whole bit above 2180, below which a 1/256-bit step can buy zero
 // work, so a chain beneath it retargets without moving the quantity fork choice selects
 // on. This bounds the reachable range rather than the whole admitted one: work stops
 // resolving above 63358 as well. VALIDATION_INTERFACE → blockWork / cumulativeWork.
 export const ORDERING_BLOCK_POW_TARGET_FLOOR = 2304;
+/** The ASERT halflife in ideal intervals. MINING_INTERFACE → Difficulty Schedule. */
+export const RETARGET_HALFLIFE_BLOCKS = 288;
+/** The future bound on `createdAt`, in ms. MINING_INTERFACE → Header timestamp rules. */
+export const MAX_FUTURE_DRIFT_MS = 600_000;
 
 // Chain reorganisation
 /**

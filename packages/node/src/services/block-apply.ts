@@ -29,7 +29,7 @@ import {
   emptyBody,
 } from './settlement.js';
 import { postsOf, postIdsOf, prunesOf, withdrawalsOf } from './block-posts.js';
-import { expectedTarget } from './difficulty.js';
+import { scheduledTargetBits, nowMs } from './difficulty.js';
 import {
   applyTx,
   checkOutputShape,
@@ -100,6 +100,7 @@ import {
   encodeTx,
   decodeTx,
   MAX_REORG_DEPTH,
+  MAX_FUTURE_DRIFT_MS,
   GENESIS_PREV_BLOCK_HASH,
   PROTOCOL_VERSION,
   MAX_ESCROW_RETURNS_PER_BLOCK,
@@ -246,6 +247,7 @@ function applyBlockBody(block: OrderingBlock): boolean {
   // 1. Chain-link check + interlink root + genesis pin
   // (NODE_INTERFACE → Ordering block apply-time authorization)
   let expectedInterlinks: string[];
+  let prevBlock: OrderingBlock | null = null;
   if (currentHeight === 0) {
     // Genesis: prevBlockHash must be all zeros
     if (block.header.prevBlockHash !== GENESIS_PREV_BLOCK_HASH) {
@@ -270,13 +272,19 @@ function applyBlockBody(block: OrderingBlock): boolean {
         return false;
       }
     }
+    // MINING_INTERFACE → Header timestamp rules, future bound (height 1)
+    if (!validation.verifyCreatedAtBound(block.header, nowMs(), MAX_FUTURE_DRIFT_MS)) {
+      console.warn(`Rejected block height=${block.header.height}: createdAt beyond the future bound`);
+      abortBlockJournal();
+      return false;
+    }
   } else {
     // Every throw in this branch reads our own stored tip, not the arriving
     // block: a rejection would blame a peer for our store and repeat for
     // every block after it (NODE_INTERFACE → Ordering block apply-time
     // authorization; NODE_INTERFACE → Ordering blocks, the corrupt-header
     // tripwire).
-    const prevBlock = getOrderingBlock(currentHeight);
+    prevBlock = getOrderingBlock(currentHeight);
     if (!prevBlock) {
       throw new MissingStoredBlockError('applyOrderingBlock', currentHeight);
     }
@@ -289,14 +297,24 @@ function applyBlockBody(block: OrderingBlock): boolean {
       abortBlockJournal();
       return false;
     }
+    // MINING_INTERFACE → Header timestamp rules, order rule
+    if (!validation.verifyCreatedAtOrder(block.header, prevBlock.header)) {
+      console.warn(`Rejected block height=${block.header.height}: createdAt not above the parent's`);
+      abortBlockJournal();
+      return false;
+    }
+    // MINING_INTERFACE → Header timestamp rules, future bound
+    if (!validation.verifyCreatedAtBound(block.header, nowMs(), MAX_FUTURE_DRIFT_MS)) {
+      console.warn(`Rejected block height=${block.header.height}: createdAt beyond the future bound`);
+      abortBlockJournal();
+      return false;
+    }
     const storedInterlinks = getInterlinks(currentHeight);
     if (storedInterlinks === null) {
       throw new UnhashableStoredHeaderError('applyOrderingBlock/interlinks', currentHeight);
     }
-    const prevLevel = validation.level(prevBlock.header);
-    if (prevLevel === null) {
-      throw new UnhashableStoredHeaderError('applyOrderingBlock/level', currentHeight);
-    }
+    // VALIDATION_INTERFACE → level: null is no level, not a fail-stop
+    const prevLevel = validation.level(prevBlock.header, config.orderingBlockPowTargetBits);
     expectedInterlinks = updateInterlinks(storedInterlinks, prevHash, prevLevel);
   }
   if (block.header.interlinkRoot !== interlinkRoot(expectedInterlinks)) {
@@ -312,16 +330,13 @@ function applyBlockBody(block: OrderingBlock): boolean {
     return false;
   }
 
-  // 3. PoW verification
-  //
-  // The scheduled target is checked first, because `verifyOrderingBlockPoW`
-  // only checks the solution against the header's *own* `powTargetBits`: a
-  // producer that writes the floor target into its header mines a near-free
-  // block that satisfies its own claim, and every node accepts it. The target
-  // is a deterministic function of height (MINING contract, invariant 4), and
-  // every path into the chain — gossip, sync, reorg — funnels through here, so
-  // this is where the schedule can be enforced for all of them.
-  const scheduledTarget = expectedTarget(block.header.height);
+  // 3. PoW target — MINING_INTERFACE → Difficulty Schedule. Checked before the
+  // PoW solution: `verifyOrderingBlockPoW` judges the solution against the
+  // header's own `powTargetBits`, so a producer writing the floor into its
+  // header mines a near-free block that satisfies its own claim.
+  const scheduledTarget = currentHeight === 0
+    ? config.orderingBlockPowTargetBits
+    : scheduledTargetBits(prevBlock!.header);
   if (block.header.powTargetBits !== scheduledTarget) {
     console.warn(
       `Rejected block height=${block.header.height}: powTargetBits ` +

@@ -1537,6 +1537,7 @@ outstanding against the live node, which still runs a pre-Spec-B chain:
 | P3 | `stateRoot` semantics |
 | Spec G | box ids (provenance-derived) |
 | P2-D | sub-block and block-body CBOR shape, post-lock box ids |
+| **ASERT** (2026-08-29) | `powTargetBits` on every block above 1 — the schedule; `interlinkRoot` — levels measured against the anchor target; `createdAt` as a consensus input; three profile fields |
 | **the post price** (2026-08-29) | the box-type tag table (`post_lock` retired, `karma_price` added); every settlement that carried a lock leg |
 | **earned invites** (2026-08-29) | `IdentityRecord` rows 6–10, the network record (a leaf on every network) and all three genesis roots; every settlement that carries a lapse leg; the mempool's `vouch_target` column |
 | **positional wire format** (Phases 0–8, shipped 2026-08-11) | **every committed byte** |
@@ -1755,7 +1756,8 @@ not be independently readable.
 ### What varies per network, and what must not
 
 **Per-network — the timescale, difficulty, genesis and cap axes:**
-`ORDERING_BLOCK_POW_TARGET_BITS` · `KARMA_DECAY_INTERVAL_BLOCKS` ·
+`ORDERING_BLOCK_POW_TARGET_BITS` · `orderingBlockIdealMs` · `orderingBlockPowTargetFloorBits` ·
+`orderingBlockPowTargetCeilingBits` · `KARMA_DECAY_INTERVAL_BLOCKS` ·
 `KARMA_STALE_THRESHOLD_BLOCKS` · `VOUCH_COOLDOWN_BLOCKS` · `INVITE_PROBATION_BLOCKS` ·
 `CREDIT_MINER_REWARD_DELAY` · `CREDIT_FIXED_RATE_BLOCKS` ·
 `CREDIT_EPOCH_BLOCKS` · `CREDIT_EMISSION_TOTAL` · `GENESIS_KARMA_PER_MEMBER` · `INVITE_BOND_MIN` · `INVITE_BOND_MAX` ·
@@ -1790,6 +1792,12 @@ axis rather than opening a fourth.
 > **1** let a chain whose only root is the faucet flag its first member on one vouch — at `10`,
 > `D(1) = 2` and a lone root could never flag anyone. A relaxed cap, not a different mechanic: the
 > bar grows as the cube root of the member count on every network.
+
+> ⚠ **The difficulty band is per-network; the schedule is not.** `RETARGET_HALFLIFE_BLOCKS` is
+> universal — the ASERT mechanic's own number — while the anchor (`ORDERING_BLOCK_POW_TARGET_BITS`),
+> the floor, the ceiling and the ideal interval are numbers on the difficulty, cap and timescale axes
+> (`TYPES_INTERFACE → Network profiles`; `MINING_INTERFACE → Difficulty Schedule`). Devnet runs the
+> same ASERT with a low ceiling as its cost cap — a relaxed cap, not a different mechanic.
 
 **Universal — every other constant, including consensus ones:** the format limits
 (`MAX_CONTENT_BYTES`, `MAX_PARENT_REFS`, `PROTOCOL_VERSION`, `AVL_KEY_LENGTH`) and **every
@@ -2471,12 +2479,15 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   > `contracts/`, so it is a session-context convention rather than a contract one.
 
 ### Data integrity
-- **A post carries no timestamp; on-chain time is block height.** Confirmed posts order by
-  the committed order — `(block height, position in block)`; a pending post orders by local
-  arrival, a stated node-local convenience (NODE_INTERFACE → Posts). The one wall-clock
-  field in consensus is the block header's `createdAt`: producer-set, domain-checked, read
-  by no rule — a client wanting a display time reads the post's confirming block's
-  `createdAt`.
+- **A post carries no timestamp; on-chain time is block height — with one named exemption.**
+  Confirmed posts order by the committed order — `(block height, position in block)`; a pending
+  post orders by local arrival, a stated node-local convenience (NODE_INTERFACE → Posts). The one
+  wall-clock field in consensus is the block header's `createdAt`: node-set at template build,
+  domain-checked, and read by exactly one rule family — the ordering-block difficulty schedule and
+  its two timestamp rules (`MINING_INTERFACE → Difficulty Schedule`, `→ Header timestamp rules`),
+  which read the chain's own stamps and no node's clock, except for a future bound that is an
+  acceptance rule. Every other rule keeps block height as its clock. A client wanting a display
+  time reads the post's confirming block's `createdAt`.
 - **Preconditions documented where violating one is unrecoverable** — a function
   that can fail-stop the process, or that is the sole writer of consensus state,
   states what it assumes of its caller. Elsewhere the types are the contract.
@@ -2637,7 +2648,8 @@ backfill — and a pruned post has no row (NODE_INTERFACE → Store Interface �
   consensus-sourced) for subtree topology and prune-authorship lookups
 - libp2p networking with two-stage validation (stateless + stateful)
 - Credit emission: Ergo-style linear decay, treasury split, miner reward delay
-- Height-deterministic difficulty schedule for ordering block PoW (no wall clock)
+- ASERT difficulty schedule for ordering block PoW — anchored at block 1, read from the chain's own
+  header stamps, no node clock
 - Internal + external mining modes
 - Unified mempool: all state mutations queued, applied atomically at block
   finalization

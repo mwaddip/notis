@@ -1,5 +1,5 @@
 import { describe, it, afterAll, expect } from 'vitest';
-import { computeContentHash, updateInterlinks, interlinkRoot } from '@dagsocial/types';
+import { computeContentHash, updateInterlinks, interlinkRoot, NETWORK_PROFILES } from '@dagsocial/types';
 import type { BlockHeader } from '@dagsocial/types';
 import { blockHash, level } from '@dagsocial/validation';
 import { createMesh, type Mesh } from '../src/mesh.js';
@@ -126,7 +126,7 @@ describe('sync', () => {
         const hash = blockHash(header);
         expect(hash).not.toBeNull();
 
-        const lv = level(header);
+        const lv = level(header, NETWORK_PROFILES.devnet.orderingBlockPowTargetBits);
         expect(lv).not.toBeNull();
 
         const expectedRoot = interlinkRoot(vector);
