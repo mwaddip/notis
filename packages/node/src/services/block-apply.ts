@@ -1116,6 +1116,8 @@ function applyMutationPhase(
       }
 
       if (likeToRecord !== null) {
+        // Journalled side-record (inverse: deleteLikeRecord), plus the
+        // in-memory accrual §11b settles.
         insertLikeRecord(likeToRecord.targetPostId, likeToRecord.likerId, height);
         likesPerAuthor.set(
           likeToRecord.authorHex,
@@ -1298,6 +1300,17 @@ function applyMutationPhase(
   // pool on every reorg, where the next fill would draw it in as a user entry.
   // Its box mutations are journalled by the store choke point like every other,
   // so the rollback inverse is unaffected.
+  // The lapse leg's vouch consumptions lower targets' memberVouches through
+  // applyTx below — capture each target before the apply so the membership pass
+  // evaluates them.
+  for (const v of lapsedVouches) {
+    const targetHex = Buffer.from(v.targetId).toString('hex');
+    membershipTouched.add(targetHex);
+    if (!preBlockRecords.has(targetHex)) {
+      preBlockRecords.set(targetHex, getIdentityRecord(v.targetId));
+    }
+  }
+
   applyTx(utxoDeps, settlement.tx, settlement.outputs, height);
 
   // 11a-ii. The clock epoch: a new record's `lastActivityBlock` starts at the
@@ -1423,7 +1436,7 @@ function applyMutationPhase(
     }
   }
 
-  // 12. Advance the decay clock for every identity the settlement charged.
+  // 13. Advance the decay clock for every identity the settlement charged.
   //
   // ⚠ **Only firings reach here.** A stale identity sitting at the karma floor
   // produces no plan and keeps its clock where it was, rather than silently
