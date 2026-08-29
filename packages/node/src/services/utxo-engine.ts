@@ -2268,7 +2268,13 @@ function adjustVouchCount(
 ): void {
   const voucherRecord = deps.getIdentityRecord(vouch.voucherId);
   const targetRecord = deps.getIdentityRecord(vouch.targetId);
-  if (!voucherRecord || !targetRecord) return;
+  if (!voucherRecord || !targetRecord) {
+    throw new Error(
+      `adjustVouchCount: missing identity record — voucher ${!!voucherRecord}, ` +
+      `target ${!!targetRecord}. Both are guaranteed by the cast arm and records ` +
+      `are never deleted; this is corrupt state.`,
+    );
+  }
   if (!isVouchCounted(voucherRecord, targetRecord)) return;
   deps.putIdentityRecord(vouch.targetId, {
     ...targetRecord,

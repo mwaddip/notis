@@ -65,6 +65,10 @@ export function castVouch(
     );
   }
 
+  // ⛔ Keyed on the voucher, because the escrow carries no target
+  // (TYPES_INTERFACE → VouchEscrowBox). `checkTransitions` holds the same
+  // predicate at apply, so this is the named early refusal rather than the
+  // rule's only statement.
   if (deps.hasActiveVouchEscrow(voucherId)) {
     throw new ClientError('Vouch cooldown active — cannot re-vouch yet');
   }
