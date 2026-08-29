@@ -414,8 +414,8 @@ creation, so nothing stays open. `expiresAtHeight` on the response is the
 | `POST` | `/vouches` | `castVouch` | Signed UTXO tx (KarmaBox to KarmaBox + VouchBox) |
 | `DELETE` | `/vouches/:targetId` | `initiateUnvouch` | Signed UTXO tx (VouchBox to none) |
 | `GET` | `/vouches?target=X&limit=50&after=<boxId>` | `getVouchesForTargetPage` | `{ vouches: [{ voucherId, targetId }], count, next }` — one page of the identity's vouchers, ascending box id, strictly after `after`; `count` over the whole set, `next` the key to continue from (HTTP API → "Every list a view returns is a page") |
-| `GET` | `/vouches?voucher=X&limit=50&after=<boxId>` | `getVouchesByVoucherPage` | `{ vouches: [{ boxId, voucherId, targetId, createdAtBlock }], count, next }` — one page of the identity's live vouches, ascending box id strictly after `after`; `count` over the whole set, `next` the key to continue from. The one arm carrying `boxId`: the unvouch builder names the box it spends |
-| `GET` | `/vouches?voucher=X&cooldowns=1&limit=50&after=<boxId>` | `getVouchCooldownsPage` | `{ escrows: [{ boxId, value, releaseAtBlock }], count, next }` — one page of the identity's unspent escrows, ascending box id strictly after `after` |
+| `GET` | `/vouches?voucher=X&limit=50&after=<boxId>` | `getVouchesByVoucherPage` | `{ vouches: [{ boxId, value, voucherId, targetId, createdAtBlock }], count, next }` — one page of the identity's live vouches, ascending box id strictly after `after`; `count` over the whole set, `next` the key to continue from. The one arm carrying `boxId`: the unvouch builder names the box it spends |
+| `GET` | `/vouches?voucher=X&cooldowns=1&limit=50&after=<boxId>` | `getVouchCooldownsPage` | `{ cooldowns: [{ boxId, value, releaseAtBlock }], count, next }` — one page of the identity's unspent escrows, ascending box id strictly after `after` |
 
 **Members vouch, without a cap.** `castVouch` refuses with a named `400`, ahead of the engine and
 changing no verdict: a voucher who is not a member (`ARCHITECTURE → Membership`); a target that
