@@ -349,11 +349,13 @@ count, so a node that has not met its peers is polled until the gate opens. The 
 `?miner=` validation: a malformed payout key earns its 400 whatever the node's readiness is.
 
 **What the gate protects.** Journal retention is the floor under revert depth — `block-apply.ts`
-purges journals below `height - MAX_REORG_DEPTH`, so a node that mines past that depth alone has no
-journal to revert with and can never rejoin a mesh it later meets. Fork resolution bottoming out at
-the genesis state (`NODE_INTERFACE` → "Fork resolution bottoms out at the genesis state") makes height
-0 a valid ancestor; this keeps a node inside the window where that ancestor is still reachable. It
-works **within** `MAX_REORG_DEPTH` and does not widen it.
+purges journals below `height − maxReorgDepth` (the profile's reorg horizon, `TYPES_INTERFACE → Chain
+reorganisation`), so a node that mines past that depth alone has no journal to revert with and can never
+rejoin a mesh it later meets. Fork resolution bottoming out at the genesis state (`NODE_INTERFACE` →
+"Fork resolution bottoms out at the genesis state") makes height 0 a valid ancestor; this keeps a node
+inside the horizon where that ancestor is still reachable. It works **within** the horizon and does not
+widen it — and it holds a node back only until its discovery window elapses, so a node partitioned after
+that keeps mining, and a partition longer than the horizon is a permanent split.
 
 **Active peers, not known ones.** `net`'s `getConnectedPeers()` filters on peer state; `peers()` lists
 every peer holding an open libp2p connection, including ones that have not completed — or have

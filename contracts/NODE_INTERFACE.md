@@ -490,7 +490,8 @@ invites, vouches, credits, prune).
    tombstone's source (→ Prune transactions). Every deleted row (skeleton, body,
    status, height, index, parent refs) is captured into the block's journal as a side-record
    **before** deletion (Block Journal → `deletedPosts`), so a reverted prune restores it exactly;
-   below `MAX_REORG_DEPTH` the journal is dropped and the node holds no byte of the subtree's
+   below the reorg horizon (`maxReorgDepth`, TYPES_INTERFACE → Chain reorganisation) the journal is
+   dropped and the node holds no byte of the subtree's
    content anywhere (ARCHITECTURE → Subtree pruning).
 
    **The stump's `upvoteCount` is the like tally of the pruned subtree**: the
@@ -1049,6 +1050,13 @@ the rent refusal (MEMPOOL_INTERFACE → Storage rent is refused at admission). F
 returns transactions to the pool without validating them, which is why the screen belongs there and
 nowhere else.
 
+**Re-insertion screens the ceiling and not the floor.** A reverted transaction whose input is immature
+or locked at the new tip (`validateTx` step 3 — the spend-timing floor) is re-inserted all the same and
+sits in the pool until the creator's rebuild evicts it: one wasted build per reorg over such an entry
+(`MINING_INTERFACE → Template and submit`, the rejected-body loop's bound), no fork, no stall. A reorg
+onto a shorter, heavier branch lowers the tip by up to `maxReorgDepth` blocks, so the case is ordinary,
+and it is bounded rather than screened.
+
 ⚠ **A new height cap owes a ceiling arm.** Any rule inside `checkTransitions` that bounds
 `currentBlockHeight` from above makes some transaction permanently unincludable once the chain passes
 it, and a rule that does so without a matching arm leaves those entries in the pool until expiry.
@@ -1221,8 +1229,8 @@ tree collapse into clean rejections:
 > | `MissingStoredBlockError` | a block the chain refers to is absent from the store | `services/block-apply.ts`, `services/fork-resolution.ts`, `services/block-creator.ts` |
 > | `UnreadableStoredBlockError` | a stored block's bytes will not decode | `store/ordering.ts` → `rowToOrderingBlock` |
 > | `DivergedStateTreeError` | the AVL+ tree refuses an operation the UTXO store implies must succeed | `state/avl-prover.ts` |
-> | `MissingJournalError` | a block journal inside retention is absent. Every height `revertBlock` can be asked for lies inside what `purgeOldJournals` keeps: deletion is strictly below `tip − MAX_REORG_DEPTH`, the fork walk's lowest non-genesis answer is `tip − MAX_REORG_DEPTH + 1` and the revert starts one above it, and its genesis answer is reachable only while `tip ≤ MAX_REORG_DEPTH` | `services/fork-resolution.ts` → `revertBlock` |
-> | `MissingStateVersionError` | no AVL version at or before a fork height the walk answers within. `MAX_PROOF_HISTORY < MAX_REORG_DEPTH` is refused at load (Configuration), so a missing version is a row the store lost | `services/fork-resolution.ts` → `reorg` |
+> | `MissingJournalError` | a block journal inside retention is absent. Every height `revertBlock` can be asked for lies inside what `purgeOldJournals` keeps: deletion is strictly below `tip − maxReorgDepth`, the fork walk's lowest non-genesis answer is `tip − maxReorgDepth + 1` and the revert starts one above it, and its genesis answer is reachable only while `tip ≤ maxReorgDepth` | `services/fork-resolution.ts` → `revertBlock` |
+> | `MissingStateVersionError` | no AVL version at or before a fork height the walk answers within. `MAX_PROOF_HISTORY < maxReorgDepth` is refused at load (Configuration), so a missing version is a row the store lost | `services/fork-resolution.ts` → `reorg` |
 >
 > The class is outside the totality property's scope by construction, and the argument is about
 > **provenance, not validation** — but it takes two shapes, and only the first is about bytes.
@@ -3586,13 +3594,13 @@ CREATE TABLE refused_headers (
 |----------|-----------|
 | `insertRefusedHeader(hash, height, refusedAt)` | `(string, number, number) => void` — idempotent on `hash` |
 | `anyRefusedHeader(hashes)` | `(string[]) => boolean` — true iff any hash is marked |
-| `purgeRefusedHeaders(belowHeight)` | `(number) => void` — called beside `purgeOldJournals`, same bound: `height − MAX_REORG_DEPTH` |
+| `purgeRefusedHeaders(belowHeight)` | `(number) => void` — called beside `purgeOldJournals`, same bound: `height − maxReorgDepth` |
 
 **One row suffices for a whole continuation.** A segment starts at a fork point *on our chain* and
 the refused block is not on our chain, so if the refused block is an ancestor of a segment's tip it
 sits inside that segment at its own height — `anyRefusedHeader` over the verified hashes is complete
 for continuations without storing descendants. **The purge is safe for the same reason:** a refused
-height below `tip − MAX_REORG_DEPTH` cannot appear in any segment `findForkPoint` can anchor.
+height below `tip − maxReorgDepth` cannot appear in any segment the fork walk can anchor.
 
 **The mark is written outside the reorg transaction**, after it has rolled back — a write inside it
 would roll back with it. It persists across restarts and is removed only by the purge; a deploy's
@@ -3619,7 +3627,8 @@ and fail-stops (`failStopIfCorruptChain`), never a refusal the requester is blam
 
 The journal is the single source of truth for undoing a block and for feeding
 the AVL prover (ARCHITECTURE → "Block application journal"). One CBOR-encoded
-row per applied block, purged below `height − MAX_REORG_DEPTH` (20).
+row per applied block, purged below `height − maxReorgDepth` (the profile's reorg horizon —
+TYPES_INTERFACE → Chain reorganisation).
 
 **Types are node-owned** (`src/store/journal.ts`); `@dagsocial/types` exports
 no journal types.
@@ -4352,17 +4361,16 @@ both checks are on every path into the store, and what makes "every path" true i
 downstream of the chain-link gate in the same function. All four callers of `applyOrderingBlock`
 (gossip, sync pull, block creator, `reorg`) go through it.
 
-**`MAX_REORG_DEPTH` does not move.** Height 0 became a reachable *answer*; how far back a reorg
-may go is unchanged, and must be — journal retention is the real floor under revert depth, and
-`revertBlock` throws without a journal. The walk reaches 0 only when our height is at or below
-the bound, which is exactly when every journal down to height 1 is still retained. Deeper than
-that the answer is still `null`.
+**The horizon is the profile's `maxReorgDepth`** (TYPES_INTERFACE → Chain reorganisation), and how far
+back a reorg may go is bounded by it because journal retention is the real floor under revert depth —
+`revertBlock` throws without a journal. The walk reaches 0 only when our height is at or below the
+horizon, which is exactly when every journal down to height 1 is still retained. Deeper than that the
+answer is still `null`.
 
-**The genesis fallback sits behind the batch check, deliberately.** A header batch with an
-unhashable entry is refused whole and answers `null` — it does not fall through to genesis.
-In front, a peer could turn one malformed header into "we fork at genesis" and buy a
-full-chain reorg attempt with it, on precisely the short chains where the whole walk is inside
-the window.
+**The genesis fallback sits behind the page check, deliberately.** A page with an unhashable entry is
+refused whole (`misbehavior`) — it does not fall through to genesis. In front, a peer could turn one
+malformed header into "we fork at genesis" and buy a full-chain reorg attempt with it, on precisely the
+short chains where the whole walk is inside the horizon.
 
 **Downstream of a `0`,** `reorg` reverts every block, rolls the prover to
 `versionAtOrBeforeHeight(0)` — the genesis version, and the genesis one only because seeding
@@ -4471,10 +4479,11 @@ none is added.
 
 ## Configuration
 
-**`MAX_PROOF_HISTORY` may not sit below `MAX_REORG_DEPTH`, and `loadConfig` refuses at load rather
-than clamping.** `checkpointProver` prunes AVL versions below `height - maxProofHistory` while the
-fork walk reaches back a fixed `MAX_REORG_DEPTH` and can answer height 0, so a smaller retention
-window would prune inside the window the walk still answers within. The check is a negated `>=`, so
+**`MAX_PROOF_HISTORY` may not sit below the profile's `maxReorgDepth`, and `loadConfig` refuses at load
+rather than clamping.** `checkpointProver` prunes AVL versions below `height - maxProofHistory` while
+the fork walk reaches back `maxReorgDepth` and can answer height 0, so a smaller retention window would
+prune inside the horizon the walk still answers within. The profile's own `maxReorgDepth` must be a
+positive safe integer — refused at load, never clamped. The check is a negated `>=`, so
 `NaN` — what `parseInt` answers for a non-numeric env value — is refused rather than admitted. With
 the floor held at load, `reorg` finding no version at or before a fork height the walk answers within
 is `MissingStateVersionError` — a row the store lost, fail-stop ("What the funnel's totality catch is
@@ -4999,7 +5008,7 @@ phase; NET_INTERFACE is authoritative for that side.
 - Content rules (`verifyPostBody`) are enforced at every body entry — packet, pull response,
   `POST /posts` — and in no transaction check
 - A pending row exists iff its transaction is in the pool, or the post is confirmed
-- Once a prune block's journal is dropped below `MAX_REORG_DEPTH`, no `dag_posts` row and no
+- Once a prune block's journal is dropped below the reorg horizon (`maxReorgDepth`), no `dag_posts` row and no
   journal row holds the subtree's content (ARCHITECTURE → Subtree pruning)
 - Protocol version checked at verification
 - Consumers call the Store interface, never the backend directly

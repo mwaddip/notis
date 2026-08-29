@@ -364,7 +364,7 @@ Pruning is irreversible. Once content is pruned, it cannot be recovered.
 What propagates is the prune transaction — by gossip like any other, and again inside the
 ordering block that settles it — never the original content, and not the stump either: each
 node derives its own stump from the verified payload at settlement (§3). Within
-`MAX_REORG_DEPTH` the deleted rows exist only as undo records in the prune
+the reorg horizon (`maxReorgDepth`, TYPES_INTERFACE → Chain reorganisation) the deleted rows exist only as undo records in the prune
 block's journal — never served, never relayed — so a reverted prune restores
 them exactly; once that journal is dropped, **a node holds no byte of the
 subtree's content anywhere**: no DAG row, no journal row, and the blocks
@@ -1762,7 +1762,7 @@ not be independently readable.
 `CREDIT_MINER_REWARD_DELAY` · `CREDIT_FIXED_RATE_BLOCKS` ·
 `CREDIT_EPOCH_BLOCKS` · `CREDIT_EMISSION_TOTAL` · `GENESIS_KARMA_PER_MEMBER` · `INVITE_BOND_MIN` · `INVITE_BOND_MAX` ·
 `genesisCommitteeKeys` · `genesisProofPayload` · `genesisStateRoot` · `genesisId` · `faucetPublicKey` ·
-`storageRentPeriodBlocks` · `membershipBarMultiplier`
+`storageRentPeriodBlocks` · `membershipBarMultiplier` · `maxReorgDepth`
 
 **Every name is spelled by its definition site, and the case says which one.** A `SCREAMING_CASE` name
 is a `constants.ts` export that a profile field reads; a `camelCase` name is a `NetworkProfile` field
@@ -1784,7 +1784,13 @@ axis rather than opening a fourth.
 > economics and universal, the period is timescale and per-network.** ⛔ **Devnet's is bounded from
 > both sides.** Mainnet's 2,102,400 blocks is unreachable in any test, so a universal period would
 > leave the rent path unexercised; and a period below the suite's own ceiling lets a producer collect
-> the faucet's genesis credits underneath a running scenario. Devnet's **40** sits between the two.
+> the faucet's genesis credits underneath a running scenario. Devnet's **100** sits between the two.
+
+> ⚠ **`maxReorgDepth` is field-only and a duration: the reorg horizon.** How far below the tip a fork
+> may be followed prices journals, AVL versions and a reorg's memory against how long a partition may
+> last before it is permanent — a number on the timescale axis (`TYPES_INTERFACE → Chain
+> reorganisation`). The fork walk, the branch scoring and the purges are the mechanic and universal;
+> mainnet's **60**, testnet's **240** and devnet's **40** are numbers on the same mechanic.
 
 > ⚠ **`membershipBarMultiplier` is field-only and a cap.** `k` scales the membership bar
 > `D(N) = max(1, icbrt(k · N))` (§Membership); the formula is the mechanic and universal, the
@@ -2077,7 +2083,7 @@ forever. A node rejects objects with an unsupported protocol version.
   has no `trigger` field and no other cause (ruled 2026-08-19)
 - A block commits a post's structure (`PostCommit`) and its content commitment, never its
   content; the body lives only in the DAG
-- Pruning deletes: once the prune block's journal is dropped below `MAX_REORG_DEPTH`, a node
+- Pruning deletes: once the prune block's journal is dropped below the reorg horizon (`maxReorgDepth`), a node
   holds no byte of the subtree's content — no DAG row, no journal row; within that depth the
   rows exist only as undo records, never served
 
@@ -2656,7 +2662,8 @@ backfill — and a pruned post has no row (NODE_INTERFACE → Store Interface �
 - Framed p2p stream protocol with magic bytes, VLQ length prefixing, and a **4-byte**
   checksum (the first 4 bytes of a blake2b digest — the frame layout at the top of this
   document says `[checksum:4]`, and `WIRE_INTERFACE.md` agrees; "32-byte" here was wrong)
-- Header-first historical sync with SyncInfo/Inv/Modifier protocol
+- Historical sync of whole ordering blocks over the SyncInfo/Inv/Modifier protocol; fork choice
+  scores a competing branch to its tip by paged, verified headers, up to the network's reorg horizon
 - Peer discovery via GetPeers/Peers gossip + PeerDb
 
 ## Deferred to future protocol versions
