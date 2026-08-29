@@ -88,7 +88,7 @@ Three limits stand in a fixed order — `MAX_BLOCK_BODY_BYTES < MAX_SERVE_BODY_B
 |---|---|---|---|---|---|---|
 | `MAX_BLOCK_BODY_BYTES` | `2_000_000` | 2 MB per block; 1.05 TB/yr at 60 s blocks | consensus | none stated for the number; the two net caps above it derive from it | CHOSEN | `TYPES_INTERFACE → Size caps` |
 | `MAX_TX_BYTES` | `10_000` | ~148 credit inputs | consensus | argued for *existence* — a transaction may not be valid, poolable and unminable at once — not for the number | CHOSEN | `TYPES_INTERFACE → Size caps` |
-| `MAX_SETTLEMENT_BYTES` | `100_000` | 5 % of the body; ≈ 2 700 like markers after the capped legs | consensus | two relations are the rule (fits a legal body; an empty-body settlement at every cap fits it — 70 + 3 × 64 × 70 = 13 510 at the escrow item's cost, the lapse item's to be measured); the number is provisional | PROVISIONAL | `TYPES_INTERFACE → Size caps` |
+| `MAX_SETTLEMENT_BYTES` | `100_000` | 5 % of the body; ≈ 2 700 like markers after the capped legs | consensus | two relations are the rule (fits a legal body; an empty-body settlement at every cap fits it — 8 903 bytes measured with the three capped legs at 64, `settlement-bound.test.ts`); the number is provisional | PROVISIONAL | `TYPES_INTERFACE → Size caps` |
 
 ### Settlement caps
 

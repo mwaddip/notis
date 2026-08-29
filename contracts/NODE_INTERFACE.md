@@ -552,8 +552,9 @@ served so a client can show when the next period falls.
 `memberBar`, `memberVouches` and `invitesUsed` are the record's plain numbers, `memberLikes` its
 second counter as a decimal string (`0` and `"0"` where no record exists); `member` is the derived
 predicate `memberSinceBlock > 0 ∧ memberVouches ≥ memberBar` evaluated by the node (`ARCHITECTURE
-→ Membership`), and `invitesAvailable` is `⌊memberVouches / D(N)⌋ − invitesUsed` for a member, `0`
-for a resident, and **`null` for a root** — unbounded, not zero. A client deriving either from the
+→ Membership`), and `invitesAvailable` is `⌊memberVouches / D(N)⌋ − invitesUsed` for a member, clamped at `0`
+(a bar that rose after invites were spent can put the difference below zero), `0` for a resident —
+a lapsed member included — and **`null` for a root** — unbounded, not zero. A client deriving either from the
 five fields holds a second implementation of a consensus predicate, the mirror class.
 
 > ⚠ **AHEAD OF CODE — 2026-08-29.** The view serves the four-field record. The seven fields are
