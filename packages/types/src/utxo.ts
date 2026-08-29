@@ -1084,9 +1084,11 @@ export interface UtxoTransaction {
    * rewrite the post any more than it can re-point a like.
    *
    * This package defines only the field and its encoding; the biconditional —
-   * present ⟺ the tx pays `POST_PRICE_THREAD` or `POST_PRICE_REPLY` into a
-   * `KarmaPriceBox` and conserves value — is consensus validation and lives in
-   * node's UTXO engine.
+   * present ⟺ the tx pays `POST_PRICE_THREAD` (thread) or
+   * `POST_PRICE_REPLY − REPLY_AUTHOR_SHARE` (reply) into a `KarmaPriceBox`,
+   * with a reply's share riding a `LikeAccrualBox` for the parent's author,
+   * and conserves value — is consensus validation and lives in node's UTXO
+   * engine.
    */
   post?: PostCommit;
   /**
