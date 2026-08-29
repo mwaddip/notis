@@ -4,23 +4,30 @@ import {
 } from '@dagsocial/types';
 import type { BlockHeader } from '@dagsocial/types';
 import {
+  asertTargetBits,
   blockHash,
+  verifyCreatedAtBound,
+  verifyCreatedAtOrder,
   verifyHeaderFieldDomains,
   verifyOrderingBlockPoW,
 } from '@dagsocial/validation';
+import type { RetargetParams } from '@dagsocial/validation';
 import { decodeNipopowProof } from './codec.js';
 import type { PoPowHeader, NipopowProof } from './codec.js';
 
 type VerifyCode =
   | 'parse-failed' | 'shape' | 'anchor' | 'domain' | 'version'
-  | 'target' | 'pow' | 'interlinks' | 'heights' | 'connections';
+  | 'target' | 'pow' | 'time' | 'clock' | 'interlinks' | 'heights' | 'connections';
 
 export type VerifyResult =
   | { ok: true; headers: BlockHeader[]; tip: BlockHeader; tipHeight: number; suffixHead: PoPowHeader }
   | { ok: false; reason: VerifyCode; index?: number };
 
-interface VerifyProfile {
-  expectedTarget: (height: number) => number;
+// NIPOPOW_INTERFACE → verifyProof
+export interface VerifyProfile {
+  retarget: RetargetParams;
+  maxFutureDriftMs: number;
+  nowMs: number;
   genesisId: string;
   protocolVersion: number;
 }
@@ -94,14 +101,45 @@ export function verifyProof(
     if (ph.interlinks[0] !== genesisHash) return fail('anchor', i);
   }
 
-  // Rule 3: every header — domain, version (from profile), target, pow
+  const { floorBits, ceilingBits } = profile.retarget;
+
+  // Rule 3: every header — domain, version, band target, pow
   for (let i = 0; i < allHeaders.length; i++) {
     const h = allHeaders[i]!;
     const domResult = verifyHeaderFieldDomains(h);
     if (!domResult.valid) return fail('domain', i);
     if (h.protocolVersion !== profile.protocolVersion) return fail('version', i);
-    if (h.powTargetBits !== profile.expectedTarget(h.height)) return fail('target', i);
+    if (h.powTargetBits < floorBits || h.powTargetBits > ceilingBits) return fail('target', i);
     if (!verifyOrderingBlockPoW(h)) return fail('pow', i);
+  }
+
+  // Rule 3 continued: suffix-tail exact schedule check
+  // NIPOPOW_INTERFACE → verifyProof rule 3 — suffixHead is band-only
+  const t_a = first.header.createdAt;
+  const suffixStartIdx = p.prefix.length;
+  let prev: { height: number; createdAt: number } = p.suffixHead.header;
+  for (let j = 0; j < p.suffixTail.length; j++) {
+    const tailH = p.suffixTail[j]!;
+    const scheduled = asertTargetBits(profile.retarget, t_a, prev);
+    if (tailH.powTargetBits !== scheduled) {
+      return fail('target', suffixStartIdx + 1 + j);
+    }
+    prev = tailH;
+  }
+
+  // Rule 3 continued: time — createdAt strictly increasing
+  // VALIDATION_INTERFACE → verifyCreatedAtOrder
+  for (let i = 1; i < allHeaders.length; i++) {
+    if (!verifyCreatedAtOrder(allHeaders[i]!, allHeaders[i - 1]!)) {
+      return fail('time', i);
+    }
+  }
+
+  // Rule 3 continued: clock — tip's future bound
+  // VALIDATION_INTERFACE → verifyCreatedAtBound
+  const tip = allHeaders[allHeaders.length - 1]!;
+  if (!verifyCreatedAtBound(tip, profile.nowMs, profile.maxFutureDriftMs)) {
+    return fail('clock', allHeaders.length - 1);
   }
 
   // Rule 4: every PoPowHeader — interlinkRoot
@@ -130,15 +168,14 @@ export function verifyProof(
   // NIPOPOW_INTERFACE → verifyProof
   for (let i = 1; i < allPoPow.length; i++) {
     const cur = allPoPow[i]!;
-    const prev = allPoPow[i - 1]!;
-    const prevHash = blockHash(prev.header);
-    if (prevHash === null) return fail('connections', i);
-    const inInterlinks = Array.isArray(cur.interlinks) && cur.interlinks.includes(prevHash);
-    const isPrev = cur.header.prevBlockHash === prevHash;
-    if (!inInterlinks && !isPrev) return fail('connections', i);
+    const prevPh = allPoPow[i - 1]!;
+    const prevPhHash = blockHash(prevPh.header);
+    if (prevPhHash === null) return fail('connections', i);
+    const inInterlinks = Array.isArray(cur.interlinks) && cur.interlinks.includes(prevPhHash);
+    const isPrevBlock = cur.header.prevBlockHash === prevPhHash;
+    if (!inInterlinks && !isPrevBlock) return fail('connections', i);
   }
   // Suffix tail: parent-linked from suffixHead
-  const suffixStartIdx = p.prefix.length;
   let prevTailHash = blockHash(p.suffixHead.header);
   if (prevTailHash === null) return fail('connections', suffixStartIdx);
   for (let i = 0; i < p.suffixTail.length; i++) {
@@ -149,7 +186,6 @@ export function verifyProof(
     prevTailHash = h;
   }
 
-  const tip = allHeaders[allHeaders.length - 1]!;
   return {
     ok: true,
     headers: allHeaders,

@@ -6,6 +6,7 @@ import {
   buildMinedChain,
   makeReader,
   devnetProfile,
+  DEVNET_POW_TARGET_BITS,
 } from './helpers.js';
 
 describe('compareProofs', () => {
@@ -89,18 +90,17 @@ describe('compareProofs', () => {
 
 describe('bestArg', () => {
   it('returns 0n for an empty chain', () => {
-    expect(bestArg([], 3)).toBe(0n);
+    expect(bestArg([], 3, DEVNET_POW_TARGET_BITS)).toBe(0n);
   });
 
-  it('level 0 always counts all headers', () => {
+  it('level 0 counts all registered headers', () => {
     const chain = buildMinedChain({ count: 10 });
-    const score = bestArg(chain.headers, 3);
-    // At minimum, 2^0 * 10 = 10
+    const score = bestArg(chain.headers, 3, DEVNET_POW_TARGET_BITS);
+    // On-schedule: every header has a level; 2^0 * 10 = 10
     expect(score).toBeGreaterThanOrEqual(10n);
   });
 
   it('hand-checked: forced levels produce expected scores', () => {
-    // Force specific levels to control the score
     const forceLevels = new Map<number, number>();
     forceLevels.set(3, 2);
     forceLevels.set(5, 2);
@@ -108,9 +108,7 @@ describe('bestArg', () => {
     const chain = buildMinedChain({ count: 10, forceLevels });
     const headers = chain.headers;
 
-    const score = bestArg(headers, 2);
-    // Level 0: 2^0 * 10 = 10
-    // Should be at least 10
+    const score = bestArg(headers, 2, DEVNET_POW_TARGET_BITS);
     expect(score).toBeGreaterThanOrEqual(10n);
   });
 });

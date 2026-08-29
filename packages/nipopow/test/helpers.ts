@@ -7,6 +7,7 @@ import {
 } from '@dagsocial/types';
 import type { BlockHeader } from '@dagsocial/types';
 import {
+  asertTargetBits,
   verifyOrderingBlockPoW,
   blockHash,
   level as headerLevel,
@@ -14,9 +15,22 @@ import {
   powHit,
   orderingPowTarget,
 } from '@dagsocial/validation';
+import type { RetargetParams } from '@dagsocial/validation';
 import type { PoPowHeader, PopowHeaderReader } from '../src/index.js';
 
 export const DEVNET_POW_TARGET_BITS = 3072;
+
+export const DEVNET_RETARGET: RetargetParams = {
+  anchorBits: 3072,
+  idealMs: 60_000,
+  halflifeMs: 17_280_000,
+  floorBits: 2304,
+  ceilingBits: 4096,
+};
+
+export const DEVNET_MAX_FUTURE_DRIFT_MS = 600_000;
+
+const ANCHOR_TIME = 1_000_000;
 
 export function solveHeaderPow(header: BlockHeader): number {
   for (let nonce = 0; ; nonce++) {
@@ -27,15 +41,16 @@ export function solveHeaderPow(header: BlockHeader): number {
 export function solveForLevel(
   header: BlockHeader,
   minLevel: number,
+  anchorBits: number,
 ): number {
-  const target = orderingPowTarget(header.powTargetBits);
-  if (target === null) throw new Error('invalid target');
+  const yardstick = orderingPowTarget(anchorBits);
+  if (yardstick === null) throw new Error('invalid anchor bits');
   for (let nonce = 0; ; nonce++) {
     const candidate = { ...header, powNonce: nonce };
     if (!verifyOrderingBlockPoW(candidate)) continue;
     const hit = powHit(candidate);
     if (hit === null) continue;
-    const lvl = levelOfHit(hit, target);
+    const lvl = levelOfHit(hit, yardstick);
     if (lvl !== null && lvl >= minLevel) return nonce;
   }
 }
@@ -52,7 +67,9 @@ interface BuildState {
   popowHeaders: PoPowHeader[];
   prevHash: string;
   prevInterlinks: string[];
-  prevLevel: number;
+  prevLevel: number | null;
+  prevHeight: number;
+  prevCreatedAt: number;
 }
 
 function freshState(): BuildState {
@@ -63,21 +80,33 @@ function freshState(): BuildState {
     prevHash: GENESIS_PREV_BLOCK_HASH,
     prevInterlinks: [],
     prevLevel: Infinity,
+    prevHeight: 0,
+    prevCreatedAt: 0,
   };
 }
 
+// On-schedule stamps: bits stay at anchorBits, createdAt = ANCHOR_TIME + idealMs * (height - 1)
 function mineHeaders(
   from: number,
   to: number,
-  powTargetBits: number,
+  retarget: RetargetParams,
   forceLevels: Map<number, number> | undefined,
   state: BuildState,
+  stampIntervalMs?: number,
 ): void {
+  const interval = stampIntervalMs ?? retarget.idealMs;
   for (let i = from; i < to; i++) {
     const height = i + 1;
     const expected = height === 1
       ? []
       : updateInterlinks(state.prevInterlinks, state.prevHash, state.prevLevel);
+
+    const createdAt = ANCHOR_TIME + interval * (height - 1);
+    const powTargetBits = height === 1
+      ? retarget.anchorBits
+      : asertTargetBits(retarget, ANCHOR_TIME,
+          { height: state.prevHeight, createdAt: state.prevCreatedAt });
+
     const header: BlockHeader = {
       protocolVersion: PROTOCOL_VERSION,
       height,
@@ -87,21 +116,20 @@ function mineHeaders(
       validatorId: new Uint8Array(32),
       powNonce: 0,
       powTargetBits,
-      createdAt: i,
+      createdAt,
       interlinkRoot: interlinkRoot(expected),
     };
 
     const wantLevel = forceLevels?.get(height);
     if (wantLevel !== undefined && wantLevel > 0) {
-      header.powNonce = solveForLevel(header, wantLevel);
+      header.powNonce = solveForLevel(header, wantLevel, retarget.anchorBits);
     } else {
       header.powNonce = solveHeaderPow(header);
     }
 
     const hash = blockHash(header);
     if (hash === null) throw new Error(`unhashable at height ${height}`);
-    const lvl = headerLevel(header);
-    if (lvl === null) throw new Error(`null level at height ${height}`);
+    const lvl = headerLevel(header, retarget.anchorBits);
 
     // validatorId bytes are not frozen — Object.freeze on a typed array with elements throws
     Object.freeze(header);
@@ -115,17 +143,20 @@ function mineHeaders(
     state.prevHash = hash;
     state.prevInterlinks = expected;
     state.prevLevel = lvl;
+    state.prevHeight = height;
+    state.prevCreatedAt = createdAt;
   }
 }
 
 export function buildMinedChainFresh(opts: {
   count: number;
-  powTargetBits?: number;
+  retarget?: RetargetParams;
   forceLevels?: Map<number, number>;
+  stampIntervalMs?: number;
 }): MinedChain {
-  const powTargetBits = opts.powTargetBits ?? DEVNET_POW_TARGET_BITS;
+  const retarget = opts.retarget ?? DEVNET_RETARGET;
   const state = freshState();
-  mineHeaders(0, opts.count, powTargetBits, opts.forceLevels, state);
+  mineHeaders(0, opts.count, retarget, opts.forceLevels, state, opts.stampIntervalMs);
   return {
     headers: state.headers,
     interlinksPerHeader: state.interlinksPerHeader,
@@ -133,8 +164,13 @@ export function buildMinedChainFresh(opts: {
   };
 }
 
-function memoKey(powTargetBits: number, forceLevels?: Map<number, number>): string {
-  let key = String(powTargetBits);
+function memoKey(
+  retarget: RetargetParams,
+  forceLevels?: Map<number, number>,
+  stampIntervalMs?: number,
+): string {
+  let key = `${retarget.anchorBits}:${retarget.idealMs}:${retarget.halflifeMs}:${retarget.floorBits}:${retarget.ceilingBits}`;
+  if (stampIntervalMs !== undefined) key += `/s=${stampIntervalMs}`;
   if (forceLevels && forceLevels.size > 0) {
     const sorted = [...forceLevels.entries()].sort((a, b) => a[0] - b[0]);
     key += '/' + sorted.map(([h, l]) => `${h}:${l}`).join(',');
@@ -154,12 +190,13 @@ const chainMemo = new Map<string, BuildState>();
 
 export function buildMinedChain(opts: {
   count: number;
-  powTargetBits?: number;
+  retarget?: RetargetParams;
   forceLevels?: Map<number, number>;
+  stampIntervalMs?: number;
 }): MinedChain {
-  const { count, forceLevels } = opts;
-  const powTargetBits = opts.powTargetBits ?? DEVNET_POW_TARGET_BITS;
-  const key = memoKey(powTargetBits, forceLevels);
+  const { count, forceLevels, stampIntervalMs } = opts;
+  const retarget = opts.retarget ?? DEVNET_RETARGET;
+  const key = memoKey(retarget, forceLevels, stampIntervalMs);
   const existing = chainMemo.get(key);
 
   if (existing && existing.headers.length >= count) {
@@ -174,10 +211,12 @@ export function buildMinedChain(opts: {
         prevHash: existing.prevHash,
         prevInterlinks: existing.prevInterlinks,
         prevLevel: existing.prevLevel,
+        prevHeight: existing.prevHeight,
+        prevCreatedAt: existing.prevCreatedAt,
       }
     : freshState();
 
-  mineHeaders(state.headers.length, count, powTargetBits, forceLevels, state);
+  mineHeaders(state.headers.length, count, retarget, forceLevels, state, stampIntervalMs);
   chainMemo.set(key, state);
 
   return sliceChain(state, count);
@@ -218,7 +257,9 @@ export function makeReader(chain: MinedChain): PopowHeaderReader {
 
 export function devnetProfile() {
   return {
-    expectedTarget: (_height: number) => DEVNET_POW_TARGET_BITS,
+    retarget: DEVNET_RETARGET,
+    maxFutureDriftMs: DEVNET_MAX_FUTURE_DRIFT_MS,
+    nowMs: 100_000_000,
     genesisId: '',
     protocolVersion: PROTOCOL_VERSION,
   };
@@ -228,7 +269,9 @@ export function devnetProfileWithGenesisId(chain: MinedChain) {
   const gHash = blockHash(chain.headers[0]!);
   if (gHash === null) throw new Error('unhashable genesis');
   return {
-    expectedTarget: (_height: number) => DEVNET_POW_TARGET_BITS,
+    retarget: DEVNET_RETARGET,
+    maxFutureDriftMs: DEVNET_MAX_FUTURE_DRIFT_MS,
+    nowMs: 100_000_000,
     genesisId: gHash,
     protocolVersion: PROTOCOL_VERSION,
   };

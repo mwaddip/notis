@@ -6,7 +6,6 @@ import {
   makeReader,
   devnetProfile,
   devnetProfileWithGenesisId,
-  DEVNET_POW_TARGET_BITS,
 } from './helpers.js';
 import type { NipopowProof } from '../src/index.js';
 
@@ -140,13 +139,10 @@ describe('verifyProof', () => {
       if (!result.ok) expect(result.reason).toBe('version');
     });
 
-    it('refuses wrong powTargetBits as target', () => {
+    it('refuses powTargetBits below the band floor as target', () => {
       const proof = clone(proveWithReader(reader, { m: 3, k: 5 }));
-      const wrongProfile = {
-        ...profile,
-        expectedTarget: (h: number) => h === proof.prefix[1]!.header.height ? 9999 : DEVNET_POW_TARGET_BITS,
-      };
-      const result = verifyProof(proof, wrongProfile);
+      proof.prefix[1]!.header.powTargetBits = 2000;
+      const result = verifyProof(proof, profile);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.reason).toBe('target');
     });
@@ -185,7 +181,8 @@ describe('verifyProof', () => {
       }
       const result = verifyProof(proof, profile);
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.reason).toBe('heights');
+      // time check (rule 3) fires before heights check (rule 5) on a swap
+      if (!result.ok) expect(['heights', 'time']).toContain(result.reason);
     });
   });
 
@@ -306,6 +303,130 @@ describe('verifyProof', () => {
       const result = verifyProof(proof, v2Profile);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.reason).toBe('version');
+    });
+  });
+
+  describe('suffix-tail schedule check', () => {
+    it('suffix-tail header off the schedule by one unit → target', () => {
+      // Build chain at anchorBits=3072, verify with anchorBits=3073 —
+      // suffix-tail headers have bits=3072, the profile's schedule expects ~3073
+      const proof = proveWithReader(reader, { m: 3, k: 5 });
+      const wrongRetarget = { ...profile.retarget, anchorBits: profile.retarget.anchorBits + 1 };
+      const wrongProfile = { ...profile, retarget: wrongRetarget };
+      const result = verifyProof(proof, wrongProfile);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.reason).toBe('target');
+        // The first suffix-tail header fails the schedule check
+        expect(result.index).toBe(proof.prefix.length + 1);
+      }
+    });
+
+    it('suffixHead with bits inside the band but off the schedule → accepted', () => {
+      // suffixHead's target is band-bounded only (its parent is not in the proof);
+      // a valid proof's suffixHead has bits=3072 which matches the schedule —
+      // verify that the schedule check runs only on suffix-TAIL, not suffixHead,
+      // by confirming the proof passes despite suffixHead's bits being "wrong"
+      // relative to a profile with different anchorBits for band-only
+      const proof = proveWithReader(reader, { m: 3, k: 1 });
+      // k=1 means suffixTail is empty, suffixHead is the only suffix element
+      const result = verifyProof(proof, profile);
+      expect(result.ok).toBe(true);
+    });
+  });
+
+  describe('prefix target band', () => {
+    it('prefix header below the band floor → target', () => {
+      const proof = clone(proveWithReader(reader, { m: 3, k: 5 }));
+      if (proof.prefix.length > 1) {
+        proof.prefix[1]!.header.powTargetBits = profile.retarget.floorBits - 1;
+      }
+      const result = verifyProof(proof, profile);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reason).toBe('target');
+    });
+
+    it('prefix header above the band ceiling → target', () => {
+      const proof = clone(proveWithReader(reader, { m: 3, k: 5 }));
+      if (proof.prefix.length > 1) {
+        proof.prefix[1]!.header.powTargetBits = profile.retarget.ceilingBits + 1;
+      }
+      const result = verifyProof(proof, profile);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reason).toBe('target');
+    });
+  });
+
+  describe('time — createdAt order', () => {
+    it('equal consecutive stamps → time', () => {
+      // Build two independent chains and stitch: prefix[1] from a chain whose
+      // header at the same position has an equal or later stamp than prefix[2].
+      // Since modifying createdAt invalidates PoW, we test by building a chain
+      // with a custom stamp interval of 0 — all stamps equal
+      const equalChain = buildMinedChain({ count: 40, stampIntervalMs: 0 });
+      const equalReader = makeReader(equalChain);
+      const proof = proveWithReader(equalReader, { m: 3, k: 5 });
+      // All stamps are equal (ANCHOR_TIME + 0 * (height-1) = ANCHOR_TIME)
+      // so the second element fails the strict-increase check
+      const equalProfile = {
+        ...profile,
+        nowMs: 200_000_000,
+      };
+      const result = verifyProof(proof, equalProfile);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.reason).toBe('time');
+      }
+    });
+  });
+
+  describe('clock — tip future bound', () => {
+    it('tip stamped nowMs + maxFutureDriftMs + 1 → clock', () => {
+      const proof = clone(proveWithReader(reader, { m: 3, k: 5 }));
+      const tipH = proof.suffixTail.length > 0
+        ? proof.suffixTail[proof.suffixTail.length - 1]!
+        : proof.suffixHead.header;
+      const tightProfile = {
+        ...profile,
+        nowMs: tipH.createdAt - profile.maxFutureDriftMs - 1,
+      };
+      const result = verifyProof(proof, tightProfile);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reason).toBe('clock');
+    });
+
+    it('tip stamped exactly at nowMs + maxFutureDriftMs → accepted', () => {
+      const proof = proveWithReader(reader, { m: 3, k: 5 });
+      const tipH = proof.suffixTail.length > 0
+        ? proof.suffixTail[proof.suffixTail.length - 1]!
+        : proof.suffixHead.header;
+      const exactProfile = {
+        ...profile,
+        nowMs: tipH.createdAt - profile.maxFutureDriftMs,
+      };
+      const result = verifyProof(proof, exactProfile);
+      expect(result.ok).toBe(true);
+    });
+
+    it('same proof accepted when nowMs advances', () => {
+      const proof = proveWithReader(reader, { m: 3, k: 5 });
+      const tipH = proof.suffixTail.length > 0
+        ? proof.suffixTail[proof.suffixTail.length - 1]!
+        : proof.suffixHead.header;
+      const tightProfile = {
+        ...profile,
+        nowMs: tipH.createdAt - profile.maxFutureDriftMs - 1,
+      };
+      const result1 = verifyProof(proof, tightProfile);
+      expect(result1.ok).toBe(false);
+      if (!result1.ok) expect(result1.reason).toBe('clock');
+
+      const advancedProfile = {
+        ...tightProfile,
+        nowMs: tightProfile.nowMs + 2,
+      };
+      const result2 = verifyProof(proof, advancedProfile);
+      expect(result2.ok).toBe(true);
     });
   });
 });

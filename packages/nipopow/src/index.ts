@@ -9,7 +9,7 @@ export {
 export type { PoPowHeader, NipopowProof } from './codec.js';
 
 export { verifyProof } from './verify.js';
-export type { VerifyResult } from './verify.js';
+export type { VerifyResult, VerifyProfile } from './verify.js';
 
 export { compareProofs, bestArg } from './compare.js';
 export type { CompareResult } from './compare.js';

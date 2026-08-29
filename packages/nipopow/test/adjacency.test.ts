@@ -6,6 +6,7 @@ import {
   buildMinedChain,
   makeReader,
   devnetProfile,
+  DEVNET_POW_TARGET_BITS,
 } from './helpers.js';
 
 // NIPOPOW_INTERFACE → verifyProof. The prove-then-verify round trip over deterministic
@@ -34,7 +35,7 @@ describe('strict-adjacency property test', () => {
         const proof = proveWithReader(reader, params);
         const result = verifyProof(proof, profile);
         if (!result.ok) {
-          const levels = chain.headers.map(h => level(h));
+          const levels = chain.headers.map(h => level(h, DEVNET_POW_TARGET_BITS));
           console.error('ADJACENCY FAILURE', {
             chainLen: len,
             m: params.m,
