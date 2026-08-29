@@ -291,10 +291,9 @@ const HEADER_DOMAIN: readonly HeaderDomainRule[] = [
     ok: (v) => isU64Safe(v) && (v as number) <= 65536,
     error: 'Block header powTargetBits must be an integer in [0, 65536]',
   },
-  // vlqU. A domain pin, not a clock policy: no monotonicity rule and no skew
-  // window — those are consensus rule additions, and "never add checks the
-  // reference lacks" applies. `createdAt` stays a producer-set record that no
-  // node validates against anything, as in every chain in the lineage.
+  // vlqU — a consensus input: the order and future-bound rules
+  // (→ verifyCreatedAtOrder, → verifyCreatedAtBound) and the difficulty
+  // schedule (→ asertTargetBits) read it.
   { field: 'createdAt', ok: isU64Safe, error: 'Block header createdAt must be a non-negative safe integer' },
   // b32 — the interlink vector's commitment (TYPES_INTERFACE → Interlink vector)
   { field: 'interlinkRoot', ok: isHex32, error: 'Block header interlinkRoot must be 64 lowercase hex characters' },
@@ -457,6 +456,93 @@ export function cumulativeWork(headers: BlockHeader[]): bigint {
     if (work !== null) sum += work;
   }
   return sum;
+}
+
+// ---------------------------------------------------------------------------
+// RetargetParams / asertTargetBits — VALIDATION_INTERFACE → asertTargetBits
+// ---------------------------------------------------------------------------
+
+/**
+ * The schedule's injected parameters. The caller owns every value; this
+ * package owns the function. VALIDATION_INTERFACE → asertTargetBits.
+ */
+export interface RetargetParams {
+  anchorBits: number;
+  idealMs: number;
+  halflifeMs: number;
+  floorBits: number;
+  ceilingBits: number;
+}
+
+/**
+ * The target the block above `parent` must carry — the ASERT difficulty
+ * schedule in log space over the 1/256-bit representation.
+ * VALIDATION_INTERFACE → asertTargetBits;
+ * MINING_INTERFACE → Difficulty Schedule.
+ */
+export function asertTargetBits(
+  params: RetargetParams,
+  anchorCreatedAt: number,
+  parent: { height: number; createdAt: number },
+): number {
+  if (!isObject(params) || !isObject(parent)) return 0;
+  const pHeight = (parent as Record<string, unknown>).height;
+  const pCreatedAt = (parent as Record<string, unknown>).createdAt;
+  if (!isU64Safe(pHeight as number) || !isU64Safe(pCreatedAt as number) || !isU64Safe(anchorCreatedAt)) return 0;
+
+  const delta = (BigInt(pCreatedAt as number) - BigInt(anchorCreatedAt))
+    - BigInt(params.idealMs) * (BigInt(pHeight as number) - 1n);
+  const numerator = delta * 256n;
+  const divisor = BigInt(params.halflifeMs);
+  let q = numerator / divisor;
+  if (numerator % divisor !== 0n && numerator < 0n) q -= 1n;
+
+  let bits = BigInt(params.anchorBits) - q;
+  const floor = BigInt(params.floorBits);
+  const ceiling = BigInt(params.ceilingBits);
+  if (bits < floor) bits = floor;
+  if (bits > ceiling) bits = ceiling;
+  return Number(bits);
+}
+
+// ---------------------------------------------------------------------------
+// verifyCreatedAtOrder — VALIDATION_INTERFACE → verifyCreatedAtOrder
+// ---------------------------------------------------------------------------
+
+/**
+ * `header.createdAt > parent.createdAt` — the timestamp order rule.
+ * MINING_INTERFACE → Header timestamp rules, the order rule.
+ */
+export function verifyCreatedAtOrder(
+  header: BlockHeader,
+  parent: BlockHeader,
+): boolean {
+  if (!isObject(header) || !isObject(parent)) return false;
+  const hCa = (header as Record<string, unknown>).createdAt;
+  const pCa = (parent as Record<string, unknown>).createdAt;
+  if (!isU64Safe(hCa as number) || !isU64Safe(pCa as number)) return false;
+  return (hCa as number) > (pCa as number);
+}
+
+// ---------------------------------------------------------------------------
+// verifyCreatedAtBound — VALIDATION_INTERFACE → verifyCreatedAtBound
+// ---------------------------------------------------------------------------
+
+/**
+ * `header.createdAt ≤ nowMs + maxDriftMs` — the future bound.
+ * MINING_INTERFACE → Header timestamp rules, the future bound.
+ */
+export function verifyCreatedAtBound(
+  header: BlockHeader,
+  nowMs: number,
+  maxDriftMs: number,
+): boolean {
+  if (!isObject(header)) return false;
+  const ca = (header as Record<string, unknown>).createdAt;
+  if (!isU64Safe(ca as number)) return false;
+  if (typeof nowMs !== 'number' || !Number.isFinite(nowMs) || !Number.isInteger(nowMs)) return false;
+  if (typeof maxDriftMs !== 'number' || !Number.isFinite(maxDriftMs) || !Number.isInteger(maxDriftMs)) return false;
+  return (ca as number) <= nowMs + maxDriftMs;
 }
 
 // ---------------------------------------------------------------------------

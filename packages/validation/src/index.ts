@@ -4,6 +4,9 @@ export {
   meetsPowTarget,
   blockWork,
   cumulativeWork,
+  asertTargetBits,
+  verifyCreatedAtOrder,
+  verifyCreatedAtBound,
   powHit,
   levelOfHit,
   level,
@@ -28,5 +31,4 @@ export {
   isValidVouchTarget,
 } from './verify.js';
 
-export type { HeaderChainVerdict } from './verify.js';
-
+export type { HeaderChainVerdict, RetargetParams } from './verify.js';
