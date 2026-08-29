@@ -21,6 +21,7 @@ const stubNet: ForkResolutionNet = {
   requestHeaders: async () => [],
   requestBlocks: async () => [],
   penalizePeer: () => {},
+  peerTipHeight: () => null,
 };
 
 // ---------------------------------------------------------------------------

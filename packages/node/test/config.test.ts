@@ -514,11 +514,15 @@ describe('config', () => {
       ).rejects.toThrow(/below maxReorgDepth/);
     });
 
+    // The depth itself is admissible — the walk's deepest answer is exactly
+    // the oldest version retained — so the comparison is `<` and not `<=`.
     it('accepts a MAX_PROOF_HISTORY sitting exactly on maxReorgDepth', async () => {
       const { loadConfig } = await importWithProofHistory(String(devnetReorgDepth));
       expect(loadConfig().maxProofHistory).toBe(devnetReorgDepth);
     });
 
+    // `parseInt` answers `NaN`, and `NaN < maxReorgDepth` is false — a `<`
+    // would admit the one value that makes every pruning height `NaN`.
     it('refuses a non-numeric MAX_PROOF_HISTORY', async () => {
       await expect(importWithProofHistory('later')).rejects.toThrow(
         /below maxReorgDepth/,
@@ -532,6 +536,7 @@ describe('config', () => {
       expect(message).toMatch(/maxReorgDepth/);
     });
 
+    // The shipped default must not be one env var away from the refusal.
     it('the default clears the depth', async () => {
       delete process.env['MAX_PROOF_HISTORY'];
       process.env['NETWORK_TYPE'] = 'devnet';

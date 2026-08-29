@@ -429,8 +429,8 @@ function applyBlockBody(block: OrderingBlock): boolean {
   // 14. Persist journal and purge old ones
   insertBlockJournal(journal);
   // Retention is the real floor under revert depth — `revertBlock` throws
-  // without a journal — so it tracks the depth `findForkPoint` can walk back
-  // to rather than restating the number.
+  // without a journal — so it tracks the depth the fork walk can reach
+  // (NODE_INTERFACE → Fork choice decides on verified headers).
   purgeOldJournals(block.header.height - config.maxReorgDepth);
   purgeRefusedHeaders(block.header.height - config.maxReorgDepth);
 
