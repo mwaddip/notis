@@ -15,6 +15,7 @@ import {
   MAX_REORG_DEPTH,
   CREDIT_INITIAL_REWARD,
   CREDIT_REWARD_REDUCTION,
+  ORDERING_BLOCK_POW_TARGET_FLOOR,
 } from '../src/index.js';
 import type { NetworkType, NetworkProfile } from '../src/index.js';
 
@@ -25,6 +26,9 @@ const REQUIRED_PROFILE_FIELDS = [
   'networkType',
   'magic',
   'orderingBlockPowTargetBits',
+  'orderingBlockIdealMs',
+  'orderingBlockPowTargetFloorBits',
+  'orderingBlockPowTargetCeilingBits',
   'karmaDecayIntervalBlocks',
   'karmaStaleThresholdBlocks',
   'vouchCooldownBlocks',
@@ -258,6 +262,44 @@ describe('NETWORK_PROFILES', () => {
     expect(NETWORK_PROFILES.mainnet.membershipBarMultiplier).toBe(10);
     expect(NETWORK_PROFILES.testnet.membershipBarMultiplier).toBe(1);
     expect(NETWORK_PROFILES.devnet.membershipBarMultiplier).toBe(1);
+  });
+
+  // MINING_INTERFACE → Difficulty Schedule: the ideal interval, floor and ceiling.
+  // Each profile's own literal; the band invariant holds on every profile.
+  it('orderingBlockIdealMs is 60_000 on all three networks', () => {
+    expect(NETWORK_PROFILES.mainnet.orderingBlockIdealMs).toBe(60_000);
+    expect(NETWORK_PROFILES.testnet.orderingBlockIdealMs).toBe(60_000);
+    expect(NETWORK_PROFILES.devnet.orderingBlockIdealMs).toBe(60_000);
+  });
+
+  it('orderingBlockPowTargetFloorBits per profile', () => {
+    expect(NETWORK_PROFILES.mainnet.orderingBlockPowTargetFloorBits).toBe(5120);
+    expect(NETWORK_PROFILES.testnet.orderingBlockPowTargetFloorBits).toBe(5120);
+    expect(NETWORK_PROFILES.devnet.orderingBlockPowTargetFloorBits).toBe(2304);
+  });
+
+  it('orderingBlockPowTargetCeilingBits per profile', () => {
+    expect(NETWORK_PROFILES.mainnet.orderingBlockPowTargetCeilingBits).toBe(65536);
+    expect(NETWORK_PROFILES.testnet.orderingBlockPowTargetCeilingBits).toBe(65536);
+    expect(NETWORK_PROFILES.devnet.orderingBlockPowTargetCeilingBits).toBe(4096);
+  });
+
+  // TYPES_INTERFACE → Network profiles: the band invariant.
+  // floor ≥ ORDERING_BLOCK_POW_TARGET_FLOOR, floor ≤ anchor ≤ ceiling ≤ 65536,
+  // idealMs > 0.
+  it('difficulty band invariant holds on every profile', () => {
+    for (const p of Object.values(NETWORK_PROFILES)) {
+      expect(p.orderingBlockPowTargetFloorBits, `${p.networkType} floor ≥ FLOOR`)
+        .toBeGreaterThanOrEqual(ORDERING_BLOCK_POW_TARGET_FLOOR);
+      expect(p.orderingBlockPowTargetFloorBits, `${p.networkType} floor ≤ anchor`)
+        .toBeLessThanOrEqual(p.orderingBlockPowTargetBits);
+      expect(p.orderingBlockPowTargetBits, `${p.networkType} anchor ≤ ceiling`)
+        .toBeLessThanOrEqual(p.orderingBlockPowTargetCeilingBits);
+      expect(p.orderingBlockPowTargetCeilingBits, `${p.networkType} ceiling ≤ 65536`)
+        .toBeLessThanOrEqual(65536);
+      expect(p.orderingBlockIdealMs, `${p.networkType} idealMs > 0`)
+        .toBeGreaterThan(0);
+    }
   });
 
   it('probation outlasts the stale threshold on every profile', () => {
