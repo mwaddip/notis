@@ -130,11 +130,11 @@ describe('protocolVersion equals the era at the judged-for height', () => {
     expect(r.error).toContain('must be the era 2 at height 5');
   });
 
-  it('finding #1: a commit declaring a version other than the era refuses the envelope', () => {
-    // The commit's version rides in the post-id preimage. On the old rule it was
-    // domain-checked only, so a commit declaring 2 inside a version-1 transaction
-    // validated end-to-end (NODE_INTERFACE → validateTx). The envelope now holds
-    // both the transaction's and the commit's version to the era.
+  it('a commit declaring a version other than the era refuses the envelope', () => {
+    // The commit's version rides in the post-id preimage, so a commit declaring
+    // another version would mint a second identity for one post. Every declared
+    // version a transaction carries equals its era, the commit's included
+    // (VALIDATION_INTERFACE → Protocol Version).
     const tx = envelope({ protocolVersion: 1, post: { protocolVersion: 2 } });
     const r = checkTxEnvelope(tx, H - 1, SCHEDULE); // era 1: the tx is right, the commit is not
     expect(r.valid).toBe(false);

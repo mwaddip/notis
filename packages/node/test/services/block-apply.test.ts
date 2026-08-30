@@ -559,7 +559,7 @@ describe('block-apply journal recording', () => {
     expect(ordering.getCurrentHeight()).toBe(1);
   });
 
-  it('finding #1: a block whose embedded commit declares a version other than the era is rejected', async () => {
+  it('a block whose embedded commit declares a version other than the era is rejected', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
@@ -568,10 +568,11 @@ describe('block-apply journal recording', () => {
 
     const author = makeTestIdentity();
     // The transaction declares era 1 (correct at height 1), but its commit
-    // declares 2. On the old rule the commit's version was domain-checked only,
-    // so this validated and applied end-to-end (NODE_INTERFACE → validateTx,
-    // finding #1). The envelope now holds the commit to the era too.
-    const { tx, karmaBox } = makePostTx(author, 'finding-one', { protocolVersion: 2 });
+    // declares 2. Every declared version a transaction carries equals its era,
+    // the commit's included — it rides in the post-id preimage, so a commit
+    // declaring another version would mint a second identity for one post
+    // (VALIDATION_INTERFACE → Protocol Version).
+    const { tx, karmaBox } = makePostTx(author, 'era-mismatch', { protocolVersion: 2 });
     utxo.insertBox(karmaBox);
     signTransaction(tx, author.privateKey, hex(author.userId));
 
