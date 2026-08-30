@@ -19,6 +19,7 @@ const TEST_KEYS = [
   'NETWORK_TYPE',
   'MINING_SECRET',
   'NODE_ROLE',
+  'BOOTSTRAP_PEERS',
   // Dead: consensus values are selected by NETWORK_TYPE, never set
   // individually. Section 7 sets these to prove they are ignored.
   //
@@ -695,6 +696,54 @@ describe('config', () => {
       process.env['NETWORK_TYPE'] = 'mainnet';
       const { loadConfig } = await import('../src/config.js');
       expect(() => loadConfig()).not.toThrow();
+    });
+  });
+
+  describe('14. BOOTSTRAP_PEERS defaults to the profile\'s known nodes', () => {
+    // Unset — not empty — takes the profile's list (NODE_INTERFACE →
+    // Configuration). testnet's is non-empty, so this pin fails against a `[]`
+    // default: sourcing the default from the profile is the whole change.
+    it('no variable, testnet: the profile\'s known nodes', async () => {
+      const { loadConfig } = await import('../src/config.js');
+      const cfg = loadConfig();
+      expect(cfg.bootstrapPeers).toEqual(NETWORK_PROFILES.testnet.bootstrapPeers);
+      expect(cfg.bootstrapPeers.length).toBeGreaterThan(0);
+    });
+
+    // The default reads the profile even when the profile is empty: devnet's
+    // list is [], so unset resolves to no seeds with no fallback of its own.
+    it('no variable, devnet: the empty profile list', async () => {
+      process.env['NETWORK_TYPE'] = 'devnet';
+      const { loadConfig } = await import('../src/config.js');
+      const cfg = loadConfig();
+      expect(cfg.bootstrapPeers).toEqual(NETWORK_PROFILES.devnet.bootstrapPeers);
+      expect(cfg.bootstrapPeers).toEqual([]);
+    });
+
+    // A set variable REPLACES the profile's list, it does not add to it, so
+    // none of testnet's seeds survive when two addresses are named.
+    it('set to two addresses: those two, none of the profile\'s', async () => {
+      process.env['NETWORK_TYPE'] = 'testnet';
+      process.env['BOOTSTRAP_PEERS'] =
+        '/ip4/10.0.0.1/tcp/9733,/ip4/10.0.0.2/tcp/9733';
+      const { loadConfig } = await import('../src/config.js');
+      const cfg = loadConfig();
+      expect(cfg.bootstrapPeers).toEqual([
+        '/ip4/10.0.0.1/tcp/9733',
+        '/ip4/10.0.0.2/tcp/9733',
+      ]);
+      for (const seed of NETWORK_PROFILES.testnet.bootstrapPeers) {
+        expect(cfg.bootstrapPeers).not.toContain(seed);
+      }
+    });
+
+    // Set is set, empty or not: an explicitly empty BOOTSTRAP_PEERS= replaces
+    // the list with no seeds — distinct from unset, which would take testnet's.
+    it('empty-set on testnet: no seeds, not the profile default', async () => {
+      process.env['NETWORK_TYPE'] = 'testnet';
+      process.env['BOOTSTRAP_PEERS'] = '';
+      const { loadConfig } = await import('../src/config.js');
+      expect(loadConfig().bootstrapPeers).toEqual([]);
     });
   });
 });

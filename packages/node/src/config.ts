@@ -180,7 +180,7 @@ export function loadConfig(): Readonly<Config> {
     ),
     avlKeyLength: AVL_KEY_LENGTH,
     // Net settings
-    bootstrapPeers: parseBootstrapPeers(process.env['BOOTSTRAP_PEERS'] ?? ''),
+    bootstrapPeers: parseBootstrapPeers(process.env['BOOTSTRAP_PEERS'], profile.bootstrapPeers),
     listenAddrs: process.env['LISTEN_ADDRS'] ?? '/ip4/0.0.0.0/tcp/0',
     maxPeers: parseInt(process.env['MAX_PEERS'] ?? '50', 10),
   };
@@ -432,7 +432,14 @@ function assertMiningAuthConfigured(cfg: Config): void {
   }
 }
 
-function parseBootstrapPeers(raw: string): string[] {
+/**
+ * `BOOTSTRAP_PEERS`, comma-separated libp2p multiaddrs. Unset defaults to the
+ * profile's known nodes; a set variable **replaces** that list rather than
+ * adding to it, so an explicitly empty `BOOTSTRAP_PEERS=` names no seeds
+ * (NODE_INTERFACE → Configuration).
+ */
+function parseBootstrapPeers(raw: string | undefined, profilePeers: readonly string[]): string[] {
+  if (raw === undefined) return [...profilePeers];
   if (!raw.trim()) return [];
   return raw.split(',').map((s) => s.trim()).filter(Boolean);
 }
