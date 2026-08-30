@@ -168,7 +168,7 @@ describe('peer readiness — entering discovery', () => {
     // The `catch` case, and the one that was wrong: a node whose `net.start()`
     // threw *with three bootstrap peers configured* was handed the verdict
     // reserved for a node with nothing to dial, so the gate opened with zero
-    // Active peers and it mined alone past MAX_REORG_DEPTH. Net's state is not
+    // Active peers and it mined alone past maxReorgDepth. Net's state is not
     // an input here — three configured peers is three configured peers.
     setNet(null as unknown as NetNode);
     enterDiscovery(3);
@@ -191,7 +191,7 @@ describe('peer readiness — entering discovery', () => {
 // The stranding this gate exists to prevent is reachable through its own
 // success path: a node meets peers, syncs, then loses every one of them, and a
 // standing "the window elapsed once" keeps it serving templates while it mines
-// past `height - MAX_REORG_DEPTH` and purges the journals it would need to
+// past `height - maxReorgDepth` and purges the journals it would need to
 // rejoin. Losing the last peer is a fresh reason to look, so the window re-arms.
 // ---------------------------------------------------------------------------
 

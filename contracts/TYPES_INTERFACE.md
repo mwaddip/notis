@@ -2569,27 +2569,24 @@ merely that the heading still exists.
 
 ### Chain reorganisation
 
-```typescript
-export const MAX_REORG_DEPTH = 20;
-```
+The **reorg horizon** is `NetworkProfile.maxReorgDepth` (→ Network profiles): how far below the tip a
+fork may be followed. Per network — mainnet 60, testnet 240, devnet 40 (`CONSTANTS → Per-network
+values`, all PROVISIONAL) — because it prices storage and memory against how long a partition may last
+before it is permanent: a duration in blocks, a number and not a mechanic (`ARCHITECTURE → What varies
+per network`). No constant stands beside it.
 
-How far back a reorg reaches. Universal, not per-network. Its load-bearing consumers are all in
-`@dagsocial/node`: the fork-walk bound (`findForkPoint`), the header request size fork resolution
-makes of the competing peer (`MAX_REORG_DEPTH · 2`), the block-journal retention window
-(`purgeOldJournals`), the refused-headers purge bound (`purgeRefusedHeaders`, NODE_INTERFACE → Store
-Interface → Refused headers), and the load-time refusal of a `MAX_PROOF_HISTORY` beneath it
-(`config.ts`). **Journal retention is the hard bound on how deep a reorg can physically go; the
-fork walk is policy**, and nothing requires the two to stay equal.
+Its load-bearing consumers are all in `@dagsocial/node`: the fork walk's reach (`resolveFork` pages a
+peer's headers down from our tip over `ourTip … ourTip − maxReorgDepth + 1`, NODE_INTERFACE → Fork
+choice decides on verified headers), the block-journal retention window (`purgeOldJournals`), the
+refused-headers purge bound (`purgeRefusedHeaders`, NODE_INTERFACE → Store Interface → Refused headers),
+and the load-time refusal of a `MAX_PROOF_HISTORY` beneath it (`config.ts`). **Journal retention is the
+hard bound on how deep a reorg can physically go; the fork walk is policy**, and nothing requires the
+two to stay equal.
 
-⚠ **`net`'s `msg-guards.ts` is not a consumer**, though it reads like one. It mentions
-`MAX_REORG_DEPTH * 2` as *what fork resolution asks for*; the cap it actually enforces is
-`MAX_CHAIN_RESPONSE_ITEMS = 400`. The two differ by 10×, and reading the prose as the limit
-conflates a caller's request size with the bound applied to it.
-
-**It lives here because node's `config.ts` cannot reach it anywhere else.**
-`services/fork-resolution.ts` imports `config` itself, so a constant declared there is unreachable
-from config load without a cycle. A load-time rule keyed on this value is only expressible with the
-constant in this package.
+⚠ **`net` reads it nowhere.** Fork resolution's header and block requests are paged at
+`MAX_CHAIN_RESPONSE_ITEMS = 400` whatever the horizon; the horizon decides how many pages the fork walk
+may take (`NET_INTERFACE → Pull Requests`), and the light client's `k` is its own number
+(`CONSTANTS → Client defaults`).
 
 ### Genesis parent hash
 
@@ -2650,6 +2647,10 @@ export interface NetworkProfile {
   readonly inviteProbationBlocks: number;
   readonly creditMinerRewardDelay: number;
 
+  // Chain reorganisation — the reorg horizon: how far below the tip a fork may be followed
+  // (→ Chain reorganisation). A duration in blocks; the mechanic is universal, the number per network.
+  readonly maxReorgDepth: number;
+
   // Emission schedule. `creditEmissionTotal` is the EmissionBox's genesis value and is
   // CARRIED, never derived (§EmissionBox); it must be STRICTLY below the curve's own sum
   // for this profile's F and E at the universal R and d.
@@ -2691,6 +2692,11 @@ mainnet and testnet, 2304 on devnet; ceiling 65536 on mainnet and testnet, 4096 
 whose floor sits below `ORDERING_BLOCK_POW_TARGET_FLOOR`, whose anchor lies outside its band, whose
 ceiling exceeds 65536 or whose ideal is not positive is refused at load (`NODE_INTERFACE →
 Configuration`) — a refusal, never a clamp.
+
+**The reorg horizon is per network; the walk is not.** `maxReorgDepth` — 60 on mainnet, 240 on testnet,
+40 on devnet (`CONSTANTS → Per-network values`) — bounds the fork walk, the journal retention window, the
+refused-header purge and the AVL history floor (→ Chain reorganisation). A profile whose horizon is not
+a positive safe integer is refused at load (`NODE_INTERFACE → Configuration`).
 
 **This is the sole definition of the network magics.** `@dagsocial/wire` exported duplicates
 until P2-A phase 5 deleted them. They live here rather than `NetworkType` living in wire

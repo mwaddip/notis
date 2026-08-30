@@ -16,19 +16,15 @@ const H32_B = 'b'.repeat(64);
 
 describe('sync codec', () => {
   it('round-trips SyncInfo', () => {
-    const info = {
-      tipHeight: 42,
-      tipBlockId: H32,
-      anchors: [{ height: 42, blockId: H32_A }],
-    };
+    const info = { tipHeight: 42 };
     const frame = encodeSyncInfo(MAGIC_TESTNET, info);
     const { code, body: b } = decodeFrame(MAGIC_TESTNET, frame);
     expect(code).toBe(MSG_SYNC_INFO);
     expect(decodeSyncInfo(b)).toEqual(info);
   });
 
-  it('round-trips SyncInfo with zero anchors (genesis)', () => {
-    const info = { tipHeight: 0, tipBlockId: H32, anchors: [] };
+  it('round-trips SyncInfo at height 0 (genesis)', () => {
+    const info = { tipHeight: 0 };
     const frame = encodeSyncInfo(MAGIC_TESTNET, info);
     const decoded = decodeSyncInfo(decodeFrame(MAGIC_TESTNET, frame).body);
     expect(decoded).toEqual(info);
@@ -80,7 +76,10 @@ describe('sync codec decode boundary', () => {
   for (const [name, decodeFn] of Object.entries(decoders)) {
     it(`${name} returns null on truncated bytes`, () => {
       expect(decodeFn(new Uint8Array([]))).toBeNull();
-      expect(decodeFn(new Uint8Array([0x01]))).toBeNull();
+      // SyncInfo is one vlqU — [0x01] is vlqU(1), a valid height-1 body, not truncated.
+      if (name !== 'decodeSyncInfo') {
+        expect(decodeFn(new Uint8Array([0x01]))).toBeNull();
+      }
     });
 
     it(`${name} returns null on trailing bytes`, () => {
@@ -107,53 +106,22 @@ describe('sync codec decode boundary', () => {
 
   describe('SyncInfo', () => {
     it('accepts a well-formed body', () => {
-      const info = { tipHeight: 10, tipBlockId: H32, anchors: [{ height: 5, blockId: H32_A }] };
+      const info = { tipHeight: 10 };
       expect(decodeSyncInfo(encodeStruct(syncInfoCodec, info))).toEqual(info);
     });
 
     it('rejects tipHeight above MAX_ADVERTISED_HEIGHT', () => {
       expect(decodeSyncInfo(encodeStruct(syncInfoCodec, {
         tipHeight: MAX_ADVERTISED_HEIGHT + 1,
-        tipBlockId: H32,
-        anchors: [],
       }))).toBeNull();
     });
 
-    it('rejects an anchor height above MAX_ADVERTISED_HEIGHT', () => {
-      expect(decodeSyncInfo(encodeStruct(syncInfoCodec, {
-        tipHeight: 10,
-        tipBlockId: H32,
-        anchors: [{ height: MAX_ADVERTISED_HEIGHT + 1, blockId: H32 }],
-      }))).toBeNull();
-    });
-
-    it('rejects more than MAX_SYNC_ANCHORS anchors', () => {
-      const body = encodeStruct(syncInfoCodec, {
-        tipHeight: 10,
-        tipBlockId: H32,
-        anchors: Array.from({length: 5}, (_, i) => ({ height: i, blockId: H32 })),
-      });
-      expect(decodeSyncInfo(body)).toBeNull();
-    });
-
-    it('accepts exactly 4 anchors (MAX_SYNC_ANCHORS)', () => {
-      const info = {
-        tipHeight: 10,
-        tipBlockId: H32,
-        anchors: Array.from({length: 4}, (_, i) => ({ height: i, blockId: H32 })),
-      };
-      expect(decodeSyncInfo(encodeStruct(syncInfoCodec, info))).toEqual(info);
-    });
-
-    it('accepts zero anchors (genesis)', () => {
-      const info = { tipHeight: 0, tipBlockId: H32, anchors: [] };
-      expect(decodeSyncInfo(encodeStruct(syncInfoCodec, info))).toEqual(info);
-    });
-
-    it('rejects wrong-width blockId (31 bytes)', () => {
-      const body = encodeStruct(syncInfoCodec, { tipHeight: 10, tipBlockId: H32, anchors: [] });
-      const truncated = body.subarray(0, body.length - 1);
-      expect(decodeSyncInfo(truncated)).toBeNull();
+    it('rejects trailing bytes after the one field', () => {
+      const valid = encodeStruct(syncInfoCodec, { tipHeight: 10 });
+      const withTrailing = new Uint8Array(valid.length + 1);
+      withTrailing.set(valid);
+      withTrailing[valid.length] = 0x00;
+      expect(decodeSyncInfo(withTrailing)).toBeNull();
     });
   });
 
@@ -199,7 +167,7 @@ describe('sync codec decode boundary', () => {
 function validBodyFor(decoderName: string): Uint8Array {
   switch (decoderName) {
     case 'decodeSyncInfo':
-      return encodeStruct(syncInfoCodec, { tipHeight: 10, tipBlockId: H32, anchors: [] });
+      return encodeStruct(syncInfoCodec, { tipHeight: 10 });
     case 'decodeInv':
       return encodeStruct(invCodec, { typeId: 101, ids: [H32] });
     case 'decodeModifierRequest':

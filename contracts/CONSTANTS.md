@@ -209,9 +209,7 @@ Units of 1/256 of a bit (`VALIDATION_INTERFACE → orderingPowTarget`).
 
 ### Chain reorganisation
 
-| Name | Value | Reads as | Kind | Argument | Status | Rule |
-|---|---|---|---|---|---|---|
-| `MAX_REORG_DEPTH` | `20` | the fork walk, the journal retention window, the headers a fork asks for (× 2) | policy | none stated; journal retention is the hard bound and the fork walk is policy | CHOSEN | `TYPES_INTERFACE → Chain reorganisation` |
+No universal constant: the reorg horizon is the profile field `maxReorgDepth` (→ Per-network values).
 
 ## Per-network values
 
@@ -231,10 +229,11 @@ devnet differ where a cell says so. The identity fields — `magic`, `genesisCom
 | `vouchCooldownBlocks` | `60` | `60` | `3` | timescale | the shortest wait that still spans block boundaries | DERIVED | `TYPES_INTERFACE → Network profiles` |
 | `inviteProbationBlocks` | `43200` | `43200` | `540` | timescale | above `karmaStaleThresholdBlocks`, so decay fires during probation on devnet as it does on mainnet — the property, not a ratio | DERIVED | `TYPES_INTERFACE → Network profiles` |
 | `creditMinerRewardDelay` | `1440` | `1440` | `10` | timescale | small enough to spend, large enough to observe immaturity | CHOSEN | `TYPES_INTERFACE → Network profiles` |
+| `maxReorgDepth` | `60` | `240` | `40` | timescale | the reorg horizon — how far below the tip a fork may be followed; it prices journals, AVL versions and a reorg's memory against how long a partition may last before it is permanent. Testnet's four hours is the user's "a few hours, not days" (2026-08-29); mainnet's is a placeholder until testnet argues one; devnet's lets the e2e fork chapter converge at ~30 deep and strand at ~45 | PROVISIONAL | `TYPES_INTERFACE → Chain reorganisation` |
 | `creditFixedRateBlocks` | `1_051_200` | `1_051_200` | `1000` | timescale | ~÷1000 so the fixed-rate → decay transition is reachable | CHOSEN | `TYPES_INTERFACE → Network profiles` |
 | `creditEpochBlocks` | `470_000` | `470_000` | `400` | timescale | fixed-rate ≈ 2.5 × epoch, preserving mainnet's ordering (epoch < fixed-rate period) | CHOSEN | `TYPES_INTERFACE → Network profiles` |
 | `creditEmissionTotal` | `42_264_000_000_000_000n` | `42_264_000_000_000_000n` | `36_200_000_000_000n` | timescale | strictly below devnet's own curve sum of 386 400 credits — the rule every profile's total obeys | DERIVED | `TYPES_INTERFACE → EmissionBox` |
-| `storageRentPeriodBlocks` | `2_102_400` | `2_102_400` | `40` | timescale | mainnet: 4 years, exactly `2 × creditFixedRateBlocks`, Ergo's wall clock. Devnet: above the deepest height any e2e scenario reaches (27), with thirteen blocks of headroom | DERIVED | `ARCHITECTURE → What varies per network` |
+| `storageRentPeriodBlocks` | `2_102_400` | `2_102_400` | `100` | timescale | mainnet: 4 years, exactly `2 × creditFixedRateBlocks`, Ergo's wall clock. Devnet: above the deepest height any e2e scenario reaches — 51, the fork chapter's strand case, measured — with headroom | DERIVED | `ARCHITECTURE → What varies per network` |
 | `genesisKarmaPerMember` | `1000n` | `1000n` | `1000n` | genesis | carried from the constant on all three | CHOSEN | `ARCHITECTURE → Genesis` |
 | `inviteBondMin` | `100n` | `100n` | `5n` | cap | a bond of `B` vests in `V · B` likes, so the floor decides whether a fixture can drive one to the end: 5 costs 15 likes | DERIVED | `TYPES_INTERFACE → Invites` |
 | `inviteBondMax` | `250n` | `1000n` | `250n` | cap | testnet's is relaxed so a tester arrives with enough karma to post and like freely — a cap, not a mechanic; devnet keeps mainnet's so the range check has both ends to fail against | DECIDED | `TYPES_INTERFACE → Invites` |
@@ -280,7 +279,7 @@ under → Size caps.
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
 | `MAX_INV_IDS` | `400` | ids per `Inv`, modifiers per response | format | the send-side batch cap, enforced on receipt as well; none stated for the number | CHOSEN | `NET_INTERFACE → Inv` |
-| `MAX_CHAIN_RESPONSE_ITEMS` | `400` | headers or blocks per response | format | the same batch cap; fork resolution asks for at most `MAX_REORG_DEPTH × 2` headers, an order of magnitude below it | DERIVED | `NET_INTERFACE → Sync State Machine` |
+| `MAX_CHAIN_RESPONSE_ITEMS` | `400` | headers or blocks per response — the page of fork resolution's header walk, its branch scoring and its block fetch | format | the same batch cap as `MAX_INV_IDS`; none stated for the number | CHOSEN | `NET_INTERFACE → Pull Requests` |
 | `MAX_SERVE_BODY_BYTES` | `4_194_304` | 4 MiB per served response | policy | half of `MAX_STREAM_BYTES`, so a response fits the read cap at the other end; above `MAX_BLOCK_BODY_BYTES`, so one legal block always fits | DERIVED | `NET_INTERFACE → Validation` |
 | `MAX_STREAM_BYTES` | `8_388_608` | 8 MiB buffered per inbound stream | format | twice the largest legitimate message; the base number is none stated | CHOSEN | `NET_INTERFACE → Validation` |
 | `MAX_PEERS_ENTRIES` | `64` | entries per `Peers` response | format | none stated; 8 are served | CHOSEN | `NET_INTERFACE → Peers` |
@@ -288,7 +287,6 @@ under → Size caps.
 | `MAX_CAPABILITY_CODE` | `65_535` | the largest capability code | format | 2¹⁶ − 1 | DOMAIN | `NET_INTERFACE → Handshake` |
 | `MAX_NAME_BYTES` | `255` | `agentName` / `nodeName` | format | none stated | CHOSEN | `NET_INTERFACE → Handshake` |
 | `MAX_ADDRESS_BYTES` | `255` | a multiaddr | format | none stated | CHOSEN | `NET_INTERFACE → Handshake` |
-| `MAX_SYNC_ANCHORS` | `4` | anchors per `SyncInfo` | format | the locator is `[tip, tip−16, tip−128, tip−512]` | DERIVED | `NET_INTERFACE → Validation` |
 | `MAX_ADVERTISED_HEIGHT` | `100_000_000` | ~190 years at one block a minute | format | a horizon no honest chain reaches | DERIVED | `NET_INTERFACE → Validation` |
 | `GET_PEERS_RESPONSE_LIMIT` | `8` | peers served per `GetPeers` | policy | none stated | CHOSEN | `NET_INTERFACE → Peers` |
 | `BACKFILL_BATCH_IDS` | `100` | post bodies requested per batch | policy | none stated | CHOSEN | `NET_INTERFACE → Sync State Machine` |
@@ -320,7 +318,7 @@ drift test's converse does not reach them and the rows are marked.
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
 | `m` (default) | `6` | the security parameter | policy | provisional | PROVISIONAL | `NIPOPOW_INTERFACE → Constants` |
-| `k` (default) | `20` | the suffix — "k-deep" means past a full node's reorg horizon; a block count, read in work under a moving target | policy | = `MAX_REORG_DEPTH`; provisional | PROVISIONAL | `NIPOPOW_INTERFACE → Constants` |
+| `k` (default) | `20` | the suffix — the client's own settlement depth; a block count, read in work under a moving target | policy | provisional; not a full node's reorg horizon, which is per network and larger (`maxReorgDepth`) | PROVISIONAL | `NIPOPOW_INTERFACE → Constants` |
 
 ## Excluded
 
@@ -342,7 +340,7 @@ check can tell an omission from an exclusion.
 - **CHOSEN is the largest class after the derived and decided ones**, and it is the class no marker
   in the tree names: `MAX_CONTENT_BYTES`, `MAX_BLOCK_BODY_BYTES`, `MAX_TX_BYTES`, the karma decay
   pair and floors, `VOUCH_MIN_BALANCE`, `VOUCH_COOLDOWN_BLOCKS`, `GENESIS_KARMA_PER_MEMBER`,
-  `CREDIT_MINER_REWARD_DELAY`, `MAX_REORG_DEPTH`, and most of net's bounds. None is marked
+  `CREDIT_MINER_REWARD_DELAY`, and most of net's bounds. None is marked
   provisional, and none has an argument on record. Marking or arguing them is a decision for their
   owner, not for this register.
 - **`INVITE_BOND_VEST_PER_LIKES` sits below the value at which the cost-gated-emission floor is met

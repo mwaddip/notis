@@ -24,7 +24,7 @@ export function anyRefusedHeader(hashes: string[]): boolean {
 
 /**
  * Remove all marks below `belowHeight`. Called beside `purgeOldJournals` with
- * the same bound: `height − MAX_REORG_DEPTH`.
+ * the same bound: `height − maxReorgDepth` (NODE_INTERFACE → Refused headers).
  */
 export function purgeRefusedHeaders(belowHeight: number): void {
   getDb()

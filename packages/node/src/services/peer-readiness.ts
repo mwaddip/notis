@@ -143,7 +143,7 @@ export function enterDiscovery(bootstrapPeerCount: number): void {
  *
  * Gates template *serving* (`MINING_INTERFACE` → "The peer-readiness gate"). The
  * bound it protects is journal retention: `block-apply.ts` purges journals below
- * `height - MAX_REORG_DEPTH`, so a node that mines past that depth alone has no
+ * `height - maxReorgDepth`, so a node that mines past that depth alone has no
  * journal to revert and can never rejoin a mesh it later meets.
  *
  * **Readiness is not latched** (`MINING_INTERFACE` → "The peer-readiness gate"),
@@ -151,7 +151,7 @@ export function enterDiscovery(bootstrapPeerCount: number): void {
  * standing "the window elapsed once" would answer for the rest of the process's
  * life, so a node that meets peers, syncs, and then loses every one of them —
  * upstream down, every peer past `penaltyScoreThreshold`, bootstrap host rotated
- * — would keep serving templates, mine past `height - MAX_REORG_DEPTH`, have its
+ * — would keep serving templates, mine past `height - maxReorgDepth`, have its
  * journals purged, and be unable to revert far enough to rejoin. That is the
  * stranding this gate exists to prevent, reached through the gate's own success
  * path.

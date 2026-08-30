@@ -8,7 +8,6 @@ import {
   CREDIT_INITIAL_REWARD,
   CREDIT_REWARD_REDUCTION,
   MAX_BLOCK_BODY_BYTES,
-  MAX_REORG_DEPTH,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
 } from '@dagsocial/types';
 
@@ -496,35 +495,37 @@ describe('config', () => {
   });
 
   // `checkpointProver` prunes AVL versions below `height - maxProofHistory`;
-  // `findForkPoint` walks back a fixed `MAX_REORG_DEPTH` and can answer height
-  // 0. A `MAX_PROOF_HISTORY` under that depth prunes inside the window the walk
-  // still answers within, so `reorg` finds no version at its fork height and
-  // aborts with the node still on its own chain. Refusal at load is what makes
-  // that unreachable rather than merely loud.
+  // the fork walk pages back `maxReorgDepth` and can answer height 0. A
+  // `MAX_PROOF_HISTORY` under that depth prunes inside the window the walk
+  // still answers within. Devnet's profile carries `maxReorgDepth: 40`.
   describe('11. proof history covers the reorg depth', () => {
+    // devnet maxReorgDepth (vitest.config.ts pins NETWORK_TYPE=devnet)
+    const devnetReorgDepth = NETWORK_PROFILES.devnet.maxReorgDepth;
+
     function importWithProofHistory(value: string) {
       process.env['MAX_PROOF_HISTORY'] = value;
+      process.env['NETWORK_TYPE'] = 'devnet';
       return import('../src/config.js');
     }
 
-    it('refuses a MAX_PROOF_HISTORY below MAX_REORG_DEPTH', async () => {
+    it('refuses a MAX_PROOF_HISTORY below the profile maxReorgDepth', async () => {
       await expect(
-        importWithProofHistory(String(MAX_REORG_DEPTH - 1)),
-      ).rejects.toThrow(/below MAX_REORG_DEPTH/);
+        importWithProofHistory(String(devnetReorgDepth - 1)),
+      ).rejects.toThrow(/below maxReorgDepth/);
     });
 
-    // The depth itself is admissible — the walk's deepest answer is exactly the
-    // oldest version retained — so the comparison is `<` and not `<=`.
-    it('accepts a MAX_PROOF_HISTORY sitting exactly on MAX_REORG_DEPTH', async () => {
-      const { loadConfig } = await importWithProofHistory(String(MAX_REORG_DEPTH));
-      expect(loadConfig().maxProofHistory).toBe(MAX_REORG_DEPTH);
+    // The depth itself is admissible — the walk's deepest answer is exactly
+    // the oldest version retained — so the comparison is `<` and not `<=`.
+    it('accepts a MAX_PROOF_HISTORY sitting exactly on maxReorgDepth', async () => {
+      const { loadConfig } = await importWithProofHistory(String(devnetReorgDepth));
+      expect(loadConfig().maxProofHistory).toBe(devnetReorgDepth);
     });
 
-    // `parseInt` answers `NaN`, and `NaN < MAX_REORG_DEPTH` is false — a `<`
+    // `parseInt` answers `NaN`, and `NaN < maxReorgDepth` is false — a `<`
     // would admit the one value that makes every pruning height `NaN`.
     it('refuses a non-numeric MAX_PROOF_HISTORY', async () => {
       await expect(importWithProofHistory('later')).rejects.toThrow(
-        /below MAX_REORG_DEPTH/,
+        /below maxReorgDepth/,
       );
     });
 
@@ -532,14 +533,55 @@ describe('config', () => {
       let message = '';
       try { await importWithProofHistory('0'); } catch (err) { message = String(err); }
       expect(message).toMatch(/MAX_PROOF_HISTORY/);
-      expect(message).toMatch(/MAX_REORG_DEPTH/);
+      expect(message).toMatch(/maxReorgDepth/);
     });
 
     // The shipped default must not be one env var away from the refusal.
     it('the default clears the depth', async () => {
       delete process.env['MAX_PROOF_HISTORY'];
+      process.env['NETWORK_TYPE'] = 'devnet';
       const { loadConfig } = await import('../src/config.js');
-      expect(loadConfig().maxProofHistory).toBeGreaterThanOrEqual(MAX_REORG_DEPTH);
+      expect(loadConfig().maxProofHistory).toBeGreaterThanOrEqual(devnetReorgDepth);
+    });
+  });
+
+  describe('11b. maxReorgDepth from the profile is validated', () => {
+    function importWithReorgDepth(depth: number) {
+      vi.doMock('@dagsocial/types', async (importOriginal) => {
+        const actual = await importOriginal<typeof import('@dagsocial/types')>();
+        return {
+          ...actual,
+          profileFor: (networkType: string) => ({
+            ...actual.profileFor(networkType as never),
+            maxReorgDepth: depth,
+          }),
+        };
+      });
+      return import('../src/config.js');
+    }
+
+    it('refuses a profile whose maxReorgDepth is 0', async () => {
+      await expect(importWithReorgDepth(0)).rejects.toThrow(
+        /not a positive safe integer/,
+      );
+    });
+
+    it('refuses a profile whose maxReorgDepth is NaN', async () => {
+      await expect(importWithReorgDepth(NaN)).rejects.toThrow(
+        /not a positive safe integer/,
+      );
+    });
+
+    it('refuses a profile whose maxReorgDepth is 2**53', async () => {
+      await expect(importWithReorgDepth(2 ** 53)).rejects.toThrow(
+        /not a positive safe integer/,
+      );
+    });
+
+    it('reads maxReorgDepth from the devnet profile (40)', async () => {
+      process.env['NETWORK_TYPE'] = 'devnet';
+      const { loadConfig } = await import('../src/config.js');
+      expect(loadConfig().maxReorgDepth).toBe(40);
     });
   });
 

@@ -112,37 +112,6 @@ describe('LazySyncStore.heightByBlockId — provider read', () => {
 });
 
 // ---------------------------------------------------------------------------
-// getAnchors — reads the block id provider, not the headers provider
-// ---------------------------------------------------------------------------
-
-describe('LazySyncStore.getAnchors', () => {
-  it('advertises an anchor from the block id provider', () => {
-    const store = new LazySyncStore(validators);
-    store.setChainHeightProvider(() => 1);
-    store.setBlockIdProvider((h) => h === 1 ? 'tip_id' : null);
-
-    expect(store.getAnchors()).toEqual([
-      { height: 1, blockId: 'tip_id' },
-    ]);
-  });
-
-  it('returns empty when the block id provider is unset', () => {
-    const store = new LazySyncStore(validators);
-    store.setChainHeightProvider(() => 5);
-    expect(store.getAnchors()).toEqual([]);
-  });
-
-  it('skips heights where the provider returns null', () => {
-    const store = new LazySyncStore(validators);
-    store.setChainHeightProvider(() => 20);
-    store.setBlockIdProvider((h) => h === 20 ? 'tip20' : null);
-
-    const anchors = store.getAnchors();
-    expect(anchors).toEqual([{ height: 20, blockId: 'tip20' }]);
-  });
-});
-
-// ---------------------------------------------------------------------------
 // NetNode forwarding — provider setters reach the sync store
 // ---------------------------------------------------------------------------
 
@@ -184,6 +153,11 @@ describe('NetNode provider forwarding', () => {
     const net = new NetNode(config, validators);
     net.setChainHeightProvider(() => 77);
     expect(getStore(net).chainHeight()).toBe(77);
+  });
+
+  it('peerTipHeight returns null before start', () => {
+    const net = new NetNode(config, validators);
+    expect(net.peerTipHeight('any-peer')).toBeNull();
   });
 });
 

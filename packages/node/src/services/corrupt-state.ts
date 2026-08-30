@@ -196,11 +196,11 @@ export class DivergedStateTreeError extends CorruptChainStateError {
 /**
  * A block journal inside retention is absent (NODE_INTERFACE → "Rollback").
  *
- * `purgeOldJournals` deletes strictly below `tip − MAX_REORG_DEPTH`.
- * `findForkPoint`'s lowest non-genesis answer is `tip − MAX_REORG_DEPTH + 1`,
+ * `purgeOldJournals` deletes strictly below `tip − maxReorgDepth`.
+ * The fork walk's lowest non-genesis answer is `tip − maxReorgDepth + 1`,
  * and `reorg` reverts starting one above the fork point, so every height
- * `revertBlock` can be asked for is ≥ `tip − MAX_REORG_DEPTH + 2` — inside
- * retention. When `findForkPoint` reaches genesis (`tip ≤ MAX_REORG_DEPTH`),
+ * `revertBlock` can be asked for is ≥ `tip − maxReorgDepth + 2` — inside
+ * retention. When the fork walk reaches genesis (`tip ≤ maxReorgDepth`),
  * the purge argument is ≤ 0 and nothing is deleted.
  *
  * A missing journal is therefore a row the store lost, not a retention gap.
@@ -211,7 +211,7 @@ export class MissingJournalError extends CorruptChainStateError {
       site,
       height,
       `no block journal at height ${height} — inside retention ` +
-      `(purgeOldJournals deletes strictly below tip − MAX_REORG_DEPTH)`,
+      `(purgeOldJournals deletes strictly below tip − maxReorgDepth)`,
     );
   }
 }
@@ -220,7 +220,7 @@ export class MissingJournalError extends CorruptChainStateError {
  * No AVL version at or before a fork height the walk answers within
  * (NODE_INTERFACE → Configuration).
  *
- * `loadConfig` refuses `MAX_PROOF_HISTORY < MAX_REORG_DEPTH`, so a missing
+ * `loadConfig` refuses `MAX_PROOF_HISTORY < maxReorgDepth`, so a missing
  * version is a row the store lost — reachable only through a `Config`
  * assembled without `loadConfig` (tests), or through store corruption.
  */
@@ -230,7 +230,7 @@ export class MissingStateVersionError extends CorruptChainStateError {
       site,
       height,
       `no AVL version at or before fork height ${height} — ` +
-      `loadConfig refuses MAX_PROOF_HISTORY < MAX_REORG_DEPTH, ` +
+      `loadConfig refuses MAX_PROOF_HISTORY < maxReorgDepth, ` +
       `so a missing version is a row the store lost`,
     );
   }

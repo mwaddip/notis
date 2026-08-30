@@ -36,7 +36,6 @@ import {
   MAX_CHAIN_RESPONSE_ITEMS,
   MAX_PEERS_ENTRIES,
   MAX_INV_IDS,
-  MAX_SYNC_ANCHORS,
   MAX_NAME_BYTES,
   MAX_ADDRESS_BYTES,
   MAX_CAPABILITY_ENTRIES,
@@ -80,41 +79,20 @@ export function readBoundedCapabilities(r: ByteReader, name: string): number[] {
 // ---------------------------------------------------------------------------
 // SyncInfo (2) — NET_INTERFACE → SyncInfo
 //
-// vlqU(tipHeight) ‖ hexN(tipBlockId, 32) ‖ arr( vlqU(height) ‖ hexN(blockId, 32) )
+// vlqU(tipHeight)
 // ---------------------------------------------------------------------------
 
 export const syncInfoCodec: StructCodec<SyncInfo> = {
   name: 'syncInfo',
   write(w, msg) {
     writeVlqU(w, msg.tipHeight);
-    writeHexNOrThrow(w, msg.tipBlockId, 32);
-    writeArr(w, msg.anchors, (aw, a) => {
-      writeVlqU(aw, a.height);
-      writeHexNOrThrow(aw, a.blockId, 32);
-    });
   },
   read(r) {
     const tipHeight = readVlqU(r);
     if (!isHeight(tipHeight)) {
       throw new ReaderError(`syncInfo: tipHeight ${tipHeight} out of domain`, 'out-of-domain');
     }
-    const tipBlockId = readHexN(r, 32);
-    const anchorCount = readVlqU(r);
-    if (anchorCount > MAX_SYNC_ANCHORS) {
-      throw new ReaderError(
-        `syncInfo: ${anchorCount} anchors exceeds ${MAX_SYNC_ANCHORS}`,
-        'array-too-large',
-      );
-    }
-    const anchors: { height: number; blockId: string }[] = [];
-    for (let i = 0; i < anchorCount; i++) {
-      const height = readVlqU(r);
-      if (!isHeight(height)) {
-        throw new ReaderError(`syncInfo: anchor height ${height} out of domain`, 'out-of-domain');
-      }
-      anchors.push({ height, blockId: readHexN(r, 32) });
-    }
-    return { tipHeight, tipBlockId, anchors };
+    return { tipHeight };
   },
 };
 

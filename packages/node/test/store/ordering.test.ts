@@ -27,6 +27,7 @@ async function importOrderingFresh() {
     getOrderingBlockHash: (height: number) => string | null;
     getHeightByBlockHash: (hash: string) => number | null;
     getInterlinks: (height: number) => string[] | null;
+    getHeadersAbove: (height: number, n: number) => import('@dagsocial/types').BlockHeader[];
   };
 }
 
@@ -305,5 +306,76 @@ describe('ordering store', () => {
 
     deleteOrderingBlock(1);
     expect(getInterlinks(1)).toBeNull();
+  });
+
+  // NODE_INTERFACE → Store Interface → Ordering blocks: the fork walk's
+  // header-only read, uncapped (not the prover's MAX_NIPOPOW_PARAM read).
+  it('getHeadersAbove(f, 300) on a 301-block chain answers 300 headers', async () => {
+    const { initDb } = await importDbFresh();
+    const { createOrderingBlock, getHeadersAbove } = await importOrderingFresh();
+
+    initDb(':memory:');
+
+    for (let h = 1; h <= 301; h++) {
+      createOrderingBlock(
+        makeOrderingBlock({
+          header: { ...makeOrderingBlock().header, height: h, createdAt: 1000 + h },
+        }),
+        [],
+      );
+    }
+
+    const headers = getHeadersAbove(1, 300);
+    expect(headers).toHaveLength(300);
+    expect(headers[0]!.height).toBe(2);
+    expect(headers[299]!.height).toBe(301);
+    for (let i = 1; i < headers.length; i++) {
+      expect(headers[i]!.height).toBe(headers[i - 1]!.height + 1);
+    }
+  });
+
+  it('getHeadersAbove: n past the tip answers what exists', async () => {
+    const { initDb } = await importDbFresh();
+    const { createOrderingBlock, getHeadersAbove } = await importOrderingFresh();
+
+    initDb(':memory:');
+
+    for (let h = 1; h <= 5; h++) {
+      createOrderingBlock(
+        makeOrderingBlock({
+          header: { ...makeOrderingBlock().header, height: h, createdAt: 1000 + h },
+        }),
+        [],
+      );
+    }
+
+    const headers = getHeadersAbove(3, 100);
+    expect(headers).toHaveLength(2);
+    expect(headers[0]!.height).toBe(4);
+    expect(headers[1]!.height).toBe(5);
+  });
+
+  it('getHeadersAbove: an unreadable row throws at its height', async () => {
+    const { initDb, getDb } = await importDbFresh();
+    const { createOrderingBlock, getHeadersAbove } = await importOrderingFresh();
+
+    initDb(':memory:');
+
+    createOrderingBlock(makeOrderingBlock(), []);
+
+    // Corrupt the header_bytes in SQLite directly.
+    getDb().prepare('UPDATE ordering_blocks SET header_bytes = ? WHERE height = 1').run(
+      Buffer.from([0xff, 0xff]),
+    );
+
+    let caught: unknown;
+    try {
+      getHeadersAbove(0, 5);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeDefined();
+    expect((caught as Error).name).toBe('UnreadableStoredBlockError');
+    expect(String(caught)).toContain('getHeadersAbove');
   });
 });

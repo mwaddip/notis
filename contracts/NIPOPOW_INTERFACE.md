@@ -84,7 +84,9 @@ anchor and below 2³² blocks holds ≤ 39 of them: 9 984 at `m = 128`; the read
 that with headroom, and `LEVEL_CAP` bounds the level count absolutely. Both numbers are provisional
 (`CONSTANTS → nipopow`). At `m = k = 6` on a million-block chain a proof is ~240 PoPowHeaders, ~200 KB.
 **`k` is a block count, and under a moving target a k-deep suffix is read in work** — the reference's
-own note; `k = MAX_REORG_DEPTH` stands with that caveat (`CONSTANTS → Client defaults`).
+own note; `k` is the client's own settlement depth, 20 by default, and not a full node's reorg horizon —
+`maxReorgDepth` is per network and larger (`TYPES_INTERFACE → Chain reorganisation`; `CONSTANTS → Client
+defaults`).
 
 **A moving target changes no layout here.** The proof carries no difficulty headers, and needs none:
 a superblock level is measured against the network's anchor target rather than the header's own

@@ -220,7 +220,7 @@ reason `'target'`).
 | Rule | Statement | Class |
 |---|---|---|
 | **Order** | `createdAt(N) > createdAt(N−1)` for N ≥ 2 — strict, Ergo's header rule 205 | **consensus** — a violation is a bad chain: refuse; in a fork segment refuse-whole and penalise `misbehavior` (reason `'time'`) |
-| **Future bound** | `createdAt(N) ≤ now + MAX_FUTURE_DRIFT_MS`, `now` the receiving node's clock | **acceptance**, not consensus — the block may be valid a minute later: refuse, **no penalty, no `refused_headers` mark** (`NODE_INTERFACE → Fork choice decides on verified headers`, what is remembered); in a fork segment reason `'clock'`, classified beside the window miss |
+| **Future bound** | `createdAt(N) ≤ now + MAX_FUTURE_DRIFT_MS`, `now` the receiving node's clock | **acceptance**, not consensus — the block may be valid a minute later: refuse, **no penalty, no `refused_headers` mark** (`NODE_INTERFACE → Fork choice decides on verified headers`, what is remembered); in a fork segment reason `'clock'`, the one refusal that is not a verdict on the chain |
 
 Block 1 has no parent and no order check; the future bound applies to it as to every block.
 
@@ -349,11 +349,13 @@ count, so a node that has not met its peers is polled until the gate opens. The 
 `?miner=` validation: a malformed payout key earns its 400 whatever the node's readiness is.
 
 **What the gate protects.** Journal retention is the floor under revert depth — `block-apply.ts`
-purges journals below `height - MAX_REORG_DEPTH`, so a node that mines past that depth alone has no
-journal to revert with and can never rejoin a mesh it later meets. Fork resolution bottoming out at
-the genesis state (`NODE_INTERFACE` → "Fork resolution bottoms out at the genesis state") makes height
-0 a valid ancestor; this keeps a node inside the window where that ancestor is still reachable. It
-works **within** `MAX_REORG_DEPTH` and does not widen it.
+purges journals below `height − maxReorgDepth` (the profile's reorg horizon, `TYPES_INTERFACE → Chain
+reorganisation`), so a node that mines past that depth alone has no journal to revert with and can never
+rejoin a mesh it later meets. Fork resolution bottoming out at the genesis state (`NODE_INTERFACE` →
+"Fork resolution bottoms out at the genesis state") makes height 0 a valid ancestor; this keeps a node
+inside the horizon where that ancestor is still reachable. It works **within** the horizon and does not
+widen it — and it holds a node back only until its discovery window elapses, so a node partitioned after
+that keeps mining, and a partition longer than the horizon is a permanent split.
 
 **Active peers, not known ones.** `net`'s `getConnectedPeers()` filters on peer state; `peers()` lists
 every peer holding an open libp2p connection, including ones that have not completed — or have

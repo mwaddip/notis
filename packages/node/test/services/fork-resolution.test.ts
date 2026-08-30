@@ -7,16 +7,17 @@ import {
   vi,
 } from 'vitest';
 import {
-  MAX_REORG_DEPTH,
   EMPTY_STATE_ROOT,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   PROTOCOL_VERSION,
   MAX_BLOCK_BODY_BYTES,
   MAX_FUTURE_DRIFT_MS,
+  GENESIS_PREV_BLOCK_HASH,
   encodeTx,
   updateInterlinks,
 } from '@dagsocial/types';
 import { blockHash, cumulativeWork, level as headerLevel } from '@dagsocial/validation';
+import { MAX_CHAIN_RESPONSE_ITEMS } from '@dagsocial/net';
 import type {
   KarmaBox,
   OrderingBlock,
@@ -154,10 +155,6 @@ async function importForkResolution() {
     '../../src/services/fork-resolution.js'
   )) as unknown as {
     extendsOurTip: (block: OrderingBlock) => boolean;
-    findForkPoint: (
-      ourTip: BlockHeader,
-      theirHeaders: BlockHeader[],
-    ) => number | null;
     revertBlock: (height: number) => void;
     reorg: (forkHeight: number, newBlocks: OrderingBlock[]) => void;
     resolveFork: (
@@ -165,6 +162,7 @@ async function importForkResolution() {
       net: ForkResolutionNet,
       fromPeerId: string,
     ) => Promise<void>;
+    resetForkResolutionMemo: () => void;
   };
 }
 
@@ -412,398 +410,6 @@ describe('extendsOurTip', () => {
     };
 
     expect(forkResolution.extendsOurTip(candidate)).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Tests — findForkPoint
-// ---------------------------------------------------------------------------
-
-describe('findForkPoint', () => {
-  beforeEach(async () => { vi.resetModules(); });
-  afterEach(async () => {
-    try {
-      const bc = await importBlockCreator();
-      bc.stopBlockCreator();
-    } catch { /* not imported */ }
-    vi.resetModules();
-  });
-
-  it('finds common ancestor between two chains', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-
-    const author = makeTestIdentity();
-
-
-    const posts = await importPosts();
-    const mempool = await importMempoolFresh();
-    const bc = await importBlockCreator();
-    bc.startBlockCreator(testConfig);
-
-    // Build chain: block 1, block 2, block 3
-    for (let i = 0; i < 3; i++) {
-      const { commit, tx: postTx, postId, content } = await seedPostTx(author, `block ${i + 1}`);
-      posts.insertPost(postId, commit, content);
-      mempool.insertUtxoTx(postTx, 1000);
-      await mineNextBlock(bc);
-    }
-
-    const ordering = await importOrdering();
-    const ourTip = ordering.getOrderingBlock(3);
-    expect(ourTip).not.toBeNull();
-
-    // Construct theirHeaders: block 3 (fork) -> block 2 (same as ours) -> block 1 (same)
-    // Their chain has same blocks 1 and 2 but a different block 3
-    const block2 = ordering.getOrderingBlock(2);
-    const forkBlock3: BlockHeader = {
-      protocolVersion: PROTOCOL_VERSION,
-      height: 3,
-      prevBlockHash: blockHash(block2!.header)!, // chains from our block 2
-      utxoTxRoot: 'ff'.repeat(32), // different content
-
-      stateRoot: 'ff'.repeat(33),
-      validatorId: new Uint8Array(32),
-      powNonce: 0,
-      powTargetBits: 256 * 4,
-      createdAt: Date.now(),
-      interlinkRoot: '00'.repeat(32),
-    };
-
-    const theirHeaders: BlockHeader[] = [
-      forkBlock3,           // newest first (their tip)
-      block2!.header,       // should match ours at height 2
-    ];
-
-    const forkResolution = await importForkResolution();
-    const forkPoint = forkResolution.findForkPoint(ourTip!.header, theirHeaders);
-
-    // Common ancestor should be at height 2 (block 2 matches both chains)
-    expect(forkPoint).toBe(2);
-  });
-
-  it('two chains sharing no block fork at the genesis state', async () => {
-    // The rule this pins: reaching height 0 IS a common ancestor. Height 0
-    // holds no block and no hash, so nothing here matches — but every node on
-    // a network holds a byte-identical height-0 state (`assertGenesisRoot`
-    // makes a divergent one fail-stop), so two chains inside the reorg window
-    // that share no block still share genesis, and it is the only ancestor
-    // they have. Before this rule the pair below answered null and a mesh
-    // whose nodes each mined their own height 1 could never converge.
-    //
-    // The null case did not disappear with it: it moved to the depth bound,
-    // which the two tests below pin from either side.
-    const db = await importDb();
-    db.initDb(':memory:');
-    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-
-    const author = makeTestIdentity();
-
-
-    const posts = await importPosts();
-    const mempool = await importMempoolFresh();
-    const bc = await importBlockCreator();
-    bc.startBlockCreator(testConfig);
-
-    // Build chain: block 1 only
-    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'genesis');
-    posts.insertPost(postId, commit, content);
-    mempool.insertUtxoTx(postTx, 1000);
-    await mineNextBlock(bc);
-
-    const ordering = await importOrdering();
-    const ourTip = ordering.getOrderingBlock(1);
-    expect(ourTip).not.toBeNull();
-
-    // Their headers: completely different chain with no overlap
-    const theirHeaders: BlockHeader[] = [
-      {
-        protocolVersion: PROTOCOL_VERSION,
-        height: 5,
-        prevBlockHash: 'ab'.repeat(32),
-        utxoTxRoot: '00'.repeat(32),
-        stateRoot: '00'.repeat(33),
-        validatorId: new Uint8Array(32),
-        powNonce: 0,
-        powTargetBits: 256 * 4,
-        createdAt: Date.now(),
-        interlinkRoot: '00'.repeat(32),
-      },
-    ];
-
-    const forkResolution = await importForkResolution();
-    const forkPoint = forkResolution.findForkPoint(ourTip!.header, theirHeaders);
-    expect(forkPoint).toBe(0);
-  });
-
-  it('returns null when depth exceeds MAX_REORG_DEPTH', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-
-    const forkResolution = await importForkResolution();
-
-    // Build a deep chain (more than MAX_REORG_DEPTH) via block-creator
-    const author = makeTestIdentity();
-
-
-    const posts = await importPosts();
-    const mempool = await importMempoolFresh();
-    const bc = await importBlockCreator();
-    bc.startBlockCreator(testConfig);
-
-    const chainLength = MAX_REORG_DEPTH + 5;
-
-    for (let i = 0; i < chainLength; i++) {
-      const { commit, tx: postTx, postId, content } = await seedPostTx(author, `deep ${i}`);
-      posts.insertPost(postId, commit, content);
-      mempool.insertUtxoTx(postTx, 1000);
-      await mineNextBlock(bc);
-    }
-
-    const ordering = await importOrdering();
-    const ourTip = ordering.getOrderingBlock(chainLength);
-    expect(ourTip).not.toBeNull();
-
-    // Their headers reference a block at height chainLength - MAX_REORG_DEPTH - 1
-    // which is beyond MAX_REORG_DEPTH from our tip
-    const deepBlock = ordering.getOrderingBlock(chainLength - MAX_REORG_DEPTH - 1);
-    expect(deepBlock).not.toBeNull();
-
-    const theirHeaders: BlockHeader[] = [
-      {
-        protocolVersion: PROTOCOL_VERSION,
-        height: chainLength - MAX_REORG_DEPTH - 1 + 3,
-        prevBlockHash: blockHash(deepBlock!.header)!,
-        utxoTxRoot: '00'.repeat(32),
-        stateRoot: '00'.repeat(33),
-        validatorId: new Uint8Array(32),
-        powNonce: 0,
-        powTargetBits: 256 * 4,
-        createdAt: Date.now(),
-        interlinkRoot: '00'.repeat(32),
-      },
-      deepBlock!.header,
-    ];
-
-    const forkPoint = forkResolution.findForkPoint(ourTip!.header, theirHeaders);
-    // The common ancestor (deepBlock) is beyond MAX_REORG_DEPTH from our tip
-    expect(forkPoint).toBeNull();
-  });
-
-  it('height 0 is reachable up to MAX_REORG_DEPTH and not one block further', async () => {
-    // **The bound did not move.** Height 0 became a valid *answer*; how far
-    // back a reorg may go is unchanged, and it has to be: journal retention is
-    // the real floor under revert depth (`revertBlock` throws without a
-    // journal, and `purgeOldJournals` clears everything below
-    // `height − MAX_REORG_DEPTH`). Answering 0 from deeper than the window
-    // would name an ancestor the node cannot revert to.
-    //
-    // Both edges, on one chain, because a single-sided assertion cannot tell a
-    // correct bound from an absent one.
-    const db = await importDb();
-    db.initDb(':memory:');
-    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-
-    const author = makeTestIdentity();
-
-    const posts = await importPosts();
-    const mempool = await importMempoolFresh();
-    const bc = await importBlockCreator();
-    bc.startBlockCreator(testConfig);
-
-    const forkResolution = await importForkResolution();
-    const ordering = await importOrdering();
-
-    /** A peer tip that chains from nothing we hold — no block can ever match. */
-    const unrelated = (height: number): BlockHeader => ({
-      protocolVersion: PROTOCOL_VERSION,
-      height,
-      prevBlockHash: 'cd'.repeat(32),
-      utxoTxRoot: '00'.repeat(32),
-      stateRoot: '00'.repeat(33),
-      validatorId: new Uint8Array(32),
-      powNonce: 0,
-      powTargetBits: 256 * 4,
-      createdAt: Date.now(),
-      interlinkRoot: '00'.repeat(32),
-    });
-
-    for (let i = 0; i < MAX_REORG_DEPTH; i++) {
-      const { commit, tx: postTx, postId, content } = await seedPostTx(author, `bound ${i}`);
-      posts.insertPost(postId, commit, content);
-      mempool.insertUtxoTx(postTx, 1000);
-      await mineNextBlock(bc);
-    }
-
-    // At exactly MAX_REORG_DEPTH the walk covers heights MAX_REORG_DEPTH..1 and then
-    // runs out of blocks — genesis is inside the window.
-    const atBound = ordering.getOrderingBlock(MAX_REORG_DEPTH);
-    expect(forkResolution.findForkPoint(atBound!.header, [unrelated(MAX_REORG_DEPTH)])).toBe(0);
-
-    // One block further, the walk is truncated by the depth bound before it
-    // reaches the bottom, and the answer goes back to "no common ancestor".
-    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'one past the bound');
-    posts.insertPost(postId, commit, content);
-    mempool.insertUtxoTx(postTx, 1000);
-    await mineNextBlock(bc);
-
-    const pastBound = ordering.getOrderingBlock(MAX_REORG_DEPTH + 1);
-    expect(pastBound).not.toBeNull();
-    expect(
-      forkResolution.findForkPoint(pastBound!.header, [unrelated(MAX_REORG_DEPTH + 1)]),
-    ).toBeNull();
-  });
-
-  it('a poisoned batch is still refused whole rather than falling through to genesis', async () => {
-    // The genesis fallback must sit behind the batch check, not in front of it.
-    // In front, a peer could turn "this batch is uninterpretable" into "we fork
-    // at genesis" by corrupting one entry — buying a full-chain reorg attempt
-    // with a single malformed header, on exactly the short chains where the
-    // whole walk is inside the window.
-    const db = await importDb();
-    db.initDb(':memory:');
-    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-
-    const author = makeTestIdentity();
-
-    const posts = await importPosts();
-    const mempool = await importMempoolFresh();
-    const bc = await importBlockCreator();
-    bc.startBlockCreator(testConfig);
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
-    for (let i = 0; i < 2; i++) {
-      const { commit, tx: postTx, postId, content } = await seedPostTx(author, `poison control ${i}`);
-      posts.insertPost(postId, commit, content);
-      mempool.insertUtxoTx(postTx, 1000);
-      await mineNextBlock(bc);
-    }
-
-    const ordering = await importOrdering();
-    const forkResolution = await importForkResolution();
-    const ourTip = ordering.getOrderingBlock(2)!;
-    const sane: BlockHeader = {
-      protocolVersion: PROTOCOL_VERSION,
-      height: 2,
-      prevBlockHash: 'ef'.repeat(32),
-      utxoTxRoot: '00'.repeat(32),
-      stateRoot: '00'.repeat(33),
-      validatorId: new Uint8Array(32),
-      powNonce: 0,
-      powTargetBits: 256 * 4,
-      createdAt: Date.now(),
-      interlinkRoot: '00'.repeat(32),
-    };
-
-    // Control: this batch, unpoisoned, falls through to genesis.
-    expect(forkResolution.findForkPoint(ourTip.header, [sane])).toBe(0);
-
-    // The same batch with one entry outside the encodable domain is refused,
-    // and the refusal names the batch rather than answering a fork point.
-    expect(
-      forkResolution.findForkPoint(ourTip.header, [sane, { ...sane, createdAt: -1 }]),
-    ).toBeNull();
-    expect(
-      warn.mock.calls.some(([m]) => typeof m === 'string' && m.includes('refusing peer header batch')),
-    ).toBe(true);
-    warn.mockRestore();
-  });
-
-  // -------------------------------------------------------------------------
-  // Phase 1f-2 — a peer header batch is accepted or refused whole.
-  //
-  // `theirHeaders` reaches this function as `decode(response) as BlockHeader[]`
-  // (net's `requestHeaders`): a raw cbor decode with a TypeScript cast and no
-  // runtime check, so every field in it is the peer's to choose. These two pin
-  // the answer to the question `blockHash` forces — what an unhashable entry
-  // means — because the plausible alternative, skipping it and carrying on,
-  // hands the peer the fork depth.
-  // -------------------------------------------------------------------------
-
-  /** A three-block chain and the pieces every batch below is built from. */
-  async function threeBlockChain() {
-    const db = await importDb();
-    db.initDb(':memory:');
-    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-
-    const author = makeTestIdentity();
-
-    const posts = await importPosts();
-    const mempool = await importMempoolFresh();
-    const bc = await importBlockCreator();
-    bc.startBlockCreator(testConfig);
-
-    for (let i = 0; i < 3; i++) {
-      const { commit, tx: postTx, postId, content } = await seedPostTx(author, `batch block ${i + 1}`);
-      posts.insertPost(postId, commit, content);
-      mempool.insertUtxoTx(postTx, 1000);
-      await mineNextBlock(bc);
-    }
-
-    const ordering = await importOrdering();
-    const block1 = ordering.getOrderingBlock(1);
-    const block2 = ordering.getOrderingBlock(2);
-    const ourTip = ordering.getOrderingBlock(3);
-    expect(block1).not.toBeNull();
-    expect(block2).not.toBeNull();
-    expect(ourTip).not.toBeNull();
-
-    // Their tip: a real-looking header on a chain that forked from ours, so the
-    // batch has a leading entry that matches nothing.
-    const theirTip: BlockHeader = {
-      protocolVersion: PROTOCOL_VERSION,
-      height: 3,
-      prevBlockHash: blockHash(block2!.header)!,
-      utxoTxRoot: 'ff'.repeat(32),
-      stateRoot: 'ff'.repeat(33),
-      validatorId: new Uint8Array(32),
-      powNonce: 0,
-      powTargetBits: 256 * 4,
-      createdAt: Date.now(),
-      interlinkRoot: '00'.repeat(32),
-    };
-
-    return {
-      ourTip: ourTip!.header,
-      block1: block1!.header,
-      block2: block2!.header,
-      theirTip,
-      forkResolution: await importForkResolution(),
-    };
-  }
-
-  it('refuses the whole batch when any header is outside the encodable domain', async () => {
-    const { ourTip, block1, block2, theirTip, forkResolution } = await threeBlockChain();
-
-    // Control: this exact batch, unpoisoned, forks at 2.
-    expect(forkResolution.findForkPoint(ourTip, [theirTip, block2])).toBe(2);
-
-    // `createdAt` outside `vlqU`'s domain — the field nothing checked before
-    // Phase 1f. Placed AFTER the matching entry, where a check that stopped at
-    // the first match would never look, so answering null proves the whole
-    // batch is hashed before any of it is matched.
-    const poisoned: BlockHeader = { ...block1, createdAt: -1 };
-    expect(forkResolution.findForkPoint(ourTip, [theirTip, block2, poisoned])).toBeNull();
-  });
-
-  it('a corrupted header cannot push the fork point deeper', async () => {
-    const { ourTip, block1, block2, theirTip, forkResolution } = await threeBlockChain();
-
-    // Control: with the height-2 entry absent the batch legitimately forks at
-    // 1, so the deeper answer is reachable and null below is a refusal rather
-    // than "nothing matched".
-    expect(forkResolution.findForkPoint(ourTip, [theirTip, block1])).toBe(1);
-
-    // Same batch, except the entry that would have matched at height 2 is
-    // corrupted instead of absent. Skipping it answers 1 — a reorg two blocks
-    // deeper than the chains actually diverged, with the depth chosen by
-    // whoever served the headers. Refusing the batch is what this pins.
-    const poisonedAtTwo: BlockHeader = { ...block2, createdAt: Number.NaN };
-    expect(
-      forkResolution.findForkPoint(ourTip, [theirTip, poisonedAtTwo, block1]),
-    ).toBeNull();
   });
 });
 
@@ -1096,30 +702,6 @@ describe('a stored header that cannot be hashed', () => {
     expect(ordering.getOrderingBlock(3)).not.toBeNull();
   });
 
-  it('findForkPoint walks the whole chain down without a hole', async () => {
-    const { tip, forkResolution } = await storeThreeBlocks();
-
-    // The control the throw below needs: with the chain intact, the walk runs
-    // out of blocks at height 0 and returns an ordinary answer — the genesis
-    // state, which is the ancestor a three-block chain shares with anything.
-    // Running out of blocks is normal *there* and only there; a hole anywhere
-    // above it throws.
-    expect(forkResolution.findForkPoint(tip, [])).toBe(0);
-  });
-
-  it('findForkPoint stops the node on a hole rather than reorging without it', async () => {
-    const { ordering, tip, forkResolution, corruptState } = await storeThreeBlocks();
-    ordering.deleteOrderingBlock(2);
-
-    // Truncating here loses our height-1 hash, so a peer chain that forks at 1
-    // reads as having no common ancestor and the node quietly declines to
-    // reorg — forever, on a chain it cannot leave. The genesis boundary is
-    // height 0; height 2 is a gap, and the two are told apart by `>= 1`.
-    const caught = thrownBy(() => forkResolution.findForkPoint(tip, []));
-    expect(caught).toBeInstanceOf(corruptState.MissingStoredBlockError);
-    expect((caught as { site: string }).site).toBe('findForkPoint');
-    expect((caught as { height: number }).height).toBe(2);
-  });
 
   it('reorg propagates the corruption instead of reporting a rejected block', async () => {
     const { buildBlock, forkResolution, corruptState } = await storeCorruptTip();
@@ -1879,7 +1461,7 @@ describe('reorg', () => {
   });
 
   it('a fork point of 0 rolls the AVL prover back to the pinned genesis root', async () => {
-    // What `findForkPoint`'s new answer costs downstream. `reorg` walks
+    // What the fork walk's genesis answer costs downstream. `reorg` walks
     // journals from the fork height and rolls the prover to
     // `versionAtOrBeforeHeight(forkHeight)` — and at 0 that version is the
     // genesis one only because `seedGenesisState` deletes the empty tree's
@@ -2134,29 +1716,43 @@ function stubNet(
   connected: string[] = ['peer-withholding'],
 ): ForkResolutionNet & {
   blockRequests: Array<{ startHeight: number; endHeight: number }>;
+  headerRequests: Array<{ startHeight: number; maxCount: number }>;
   askedPeers: string[];
   penalties: Array<{ peerId: string; kind: string; reason: string }>;
 } {
   const blockRequests: Array<{ startHeight: number; endHeight: number }> = [];
+  const headerRequests: Array<{ startHeight: number; maxCount: number }> = [];
   const askedPeers: string[] = [];
   const penalties: Array<{ peerId: string; kind: string; reason: string }> = [];
+  const peerTip = theirHeaders.length > 0
+    ? Math.max(...theirHeaders.map(h => h.height))
+    : null;
   return {
     blockRequests,
+    headerRequests,
     askedPeers,
     penalties,
     getConnectedPeers: () => connected,
-    requestHeaders: async (_startHeight: number, _maxCount: number, peerId: string) => {
+    requestHeaders: async (startHeight: number, maxCount: number, peerId: string) => {
       askedPeers.push(peerId);
-      return theirHeaders;
+      headerRequests.push({ startHeight, maxCount });
+      // NET_INTERFACE → GetHeaders / GetBlocks responses: descending from startHeight,
+      // clamped to the peer's tip, at most maxCount.
+      const clamped = peerTip !== null ? Math.min(startHeight, peerTip) : startHeight;
+      return theirHeaders
+        .filter(h => h.height <= clamped)
+        .sort((a, b) => b.height - a.height)
+        .slice(0, maxCount);
     },
     requestBlocks: async (startHeight: number, endHeight: number, peerId: string) => {
       askedPeers.push(peerId);
       blockRequests.push({ startHeight, endHeight });
-      return answer;
+      return answer.filter(b => b.header.height >= startHeight && b.header.height <= endHeight);
     },
     penalizePeer: (peerId: string, kind: string, reason: string) => {
       penalties.push({ peerId, kind, reason });
     },
+    peerTipHeight: () => peerTip,
   };
 }
 
@@ -2253,7 +1849,7 @@ describe('resolveFork — the reorg applies exactly the verified chain it scored
 // runs on `peer:connect` and starts them at Connecting, so a peer that failed
 // the DAGsocial handshake is on that list. Choosing a counterparty from it lets
 // a stranger's chain be adopted — and because the fork walk bottoms out at the
-// genesis state, a node below MAX_REORG_DEPTH can have its whole chain replaced
+// genesis state, a node below maxReorgDepth can have its whole chain replaced
 // rather than a suffix of it.
 //
 // Within that list the peer asked is the one that relayed the competing block
@@ -2350,8 +1946,10 @@ describe('resolveFork — the counterparty is an Active peer', () => {
 
     await forkResolution.resolveFork(scenario.competingBlock, net, 'peer-relayed-it');
 
-    // Both queries — the header walk and the block fetch — went to it.
-    expect(net.askedPeers).toEqual(['peer-relayed-it', 'peer-relayed-it']);
+    // Every request — fork walk pages, scoring walk pages, block fetch — went
+    // to the relaying peer.
+    expect(net.askedPeers.length).toBeGreaterThanOrEqual(2);
+    expect(net.askedPeers.every(p => p === 'peer-relayed-it')).toBe(true);
     expect(ordering.getCurrentHeight()).toBe(4);
   });
 
@@ -2371,7 +1969,8 @@ describe('resolveFork — the counterparty is an Active peer', () => {
     // membership test is what keeps the counterparty on the Active list rather
     // than wherever the source came from.
     expect(net.askedPeers).not.toContain('peer-since-disconnected');
-    expect(net.askedPeers).toEqual(['peer-active', 'peer-active']);
+    expect(net.askedPeers.length).toBeGreaterThanOrEqual(2);
+    expect(net.askedPeers.every(p => p === 'peer-active')).toBe(true);
     for (const asked of net.askedPeers) {
       expect(net.getConnectedPeers()).toContain(asked);
     }
@@ -2393,7 +1992,8 @@ describe('resolveFork — the counterparty is an Active peer', () => {
     // the whole test, so this needs no case of its own.
     await forkResolution.resolveFork(scenario.competingBlock, net, '');
 
-    expect(net.askedPeers).toEqual(['peer-active', 'peer-active']);
+    expect(net.askedPeers.length).toBeGreaterThanOrEqual(2);
+    expect(net.askedPeers.every(p => p === 'peer-active')).toBe(true);
     expect(ordering.getCurrentHeight()).toBe(4);
   });
 });
@@ -2408,7 +2008,7 @@ describe('resolveFork — the counterparty is an Active peer', () => {
 // mismatch blamed on whoever sent the next block.
 //
 // `MAX_PROOF_HISTORY` is env-tunable and prunes below `height - maxProofHistory`
-// while `MAX_REORG_DEPTH` is fixed at 20, so this is reachable by configuration
+// while `maxReorgDepth` is the profile's per-network horizon, so this is reachable by configuration
 // and not only by corruption.
 // ---------------------------------------------------------------------------
 
@@ -2684,7 +2284,7 @@ describe('resolveFork — tampered headers refused before any block request', ()
     vi.resetModules();
   });
 
-  it('window miss (f=0, segment starting above height 1) → refused, no penalty', async () => {
+  it('far headers with no overlap → genesis fallback, scoring starts at height 1', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
@@ -2699,9 +2299,10 @@ describe('resolveFork — tampered headers refused before any block request', ()
     await mineNextBlock(bc);
     expect(ordering.getCurrentHeight()).toBe(1);
 
-    // Peer headers are at very high heights (no overlap except genesis)
-    // This makes findForkPoint return GENESIS_HEIGHT (0), and the segment
-    // starts at height > 1, which is a window miss.
+    // Peer headers are at heights far above our tip. The fork walk's first
+    // page holds nothing at or below our tip, so no match is found; with
+    // ourTip ≤ maxReorgDepth, genesis is the common ancestor and the scoring
+    // walk starts at height 1.
     const farHeaders: BlockHeader[] = [];
     for (let h = 50; h >= 42; h--) {
       farHeaders.push({
@@ -2834,7 +2435,7 @@ describe('resolveFork — refused headers', () => {
     if (hash) expect(rh.anyRefusedHeader([hash])).toBe(false);
   });
 
-  it('purge on apply removes marks below tip − MAX_REORG_DEPTH', async () => {
+  it('purge on apply removes marks below tip − maxReorgDepth', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
@@ -2848,8 +2449,8 @@ describe('resolveFork — refused headers', () => {
     rh.insertRefusedHeader('old-hash', 1, 5);
     expect(rh.anyRefusedHeader(['old-hash'])).toBe(true);
 
-    // Mine enough blocks so that height 1 is below tip − MAX_REORG_DEPTH
-    for (let i = 0; i < MAX_REORG_DEPTH + 2; i++) {
+    // Mine enough blocks so that height 1 is below tip − maxReorgDepth
+    for (let i = 0; i < testConfig.maxReorgDepth + 2; i++) {
       await mineNextBlock(bc);
     }
 
@@ -3032,13 +2633,17 @@ describe('resolveFork — one tampered header per reason', () => {
 
   it('height gap → refused, misbehaviour, no block request', async () => {
     const { ordering, forkResolution } = await setupChainOfThree();
-    const headers = headersWithTampered(ordering, (h) => {
-      h.height = 5;
-      return h;
-    });
+    // A header at height 3 that doesn't match ours: the fork walk sees it,
+    // finds no match at height 3, finds the shared block at height 1, and the
+    // scoring walk verifies [tampered(h=3)] starting from fork height 1 —
+    // height 3 ≠ anchor.height + 1 (= 2) → 'height' refusal → misbehavior.
+    const shared = ordering.getOrderingBlock(1)!.header;
+    const legit = ordering.getOrderingBlock(2)!.header;
+    const tampered: BlockHeader = { ...legit, height: 3, prevBlockHash: 'ee'.repeat(32) };
+    const headers = [tampered, shared];
     const net = stubNet(headers, []);
     await forkResolution.resolveFork(
-      { header: headers[0]!, utxoTxTree: { utxoTxIds: [], utxoTxs: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock,
+      { header: tampered, utxoTxTree: { utxoTxIds: [], utxoTxs: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock,
       net, 'peer-tamper',
     );
     expect(net.blockRequests).toEqual([]);
@@ -3370,6 +2975,129 @@ describe('reorg — ceiling screen', () => {
       expect(
         warn.mock.calls.some((c) => String(c[0]).includes('past ceiling')),
       ).toBe(false);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Re-insertion floor pin — row 167-1 (NODE_INTERFACE → Validity ceiling:
+// "Re-insertion screens the ceiling and not the floor"). A reorg onto a
+// shorter, heavier branch re-inserts a credit tx whose input's
+// `lockedUntilBlock` is above the new tip; the tx sits in the pool, the
+// next build evicts it (the rejected-body loop), and the node holds a
+// template afterwards (no fork, no stall).
+// ---------------------------------------------------------------------------
+
+describe('reorg — re-insertion floor pin (row 167-1)', () => {
+  beforeEach(async () => { vi.resetModules(); });
+  afterEach(async () => {
+    try {
+      const bc = await importBlockCreator();
+      bc.stopBlockCreator();
+    } catch { /* not imported */ }
+    vi.resetModules();
+  });
+
+  it('a locked credit tx re-inserted by a reorg to a shorter chain sits in the pool and is evicted by the next build', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const db = await importDb();
+      db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+      const author = makeTestIdentity();
+      const posts = await importPosts();
+      const mempool = await importMempoolFresh();
+      const utxo = await importUtxo();
+      const forkResolution = await importForkResolution();
+      const bc = await importBlockCreator();
+
+      // Seed karma boxes before the prover: a box entering the store
+      // after the bootstrap is absent from the tree
+      // (NODE_INTERFACE → AVL+ State Root).
+      const postFixtures = [];
+      for (let i = 0; i < 6; i++) {
+        postFixtures.push(await seedPostTx(author, `floor ${i}`));
+      }
+
+      await activateProverOverStore();
+      bc.startBlockCreator(testConfig);
+      const ordering = await importOrdering();
+
+      // Build 6 blocks.
+      for (let i = 0; i < 6; i++) {
+        const { commit, tx: postTx, postId, content } = postFixtures[i]!;
+        posts.insertPost(postId, commit, content);
+        mempool.insertUtxoTx(postTx, 1000);
+        await mineNextBlock(bc);
+      }
+      expect(ordering.getCurrentHeight()).toBe(6);
+
+      // A CreditBox locked until 6 (NODE_INTERFACE → Spend timing).
+      const creditOwner = author.publicKey;
+      const { computeCandidateBoxId } = await import('@dagsocial/types');
+      const lockedCandidate = {
+        boxType: 'credit' as const,
+        value: 100n,
+        owner: creditOwner,
+        createdAtBlock: 3,
+        lockedUntilBlock: 6,
+      };
+      const provTxId = 'cc'.repeat(32);
+      const boxId = computeCandidateBoxId(lockedCandidate, provTxId, 0);
+      utxo.insertBox({ ...lockedCandidate, id: boxId, txId: provTxId, index: 0 });
+
+      // A credit → credit spend of the locked box.
+      const floorTx: UtxoTransaction = {
+        inputs: [boxId],
+        outputs: [
+          { boxType: 'credit', value: 100n, owner: creditOwner, createdAtBlock: 6, lockedUntilBlock: 0 },
+        ],
+        signatures: {},
+        protocolVersion: PROTOCOL_VERSION,
+      };
+      signTransaction(floorTx, author.privateKey, hex(creditOwner));
+
+      // Inject into block 5's journal for re-insertion on reorg.
+      const journalMod = await import('../../src/store/journal.js');
+      const journal5 = journalMod.getBlockJournal(5);
+      if (!journal5) throw new Error('no journal at height 5');
+      journal5.appliedUtxoTxs.push({ txId: 'floor-test-tx', txBytes: encodeTx(floorTx) });
+      journalMod.insertBlockJournal(journal5);
+
+      const { decodeTx: decode } = await import('@dagsocial/types');
+      const findLocked = (entries: Array<{ utxoTxBytes: Uint8Array | null }>) =>
+        entries.find(e => {
+          if (!e.utxoTxBytes) return false;
+          const tx = decode(e.utxoTxBytes);
+          return tx.inputs.includes(boxId);
+        });
+
+      // Revert blocks 5 and 6: new tip = 4. The locked tx from height
+      // 5's journal is re-inserted into the pool
+      // (NODE_INTERFACE → Validity ceiling).
+      warn.mockClear();
+      forkResolution.reorg(4, []);
+      expect(ordering.getCurrentHeight()).toBe(4);
+
+      // Re-insertion screens the ceiling and not the floor
+      // (NODE_INTERFACE → Validity ceiling): the locked tx enters the pool,
+      // the build at height 5 speculates, `validateTx` step 3 refuses
+      // (5 < lockedUntilBlock 6), the body is rejected, and the
+      // rejected-body loop evicts the entry
+      // (MINING_INTERFACE → Template and submit).
+      const warns = warn.mock.calls.map(c => String(c[0]));
+      expect(
+        warns.some(w => w.includes('speculation returned body-rejected')),
+        'the eviction warn fires',
+      ).toBe(true);
+      expect(findLocked(mempool.getPendingEntries(1000)), 'the locked tx is evicted from the pool').toBeUndefined();
+      const template = bc.getCurrentTemplate();
+      expect(template, 'the node holds a template after the build (no stall)').not.toBeNull();
     } finally {
       warn.mockRestore();
     }
@@ -3742,5 +3470,1807 @@ describe('resolveFork — ASERT timestamp rules and schedule', () => {
 
     expect(ordering.getCurrentHeight()).toBe(5);
     expect(net.penalties).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The fork walk — NODE_INTERFACE → Fork choice decides on verified headers, step 3.
+// ---------------------------------------------------------------------------
+
+describe('the fork walk', () => {
+  beforeEach(async () => { vi.resetModules(); });
+  afterEach(async () => {
+    try { (await importBlockCreator()).stopBlockCreator(); } catch {}
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  function dummyBlock(header: BlockHeader): OrderingBlock {
+    return {
+      header,
+      utxoTxTree: { utxoTxIds: [], utxoTxs: [] },
+      validatorSignature: new Uint8Array(64),
+    } as OrderingBlock;
+  }
+
+  it('common ancestor found at 2', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    const { retargetParams: rp } = await import('../../src/services/difficulty.js');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const t1 = 1_000_000;
+    for (let i = 0; i < 5; i++) {
+      setClock(() => t1 + i * 60_000);
+      await mineNextBlock(bc);
+    }
+    expect(ordering.getCurrentHeight()).toBe(5);
+
+    // Compute ourWork from headers 3..5 BEFORE any fork resolution (fork at 2).
+    const ourHeadersAboveFork = [3, 4, 5].map(h => ordering.getOrderingBlock(h)!.header);
+    const expectedWork = cumulativeWork(ourHeadersAboveFork);
+
+    // Valid lighter branch from block 2 — one header at height 3 (lighter than
+    // our three above the fork at 2). Built manually because
+    // buildMinedHeaderChain's anchor-level assumption (Infinity) matches only
+    // height-1 forks; at any other fork height the interlinks diverge.
+    const block2 = ordering.getOrderingBlock(2)!.header;
+    const hash2 = blockHash(block2)!;
+    const il2 = ordering.getInterlinks(2)!;
+    const level2 = headerLevel(block2, testConfig.orderingBlockPowTargetBits);
+    // The vector block 3 must commit to — the anchor resolveFork will build.
+    const anchorIl = updateInterlinks(il2, hash2, level2);
+    const params = rp();
+    const t_a_val = ordering.getOrderingBlock(1)!.header.createdAt;
+    const targetBits = (await import('@dagsocial/validation')).asertTargetBits(
+      params, t_a_val, { height: 2, createdAt: block2.createdAt },
+    );
+    const peerHeader: BlockHeader = {
+      protocolVersion: PROTOCOL_VERSION,
+      height: 3,
+      prevBlockHash: hash2,
+      utxoTxRoot: '00'.repeat(32),
+      stateRoot: EMPTY_STATE_ROOT,
+      validatorId: new Uint8Array(32),
+      powNonce: 0,
+      powTargetBits: targetBits,
+      createdAt: block2.createdAt + 60_000,
+      interlinkRoot: (await import('@dagsocial/types')).interlinkRoot(anchorIl),
+    };
+    peerHeader.powNonce = solveHeaderPow(peerHeader);
+    expect(blockHash(peerHeader)).not.toBeNull();
+
+    const theirHeaders = [peerHeader, block2];
+    const trigger = { header: peerHeader, utxoTxTree: { utxoTxIds: [], utxoTxs: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock;
+
+    setClock(() => t1 + 5 * 60_000);
+    const net = stubNet(theirHeaders, []);
+    await forkResolution.resolveFork(trigger, net, 'peer-a');
+
+    // The walk found the fork at height 2: the log shows the work above
+    // exactly the fork point — our three headers 3..5.
+    const workLog = logSpy.mock.calls.find(
+      c => typeof c[0] === 'string' && c[0].includes(`ours=${expectedWork}`),
+    );
+    expect(workLog, `log must show ours=${expectedWork}`).toBeTruthy();
+    expect(ordering.getCurrentHeight()).toBe(5);
+
+    // The memo was written — a second call makes no request.
+    const firstCount = net.headerRequests.length;
+    await forkResolution.resolveFork(trigger, net, 'peer-a');
+    expect(net.headerRequests.length).toBe(firstCount);
+  });
+
+  it('two chains sharing no block fork at the genesis state', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    const { retargetParams: rp } = await import('../../src/services/difficulty.js');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const t1 = 1_000_000;
+    for (let i = 0; i < 3; i++) {
+      setClock(() => t1 + i * 60_000);
+      await mineNextBlock(bc);
+    }
+    expect(ordering.getCurrentHeight()).toBe(3);
+
+    // Valid lighter branch from genesis — shares no block.
+    const { headers: peerChain } = buildMinedHeaderChain({
+      anchorPrevBlockHash: GENESIS_PREV_BLOCK_HASH,
+      anchorInterlinks: [],
+      startHeight: 1,
+      count: 1,
+      params: rp(),
+      anchorCreatedAt: null,
+      anchorStamp: 0,
+      startStamp: t1 + 500_000,
+    });
+
+    setClock(() => t1 + 3 * 60_000);
+    const net = stubNet(peerChain, []);
+    await forkResolution.resolveFork(dummyBlock(peerChain[0]!), net, 'peer-b');
+
+    // f = 0 → ourWork is the whole chain (heights 1..3).
+    const allOurHeaders = [1, 2, 3].map(h => ordering.getOrderingBlock(h)!.header);
+    const expectedWork = cumulativeWork(allOurHeaders);
+    const workLog = logSpy.mock.calls.find(
+      c => typeof c[0] === 'string' && c[0].includes(`ours=${expectedWork}`),
+    );
+    expect(workLog, `log must show ours=${expectedWork}`).toBeTruthy();
+
+    // No "no common ancestor" warning — the walk found genesis.
+    expect(warnSpy.mock.calls.every(
+      c => !String(c[0]).includes('no common ancestor'),
+    )).toBe(true);
+    expect(ordering.getCurrentHeight()).toBe(3);
+  });
+
+  it('null one past the horizon, no penalty', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // Build a chain of maxReorgDepth + 1 blocks (41).
+    for (let i = 0; i < testConfig.maxReorgDepth + 1; i++) await mineNextBlock(bc);
+    expect(ordering.getCurrentHeight()).toBe(testConfig.maxReorgDepth + 1);
+
+    // Peer shares nothing — all headers are unrelated.
+    const fakeHeaders: BlockHeader[] = [];
+    for (let h = testConfig.maxReorgDepth + 1; h >= 1; h--) {
+      fakeHeaders.push({
+        height: h,
+        prevBlockHash: 'ee'.repeat(32),
+        stateRoot: EMPTY_STATE_ROOT,
+        utxoTxRoot: '00'.repeat(32),
+        powTargetBits: testConfig.orderingBlockPowTargetBits,
+        powNonce: 0,
+        protocolVersion: PROTOCOL_VERSION,
+        createdAt: 1000 + h * 60000,
+        validatorId: new Uint8Array(32),
+        interlinkRoot: '00'.repeat(32),
+      });
+    }
+
+    const net = stubNet(fakeHeaders, []);
+    await forkResolution.resolveFork(dummyBlock(fakeHeaders[0]!), net, 'peer-c');
+
+    // Past the horizon → null, no penalty.
+    expect(ordering.getCurrentHeight()).toBe(testConfig.maxReorgDepth + 1);
+    expect(net.penalties).toEqual([]);
+    expect(warnSpy.mock.calls.some(c => String(c[0]).includes('no common ancestor'))).toBe(true);
+  });
+
+  it('genesis at the horizon exactly', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    const { retargetParams: rp } = await import('../../src/services/difficulty.js');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const t1 = 1_000_000;
+    for (let i = 0; i < testConfig.maxReorgDepth; i++) {
+      setClock(() => t1 + i * 60_000);
+      await mineNextBlock(bc);
+    }
+    expect(ordering.getCurrentHeight()).toBe(testConfig.maxReorgDepth);
+
+    // Valid lighter branch from genesis — shares no block.
+    const { headers: peerChain } = buildMinedHeaderChain({
+      anchorPrevBlockHash: GENESIS_PREV_BLOCK_HASH,
+      anchorInterlinks: [],
+      startHeight: 1,
+      count: 1,
+      params: rp(),
+      anchorCreatedAt: null,
+      anchorStamp: 0,
+      startStamp: t1 + 500_000,
+    });
+
+    setClock(() => t1 + testConfig.maxReorgDepth * 60_000);
+    const net = stubNet(peerChain, []);
+    await forkResolution.resolveFork(dummyBlock(peerChain[0]!), net, 'peer-d');
+
+    // ourTip = maxReorgDepth → genesis reachable; ourWork is the whole chain.
+    const allHeaders = [];
+    for (let h = 1; h <= testConfig.maxReorgDepth; h++) {
+      allHeaders.push(ordering.getOrderingBlock(h)!.header);
+    }
+    const expectedWork = cumulativeWork(allHeaders);
+    expect(logSpy.mock.calls.some(
+      c => typeof c[0] === 'string' && c[0].includes(`ours=${expectedWork}`),
+    )).toBe(true);
+    expect(warnSpy.mock.calls.every(
+      c => !String(c[0]).includes('no common ancestor'),
+    )).toBe(true);
+    expect(ordering.getCurrentHeight()).toBe(testConfig.maxReorgDepth);
+  });
+
+  it('a poisoned page refused whole with misbehavior and no genesis fallthrough', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // Short chain inside the horizon.
+    for (let i = 0; i < 3; i++) await mineNextBlock(bc);
+
+    // Peer page with one unhashable entry (createdAt: -1).
+    const poisoned: BlockHeader = {
+      height: 2,
+      prevBlockHash: '00'.repeat(32),
+      stateRoot: EMPTY_STATE_ROOT,
+      utxoTxRoot: '00'.repeat(32),
+      powTargetBits: testConfig.orderingBlockPowTargetBits,
+      powNonce: 0,
+      protocolVersion: PROTOCOL_VERSION,
+      createdAt: -1,
+      validatorId: new Uint8Array(32),
+      interlinkRoot: '00'.repeat(32),
+    };
+    expect(blockHash(poisoned)).toBeNull();
+
+    const goodHeader: BlockHeader = {
+      height: 1,
+      prevBlockHash: '00'.repeat(32),
+      stateRoot: EMPTY_STATE_ROOT,
+      utxoTxRoot: '00'.repeat(32),
+      powTargetBits: testConfig.orderingBlockPowTargetBits,
+      powNonce: 0,
+      protocolVersion: PROTOCOL_VERSION,
+      createdAt: 1000,
+      validatorId: new Uint8Array(32),
+      interlinkRoot: '00'.repeat(32),
+    };
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const net = stubNet([poisoned, goodHeader], []);
+    await forkResolution.resolveFork(dummyBlock(poisoned), net, 'peer-poison');
+
+    expect(net.penalties).toEqual([
+      expect.objectContaining({ kind: 'misbehavior', reason: expect.stringContaining('fork-walk') }),
+    ]);
+    // No genesis-anchored scoring (no header request above our tip).
+    expect(net.headerRequests.every(r => r.startHeight <= 3)).toBe(true);
+    // No "no common ancestor" warning — the walk stopped at the poison.
+    expect(warnSpy.mock.calls.every(
+      c => !String(c[0]).includes('no common ancestor'),
+    )).toBe(true);
+    expect(ordering.getCurrentHeight()).toBe(3);
+  });
+
+  it('control: unpoisoned page with no shared block reaches genesis', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    const { retargetParams: rp } = await import('../../src/services/difficulty.js');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const t1 = 1_000_000;
+    for (let i = 0; i < 3; i++) {
+      setClock(() => t1 + i * 60_000);
+      await mineNextBlock(bc);
+    }
+
+    // Valid lighter branch from genesis — the control for the poisoned-page pin.
+    const { headers: peerChain } = buildMinedHeaderChain({
+      anchorPrevBlockHash: GENESIS_PREV_BLOCK_HASH,
+      anchorInterlinks: [],
+      startHeight: 1,
+      count: 1,
+      params: rp(),
+      anchorCreatedAt: null,
+      anchorStamp: 0,
+      startStamp: t1 + 500_000,
+    });
+
+    setClock(() => t1 + 3 * 60_000);
+    const net = stubNet(peerChain, []);
+    await forkResolution.resolveFork(dummyBlock(peerChain[0]!), net, 'peer-clean');
+
+    // Genesis reached: ourWork is the whole chain, no "no common ancestor".
+    const allOurHeaders = [1, 2, 3].map(h => ordering.getOrderingBlock(h)!.header);
+    const expectedWork = cumulativeWork(allOurHeaders);
+    expect(logSpy.mock.calls.some(
+      c => typeof c[0] === 'string' && c[0].includes(`ours=${expectedWork}`),
+    )).toBe(true);
+    expect(warnSpy.mock.calls.every(
+      c => !String(c[0]).includes('no common ancestor'),
+    )).toBe(true);
+    expect(ordering.getCurrentHeight()).toBe(3);
+  });
+
+  it('poison after the matching entry still refuses the whole page', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    for (let i = 0; i < 4; i++) await mineNextBlock(bc);
+
+    // Peer page: shared header at height 3 followed by an unhashable at height 1.
+    const sharedHeader = ordering.getOrderingBlock(3)!.header;
+    const poisoned: BlockHeader = {
+      height: 1,
+      prevBlockHash: '00'.repeat(32),
+      stateRoot: EMPTY_STATE_ROOT,
+      utxoTxRoot: '00'.repeat(32),
+      powTargetBits: testConfig.orderingBlockPowTargetBits,
+      powNonce: 0,
+      protocolVersion: PROTOCOL_VERSION,
+      createdAt: -1,
+      validatorId: new Uint8Array(32),
+      interlinkRoot: '00'.repeat(32),
+    };
+    expect(blockHash(poisoned)).toBeNull();
+
+    // Page is [height 4 (unrelated), height 3 (shared), height 1 (poisoned)].
+    const unrelatedH4: BlockHeader = {
+      ...sharedHeader,
+      height: 4,
+      prevBlockHash: 'cc'.repeat(32),
+    };
+    const net = stubNet([unrelatedH4, sharedHeader, poisoned], []);
+    await forkResolution.resolveFork(dummyBlock(unrelatedH4), net, 'peer-poison2');
+
+    // The match at height 3 is not taken — the whole page is hashed first.
+    expect(net.penalties).toEqual([
+      expect.objectContaining({ kind: 'misbehavior', reason: expect.stringContaining('fork-walk') }),
+    ]);
+    expect(ordering.getCurrentHeight()).toBe(4);
+  });
+
+  it('a corrupted header cannot push the fork point deeper', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    for (let i = 0; i < 5; i++) await mineNextBlock(bc);
+
+    // Peer page with a poisoned entry at height 4 (which would match our
+    // block 4) and a valid match at height 2. Without hash-before-match,
+    // the match at height 2 would be used. With it, the poisoned entry
+    // refuses the whole page.
+    const poisonedMatch: BlockHeader = {
+      ...ordering.getOrderingBlock(4)!.header,
+      createdAt: -1,
+    };
+    expect(blockHash(poisonedMatch)).toBeNull();
+
+    const deepMatch = ordering.getOrderingBlock(2)!.header;
+    const net = stubNet([poisonedMatch, deepMatch], []);
+    await forkResolution.resolveFork(dummyBlock(poisonedMatch), net, 'peer-deeper');
+
+    expect(net.penalties).toEqual([
+      expect.objectContaining({ kind: 'misbehavior', reason: expect.stringContaining('fork-walk') }),
+    ]);
+    expect(ordering.getCurrentHeight()).toBe(5);
+  });
+
+  it('the fork walk fail-stops on a hole in the chain', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    const { MissingStoredBlockError } = await importCorruptState();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    for (let i = 0; i < 5; i++) await mineNextBlock(bc);
+
+    // Delete height 3 to create a hole.
+    ordering.deleteOrderingBlock(3);
+
+    // Peer headers that don't match heights 5 or 4, forcing the walk to hit 3.
+    const fakeHeaders: BlockHeader[] = [];
+    for (let h = 5; h >= 1; h--) {
+      fakeHeaders.push({
+        height: h,
+        prevBlockHash: 'ab'.repeat(32),
+        stateRoot: EMPTY_STATE_ROOT,
+        utxoTxRoot: '00'.repeat(32),
+        powTargetBits: testConfig.orderingBlockPowTargetBits,
+        powNonce: 0,
+        protocolVersion: PROTOCOL_VERSION,
+        createdAt: 1000 + h * 60000,
+        validatorId: new Uint8Array(32),
+        interlinkRoot: '00'.repeat(32),
+      });
+    }
+
+    const net = stubNet(fakeHeaders, []);
+    await expect(
+      forkResolution.resolveFork(dummyBlock(fakeHeaders[0]!), net, 'peer-hole'),
+    ).rejects.toThrow(MissingStoredBlockError);
+  });
+
+  it('the fork walk does not reorg through a hole', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    const { MissingStoredBlockError } = await importCorruptState();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    for (let i = 0; i < 5; i++) await mineNextBlock(bc);
+
+    // Delete height 3 to create a hole.
+    ordering.deleteOrderingBlock(3);
+
+    // Peer shares block 2, but the walk must hit 3 (the hole) before reaching 2.
+    const shared2 = ordering.getOrderingBlock(2)!.header;
+    const fakeHeaders: BlockHeader[] = [];
+    for (let h = 5; h >= 3; h--) {
+      fakeHeaders.push({
+        height: h,
+        prevBlockHash: 'ab'.repeat(32),
+        stateRoot: EMPTY_STATE_ROOT,
+        utxoTxRoot: '00'.repeat(32),
+        powTargetBits: testConfig.orderingBlockPowTargetBits,
+        powNonce: 0,
+        protocolVersion: PROTOCOL_VERSION,
+        createdAt: 1000 + h * 60000,
+        validatorId: new Uint8Array(32),
+        interlinkRoot: '00'.repeat(32),
+      });
+    }
+    fakeHeaders.push(shared2);
+
+    const net = stubNet(fakeHeaders, []);
+    await expect(
+      forkResolution.resolveFork(dummyBlock(fakeHeaders[0]!), net, 'peer-hole2'),
+    ).rejects.toThrow(MissingStoredBlockError);
+
+    expect(ordering.getCurrentHeight()).toBe(5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Paged scoring walk — depth convergence and multi-page walk
+// ---------------------------------------------------------------------------
+
+describe('resolveFork — paged scoring walk', () => {
+  beforeEach(async () => { vi.resetModules(); });
+  afterEach(async () => {
+    try { (await importBlockCreator()).stopBlockCreator(); } catch {}
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it('a fork at depth 30 converges', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const { applyOrderingBlock } = (await import(
+      '../../src/services/block-apply.js'
+    )) as { applyOrderingBlock: (block: OrderingBlock) => boolean };
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // Pin the clock: both chains carry identical stamps per height so work
+    // is equal, and the crossing is their block 32 by construction.
+    const t1 = 1_000_000;
+    setClock(() => t1);
+    await mineNextBlock(bc);
+
+    // Build their chain: 31 blocks (heights 2..32), applied then reverted.
+    const theirBlocks: OrderingBlock[] = [];
+    for (let h = 2; h <= 32; h++) {
+      setClock(() => t1 + (h - 1) * 60_000);
+      const b = await makeApplicableBlock({ height: h });
+      expect(applyOrderingBlock(b)).toBe(true);
+      theirBlocks.push(b);
+    }
+    expect(ordering.getCurrentHeight()).toBe(32);
+    for (let h = 32; h >= 2; h--) forkResolution.revertBlock(h);
+    expect(ordering.getCurrentHeight()).toBe(1);
+
+    // Our chain: 30 blocks (heights 2..31) at the same stamps.
+    for (let i = 0; i < 30; i++) {
+      setClock(() => t1 + (i + 1) * 60_000);
+      await mineNextBlock(bc);
+    }
+    expect(ordering.getCurrentHeight()).toBe(31);
+
+    const theirHeaders = [...theirBlocks].reverse().map(b => b.header).concat(
+      ordering.getOrderingBlock(1)!.header,
+    );
+
+    setClock(() => t1 + 32 * 60_000);
+    const net = stubNet(theirHeaders, theirBlocks);
+    await forkResolution.resolveFork(theirBlocks[theirBlocks.length - 1]!, net, 'peer-deep');
+
+    // Their chain (31 blocks) is heavier than ours (30 blocks at the same
+    // target); the crossing is block 32.
+    const theirTipHash = blockHash(theirBlocks[theirBlocks.length - 1]!.header)!;
+    expect(ordering.getCurrentHeight()).toBe(32);
+    expect(blockHash(ordering.getOrderingBlock(32)!.header)).toBe(theirTipHash);
+    expect(net.penalties).toEqual([]);
+  });
+
+  it('a lighter branch keeps ours, no penalty', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    const { retargetParams: rp } = await import('../../src/services/difficulty.js');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const t1 = 1_000_000;
+    setClock(() => t1);
+    await mineNextBlock(bc);
+    for (let i = 1; i < 5; i++) {
+      setClock(() => t1 + i * 60_000);
+      await mineNextBlock(bc);
+    }
+    expect(ordering.getCurrentHeight()).toBe(5);
+
+    // Fork at height 1: a competing branch with 1 block is lighter than
+    // our 4 blocks above the fork.
+    const forkH = ordering.getOrderingBlock(1)!.header;
+    const forkHash = blockHash(forkH)!;
+    const forkLevel = headerLevel(forkH, testConfig.orderingBlockPowTargetBits);
+    const anchorIl = updateInterlinks([], forkHash, forkLevel);
+
+    const { headers: peerChain } = buildMinedHeaderChain({
+      anchorPrevBlockHash: forkHash,
+      anchorInterlinks: anchorIl,
+      startHeight: 2,
+      count: 1,
+      params: rp(),
+      anchorCreatedAt: forkH.createdAt,
+      anchorStamp: forkH.createdAt,
+      startStamp: forkH.createdAt + 60_000,
+    });
+
+    const theirHeaders = [...peerChain].reverse().concat(forkH);
+
+    setClock(() => t1 + 5 * 60_000);
+    const net = stubNet(theirHeaders, []);
+    await forkResolution.resolveFork(
+      { header: peerChain[0]!, utxoTxTree: { utxoTxIds: [], utxoTxs: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock,
+      net,
+      'peer-lighter',
+    );
+
+    // Our chain (4 blocks above fork) has more work than theirs (1 block).
+    expect(ordering.getCurrentHeight()).toBe(5);
+    expect(net.penalties).toEqual([]);
+  });
+
+  it('clock refusal on a scoring page → no penalty, no memo', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    for (let i = 0; i < 3; i++) await mineNextBlock(bc);
+
+    // Peer shares block 1 and has a header at height 2 with a future timestamp.
+    const shared1 = ordering.getOrderingBlock(1)!.header;
+    const futureHeader: BlockHeader = {
+      ...shared1,
+      height: 2,
+      prevBlockHash: blockHash(shared1)!,
+      createdAt: Date.now() + MAX_FUTURE_DRIFT_MS + 60_000,
+      powTargetBits: testConfig.orderingBlockPowTargetBits,
+    };
+    futureHeader.powNonce = solveHeaderPow(futureHeader);
+
+    const headers = [futureHeader, shared1];
+    const net = stubNet(headers, []);
+    await forkResolution.resolveFork(
+      { header: futureHeader, utxoTxTree: { utxoTxIds: [], utxoTxs: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock,
+      net,
+      'peer-clock',
+    );
+
+    expect(ordering.getCurrentHeight()).toBe(3);
+    expect(net.penalties).toEqual([]);
+  });
+
+  it('our tip moving between scoring pages → abort, no penalty', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    const { retargetParams: rp } = await import('../../src/services/difficulty.js');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const t1 = 1_000_000;
+    for (let i = 0; i < 20; i++) {
+      setClock(() => t1 + i * 60_000);
+      await mineNextBlock(bc);
+    }
+    expect(ordering.getCurrentHeight()).toBe(20);
+
+    // Their branch from height 1 at 10x-ideal spacing — each header carries
+    // much less work than ours (ASERT lowers the target toward the floor).
+    // 22 blocks total, two above our tip for a scoring page 2. Our 20 blocks
+    // at ideal rate are heavier than their 22 at 10x spacing.
+    const params = rp();
+    const { headers: peerChain } = buildMinedHeaderChain({
+      anchorPrevBlockHash: GENESIS_PREV_BLOCK_HASH,
+      anchorInterlinks: [],
+      startHeight: 1,
+      count: 22,
+      params,
+      anchorCreatedAt: null,
+      anchorStamp: t1,
+      startStamp: t1,
+      spacingMs: 600_000,
+    });
+
+    // Peer tip at 22. The fork walk finds no match among heights 20..1 →
+    // genesis (ourTip 20 ≤ maxReorgDepth 40). Residual: their 1..20 (twenty
+    // lighter headers). The scoring walk requests page 2 above 20 — the stub
+    // mines a block on us during that request.
+    let scoringPageRequests = 0;
+    const headerRequests: Array<{ startHeight: number; maxCount: number }> = [];
+    const blockRequests: Array<{ startHeight: number; endHeight: number }> = [];
+    const penalties: Array<{ peerId: string; kind: string; reason: string }> = [];
+    const allHeaders = [...peerChain];
+    const peerTip = 22;
+
+    // Set clock past the peer's latest stamp so no header hits the future bound.
+    setClock(() => t1 + 22 * 600_000);
+    const net: ForkResolutionNet = {
+      getConnectedPeers: () => ['peer-tip-move'],
+      requestHeaders: async (startHeight: number, maxCount: number) => {
+        headerRequests.push({ startHeight, maxCount });
+        // The fork walk requests from height 5 down — those are the pages
+        // whose residual above f feeds the scoring walk. The scoring walk's
+        // requests start above the residual's top. When the request is above
+        // our original tip (5), it's a scoring-walk request.
+        if (startHeight > 20) {
+          scoringPageRequests++;
+          if (scoringPageRequests === 1) {
+            setClock(() => t1 + 23 * 600_000);
+            const mined = await mineNextBlock(bc);
+            if (!mined) throw new Error('mineNextBlock returned null inside stub');
+          }
+        }
+        const clamped = Math.min(startHeight, peerTip);
+        return allHeaders
+          .filter(h => h.height <= clamped)
+          .sort((a, b) => b.height - a.height)
+          .slice(0, maxCount);
+      },
+      requestBlocks: async (startHeight: number, endHeight: number) => {
+        blockRequests.push({ startHeight, endHeight });
+        return [];
+      },
+      penalizePeer: (peerId: string, kind: string, reason: string) => {
+        penalties.push({ peerId, kind, reason });
+      },
+      peerTipHeight: () => peerTip,
+    };
+
+    const trigger = {
+      header: peerChain[21]!,
+      utxoTxTree: { utxoTxIds: [], utxoTxs: [] },
+      validatorSignature: new Uint8Array(64),
+    } as OrderingBlock;
+    await forkResolution.resolveFork(trigger, net, 'peer-tip-move');
+
+    // After the fork resolution, our tip should have moved (the stub mined a block).
+    expect(ordering.getCurrentHeight()).toBeGreaterThan(20);
+
+    // The scoring walk saw the tip change and aborted.
+    const warnTexts = warnSpy.mock.calls.map(c => String(c[0]));
+    const tipChanged = warnTexts.find(w => w.includes('Tip changed'));
+    expect(tipChanged, `warns: ${JSON.stringify(warnTexts)}`).toBeDefined();
+    expect(penalties).toEqual([]);
+    expect(blockRequests).toEqual([]);
+
+    // No memo was written — a further call re-requests.
+    const countAfterAbort = headerRequests.length;
+    await forkResolution.resolveFork(trigger, net, 'peer-tip-move');
+    expect(headerRequests.length).toBeGreaterThan(countAfterAbort);
+  });
+
+  it('refused_headers hit on page two → misbehavior before a third request', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    const { retargetParams: rp } = await import('../../src/services/difficulty.js');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    const rh = await importRefusedHeaders();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const t1 = 1_000_000;
+    setClock(() => t1);
+    await mineNextBlock(bc);
+    for (let i = 1; i < 5; i++) {
+      setClock(() => t1 + i * 60_000);
+      await mineNextBlock(bc);
+    }
+    expect(ordering.getCurrentHeight()).toBe(5);
+
+    // Fork at height 1. Build a peer chain from 2 to 10.
+    const forkH = ordering.getOrderingBlock(1)!.header;
+    const forkHash = blockHash(forkH)!;
+    const forkLevel = headerLevel(forkH, testConfig.orderingBlockPowTargetBits);
+    const il1 = ordering.getInterlinks(1)!;
+    const anchorIl = updateInterlinks(il1, forkHash, forkLevel);
+
+    const { headers: peerChain } = buildMinedHeaderChain({
+      anchorPrevBlockHash: forkHash,
+      anchorInterlinks: anchorIl,
+      startHeight: 2,
+      count: 9,
+      params: rp(),
+      anchorCreatedAt: forkH.createdAt,
+      anchorStamp: forkH.createdAt,
+      startStamp: forkH.createdAt + 60_000,
+    });
+    const theirHeaders = [...peerChain].reverse().concat(forkH);
+
+    // The fork walk sees heights 2-5 as non-matching (different hashes),
+    // plus forkH at 1 (match). Scoring page 1 = forkWalkAboveFork (heights
+    // 2-5 of peer). Scoring page 2 = heights 6-10 from a fresh request.
+    // Plant a refused header matching a page-2 hash.
+    const page2Hash = blockHash(peerChain[4]!)!; // height 6
+    rh.insertRefusedHeader(page2Hash, 6, 5);
+
+    setClock(() => t1 + 10 * 60_000);
+    const net = stubNet(theirHeaders, []);
+    await forkResolution.resolveFork(
+      { header: peerChain[8]!, utxoTxTree: { utxoTxIds: [], utxoTxs: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock,
+      net,
+      'peer-withholding',
+    );
+
+    // misbehavior on the refused header, chain untouched.
+    expect(ordering.getCurrentHeight()).toBe(5);
+    expect(net.penalties).toEqual([
+      expect.objectContaining({ kind: 'misbehavior', reason: expect.stringContaining('refused header') }),
+    ]);
+
+    // The fork walk made one request (from our tip). The scoring walk
+    // verified page 1 (the fork walk residual), then fetched page 2 and
+    // hit the refused header. No third header request was made.
+    const scoringRequests = net.headerRequests.filter(
+      r => r.startHeight > ordering.getCurrentHeight(),
+    );
+    expect(scoringRequests.length).toBe(1);
+  });
+
+  it('a test config with horizon 450 walks two pages to a fork at depth 400', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const { setClock } = await import('../../src/services/difficulty.js');
+
+    // Inject a config with maxReorgDepth 450.
+    const bigConfig = makeTestConfig({ maxReorgDepth: 450 });
+    vi.doMock('../../src/config.js', () => ({ config: bigConfig, loadConfig: () => bigConfig }));
+
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(bigConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // Mine 450 blocks.
+    const t1 = 1_000_000;
+    for (let i = 0; i < 450; i++) {
+      setClock(() => t1 + i * 60_000);
+      await mineNextBlock(bc);
+    }
+    expect(ordering.getCurrentHeight()).toBe(450);
+
+    // Peer shares our block at height 50 (depth 400 from tip).
+    // Build headers that don't match at heights 51-450, then match at 50.
+    const sharedBlock = ordering.getOrderingBlock(50)!.header;
+    const fakeHeaders: BlockHeader[] = [];
+    for (let h = 450; h >= 1; h--) {
+      if (h === 50) {
+        fakeHeaders.push(sharedBlock);
+      } else if (h < 50) {
+        fakeHeaders.push(ordering.getOrderingBlock(h)!.header);
+      } else {
+        fakeHeaders.push({
+          height: h,
+          prevBlockHash: 'ff'.repeat(32),
+          stateRoot: EMPTY_STATE_ROOT,
+          utxoTxRoot: '00'.repeat(32),
+          powTargetBits: bigConfig.orderingBlockPowTargetBits,
+          powNonce: 0,
+          protocolVersion: PROTOCOL_VERSION,
+          createdAt: t1 + h * 60_000,
+          validatorId: new Uint8Array(32),
+          interlinkRoot: '00'.repeat(32),
+        });
+      }
+    }
+
+    setClock(() => t1 + 451 * 60_000);
+    const net = stubNet(fakeHeaders, []);
+    await forkResolution.resolveFork(
+      { header: fakeHeaders[0]!, utxoTxTree: { utxoTxIds: [], utxoTxs: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock,
+      net,
+      'peer-withholding',
+    );
+
+    // The fork walk starts at 450, pages down in 400-header pages:
+    // Request 1: startHeight=450, maxCount=400 → headers 450..51
+    // Request 2: startHeight=50, maxCount=400 → headers 50..1, match at 50
+    // Two fork-walk requests.
+    const forkWalkRequests = net.headerRequests.filter(
+      r => r.startHeight <= 450,
+    );
+    expect(forkWalkRequests.length).toBe(2);
+    expect(forkWalkRequests[0]!.startHeight).toBe(450);
+    expect(forkWalkRequests[1]!.startHeight).toBeLessThanOrEqual(51);
+
+    // Chain untouched (the peer's headers above the fork fail verification).
+    expect(ordering.getCurrentHeight()).toBe(450);
+  }, 120_000);
+
+  it('hazard 2 — first 21 lighter than our 20, whole heavier → reorg', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    const { retargetParams: rp } = await import('../../src/services/difficulty.js');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // Fork at height 1 — build our chain: 22 blocks (heights 2-23) at the
+    // ideal rate (60 s spacing → difficulty stays at anchorBits).
+    const t1 = 1_000_000;
+    setClock(() => t1);
+    await mineNextBlock(bc);
+    for (let i = 1; i <= 22; i++) {
+      setClock(() => t1 + i * 60_000);
+      await mineNextBlock(bc);
+    }
+    expect(ordering.getCurrentHeight()).toBe(23);
+
+    const forkH = ordering.getOrderingBlock(1)!.header;
+    const forkHash = blockHash(forkH)!;
+    const forkLevel = headerLevel(forkH, testConfig.orderingBlockPowTargetBits);
+    const il1 = ordering.getInterlinks(1)!;
+    const anchorIl = updateInterlinks(il1, forkHash, forkLevel);
+    const params = rp();
+
+    // Our work above the fork (22 blocks at anchorBits).
+    const ourHeaders: BlockHeader[] = [];
+    for (let h = 2; h <= 23; h++) {
+      ourHeaders.push(ordering.getOrderingBlock(h)!.header);
+    }
+    const ourWork = cumulativeWork(ourHeaders);
+
+    // Peer chain: slow-then-fast, built in a single loop to keep interlinks
+    // chained correctly. 21 slow blocks at 10x the ideal rate → ASERT lowers
+    // the target, then fast blocks at 0.1x until the branch is heavier.
+    const { asertTargetBits: computeBits } = await import('@dagsocial/validation');
+    const { interlinkRoot: computeIlRoot } = await import('@dagsocial/types');
+    const slowCount = 21;
+    const peerChain: BlockHeader[] = [];
+    let prevHash = forkHash;
+    let prevIl = anchorIl;
+    let prevLvl: number | null = forkLevel;
+    let peer_t_a: number | null = forkH.createdAt;
+
+    for (let i = 0; i < slowCount + 100; i++) {
+      const height = 2 + i;
+      const isSlow = i < slowCount;
+      const spacing = isSlow ? 600_000 : 6_000;
+      const stamp = i === 0
+        ? forkH.createdAt + spacing
+        : peerChain[i - 1]!.createdAt + spacing;
+
+      let bits: number;
+      if (height === 1) {
+        bits = params.anchorBits;
+        if (peer_t_a === null) peer_t_a = stamp;
+      } else {
+        const prev = i === 0
+          ? { height: 1, createdAt: forkH.createdAt }
+          : peerChain[i - 1]!;
+        bits = computeBits(params, peer_t_a!, prev);
+      }
+
+      const expected = updateInterlinks(prevIl, prevHash, prevLvl);
+      const header: BlockHeader = {
+        protocolVersion: PROTOCOL_VERSION,
+        height,
+        prevBlockHash: prevHash,
+        utxoTxRoot: '00'.repeat(32),
+        stateRoot: EMPTY_STATE_ROOT,
+        validatorId: new Uint8Array(32),
+        powNonce: 0,
+        powTargetBits: bits,
+        createdAt: stamp,
+        interlinkRoot: computeIlRoot(expected),
+      };
+      header.powNonce = solveHeaderPow(header);
+      const hash = blockHash(header)!;
+      const lvl = headerLevel(header, params.anchorBits);
+
+      peerChain.push(header);
+      prevHash = hash;
+      prevIl = expected;
+      prevLvl = lvl;
+
+      // Check if we're past slowCount and the total work exceeds ours.
+      if (i >= slowCount) {
+        const totalWork = cumulativeWork(peerChain);
+        if (totalWork > ourWork) break;
+      }
+    }
+
+    const slowPart = peerChain.slice(0, slowCount);
+
+    // Verify the hazard: the first 21 headers carry less work than our
+    // first 20 above the fork.
+    const slowWork = cumulativeWork(slowPart);
+    const our20Work = cumulativeWork(ourHeaders.slice(0, 20));
+    expect(slowWork < our20Work).toBe(true);
+    expect(cumulativeWork(peerChain) > ourWork).toBe(true);
+
+    const theirHeaders = [...peerChain].reverse().concat(forkH);
+
+    setClock(() => peerChain[peerChain.length - 1]!.createdAt + 60_000);
+    const net = stubNet(theirHeaders, []);
+    await forkResolution.resolveFork(
+      { header: peerChain[peerChain.length - 1]!, utxoTxTree: { utxoTxIds: [], utxoTxs: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock,
+      net,
+      'peer-withholding',
+    );
+
+    // The scoring walk found the branch heavier → block requests issued.
+    // Since no real blocks were served, the reorg aborted with a transient
+    // penalty (empty block response). The key assertion: blocks WERE
+    // requested, meaning the heavier-branch decision was made despite the
+    // first 21 being lighter.
+    expect(net.blockRequests.length).toBeGreaterThan(0);
+    expect(net.blockRequests[0]!.startHeight).toBe(2);
+  });
+
+  it('floor-difficulty stub ends the walk within ceil(ourWork/floorWork)+400 headers', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    const { retargetParams: rp } = await import('../../src/services/difficulty.js');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // Mine 5 blocks at the ideal rate.
+    const t1 = 1_000_000;
+    setClock(() => t1);
+    await mineNextBlock(bc);
+    for (let i = 1; i < 5; i++) {
+      setClock(() => t1 + i * 60_000);
+      await mineNextBlock(bc);
+    }
+    expect(ordering.getCurrentHeight()).toBe(5);
+
+    const forkH = ordering.getOrderingBlock(1)!.header;
+    const forkHash = blockHash(forkH)!;
+    const forkLevel = headerLevel(forkH, testConfig.orderingBlockPowTargetBits);
+    const il1 = ordering.getInterlinks(1)!;
+    const anchorIl = updateInterlinks(il1, forkHash, forkLevel);
+    const params = rp();
+
+    // Our work above the fork (4 blocks).
+    const ourHdrs: BlockHeader[] = [];
+    for (let h = 2; h <= 5; h++) {
+      ourHdrs.push(ordering.getOrderingBlock(h)!.header);
+    }
+    const ourWork = cumulativeWork(ourHdrs);
+
+    // Build a peer chain with floor-difficulty headers (very long spacing
+    // → ASERT drops the target to the floor → minimum work per header).
+    const floorSpacingMs = 3_600_000; // 1 hour → target drops to floor
+    const peerCount = 2000; // More than enough to exceed ourWork at the floor
+    const { headers: floorChain } = buildMinedHeaderChain({
+      anchorPrevBlockHash: forkHash,
+      anchorInterlinks: anchorIl,
+      startHeight: 2,
+      count: peerCount,
+      params,
+      anchorCreatedAt: forkH.createdAt,
+      anchorStamp: forkH.createdAt,
+      startStamp: forkH.createdAt + floorSpacingMs,
+      spacingMs: floorSpacingMs,
+    });
+
+    // Work per floor-difficulty header.
+    const floorWork = cumulativeWork([floorChain[floorChain.length - 1]!]);
+    const boundHeaders = Number((ourWork + floorWork - 1n) / floorWork);
+    const requestBound = Math.ceil(boundHeaders / MAX_CHAIN_RESPONSE_ITEMS) + 1;
+
+    const theirHeaders = [...floorChain].reverse().concat(forkH);
+    setClock(() => forkH.createdAt + floorSpacingMs * peerCount + 60_000);
+    const net = stubNet(theirHeaders, []);
+    await forkResolution.resolveFork(
+      { header: floorChain[floorChain.length - 1]!, utxoTxTree: { utxoTxIds: [], utxoTxs: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock,
+      net,
+      'peer-withholding',
+    );
+
+    // The scoring walk's header requests should be bounded by
+    // ceil(ourWork / floorWork) + 400 headers worth of pages.
+    const scoringRequests = net.headerRequests.filter(
+      r => r.startHeight > ordering.getCurrentHeight(),
+    );
+    expect(scoringRequests.length).toBeLessThanOrEqual(requestBound);
+  });
+
+  it('a fork at depth 40 converges', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const { applyOrderingBlock } = (await import(
+      '../../src/services/block-apply.js'
+    )) as { applyOrderingBlock: (block: OrderingBlock) => boolean };
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // Pin the clock: both chains carry identical stamps per height, and the
+    // crossing is their block 42.
+    const t1 = 1_000_000;
+    setClock(() => t1);
+    await mineNextBlock(bc);
+
+    // Build their chain: 41 blocks (heights 2..42), applied then reverted.
+    const theirBlocks: OrderingBlock[] = [];
+    for (let h = 2; h <= 42; h++) {
+      setClock(() => t1 + (h - 1) * 60_000);
+      const b = await makeApplicableBlock({ height: h });
+      expect(applyOrderingBlock(b)).toBe(true);
+      theirBlocks.push(b);
+    }
+    expect(ordering.getCurrentHeight()).toBe(42);
+    for (let h = 42; h >= 2; h--) forkResolution.revertBlock(h);
+    expect(ordering.getCurrentHeight()).toBe(1);
+
+    // Our chain: 40 blocks (heights 2..41) at the same stamps.
+    for (let i = 0; i < 40; i++) {
+      setClock(() => t1 + (i + 1) * 60_000);
+      await mineNextBlock(bc);
+    }
+    expect(ordering.getCurrentHeight()).toBe(41);
+
+    const theirHeaders = [...theirBlocks].reverse().map(b => b.header).concat(
+      ordering.getOrderingBlock(1)!.header,
+    );
+
+    setClock(() => t1 + 42 * 60_000);
+    const net = stubNet(theirHeaders, theirBlocks);
+    await forkResolution.resolveFork(theirBlocks[theirBlocks.length - 1]!, net, 'peer-deep40');
+
+    const theirTipHash = blockHash(theirBlocks[theirBlocks.length - 1]!.header)!;
+    expect(ordering.getCurrentHeight()).toBe(42);
+    expect(blockHash(ordering.getOrderingBlock(42)!.header)).toBe(theirTipHash);
+    expect(net.penalties).toEqual([]);
+  });
+
+  it('first page-aligned heavier prefix — the reorg target is the first stop-rule hit', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    const { retargetParams: rp } = await import('../../src/services/difficulty.js');
+
+    // Inject a config with maxReorgDepth 450.
+    const bigConfig = makeTestConfig({ maxReorgDepth: 450 });
+    vi.doMock('../../src/config.js', () => ({ config: bigConfig, loadConfig: () => bigConfig }));
+
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(bigConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // Mine 450 blocks.
+    const t1 = 1_000_000;
+    for (let i = 0; i < 450; i++) {
+      setClock(() => t1 + i * 60_000);
+      await mineNextBlock(bc);
+    }
+    expect(ordering.getCurrentHeight()).toBe(450);
+
+    // Fork at height 1 (depth 449). Our work above 1 is 449 blocks.
+    const forkBlock = ordering.getOrderingBlock(1)!.header;
+    const forkHash = blockHash(forkBlock)!;
+    const forkLevel = headerLevel(forkBlock, bigConfig.orderingBlockPowTargetBits);
+    const anchorIl = updateInterlinks([], forkHash, forkLevel);
+
+    // Their branch: slightly faster spacing so each header is harder → more
+    // work per header. The crossing boundary is derived from cumulativeWork.
+    const params = rp();
+    const { headers: peerChain } = buildMinedHeaderChain({
+      anchorPrevBlockHash: forkHash,
+      anchorInterlinks: anchorIl,
+      startHeight: 2,
+      count: 450,
+      params,
+      anchorCreatedAt: forkBlock.createdAt,
+      anchorStamp: forkBlock.createdAt,
+      startStamp: forkBlock.createdAt + 57_000,
+      spacingMs: 57_000,
+    });
+
+    // Include the shared block 1 so the fork walk finds the match.
+    const theirHeaders = [...peerChain].reverse().concat(forkBlock);
+
+    const blockRequests: Array<{ startHeight: number; endHeight: number }> = [];
+    const penalties: Array<{ peerId: string; kind: string; reason: string }> = [];
+    const peerTip = 1 + 450;
+
+    const net: ForkResolutionNet & {
+      blockRequests: typeof blockRequests;
+      headerRequests: Array<{ startHeight: number; maxCount: number }>;
+      penalties: typeof penalties;
+    } = {
+      getConnectedPeers: () => ['peer-prefix'],
+      requestHeaders: async (startHeight: number, maxCount: number) => {
+        net.headerRequests.push({ startHeight, maxCount });
+        const clamped = Math.min(startHeight, peerTip);
+        return theirHeaders
+          .filter(h => h.height <= clamped)
+          .sort((a, b) => b.height - a.height)
+          .slice(0, maxCount);
+      },
+      requestBlocks: async (s: number, e: number) => {
+        blockRequests.push({ startHeight: s, endHeight: e });
+        return [];
+      },
+      penalizePeer: (peerId: string, kind: string, reason: string) => {
+        penalties.push({ peerId, kind, reason });
+      },
+      peerTipHeight: () => peerTip,
+      blockRequests,
+      headerRequests: [],
+      penalties,
+    };
+
+    setClock(() => t1 + 451 * 60_000);
+    // Spy getHeadersAbove to pin that ourWork reads the header-only store path.
+    const orderingMod = await import('../../src/store/ordering.js');
+    const headersAboveSpy = vi.spyOn(orderingMod, 'getHeadersAbove');
+
+    await forkResolution.resolveFork(
+      { header: peerChain[peerChain.length - 1]!, utxoTxTree: { utxoTxIds: [], utxoTxs: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock,
+      net,
+      'peer-prefix',
+    );
+
+    // The ourWork read went through getHeadersAbove, not the decode loop.
+    expect(headersAboveSpy).toHaveBeenCalledWith(1, 449);
+
+    // Derive the first page boundary at which their work exceeds ours.
+    // The residual (heights 2..450) is chunked at MAX_CHAIN_RESPONSE_ITEMS
+    // (400): pages of 2..401, 402..450. Fresh requests above that.
+    const ourWork = cumulativeWork(
+      Array.from({ length: 449 }, (_, i) => ordering.getOrderingBlock(2 + i)!.header),
+    );
+    const pageBoundaries = [400, 449];
+    let expectedK: number | null = null;
+    for (const k of pageBoundaries) {
+      const sliceWork = cumulativeWork(peerChain.slice(0, k));
+      if (sliceWork > ourWork) { expectedK = k; break; }
+    }
+    expect(expectedK, 'peer branch must exceed our work at some page boundary').not.toBeNull();
+
+    expect(blockRequests.length).toBeGreaterThan(0);
+    expect(blockRequests[0]!.startHeight).toBe(2);
+    expect(blockRequests[blockRequests.length - 1]!.endHeight).toBe(1 + expectedK!);
+    expect(penalties.some(p => p.kind === 'transient')).toBe(true);
+  }, 120_000);
+});
+
+// ---------------------------------------------------------------------------
+// Paged block fetch (NODE_INTERFACE → Fork choice decides on verified headers,
+// step 8). The code pages `requestBlocks` from f+1; these pins exercise the
+// per-page identity check, the empty-page abort, and tampered second pages.
+// ---------------------------------------------------------------------------
+
+describe('resolveFork — paged block fetch', () => {
+  beforeEach(async () => { vi.resetModules(); });
+  afterEach(async () => {
+    try { (await importBlockCreator()).stopBlockCreator(); } catch {}
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it('three block requests for a paged reorg with identity checked per page', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const scenario = await buildForkScenario();
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // A stub that serves at most 1 block per request, forcing 3 requests
+    // for the 3-block reorg (heights 2, 3, 4).
+    const blockRequests: Array<{ startHeight: number; endHeight: number }> = [];
+    const headerRequests: Array<{ startHeight: number; maxCount: number }> = [];
+    const peerTip = Math.max(...scenario.theirHeaders.map(h => h.height));
+    const net: ForkResolutionNet & {
+      blockRequests: typeof blockRequests;
+      penalties: Array<{ peerId: string; kind: string; reason: string }>;
+    } = {
+      getConnectedPeers: () => ['peer-paged'],
+      requestHeaders: async (startHeight: number, maxCount: number) => {
+        headerRequests.push({ startHeight, maxCount });
+        const clamped = Math.min(startHeight, peerTip);
+        return scenario.theirHeaders
+          .filter(h => h.height <= clamped)
+          .sort((a, b) => b.height - a.height)
+          .slice(0, maxCount);
+      },
+      requestBlocks: async (startHeight: number, endHeight: number) => {
+        blockRequests.push({ startHeight, endHeight });
+        // Serve at most 1 block per call.
+        const page = scenario.theirBlocks
+          .filter(b => b.header.height >= startHeight && b.header.height <= endHeight)
+          .slice(0, 1);
+        return page;
+      },
+      penalizePeer: () => {},
+      peerTipHeight: () => peerTip,
+      blockRequests,
+      penalties: [],
+    };
+
+    await forkResolution.resolveFork(scenario.competingBlock, net, 'peer-paged');
+
+    // The reorg succeeded — tip is theirs.
+    expect(ordering.getCurrentHeight()).toBe(4);
+
+    // Three block requests: one per block, each checked on arrival.
+    expect(blockRequests).toEqual([
+      { startHeight: 2, endHeight: 4 },
+      { startHeight: 3, endHeight: 4 },
+      { startHeight: 4, endHeight: 4 },
+    ]);
+  });
+
+  it('empty block page on the second request → transient, chain untouched', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const scenario = await buildForkScenario();
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    const journalStore = await importJournalStore();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // Journals for our chain exist before the attempt.
+    const journalsBefore = [1, 2, 3].map(h => journalStore.getBlockJournal(h));
+    expect(journalsBefore.every(j => j !== null)).toBe(true);
+
+    let callCount = 0;
+    const blockRequests: Array<{ startHeight: number; endHeight: number }> = [];
+    const penalties: Array<{ peerId: string; kind: string; reason: string }> = [];
+    const peerTip = Math.max(...scenario.theirHeaders.map(h => h.height));
+    const net: ForkResolutionNet & {
+      blockRequests: typeof blockRequests;
+      penalties: typeof penalties;
+    } = {
+      getConnectedPeers: () => ['peer-empty'],
+      requestHeaders: async (startHeight: number, maxCount: number) => {
+        const clamped = Math.min(startHeight, peerTip);
+        return scenario.theirHeaders
+          .filter(h => h.height <= clamped)
+          .sort((a, b) => b.height - a.height)
+          .slice(0, maxCount);
+      },
+      requestBlocks: async (startHeight: number, endHeight: number) => {
+        blockRequests.push({ startHeight, endHeight });
+        callCount++;
+        if (callCount === 1) {
+          // First page: serve the first block correctly.
+          return scenario.theirBlocks.filter(
+            b => b.header.height >= startHeight && b.header.height <= endHeight,
+          ).slice(0, 1);
+        }
+        // Second page: empty — nothing delivered.
+        return [];
+      },
+      penalizePeer: (peerId: string, kind: string, reason: string) => {
+        penalties.push({ peerId, kind, reason });
+      },
+      peerTipHeight: () => peerTip,
+      blockRequests,
+      penalties,
+    };
+
+    await forkResolution.resolveFork(scenario.competingBlock, net, 'peer-empty');
+
+    // Chain untouched — our tip and journals as before.
+    expect(ordering.getCurrentHeight()).toBe(3);
+    for (const h of [1, 2, 3]) {
+      expect(blockHash(ordering.getOrderingBlock(h)!.header)).toBe(scenario.ourHashes[h - 1]);
+    }
+    const journalsAfter = [1, 2, 3].map(h => journalStore.getBlockJournal(h));
+    expect(journalsAfter.every(j => j !== null)).toBe(true);
+
+    expect(penalties).toEqual([
+      expect.objectContaining({ kind: 'transient' }),
+    ]);
+  });
+
+  it('wrong hash in block page two → misbehavior, nothing reverted', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const scenario = await buildForkScenario();
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    let callCount = 0;
+    const penalties: Array<{ peerId: string; kind: string; reason: string }> = [];
+    const peerTip = Math.max(...scenario.theirHeaders.map(h => h.height));
+    const net: ForkResolutionNet = {
+      getConnectedPeers: () => ['peer-bad-hash'],
+      requestHeaders: async (startHeight: number, maxCount: number) => {
+        const clamped = Math.min(startHeight, peerTip);
+        return scenario.theirHeaders
+          .filter(h => h.height <= clamped)
+          .sort((a, b) => b.height - a.height)
+          .slice(0, maxCount);
+      },
+      requestBlocks: async (startHeight: number, endHeight: number) => {
+        callCount++;
+        if (callCount === 1) {
+          // Page 1: serve the first block correctly.
+          return scenario.theirBlocks.filter(
+            b => b.header.height >= startHeight && b.header.height <= endHeight,
+          ).slice(0, 1);
+        }
+        // Page 2: serve a block with a tampered header — wrong hash.
+        const real = scenario.theirBlocks.find(
+          b => b.header.height >= startHeight && b.header.height <= endHeight,
+        );
+        if (!real) return [];
+        const tampered: OrderingBlock = {
+          ...real,
+          header: { ...real.header, powNonce: real.header.powNonce + 999 },
+        };
+        return [tampered];
+      },
+      penalizePeer: (_peerId: string, kind: string, reason: string) => {
+        penalties.push({ peerId: _peerId, kind, reason });
+      },
+      peerTipHeight: () => peerTip,
+    };
+
+    await forkResolution.resolveFork(scenario.competingBlock, net, 'peer-bad-hash');
+
+    // Chain untouched.
+    expect(ordering.getCurrentHeight()).toBe(3);
+    for (const h of [1, 2, 3]) {
+      expect(blockHash(ordering.getOrderingBlock(h)!.header)).toBe(scenario.ourHashes[h - 1]);
+    }
+
+    expect(penalties).toEqual([
+      expect.objectContaining({ kind: 'misbehavior', reason: expect.stringContaining('identity mismatch') }),
+    ]);
+  });
+
+  it('wrong height in block page two → misbehavior', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const scenario = await buildForkScenario();
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    let callCount = 0;
+    const penalties: Array<{ peerId: string; kind: string; reason: string }> = [];
+    const peerTip = Math.max(...scenario.theirHeaders.map(h => h.height));
+    const net: ForkResolutionNet = {
+      getConnectedPeers: () => ['peer-bad-height'],
+      requestHeaders: async (startHeight: number, maxCount: number) => {
+        const clamped = Math.min(startHeight, peerTip);
+        return scenario.theirHeaders
+          .filter(h => h.height <= clamped)
+          .sort((a, b) => b.height - a.height)
+          .slice(0, maxCount);
+      },
+      requestBlocks: async (startHeight: number, endHeight: number) => {
+        callCount++;
+        if (callCount === 1) {
+          // Page 1: serve the first block correctly.
+          return scenario.theirBlocks.filter(
+            b => b.header.height >= startHeight && b.header.height <= endHeight,
+          ).slice(0, 1);
+        }
+        // Page 2: serve a block at the wrong height — height 4 when 3 is expected.
+        const wrongBlock = scenario.theirBlocks.find(b => b.header.height === 4);
+        if (!wrongBlock) return [];
+        return [wrongBlock];
+      },
+      penalizePeer: (_peerId: string, kind: string, reason: string) => {
+        penalties.push({ peerId: _peerId, kind, reason });
+      },
+      peerTipHeight: () => peerTip,
+    };
+
+    await forkResolution.resolveFork(scenario.competingBlock, net, 'peer-bad-height');
+
+    // Chain untouched.
+    expect(ordering.getCurrentHeight()).toBe(3);
+
+    expect(penalties).toEqual([
+      expect.objectContaining({ kind: 'misbehavior', reason: expect.stringContaining('height mismatch') }),
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Re-score memo pins
+// ---------------------------------------------------------------------------
+
+describe('resolveFork — re-score memo', () => {
+  beforeEach(async () => { vi.resetModules(); });
+  afterEach(async () => {
+    try { (await importBlockCreator()).stopBlockCreator(); } catch {}
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it('same peer at an unmoved tip makes no header request', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    const { retargetParams: rp } = await import('../../src/services/difficulty.js');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const t1 = 1_000_000;
+    setClock(() => t1);
+    await mineNextBlock(bc);
+    setClock(() => t1 + 60_000);
+    await mineNextBlock(bc);
+    setClock(() => t1 + 120_000);
+    await mineNextBlock(bc);
+    expect(ordering.getCurrentHeight()).toBe(3);
+
+    // Build a valid lighter branch from fork at height 1 — only 1 block.
+    const forkH = ordering.getOrderingBlock(1)!.header;
+    const forkHash = blockHash(forkH)!;
+    const forkLevel = headerLevel(forkH, testConfig.orderingBlockPowTargetBits);
+    const il1 = ordering.getInterlinks(1)!;
+    const anchorIl = updateInterlinks(il1, forkHash, forkLevel);
+    const { headers: peerChain } = buildMinedHeaderChain({
+      anchorPrevBlockHash: forkHash,
+      anchorInterlinks: anchorIl,
+      startHeight: 2,
+      count: 1,
+      params: rp(),
+      anchorCreatedAt: forkH.createdAt,
+      anchorStamp: forkH.createdAt,
+      startStamp: forkH.createdAt + 60_000,
+    });
+    const theirHeaders = [...peerChain].reverse().concat(forkH);
+
+    setClock(() => t1 + 120_000);
+    const net = stubNet(theirHeaders, []);
+    const trigger = { header: peerChain[0]!, utxoTxTree: { utxoTxIds: [], utxoTxs: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock;
+    await forkResolution.resolveFork(trigger, net, 'peer-withholding');
+
+    const firstRequestCount = net.headerRequests.length;
+    expect(firstRequestCount).toBeGreaterThan(0);
+
+    // Second call — same peer, tip unchanged → memoised, zero additional requests.
+    await forkResolution.resolveFork(trigger, net, 'peer-withholding');
+    expect(net.headerRequests.length).toBe(firstRequestCount);
+  });
+
+  it('moved peer tip → re-scored', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    const { retargetParams: rp } = await import('../../src/services/difficulty.js');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const t1 = 1_000_000;
+    for (let i = 0; i < 3; i++) {
+      setClock(() => t1 + i * 60_000);
+      await mineNextBlock(bc);
+    }
+
+    // Valid lighter branch from height 1 — 1 block.
+    const forkH = ordering.getOrderingBlock(1)!.header;
+    const forkHash = blockHash(forkH)!;
+    const forkLevel = headerLevel(forkH, testConfig.orderingBlockPowTargetBits);
+    const il1 = ordering.getInterlinks(1)!;
+    const anchorIl = updateInterlinks(il1, forkHash, forkLevel);
+    const { headers: peerChain } = buildMinedHeaderChain({
+      anchorPrevBlockHash: forkHash,
+      anchorInterlinks: anchorIl,
+      startHeight: 2,
+      count: 1,
+      params: rp(),
+      anchorCreatedAt: forkH.createdAt,
+      anchorStamp: forkH.createdAt,
+      startStamp: forkH.createdAt + 60_000,
+    });
+    const theirHeaders = [...peerChain].reverse().concat(forkH);
+
+    let reportedTip = Math.max(...theirHeaders.map(h => h.height));
+    setClock(() => t1 + 3 * 60_000);
+    const net = stubNet(theirHeaders, []);
+    // Override peerTipHeight to be mutable.
+    (net as unknown as { peerTipHeight: (_p: string) => number | null }).peerTipHeight = () => reportedTip;
+    const trigger = { header: peerChain[0]!, utxoTxTree: { utxoTxIds: [], utxoTxs: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock;
+
+    // First call → "keep ours" → memo written.
+    await forkResolution.resolveFork(trigger, net, 'peer-growing');
+    const firstCount = net.headerRequests.length;
+
+    // Verify memo is in force (second call: zero additional requests).
+    await forkResolution.resolveFork(trigger, net, 'peer-growing');
+    expect(net.headerRequests.length).toBe(firstCount);
+
+    // Peer tip moves → third call re-requests.
+    reportedTip = 10;
+    await forkResolution.resolveFork(trigger, net, 'peer-growing');
+    expect(net.headerRequests.length).toBeGreaterThan(firstCount);
+  });
+
+  it('our tip moving clears the memo', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    const { retargetParams: rp } = await import('../../src/services/difficulty.js');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const t1 = 1_000_000;
+    for (let i = 0; i < 3; i++) {
+      setClock(() => t1 + i * 60_000);
+      await mineNextBlock(bc);
+    }
+
+    // Valid lighter branch from height 1.
+    const forkH = ordering.getOrderingBlock(1)!.header;
+    const forkHash = blockHash(forkH)!;
+    const forkLevel = headerLevel(forkH, testConfig.orderingBlockPowTargetBits);
+    const il1 = ordering.getInterlinks(1)!;
+    const anchorIl = updateInterlinks(il1, forkHash, forkLevel);
+    const { headers: peerChain } = buildMinedHeaderChain({
+      anchorPrevBlockHash: forkHash,
+      anchorInterlinks: anchorIl,
+      startHeight: 2,
+      count: 1,
+      params: rp(),
+      anchorCreatedAt: forkH.createdAt,
+      anchorStamp: forkH.createdAt,
+      startStamp: forkH.createdAt + 60_000,
+    });
+    const theirHeaders = [...peerChain].reverse().concat(forkH);
+
+    setClock(() => t1 + 3 * 60_000);
+    const net = stubNet(theirHeaders, []);
+    const trigger = { header: peerChain[0]!, utxoTxTree: { utxoTxIds: [], utxoTxs: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock;
+
+    // First call → "keep ours" → memo written.
+    await forkResolution.resolveFork(trigger, net, 'peer-withholding');
+    const firstCount = net.headerRequests.length;
+
+    // Verify memo is in force (second call: zero additional requests).
+    await forkResolution.resolveFork(trigger, net, 'peer-withholding');
+    expect(net.headerRequests.length).toBe(firstCount);
+
+    // Mine a block — our tip moves, memo should be cleared.
+    setClock(() => t1 + 4 * 60_000);
+    await mineNextBlock(bc);
+
+    // Third call → re-requests because atOurTip is stale.
+    await forkResolution.resolveFork(trigger, net, 'peer-withholding');
+    expect(net.headerRequests.length).toBeGreaterThan(firstCount);
+  });
+
+  it('clock refusal writes no memo', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    for (let i = 0; i < 3; i++) await mineNextBlock(bc);
+
+    const shared1 = ordering.getOrderingBlock(1)!.header;
+    const futureHeader: BlockHeader = {
+      ...shared1,
+      height: 2,
+      prevBlockHash: blockHash(shared1)!,
+      createdAt: Date.now() + MAX_FUTURE_DRIFT_MS + 60_000,
+      powTargetBits: testConfig.orderingBlockPowTargetBits,
+    };
+    futureHeader.powNonce = solveHeaderPow(futureHeader);
+
+    const net = stubNet([futureHeader, shared1], []);
+    const trigger = { header: futureHeader, utxoTxTree: { utxoTxIds: [], utxoTxs: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock;
+    await forkResolution.resolveFork(trigger, net, 'peer-withholding');
+    const firstCount = net.headerRequests.length;
+
+    // A second call should NOT be memoised — clock refusal wrote nothing.
+    await forkResolution.resolveFork(trigger, net, 'peer-withholding');
+    expect(net.headerRequests.length).toBeGreaterThan(firstCount);
+  });
+
+  it('memo is keyed on the peer — two triggers from one memoised peer make zero requests', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    const { retargetParams: rp } = await import('../../src/services/difficulty.js');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const t1 = 1_000_000;
+    setClock(() => t1);
+    await mineNextBlock(bc);
+    setClock(() => t1 + 60_000);
+    await mineNextBlock(bc);
+    setClock(() => t1 + 120_000);
+    await mineNextBlock(bc);
+
+    // Build a valid lighter branch from the fork at height 1 (1 block).
+    const forkH = ordering.getOrderingBlock(1)!.header;
+    const forkHash = blockHash(forkH)!;
+    const forkLevel = headerLevel(forkH, testConfig.orderingBlockPowTargetBits);
+    const il1 = ordering.getInterlinks(1)!;
+    const anchorIl = updateInterlinks(il1, forkHash, forkLevel);
+    const { headers: peerChain } = buildMinedHeaderChain({
+      anchorPrevBlockHash: forkHash,
+      anchorInterlinks: anchorIl,
+      startHeight: 2,
+      count: 1,
+      params: rp(),
+      anchorCreatedAt: forkH.createdAt,
+      anchorStamp: forkH.createdAt,
+      startStamp: forkH.createdAt + 60_000,
+    });
+    const theirHeaders = [...peerChain].reverse().concat(forkH);
+
+    setClock(() => t1 + 120_000);
+    const net = stubNet(theirHeaders, []);
+    const trigger1 = { header: peerChain[0]!, utxoTxTree: { utxoTxIds: [], utxoTxs: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock;
+    const trigger2 = { header: { ...peerChain[0]!, height: 99 }, utxoTxTree: { utxoTxIds: [], utxoTxs: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock;
+
+    // First call: scores the branch → "keep ours" → memo written.
+    await forkResolution.resolveFork(trigger1, net, 'peer-withholding');
+    const firstCount = net.headerRequests.length;
+    expect(firstCount).toBeGreaterThan(0);
+
+    // Second call: different trigger block, same peer → memoised.
+    await forkResolution.resolveFork(trigger2, net, 'peer-withholding');
+    expect(net.headerRequests.length).toBe(firstCount);
   });
 });

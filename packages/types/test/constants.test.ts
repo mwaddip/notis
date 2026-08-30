@@ -15,7 +15,6 @@ import {
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   RETARGET_HALFLIFE_BLOCKS,
   MAX_FUTURE_DRIFT_MS,
-  MAX_REORG_DEPTH,
   GENESIS_PREV_BLOCK_HASH,
   NETWORK_PROFILES,
   COINBASE_TREASURY_PCT,
@@ -103,35 +102,6 @@ describe('PoW difficulty constants', () => {
     expect(MAX_FUTURE_DRIFT_MS).toBe(600_000);
     expect(typeof MAX_FUTURE_DRIFT_MS).toBe('number');
     expect(MAX_FUTURE_DRIFT_MS / 60_000).toBe(10);
-  });
-});
-
-/**
- * The reorg bound.
- *
- * It lives in this package so that `@dagsocial/node`'s `config.ts` can reach it:
- * the constant's node-side home imports `config` itself, so the edge back would
- * close a cycle. Nothing here reads it — every consumer is in node — which is
- * exactly why its domain and its universality are pinned at the source.
- */
-describe('MAX_REORG_DEPTH', () => {
-  it('is a positive count of blocks', () => {
-    expect(MAX_REORG_DEPTH).toBe(20);
-    // It is subtracted from a height and compared against a walk depth, so a
-    // non-integer or a zero is not a smaller window — it is a retention cutoff
-    // above the tip and a fork walk that never runs.
-    expect(Number.isSafeInteger(MAX_REORG_DEPTH)).toBe(true);
-    expect(MAX_REORG_DEPTH).toBeGreaterThan(0);
-  });
-
-  // TYPES_INTERFACE → Network profiles: every constant outside `NetworkProfile`
-  // is universal, and a constant moved into it is a place devnet may behave
-  // unlike mainnet. Making this one per-network is a live proposal, so the
-  // absence is asserted rather than assumed.
-  it('is universal, not a per-network profile field', () => {
-    for (const profile of Object.values(NETWORK_PROFILES)) {
-      expect(Object.hasOwn(profile, 'maxReorgDepth')).toBe(false);
-    }
   });
 });
 
