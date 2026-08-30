@@ -3016,12 +3016,22 @@ describe('reorg — re-insertion floor pin (row 167-1)', () => {
       const utxo = await importUtxo();
       const forkResolution = await importForkResolution();
       const bc = await importBlockCreator();
+
+      // Seed karma boxes before the prover: a box entering the store
+      // after the bootstrap is absent from the tree
+      // (NODE_INTERFACE → AVL+ State Root).
+      const postFixtures = [];
+      for (let i = 0; i < 6; i++) {
+        postFixtures.push(await seedPostTx(author, `floor ${i}`));
+      }
+
+      await activateProverOverStore();
       bc.startBlockCreator(testConfig);
       const ordering = await importOrdering();
 
       // Build 6 blocks.
       for (let i = 0; i < 6; i++) {
-        const { commit, tx: postTx, postId, content } = await seedPostTx(author, `floor ${i}`);
+        const { commit, tx: postTx, postId, content } = postFixtures[i]!;
         posts.insertPost(postId, commit, content);
         mempool.insertUtxoTx(postTx, 1000);
         await mineNextBlock(bc);
@@ -3068,30 +3078,25 @@ describe('reorg — re-insertion floor pin (row 167-1)', () => {
           return tx.inputs.includes(boxId);
         });
 
-      // Reorg to a 4-block chain (shorter than our 6): new tip = 4.
-      // Re-insertion screens the ceiling, not the floor
+      // Revert blocks 5 and 6: new tip = 4. The locked tx from height
+      // 5's journal is re-inserted into the pool
       // (NODE_INTERFACE → Validity ceiling).
       warn.mockClear();
-      const chain4 = Array.from({ length: 4 }, (_, i) => ordering.getOrderingBlock(i + 1)!);
-      forkResolution.reorg(0, chain4);
+      forkResolution.reorg(4, []);
       expect(ordering.getCurrentHeight()).toBe(4);
 
-      // The locked tx is in the pool — re-insertion did not screen the
-      // floor. `validateTx` step 3 refuses it at the build height
-      // (5 < lockedUntilBlock 6), but the reorg caller did not run
-      // `validateTx` (NODE_INTERFACE → Validity ceiling: "Re-insertion
-      // screens the ceiling and not the floor").
-      const afterReorg = mempool.getPendingEntries(1000);
-      expect(findLocked(afterReorg), 'the locked tx is in the pool after the reorg').toBeDefined();
-
-      // A template is held — no stall. `rebuildTemplate` inside `reorg`
-      // runs `createOrderingBlock` on the `no-prover` path
-      // (`computePostBlockStateRoot` answers `{ kind: 'no-prover' }` when
-      // `tryGetAvlProver()` is null — block-creator.ts:~674, "test-only"),
-      // so the mutation phase does not run at build and the locked tx
-      // rides into the template unvalidated. On a production node with an
-      // active prover the speculation's rejected-body loop
-      // (MINING_INTERFACE → Template and submit) evicts it.
+      // Re-insertion screens the ceiling and not the floor
+      // (NODE_INTERFACE → Validity ceiling): the locked tx enters the pool,
+      // the build at height 5 speculates, `validateTx` step 3 refuses
+      // (5 < lockedUntilBlock 6), the body is rejected, and the
+      // rejected-body loop evicts the entry
+      // (MINING_INTERFACE → Template and submit).
+      const warns = warn.mock.calls.map(c => String(c[0]));
+      expect(
+        warns.some(w => w.includes('speculation returned body-rejected')),
+        'the eviction warn fires',
+      ).toBe(true);
+      expect(findLocked(mempool.getPendingEntries(1000)), 'the locked tx is evicted from the pool').toBeUndefined();
       const template = bc.getCurrentTemplate();
       expect(template, 'the node holds a template after the build (no stall)').not.toBeNull();
     } finally {
