@@ -1,6 +1,5 @@
 import { createHash, createPublicKey, verify as cryptoVerify } from 'crypto';
 import {
-  PROTOCOL_VERSION,
   MAX_CONTENT_BYTES,
   MAX_PARENT_REFS,
   MAX_TX_BYTES,
@@ -13,9 +12,10 @@ import {
   MAX_FUTURE_DRIFT_MS,
   interlinkRoot,
   updateInterlinks,
+  protocolVersionAt,
 } from '@dagsocial/types';
 import { encodeHeader, encodeTx, utxoTxTreeByteLength, computeContentHash } from '@dagsocial/types';
-import type { BlockHeader, OrderingBlock, UtxoTransaction } from '@dagsocial/types';
+import type { BlockHeader, OrderingBlock, ProtocolEra, UtxoTransaction } from '@dagsocial/types';
 import { isDisallowedContentCodepoint } from './content-charset.js';
 
 // ---------------------------------------------------------------------------
@@ -581,8 +581,31 @@ export function verifyValidatorSignature(header: BlockHeader, signature: Uint8Ar
 // verifyProtocolVersion
 // ---------------------------------------------------------------------------
 
-export function verifyProtocolVersion(version: number): boolean {
-  return version === PROTOCOL_VERSION;
+/**
+ * The declared protocol version equals the era scheduled for `height`
+ * (VALIDATION_INTERFACE → Protocol Version). The height is the object's own — a
+ * block header's `height`, a transaction's the carrying block's, `tip + 1` at
+ * admission (ARCHITECTURE → Protocol Versioning). `false` when no era covers the
+ * height (`protocolVersionAt` answers `null`) and when `declared` is anything but
+ * that integer.
+ *
+ * Total (M-5): `protocolVersionAt` iterates the schedule (TYPES_INTERFACE →
+ * Version), so a non-array or an ill-formed schedule throws there — the call is
+ * guarded and any throw is read as "no era", never escapes. No check in this
+ * package reads `PROTOCOL_VERSION`.
+ */
+export function verifyProtocolVersion(
+  declared: number,
+  height: number,
+  schedule: readonly ProtocolEra[],
+): boolean {
+  let era: number | null;
+  try {
+    era = protocolVersionAt(schedule, height);
+  } catch {
+    return false;
+  }
+  return era !== null && declared === era;
 }
 
 // ---------------------------------------------------------------------------
@@ -1072,7 +1095,9 @@ export type HeaderChainVerdict =
 
 /**
  * Verify a contiguous header segment against an anchor, the retarget
- * parameters and the caller's clock. VALIDATION_INTERFACE → verifyHeaderChain.
+ * parameters, the caller's clock and the protocol-version schedule. Each header
+ * declares the era scheduled at its own `height` (the `version` reason).
+ * VALIDATION_INTERFACE → verifyHeaderChain.
  */
 export function verifyHeaderChain(
   headers: BlockHeader[],
@@ -1080,6 +1105,7 @@ export function verifyHeaderChain(
   params: RetargetParams,
   anchorCreatedAt: number | null,
   nowMs: number,
+  schedule: readonly ProtocolEra[],
 ): HeaderChainVerdict {
   if (!Array.isArray(headers) || headers.length === 0) {
     return { ok: true, work: 0n, hashes: [], next: { prevBlockHash: anchor.prevBlockHash, height: anchor.height, interlinks: anchor.interlinks, createdAt: anchor.createdAt ?? null, t_a: anchorCreatedAt ?? null } };
@@ -1119,8 +1145,9 @@ export function verifyHeaderChain(
       return { ok: false, index: i, reason: 'domain' };
     }
 
-    // 2. Protocol version
-    if (!verifyProtocolVersion(header.protocolVersion)) {
+    // 2. Protocol version — the era scheduled at this header's own height
+    //    (VALIDATION_INTERFACE → verifyHeaderChain).
+    if (!verifyProtocolVersion(header.protocolVersion, header.height, schedule)) {
       return { ok: false, index: i, reason: 'version' };
     }
 
