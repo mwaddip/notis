@@ -72,8 +72,9 @@ function loadUiBuilders(): UiBuilders {
   return new Function(
     [
       'let currentBlockHeight = 0;',
-      lift('const PROTOCOL_VERSION ='),
-      // The UI starts with null (set by /status); seed the devnet floor.
+      // The UI's protocolVersion and INVITE_BOND_DEFAULT start null (set by
+      // /status); seed the era and the devnet floor so the builder runs.
+      'let protocolVersion = 1;',
       'let INVITE_BOND_DEFAULT = 5n;',
       lift('function jsonBigint('),
       lift('function selectBoxes('),
@@ -127,6 +128,7 @@ async function request(
       getNetworkRecord: () => ({ memberCount: 1 }),
       membershipBarMultiplier: 1,
       putIdentityRecord: () => {},
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
       createInvite,
       getCurrentHeight,
     };
@@ -289,7 +291,7 @@ describe('invites routes', () => {
       pubHex: string,
     ): Record<string, unknown> {
       const wire = JSON.parse(JSON.stringify(uiTx, ui.jsonBigint)) as Record<string, unknown>;
-      const sig = cryptoSign(null, Buffer.from(computeTxId(jsonToTx(wire)), 'hex'), priv);
+      const sig = cryptoSign(null, Buffer.from(computeTxId(jsonToTx(wire, 1)), 'hex'), priv);
       return { ...wire, signatures: { [pubHex]: Buffer.from(sig).toString('hex') } };
     }
 
@@ -324,7 +326,7 @@ describe('invites routes', () => {
       expect(typeof data.bondBoxId).toBe('string');
       expect(data.inviteBoxId).toBeUndefined();
 
-      const outputs = jsonToTx(body).outputs as [KarmaBox, BondBox];
+      const outputs = jsonToTx(body, 1).outputs as [KarmaBox, BondBox];
       expect(outputs).toHaveLength(2);
       const [change, bond] = outputs;
       expect(change.value).toBe(funded - uiBond);

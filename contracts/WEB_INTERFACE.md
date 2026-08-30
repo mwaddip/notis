@@ -91,6 +91,8 @@ All endpoints consumed from `@dagsocial/node` HTTP API per NODE_INTERFACE.md:
 ## Invariants
 - Private key never leaves the browser
 - Content length enforced client-side (300 bytes) before submission
-- `protocolVersion` is set by the client per the current protocol version imported from types
+- `protocolVersion` is the era the node reports — `GET /status` → `protocolVersion`, the era at
+  `blockHeight + 1` — never a constant of the client's build: the field is in every id preimage, so
+  the client learns the era before it signs (`ARCHITECTURE → Protocol Versioning`)
 - PoW is solved client-side (the node never does client PoW)
 - All hashing (blake2b512) is client-side; the node verifies, not assists

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import type { UtxoTransaction } from '@dagsocial/types';
+import { protocolVersionAt } from '@dagsocial/types';
 import type { UtxoEngineDeps } from '../services/utxo-engine.js';
 import { getNet } from '../services/net-instance.js';
 import { jsonToTx } from './json-to-tx.js';
@@ -33,7 +34,7 @@ export function pruneWithdrawRoutes(deps: PruneWithdrawDeps): Router {
 
     let tx: UtxoTransaction;
     try {
-      tx = jsonToTx(body.tx);
+      tx = jsonToTx(body.tx, protocolVersionAt(deps.protocolVersionSchedule, deps.getCurrentHeight() + 1)!);
     } catch (err) {
       respondError(res, err, 'POST /posts/:id/prune (tx decode)', 'message');
       return;
@@ -45,7 +46,8 @@ export function pruneWithdrawRoutes(deps: PruneWithdrawDeps): Router {
     }
 
     try {
-      const currentHeight = deps.getCurrentHeight();
+      // Admission judges at tip + 1 (NODE_INTERFACE → validateTx).
+      const currentHeight = deps.getCurrentHeight() + 1;
       const { txId } = deps.executePrune(deps, tx, currentHeight);
 
       const net = getNet();
@@ -76,7 +78,7 @@ export function pruneWithdrawRoutes(deps: PruneWithdrawDeps): Router {
 
     let tx: UtxoTransaction;
     try {
-      tx = jsonToTx(body.tx);
+      tx = jsonToTx(body.tx, protocolVersionAt(deps.protocolVersionSchedule, deps.getCurrentHeight() + 1)!);
     } catch (err) {
       respondError(res, err, 'POST /posts/:id/withdraw (tx decode)', 'message');
       return;
@@ -88,7 +90,8 @@ export function pruneWithdrawRoutes(deps: PruneWithdrawDeps): Router {
     }
 
     try {
-      const currentHeight = deps.getCurrentHeight();
+      // Admission judges at tip + 1 (NODE_INTERFACE → validateTx).
+      const currentHeight = deps.getCurrentHeight() + 1;
       const { txId } = deps.executePostWithdraw(deps, tx, currentHeight);
 
       const net = getNet();

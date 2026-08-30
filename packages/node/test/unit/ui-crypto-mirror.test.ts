@@ -36,6 +36,10 @@ import {
   PROTOCOL_VERSION, VOUCH_KARMA_AMOUNT, VOUCH_MIN_BALANCE, u32BE,
 } from '@dagsocial/types';
 import { jsonToTx } from '../../src/routes/json-to-tx.js';
+
+// jsonToTx defaults an absent protocolVersion to the era the route supplies; the
+// mirror passes the single era (NODE_INTERFACE → validateTx).
+const toTxV1 = (raw: Record<string, unknown>) => jsonToTx(raw, 1);
 import { extractDeclaration as extractDeclarationFrom } from './extract-declaration.js';
 import type {
   CandidateOf,
@@ -390,7 +394,7 @@ const MIRRORED_FUNCTIONS: readonly string[] =
 /** Consts the mirror lifts. A top-level one may itself construct bytes. */
 const MIRRORED_CONSTS = [
   'POST_CONTENT_DOMAIN', 'POST_ID_DOMAIN', 'BOX_ID_DOMAIN', 'TX_ID_DOMAIN', 'VLQ_SENTINEL', 'U32_SENTINEL', 'BOX_TYPE_TAGS', 'POST_TYPE_TAGS',
-  'PROTOCOL_VERSION', 'VOUCH_KARMA_AMOUNT', 'VOUCH_MIN_BALANCE',
+  'protocolVersion', 'VOUCH_KARMA_AMOUNT', 'VOUCH_MIN_BALANCE',
   'LIKE_KARMA_COST', 'POST_PRICE_THREAD', 'POST_PRICE_REPLY', 'REPLY_AUTHOR_SHARE',
   'INVITE_BOND_DEFAULT',
   'pendingKarmaChange',
@@ -493,9 +497,11 @@ function loadUiCrypto(): UiCrypto {
     'let currentBlockHeight = 0;',
     ...MIRRORED_CONSTS.map((name) => {
       const decl = extractConst(html, name);
-      // INVITE_BOND_DEFAULT starts null in the UI (set by /status at runtime).
-      // The test sets it to a valid value so the builders can run.
+      // INVITE_BOND_DEFAULT and protocolVersion start null in the UI (set by
+      // /status at runtime). The test sets them to valid values so the builders
+      // can run and stamp the era the node would report.
       if (name === 'INVITE_BOND_DEFAULT') return 'let INVITE_BOND_DEFAULT = 5n;';
+      if (name === 'protocolVersion') return 'let protocolVersion = 1;';
       return decl;
     }),
     ...MIRRORED_FUNCTIONS.map((name) => extractDeclaration(html, `function ${name}(`)),
@@ -964,11 +970,11 @@ describe('demo UI ↔ @dagsocial/types box identity mirror (Spec G phase E)', ()
       ui.buildPostTx(karmaBox, 5n, GOLDEN_POST_HEX_AUTHOR as unknown as Record<string, unknown>, pubKeyHex),
     ]) {
       const asTx = tx as unknown as Record<string, unknown>;
-      const txId = computeTxId(jsonToTx(JSON.parse(JSON.stringify(asTx, ui.jsonBigint))));
+      const txId = computeTxId(toTxV1(JSON.parse(JSON.stringify(asTx, ui.jsonBigint))));
       for (let i = 0; i < (tx.outputs as unknown[]).length; i++) {
         expect(ui.predictOutputBoxId(asTx, i)).toBe(
           computeCandidateBoxId(
-            jsonToTx(JSON.parse(JSON.stringify(asTx, ui.jsonBigint))).outputs[i]!,
+            toTxV1(JSON.parse(JSON.stringify(asTx, ui.jsonBigint))).outputs[i]!,
             txId,
             i,
           ),
@@ -1427,7 +1433,7 @@ describe('demo UI vouch builders ↔ the id the node derives', () => {
 
   /** The tx as it arrives server-side: through the page's own bigint replacer. */
   const overTheWire = (tx: Record<string, unknown>) =>
-    jsonToTx(JSON.parse(JSON.stringify(tx, ui.jsonBigint)) as Record<string, unknown>);
+    toTxV1(JSON.parse(JSON.stringify(tx, ui.jsonBigint)) as Record<string, unknown>);
 
   it('the page mirrors the vouch amount constants it stakes against', () => {
     // Mirrored by hand from `@dagsocial/types`, so nothing but this compares
@@ -1515,7 +1521,7 @@ describe('demo UI invite builder ↔ the id the node derives', () => {
 
   /** The tx as it arrives server-side: through the page's own bigint replacer. */
   const overTheWire = (tx: Record<string, unknown>) =>
-    jsonToTx(JSON.parse(JSON.stringify(tx, ui.jsonBigint)) as Record<string, unknown>);
+    toTxV1(JSON.parse(JSON.stringify(tx, ui.jsonBigint)) as Record<string, unknown>);
 
   it('the bond the page names is one the node would accept', () => {
     // ⛔ **Range membership, not equality — there is no constant left to equal.**

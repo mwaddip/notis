@@ -315,7 +315,10 @@ const encoder = new TextEncoder();
 // Protocol constants (mirrored from @dagsocial/types constants.ts)
 // ===========================================================================
 
-const PROTOCOL_VERSION = 1;
+// The protocol version the node reports at blockHeight + 1, read from GET
+// /status at load — never a constant of the client's build. Null until it is
+// known, and the page does not sign until then (WEB_INTERFACE → Invariants).
+let protocolVersion = null;
 /**
  * How many parents a post may name — TYPES_INTERFACE → Content limits. The node
  * rejects anything wider, so the composer must refuse to mine one rather than
@@ -837,6 +840,11 @@ function computeTxId(tx) {
 
 /** Sign a txId hash with the current identity's Ed25519 private key. */
 async function signTxId(tx) {
+  // The page signs at the era the node reports, never a constant, and not at
+  // all until /status has answered (WEB_INTERFACE → Invariants).
+  if (protocolVersion === null) {
+    throw new Error('Protocol version not loaded from /status — cannot sign');
+  }
   const txId = computeTxId(tx);
   const txIdBytes = hex2buf(txId);
   const sig = await crypto.subtle.sign('Ed25519', privKey, txIdBytes);
@@ -1037,7 +1045,7 @@ function buildPostTx(karmaBox, priceAmount, post, pubKeyHex, parentAuthorHex) {
     inputs: selected.map(b => b.boxId),
     outputs,
     signatures: {},
-    protocolVersion: PROTOCOL_VERSION,
+    protocolVersion: protocolVersion,
     // ⛔ The post rides INSIDE the transaction. `postFieldBytes` is in the
     // `computeTxId` preimage, so the signature covers the post — a relay cannot
     // rewrite it any more than it can re-point a like — and the id the page
@@ -1095,7 +1103,7 @@ function buildLikeTx(karmaBox, targetPostId, pubKeyHex, authorHex) {
     inputs: selected.map(b => b.boxId),
     outputs,
     signatures: {},
-    protocolVersion: PROTOCOL_VERSION,
+    protocolVersion: protocolVersion,
     likeTarget: targetPostId,
   };
 }
@@ -1150,7 +1158,7 @@ function buildCreateInviteTx(karmaBox, pubKeyHex, inviteePubKeyHex) {
     inputs: selected.map(b => b.boxId),
     outputs,
     signatures: {},
-    protocolVersion: PROTOCOL_VERSION,
+    protocolVersion: protocolVersion,
   };
 }
 
@@ -1194,7 +1202,7 @@ function buildVouchTx(karmaBox, targetIdHex, pubKeyHex) {
     inputs: selected.map(b => b.boxId),
     outputs,
     signatures: {},
-    protocolVersion: PROTOCOL_VERSION,
+    protocolVersion: protocolVersion,
   };
 }
 
@@ -1237,7 +1245,7 @@ function buildUnvouchTx(vouchBoxId, stakeValue, pubKeyHex, releaseAtBlock) {
       releaseAtBlock,
     }],
     signatures: {},
-    protocolVersion: PROTOCOL_VERSION,
+    protocolVersion: protocolVersion,
   };
 }
 
@@ -1659,7 +1667,7 @@ document.getElementById('postBtn').addEventListener('click', async () => {
       contentHash,
       author: userId,
       parentRefs,
-      protocolVersion: PROTOCOL_VERSION,
+      protocolVersion: protocolVersion,
       type: 'regular',
     };
 
@@ -2485,6 +2493,10 @@ async function loadStatus() {
     // it hides the debug surfaces, which is the safe failure direction.
     networkType = s.networkType || 'mainnet';
     currentBlockHeight = s.blockHeight || 0;
+    // The era the node reports at blockHeight + 1 — the version the page signs
+    // at (WEB_INTERFACE → Invariants). Left null on a missing field so the page
+    // refuses to sign rather than falling back to a constant.
+    protocolVersion = s.protocolVersion ?? null;
     // `??`, not `||`: a served `0` is a legal cooldown and must not fall back.
     vouchCooldownBlocks = s.vouchCooldownBlocks ?? vouchCooldownBlocks;
 
@@ -2537,7 +2549,7 @@ function buildCreditTransferTx(creditBoxes, recipientHex, amount) {
     inputs: selected.map(b => b.boxId),
     outputs,
     signatures: {},
-    protocolVersion: PROTOCOL_VERSION,
+    protocolVersion: protocolVersion,
   };
 }
 

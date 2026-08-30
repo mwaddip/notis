@@ -13,7 +13,7 @@ import {
 import { createRouter } from '../../src/routes/nipopow.js';
 import { createPopowHeaderReader } from '../../src/services/nipopow.js';
 import { buildMinedHeaderChain } from '../helpers.js';
-import { GENESIS_PREV_BLOCK_HASH, PROTOCOL_VERSION, MAX_FUTURE_DRIFT_MS } from '@dagsocial/types';
+import { GENESIS_PREV_BLOCK_HASH, MAX_FUTURE_DRIFT_MS } from '@dagsocial/types';
 import { retargetParams } from '../../src/services/difficulty.js';
 import { decodeNipopowProof, verifyProof } from '@dagsocial/nipopow';
 import { unlinkSync } from 'fs';
@@ -175,7 +175,7 @@ describe('nipopow route', () => {
       maxFutureDriftMs: MAX_FUTURE_DRIFT_MS,
       nowMs: Date.now() + 86_400_000,
       genesisId: '',
-      protocolVersion: PROTOCOL_VERSION,
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
     });
     expect(result.ok).toBe(true);
   });

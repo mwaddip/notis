@@ -12,6 +12,7 @@ export {
   level,
   verifyValidatorSignature,
   verifyProtocolVersion,
+  verifyTxProtocolVersion,
   verifyContentLimits,
   verifyContentCharacters,
   verifyParentRefsCount,

@@ -107,6 +107,7 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
       getNetworkRecord: storeGetNetworkRecord,
       membershipBarMultiplier: 1,
       putIdentityRecord: storePutIdentityRecord,
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
     };
   });
 

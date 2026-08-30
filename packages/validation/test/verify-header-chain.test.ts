@@ -11,8 +11,8 @@ import {
   orderingPowTarget,
 } from '../src/index.js';
 import type { RetargetParams } from '../src/index.js';
-import type { BlockHeader } from '@dagsocial/types';
-import { PROTOCOL_VERSION, MAX_FUTURE_DRIFT_MS, interlinkRoot, updateInterlinks } from '@dagsocial/types';
+import type { BlockHeader, ProtocolEra } from '@dagsocial/types';
+import { PROTOCOL_VERSION, NETWORK_PROFILES, MAX_FUTURE_DRIFT_MS, interlinkRoot, updateInterlinks, protocolVersionAt } from '@dagsocial/types';
 
 // ---------------------------------------------------------------------------
 // Devnet schedule parameters and helpers
@@ -28,15 +28,23 @@ const P_dev: RetargetParams = {
 
 const t_a = 1_700_000_000_000;
 
+// The devnet profile's real schedule — one era, [1@0] — is what makeHeader stamps
+// by default and the schedule every existing call site verifies against
+// (TYPES_INTERFACE → Version).
+const DEVNET_SCHEDULE = NETWORK_PROFILES.devnet.protocolVersionSchedule;
+
 function solveHeaderPow(header: BlockHeader): number {
   for (let nonce = 0; ; nonce++) {
     if (verifyOrderingBlockPoW({ ...header, powNonce: nonce })) return nonce;
   }
 }
 
-function makeHeader(overrides: Partial<BlockHeader> & { height: number; prevBlockHash: string }): BlockHeader {
+function makeHeader(
+  overrides: Partial<BlockHeader> & { height: number; prevBlockHash: string },
+  schedule: readonly ProtocolEra[] = DEVNET_SCHEDULE,
+): BlockHeader {
   return {
-    protocolVersion: PROTOCOL_VERSION,
+    protocolVersion: protocolVersionAt(schedule, overrides.height) ?? PROTOCOL_VERSION,
     utxoTxRoot: '00'.repeat(32),
     stateRoot: '00'.repeat(33),
     validatorId: new Uint8Array(32),
@@ -48,8 +56,11 @@ function makeHeader(overrides: Partial<BlockHeader> & { height: number; prevBloc
   };
 }
 
-function mineHeader(overrides: Partial<BlockHeader> & { height: number; prevBlockHash: string }): BlockHeader {
-  const h = makeHeader(overrides);
+function mineHeader(
+  overrides: Partial<BlockHeader> & { height: number; prevBlockHash: string },
+  schedule: readonly ProtocolEra[] = DEVNET_SCHEDULE,
+): BlockHeader {
+  const h = makeHeader(overrides, schedule);
   h.powNonce = solveHeaderPow(h);
   return h;
 }
@@ -64,6 +75,7 @@ function mineChain(
   count: number,
   params: RetargetParams = P_dev,
   anchorCreatedAt: number = t_a,
+  schedule: readonly ProtocolEra[] = DEVNET_SCHEDULE,
 ): BlockHeader[] {
   const headers: BlockHeader[] = [];
   let prevHash = anchor.prevBlockHash;
@@ -94,7 +106,7 @@ function mineChain(
       interlinkRoot: root,
       powTargetBits: bits,
       createdAt,
-    });
+    }, schedule);
     const hash = blockHash(h)!;
     const hit = powHit(h)!;
     const lev = h.height === 1 ? Infinity : levelOfHit(hit, yardstick);
@@ -129,7 +141,7 @@ describe('verifyHeaderChain', () => {
 
   it('accepts a contiguous mined segment with correct work and hashes', () => {
     const headers = mineChain(anchor, 3);
-    const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+    const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.work).toBe(cumulativeWork(headers));
@@ -142,7 +154,7 @@ describe('verifyHeaderChain', () => {
   // ---- Empty segment ----
 
   it('returns ok with zero work for an empty segment', () => {
-    const result = verifyHeaderChain([], anchor, P_dev, t_a, FAR_FUTURE);
+    const result = verifyHeaderChain([], anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.work).toBe(0n);
@@ -155,7 +167,7 @@ describe('verifyHeaderChain', () => {
     const headers = mineChain(genesisAnchor, 1, P_dev, t_a);
     expect(headers[0]!.height).toBe(1);
     expect(headers[0]!.prevBlockHash).toBe('00'.repeat(32));
-    const result = verifyHeaderChain(headers, genesisAnchor, P_dev, null, FAR_FUTURE);
+    const result = verifyHeaderChain(headers, genesisAnchor, P_dev, null, FAR_FUTURE, DEVNET_SCHEDULE);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.work).toBe(blockWork(P_dev.anchorBits));
@@ -168,21 +180,21 @@ describe('verifyHeaderChain', () => {
     it('at first position — non-object header', () => {
       const headers = mineChain(anchor, 3);
       (headers as unknown[])[0] = null;
-      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 0, reason: 'domain' });
     });
 
     it('at middle position — header with invalid prevBlockHash type', () => {
       const headers = mineChain(anchor, 3);
       (headers[1] as unknown as Record<string, unknown>).prevBlockHash = 12345;
-      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 1, reason: 'domain' });
     });
 
     it('at last position — header with wrong-width validatorId', () => {
       const headers = mineChain(anchor, 3);
       (headers[2] as unknown as Record<string, unknown>).validatorId = new Uint8Array(16);
-      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 2, reason: 'domain' });
     });
   });
@@ -199,7 +211,7 @@ describe('verifyHeaderChain', () => {
         createdAt: headers[0]!.createdAt,
         powTargetBits: headers[0]!.powTargetBits,
       });
-      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 0, reason: 'version' });
     });
 
@@ -208,7 +220,7 @@ describe('verifyHeaderChain', () => {
       const h = { ...headers[1]!, protocolVersion: 0 };
       h.powNonce = solveHeaderPow(h);
       headers[1] = h;
-      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 1, reason: 'version' });
     });
 
@@ -217,8 +229,42 @@ describe('verifyHeaderChain', () => {
       const h = { ...headers[2]!, protocolVersion: 2 };
       h.powNonce = solveHeaderPow(h);
       headers[2] = h;
-      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 2, reason: 'version' });
+    });
+  });
+
+  // ---- reason: version — across an era boundary ----
+
+  describe('the era schedule across a boundary', () => {
+    // A synthetic schedule, the boundary just above the height-10 anchor. The
+    // mined page [11, 12] straddles it — height 11 is era 1, height 12 era 2 —
+    // so both headers build from mineChain (TYPES_INTERFACE → Version).
+    const boundary: ProtocolEra[] = [
+      { version: 1, fromHeight: 0 },
+      { version: 2, fromHeight: 12 },
+    ];
+
+    it('a page across the boundary passes when each header declares its era', () => {
+      const page = mineChain(anchor, 2, P_dev, t_a, boundary);
+      expect(page[0]!.protocolVersion).toBe(1);
+      expect(page[1]!.protocolVersion).toBe(2);
+      const result = verifyHeaderChain(page, anchor, P_dev, t_a, FAR_FUTURE, boundary);
+      expect(result.ok).toBe(true);
+    });
+
+    it('the era-2 header declaring era 1 fails version at its index', () => {
+      const page = mineChain(anchor, 2, P_dev, t_a, boundary);
+      page[1] = { ...page[1]!, protocolVersion: 1 };
+      const result = verifyHeaderChain(page, anchor, P_dev, t_a, FAR_FUTURE, boundary);
+      expect(result).toEqual({ ok: false, index: 1, reason: 'version' });
+    });
+
+    it('an era-1 header declaring era 2 fails version at its index', () => {
+      const page = mineChain(anchor, 2, P_dev, t_a, boundary);
+      page[0] = { ...page[0]!, protocolVersion: 2 };
+      const result = verifyHeaderChain(page, anchor, P_dev, t_a, FAR_FUTURE, boundary);
+      expect(result).toEqual({ ok: false, index: 0, reason: 'version' });
     });
   });
 
@@ -229,7 +275,7 @@ describe('verifyHeaderChain', () => {
       const headers = mineChain(anchor, 3);
       const h = mineHeader({ height: anchor.height + 3, prevBlockHash: anchor.prevBlockHash, createdAt: headers[0]!.createdAt });
       headers[0] = h;
-      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 0, reason: 'height' });
     });
 
@@ -238,14 +284,14 @@ describe('verifyHeaderChain', () => {
       const h = { ...headers[1]!, height: headers[0]!.height };
       h.powNonce = solveHeaderPow(h);
       headers[1] = h;
-      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 1, reason: 'height' });
     });
 
     it('wrong start — height does not continue from anchor', () => {
       const wrongAnchor = { prevBlockHash: 'aa'.repeat(32), height: 5, interlinks: ['bb'.repeat(32)], createdAt: t_a + 4 * P_dev.idealMs };
       const headers = mineChain(anchor, 3);
-      const result = verifyHeaderChain(headers, wrongAnchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, wrongAnchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 0, reason: 'height' });
     });
 
@@ -254,7 +300,7 @@ describe('verifyHeaderChain', () => {
       const h = { ...headers[2]!, height: headers[1]!.height };
       h.powNonce = solveHeaderPow(h);
       headers[2] = h;
-      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 2, reason: 'height' });
     });
   });
@@ -271,7 +317,7 @@ describe('verifyHeaderChain', () => {
         powTargetBits: headers[0]!.powTargetBits,
       });
       headers[0] = h;
-      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 0, reason: 'link' });
     });
 
@@ -284,7 +330,7 @@ describe('verifyHeaderChain', () => {
         powTargetBits: headers[1]!.powTargetBits,
       });
       headers[1] = h;
-      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 1, reason: 'link' });
     });
 
@@ -297,7 +343,7 @@ describe('verifyHeaderChain', () => {
         powTargetBits: headers[2]!.powTargetBits,
       });
       headers[2] = h;
-      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 2, reason: 'link' });
     });
   });
@@ -315,7 +361,7 @@ describe('verifyHeaderChain', () => {
         interlinkRoot: headers[0]!.interlinkRoot,
       });
       headers[0] = h;
-      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 0, reason: 'time' });
     });
 
@@ -324,7 +370,7 @@ describe('verifyHeaderChain', () => {
       const h = { ...headers[1]!, createdAt: headers[0]!.createdAt };
       h.powNonce = solveHeaderPow(h);
       headers[1] = h;
-      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 1, reason: 'time' });
     });
 
@@ -333,7 +379,7 @@ describe('verifyHeaderChain', () => {
       const h = { ...headers[1]!, createdAt: headers[0]!.createdAt };
       h.powNonce = solveHeaderPow(h);
       headers[1] = h;
-      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.reason).toBe('time');
     });
@@ -341,13 +387,13 @@ describe('verifyHeaderChain', () => {
     it('the malformed null/non-null mix → time at index 0', () => {
       const headers = mineChain(anchor, 1);
       const mixedAnchor = { ...anchor, createdAt: null as number | null };
-      const result = verifyHeaderChain(headers, mixedAnchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, mixedAnchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 0, reason: 'time' });
     });
 
     it('the reverse null/non-null mix → time at index 0', () => {
       const headers = mineChain(anchor, 1);
-      const result = verifyHeaderChain(headers, anchor, P_dev, null, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, anchor, P_dev, null, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 0, reason: 'time' });
     });
   });
@@ -358,7 +404,7 @@ describe('verifyHeaderChain', () => {
     it('a header stamped nowMs + MAX_FUTURE_DRIFT_MS + 1 → clock', () => {
       const headers = mineChain(anchor, 3);
       const nowMs = headers[1]!.createdAt - MAX_FUTURE_DRIFT_MS - 1;
-      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, nowMs);
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, nowMs, DEVNET_SCHEDULE);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.reason).toBe('clock');
     });
@@ -367,7 +413,7 @@ describe('verifyHeaderChain', () => {
       const headers = mineChain(anchor, 3);
       const maxCa = Math.max(...headers.map(h => h.createdAt));
       const nowMs = maxCa - MAX_FUTURE_DRIFT_MS;
-      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, nowMs);
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, nowMs, DEVNET_SCHEDULE);
       expect(result.ok).toBe(true);
     });
 
@@ -375,10 +421,10 @@ describe('verifyHeaderChain', () => {
       const headers = mineChain(anchor, 3);
       const maxCa = Math.max(...headers.map(h => h.createdAt));
       const tooEarly = maxCa - MAX_FUTURE_DRIFT_MS - 1;
-      const early = verifyHeaderChain(headers, anchor, P_dev, t_a, tooEarly);
+      const early = verifyHeaderChain(headers, anchor, P_dev, t_a, tooEarly, DEVNET_SCHEDULE);
       expect(early.ok).toBe(false);
       if (!early.ok) expect(early.reason).toBe('clock');
-      const ok = verifyHeaderChain(headers, anchor, P_dev, t_a, maxCa);
+      const ok = verifyHeaderChain(headers, anchor, P_dev, t_a, maxCa, DEVNET_SCHEDULE);
       expect(ok.ok).toBe(true);
     });
   });
@@ -397,7 +443,7 @@ describe('verifyHeaderChain', () => {
         interlinkRoot: headers[0]!.interlinkRoot,
       });
       headers[0] = h;
-      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 0, reason: 'target' });
     });
 
@@ -411,7 +457,7 @@ describe('verifyHeaderChain', () => {
         interlinkRoot: headers[1]!.interlinkRoot,
       });
       headers[1] = h;
-      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 1, reason: 'target' });
     });
 
@@ -425,7 +471,7 @@ describe('verifyHeaderChain', () => {
         interlinkRoot: headers[2]!.interlinkRoot,
       });
       headers[2] = h;
-      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 2, reason: 'target' });
     });
 
@@ -439,14 +485,14 @@ describe('verifyHeaderChain', () => {
         interlinkRoot: headers[0]!.interlinkRoot,
       });
       headers[0] = h;
-      const result = verifyHeaderChain(headers, genesisAnchor, P_dev, null, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, genesisAnchor, P_dev, null, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 0, reason: 'target' });
     });
 
     it('out-of-domain anchorBits → target at index 0', () => {
       const headers = mineChain(anchor, 1);
       const badParams = { ...P_dev, anchorBits: 70000 };
-      const result = verifyHeaderChain(headers, anchor, badParams, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, anchor, badParams, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 0, reason: 'target' });
     });
   });
@@ -458,7 +504,7 @@ describe('verifyHeaderChain', () => {
     const h = { ...headers[1]!, createdAt: headers[0]!.createdAt, powTargetBits: P_dev.anchorBits + 256 };
     h.powNonce = solveHeaderPow(h);
     headers[1] = h;
-    const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+    const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('time');
   });
@@ -469,21 +515,21 @@ describe('verifyHeaderChain', () => {
     it('at first position — tampered nonce', () => {
       const headers = mineChain(anchor, 3);
       headers[0] = { ...headers[0]!, powNonce: headers[0]!.powNonce + 1 };
-      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 0, reason: 'pow' });
     });
 
     it('at middle position — tampered nonce', () => {
       const headers = mineChain(anchor, 3);
       headers[1] = { ...headers[1]!, powNonce: headers[1]!.powNonce + 1 };
-      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 1, reason: 'pow' });
     });
 
     it('at last position — tampered nonce', () => {
       const headers = mineChain(anchor, 3);
       headers[2] = { ...headers[2]!, powNonce: headers[2]!.powNonce + 1 };
-      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 2, reason: 'pow' });
     });
   });
@@ -497,7 +543,7 @@ describe('verifyHeaderChain', () => {
     const tampered = { ...original, powNonce: original.powNonce + 1 };
     expect(verifyOrderingBlockPoW(tampered)).toBe(false);
     headers[1] = tampered;
-    const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+    const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
     expect(result).toEqual({ ok: false, index: 1, reason: 'pow' });
   });
 
@@ -506,7 +552,7 @@ describe('verifyHeaderChain', () => {
   describe('genesis anchor', () => {
     it('headers[1] target computed from headers[0] stamp', () => {
       const headers = mineChain(genesisAnchor, 3, P_dev, t_a);
-      const result = verifyHeaderChain(headers, genesisAnchor, P_dev, null, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, genesisAnchor, P_dev, null, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.work).toBe(cumulativeWork(headers));
@@ -517,7 +563,7 @@ describe('verifyHeaderChain', () => {
 
   it('a no-level header (yardstick harder than own target) verifies', () => {
     const headers = mineChain(anchor, 5);
-    const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+    const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
     expect(result.ok).toBe(true);
   });
 
@@ -526,19 +572,19 @@ describe('verifyHeaderChain', () => {
   describe('M-5: no-throw on malformed input', () => {
     it('non-object header answers domain', () => {
       const headers = [42 as unknown as BlockHeader];
-      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 0, reason: 'domain' });
     });
 
     it('string header answers domain', () => {
       const headers = ['not a header' as unknown as BlockHeader];
-      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 0, reason: 'domain' });
     });
 
     it('header with NaN height answers domain (blockHash refuses it)', () => {
       const h = makeHeader({ height: NaN as unknown as number, prevBlockHash: anchor.prevBlockHash });
-      const result = verifyHeaderChain([h], anchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain([h], anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 0, reason: 'domain' });
     });
 
@@ -548,17 +594,17 @@ describe('verifyHeaderChain', () => {
         prevBlockHash: anchor.prevBlockHash,
         powTargetBits: NaN as unknown as number,
       });
-      const result = verifyHeaderChain([h], anchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain([h], anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 0, reason: 'domain' });
     });
 
     it('null header answers domain', () => {
-      const result = verifyHeaderChain([null as unknown as BlockHeader], anchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain([null as unknown as BlockHeader], anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 0, reason: 'domain' });
     });
 
     it('non-array headers treated as empty segment', () => {
-      const result = verifyHeaderChain(null as unknown as BlockHeader[], anchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(null as unknown as BlockHeader[], anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.work).toBe(0n);
@@ -571,7 +617,7 @@ describe('verifyHeaderChain', () => {
   it('failure exposes no hashes or work', () => {
     const headers = mineChain(anchor, 3);
     headers[1] = { ...headers[1]!, powNonce: headers[1]!.powNonce + 1 };
-    const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+    const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result).toEqual({ ok: false, index: 1, reason: 'pow' });
@@ -584,7 +630,7 @@ describe('verifyHeaderChain', () => {
   describe('reason: interlinks', () => {
     it('the honest chain passes step 9 — mineChain maintains the vector', () => {
       const headers = mineChain(genesisAnchor, 5, P_dev, t_a);
-      const result = verifyHeaderChain(headers, genesisAnchor, P_dev, null, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, genesisAnchor, P_dev, null, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result.ok).toBe(true);
     });
 
@@ -600,7 +646,7 @@ describe('verifyHeaderChain', () => {
         powTargetBits: bits1,
         createdAt: headers[0]!.createdAt + P_dev.idealMs,
       });
-      const result = verifyHeaderChain([headers[0]!, h1], anchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain([headers[0]!, h1], anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 1, reason: 'interlinks' });
     });
 
@@ -616,27 +662,27 @@ describe('verifyHeaderChain', () => {
         powTargetBits: bits1,
         createdAt: headers[0]!.createdAt + P_dev.idealMs,
       });
-      const result = verifyHeaderChain([headers[0]!, h1], anchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain([headers[0]!, h1], anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 1, reason: 'interlinks' });
     });
 
     it('an anchor vector that is not the chain\'s → refused at index 0', () => {
       const headers = mineChain(anchor, 2);
       const wrongAnchor = { ...anchor, interlinks: ['cc'.repeat(32), 'dd'.repeat(32)] };
-      const result = verifyHeaderChain(headers, wrongAnchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, wrongAnchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 0, reason: 'interlinks' });
     });
 
     it('genesis anchor [] accepted for a height-1 header committing to interlinkRoot([])', () => {
       const headers = mineChain(genesisAnchor, 1, P_dev, t_a);
       expect(headers[0]!.interlinkRoot).toBe(interlinkRoot([]));
-      const result = verifyHeaderChain(headers, genesisAnchor, P_dev, null, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, genesisAnchor, P_dev, null, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result.ok).toBe(true);
     });
 
     it('a non-genesis anchor with a non-empty vector threads through', () => {
       const headers = mineChain(anchor, 3);
-      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.hashes).toHaveLength(3);
@@ -645,14 +691,14 @@ describe('verifyHeaderChain', () => {
     it('malformed anchor vector — not an array → interlinks at index 0', () => {
       const badAnchor = { ...anchor, interlinks: 'not-an-array' as unknown as string[] };
       const headers = mineChain(anchor, 1);
-      const result = verifyHeaderChain(headers, badAnchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, badAnchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 0, reason: 'interlinks' });
     });
 
     it('malformed anchor vector — entry not hex(32) → interlinks at index 0', () => {
       const badAnchor = { ...anchor, interlinks: ['not-hex'] };
       const headers = mineChain(anchor, 1);
-      const result = verifyHeaderChain(headers, badAnchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, badAnchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 0, reason: 'interlinks' });
     });
 
@@ -660,7 +706,7 @@ describe('verifyHeaderChain', () => {
       const tooMany = Array.from({ length: 258 }, () => 'aa'.repeat(32));
       const badAnchor = { ...anchor, interlinks: tooMany };
       const headers = mineChain(anchor, 1);
-      const result = verifyHeaderChain(headers, badAnchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, badAnchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 0, reason: 'interlinks' });
     });
 
@@ -677,15 +723,15 @@ describe('verifyHeaderChain', () => {
         interlinkRoot: interlinkRoot([]),
         createdAt: t_a + 5 * P_dev.idealMs,
       });
-      expect(() => verifyHeaderChain([h], emptyAboveGenesis, P_dev, t_a, FAR_FUTURE)).not.toThrow();
-      const result = verifyHeaderChain([h], emptyAboveGenesis, P_dev, t_a, FAR_FUTURE);
+      expect(() => verifyHeaderChain([h], emptyAboveGenesis, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE)).not.toThrow();
+      const result = verifyHeaderChain([h], emptyAboveGenesis, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result).toEqual({ ok: false, index: 0, reason: 'interlinks' });
     });
 
     it('malformed anchor never throws', () => {
       for (const bad of [null, undefined, 42, 'str', [42], [null]]) {
         const badAnchor = { ...anchor, interlinks: bad as unknown as string[] };
-        expect(() => verifyHeaderChain([], badAnchor, P_dev, t_a, FAR_FUTURE)).not.toThrow();
+        expect(() => verifyHeaderChain([], badAnchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE)).not.toThrow();
       }
     });
   });
@@ -694,7 +740,7 @@ describe('verifyHeaderChain', () => {
 
   it('a segment whose declared targets follow the schedule over its own stamps verifies', () => {
     const headers = mineChain(anchor, 5);
-    const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+    const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.work).toBe(cumulativeWork(headers));
@@ -705,15 +751,15 @@ describe('verifyHeaderChain', () => {
   describe('next — the continuation anchor', () => {
     it('one call equals pages — above genesis', () => {
       const headers = mineChain(anchor, 7);
-      const full = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      const full = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(full.ok).toBe(true);
       if (!full.ok) return;
 
-      const page1 = verifyHeaderChain(headers.slice(0, 3), anchor, P_dev, t_a, FAR_FUTURE);
+      const page1 = verifyHeaderChain(headers.slice(0, 3), anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(page1.ok).toBe(true);
       if (!page1.ok) return;
 
-      const page2 = verifyHeaderChain(headers.slice(3), page1.next, P_dev, page1.next.t_a, FAR_FUTURE);
+      const page2 = verifyHeaderChain(headers.slice(3), page1.next, P_dev, page1.next.t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(page2.ok).toBe(true);
       if (!page2.ok) return;
 
@@ -724,18 +770,18 @@ describe('verifyHeaderChain', () => {
 
     it('one call equals pages — genesis-anchored', () => {
       const headers = mineChain(genesisAnchor, 7, P_dev, t_a);
-      const full = verifyHeaderChain(headers, genesisAnchor, P_dev, null, FAR_FUTURE);
+      const full = verifyHeaderChain(headers, genesisAnchor, P_dev, null, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(full.ok).toBe(true);
       if (!full.ok) return;
 
-      const page1 = verifyHeaderChain(headers.slice(0, 3), genesisAnchor, P_dev, null, FAR_FUTURE);
+      const page1 = verifyHeaderChain(headers.slice(0, 3), genesisAnchor, P_dev, null, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(page1.ok).toBe(true);
       if (!page1.ok) return;
 
       // At genesis, page one's next.t_a is the height-1 header's stamp
       expect(page1.next.t_a).toBe(headers[0]!.createdAt);
 
-      const page2 = verifyHeaderChain(headers.slice(3), page1.next, P_dev, page1.next.t_a, FAR_FUTURE);
+      const page2 = verifyHeaderChain(headers.slice(3), page1.next, P_dev, page1.next.t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(page2.ok).toBe(true);
       if (!page2.ok) return;
 
@@ -746,12 +792,12 @@ describe('verifyHeaderChain', () => {
 
     it('stale carried vector refuses interlinks', () => {
       const headers = mineChain(anchor, 5);
-      const page1 = verifyHeaderChain(headers.slice(0, 3), anchor, P_dev, t_a, FAR_FUTURE);
+      const page1 = verifyHeaderChain(headers.slice(0, 3), anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(page1.ok).toBe(true);
       if (!page1.ok) return;
 
       const stale = { ...page1.next, interlinks: anchor.interlinks };
-      const result = verifyHeaderChain(headers.slice(3), stale, P_dev, stale.t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers.slice(3), stale, P_dev, stale.t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.index).toBe(0);
@@ -760,12 +806,12 @@ describe('verifyHeaderChain', () => {
 
     it('tampered prevBlockHash in next refuses link', () => {
       const headers = mineChain(anchor, 5);
-      const page1 = verifyHeaderChain(headers.slice(0, 3), anchor, P_dev, t_a, FAR_FUTURE);
+      const page1 = verifyHeaderChain(headers.slice(0, 3), anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(page1.ok).toBe(true);
       if (!page1.ok) return;
 
       const bad = { ...page1.next, prevBlockHash: 'ff'.repeat(32) };
-      const result = verifyHeaderChain(headers.slice(3), bad, P_dev, bad.t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers.slice(3), bad, P_dev, bad.t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.reason).toBe('link');
@@ -773,12 +819,12 @@ describe('verifyHeaderChain', () => {
 
     it('wrong height in next refuses height', () => {
       const headers = mineChain(anchor, 5);
-      const page1 = verifyHeaderChain(headers.slice(0, 3), anchor, P_dev, t_a, FAR_FUTURE);
+      const page1 = verifyHeaderChain(headers.slice(0, 3), anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(page1.ok).toBe(true);
       if (!page1.ok) return;
 
       const bad = { ...page1.next, height: page1.next.height + 1 };
-      const result = verifyHeaderChain(headers.slice(3), bad, P_dev, bad.t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers.slice(3), bad, P_dev, bad.t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.reason).toBe('height');
@@ -786,19 +832,19 @@ describe('verifyHeaderChain', () => {
 
     it('createdAt above page first stamp refuses time', () => {
       const headers = mineChain(anchor, 5);
-      const page1 = verifyHeaderChain(headers.slice(0, 3), anchor, P_dev, t_a, FAR_FUTURE);
+      const page1 = verifyHeaderChain(headers.slice(0, 3), anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(page1.ok).toBe(true);
       if (!page1.ok) return;
 
       const bad = { ...page1.next, createdAt: headers[4]!.createdAt + 1 };
-      const result = verifyHeaderChain(headers.slice(3), bad, P_dev, bad.t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers.slice(3), bad, P_dev, bad.t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.reason).toBe('time');
     });
 
     it('empty segment next equals its anchor', () => {
-      const result = verifyHeaderChain([], anchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain([], anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.next).toEqual({
@@ -811,7 +857,7 @@ describe('verifyHeaderChain', () => {
     });
 
     it('empty segment next reads undefined anchorCreatedAt as null', () => {
-      const result = verifyHeaderChain([], anchor, P_dev, undefined as unknown as number | null, FAR_FUTURE);
+      const result = verifyHeaderChain([], anchor, P_dev, undefined as unknown as number | null, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.next.t_a).toBe(null);
@@ -826,7 +872,7 @@ describe('verifyHeaderChain', () => {
         createdAt: headers[0]!.createdAt,
         powTargetBits: headers[0]!.powTargetBits,
       });
-      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE);
+      const result = verifyHeaderChain(headers, anchor, P_dev, t_a, FAR_FUTURE, DEVNET_SCHEDULE);
       expect(result.ok).toBe(false);
       expect(result).not.toHaveProperty('next');
     });

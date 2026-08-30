@@ -10,6 +10,7 @@ import {
   createOrderingBlock,
 } from '../../src/store/ordering.js';
 import { createRouter, KARMA_SUPPLY_TYPES } from '../../src/routes/blocks.js';
+import type { BlocksDeps } from '../../src/routes/blocks.js';
 import { PROTOCOL_VERSION } from '@dagsocial/types';
 import type { OrderingBlock } from '@dagsocial/types';
 import { unlinkSync } from 'fs';
@@ -119,6 +120,7 @@ async function request(
       inviteBondMax: 10000n,
       getNetworkRecord: () => ({ memberCount: 1 }),
       membershipBarMultiplier: 1,
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
     };
 
     const app = express();
@@ -306,5 +308,50 @@ describe('blocks routes', () => {
     expect(body.totalKarma).toBe(expectedTotal.toString());
     expect(body.liquidKarma).toBe('7');
     expect(body.totalCredits).toBe('100');
+  });
+});
+
+describe('/status reports the era at blockHeight + 1', () => {
+  const H = 5;
+  // A synthetic two-era schedule; a fixture may schedule a version the build
+  // does not implement (TYPES_INTERFACE → Version).
+  const SCHEDULE = [{ version: 1, fromHeight: 0 }, { version: 2, fromHeight: H }];
+
+  function statusAt(tip: number): Promise<Record<string, unknown>> {
+    const deps: BlocksDeps = {
+      getOrderingBlock: () => null,
+      getOrderingBlockHash: () => null,
+      getCurrentHeight: () => tip,
+      getPostCount: () => 0,
+      getPendingPostCount: () => 0,
+      getTotalKarma: () => 0n,
+      getLiquidKarma: () => 0n,
+      getTotalCredits: () => 0n,
+      networkType: 'testnet',
+      inviteProbationBlocks: 43200,
+      vouchCooldownBlocks: 60,
+      inviteBondMin: 100n,
+      inviteBondMax: 10000n,
+      getNetworkRecord: () => ({ memberCount: 1 }),
+      membershipBarMultiplier: 1,
+      protocolVersionSchedule: SCHEDULE,
+    };
+    const app = express();
+    app.use(createRouter(deps));
+    return new Promise((resolve) => {
+      const server = app.listen(0, () => {
+        const addr = server.address() as { port: number };
+        http.get(`http://127.0.0.1:${addr.port}/status`, (res) => {
+          let b = '';
+          res.on('data', (c) => (b += c));
+          res.on('end', () => { server.close(); resolve(JSON.parse(b)); });
+        });
+      });
+    });
+  }
+
+  it('protocolVersion is the era at blockHeight + 1 and flips at the boundary', async () => {
+    expect((await statusAt(H - 2)).protocolVersion).toBe(1);
+    expect((await statusAt(H - 1)).protocolVersion).toBe(2);
   });
 });

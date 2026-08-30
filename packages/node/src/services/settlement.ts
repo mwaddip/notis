@@ -66,7 +66,7 @@
 import {
   INVITE_BOND_VEST_PER_LIKES,
   LIKES_PER_KARMA_PAYOUT,
-  PROTOCOL_VERSION,
+  protocolVersionAt,
   encodeTx,
 } from '@dagsocial/types';
 import type {
@@ -81,7 +81,9 @@ import type {
   VouchBox,
   VouchEscrowBox,
   UtxoTransaction,
+  ProtocolEra,
 } from '@dagsocial/types';
+import { verifyProtocolVersion } from '@dagsocial/validation';
 import { splitCoinbase } from './coinbase-split.js';
 import type { DecayPlan } from './decay.js';
 
@@ -533,11 +535,18 @@ function derive(
 export function buildSettlement(
   deps: SettlementDeps,
   height: number,
+  schedule: readonly ProtocolEra[],
   emission: bigint,
   minerRewardDelay: number,
   body: SettlementBody,
   minerOwner: Uint8Array,
 ): { tx: UtxoTransaction } | { error: string } {
+  // The settlement declares the block's era (NODE_INTERFACE → The settlement
+  // transaction). Total in height, so a height no era covers is an error.
+  const version = protocolVersionAt(schedule, height);
+  if (version === null) {
+    return { error: `no protocol era scheduled at height ${height}` };
+  }
   const d = derive(deps, height, emission, minerRewardDelay, body);
   if ('error' in d) return d;
   const { derived } = d;
@@ -564,7 +573,7 @@ export function buildSettlement(
       // rule reads (NODE_INTERFACE → Legal box transitions — no requirement may
       // name a key that is not already in consensus state).
       signatures: {},
-      protocolVersion: PROTOCOL_VERSION,
+      protocolVersion: version,
     },
   };
 }
@@ -612,6 +621,7 @@ function candidateKey(o: AnyBoxCandidate): string {
 export function checkSettlement(
   deps: SettlementDeps,
   height: number,
+  schedule: readonly ProtocolEra[],
   emission: bigint,
   minerRewardDelay: number,
   body: SettlementBody,
@@ -666,10 +676,14 @@ export function checkSettlement(
   if (settlement.postWithdraw !== undefined) {
     return { valid: false, error: 'settlement carries a postWithdraw' };
   }
-  if (settlement.protocolVersion !== PROTOCOL_VERSION) {
+  // The settlement declares the block's era (NODE_INTERFACE → The settlement
+  // transaction).
+  if (!verifyProtocolVersion(settlement.protocolVersion, height, schedule)) {
     return {
       valid: false,
-      error: `settlement declares protocol version ${settlement.protocolVersion}`,
+      error:
+        `settlement declares protocol version ${settlement.protocolVersion}, ` +
+        `not the era ${protocolVersionAt(schedule, height)} at height ${height}`,
     };
   }
 
@@ -778,7 +792,7 @@ export function checkSettlement(
  * amount is a parameter: the inviter picks the bond, and the grant equals it, so
  * a grant's width is a property of the invite rather than of a constant.
  */
-function probe(inputs: number, grants: number, grantValue: bigint): UtxoTransaction {
+function probe(inputs: number, grants: number, grantValue: bigint, version: number): UtxoTransaction {
   return {
     inputs: Array.from({ length: inputs }, (_, i) =>
       i.toString(16).padStart(64, '0'),
@@ -790,7 +804,7 @@ function probe(inputs: number, grants: number, grantValue: bigint): UtxoTransact
       owner: new Uint8Array(32),
     })),
     signatures: {},
-    protocolVersion: PROTOCOL_VERSION,
+    protocolVersion: version,
   };
 }
 
@@ -799,8 +813,21 @@ function probe(inputs: number, grants: number, grantValue: bigint): UtxoTransact
 // consistent transposition round-trips perfectly — the same reason
 // `utxoTxTreeByteLength` exists rather than an arithmetic in the block creator
 // (TYPES_INTERFACE → Sizing without encoding).
-const PROBE_BASE = encodeTx(probe(0, 0, 0n)).length;
-const INPUT_BYTES = encodeTx(probe(1, 0, 0n)).length - PROBE_BASE;
+//
+// ⛔ **The probe stamps the era it prices, never a constant, and the bases are
+// measured per era rather than read off an import-time constant** (NODE_INTERFACE
+// → The settlement transaction). A version wide enough to widen its VLQ moves the
+// base, so a settlement of that era is measured at that era.
+const probeBasesByVersion = new Map<number, { base: number; inputBytes: number }>();
+function probeBases(version: number): { base: number; inputBytes: number } {
+  let bases = probeBasesByVersion.get(version);
+  if (bases === undefined) {
+    const base = encodeTx(probe(0, 0, 0n, version)).length;
+    bases = { base, inputBytes: encodeTx(probe(1, 0, 0n, version)).length - base };
+    probeBasesByVersion.set(version, bases);
+  }
+  return bases;
+}
 
 /**
  * What one grant of `amount` adds to the settlement, in bytes.
@@ -813,8 +840,8 @@ const INPUT_BYTES = encodeTx(probe(1, 0, 0n)).length - PROBE_BASE;
  * Exact rather than a ceiling: the transaction being sized names its own bond,
  * so there is nothing to bound.
  */
-function grantBytes(amount: bigint): number {
-  return encodeTx(probe(0, 1, amount)).length - PROBE_BASE;
+function grantBytes(amount: bigint, version: number): number {
+  return encodeTx(probe(0, 1, amount, version)).length - probeBases(version).base;
 }
 
 /**
@@ -837,10 +864,15 @@ function grantBytes(amount: bigint): number {
  * the last word.
  */
 export function settlementMarginalBytes(tx: UtxoTransaction): number {
+  // The settlement's version is the block's era, which every embedded
+  // transaction declares too — so the probe prices at this transaction's own
+  // version (NODE_INTERFACE → The settlement transaction).
+  const version = tx.protocolVersion;
+  const { inputBytes } = probeBases(version);
   let bytes = 0;
   for (const out of tx.outputs ?? []) {
-    if (out.boxType === 'fee') bytes += INPUT_BYTES;
-    else if (out.boxType === 'bond') bytes += grantBytes((out as BondBox).value);
+    if (out.boxType === 'fee') bytes += inputBytes;
+    else if (out.boxType === 'bond') bytes += grantBytes((out as BondBox).value, version);
     // ⛔ **A marker's term is an INPUT, not an output**, and that is the whole
     // reason a per-like surcharge does not compound. Each like adds one derived
     // input to the settlement; the payout it eventually joins is one output per
@@ -852,8 +884,8 @@ export function settlementMarginalBytes(tx: UtxoTransaction): number {
     // At most one input and one output per credited author, which the marker
     // terms already over-count against — an author with `k` likes reserves `k`
     // inputs and needs `k + 1`, and the sizer has the last word either way.
-    else if (out.boxType === 'like_accrual') bytes += INPUT_BYTES;
-    else if (out.boxType === 'karma_price') bytes += INPUT_BYTES;
+    else if (out.boxType === 'like_accrual') bytes += inputBytes;
+    else if (out.boxType === 'karma_price') bytes += inputBytes;
   }
   return bytes;
 }

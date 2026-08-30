@@ -10,6 +10,7 @@ import { describe, it, expect } from 'vitest';
 import {
   LIKES_PER_KARMA_PAYOUT,
   INVITE_BOND_VEST_PER_LIKES,
+  encodeTx,
 } from '@dagsocial/types';
 import type {
   AnyBox,
@@ -168,7 +169,7 @@ describe('settlement leg order', () => {
   // and the "exactly and in order" / "element-wise and in order" checks).
   it('inputs and outputs land in derive()\'s leg order', () => {
     const result = buildSettlement(
-      deps, HEIGHT, EMISSION, MINER_REWARD_DELAY, body, miner.userId);
+      deps, HEIGHT, [{ version: 1, fromHeight: 0 }], EMISSION, MINER_REWARD_DELAY, body, miner.userId);
     expect('tx' in result).toBe(true);
     if (!('tx' in result)) return;
     const { tx } = result;
@@ -248,19 +249,54 @@ describe('settlement leg order', () => {
     // necessary but not sufficient — the positional assertions above are
     // the pin.
     const check = checkSettlement(
-      deps, HEIGHT, EMISSION, MINER_REWARD_DELAY, body, tx);
+      deps, HEIGHT, [{ version: 1, fromHeight: 0 }], EMISSION, MINER_REWARD_DELAY, body, tx);
     expect(check.valid).toBe(true);
   });
 
   it('refuses a settlement carrying a postWithdraw payload', () => {
     const result = buildSettlement(
-      deps, HEIGHT, EMISSION, MINER_REWARD_DELAY, body, miner.userId);
+      deps, HEIGHT, [{ version: 1, fromHeight: 0 }], EMISSION, MINER_REWARD_DELAY, body, miner.userId);
     expect('tx' in result).toBe(true);
     if (!('tx' in result)) return;
     const poisoned = { ...result.tx, postWithdraw: { postId: 'aa'.repeat(32) } };
     const check = checkSettlement(
-      deps, HEIGHT, EMISSION, MINER_REWARD_DELAY, body, poisoned);
+      deps, HEIGHT, [{ version: 1, fromHeight: 0 }], EMISSION, MINER_REWARD_DELAY, body, poisoned);
     expect(check.valid).toBe(false);
     expect(check.error).toMatch(/settlement carries a postWithdraw/);
+  });
+});
+
+describe('the settlement declares the block\'s era', () => {
+  // A synthetic two-era schedule; a fixture may schedule a version the build
+  // does not implement (TYPES_INTERFACE → Version).
+  const AT_H = [{ version: 1, fromHeight: 0 }, { version: 2, fromHeight: HEIGHT }];
+  const ONE_ERA = [{ version: 1, fromHeight: 0 }];
+
+  it('the builder stamps the era at the block\'s height', () => {
+    const built = buildSettlement(deps, HEIGHT, AT_H, EMISSION, MINER_REWARD_DELAY, body, miner.userId);
+    expect('tx' in built).toBe(true);
+    if (!('tx' in built)) return;
+    expect(built.tx.protocolVersion).toBe(2);
+  });
+
+  it('checkSettlement refuses a settlement declaring a version other than the era', () => {
+    const era1 = buildSettlement(deps, HEIGHT, ONE_ERA, EMISSION, MINER_REWARD_DELAY, body, miner.userId);
+    expect('tx' in era1).toBe(true);
+    if (!('tx' in era1)) return;
+    // Built declaring 1, checked at H where the era is 2.
+    const check = checkSettlement(deps, HEIGHT, AT_H, EMISSION, MINER_REWARD_DELAY, body, era1.tx);
+    expect(check.valid).toBe(false);
+    expect(check.error).toContain('not the era 2');
+  });
+
+  it('the byte probe measures a wide version — era 128 is one byte more than era 1', () => {
+    const era1 = buildSettlement(deps, HEIGHT, ONE_ERA, EMISSION, MINER_REWARD_DELAY, body, miner.userId);
+    const era128 = buildSettlement(
+      deps, HEIGHT, [{ version: 1, fromHeight: 0 }, { version: 128, fromHeight: HEIGHT }],
+      EMISSION, MINER_REWARD_DELAY, body, miner.userId);
+    expect('tx' in era1 && 'tx' in era128).toBe(true);
+    if (!('tx' in era1) || !('tx' in era128)) return;
+    expect(era128.tx.protocolVersion).toBe(128);
+    expect(encodeTx(era128.tx).length).toBe(encodeTx(era1.tx).length + 1);
   });
 });

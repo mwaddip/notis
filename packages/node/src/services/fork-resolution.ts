@@ -43,6 +43,7 @@ import { applyOrderingBlock } from './block-apply.js';
 import { registerPlaceholder } from './backfill.js';
 import { getPlaceholdersAt } from '../store/index.js';
 import { noteTip } from '../metrics.js';
+import { getNet } from './net-instance.js';
 import { rebuildTemplate } from './block-creator.js';
 import {
   CorruptChainStateError,
@@ -331,6 +332,9 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[]): void {
 
   // NODE_INTERFACE → Admin Listener: the tip the reorg left.
   noteTip(forkHeight + newBlocks.length);
+  // net learns of the reorg's tip at the same seam, so a version boundary can
+  // sweep peers below the new era (NET_INTERFACE → API).
+  getNet()?.tipApplied(forkHeight + newBlocks.length);
 
   // A reorg is one tip move, however many blocks it applies. The per-block
   // rebuild inside `applyOrderingBlock` stands down while nested in the
@@ -581,7 +585,7 @@ export async function resolveFork(
       }
 
       // Verify this page (VALIDATION_INTERFACE → verifyHeaderChain).
-      const verdict = verifyHeaderChain(page, anchor, params, t_a, nowMs());
+      const verdict = verifyHeaderChain(page, anchor, params, t_a, nowMs(), config.protocolVersionSchedule);
       if (!verdict.ok) {
         if (verdict.reason === 'clock') {
           console.warn(
@@ -590,11 +594,15 @@ export async function resolveFork(
           );
           return;
         }
+        // A 'version' verdict is a compatibility refusal — the peer serves a
+        // chain of another era — penalised transient, not misbehavior
+        // (NODE_INTERFACE → Fork choice decides on verified headers).
+        const tier = verdict.reason === 'version' ? 'transient' : 'misbehavior';
         console.warn(
           `Fork resolution: header verification failed ` +
-          `(index=${verdict.index}, reason=${verdict.reason}), penalising peer ${peerId}`,
+          `(index=${verdict.index}, reason=${verdict.reason}), penalising peer ${peerId} (${tier})`,
         );
-        net.penalizePeer(peerId, 'misbehavior', `header verification: ${verdict.reason} at index ${verdict.index}`);
+        net.penalizePeer(peerId, tier, `header verification: ${verdict.reason} at index ${verdict.index}`);
         return;
       }
 

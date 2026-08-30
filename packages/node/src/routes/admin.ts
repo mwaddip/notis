@@ -1,5 +1,7 @@
 // NODE_INTERFACE → Admin Listener: a pure reader of metrics.ts and injected net deps.
 import { Router } from 'express';
+import type { ProtocolEra } from '@dagsocial/types';
+import { protocolVersionAt } from '@dagsocial/types';
 import {
   getDagTipHeight,
   getLastPostReceivedMsAgo,
@@ -11,6 +13,8 @@ import {
 export interface AdminDeps {
   getConnectedPeers: () => string[];
   syncPhase: () => 'idle' | 'syncing' | 'backfill' | 'synced';
+  /** The profile's era schedule (NODE_INTERFACE → Admin Listener). */
+  protocolVersionSchedule: readonly ProtocolEra[];
 }
 
 export function createAdminRouter(deps: AdminDeps): Router {
@@ -26,6 +30,13 @@ export function createAdminRouter(deps: AdminDeps): Router {
       syncing: phase === 'syncing' || phase === 'backfill',
       sync_phase: phase,
       uptime_seconds: getUptimeSeconds(),
+      // The era a client must sign at, off the metrics' tip — the same number
+      // dag_tip_height shows (NODE_INTERFACE → Admin Listener).
+      protocol_version: protocolVersionAt(deps.protocolVersionSchedule, getDagTipHeight() + 1),
+      protocol_version_schedule: deps.protocolVersionSchedule.map((e) => ({
+        version: e.version,
+        from_height: e.fromHeight,
+      })),
       apiVersion: '1.0',
       journalEventsVersion: '1.0',
     });

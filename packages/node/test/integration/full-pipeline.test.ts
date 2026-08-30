@@ -211,6 +211,7 @@ interface EngineDeps {
   getNetworkRecord: () => { memberCount: number };
   membershipBarMultiplier: number;
   putIdentityRecord: (identityId: Uint8Array, record: IdentityRecord) => void;
+  protocolVersionSchedule: readonly { version: number; fromHeight: number }[];
 }
 
 function makeEngineDeps(
@@ -266,6 +267,7 @@ function makeEngineDeps(
     getNetworkRecord: () => ({ memberCount: 1 }),
     membershipBarMultiplier: 1,
     putIdentityRecord: () => {},
+    protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
   };
 }
 

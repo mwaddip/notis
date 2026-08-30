@@ -14,11 +14,13 @@ import {
 function adminApp(deps?: {
   getConnectedPeers?: () => string[];
   syncPhase?: () => 'idle' | 'syncing' | 'synced';
+  protocolVersionSchedule?: { version: number; fromHeight: number }[];
 }): express.Express {
   const app = express();
   app.use(createAdminRouter({
     getConnectedPeers: deps?.getConnectedPeers ?? (() => []),
     syncPhase: deps?.syncPhase ?? (() => 'idle'),
+    protocolVersionSchedule: deps?.protocolVersionSchedule ?? [{ version: 1, fromHeight: 0 }],
   }));
   return app;
 }
@@ -166,6 +168,30 @@ describe('admin routes', () => {
       expect(counters.pow_verifications_total).toBe(2);
       expect(counters.pow_verification_failures_total).toBe(1);
       expect(counters.http_requests_total).toBe(3);
+    });
+  });
+
+  describe('the era, off the metrics tip', () => {
+    const H = 5;
+    // A synthetic two-era schedule; a fixture may schedule a version the build
+    // does not implement (TYPES_INTERFACE → Version).
+    const SCHEDULE = [{ version: 1, fromHeight: 0 }, { version: 2, fromHeight: H }];
+
+    it('protocol_version is the era at the tip + 1 and flips at the boundary', async () => {
+      noteTip(H - 2);
+      const below = (await get(adminApp({ protocolVersionSchedule: SCHEDULE }), '/health')).data as Record<string, unknown>;
+      expect(below.protocol_version).toBe(1);
+      noteTip(H - 1);
+      const at = (await get(adminApp({ protocolVersionSchedule: SCHEDULE }), '/health')).data as Record<string, unknown>;
+      expect(at.protocol_version).toBe(2);
+    });
+
+    it('protocol_version_schedule lists the profile rows as { version, from_height }', async () => {
+      const data = (await get(adminApp({ protocolVersionSchedule: SCHEDULE }), '/health')).data as Record<string, unknown>;
+      expect(data.protocol_version_schedule).toEqual([
+        { version: 1, from_height: 0 },
+        { version: 2, from_height: 5 },
+      ]);
     });
   });
 });

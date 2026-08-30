@@ -9,6 +9,7 @@ import type { PostCommit, UtxoTransaction, OrderingBlock, BlockHeader } from '@d
 import {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
+  verifyTxProtocolVersion,
   verifyContentLimits,
   verifyParentRefsCount,
   verifyTxStructure,
@@ -24,6 +25,7 @@ function makeConfig(bootstrapPeers: string[] = []): NetConfig {
     // not silently frame as mainnet (ARCHITECTURE → What varies per network,
     // and what must not).
     magic: 0x54444147,
+    protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
     // Matches the 20-bit target the fixtures below are mined at.
     bootstrapPeers,
     listenAddrs: '/ip4/0.0.0.0/tcp/0',
@@ -38,6 +40,7 @@ function makeConfig(bootstrapPeers: string[] = []): NetConfig {
 const validators: NetValidators = {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
+  verifyTxProtocolVersion,
   verifyContentLimits,
   verifyParentRefsCount,
   verifyTxStructure,

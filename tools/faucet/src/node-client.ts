@@ -1,5 +1,11 @@
 import type { BoxRef } from './tx.js';
 
+/** One `/status` read: the tip, and the era a client signs (NODE_INTERFACE → Status). */
+export interface NodeStatus {
+  readonly blockHeight: number;
+  readonly protocolVersion: number;
+}
+
 /**
  * The node's HTTP surface, and the only file that knows its URL shape.
  *
@@ -8,7 +14,7 @@ import type { BoxRef } from './tx.js';
  * one is parsed to `bigint` here and nothing downstream sees the wire form.
  */
 export interface NodeClient {
-  currentHeight(): Promise<number>;
+  status(): Promise<NodeStatus>;
   karmaBoxes(pubKeyHex: string): Promise<BoxRef[]>;
   creditBoxes(pubKeyHex: string): Promise<BoxRef[]>;
   submitInvite(tx: Record<string, unknown>): Promise<void>;
@@ -24,12 +30,24 @@ interface WireBox {
 export class HttpNodeClient implements NodeClient {
   constructor(private readonly base: string) {}
 
-  async currentHeight(): Promise<number> {
+  /**
+   * The tip and the era, from one `/status` read.
+   *
+   * The faucet is a client, and a client signs the era the node reports rather
+   * than a constant of its own build (WEB_INTERFACE → Invariants); `/status`
+   * serves `protocolVersion` — the era at `blockHeight + 1` — beside the height
+   * for exactly that. A status missing either field is refused: a default would
+   * sign the wrong era.
+   */
+  async status(): Promise<NodeStatus> {
     const res = await fetch(`${this.base}/status`);
     if (!res.ok) throw new NodeError(res.status, await failure(res));
-    const data = (await res.json()) as { blockHeight?: number };
+    const data = (await res.json()) as { blockHeight?: number; protocolVersion?: number };
     if (typeof data.blockHeight !== 'number') throw new NodeError(502, 'node status carried no height');
-    return data.blockHeight;
+    if (typeof data.protocolVersion !== 'number') {
+      throw new NodeError(502, 'node status carried no protocol version');
+    }
+    return { blockHeight: data.blockHeight, protocolVersion: data.protocolVersion };
   }
 
   async karmaBoxes(pubKeyHex: string): Promise<BoxRef[]> {

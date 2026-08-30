@@ -2,7 +2,7 @@ import {
   computePostId,
   MEMPOOL_EXPIRY_BLOCKS,
 } from '@dagsocial/types';
-import type { PostCommit, Stump, KarmaBox, UtxoTransaction, AnyBox } from '@dagsocial/types';
+import type { PostCommit, Stump, KarmaBox, UtxoTransaction, AnyBox, ProtocolEra } from '@dagsocial/types';
 import type { StoredPost, PrunedTombstone } from '../store/posts.js';
 import type { VerifierDeps, VerificationResult } from './verifier.js';
 import type { DecayCfg } from './decay.js';
@@ -43,6 +43,8 @@ export interface PostServiceDeps {
   insertPost: (postId: string, commit: PostCommit, content: string | null) => void;
 
   getCurrentHeight: () => number;
+  /** The profile's era schedule — supplied to the verifier's version check. */
+  protocolVersionSchedule: readonly ProtocolEra[];
 
   admitTx: (tx: UtxoTransaction, expiresAtHeight: number) => number;
 
@@ -76,7 +78,10 @@ export function createPost(
   tx: UtxoTransaction,
   content: string,
 ): PostCreateResult {
-  const currentHeight = deps.getCurrentHeight();
+  // The judged-for height — tip + 1, the block that would carry this
+  // transaction. The verifier and validateTx read the same height, one rule
+  // (NODE_INTERFACE → validateTx).
+  const currentHeight = deps.getCurrentHeight() + 1;
 
   const commit = tx.post;
   if (!commit) {
@@ -97,6 +102,7 @@ export function createPost(
     currentHeight,
     decayCfg: deps.decayCfg,
     getPost: deps.getPost,
+    protocolVersionSchedule: deps.protocolVersionSchedule,
   };
   const result = deps.verifyPost(verifierDeps, commit);
   if (!result.valid) {

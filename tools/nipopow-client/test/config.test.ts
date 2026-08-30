@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseConfig, ConfigError, verifierProfile } from '../src/config.js';
-import { NETWORK_PROFILES, PROTOCOL_VERSION } from '@dagsocial/types';
+import { NETWORK_PROFILES } from '@dagsocial/types';
 
 function env(overrides: Record<string, string> = {}) {
   return {
@@ -108,7 +108,8 @@ describe('verifierProfile', () => {
     expect(vp.maxFutureDriftMs).toBe(600_000);
     expect(vp.nowMs).toBe(12345);
     expect(vp.genesisId).toBe(NETWORK_PROFILES.devnet.genesisId);
-    expect(vp.protocolVersion).toBe(PROTOCOL_VERSION);
+    expect(vp.protocolVersionSchedule).toEqual([{ version: 1, fromHeight: 0 }]);
+    expect(vp.protocolVersionSchedule).toBe(NETWORK_PROFILES.devnet.protocolVersionSchedule);
   });
 
   it('testnet profile carries the testnet band and schedule', () => {
@@ -123,6 +124,7 @@ describe('verifierProfile', () => {
     expect(vp.maxFutureDriftMs).toBe(600_000);
     expect(vp.nowMs).toBe(99999);
     expect(vp.genesisId).toBe(NETWORK_PROFILES.testnet.genesisId);
-    expect(vp.protocolVersion).toBe(PROTOCOL_VERSION);
+    expect(vp.protocolVersionSchedule).toEqual([{ version: 1, fromHeight: 0 }]);
+    expect(vp.protocolVersionSchedule).toBe(NETWORK_PROFILES.testnet.protocolVersionSchedule);
   });
 });

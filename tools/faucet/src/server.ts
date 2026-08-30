@@ -52,8 +52,10 @@ export function createApp(cfg: FaucetConfig, client: NodeClient): express.Expres
     const pubkey = requested(req, res);
     if (pubkey === null || limited(karmaLimit, req, res)) return;
     try {
-      const height = await client.currentHeight();
-      const built = buildInviteTx(cfg, chain.view(await client.karmaBoxes(cfg.publicKeyHex)), pubkey, height);
+      const { blockHeight, protocolVersion } = await client.status();
+      const built = buildInviteTx(
+        cfg, chain.view(await client.karmaBoxes(cfg.publicKeyHex)), pubkey, blockHeight, protocolVersion,
+      );
       await client.submitInvite(built.tx);
       chain.advance(built);
       res.status(202).json({ txId: built.txId, status: 'pending' });
@@ -69,9 +71,9 @@ export function createApp(cfg: FaucetConfig, client: NodeClient): express.Expres
     const pubkey = requested(req, res);
     if (pubkey === null || limited(creditLimit, req, res)) return;
     try {
-      const height = await client.currentHeight();
+      const { blockHeight, protocolVersion } = await client.status();
       const built = buildCreditTransferTx(
-        cfg, await client.creditBoxes(cfg.publicKeyHex), pubkey, height,
+        cfg, await client.creditBoxes(cfg.publicKeyHex), pubkey, blockHeight, protocolVersion,
       );
       await client.submitTransfer(built.tx);
       res.status(202).json({ txId: built.txId, status: 'pending' });

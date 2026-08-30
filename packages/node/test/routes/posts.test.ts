@@ -91,6 +91,7 @@ async function request(
       getTopologyAuthor: () => null,
       getPendingPostAuthor,
       getCurrentHeight,
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
       admitTx: insertUtxoTx,
       runInTransaction: (fn: () => void) => db.transaction(fn)(),
       validateTx: (tx: UtxoTransaction, height: number) => {
@@ -135,6 +136,7 @@ async function request(
       getNetworkRecord: () => ({ memberCount: 1 }),
       membershipBarMultiplier: 1,
       putIdentityRecord: () => {},
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
           },
           tx,
           height,

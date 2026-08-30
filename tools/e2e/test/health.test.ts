@@ -8,6 +8,7 @@ import {
   postInvite,
   postPost,
   getKarma,
+  getStatus,
   hasKarma,
   getBlockCurrent,
   adminGet,
@@ -24,6 +25,8 @@ const HEALTH_KEYS = [
   'sync_phase',
   'syncing',
   'uptime_seconds',
+  'protocol_version',
+  'protocol_version_schedule',
   'apiVersion',
   'journalEventsVersion',
 ] as const;
@@ -87,6 +90,12 @@ describe('health', () => {
       expect(h['last_post_received_ms_ago']).toBeNull();
       expect(typeof h['uptime_seconds']).toBe('number');
       expect(h['uptime_seconds'] as number).toBeGreaterThanOrEqual(0);
+      // the era at dag_tip_height + 1, and the profile's rows
+      // (NODE_INTERFACE → Admin Listener)
+      expect(h['protocol_version']).toBe(1);
+      expect(h['protocol_version_schedule']).toEqual([
+        { version: 1, from_height: 0 },
+      ]);
       expect(h['apiVersion']).toBe('1.0');
       expect(h['journalEventsVersion']).toBe('1.0');
     }
@@ -107,6 +116,7 @@ describe('health', () => {
     }
 
     // ---- post one thread, confirm it ----
+    const version = (await getStatus(miner)).protocolVersion;
     const alice = fresh();
     const bondAmount = 50n;
     const faucetKarma = (await getKarma(miner, DEVNET_FAUCET.publicKeyHex))!;
@@ -116,6 +126,7 @@ describe('health', () => {
       alice,
       bondAmount,
       faucetKarma.height,
+      version,
     );
     await postInvite(miner, invite.json);
 
@@ -132,6 +143,7 @@ describe('health', () => {
       karmaBoxes(aliceK),
       'health check post',
       aliceK.height,
+      version,
     );
 
     // Submit the post to every node via HTTP so each fires emitPostReceived

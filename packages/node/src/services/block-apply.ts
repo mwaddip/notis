@@ -94,6 +94,7 @@ import type { BlockJournal } from '../store/journal.js';
 import { tryGetAvlProver, applyBlockMutations, checkpointProver } from '../state/avl-prover.js';
 import { emitPostIndexed } from '../journal.js';
 import { countedVerifyOrderingBlockPoW, noteTip } from '../metrics.js';
+import { getNet } from './net-instance.js';
 import type { RecordPut, NetworkPut } from '../state/avl-prover.js';
 import { networkRecordKey } from '../store/identity-records.js';
 import {
@@ -101,7 +102,7 @@ import {
   decodeTx,
   MAX_FUTURE_DRIFT_MS,
   GENESIS_PREV_BLOCK_HASH,
-  PROTOCOL_VERSION,
+  protocolVersionAt,
   MAX_ESCROW_RETURNS_PER_BLOCK,
   MAX_LAPSE_WITHDRAWALS_PER_BLOCK,
   computeTxId,
@@ -230,6 +231,9 @@ export function applyOrderingBlock(block: OrderingBlock): boolean {
   if (!getDb().inTransaction) {
     rebuildTemplate();
     noteTip(block.header.height);
+    // The applied tip reaches net at the same seam, so a version boundary can
+    // sweep peers below the new era (NET_INTERFACE → API).
+    getNet()?.tipApplied(block.header.height);
   }
   return applied;
 }
@@ -323,8 +327,10 @@ function applyBlockBody(block: OrderingBlock): boolean {
   }
 
   // 2. Protocol version
-  if (!validation.verifyProtocolVersion(block.header.protocolVersion)) {
-    console.warn(`Rejected block height=${block.header.height}: unsupported protocol version ${block.header.protocolVersion}`);
+  // The header's version equals the era at its own height
+  // (VALIDATION_INTERFACE → Protocol Version).
+  if (!validation.verifyProtocolVersion(block.header.protocolVersion, block.header.height, config.protocolVersionSchedule)) {
+    console.warn(`Rejected block height=${block.header.height}: protocol version ${block.header.protocolVersion} is not the era ${protocolVersionAt(config.protocolVersionSchedule, block.header.height)}`);
     abortBlockJournal();
     return false;
   }
@@ -785,6 +791,7 @@ function applyMutationPhase(
     getNetworkRecord,
     membershipBarMultiplier: config.membershipBarMultiplier,
     putIdentityRecord,
+    protocolVersionSchedule: config.protocolVersionSchedule,
   };
 
   // The proof obligation (NODE_INTERFACE → "Embedded transactions: a mismatch
@@ -842,7 +849,7 @@ function applyMutationPhase(
     // user transaction may not — the same closed key set (the four required
     // fields plus `likeTarget`, `post`, `prune` and `postWithdraw`) and the
     // same field types, over a wider set of box types.
-    const envelopeCheck = checkTxEnvelope(tx);
+    const envelopeCheck = checkTxEnvelope(tx, height, config.protocolVersionSchedule);
     if (!envelopeCheck.valid) {
       console.warn(
         `Rejected block height=${height}: embedded UTXO tx ${txId} has a ` +
@@ -1242,7 +1249,10 @@ function applyMutationPhase(
       authorId: bp.author,
       replyCount: subtreePostIds.length - 1,
       upvoteCount: likeTally,
-      protocolVersion: PROTOCOL_VERSION,
+      // The stump carries the block's era — its compaction height is the block's,
+      // whose header version step 2 verified equals the scheduled era
+      // (NODE_INTERFACE → The settlement transaction; ARCHITECTURE → Protocol Versioning).
+      protocolVersion: block.header.protocolVersion,
       compactedAtBlockHeight: height,
     };
     insertStump(stump);
@@ -1281,6 +1291,7 @@ function applyMutationPhase(
   const settlementCheck = checkSettlement(
     settlementDepsWith(() => decayPlans, escrows, lapsedVouches),
     height,
+    config.protocolVersionSchedule,
     emission,
     config.creditMinerRewardDelay,
     settlementBody,

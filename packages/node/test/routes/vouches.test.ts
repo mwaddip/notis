@@ -119,7 +119,8 @@ function loadUiBuilders(): UiBuilders {
   return new Function(
     [
       `let currentBlockHeight = ${HEIGHT};`,
-      lift('const PROTOCOL_VERSION ='),
+      // The UI's protocolVersion starts null (set by /status); seed the era.
+      'let protocolVersion = 1;',
       lift('const VOUCH_KARMA_AMOUNT ='),
       lift('function jsonBigint('),
       lift('function selectBoxes('),
@@ -185,6 +186,7 @@ describe('vouch routes — the JSON edge', () => {
       getNetworkRecord: () => ({ memberCount: 1 }),
       membershipBarMultiplier: 1,
       putIdentityRecord: () => {},
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
     };
   }
 
@@ -363,7 +365,7 @@ describe('vouch routes — the JSON edge', () => {
     // "working" end to end. Nothing else in the suite would notice.
     const karmaBox = seedKarma(voucher.pub, VOUCH_MIN_BALANCE + VOUCH_KARMA_AMOUNT);
     const raw = rawVouchCast(karmaBox);
-    const throughEdge = jsonToTx(txToJson(raw));
+    const throughEdge = jsonToTx(txToJson(raw), 1);
 
     expect(computeTxId(throughEdge)).toBe(computeTxId(raw));
 
@@ -484,7 +486,7 @@ describe('vouch routes — the JSON edge', () => {
       const wire = JSON.parse(JSON.stringify(uiTx, ui.jsonBigint)) as Record<string, unknown>;
       const sig = cryptoSign(
         null,
-        Buffer.from(computeTxId(jsonToTx(wire)), 'hex'),
+        Buffer.from(computeTxId(jsonToTx(wire, 1)), 'hex'),
         voucher.priv,
       );
       return { ...wire, signatures: { [voucher.hex]: Buffer.from(sig).toString('hex') } };

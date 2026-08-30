@@ -16,6 +16,14 @@ export const pubHex = (kp.publicKey.export({ format: 'der', type: 'spki' }) as B
 
 export const recipient = 'aa'.repeat(32);
 
+/**
+ * The era a fixture transaction declares — the one the default schedule `[1@0]`
+ * fixes at any fixture height, which is what a node on that schedule answers
+ * from `GET /status` (NODE_INTERFACE → Status). The builders stamp the era the
+ * node reports, so a fixture passes this as that era.
+ */
+export const ERA = 1;
+
 export const baseCfg: FaucetConfig = {
   nodeUrl: 'http://x',
   networkType: 'testnet',

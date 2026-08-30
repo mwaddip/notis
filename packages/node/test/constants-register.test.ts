@@ -14,8 +14,11 @@ const REGISTER_PATH = fileURLToPath(
 
 interface ParsedValue {
   raw: string;
-  parsed: number | bigint;
+  parsed: number | bigint | null;
   isBigint: boolean;
+  // The one list-valued field, protocolVersionSchedule, writes a
+  // `version@fromHeight` list (CONSTANTS → Reading a row); null for a scalar.
+  schedule: { version: number; fromHeight: number }[] | null;
 }
 
 interface PinnedRow {
@@ -26,15 +29,28 @@ interface PinnedRow {
 
 function parseValueCell(cell: string): ParsedValue | null {
   const m = cell.match(/^`(\d[\d_]*n?)`$/);
-  if (!m) return null;
-  const raw = m[1]!;
-  const isBigint = raw.endsWith('n');
-  const digits = raw.replace(/[_n]/g, '');
-  return {
-    raw,
-    parsed: isBigint ? BigInt(digits) : Number(digits),
-    isBigint,
-  };
+  if (m) {
+    const raw = m[1]!;
+    const isBigint = raw.endsWith('n');
+    const digits = raw.replace(/[_n]/g, '');
+    return {
+      raw,
+      parsed: isBigint ? BigInt(digits) : Number(digits),
+      isBigint,
+      schedule: null,
+    };
+  }
+  // A `version@fromHeight` list, comma-separated, in order — `1@0`,
+  // `1@0, 2@43200` (CONSTANTS → Reading a row).
+  const s = cell.match(/^`((?:\d+@\d+)(?:, ?\d+@\d+)*)`$/);
+  if (s) {
+    const schedule = s[1]!.split(',').map((pair) => {
+      const [version, fromHeight] = pair.trim().split('@').map(Number);
+      return { version: version!, fromHeight: fromHeight! };
+    });
+    return { raw: s[1]!, parsed: null, isBigint: false, schedule };
+  }
+  return null;
 }
 
 function parseRegister(text: string): {
@@ -155,11 +171,16 @@ describe('constants register drift', () => {
 
           const val = profile[row.name];
           const rv = row.values[i]!;
-          const wantType = rv.isBigint ? 'bigint' : 'number';
-          expect(typeof val, `${row.name}.${net}: expected ${wantType}`).toBe(
-            wantType,
-          );
-          expect(val, `${row.name}.${net}`).toStrictEqual(rv.parsed);
+          if (rv.schedule) {
+            // The era table, compared as [{ version, fromHeight }], in order.
+            expect(val, `${row.name}.${net}`).toStrictEqual(rv.schedule);
+          } else {
+            const wantType = rv.isBigint ? 'bigint' : 'number';
+            expect(typeof val, `${row.name}.${net}: expected ${wantType}`).toBe(
+              wantType,
+            );
+            expect(val, `${row.name}.${net}`).toStrictEqual(rv.parsed);
+          }
         });
       }
     }

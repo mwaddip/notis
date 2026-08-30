@@ -262,8 +262,8 @@ proving someone burned a millisecond.
 ⚠ **The one `isU64Safe` pin on the post path guards `protocolVersion`, and it is not a
 search-variable guard:** no consensus field of a post is a variable an attacker varies to
 hit a target — `protocolVersion` is `vlqU` and total by sentinel, and an out-of-domain
-version encodes to a value the strict-equality version check refuses, so the sentinel never
-reaches a rule as a meaning.
+version encodes to a value the era check refuses, so the sentinel never reaches a rule as a
+meaning.
 
 `verifyOrderingBlockPoW` is unaffected — ordering-block PoW is the consensus PoW and
 always was. **Consensus is honestly single-phase.**
@@ -546,11 +546,30 @@ which rejects it cleanly.
 ### verifyProtocolVersion
 
 ```
-verifyProtocolVersion(version: number): boolean
+verifyProtocolVersion(declared: number, height: number, schedule: readonly ProtocolEra[]): boolean
 ```
 
-Returns `true` iff `version === PROTOCOL_VERSION` (currently `1`).
-Rejects all other versions.
+Returns `true` iff `declared === protocolVersionAt(schedule, height)` — the version scheduled for the era
+the height falls in (`TYPES_INTERFACE → Network profiles`). `false` when no era covers the height
+(`protocolVersionAt` answers `null` for any `height` that is not a non-negative safe integer) and when
+`declared` is anything but that integer. Total — never throws. The schedule is an argument: no check in this package reads
+`PROTOCOL_VERSION`.
+
+**The height is the object's own:** a block header's `height`; a transaction's the height of the block
+that carries it — `tip + 1` at admission and in gossip; a settlement's the block's
+(`ARCHITECTURE → Protocol Versioning`).
+
+### verifyTxProtocolVersion
+
+```
+verifyTxProtocolVersion(tx: UtxoTransaction, height: number, schedule: readonly ProtocolEra[]): boolean
+```
+
+`true` iff `tx.protocolVersion` and, when `tx.post` is present, `tx.post.protocolVersion` both pass
+`verifyProtocolVersion` at `height`. **Every declared version a transaction carries equals its era** — the
+commit's is in the post-id preimage, so a commit declaring a version other than its transaction's would
+mint a second identity for one post. Net's gossip tx validator and node's transaction envelope check both
+call it, so the rule has one spelling.
 
 ---
 
@@ -1123,6 +1142,7 @@ verifyHeaderChain(
   params: RetargetParams,                 // → asertTargetBits
   anchorCreatedAt: number | null,         // block 1's createdAt, t_a — null at a fork at GENESIS_HEIGHT
   nowMs: number,                          // the caller's clock, for the future bound
+  schedule: readonly ProtocolEra[],       // → verifyProtocolVersion at each header's own height
 ): { ok: true; work: bigint; hashes: string[];
      next: { prevBlockHash: string; height: number; interlinks: string[]; createdAt: number | null; t_a: number | null } }
  | { ok: false; index: number; reason: 'domain' | 'version' | 'height' | 'link' | 'time' | 'clock' | 'target' | 'pow' | 'interlinks' }
@@ -1130,7 +1150,8 @@ verifyHeaderChain(
 
 **The header-level rules a chain must pass before any of its work counts**, applied to every header
 in order. For header `i`: `blockHash(header) !== null` (`domain` — the whole
-`verifyHeaderFieldDomains` domain, stated once by the hash) · `verifyProtocolVersion` (`version`) ·
+`verifyHeaderFieldDomains` domain, stated once by the hash) · `verifyProtocolVersion(header.protocolVersion,
+header.height, schedule)` (`version`) ·
 `height === anchor.height + 1 + i` (`height`) · `prevBlockHash` equals `anchor.prevBlockHash` for
 `i = 0` and `hashes[i − 1]` after (`link`) · `createdAt` strictly above the previous header's, or above
 `anchor.createdAt` for `i = 0` when that is not `null` (`time`) · `createdAt ≤ nowMs +
@@ -1199,7 +1220,8 @@ rejected before phase N+1 executes.
 - The transaction (and its packet) deserializes without error
 - Commit field domains (`verifyPostCommitDomains`) — `contentHash` width, `author` width,
   refs hex and count within [0, MAX_PARENT_REFS], `type` in the table
-- `protocolVersion` is supported
+- `protocolVersion` — the transaction's and the commit's — equals the era at the carrying block's height
+  (`verifyTxProtocolVersion`)
 - The body, wherever it enters (`verifyPostBody`): `content` within [1, MAX_CONTENT_BYTES]
   UTF-8 bytes, no category-C characters, and `computeContentHash(content)` equals the
   commit's `contentHash`
@@ -1307,7 +1329,8 @@ own.
   check never reads content — the transaction carries a commit, the body travels apart
   (TYPES_INTERFACE → Layout — PostCommit, Layout — Post body)
 - All functions are synchronous — no Promises, no callbacks
-- Protocol version `PROTOCOL_VERSION` from `@dagsocial/types`
+- The protocol era from the profile's schedule — `protocolVersionAt` from `@dagsocial/types`;
+  `PROTOCOL_VERSION` is read by no check
 - Ordering-block hashing is over the **header**. The PoW preimage
   (`computePowHash`) is the encoded header with `powNonce` zeroed; the canonical
   `blockHash` is the encoded header with the solved `powNonce`. Neither includes

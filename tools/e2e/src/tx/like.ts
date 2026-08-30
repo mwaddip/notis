@@ -1,4 +1,4 @@
-import { selectBoxes, PROTOCOL_VERSION, LIKE_KARMA_COST } from '@dagsocial/types';
+import { selectBoxes, LIKE_KARMA_COST } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import type { Identity } from '../identities.js';
 import { signAndRender, type BoxRef, type BuiltTx } from './render.js';
@@ -9,6 +9,7 @@ export function buildLikeTx(
   postId: string,
   postAuthorHex: string,
   height: number,
+  protocolVersion: number,
 ): BuiltTx {
   const sorted = [...boxes].sort((a, b) => (b.value > a.value ? 1 : b.value < a.value ? -1 : 0));
   const selected = selectBoxes(sorted, LIKE_KARMA_COST);
@@ -31,7 +32,7 @@ export function buildLikeTx(
     inputs: selected.map((b) => b.boxId),
     outputs,
     signatures: {},
-    protocolVersion: PROTOCOL_VERSION,
+    protocolVersion,
     likeTarget: postId,
   };
 

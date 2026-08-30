@@ -87,8 +87,9 @@ describe('membership', () => {
     const A = fresh();
     let fK = await getKarma(miner, DEVNET_FAUCET.publicKeyHex);
     const status0 = await getStatus(miner);
+    const version = status0.protocolVersion;
     const bondAmount = 50n;
-    const invA = buildInviteTx(DEVNET_FAUCET, karmaBoxes(fK), A, bondAmount, fK.height);
+    const invA = buildInviteTx(DEVNET_FAUCET, karmaBoxes(fK), A, bondAmount, fK.height, version);
     await postInvite(miner, invA.json);
 
     await confirm(
@@ -109,7 +110,7 @@ describe('membership', () => {
     // ---- A's cast as a resident is refused ----
     // NODE_INTERFACE → Vouches: "a voucher who is not a member"
     const aKForVouch = await getKarma(miner, A.publicKeyHex);
-    const badVouch = buildVouchTx(A, karmaBoxes(aKForVouch), DEVNET_FAUCET, aKForVouch.height);
+    const badVouch = buildVouchTx(A, karmaBoxes(aKForVouch), DEVNET_FAUCET, aKForVouch.height, version);
     try {
       await postVouch(miner, badVouch.json);
       expect.fail('resident vouch should have been refused');
@@ -120,7 +121,7 @@ describe('membership', () => {
 
     // ---- faucet vouches A ----
     fK = await getKarma(miner, DEVNET_FAUCET.publicKeyHex);
-    const faucetVouchA = buildVouchTx(DEVNET_FAUCET, karmaBoxes(fK), A, fK.height);
+    const faucetVouchA = buildVouchTx(DEVNET_FAUCET, karmaBoxes(fK), A, fK.height, version);
     await postVouch(miner, faucetVouchA.json);
 
     await confirm(
@@ -131,9 +132,9 @@ describe('membership', () => {
 
     // ---- A posts two threads ----
     let aK = await getKarma(miner, A.publicKeyHex);
-    const thread1 = buildThreadTx(A, karmaBoxes(aK), 'm thread 1', aK.height);
+    const thread1 = buildThreadTx(A, karmaBoxes(aK), 'm thread 1', aK.height, version);
     const t1Res = await postPost(miner, thread1.json, thread1.content);
-    const thread2 = buildThreadTx(A, [thread1.outputs[0]!], 'm thread 2', aK.height);
+    const thread2 = buildThreadTx(A, [thread1.outputs[0]!], 'm thread 2', aK.height, version);
     const t2Res = await postPost(miner, thread2.json, thread2.content);
 
     await confirm(
@@ -148,9 +149,9 @@ describe('membership', () => {
     // ---- faucet likes each post once ----
     // ARCHITECTURE → The like transaction: one like per (liker, post)
     fK = await getKarma(miner, DEVNET_FAUCET.publicKeyHex);
-    const like1 = buildLikeTx(DEVNET_FAUCET, karmaBoxes(fK), t1Res.postId, A.publicKeyHex, fK.height);
+    const like1 = buildLikeTx(DEVNET_FAUCET, karmaBoxes(fK), t1Res.postId, A.publicKeyHex, fK.height, version);
     await postLike(miner, like1.json);
-    const like2 = buildLikeTx(DEVNET_FAUCET, [like1.outputs[0]!], t2Res.postId, A.publicKeyHex, fK.height);
+    const like2 = buildLikeTx(DEVNET_FAUCET, [like1.outputs[0]!], t2Res.postId, A.publicKeyHex, fK.height, version);
     await postLike(miner, like2.json);
 
     await confirm(
@@ -183,7 +184,7 @@ describe('membership', () => {
     const B = fresh();
     aK = await getKarma(miner, A.publicKeyHex);
     const bBondAmount = 20n;
-    const invB = buildInviteTx(A, karmaBoxes(aK), B, bBondAmount, aK.height);
+    const invB = buildInviteTx(A, karmaBoxes(aK), B, bBondAmount, aK.height, version);
     await postInvite(miner, invB.json);
 
     await confirm(
@@ -203,7 +204,7 @@ describe('membership', () => {
     // NODE_INTERFACE → Invites: "the inviter is neither a root nor a member with an invite available"
     const C = fresh();
     aK = await getKarma(miner, A.publicKeyHex);
-    const invC = buildInviteTx(A, karmaBoxes(aK), C, bBondAmount, aK.height);
+    const invC = buildInviteTx(A, karmaBoxes(aK), C, bBondAmount, aK.height, version);
     try {
       await postInvite(miner, invC.json);
       expect.fail('second invite should have been refused');
@@ -214,7 +215,7 @@ describe('membership', () => {
 
     // ---- A vouches B, B posts two threads, A likes each ----
     aK = await getKarma(miner, A.publicKeyHex);
-    const aVouchB = buildVouchTx(A, karmaBoxes(aK), B, aK.height);
+    const aVouchB = buildVouchTx(A, karmaBoxes(aK), B, aK.height, version);
     await postVouch(miner, aVouchB.json);
 
     await confirm(
@@ -224,9 +225,9 @@ describe('membership', () => {
     await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
 
     let bK = await getKarma(miner, B.publicKeyHex);
-    const bt1 = buildThreadTx(B, karmaBoxes(bK), 'b thread 1', bK.height);
+    const bt1 = buildThreadTx(B, karmaBoxes(bK), 'b thread 1', bK.height, version);
     const bt1Res = await postPost(miner, bt1.json, bt1.content);
-    const bt2 = buildThreadTx(B, [bt1.outputs[0]!], 'b thread 2', bK.height);
+    const bt2 = buildThreadTx(B, [bt1.outputs[0]!], 'b thread 2', bK.height, version);
     const bt2Res = await postPost(miner, bt2.json, bt2.content);
 
     await confirm(
@@ -240,9 +241,9 @@ describe('membership', () => {
 
     // A likes each of B's posts (A is a member, so these are member-likes)
     aK = await getKarma(miner, A.publicKeyHex);
-    const bLike1 = buildLikeTx(A, karmaBoxes(aK), bt1Res.postId, B.publicKeyHex, aK.height);
+    const bLike1 = buildLikeTx(A, karmaBoxes(aK), bt1Res.postId, B.publicKeyHex, aK.height, version);
     await postLike(miner, bLike1.json);
-    const bLike2 = buildLikeTx(A, [bLike1.outputs[0]!], bt2Res.postId, B.publicKeyHex, aK.height);
+    const bLike2 = buildLikeTx(A, [bLike1.outputs[0]!], bt2Res.postId, B.publicKeyHex, aK.height, version);
     await postLike(miner, bLike2.json);
 
     await confirm(
@@ -288,6 +289,7 @@ describe('membership', () => {
       faucetVouchBox.createdAtBlock,
       statusPre.blockHeight,
       statusPre.vouchCooldownBlocks,
+      version,
     );
     await deleteVouch(miner, A.publicKeyHex, unvouchA.json);
 
@@ -341,7 +343,7 @@ describe('membership', () => {
     // ---- A as a resident cannot recast ----
     // NODE_INTERFACE → Vouches: "a voucher who is not a member"
     aK = await getKarma(miner, A.publicKeyHex);
-    const recastAttempt = buildVouchTx(A, karmaBoxes(aK), B, aK.height);
+    const recastAttempt = buildVouchTx(A, karmaBoxes(aK), B, aK.height, version);
     try {
       await postVouch(miner, recastAttempt.json);
       expect.fail('resident recast should have been refused');

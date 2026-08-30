@@ -459,8 +459,8 @@ invites, vouches, credits, prune).
 
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
-| `POST` | `/posts/:id/prune` | `{ tx }` — a prune transaction, JSON-encoded like every other route's (`jsonToTx`) | `{ status: "submitted", txId: hex, postId: hex }` (201) — no `replyCount`: the count is a property of apply, read off the stump | 400 if the payload is absent, the root is unconfirmed or confirmed in the current block, or `validateTx` refuses it; 404 if the post is unknown; 409 on a pending-spend conflict; 503 if the pool is full |
-| `POST` | `/posts/:id/withdraw` | `{ tx }` — a withdrawal transaction, JSON-encoded like every other route's (`jsonToTx`) | `{ status: "submitted", txId: hex, postId: hex }` (201) | 400 if the payload is absent, the post is unconfirmed or confirmed in the current block, the signer is not its author, the post is already withdrawn, or `validateTx` refuses it; 404 if the post is unknown; 409 on a pending-spend conflict; 503 if the pool is full |
+| `POST` | `/posts/:id/prune` | `{ tx }` — a prune transaction, JSON-encoded like every other route's (`jsonToTx`) | `{ status: "submitted", txId: hex, postId: hex }` (201) — no `replyCount`: the count is a property of apply, read off the stump | 400 if the payload is absent, the root is unconfirmed or confirmed at or above the block the prune is judged for (`tip + 1` at admission, → validateTx), or `validateTx` refuses it; 404 if the post is unknown; 409 on a pending-spend conflict; 503 if the pool is full |
+| `POST` | `/posts/:id/withdraw` | `{ tx }` — a withdrawal transaction, JSON-encoded like every other route's (`jsonToTx`) | `{ status: "submitted", txId: hex, postId: hex }` (201) | 400 if the payload is absent, the post is unconfirmed or confirmed at or above the block the withdrawal is judged for (`tip + 1` at admission, → validateTx), the signer is not its author, the post is already withdrawn, or `validateTx` refuses it; 404 if the post is unknown; 409 on a pending-spend conflict; 503 if the pool is full |
 
 **Prune flow:**
 
@@ -504,7 +504,9 @@ invites, vouches, credits, prune).
 **Stumps are derived state.** A `dag_stumps` row is a local projection of an
 applied prune transaction — never information in its own
 right. `insertStump` has exactly one caller: prune settlement in block
-application. No network input writes the table. Inbound stump gossip is not
+application. The stump's `protocolVersion` is the era at its `compactedAtBlockHeight`, stamped by that
+caller and checked by nothing — a stump is never on the wire (`ARCHITECTURE → Protocol Versioning`).
+No network input writes the table. Inbound stump gossip is not
 consumed, and no stump pull protocol exists: a gossiped stump is unverifiable
 by construction (it carries no signature and names no set, so a receiver has
 nothing to check it against), while the
@@ -675,7 +677,7 @@ the chain) is not served. The prover behind it is `Nipopow prover` below.
 
 | Method | Path | Response |
 |--------|------|----------|
-| `GET` | `/status` | `{ networkType, blockHeight, postCount, pendingPosts, totalKarma, liquidKarma, totalCredits, inviteProbationBlocks, vouchCooldownBlocks, inviteBondMin, inviteBondMax, membership: { memberCount, memberBar, memberLikesBar } }` |
+| `GET` | `/status` | `{ networkType, blockHeight, protocolVersion, postCount, pendingPosts, totalKarma, liquidKarma, totalCredits, inviteProbationBlocks, vouchCooldownBlocks, inviteBondMin, inviteBondMax, membership: { memberCount, memberBar, memberLikesBar } }` |
 
 > ⚠ **`totalKarma` is karma in existence; `liquidKarma` is karma its owner can spend now.**
 > `totalKarma` sums the karma-bearing types; `liquidKarma` sums `karma` alone. `credit` is the
@@ -831,7 +833,8 @@ Verification order (fail-fast):
 1. **Content** — 1–`MAX_CONTENT_BYTES` UTF-8 bytes, non-empty; then the
    character restrictions (no control, zero-width, or bidi characters)
 2. **Parent refs count** — at most `MAX_PARENT_REFS`
-3. **Protocol version** — strict equality with `PROTOCOL_VERSION`
+3. **Protocol version** — the commit's equals the era at `tip + 1` (VALIDATION_INTERFACE → Protocol
+   Version); the early rejection — the envelope's `verifyTxProtocolVersion` is the consensus check
 4. **Karma** — the author's **summed** karma must cover the price: threads (no
    parentRefs) ≥ `POST_PRICE_THREAD`, replies ≥ `POST_PRICE_REPLY`.
    ⚠ An early, friendlier rejection, NOT the enforcement point — the engine's
@@ -858,6 +861,11 @@ values. The engine is split into three functions:
 ```
 validateTx(deps, tx: UtxoTransaction, currentBlockHeight: number): UtxoResult
 ```
+
+**`currentBlockHeight` is the height of the block the transaction is judged for** — at admission
+`tip + 1`, the block that would carry it; at block application the block's own height. Every rule keyed
+on it (step 3's unlock floor, step 6's creation bound, step 7's era) reads that height, so a transaction
+admitted at the tip is judged exactly as the next block judges it.
 
 Full read-only validation. Performs all checks without modifying state. The
 step numbers below are the code's own — one numbering, shared by every
@@ -986,7 +994,9 @@ exists for the types that must be **user-spendable and carry a clock**.
 
 **Checked once per input at `validateTx` step 3**, after liveness (its only
 precondition) and before authorization: timing is cheaper than signature
-verification and refuses a transaction that cannot succeed either way.
+verification and refuses a transaction that cannot succeed either way. The height compared is
+`currentBlockHeight` as `validateTx` defines it — the carrying block's — so an input unlocking at `L`
+is admitted at tip `L − 1`, the block that will spend it being `L`.
 
 ⛔ **A tightening.** A historical block containing a premature spend would be
 rejected on resync; testnet and devnet wipe at deploy and mainnet does not
@@ -1435,12 +1445,13 @@ The checks:
    `TxId`. The field is not in the id preimage, not in the type and not on the wire, so there is
    nothing left to constrain. ⛔ **The name stays reserved** — a future secret-carrying field would
    have to state what reads it, which is precisely what this one never did.
-7. `protocolVersion`: an integer strictly equal to `PROTOCOL_VERSION`
-   (decided 2026-08-08). Same strict-equality posture as posts and block
-   headers — no version-keyed dispatch exists (repo-root warning), and this
-   gate does not pretend otherwise. Rider: `jsonToTx`'s `?? 1` default
-   becomes `?? PROTOCOL_VERSION`, so the HTTP edge cannot mint
-   stale-version txs after a future bump.
+7. `protocolVersion`: equals the era at the judged-for height —
+   `verifyTxProtocolVersion(tx, currentBlockHeight, schedule)` (VALIDATION_INTERFACE → Protocol
+   Version), which holds `tx.post.protocolVersion` to the same era when a commit is present; the
+   schedule rides on `deps`. Rider: `jsonToTx`'s default is `?? protocolVersionAt(schedule, tip + 1)`,
+   so the HTTP edge cannot mint a foreign-era transaction; a signing client learns the era first
+   (`/status` → `protocolVersion`, the era at `blockHeight + 1` — served, never known, like every
+   per-network value on that route), the field being in the id preimage.
 8. `likeTarget`: absent, or a 64-char lowercase-hex string.
 
 **Call sites (all of them, or the guarantee is path-dependent):**
@@ -2498,6 +2509,12 @@ relation** (`TYPES_INTERFACE` → Size caps): whatever the chain state holds, th
 empty body fits `MAX_SETTLEMENT_BYTES`, so a block exists at every height.
 
 ⛔ **The two orders are consensus.** `derive()` builds the input list and the output list leg by leg in exactly these sequences, and a verifier recomputes both and compares the block's settlement to them position by position — the input list whole, the derived outputs element-wise; the coinbase is constrained, never derived (→ "Determinism is this mechanism's whole risk", the derived / producer-chosen table, where output ordering is a derived field). A leg moved is every settlement's bytes moved, on both sides identically. `node/test/services/settlement-leg-order.test.ts` pins both sequences with one fixture that fires every leg at once.
+
+**The settlement declares the block's era.** `derive()` stamps `protocolVersion:
+protocolVersionAt(schedule, height)`, and the verifier refuses a settlement declaring any other — the
+envelope check every embedded transaction passes at the block's height (`verifyTxProtocolVersion`), and
+the settlement's own comparison. The byte probe that prices a settlement stamps the same era, so a version
+wide enough to widen the VLQ is measured rather than assumed.
 
 ⚠ **The escrow leg reads PRE-BODY state, and returns at or past `releaseAtBlock`, not at it.**
 The settlement of height `h` consumes **at most `MAX_ESCROW_RETURNS_PER_BLOCK`** of the unspent
@@ -4299,11 +4316,13 @@ with the chain untouched:
    hold `f + 1 … min(ourTip, theirTip)`; above that `requestHeaders(top + 400, 400)` trimmed to the
    heights not yet verified — the serve arm clamps to the peer's tip, so a page whose top sits below
    the request is their tip, and an empty trimmed page ends the branch. Each page, chronological, goes
-   through `verifyHeaderChain(page, anchor, params, t_a, now)` (VALIDATION_INTERFACE →
+   through `verifyHeaderChain(page, anchor, params, t_a, now, schedule)` (VALIDATION_INTERFACE →
    verifyHeaderChain) with the anchor the previous page's verdict returned (`next`). A refusal is
    classified: **`reason 'clock'` at any index is a future-bound refusal** — a verdict of this node's
    clock, not on the chain: no penalty, no mark, no memo, and the sync path re-delivers the branch
-   inside the bound (`MINING_INTERFACE → Header timestamp rules`). Every other `(index, reason)` —
+   inside the bound (`MINING_INTERFACE → Header timestamp rules`). **`reason 'version'` is a
+   compatibility refusal** — a peer serving a chain of another era: refuse and penalise `transient`,
+   no mark, no memo (NET_INTERFACE → Peer Penalty System). Every other `(index, reason)` —
    `'time'`, a hole (`'height'`), a header off its own chain (`'link'`) included — is a served chain
    that is not one: refuse and penalise (NET_INTERFACE → Peer Penalty System, `misbehavior`).
 6. **Memory.** Any verified hash in a page present in `refused_headers` (Store Interface → Refused
@@ -4456,6 +4475,8 @@ below) and two `NetNode` reads (`getConnectedPeers()`, `syncPhase()` — NET_INT
   "syncing": false,
   "sync_phase": "synced",
   "uptime_seconds": 84200,
+  "protocol_version": 1,
+  "protocol_version_schedule": [{ "version": 1, "from_height": 0 }],
   "apiVersion": "1.0",
   "journalEventsVersion": "1.0"
 }
@@ -4463,12 +4484,14 @@ below) and two `NetNode` reads (`getConnectedPeers()`, `syncPhase()` — NET_INT
 
 | Field | Is | Written |
 |---|---|---|
-| `dag_tip_height` | the applied chain tip — the height of the last block `applyOrderingBlock` applied, or the tip a reorg left | pushed at every successful apply and at the end of a reorg (`noteTip(height)`); `0` before the first |
+| `dag_tip_height` | the applied chain tip — the height of the last block `applyOrderingBlock` applied, or the tip a reorg left | pushed at every successful apply and at the end of a reorg (`noteTip(height)`), and `net.tipApplied(height)` is called at the same seam (NET_INTERFACE → API); `0` before the first |
 | `peers_connected` | `net.getConnectedPeers().length` — Active peers | read at request time |
 | `last_post_received_ms_ago` | milliseconds since the last `post_received` journal event, any source; **`null`** until the first | the `emitPostReceived` wrapper stamps the time |
 | `syncing` | `net.syncPhase()` is `'syncing'` or `'backfill'` — the chain is not yet usable as current | read at request time |
 | `sync_phase` | `net.syncPhase()` verbatim — `'idle' \| 'syncing' \| 'backfill' \| 'synced'` (NET_INTERFACE → Sync State Machine). | read at request time |
 | `uptime_seconds` | seconds since process start | — |
+| `protocol_version` | the era at `dag_tip_height + 1` — `protocolVersionAt(schedule, tip + 1)`, the version a client must sign (`ARCHITECTURE → Protocol Versioning`) | read at request time |
+| `protocol_version_schedule` | the profile's `protocolVersionSchedule`, each era as `{ version, from_height }` | static |
 | `apiVersion`, `journalEventsVersion` | `"1.0"` | static |
 
 `GET /stats` — cumulative counters since process start (`since`, epoch seconds):
@@ -4985,6 +5008,9 @@ funnel:
   unwrapped: it decodes no row, so there is nothing for `failStopIfCorruptChain` to promote. `net`
   reads it once per handshake, `SyncInfo` and served chain query in place of a walk through the
   headers provider (NET_INTERFACE → Sync Handler Registration)
+- **`tipApplied(height)`**: called beside `noteTip` at every successful apply and at the end of a
+  reorg — the seam net's boundary sweep runs off (NET_INTERFACE → API). `NetConfig` receives the
+  profile's `protocolVersionSchedule` the way it receives `magic`
 - **`setBlockIdProvider(getOrderingBlockHash)`**: the block id at a height — the store's
   `block_hash` column, written by `createOrderingBlock` from the node's own decoded header at the
   table's single INSERT — behind every Inv continuation.
@@ -5041,7 +5067,7 @@ phase; NET_INTERFACE is authoritative for that side.
 - A pending row exists iff its transaction is in the pool, or the post is confirmed
 - Once a prune block's journal is dropped below the reorg horizon (`maxReorgDepth`), no `dag_posts` row and no
   journal row holds the subtree's content (ARCHITECTURE → Subtree pruning)
-- Protocol version checked at verification
+- Protocol version checked at verification, against the era scheduled at the object's height
 - Consumers call the Store interface, never the backend directly
 - UTXO transactions are atomic — all boxes consumed/created in one commit
 - Karma decay is virtual — sufficiency reads value through `effectiveKarma`; the

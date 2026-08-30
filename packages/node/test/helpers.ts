@@ -913,6 +913,11 @@ export async function makeApplicableBlock(
      *  slice — so a test states this only to deviate from it deliberately, and
      *  what it measures is that deviation. */
     settlement?: (tx: UtxoTransaction) => UtxoTransaction;
+    /** Override the header's `protocolVersion` — a block that declares a version
+     *  other than the era at its height, to exercise the step-2 header check
+     *  (VALIDATION_INTERFACE → Protocol Version). The nonce is solved over this
+     *  header, so the block's PoW is honest whatever the version. */
+    protocolVersion?: number;
   } = {},
 ): Promise<OrderingBlock> {
   const { computeUtxoTxRoot, buildBlockSettlement } = await import(
@@ -998,7 +1003,7 @@ export async function makeApplicableBlock(
     }
   }
   const header = {
-    protocolVersion: PROTOCOL_VERSION,
+    protocolVersion: opts.protocolVersion ?? PROTOCOL_VERSION,
     height,
     prevBlockHash,
     utxoTxRoot: computeUtxoTxRoot(utxoTxTree),

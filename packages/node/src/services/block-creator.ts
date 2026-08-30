@@ -4,7 +4,7 @@ import {
   type KeyObject,
 } from 'crypto';
 import {
-  PROTOCOL_VERSION,
+  protocolVersionAt,
   GENESIS_PREV_BLOCK_HASH,
   CREDIT_INITIAL_REWARD,
   CREDIT_REWARD_REDUCTION,
@@ -338,6 +338,15 @@ export function createOrderingBlock(): OrderingBlock | null {
   const currentHeight = getCurrentHeight();
   const newHeight = currentHeight + 1;
 
+  // The era in force for the block being built — the producer stamps it on the
+  // header template, the rent transaction and the settlement (MINING_INTERFACE →
+  // GET /mining/template; NODE_INTERFACE → The settlement transaction).
+  const era = protocolVersionAt(nodeConfig.protocolVersionSchedule, newHeight);
+  if (era === null) {
+    console.warn(`Not producing block at height ${newHeight}: no protocol era scheduled`);
+    return null;
+  }
+
   // A body-rejected build repeats until it holds a template or a body
   // carrying no pool row is rejected. Every repetition strictly shrinks the
   // pool, which is what bounds the loop (MINING_INTERFACE → Template and
@@ -403,6 +412,7 @@ export function createOrderingBlock(): OrderingBlock | null {
       const built = buildSettlement(
         settlementDepsWith(() => deriveKarmaDecay(decayDeps, postBody, newHeight, decayConfig()), escrows, lapsed),
         newHeight,
+        nodeConfig.protocolVersionSchedule,
         computeBlockReward(newHeight),
         nodeConfig.creditMinerRewardDelay,
         predictSettlementBody(userTxBytesList, validatorId),
@@ -465,6 +475,11 @@ export function createOrderingBlock(): OrderingBlock | null {
       for (const entry of iteratePendingEntries({ klass })) {
         if (entry.entryType !== 'utxo_tx' || entry.utxoTxBytes === null) continue;
         const tx = decodeTx(entry.utxoTxBytes);
+        // The fill skips an entry whose declared version is not the era of the
+        // block being built — not evicted, not counted against the budget; a
+        // skipped entry leaves by expiry (MEMPOOL_INTERFACE → Block Creator
+        // Integration).
+        if (tx.protocolVersion !== era) continue;
         const txId = computeTxId(tx);
         const invitee = bondInviteeOf(
           tx.outputs.map((out, i) => materializeOutput(out, txId, i)),
@@ -510,7 +525,7 @@ export function createOrderingBlock(): OrderingBlock | null {
         inputs: [box.id!],
         outputs,
         signatures: {},
-        protocolVersion: PROTOCOL_VERSION,
+        protocolVersion: era,
       };
       const encoded = encodeTx(rentTx);
       const cost = entryByteCost(encoded);
@@ -648,7 +663,7 @@ export function createOrderingBlock(): OrderingBlock | null {
       templateInterlinks = [];
     }
     const headerTemplate: BlockHeader = {
-      protocolVersion: PROTOCOL_VERSION,
+      protocolVersion: era,
       height: newHeight,
       prevBlockHash,
       utxoTxRoot,
@@ -1011,6 +1026,7 @@ export function buildBlockSettlement(
   return buildSettlement(
     settlementDepsWith(() => deriveKarmaDecay(decayDeps, postBody, height, decayConfig()), escrows, lapsed),
     height,
+    nodeConfig.protocolVersionSchedule,
     computeBlockReward(height),
     nodeConfig.creditMinerRewardDelay,
     predictSettlementBody(txBytesList, validator),

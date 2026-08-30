@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { protocolVersionAt } from '@dagsocial/types';
 import { createPost } from '../services/post-service.js';
 import type { PostServiceDeps } from '../services/post-service.js';
 import { FeedService } from '../services/feed-service.js';
@@ -42,7 +43,7 @@ export function createRouter(deps: PostsDeps): Router {
 
     let tx;
     try {
-      tx = jsonToTx(rawTx);
+      tx = jsonToTx(rawTx, protocolVersionAt(deps.protocolVersionSchedule, deps.getCurrentHeight() + 1)!);
     } catch (err) {
       respondError(res, err, 'POST /posts (tx decode)');
       return;

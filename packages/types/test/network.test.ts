@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   NETWORK_PROFILES,
   profileFor,
+  protocolVersionAt,
+  PROTOCOL_VERSION,
   MAGIC_MAINNET,
   MAGIC_TESTNET,
   MAGIC_DEVNET,
@@ -16,7 +18,7 @@ import {
   CREDIT_REWARD_REDUCTION,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
 } from '../src/index.js';
-import type { NetworkType, NetworkProfile } from '../src/index.js';
+import type { NetworkType, NetworkProfile, ProtocolEra } from '../src/index.js';
 
 // The full contract field set — TYPES_INTERFACE → Network profiles. Guards both
 // directions: a missing field and an added one (per-network creep is how a devnet
@@ -34,6 +36,7 @@ const REQUIRED_PROFILE_FIELDS = [
   'inviteProbationBlocks',
   'creditMinerRewardDelay',
   'maxReorgDepth',
+  'protocolVersionSchedule',
   'creditFixedRateBlocks',
   'creditEpochBlocks',
   'creditEmissionTotal',
@@ -125,6 +128,14 @@ describe('NETWORK_PROFILES', () => {
     for (const profile of Object.values(NETWORK_PROFILES)) {
       expect(Object.isFrozen(profile)).toBe(true);
       expect(Object.isFrozen(profile.genesisCommitteeKeys)).toBe(true);
+      // The schedule is a nested array of nested objects, neither of which the
+      // profile's own Object.freeze reaches, so both levels are frozen at the
+      // literal — the array and every era. (TYPES_INTERFACE → Version)
+      expect(Object.isFrozen(profile.protocolVersionSchedule), `${profile.networkType} schedule`).toBe(true);
+      expect(
+        profile.protocolVersionSchedule.every((era) => Object.isFrozen(era)),
+        `${profile.networkType} eras`,
+      ).toBe(true);
     }
   });
 
@@ -158,13 +169,21 @@ describe('NETWORK_PROFILES', () => {
     // discovered. `inviteBondMin` is deliberately absent — testnet inherits
     // mainnet's floor.
     const relaxedCaps = new Set(['inviteBondMax', 'maxReorgDepth', 'membershipBarMultiplier']);
+    // The version schedule is per network and stated as its own literal on each (never inherited by
+    // spread), so testnet's array is a distinct reference from mainnet's even where the two schedules
+    // agree — a `.toBe` here would read that reference difference as a divergence. It is neither a
+    // must-match mechanic nor a declared cap that must differ: the schedule MAY diverge (mainnet's may
+    // end at an earlier version than testnet's under one build), and today it does not. Its content
+    // `[1@0]` and its distinct reference are pinned in the schedule tests below; this case does not
+    // opine on it. TYPES_INTERFACE → Version.
+    const perNetworkSchedule = new Set(['protocolVersionSchedule']);
     const { mainnet, testnet } = NETWORK_PROFILES;
     // ⛔ Derived from the profiles, never from a literal list. A hardcoded set
     // goes on passing while a field added to either profile sits uncompared, so
     // the guarantee this test states would quietly stop covering the tree.
     const fields = new Set([...Object.keys(mainnet), ...Object.keys(testnet)]);
     for (const field of fields) {
-      if (identityOrGenesis.has(field) || relaxedCaps.has(field)) continue;
+      if (identityOrGenesis.has(field) || relaxedCaps.has(field) || perNetworkSchedule.has(field)) continue;
       expect(testnet[field as keyof NetworkProfile], field).toBe(
         mainnet[field as keyof NetworkProfile],
       );
@@ -524,5 +543,102 @@ describe('invite bond caps per network', () => {
     const likesToVestSmallest =
       INVITE_BOND_VEST_PER_LIKES * Number(profileFor('devnet').inviteBondMin);
     expect(likesToVestSmallest).toBeLessThanOrEqual(15);
+  });
+});
+
+describe('protocolVersionSchedule', () => {
+  // TYPES_INTERFACE → Version — "A schedule is valid iff". The rule written as the function the
+  // assertions apply; test-local, because no production code reads it — every shipped schedule is
+  // valid by construction, not by any runtime check. `maxVersion` defaults to the contract's bound
+  // (PROTOCOL_VERSION) and is a parameter only so each clause can be shown to fire in isolation: at
+  // PROTOCOL_VERSION 1 any second era already exceeds the build, so the version-step and
+  // ascending-fromHeight clauses can be violated ALONE only against a higher bound.
+  function isValidSchedule(
+    schedule: readonly ProtocolEra[],
+    maxVersion: number = PROTOCOL_VERSION,
+  ): boolean {
+    const first = schedule[0];
+    if (first === undefined || first.version !== 1 || first.fromHeight !== 0) return false;
+    for (let i = 1; i < schedule.length; i++) {
+      const prev = schedule[i - 1]!;
+      const era = schedule[i]!;
+      if (era.version !== prev.version + 1) return false; // each version is the previous plus one
+      if (era.fromHeight <= prev.fromHeight) return false; // fromHeight strictly ascending
+    }
+    return schedule[schedule.length - 1]!.version <= maxVersion; // build implements every era it schedules
+  }
+
+  it('every shipped profile schedules a valid era table', () => {
+    for (const profile of Object.values(NETWORK_PROFILES)) {
+      expect(isValidSchedule(profile.protocolVersionSchedule), profile.networkType).toBe(true);
+    }
+  });
+
+  it('the validity rule rejects each of its four clauses violated in isolation', () => {
+    // Clause 1 — the first era must be { version: 1, fromHeight: 0 }, both halves.
+    expect(isValidSchedule([{ version: 2, fromHeight: 0 }], 5)).toBe(false);
+    expect(isValidSchedule([{ version: 1, fromHeight: 5 }], 5)).toBe(false);
+    // Clause 2 — each version is the previous plus one. Holding it at 1 keeps clause 4 clear.
+    expect(isValidSchedule([{ version: 1, fromHeight: 0 }, { version: 1, fromHeight: 10 }], 5)).toBe(false);
+    // Clause 3 — fromHeight strictly ascending. Bound 5, so version 2 does not co-trip clause 4.
+    expect(isValidSchedule([{ version: 1, fromHeight: 0 }, { version: 2, fromHeight: 0 }], 5)).toBe(false);
+    // Clause 4 — the last version is at most the build's. The same schedule is valid at bound 2 and
+    // rejected at bound 1, so the ONLY thing wrong there is that version 2 is unimplemented.
+    expect(isValidSchedule([{ version: 1, fromHeight: 0 }, { version: 2, fromHeight: 10 }], 2)).toBe(true);
+    expect(isValidSchedule([{ version: 1, fromHeight: 0 }, { version: 2, fromHeight: 10 }], 1)).toBe(false);
+  });
+
+  it('every profile schedules exactly one era: version 1 from height 0', () => {
+    for (const profile of Object.values(NETWORK_PROFILES)) {
+      expect(profile.protocolVersionSchedule, profile.networkType).toEqual([{ version: 1, fromHeight: 0 }]);
+    }
+  });
+
+  // The spread hazard, named as a pin: TESTNET_PROFILE is `{ ...MAINNET_PROFILE, … }`, so an
+  // un-overridden schedule would BE mainnet's array by reference — and a future bump to mainnet's
+  // would silently ride into testnet. Each network states its own literal. (TYPES_INTERFACE → Version)
+  it('testnet and devnet schedule arrays are not the mainnet array', () => {
+    const { mainnet, testnet, devnet } = NETWORK_PROFILES;
+    expect(testnet.protocolVersionSchedule).not.toBe(mainnet.protocolVersionSchedule);
+    expect(devnet.protocolVersionSchedule).not.toBe(mainnet.protocolVersionSchedule);
+  });
+});
+
+describe('protocolVersionAt', () => {
+  // A single-era schedule and a two-era one. The two-era fixture schedules version 2, which this build
+  // does not implement — allowed here, since the validity rule binds NETWORK_PROFILES only and the
+  // lookup reads any ascending schedule in order. (TYPES_INTERFACE → Version)
+  const ONE_ERA: readonly ProtocolEra[] = [{ version: 1, fromHeight: 0 }];
+  const TWO_ERA: readonly ProtocolEra[] = [
+    { version: 1, fromHeight: 0 },
+    { version: 2, fromHeight: 10 },
+  ];
+
+  it('reads the single era at 0, at 1, and far above', () => {
+    expect(protocolVersionAt(ONE_ERA, 0)).toBe(1);
+    expect(protocolVersionAt(ONE_ERA, 1)).toBe(1);
+    expect(protocolVersionAt(ONE_ERA, 1_000_000)).toBe(1);
+  });
+
+  it('reads the era boundary of a two-era schedule', () => {
+    expect(protocolVersionAt(TWO_ERA, 9)).toBe(1); // last era at or below 9 is 1@0
+    expect(protocolVersionAt(TWO_ERA, 10)).toBe(2); // 2@10 covers exactly 10
+    expect(protocolVersionAt(TWO_ERA, 1_000_000)).toBe(2);
+  });
+
+  it('is null for any height outside the chain height domain', () => {
+    // The height domain is a non-negative safe integer; a negative, a fraction, NaN, ±Infinity and a
+    // value past 2⁵³ are all outside it and read null. (TYPES_INTERFACE → Version)
+    for (const bad of [-1, 1.5, NaN, Infinity, -Infinity, 2 ** 53]) {
+      expect(protocolVersionAt(ONE_ERA, bad), String(bad)).toBeNull();
+    }
+  });
+
+  it('is total on a non-number height — no throw, null on undefined, a string, an object', () => {
+    const bads: unknown[] = [undefined, 'x', {}, null, [], true];
+    for (const bad of bads) {
+      expect(() => protocolVersionAt(ONE_ERA, bad as number)).not.toThrow();
+      expect(protocolVersionAt(ONE_ERA, bad as number)).toBeNull();
+    }
   });
 });

@@ -9,6 +9,7 @@ import type { BlockHeader, OrderingBlock } from '@dagsocial/types';
 import {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
+  verifyTxProtocolVersion,
   verifyContentLimits,
   verifyParentRefsCount,
   verifyTxStructure,
@@ -41,6 +42,7 @@ import type { NetValidators } from '../src/types.js';
 const validators: NetValidators = {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
+  verifyTxProtocolVersion,
   verifyContentLimits,
   verifyParentRefsCount,
   verifyTxStructure,

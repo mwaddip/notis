@@ -218,6 +218,7 @@ export function createApp(config: Config): express.Express {
     getNetworkRecord: store.getNetworkRecord,
     membershipBarMultiplier: config.membershipBarMultiplier,
     putIdentityRecord: store.putIdentityRecord,
+    protocolVersionSchedule: config.protocolVersionSchedule,
   };
 
   // ---- Routes ----
@@ -234,6 +235,7 @@ export function createApp(config: Config): express.Express {
       getIdentityRecord: store.getIdentityRecord,
       decayCfg: decayConfig(),
       getCurrentHeight: store.getCurrentHeight,
+      protocolVersionSchedule: config.protocolVersionSchedule,
       getLikeRecordCount: store.getLikeRecordCount,
       hasLikeRecord: store.hasLikeRecord,
       getAncestorsNearest: store.getAncestorsNearest,
@@ -407,6 +409,7 @@ export function createApp(config: Config): express.Express {
       inviteBondMax: config.inviteBondMax,
       getNetworkRecord: store.getNetworkRecord,
       membershipBarMultiplier: config.membershipBarMultiplier,
+      protocolVersionSchedule: config.protocolVersionSchedule,
     }),
   );
 

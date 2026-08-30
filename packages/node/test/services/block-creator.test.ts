@@ -22,9 +22,10 @@ import {
 import {
   MAX_BLOCK_BODY_BYTES,
   PROTOCOL_VERSION,
-  LIKE_KARMA_COST, computeTxId, utxoTxTreeByteLength } from '@dagsocial/types';
+  LIKE_KARMA_COST, computeTxId, decodeTx, utxoTxTreeByteLength } from '@dagsocial/types';
 import { blockHash } from '@dagsocial/validation';
 import type {
+  CreditBox,
   KarmaBox,
   OrderingBlock,
   UtxoTransaction,
@@ -294,6 +295,109 @@ describe('block-creator', () => {
     expect(carried[0]!.post.parentRefs).toEqual(commit.parentRefs);
     expect(Buffer.from(carried[0]!.post.author).toString('hex'))
       .toBe(Buffer.from(commit.author).toString('hex'));
+  });
+
+  // -----------------------------------------------------------------------
+  // The producer stamps the era at the mined height, never a build constant
+  // (ARCHITECTURE → Protocol Versioning).
+  // -----------------------------------------------------------------------
+
+  describe('the producer stamps the scheduled era', () => {
+    // Height 1 is era 2 under this schedule; the producer reads the era off the
+    // module config (block-creator: `config as nodeConfig`), so it is mocked,
+    // not passed. A fixture may schedule a version the build does not implement
+    // (TYPES_INTERFACE → Version).
+    const SCHEDULE = [{ version: 1, fromHeight: 0 }, { version: 2, fromHeight: 1 }];
+
+    beforeEach(() => {
+      vi.doMock('../../src/config.js', async () => {
+        const actual = await vi.importActual<typeof import('../../src/config.js')>(
+          '../../src/config.js',
+        );
+        return {
+          ...actual,
+          config: Object.freeze({ ...actual.config, protocolVersionSchedule: SCHEDULE, storageRentPeriodBlocks: 0 }),
+        };
+      });
+      vi.resetModules();
+    });
+
+    afterEach(() => {
+      vi.doUnmock('../../src/config.js');
+    });
+
+    it('the template header and its coinbase settlement declare the era at the built height', async () => {
+      const db = await importDb();
+      db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+      const bc = await importBlockCreator();
+      bc.startBlockCreator(testConfig);
+
+      const template = bc.getCurrentTemplate();
+      expect(template).not.toBeNull();
+      expect(template!.header.height).toBe(1);
+      // The header stamps era 2, not PROTOCOL_VERSION (1).
+      expect(template!.header.protocolVersion).toBe(2);
+      // The settlement — the LAST entry, the coinbase rent — rides the same
+      // era. `utxoTxs` holds encoded transactions, so decode it to read the era.
+      const encoded = template!.utxoTxTree.utxoTxs;
+      expect(decodeTx(encoded[encoded.length - 1]!).protocolVersion).toBe(2);
+    });
+
+    it('the fill excludes a pooled transaction whose version is not the era, leaving it pooled', async () => {
+      const db = await importDb();
+      db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+      const bc = await importBlockCreator();
+      const mempool = await importMempoolFresh();
+
+      // Two entries, alike but for the version. At height 1 the era is 2, so the
+      // version-1 entry is foreign — admitted under an earlier era, met by the
+      // fill past the boundary. The producer skips it rather than evicting it.
+      const eraTx = { ...fillerTx('era-2'), protocolVersion: 2 };
+      const foreignTx = fillerTx('era-1'); // PROTOCOL_VERSION = 1
+      const foreignRow = mempool.insertUtxoTx(foreignTx, 1000);
+      mempool.insertUtxoTx(eraTx, 1000);
+
+      bc.startBlockCreator(testConfig);
+      const template = bc.getCurrentTemplate();
+      expect(template).not.toBeNull();
+      // The era entry rides the body; the foreign one does not.
+      expect(template!.utxoTxTree.utxoTxIds).toContain(computeTxId(eraTx));
+      expect(template!.utxoTxTree.utxoTxIds).not.toContain(computeTxId(foreignTx));
+      // Skipped, not evicted: the foreign entry is still pooled, to leave by
+      // expiry like any other.
+      expect(mempool.getPendingEntries(10).map((e) => e.rowid)).toContain(foreignRow);
+    });
+
+    it('a rent transaction over a rent-eligible box declares the era', async () => {
+      const db = await importDb();
+      db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+      const utxo = await importUtxo();
+      const bc = await importBlockCreator();
+
+      // A credit box old enough to owe rent at height 1: eligibility is
+      // created_at_block < currentHeight - storageRentPeriodBlocks = 1 - 0 = 1,
+      // and this box is at 0 (NODE_INTERFACE → Storage rent is a transition
+      // requiring no signature). Its rent transaction rides era 2.
+      const owner = makeTestIdentity().userId;
+      const box = seedProvenance<CreditBox>(
+        { boxType: 'credit', value: 100_000_000n, owner, createdAtBlock: 0 },
+        88,
+      );
+      utxo.insertBox(box);
+
+      bc.startBlockCreator(testConfig);
+      const template = bc.getCurrentTemplate();
+      expect(template).not.toBeNull();
+      // The body is the rent transaction, then the settlement. The rent tx
+      // charges the box (a fee output) and declares the era at the built height.
+      const encoded = template!.utxoTxTree.utxoTxs;
+      const rentTx = decodeTx(encoded[0]!);
+      expect(rentTx.outputs.some((o) => o.boxType === 'fee')).toBe(true);
+      expect(rentTx.protocolVersion).toBe(2);
+    });
   });
 
   // -----------------------------------------------------------------------

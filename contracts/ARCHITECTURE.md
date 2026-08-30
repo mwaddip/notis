@@ -1950,43 +1950,38 @@ a committed byte, and none of them need to wait for a break bundle.
 
 ## Protocol Versioning
 
-Every post, stump, ordering block, and UTXO transaction carries a
-`protocolVersion` field. Validation rules are keyed to this version:
+Every post commit, ordering block, UTXO transaction and stump carries a `protocolVersion` field. **The
+version in force is scheduled by height, per network:** `NetworkProfile.protocolVersionSchedule` is a list
+of eras `{ version, fromHeight }`, and `protocolVersionAt(schedule, height)` is the version of the last era
+whose `fromHeight` is at or below the height (`TYPES_INTERFACE → Network profiles`). Every profile's
+schedule is `[{ version: 1, fromHeight: 0 }]`.
 
-- **Version 1 (current):** Dual-ledger architecture, sovereign subtrees, stumps,
-  UTXO karma/credits, likes, invite system, ordering blocks, PoW
-  validators, libp2p networking, two-stage validation (`@dagsocial/validation`
-  + `@dagsocial/net`), unified mempool.
-- **Future versions:** Credit sinks, reply earning, karma-proportional PoW,
-  storage pruning, view keys.
+**A declared version must equal the era at the object's height, and is compared to nothing else** — an
+ordering block's own `height`; a transaction's, and its post commit's, the height of the block that carries
+it, which at admission is `tip + 1`; a stump's its `compactedAtBlockHeight`; a settlement's the block's
+(`VALIDATION_INTERFACE → Protocol Version`). An old object validates under its era's rules because its
+height fixes them, so history resyncs across a bump; a new object cannot pose as old. The declared field
+keeps two jobs: it is hashed into the object's identity, and it is the value a decoder reads first
+(`TYPES_INTERFACE → Layout — Block`).
 
-An object with an old version is validated against that version's rules
-forever. A node rejects objects with an unsupported protocol version.
+**A bump adds an era row an upgrade window ahead** — a week or two, so every node has moved by the flag
+height. A build whose schedule lacks the row rejects the new era's objects as unsupported and refuses its
+peers softly: peering is by era coverage — a node declares the highest version it implements and accepts a
+peer that covers its current era (`NET_INTERFACE → Handshake`) — and a version mismatch anywhere is a
+compatibility signal, never a protocol violation. The partition at the flag height is the fork itself.
 
-> ⚠ **NOT IMPLEMENTED — the second sentence is true, the first is not.**
-> There is **no version-keyed rule table and no dispatch**. Every check is a **strict equality
-> against `PROTOCOL_VERSION`**, so rejecting an unsupported version works while "validated against
-> that version's rules forever" describes a mechanism that was never built.
->
-> ⚠ **Re-measured 2026-08-25 — the 2026-08-11 enumeration had rotted entirely.** It named four
-> sites by line, two of them in `verifier.ts`, **a file that no longer exists**, and claimed every
-> one used `!== PROTOCOL_VERSION` where one does. Named by what they are rather than where they sit,
-> the checks are: **one predicate** — `verifyProtocolVersion` in validation, a bare `===`, called
-> from net's gossip on blocks and transactions — and **three that bypass it**, in node's transaction
-> envelope step, node's settlement, and net's handshake, which passes a single-element accept list.
-> **Four checks, three forms, four packages.** A version-keyed table replaces all of them at once,
-> and #20 / #21 reopen when it lands.
->
-> **The consequence is worse than a missing feature: the first version bump makes existing
-> history un-resyncable.** Under strict equality a v2 node rejects every v1 object,
-> including the chain it already has — so the migration path the versioning scheme exists
-> to provide is exactly what it cannot do. This must be built **before** the first bump,
-> not during it.
->
-> The design stands and is published as how the protocol evolves. **This claim appears in
-> four places** — here, `CLAUDE.md` (auto-loaded into every session), `docs/site/architecture`
-> (published), and `VALIDATION_INTERFACE.md`. Only `VALIDATION_INTERFACE.md` describes what
-> the code does. **If this is built, all four change together.**
+**What a bump does in code.** A rule that differs between versions branches on the era's version *as
+passed in* — never on the declared field, never on a module constant — and keeps every older branch. The
+codec dispatches on the declared field and the era check confirms it after decode. A per-era parameter
+object, or named deployments with activation heights, is organisation inside a node; either stays on one
+chain with nodes that have neither. Nothing branches at version 1. `PROTOCOL_VERSION` is the highest
+version a build implements: the handshake declares it and the profile check bounds every schedule by it;
+no object check compares against it and no producer stamps it.
+
+- **Version 1:** dual-ledger architecture, sovereign subtrees, stumps, UTXO karma/credits, likes, the
+  invite system, ordering blocks, PoW validators, libp2p networking, two-stage validation
+  (`@dagsocial/validation` + `@dagsocial/net`), unified mempool. What later versions may carry is listed
+  under → Deferred to future protocol versions.
 
 ---
 

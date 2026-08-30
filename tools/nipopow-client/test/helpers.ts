@@ -7,11 +7,12 @@ import {
   AVL_KEY_LENGTH,
   boxRecordBytes,
   computeCandidateBoxId,
+  protocolVersionAt,
   RETARGET_HALFLIFE_BLOCKS,
   NETWORK_PROFILES,
   profileFor,
 } from '@dagsocial/types';
-import type { BlockHeader, BoxCandidate, TxId, NetworkProfile } from '@dagsocial/types';
+import type { BlockHeader, BoxCandidate, TxId, NetworkProfile, ProtocolEra } from '@dagsocial/types';
 import {
   verifyOrderingBlockPoW,
   blockHash,
@@ -71,6 +72,7 @@ export interface MinedChain {
 }
 
 // Headers follow the ASERT schedule; stamps are on schedule so bits stay at the anchor's.
+// TYPES_INTERFACE → Version — with a schedule each header stamps the era at its height, else PROTOCOL_VERSION.
 export function buildMinedChain(opts: {
   count: number;
   anchorBits?: number;
@@ -79,8 +81,9 @@ export function buildMinedChain(opts: {
   forceLevels?: Map<number, number>;
   stateRoot?: string;
   validatorId?: Uint8Array;
+  schedule?: readonly ProtocolEra[];
 }): MinedChain {
-  const { count, forceLevels } = opts;
+  const { count, forceLevels, schedule } = opts;
   const anchorBits = opts.anchorBits ?? DEVNET_POW_TARGET_BITS;
   const idealMs = opts.idealMs ?? DEVNET_IDEAL_MS;
   const anchorStamp = opts.anchorStamp ?? DEFAULT_ANCHOR_STAMP;
@@ -105,8 +108,11 @@ export function buildMinedChain(opts: {
       ? anchorBits
       : asertTargetBits(retarget, anchorStamp, headers[i - 1]!);
 
+    const version = schedule ? protocolVersionAt(schedule, height) : PROTOCOL_VERSION;
+    if (version === null) throw new Error(`no era covers height ${height}`);
+
     const header: BlockHeader = {
-      protocolVersion: PROTOCOL_VERSION,
+      protocolVersion: version,
       height,
       prevBlockHash: prevHash,
       utxoTxRoot: '00'.repeat(32),

@@ -116,8 +116,8 @@ panic-free on malformed input (the `@dagsocial/validation` no-panic contract, M-
 mirror implementation must reproduce this, not reintroduce a throw.
 
 ⚠ **No field takes an out-of-domain sentinel that consensus then reads.** `vlqU`'s sentinel
-guards `protocolVersion`, and an out-of-domain version encodes to a value the
-strict-equality version check refuses — the sentinel never reaches a rule as a meaning.
+guards `protocolVersion`, and an out-of-domain version encodes to a value the era check
+refuses — the sentinel never reaches a rule as a meaning.
 `type`'s writer (`enum8`, → Layout — Post) is **total the same way, at byte width**: an
 off-table value takes the reserved `0xff` sentinel, which no table may claim and which the
 decode boundary refuses as `invalid-tag`. `verifyPostFieldDomains`' membership rule keeps
@@ -2128,7 +2128,7 @@ biconditional is a check, not a property of the bytes.
 
 | # | Field | Encoding |
 |---|---|---|
-| 1 | `protocolVersion` | `vlqU` — **first, so it is readable before any version dispatch** |
+| 1 | `protocolVersion` | `vlqU` — **first, so it is readable before any version dispatch**: a decoder dispatches on the declared field, and the era check confirms it after decode (`ARCHITECTURE → Protocol Versioning`) |
 | 2 | `height` | `vlqU` |
 | 3 | `prevBlockHash` | `b32` |
 | 4 | `utxoTxRoot` | `b32` |
@@ -2651,6 +2651,10 @@ export interface NetworkProfile {
   // (→ Chain reorganisation). A duration in blocks; the mechanic is universal, the number per network.
   readonly maxReorgDepth: number;
 
+  // Protocol versioning — the eras this network's version runs through; the version in force at a
+  // height is the last era's whose fromHeight is at or below it (→ Version).
+  readonly protocolVersionSchedule: readonly ProtocolEra[];
+
   // Emission schedule. `creditEmissionTotal` is the EmissionBox's genesis value and is
   // CARRIED, never derived (§EmissionBox); it must be STRICTLY below the curve's own sum
   // for this profile's F and E at the universal R and d.
@@ -2697,6 +2701,11 @@ Configuration`) — a refusal, never a clamp.
 40 on devnet (`CONSTANTS → Per-network values`) — bounds the fork walk, the journal retention window, the
 refused-header purge and the AVL history floor (→ Chain reorganisation). A profile whose horizon is not
 a positive safe integer is refused at load (`NODE_INTERFACE → Configuration`).
+
+**The version schedule is per network; the rules are not.** `protocolVersionSchedule` —
+`[{ version: 1, fromHeight: 0 }]` on all three (`CONSTANTS → Per-network values`) — is the era table
+(→ Version): a bump adds an era row to the network it lands on, an upgrade window ahead, and mainnet's
+schedule may end at an earlier version than testnet's under one build.
 
 **This is the sole definition of the network magics.** `@dagsocial/wire` exported duplicates
 until P2-A phase 5 deleted them. They live here rather than `NetworkType` living in wire
@@ -2832,7 +2841,29 @@ threshold / percentage / bits** constants stay `number`.
 
 ```typescript
 export const PROTOCOL_VERSION = 1;
+
+export interface ProtocolEra { readonly version: number; readonly fromHeight: number }
+export function protocolVersionAt(schedule: readonly ProtocolEra[], height: number): number | null;
 ```
+
+**`PROTOCOL_VERSION` is the highest protocol version this build implements.** The handshake declares it
+(`NET_INTERFACE → Handshake`) and every schedule's last version is bounded by it; no object check compares
+against it and no producer stamps it (`ARCHITECTURE → Protocol Versioning`).
+
+**The version in force at a height is scheduled.** `protocolVersionAt` answers the `version` of the last
+era whose `fromHeight` is at or below `height`, and `null` for a `height` outside the height domain —
+anything but a non-negative safe integer (`−1`, `1.5`, `NaN`, `±Infinity`, a non-number): nothing covers
+it. One domain, the chain's own; the callers' height checks are the same predicate. Total in `height`:
+it never throws on any height value. The schedule is the profile's — never input, never peer-supplied —
+so an off-type schedule is a build defect, and a caller that takes a schedule from anywhere else guards
+the call itself (`VALIDATION_INTERFACE → Protocol Version` does).
+
+**A schedule is valid iff** its first era is `{ version: 1, fromHeight: 0 }`; each era's version is the
+previous one's plus one (a version's rules are defined against the previous version's); `fromHeight` is
+strictly ascending; and the last version is at most `PROTOCOL_VERSION` — a build implements every era it
+schedules. The last rule is what lets networks diverge: one build may carry testnet at a second era while
+mainnet's schedule still ends at 1. Every shipped profile's schedule is valid; a profile that is not is a
+build defect, not a runtime condition.
 
 ### Content limits
 

@@ -300,7 +300,13 @@ The block creator (`services/block-creator.ts`) is the sole consumer of
 pending entries:
 
 1. Calls `purgeExpired(currentHeight)` — drops stale entries
-2. Draws pending entries in FIFO order and fills up to `BLOCK_BODY_BUDGET_BYTES`
+2. Draws pending entries in FIFO order and fills up to `BLOCK_BODY_BUDGET_BYTES`, **skipping an
+   entry whose declared `protocolVersion` is not the era of the block being built**
+   (`protocolVersionAt(schedule, height)`, `ARCHITECTURE → Protocol Versioning`). A skipped entry
+   stays pooled and leaves by expiry (→ What takes an entry out of the pool, 2) — never evicted for
+   its version, never included. Without the skip, the first block of a new era would carry every
+   pre-boundary entry, the mutation phase would reject the body, and the rebuild would evict the
+   era's valid entries with them
 3. Every entry is a `utxo_tx` → `utxoTxIds` / `utxoTxs`
 4. Tracks `confirmedRowids` — **every** row the template carries (a prune is a
    transaction row)

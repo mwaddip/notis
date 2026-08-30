@@ -10,7 +10,7 @@ import {
   STORAGE_RENT_PER_BYTE,
   POST_PRICE_REPLY,
   REPLY_AUTHOR_SHARE,
-  PROTOCOL_VERSION,
+  protocolVersionAt,
   VOUCH_CAST_HEIGHT_WINDOW,
   VOUCH_KARMA_AMOUNT,
   VOUCH_MIN_BALANCE,
@@ -19,7 +19,7 @@ import {
 import { isCreditSideTx } from './coinbase-split.js';
 import { effectiveKarma } from './decay.js';
 import type { DecayCfg } from './decay.js';
-import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, PostCommit, PruneCommit, PostWithdrawCommit } from '@dagsocial/types';
+import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, PostCommit, PruneCommit, PostWithdrawCommit, ProtocolEra } from '@dagsocial/types';
 
 // `computeTxId` has exactly one implementation and it is types'. This engine
 // must never grow a local copy: the id it returns is both the hash
@@ -29,7 +29,7 @@ import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, Bon
 // same `Encoder` options, same strip rule, same domain tag, all by hand
 // (NODE_INTERFACE → "Box Identity and Mint Provenance").
 
-import { ed25519PublicKeyToKeyObject, verifyPostCommitDomains, verifyPostWithdrawCommitDomains, verifyPruneCommitDomains, verifyProtocolVersion } from '@dagsocial/validation';
+import { ed25519PublicKeyToKeyObject, verifyPostCommitDomains, verifyPostWithdrawCommitDomains, verifyPruneCommitDomains, verifyTxProtocolVersion } from '@dagsocial/validation';
 // Type-only: erased at compile time, so the engine gains no runtime edge into
 // the store module graph. Same seam `DecayDeps` uses for the same record.
 import type { IdentityRecord, NetworkRecord } from '../store/identity-records.js';
@@ -191,6 +191,11 @@ export interface UtxoEngineDeps {
   /** The profile's membershipBarMultiplier (k in D(N) = max(1, icbrt(k·N))). */
   membershipBarMultiplier: number;
   putIdentityRecord: (identityId: Uint8Array, record: IdentityRecord) => void;
+  /**
+   * The profile's protocol-version schedule. Envelope step 7 holds each declared
+   * version to the era at the judged-for height (NODE_INTERFACE → validateTx).
+   */
+  protocolVersionSchedule: readonly ProtocolEra[];
 }
 
 // ---------------------------------------------------------------------------
@@ -1196,7 +1201,7 @@ function checkHexKeyedByteMap(
  * block funnel in `block-apply.ts`; gossip and the HTTP routes inherit it
  * through `validateTx`.
  */
-export function checkTxEnvelope(tx: unknown): UtxoResult {
+export function checkTxEnvelope(tx: unknown, height: number, schedule: readonly ProtocolEra[]): UtxoResult {
   // ---- 1. A plain, non-null, non-array object ----
   if (!isPlainObject(tx)) {
     return {
@@ -1293,18 +1298,21 @@ export function checkTxEnvelope(tx: unknown): UtxoResult {
   // It has no clause of its own because it is not a field: the name is reserved
   // and never to be reused (TYPES_INTERFACE → Layout — UtxoTransaction).
 
-  // ---- 7. protocolVersion: strictly PROTOCOL_VERSION ----
-  // The same strict-equality posture as posts and block headers. No
-  // version-keyed dispatch exists (repo-root CLAUDE.md warning) and this gate
-  // does not pretend otherwise. Measured pre-gate: a tx SIGNED with
-  // `protocolVersion: "x"` validated, pooled and applied end-to-end, with the
-  // string `String()`-coerced into its own id preimage.
-  if (!verifyProtocolVersion(tx.protocolVersion as number)) {
+  // ---- 7. protocolVersion: the era at the judged-for height ----
+  // Every declared version the transaction carries — its own and, when a commit
+  // is present, the commit's — equals the era scheduled at `height`
+  // (NODE_INTERFACE → validateTx; VALIDATION_INTERFACE → Protocol Version). The
+  // commit's version rides in the post-id preimage, so a commit declaring a
+  // version other than the transaction's would mint a second identity for one post.
+  if (!verifyTxProtocolVersion(tx as unknown as UtxoTransaction, height, schedule)) {
+    const era = protocolVersionAt(schedule, height);
+    const commit = tx.post as { protocolVersion?: unknown } | undefined;
     return {
       valid: false,
       error:
-        `Invalid tx envelope: protocolVersion must be ${PROTOCOL_VERSION}, ` +
-        `got ${describeValue(tx.protocolVersion)}`,
+        `Invalid tx envelope: protocolVersion must be the era ${era} at height ${height}, ` +
+        `got ${describeValue(tx.protocolVersion)}` +
+        (commit !== undefined ? ` (commit ${describeValue(commit.protocolVersion)})` : ''),
     };
   }
 
@@ -1984,8 +1992,8 @@ function checkAuthorization(
  * Performs 9 validation steps:
  * 0. Transaction envelope shape — `tx` is a plain object with the closed key
  *    set, hex input ids, array outputs, a hex-keyed 64-byte signature map, and
- *    `protocolVersion` strictly equal
- *    to `PROTOCOL_VERSION` (NODE_INTERFACE → "Transaction envelope shape").
+ *    a `protocolVersion` — its own and any commit's — equal to the era at the
+ *    judged-for height (NODE_INTERFACE → "Transaction envelope shape").
  *    Ahead of every other read of `tx`, so steps 1–9 dereference envelope
  *    fields under a shape guarantee.
  * 1. No duplicate input IDs
@@ -2027,7 +2035,7 @@ export function validateTx(
   // Ahead of every other read of `tx`: steps 1–9 index `tx.inputs`, iterate
   // `tx.outputs`, and hash the whole envelope inside `computeTxId`, all of
   // which are throw sites for a malformed envelope without this gate.
-  const envelopeCheck = checkTxEnvelope(tx);
+  const envelopeCheck = checkTxEnvelope(tx, currentBlockHeight, deps.protocolVersionSchedule);
   if (!envelopeCheck.valid) return envelopeCheck;
 
   // ---- 1. No duplicate input box IDs ----

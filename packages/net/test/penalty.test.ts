@@ -7,6 +7,7 @@ import type { NetConfig, NetValidators, Peer } from '../src/types.js';
 function makeConfig(overrides: Partial<NetConfig> = {}): NetConfig {
   return {
     magic: 0x54444147,
+    protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
     bootstrapPeers: [],
     listenAddrs: '/ip4/0.0.0.0/tcp/0',
     maxPeers: 50,
@@ -128,6 +129,7 @@ describe('penalty attribution (using PeerManager)', () => {
 const stubValidators: NetValidators = {
   verifyOrderingBlockPoW: () => true,
   verifyProtocolVersion: () => true,
+  verifyTxProtocolVersion: () => true,
   verifyContentLimits: () => ({ valid: true }),
   verifyParentRefsCount: () => ({ valid: true }),
   verifyTxStructure: () => ({ valid: true }),

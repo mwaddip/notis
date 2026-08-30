@@ -1,7 +1,6 @@
 import {
   selectBoxes,
   computeContentHash,
-  PROTOCOL_VERSION,
   POST_PRICE_THREAD,
   POST_PRICE_REPLY,
   REPLY_AUTHOR_SHARE,
@@ -19,8 +18,10 @@ export function buildThreadTx(
   boxes: BoxRef[],
   content: string,
   height: number,
+  protocolVersion: number,
+  postProtocolVersion: number = protocolVersion,
 ): PostTx {
-  return buildPostTx(author, boxes, content, [], POST_PRICE_THREAD, height);
+  return buildPostTx(author, boxes, content, [], POST_PRICE_THREAD, height, protocolVersion, postProtocolVersion);
 }
 
 export function buildReplyTx(
@@ -30,8 +31,10 @@ export function buildReplyTx(
   parentPostId: string,
   parentAuthorHex: string,
   height: number,
+  protocolVersion: number,
+  postProtocolVersion: number = protocolVersion,
 ): PostTx {
-  return buildPostTx(author, boxes, content, [parentPostId], POST_PRICE_REPLY, height, parentAuthorHex);
+  return buildPostTx(author, boxes, content, [parentPostId], POST_PRICE_REPLY, height, protocolVersion, postProtocolVersion, parentAuthorHex);
 }
 
 function buildPostTx(
@@ -41,6 +44,8 @@ function buildPostTx(
   parentRefs: string[],
   price: bigint,
   height: number,
+  protocolVersion: number,
+  commitVersion: number,
   parentAuthorHex?: string,
 ): PostTx {
   const sorted = [...boxes].sort((a, b) => (b.value > a.value ? 1 : b.value < a.value ? -1 : 0));
@@ -79,12 +84,12 @@ function buildPostTx(
     inputs: selected.map((b) => b.boxId),
     outputs,
     signatures: {},
-    protocolVersion: PROTOCOL_VERSION,
+    protocolVersion,
     post: {
       contentHash: computeContentHash(content),
       author: owner,
       parentRefs,
-      protocolVersion: PROTOCOL_VERSION,
+      protocolVersion: commitVersion,
       type: 'regular',
     },
   };

@@ -12,6 +12,7 @@ const PEER = 'peer-under-test';
 function makeConfig(): NetConfig {
   return {
     magic: MAGIC,
+    protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
     bootstrapPeers: [],
     listenAddrs: '/ip4/0.0.0.0/tcp/0',
     maxPeers: 10,

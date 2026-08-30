@@ -64,15 +64,17 @@ describe('post-price', () => {
       expect(b.header.stateRoot).toBe(block1s[0]!.header.stateRoot);
     }
 
+    const version = (await getStatus(miner)).protocolVersion;
+
     // ---- invite A and B ----
     const alice = fresh();
     const bob = fresh();
     const bondAmount = 50n;
 
     const faucetK = (await getKarma(miner, DEVNET_FAUCET.publicKeyHex))!;
-    const inv1 = buildInviteTx(DEVNET_FAUCET, karmaBoxes(faucetK), alice, bondAmount, faucetK.height);
+    const inv1 = buildInviteTx(DEVNET_FAUCET, karmaBoxes(faucetK), alice, bondAmount, faucetK.height, version);
     await postInvite(miner, inv1.json);
-    const inv2 = buildInviteTx(DEVNET_FAUCET, [inv1.outputs[0]!], bob, bondAmount, faucetK.height);
+    const inv2 = buildInviteTx(DEVNET_FAUCET, [inv1.outputs[0]!], bob, bondAmount, faucetK.height, version);
     await postInvite(miner, inv2.json);
 
     await confirm(
@@ -88,7 +90,7 @@ describe('post-price', () => {
     // ---- A posts a thread ----
     const aliceK = (await getKarma(miner, alice.publicKeyHex))!;
     const aliceBefore = BigInt(aliceK.total);
-    const thread = buildThreadTx(alice, karmaBoxes(aliceK), 'price test thread', aliceK.height);
+    const thread = buildThreadTx(alice, karmaBoxes(aliceK), 'price test thread', aliceK.height, version);
     const threadRes = await postPost(miner, thread.json, thread.content);
 
     await confirm(
@@ -117,7 +119,7 @@ describe('post-price', () => {
     // ---- B replies to A's thread ----
     const bobK = (await getKarma(miner, bob.publicKeyHex))!;
     const bobBefore = BigInt(bobK.total);
-    const reply1 = buildReplyTx(bob, karmaBoxes(bobK), 'b reply 1', threadRes.postId, alice.publicKeyHex, bobK.height);
+    const reply1 = buildReplyTx(bob, karmaBoxes(bobK), 'b reply 1', threadRes.postId, alice.publicKeyHex, bobK.height, version);
     const reply1Res = await postPost(miner, reply1.json, reply1.content);
 
     await confirm(
@@ -158,7 +160,7 @@ describe('post-price', () => {
 
     for (let i = 1; i < LIKES_PER_KARMA_PAYOUT; i++) {
       const bk = (await getKarma(miner, bob.publicKeyHex))!;
-      const rTx = buildReplyTx(bob, karmaBoxes(bk), `accrual reply ${i + 1}`, threadRes.postId, alice.publicKeyHex, bk.height);
+      const rTx = buildReplyTx(bob, karmaBoxes(bk), `accrual reply ${i + 1}`, threadRes.postId, alice.publicKeyHex, bk.height, version);
       const rRes = await postPost(miner, rTx.json, rTx.content);
 
       await confirm(
@@ -197,6 +199,7 @@ describe('post-price', () => {
       threadRes.postId,
       alice.publicKeyHex,
       bobKLike.height,
+      version,
     );
     await postLike(miner, like.json);
 

@@ -7,7 +7,9 @@
 // NetworkProfile (network.ts). They stay exported from here until every consumer
 // is re-pointed; deleting them now would break consumers.
 
-// Protocol
+// The highest protocol version this build implements: every network's version schedule ends at or
+// below it and the handshake declares it, but no object check compares against it and no producer
+// stamps it — the version in force is scheduled by height (TYPES_INTERFACE → Version).
 export const PROTOCOL_VERSION = 1;
 
 // Content limits

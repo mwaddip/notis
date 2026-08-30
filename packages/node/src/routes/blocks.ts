@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import type { OrderingBlock } from '@dagsocial/types';
-import { membershipBar, memberLikesBar } from '@dagsocial/types';
+import type { OrderingBlock, ProtocolEra } from '@dagsocial/types';
+import { membershipBar, memberLikesBar, protocolVersionAt } from '@dagsocial/types';
 import { postIdsOf } from '../services/block-posts.js';
 import type { NetworkRecord } from '../store/identity-records.js';
 
@@ -44,6 +44,8 @@ export interface BlocksDeps {
   inviteBondMax: bigint;
   getNetworkRecord(): NetworkRecord;
   membershipBarMultiplier: number;
+  /** The profile's era schedule — /status serves the era at blockHeight + 1. */
+  protocolVersionSchedule: readonly ProtocolEra[];
 }
 
 // ---------------------------------------------------------------------------
@@ -126,9 +128,14 @@ export function createRouter(deps: BlocksDeps): Router {
 
   // GET /status — aggregated node status
   router.get('/status', (_req, res) => {
+    const blockHeight = deps.getCurrentHeight();
     res.json({
       networkType: deps.networkType,
-      blockHeight: deps.getCurrentHeight(),
+      blockHeight,
+      // The era a client must sign at — the era at blockHeight + 1, served
+      // because a client reproduces it rather than holding a constant
+      // (NODE_INTERFACE → Status).
+      protocolVersion: protocolVersionAt(deps.protocolVersionSchedule, blockHeight + 1),
       postCount: deps.getPostCount(),
       pendingPosts: deps.getPendingPostCount(),
       totalKarma: deps.getTotalKarma().toString(),

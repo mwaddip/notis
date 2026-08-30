@@ -1,4 +1,4 @@
-import type { OrderingBlock, UtxoTransaction, BlockHeader } from '@dagsocial/types';
+import type { OrderingBlock, UtxoTransaction, BlockHeader, ProtocolEra } from '@dagsocial/types';
 
 // ---------------------------------------------------------------------------
 // Message codes
@@ -96,6 +96,13 @@ export interface PeerMetadata {
    * PeerDb through this field (contract: "Ban surfaces are unified").
    */
   address: string | null;
+  /**
+   * The peer's declared `protocolVersion` (the handshake's), or null until the
+   * handshake reveals it. This is the version the boundary sweep reads
+   * (NET_INTERFACE → Post-Handshake Routing): a peer whose version is null has
+   * not handshaken and is not Active, so it is never the sweep's.
+   */
+  protocolVersion: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -136,6 +143,10 @@ export interface NetConfig {
   // these values, it never resolves them — no NetworkProfile import, no env
   // read, no default (NET_INTERFACE → Consensus parameters net enforces).
   magic: number;
+  // The profile's era table (TYPES_INTERFACE → Version). The handshake, the tx
+  // validator and the boundary sweep read the era at chainHeight() + 1 from it;
+  // the block validator reads it at each header's height (NET_INTERFACE → Config).
+  protocolVersionSchedule: readonly ProtocolEra[];
   bootstrapPeers: string[];
   listenAddrs: string;
   maxPeers: number;
@@ -154,7 +165,11 @@ export interface NetConfig {
 
 export interface NetValidators {
   verifyOrderingBlockPoW: (header: BlockHeader) => boolean;
-  verifyProtocolVersion: (version: number) => boolean;
+  // The declared version equals the era scheduled at the object's height
+  // (VALIDATION_INTERFACE → Protocol Version). Node passes validation's
+  // functions through; net calls them, it does not implement them.
+  verifyProtocolVersion: (declared: number, height: number, schedule: readonly ProtocolEra[]) => boolean;
+  verifyTxProtocolVersion: (tx: UtxoTransaction, height: number, schedule: readonly ProtocolEra[]) => boolean;
   verifyContentLimits: (content: string) => { valid: boolean; error?: string };
   verifyParentRefsCount: (refs: string[]) => { valid: boolean; error?: string };
   verifyTxStructure: (tx: UtxoTransaction) => { valid: boolean; error?: string };

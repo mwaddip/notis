@@ -2,7 +2,7 @@ import {
   interlinkRoot,
   MAX_INTERLINKS,
 } from '@dagsocial/types';
-import type { BlockHeader } from '@dagsocial/types';
+import type { BlockHeader, ProtocolEra } from '@dagsocial/types';
 import {
   asertTargetBits,
   blockHash,
@@ -10,6 +10,7 @@ import {
   verifyCreatedAtOrder,
   verifyHeaderFieldDomains,
   verifyOrderingBlockPoW,
+  verifyProtocolVersion,
 } from '@dagsocial/validation';
 import type { RetargetParams } from '@dagsocial/validation';
 import { decodeNipopowProof } from './codec.js';
@@ -29,7 +30,7 @@ export interface VerifyProfile {
   maxFutureDriftMs: number;
   nowMs: number;
   genesisId: string;
-  protocolVersion: number;
+  protocolVersionSchedule: readonly ProtocolEra[];   // TYPES_INTERFACE → Version
 }
 
 function fail(reason: VerifyCode, index?: number): VerifyResult {
@@ -108,7 +109,10 @@ export function verifyProof(
     const h = allHeaders[i]!;
     const domResult = verifyHeaderFieldDomains(h);
     if (!domResult.valid) return fail('domain', i);
-    if (h.protocolVersion !== profile.protocolVersion) return fail('version', i);
+    // VALIDATION_INTERFACE → Protocol Version — declared equals the era at the header's height
+    if (!verifyProtocolVersion(h.protocolVersion, h.height, profile.protocolVersionSchedule)) {
+      return fail('version', i);
+    }
     if (h.powTargetBits < floorBits || h.powTargetBits > ceilingBits) return fail('target', i);
     if (!verifyOrderingBlockPoW(h)) return fail('pow', i);
   }

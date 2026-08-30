@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, vi } from 'vitest';
 import {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
+  verifyTxProtocolVersion,
   verifyContentLimits,
   verifyParentRefsCount,
   verifyTxStructure,
@@ -20,7 +21,7 @@ import {
   ORDERING_BLOCK_POW_TARGET_FLOOR,
 } from '@dagsocial/types';
 import type {
-  PostCommit, UtxoTransaction, OrderingBlock, BlockHeader, UtxoTxTree,
+  PostCommit, UtxoTransaction, OrderingBlock, BlockHeader, UtxoTxTree, ProtocolEra,
 } from '@dagsocial/types';
 import { TopicValidatorResult } from '@libp2p/interface';
 import { subscribeTopics, TOPICS } from '../src/gossip.js';
@@ -38,6 +39,7 @@ import type { NetConfig, NetValidators } from '../src/types.js';
 const validators: NetValidators = {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
+  verifyTxProtocolVersion,
   verifyContentLimits,
   verifyParentRefsCount,
   verifyTxStructure,
@@ -48,6 +50,7 @@ const validators: NetValidators = {
 function makeConfig(): NetConfig {
   return {
     magic: 0x54444147,
+    protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
     bootstrapPeers: [],
     listenAddrs: '/ip4/0.0.0.0/tcp/0',
     maxPeers: 10,
@@ -63,7 +66,14 @@ type CapturedValidator = (
   msg: { data: Uint8Array },
 ) => TopicValidatorResult;
 
-function makeHarness(karmaMembers: Set<string> = new Set()) {
+function makeHarness(
+  karmaMembers: Set<string> = new Set(),
+  opts: {
+    schedule?: readonly ProtocolEra[];
+    chainHeight?: () => number;
+    penaltyScoreThreshold?: number;
+  } = {},
+) {
   const topicValidators = new Map<string, CapturedValidator>();
   const stub = {
     services: {
@@ -75,11 +85,16 @@ function makeHarness(karmaMembers: Set<string> = new Set()) {
     },
   } as unknown as Libp2pGossip;
 
-  const peerMgr = new PeerManager(makeConfig());
+  const config = opts.penaltyScoreThreshold !== undefined
+    ? { ...makeConfig(), penaltyScoreThreshold: opts.penaltyScoreThreshold }
+    : makeConfig();
+  const peerMgr = new PeerManager(config);
   subscribeTopics(stub, validators, peerMgr, {
     onOrderingBlock: () => {},
     onTx: () => {},
-  }, karmaMembers);
+  }, karmaMembers,
+    opts.schedule ?? [{ version: 1, fromHeight: 0 }],
+    opts.chainHeight ?? (() => 0));
 
   const penaltySpy = vi.spyOn(peerMgr, 'recordPenalty');
   return { topicValidators, peerMgr, penaltySpy, karmaMembers };
@@ -305,8 +320,9 @@ describe('tx topic validator — the post membership gate', () => {
     const { topicValidators, peerMgr, penaltySpy } = makeHarness(members);
     const validate = topicValidators.get(TOPICS.tx)!;
     const peer = newPeer(peerMgr);
+    const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
     const result = validate(peer, { data: encodeTxPacket(tx, content) });
-    return { result, peer, peerMgr, penaltySpy };
+    return { result, peer, peerMgr, penaltySpy, kindSpy };
   };
 
   // --- cell 1: a known author is admitted -----------------------------------
@@ -393,12 +409,15 @@ describe('tx topic validator — the post membership gate', () => {
   });
 
   it('rejects an unsupported protocol version', () => {
+    // era at chainHeight()+1 = 0+1 = 1; the tx declares 99. A version mismatch is
+    // a compatibility signal — Transient (50), not misbehavior (100).
     const tx = { ...txWith(baseCommit(keyPair.publicKey)), protocolVersion: 99 };
-    const { result, peer, penaltySpy } = validatePacket(tx, postContent, new Set([authorHex]));
+    const { result, peer, penaltySpy, kindSpy } = validatePacket(tx, postContent, new Set([authorHex]));
     expect(result).toBe(TopicValidatorResult.Reject);
-    expect(penaltySpy).toHaveBeenCalledWith(
-      'misbehavior', peer.id, 100, 'unsupported protocol version',
+    expect(kindSpy).toHaveBeenCalledWith(
+      PenaltyKind.Transient, peer.id, expect.stringContaining('era 1'),
     );
+    expect(penaltySpy).not.toHaveBeenCalled();
   });
 
   it('there is no sub-block topic to subscribe to', () => {
@@ -510,6 +529,8 @@ function makeDispatchHarness(handlers: {
       onTx: handlers.onTx ?? (() => {}),
     },
     new Set<string>(),
+    [{ version: 1, fromHeight: 0 }],
+    () => 0,
   );
 
   // `from` is left undefined so the Active-peer filter is skipped — this suite
@@ -669,5 +690,149 @@ describe('gossip dispatch listener', () => {
       onOrderingBlock: () => { throw new Error('must not run'); },
     });
     expect(() => deliver('/dagsocial/not-a-topic/1', new Uint8Array([1, 2, 3]))).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Version gate — NET_INTERFACE → Stage 1; → Peer Penalty System
+//
+// A declared version that is not its era is a compatibility signal, Rejected
+// with PenaltyKind.Transient (50), never the misbehavior tier (100). The block
+// header is keyed on its own height; the tx on the next block's, chainHeight()+1.
+// A synthetic two-era schedule [1@0, 2@H] exercises the boundary without a
+// placeholder version.
+// ---------------------------------------------------------------------------
+
+describe('version gate — a mismatch is Transient (50), not misbehavior (100)', () => {
+  const H = 5;
+  const twoEra: readonly ProtocolEra[] = [
+    { version: 1, fromHeight: 0 },
+    { version: 2, fromHeight: H },
+  ];
+
+  const vHeader = (height: number, protocolVersion: number): BlockHeader => ({
+    protocolVersion,
+    height,
+    prevBlockHash: '11'.repeat(32),
+    utxoTxRoot: '33'.repeat(32),
+    stateRoot: EMPTY_STATE_ROOT,
+    validatorId: new Uint8Array(32).fill(9),
+    powNonce: 0,
+    powTargetBits: ORDERING_BLOCK_POW_TARGET_FLOOR,
+    createdAt: 1_722_470_400_000,
+    interlinkRoot: '00'.repeat(32),
+  });
+  const vBlock = (height: number, protocolVersion: number): OrderingBlock => ({
+    header: vHeader(height, protocolVersion),
+    utxoTxTree: settlementBody(),
+    validatorSignature: new Uint8Array(64),
+  });
+
+  let keyPair: ReturnType<typeof generateKeyPair>;
+  const CONTENT = 'version-gate fixture';
+  beforeAll(() => { keyPair = generateKeyPair(); });
+
+  const vCommit = (protocolVersion: number): PostCommit => ({
+    contentHash: computeContentHash(CONTENT),
+    author: keyPair.publicKey,
+    parentRefs: [],
+    protocolVersion,
+    type: 'regular' as const,
+  });
+  const plainTxV = (protocolVersion: number): UtxoTransaction => ({
+    inputs: ['aa'.repeat(32)],
+    outputs: [{ boxType: 'karma', value: 10n, createdAtBlock: 0, owner: new Uint8Array(32).fill(1) } as never],
+    signatures: {},
+    protocolVersion,
+  });
+  const postTxV = (txVersion: number, commitVersion: number): UtxoTransaction => ({
+    ...plainTxV(txVersion),
+    post: vCommit(commitVersion),
+  });
+
+  const runBlock = (block: OrderingBlock) => {
+    const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set(), { schedule: twoEra });
+    const validate = topicValidators.get(TOPICS.orderingBlock)!;
+    const peer = newPeer(peerMgr);
+    const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+    const result = validate(peer, { data: encodeOrderingBlock(block) });
+    return { result, peer, peerMgr, penaltySpy, kindSpy };
+  };
+  const runTx = (tx: UtxoTransaction, content: string | undefined, chainHeightVal: number) => {
+    const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set([Buffer.from(keyPair.publicKey).toString('hex')]), {
+      schedule: twoEra,
+      chainHeight: () => chainHeightVal,
+    });
+    const validate = topicValidators.get(TOPICS.tx)!;
+    const peer = newPeer(peerMgr);
+    const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+    const result = validate(peer, { data: encodeTxPacket(tx, content) });
+    return { result, peer, peerMgr, penaltySpy, kindSpy };
+  };
+
+  it('rejects block H declaring era 1 (era at H is 2)', () => {
+    const { result, peer, penaltySpy, kindSpy } = runBlock(vBlock(H, 1));
+    expect(result).toBe(TopicValidatorResult.Reject);
+    expect(kindSpy).toHaveBeenCalledWith(PenaltyKind.Transient, peer.id, expect.stringContaining('era 2'));
+    expect(penaltySpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects block H-1 declaring era 2 (era at H-1 is 1)', () => {
+    const { result, peer, penaltySpy, kindSpy } = runBlock(vBlock(H - 1, 2));
+    expect(result).toBe(TopicValidatorResult.Reject);
+    expect(kindSpy).toHaveBeenCalledWith(PenaltyKind.Transient, peer.id, expect.stringContaining('era 1'));
+    expect(penaltySpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects a tx declaring era 1 when chainHeight()+1 = H (era 2)', () => {
+    const { result, peer, penaltySpy, kindSpy } = runTx(plainTxV(1), undefined, H - 1);
+    expect(result).toBe(TopicValidatorResult.Reject);
+    expect(kindSpy).toHaveBeenCalledWith(PenaltyKind.Transient, peer.id, expect.stringContaining('era 2'));
+    expect(penaltySpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects a tx whose commit declares a different era than its envelope', () => {
+    // The envelope declares era 2 (matches), the commit declares 1 — both must
+    // equal the era, so the commit alone fails it.
+    const { result, peer, penaltySpy, kindSpy } = runTx(postTxV(2, 1), CONTENT, H - 1);
+    expect(result).toBe(TopicValidatorResult.Reject);
+    expect(kindSpy).toHaveBeenCalledWith(PenaltyKind.Transient, peer.id, expect.stringContaining('commit 1'));
+    expect(penaltySpy).not.toHaveBeenCalled();
+  });
+
+  it('a mismatch accrues 50, not 100: one hit under threshold 75 does not ban, two do', () => {
+    // The score that separates Transient from misbehavior. The harness config
+    // sets penaltySafeIntervalMs 0, so no decay: 50 + 50 = 100 crosses 75, while
+    // a single misbehavior (100) would have banned at the first hit.
+    const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set(), {
+      schedule: twoEra,
+      penaltyScoreThreshold: 75,
+    });
+    const validate = topicValidators.get(TOPICS.orderingBlock)!;
+    const peer = newPeer(peerMgr);
+    const data = encodeOrderingBlock(vBlock(H, 1));
+
+    validate(peer, { data });
+    expect(peerMgr.isBanned(peer.id)).toBe(false); // 50 < 75
+
+    validate(peer, { data });
+    expect(peerMgr.isBanned(peer.id)).toBe(true);  // 50 + 50 = 100 >= 75
+
+    expect(penaltySpy).not.toHaveBeenCalled();      // never the misbehavior path
+  });
+
+  it('a structurally invalid block is still misbehavior (100), not Transient', () => {
+    // The tier split holds only for the version step: a bad body keeps its tier.
+    const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set(), { schedule: twoEra });
+    const validate = topicValidators.get(TOPICS.orderingBlock)!;
+    const peer = newPeer(peerMgr);
+    // An empty utxoTxTree is a structural failure ahead of the version step
+    // (every block carries at least the settlement tx).
+    const bad: OrderingBlock = { ...vBlock(7, 1), utxoTxTree: { utxoTxIds: [], utxoTxs: [] } };
+
+    const result = validate(peer, { data: encodeOrderingBlock(bad) });
+
+    expect(result).toBe(TopicValidatorResult.Reject);
+    expect(penaltySpy).toHaveBeenCalledWith('misbehavior', peer.id, 100, expect.anything());
   });
 });

@@ -9,7 +9,7 @@ import { multiaddr } from '@multiformats/multiaddr';
 
 import type { Libp2p } from 'libp2p';
 import type { OrderingBlock, UtxoTransaction, BlockHeader } from '@dagsocial/types';
-import { PROTOCOL_VERSION, decodeOrderingBlock, encodeOrderingBlock, decodePostBody, encodePostBody } from '@dagsocial/types';
+import { PROTOCOL_VERSION, protocolVersionAt, decodeOrderingBlock, encodeOrderingBlock, decodePostBody, encodePostBody } from '@dagsocial/types';
 import { ReaderError } from '@dagsocial/wire';
 import type {
   NetConfig, NetValidators, Peer, PeerEntryMsg,
@@ -523,6 +523,13 @@ export class NetNode {
   private orderingBlockHandlers: OrderingBlockCallback[] = [];
   private txHandlers: TxCallback[] = [];
   private started = false;
+  /**
+   * The era in force — the version scheduled at the tip this node has applied.
+   * Initialised at start() from chainHeight() + 1 and moved by tipApplied when a
+   * boundary is crossed (NET_INTERFACE → Post-Handshake Routing). The base era is
+   * always 1 (every schedule's first era is { version: 1, fromHeight: 0 }).
+   */
+  private eraInForce = 1;
 
   // New sync infrastructure
   private peerDb: PeerDb | null = null;
@@ -580,6 +587,11 @@ export class NetNode {
 
   async start(): Promise<void> {
     if (this.started) return;
+
+    // The era in force at the tip we start from (NET_INTERFACE →
+    // Post-Handshake Routing). A valid schedule and a non-negative height place
+    // us in an era; the base era 1 stands if they somehow do not.
+    this.eraInForce = this.currentEra() ?? 1;
 
     // createLibp2p options cast to `any` works around @libp2p/interface version
     // mismatches in the dependency tree (v1.7, v2.11, v3.2 coexist).  The
@@ -739,6 +751,8 @@ export class NetNode {
       this.peerMgr,
       handlers,
       this.karmaMembers,
+      this.config.protocolVersionSchedule,
+      () => this.syncStore.chainHeight(),
     );
 
     // Log listen addresses
@@ -832,15 +846,19 @@ export class NetNode {
 
       try {
         const result = await this.runOutboundHandshake(conn.remotePeer.toString());
-        if (result.ok) {
+        if (result.ok && result.msg) {
           this.peerMgr.setPeerState(conn.remotePeer.toString(), PeerState.Active);
           this.peerMgr.setPeerAddress(conn.remotePeer.toString(), addr);
+          // The record and the metadata keep the peer's declared version, not
+          // ours — it is what the boundary sweep reads (NET_INTERFACE → PeerDb;
+          // → Post-Handshake Routing).
+          this.peerMgr.setPeerVersion(conn.remotePeer.toString(), result.msg.protocolVersion);
           this.peerDb?.record({
             address: addr,
             lastSeenMs: Date.now(),
             agentName: 'bootstrap',
             nodeName: '',
-            protocolVersion: PROTOCOL_VERSION,
+            protocolVersion: result.msg.protocolVersion,
             capabilities: result.peerCapabilities,
           });
           const dir = (conn.direction ?? 'outbound') as 'inbound' | 'outbound';
@@ -901,7 +919,19 @@ export class NetNode {
         }
         const body = decoded.body;
 
-        const result = validateHandshake(parseHandshakeBody(body), [PROTOCOL_VERSION]);
+        // Reading our era goes through node's store callback, so a failure here
+        // is local — attributed to the store, not to the outer handshake span,
+        // and never a penalty on the peer (same reasoning as our reply below).
+        let era: number | null;
+        try {
+          era = this.currentEra();
+        } catch (err) {
+          console.error(`[net] cannot read our era for ${peerId}: ${String(err)}`);
+          await stream.sink([new Uint8Array(0)]);
+          return;
+        }
+
+        const result = validateHandshake(parseHandshakeBody(body), era);
         if (!result.ok || !result.msg) {
           // Contract: the stream closes either way, but the ban does not —
           // malformed input is banned permanently, an unsupported version is
@@ -922,6 +952,10 @@ export class NetNode {
 
         const addr = msg.declaredAddress ?? connection.remoteAddr?.toString() ?? peerId;
         this.peerMgr.setPeerAddress(peerId, addr);
+        // The record and the metadata both keep the peer's declared version, not
+        // ours — it is what the boundary sweep reads (NET_INTERFACE → PeerDb;
+        // → Post-Handshake Routing).
+        this.peerMgr.setPeerVersion(peerId, msg.protocolVersion);
         this.peerDb?.record({
           address: addr,
           lastSeenMs: Date.now(),
@@ -1198,6 +1232,16 @@ export class NetNode {
   // Handshake — outbound
   // -----------------------------------------------------------------------
 
+  /**
+   * The era of the next block this node would apply — what the handshake checks
+   * a peer against (NET_INTERFACE → Handshake). `null` only if the chain height
+   * is out of the schedule's domain, which a valid profile and a non-negative
+   * `SyncStore` height rule out.
+   */
+  private currentEra(): number | null {
+    return protocolVersionAt(this.config.protocolVersionSchedule, this.syncStore.chainHeight() + 1);
+  }
+
   private buildOurHandshake(): import('./handshake.js').HandshakeMsg {
     const listenAddrs = this.libp2p?.getMultiaddrs() ?? [];
     return {
@@ -1263,7 +1307,7 @@ export class NetNode {
       }
       const body = decoded.body;
 
-      const result = validateHandshake(parseHandshakeBody(body), [PROTOCOL_VERSION]);
+      const result = validateHandshake(parseHandshakeBody(body), this.currentEra());
       if (!result.ok) {
         console.warn(`[net] outbound handshake with ${peerId} rejected: ${result.error}`);
         const outHsPenKind = handshakePenalty(result.rejection);
@@ -1326,6 +1370,36 @@ export class NetNode {
     return this.peerMgr.getPeers()
       .filter(p => this.peerMgr.isPeerActive(p.id))
       .map(p => p.id);
+  }
+
+  /**
+   * The node reports each applied tip — every successful apply and the tip a
+   * reorg leaves (NET_INTERFACE → API → Node Lifecycle). When the era at the
+   * next height rises above the era in force, the boundary sweep drops every
+   * Active peer whose declared version is below the new era, so every Active peer
+   * implements the era this node is applying (NET_INTERFACE → Post-Handshake
+   * Routing). Inside an era it does nothing, and iterates nothing.
+   */
+  tipApplied(height: number): void {
+    const era = protocolVersionAt(this.config.protocolVersionSchedule, height + 1);
+    if (era === null || era <= this.eraInForce) return;
+    for (const peerId of this.peerMgr.activePeersBelowVersion(era)) {
+      this.disconnectPeer(peerId);
+    }
+    this.eraInForce = era;
+  }
+
+  /**
+   * Close a peer's libp2p connection and drop it from the manager. `hangUp`
+   * closes every connection to the peer; the PeerId comes from the live
+   * connection, so no id-parsing dependency is needed. The manager row is
+   * removed here so the peer is no longer Active at once — the `peer:disconnect`
+   * event that hangUp raises repeats the removal idempotently.
+   */
+  private disconnectPeer(peerId: string): void {
+    const conn = this.libp2p?.getConnections().find(c => c.remotePeer.toString() === peerId);
+    if (conn) void Promise.resolve(this.libp2p!.hangUp(conn.remotePeer)).catch(() => {});
+    this.peerMgr.removePeer(peerId);
   }
 
   // -----------------------------------------------------------------------

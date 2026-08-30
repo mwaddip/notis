@@ -8,6 +8,7 @@ import {
   postInvite,
   postPost,
   getKarma,
+  getStatus,
   hasKarma,
   getBlockCurrent,
   getPosts,
@@ -45,6 +46,8 @@ describe('paging', () => {
     const block1 = await fetch(`${node.url}/blocks/1`);
     expect(block1.ok).toBe(true);
 
+    const version = (await getStatus(node)).protocolVersion;
+
     // ARCHITECTURE → Like parameters
     // POST_PRICE_THREAD = 5n, POST_PRICE_REPLY = 3n;
     // actual spend: 6 threads × 5 + 4 replies × 3 = 42n
@@ -58,6 +61,7 @@ describe('paging', () => {
       alice,
       bondAmount,
       faucetKarma.height,
+      version,
     );
     await postInvite(node, invite.json);
 
@@ -70,7 +74,7 @@ describe('paging', () => {
     // ---- the feed: three threads confirmed one at a time ----
 
     let aliceK = (await getKarma(node, alice.publicKeyHex))!;
-    const p1Tx = buildThreadTx(alice, karmaBoxes(aliceK), 'post one', aliceK.height);
+    const p1Tx = buildThreadTx(alice, karmaBoxes(aliceK), 'post one', aliceK.height, version);
     const p1Res = await postPost(node, p1Tx.json, p1Tx.content);
     await confirm(
       async () => {
@@ -81,7 +85,7 @@ describe('paging', () => {
       mesh.miningSecret,
     );
     aliceK = (await getKarma(node, alice.publicKeyHex))!;
-    const p2Tx = buildThreadTx(alice, karmaBoxes(aliceK), 'post two', aliceK.height);
+    const p2Tx = buildThreadTx(alice, karmaBoxes(aliceK), 'post two', aliceK.height, version);
     const p2Res = await postPost(node, p2Tx.json, p2Tx.content);
     await confirm(
       async () => {
@@ -92,7 +96,7 @@ describe('paging', () => {
       mesh.miningSecret,
     );
     aliceK = (await getKarma(node, alice.publicKeyHex))!;
-    const p3Tx = buildThreadTx(alice, karmaBoxes(aliceK), 'post three', aliceK.height);
+    const p3Tx = buildThreadTx(alice, karmaBoxes(aliceK), 'post three', aliceK.height, version);
     const p3Res = await postPost(node, p3Tx.json, p3Tx.content);
     await confirm(
       async () => {
@@ -117,7 +121,7 @@ describe('paging', () => {
 
     // ---- post two more, confirm each ----
     aliceK = (await getKarma(node, alice.publicKeyHex))!;
-    const p4Tx = buildThreadTx(alice, karmaBoxes(aliceK), 'post four', aliceK.height);
+    const p4Tx = buildThreadTx(alice, karmaBoxes(aliceK), 'post four', aliceK.height, version);
     const p4Res = await postPost(node, p4Tx.json, p4Tx.content);
     await confirm(
       async () => {
@@ -128,7 +132,7 @@ describe('paging', () => {
       mesh.miningSecret,
     );
     aliceK = (await getKarma(node, alice.publicKeyHex))!;
-    const p5Tx = buildThreadTx(alice, karmaBoxes(aliceK), 'post five', aliceK.height);
+    const p5Tx = buildThreadTx(alice, karmaBoxes(aliceK), 'post five', aliceK.height, version);
     const p5Res = await postPost(node, p5Tx.json, p5Tx.content);
     await confirm(
       async () => {
@@ -153,7 +157,7 @@ describe('paging', () => {
 
     // ---- pending: post without mining ----
     aliceK = (await getKarma(node, alice.publicKeyHex))!;
-    const p6Tx = buildThreadTx(alice, karmaBoxes(aliceK), 'post six', aliceK.height);
+    const p6Tx = buildThreadTx(alice, karmaBoxes(aliceK), 'post six', aliceK.height, version);
     const p6Res = await postPost(node, p6Tx.json, p6Tx.content);
 
     // NODE_INTERFACE → "Every list a view returns is a page"
@@ -184,7 +188,7 @@ describe('paging', () => {
 
     // ---- the thread: replies to p1 ----
     aliceK = (await getKarma(node, alice.publicKeyHex))!;
-    const r1Tx = buildReplyTx(alice, karmaBoxes(aliceK), 'reply one', p1Res.postId, alice.publicKeyHex, aliceK.height);
+    const r1Tx = buildReplyTx(alice, karmaBoxes(aliceK), 'reply one', p1Res.postId, alice.publicKeyHex, aliceK.height, version);
     const r1Res = await postPost(node, r1Tx.json, r1Tx.content);
     await confirm(
       async () => {
@@ -196,7 +200,7 @@ describe('paging', () => {
     );
 
     aliceK = (await getKarma(node, alice.publicKeyHex))!;
-    const r2Tx = buildReplyTx(alice, karmaBoxes(aliceK), 'reply two', p1Res.postId, alice.publicKeyHex, aliceK.height);
+    const r2Tx = buildReplyTx(alice, karmaBoxes(aliceK), 'reply two', p1Res.postId, alice.publicKeyHex, aliceK.height, version);
     const r2Res = await postPost(node, r2Tx.json, r2Tx.content);
     await confirm(
       async () => {
@@ -208,7 +212,7 @@ describe('paging', () => {
     );
 
     aliceK = (await getKarma(node, alice.publicKeyHex))!;
-    const r3Tx = buildReplyTx(alice, karmaBoxes(aliceK), 'reply three', p1Res.postId, alice.publicKeyHex, aliceK.height);
+    const r3Tx = buildReplyTx(alice, karmaBoxes(aliceK), 'reply three', p1Res.postId, alice.publicKeyHex, aliceK.height, version);
     const r3Res = await postPost(node, r3Tx.json, r3Tx.content);
     await confirm(
       async () => {
@@ -232,7 +236,7 @@ describe('paging', () => {
 
     // ---- reply r4, confirm, continue thread ----
     aliceK = (await getKarma(node, alice.publicKeyHex))!;
-    const r4Tx = buildReplyTx(alice, karmaBoxes(aliceK), 'reply four', p1Res.postId, alice.publicKeyHex, aliceK.height);
+    const r4Tx = buildReplyTx(alice, karmaBoxes(aliceK), 'reply four', p1Res.postId, alice.publicKeyHex, aliceK.height, version);
     const r4Res = await postPost(node, r4Tx.json, r4Tx.content);
     await confirm(
       async () => {

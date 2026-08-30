@@ -10,6 +10,7 @@ import {
   postPost,
   postPrune,
   getKarma,
+  getStatus,
   hasKarma,
   getPost,
   getBlockCurrent,
@@ -45,15 +46,17 @@ describe('prune', () => {
     await mine(miner, mesh.miningSecret, 1);
     await waitHeight(mesh.nodes, 1);
 
+    const version = (await getStatus(miner)).protocolVersion;
+
     // ---- invite alice (the author) and bob (the non-author) ----
     const alice = fresh();
     const bob = fresh();
     const bondAmount = 50n;
 
     const faucetK = (await getKarma(miner, DEVNET_FAUCET.publicKeyHex))!;
-    const inv1 = buildInviteTx(DEVNET_FAUCET, karmaBoxes(faucetK), alice, bondAmount, faucetK.height);
+    const inv1 = buildInviteTx(DEVNET_FAUCET, karmaBoxes(faucetK), alice, bondAmount, faucetK.height, version);
     await postInvite(miner, inv1.json);
-    const inv2 = buildInviteTx(DEVNET_FAUCET, [inv1.outputs[0]!], bob, bondAmount, faucetK.height);
+    const inv2 = buildInviteTx(DEVNET_FAUCET, [inv1.outputs[0]!], bob, bondAmount, faucetK.height, version);
     await postInvite(miner, inv2.json);
 
     await confirm(
@@ -64,12 +67,12 @@ describe('prune', () => {
 
     // ---- alice posts a thread, confirm before replying ----
     const aliceK = (await getKarma(miner, alice.publicKeyHex))!;
-    const thread = buildThreadTx(alice, karmaBoxes(aliceK), 'prune root', aliceK.height);
+    const thread = buildThreadTx(alice, karmaBoxes(aliceK), 'prune root', aliceK.height, version);
     const threadRes = await postPost(miner, thread.json, thread.content);
 
     // ---- bob posts a thread (for the non-author test later) ----
     const bobK = (await getKarma(miner, bob.publicKeyHex))!;
-    const bobThread = buildThreadTx(bob, karmaBoxes(bobK), 'bob thread', bobK.height);
+    const bobThread = buildThreadTx(bob, karmaBoxes(bobK), 'bob thread', bobK.height, version);
     const bobThreadRes = await postPost(miner, bobThread.json, bobThread.content);
 
     await confirm(
@@ -83,10 +86,10 @@ describe('prune', () => {
 
     // ---- alice replies to her confirmed thread ----
     const aliceKR = (await getKarma(miner, alice.publicKeyHex))!;
-    const reply1 = buildReplyTx(alice, karmaBoxes(aliceKR), 'reply 1', threadRes.postId, alice.publicKeyHex, aliceKR.height);
+    const reply1 = buildReplyTx(alice, karmaBoxes(aliceKR), 'reply 1', threadRes.postId, alice.publicKeyHex, aliceKR.height, version);
     const reply1Res = await postPost(miner, reply1.json, reply1.content);
 
-    const reply2 = buildReplyTx(alice, [reply1.outputs[0]!], 'reply 2', threadRes.postId, alice.publicKeyHex, aliceKR.height);
+    const reply2 = buildReplyTx(alice, [reply1.outputs[0]!], 'reply 2', threadRes.postId, alice.publicKeyHex, aliceKR.height, version);
     const reply2Res = await postPost(miner, reply2.json, reply2.content);
 
     await confirm(
@@ -104,7 +107,7 @@ describe('prune', () => {
 
     // ---- alice prunes her thread ----
     const aliceK2 = (await getKarma(miner, alice.publicKeyHex))!;
-    const pruneTx = buildPruneTx(alice, karmaBoxes(aliceK2), threadRes.postId, aliceK2.height);
+    const pruneTx = buildPruneTx(alice, karmaBoxes(aliceK2), threadRes.postId, aliceK2.height, version);
     await postPrune(miner, threadRes.postId, pruneTx.json);
 
     await confirm(
@@ -153,7 +156,7 @@ describe('prune', () => {
     // ---- non-author prune → 400 ----
     // NODE_INTERFACE → Prune transactions
     const aliceK3 = (await getKarma(miner, alice.publicKeyHex))!;
-    const fakePrune = buildPruneTx(alice, karmaBoxes(aliceK3), bobThreadRes.postId, aliceK3.height);
+    const fakePrune = buildPruneTx(alice, karmaBoxes(aliceK3), bobThreadRes.postId, aliceK3.height, version);
     try {
       await postPrune(miner, bobThreadRes.postId, fakePrune.json);
       expect.fail('non-author prune should have been refused');
@@ -164,7 +167,7 @@ describe('prune', () => {
 
     // ---- PROPAGATION: prune submitted to a non-mining node reaches consensus ----
     const aliceK4 = (await getKarma(miner, alice.publicKeyHex))!;
-    const propThread = buildThreadTx(alice, karmaBoxes(aliceK4), 'propagation root', aliceK4.height);
+    const propThread = buildThreadTx(alice, karmaBoxes(aliceK4), 'propagation root', aliceK4.height, version);
     const propThreadRes = await postPost(miner, propThread.json, propThread.content);
 
     await confirm(
@@ -180,7 +183,7 @@ describe('prune', () => {
     await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
 
     const aliceK5 = (await getKarma(miner, alice.publicKeyHex))!;
-    const propPruneTx = buildPruneTx(alice, karmaBoxes(aliceK5), propThreadRes.postId, aliceK5.height);
+    const propPruneTx = buildPruneTx(alice, karmaBoxes(aliceK5), propThreadRes.postId, aliceK5.height, version);
     await postPrune(peer, propThreadRes.postId, propPruneTx.json);
 
     await confirm(
@@ -201,10 +204,10 @@ describe('prune', () => {
     // ---- SAME-BLOCK REJECTION: prune of an unconfirmed post ----
     // NODE_INTERFACE → Prune transactions
     const aliceK7 = (await getKarma(miner, alice.publicKeyHex))!;
-    const immThread = buildThreadTx(alice, karmaBoxes(aliceK7), 'immediate prune', aliceK7.height);
+    const immThread = buildThreadTx(alice, karmaBoxes(aliceK7), 'immediate prune', aliceK7.height, version);
     const immThreadRes = await postPost(miner, immThread.json, immThread.content);
 
-    const immPruneTx = buildPruneTx(alice, [immThread.outputs[0]!], immThreadRes.postId, aliceK7.height);
+    const immPruneTx = buildPruneTx(alice, [immThread.outputs[0]!], immThreadRes.postId, aliceK7.height, version);
     try {
       await postPrune(miner, immThreadRes.postId, immPruneTx.json);
       expect.fail('prune of an unconfirmed post should have been refused');
@@ -224,15 +227,17 @@ describe('prune', () => {
     await mine(miner, mesh.miningSecret, 1);
     await waitHeight(mesh.nodes, 1);
 
+    const version = (await getStatus(miner)).protocolVersion;
+
     // ---- invite alice (author) and bob (replier) ----
     const alice = fresh();
     const bob = fresh();
     const bondAmount = 50n;
 
     const faucetK = (await getKarma(miner, DEVNET_FAUCET.publicKeyHex))!;
-    const inv1 = buildInviteTx(DEVNET_FAUCET, karmaBoxes(faucetK), alice, bondAmount, faucetK.height);
+    const inv1 = buildInviteTx(DEVNET_FAUCET, karmaBoxes(faucetK), alice, bondAmount, faucetK.height, version);
     await postInvite(miner, inv1.json);
-    const inv2 = buildInviteTx(DEVNET_FAUCET, [inv1.outputs[0]!], bob, bondAmount, faucetK.height);
+    const inv2 = buildInviteTx(DEVNET_FAUCET, [inv1.outputs[0]!], bob, bondAmount, faucetK.height, version);
     await postInvite(miner, inv2.json);
 
     await confirm(
@@ -243,7 +248,7 @@ describe('prune', () => {
 
     // ---- alice posts a thread, confirm, then reply ----
     const aliceK = (await getKarma(miner, alice.publicKeyHex))!;
-    const thread = buildThreadTx(alice, karmaBoxes(aliceK), 't5 root', aliceK.height);
+    const thread = buildThreadTx(alice, karmaBoxes(aliceK), 't5 root', aliceK.height, version);
     const threadRes = await postPost(miner, thread.json, thread.content);
 
     await confirm(
@@ -256,7 +261,7 @@ describe('prune', () => {
     await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
 
     const aliceKR = (await getKarma(miner, alice.publicKeyHex))!;
-    const reply1 = buildReplyTx(alice, karmaBoxes(aliceKR), 't5 reply1', threadRes.postId, alice.publicKeyHex, aliceKR.height);
+    const reply1 = buildReplyTx(alice, karmaBoxes(aliceKR), 't5 reply1', threadRes.postId, alice.publicKeyHex, aliceKR.height, version);
     const reply1Res = await postPost(miner, reply1.json, reply1.content);
 
     await confirm(
@@ -274,11 +279,11 @@ describe('prune', () => {
 
     // ---- in one block: bob replies to the thread AND alice prunes it ----
     const bobK = (await getKarma(miner, bob.publicKeyHex))!;
-    const bobReply = buildReplyTx(bob, karmaBoxes(bobK), 't5 bob reply', threadRes.postId, alice.publicKeyHex, bobK.height);
+    const bobReply = buildReplyTx(bob, karmaBoxes(bobK), 't5 bob reply', threadRes.postId, alice.publicKeyHex, bobK.height, version);
     const bobReplyRes = await postPost(miner, bobReply.json, bobReply.content);
 
     const aliceK2 = (await getKarma(miner, alice.publicKeyHex))!;
-    const pruneTx = buildPruneTx(alice, karmaBoxes(aliceK2), threadRes.postId, aliceK2.height);
+    const pruneTx = buildPruneTx(alice, karmaBoxes(aliceK2), threadRes.postId, aliceK2.height, version);
     await postPrune(miner, threadRes.postId, pruneTx.json);
 
     // mine one block — both the reply and the prune land
@@ -329,6 +334,8 @@ describe('prune', () => {
     await mine(miner, mesh.miningSecret, 1);
     await waitHeight(mesh.nodes, 1);
 
+    const version = (await getStatus(miner)).protocolVersion;
+
     // ---- invite alice (author) + repliers ----
     const alice = fresh();
     const repliers: Identity[] = [];
@@ -337,7 +344,7 @@ describe('prune', () => {
     let faucetBox: BoxRef;
     {
       const faucetK = (await getKarma(miner, DEVNET_FAUCET.publicKeyHex))!;
-      const invAlice = buildInviteTx(DEVNET_FAUCET, karmaBoxes(faucetK), alice, bondAmount, faucetK.height);
+      const invAlice = buildInviteTx(DEVNET_FAUCET, karmaBoxes(faucetK), alice, bondAmount, faucetK.height, version);
       await postInvite(miner, invAlice.json);
       faucetBox = invAlice.outputs[0]!;
     }
@@ -345,7 +352,7 @@ describe('prune', () => {
     for (let i = 0; i < REPLY_COUNT; i++) {
       const replier = fresh();
       repliers.push(replier);
-      const inv = buildInviteTx(DEVNET_FAUCET, [faucetBox], replier, bondAmount, 1);
+      const inv = buildInviteTx(DEVNET_FAUCET, [faucetBox], replier, bondAmount, 1, version);
       await postInvite(miner, inv.json);
       faucetBox = inv.outputs[0]!;
     }
@@ -358,7 +365,7 @@ describe('prune', () => {
 
     // ---- alice posts a thread ----
     const aliceK = (await getKarma(miner, alice.publicKeyHex))!;
-    const thread = buildThreadTx(alice, karmaBoxes(aliceK), 'prune-refund root', aliceK.height);
+    const thread = buildThreadTx(alice, karmaBoxes(aliceK), 'prune-refund root', aliceK.height, version);
     const threadRes = await postPost(miner, thread.json, thread.content);
 
     await confirm(
@@ -375,7 +382,7 @@ describe('prune', () => {
     const replyPostIds: string[] = [];
     for (const replier of repliers) {
       const rK = (await getKarma(miner, replier.publicKeyHex))!;
-      const reply = buildReplyTx(replier, karmaBoxes(rK), `reply by ${replier.publicKeyHex.slice(0, 8)}`, threadRes.postId, alice.publicKeyHex, rK.height);
+      const reply = buildReplyTx(replier, karmaBoxes(rK), `reply by ${replier.publicKeyHex.slice(0, 8)}`, threadRes.postId, alice.publicKeyHex, rK.height, version);
       const res = await postPost(miner, reply.json, reply.content);
       replyPostIds.push(res.postId);
     }
@@ -404,7 +411,7 @@ describe('prune', () => {
 
     // ---- alice prunes her thread ----
     const aliceK2 = (await getKarma(miner, alice.publicKeyHex))!;
-    const pruneTx = buildPruneTx(alice, karmaBoxes(aliceK2), threadRes.postId, aliceK2.height);
+    const pruneTx = buildPruneTx(alice, karmaBoxes(aliceK2), threadRes.postId, aliceK2.height, version);
     await postPrune(miner, threadRes.postId, pruneTx.json);
 
     await confirm(

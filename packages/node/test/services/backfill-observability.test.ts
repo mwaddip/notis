@@ -37,6 +37,7 @@ describe('/health shape', () => {
     const router = createAdminRouter({
       getConnectedPeers: () => [],
       syncPhase: () => 'backfill',
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
     });
     app.use(router);
 
@@ -61,6 +62,7 @@ describe('/health shape', () => {
     const router = createAdminRouter({
       getConnectedPeers: () => [],
       syncPhase: () => 'synced',
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
     });
     app.use(router);
 
@@ -78,6 +80,7 @@ describe('/health shape', () => {
     const router = createAdminRouter({
       getConnectedPeers: () => [],
       syncPhase: () => 'synced',
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
     });
     app.use(router);
 

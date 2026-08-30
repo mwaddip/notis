@@ -71,6 +71,7 @@ function mockDeps(store: MockStore, overrides?: Partial<PostServiceDeps>): PostS
         owner: new Uint8Array(32),
       }) as AnyBox,
     runInTransaction: (fn: () => void) => fn(),
+    protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
     ...overrides,
   };
 }

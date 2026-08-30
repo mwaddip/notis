@@ -118,7 +118,7 @@
 
     <section>
       <h2>Protocol versioning</h2>
-      <p>Every post, block, and transaction carries a <code>protocolVersion</code>, and validation rules are keyed to it. An object made under an old version is validated against <em>that</em> version's rules forever; a node rejects versions it doesn't support. This is how the protocol can evolve — new mechanics, new rules — without rewriting or breaking the history that came before.</p>
+      <p>Every post, block, and transaction carries a <code>protocolVersion</code>, and the version in force is scheduled by block height, per network. A declared version must match the era at the object's height, so an object made under an old version is validated against <em>that</em> version's rules forever — its height fixes them — and a new object can't pose as an old one. A bump is announced as an era row a week or two ahead, so every node has moved by the flag height; a node that hasn't rejects the new era's objects and is refused by upgraded peers gently, never banned. This is how the protocol can evolve — new mechanics, new rules — without rewriting or breaking the history that came before.</p>
     </section>
 
     <section>

@@ -202,6 +202,7 @@ describe('authorization is a property of the transition', () => {
       getNetworkRecord: () => ({ memberCount: 1 }),
       membershipBarMultiplier: 1,
       putIdentityRecord: () => {},
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
     };
     holder = makeTestIdentity();
     other = makeTestIdentity();

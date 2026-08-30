@@ -8,6 +8,7 @@ import {
   postInvite,
   postPost,
   getKarma,
+  getStatus,
   hasKarma,
   getPost,
   isPost,
@@ -47,6 +48,8 @@ describe('mempool-cap', () => {
     const tip = await getBlockCurrent(node);
     expect(tip.height).toBe(1);
 
+    const version = (await getStatus(node)).protocolVersion;
+
     // ---- invite alice (sequential: cap 1 allows one pending entry) ----
     const alice = fresh();
     const faucetKarma = (await getKarma(node, DEVNET_FAUCET.publicKeyHex))!;
@@ -56,6 +59,7 @@ describe('mempool-cap', () => {
       alice,
       50n,
       faucetKarma.height,
+      version,
     );
     await postInvite(node, inviteAlice.json);
     await confirm(
@@ -73,6 +77,7 @@ describe('mempool-cap', () => {
       bob,
       50n,
       faucetKarma2.height,
+      version,
     );
     await postInvite(node, inviteBob.json);
     await confirm(
@@ -88,6 +93,7 @@ describe('mempool-cap', () => {
       karmaBoxes(aliceK),
       'first pending post',
       aliceK.height,
+      version,
     );
     const aliceRes = await postPost(node, aliceThread.json, aliceThread.content);
     expect(aliceRes.txId).toBeTruthy();
@@ -101,6 +107,7 @@ describe('mempool-cap', () => {
       karmaBoxes(bobK),
       'second pending post',
       bobK.height,
+      version,
     );
     let rejection: NodeError | null = null;
     try {

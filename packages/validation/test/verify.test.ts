@@ -4,6 +4,7 @@ import { readFileSync } from 'fs';
 import {
   verifyValidatorSignature,
   verifyProtocolVersion,
+  verifyTxProtocolVersion,
   verifyContentLimits,
   verifyContentCharacters,
   verifyParentRefsCount,
@@ -22,8 +23,12 @@ import {
   ed25519PublicKeyToKeyObject,
 } from '../src/verify.js';
 import { isDisallowedContentCodepoint, PINNED_UNICODE_VERSION } from '../src/content-charset.js';
-import { generateKeyPair, computePostId, computeTxId, computeContentHash, postFieldBytes, EMPTY_STATE_ROOT, MAX_PARENT_REFS, MAX_TX_BYTES, MAX_SETTLEMENT_BYTES, MAX_BLOCK_BODY_BYTES, ORDERING_BLOCK_POW_TARGET_FLOOR, encodeTx, encodeUtxoTxTree, utxoTxTreeByteLength, ByteWriter, writeHexNOrThrow, writeBytesNOrThrow, writeVlqU, writeLp } from '@dagsocial/types';
-import type { PostCommit, BlockHeader, OrderingBlock, UtxoTransaction, AnyBoxCandidate } from '@dagsocial/types';
+import { generateKeyPair, computePostId, computeTxId, computeContentHash, postFieldBytes, EMPTY_STATE_ROOT, MAX_PARENT_REFS, MAX_TX_BYTES, MAX_SETTLEMENT_BYTES, MAX_BLOCK_BODY_BYTES, ORDERING_BLOCK_POW_TARGET_FLOOR, NETWORK_PROFILES, encodeTx, encodeUtxoTxTree, utxoTxTreeByteLength, ByteWriter, writeHexNOrThrow, writeBytesNOrThrow, writeVlqU, writeLp } from '@dagsocial/types';
+import type { PostCommit, BlockHeader, OrderingBlock, ProtocolEra, UtxoTransaction, AnyBoxCandidate } from '@dagsocial/types';
+
+// The devnet profile's real schedule — one era, [1@0] — is the schedule every
+// header and commit fixture here is verified against (TYPES_INTERFACE → Version).
+const DEVNET_SCHEDULE = NETWORK_PROFILES.devnet.protocolVersionSchedule;
 
 /**
  * `blockHash` for a fixture the test has just built and asserts is in-domain.
@@ -174,20 +179,117 @@ describe('verifyValidatorSignature', () => {
 // ---------------------------------------------------------------------------
 
 describe('verifyProtocolVersion', () => {
+  // A synthetic two-era schedule, the boundary at height 10. A fixture may
+  // schedule a version this build does not implement; the validity rule binds
+  // only NETWORK_PROFILES (TYPES_INTERFACE → Version).
+  const schedule: ProtocolEra[] = [
+    { version: 1, fromHeight: 0 },
+    { version: 2, fromHeight: 10 },
+  ];
+
+  // The original four, in the three-argument form: era 1 below the boundary.
   it('accepts version 1', () => {
-    expect(verifyProtocolVersion(1)).toBe(true);
+    expect(verifyProtocolVersion(1, 9, schedule)).toBe(true);
   });
 
   it('rejects version 0', () => {
-    expect(verifyProtocolVersion(0)).toBe(false);
+    expect(verifyProtocolVersion(0, 9, schedule)).toBe(false);
   });
 
   it('rejects version 2', () => {
-    expect(verifyProtocolVersion(2)).toBe(false);
+    expect(verifyProtocolVersion(2, 9, schedule)).toBe(false);
   });
 
   it('rejects version 999', () => {
-    expect(verifyProtocolVersion(999)).toBe(false);
+    expect(verifyProtocolVersion(999, 9, schedule)).toBe(false);
+  });
+
+  // The boundary is exact — no grace window.
+  it('accepts the new era at its fromHeight', () => {
+    expect(verifyProtocolVersion(2, 10, schedule)).toBe(true);
+  });
+
+  it('rejects the old era at the new-era height', () => {
+    expect(verifyProtocolVersion(1, 10, schedule)).toBe(false);
+  });
+
+  it('rejects a version no era schedules at the height', () => {
+    expect(verifyProtocolVersion(3, 10, schedule)).toBe(false);
+  });
+
+  // Out-of-domain heights: no era covers them, so false and no throw.
+  it('rejects a negative height', () => {
+    expect(verifyProtocolVersion(2, -1, schedule)).toBe(false);
+  });
+
+  it('rejects a NaN height', () => {
+    expect(verifyProtocolVersion(2, NaN, schedule)).toBe(false);
+  });
+
+  // A declared value that is not the scheduled integer.
+  it('rejects a fractional declared version', () => {
+    expect(verifyProtocolVersion(1.5, 5, schedule)).toBe(false);
+  });
+
+  it('rejects a string declared version', () => {
+    expect(verifyProtocolVersion('1' as unknown as number, 5, schedule)).toBe(false);
+  });
+
+  // The devnet profile's real one-era schedule: version 1 at every height.
+  it('accepts era 1 at genesis on the devnet schedule', () => {
+    expect(verifyProtocolVersion(1, 0, DEVNET_SCHEDULE)).toBe(true);
+  });
+
+  it('accepts era 1 far above genesis on the devnet schedule', () => {
+    expect(verifyProtocolVersion(1, 1_000_000, DEVNET_SCHEDULE)).toBe(true);
+  });
+
+  it('rejects era 2 on the devnet schedule', () => {
+    expect(verifyProtocolVersion(2, 1_000_000, DEVNET_SCHEDULE)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// verifyTxProtocolVersion
+// ---------------------------------------------------------------------------
+
+describe('verifyTxProtocolVersion', () => {
+  // The boundary is at height 10. Every case is judged at height 10 (era 2), so
+  // a declared 2 is the era and a declared 1 is not. The helper builds exactly
+  // the two fields the check reads (VALIDATION_INTERFACE → verifyTxProtocolVersion).
+  const schedule: ProtocolEra[] = [
+    { version: 1, fromHeight: 0 },
+    { version: 2, fromHeight: 10 },
+  ];
+  const tx = (protocolVersion: number, post?: unknown): UtxoTransaction =>
+    ({ protocolVersion, ...(post !== undefined ? { post } : {}) } as unknown as UtxoTransaction);
+
+  it('accepts a transaction and commit that both declare the era', () => {
+    expect(verifyTxProtocolVersion(tx(2, { protocolVersion: 2 }), 10, schedule)).toBe(true);
+  });
+
+  it('rejects a commit declaring a version other than its transaction', () => {
+    expect(verifyTxProtocolVersion(tx(2, { protocolVersion: 1 }), 10, schedule)).toBe(false);
+  });
+
+  it('rejects a transaction whose own version is not the era', () => {
+    expect(verifyTxProtocolVersion(tx(1, { protocolVersion: 2 }), 10, schedule)).toBe(false);
+  });
+
+  it('accepts a transaction with no post that declares the era', () => {
+    expect(verifyTxProtocolVersion(tx(2), 10, schedule)).toBe(true);
+  });
+
+  it('rejects a transaction with no post whose version is not the era', () => {
+    expect(verifyTxProtocolVersion(tx(1), 10, schedule)).toBe(false);
+  });
+
+  it('rejects a null transaction without throwing', () => {
+    expect(verifyTxProtocolVersion(null as unknown as UtxoTransaction, 10, schedule)).toBe(false);
+  });
+
+  it('rejects a transaction whose post is not an object without throwing', () => {
+    expect(verifyTxProtocolVersion(tx(2, 'x'), 10, schedule)).toBe(false);
   });
 });
 
@@ -931,7 +1033,7 @@ describe('ordering-block hex domains — the pin has teeth', () => {
    * *only* remaining question is the structure check itself.
    */
   const everythingElsePasses = (block: OrderingBlock): boolean =>
-    verifyProtocolVersion(block.header.protocolVersion) &&
+    verifyProtocolVersion(block.header.protocolVersion, block.header.height, DEVNET_SCHEDULE) &&
     Number.isSafeInteger(block.header.height) &&
     verifyOrderingBlockPoW(block.header) &&
     verifyValidatorSignature(block.header, block.validatorSignature);
@@ -985,7 +1087,7 @@ describe('ordering-block hex domains — the pin has teeth', () => {
 
     it('still clears version, height, PoW and the validator signature', () => {
       const block = empty();
-      expect(verifyProtocolVersion(block.header.protocolVersion)).toBe(true);
+      expect(verifyProtocolVersion(block.header.protocolVersion, block.header.height, DEVNET_SCHEDULE)).toBe(true);
       expect(Number.isSafeInteger(block.header.height)).toBe(true);
       expect(verifyOrderingBlockPoW(block.header)).toBe(true);
       expect(verifyValidatorSignature(block.header, block.validatorSignature)).toBe(true);
@@ -1014,7 +1116,7 @@ describe('ordering-block hex domains — the pin has teeth', () => {
       it('still clears version, height, PoW and the validator signature', () => {
         const block = c.block();
         // Individually, so a failure names which one moved.
-        expect(verifyProtocolVersion(block.header.protocolVersion)).toBe(true);
+        expect(verifyProtocolVersion(block.header.protocolVersion, block.header.height, DEVNET_SCHEDULE)).toBe(true);
         expect(Number.isSafeInteger(block.header.height)).toBe(true);
         expect(verifyOrderingBlockPoW(block.header)).toBe(true);
         expect(verifyValidatorSignature(block.header, block.validatorSignature)).toBe(true);
@@ -1747,8 +1849,13 @@ describe('no-panic on malformed input (M-5)', () => {
   });
 
   it('verifyProtocolVersion survives every malformed argument', () => {
+    // Garbage in any of the three positions: false, and no throw. The schedule
+    // position is the sharpest — protocolVersionAt iterates it, so a non-array or
+    // a garbage element (e.g. [null]) throws there without the guard.
     for (const bad of MALFORMED) {
-      expect(() => verifyProtocolVersion(bad as any)).not.toThrow();
+      expect(verifyProtocolVersion(bad as any, 0, DEVNET_SCHEDULE)).toBe(false);
+      expect(verifyProtocolVersion(2, bad as any, DEVNET_SCHEDULE)).toBe(false);
+      expect(verifyProtocolVersion(1, 0, bad as any)).toBe(false);
     }
   });
 
@@ -2048,7 +2155,7 @@ describe('fixed-width field domains (spec §2.5 / §6.1)', () => {
     expect(verifyPostCommitDomains(honest)).toEqual({ valid: true });
 
     expect(verifyParentRefsCount(commit.parentRefs)).toEqual({ valid: true });
-    expect(verifyProtocolVersion(commit.protocolVersion)).toBe(true);
+    expect(verifyProtocolVersion(commit.protocolVersion, 0, DEVNET_SCHEDULE)).toBe(true);
     expect(() => postFieldBytes(commit)).toThrow(
       'writeHexNOrThrow: expected 64 lowercase hex chars, got 64 chars',
     );

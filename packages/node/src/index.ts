@@ -45,6 +45,7 @@ import {
   getBox,
   getBoxProvenance,
   getCurrentHeight,
+  nextBlockHeight,
   MempoolFullError,
   PendingSpendConflictError,
   getOrderingBlock,
@@ -136,6 +137,9 @@ const net = new NetNode(
     // The profile's wire magic. Required in NetConfig — net has no fallback of
     // its own (NET_INTERFACE → "Magic Bytes").
     magic: config.profile.magic,
+    // The profile's era table, supplied like `magic` — the handshake, tx
+    // validator and boundary sweep read the era from it (NET_INTERFACE → Config).
+    protocolVersionSchedule: config.profile.protocolVersionSchedule,
     bootstrapPeers: config.bootstrapPeers,
     listenAddrs: config.listenAddrs,
     maxPeers: config.maxPeers,
@@ -213,8 +217,11 @@ net.onTx((tx, content, fromPeerId) => {
     getNetworkRecord,
     membershipBarMultiplier: config.membershipBarMultiplier,
     putIdentityRecord,
+    protocolVersionSchedule: config.protocolVersionSchedule,
   };
-  const currentHeight = getCurrentHeight();
+  // Admission judges a transaction at the height of the block that would carry
+  // it — tip + 1 (NODE_INTERFACE → validateTx).
+  const currentHeight = nextBlockHeight();
   const validationStart = performance.now();
   const result = validateTx(deps, tx, currentHeight);
   if (!result.valid) {
@@ -365,6 +372,7 @@ const app = createApp(config);
 const adminServer = createAdminApp(config, {
   getConnectedPeers: () => net.getConnectedPeers(),
   syncPhase: () => net.syncPhase(),
+  protocolVersionSchedule: config.protocolVersionSchedule,
 });
 const server = app.listen(config.port, () => {
   // Read off the socket rather than named from config: `listen(port)` passes no

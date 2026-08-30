@@ -124,7 +124,7 @@ verifyProof(
     maxFutureDriftMs: number;        // MAX_FUTURE_DRIFT_MS
     nowMs: number;                   // the client's clock, injected
     genesisId: string;
-    protocolVersion: number;
+    protocolVersionSchedule: readonly ProtocolEra[];   // TYPES_INTERFACE → Version
   },
 ): VerifyResult
 
@@ -146,7 +146,8 @@ at fault.
    equals `blockHash(prefix[0].header)` (`anchor`). The rule is one whether or not the profile pins
    — the pin only decides *which* block 1 is acceptable (`TYPES_INTERFACE → Network profiles`).
 3. **Every header** — prefix, suffixHead and tail alike: `verifyHeaderFieldDomains` (`domain`),
-   `protocolVersion === profile.protocolVersion` (`version`), `powTargetBits` inside the profile band
+   `verifyProtocolVersion(h.protocolVersion, h.height, profile.protocolVersionSchedule)` (`version`),
+   `powTargetBits` inside the profile band
    `[floorBits, ceilingBits]` (`target`), and `verifyOrderingBlockPoW` against the header's **own**
    declared bits (`pow`). **Every suffix-tail header** additionally carries exactly the scheduled
    target — `asertTargetBits(profile.retarget, t_a, previous)` with `t_a` the first prefix element's

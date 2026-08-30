@@ -36,6 +36,11 @@ import {
 // module resets.
 import { checkTxEnvelope } from '../../src/services/utxo-engine.js';
 
+// checkTxEnvelope takes the judged-for height and the era schedule
+// (NODE_INTERFACE → validateTx). These envelope-shape tests use the single-era
+// default; a version-1 transaction passes the era check at any height.
+const checkEnvelope = (tx: unknown) => checkTxEnvelope(tx, 0, [{ version: 1, fromHeight: 0 }]);
+
 async function importDb() {
   return (await import('../../src/store/db.js')) as {
     initDb: (path: string) => void;
@@ -131,7 +136,7 @@ describe('block funnel — the embedded-tx proof obligation', () => {
     signTransaction(
       malformed, mallory.privateKey, Buffer.from(mallory.userId).toString('hex'),
     );
-    expect(checkTxEnvelope(malformed).valid).toBe(false);
+    expect(checkEnvelope(malformed).valid).toBe(false);
 
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
@@ -198,7 +203,7 @@ describe('block funnel — the embedded-tx proof obligation', () => {
     poison.inputs = [aliceBox.id!.toUpperCase()];
 
     // The gate would refuse it …
-    expect(checkTxEnvelope(poison).valid, 'the gate must reject poison').toBe(false);
+    expect(checkEnvelope(poison).valid, 'the gate must reject poison').toBe(false);
     // … and it never gets the chance, because the bytes do not exist.
     expect(() => computeTxId(poison)).toThrow();
     expect(() => encodeTx(poison)).toThrow();
@@ -230,7 +235,7 @@ describe('block funnel — the embedded-tx proof obligation', () => {
     // The envelope clears it — it types `inputs`, `signatures`,
     // `protocolVersion` and `likeTarget`, and stops at `Array.isArray` for
     // outputs — and the writers refuse it anyway.
-    expect(checkTxEnvelope(poison)).toEqual({ valid: true });
+    expect(checkEnvelope(poison)).toEqual({ valid: true });
     expect(() => computeTxId(poison)).toThrow();
     expect(() => encodeTx(poison)).toThrow();
   });
@@ -258,7 +263,7 @@ describe('block funnel — the embedded-tx proof obligation', () => {
     // id. Every gate ahead of the id check passes, so this reaches the
     // comparison and nothing else refuses it.
     const substituted = karmaSelfSpend(bob, bobBox);
-    expect(checkTxEnvelope(substituted)).toEqual({ valid: true });
+    expect(checkEnvelope(substituted)).toEqual({ valid: true });
     expect(computeTxId(substituted)).not.toBe(computeTxId(declared));
     block.utxoTxTree.utxoTxs[0] = encodeTx(substituted);
 
@@ -382,7 +387,7 @@ describe('block funnel — the embedded-tx proof obligation', () => {
     const forged = karmaSelfSpend(victim, victimBox);
     forged.signatures = {}; // well-formed envelope, no authorisation
 
-    expect(checkTxEnvelope(forged)).toEqual({ valid: true });
+    expect(checkEnvelope(forged)).toEqual({ valid: true });
 
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const block = await makeApplicableBlock({ utxoTxs: [valid, forged] });
@@ -428,7 +433,7 @@ describe('envelope exclusivity — at most one payload field', () => {
 
   it('like + post (with a price box) is refused', () => {
     const tx = { ...base, likeTarget: LIKE_TARGET, post: POST_COMMIT };
-    const r = checkTxEnvelope(tx);
+    const r = checkEnvelope(tx);
     expect(r.valid).toBe(false);
     expect(r.error).toMatch(/likeTarget/);
     expect(r.error).toMatch(/post/);
@@ -436,7 +441,7 @@ describe('envelope exclusivity — at most one payload field', () => {
 
   it('like + post (without a price box) is refused', () => {
     const tx = { ...base, outputs: [], likeTarget: LIKE_TARGET, post: POST_COMMIT };
-    const r = checkTxEnvelope(tx);
+    const r = checkEnvelope(tx);
     expect(r.valid).toBe(false);
     expect(r.error).toMatch(/likeTarget.*post|post.*likeTarget/);
   });
@@ -444,7 +449,7 @@ describe('envelope exclusivity — at most one payload field', () => {
   it('like + post (foreign author on the commit) is refused at the envelope', () => {
     const foreignPost = { ...POST_COMMIT, author: new Uint8Array(32).fill(0xff) };
     const tx = { ...base, likeTarget: LIKE_TARGET, post: foreignPost };
-    const r = checkTxEnvelope(tx);
+    const r = checkEnvelope(tx);
     expect(r.valid).toBe(false);
     expect(r.error).toMatch(/likeTarget/);
     expect(r.error).toMatch(/post/);
@@ -452,7 +457,7 @@ describe('envelope exclusivity — at most one payload field', () => {
 
   it('like + prune is refused', () => {
     const tx = { ...base, likeTarget: LIKE_TARGET, prune: PRUNE };
-    const r = checkTxEnvelope(tx);
+    const r = checkEnvelope(tx);
     expect(r.valid).toBe(false);
     expect(r.error).toMatch(/likeTarget/);
     expect(r.error).toMatch(/prune/);
@@ -460,7 +465,7 @@ describe('envelope exclusivity — at most one payload field', () => {
 
   it('post + prune is refused', () => {
     const tx = { ...base, post: POST_COMMIT, prune: PRUNE };
-    const r = checkTxEnvelope(tx);
+    const r = checkEnvelope(tx);
     expect(r.valid).toBe(false);
     expect(r.error).toMatch(/post/);
     expect(r.error).toMatch(/prune/);
@@ -468,7 +473,7 @@ describe('envelope exclusivity — at most one payload field', () => {
 
   it('post + withdraw is refused', () => {
     const tx = { ...base, post: POST_COMMIT, postWithdraw: WITHDRAW };
-    const r = checkTxEnvelope(tx);
+    const r = checkEnvelope(tx);
     expect(r.valid).toBe(false);
     expect(r.error).toMatch(/post/);
     expect(r.error).toMatch(/postWithdraw/);
@@ -476,7 +481,7 @@ describe('envelope exclusivity — at most one payload field', () => {
 
   it('prune + withdraw is refused', () => {
     const tx = { ...base, prune: PRUNE, postWithdraw: WITHDRAW };
-    const r = checkTxEnvelope(tx);
+    const r = checkEnvelope(tx);
     expect(r.valid).toBe(false);
     expect(r.error).toMatch(/prune/);
     expect(r.error).toMatch(/postWithdraw/);

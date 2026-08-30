@@ -76,6 +76,11 @@ import {
   getNetworkRecord as storeGetNetworkRecord,
 } from '../../src/store/index.js';
 import { checkTxEnvelope, validateTx } from '../../src/services/utxo-engine.js';
+
+// checkTxEnvelope takes the judged-for height and the era schedule
+// (NODE_INTERFACE → validateTx). These envelope tests use the single-era
+// default; a version-1 transaction passes the era check at any height.
+const checkEnvelope = (tx: unknown) => checkTxEnvelope(tx, 0, [{ version: 1, fromHeight: 0 }]);
 import { config } from '../../src/config.js';
 
 interface TestKeys {
@@ -104,9 +109,38 @@ function envelope(over: Record<string, unknown> = {}): Record<string, unknown> {
 
 /** Run the gate and return its error, or `null` when it accepted. */
 function reject(tx: unknown): string | null {
-  const r = checkTxEnvelope(tx);
+  const r = checkEnvelope(tx);
   return r.valid ? null : (r.error ?? '<no error string>');
 }
+
+describe('protocolVersion equals the era at the judged-for height', () => {
+  const H = 5;
+  // A synthetic two-era schedule; a fixture may schedule a version the build
+  // does not implement (TYPES_INTERFACE → Version).
+  const SCHEDULE = [{ version: 1, fromHeight: 0 }, { version: 2, fromHeight: H }];
+
+  it('a transaction declaring the era at its height is accepted', () => {
+    expect(checkTxEnvelope(envelope({ protocolVersion: 2 }), H, SCHEDULE)).toEqual({ valid: true });
+    expect(checkTxEnvelope(envelope({ protocolVersion: 1 }), H - 1, SCHEDULE)).toEqual({ valid: true });
+  });
+
+  it('a transaction declaring the wrong era is refused, naming the era and height', () => {
+    const r = checkTxEnvelope(envelope({ protocolVersion: 1 }), H, SCHEDULE);
+    expect(r.valid).toBe(false);
+    expect(r.error).toContain('must be the era 2 at height 5');
+  });
+
+  it('a commit declaring a version other than the era refuses the envelope', () => {
+    // The commit's version rides in the post-id preimage, so a commit declaring
+    // another version would mint a second identity for one post. Every declared
+    // version a transaction carries equals its era, the commit's included
+    // (VALIDATION_INTERFACE → Protocol Version).
+    const tx = envelope({ protocolVersion: 1, post: { protocolVersion: 2 } });
+    const r = checkTxEnvelope(tx, H - 1, SCHEDULE); // era 1: the tx is right, the commit is not
+    expect(r.valid).toBe(false);
+    expect(r.error).toContain('commit');
+  });
+});
 
 // ---------------------------------------------------------------------------
 // The `as unknown as KarmaBox` casts below are DELIBERATE. `checkTxEnvelope`
@@ -118,12 +152,12 @@ function reject(tx: unknown): string | null {
 // ---------------------------------------------------------------------------
 describe('checkTxEnvelope — the closed envelope', () => {
   it('accepts the well-formed minimum', () => {
-    expect(checkTxEnvelope(envelope())).toEqual({ valid: true });
+    expect(checkEnvelope(envelope())).toEqual({ valid: true });
   });
 
   it('accepts every optional field in its legal form', () => {
     expect(
-      checkTxEnvelope(
+      checkEnvelope(
         envelope({
           likeTarget: HEX_B,
           signatures: { [HEX_B]: new Uint8Array(64) },
@@ -327,7 +361,7 @@ describe('checkTxEnvelope — the closed envelope', () => {
     for (const v of bad) {
       const err = reject(envelope({ protocolVersion: v }));
       expect(err, `protocolVersion=${String(v)}`).toContain(
-        `protocolVersion must be ${PROTOCOL_VERSION}`,
+        'protocolVersion must be the era',
       );
     }
     expect(reject(envelope({ protocolVersion: PROTOCOL_VERSION }))).toBeNull();
@@ -358,7 +392,7 @@ describe('checkTxEnvelope — the closed envelope', () => {
         },
       },
     };
-    expect(() => checkTxEnvelope(hostile)).not.toThrow();
+    expect(() => checkEnvelope(hostile)).not.toThrow();
 
     const toStringBomb = {
       ...envelope(),
@@ -370,7 +404,7 @@ describe('checkTxEnvelope — the closed envelope', () => {
     };
     let result: ReturnType<typeof checkTxEnvelope> | undefined;
     expect(() => {
-      result = checkTxEnvelope(toStringBomb);
+      result = checkEnvelope(toStringBomb);
     }).not.toThrow();
     expect(result!.valid).toBe(false);
     expect(result!.error).toContain('object'); // describeValue, not String(v)
@@ -427,6 +461,7 @@ describe('validateTx step 0 — the envelope gate in place', () => {
       getNetworkRecord: storeGetNetworkRecord,
       membershipBarMultiplier: 1,
       putIdentityRecord: storePutIdentityRecord,
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
     };
   }
 
@@ -570,7 +605,7 @@ describe('validateTx step 0 — the envelope gate in place', () => {
     );
     const result = validateTx(deps, tx, 10);
     expect(result.valid).toBe(false);
-    expect(result.error).toContain(`protocolVersion must be ${PROTOCOL_VERSION}`);
+    expect(result.error).toContain('protocolVersion must be the era');
   });
 
   it('a like transaction with a real hex target still validates', () => {
@@ -647,7 +682,7 @@ describe('checkTxEnvelope at the decode boundary', () => {
         key,
       ).toContain(key);
     }
-    expect(checkTxEnvelope(decoded)).toEqual({ valid: true });
+    expect(checkEnvelope(decoded)).toEqual({ valid: true });
   });
 
   it('round-trips an honest transaction through the codec unchanged', () => {
@@ -656,7 +691,7 @@ describe('checkTxEnvelope at the decode boundary', () => {
       likeTarget: HEX_B,
     }) as unknown as UtxoTransaction;
     const decoded = decodeTx(encodeTx(tx));
-    expect(checkTxEnvelope(decoded)).toEqual({ valid: true });
+    expect(checkEnvelope(decoded)).toEqual({ valid: true });
     expect(computeTxId(decoded)).toBe(computeTxId(tx));
   });
 });

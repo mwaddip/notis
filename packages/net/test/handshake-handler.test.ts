@@ -2,10 +2,11 @@ import { describe, it, expect, vi } from 'vitest';
 import { encodeStruct } from '@dagsocial/types';
 import { handshakeCodec } from '../src/handshake.js';
 import { PROTOCOL_VERSION } from '@dagsocial/types';
-import type { OrderingBlock } from '@dagsocial/types';
+import type { OrderingBlock, ProtocolEra } from '@dagsocial/types';
 import {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
+  verifyTxProtocolVersion,
   verifyContentLimits,
   verifyParentRefsCount,
   verifyTxStructure,
@@ -19,6 +20,7 @@ import { decodeFrame } from '../src/frame.js';
 import { PeerState } from '../src/types.js';
 import type { NetConfig, NetValidators } from '../src/types.js';
 import type { PeerManager } from '../src/peer-mgr.js';
+import { PeerDb } from '../src/peerdb.js';
 
 // ---------------------------------------------------------------------------
 // The inbound handshake handler — every failure gets a line
@@ -37,6 +39,7 @@ const MAGIC = 0x54444147;
 const validators: NetValidators = {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
+  verifyTxProtocolVersion,
   verifyContentLimits,
   verifyParentRefsCount,
   verifyTxStructure,
@@ -44,9 +47,12 @@ const validators: NetValidators = {
   verifyPostBody,
 };
 
-function makeConfig(): NetConfig {
+function makeConfig(
+  schedule: readonly ProtocolEra[] = [{ version: 1, fromHeight: 0 }],
+): NetConfig {
   return {
     magic: MAGIC,
+    protocolVersionSchedule: schedule,
     bootstrapPeers: [],
     listenAddrs: '/ip4/0.0.0.0/tcp/0',
     maxPeers: 10,
@@ -76,16 +82,23 @@ function makeHandshakeHarness(opts: {
   chainHeight?: number;
   chainHeightProvider?: () => number;
   sinkThrows?: boolean;
+  schedule?: readonly ProtocolEra[];
 } = {}) {
-  const net = new NetNode(makeConfig(), validators);
+  const net = new NetNode(makeConfig(opts.schedule), validators);
   const peerId = 'peer-under-test';
 
   let captured: StreamHandler | null = null;
   const internals = net as unknown as {
     libp2p: unknown;
     peerMgr: PeerManager;
+    peerDb: PeerDb;
     registerHandshakeHandler(libp2p: unknown): void;
   };
+  // start() is never called (real libp2p is a TCP listener), so peerDb is null
+  // and the handler's record write is a no-op. Inject an ephemeral one so the
+  // record the inbound handshake writes is observable.
+  const peerDb = new PeerDb(null, 1000, []);
+  internals.peerDb = peerDb;
   internals.libp2p = {
     handle: (protocol: string, cb: StreamHandler) => {
       if (protocol === '/dagsocial/handshake/1') captured = cb;
@@ -147,7 +160,7 @@ function makeHandshakeHarness(opts: {
       throw new Error('connection reset');
     })());
 
-  return { send, sendBrokenStream, peerMgr: internals.peerMgr, peerId };
+  return { send, sendBrokenStream, peerMgr: internals.peerMgr, peerId, peerDb };
 }
 
 function validHandshakeFrame(): Uint8Array {
@@ -263,8 +276,8 @@ describe('inbound handshake handler — the outer span', () => {
 
 describe('inbound handshake handler — our own reply', () => {
   it('attributes a throwing store callback to the store, not to the handshake', async () => {
-    // `buildOurHandshake` reads `chainHeight()` via the height provider.
-    // Folded into the outer catch it would read as a handshake failure,
+    // Reading our era goes through `chainHeight()`, the first store read on the
+    // path. Folded into the outer catch it would read as a handshake failure,
     // sending whoever read the log to the wrong subsystem.
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -277,7 +290,7 @@ describe('inbound handshake handler — our own reply', () => {
     const written = await send(validHandshakeFrame());
 
     expect(errSpy).toHaveBeenCalledWith(
-      expect.stringContaining('cannot build our handshake'),
+      expect.stringContaining('cannot read our era'),
     );
     expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('store exploded'));
     expect(warnSpy).not.toHaveBeenCalledWith(
@@ -322,7 +335,8 @@ describe('inbound handshake handler — our own reply', () => {
     expect(written).toHaveLength(1);
     const frame = decodeFrame(MAGIC, written[0]!);
     const raw = parseHandshakeBody(frame.body);
-    const result = validateHandshake(raw, [PROTOCOL_VERSION]);
+    // Our reply declares PROTOCOL_VERSION, which covers era PROTOCOL_VERSION.
+    const result = validateHandshake(raw, PROTOCOL_VERSION);
     expect(result.ok).toBe(true);
     expect(result.peerHeight).toBe(55);
   });
@@ -369,5 +383,79 @@ describe('inbound handshake handler — frame-tier rejection', () => {
     expect(peerMgr.isBanned(peerId)).toBe(false);
     expect(peerMgr.getPeerMetadata(peerId)?.penaltyCount ?? 0).toBe(0);
     warnSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The era gate flips through the tip — NET_INTERFACE → Handshake
+//
+// The handler reads its era from chainHeight() + 1, so the accept/refuse of one
+// fixed peer flips as the tip crosses the boundary — driven through the height
+// provider, not the era argument. `validHandshakeFrame()` declares
+// PROTOCOL_VERSION = 1, and the schedule bumps to era 2 at height H.
+// ---------------------------------------------------------------------------
+
+function peerHandshakeFrame(version: number, declaredAddress?: string): Uint8Array {
+  return buildHandshakeFrame(MAGIC, {
+    agentName: 'dagsocial/1.0.0',
+    protocolVersion: version,
+    nodeName: 'peer',
+    chainHeight: 7,
+    ...(declaredAddress ? { declaredAddress } : {}),
+    capabilities: [],
+    sessionMagic: 1234,
+  });
+}
+
+describe('inbound handshake handler — the era gate flips through the tip', () => {
+  const H = 5;
+  const twoEra: readonly ProtocolEra[] = [
+    { version: 1, fromHeight: 0 },
+    { version: 2, fromHeight: H },
+  ];
+
+  it('accepts a v1 peer while the tip is below the boundary', async () => {
+    // chainHeight H-2 → era at (H-2)+1 = H-1 = 1; 1 >= 1 accepts.
+    const { send, peerMgr, peerId } = makeHandshakeHarness({ schedule: twoEra, chainHeight: H - 2 });
+
+    const written = await send(validHandshakeFrame());
+
+    expect(written).toHaveLength(1);
+    expect(written[0]!.length).toBeGreaterThan(0);
+    expect(peerMgr.getPeerMetadata(peerId)?.state).toBe(PeerState.Active);
+  });
+
+  it('refuses the same v1 peer once the tip crosses the boundary', async () => {
+    // chainHeight H-1 → era at (H-1)+1 = H = 2; 1 < 2 refuses, softly.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { send, peerMgr, peerId } = makeHandshakeHarness({ schedule: twoEra, chainHeight: H - 1 });
+
+    const written = await send(validHandshakeFrame());
+
+    expect(isEmptyReply(written)).toBe(true);
+    expect(peerMgr.getPeerMetadata(peerId)?.state).not.toBe(PeerState.Active);
+    // Soft: a version mismatch is Transient, never a ban.
+    expect(peerMgr.isBanned(peerId)).toBe(false);
+    expect(peerMgr.getPeerMetadata(peerId)?.penaltyCount ?? 0).toBe(1);
+    warnSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The record and metadata keep the peer's declared version — NET_INTERFACE →
+// PeerDb; → Post-Handshake Routing. This build declares PROTOCOL_VERSION = 1;
+// the peer declares 2, and both the PeerDb record and the peer's metadata hold
+// 2, not our constant.
+// ---------------------------------------------------------------------------
+
+describe('inbound handshake handler — the record keeps the declared version', () => {
+  it('records the peer\'s declared version and stamps it on the metadata', async () => {
+    const addr = '/ip4/9.9.9.9/tcp/9000';
+    const { send, peerMgr, peerId, peerDb } = makeHandshakeHarness({ chainHeight: 0 });
+
+    await send(peerHandshakeFrame(2, addr));
+
+    expect(peerDb.get(addr)?.protocolVersion).toBe(2);
+    expect(peerMgr.getPeerMetadata(peerId)?.protocolVersion).toBe(2);
   });
 });

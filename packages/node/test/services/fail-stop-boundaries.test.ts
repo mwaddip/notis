@@ -168,6 +168,7 @@ describe('route boundary (real wiring)', () => {
       inviteBondMax: 10000n,
       getNetworkRecord: () => ({ memberCount: 1 }),
       membershipBarMultiplier: 1,
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
     }));
 
     await new Promise<void>((resolve) => {

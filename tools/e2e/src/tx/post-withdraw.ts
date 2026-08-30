@@ -1,4 +1,3 @@
-import { PROTOCOL_VERSION } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import type { Identity } from '../identities.js';
 import { signAndRender, type BoxRef, type BuiltTx } from './render.js';
@@ -8,6 +7,7 @@ export function buildPostWithdrawTx(
   boxes: BoxRef[],
   postId: string,
   height: number,
+  protocolVersion: number,
 ): BuiltTx {
   const totalValue = boxes.reduce((sum, b) => sum + b.value, 0n);
   const owner = Buffer.from(author.publicKeyHex, 'hex');
@@ -18,7 +18,7 @@ export function buildPostWithdrawTx(
       { boxType: 'karma', value: totalValue, createdAtBlock: height, owner },
     ],
     signatures: {},
-    protocolVersion: PROTOCOL_VERSION,
+    protocolVersion,
     postWithdraw: {
       postId,
     },

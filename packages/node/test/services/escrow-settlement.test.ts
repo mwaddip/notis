@@ -530,6 +530,7 @@ describe('escrow settlement leg', () => {
       getNetworkRecord: () => ({ memberCount: 1 }),
       membershipBarMultiplier: 1,
       putIdentityRecord: () => {},
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
       },
       tx,
       10,

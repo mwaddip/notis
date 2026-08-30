@@ -1,4 +1,4 @@
-import { selectBoxes, PROTOCOL_VERSION, VOUCH_KARMA_AMOUNT } from '@dagsocial/types';
+import { selectBoxes, VOUCH_KARMA_AMOUNT } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import type { Identity } from '../identities.js';
 import { signAndRender, type BoxRef, type BuiltTx } from './render.js';
@@ -8,6 +8,7 @@ export function buildVouchTx(
   boxes: BoxRef[],
   target: Identity,
   height: number,
+  protocolVersion: number,
 ): BuiltTx {
   const sorted = [...boxes].sort((a, b) => (b.value > a.value ? 1 : b.value < a.value ? -1 : 0));
   const selected = selectBoxes(sorted, VOUCH_KARMA_AMOUNT);
@@ -31,7 +32,7 @@ export function buildVouchTx(
     inputs: selected.map((b) => b.boxId),
     outputs,
     signatures: {},
-    protocolVersion: PROTOCOL_VERSION,
+    protocolVersion,
   };
 
   return signAndRender(voucher, tx);
@@ -44,6 +45,7 @@ export function buildUnvouchTx(
   vouchCreatedAtBlock: number,
   height: number,
   vouchCooldownBlocks: number,
+  protocolVersion: number,
 ): BuiltTx {
   const owner = Buffer.from(voucher.publicKeyHex, 'hex');
   const tx: UtxoTransaction = {
@@ -58,7 +60,7 @@ export function buildUnvouchTx(
       },
     ],
     signatures: {},
-    protocolVersion: PROTOCOL_VERSION,
+    protocolVersion,
   };
 
   return signAndRender(voucher, tx);

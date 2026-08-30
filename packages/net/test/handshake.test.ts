@@ -67,7 +67,7 @@ describe('handshake', () => {
       const decoded = decodeHandshakePayload(MAGIC_TESTNET, frame);
       expect(decoded.kind).toBe('framed');
       if (decoded.kind === 'reject') return;
-      expect(validateHandshake(parseHandshakeBody(decoded.body), [1]).ok).toBe(true);
+      expect(validateHandshake(parseHandshakeBody(decoded.body), 1).ok).toBe(true);
     });
 
     it('rejects a frame from the wrong network', () => {
@@ -115,16 +115,28 @@ describe('handshake', () => {
   });
 
   it('validates compatible protocol version', () => {
-    const result = validateHandshake(testMsg, [1]);
+    const result = validateHandshake(testMsg, 1);
     expect(result.ok).toBe(true);
     expect(result.peerHeight).toBe(42);
     expect(result.msg).toEqual(testMsg);
   });
 
   it('rejects incompatible protocol version', () => {
-    const result = validateHandshake({ ...testMsg, protocolVersion: 99 }, [1]);
+    // A peer at version 1 does not cover era 2 — peering is by coverage,
+    // declared >= era (NET_INTERFACE → Handshake).
+    const result = validateHandshake({ ...testMsg, protocolVersion: 1 }, 2);
     expect(result.ok).toBe(false);
     expect(result.error).toContain('unsupported protocol version');
+    // The refusal names both numbers — the declared version and the era.
+    expect(result.error).toMatch(/version 1.*era 2/);
+  });
+
+  it('accepts a newer build that covers our era', () => {
+    // 3 >= era 2, so a peer from a newer build passes: it validates our era,
+    // and its post-flag objects simply fail our era check (no upper bound).
+    const result = validateHandshake({ ...testMsg, protocolVersion: 3 }, 2);
+    expect(result.ok).toBe(true);
+    expect(result.msg?.protocolVersion).toBe(3);
   });
 
   describe('ban policy', () => {
@@ -133,6 +145,7 @@ describe('handshake', () => {
     function makeMgr(): PeerManager {
       const config: NetConfig = {
         magic: 0x54444147,
+        protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
         bootstrapPeers: [],
         listenAddrs: '/ip4/0.0.0.0/tcp/0',
         maxPeers: 10,
@@ -153,7 +166,8 @@ describe('handshake', () => {
     }
 
     function applyVersionPolicy(mgr: PeerManager): void {
-      const result = validateHandshake({ ...testMsg, protocolVersion: 99 }, [1]);
+      // A peer at version 1 below era 2 — refused softly, never banned.
+      const result = validateHandshake({ ...testMsg, protocolVersion: 1 }, 2);
       expect(result.ok).toBe(false);
       mgr.recordPenaltyKind(handshakePenalty(result.rejection), 'peer1', 'handshake');
     }
@@ -163,7 +177,7 @@ describe('handshake', () => {
     });
 
     it('classifies an unsupported version as a compatibility mismatch', () => {
-      const result = validateHandshake({ ...testMsg, protocolVersion: 99 }, [1]);
+      const result = validateHandshake({ ...testMsg, protocolVersion: 1 }, 2);
       expect(result.rejection).toBe('unsupported-version');
       expect(handshakePenalty(result.rejection)).toBe(PenaltyKind.Transient);
     });
@@ -210,7 +224,7 @@ describe('handshake', () => {
   });
 
   it('rejects missing agentName', () => {
-    const result = validateHandshake(testMsg, [1]);
+    const result = validateHandshake(testMsg, 1);
     expect(result.ok).toBe(true);
     const decoded = decodeHandshakeBody(validBody({ agentName: '' }));
     expect(decoded).toBeNull();
@@ -222,7 +236,7 @@ describe('handshake', () => {
     });
 
     it('rejects a null body in validateHandshake', () => {
-      expect(validateHandshake(null, [1]).ok).toBe(false);
+      expect(validateHandshake(null, 1).ok).toBe(false);
     });
 
     it('rejects truncated body', () => {

@@ -86,6 +86,7 @@ export class PeerManager {
         stalled: false,
         lastSeenMs: Date.now(),
         address: null,
+        protocolVersion: null,
       });
     }
   }
@@ -99,6 +100,36 @@ export class PeerManager {
   setPeerAddress(peerId: string, address: string): void {
     const meta = this.metadata.get(peerId);
     if (meta) meta.address = address;
+  }
+
+  /**
+   * Record the peer's declared `protocolVersion` once the handshake reveals it.
+   * No-op for an untracked peer, like setPeerAddress. It is what the boundary
+   * sweep reads (NET_INTERFACE → Post-Handshake Routing).
+   */
+  setPeerVersion(peerId: string, protocolVersion: number): void {
+    const meta = this.metadata.get(peerId);
+    if (meta) meta.protocolVersion = protocolVersion;
+  }
+
+  /**
+   * The peer ids of every Active peer whose declared `protocolVersion` is known
+   * and below `era` — the boundary sweep's targets (NET_INTERFACE →
+   * Post-Handshake Routing). A peer whose version is null has not handshaken and
+   * is not Active, so it is never returned.
+   */
+  activePeersBelowVersion(era: number): string[] {
+    const below: string[] = [];
+    for (const meta of this.metadata.values()) {
+      if (
+        meta.state === PeerState.Active &&
+        meta.protocolVersion !== null &&
+        meta.protocolVersion < era
+      ) {
+        below.push(meta.peerId);
+      }
+    }
+    return below;
   }
 
   removePeer(peerId: string): void {

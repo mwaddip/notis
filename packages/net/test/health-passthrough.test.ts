@@ -4,6 +4,7 @@ import { syncInfoCodec } from '../src/sync-codec.js';
 import {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
+  verifyTxProtocolVersion,
   verifyContentLimits,
   verifyParentRefsCount,
   verifyTxStructure,
@@ -23,6 +24,7 @@ const MAGIC = 0x54444147;
 const validators: NetValidators = {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
+  verifyTxProtocolVersion,
   verifyContentLimits,
   verifyParentRefsCount,
   verifyTxStructure,
@@ -33,6 +35,7 @@ const validators: NetValidators = {
 function makeConfig(): NetConfig {
   return {
     magic: MAGIC,
+    protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
     bootstrapPeers: [],
     listenAddrs: '/ip4/0.0.0.0/tcp/0',
     maxPeers: 10,
@@ -320,9 +323,13 @@ describe('onPeerPenalised', () => {
     const events: Array<{ id: string; kind: string; detail: string | null }> = [];
     net.onPeerPenalised((id, k, d) => events.push({ id, kind: k, detail: d }));
 
+    // A well-framed body that fails the codec (empty agentName) is a body-tier
+    // malformed handshake — rejected and penalised, firing the event. A high
+    // declared version is accepted, since peering is by era coverage and a newer
+    // build covers the era (NET_INTERFACE → Handshake).
     const badFrame = buildHandshakeFrame(MAGIC, {
-      agentName: 'dagsocial/1.0.0',
-      protocolVersion: 999,
+      agentName: '',
+      protocolVersion: 1,
       nodeName: 'peer',
       chainHeight: 7,
       capabilities: [],

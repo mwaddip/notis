@@ -3,7 +3,7 @@ import request from 'supertest';
 import { createApp } from '../src/server.js';
 import { NodeError } from '../src/node-client.js';
 import type { NodeClient } from '../src/node-client.js';
-import { C1, K1, baseCfg, pubHex, recipient } from './fixture.js';
+import { C1, ERA, K1, baseCfg, pubHex, recipient } from './fixture.js';
 
 const cfg = { ...baseCfg, creditAmount: 100n, rateLimitPerHour: 2 };
 const other = 'bb'.repeat(32);
@@ -14,7 +14,7 @@ let client: NodeClient;
 beforeEach(() => {
   submitted = [];
   client = {
-    currentHeight: async () => 100,
+    status: async () => ({ blockHeight: 100, protocolVersion: ERA }),
     karmaBoxes: async () => [{ boxId: K1, value: 1000n }],
     creditBoxes: async () => [{ boxId: C1, value: 1000n }],
     submitInvite: async (tx) => { submitted.push(tx); },
@@ -170,5 +170,19 @@ describe('the surface', () => {
       .post('/faucet/karma').set('Content-Type', 'application/json').send('{oops');
     expect(res.status).toBe(400);
     expect(submitted).toHaveLength(0);
+  });
+});
+
+describe('the era the faucet signs', () => {
+  // WEB_INTERFACE → Invariants: the faucet signs the era the node reports. When
+  // the node answers a different era, both endpoints stamp it into what they submit.
+  it('stamps the protocolVersion the node reports on both endpoints', async () => {
+    client.status = async () => ({ blockHeight: 100, protocolVersion: 2 });
+    const app = createApp(cfg, client);
+    await request(app).post('/faucet/karma').send({ pubkey: recipient }).set(from('8.8.8.1'));
+    await request(app).post('/faucet/credits').send({ pubkey: recipient }).set(from('8.8.8.2'));
+    expect(submitted).toHaveLength(2);
+    expect(submitted[0]!.protocolVersion).toBe(2);
+    expect(submitted[1]!.protocolVersion).toBe(2);
   });
 });

@@ -174,6 +174,15 @@ export function getCurrentHeight(): number {
   return row.h;
 }
 
+/**
+ * The height of the block that would carry a transaction admitted now — the tip
+ * plus one. A transaction is judged at the height of the block that would carry
+ * it, so admission reads this rather than the tip (NODE_INTERFACE → validateTx).
+ */
+export function nextBlockHeight(): number {
+  return getCurrentHeight() + 1;
+}
+
 export function getOrderingBlockHash(height: number): string | null {
   const row = getDb()
     .prepare('SELECT block_hash FROM ordering_blocks WHERE height = ?')

@@ -1,11 +1,12 @@
 import {
-  PROTOCOL_VERSION,
   EMPTY_STATE_ROOT,
   GENESIS_PREV_BLOCK_HASH,
+  NETWORK_PROFILES,
   interlinkRoot,
+  protocolVersionAt,
   updateInterlinks,
 } from '@dagsocial/types';
-import type { BlockHeader } from '@dagsocial/types';
+import type { BlockHeader, ProtocolEra } from '@dagsocial/types';
 import {
   asertTargetBits,
   verifyOrderingBlockPoW,
@@ -90,6 +91,7 @@ function mineHeaders(
   from: number,
   to: number,
   retarget: RetargetParams,
+  schedule: readonly ProtocolEra[],
   forceLevels: Map<number, number> | undefined,
   state: BuildState,
   stampIntervalMs?: number,
@@ -107,8 +109,12 @@ function mineHeaders(
       : asertTargetBits(retarget, ANCHOR_TIME,
           { height: state.prevHeight, createdAt: state.prevCreatedAt });
 
+    // the era scheduled at this height (TYPES_INTERFACE → Version)
+    const version = protocolVersionAt(schedule, height);
+    if (version === null) throw new Error(`no protocol era covers height ${height}`);
+
     const header: BlockHeader = {
-      protocolVersion: PROTOCOL_VERSION,
+      protocolVersion: version,
       height,
       prevBlockHash: state.prevHash,
       utxoTxRoot: '00'.repeat(32),
@@ -153,10 +159,12 @@ export function buildMinedChainFresh(opts: {
   retarget?: RetargetParams;
   forceLevels?: Map<number, number>;
   stampIntervalMs?: number;
+  schedule?: readonly ProtocolEra[];
 }): MinedChain {
   const retarget = opts.retarget ?? DEVNET_RETARGET;
+  const schedule = opts.schedule ?? NETWORK_PROFILES.devnet.protocolVersionSchedule;
   const state = freshState();
-  mineHeaders(0, opts.count, retarget, opts.forceLevels, state, opts.stampIntervalMs);
+  mineHeaders(0, opts.count, retarget, schedule, opts.forceLevels, state, opts.stampIntervalMs);
   return {
     headers: state.headers,
     interlinksPerHeader: state.interlinksPerHeader,
@@ -166,10 +174,12 @@ export function buildMinedChainFresh(opts: {
 
 function memoKey(
   retarget: RetargetParams,
+  schedule: readonly ProtocolEra[],
   forceLevels?: Map<number, number>,
   stampIntervalMs?: number,
 ): string {
   let key = `${retarget.anchorBits}:${retarget.idealMs}:${retarget.halflifeMs}:${retarget.floorBits}:${retarget.ceilingBits}`;
+  key += '/v=' + schedule.map(e => `${e.version}@${e.fromHeight}`).join(',');
   if (stampIntervalMs !== undefined) key += `/s=${stampIntervalMs}`;
   if (forceLevels && forceLevels.size > 0) {
     const sorted = [...forceLevels.entries()].sort((a, b) => a[0] - b[0]);
@@ -193,10 +203,12 @@ export function buildMinedChain(opts: {
   retarget?: RetargetParams;
   forceLevels?: Map<number, number>;
   stampIntervalMs?: number;
+  schedule?: readonly ProtocolEra[];
 }): MinedChain {
   const { count, forceLevels, stampIntervalMs } = opts;
   const retarget = opts.retarget ?? DEVNET_RETARGET;
-  const key = memoKey(retarget, forceLevels, stampIntervalMs);
+  const schedule = opts.schedule ?? NETWORK_PROFILES.devnet.protocolVersionSchedule;
+  const key = memoKey(retarget, schedule, forceLevels, stampIntervalMs);
   const existing = chainMemo.get(key);
 
   if (existing && existing.headers.length >= count) {
@@ -216,7 +228,7 @@ export function buildMinedChain(opts: {
       }
     : freshState();
 
-  mineHeaders(state.headers.length, count, retarget, forceLevels, state, stampIntervalMs);
+  mineHeaders(state.headers.length, count, retarget, schedule, forceLevels, state, stampIntervalMs);
   chainMemo.set(key, state);
 
   return sliceChain(state, count);
@@ -261,7 +273,7 @@ export function devnetProfile() {
     maxFutureDriftMs: DEVNET_MAX_FUTURE_DRIFT_MS,
     nowMs: 100_000_000,
     genesisId: '',
-    protocolVersion: PROTOCOL_VERSION,
+    protocolVersionSchedule: NETWORK_PROFILES.devnet.protocolVersionSchedule,
   };
 }
 
@@ -273,6 +285,6 @@ export function devnetProfileWithGenesisId(chain: MinedChain) {
     maxFutureDriftMs: DEVNET_MAX_FUTURE_DRIFT_MS,
     nowMs: 100_000_000,
     genesisId: gHash,
-    protocolVersion: PROTOCOL_VERSION,
+    protocolVersionSchedule: NETWORK_PROFILES.devnet.protocolVersionSchedule,
   };
 }

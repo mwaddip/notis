@@ -4,6 +4,7 @@ import { peersCodec } from '../src/sync-codec.js';
 import {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
+  verifyTxProtocolVersion,
   verifyContentLimits,
   verifyParentRefsCount,
   verifyTxStructure,
@@ -32,6 +33,7 @@ import type { NetConfig, PeerRecord, PeersMsg } from '../src/types.js';
 function makeConfig(): NetConfig {
   return {
     magic: MAGIC_TESTNET,
+    protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
     bootstrapPeers: [],
     listenAddrs: '/ip4/127.0.0.1/tcp/0',
     maxPeers: 8,
@@ -234,6 +236,7 @@ describe('peerDbCap default (contract: soft cap 1000)', () => {
   const validators = {
     verifyOrderingBlockPoW,
     verifyProtocolVersion,
+    verifyTxProtocolVersion,
     verifyContentLimits,
     verifyParentRefsCount,
     verifyTxStructure,
