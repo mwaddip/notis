@@ -475,6 +475,11 @@ export function createOrderingBlock(): OrderingBlock | null {
       for (const entry of iteratePendingEntries({ klass })) {
         if (entry.entryType !== 'utxo_tx' || entry.utxoTxBytes === null) continue;
         const tx = decodeTx(entry.utxoTxBytes);
+        // The fill skips an entry whose declared version is not the era of the
+        // block being built — not evicted, not counted against the budget; a
+        // skipped entry leaves by expiry (MEMPOOL_INTERFACE → Block Creator
+        // Integration).
+        if (tx.protocolVersion !== era) continue;
         const txId = computeTxId(tx);
         const invitee = bondInviteeOf(
           tx.outputs.map((out, i) => materializeOutput(out, txId, i)),
