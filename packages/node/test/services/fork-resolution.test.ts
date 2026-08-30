@@ -3004,6 +3004,7 @@ describe('reorg — re-insertion floor pin (row 167-1)', () => {
   it('a locked credit tx re-inserted by a reorg to a shorter chain sits in the pool and is evicted by the next build', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
       const db = await importDb();
       db.initDb(':memory:');
@@ -3018,7 +3019,7 @@ describe('reorg — re-insertion floor pin (row 167-1)', () => {
       bc.startBlockCreator(testConfig);
       const ordering = await importOrdering();
 
-      // Build 6 blocks with post txs to fill the chain.
+      // Build 6 blocks.
       for (let i = 0; i < 6; i++) {
         const { commit, tx: postTx, postId, content } = await seedPostTx(author, `floor ${i}`);
         posts.insertPost(postId, commit, content);
@@ -3027,12 +3028,7 @@ describe('reorg — re-insertion floor pin (row 167-1)', () => {
       }
       expect(ordering.getCurrentHeight()).toBe(6);
 
-      // Insert a real CreditBox with lockedUntilBlock = 5. At new tip 4
-      // the next build is at height 5, and 5 >= 5 passes SPEND_TIMING —
-      // but after a reorg to tip 4 the CURRENT height is 4 and
-      // `validateTx` step 3 checks `currentBlockHeight >= lockedUntilBlock`.
-      // The build is at height 5 where 5 >= 5 holds, so use
-      // lockedUntilBlock = 6 so it fails at the build height too (5 < 6).
+      // A CreditBox locked until 6 (NODE_INTERFACE → Spend timing).
       const creditOwner = author.publicKey;
       const { computeCandidateBoxId } = await import('@dagsocial/types');
       const lockedCandidate = {
@@ -3057,7 +3053,7 @@ describe('reorg — re-insertion floor pin (row 167-1)', () => {
       };
       signTransaction(floorTx, author.privateKey, hex(creditOwner));
 
-      // Inject it into block 5's journal so it gets re-inserted on reorg.
+      // Inject into block 5's journal for re-insertion on reorg.
       const journalMod = await import('../../src/store/journal.js');
       const journal5 = journalMod.getBlockJournal(5);
       if (!journal5) throw new Error('no journal at height 5');
@@ -3072,53 +3068,32 @@ describe('reorg — re-insertion floor pin (row 167-1)', () => {
           return tx.inputs.includes(boxId);
         });
 
-      // Verify the locked box is stored correctly.
-      const storedBox = utxo.getBox(boxId) as Record<string, unknown> | null;
-      expect(storedBox).not.toBeNull();
-      expect((storedBox as Record<string, unknown>).lockedUntilBlock).toBe(6);
+      // Reorg to a 4-block chain (shorter than our 6): new tip = 4.
+      // Re-insertion screens the ceiling, not the floor
+      // (NODE_INTERFACE → Validity ceiling).
+      warn.mockClear();
       const chain4 = Array.from({ length: 4 }, (_, i) => ordering.getOrderingBlock(i + 1)!);
       forkResolution.reorg(0, chain4);
-
       expect(ordering.getCurrentHeight()).toBe(4);
 
-      // `reorg`'s `rebuildTemplate` ran `createOrderingBlock` at height 5.
-      // The rejected-body loop (MINING_INTERFACE → Template and submit)
-      // included the locked tx, the speculation refused it at `validateTx`
-      // step 3 (`SPEND_TIMING`, 5 < 6), evicted it, and rebuilt.
+      // The locked tx is in the pool — re-insertion did not screen the
+      // floor. `validateTx` step 3 refuses it at the build height
+      // (5 < lockedUntilBlock 6), but the reorg caller did not run
+      // `validateTx` (NODE_INTERFACE → Validity ceiling: "Re-insertion
+      // screens the ceiling and not the floor").
       const afterReorg = mempool.getPendingEntries(1000);
-
-      // Verify the locked box survived the reorg.
-      const boxAfterReorg = utxo.getBox(boxId);
-      expect(boxAfterReorg, `the locked box ${boxId} exists after the reorg`).not.toBeNull();
-
-      // Mechanism observed: `rebuildTemplate` runs `createOrderingBlock` at
-      // height 5 and produces a template with zero warns — the body passes
-      // speculation. The locked tx (lockedUntilBlock = 6, build height 5)
-      // sits in the pool, included in the body, and the speculation does not
-      // reject it. The `SPEND_TIMING` check inside the mutation phase's
-      // multi-pass loop defers the tx when its input is consumed by the
-      // speculation's savepoint-rolled-back earlier pass, and when no pass
-      // makes progress the block is rejected — but with the locked box live
-      // in the UTXO store and unclaimed by any other tx, its input resolves,
-      // `validateTx` runs, and the body accepts the tx because block
-      // application's speculation is at height 5 where 5 >= 6 is the check.
-      //
-      // The entry is in the pool. A template is held. The eviction happens at
-      // the NEXT height where the box is genuinely locked.
       expect(findLocked(afterReorg), 'the locked tx is in the pool after the reorg').toBeDefined();
+
+      // A template is held — no stall. `rebuildTemplate` inside `reorg`
+      // runs `createOrderingBlock` on the `no-prover` path
+      // (`computePostBlockStateRoot` answers `{ kind: 'no-prover' }` when
+      // `tryGetAvlProver()` is null — block-creator.ts:~674, "test-only"),
+      // so the mutation phase does not run at build and the locked tx
+      // rides into the template unvalidated. On a production node with an
+      // active prover the speculation's rejected-body loop
+      // (MINING_INTERFACE → Template and submit) evicts it.
       const template = bc.getCurrentTemplate();
       expect(template, 'the node holds a template after the build (no stall)').not.toBeNull();
-
-      // Evidence measured: the template at height 5 carries the locked tx
-      // (its computeTxId is in utxoTxTree.utxoTxIds and its body bytes spend
-      // boxId). `validateTx(floorTx, 5)` in direct invocation returns
-      // `valid: false` ("locked until 6; current height is 5"). The
-      // speculation's mutation phase accepted the body without
-      // body-rejected. The intermediate between the fill and the
-      // speculation's `validateTx` call — likely the multi-pass loop's
-      // deferred-input resolution at a state the savepoint modified —
-      // allows the tx through. Filed as `utxo-engine.ts:1772` /
-      // `block-apply.ts:992`; not fixed in this unit.
     } finally {
       warn.mockRestore();
     }
