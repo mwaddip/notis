@@ -3392,35 +3392,49 @@ describe('the fork walk', () => {
     }
     expect(ordering.getCurrentHeight()).toBe(5);
 
-    // Compute ourWork from headers 2..5 BEFORE any fork resolution (fork at 1).
-    const ourHeadersAboveFork = [2, 3, 4, 5].map(h => ordering.getOrderingBlock(h)!.header);
+    // Compute ourWork from headers 3..5 BEFORE any fork resolution (fork at 2).
+    const ourHeadersAboveFork = [3, 4, 5].map(h => ordering.getOrderingBlock(h)!.header);
     const expectedWork = cumulativeWork(ourHeadersAboveFork);
 
-    // Valid lighter branch from block 1 — one block (lighter than our four
-    // above the fork at 1). The observable: ourWork is cumulativeWork(2..5).
-    const block1 = ordering.getOrderingBlock(1)!.header;
-    const hash1 = blockHash(block1)!;
-    const il1 = ordering.getInterlinks(1)!;
-    const { headers: peerChain } = buildMinedHeaderChain({
-      anchorPrevBlockHash: hash1,
-      anchorInterlinks: il1,
-      startHeight: 2,
-      count: 1,
-      params: rp(),
-      anchorCreatedAt: block1.createdAt,
-      anchorStamp: block1.createdAt,
-      startStamp: block1.createdAt + 60_000,
-    });
+    // Valid lighter branch from block 2 — one header at height 3 (lighter than
+    // our three above the fork at 2). Built manually because
+    // buildMinedHeaderChain's anchor-level assumption (Infinity) matches only
+    // height-1 forks; at any other fork height the interlinks diverge.
+    const block2 = ordering.getOrderingBlock(2)!.header;
+    const hash2 = blockHash(block2)!;
+    const il2 = ordering.getInterlinks(2)!;
+    const level2 = headerLevel(block2, testConfig.orderingBlockPowTargetBits);
+    // The vector block 3 must commit to — the anchor resolveFork will build.
+    const anchorIl = updateInterlinks(il2, hash2, level2);
+    const params = rp();
+    const t_a_val = ordering.getOrderingBlock(1)!.header.createdAt;
+    const targetBits = (await import('@dagsocial/validation')).asertTargetBits(
+      params, t_a_val, { height: 2, createdAt: block2.createdAt },
+    );
+    const peerHeader: BlockHeader = {
+      protocolVersion: PROTOCOL_VERSION,
+      height: 3,
+      prevBlockHash: hash2,
+      utxoTxRoot: '00'.repeat(32),
+      stateRoot: EMPTY_STATE_ROOT,
+      validatorId: new Uint8Array(32),
+      powNonce: 0,
+      powTargetBits: targetBits,
+      createdAt: block2.createdAt + 60_000,
+      interlinkRoot: (await import('@dagsocial/types')).interlinkRoot(anchorIl),
+    };
+    peerHeader.powNonce = solveHeaderPow(peerHeader);
+    expect(blockHash(peerHeader)).not.toBeNull();
 
-    const theirHeaders = [...peerChain].reverse().concat(block1);
-    const trigger = { header: peerChain[0]!, utxoTxTree: { utxoTxIds: [], utxoTxs: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock;
+    const theirHeaders = [peerHeader, block2];
+    const trigger = { header: peerHeader, utxoTxTree: { utxoTxIds: [], utxoTxs: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock;
 
     setClock(() => t1 + 5 * 60_000);
     const net = stubNet(theirHeaders, []);
     await forkResolution.resolveFork(trigger, net, 'peer-a');
 
-    // The walk found the fork at height 1: the log shows the work above
-    // exactly the fork point — our four headers 2..5.
+    // The walk found the fork at height 2: the log shows the work above
+    // exactly the fork point — our three headers 3..5.
     const workLog = logSpy.mock.calls.find(
       c => typeof c[0] === 'string' && c[0].includes(`ours=${expectedWork}`),
     );
@@ -3993,11 +4007,110 @@ describe('resolveFork — paged scoring walk', () => {
     expect(net.penalties).toEqual([]);
   });
 
-  // The tip-moving-between-pages abort path is tested by the fork walk's own
-  // abort on tip move (step 9). Intercepting getCurrentHeight inside resolveFork
-  // for the scoring walk's check requires ESM module replacement of the store
-  // barrel before the import binding is captured — a vi.doMock of a re-exported
-  // function that vitest does not resolve across re-exports.
+  it('our tip moving between scoring pages → abort, no penalty', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    const { retargetParams: rp } = await import('../../src/services/difficulty.js');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const t1 = 1_000_000;
+    for (let i = 0; i < 20; i++) {
+      setClock(() => t1 + i * 60_000);
+      await mineNextBlock(bc);
+    }
+    expect(ordering.getCurrentHeight()).toBe(20);
+
+    // Their branch from height 1 at 10x-ideal spacing — each header carries
+    // much less work than ours (ASERT lowers the target toward the floor).
+    // 22 blocks total, two above our tip for a scoring page 2. Our 20 blocks
+    // at ideal rate are heavier than their 22 at 10x spacing.
+    const params = rp();
+    const { headers: peerChain } = buildMinedHeaderChain({
+      anchorPrevBlockHash: GENESIS_PREV_BLOCK_HASH,
+      anchorInterlinks: [],
+      startHeight: 1,
+      count: 22,
+      params,
+      anchorCreatedAt: null,
+      anchorStamp: t1,
+      startStamp: t1,
+      spacingMs: 600_000,
+    });
+
+    // Peer tip at 22. The fork walk finds no match among heights 20..1 →
+    // genesis (ourTip 20 ≤ maxReorgDepth 40). Residual: their 1..20 (twenty
+    // lighter headers). The scoring walk requests page 2 above 20 — the stub
+    // mines a block on us during that request.
+    let scoringPageRequests = 0;
+    const headerRequests: Array<{ startHeight: number; maxCount: number }> = [];
+    const blockRequests: Array<{ startHeight: number; endHeight: number }> = [];
+    const penalties: Array<{ peerId: string; kind: string; reason: string }> = [];
+    const allHeaders = [...peerChain];
+    const peerTip = 22;
+
+    // Set clock past the peer's latest stamp so no header hits the future bound.
+    setClock(() => t1 + 22 * 600_000);
+    const net: ForkResolutionNet = {
+      getConnectedPeers: () => ['peer-tip-move'],
+      requestHeaders: async (startHeight: number, maxCount: number) => {
+        headerRequests.push({ startHeight, maxCount });
+        // The fork walk requests from height 5 down — those are the pages
+        // whose residual above f feeds the scoring walk. The scoring walk's
+        // requests start above the residual's top. When the request is above
+        // our original tip (5), it's a scoring-walk request.
+        if (startHeight > 20) {
+          scoringPageRequests++;
+          if (scoringPageRequests === 1) {
+            setClock(() => t1 + 23 * 600_000);
+            const mined = await mineNextBlock(bc);
+            if (!mined) throw new Error('mineNextBlock returned null inside stub');
+          }
+        }
+        const clamped = Math.min(startHeight, peerTip);
+        return allHeaders
+          .filter(h => h.height <= clamped)
+          .sort((a, b) => b.height - a.height)
+          .slice(0, maxCount);
+      },
+      requestBlocks: async (startHeight: number, endHeight: number) => {
+        blockRequests.push({ startHeight, endHeight });
+        return [];
+      },
+      penalizePeer: (peerId: string, kind: string, reason: string) => {
+        penalties.push({ peerId, kind, reason });
+      },
+      peerTipHeight: () => peerTip,
+    };
+
+    const trigger = {
+      header: peerChain[21]!,
+      utxoTxTree: { utxoTxIds: [], utxoTxs: [] },
+      validatorSignature: new Uint8Array(64),
+    } as OrderingBlock;
+    await forkResolution.resolveFork(trigger, net, 'peer-tip-move');
+
+    // After the fork resolution, our tip should have moved (the stub mined a block).
+    expect(ordering.getCurrentHeight()).toBeGreaterThan(20);
+
+    // The scoring walk saw the tip change and aborted.
+    const warnTexts = warnSpy.mock.calls.map(c => String(c[0]));
+    const tipChanged = warnTexts.find(w => w.includes('Tip changed'));
+    expect(tipChanged, `warns: ${JSON.stringify(warnTexts)}`).toBeDefined();
+    expect(penalties).toEqual([]);
+    expect(blockRequests).toEqual([]);
+
+    // No memo was written — a further call re-requests.
+    const countAfterAbort = headerRequests.length;
+    await forkResolution.resolveFork(trigger, net, 'peer-tip-move');
+    expect(headerRequests.length).toBeGreaterThan(countAfterAbort);
+  });
 
   it('refused_headers hit on page two → misbehavior before a third request', async () => {
     const db = await importDb();
@@ -4418,23 +4531,21 @@ describe('resolveFork — paged scoring walk', () => {
     }
     expect(ordering.getCurrentHeight()).toBe(900);
 
-    // Fork at height 50 (depth 850). Our work above 50 is 850 blocks.
-    const forkBlock = ordering.getOrderingBlock(50)!.header;
+    // Fork at height 1 (depth 899). Our work above 1 is 899 blocks.
+    const forkBlock = ordering.getOrderingBlock(1)!.header;
     const forkHash = blockHash(forkBlock)!;
     const forkLevel = headerLevel(forkBlock, bigConfig.orderingBlockPowTargetBits);
-    const il50 = ordering.getInterlinks(50)!;
-    const anchorIl = updateInterlinks(il50, forkHash, forkLevel);
+    const anchorIl = updateInterlinks([], forkHash, forkLevel);
 
     // Their branch: slightly faster spacing so each header is harder → more
-    // work per header. With ~850 of ours above the fork and theirs at ~0.95x
+    // work per header. With ~899 of ours above the fork and theirs at ~0.95x
     // spacing, their work per header is ~5% more, so they cross around header
-    // ~475 and the first page-aligned stop is at 800 (two pages of 400 from
-    // the residual). We build 900 headers.
+    // ~475 and the first page-aligned stop is a residual page boundary.
     const params = rp();
     const { headers: peerChain } = buildMinedHeaderChain({
       anchorPrevBlockHash: forkHash,
       anchorInterlinks: anchorIl,
-      startHeight: 51,
+      startHeight: 2,
       count: 900,
       params,
       anchorCreatedAt: forkBlock.createdAt,
@@ -4443,18 +4554,12 @@ describe('resolveFork — paged scoring walk', () => {
       spacingMs: 57_000,
     });
 
-    // Include the shared headers below 50 so the fork walk finds the match.
-    const sharedBelow: BlockHeader[] = [];
-    for (let h = 50; h >= 1; h--) {
-      sharedBelow.push(ordering.getOrderingBlock(h)!.header);
-    }
-    const theirHeaders = [...peerChain].reverse().concat(...sharedBelow);
+    // Include the shared block 1 so the fork walk finds the match.
+    const theirHeaders = [...peerChain].reverse().concat(forkBlock);
 
-    // The stub serves blocks as dummy OrderingBlocks (the reorg is expected to
-    // try but we assert the block request range, not the reorg's success).
     const blockRequests: Array<{ startHeight: number; endHeight: number }> = [];
     const penalties: Array<{ peerId: string; kind: string; reason: string }> = [];
-    const peerTip = 50 + 900;
+    const peerTip = 1 + 900;
 
     const net: ForkResolutionNet & {
       blockRequests: typeof blockRequests;
@@ -4490,18 +4595,24 @@ describe('resolveFork — paged scoring walk', () => {
       'peer-prefix',
     );
 
-    // The block request range reveals the page-aligned prefix the scoring walk
-    // decided on: it must start at f+1=51 and end at a page boundary
-    // (50 + k*400 for some k). The walk stops the first time work > ourWork,
-    // which is page-aligned.
-    if (blockRequests.length > 0) {
-      expect(blockRequests[0]!.startHeight).toBe(51);
-      const requestedEnd = blockRequests[blockRequests.length - 1]!.endHeight;
-      // The end must be a residual boundary or a page multiple above the fork.
-      expect(requestedEnd).toBeLessThan(50 + 900);
-      // And a transient penalty fires because we served empty blocks.
-      expect(penalties.some(p => p.kind === 'transient')).toBe(true);
+    // Derive the first page boundary at which their work exceeds ours.
+    // The residual (heights 2..900) is chunked at MAX_CHAIN_RESPONSE_ITEMS
+    // (400): pages of 2..401, 402..801, 802..900. Fresh requests above that.
+    const ourWork = cumulativeWork(
+      Array.from({ length: 899 }, (_, i) => ordering.getOrderingBlock(2 + i)!.header),
+    );
+    const pageBoundaries = [400, 800, 899];
+    let expectedK: number | null = null;
+    for (const k of pageBoundaries) {
+      const sliceWork = cumulativeWork(peerChain.slice(0, k));
+      if (sliceWork > ourWork) { expectedK = k; break; }
     }
+    expect(expectedK, 'peer branch must exceed our work at some page boundary').not.toBeNull();
+
+    expect(blockRequests.length).toBeGreaterThan(0);
+    expect(blockRequests[0]!.startHeight).toBe(2);
+    expect(blockRequests[blockRequests.length - 1]!.endHeight).toBe(1 + expectedK!);
+    expect(penalties.some(p => p.kind === 'transient')).toBe(true);
   }, 120_000);
 });
 
