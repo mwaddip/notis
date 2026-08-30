@@ -99,6 +99,27 @@ describe('PostService', () => {
     expect(result.tx).toBe(tx);
   });
 
+  it('judges admission at tip + 1 — the verifier and validateTx read the same height', () => {
+    // getCurrentHeight is the tip; admission judges at the block that would
+    // carry the transaction, tip + 1 (NODE_INTERFACE → validateTx). At tip
+    // = L - 1 (L = 5) both the commit verifier and validateTx read L.
+    const L = 5;
+    let verifierHeight: number | undefined;
+    let validateHeight: number | undefined;
+    const deps = mockDeps({
+      getCurrentHeight: () => L - 1,
+      verifyPost: (vd) => { verifierHeight = vd.currentHeight; return { valid: true }; },
+      validateTx: (tx, height) => { validateHeight = height; return { valid: true, txId: computeTxId(tx) }; },
+    });
+
+    const result = createPost(deps, makePostTx(), CONTENT);
+
+    expect(result.status).toBe('pending');
+    // One read, one rule: the tip + 1 that judged the commit judged the tx.
+    expect(verifierHeight).toBe(L);
+    expect(validateHeight).toBe(L);
+  });
+
   it('⛔ names the post from the transaction that creates it, not from the post', () => {
     const deps = mockDeps();
     const tx = makePostTx();

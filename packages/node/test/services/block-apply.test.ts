@@ -559,6 +559,36 @@ describe('block-apply journal recording', () => {
     expect(ordering.getCurrentHeight()).toBe(1);
   });
 
+  it('finding #1: a block whose embedded commit declares a version other than the era is rejected', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const utxo = await importUtxo();
+    const blockApply = await importBlockApply();
+
+    const author = makeTestIdentity();
+    // The transaction declares era 1 (correct at height 1), but its commit
+    // declares 2. On the old rule the commit's version was domain-checked only,
+    // so this validated and applied end-to-end (NODE_INTERFACE → validateTx,
+    // finding #1). The envelope now holds the commit to the era too.
+    const { tx, karmaBox } = makePostTx(author, 'finding-one', { protocolVersion: 2 });
+    utxo.insertBox(karmaBox);
+    signTransaction(tx, author.privateKey, hex(author.userId));
+
+    const block = await makeApplicableBlock({ utxoTxs: [tx] });
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = blockApply.applyOrderingBlock(block);
+    const warnings = warn.mock.calls.map((c) => String(c[0]));
+    warn.mockRestore();
+
+    expect(result).toBe(false);
+    expect(
+      warnings.some((w) => w.includes('commit')),
+      `expected a commit-version reason, got ${JSON.stringify(warnings)}`,
+    ).toBe(true);
+  });
+
   // A zero-value coinbase satisfies conservation (step 5), which is why
   // step 4 names it before the total (NODE_INTERFACE → The settlement
   // transaction).

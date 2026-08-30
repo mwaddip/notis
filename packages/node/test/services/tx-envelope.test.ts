@@ -113,6 +113,35 @@ function reject(tx: unknown): string | null {
   return r.valid ? null : (r.error ?? '<no error string>');
 }
 
+describe('protocolVersion equals the era at the judged-for height', () => {
+  const H = 5;
+  // A synthetic two-era schedule; a fixture may schedule a version the build
+  // does not implement (TYPES_INTERFACE → Version).
+  const SCHEDULE = [{ version: 1, fromHeight: 0 }, { version: 2, fromHeight: H }];
+
+  it('a transaction declaring the era at its height is accepted', () => {
+    expect(checkTxEnvelope(envelope({ protocolVersion: 2 }), H, SCHEDULE)).toEqual({ valid: true });
+    expect(checkTxEnvelope(envelope({ protocolVersion: 1 }), H - 1, SCHEDULE)).toEqual({ valid: true });
+  });
+
+  it('a transaction declaring the wrong era is refused, naming the era and height', () => {
+    const r = checkTxEnvelope(envelope({ protocolVersion: 1 }), H, SCHEDULE);
+    expect(r.valid).toBe(false);
+    expect(r.error).toContain('must be the era 2 at height 5');
+  });
+
+  it('finding #1: a commit declaring a version other than the era refuses the envelope', () => {
+    // The commit's version rides in the post-id preimage. On the old rule it was
+    // domain-checked only, so a commit declaring 2 inside a version-1 transaction
+    // validated end-to-end (NODE_INTERFACE → validateTx). The envelope now holds
+    // both the transaction's and the commit's version to the era.
+    const tx = envelope({ protocolVersion: 1, post: { protocolVersion: 2 } });
+    const r = checkTxEnvelope(tx, H - 1, SCHEDULE); // era 1: the tx is right, the commit is not
+    expect(r.valid).toBe(false);
+    expect(r.error).toContain('commit');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // The `as unknown as KarmaBox` casts below are DELIBERATE. `checkTxEnvelope`
 // is total over any decoded-CBOR value and this suite feeds it exactly the

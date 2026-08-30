@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { BOX_VALUE_BOUND, PROTOCOL_VERSION, writeVlqU64OrThrow, ByteWriter } from '@dagsocial/types';
+import { BOX_VALUE_BOUND, PROTOCOL_VERSION, protocolVersionAt, writeVlqU64OrThrow, ByteWriter } from '@dagsocial/types';
 
 import { jsonToTx } from '../../src/routes/json-to-tx.js';
 
@@ -121,5 +121,21 @@ describe('jsonToTx box value validation (audit L-11, Spec B P0)', () => {
     const tx = toTx(raw);
     expect(tx.postWithdraw).toBeDefined();
     expect(tx.postWithdraw!.postId).toBe(postId);
+  });
+});
+
+describe('the default protocolVersion is the era the route supplies', () => {
+  it('defaults an absent version to protocolVersionAt(schedule, tip + 1)', () => {
+    // The route supplies protocolVersionAt(schedule, tip + 1); at tip = H - 1
+    // (H = 5) that is 2 (TYPES_INTERFACE → Version).
+    const era = protocolVersionAt([{ version: 1, fromHeight: 0 }, { version: 2, fromHeight: 5 }], 5);
+    expect(era).toBe(2);
+    const tx = jsonToTx({ inputs: [], outputs: [], signatures: {} }, era!);
+    expect(tx.protocolVersion).toBe(2);
+  });
+
+  it('a client-supplied version passes through unchanged', () => {
+    const tx = jsonToTx({ inputs: [], outputs: [], signatures: {}, protocolVersion: 7 }, 2);
+    expect(tx.protocolVersion).toBe(7);
   });
 });

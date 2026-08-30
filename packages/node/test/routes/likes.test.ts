@@ -254,6 +254,26 @@ describe('likes routes', () => {
   // reaches the client; an unexpected error never does.
   // ---------------------------------------------------------------------------
 
+  describe('admission height', () => {
+    it('judges at tip + 1 — castLike receives the height above the tip', async () => {
+      // getCurrentHeight is the tip; the route judges at the block that would
+      // carry the transaction, tip + 1 (NODE_INTERFACE → validateTx). At
+      // tip = L - 1 (L = 5) castLike is called at L.
+      const L = 5;
+      let captured: number | undefined;
+      const txJson = buildLikeTx(karmaBox, likerPrivKey, likerId, likerPubKeyHex, postId).txJson;
+      const res = await request('/', 'POST', { tx: txJson }, {
+        getCurrentHeight: () => L - 1,
+        castLike: (_deps, tx, height) => {
+          captured = height;
+          return { castLikeResult: 'pending' as const, txId: 'ab'.repeat(32), expiresAtHeight: height + 1, tx };
+        },
+      });
+      expect(res.status).toBe(200);
+      expect(captured).toBe(L);
+    });
+  });
+
   describe('error policy', () => {
     const SECRET = 'SQLITE_CORRUPT: database disk image is malformed at /srv/dagsocial.db';
 
