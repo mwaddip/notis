@@ -265,7 +265,7 @@ opt(lpUtf8(declaredAddress)) ‖ arr(vlqU(capability)) ‖ vlqU(sessionMagic)
 | Field | Rule |
 |---|---|
 | `agentName` | non-empty, ≤ `MAX_NAME_BYTES` (255) UTF-8 bytes — e.g. `"dagsocial/1.0.0"` |
-| `protocolVersion` | ≤ `MAX_CAPABILITY_CODE`; app protocol version the node supports |
+| `protocolVersion` | ≤ `MAX_CAPABILITY_CODE`; the highest app protocol version the sender implements — its build's `PROTOCOL_VERSION` (`TYPES_INTERFACE → Version`) |
 | `nodeName` | ≤ `MAX_NAME_BYTES` bytes; operator-configured, human-readable, may be empty |
 | `chainHeight` | ≤ `MAX_ADVERTISED_HEIGHT`; tip height of this node's chain |
 | `declaredAddress` | optional (`opt`), ≤ `MAX_ADDRESS_BYTES` (255) bytes; multiaddr this node advertises |
@@ -333,7 +333,11 @@ syncing from history can ever fetch it, which is a consensus-visible split produ
 constants moving independently.
 
 Handshake specifics:
-- `protocolVersion` must be one this node supports
+- `protocolVersion` must cover the receiver's era: `protocolVersion ≥ protocolVersionAt(schedule,
+  chainHeight() + 1)`, the era of the next block this node would apply (`ARCHITECTURE → Protocol
+  Versioning`). A peer from a newer build passes — it validates our era; a peer whose build ends before
+  our era is refused. Evaluated at handshake time, in both directions, and held for live connections
+  by the boundary sweep (→ Post-Handshake Routing)
 - `chainHeight` (and `SyncInfo.tipHeight`) must be a non-negative integer `<=
   MAX_ADVERTISED_HEIGHT` (= 100,000,000, ~190 years at 1 block/min) — they drive
   `servePeer`, so an unbounded or negative value must never reach the serve loop (it
@@ -361,9 +365,16 @@ body defects as deliberate:
 - Malformed / out-of-bounds input (short or trailing bytes, non-canonical encodings,
   out-of-domain values such as an over-`MAX_ADVERTISED_HEIGHT` height) is adversarial →
   stream closed, peer **banned permanently**.
-- `protocolVersion` unsupported is a compatibility mismatch, not an attack → stream closed
-  with a **soft refusal; do not permanently ban** (a routine `PROTOCOL_VERSION` bump must not
-  partition the network — the peer may upgrade). A short temporary cooldown at most.
+- `protocolVersion` below the receiver's era is a compatibility mismatch, not an attack → stream
+  closed with a **soft refusal (`Transient`); never a permanent ban** — a routine bump must not
+  partition the network, and the peer may upgrade. The same tier applies to every version mismatch
+  after the handshake (→ Peer Penalty System).
+
+> ⚠ **AHEAD OF CODE — 2026-08-30.** `validateHandshake` takes an accept list and is called with
+> `[PROTOCOL_VERSION]`; gossip penalises a version mismatch as `misbehavior` 100 and fork resolution
+> asks for the same tier; no boundary sweep exists; the PeerDb record written after a handshake holds
+> this node's `PROTOCOL_VERSION`, not the peer's. The version-schedule unit's net dispatch (fork
+> resolution's tier is node's).
 
 ### Post-Handshake Routing
 
@@ -372,6 +383,11 @@ body defects as deliberate:
 | `theirHeight > ourHeight` | Initiate sync from that peer |
 | `theirHeight < ourHeight` | Offer them headers (serve mode — send Inv) |
 | `theirHeight == ourHeight` | Idle — only gossip flows |
+
+**At an era boundary, every Active peer below the new era is dropped.** When applying a block raises
+`protocolVersionAt(schedule, chainHeight() + 1)`, the node disconnects each Active peer whose declared
+`protocolVersion` is below the new era — the handshake rule, held for live connections — so every
+Active peer implements the era this node is applying. A tip move inside an era drops no one.
 
 ---
 
@@ -633,7 +649,7 @@ interface PeerRecord {
   lastSeenMs: number      // Unix epoch ms
   agentName: string
   nodeName: string
-  protocolVersion: number
+  protocolVersion: number // the version the peer declared — its build's highest
   capabilities: number[]  // message codes, opaque forward-compat
 }
 ```
@@ -848,10 +864,11 @@ Node start
 
 | Penalty | Trigger | Score |
 |---------|---------|-------|
-| `misbehavior` | Invalid message — fails Stage 1: structure, protocol version, ordering-block PoW, the packet rule (a post without a body or a body without a post), a body that fails `verifyPostBody`, or the karma-membership gate (`gossip.ts` call sites); a pulled body that fails its commitment (the `MODIFIER_POST_BODY` receive arm) | 100 |
+| `misbehavior` | Invalid message — fails Stage 1: structure, ordering-block PoW, the packet rule (a post without a body or a body without a post), a body that fails `verifyPostBody`, or the karma-membership gate (`gossip.ts` call sites); a pulled body that fails its commitment (the `MODIFIER_POST_BODY` receive arm) | 100 |
 | `ProtocolViolation` | Undecodable/malformed frame or message; wrong-network handshake | permanent ban |
 | `Transient` | Transient handshake failure / timeout (`handshake.ts`) | 50 |
-| `misbehavior` | Fork resolution, via `NetNode.penalizePeer` from node's `resolveFork` (NODE_INTERFACE → Fork choice decides on verified headers): a header segment that fails `verifyHeaderChain` other than the window-miss case; a segment containing a refused header; a delivered block whose hash is not the verified header's; a verified-header chain rejected by the apply funnel | 100 |
+| `Transient` | A version mismatch — a gossiped block or transaction whose declared version is not its era (`gossip.ts` call sites), or a header segment `verifyHeaderChain` refuses with reason `'version'` in fork resolution (via `NetNode.penalizePeer`): compatibility, never a violation | 50 |
+| `misbehavior` | Fork resolution, via `NetNode.penalizePeer` from node's `resolveFork` (NODE_INTERFACE → Fork choice decides on verified headers): a header segment that fails `verifyHeaderChain` other than the window-miss case and the `'version'` reason; a segment containing a refused header; a delivered block whose hash is not the verified header's; a verified-header chain rejected by the apply funnel | 100 |
 | `Transient` | Fork resolution, via `NetNode.penalizePeer`: a block answer shorter than the verified segment (non-delivery) | 50 |
 
 **`NetNode.penalizePeer(peerId, kind: 'misbehavior' | 'transient', reason)`** is node's one call
@@ -1092,13 +1109,13 @@ Two-stage validation, modeled after Ergo's modifier processing:
 Runs inside the gossipsub topic validators — i.e. **before** a message is
 forwarded to mesh peers. A message that fails Stage 1 is Rejected (never
 forwarded) and penalized: undecodable → `ProtocolViolation` (permanent
-ban); well-formed but invalid → misbehavior penalty (100). Uses
-`@dagsocial/validation`. Per topic:
+ban); well-formed but invalid → misbehavior penalty (100), except a version mismatch, which is
+`Transient` (→ Peer Penalty System). Uses `@dagsocial/validation`. Per topic:
 
 | Topic | Checks before Accept |
 |-------|----------------------|
-| ordering-block | `verifyOrderingBlockStructure`; protocol version; `header.height` is a safe integer (NaN/float/±Infinity → Reject); ordering-block PoW (`verifyOrderingBlockPoW`) — the solution must satisfy the header's own `powTargetBits` (bounded ≥ `ORDERING_BLOCK_POW_TARGET_FLOOR` by structure), and a non-safe-integer `powNonce`/`powTargetBits` never verifies (audit M-6, M-9) |
-| tx | `decodeTxPacket`; `verifyTxStructure`; protocol version; the packet rule (`tx.post` present ⟺ `content` present); `verifyPostBody(content, tx.post.contentHash)` for a post-bearing tx; then the cached karma-membership gate — the author holds karma at all (`NODE_INTERFACE` → Post transactions). Order as under Gossip Topics |
+| ordering-block | `verifyOrderingBlockStructure`; protocol version — `verifyProtocolVersion(header.protocolVersion, header.height, schedule)`, a mismatch Rejected with `Transient`; `header.height` is a safe integer (NaN/float/±Infinity → Reject); ordering-block PoW (`verifyOrderingBlockPoW`) — the solution must satisfy the header's own `powTargetBits` (bounded ≥ `ORDERING_BLOCK_POW_TARGET_FLOOR` by structure), and a non-safe-integer `powNonce`/`powTargetBits` never verifies (audit M-6, M-9) |
+| tx | `decodeTxPacket`; `verifyTxStructure`; protocol version — `verifyTxProtocolVersion(tx, chainHeight() + 1, schedule)`, the envelope's and the commit's against the next block's era, a mismatch Rejected with `Transient`; the packet rule (`tx.post` present ⟺ `content` present); `verifyPostBody(content, tx.post.contentHash)` for a post-bearing tx; then the cached karma-membership gate — the author holds karma at all (`NODE_INTERFACE` → Post transactions). Order as under Gossip Topics |
 
 Stage 1 is stateless. It does **not** check the difficulty schedule
 (`powTargetBits` against the schedule over the stored parent, `MINING_INTERFACE → Difficulty
