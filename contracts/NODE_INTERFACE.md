@@ -3558,7 +3558,12 @@ See `MEMPOOL_INTERFACE.md` for the full mempool contract.
 | `getOrderingBlockHash(height)` | `(number) => string \| null` — the stored `block_hash` column, no row decode |
 | `getHeightByBlockHash(hash)` | `(string) => number \| null` — indexed point lookup on the same column |
 | `getInterlinks(height)` | `(number) => string[] \| null` — the stored vector, decoded; `null` for no row |
+| `getHeadersAbove(height, n)` | `(number, number) => BlockHeader[]` — `WHERE height > ? ORDER BY height ASC LIMIT n`, `header_bytes` decoded and nothing else; **the caller bounds `n`** — fork choice passes `ourTip − f ≤ maxReorgDepth` (Fork choice decides on verified headers, step 4). Not the NiPoPoW reader: `getHeadersAfter` is capped at `MAX_NIPOPOW_PARAM` for the prover and answers at most 128 rows, which a work comparison over a horizon must never read through |
 | `deleteOrderingBlock(height)` | `(number) => void` — for fork rollback |
+
+> ⚠ **AHEAD OF CODE — 2026-08-29.** `getHeadersAbove` does not exist; `resolveFork` reads its headers
+> above the fork through `getOrderingBlock`, a whole-block decode per row. The reorg-horizon unit's
+> node dispatch.
 
 **Who reads the `block_hash` column, and who deliberately does not.**
 `getOrderingBlockHash` is the read behind net's providers, serving
@@ -4291,7 +4296,9 @@ with the chain untouched:
    hash(f), level(our header at f, anchorBits))`, or `[]` at `f = 0`; `createdAt` is our block at `f`'s
    stamp, or `null` at `f = 0`. Beside the anchor: the profile's `RetargetParams`, block 1's stored
    stamp `t_a` (or `null` at `f = 0`, where the branch's own first header supplies it), and this
-   node's clock. `ourWork = cumulativeWork(our headers f + 1 … ourTip)`, read once.
+   node's clock. `ourWork = cumulativeWork(our headers f + 1 … ourTip)`, read once through
+   `getHeadersAbove(f, ourTip − f)` (Store Interface → Ordering blocks) — a header-only read of at most
+   `maxReorgDepth` rows, never the NiPoPoW reader's capped `getHeadersAfter`.
 5. **The scoring walk.** Their branch above `f`, **upward in pages**: the fork walk's pages already
    hold `f + 1 … min(ourTip, theirTip)`; above that `requestHeaders(top + 400, 400)` trimmed to the
    heights not yet verified — the serve arm clamps to the peer's tip, so a page whose top sits below
