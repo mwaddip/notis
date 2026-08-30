@@ -372,7 +372,8 @@ body defects as deliberate:
 
 > ⚠ **AHEAD OF CODE — 2026-08-30.** `validateHandshake` takes an accept list and is called with
 > `[PROTOCOL_VERSION]`; gossip penalises a version mismatch as `misbehavior` 100 and fork resolution
-> asks for the same tier; no boundary sweep exists; the PeerDb record written after a handshake holds
+> asks for the same tier; no boundary sweep, no `tipApplied` and no `NetConfig.protocolVersionSchedule`
+> exist, and the peer metadata keeps no declared version; the PeerDb record written after a handshake holds
 > this node's `PROTOCOL_VERSION`, not the peer's. The version-schedule unit's net dispatch (fork
 > resolution's tier is node's).
 
@@ -384,10 +385,11 @@ body defects as deliberate:
 | `theirHeight < ourHeight` | Offer them headers (serve mode — send Inv) |
 | `theirHeight == ourHeight` | Idle — only gossip flows |
 
-**At an era boundary, every Active peer below the new era is dropped.** When applying a block raises
-`protocolVersionAt(schedule, chainHeight() + 1)`, the node disconnects each Active peer whose declared
-`protocolVersion` is below the new era — the handshake rule, held for live connections — so every
-Active peer implements the era this node is applying. A tip move inside an era drops no one.
+**At an era boundary, every Active peer below the new era is dropped.** When `tipApplied(height)`
+(→ API) reports a tip whose `protocolVersionAt(schedule, height + 1)` is above the era last in force,
+the node disconnects each Active peer whose declared `protocolVersion` — the handshake's, kept on the
+peer's metadata — is below the new era: the handshake rule, held for live connections, so every Active
+peer implements the era this node is applying. A tip move inside an era drops no one.
 
 ---
 
@@ -1155,6 +1157,7 @@ structure, PoW, and signatures.
 | `peerId()` | `() => string` | This node's libp2p peer ID |
 | `peers()` | `() => Peer[]` | Connected peers with metadata |
 | `getConnectedPeers()` | `() => string[]` | Peer IDs of currently connected peers |
+| `tipApplied(height)` | `(number) => void` | The node reports each applied tip — every successful apply and the tip a reorg leaves, at the seam where it stamps `dag_tip_height`. When `protocolVersionAt(schedule, height + 1)` is above the era last in force, the boundary sweep runs (→ Post-Handshake Routing); inside an era it does nothing |
 | `syncPhase()` | `() => 'idle' \| 'syncing' \| 'backfill' \| 'synced'` | The sync machine's phase (Sync State Machine). `'idle'` means no sync has been needed: before `start()`, after `stop()`, and on a node that never met a peer ahead of it — a co-started mesh follows gossip at `'idle'` and never enters `'synced'`; only a node that fell behind passes through `'syncing'` → `'backfill'` → `'synced'`. A reader wanting "not behind" tests for `'syncing'`/`'backfill'` absent, not for `'synced'` present |
 
 ### Gossip
@@ -1279,6 +1282,9 @@ interface NetConfig {
   // Network — REQUIRED, supplied by the node from its resolved profile.
   // No default; see §Magic Bytes and §Consensus parameters net enforces.
   magic: number                    // mainnet 0x4D444147 · testnet 0x54444147 · devnet 0x44444147
+  protocolVersionSchedule: readonly ProtocolEra[]   // the profile's era table (TYPES_INTERFACE → Version):
+                                   // the handshake, the tx validator and the boundary sweep read the
+                                   // era at chainHeight() + 1 from it; the block validator each header's
 
   // Peer discovery
   minPeers: number                 // floor for fill phase (default 3)

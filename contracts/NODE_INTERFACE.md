@@ -4489,7 +4489,7 @@ below) and two `NetNode` reads (`getConnectedPeers()`, `syncPhase()` — NET_INT
 
 | Field | Is | Written |
 |---|---|---|
-| `dag_tip_height` | the applied chain tip — the height of the last block `applyOrderingBlock` applied, or the tip a reorg left | pushed at every successful apply and at the end of a reorg (`noteTip(height)`); `0` before the first |
+| `dag_tip_height` | the applied chain tip — the height of the last block `applyOrderingBlock` applied, or the tip a reorg left | pushed at every successful apply and at the end of a reorg (`noteTip(height)`), and `net.tipApplied(height)` is called at the same seam (NET_INTERFACE → API); `0` before the first |
 | `peers_connected` | `net.getConnectedPeers().length` — Active peers | read at request time |
 | `last_post_received_ms_ago` | milliseconds since the last `post_received` journal event, any source; **`null`** until the first | the `emitPostReceived` wrapper stamps the time |
 | `syncing` | `net.syncPhase()` is `'syncing'` or `'backfill'` — the chain is not yet usable as current | read at request time |
@@ -5013,6 +5013,9 @@ funnel:
   unwrapped: it decodes no row, so there is nothing for `failStopIfCorruptChain` to promote. `net`
   reads it once per handshake, `SyncInfo` and served chain query in place of a walk through the
   headers provider (NET_INTERFACE → Sync Handler Registration)
+- **`tipApplied(height)`**: called beside `noteTip` at every successful apply and at the end of a
+  reorg — the seam net's boundary sweep runs off (NET_INTERFACE → API). `NetConfig` receives the
+  profile's `protocolVersionSchedule` the way it receives `magic`
 - **`setBlockIdProvider(getOrderingBlockHash)`**: the block id at a height — the store's
   `block_hash` column, written by `createOrderingBlock` from the node's own decoded header at the
   table's single INSERT — behind every Inv continuation.
