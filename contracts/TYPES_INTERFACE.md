@@ -2853,8 +2853,10 @@ against it and no producer stamps it (`ARCHITECTURE → Protocol Versioning`).
 **The version in force at a height is scheduled.** `protocolVersionAt` answers the `version` of the last
 era whose `fromHeight` is at or below `height`, and `null` for a `height` outside the height domain —
 anything but a non-negative safe integer (`−1`, `1.5`, `NaN`, `±Infinity`, a non-number): nothing covers
-it. One domain, the chain's own; the callers' height checks are the same predicate. Total: it never
-throws.
+it. One domain, the chain's own; the callers' height checks are the same predicate. Total in `height`:
+it never throws on any height value. The schedule is the profile's — never input, never peer-supplied —
+so an off-type schedule is a build defect, and a caller that takes a schedule from anywhere else guards
+the call itself (`VALIDATION_INTERFACE → Protocol Version` does).
 
 **A schedule is valid iff** its first era is `{ version: 1, fromHeight: 0 }`; each era's version is the
 previous one's plus one (a version's rules are defined against the previous version's); `fromHeight` is
