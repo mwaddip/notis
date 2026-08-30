@@ -94,7 +94,7 @@ export interface FeedResult {
 // Service helpers
 // ---------------------------------------------------------------------------
 
-export function postToJson(
+function postToJson(
   post: StoredPost,
   likeCount: number,
   likedByViewer: boolean | null,
@@ -117,7 +117,7 @@ export function postToJson(
   };
 }
 
-export function stumpToJson(stump: Stump): StumpJson {
+function stumpToJson(stump: Stump): StumpJson {
   return {
     kind: 'stump',
     id: stump.rootPostHash,
@@ -129,7 +129,7 @@ export function stumpToJson(stump: Stump): StumpJson {
   };
 }
 
-export function prunedToJson(tombstone: PrunedTombstone): PrunedJson {
+function prunedToJson(tombstone: PrunedTombstone): PrunedJson {
   return {
     kind: 'pruned',
     id: tombstone.id,
@@ -139,7 +139,7 @@ export function prunedToJson(tombstone: PrunedTombstone): PrunedJson {
   };
 }
 
-export function withdrawnToJson(post: StoredPost): WithdrawnJson {
+function withdrawnToJson(post: StoredPost): WithdrawnJson {
   return {
     kind: 'withdrawn',
     id: post.id,

@@ -967,7 +967,7 @@ export function settlementDepsWith(
  * the applier walks them in. An input that resolves to neither leaves the body
  * unappliable, which the speculation above is what catches.
  */
-export function predictSettlementBody(
+function predictSettlementBody(
   txBytesList: Uint8Array[],
   validator: Uint8Array,
 ): SettlementBody {

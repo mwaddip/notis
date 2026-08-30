@@ -24,9 +24,10 @@ interface DecodedValue {
 /**
  * Decode whatever the key resolved to (Spec G phase D).
  *
- * The tree holds **two** entity kinds and their keys are indistinguishable from
- * outside — a box id and an identity-record key are both 32 bytes of hash
- * output — so a client can, and eventually will, ask for a record key. Until
+ * The tree holds **three** entity kinds and their keys are indistinguishable
+ * from outside — a box id, an identity-record key, and the network record's
+ * key are all 32 bytes of hash output (NODE_INTERFACE → Three entity kinds)
+ * — so a client can ask for any of the three. Until
  * phase D nothing populated records, so the tree provably contained none and
  * decoding every value as a box could not fail; records exist now, and
  * `deserializeBox` throws on the record tag by design. Dispatching on the tag

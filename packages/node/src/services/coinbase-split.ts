@@ -65,7 +65,7 @@ export function isCreditSideTx(tx: UtxoTransaction): boolean {
  * (NODE_INTERFACE → Legal box transitions), so no arm needs the output list to
  * tell two shapes apart.
  */
-export function actorOf(inputBoxes: AnyBox[]): Uint8Array | null {
+function actorOf(inputBoxes: AnyBox[]): Uint8Array | null {
   const first = inputBoxes[0];
   if (!first) return null;
   switch (first.boxType) {
