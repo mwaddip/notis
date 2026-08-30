@@ -171,19 +171,22 @@ makes a title plain.
   box the transaction itself outputs (`NODE_INTERFACE` → `validateTx` step 7). All mints and burns
   happen in block-application paths, never inside a user transaction
 - Secret keys never appear in API responses or in DTOs crossing component boundaries
-- Protocol version on every post and block (`PROTOCOL_VERSION = 1`)
+- Protocol version on every post commit, block, transaction and stump, equal to the era scheduled at its height
 - Single-transaction atomic writes for any multi-table mutation
 
 ## Protocol versioning
 
-All posts and blocks carry a `protocolVersion`. Validation rules are keyed to this version; old posts
-are validated against their declared version forever, and a node rejects an unsupported one.
+Every post commit, block, transaction and stump carries a `protocolVersion`. The version in force is
+scheduled by height, per network (`NetworkProfile.protocolVersionSchedule`); a declared version must equal
+the era at the object's height — a block's own, a transaction's the block that carries it (`tip + 1` at
+admission) — so an old object validates under its era's rules because its height fixes them, and a new one
+cannot pose as old. A bump adds an era row an upgrade window ahead; peering is by era coverage, and a
+version mismatch is never a ban. `PROTOCOL_VERSION` is the highest version a build implements. A rule that
+differs between versions branches on the era as passed in, never on a module constant
+(`ARCHITECTURE → Protocol Versioning`).
 
-> ⚠ **NOT IMPLEMENTED — this describes the intended design, not the running code.**
-> There is no version-keyed rule table. Validation is a **strict equality check against
-> `PROTOCOL_VERSION`**, so nothing is "validated against its declared version forever" and the first
-> version bump makes existing history un-resyncable. The design stands — the mechanism is Phase 2 work.
-> **Do not write code or contract text that assumes version-keyed dispatch exists.**
+> ⚠ **AHEAD OF CODE — 2026-08-30.** The schedule is being built (the version-schedule unit); until its
+> contract pass, every check is a strict equality against `PROTOCOL_VERSION`.
 
 ## Platform constraint
 
