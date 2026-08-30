@@ -67,6 +67,7 @@ import {
   INVITE_BOND_VEST_PER_LIKES,
   LIKES_PER_KARMA_PAYOUT,
   PROTOCOL_VERSION,
+  protocolVersionAt,
   encodeTx,
 } from '@dagsocial/types';
 import type {
@@ -81,7 +82,9 @@ import type {
   VouchBox,
   VouchEscrowBox,
   UtxoTransaction,
+  ProtocolEra,
 } from '@dagsocial/types';
+import { verifyProtocolVersion } from '@dagsocial/validation';
 import { splitCoinbase } from './coinbase-split.js';
 import type { DecayPlan } from './decay.js';
 
@@ -612,6 +615,7 @@ function candidateKey(o: AnyBoxCandidate): string {
 export function checkSettlement(
   deps: SettlementDeps,
   height: number,
+  schedule: readonly ProtocolEra[],
   emission: bigint,
   minerRewardDelay: number,
   body: SettlementBody,
@@ -666,10 +670,14 @@ export function checkSettlement(
   if (settlement.postWithdraw !== undefined) {
     return { valid: false, error: 'settlement carries a postWithdraw' };
   }
-  if (settlement.protocolVersion !== PROTOCOL_VERSION) {
+  // The settlement declares the block's era (NODE_INTERFACE → The settlement
+  // transaction).
+  if (!verifyProtocolVersion(settlement.protocolVersion, height, schedule)) {
     return {
       valid: false,
-      error: `settlement declares protocol version ${settlement.protocolVersion}`,
+      error:
+        `settlement declares protocol version ${settlement.protocolVersion}, ` +
+        `not the era ${protocolVersionAt(schedule, height)} at height ${height}`,
     };
   }
 

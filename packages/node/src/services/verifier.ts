@@ -1,8 +1,9 @@
 import {
   POST_PRICE_THREAD,
   POST_PRICE_REPLY,
+  protocolVersionAt,
 } from '@dagsocial/types';
-import type { PostCommit, Stump } from '@dagsocial/types';
+import type { PostCommit, Stump, ProtocolEra } from '@dagsocial/types';
 import type { StoredPost, PrunedTombstone } from '../store/posts.js';
 import {
   verifyParentRefsCount,
@@ -23,6 +24,8 @@ export interface VerifierDeps {
   currentHeight: number;
   decayCfg: DecayCfg;
   getPost: (id: string) => StoredPost | Stump | PrunedTombstone | null;
+  /** The profile's era schedule — the version check reads the era at `currentHeight`. */
+  protocolVersionSchedule: readonly ProtocolEra[];
 }
 
 // ---------------------------------------------------------------------------
@@ -57,9 +60,16 @@ export function verifyPost(
   const refs = verifyParentRefsCount(commit.parentRefs);
   if (!refs.valid) return refs;
 
-  // 2. Protocol version.
-  if (!verifyProtocolVersion(commit.protocolVersion)) {
-    return { valid: false, error: 'Unsupported protocol version' };
+  // 2. Protocol version: the commit's equals the era at the height it is judged
+  //    for — the early, friendly rejection (NODE_INTERFACE → Verifier Contract).
+  //    The envelope's verifyTxProtocolVersion is the consensus check.
+  if (!verifyProtocolVersion(commit.protocolVersion, deps.currentHeight, deps.protocolVersionSchedule)) {
+    return {
+      valid: false,
+      error:
+        `Protocol version ${commit.protocolVersion} is not the era ` +
+        `${protocolVersionAt(deps.protocolVersionSchedule, deps.currentHeight)}`,
+    };
   }
 
   // 3. Karma: author must have sufficient EFFECTIVE karma.

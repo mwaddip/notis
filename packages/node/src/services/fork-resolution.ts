@@ -585,7 +585,7 @@ export async function resolveFork(
       }
 
       // Verify this page (VALIDATION_INTERFACE → verifyHeaderChain).
-      const verdict = verifyHeaderChain(page, anchor, params, t_a, nowMs());
+      const verdict = verifyHeaderChain(page, anchor, params, t_a, nowMs(), config.protocolVersionSchedule);
       if (!verdict.ok) {
         if (verdict.reason === 'clock') {
           console.warn(
@@ -594,11 +594,15 @@ export async function resolveFork(
           );
           return;
         }
+        // A 'version' verdict is a compatibility refusal — the peer serves a
+        // chain of another era — penalised transient, not misbehavior
+        // (NODE_INTERFACE → Fork choice decides on verified headers).
+        const tier = verdict.reason === 'version' ? 'transient' : 'misbehavior';
         console.warn(
           `Fork resolution: header verification failed ` +
-          `(index=${verdict.index}, reason=${verdict.reason}), penalising peer ${peerId}`,
+          `(index=${verdict.index}, reason=${verdict.reason}), penalising peer ${peerId} (${tier})`,
         );
-        net.penalizePeer(peerId, 'misbehavior', `header verification: ${verdict.reason} at index ${verdict.index}`);
+        net.penalizePeer(peerId, tier, `header verification: ${verdict.reason} at index ${verdict.index}`);
         return;
       }
 

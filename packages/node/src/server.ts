@@ -235,6 +235,7 @@ export function createApp(config: Config): express.Express {
       getIdentityRecord: store.getIdentityRecord,
       decayCfg: decayConfig(),
       getCurrentHeight: store.getCurrentHeight,
+      protocolVersionSchedule: config.protocolVersionSchedule,
       getLikeRecordCount: store.getLikeRecordCount,
       hasLikeRecord: store.hasLikeRecord,
       getAncestorsNearest: store.getAncestorsNearest,

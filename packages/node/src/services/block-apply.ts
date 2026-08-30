@@ -103,6 +103,7 @@ import {
   MAX_FUTURE_DRIFT_MS,
   GENESIS_PREV_BLOCK_HASH,
   PROTOCOL_VERSION,
+  protocolVersionAt,
   MAX_ESCROW_RETURNS_PER_BLOCK,
   MAX_LAPSE_WITHDRAWALS_PER_BLOCK,
   computeTxId,
@@ -327,8 +328,10 @@ function applyBlockBody(block: OrderingBlock): boolean {
   }
 
   // 2. Protocol version
-  if (!validation.verifyProtocolVersion(block.header.protocolVersion)) {
-    console.warn(`Rejected block height=${block.header.height}: unsupported protocol version ${block.header.protocolVersion}`);
+  // The header's version equals the era at its own height
+  // (VALIDATION_INTERFACE → Protocol Version).
+  if (!validation.verifyProtocolVersion(block.header.protocolVersion, block.header.height, config.protocolVersionSchedule)) {
+    console.warn(`Rejected block height=${block.header.height}: protocol version ${block.header.protocolVersion} is not the era ${protocolVersionAt(config.protocolVersionSchedule, block.header.height)}`);
     abortBlockJournal();
     return false;
   }
@@ -847,7 +850,7 @@ function applyMutationPhase(
     // user transaction may not — the same closed key set (the four required
     // fields plus `likeTarget`, `post`, `prune` and `postWithdraw`) and the
     // same field types, over a wider set of box types.
-    const envelopeCheck = checkTxEnvelope(tx);
+    const envelopeCheck = checkTxEnvelope(tx, height, config.protocolVersionSchedule);
     if (!envelopeCheck.valid) {
       console.warn(
         `Rejected block height=${height}: embedded UTXO tx ${txId} has a ` +
@@ -1286,6 +1289,7 @@ function applyMutationPhase(
   const settlementCheck = checkSettlement(
     settlementDepsWith(() => decayPlans, escrows, lapsedVouches),
     height,
+    config.protocolVersionSchedule,
     emission,
     config.creditMinerRewardDelay,
     settlementBody,
