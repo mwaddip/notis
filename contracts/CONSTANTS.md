@@ -241,10 +241,6 @@ devnet differ where a cell says so. The identity fields — `magic`, `genesisCom
 | `membershipBarMultiplier` | `10` | `1` | `1` | cap | devnet's `1` lets a chain whose only root is the faucet flag its first member on one vouch — `D(1) = 1`, where `10` gives `D(1) = 2` and a lone root could never flag anyone; mainnet's `10` is fixed by the user's two anchors (2026-08-28): `D = 10` at 100 members, `100` at 100 000 | DERIVED | `ARCHITECTURE → Membership` |
 | `protocolVersionSchedule` | `1@0` | `1@0` | `1@0` | consensus — the era table | one era on every network (user, 2026-08-30); a second row is a ruling, set an upgrade window ahead on the network it lands on, and mainnet's may lag testnet's under one build | DECIDED | `TYPES_INTERFACE → Version` |
 
-> ⚠ **AHEAD OF CODE — 2026-08-30.** The field does not exist, and the drift test's cell parser reads
-> integers only — this row fails its grammar until node's dispatch of the version-schedule unit teaches
-> it the `version@fromHeight` list; the types dispatch adds the field.
-
 ## Bounds outside types
 
 ### wire

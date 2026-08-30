@@ -300,9 +300,6 @@ touches CBOR.
 (`ARCHITECTURE → Protocol Versioning`): the creator stamps it and the miner copies it, so the template
 for the first block of a new era carries the new version.
 
-> ⚠ **AHEAD OF CODE — 2026-08-30.** The creator stamps `PROTOCOL_VERSION`. The version-schedule
-> unit's node dispatch.
-
 `interlinkRoot` is the node's — `interlinkRoot(updateInterlinks(I(tip), tipHash, level(tip)))` from
 the tip the template builds on (`TYPES_INTERFACE` → Interlink vector); the miner supplies a nonce and
 a height, never a header field.

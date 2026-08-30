@@ -317,9 +317,6 @@ pending entries:
    confirms are reached by that block's application (`removeUtxoTxEntry` /
    `removeUtxoTxEntry`), not by this step
 
-> ⚠ **AHEAD OF CODE — 2026-08-30.** The fill reads no version. The version-schedule unit's node
-> dispatch.
-
 ### The fill budget is bytes; `getPendingEntries` is a count
 
 ⛔ **A SQL `LIMIT` does not express a byte budget.** The two do not correspond: 2 MB of body is

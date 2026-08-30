@@ -134,9 +134,6 @@ VerifyResult =
                        | 'pow' | 'time' | 'clock' | 'interlinks' | 'heights' | 'connections'; index?: number }
 ```
 
-> ⚠ **AHEAD OF CODE — 2026-08-30.** The profile carries one `protocolVersion` and rule 3 compares each
-> header against it locally. The version-schedule unit's nipopow dispatch.
-
 **The rules a proof must pass, in order; the first failure answers `{ ok: false, reason, index }`
 for the whole proof — refuse-whole, never skip.** `index` is the position in the flattened
 sequence `prefix ++ [suffixHead] ++ suffixTail` of the element that failed, where one element is

@@ -1983,12 +1983,6 @@ no object check compares against it and no producer stamps it.
   (`@dagsocial/validation` + `@dagsocial/net`), unified mempool. What later versions may carry is listed
   under → Deferred to future protocol versions.
 
-> ⚠ **AHEAD OF CODE — 2026-08-30.** No schedule exists: every check is `version === PROTOCOL_VERSION`
-> (`verifyProtocolVersion` in validation, called from net's gossip, node's block apply, post verifier and
-> transaction envelope; a bare `!==` in node's settlement; a one-element accept list in net's handshake;
-> `profile.protocolVersion` in nipopow), and every producer stamps the constant. The version-schedule
-> unit, six dispatches: types → validation → nipopow → net → node → tools.
-
 ---
 
 ## Invariants

@@ -185,9 +185,6 @@ version mismatch is never a ban. `PROTOCOL_VERSION` is the highest version a bui
 differs between versions branches on the era as passed in, never on a module constant
 (`ARCHITECTURE → Protocol Versioning`).
 
-> ⚠ **AHEAD OF CODE — 2026-08-30.** The schedule is being built (the version-schedule unit); until its
-> contract pass, every check is a strict equality against `PROTOCOL_VERSION`.
-
 ## Platform constraint
 
 Node.js v22 does not support `createHash('blake2b256')`. All hashing uses `createHash('blake2b512')`

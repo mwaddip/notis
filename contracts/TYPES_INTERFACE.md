@@ -2865,10 +2865,6 @@ schedules. The last rule is what lets networks diverge: one build may carry test
 mainnet's schedule still ends at 1. Every shipped profile's schedule is valid; a profile that is not is a
 build defect, not a runtime condition.
 
-> ⚠ **AHEAD OF CODE — 2026-08-30.** `ProtocolEra`, `protocolVersionSchedule` and `protocolVersionAt` do
-> not exist; `PROTOCOL_VERSION` is what every version check compares against. The version-schedule
-> unit's types dispatch.
-
 ### Content limits
 
 ```typescript

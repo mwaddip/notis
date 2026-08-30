@@ -867,12 +867,6 @@ validateTx(deps, tx: UtxoTransaction, currentBlockHeight: number): UtxoResult
 on it (step 3's unlock floor, step 6's creation bound, step 7's era) reads that height, so a transaction
 admitted at the tip is judged exactly as the next block judges it.
 
-> ⚠ **AHEAD OF CODE — 2026-08-30.** Admission passes the tip (`store.getCurrentHeight()`), so an input
-> locked until `L` is refused at tip `L − 1` though block `L` accepts it, and a transaction is judged
-> by the tip's era; step 7 compares against `PROTOCOL_VERSION`; the settlement, the stump, the rent
-> transaction and the template stamp the constant; fork resolution penalises a `'version'` verdict as
-> `misbehavior`; `/status` and `/health` report no era. The version-schedule unit's node dispatch.
-
 Full read-only validation. Performs all checks without modifying state. The
 step numbers below are the code's own — one numbering, shared by every
 citation of a `validateTx` step in this repo:

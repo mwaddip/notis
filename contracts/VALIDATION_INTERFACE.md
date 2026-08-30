@@ -571,10 +571,6 @@ commit's is in the post-id preimage, so a commit declaring a version other than 
 mint a second identity for one post. Net's gossip tx validator and node's transaction envelope check both
 call it, so the rule has one spelling.
 
-> ⚠ **AHEAD OF CODE — 2026-08-30.** `verifyProtocolVersion(version)` is `version === PROTOCOL_VERSION`;
-> `verifyTxProtocolVersion` does not exist, and a commit's version is domain-checked only. The
-> version-schedule unit's validation dispatch.
-
 ---
 
 ## Content Limits

@@ -370,13 +370,6 @@ body defects as deliberate:
   partition the network, and the peer may upgrade. The same tier applies to every version mismatch
   after the handshake (→ Peer Penalty System).
 
-> ⚠ **AHEAD OF CODE — 2026-08-30.** `validateHandshake` takes an accept list and is called with
-> `[PROTOCOL_VERSION]`; gossip penalises a version mismatch as `misbehavior` 100 and fork resolution
-> asks for the same tier; no boundary sweep, no `tipApplied` and no `NetConfig.protocolVersionSchedule`
-> exist, and the peer metadata keeps no declared version; the PeerDb record written after a handshake holds
-> this node's `PROTOCOL_VERSION`, not the peer's. The version-schedule unit's net dispatch (fork
-> resolution's tier is node's).
-
 ### Post-Handshake Routing
 
 | Condition | Action |
