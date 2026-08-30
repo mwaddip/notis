@@ -702,7 +702,6 @@ describe('a stored header that cannot be hashed', () => {
     expect(ordering.getOrderingBlock(3)).not.toBeNull();
   });
 
-  // findForkPoint tests deleted — the function is internal to resolveFork.
 
   it('reorg propagates the corruption instead of reporting a rejected block', async () => {
     const { buildBlock, forkResolution, corruptState } = await storeCorruptTip();
@@ -3475,8 +3474,7 @@ describe('resolveFork — ASERT timestamp rules and schedule', () => {
 });
 
 // ---------------------------------------------------------------------------
-// The fork walk — successor pins for the deleted findForkPoint tests.
-// The function is now inline in resolveFork; the subject is unchanged.
+// The fork walk — NODE_INTERFACE → Fork choice decides on verified headers, step 3.
 // ---------------------------------------------------------------------------
 
 describe('the fork walk', () => {
