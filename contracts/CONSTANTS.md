@@ -335,7 +335,7 @@ check can tell an omission from an exclusion.
 | `MSG_HANDSHAKE`, `MSG_SYNC_INFO`, `MSG_INV`, `MSG_MODIFIER_REQUEST`, `MSG_MODIFIER_RESPONSE`, `MSG_GET_PEERS`, `MSG_PEERS`, `MSG_GET_HEADERS`, `MSG_HEADERS`, `MSG_GET_BLOCKS`, `MSG_BLOCKS` | message codes — `NET_INTERFACE → Frame Format` |
 | `MODIFIER_ORDERING_BLOCK`, `MODIFIER_POST_BODY` | modifier type ids — `NET_INTERFACE → ModifierRequest` |
 | `GET_PEERS_INTERVAL_MS`, `OUTBOUND_TICK_INTERVAL_MS` | local cadences — `NET_INTERFACE → Outbound Manager` |
-| `genesisCommitteeKeys`, `faucetPublicKey`, `genesisProofPayload`, `genesisStateRoot`, `genesisId` | identity fields — non-numeric, listed for completeness |
+| `genesisCommitteeKeys`, `faucetPublicKey`, `genesisProofPayload`, `genesisStateRoot`, `genesisId`, `bootstrapPeers` | identity fields — non-numeric, listed for completeness |
 
 ## What the register makes visible
 

@@ -268,8 +268,11 @@ opt(lpUtf8(declaredAddress)) ‖ arr(vlqU(capability)) ‖ vlqU(sessionMagic)
 | `protocolVersion` | ≤ `MAX_CAPABILITY_CODE`; the highest app protocol version the sender implements — its build's `PROTOCOL_VERSION` (`TYPES_INTERFACE → Version`) |
 | `nodeName` | ≤ `MAX_NAME_BYTES` bytes; operator-configured, human-readable, may be empty |
 | `chainHeight` | ≤ `MAX_ADVERTISED_HEIGHT`; tip height of this node's chain |
-| `declaredAddress` | optional (`opt`), ≤ `MAX_ADDRESS_BYTES` (255) bytes; multiaddr this node advertises |
+| `declaredAddress` | optional (`opt`), ≤ `MAX_ADDRESS_BYTES` (255) bytes; the multiaddr this node advertises — **its first listen address that is not loopback**, absent when every listen address is loopback. A loopback address advertised to a peer is one no peer can dial |
 | `capabilities` | count ≤ `MAX_CAPABILITY_ENTRIES` (64), each ≤ `MAX_CAPABILITY_CODE`; message codes this node can handle. Always present — an empty list is a peer that declares nothing |
+
+> ⚠ **AHEAD OF CODE — 2026-08-30.** `buildOurHandshake` declares `listenAddrs[0]`, which on a node listening on `0.0.0.0` is the
+> loopback address. The testnet-bootstrap-default unit's net dispatch.
 | `sessionMagic` | ≤ `MAX_UINT32`; random per-connection uint32 |
 
 Every rule is enforced inside the codec's `read`: a violation is a `ReaderError`, and the decode
@@ -801,8 +804,14 @@ is how a node gets eclipsed. Inbound connections are counted toward
 `maxPeers` capacity, but never toward the floor/fill thresholds.
 
 **Floor phase** (outbound connections < `minPeers`):
-- Dial bootstrap seeds aggressively with retry/backoff
+- Dial each bootstrap seed **whose peer is not already connected**, with retry/backoff. A seed that
+  holds a live connection is skipped: a network with fewer seeds than `minPeers` stays below the
+  floor by construction, and re-dialing a connected seed every tick would open a fresh connection
+  and run a fresh handshake against it each time
 - PeerDb not consulted — seeds are the bootstrap source
+
+> ⚠ **AHEAD OF CODE — 2026-08-30.** The floor re-dials every seed each tick while below `minPeers`, connected or not. The
+> testnet-bootstrap-default unit's net dispatch.
 
 **Fill phase** (outbound connections >= `minPeers`, < `maxPeers`):
 - Every `OUTBOUND_TICK_INTERVAL_MS` (30s, fixed — see below), query
