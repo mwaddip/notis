@@ -61,6 +61,14 @@ rsync -a \
   `# governance notes (.git/info/exclude) and docs/specs/ (.gitignore); both` \
   `# would otherwise ship in a package headed for a public host.` \
   --exclude 'docs' \
+  `# Secrets never ship in a package headed for a public host — exclude the` \
+  `# common dotenv and private-key patterns whether or not one is tracked now,` \
+  `# so a stray secret cannot ride along by omission from the list above.` \
+  --exclude '.env' \
+  --exclude '.env.*' \
+  --exclude '*.key' \
+  --exclude '*.pem' \
+  --exclude '*.der' \
   "$REPO_ROOT/" "$APP_DIR/"
 
 # ---------------------------------------------------------------------------
