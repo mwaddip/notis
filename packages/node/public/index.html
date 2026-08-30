@@ -1115,6 +1115,32 @@ function buildLikeTx(karmaBox, targetPostId, pubKeyHex, authorHex) {
 }
 
 /**
+ * Build a post-withdraw tx: one karma box in, a karma box of the SAME value
+ * back out, carrying `postWithdraw` — a conserving self-transfer
+ * (NODE_INTERFACE → "A withdrawal empties one post and leaves its subtree
+ * intact").
+ *
+ * `createdAtBlock` on the output is `currentBlockHeight`, like every other
+ * karma output this page builds: `/karma` answers `{ boxId, value }` only, so
+ * the spent box's own creation height is never in hand to reuse.
+ */
+function buildPostWithdrawTx(karmaBox, postId, pubKeyHex) {
+  const spent = karmaBox.boxes[0];
+  return {
+    inputs: [spent.boxId],
+    outputs: [{
+      boxType: 'karma',
+      value: spent.value,
+      createdAtBlock: currentBlockHeight,
+      owner: pubKeyHex,
+    }],
+    signatures: {},
+    protocolVersion: protocolVersion,
+    postWithdraw: { postId },
+  };
+}
+
+/**
  * Build an invite tx: karma boxes → at most one karma(change) + bond.
  *
  * ⛔ **THE BOND IS THE WHOLE REQUEST.** The invite is one
@@ -2150,7 +2176,12 @@ async function loadFeedPage(afterKey) {
     if (userId) url += '&viewer=' + userId;
     const res = await fetch(url);
     const data = await res.json();
-    mergeRange(feedMap, feedKey, compareFeedKeys, afterKey || null, data.posts || [], data.next || null);
+    // A withdrawn row carries no blockHeight, so it cannot form a feedKey —
+    // filtered out here, ahead of mergeRange, rather than given one. It still
+    // renders as a tombstone in its thread (NODE_INTERFACE → "A withdrawal
+    // empties one post and leaves its subtree intact").
+    const liveRows = (data.posts || []).filter(p => p.kind !== 'withdrawn');
+    mergeRange(feedMap, feedKey, compareFeedKeys, afterKey || null, liveRows, data.next || null);
     feedPending = data.pending || [];
     if (afterKey) {
       if (!data.next) feedOldestNext = null;
@@ -2374,7 +2405,7 @@ function attachFeedHandlers(container) {
       const postId = btn.dataset.postId;
       if (!postId || !userId || !privKey) return;
 
-      if (!confirm('Delete this post and all replies? This will return any locked karma to each reply author.')) {
+      if (!confirm('Withdraw this post? This removes its content; you sign a withdrawal transaction.')) {
         return;
       }
 
@@ -2382,34 +2413,27 @@ function attachFeedHandlers(container) {
       btn.textContent = '...';
 
       try {
-        const chalRes = await fetch(API + '/challenge', {
+        const karmaBox = await fetchKarmaBox();
+        if (!karmaBox || !karmaBox.boxes.length) {
+          throw new Error('No karma box — cannot withdraw');
+        }
+
+        const pubKeyHex = buf2hex(pubKeyRaw);
+        const tx = buildPostWithdrawTx(karmaBox, postId, pubKeyHex);
+        const { signature } = await signTxId(tx);
+        tx.signatures[pubKeyHex] = signature;
+
+        const res = await fetch(API + '/posts/' + encodeURIComponent(postId) + '/withdraw', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId }),
+          body: JSON.stringify({ tx }, jsonBigint),
         });
-        if (!chalRes.ok) {
-          throw new Error('Failed to get challenge');
-        }
-        const { challenge } = await chalRes.json();
-
-        const chalBytes = hex2buf(challenge);
-        const hash = blake2b(chalBytes, null, 64).slice(0, 32);
-        const sigBuf = await crypto.subtle.sign('Ed25519', privKey, hash);
-        const signature = buf2hex(new Uint8Array(sigBuf));
-
-        const res = await fetch(API + '/posts/' + encodeURIComponent(postId), {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ authorId: userId, challenge, signature }),
-        });
-
+        const data = await res.json();
         if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Delete failed');
+          throw new Error(data.reason || data.error || 'Withdrawal failed');
         }
 
-        const result = await res.json();
-        console.log('Post deleted:', result);
+        recordPendingKarmaChange(tx);
         if (threadPostId) {
           if (threadPostId === postId) window.history.back();
           else loadThreadPage(threadPostId, null);
@@ -2417,8 +2441,8 @@ function attachFeedHandlers(container) {
           loadFeedPage(null);
         }
       } catch (e) {
-        console.error('Delete failed:', e);
-        alert('Delete failed: ' + (e.message || 'unknown error'));
+        console.error('Withdraw failed:', e);
+        alert('Withdraw failed: ' + (e.message || 'unknown error'));
         btn.disabled = false;
         btn.textContent = '✕ Delete';
       }
