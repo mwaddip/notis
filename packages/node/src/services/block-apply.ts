@@ -102,7 +102,6 @@ import {
   decodeTx,
   MAX_FUTURE_DRIFT_MS,
   GENESIS_PREV_BLOCK_HASH,
-  PROTOCOL_VERSION,
   protocolVersionAt,
   MAX_ESCROW_RETURNS_PER_BLOCK,
   MAX_LAPSE_WITHDRAWALS_PER_BLOCK,
@@ -1250,7 +1249,10 @@ function applyMutationPhase(
       authorId: bp.author,
       replyCount: subtreePostIds.length - 1,
       upvoteCount: likeTally,
-      protocolVersion: PROTOCOL_VERSION,
+      // The stump carries the block's era — its compaction height is the block's,
+      // whose header version step 2 verified equals the scheduled era
+      // (NODE_INTERFACE → The settlement transaction; ARCHITECTURE → Protocol Versioning).
+      protocolVersion: block.header.protocolVersion,
       compactedAtBlockHeight: height,
     };
     insertStump(stump);

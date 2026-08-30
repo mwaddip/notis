@@ -1,6 +1,6 @@
 import { Router, Response } from 'express';
 import type { UtxoTransaction, KarmaBox, CreditBox, BondBox } from '@dagsocial/types';
-import { membershipBar } from '@dagsocial/types';
+import { membershipBar, protocolVersionAt } from '@dagsocial/types';
 import { sendCredits } from '../services/credits.js';
 import type { UtxoEngineDeps } from '../services/utxo-engine.js';
 import { isMember, isRoot } from '../services/utxo-engine.js';
@@ -148,7 +148,7 @@ export function createRouter(deps: UtxoDeps): Router {
 
     let tx: UtxoTransaction;
     try {
-      tx = jsonToTx(body.tx);
+      tx = jsonToTx(body.tx, protocolVersionAt(deps.getUtxoEngineDeps().protocolVersionSchedule, deps.getCurrentHeight() + 1)!);
     } catch (err) {
       respondError(res, err, 'POST /credits/transfer (tx decode)', 'message');
       return;

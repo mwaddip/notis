@@ -1,4 +1,4 @@
-import { BOX_VALUE_BOUND, PROTOCOL_VERSION } from '@dagsocial/types';
+import { BOX_VALUE_BOUND } from '@dagsocial/types';
 import type { AnyBox, PostCommit, PostType, PostWithdrawCommit, PruneCommit, UtxoTransaction } from '@dagsocial/types';
 import { ClientError } from '../services/client-error.js';
 
@@ -50,7 +50,7 @@ export const BINARY_BOX_FIELDS = new Set([
  * silently is right here and only here — this edge builds the transaction, so a
  * key it does not build is a key that never existed.
  */
-export function jsonToTx(raw: Record<string, unknown>): UtxoTransaction {
+export function jsonToTx(raw: Record<string, unknown>, defaultVersion: number): UtxoTransaction {
   // ---- signatures ----
   const rawSigs = (raw.signatures ?? {}) as Record<string, string>;
   const signatures: Record<string, Uint8Array> = {};
@@ -66,12 +66,11 @@ export function jsonToTx(raw: Record<string, unknown>): UtxoTransaction {
   const outputs = rawOutputs.map(convertBox) as unknown as AnyBox[];
 
   // ---- protocolVersion ----
-  // `PROTOCOL_VERSION`, never a hard-coded 1: after a version bump the literal
-  // would have this edge mint stale-version txs that `checkTxEnvelope`'s
-  // strict-equality clause then rejects. The value still passes through when
-  // the client supplies one — the gate owns the equality check, this owns only
-  // the default.
-  const protocolVersion = (raw.protocolVersion as number) ?? PROTOCOL_VERSION;
+  // The era the node reports at `tip + 1`, supplied by the route
+  // (NODE_INTERFACE → validateTx). Never a hard-coded constant: a client that
+  // omits the field gets the current era, the envelope owns the equality check,
+  // and a client-supplied value passes through unchanged.
+  const protocolVersion = (raw.protocolVersion as number) ?? defaultVersion;
 
   // ---- likeTarget ----
   // Carried through only when present — presence is `!== undefined`, matching
@@ -88,7 +87,7 @@ export function jsonToTx(raw: Record<string, unknown>): UtxoTransaction {
   // inside the signed bytes. `author` is the one binary field — hex on the wire,
   // raw bytes in the preimage — and `verifyTxStructure` owns its 32-byte shape
   // check, as `castLike` owns `likeTarget`'s.
-  const post = raw.post === undefined ? undefined : jsonToPostCommit(raw.post);
+  const post = raw.post === undefined ? undefined : jsonToPostCommit(raw.post, defaultVersion);
 
   // ---- prune ----
   const prune = raw.prune === undefined ? undefined : jsonToPruneCommit(raw.prune);
@@ -116,7 +115,7 @@ export function jsonToTx(raw: Record<string, unknown>): UtxoTransaction {
  * be a claim with nothing behind it. The service derives it after the
  * transaction validates.
  */
-function jsonToPostCommit(raw: unknown): PostCommit {
+function jsonToPostCommit(raw: unknown, defaultVersion: number): PostCommit {
   if (typeof raw !== 'object' || raw === null) {
     throw new ClientError('post must be an object');
   }
@@ -139,7 +138,7 @@ function jsonToPostCommit(raw: unknown): PostCommit {
     contentHash,
     author,
     parentRefs: (p.parentRefs ?? []) as string[],
-    protocolVersion: (p.protocolVersion as number) ?? PROTOCOL_VERSION,
+    protocolVersion: (p.protocolVersion as number) ?? defaultVersion,
     type: ((p.type as string) ?? 'regular') as PostType,
   };
 }
