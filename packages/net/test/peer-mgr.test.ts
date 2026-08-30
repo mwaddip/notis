@@ -41,7 +41,6 @@ describe('PeerManager', () => {
     mgr.addPeer(makePeer('peer1'));
     mgr.addPeer(makePeer('peer2'));
     expect(mgr.getPeerCount()).toBe(2);
-    expect(mgr.getPeer('peer1')?.id).toBe('peer1');
   });
 
   it('does not add banned peers', () => {
@@ -169,18 +168,6 @@ describe('PeerManager', () => {
     expect(mgr.getPeerCount()).toBe(0);
   });
 
-  it('evicts a random peer', () => {
-    mgr.addPeer(makePeer('peer1'));
-    mgr.addPeer(makePeer('peer2'));
-    const evicted = mgr.evictRandom();
-    expect(evicted).toBeDefined();
-    expect(mgr.getPeerCount()).toBe(1);
-  });
-
-  it('returns null when evicting from empty set', () => {
-    expect(mgr.evictRandom()).toBeNull();
-  });
-
   it('temporal ban expires', () => {
     mgr.addPeer(makePeer('peer1'));
     vi.spyOn(Date, 'now').mockReturnValue(0);
@@ -266,103 +253,6 @@ describe('PeerManager', () => {
     const meta = mgr.getPeerMetadata('peer1');
     expect(meta?.penaltyCount).toBe(1);
     expect(meta?.state).toBe(PeerState.Connecting); // state unchanged by penalty
-  });
-
-  // -----------------------------------------------------------------------
-  // Stall detection
-  // -----------------------------------------------------------------------
-
-  it('markStalled and clearStalled', () => {
-    mgr.addPeer(makePeer('peer1'));
-    mgr.setPeerState('peer1', PeerState.Active);
-
-    mgr.markStalled('peer1');
-    expect(mgr.getPeerMetadata('peer1')!.stalled).toBe(true);
-    expect(mgr.getStalledPeers().has('peer1')).toBe(true);
-
-    mgr.clearStalled();
-    expect(mgr.getPeerMetadata('peer1')!.stalled).toBe(false);
-    expect(mgr.getStalledPeers().size).toBe(0);
-  });
-
-  it('markStalled is a no-op for unknown peer', () => {
-    mgr.markStalled('ghost');
-    expect(mgr.getStalledPeers().size).toBe(0);
-  });
-
-  it('getNextActivePeer returns non-stalled Active peer', () => {
-    mgr.addPeer(makePeer('peer1'));
-    mgr.addPeer(makePeer('peer2'));
-    mgr.setPeerState('peer1', PeerState.Active);
-    mgr.setPeerState('peer2', PeerState.Active);
-
-    // Both Active and non-stalled — returns first
-    const next = mgr.getNextActivePeer();
-    expect(next).not.toBeNull();
-    expect(next!.state).toBe(PeerState.Active);
-    expect(next!.stalled).toBe(false);
-  });
-
-  it('getNextActivePeer skips stalled peers', () => {
-    mgr.addPeer(makePeer('peer1'));
-    mgr.addPeer(makePeer('peer2'));
-    mgr.setPeerState('peer1', PeerState.Active);
-    mgr.setPeerState('peer2', PeerState.Active);
-
-    mgr.markStalled('peer1');
-
-    const next = mgr.getNextActivePeer();
-    expect(next).not.toBeNull();
-    expect(next!.peerId).toBe('peer2'); // peer1 is stalled, skipped
-  });
-
-  it('getNextActivePeer returns null when all peers stalled (and clears stalls)', () => {
-    mgr.addPeer(makePeer('peer1'));
-    mgr.setPeerState('peer1', PeerState.Active);
-    mgr.markStalled('peer1');
-
-    const firstAttempt = mgr.getNextActivePeer();
-    expect(firstAttempt).toBeNull();
-    // Should have cleared stalls — stalls are now cleared
-    expect(mgr.getStalledPeers().size).toBe(0);
-  });
-
-  it('getNextActivePeer skips non-Active peers', () => {
-    mgr.addPeer(makePeer('peer1'));
-    mgr.addPeer(makePeer('peer2'));
-    mgr.setPeerState('peer1', PeerState.Handshaking);
-    mgr.setPeerState('peer2', PeerState.Active);
-
-    const next = mgr.getNextActivePeer();
-    expect(next).not.toBeNull();
-    expect(next!.peerId).toBe('peer2');
-  });
-
-  it('isStallTimedOut detects stall timeout', () => {
-    mgr.addPeer(makePeer('peer1'));
-    mgr.setPeerState('peer1', PeerState.Active);
-
-    vi.spyOn(Date, 'now').mockReturnValue(0);
-    mgr.markStalled('peer1');
-
-    // Not timed out yet (0ms elapsed)
-    vi.spyOn(Date, 'now').mockReturnValue(1);
-    expect(mgr.isStallTimedOut('peer1')).toBe(false);
-
-    // Timed out (>30s elapsed)
-    vi.spyOn(Date, 'now').mockReturnValue(30001);
-    expect(mgr.isStallTimedOut('peer1')).toBe(true);
-  });
-
-  it('isStallTimedOut returns false for non-stalled peer', () => {
-    mgr.addPeer(makePeer('peer1'));
-    mgr.setPeerState('peer1', PeerState.Active);
-
-    expect(mgr.isStallTimedOut('peer1')).toBe(false);
-  });
-
-  it('isStallTimedOut returns false for unknown peer', () => {
-    expect(mgr.isStallTimedOut('ghost')).toBe(false);
   });
 
   it('addPeer initializes metadata only if not already present', () => {

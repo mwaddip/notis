@@ -393,7 +393,7 @@ export function servePostBodiesResponse(
  *   before the node concludes it is alone. Above 45s, that window expires
  *   first and a node that had a peer available strands itself.
  */
-export const OUTBOUND_TICK_INTERVAL_MS = 30_000;
+const OUTBOUND_TICK_INTERVAL_MS = 30_000;
 
 /** Cadence for sending GetPeers to each Active peer. */
 export const GET_PEERS_INTERVAL_MS = 120_000;

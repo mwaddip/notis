@@ -47,13 +47,6 @@ export interface Peer {
 
 export type PenaltyType = 'misbehavior' | 'permanent';
 
-export interface PenaltyRecord {
-  type: PenaltyType;
-  score: number;
-  timestamp: number;
-  reason: string;
-}
-
 // ---------------------------------------------------------------------------
 // Peer state machine
 // ---------------------------------------------------------------------------
@@ -103,22 +96,6 @@ export interface PeerMetadata {
    * not handshaken and is not Active, so it is never the sweep's.
    */
   protocolVersion: number | null;
-}
-
-// ---------------------------------------------------------------------------
-// Event types for the biased event loop
-// ---------------------------------------------------------------------------
-
-export interface ControlEvent {
-  kind: 'reorg' | 'peer_disconnect' | 'new_peer' | 'shutdown';
-  peerId?: string;
-  data?: unknown;
-}
-
-export interface DataEvent {
-  kind: 'post_received' | 'post_acknowledged' | 'message';
-  peerId: string;
-  data: Uint8Array;
 }
 
 // ---------------------------------------------------------------------------
