@@ -4617,6 +4617,253 @@ describe('resolveFork — paged scoring walk', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Paged block fetch (NODE_INTERFACE → Fork choice decides on verified headers,
+// step 8). The code pages `requestBlocks` from f+1; these pins exercise the
+// per-page identity check, the empty-page abort, and tampered second pages.
+// ---------------------------------------------------------------------------
+
+describe('resolveFork — paged block fetch', () => {
+  beforeEach(async () => { vi.resetModules(); });
+  afterEach(async () => {
+    try { (await importBlockCreator()).stopBlockCreator(); } catch {}
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it('three block requests for a paged reorg with identity checked per page', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const scenario = await buildForkScenario();
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // A stub that serves at most 1 block per request, forcing 3 requests
+    // for the 3-block reorg (heights 2, 3, 4).
+    const blockRequests: Array<{ startHeight: number; endHeight: number }> = [];
+    const headerRequests: Array<{ startHeight: number; maxCount: number }> = [];
+    const peerTip = Math.max(...scenario.theirHeaders.map(h => h.height));
+    const net: ForkResolutionNet & {
+      blockRequests: typeof blockRequests;
+      penalties: Array<{ peerId: string; kind: string; reason: string }>;
+    } = {
+      getConnectedPeers: () => ['peer-paged'],
+      requestHeaders: async (startHeight: number, maxCount: number) => {
+        headerRequests.push({ startHeight, maxCount });
+        const clamped = Math.min(startHeight, peerTip);
+        return scenario.theirHeaders
+          .filter(h => h.height <= clamped)
+          .sort((a, b) => b.height - a.height)
+          .slice(0, maxCount);
+      },
+      requestBlocks: async (startHeight: number, endHeight: number) => {
+        blockRequests.push({ startHeight, endHeight });
+        // Serve at most 1 block per call.
+        const page = scenario.theirBlocks
+          .filter(b => b.header.height >= startHeight && b.header.height <= endHeight)
+          .slice(0, 1);
+        return page;
+      },
+      penalizePeer: () => {},
+      peerTipHeight: () => peerTip,
+      blockRequests,
+      penalties: [],
+    };
+
+    await forkResolution.resolveFork(scenario.competingBlock, net, 'peer-paged');
+
+    // The reorg succeeded — tip is theirs.
+    expect(ordering.getCurrentHeight()).toBe(4);
+
+    // Three block requests: one per block, each checked on arrival.
+    expect(blockRequests).toEqual([
+      { startHeight: 2, endHeight: 4 },
+      { startHeight: 3, endHeight: 4 },
+      { startHeight: 4, endHeight: 4 },
+    ]);
+  });
+
+  it('empty block page on the second request → transient, chain untouched', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const scenario = await buildForkScenario();
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    const journalStore = await importJournalStore();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // Journals for our chain exist before the attempt.
+    const journalsBefore = [1, 2, 3].map(h => journalStore.getBlockJournal(h));
+    expect(journalsBefore.every(j => j !== null)).toBe(true);
+
+    let callCount = 0;
+    const blockRequests: Array<{ startHeight: number; endHeight: number }> = [];
+    const penalties: Array<{ peerId: string; kind: string; reason: string }> = [];
+    const peerTip = Math.max(...scenario.theirHeaders.map(h => h.height));
+    const net: ForkResolutionNet & {
+      blockRequests: typeof blockRequests;
+      penalties: typeof penalties;
+    } = {
+      getConnectedPeers: () => ['peer-empty'],
+      requestHeaders: async (startHeight: number, maxCount: number) => {
+        const clamped = Math.min(startHeight, peerTip);
+        return scenario.theirHeaders
+          .filter(h => h.height <= clamped)
+          .sort((a, b) => b.height - a.height)
+          .slice(0, maxCount);
+      },
+      requestBlocks: async (startHeight: number, endHeight: number) => {
+        blockRequests.push({ startHeight, endHeight });
+        callCount++;
+        if (callCount === 1) {
+          // First page: serve the first block correctly.
+          return scenario.theirBlocks.filter(
+            b => b.header.height >= startHeight && b.header.height <= endHeight,
+          ).slice(0, 1);
+        }
+        // Second page: empty — nothing delivered.
+        return [];
+      },
+      penalizePeer: (peerId: string, kind: string, reason: string) => {
+        penalties.push({ peerId, kind, reason });
+      },
+      peerTipHeight: () => peerTip,
+      blockRequests,
+      penalties,
+    };
+
+    await forkResolution.resolveFork(scenario.competingBlock, net, 'peer-empty');
+
+    // Chain untouched — our tip and journals as before.
+    expect(ordering.getCurrentHeight()).toBe(3);
+    for (const h of [1, 2, 3]) {
+      expect(blockHash(ordering.getOrderingBlock(h)!.header)).toBe(scenario.ourHashes[h - 1]);
+    }
+    const journalsAfter = [1, 2, 3].map(h => journalStore.getBlockJournal(h));
+    expect(journalsAfter.every(j => j !== null)).toBe(true);
+
+    expect(penalties).toEqual([
+      expect.objectContaining({ kind: 'transient' }),
+    ]);
+  });
+
+  it('wrong hash in block page two → misbehavior, nothing reverted', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const scenario = await buildForkScenario();
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    let callCount = 0;
+    const penalties: Array<{ peerId: string; kind: string; reason: string }> = [];
+    const peerTip = Math.max(...scenario.theirHeaders.map(h => h.height));
+    const net: ForkResolutionNet = {
+      getConnectedPeers: () => ['peer-bad-hash'],
+      requestHeaders: async (startHeight: number, maxCount: number) => {
+        const clamped = Math.min(startHeight, peerTip);
+        return scenario.theirHeaders
+          .filter(h => h.height <= clamped)
+          .sort((a, b) => b.height - a.height)
+          .slice(0, maxCount);
+      },
+      requestBlocks: async (startHeight: number, endHeight: number) => {
+        callCount++;
+        if (callCount === 1) {
+          // Page 1: serve the first block correctly.
+          return scenario.theirBlocks.filter(
+            b => b.header.height >= startHeight && b.header.height <= endHeight,
+          ).slice(0, 1);
+        }
+        // Page 2: serve a block with a tampered header — wrong hash.
+        const real = scenario.theirBlocks.find(
+          b => b.header.height >= startHeight && b.header.height <= endHeight,
+        );
+        if (!real) return [];
+        const tampered: OrderingBlock = {
+          ...real,
+          header: { ...real.header, powNonce: real.header.powNonce + 999 },
+        };
+        return [tampered];
+      },
+      penalizePeer: (_peerId: string, kind: string, reason: string) => {
+        penalties.push({ peerId: _peerId, kind, reason });
+      },
+      peerTipHeight: () => peerTip,
+    };
+
+    await forkResolution.resolveFork(scenario.competingBlock, net, 'peer-bad-hash');
+
+    // Chain untouched.
+    expect(ordering.getCurrentHeight()).toBe(3);
+    for (const h of [1, 2, 3]) {
+      expect(blockHash(ordering.getOrderingBlock(h)!.header)).toBe(scenario.ourHashes[h - 1]);
+    }
+
+    expect(penalties).toEqual([
+      expect.objectContaining({ kind: 'misbehavior', reason: expect.stringContaining('identity mismatch') }),
+    ]);
+  });
+
+  it('wrong height in block page two → misbehavior', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const scenario = await buildForkScenario();
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    let callCount = 0;
+    const penalties: Array<{ peerId: string; kind: string; reason: string }> = [];
+    const peerTip = Math.max(...scenario.theirHeaders.map(h => h.height));
+    const net: ForkResolutionNet = {
+      getConnectedPeers: () => ['peer-bad-height'],
+      requestHeaders: async (startHeight: number, maxCount: number) => {
+        const clamped = Math.min(startHeight, peerTip);
+        return scenario.theirHeaders
+          .filter(h => h.height <= clamped)
+          .sort((a, b) => b.height - a.height)
+          .slice(0, maxCount);
+      },
+      requestBlocks: async (startHeight: number, endHeight: number) => {
+        callCount++;
+        if (callCount === 1) {
+          // Page 1: serve the first block correctly.
+          return scenario.theirBlocks.filter(
+            b => b.header.height >= startHeight && b.header.height <= endHeight,
+          ).slice(0, 1);
+        }
+        // Page 2: serve a block at the wrong height — height 4 when 3 is expected.
+        const wrongBlock = scenario.theirBlocks.find(b => b.header.height === 4);
+        if (!wrongBlock) return [];
+        return [wrongBlock];
+      },
+      penalizePeer: (_peerId: string, kind: string, reason: string) => {
+        penalties.push({ peerId: _peerId, kind, reason });
+      },
+      peerTipHeight: () => peerTip,
+    };
+
+    await forkResolution.resolveFork(scenario.competingBlock, net, 'peer-bad-height');
+
+    // Chain untouched.
+    expect(ordering.getCurrentHeight()).toBe(3);
+
+    expect(penalties).toEqual([
+      expect.objectContaining({ kind: 'misbehavior', reason: expect.stringContaining('height mismatch') }),
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Re-score memo pins
 // ---------------------------------------------------------------------------
 
