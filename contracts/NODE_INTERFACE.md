@@ -3561,10 +3561,6 @@ See `MEMPOOL_INTERFACE.md` for the full mempool contract.
 | `getHeadersAbove(height, n)` | `(number, number) => BlockHeader[]` — `WHERE height > ? ORDER BY height ASC LIMIT n`, `header_bytes` decoded and nothing else; **the caller bounds `n`** — fork choice passes `ourTip − f ≤ maxReorgDepth` (Fork choice decides on verified headers, step 4). Not the NiPoPoW reader: `getHeadersAfter` is capped at `MAX_NIPOPOW_PARAM` for the prover and answers at most 128 rows, which a work comparison over a horizon must never read through |
 | `deleteOrderingBlock(height)` | `(number) => void` — for fork rollback |
 
-> ⚠ **AHEAD OF CODE — 2026-08-29.** `getHeadersAbove` does not exist; `resolveFork` reads its headers
-> above the fork through `getOrderingBlock`, a whole-block decode per row. The reorg-horizon unit's
-> node dispatch.
-
 **Who reads the `block_hash` column, and who deliberately does not.**
 `getOrderingBlockHash` is the read behind net's providers, serving
 (`GET /blocks/current`) and the gossip dedup in `handleOrderingBlock` — each
@@ -4382,13 +4378,6 @@ between the re-read and the call, so the second always sees the first's height a
 header-level rules run twice — once over the pages, once in the funnel. The funnel is unchanged
 and remains the single consensus gate (`Ordering block apply-time authorization`).
 
-> ⚠ **AHEAD OF CODE — 2026-08-29.** `resolveFork` asks `requestHeaders(block.height, MAX_REORG_DEPTH ·
-> 2)` once, newest-first from the trigger's height, and scores that window: a branch lighter in its
-> first 21 headers and heavier as a whole is refused (the safe direction, never a reorg to a lighter
-> chain), a fork deeper than 20 answers `null`, a "window miss" (`index 0 · 'height' · f = 0`) is
-> classified beside `'clock'`, `requestBlocks` is one call, and there is no memo. The reorg-horizon
-> unit's node dispatch.
-
 ### Fork resolution bottoms out at the genesis state
 
 **Reaching height 0 in the ancestor walk IS a common ancestor**, at depth = our height.
@@ -4525,11 +4514,7 @@ none is added.
 rather than clamping.** `checkpointProver` prunes AVL versions below `height - maxProofHistory` while
 the fork walk reaches back `maxReorgDepth` and can answer height 0, so a smaller retention window would
 prune inside the horizon the walk still answers within. The profile's own `maxReorgDepth` must be a
-positive safe integer — refused at load, never clamped.
-
-> ⚠ **AHEAD OF CODE — 2026-08-29.** `loadConfig` reads no `maxReorgDepth` and checks the AVL history
-> against nothing (the `types` constant it compared against is deleted). The reorg-horizon unit's node
-> dispatch. The check is a negated `>=`, so
+positive safe integer — refused at load, never clamped. The check is a negated `>=`, so
 `NaN` — what `parseInt` answers for a non-numeric env value — is refused rather than admitted. With
 the floor held at load, `reorg` finding no version at or before a fork height the walk answers within
 is `MissingStateVersionError` — a row the store lost, fail-stop ("What the funnel's totality catch is

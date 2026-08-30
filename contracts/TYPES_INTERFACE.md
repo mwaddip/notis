@@ -2588,12 +2588,6 @@ two to stay equal.
 may take (`NET_INTERFACE → Pull Requests`), and the light client's `k` is its own number
 (`CONSTANTS → Client defaults`).
 
-> ⚠ **AHEAD OF CODE — 2026-08-29.** `export const MAX_REORG_DEPTH = 20` is the universal value today,
-> read by node's `config.ts`, `fork-resolution.ts`, `block-apply.ts`, `refused-headers.ts`,
-> `corrupt-state.ts` and `peer-readiness.ts`, by `net`'s `msg-guards.ts` in prose, and by
-> `tools/e2e`. The reorg-horizon unit's types dispatch deletes the constant; node's, net's and e2e's
-> follow.
-
 ### Genesis parent hash
 
 ```typescript
@@ -2703,9 +2697,6 @@ Configuration`) — a refusal, never a clamp.
 40 on devnet (`CONSTANTS → Per-network values`) — bounds the fork walk, the journal retention window, the
 refused-header purge and the AVL history floor (→ Chain reorganisation). A profile whose horizon is not
 a positive safe integer is refused at load (`NODE_INTERFACE → Configuration`).
-
-> ⚠ **AHEAD OF CODE — 2026-08-29.** The field does not exist; `MAX_REORG_DEPTH = 20` in `constants.ts`
-> is the universal value every consumer reads. The reorg-horizon unit's types dispatch.
 
 **This is the sole definition of the network magics.** `@dagsocial/wire` exported duplicates
 until P2-A phase 5 deleted them. They live here rather than `NetworkType` living in wire

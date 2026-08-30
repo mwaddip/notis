@@ -1163,9 +1163,6 @@ caller's own anchor and `t_a`: a segment that adds nothing to the anchor carries
 `headers` is read as the empty segment — the same verdict, and it grants nothing: zero work never
 exceeds the incumbent's and an empty `hashes` admits no block.
 
-> ⚠ **AHEAD OF CODE — 2026-08-29.** The verdict carries no `next`; a caller paging a branch would have
-> to recompute the vector. The reorg-horizon unit's validation dispatch.
-
 **The anchor is the fork point.** Its `prevBlockHash` is the hash of the block the segment must
 build on — for a fork at `GENESIS_HEIGHT` it is `GENESIS_PREV_BLOCK_HASH` (TYPES_INTERFACE → Genesis
 parent hash), the same value apply's genesis branch checks a height-1 block against. Its `interlinks`

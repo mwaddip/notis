@@ -211,10 +211,6 @@ Units of 1/256 of a bit (`VALIDATION_INTERFACE → orderingPowTarget`).
 
 No universal constant: the reorg horizon is the profile field `maxReorgDepth` (→ Per-network values).
 
-> ⚠ **AHEAD OF CODE — 2026-08-29.** `MAX_REORG_DEPTH = 20` is still exported by `types/src/constants.ts`
-> and `MAX_SYNC_ANCHORS = 4` by `net/src/msg-guards.ts`; the profile carries no `maxReorgDepth`. The
-> reorg-horizon unit's types and net dispatches; the drift test's rows follow the code as each lands.
-
 ## Per-network values
 
 `@dagsocial/types` → `network.ts`. Mainnet's cells are the universal constants above; testnet and
@@ -237,7 +233,7 @@ devnet differ where a cell says so. The identity fields — `magic`, `genesisCom
 | `creditFixedRateBlocks` | `1_051_200` | `1_051_200` | `1000` | timescale | ~÷1000 so the fixed-rate → decay transition is reachable | CHOSEN | `TYPES_INTERFACE → Network profiles` |
 | `creditEpochBlocks` | `470_000` | `470_000` | `400` | timescale | fixed-rate ≈ 2.5 × epoch, preserving mainnet's ordering (epoch < fixed-rate period) | CHOSEN | `TYPES_INTERFACE → Network profiles` |
 | `creditEmissionTotal` | `42_264_000_000_000_000n` | `42_264_000_000_000_000n` | `36_200_000_000_000n` | timescale | strictly below devnet's own curve sum of 386 400 credits — the rule every profile's total obeys | DERIVED | `TYPES_INTERFACE → EmissionBox` |
-| `storageRentPeriodBlocks` | `2_102_400` | `2_102_400` | `100` | timescale | mainnet: 4 years, exactly `2 × creditFixedRateBlocks`, Ergo's wall clock. Devnet: above the deepest height any e2e scenario reaches (~47 — the fork chapter strands at `maxReorgDepth + 7`), with headroom | DERIVED | `ARCHITECTURE → What varies per network` |
+| `storageRentPeriodBlocks` | `2_102_400` | `2_102_400` | `100` | timescale | mainnet: 4 years, exactly `2 × creditFixedRateBlocks`, Ergo's wall clock. Devnet: above the deepest height any e2e scenario reaches — 51, the fork chapter's strand case, measured — with headroom | DERIVED | `ARCHITECTURE → What varies per network` |
 | `genesisKarmaPerMember` | `1000n` | `1000n` | `1000n` | genesis | carried from the constant on all three | CHOSEN | `ARCHITECTURE → Genesis` |
 | `inviteBondMin` | `100n` | `100n` | `5n` | cap | a bond of `B` vests in `V · B` likes, so the floor decides whether a fixture can drive one to the end: 5 costs 15 likes | DERIVED | `TYPES_INTERFACE → Invites` |
 | `inviteBondMax` | `250n` | `1000n` | `250n` | cap | testnet's is relaxed so a tester arrives with enough karma to post and like freely — a cap, not a mechanic; devnet keeps mainnet's so the range check has both ends to fail against | DECIDED | `TYPES_INTERFACE → Invites` |

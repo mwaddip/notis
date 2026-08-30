@@ -388,11 +388,6 @@ the blocks it applied and for nothing else.
 
 All messages are positional bodies wrapped in frames; layouts below.
 
-> ⚠ **AHEAD OF CODE — 2026-08-29.** `SyncInfo` still carries `tipBlockId` and up to `MAX_SYNC_ANCHORS`
-> anchors — sent, decoded, read by nothing — and fork choice still asks for one forty-header window
-> from the trigger's height rather than paging from our tip. The reorg-horizon unit's net and node
-> dispatches.
-
 ### SyncInfo (code 2)
 
 ```
@@ -1197,10 +1192,6 @@ n` for the `n` headers verified, fetched in pages of `requestBlocks`, each page 
 it lands — never a height the peer claimed. The descending serve arm and its clamp to the peer's tip
 (→ `GetHeaders` / `GetBlocks` responses) are what the upward walk relies on: a request above the tip
 answers from the tip down, so the trimmed page is the next 400 or the remainder.
-
-> ⚠ **AHEAD OF CODE — 2026-08-29.** `resolveFork` asks `requestHeaders(block.height, 40)` once from the
-> trigger's height and scores that window; `requestBlocks` is one call; `peerTipHeight` does not exist.
-> The reorg-horizon unit's node and net dispatches.
 
 **The gossip source is what fork resolution asks.** `resolveFork` takes the peer that relayed the
 competing block and uses it as the counterparty when it is still in `getConnectedPeers()`, falling back
