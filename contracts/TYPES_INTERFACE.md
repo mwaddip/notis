@@ -2851,8 +2851,10 @@ export function protocolVersionAt(schedule: readonly ProtocolEra[], height: numb
 against it and no producer stamps it (`ARCHITECTURE → Protocol Versioning`).
 
 **The version in force at a height is scheduled.** `protocolVersionAt` answers the `version` of the last
-era whose `fromHeight` is at or below `height`, and `null` when no era covers it — a `height` below 0 or
-not a number. Total: it never throws.
+era whose `fromHeight` is at or below `height`, and `null` for a `height` outside the height domain —
+anything but a non-negative safe integer (`−1`, `1.5`, `NaN`, `±Infinity`, a non-number): nothing covers
+it. One domain, the chain's own; the callers' height checks are the same predicate. Total: it never
+throws.
 
 **A schedule is valid iff** its first era is `{ version: 1, fromHeight: 0 }`; each era's version is the
 previous one's plus one (a version's rules are defined against the previous version's); `fromHeight` is

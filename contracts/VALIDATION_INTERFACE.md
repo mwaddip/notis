@@ -551,8 +551,8 @@ verifyProtocolVersion(declared: number, height: number, schedule: readonly Proto
 
 Returns `true` iff `declared === protocolVersionAt(schedule, height)` — the version scheduled for the era
 the height falls in (`TYPES_INTERFACE → Network profiles`). `false` when no era covers the height
-(`protocolVersionAt` answers `null` below 0 and for a non-number) and when `declared` is anything but that
-integer. Total — never throws. The schedule is an argument: no check in this package reads
+(`protocolVersionAt` answers `null` for any `height` that is not a non-negative safe integer) and when
+`declared` is anything but that integer. Total — never throws. The schedule is an argument: no check in this package reads
 `PROTOCOL_VERSION`.
 
 **The height is the object's own:** a block header's `height`; a transaction's the height of the block
