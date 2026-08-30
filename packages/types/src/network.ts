@@ -43,6 +43,10 @@ export interface NetworkProfile {
   readonly networkType: NetworkType;
   readonly magic: number;              // wire frame magic — one per network
 
+  // The network's known nodes — the multiaddrs a node dials at start when the environment names none
+  // (NODE_INTERFACE → Configuration). Identity, not a tunable.
+  readonly bootstrapPeers: readonly string[];
+
   // Difficulty — the ASERT schedule's per-network numbers (MINING_INTERFACE → Difficulty Schedule).
   // `orderingBlockPowTargetBits` is the ANCHOR's bits — block 1's target, and the yardstick every
   // superblock level is measured against; the schedule moves inside [floor, ceiling];
@@ -182,6 +186,7 @@ export const KNOWN_FRAME_MAGICS: readonly number[] = Object.freeze([
 const MAINNET_PROFILE: NetworkProfile = Object.freeze({
   networkType: 'mainnet',
   magic: MAGIC_MAINNET,
+  bootstrapPeers: Object.freeze([] as string[]),
 
   orderingBlockPowTargetBits: ORDERING_BLOCK_POW_TARGET_BITS,
   orderingBlockIdealMs: 60_000,
@@ -250,6 +255,12 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   networkType: 'testnet',
   magic: MAGIC_TESTNET,
 
+  // Overridden explicitly: the spread above would hand testnet mainnet's empty list, and testnet is
+  // the one network with a known node to dial
+  // (TYPES_INTERFACE → "bootstrapPeers is the network's known nodes, per network"). A bare multiaddr:
+  // no `/p2p/`, so libp2p learns the peer id from the handshake and no pinned id rots across a restart.
+  bootstrapPeers: Object.freeze(['/dns4/notis.fun/tcp/9733']),
+
   // Generated 2026-08-18. The secret is NOT in this repo; it is deployed to the
   // faucet service as a config value.
   faucetPublicKey: '7d501686ebf18b2618c5a9394445bd14922a72478d2a4c36a82a8cfc2a66cce7',
@@ -296,6 +307,9 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
 const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   networkType: 'devnet',
   magic: MAGIC_DEVNET,
+  // Empty — a devnet mesh is spawned with explicit addresses
+  // (TYPES_INTERFACE → "bootstrapPeers is the network's known nodes, per network").
+  bootstrapPeers: Object.freeze([] as string[]),
 
   // The schedule reads the process config singleton, so the mechanic is the same on every
   // network; the band is the cap. The ceiling of 4096 keeps a burst of test blocks inside
