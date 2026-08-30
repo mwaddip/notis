@@ -237,9 +237,9 @@ describe('verifyHeaderChain', () => {
   // ---- reason: version — across an era boundary ----
 
   describe('the era schedule across a boundary', () => {
-    // Spec §8: a synthetic schedule, the boundary just above the height-10
-    // anchor. The mined page [11, 12] straddles it — height 11 is era 1, height
-    // 12 era 2 — so both headers build from mineChain (TYPES_INTERFACE → Version).
+    // A synthetic schedule, the boundary just above the height-10 anchor. The
+    // mined page [11, 12] straddles it — height 11 is era 1, height 12 era 2 —
+    // so both headers build from mineChain (TYPES_INTERFACE → Version).
     const boundary: ProtocolEra[] = [
       { version: 1, fromHeight: 0 },
       { version: 2, fromHeight: 12 },

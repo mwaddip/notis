@@ -179,9 +179,9 @@ describe('verifyValidatorSignature', () => {
 // ---------------------------------------------------------------------------
 
 describe('verifyProtocolVersion', () => {
-  // Spec §8: a synthetic two-era schedule, the boundary at height 10. A fixture
-  // may schedule a version this build does not implement; the validity rule
-  // binds only NETWORK_PROFILES (TYPES_INTERFACE → Version).
+  // A synthetic two-era schedule, the boundary at height 10. A fixture may
+  // schedule a version this build does not implement; the validity rule binds
+  // only NETWORK_PROFILES (TYPES_INTERFACE → Version).
   const schedule: ProtocolEra[] = [
     { version: 1, fromHeight: 0 },
     { version: 2, fromHeight: 10 },
@@ -204,7 +204,7 @@ describe('verifyProtocolVersion', () => {
     expect(verifyProtocolVersion(999, 9, schedule)).toBe(false);
   });
 
-  // The boundary is exact — no grace window (spec §0 ruling 4).
+  // The boundary is exact — no grace window.
   it('accepts the new era at its fromHeight', () => {
     expect(verifyProtocolVersion(2, 10, schedule)).toBe(true);
   });
@@ -254,10 +254,9 @@ describe('verifyProtocolVersion', () => {
 // ---------------------------------------------------------------------------
 
 describe('verifyTxProtocolVersion', () => {
-  // Spec §8: the boundary at height 10. Every case is judged at height 10 (era
-  // 2), so a declared 2 is the era and a declared 1 is not. The helper builds
-  // exactly the two fields the check reads (VALIDATION_INTERFACE →
-  // verifyTxProtocolVersion).
+  // The boundary is at height 10. Every case is judged at height 10 (era 2), so
+  // a declared 2 is the era and a declared 1 is not. The helper builds exactly
+  // the two fields the check reads (VALIDATION_INTERFACE → verifyTxProtocolVersion).
   const schedule: ProtocolEra[] = [
     { version: 1, fromHeight: 0 },
     { version: 2, fromHeight: 10 },
@@ -269,7 +268,7 @@ describe('verifyTxProtocolVersion', () => {
     expect(verifyTxProtocolVersion(tx(2, { protocolVersion: 2 }), 10, schedule)).toBe(true);
   });
 
-  it('rejects a commit declaring a version other than its transaction (finding #1)', () => {
+  it('rejects a commit declaring a version other than its transaction', () => {
     expect(verifyTxProtocolVersion(tx(2, { protocolVersion: 1 }), 10, schedule)).toBe(false);
   });
 
