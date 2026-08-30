@@ -1271,8 +1271,6 @@ const AUDIT_VOCABULARY: readonly string[] = [
  * what it concedes rather than treating the list as a second column of coverage.
  */
 const AUDIT_ALLOW: Record<string, string> = {
-  attachFeedHandlers:
-    'hashes a server-issued challenge before Ed25519 signing — it takes no layout decision',
   pruneFieldBytes:
     'mirrors @dagsocial/types pruneFieldBytes — the prune payload encoder for field 6 of txIdBytes',
   postWithdrawFieldBytes:

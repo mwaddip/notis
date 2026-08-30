@@ -276,7 +276,7 @@ hr{border:none;border-top:1px solid var(--border);margin:6px 0}
     <div id="creditTransferResult"></div>
 
     <h3>Invites</h3>
-    <h4>Create (bond: 25 karma)</h4>
+    <h4>Create</h4>
     <div style="font-size:11px;color:var(--inkMute);margin:4px 0 2px">Invitee public key (hex):</div>
     <div class="row">
       <input id="inviteePublicKeyInput" placeholder="Invitee public key (hex)" style="flex:1;font-size:11px">
@@ -325,6 +325,12 @@ let protocolVersion = null;
  * spend the PoW and have it bounced.
  */
 const MAX_PARENT_REFS = 1;
+/**
+ * Post content bounds, in UTF-8 BYTES not characters — TYPES_INTERFACE → Content
+ * limits. The composer checks this before building or signing, so an over-limit
+ * post is refused locally rather than mined and then bounced by the node.
+ */
+const MAX_CONTENT_BYTES = 300;
 // Amount constants are bigint (box values are bigint — TYPES_INTERFACE →
 // Denomination); block counts stay plain numbers. Mirrors @dagsocial/types
 // constants.ts.
@@ -1109,6 +1115,32 @@ function buildLikeTx(karmaBox, targetPostId, pubKeyHex, authorHex) {
 }
 
 /**
+ * Build a post-withdraw tx: one karma box in, a karma box of the SAME value
+ * back out, carrying `postWithdraw` — a conserving self-transfer
+ * (NODE_INTERFACE → "A withdrawal empties one post and leaves its subtree
+ * intact").
+ *
+ * `createdAtBlock` on the output is `currentBlockHeight`, like every other
+ * karma output this page builds: `/karma` answers `{ boxId, value }` only, so
+ * the spent box's own creation height is never in hand to reuse.
+ */
+function buildPostWithdrawTx(karmaBox, postId, pubKeyHex) {
+  const spent = karmaBox.boxes[0];
+  return {
+    inputs: [spent.boxId],
+    outputs: [{
+      boxType: 'karma',
+      value: spent.value,
+      createdAtBlock: currentBlockHeight,
+      owner: pubKeyHex,
+    }],
+    signatures: {},
+    protocolVersion: protocolVersion,
+    postWithdraw: { postId },
+  };
+}
+
+/**
  * Build an invite tx: karma boxes → at most one karma(change) + bond.
  *
  * ⛔ **THE BOND IS THE WHOLE REQUEST.** The invite is one
@@ -1366,7 +1398,7 @@ function setStatus(text, cls) {
   s.textContent = text; s.className = 'status status-' + (cls || 'busy');
 }
 
-function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function escWithBreaks(s) { return esc(s).replace(/\n/g, '<br>'); }
 
 // ===========================================================================
@@ -1614,6 +1646,16 @@ document.getElementById('postBtn').addEventListener('click', async () => {
   const btn = document.getElementById('postBtn');
   const content = document.getElementById('content').value.trim();
   if (!content) return;
+
+  // UTF-8 bytes, not characters — matches the node's MAX_CONTENT_BYTES exactly
+  // (TYPES_INTERFACE → Content limits). Checked before anything is built or
+  // signed, so an over-limit post is refused locally rather than mined and
+  // bounced.
+  const contentBytes = new TextEncoder().encode(content).length;
+  if (contentBytes < 1 || contentBytes > MAX_CONTENT_BYTES) {
+    setStatus(`content must be 1..${MAX_CONTENT_BYTES} UTF-8 bytes (got ${contentBytes})`, 'error');
+    return;
+  }
 
   btn.disabled = true;
   try {
@@ -1980,19 +2022,26 @@ function renderPost(p, id, depth, highlighted = false) {
     return `
       <div class="post${hlClass}" style="margin-left:${indent}px;border-left:${borderStyle};padding-left:${padLeft};opacity:0.5">
         <div class="post-author">${esc(p.author.slice(0, 12))}...</div>
-        <div class="post-content" style="font-style:italic;color:var(--muted)">[pruned — ${p.replyCount} replies, ${p.upvoteCount} likes]</div>
+        <div class="post-content" style="font-style:italic;color:var(--inkMute)">[pruned — ${p.replyCount} replies, ${p.upvoteCount} likes]</div>
       </div>`;
   }
   if (p.kind === 'pruned') {
     return `
       <div class="post${hlClass}" style="margin-left:${indent}px;border-left:${borderStyle};padding-left:${padLeft};opacity:0.5">
         <div class="post-author">${esc(p.author.slice(0, 12))}...</div>
-        <div class="post-content" style="font-style:italic;color:var(--muted)">[pruned]</div>
+        <div class="post-content" style="font-style:italic;color:var(--inkMute)">[pruned]</div>
+      </div>`;
+  }
+  if (p.kind === 'withdrawn') {
+    return `
+      <div class="post${hlClass}" style="margin-left:${indent}px;border-left:${borderStyle};padding-left:${padLeft};opacity:0.5">
+        <div class="post-author">${esc(p.author.slice(0, 12))}...</div>
+        <div class="post-content" style="font-style:italic;color:var(--inkMute)">[withdrawn — height ${p.withdrawnAtHeight}]</div>
       </div>`;
   }
 
   const contentHtml = p.content === null
-    ? '<span style="font-style:italic;color:var(--muted)">not yet available</span>'
+    ? '<span style="font-style:italic;color:var(--inkMute)">not yet available</span>'
     : escWithBreaks(p.content);
 
   const liked = p.likedByViewer === true;
@@ -2127,7 +2176,12 @@ async function loadFeedPage(afterKey) {
     if (userId) url += '&viewer=' + userId;
     const res = await fetch(url);
     const data = await res.json();
-    mergeRange(feedMap, feedKey, compareFeedKeys, afterKey || null, data.posts || [], data.next || null);
+    // A withdrawn row carries no blockHeight, so it cannot form a feedKey —
+    // filtered out here, ahead of mergeRange, rather than given one. It still
+    // renders as a tombstone in its thread (NODE_INTERFACE → "A withdrawal
+    // empties one post and leaves its subtree intact").
+    const liveRows = (data.posts || []).filter(p => p.kind !== 'withdrawn');
+    mergeRange(feedMap, feedKey, compareFeedKeys, afterKey || null, liveRows, data.next || null);
     feedPending = data.pending || [];
     if (afterKey) {
       if (!data.next) feedOldestNext = null;
@@ -2351,7 +2405,7 @@ function attachFeedHandlers(container) {
       const postId = btn.dataset.postId;
       if (!postId || !userId || !privKey) return;
 
-      if (!confirm('Delete this post and all replies? This will return any locked karma to each reply author.')) {
+      if (!confirm('Withdraw this post? This removes its content; you sign a withdrawal transaction.')) {
         return;
       }
 
@@ -2359,34 +2413,27 @@ function attachFeedHandlers(container) {
       btn.textContent = '...';
 
       try {
-        const chalRes = await fetch(API + '/challenge', {
+        const karmaBox = await fetchKarmaBox();
+        if (!karmaBox || !karmaBox.boxes.length) {
+          throw new Error('No karma box — cannot withdraw');
+        }
+
+        const pubKeyHex = buf2hex(pubKeyRaw);
+        const tx = buildPostWithdrawTx(karmaBox, postId, pubKeyHex);
+        const { signature } = await signTxId(tx);
+        tx.signatures[pubKeyHex] = signature;
+
+        const res = await fetch(API + '/posts/' + encodeURIComponent(postId) + '/withdraw', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId }),
+          body: JSON.stringify({ tx }, jsonBigint),
         });
-        if (!chalRes.ok) {
-          throw new Error('Failed to get challenge');
-        }
-        const { challenge } = await chalRes.json();
-
-        const chalBytes = hex2buf(challenge);
-        const hash = blake2b(chalBytes, null, 64).slice(0, 32);
-        const sigBuf = await crypto.subtle.sign('Ed25519', privKey, hash);
-        const signature = buf2hex(new Uint8Array(sigBuf));
-
-        const res = await fetch(API + '/posts/' + encodeURIComponent(postId), {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ authorId: userId, challenge, signature }),
-        });
-
+        const data = await res.json();
         if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || 'Delete failed');
+          throw new Error(data.reason || data.error || 'Withdrawal failed');
         }
 
-        const result = await res.json();
-        console.log('Post deleted:', result);
+        recordPendingKarmaChange(tx);
         if (threadPostId) {
           if (threadPostId === postId) window.history.back();
           else loadThreadPage(threadPostId, null);
@@ -2394,8 +2441,8 @@ function attachFeedHandlers(container) {
           loadFeedPage(null);
         }
       } catch (e) {
-        console.error('Delete failed:', e);
-        alert('Delete failed: ' + (e.message || 'unknown error'));
+        console.error('Withdraw failed:', e);
+        alert('Withdraw failed: ' + (e.message || 'unknown error'));
         btn.disabled = false;
         btn.textContent = '✕ Delete';
       }
@@ -2719,7 +2766,6 @@ setInterval(() => {
   // arrive from elsewhere. Polled here because nothing else would show them.
   loadIdentityStatus();
 }, 5000);
-setInterval(loadStatus, 15000);
 </script>
 </body>
 </html>
