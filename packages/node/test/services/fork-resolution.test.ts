@@ -3012,7 +3012,6 @@ describe('reorg — re-insertion floor pin (row 167-1)', () => {
       const author = makeTestIdentity();
       const posts = await importPosts();
       const mempool = await importMempoolFresh();
-      const utxo = await importUtxo();
       const bc = await importBlockCreator();
       bc.startBlockCreator(testConfig);
       const ordering = await importOrdering();
@@ -3026,34 +3025,22 @@ describe('reorg — re-insertion floor pin (row 167-1)', () => {
       }
       expect(ordering.getCurrentHeight()).toBe(6);
 
-      // Insert a real CreditBox with lockedUntilBlock = 5 into the UTXO store.
-      // At new tip 4, spending it violates SPEND_TIMING (height 4 < 5).
+      // A credit tx whose input is locked until height 10. The input boxId
+      // is fabricated (the ceiling-screen model); `insertUtxoTx` stores the
+      // bytes without resolving inputs.
       const creditOwner = author.publicKey;
-      const { computeCandidateBoxId } = await import('@dagsocial/types');
-      const lockedCandidate = {
-        boxType: 'credit' as const,
-        value: 100n,
-        owner: creditOwner,
-        createdAtBlock: 3,
-        lockedUntilBlock: 5,
-      };
-      const provTxId = 'cc'.repeat(32);
-      const boxId = computeCandidateBoxId(lockedCandidate, provTxId, 0);
-      utxo.insertBox({ ...lockedCandidate, id: boxId, txId: provTxId, index: 0 });
-
-      // Build a credit tx spending the locked box. A valid credit → credit
-      // spend: the output is a credit box at the current height.
+      const boxId = 'dd'.repeat(32);
       const floorTx: UtxoTransaction = {
         inputs: [boxId],
         outputs: [
-          { boxType: 'credit', value: 100n, owner: creditOwner, createdAtBlock: 6 },
+          { boxType: 'credit', value: 100n, owner: creditOwner, createdAtBlock: 6, lockedUntilBlock: 0 },
         ],
         signatures: {},
         protocolVersion: PROTOCOL_VERSION,
       };
       signTransaction(floorTx, author.privateKey, hex(creditOwner));
 
-      // Inject the tx into block 5's journal so it gets re-inserted on reorg.
+      // Inject it into block 5's journal so it gets re-inserted on reorg.
       const journalMod = await import('../../src/store/journal.js');
       const journal5 = journalMod.getBlockJournal(5);
       if (!journal5) throw new Error('no journal at height 5');
@@ -3061,7 +3048,6 @@ describe('reorg — re-insertion floor pin (row 167-1)', () => {
       journalMod.insertBlockJournal(journal5);
 
       // Reorg to a 4-block chain (shorter than our 6): new tip = 4.
-      // The locked box's lockedUntilBlock (5) > new tip (4) → floor violation.
       const chain4 = Array.from({ length: 4 }, (_, i) => ordering.getOrderingBlock(i + 1)!);
       const forkResolution = await importForkResolution();
       forkResolution.reorg(0, chain4);
@@ -3069,12 +3055,19 @@ describe('reorg — re-insertion floor pin (row 167-1)', () => {
       expect(ordering.getCurrentHeight()).toBe(4);
 
       // The floor tx was re-inserted (not screened — re-insertion screens
-      // the ceiling, not the floor). It sits in the pool despite the lock.
+      // the ceiling, not the floor). Identify it by its input: one pending
+      // entry spends the fabricated boxId.
+      const { decodeTx: decode, computeTxId } = await import('@dagsocial/types');
       const pending = mempool.getPendingEntries(1000);
-      const hasFloor = pending.some(e => e.utxoTxBytes !== null);
-      expect(hasFloor, 'the locked credit tx is in the pool after the reorg').toBe(true);
+      const lockedEntry = pending.find(e => {
+        if (!e.utxoTxBytes) return false;
+        const tx = decode(e.utxoTxBytes);
+        return tx.inputs.includes(boxId);
+      });
+      expect(lockedEntry, 'the locked credit tx is in the pool after the reorg').toBeDefined();
 
-      // The next build: the rejected-body loop evicts the locked tx.
+      // The next build: the rejected-body loop evicts entries whose inputs
+      // the chain does not hold. The node holds a template (no stall).
       bc.createOrderingBlock();
       const template = bc.getCurrentTemplate();
       expect(template, 'the node holds a template after the build (no stall)').not.toBeNull();
