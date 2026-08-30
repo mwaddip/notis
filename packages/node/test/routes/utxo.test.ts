@@ -547,7 +547,7 @@ describe('UTXO routes', () => {
         outputs: [CREDIT_OUT],
         signatures: {},
         protocolVersion: PROTOCOL_VERSION,
-      });
+      }, PROTOCOL_VERSION);
       expect(Object.hasOwn(tx, 'preimages')).toBe(false);
       expect(Object.keys(tx)).not.toContain('preimages');
     });

@@ -90,6 +90,7 @@ function settle(
       vouchCooldownBlocks: 2,
     },
     height,
+    [{ version: 1, fromHeight: 0 }],
     emission,
     s.config.config.creditMinerRewardDelay,
     { fees: opts.fees ?? 0n, rent: 0n, actors: opts.actors ?? 0, feeBoxIds: [], invites: [], markers: [], priceBoxes: [] },

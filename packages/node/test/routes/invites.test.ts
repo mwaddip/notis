@@ -290,7 +290,7 @@ describe('invites routes', () => {
       pubHex: string,
     ): Record<string, unknown> {
       const wire = JSON.parse(JSON.stringify(uiTx, ui.jsonBigint)) as Record<string, unknown>;
-      const sig = cryptoSign(null, Buffer.from(computeTxId(jsonToTx(wire)), 'hex'), priv);
+      const sig = cryptoSign(null, Buffer.from(computeTxId(jsonToTx(wire, 1)), 'hex'), priv);
       return { ...wire, signatures: { [pubHex]: Buffer.from(sig).toString('hex') } };
     }
 
@@ -325,7 +325,7 @@ describe('invites routes', () => {
       expect(typeof data.bondBoxId).toBe('string');
       expect(data.inviteBoxId).toBeUndefined();
 
-      const outputs = jsonToTx(body).outputs as [KarmaBox, BondBox];
+      const outputs = jsonToTx(body, 1).outputs as [KarmaBox, BondBox];
       expect(outputs).toHaveLength(2);
       const [change, bond] = outputs;
       expect(change.value).toBe(funded - uiBond);

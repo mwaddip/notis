@@ -168,7 +168,7 @@ describe('settlement leg order', () => {
   // and the "exactly and in order" / "element-wise and in order" checks).
   it('inputs and outputs land in derive()\'s leg order', () => {
     const result = buildSettlement(
-      deps, HEIGHT, EMISSION, MINER_REWARD_DELAY, body, miner.userId);
+      deps, HEIGHT, [{ version: 1, fromHeight: 0 }], EMISSION, MINER_REWARD_DELAY, body, miner.userId);
     expect('tx' in result).toBe(true);
     if (!('tx' in result)) return;
     const { tx } = result;
@@ -254,7 +254,7 @@ describe('settlement leg order', () => {
 
   it('refuses a settlement carrying a postWithdraw payload', () => {
     const result = buildSettlement(
-      deps, HEIGHT, EMISSION, MINER_REWARD_DELAY, body, miner.userId);
+      deps, HEIGHT, [{ version: 1, fromHeight: 0 }], EMISSION, MINER_REWARD_DELAY, body, miner.userId);
     expect('tx' in result).toBe(true);
     if (!('tx' in result)) return;
     const poisoned = { ...result.tx, postWithdraw: { postId: 'aa'.repeat(32) } };

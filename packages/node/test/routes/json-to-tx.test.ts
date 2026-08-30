@@ -3,6 +3,10 @@ import { BOX_VALUE_BOUND, PROTOCOL_VERSION, writeVlqU64OrThrow, ByteWriter } fro
 
 import { jsonToTx } from '../../src/routes/json-to-tx.js';
 
+// jsonToTx defaults an absent protocolVersion to the era the route supplies
+// (NODE_INTERFACE → validateTx). These conversion tests pass the single era.
+const toTx = (raw: Record<string, unknown>) => jsonToTx(raw, PROTOCOL_VERSION);
+
 /**
  * `jsonToTx` is the JSON edge, and a client-supplied box `value` copied through
  * it verbatim is a forgery lever. `value` is a bigint at runtime
@@ -30,7 +34,7 @@ describe('jsonToTx box value validation (audit L-11, Spec B P0)', () => {
   }
 
   it('coerces a non-negative integer number to bigint', () => {
-    const tx = jsonToTx(rawTx(42));
+    const tx = toTx(rawTx(42));
     const out = tx.outputs[0]!;
     expect(out.value).toBe(42n);
     // Hex fields are still decoded to raw bytes. Narrow on the discriminant
@@ -41,21 +45,21 @@ describe('jsonToTx box value validation (audit L-11, Spec B P0)', () => {
   });
 
   it('coerces a decimal string to bigint (canonical wire form)', () => {
-    expect(jsonToTx(rawTx('10')).outputs[0]!.value).toBe(10n);
+    expect(toTx(rawTx('10')).outputs[0]!.value).toBe(10n);
   });
 
   it('coerces a decimal string above 2^53 without precision loss', () => {
     const big = (1n << 60n).toString();
-    expect(jsonToTx(rawTx(big)).outputs[0]!.value).toBe(1n << 60n);
+    expect(toTx(rawTx(big)).outputs[0]!.value).toBe(1n << 60n);
   });
 
   it('accepts a zero value (fully-spent change box)', () => {
-    expect(jsonToTx(rawTx(0)).outputs[0]!.value).toBe(0n);
+    expect(toTx(rawTx(0)).outputs[0]!.value).toBe(0n);
   });
 
   it('accepts a value just below BOX_VALUE_BOUND', () => {
     const max = (BOX_VALUE_BOUND - 1n).toString();
-    expect(jsonToTx(rawTx(max)).outputs[0]!.value).toBe(BOX_VALUE_BOUND - 1n);
+    expect(toTx(rawTx(max)).outputs[0]!.value).toBe(BOX_VALUE_BOUND - 1n);
   });
 
   it('the stranded values ENCODE — this edge is narrower than the writer, deliberately', () => {
@@ -91,7 +95,7 @@ describe('jsonToTx box value validation (audit L-11, Spec B P0)', () => {
     ['missing', undefined],
   ] as const) {
     it(`rejects a ${label} value`, () => {
-      expect(() => jsonToTx(rawTx(badValue))).toThrow(
+      expect(() => toTx(rawTx(badValue))).toThrow(
         /box value must be a non-negative/,
       );
     });
@@ -105,7 +109,7 @@ describe('jsonToTx box value validation (audit L-11, Spec B P0)', () => {
       owner: ownerHex,
     });
 
-    expect(() => jsonToTx(raw)).toThrow(/box value must be a non-negative/);
+    expect(() => toTx(raw)).toThrow(/box value must be a non-negative/);
   });
 
   it('a JSON body carrying postWithdraw survives jsonToTx with the payload intact', () => {
@@ -114,7 +118,7 @@ describe('jsonToTx box value validation (audit L-11, Spec B P0)', () => {
       ...rawTx(100),
       postWithdraw: { postId },
     };
-    const tx = jsonToTx(raw);
+    const tx = toTx(raw);
     expect(tx.postWithdraw).toBeDefined();
     expect(tx.postWithdraw!.postId).toBe(postId);
   });
