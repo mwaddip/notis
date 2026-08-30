@@ -144,6 +144,26 @@ describe('tip resolution', () => {
     expect(result.winner).toBeNull();
   });
 
+  // Asking independent nodes is the eclipse defence: one node throwing on the
+  // wire must not sink the run — it is refused, and the reachable node decides.
+  it('a node whose transport fails is refused, and the reachable node still decides', async () => {
+    const chain = buildMinedChain({ count: CHAIN_LEN });
+    const profile = devnetProfile();
+    const now = clockAfterChain(chain);
+    const nodeA = createFakeNode({ url: 'http://a:3000', chain, m: M, k: K });
+
+    const combinedFetch = async (url: string) => {
+      if (url.startsWith('http://a:3000')) return nodeA.fetch(url);
+      throw new TypeError('fetch failed');
+    };
+
+    const result = await resolveTip(['http://a:3000', 'http://b:3001'], M, K, profile, now, combinedFetch);
+    expect(result.nodes[1]!.verified).toBe(false);
+    expect(result.nodes[1]!.refuseReason).toContain('fetch failed');
+    expect(result.nodes[0]!.verified).toBe(true);
+    expect(result.winner).not.toBeNull();
+  });
+
   it('proof whose tip is beyond now + drift → refused with clock, advanced clock verifies', async () => {
     const chain = buildMinedChain({ count: CHAIN_LEN });
     const profile = devnetProfile();
