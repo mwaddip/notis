@@ -263,3 +263,24 @@ export function getHeadersAfter(height: number, n: number): BlockHeader[] {
     }
   });
 }
+
+/**
+ * Headers above `height`, ascending, at most `n` — the caller bounds `n`.
+ *
+ * Not the NiPoPoW prover's read (`getHeadersAfter`, capped at
+ * `MAX_NIPOPOW_PARAM`): fork resolution needs every header above the fork
+ * for `ourWork`, which can be up to `maxReorgDepth` (NODE_INTERFACE →
+ * Store Interface → Ordering blocks).
+ */
+export function getHeadersAbove(height: number, n: number): BlockHeader[] {
+  const rows = getDb()
+    .prepare('SELECT header_bytes, height FROM ordering_blocks WHERE height > ? ORDER BY height ASC LIMIT ?')
+    .all(height, n) as Array<{ header_bytes: Buffer; height: number }>;
+  return rows.map((row) => {
+    try {
+      return decodeHeader(new Uint8Array(row.header_bytes));
+    } catch (err) {
+      throw new UnreadableStoredBlockError('getHeadersAbove', row.height, err);
+    }
+  });
+}

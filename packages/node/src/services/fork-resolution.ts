@@ -11,6 +11,7 @@ import {
   getOrderingBlock,
   getCurrentHeight,
   getOrderingBlockHash,
+  getHeadersAbove,
   getBlockJournal,
   deleteBlockJournal,
   deleteOrderingBlock,
@@ -528,15 +529,12 @@ export async function resolveFork(
       createdAt: anchorCreatedAt,
     };
 
-    // ourWork — once (NODE_INTERFACE → Fork choice decides on verified headers,
-    // step 4). `getHeadersAfter` is a NiPoPoW reader capped at
-    // `MAX_NIPOPOW_PARAM`; the walk needs every header above the fork.
-    const ourHeaders: BlockHeader[] = [];
-    for (let h = forkHeight + 1; h <= currentHeight; h++) {
-      const b = getOrderingBlock(h);
-      if (!b) throw new MissingStoredBlockError('resolveFork ourWork', h);
-      ourHeaders.push(b.header);
-    }
+    // ourWork — once, through `getHeadersAbove` (NODE_INTERFACE → Fork choice
+    // decides on verified headers, step 4; NODE_INTERFACE → Store Interface →
+    // Ordering blocks). Not the NiPoPoW prover's `getHeadersAfter`, which is
+    // capped at `MAX_NIPOPOW_PARAM` (128) — the walk needs every header above
+    // the fork, up to `maxReorgDepth`.
+    const ourHeaders = getHeadersAbove(forkHeight, currentHeight - forkHeight);
     const ourWork = cumulativeWork(ourHeaders);
 
     // 5. The scoring walk — upward in pages, fetch → verify → stop rules

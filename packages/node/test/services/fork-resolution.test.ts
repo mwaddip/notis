@@ -2983,6 +2983,108 @@ describe('reorg — ceiling screen', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Re-insertion floor pin — row 167-1 (NODE_INTERFACE → Validity ceiling:
+// "Re-insertion screens the ceiling and not the floor"). A reorg onto a
+// shorter, heavier branch re-inserts a credit tx whose input's
+// `lockedUntilBlock` is above the new tip; the tx sits in the pool, the
+// next build evicts it (the rejected-body loop), and the node holds a
+// template afterwards (no fork, no stall).
+// ---------------------------------------------------------------------------
+
+describe('reorg — re-insertion floor pin (row 167-1)', () => {
+  beforeEach(async () => { vi.resetModules(); });
+  afterEach(async () => {
+    try {
+      const bc = await importBlockCreator();
+      bc.stopBlockCreator();
+    } catch { /* not imported */ }
+    vi.resetModules();
+  });
+
+  it('a locked credit tx re-inserted by a reorg to a shorter chain sits in the pool and is evicted by the next build', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const db = await importDb();
+      db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+      const author = makeTestIdentity();
+      const posts = await importPosts();
+      const mempool = await importMempoolFresh();
+      const utxo = await importUtxo();
+      const bc = await importBlockCreator();
+      bc.startBlockCreator(testConfig);
+      const ordering = await importOrdering();
+
+      // Build 6 blocks with post txs to fill the chain.
+      for (let i = 0; i < 6; i++) {
+        const { commit, tx: postTx, postId, content } = await seedPostTx(author, `floor ${i}`);
+        posts.insertPost(postId, commit, content);
+        mempool.insertUtxoTx(postTx, 1000);
+        await mineNextBlock(bc);
+      }
+      expect(ordering.getCurrentHeight()).toBe(6);
+
+      // Insert a real CreditBox with lockedUntilBlock = 5 into the UTXO store.
+      // At new tip 4, spending it violates SPEND_TIMING (height 4 < 5).
+      const creditOwner = author.publicKey;
+      const { computeCandidateBoxId } = await import('@dagsocial/types');
+      const lockedCandidate = {
+        boxType: 'credit' as const,
+        value: 100n,
+        owner: creditOwner,
+        createdAtBlock: 3,
+        lockedUntilBlock: 5,
+      };
+      const provTxId = 'cc'.repeat(32);
+      const boxId = computeCandidateBoxId(lockedCandidate, provTxId, 0);
+      utxo.insertBox({ ...lockedCandidate, id: boxId, txId: provTxId, index: 0 });
+
+      // Build a credit tx spending the locked box. A valid credit → credit
+      // spend: the output is a credit box at the current height.
+      const floorTx: UtxoTransaction = {
+        inputs: [boxId],
+        outputs: [
+          { boxType: 'credit', value: 100n, owner: creditOwner, createdAtBlock: 6 },
+        ],
+        signatures: {},
+        protocolVersion: PROTOCOL_VERSION,
+      };
+      signTransaction(floorTx, author.privateKey, hex(creditOwner));
+
+      // Inject the tx into block 5's journal so it gets re-inserted on reorg.
+      const journalMod = await import('../../src/store/journal.js');
+      const journal5 = journalMod.getBlockJournal(5);
+      if (!journal5) throw new Error('no journal at height 5');
+      journal5.appliedUtxoTxs.push({ txId: 'floor-test-tx', txBytes: encodeTx(floorTx) });
+      journalMod.insertBlockJournal(journal5);
+
+      // Reorg to a 4-block chain (shorter than our 6): new tip = 4.
+      // The locked box's lockedUntilBlock (5) > new tip (4) → floor violation.
+      const chain4 = Array.from({ length: 4 }, (_, i) => ordering.getOrderingBlock(i + 1)!);
+      const forkResolution = await importForkResolution();
+      forkResolution.reorg(0, chain4);
+
+      expect(ordering.getCurrentHeight()).toBe(4);
+
+      // The floor tx was re-inserted (not screened — re-insertion screens
+      // the ceiling, not the floor). It sits in the pool despite the lock.
+      const pending = mempool.getPendingEntries(1000);
+      const hasFloor = pending.some(e => e.utxoTxBytes !== null);
+      expect(hasFloor, 'the locked credit tx is in the pool after the reorg').toBe(true);
+
+      // The next build: the rejected-body loop evicts the locked tx.
+      bc.createOrderingBlock();
+      const template = bc.getCurrentTemplate();
+      expect(template, 'the node holds a template after the build (no stall)').not.toBeNull();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Interlink root — verifyHeaderChain step 7 in fork choice
 // (NODE_INTERFACE → Fork choice decides on verified headers, step 4-5;
 //  VALIDATION_INTERFACE → verifyHeaderChain)
@@ -4589,11 +4691,18 @@ describe('resolveFork — paged scoring walk', () => {
     };
 
     setClock(() => t1 + 901 * 60_000);
+    // Spy getHeadersAbove to pin that ourWork reads the header-only store path.
+    const orderingMod = await import('../../src/store/ordering.js');
+    const headersAboveSpy = vi.spyOn(orderingMod, 'getHeadersAbove');
+
     await forkResolution.resolveFork(
       { header: peerChain[peerChain.length - 1]!, utxoTxTree: { utxoTxIds: [], utxoTxs: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock,
       net,
       'peer-prefix',
     );
+
+    // The ourWork read went through getHeadersAbove, not the decode loop.
+    expect(headersAboveSpy).toHaveBeenCalledWith(1, 899);
 
     // Derive the first page boundary at which their work exceeds ours.
     // The residual (heights 2..900) is chunked at MAX_CHAIN_RESPONSE_ITEMS
