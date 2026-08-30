@@ -19,7 +19,7 @@ that set with its defaults).
 | Column | Holds |
 |---|---|
 | Name | the identifier as its definition site spells it — `SCREAMING_CASE` is a `constants.ts` (or another package's) export, `camelCase` is a `NetworkProfile` field |
-| Value | **the value as JavaScript evaluates the code's expression**, in a code span — a decimal integer, `_` group separators allowed, `n` for a bigint, nothing else in the cell. `42n * 10n ** 8n` is written `4_200_000_000n` |
+| Value | **the value as JavaScript evaluates the code's expression**, in a code span — a decimal integer, `_` group separators allowed, `n` for a bigint, nothing else in the cell. `42n * 10n ** 8n` is written `4_200_000_000n`. The one list-valued field, `protocolVersionSchedule`, writes its eras as `version@fromHeight` pairs, comma-separated, in order — `1@0`, `1@0, 2@43200` |
 | Reads as | the human quantity — hours, credits, bytes |
 | Kind | `consensus` (block validity), `policy` (a producer's or relay's choice that consensus does not check), `format` (a codec bound), `local`; `→ profile` after it marks a constant a `NetworkProfile` field reads |
 | Argument | what produces the number: a formula, a dated measurement, a dated ruling — or *none stated* |
@@ -48,7 +48,8 @@ reads this file and pins it to the code:
 1. every row whose first cell is exactly a backticked `SCREAMING_CASE` name is exported by exactly
    one of `@dagsocial/types`, `@dagsocial/net`, `@dagsocial/nipopow`, with the value the cell states;
 2. every row whose first cell is a backticked `camelCase` name is a `NetworkProfile` field whose three
-   values are `NETWORK_PROFILES.mainnet`, `.testnet`, `.devnet` in that order;
+   values are `NETWORK_PROFILES.mainnet`, `.testnet`, `.devnet` in that order — `protocolVersionSchedule`'s
+   cells as the `version@fromHeight` list the field holds;
 3. the converse — every `number` or `bigint` export of those three barrels, and every numeric field of
    every profile, is either such a row or a name listed under → Excluded. A constant added without a
    register row fails here, and so does a row whose constant is renamed away.
@@ -72,7 +73,7 @@ in their Kind cell and appear again under → Per-network values with all three 
 
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
-| `PROTOCOL_VERSION` | `1` | — | consensus | the one version; validation is an equality check against it | DOMAIN | `TYPES_INTERFACE → Version` |
+| `PROTOCOL_VERSION` | `1` | — | consensus | the highest version this build implements: the handshake declares it and every schedule's last version is bounded by it; no check compares an object against it | DOMAIN | `TYPES_INTERFACE → Version` |
 | `MAX_CONTENT_BYTES` | `300` | 300 UTF-8 bytes | consensus | none stated | CHOSEN | `TYPES_INTERFACE → Content limits` |
 | `MAX_PARENT_REFS` | `1` | one parent | consensus | user ruling, 2026-08-09 — subtrees stay disjoint, so pruning is well-defined | RULED | `TYPES_INTERFACE → Content limits` |
 | `MAX_GENESIS_PROOF_PAYLOAD_BYTES` | `512` | 512 bytes | format | roughly Ergo's five-register no-premine payload plus headroom, derived from no measurement; the three profile payloads are ~35 bytes | PROVISIONAL | `TYPES_INTERFACE → Content limits` |
@@ -238,6 +239,11 @@ devnet differ where a cell says so. The identity fields — `magic`, `genesisCom
 | `inviteBondMin` | `100n` | `100n` | `5n` | cap | a bond of `B` vests in `V · B` likes, so the floor decides whether a fixture can drive one to the end: 5 costs 15 likes | DERIVED | `TYPES_INTERFACE → Invites` |
 | `inviteBondMax` | `250n` | `1000n` | `250n` | cap | testnet's is relaxed so a tester arrives with enough karma to post and like freely — a cap, not a mechanic; devnet keeps mainnet's so the range check has both ends to fail against | DECIDED | `TYPES_INTERFACE → Invites` |
 | `membershipBarMultiplier` | `10` | `1` | `1` | cap | devnet's `1` lets a chain whose only root is the faucet flag its first member on one vouch — `D(1) = 1`, where `10` gives `D(1) = 2` and a lone root could never flag anyone; mainnet's `10` is fixed by the user's two anchors (2026-08-28): `D = 10` at 100 members, `100` at 100 000 | DERIVED | `ARCHITECTURE → Membership` |
+| `protocolVersionSchedule` | `1@0` | `1@0` | `1@0` | consensus — the era table | one era on every network (user, 2026-08-30); a second row is a ruling, set an upgrade window ahead on the network it lands on, and mainnet's may lag testnet's under one build | DECIDED | `TYPES_INTERFACE → Version` |
+
+> ⚠ **AHEAD OF CODE — 2026-08-30.** The field does not exist, and the drift test's cell parser reads
+> integers only — this row fails its grammar until node's dispatch of the version-schedule unit teaches
+> it the `version@fromHeight` list; the types dispatch adds the field.
 
 ## Bounds outside types
 
