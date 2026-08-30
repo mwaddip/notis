@@ -50,6 +50,8 @@ rsync -a \
   --exclude 'tmp' \
   --exclude 'CLAUDE.md' \
   --exclude 'SESSION_CONTEXT.md' \
+  `# SETTINGS.md is the machine-local workflow file, excluded from git via .git/info/exclude` \
+  --exclude 'SETTINGS.md' \
   --exclude 'dagsocial.md' \
   --exclude 'HOW_IT_WORKS.md' \
   --exclude 'AUDIT-*.md' \
