@@ -94,6 +94,7 @@ import type { BlockJournal } from '../store/journal.js';
 import { tryGetAvlProver, applyBlockMutations, checkpointProver } from '../state/avl-prover.js';
 import { emitPostIndexed } from '../journal.js';
 import { countedVerifyOrderingBlockPoW, noteTip } from '../metrics.js';
+import { getNet } from './net-instance.js';
 import type { RecordPut, NetworkPut } from '../state/avl-prover.js';
 import { networkRecordKey } from '../store/identity-records.js';
 import {
@@ -230,6 +231,9 @@ export function applyOrderingBlock(block: OrderingBlock): boolean {
   if (!getDb().inTransaction) {
     rebuildTemplate();
     noteTip(block.header.height);
+    // The applied tip reaches net at the same seam, so a version boundary can
+    // sweep peers below the new era (NET_INTERFACE → API).
+    getNet()?.tipApplied(block.header.height);
   }
   return applied;
 }
@@ -785,6 +789,7 @@ function applyMutationPhase(
     getNetworkRecord,
     membershipBarMultiplier: config.membershipBarMultiplier,
     putIdentityRecord,
+    protocolVersionSchedule: config.protocolVersionSchedule,
   };
 
   // The proof obligation (NODE_INTERFACE → "Embedded transactions: a mismatch

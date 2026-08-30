@@ -218,6 +218,7 @@ export function createApp(config: Config): express.Express {
     getNetworkRecord: store.getNetworkRecord,
     membershipBarMultiplier: config.membershipBarMultiplier,
     putIdentityRecord: store.putIdentityRecord,
+    protocolVersionSchedule: config.protocolVersionSchedule,
   };
 
   // ---- Routes ----

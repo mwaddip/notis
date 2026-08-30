@@ -43,6 +43,7 @@ import { applyOrderingBlock } from './block-apply.js';
 import { registerPlaceholder } from './backfill.js';
 import { getPlaceholdersAt } from '../store/index.js';
 import { noteTip } from '../metrics.js';
+import { getNet } from './net-instance.js';
 import { rebuildTemplate } from './block-creator.js';
 import {
   CorruptChainStateError,
@@ -331,6 +332,9 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[]): void {
 
   // NODE_INTERFACE → Admin Listener: the tip the reorg left.
   noteTip(forkHeight + newBlocks.length);
+  // net learns of the reorg's tip at the same seam, so a version boundary can
+  // sweep peers below the new era (NET_INTERFACE → API).
+  getNet()?.tipApplied(forkHeight + newBlocks.length);
 
   // A reorg is one tip move, however many blocks it applies. The per-block
   // rebuild inside `applyOrderingBlock` stands down while nested in the

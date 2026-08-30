@@ -19,7 +19,7 @@ import {
 import { isCreditSideTx } from './coinbase-split.js';
 import { effectiveKarma } from './decay.js';
 import type { DecayCfg } from './decay.js';
-import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, PostCommit, PruneCommit, PostWithdrawCommit } from '@dagsocial/types';
+import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, PostCommit, PruneCommit, PostWithdrawCommit, ProtocolEra } from '@dagsocial/types';
 
 // `computeTxId` has exactly one implementation and it is types'. This engine
 // must never grow a local copy: the id it returns is both the hash
@@ -191,6 +191,11 @@ export interface UtxoEngineDeps {
   /** The profile's membershipBarMultiplier (k in D(N) = max(1, icbrt(k·N))). */
   membershipBarMultiplier: number;
   putIdentityRecord: (identityId: Uint8Array, record: IdentityRecord) => void;
+  /**
+   * The profile's protocol-version schedule. Envelope step 7 holds each declared
+   * version to the era at the judged-for height (NODE_INTERFACE → validateTx).
+   */
+  protocolVersionSchedule: readonly ProtocolEra[];
 }
 
 // ---------------------------------------------------------------------------

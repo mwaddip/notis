@@ -136,6 +136,9 @@ const net = new NetNode(
     // The profile's wire magic. Required in NetConfig — net has no fallback of
     // its own (NET_INTERFACE → "Magic Bytes").
     magic: config.profile.magic,
+    // The profile's era table, supplied like `magic` — the handshake, tx
+    // validator and boundary sweep read the era from it (NET_INTERFACE → Config).
+    protocolVersionSchedule: config.profile.protocolVersionSchedule,
     bootstrapPeers: config.bootstrapPeers,
     listenAddrs: config.listenAddrs,
     maxPeers: config.maxPeers,
@@ -213,6 +216,7 @@ net.onTx((tx, content, fromPeerId) => {
     getNetworkRecord,
     membershipBarMultiplier: config.membershipBarMultiplier,
     putIdentityRecord,
+    protocolVersionSchedule: config.protocolVersionSchedule,
   };
   const currentHeight = getCurrentHeight();
   const validationStart = performance.now();

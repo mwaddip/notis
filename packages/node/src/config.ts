@@ -7,7 +7,7 @@ import {
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   profileFor,
 } from '@dagsocial/types';
-import type { NetworkProfile, NetworkType } from '@dagsocial/types';
+import type { NetworkProfile, NetworkType, ProtocolEra } from '@dagsocial/types';
 import { DEFAULT_MAX_MEMPOOL_ENTRIES } from './store/mempool.js';
 
 export interface Config {
@@ -104,6 +104,9 @@ export interface Config {
   // Chain reorganisation — the profile's reorg horizon
   // (TYPES_INTERFACE → Chain reorganisation).
   maxReorgDepth: number;
+  // The protocol-version schedule — the era in force at each height
+  // (ARCHITECTURE → Protocol Versioning).
+  protocolVersionSchedule: readonly ProtocolEra[];
   // AVL state root
   verifyStateRoot: boolean;
   maxProofHistory: number;
@@ -164,6 +167,7 @@ export function loadConfig(): Readonly<Config> {
     karmaMinimum: KARMA_MINIMUM,
     storageRentPeriodBlocks: profile.storageRentPeriodBlocks,
     maxReorgDepth: profile.maxReorgDepth,
+    protocolVersionSchedule: profile.protocolVersionSchedule,
     // AVL state root. On by default since Spec B P3: producer and verifier now
     // agree by construction — the header carries the POST-block digest (H-6),
     // both feeds are canonically ordered (M-12), and the mutation set is
