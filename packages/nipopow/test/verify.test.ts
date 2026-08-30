@@ -332,13 +332,48 @@ describe('verifyProof', () => {
     });
   });
 
-  describe('profile.protocolVersion', () => {
-    it('a profile with protocolVersion 2 refuses a version-1 proof as version', () => {
-      const proof = proveWithReader(reader, { m: 3, k: 5 });
-      const v2Profile = { ...profile, protocolVersion: 2 };
-      const result = verifyProof(proof, v2Profile);
+  describe('protocolVersionSchedule', () => {
+    // The declared version equals the era at each header's own height
+    // (NIPOPOW_INTERFACE → verifyProof, VALIDATION_INTERFACE → Protocol Version). A synthetic
+    // two-era schedule with the boundary at height 36, where count 40 and k 5 put suffixHead
+    // (chainHeight minus k plus 1). Every prefix element is a strict ancestor of suffixHead, so
+    // all sit below the boundary; suffixHead is the first flattened header at or above it, at
+    // index prefix.length.
+    const BOUNDARY = 36;
+    const twoEra = [
+      { version: 1, fromHeight: 0 },
+      { version: 2, fromHeight: BOUNDARY },
+    ] as const;
+    const twoEraProfile = { ...devnetProfile(), protocolVersionSchedule: twoEra };
+    const boundaryChain = buildMinedChain({ count: 40, schedule: twoEra });
+    const boundaryProof = proveWithReader(makeReader(boundaryChain), { m: 3, k: 5 });
+
+    it('a proof spanning an era boundary verifies under the boundary schedule', () => {
+      expect(boundaryProof.suffixHead.header.height).toBe(BOUNDARY);
+      const result = verifyProof(boundaryProof, twoEraProfile);
+      expect(result.ok).toBe(true);
+    });
+
+    it('the boundary proof under the one-era devnet schedule fails version at the boundary header', () => {
+      expect(Math.max(...boundaryProof.prefix.map(p => p.header.height))).toBeLessThan(BOUNDARY);
+      const result = verifyProof(boundaryProof, devnetProfile());
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.reason).toBe('version');
+      if (!result.ok) {
+        expect(result.reason).toBe('version');
+        expect(result.index).toBe(boundaryProof.prefix.length);
+      }
+    });
+
+    it('an all-v1 proof under a two-era schedule fails version at the era-2 boundary header', () => {
+      const proof = proveWithReader(reader, { m: 3, k: 5 });
+      expect(proof.suffixHead.header.height).toBe(BOUNDARY);
+      expect(Math.max(...proof.prefix.map(p => p.header.height))).toBeLessThan(BOUNDARY);
+      const result = verifyProof(proof, twoEraProfile);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.reason).toBe('version');
+        expect(result.index).toBe(proof.prefix.length);
+      }
     });
   });
 
