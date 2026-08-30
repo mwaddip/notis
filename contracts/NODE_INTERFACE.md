@@ -4959,8 +4959,9 @@ rule runs over a peer's segment in `verifyHeaderChain` before fork choice scores
 
 **Genesis pin.** When the profile's `genesisId` is non-empty, the height-1 chain-link also requires
 `blockHash(header) === genesisId` — a block 1 that builds on `GENESIS_PREV_BLOCK_HASH` but is not the
-pinned one is rejected like any chain-link failure. An empty `genesisId` (devnet always; testnet and
-mainnet until their block 1 exists) leaves the height-1 check as the sentinel compare alone
+pinned one is rejected like any chain-link failure. An empty `genesisId` (devnet always; mainnet until
+its block 1 exists — testnet's is pinned, `TYPES_INTERFACE → Network profiles`) leaves the height-1 check
+as the sentinel compare alone
 (`TYPES_INTERFACE` → Network profiles).
 
 **Post authorship + prune authorship (H-3).** A post transaction carries the
