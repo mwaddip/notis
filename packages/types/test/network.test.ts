@@ -34,6 +34,7 @@ const REQUIRED_PROFILE_FIELDS = [
   'inviteProbationBlocks',
   'creditMinerRewardDelay',
   'maxReorgDepth',
+  'protocolVersionSchedule',
   'creditFixedRateBlocks',
   'creditEpochBlocks',
   'creditEmissionTotal',
@@ -158,13 +159,21 @@ describe('NETWORK_PROFILES', () => {
     // discovered. `inviteBondMin` is deliberately absent — testnet inherits
     // mainnet's floor.
     const relaxedCaps = new Set(['inviteBondMax', 'maxReorgDepth', 'membershipBarMultiplier']);
+    // The version schedule is per network and stated as its own literal on each (never inherited by
+    // spread), so testnet's array is a distinct reference from mainnet's even where the two schedules
+    // agree — a `.toBe` here would read that reference difference as a divergence. It is neither a
+    // must-match mechanic nor a declared cap that must differ: the schedule MAY diverge (mainnet's may
+    // end at an earlier version than testnet's under one build), and today it does not. Its content
+    // `[1@0]` and its distinct reference are pinned in the schedule tests below; this case does not
+    // opine on it. TYPES_INTERFACE → Version.
+    const perNetworkSchedule = new Set(['protocolVersionSchedule']);
     const { mainnet, testnet } = NETWORK_PROFILES;
     // ⛔ Derived from the profiles, never from a literal list. A hardcoded set
     // goes on passing while a field added to either profile sits uncompared, so
     // the guarantee this test states would quietly stop covering the tree.
     const fields = new Set([...Object.keys(mainnet), ...Object.keys(testnet)]);
     for (const field of fields) {
-      if (identityOrGenesis.has(field) || relaxedCaps.has(field)) continue;
+      if (identityOrGenesis.has(field) || relaxedCaps.has(field) || perNetworkSchedule.has(field)) continue;
       expect(testnet[field as keyof NetworkProfile], field).toBe(
         mainnet[field as keyof NetworkProfile],
       );

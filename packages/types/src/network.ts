@@ -32,6 +32,13 @@ import {
 
 export type NetworkType = 'mainnet' | 'testnet' | 'devnet';
 
+// A protocol era: the version in force from `fromHeight` up to the next era's start (TYPES_INTERFACE →
+// Version). A schedule is a list of these; `protocolVersionAt` reads the version in force at a height.
+export interface ProtocolEra {
+  readonly version: number;
+  readonly fromHeight: number;
+}
+
 export interface NetworkProfile {
   readonly networkType: NetworkType;
   readonly magic: number;              // wire frame magic — one per network
@@ -56,6 +63,10 @@ export interface NetworkProfile {
   // Chain reorganisation — the reorg horizon: how far below the tip a fork may be followed
   // (→ Chain reorganisation). A duration in blocks; the mechanic is universal, the number per network.
   readonly maxReorgDepth: number;
+
+  // Protocol versioning — the eras this network's version runs through; the version in force at a
+  // height is the last era whose fromHeight is at or below it (TYPES_INTERFACE → Version).
+  readonly protocolVersionSchedule: readonly ProtocolEra[];
 
   // Emission schedule. `creditEmissionTotal` is the EmissionBox's genesis value,
   // CARRIED rather than derived (TYPES_INTERFACE → EmissionBox). It must be
@@ -186,6 +197,12 @@ const MAINNET_PROFILE: NetworkProfile = Object.freeze({
   // TYPES_INTERFACE → Chain reorganisation
   maxReorgDepth: 60,
 
+  // Its own literal on every network, never spread from another: a bump adds an era row to the network
+  // it lands on, and mainnet's schedule may end at an earlier version than testnet's under one build
+  // (TYPES_INTERFACE → Version). Frozen at both levels — Object.freeze does not reach a nested array or
+  // the objects inside it, so the array and its era are each frozen.
+  protocolVersionSchedule: Object.freeze([Object.freeze({ version: 1, fromHeight: 0 })]),
+
   creditFixedRateBlocks: CREDIT_FIXED_RATE_BLOCKS,
   creditEpochBlocks: CREDIT_EPOCH_BLOCKS,
   creditEmissionTotal: CREDIT_EMISSION_TOTAL,
@@ -238,6 +255,11 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   faucetPublicKey: '7d501686ebf18b2618c5a9394445bd14922a72478d2a4c36a82a8cfc2a66cce7',
   // TYPES_INTERFACE → Chain reorganisation
   maxReorgDepth: 240,
+
+  // Overridden, not inherited: the spread above would hand testnet mainnet's schedule array, and the
+  // schedule exists so a network can diverge — a mainnet era row must never ride into testnet through
+  // the spread. Its own literal, frozen at both levels (TYPES_INTERFACE → Version).
+  protocolVersionSchedule: Object.freeze([Object.freeze({ version: 1, fromHeight: 0 })]),
 
   // Relaxed so a tester arrives with enough karma to post and like freely. A cap,
   // not a mechanic — the vesting formula is unchanged.
@@ -300,6 +322,9 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   // TYPES_INTERFACE → Chain reorganisation
   maxReorgDepth: 40,
 
+  // Its own literal, frozen at both levels — like every network's (TYPES_INTERFACE → Version).
+  protocolVersionSchedule: Object.freeze([Object.freeze({ version: 1, fromHeight: 0 })]),
+
   creditFixedRateBlocks: 1000, // ~÷1000 so the fixed-rate → decay transition is reachable
   creditEpochBlocks: 400, // fixed-rate ≈ 2.5× epoch (mainnet: ≈ 2.24×)
   creditEmissionTotal: 362_000n * 10n ** 8n, // below devnet's curve (386,400)
@@ -353,4 +378,19 @@ export function profileFor(network: NetworkType): NetworkProfile {
     );
   }
   return NETWORK_PROFILES[network];
+}
+
+/**
+ * The protocol version in force at `height`: the `version` of the last era whose `fromHeight` is at or
+ * below `height`, and `null` when no era covers it (TYPES_INTERFACE → Version). **Total** — it never
+ * throws on any input: a `height` that is not a finite number (a non-number, `NaN`, `±Infinity`) yields
+ * `null`. The schedule ascends by `fromHeight` by construction, so it is read in order with no sort.
+ */
+export function protocolVersionAt(schedule: readonly ProtocolEra[], height: number): number | null {
+  if (typeof height !== 'number' || !Number.isFinite(height)) return null;
+  let version: number | null = null;
+  for (const era of schedule) {
+    if (era.fromHeight <= height) version = era.version;
+  }
+  return version;
 }
