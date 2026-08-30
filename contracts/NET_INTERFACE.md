@@ -270,10 +270,10 @@ opt(lpUtf8(declaredAddress)) ‖ arr(vlqU(capability)) ‖ vlqU(sessionMagic)
 | `chainHeight` | ≤ `MAX_ADVERTISED_HEIGHT`; tip height of this node's chain |
 | `declaredAddress` | optional (`opt`), ≤ `MAX_ADDRESS_BYTES` (255) bytes; the multiaddr this node advertises — **its first listen address that is not loopback**, absent when every listen address is loopback. A loopback address advertised to a peer is one no peer can dial |
 | `capabilities` | count ≤ `MAX_CAPABILITY_ENTRIES` (64), each ≤ `MAX_CAPABILITY_CODE`; message codes this node can handle. Always present — an empty list is a peer that declares nothing |
+| `sessionMagic` | ≤ `MAX_UINT32`; random per-connection uint32 |
 
 > ⚠ **AHEAD OF CODE — 2026-08-30.** `buildOurHandshake` declares `listenAddrs[0]`, which on a node listening on `0.0.0.0` is the
 > loopback address. The testnet-bootstrap-default unit's net dispatch.
-| `sessionMagic` | ≤ `MAX_UINT32`; random per-connection uint32 |
 
 Every rule is enforced inside the codec's `read`: a violation is a `ReaderError`, and the decode
 boundary collapses it to `null` → `malformed` (Ban policy below). The version-support check runs
