@@ -277,7 +277,10 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   // single failure: the spread would hand testnet mainnet's root, and a root is
   // exactly what a node checks its own seeded state against.
   genesisStateRoot: 'd5be2f66c8d10f0408f726b982a1c1282b9577587aefc1cab6808f0a218bf45403',
-  genesisId: '',
+  // Testnet's block 1, mined 2026-08-30 on the chain deployed with PR #169's
+  // build (TYPES_INTERFACE → "genesisId pins block 1, and is empty until a
+  // network has one"). Mainnet's and devnet's stay ''.
+  genesisId: '30865e48f876921a6b58db6bbf9f3ef82cde99058a421f4f6e34c287d1322fdc',
 } satisfies NetworkProfile);
 
 // devnet: compressed timescale, same economics. `karmaDecayIntervalBlocks` (3) and

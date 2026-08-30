@@ -2759,9 +2759,10 @@ overridden explicitly and `network.test.ts` asserts the override rather than the
 **`genesisId` pins block 1, and is empty until a network has one.** Hex(32) of the height-1 block's
 `blockHash`, or `''`. When set, the height-1 chain-link refuses any other block 1 (`NODE_INTERFACE` →
 Ordering block apply-time authorization, genesis pin) and a NiPoPoW proof must anchor on it
-(→ Interlink vector). Devnet is always `''` — every run mines its own block 1. Testnet and mainnet are
-`''` until their block 1 exists and are pinned in the release after: a value, not a format, so
-pinning it moves no bytes. Field-only and per-network like the other genesis fields; `network.test.ts`
+(→ Interlink vector). Devnet is always `''` — every run mines its own block 1. **Testnet is pinned to
+`30865e48f876921a6b58db6bbf9f3ef82cde99058a421f4f6e34c287d1322fdc`**, its block 1, mined 2026-08-30 on the chain
+deployed with PR #169's build. Mainnet is `''` until its block 1 exists and is pinned in the release
+after: a value, not a format, so pinning it moves no bytes. Field-only and per-network like the other genesis fields; `network.test.ts`
 asserts each profile's own value rather than the spread.
 
 **`membershipBarMultiplier` is field-only, and the case says so.** It scales the membership bar
