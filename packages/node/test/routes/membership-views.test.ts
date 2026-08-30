@@ -278,6 +278,7 @@ describe('/status membership fields', () => {
         inviteBondMax: 10000n,
         getNetworkRecord: () => ({ memberCount: 4 }),
         membershipBarMultiplier: 1,
+        protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
       };
       const app = express();
       app.use(express.json());

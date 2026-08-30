@@ -372,6 +372,7 @@ const app = createApp(config);
 const adminServer = createAdminApp(config, {
   getConnectedPeers: () => net.getConnectedPeers(),
   syncPhase: () => net.syncPhase(),
+  protocolVersionSchedule: config.protocolVersionSchedule,
 });
 const server = app.listen(config.port, () => {
   // Read off the socket rather than named from config: `listen(port)` passes no

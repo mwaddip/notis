@@ -119,6 +119,7 @@ async function request(
       inviteBondMax: 10000n,
       getNetworkRecord: () => ({ memberCount: 1 }),
       membershipBarMultiplier: 1,
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
     };
 
     const app = express();

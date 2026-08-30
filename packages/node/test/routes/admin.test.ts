@@ -19,6 +19,7 @@ function adminApp(deps?: {
   app.use(createAdminRouter({
     getConnectedPeers: deps?.getConnectedPeers ?? (() => []),
     syncPhase: deps?.syncPhase ?? (() => 'idle'),
+    protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
   }));
   return app;
 }

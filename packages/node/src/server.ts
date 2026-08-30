@@ -409,6 +409,7 @@ export function createApp(config: Config): express.Express {
       inviteBondMax: config.inviteBondMax,
       getNetworkRecord: store.getNetworkRecord,
       membershipBarMultiplier: config.membershipBarMultiplier,
+      protocolVersionSchedule: config.protocolVersionSchedule,
     }),
   );
 
