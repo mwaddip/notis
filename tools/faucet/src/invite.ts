@@ -1,4 +1,4 @@
-import { selectBoxes, PROTOCOL_VERSION } from '@dagsocial/types';
+import { selectBoxes } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import type { FaucetConfig } from './config.js';
 import { InsufficientFundsError, checkRecipient, signAndRender, valueDescending } from './tx.js';
@@ -19,6 +19,7 @@ export function buildInviteTx(
   boxes: readonly BoxRef[],
   inviteeHex: string,
   height: number,
+  protocolVersion: number,
 ): BuiltTx {
   checkRecipient(cfg, inviteeHex, 'invitee');
 
@@ -52,7 +53,9 @@ export function buildInviteTx(
     inputs: selected.map((b) => b.boxId),
     outputs,
     signatures: {},
-    protocolVersion: PROTOCOL_VERSION,
+    // The era the node reported, never a constant of this build — a client signs
+    // the era the node reports (WEB_INTERFACE → Invariants).
+    protocolVersion,
   };
 
   return signAndRender(cfg, tx, changeValue > 0n ? 0 : null);

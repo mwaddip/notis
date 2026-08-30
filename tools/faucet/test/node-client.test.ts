@@ -48,3 +48,34 @@ describe('HttpNodeClient box queries', () => {
     await expect(client.karmaBoxes(key)).rejects.toThrow(NodeError);
   });
 });
+
+describe('HttpNodeClient status', () => {
+  const client = new HttpNodeClient('http://localhost:3000');
+
+  // NODE_INTERFACE → Status: /status carries the tip and the era, and the client
+  // reads both from the one fetch.
+  it('reads the tip and the era from one fetch', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      json(200, { networkType: 'testnet', blockHeight: 512, protocolVersion: 3, postCount: 0 }),
+    );
+    expect(await client.status()).toEqual({ blockHeight: 512, protocolVersion: 3 });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  // WEB_INTERFACE → Invariants: the client signs the era the node reports, so a
+  // status carrying no era is refused — never signed under a default of 1.
+  it('refuses a status with no protocolVersion, rather than defaulting to 1', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(json(200, { blockHeight: 512 }));
+    await expect(client.status()).rejects.toThrow(/protocol version/i);
+  });
+
+  it('refuses a status with no height', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(json(200, { protocolVersion: 1 }));
+    await expect(client.status()).rejects.toThrow(NodeError);
+  });
+
+  it('a non-ok status is a failure', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(json(502, { error: 'bad gateway' }));
+    await expect(client.status()).rejects.toThrow(NodeError);
+  });
+});
