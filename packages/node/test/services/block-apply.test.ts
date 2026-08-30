@@ -2881,3 +2881,135 @@ describe('T4: activity clock in the user-transaction loop', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// The step-2 header version check — the consensus check on a block's own
+// header, over a two-era schedule (VALIDATION_INTERFACE → Protocol Version).
+// applyOrderingBlock reads the schedule off the module config, so it is mocked.
+// ---------------------------------------------------------------------------
+describe('the step-2 header version check', () => {
+  // Era 1 below height 2, era 2 from height 2. A fixture may schedule a version
+  // the build does not implement (TYPES_INTERFACE → Version).
+  const SCHEDULE = [{ version: 1, fromHeight: 0 }, { version: 2, fromHeight: 2 }];
+
+  beforeEach(() => {
+    vi.doMock('../../src/config.js', async () => {
+      const actual = await vi.importActual<typeof import('../../src/config.js')>(
+        '../../src/config.js',
+      );
+      return {
+        ...actual,
+        config: Object.freeze({ ...actual.config, protocolVersionSchedule: SCHEDULE }),
+      };
+    });
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    vi.doUnmock('../../src/config.js');
+  });
+
+  it('rejects a block whose header declares a version above its era', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const blockApply = await importBlockApply();
+
+    // Height 1 is era 1; a header declaring 2 is rejected at step 2, ahead of PoW.
+    const block = await makeApplicableBlock({ protocolVersion: 2, height: 1 });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = blockApply.applyOrderingBlock(block);
+    const warnings = warn.mock.calls.map((c) => String(c[0]));
+    warn.mockRestore();
+
+    expect(result).toBe(false);
+    expect(warnings.some((w) => w.includes('not the era 1')), JSON.stringify(warnings)).toBe(true);
+  });
+
+  it('rejects a block declaring a version below its era, and applies the one that declares it', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const blockApply = await importBlockApply();
+
+    // Block 1 (era 1) establishes the tip.
+    expect(blockApply.applyOrderingBlock(await makeApplicableBlock({ height: 1 }))).toBe(true);
+
+    // Height 2 is era 2. A header declaring 1 is rejected at step 2, naming the era.
+    const below = await makeApplicableBlock({ protocolVersion: 1, height: 2 });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const rejected = blockApply.applyOrderingBlock(below);
+    const warnings = warn.mock.calls.map((c) => String(c[0]));
+    warn.mockRestore();
+    expect(rejected).toBe(false);
+    expect(warnings.some((w) => w.includes('not the era 2')), JSON.stringify(warnings)).toBe(true);
+
+    // The block that declares the era applies at that same height.
+    const at = await makeApplicableBlock({ protocolVersion: 2, height: 2 });
+    expect(blockApply.applyOrderingBlock(at)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A prune applied in a block leaves a stump carrying the block's era — its
+// compaction height is the block's (ARCHITECTURE → Protocol Versioning).
+// ---------------------------------------------------------------------------
+describe('a prune stamps its stump with the block era', () => {
+  const SCHEDULE = [{ version: 1, fromHeight: 0 }, { version: 2, fromHeight: 2 }];
+
+  beforeEach(() => {
+    vi.doMock('../../src/config.js', async () => {
+      const actual = await vi.importActual<typeof import('../../src/config.js')>(
+        '../../src/config.js',
+      );
+      return {
+        ...actual,
+        config: Object.freeze({ ...actual.config, protocolVersionSchedule: SCHEDULE }),
+      };
+    });
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    vi.doUnmock('../../src/config.js');
+  });
+
+  it('a prune applied in a block at era 2 leaves a stump declaring 2', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const utxo = await importUtxo();
+    const blockApply = await importBlockApply();
+
+    const rootAuthor = makeTestIdentity();
+
+    // Block 1 (era 1) confirms the root post.
+    const { tx: postTx, postId } = await seedPostTx(rootAuthor, 'root');
+    expect(
+      blockApply.applyOrderingBlock(await makeApplicableBlock({ utxoTxs: [postTx], height: 1 })),
+    ).toBe(true);
+
+    // Block 2 (era 2) prunes it. The prune is by the root topology author, and
+    // its transaction rides the block's era.
+    const pruneKarma = makeKarmaBox(10n, rootAuthor.userId, 1, 88);
+    utxo.insertBox(pruneKarma);
+    const pruneTx: UtxoTransaction = {
+      inputs: [pruneKarma.id!],
+      outputs: [
+        { boxType: 'karma', value: pruneKarma.value, createdAtBlock: pruneKarma.createdAtBlock, owner: rootAuthor.userId } as never,
+      ],
+      signatures: {},
+      protocolVersion: 2,
+      prune: { rootPostHash: postId },
+    };
+    signTransaction(pruneTx, rootAuthor.privateKey, hex(rootAuthor.userId));
+    const block2 = await makeApplicableBlock({ utxoTxs: [pruneTx], height: 2, protocolVersion: 2 });
+    expect(blockApply.applyOrderingBlock(block2)).toBe(true);
+
+    // The stump carries the block's era.
+    const { getStump } = await import('../../src/store/stumps.js');
+    const stump = getStump(postId);
+    expect(stump).not.toBeNull();
+    expect(stump!.protocolVersion).toBe(2);
+  });
+});
+

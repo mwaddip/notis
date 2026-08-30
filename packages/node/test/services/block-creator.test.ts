@@ -25,6 +25,7 @@ import {
   LIKE_KARMA_COST, computeTxId, decodeTx, utxoTxTreeByteLength } from '@dagsocial/types';
 import { blockHash } from '@dagsocial/validation';
 import type {
+  CreditBox,
   KarmaBox,
   OrderingBlock,
   UtxoTransaction,
@@ -315,7 +316,7 @@ describe('block-creator', () => {
         );
         return {
           ...actual,
-          config: Object.freeze({ ...actual.config, protocolVersionSchedule: SCHEDULE }),
+          config: Object.freeze({ ...actual.config, protocolVersionSchedule: SCHEDULE, storageRentPeriodBlocks: 0 }),
         };
       });
       vi.resetModules();
@@ -367,6 +368,35 @@ describe('block-creator', () => {
       // Skipped, not evicted: the foreign entry is still pooled, to leave by
       // expiry like any other.
       expect(mempool.getPendingEntries(10).map((e) => e.rowid)).toContain(foreignRow);
+    });
+
+    it('a rent transaction over a rent-eligible box declares the era', async () => {
+      const db = await importDb();
+      db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+      const utxo = await importUtxo();
+      const bc = await importBlockCreator();
+
+      // A credit box old enough to owe rent at height 1: eligibility is
+      // created_at_block < currentHeight - storageRentPeriodBlocks = 1 - 0 = 1,
+      // and this box is at 0 (NODE_INTERFACE → Storage rent is a transition
+      // requiring no signature). Its rent transaction rides era 2.
+      const owner = makeTestIdentity().userId;
+      const box = seedProvenance<CreditBox>(
+        { boxType: 'credit', value: 100_000_000n, owner, createdAtBlock: 0 },
+        88,
+      );
+      utxo.insertBox(box);
+
+      bc.startBlockCreator(testConfig);
+      const template = bc.getCurrentTemplate();
+      expect(template).not.toBeNull();
+      // The body is the rent transaction, then the settlement. The rent tx
+      // charges the box (a fee output) and declares the era at the built height.
+      const encoded = template!.utxoTxTree.utxoTxs;
+      const rentTx = decodeTx(encoded[0]!);
+      expect(rentTx.outputs.some((o) => o.boxType === 'fee')).toBe(true);
+      expect(rentTx.protocolVersion).toBe(2);
     });
   });
 

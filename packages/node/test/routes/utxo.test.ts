@@ -476,6 +476,43 @@ describe('UTXO routes', () => {
       return tx;
     }
 
+    /** Spend one specific box to the receiver, signed by the sender. */
+    function spendBox(boxId: string, value: bigint): UtxoTransaction {
+      const tx: UtxoTransaction = {
+        inputs: [boxId],
+        outputs: [{ boxType: 'credit', value, createdAtBlock: 0, owner: receiverPubKey } as CandidateOf<CreditBox>],
+        signatures: {},
+        protocolVersion: PROTOCOL_VERSION,
+      };
+      const privKey = createPrivateKey({ key: Buffer.from(senderPrivKey), format: 'der', type: 'pkcs8' });
+      tx.signatures[senderHex] = new Uint8Array(sign(null, Buffer.from(computeTxId(tx), 'hex'), privKey));
+      return tx;
+    }
+
+    it('admits a box locked until L at tip = L - 1, and refuses it at tip = L - 2', async () => {
+      // Admission judges at tip + 1 (NODE_INTERFACE → validateTx). A box locked
+      // until L is spendable in the block at height L, so the route whose tip is
+      // L - 1 admits it — one block earlier than a tip-height judge would. The
+      // pair isolates the lock: the same signed transaction, only the tip moves.
+      const L = 300;
+      const locked = seedProvenance<CreditBox>({
+        boxType: 'credit',
+        value: 50_000n,
+        owner: senderPubKey,
+        createdAtBlock: 0,
+        lockedUntilBlock: L,
+      }, 77);
+      insertBox(locked);
+
+      // Tip L - 2 → judged at L - 1 → still locked.
+      const early = await request('/credits/transfer', 'POST', { tx: txToJson(spendBox(locked.id!, 50_000n)) }, L - 2);
+      expect(early.status).toBe(400);
+
+      // Tip L - 1 → judged at L → spendable.
+      const atTip = await request('/credits/transfer', 'POST', { tx: txToJson(spendBox(locked.id!, 50_000n)) }, L - 1);
+      expect(atTip.status).toBe(200);
+    });
+
     it('rejects a missing tx', async () => {
       const res = await request('/credits/transfer', 'POST', {});
       expect(res.status).toBe(400);
