@@ -78,4 +78,13 @@ describe('HttpNodeClient status', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(json(502, { error: 'bad gateway' }));
     await expect(client.status()).rejects.toThrow(NodeError);
   });
+
+  // A hung node must not stall the faucet, so every call carries a timeout signal.
+  it('attaches a timeout signal to the request', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      json(200, { blockHeight: 512, protocolVersion: 3 }));
+    await client.status();
+    const init = fetchMock.mock.calls[0]![1] as RequestInit | undefined;
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
+  });
 });
