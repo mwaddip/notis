@@ -39,7 +39,7 @@ import {
   decodeModifierResponse,
 } from './sync-codec.js';
 import { encodeServableOrderingBlock } from './serve-encode.js';
-import { isBogusAddress } from './bogus-addr.js';
+import { isBogusAddress, isLoopbackAddress } from './bogus-addr.js';
 import { readStreamBounded } from './util.js';
 import { MAX_CHAIN_RESPONSE_ITEMS, MAX_SERVE_BODY_BYTES, MAX_STREAM_BYTES } from './msg-guards.js';
 import { PeerDb, type PeerStorage } from './peerdb.js';
@@ -1247,13 +1247,17 @@ export class NetNode {
   }
 
   private buildOurHandshake(): import('./handshake.js').HandshakeMsg {
-    const listenAddrs = this.libp2p?.getMultiaddrs() ?? [];
     return {
       agentName: 'dagsocial',
       protocolVersion: PROTOCOL_VERSION,
       nodeName: this.peerId().slice(0, 12),
       chainHeight: this.syncStore.chainHeight(),
-      declaredAddress: listenAddrs[0]?.toString(),
+      // NET_INTERFACE → Handshake Body, the `declaredAddress` row: the first
+      // listen address that is not loopback, absent when every one is — a
+      // loopback address advertised to a peer is one no peer can dial.
+      declaredAddress: (this.libp2p?.getMultiaddrs() ?? [])
+        .map((a) => a.toString())
+        .find((a) => !isLoopbackAddress(a)),
       capabilities: [],
       sessionMagic: Math.floor(Math.random() * 0x100000000),
     };

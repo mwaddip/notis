@@ -102,3 +102,35 @@ export function isBogusAddress(addr: string, magic: number): boolean {
 
   return true;
 }
+
+/**
+ * True when `addr`'s dial target is a loopback address — 127/8 or ::1.
+ *
+ * Same parse as `isBogusAddress` — the first `ip4`/`ip6` component's raw bytes.
+ * Chooses the handshake's advertised address (NET_INTERFACE → Handshake Body,
+ * the `declaredAddress` row): a node declares its first listen address that is
+ * not loopback, so a node listening on `0.0.0.0` does not declare the loopback
+ * entry libp2p lists first. A string that does not parse, or names no IP
+ * component (a `/dns4/…` name), is not loopback — it is dialable. Never throws.
+ */
+export function isLoopbackAddress(addr: string): boolean {
+  let tuples: Array<[number, Uint8Array?]>;
+  try {
+    tuples = multiaddr(addr).tuples();
+  } catch {
+    return false;
+  }
+
+  for (const [code, bytes] of tuples) {
+    if (code === CODE_IP4 && bytes !== undefined && bytes.length === 4) {
+      return bytes[0] === 127; // loopback 127/8
+    }
+    if (code === CODE_IP6 && bytes !== undefined && bytes.length === 16) {
+      let leadingZero = 0;
+      while (leadingZero < 16 && bytes[leadingZero] === 0) leadingZero++;
+      return leadingZero >= 15 && bytes[15] === 1; // loopback ::1
+    }
+  }
+
+  return false;
+}
