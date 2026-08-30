@@ -304,8 +304,9 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   creditEpochBlocks: 400, // fixed-rate ≈ 2.5× epoch (mainnet: ≈ 2.24×)
   creditEmissionTotal: 362_000n * 10n ** 8n, // below devnet's curve (386,400)
 
-  // Above the deepest height any e2e scenario reaches (~47 — the fork chapter
-  // strands at maxReorgDepth + 7), with headroom. ARCHITECTURE → What varies per network.
+  // Above the deepest height any e2e scenario reaches — 51, the fork chapter's
+  // strand case, measured (CONSTANTS → Per-network values) — with headroom.
+  // ARCHITECTURE → What varies per network.
   storageRentPeriodBlocks: 100,
 
   // ⚠ **A PUBLICLY KNOWN TEST KEY.** Its secret is in tracked source and reaches

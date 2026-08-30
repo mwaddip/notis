@@ -246,8 +246,9 @@ describe('NETWORK_PROFILES', () => {
       .toBe(2 * NETWORK_PROFILES.mainnet.creditFixedRateBlocks);
   });
 
-  // Above the deepest height any e2e scenario reaches (~47 — the fork chapter
-  // strands at maxReorgDepth + 7), with headroom. The drift test pins both values.
+  // Above the deepest height any e2e scenario reaches — 51, the fork chapter's
+  // strand case, measured (CONSTANTS → Per-network values) — with headroom.
+  // The drift test pins both values.
   it('devnet rent period clears the deepest e2e height with headroom', () => {
     const devnet = NETWORK_PROFILES.devnet;
     expect(devnet.storageRentPeriodBlocks).toBe(100);
