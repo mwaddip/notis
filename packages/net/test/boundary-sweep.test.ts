@@ -19,7 +19,7 @@ import type { PeerManager } from '../src/peer-mgr.js';
 
 // ---------------------------------------------------------------------------
 // tipApplied — the boundary sweep (NET_INTERFACE → Post-Handshake Routing) and
-// the record's declared version (NET_INTERFACE → PeerDb; spec finding #3).
+// the record's declared version (NET_INTERFACE → PeerDb).
 //
 // These drive the real NetNode against a stub libp2p — start() is a TCP
 // listener, so the connection primitives (getConnections/hangUp, dial) are the
@@ -141,7 +141,7 @@ describe('the outbound bootstrap record keeps the peer\'s declared version', () 
     });
   }
 
-  it('records 2, not our PROTOCOL_VERSION, and stamps it on the metadata (finding #3)', async () => {
+  it('records 2, not our PROTOCOL_VERSION, and stamps it on the metadata', async () => {
     const net = new NetNode(makeConfig(), validators);
     const internals = net as unknown as Internals;
     const peerId = 'boot-peer';

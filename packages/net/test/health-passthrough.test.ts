@@ -325,8 +325,8 @@ describe('onPeerPenalised', () => {
 
     // A well-framed body that fails the codec (empty agentName) is a body-tier
     // malformed handshake — rejected and penalised, firing the event. A high
-    // declared version is no longer a rejection: peering is by era coverage, so
-    // a newer build is accepted (NET_INTERFACE → Handshake).
+    // declared version is accepted, since peering is by era coverage and a newer
+    // build covers the era (NET_INTERFACE → Handshake).
     const badFrame = buildHandshakeFrame(MAGIC, {
       agentName: '',
       protocolVersion: 1,

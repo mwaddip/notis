@@ -443,9 +443,9 @@ describe('inbound handshake handler — the era gate flips through the tip', () 
 
 // ---------------------------------------------------------------------------
 // The record and metadata keep the peer's declared version — NET_INTERFACE →
-// PeerDb; → Post-Handshake Routing (spec finding #3). This build declares
-// PROTOCOL_VERSION = 1; the peer declares 2, and both the PeerDb record and the
-// peer's metadata hold 2, not our constant.
+// PeerDb; → Post-Handshake Routing. This build declares PROTOCOL_VERSION = 1;
+// the peer declares 2, and both the PeerDb record and the peer's metadata hold
+// 2, not our constant.
 // ---------------------------------------------------------------------------
 
 describe('inbound handshake handler — the record keeps the declared version', () => {

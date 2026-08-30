@@ -791,7 +791,7 @@ describe('version gate — a mismatch is Transient (50), not misbehavior (100)',
     expect(penaltySpy).not.toHaveBeenCalled();
   });
 
-  it('rejects a tx whose commit declares a different era than its envelope (finding #1)', () => {
+  it('rejects a tx whose commit declares a different era than its envelope', () => {
     // The envelope declares era 2 (matches), the commit declares 1 — both must
     // equal the era, so the commit alone fails it.
     const { result, peer, penaltySpy, kindSpy } = runTx(postTxV(2, 1), CONTENT, H - 1);
