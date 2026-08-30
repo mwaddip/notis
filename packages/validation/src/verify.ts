@@ -609,6 +609,35 @@ export function verifyProtocolVersion(
 }
 
 // ---------------------------------------------------------------------------
+// verifyTxProtocolVersion
+// ---------------------------------------------------------------------------
+
+/**
+ * Every declared version a transaction carries equals the era at `height`:
+ * `tx.protocolVersion` and, when `tx.post` is present, `tx.post.protocolVersion`
+ * (VALIDATION_INTERFACE → verifyTxProtocolVersion). The commit's version is in
+ * the post-id preimage, so a commit declaring a version other than its
+ * transaction's would mint a second identity for one post.
+ *
+ * Total (M-5): reached straight off gossip, so a non-object `tx` or a `post`
+ * that is not an object is `false`, never a throw.
+ */
+export function verifyTxProtocolVersion(
+  tx: UtxoTransaction,
+  height: number,
+  schedule: readonly ProtocolEra[],
+): boolean {
+  if (!isObject(tx)) return false;
+  if (!verifyProtocolVersion(tx.protocolVersion as number, height, schedule)) return false;
+  const post = tx.post;
+  if (post !== undefined) {
+    if (!isObject(post)) return false;
+    if (!verifyProtocolVersion(post.protocolVersion as number, height, schedule)) return false;
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // verifyContentLimits
 // ---------------------------------------------------------------------------
 

@@ -4,6 +4,7 @@ import { readFileSync } from 'fs';
 import {
   verifyValidatorSignature,
   verifyProtocolVersion,
+  verifyTxProtocolVersion,
   verifyContentLimits,
   verifyContentCharacters,
   verifyParentRefsCount,
@@ -245,6 +246,51 @@ describe('verifyProtocolVersion', () => {
 
   it('rejects era 2 on the devnet schedule', () => {
     expect(verifyProtocolVersion(2, 1_000_000, DEVNET_SCHEDULE)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// verifyTxProtocolVersion
+// ---------------------------------------------------------------------------
+
+describe('verifyTxProtocolVersion', () => {
+  // Spec §8: the boundary at height 10. Every case is judged at height 10 (era
+  // 2), so a declared 2 is the era and a declared 1 is not. The helper builds
+  // exactly the two fields the check reads (VALIDATION_INTERFACE →
+  // verifyTxProtocolVersion).
+  const schedule: ProtocolEra[] = [
+    { version: 1, fromHeight: 0 },
+    { version: 2, fromHeight: 10 },
+  ];
+  const tx = (protocolVersion: number, post?: unknown): UtxoTransaction =>
+    ({ protocolVersion, ...(post !== undefined ? { post } : {}) } as unknown as UtxoTransaction);
+
+  it('accepts a transaction and commit that both declare the era', () => {
+    expect(verifyTxProtocolVersion(tx(2, { protocolVersion: 2 }), 10, schedule)).toBe(true);
+  });
+
+  it('rejects a commit declaring a version other than its transaction (finding #1)', () => {
+    expect(verifyTxProtocolVersion(tx(2, { protocolVersion: 1 }), 10, schedule)).toBe(false);
+  });
+
+  it('rejects a transaction whose own version is not the era', () => {
+    expect(verifyTxProtocolVersion(tx(1, { protocolVersion: 2 }), 10, schedule)).toBe(false);
+  });
+
+  it('accepts a transaction with no post that declares the era', () => {
+    expect(verifyTxProtocolVersion(tx(2), 10, schedule)).toBe(true);
+  });
+
+  it('rejects a transaction with no post whose version is not the era', () => {
+    expect(verifyTxProtocolVersion(tx(1), 10, schedule)).toBe(false);
+  });
+
+  it('rejects a null transaction without throwing', () => {
+    expect(verifyTxProtocolVersion(null as unknown as UtxoTransaction, 10, schedule)).toBe(false);
+  });
+
+  it('rejects a transaction whose post is not an object without throwing', () => {
+    expect(verifyTxProtocolVersion(tx(2, 'x'), 10, schedule)).toBe(false);
   });
 });
 
