@@ -119,7 +119,8 @@ function loadUiBuilders(): UiBuilders {
   return new Function(
     [
       `let currentBlockHeight = ${HEIGHT};`,
-      lift('const PROTOCOL_VERSION ='),
+      // The UI's protocolVersion starts null (set by /status); seed the era.
+      'let protocolVersion = 1;',
       lift('const VOUCH_KARMA_AMOUNT ='),
       lift('function jsonBigint('),
       lift('function selectBoxes('),

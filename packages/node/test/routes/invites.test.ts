@@ -72,8 +72,9 @@ function loadUiBuilders(): UiBuilders {
   return new Function(
     [
       'let currentBlockHeight = 0;',
-      lift('const PROTOCOL_VERSION ='),
-      // The UI starts with null (set by /status); seed the devnet floor.
+      // The UI's protocolVersion and INVITE_BOND_DEFAULT start null (set by
+      // /status); seed the era and the devnet floor so the builder runs.
+      'let protocolVersion = 1;',
       'let INVITE_BOND_DEFAULT = 5n;',
       lift('function jsonBigint('),
       lift('function selectBoxes('),

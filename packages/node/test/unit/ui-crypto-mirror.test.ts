@@ -394,7 +394,7 @@ const MIRRORED_FUNCTIONS: readonly string[] =
 /** Consts the mirror lifts. A top-level one may itself construct bytes. */
 const MIRRORED_CONSTS = [
   'POST_CONTENT_DOMAIN', 'POST_ID_DOMAIN', 'BOX_ID_DOMAIN', 'TX_ID_DOMAIN', 'VLQ_SENTINEL', 'U32_SENTINEL', 'BOX_TYPE_TAGS', 'POST_TYPE_TAGS',
-  'PROTOCOL_VERSION', 'VOUCH_KARMA_AMOUNT', 'VOUCH_MIN_BALANCE',
+  'protocolVersion', 'VOUCH_KARMA_AMOUNT', 'VOUCH_MIN_BALANCE',
   'LIKE_KARMA_COST', 'POST_PRICE_THREAD', 'POST_PRICE_REPLY', 'REPLY_AUTHOR_SHARE',
   'INVITE_BOND_DEFAULT',
   'pendingKarmaChange',
@@ -497,9 +497,11 @@ function loadUiCrypto(): UiCrypto {
     'let currentBlockHeight = 0;',
     ...MIRRORED_CONSTS.map((name) => {
       const decl = extractConst(html, name);
-      // INVITE_BOND_DEFAULT starts null in the UI (set by /status at runtime).
-      // The test sets it to a valid value so the builders can run.
+      // INVITE_BOND_DEFAULT and protocolVersion start null in the UI (set by
+      // /status at runtime). The test sets them to valid values so the builders
+      // can run and stamp the era the node would report.
       if (name === 'INVITE_BOND_DEFAULT') return 'let INVITE_BOND_DEFAULT = 5n;';
+      if (name === 'protocolVersion') return 'let protocolVersion = 1;';
       return decl;
     }),
     ...MIRRORED_FUNCTIONS.map((name) => extractDeclaration(html, `function ${name}(`)),
