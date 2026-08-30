@@ -7,6 +7,7 @@ import type { NetConfig, Peer } from '../src/types.js';
 function makeConfig(overrides: Partial<NetConfig> = {}): NetConfig {
   return {
     magic: 0x54444147,
+    protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
     bootstrapPeers: [],
     listenAddrs: '/ip4/0.0.0.0/tcp/0',
     maxPeers: 50,

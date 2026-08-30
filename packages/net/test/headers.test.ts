@@ -13,6 +13,7 @@ import {
   blockHash,
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
+  verifyTxProtocolVersion,
   verifyContentLimits,
   verifyParentRefsCount,
   verifyTxStructure,
@@ -785,6 +786,7 @@ describe('chain query round-trip', () => {
 
 const registrationConfig: NetConfig = {
   magic: MAGIC,
+  protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
   bootstrapPeers: [],
   listenAddrs: '/ip4/0.0.0.0/tcp/0',
   maxPeers: 10,
@@ -797,6 +799,7 @@ const registrationConfig: NetConfig = {
 const registrationValidators: NetValidators = {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
+  verifyTxProtocolVersion,
   verifyContentLimits,
   verifyParentRefsCount,
   verifyTxStructure,

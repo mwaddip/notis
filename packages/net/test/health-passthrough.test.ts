@@ -4,6 +4,7 @@ import { syncInfoCodec } from '../src/sync-codec.js';
 import {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
+  verifyTxProtocolVersion,
   verifyContentLimits,
   verifyParentRefsCount,
   verifyTxStructure,
@@ -23,6 +24,7 @@ const MAGIC = 0x54444147;
 const validators: NetValidators = {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
+  verifyTxProtocolVersion,
   verifyContentLimits,
   verifyParentRefsCount,
   verifyTxStructure,
@@ -33,6 +35,7 @@ const validators: NetValidators = {
 function makeConfig(): NetConfig {
   return {
     magic: MAGIC,
+    protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
     bootstrapPeers: [],
     listenAddrs: '/ip4/0.0.0.0/tcp/0',
     maxPeers: 10,

@@ -46,6 +46,7 @@ function stubStore(overrides: Partial<SyncStore> = {}): SyncStore {
 
 const testConfig: NetConfig = {
   magic: 0x54444147,
+  protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
   bootstrapPeers: [],
   listenAddrs: '',
   maxPeers: 10,

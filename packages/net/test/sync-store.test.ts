@@ -9,6 +9,7 @@ import {
 import {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
+  verifyTxProtocolVersion,
   verifyContentLimits,
   verifyParentRefsCount,
   verifyTxStructure,
@@ -48,6 +49,7 @@ function makeBlock(header: BlockHeader): OrderingBlock {
 const validators: NetValidators = {
   verifyOrderingBlockPoW,
   verifyProtocolVersion,
+  verifyTxProtocolVersion,
   verifyContentLimits,
   verifyParentRefsCount,
   verifyTxStructure,
@@ -117,6 +119,7 @@ describe('LazySyncStore.heightByBlockId — provider read', () => {
 
 const config: NetConfig = {
   magic: 0x54444147,
+  protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
   bootstrapPeers: [],
   listenAddrs: '/ip4/0.0.0.0/tcp/0',
   maxPeers: 10,

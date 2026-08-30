@@ -41,11 +41,12 @@ export interface HandshakeMsg {
  * - `malformed` — missing or wrong-typed fields, negative or over-bound heights.
  *   Nothing legitimate produces this, so the peer is adversarial and earns a
  *   permanent ban.
- * - `unsupported-version` — a well-formed handshake from a node speaking a
- *   protocol version we do not implement. That is a compatibility mismatch, not
- *   an attack: permanently banning it would partition the network on a routine
- *   `PROTOCOL_VERSION` bump, since every not-yet-upgraded peer would be banned
- *   by every upgraded one, permanently, with no path back once they upgrade.
+ * - `unsupported-version` — a well-formed handshake from a peer whose declared
+ *   version is below our era, so it does not cover the era we are applying
+ *   (NET_INTERFACE → Handshake). That is a compatibility mismatch, not an
+ *   attack: peering is by era coverage, and a version mismatch anywhere is a
+ *   soft refusal, never a permanent ban — a bump adds its era an upgrade window
+ *   ahead, and the peer may upgrade and reconnect.
  */
 export type HandshakeRejection = 'malformed' | 'unsupported-version';
 
@@ -170,23 +171,32 @@ function reject(
 /**
  * Validate a decoded handshake.
  *
- * Shape and bounds are enforced by the codec; this function checks
- * protocol-version support. The codec runs first, so a malformed body is
- * `null` before this is reached — a body that is malformed AND
+ * Shape and bounds are enforced by the codec; this function checks that the peer
+ * covers our era. Peering is by era coverage (NET_INTERFACE → Handshake): accept
+ * iff the peer's declared `protocolVersion` is at or above `era`, the era of the
+ * next block we would apply. A newer build passes — it covers our era; a build
+ * whose versions end below our era is refused. The codec runs first, so a
+ * malformed body is `null` before this is reached — a body that is malformed AND
  * version-mismatched is classified `malformed`, not `unsupported-version`.
+ *
+ * `era` is `protocolVersionAt(schedule, chainHeight() + 1)`, so it is `null` when
+ * the chain height is out of the schedule's domain — a build defect, since
+ * `SyncStore` supplies a non-negative integer and `{ version: 1, fromHeight: 0 }`
+ * covers it. A null era refuses softly: we decline what we cannot place against
+ * an era we cannot compute, and the refusal is reversible (Transient).
  */
 export function validateHandshake(
   raw: unknown,
-  requiredProtocolVersions: number[],
+  era: number | null,
 ): HandshakeResult {
   if (raw === null || typeof raw !== 'object') {
     return reject('handshake body is not a valid message');
   }
   const msg = raw as HandshakeMsg;
 
-  if (!requiredProtocolVersions.includes(msg.protocolVersion)) {
+  if (era === null || msg.protocolVersion < era) {
     return reject(
-      `unsupported protocol version ${msg.protocolVersion}`,
+      `unsupported protocol version ${msg.protocolVersion}; era ${era}`,
       'unsupported-version',
     );
   }

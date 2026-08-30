@@ -3,8 +3,9 @@ import {
   decodeTxPacket,
   encodeOrderingBlock,
   encodeTxPacket,
+  protocolVersionAt,
 } from '@dagsocial/types';
-import type { OrderingBlock, UtxoTransaction } from '@dagsocial/types';
+import type { OrderingBlock, UtxoTransaction, ProtocolEra } from '@dagsocial/types';
 import { TopicValidatorResult } from '@libp2p/interface';
 import type { PubSub } from '@libp2p/interface';
 import type { GossipsubEvents } from '@chainsafe/libp2p-gossipsub';
@@ -80,6 +81,11 @@ export function subscribeTopics(
   peerMgr: PeerManager,
   handlers: GossipHandlers,
   karmaMembers: KarmaMembers,
+  // The profile's era table and the sync store's tip read. The block validator
+  // keys the era on each header's own height; the tx validator on the next
+  // block's, chainHeight() + 1 (NET_INTERFACE → Stage 1).
+  schedule: readonly ProtocolEra[],
+  chainHeight: () => number,
 ): void {
   const gs = libp2p.services.pubsub;
 
@@ -98,9 +104,16 @@ export function subscribeTopics(
         peerMgr.recordPenalty('misbehavior', _peer.toString(), 100, vr.error ?? 'invalid ordering block');
         return TopicValidatorResult.Reject;
       }
-      if (!validators.verifyProtocolVersion(block.header.protocolVersion)) {
-        // Bogus — well-formed message with unsupported version.
-        peerMgr.recordPenalty('misbehavior', _peer.toString(), 100, 'unsupported protocol version');
+      if (!validators.verifyProtocolVersion(block.header.protocolVersion, block.header.height, schedule)) {
+        // A declared version that is not the era at the header's height is a
+        // compatibility signal, never a violation (NET_INTERFACE → Peer Penalty
+        // System): Transient, not misbehavior.
+        const era = protocolVersionAt(schedule, block.header.height);
+        peerMgr.recordPenaltyKind(
+          PenaltyKind.Transient,
+          _peer.toString(),
+          `protocol version ${block.header.protocolVersion} != era ${era} at height ${block.header.height}`,
+        );
         return TopicValidatorResult.Reject;
       }
       // No explicit height guard here, and adding one would be dead code:
@@ -134,8 +147,19 @@ export function subscribeTopics(
         peerMgr.recordPenalty('misbehavior', _peer.toString(), 100, vr.error ?? 'invalid tx');
         return TopicValidatorResult.Reject;
       }
-      if (!validators.verifyProtocolVersion(tx.protocolVersion)) {
-        peerMgr.recordPenalty('misbehavior', _peer.toString(), 100, 'unsupported protocol version');
+      if (!validators.verifyTxProtocolVersion(tx, chainHeight() + 1, schedule)) {
+        // The envelope's and the commit's declared version each equal the era
+        // of the next block this node would apply; a mismatch is a compatibility
+        // signal, Transient not misbehavior (NET_INTERFACE → Peer Penalty System).
+        const era = protocolVersionAt(schedule, chainHeight() + 1);
+        const declared = tx.post !== undefined
+          ? `tx ${tx.protocolVersion}/commit ${tx.post.protocolVersion}`
+          : `tx ${tx.protocolVersion}`;
+        peerMgr.recordPenaltyKind(
+          PenaltyKind.Transient,
+          _peer.toString(),
+          `protocol version ${declared} != era ${era}`,
+        );
         return TopicValidatorResult.Reject;
       }
       // NET_INTERFACE → Gossip Topics: tx.post present ⟺ content present
