@@ -919,7 +919,19 @@ export class NetNode {
         }
         const body = decoded.body;
 
-        const result = validateHandshake(parseHandshakeBody(body), this.currentEra());
+        // Reading our era goes through node's store callback, so a failure here
+        // is local — attributed to the store, not to the outer handshake span,
+        // and never a penalty on the peer (same reasoning as our reply below).
+        let era: number | null;
+        try {
+          era = this.currentEra();
+        } catch (err) {
+          console.error(`[net] cannot read our era for ${peerId}: ${String(err)}`);
+          await stream.sink([new Uint8Array(0)]);
+          return;
+        }
+
+        const result = validateHandshake(parseHandshakeBody(body), era);
         if (!result.ok || !result.msg) {
           // Contract: the stream closes either way, but the ban does not —
           // malformed input is banned permanently, an unsupported version is

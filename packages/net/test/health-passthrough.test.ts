@@ -323,9 +323,13 @@ describe('onPeerPenalised', () => {
     const events: Array<{ id: string; kind: string; detail: string | null }> = [];
     net.onPeerPenalised((id, k, d) => events.push({ id, kind: k, detail: d }));
 
+    // A well-framed body that fails the codec (empty agentName) is a body-tier
+    // malformed handshake — rejected and penalised, firing the event. A high
+    // declared version is no longer a rejection: peering is by era coverage, so
+    // a newer build is accepted (NET_INTERFACE → Handshake).
     const badFrame = buildHandshakeFrame(MAGIC, {
-      agentName: 'dagsocial/1.0.0',
-      protocolVersion: 999,
+      agentName: '',
+      protocolVersion: 1,
       nodeName: 'peer',
       chainHeight: 7,
       capabilities: [],
