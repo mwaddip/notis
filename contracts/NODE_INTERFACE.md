@@ -4633,9 +4633,6 @@ its actual reach.
 | `LISTEN_ADDRS` | `operational` | `/ip4/0.0.0.0/tcp/0` | libp2p listen addresses |
 | `PUBLIC_URL` | `operational` | `/` | Base path where the demo UI is served |
 
-> ⚠ **AHEAD OF CODE — 2026-08-30.** `BOOTSTRAP_PEERS` defaults to `[]` regardless of the profile. The testnet-bootstrap-default
-> unit's node dispatch.
-
 > ⚠ **Every "at 60 seconds" duration annotation is nominal in the short run and exact in the long
 > run.** The block time is an *emergent* property of the target and hashrate — there is no producer
 > timer — and the ASERT schedule tracks it toward `orderingBlockIdealMs` with an absolute anchor, so

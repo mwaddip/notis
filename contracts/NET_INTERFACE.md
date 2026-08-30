@@ -272,9 +272,6 @@ opt(lpUtf8(declaredAddress)) ‖ arr(vlqU(capability)) ‖ vlqU(sessionMagic)
 | `capabilities` | count ≤ `MAX_CAPABILITY_ENTRIES` (64), each ≤ `MAX_CAPABILITY_CODE`; message codes this node can handle. Always present — an empty list is a peer that declares nothing |
 | `sessionMagic` | ≤ `MAX_UINT32`; random per-connection uint32 |
 
-> ⚠ **AHEAD OF CODE — 2026-08-30.** `buildOurHandshake` declares `listenAddrs[0]`, which on a node listening on `0.0.0.0` is the
-> loopback address. The testnet-bootstrap-default unit's net dispatch.
-
 Every rule is enforced inside the codec's `read`: a violation is a `ReaderError`, and the decode
 boundary collapses it to `null` → `malformed` (Ban policy below). The version-support check runs
 **after** decode, on a structurally sound message only.
@@ -809,9 +806,6 @@ is how a node gets eclipsed. Inbound connections are counted toward
   floor by construction, and re-dialing a connected seed every tick would open a fresh connection
   and run a fresh handshake against it each time
 - PeerDb not consulted — seeds are the bootstrap source
-
-> ⚠ **AHEAD OF CODE — 2026-08-30.** The floor re-dials every seed each tick while below `minPeers`, connected or not. The
-> testnet-bootstrap-default unit's net dispatch.
 
 **Fill phase** (outbound connections >= `minPeers`, < `maxPeers`):
 - Every `OUTBOUND_TICK_INTERVAL_MS` (30s, fixed — see below), query

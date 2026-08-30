@@ -2718,9 +2718,6 @@ would rot on the first restart. `BOOTSTRAP_PEERS` in the environment replaces th
 (`NODE_INTERFACE → Configuration`). Identity, not a tunable — not a register row (`CONSTANTS → Excluded`);
 each profile states its own literal, never a spread.
 
-> ⚠ **AHEAD OF CODE — 2026-08-30.** The field does not exist; `loadConfig` reads `BOOTSTRAP_PEERS` alone and defaults to `[]`. The
-> testnet-bootstrap-default unit's types dispatch.
-
 **This is the sole definition of the network magics.** `@dagsocial/wire` exported duplicates
 until P2-A phase 5 deleted them. They live here rather than `NetworkType` living in wire
 because **wire has zero runtime dependencies and keeps them**: `@dagsocial/types` cannot
