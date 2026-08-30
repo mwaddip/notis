@@ -3108,6 +3108,17 @@ describe('reorg — re-insertion floor pin (row 167-1)', () => {
       expect(findLocked(afterReorg), 'the locked tx is in the pool after the reorg').toBeDefined();
       const template = bc.getCurrentTemplate();
       expect(template, 'the node holds a template after the build (no stall)').not.toBeNull();
+
+      // Evidence measured: the template at height 5 carries the locked tx
+      // (its computeTxId is in utxoTxTree.utxoTxIds and its body bytes spend
+      // boxId). `validateTx(floorTx, 5)` in direct invocation returns
+      // `valid: false` ("locked until 6; current height is 5"). The
+      // speculation's mutation phase accepted the body without
+      // body-rejected. The intermediate between the fill and the
+      // speculation's `validateTx` call — likely the multi-pass loop's
+      // deferred-input resolution at a state the savepoint modified —
+      // allows the tx through. Filed as `utxo-engine.ts:1772` /
+      // `block-apply.ts:992`; not fixed in this unit.
     } finally {
       warn.mockRestore();
     }
