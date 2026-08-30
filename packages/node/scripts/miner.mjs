@@ -8,10 +8,17 @@ import { createHash } from 'crypto';
 // Points to the API base path where /mining/template and /mining/submit are reachable.
 // When running behind nginx, this must include the /api prefix (e.g. https://node.example/testnet/api).
 const NODE_URL = (process.env.NODE_URL ?? 'http://localhost:3000').replace(/\/+$/, '');
-const MINER_PCT = Math.max(0, Math.min(100, parseInt(process.env.MINER_PCT ?? '25', 10)));
+// A non-numeric MINER_PCT makes parseInt return NaN, which Math.min/max
+// propagate rather than clamp; fall back to the default so the duty cycle is
+// always a real 0..100 percentage.
+const parsedMinerPct = parseInt(process.env.MINER_PCT ?? '25', 10);
+const MINER_PCT = Number.isFinite(parsedMinerPct) ? Math.max(0, Math.min(100, parsedMinerPct)) : 25;
 const MINING_SECRET = process.env.MINING_SECRET ?? '';
 const MINER_PUBKEY = (process.env.MINER_PUBKEY ?? '').trim();
 const DUTY_WINDOW_MS = 1000;
+// A node call that has not answered in this many ms is treated as unreachable,
+// so a hung node cannot stall the mining loop.
+const FETCH_TIMEOUT_MS = 10_000;
 
 // ---------------------------------------------------------------------------
 // PoW solver
@@ -168,7 +175,7 @@ async function fetchTemplate() {
   const url = MINER_PUBKEY
     ? `${NODE_URL}/mining/template?miner=${MINER_PUBKEY}`
     : `${NODE_URL}/mining/template`;
-  const res = await fetch(url, { headers });
+  const res = await fetch(url, { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   if (res.status === 401) {
     throw new Error('Mining API returned 401 — check MINING_SECRET');
   }
@@ -206,6 +213,7 @@ async function submitNonce(powNonce, height) {
     method: 'POST',
     headers,
     body: JSON.stringify({ powNonce, height }),
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
   if (res.status === 401) {
     throw new Error('Mining API returned 401 — check MINING_SECRET');
