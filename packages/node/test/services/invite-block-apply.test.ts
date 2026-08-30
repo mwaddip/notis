@@ -502,6 +502,7 @@ describe('the invite at block application', () => {
       getNetworkRecord: records.getNetworkRecord,
       membershipBarMultiplier: 1,
       putIdentityRecord: records.putIdentityRecord,
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
     }, second, 2);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('may not name an existing account');

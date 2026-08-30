@@ -597,6 +597,7 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
       getNetworkRecord: () => ({ memberCount: 1 }),
       membershipBarMultiplier: 1,
       putIdentityRecord: () => {},
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
       executePrune: () => ({ txId: 'b'.repeat(64) }),
       executePostWithdraw: () => ({ txId: 'c'.repeat(64) }),
       getCurrentHeight: () => 10,

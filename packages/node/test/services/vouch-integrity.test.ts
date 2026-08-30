@@ -131,6 +131,7 @@ describe('P2-B phase 2 — vouch integrity + born-committed bond', () => {
       getNetworkRecord: storeGetNetworkRecord,
       membershipBarMultiplier: 1,
       putIdentityRecord: storePutIdentityRecord,
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
     };
   }
 

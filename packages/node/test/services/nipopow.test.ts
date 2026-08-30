@@ -80,7 +80,7 @@ describe('PopowHeaderReader + proveWithReader', () => {
       maxFutureDriftMs: MAX_FUTURE_DRIFT_MS,
       nowMs: Date.now() + 86_400_000,
       genesisId: '',
-      protocolVersion: 1,
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
     });
     expect(result.ok).toBe(true);
   });

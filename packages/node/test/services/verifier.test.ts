@@ -43,6 +43,7 @@ function createMockDeps(store: MockStore): VerifierDeps {
       karmaMinimum: KARMA_MINIMUM,
     },
     getPost: (id: string) => store.posts.get(id) ?? null,
+    protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
   };
 }
 
@@ -112,7 +113,7 @@ describe('verifyPost', () => {
     const deps = createMockDeps(store);
     const result = verifyPost(deps, commit);
     expect(result.valid).toBe(false);
-    expect(result.error).toBe('Unsupported protocol version');
+    expect(result.error).toBe('Protocol version 99 is not the era 1');
   });
 
   it('rejects missing parent ref', () => {

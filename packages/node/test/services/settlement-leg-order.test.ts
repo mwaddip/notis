@@ -248,7 +248,7 @@ describe('settlement leg order', () => {
     // necessary but not sufficient — the positional assertions above are
     // the pin.
     const check = checkSettlement(
-      deps, HEIGHT, EMISSION, MINER_REWARD_DELAY, body, tx);
+      deps, HEIGHT, [{ version: 1, fromHeight: 0 }], EMISSION, MINER_REWARD_DELAY, body, tx);
     expect(check.valid).toBe(true);
   });
 
@@ -259,7 +259,7 @@ describe('settlement leg order', () => {
     if (!('tx' in result)) return;
     const poisoned = { ...result.tx, postWithdraw: { postId: 'aa'.repeat(32) } };
     const check = checkSettlement(
-      deps, HEIGHT, EMISSION, MINER_REWARD_DELAY, body, poisoned);
+      deps, HEIGHT, [{ version: 1, fromHeight: 0 }], EMISSION, MINER_REWARD_DELAY, body, poisoned);
     expect(check.valid).toBe(false);
     expect(check.error).toMatch(/settlement carries a postWithdraw/);
   });

@@ -113,6 +113,7 @@ async function buildDeps(): Promise<UtxoEngineDeps> {
     getNetworkRecord: store.getNetworkRecord,
     membershipBarMultiplier: 1,
     putIdentityRecord: store.putIdentityRecord,
+    protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
   };
 }
 

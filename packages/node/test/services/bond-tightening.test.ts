@@ -119,6 +119,7 @@ describe('bond transitions (audit F-consensus-1)', () => {
       getNetworkRecord: () => ({ memberCount: 1 }),
       membershipBarMultiplier: 1,
       putIdentityRecord: () => {},
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
     };
   }
 

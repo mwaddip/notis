@@ -2616,7 +2616,7 @@ describe('resolveFork — one tampered header per reason', () => {
     return [tampered, shared];
   }
 
-  it('wrong version → refused, misbehaviour, no block request', async () => {
+  it('wrong version → refused, transient, no block request', async () => {
     const { ordering, forkResolution } = await setupChainOfThree();
     const headers = headersWithTampered(ordering, (h) => {
       h.protocolVersion = 999;
@@ -2628,7 +2628,9 @@ describe('resolveFork — one tampered header per reason', () => {
       net, 'peer-tamper',
     );
     expect(net.blockRequests).toEqual([]);
-    expect(net.penalties).toEqual([expect.objectContaining({ kind: 'misbehavior' })]);
+    // A 'version' verdict is a compatibility refusal, not misbehavior
+    // (NODE_INTERFACE → Fork choice decides on verified headers).
+    expect(net.penalties).toEqual([expect.objectContaining({ kind: 'transient' })]);
   });
 
   it('height gap → refused, misbehaviour, no block request', async () => {

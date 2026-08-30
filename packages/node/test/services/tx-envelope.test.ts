@@ -76,6 +76,11 @@ import {
   getNetworkRecord as storeGetNetworkRecord,
 } from '../../src/store/index.js';
 import { checkTxEnvelope, validateTx } from '../../src/services/utxo-engine.js';
+
+// checkTxEnvelope takes the judged-for height and the era schedule
+// (NODE_INTERFACE → validateTx). These envelope tests use the single-era
+// default; a version-1 transaction passes the era check at any height.
+const checkEnvelope = (tx: unknown) => checkTxEnvelope(tx, 0, [{ version: 1, fromHeight: 0 }]);
 import { config } from '../../src/config.js';
 
 interface TestKeys {
@@ -104,7 +109,7 @@ function envelope(over: Record<string, unknown> = {}): Record<string, unknown> {
 
 /** Run the gate and return its error, or `null` when it accepted. */
 function reject(tx: unknown): string | null {
-  const r = checkTxEnvelope(tx);
+  const r = checkEnvelope(tx);
   return r.valid ? null : (r.error ?? '<no error string>');
 }
 
@@ -118,12 +123,12 @@ function reject(tx: unknown): string | null {
 // ---------------------------------------------------------------------------
 describe('checkTxEnvelope — the closed envelope', () => {
   it('accepts the well-formed minimum', () => {
-    expect(checkTxEnvelope(envelope())).toEqual({ valid: true });
+    expect(checkEnvelope(envelope())).toEqual({ valid: true });
   });
 
   it('accepts every optional field in its legal form', () => {
     expect(
-      checkTxEnvelope(
+      checkEnvelope(
         envelope({
           likeTarget: HEX_B,
           signatures: { [HEX_B]: new Uint8Array(64) },
@@ -327,7 +332,7 @@ describe('checkTxEnvelope — the closed envelope', () => {
     for (const v of bad) {
       const err = reject(envelope({ protocolVersion: v }));
       expect(err, `protocolVersion=${String(v)}`).toContain(
-        `protocolVersion must be ${PROTOCOL_VERSION}`,
+        'protocolVersion must be the era',
       );
     }
     expect(reject(envelope({ protocolVersion: PROTOCOL_VERSION }))).toBeNull();
@@ -358,7 +363,7 @@ describe('checkTxEnvelope — the closed envelope', () => {
         },
       },
     };
-    expect(() => checkTxEnvelope(hostile)).not.toThrow();
+    expect(() => checkEnvelope(hostile)).not.toThrow();
 
     const toStringBomb = {
       ...envelope(),
@@ -370,7 +375,7 @@ describe('checkTxEnvelope — the closed envelope', () => {
     };
     let result: ReturnType<typeof checkTxEnvelope> | undefined;
     expect(() => {
-      result = checkTxEnvelope(toStringBomb);
+      result = checkEnvelope(toStringBomb);
     }).not.toThrow();
     expect(result!.valid).toBe(false);
     expect(result!.error).toContain('object'); // describeValue, not String(v)
@@ -427,6 +432,7 @@ describe('validateTx step 0 — the envelope gate in place', () => {
       getNetworkRecord: storeGetNetworkRecord,
       membershipBarMultiplier: 1,
       putIdentityRecord: storePutIdentityRecord,
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
     };
   }
 
@@ -570,7 +576,7 @@ describe('validateTx step 0 — the envelope gate in place', () => {
     );
     const result = validateTx(deps, tx, 10);
     expect(result.valid).toBe(false);
-    expect(result.error).toContain(`protocolVersion must be ${PROTOCOL_VERSION}`);
+    expect(result.error).toContain('protocolVersion must be the era');
   });
 
   it('a like transaction with a real hex target still validates', () => {
@@ -647,7 +653,7 @@ describe('checkTxEnvelope at the decode boundary', () => {
         key,
       ).toContain(key);
     }
-    expect(checkTxEnvelope(decoded)).toEqual({ valid: true });
+    expect(checkEnvelope(decoded)).toEqual({ valid: true });
   });
 
   it('round-trips an honest transaction through the codec unchanged', () => {
@@ -656,7 +662,7 @@ describe('checkTxEnvelope at the decode boundary', () => {
       likeTarget: HEX_B,
     }) as unknown as UtxoTransaction;
     const decoded = decodeTx(encodeTx(tx));
-    expect(checkTxEnvelope(decoded)).toEqual({ valid: true });
+    expect(checkEnvelope(decoded)).toEqual({ valid: true });
     expect(computeTxId(decoded)).toBe(computeTxId(tx));
   });
 });

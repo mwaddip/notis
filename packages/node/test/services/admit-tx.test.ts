@@ -259,6 +259,7 @@ describe('rent admission refusal', () => {
       getNetworkRecord: () => ({ memberCount: 1 }),
       membershipBarMultiplier: 1,
       putIdentityRecord: () => {},
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
     };
 
     const result = engine.validateTx(deps, tx, height);

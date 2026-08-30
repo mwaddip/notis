@@ -120,6 +120,7 @@ describe('membership arms', () => {
       getNetworkRecord: storeGetNetworkRecord,
       membershipBarMultiplier: 1,
       putIdentityRecord: storePutIdentityRecord,
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
     };
   }
 

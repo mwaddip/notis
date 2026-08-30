@@ -95,6 +95,7 @@ async function request(
         getNetworkRecord: () => ({ memberCount: 1 }),
         membershipBarMultiplier: 1,
         putIdentityRecord: () => {},
+        protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
       }),
     };
     const app = express();
@@ -521,7 +522,7 @@ describe('UTXO routes', () => {
       });
       expect(res.status).toBe(400);
       expect(String((res.data as Record<string, unknown>).error)).toContain(
-        `protocolVersion must be ${PROTOCOL_VERSION}`,
+        'protocolVersion must be the era',
       );
     });
 

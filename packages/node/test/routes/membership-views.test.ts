@@ -144,6 +144,7 @@ describe('/karma/:userId membership fields', () => {
           getNetworkRecord,
           membershipBarMultiplier: config.membershipBarMultiplier,
           putIdentityRecord: () => {},
+          protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
         }),
       };
       const app = express();
@@ -363,6 +364,7 @@ describe('POST /vouches — the four membership 400s', () => {
       getNetworkRecord,
       membershipBarMultiplier: config.membershipBarMultiplier,
       putIdentityRecord: (id: Uint8Array, rec: any) => putIdentityRecord(id, rec),
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
     };
   }
 
@@ -561,6 +563,7 @@ describe('POST /invites — membership 400', () => {
         getNetworkRecord,
         membershipBarMultiplier: config.membershipBarMultiplier,
         putIdentityRecord: (id: Uint8Array, rec: any) => putIdentityRecord(id, rec),
+        protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
         createInvite,
         getCurrentHeight: () => HEIGHT,
       };

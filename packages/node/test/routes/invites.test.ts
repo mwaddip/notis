@@ -127,6 +127,7 @@ async function request(
       getNetworkRecord: () => ({ memberCount: 1 }),
       membershipBarMultiplier: 1,
       putIdentityRecord: () => {},
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
       createInvite,
       getCurrentHeight,
     };
