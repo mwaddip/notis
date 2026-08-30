@@ -8,6 +8,7 @@ import {
   postInvite,
   postPost,
   getKarma,
+  getStatus,
   hasKarma,
   getBlockCurrent,
   getPosts,
@@ -71,6 +72,8 @@ describe('decay', () => {
     const block1 = await fetch(`${node.url}/blocks/1`);
     expect(block1.ok).toBe(true);
 
+    const version = (await getStatus(node)).protocolVersion;
+
     // ---- invite alice ----
     const alice = fresh();
     const bondAmount = 50n;
@@ -82,6 +85,7 @@ describe('decay', () => {
       alice,
       bondAmount,
       faucetKarma.height,
+      version,
     );
     await postInvite(node, invite.json);
 
@@ -131,6 +135,7 @@ describe('decay', () => {
       karmaBoxes(aliceK),
       'hello from the other side of staleness',
       aliceK.height,
+      version,
     );
     const postRes = await postPost(node, threadTx.json, threadTx.content);
     await confirm(

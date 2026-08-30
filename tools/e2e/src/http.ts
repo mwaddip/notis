@@ -264,6 +264,9 @@ export async function adminGet(
 export interface StatusResponse {
   vouchCooldownBlocks: number;
   blockHeight: number;
+  // The era a client must sign at — the era at blockHeight + 1
+  // (NODE_INTERFACE → Status).
+  protocolVersion: number;
   totalKarma: string;
   inviteBondMin: string;
   inviteBondMax: string;

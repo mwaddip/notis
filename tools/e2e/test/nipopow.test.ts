@@ -5,7 +5,6 @@ import { getBlockCurrent } from '../src/http.js';
 import type { NodeProcess } from '../src/node-process.js';
 import {
   NETWORK_PROFILES,
-  PROTOCOL_VERSION,
   RETARGET_HALFLIFE_BLOCKS,
   MAX_FUTURE_DRIFT_MS,
 } from '@dagsocial/types';
@@ -34,7 +33,7 @@ function makeVerifyProfile() {
     maxFutureDriftMs: MAX_FUTURE_DRIFT_MS,
     nowMs: Date.now(),
     genesisId: devnetProfile.genesisId,
-    protocolVersion: PROTOCOL_VERSION,
+    protocolVersionSchedule: devnetProfile.protocolVersionSchedule,
   };
 }
 

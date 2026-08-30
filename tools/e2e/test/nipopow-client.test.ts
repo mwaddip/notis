@@ -5,7 +5,7 @@ import { createMesh, type Mesh } from '../src/mesh.js';
 import { mine, confirm, waitHeight } from '../src/miner.js';
 import { DEVNET_FAUCET, fresh } from '../src/identities.js';
 import { buildInviteTx } from '../src/tx/invite.js';
-import { postInvite, getKarma, hasKarma, getBlockCurrent } from '../src/http.js';
+import { postInvite, getKarma, getStatus, hasKarma, getBlockCurrent } from '../src/http.js';
 import type { BoxRef } from '../src/tx/render.js';
 import type { NodeProcess } from '../src/node-process.js';
 
@@ -84,6 +84,7 @@ describe('nipopow-client', () => {
     }
 
     // ---- invite a member so the key holds karma ----
+    const version = (await getStatus(node1)).protocolVersion;
     const member = fresh();
     const bondAmount = 50n;
 
@@ -94,6 +95,7 @@ describe('nipopow-client', () => {
       member,
       bondAmount,
       faucetKarma.height,
+      version,
     );
     await postInvite(node1, invite.json);
 

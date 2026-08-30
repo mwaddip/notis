@@ -8,6 +8,7 @@ import {
   postInvite,
   postPost,
   getKarma,
+  getStatus,
   hasKarma,
   getPost,
   getBlockCurrent,
@@ -40,9 +41,10 @@ describe('validation', () => {
     await waitHeight(mesh.nodes, 1);
 
     // ---- invite alice ----
+    const version = (await getStatus(node1!)).protocolVersion;
     const alice = fresh();
     const faucetK = (await getKarma(node1!, DEVNET_FAUCET.publicKeyHex))!;
-    const inv = buildInviteTx(DEVNET_FAUCET, karmaBoxes(faucetK), alice, 50n, faucetK.height);
+    const inv = buildInviteTx(DEVNET_FAUCET, karmaBoxes(faucetK), alice, 50n, faucetK.height, version);
     await postInvite(node1!, inv.json);
 
     await confirm(
@@ -53,7 +55,7 @@ describe('validation', () => {
 
     // ---- forged signature → 400 ----
     const aliceK = (await getKarma(node1!, alice.publicKeyHex))!;
-    const thread = buildThreadTx(alice, karmaBoxes(aliceK), 'forged', aliceK.height);
+    const thread = buildThreadTx(alice, karmaBoxes(aliceK), 'forged', aliceK.height, version);
     const forgedJson = { ...thread.json };
     const sigs = forgedJson['signatures'] as Record<string, string>;
     const sigKeys = Object.keys(sigs);
@@ -80,8 +82,8 @@ describe('validation', () => {
     const aliceK2 = (await getKarma(node1!, alice.publicKeyHex))!;
     const boxes = karmaBoxes(aliceK2);
 
-    const tx1 = buildThreadTx(alice, boxes, 'double spend A', aliceK2.height);
-    const tx2 = buildThreadTx(alice, boxes, 'double spend B', aliceK2.height);
+    const tx1 = buildThreadTx(alice, boxes, 'double spend A', aliceK2.height, version);
+    const tx2 = buildThreadTx(alice, boxes, 'double spend B', aliceK2.height, version);
 
     const results = await Promise.allSettled([
       postPost(node1!, tx1.json, tx1.content),

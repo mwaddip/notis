@@ -9,6 +9,7 @@ import {
   postInvite,
   postPost,
   getKarma,
+  getStatus,
   hasKarma,
   getPost,
   getBlockCurrent,
@@ -47,6 +48,8 @@ describe('zero-change', () => {
     const tip = await getBlockCurrent(miner);
     expect(tip.height).toBe(1);
 
+    const version = (await getStatus(miner)).protocolVersion;
+
     // ---- faucet invites alice with bond 5 (inviteBondMin), grant is 5 ----
     const alice = fresh();
     const bondAmount = 5n;
@@ -57,6 +60,7 @@ describe('zero-change', () => {
       alice,
       bondAmount,
       faucetK.height,
+      version,
     );
     await postInvite(miner, invite.json);
 
@@ -77,6 +81,7 @@ describe('zero-change', () => {
       karmaBoxes(aliceK),
       'exact spend',
       aliceK.height,
+      version,
     );
     // TYPES_INTERFACE → Box value domain
     expect(thread.outputs.length).toBe(1);

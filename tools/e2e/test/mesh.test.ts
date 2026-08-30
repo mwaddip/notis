@@ -10,6 +10,7 @@ import {
   postPost,
   postLike,
   getKarma,
+  getStatus,
   hasKarma,
   getPost,
   getBlockCurrent,
@@ -61,6 +62,8 @@ describe('mesh', () => {
       expect(b.header.stateRoot).toBe(block1s[0]!.header.stateRoot);
     }
 
+    const version = (await getStatus(miner)).protocolVersion;
+
     // ---- faucet invites two identities ----
     const alice = fresh();
     const bob = fresh();
@@ -73,6 +76,7 @@ describe('mesh', () => {
       alice,
       bondAmount,
       faucetKarma.height,
+      version,
     );
     await postInvite(miner, inviteAlice.json);
 
@@ -82,6 +86,7 @@ describe('mesh', () => {
       bob,
       bondAmount,
       faucetKarma.height,
+      version,
     );
     await postInvite(miner, inviteBob.json);
 
@@ -107,6 +112,7 @@ describe('mesh', () => {
       karmaBoxes(aliceK),
       'hello mesh',
       aliceK.height,
+      version,
     );
     const threadRes = await postPost(miner, thread.json, thread.content);
 
@@ -117,6 +123,7 @@ describe('mesh', () => {
       threadRes.postId,
       alice.publicKeyHex,
       aliceK.height,
+      version,
     );
     const replyRes = await postPost(miner, reply.json, reply.content);
 
@@ -170,6 +177,7 @@ describe('mesh', () => {
       threadRes.postId,
       authorHex,
       bobK.height,
+      version,
     );
     await postLike(miner, like.json);
 
@@ -204,6 +212,7 @@ describe('mesh', () => {
       threadRes.postId,
       authorHex,
       bobK2.height,
+      version,
     );
     try {
       await postLike(miner, like2.json);

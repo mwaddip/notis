@@ -8,6 +8,7 @@ import {
   postInvite,
   postPost,
   getKarma,
+  getStatus,
   hasKarma,
   getPost,
   getBlockCurrent,
@@ -40,9 +41,10 @@ describe('packet', () => {
     await waitHeight(mesh.nodes, 1);
 
     // ---- invite alice ----
+    const version = (await getStatus(miner)).protocolVersion;
     const alice = fresh();
     const faucetK = (await getKarma(miner, DEVNET_FAUCET.publicKeyHex))!;
-    const inv = buildInviteTx(DEVNET_FAUCET, karmaBoxes(faucetK), alice, 50n, faucetK.height);
+    const inv = buildInviteTx(DEVNET_FAUCET, karmaBoxes(faucetK), alice, 50n, faucetK.height, version);
     await postInvite(miner, inv.json);
 
     await confirm(
@@ -53,7 +55,7 @@ describe('packet', () => {
 
     // ---- alice posts a thread on the miner (no mining — stays pending) ----
     const aliceK = (await getKarma(miner, alice.publicKeyHex))!;
-    const thread = buildThreadTx(alice, karmaBoxes(aliceK), 'packet post', aliceK.height);
+    const thread = buildThreadTx(alice, karmaBoxes(aliceK), 'packet post', aliceK.height, version);
     const threadRes = await postPost(miner, thread.json, thread.content);
     expect(threadRes.status).toBe('pending');
 
@@ -99,7 +101,7 @@ describe('packet', () => {
 
     // ---- mismatched body → 400 ----
     const aliceK2 = (await getKarma(miner, alice.publicKeyHex))!;
-    const bad = buildThreadTx(alice, karmaBoxes(aliceK2), 'correct body', aliceK2.height);
+    const bad = buildThreadTx(alice, karmaBoxes(aliceK2), 'correct body', aliceK2.height, version);
     try {
       await postPost(miner, bad.json, 'wrong body');
       expect.fail('mismatched body should have been rejected');

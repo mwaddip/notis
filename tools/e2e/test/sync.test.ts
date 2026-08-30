@@ -11,6 +11,7 @@ import {
   postInvite,
   postPost,
   getKarma,
+  getStatus,
   hasKarma,
   getPost,
   getBlock,
@@ -44,9 +45,10 @@ describe('sync', () => {
     await waitHeight(mesh.nodes, 1);
 
     // ---- invite and post ----
+    const version = (await getStatus(miner)).protocolVersion;
     const alice = fresh();
     const faucetK = (await getKarma(miner, DEVNET_FAUCET.publicKeyHex))!;
-    const inv = buildInviteTx(DEVNET_FAUCET, karmaBoxes(faucetK), alice, 50n, faucetK.height);
+    const inv = buildInviteTx(DEVNET_FAUCET, karmaBoxes(faucetK), alice, 50n, faucetK.height, version);
     await postInvite(miner, inv.json);
 
     await confirm(
@@ -55,7 +57,7 @@ describe('sync', () => {
     );
 
     const aliceK = (await getKarma(miner, alice.publicKeyHex))!;
-    const thread = buildThreadTx(alice, karmaBoxes(aliceK), 'synced post', aliceK.height);
+    const thread = buildThreadTx(alice, karmaBoxes(aliceK), 'synced post', aliceK.height, version);
     const threadRes = await postPost(miner, thread.json, thread.content);
 
     await confirm(

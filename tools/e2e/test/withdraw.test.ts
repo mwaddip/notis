@@ -50,15 +50,17 @@ describe('withdraw', () => {
     await mine(miner, mesh.miningSecret, 1);
     await waitHeight(mesh.nodes, 1);
 
+    const version = (await getStatus(miner)).protocolVersion;
+
     // ---- invite voucher and target ----
     const voucher = fresh();
     const target = fresh();
     const bondAmount = 50n;
 
     const faucetK = await getKarma(miner, DEVNET_FAUCET.publicKeyHex);
-    const inv1 = buildInviteTx(DEVNET_FAUCET, karmaBoxes(faucetK), voucher, bondAmount, faucetK.height);
+    const inv1 = buildInviteTx(DEVNET_FAUCET, karmaBoxes(faucetK), voucher, bondAmount, faucetK.height, version);
     await postInvite(miner, inv1.json);
-    const inv2 = buildInviteTx(DEVNET_FAUCET, [inv1.outputs[0]!], target, bondAmount, faucetK.height);
+    const inv2 = buildInviteTx(DEVNET_FAUCET, [inv1.outputs[0]!], target, bondAmount, faucetK.height, version);
     await postInvite(miner, inv2.json);
 
     await confirm(
@@ -70,7 +72,7 @@ describe('withdraw', () => {
     // ---- ARCHITECTURE → Membership: the voucher must be a member to cast ----
     // faucet vouches the voucher, voucher posts two threads, faucet likes each
     let fK = await getKarma(miner, DEVNET_FAUCET.publicKeyHex);
-    const faucetVouch = buildVouchTx(DEVNET_FAUCET, karmaBoxes(fK), voucher, fK.height);
+    const faucetVouch = buildVouchTx(DEVNET_FAUCET, karmaBoxes(fK), voucher, fK.height, version);
     await postVouch(miner, faucetVouch.json);
 
     await confirm(
@@ -80,9 +82,9 @@ describe('withdraw', () => {
     await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
 
     let vK = await getKarma(miner, voucher.publicKeyHex);
-    const t1 = buildThreadTx(voucher, karmaBoxes(vK), 'w thread 1', vK.height);
+    const t1 = buildThreadTx(voucher, karmaBoxes(vK), 'w thread 1', vK.height, version);
     const t1Res = await postPost(miner, t1.json, t1.content);
-    const t2 = buildThreadTx(voucher, [t1.outputs[0]!], 'w thread 2', vK.height);
+    const t2 = buildThreadTx(voucher, [t1.outputs[0]!], 'w thread 2', vK.height, version);
     const t2Res = await postPost(miner, t2.json, t2.content);
 
     await confirm(
@@ -95,9 +97,9 @@ describe('withdraw', () => {
     await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
 
     fK = await getKarma(miner, DEVNET_FAUCET.publicKeyHex);
-    const lk1 = buildLikeTx(DEVNET_FAUCET, karmaBoxes(fK), t1Res.postId, voucher.publicKeyHex, fK.height);
+    const lk1 = buildLikeTx(DEVNET_FAUCET, karmaBoxes(fK), t1Res.postId, voucher.publicKeyHex, fK.height, version);
     await postLike(miner, lk1.json);
-    const lk2 = buildLikeTx(DEVNET_FAUCET, [lk1.outputs[0]!], t2Res.postId, voucher.publicKeyHex, fK.height);
+    const lk2 = buildLikeTx(DEVNET_FAUCET, [lk1.outputs[0]!], t2Res.postId, voucher.publicKeyHex, fK.height, version);
     await postLike(miner, lk2.json);
 
     await confirm(
@@ -109,7 +111,7 @@ describe('withdraw', () => {
     // ---- vouch ----
     const voucherK = await getKarma(miner, voucher.publicKeyHex);
     const voucherKarmaBefore = BigInt(voucherK.total);
-    const vouch = buildVouchTx(voucher, karmaBoxes(voucherK), target, voucherK.height);
+    const vouch = buildVouchTx(voucher, karmaBoxes(voucherK), target, voucherK.height, version);
     await postVouch(miner, vouch.json);
 
     await confirm(
@@ -144,6 +146,7 @@ describe('withdraw', () => {
       vouchBox.createdAtBlock,
       status.blockHeight,
       status.vouchCooldownBlocks,
+      version,
     );
     await deleteVouch(miner, target.publicKeyHex, unvouch.json);
 
@@ -185,6 +188,7 @@ describe('withdraw', () => {
       karmaBoxes(voucherKAfterReturn),
       target,
       voucherKAfterReturn.height,
+      version,
     );
     await postVouch(miner, recast.json);
 
