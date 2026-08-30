@@ -383,11 +383,12 @@ export function profileFor(network: NetworkType): NetworkProfile {
 /**
  * The protocol version in force at `height`: the `version` of the last era whose `fromHeight` is at or
  * below `height`, and `null` when no era covers it (TYPES_INTERFACE → Version). **Total** — it never
- * throws on any input: a `height` that is not a finite number (a non-number, `NaN`, `±Infinity`) yields
+ * throws on any input: a `height` outside the chain's height domain — anything but a non-negative safe
+ * integer, so a negative, a fraction, `NaN`, `±Infinity`, a value past 2⁵³, or a non-number — yields
  * `null`. The schedule ascends by `fromHeight` by construction, so it is read in order with no sort.
  */
 export function protocolVersionAt(schedule: readonly ProtocolEra[], height: number): number | null {
-  if (typeof height !== 'number' || !Number.isFinite(height)) return null;
+  if (!Number.isSafeInteger(height) || height < 0) return null;
   let version: number | null = null;
   for (const era of schedule) {
     if (era.fromHeight <= height) version = era.version;
