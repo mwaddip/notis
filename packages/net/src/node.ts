@@ -39,7 +39,7 @@ import {
   decodeModifierResponse,
 } from './sync-codec.js';
 import { encodeServableOrderingBlock } from './serve-encode.js';
-import { isBogusAddress } from './bogus-addr.js';
+import { isBogusAddress, isLoopbackAddress } from './bogus-addr.js';
 import { readStreamBounded } from './util.js';
 import { MAX_CHAIN_RESPONSE_ITEMS, MAX_SERVE_BODY_BYTES, MAX_STREAM_BYTES } from './msg-guards.js';
 import { PeerDb, type PeerStorage } from './peerdb.js';
@@ -774,11 +774,11 @@ export class NetNode {
         // phase's exclude set.
         const plan = this.outboundMgr.planTick(this.libp2p.getConnections());
 
-        // Floor phase: re-dial bootstrap peers while outbound < minPeers.
-        if (plan.dialBootstrap) {
-          for (const addr of this.config.bootstrapPeers) {
-            this.dialBootstrapPeer(addr);
-          }
+        // Floor phase: dial the bootstrap seeds the manager selected — each
+        // whose peer is not already connected (NET_INTERFACE → Outbound
+        // Manager, Floor phase).
+        for (const addr of plan.bootstrapDials) {
+          this.dialBootstrapPeer(addr);
         }
 
         // Fill phase: dial one PeerDb candidate per tick
@@ -842,6 +842,10 @@ export class NetNode {
     try {
       const conn = await this.libp2p.dial(multiaddr(addr));
       this.pendingBootstrapDials.delete(addr);
+      // NET_INTERFACE → Outbound Manager, Floor phase: the floor skips a seed
+      // whose peer holds a live connection; a bare seed has no peer id of its
+      // own, so remember the peer this dial resolved to.
+      this.outboundMgr?.recordSeedPeer(addr, conn.remotePeer.toString());
       console.log(`[net] bootstrap dial succeeded: ${addr} -> peer=${conn.remotePeer.toString()}`);
 
       try {
@@ -1243,13 +1247,17 @@ export class NetNode {
   }
 
   private buildOurHandshake(): import('./handshake.js').HandshakeMsg {
-    const listenAddrs = this.libp2p?.getMultiaddrs() ?? [];
     return {
       agentName: 'dagsocial',
       protocolVersion: PROTOCOL_VERSION,
       nodeName: this.peerId().slice(0, 12),
       chainHeight: this.syncStore.chainHeight(),
-      declaredAddress: listenAddrs[0]?.toString(),
+      // NET_INTERFACE → Handshake Body, the `declaredAddress` row: the first
+      // listen address that is not loopback, absent when every one is — a
+      // loopback address advertised to a peer is one no peer can dial.
+      declaredAddress: (this.libp2p?.getMultiaddrs() ?? [])
+        .map((a) => a.toString())
+        .find((a) => !isLoopbackAddress(a)),
       capabilities: [],
       sessionMagic: Math.floor(Math.random() * 0x100000000),
     };

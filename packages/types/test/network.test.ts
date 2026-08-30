@@ -26,6 +26,7 @@ import type { NetworkType, NetworkProfile, ProtocolEra } from '../src/index.js';
 const REQUIRED_PROFILE_FIELDS = [
   'networkType',
   'magic',
+  'bootstrapPeers',
   'orderingBlockPowTargetBits',
   'orderingBlockIdealMs',
   'orderingBlockPowTargetFloorBits',
@@ -150,6 +151,10 @@ describe('NETWORK_PROFILES', () => {
     const identityOrGenesis = new Set([
       'networkType',
       'magic',
+      // Per-network identity, not a shared mechanic: testnet names a node to dial and mainnet names
+      // none, so it differs across the two by content and by reference and must not be compared here
+      // (TYPES_INTERFACE → "bootstrapPeers is the network's known nodes, per network").
+      'bootstrapPeers',
       'genesisCommitteeKeys',
       'genesisProofPayload',
       // Exempt for the same reason as the payload, and inseparably: the root is
@@ -553,6 +558,43 @@ describe('invite bond caps per network', () => {
     const likesToVestSmallest =
       INVITE_BOND_VEST_PER_LIKES * Number(profileFor('devnet').inviteBondMin);
     expect(likesToVestSmallest).toBeLessThanOrEqual(15);
+  });
+});
+
+/**
+ * The bootstrap peers.
+ *
+ * The multiaddrs a node dials at start when the environment names none
+ * (NODE_INTERFACE → Configuration). Identity, per network — not a tunable
+ * (TYPES_INTERFACE → "bootstrapPeers is the network's known nodes, per network").
+ */
+describe('bootstrap peers per network', () => {
+  it('testnet names notis.fun; mainnet and devnet name none', () => {
+    expect(NETWORK_PROFILES.testnet.bootstrapPeers).toEqual(['/dns4/notis.fun/tcp/9733']);
+    expect(NETWORK_PROFILES.mainnet.bootstrapPeers).toEqual([]);
+    expect(NETWORK_PROFILES.devnet.bootstrapPeers).toEqual([]);
+  });
+
+  it('every profile freezes its own bootstrapPeers array', () => {
+    const arrays = Object.values(NETWORK_PROFILES).map((p) => p.bootstrapPeers);
+    for (const profile of Object.values(NETWORK_PROFILES)) {
+      expect(Object.isFrozen(profile.bootstrapPeers), profile.networkType).toBe(true);
+    }
+    // Its own reference on each — never spread from another profile, or a bump to one network's
+    // list would ride into the others (TYPES_INTERFACE → "bootstrapPeers is the network's known
+    // nodes, per network").
+    expect(new Set(arrays).size).toBe(3);
+  });
+
+  // A bare multiaddr the node can dial — `/dns4/<host>/tcp/<port>`, no `/p2p/`. libp2p learns the
+  // peer id from the handshake, and the node's identity is not persisted across restarts, so a
+  // pinned peer id is exactly what the contract forbids
+  // (TYPES_INTERFACE → "bootstrapPeers is the network's known nodes, per network").
+  it('the testnet entry is a dialable multiaddr with no pinned peer id', () => {
+    for (const addr of NETWORK_PROFILES.testnet.bootstrapPeers) {
+      expect(addr).toMatch(/^\/dns4\/[^\/]+\/tcp\/\d+$/);
+      expect(addr).not.toContain('/p2p/');
+    }
   });
 });
 

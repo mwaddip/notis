@@ -14,7 +14,7 @@ import {
   verifyPostBody,
 } from '@dagsocial/validation';
 import { NetNode } from '../src/node.js';
-import { buildHandshakeFrame, parseHandshakeBody, validateHandshake } from '../src/handshake.js';
+import { buildHandshakeFrame, decodeHandshakeBody, parseHandshakeBody, validateHandshake } from '../src/handshake.js';
 import type { HandshakeResult } from '../src/handshake.js';
 import { decodeFrame } from '../src/frame.js';
 import { PeerState } from '../src/types.js';
@@ -83,6 +83,7 @@ function makeHandshakeHarness(opts: {
   chainHeightProvider?: () => number;
   sinkThrows?: boolean;
   schedule?: readonly ProtocolEra[];
+  multiaddrs?: string[];
 } = {}) {
   const net = new NetNode(makeConfig(opts.schedule), validators);
   const peerId = 'peer-under-test';
@@ -103,7 +104,7 @@ function makeHandshakeHarness(opts: {
     handle: (protocol: string, cb: StreamHandler) => {
       if (protocol === '/dagsocial/handshake/1') captured = cb;
     },
-    getMultiaddrs: () => [],
+    getMultiaddrs: () => (opts.multiaddrs ?? []).map((s) => ({ toString: () => s })),
     peerId: { toString: () => 'self-peer-id' },
   };
 
@@ -339,6 +340,32 @@ describe('inbound handshake handler — our own reply', () => {
     const result = validateHandshake(raw, PROTOCOL_VERSION);
     expect(result.ok).toBe(true);
     expect(result.peerHeight).toBe(55);
+  });
+});
+
+describe('inbound handshake handler — the declared address', () => {
+  // NET_INTERFACE → Handshake Body, the `declaredAddress` row: our reply
+  // declares the first listen address that is not loopback, and declares
+  // nothing when every listen address is loopback.
+  async function replyDeclaredAddress(
+    multiaddrs: string[],
+  ): Promise<string | undefined> {
+    const { send } = makeHandshakeHarness({ chainHeight: 0, multiaddrs });
+    const written = await send(validHandshakeFrame());
+    const reply = decodeHandshakeBody(decodeFrame(MAGIC, written[0]!).body);
+    return reply?.declaredAddress;
+  }
+
+  it('declares the first non-loopback address, skipping the loopback libp2p lists first', async () => {
+    expect(
+      await replyDeclaredAddress(['/ip4/127.0.0.1/tcp/9733', '/ip4/10.0.0.5/tcp/9733']),
+    ).toBe('/ip4/10.0.0.5/tcp/9733');
+  });
+
+  it('declares nothing when every listen address is loopback', async () => {
+    expect(
+      await replyDeclaredAddress(['/ip4/127.0.0.1/tcp/9733', '/ip6/::1/tcp/9733']),
+    ).toBeUndefined();
   });
 });
 

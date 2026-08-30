@@ -2629,6 +2629,9 @@ export type NetworkType = 'mainnet' | 'testnet' | 'devnet';
 export interface NetworkProfile {
   readonly networkType: NetworkType;
   readonly magic: number;              // wire frame magic — one per network
+  // The network's known nodes — the multiaddrs a node dials at start when the environment names none
+  // (NODE_INTERFACE → Configuration). Identity, not a tunable.
+  readonly bootstrapPeers: readonly string[];
 
   // Difficulty — the ASERT schedule's per-network numbers (MINING_INTERFACE → Difficulty Schedule).
   // `orderingBlockPowTargetBits` is the ANCHOR's bits — block 1's target, and the yardstick every
@@ -2706,6 +2709,14 @@ a positive safe integer is refused at load (`NODE_INTERFACE → Configuration`).
 `[{ version: 1, fromHeight: 0 }]` on all three (`CONSTANTS → Per-network values`) — is the era table
 (→ Version): a bump adds an era row to the network it lands on, an upgrade window ahead, and mainnet's
 schedule may end at an earlier version than testnet's under one build.
+
+**`bootstrapPeers` is the network's known nodes, per network.** Testnet's is
+`['/dns4/notis.fun/tcp/9733']`; mainnet's and devnet's are `[]` (a devnet mesh is spawned with explicit
+addresses). A bare multiaddr, deliberately: libp2p dials it without a `/p2p/` component and learns the
+peer id from the handshake, and the node's own identity is not persisted across restarts, so a pinned id
+would rot on the first restart. `BOOTSTRAP_PEERS` in the environment replaces the list when set
+(`NODE_INTERFACE → Configuration`). Identity, not a tunable — not a register row (`CONSTANTS → Excluded`);
+each profile states its own literal, never a spread.
 
 **This is the sole definition of the network magics.** `@dagsocial/wire` exported duplicates
 until P2-A phase 5 deleted them. They live here rather than `NetworkType` living in wire

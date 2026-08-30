@@ -213,10 +213,21 @@ on Ctrl-C. Databases go to a temporary directory and are not reused.
 ### Running a node
 
 ```bash
-NETWORK_TYPE=testnet NODE_ROLE=miner MINING_SECRET=<secret> node packages/node/dist/index.js
+pnpm -r build
+node packages/node/dist/index.js
 ```
 
-Starts a node on `http://localhost:3000` with the demo UI at the same address.
+That is the whole of it: the defaults are testnet, a `server` role, port 3000 and `dagsocial.db` in the
+current directory, and the testnet profile names the network's bootstrap node (`notis.fun`), so the
+node dials it, syncs the chain and follows new blocks. The demo UI is at `http://localhost:3000/`.
+Karma for a fresh identity comes from the public faucet at `https://notis.fun/testnet/` — use the same
+key there; the grant is on-chain, so your node sees it once the block that carries it syncs.
+
+To mine as well:
+
+```bash
+NETWORK_TYPE=testnet NODE_ROLE=miner MINING_SECRET=<secret> node packages/node/dist/index.js
+```
 
 **A miner node serves templates and solves nothing itself.** There is no
 in-process solver, so `NODE_ROLE=miner` requires a `MINING_SECRET` — the node
@@ -267,7 +278,7 @@ environment is not merely discouraged, it has no effect.
 | `PORT` | 3000 | HTTP API port |
 | `DB_PATH` | `dagsocial.db` | SQLite database path |
 | `NODE_ROLE` | `server` | `server` or `miner` |
-| `BOOTSTRAP_PEERS` | (empty) | Comma-separated libp2p multiaddrs |
+| `BOOTSTRAP_PEERS` | the profile's (testnet: `/dns4/notis.fun/tcp/9733`) | Comma-separated libp2p multiaddrs; when set, replaces the profile's list |
 | `LISTEN_ADDRS` | `/ip4/0.0.0.0/tcp/0` | libp2p listen address |
 | `MAX_PEERS` | — | Peer connection ceiling |
 | `MAX_MEMPOOL_ENTRIES` | — | Mempool capacity; submissions beyond it are refused |

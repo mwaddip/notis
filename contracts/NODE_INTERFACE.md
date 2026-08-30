@@ -4629,7 +4629,7 @@ its actual reach.
 | `NODE_ROLE` | `operational` | `server` | `server` (applies peer blocks) or `miner` (produces blocks) |
 | ~~`MINING_MODE`~~ | **removed** | ~~`internal`~~ | The node has no in-process solver. A miner node serves templates; that is the only production model |
 | `MINING_SECRET` | `operational` | `""` | Mining auth secret — **required when `NODE_ROLE=miner`**; startup asserts it is set |
-| `BOOTSTRAP_PEERS` | `operational` | `[]` | Comma-separated libp2p multiaddrs |
+| `BOOTSTRAP_PEERS` | `operational` | the profile's `bootstrapPeers` — testnet `/dns4/notis.fun/tcp/9733`, mainnet and devnet none (`TYPES_INTERFACE → Network profiles`) | Comma-separated libp2p multiaddrs; a set variable **replaces** the profile's list, it does not add to it |
 | `LISTEN_ADDRS` | `operational` | `/ip4/0.0.0.0/tcp/0` | libp2p listen addresses |
 | `PUBLIC_URL` | `operational` | `/` | Base path where the demo UI is served |
 
