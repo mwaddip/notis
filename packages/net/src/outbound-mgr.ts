@@ -8,18 +8,20 @@ import type { NetConfig } from './types.js';
 export interface ConnectionLike {
   direction: 'inbound' | 'outbound';
   remoteAddr: { toString(): string };
+  remotePeer: { toString(): string };
 }
 
 /** What one outbound timer tick should do (contract: "Outbound Manager"). */
 export interface OutboundTickPlan {
-  /** Floor phase: dial the bootstrap seeds aggressively. */
-  dialBootstrap: boolean;
+  /** Floor phase: the bootstrap seeds to dial this tick (contract: "Floor phase"). */
+  bootstrapDials: string[];
   /** Fill phase: the PeerDb candidate to dial this tick, or null. */
   candidate: string | null;
 }
 
 export class OutboundManager {
   private cooldowns: Map<string, number> = new Map();
+  private seedPeerIds: Map<string, string> = new Map();
   private readonly redialCooldownMs: number;
   private readonly minPeers: number;
 
@@ -41,6 +43,16 @@ export class OutboundManager {
   }
 
   /**
+   * Remember the peer id a bootstrap seed dial resolved to. A bare seed carries
+   * no peer id of its own, so the mapping the dial establishes is the only way
+   * the floor can later recognise that the seed's peer is already connected
+   * (NET_INTERFACE → Outbound Manager, Floor phase).
+   */
+  recordSeedPeer(addr: string, peerId: string): void {
+    this.seedPeerIds.set(addr, peerId);
+  }
+
+  /**
    * Decide this tick's actions from the live connection list. Both phases key
    * off the count of OUTBOUND connections only — an attacker who fills every
    * inbound slot must not be able to stop us from dialing out, which is how a
@@ -51,12 +63,25 @@ export class OutboundManager {
   planTick(connections: ConnectionLike[]): OutboundTickPlan {
     let connectedOutbound = 0;
     const connectedAddrs = new Set<string>();
+    const connectedPeerIds = new Set<string>();
     for (const conn of connections) {
       if (conn.direction === 'outbound') connectedOutbound++;
       connectedAddrs.add(conn.remoteAddr.toString());
+      connectedPeerIds.add(conn.remotePeer.toString());
     }
     return {
-      dialBootstrap: connectedOutbound < this.minPeers,
+      // Floor phase (NET_INTERFACE → Outbound Manager, Floor phase): below
+      // minPeers, dial each seed whose learned peer is not already connected. A
+      // seed holding a live connection is skipped, so a network with fewer
+      // seeds than minPeers stays below the floor rather than opening a fresh
+      // connection and handshake to a connected seed each tick.
+      bootstrapDials:
+        connectedOutbound >= this.minPeers
+          ? []
+          : this.config.bootstrapPeers.filter((addr) => {
+              const learned = this.seedPeerIds.get(addr);
+              return learned === undefined || !connectedPeerIds.has(learned);
+            }),
       candidate: this.pickCandidate(connectedOutbound, connectedAddrs),
     };
   }

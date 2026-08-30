@@ -18,8 +18,16 @@ const testConfig: NetConfig = {
 };
 
 /** Fake connection with just the slice planTick reads (ConnectionLike). */
-function conn(direction: 'inbound' | 'outbound', addr: string) {
-  return { direction, remoteAddr: { toString: () => addr } };
+function conn(
+  direction: 'inbound' | 'outbound',
+  addr: string,
+  peerId: string = `peer${addr}`,
+) {
+  return {
+    direction,
+    remoteAddr: { toString: () => addr },
+    remotePeer: { toString: () => peerId },
+  };
 }
 
 const NONE = new Set<string>();
@@ -136,7 +144,7 @@ describe('OutboundManager', () => {
       const inboundFlood = Array.from({ length: 12 }, (_, i) =>
         conn('inbound', `/ip4/198.51.100.${i}/tcp/${40000 + i}`));
       const plan = mgr.planTick(inboundFlood);
-      expect(plan.dialBootstrap).toBe(true);
+      expect(plan.bootstrapDials).toEqual(['/ip4/10.0.0.1/tcp/9000']);
       expect(plan.candidate).toBeNull(); // floor phase: seeds, not PeerDb
     });
 
@@ -148,7 +156,7 @@ describe('OutboundManager', () => {
         conn('outbound', '/ip4/51.15.9.2/tcp/4001'),
         conn('outbound', '/ip4/51.15.9.3/tcp/4001'),
       ];
-      expect(mgr.planTick(conns).dialBootstrap).toBe(false);
+      expect(mgr.planTick(conns).bootstrapDials).toEqual([]);
     });
 
     it('outbound connections alone reaching maxPeers stop the fill phase', () => {
@@ -163,7 +171,7 @@ describe('OutboundManager', () => {
       const conns = Array.from({ length: 10 }, (_, i) =>
         conn('outbound', `/ip4/51.15.9.${i}/tcp/4001`));
       const plan = mgr.planTick(conns);
-      expect(plan.dialBootstrap).toBe(false);
+      expect(plan.bootstrapDials).toEqual([]);
       expect(plan.candidate).toBeNull();
     });
   });
@@ -220,6 +228,40 @@ describe('OutboundManager', () => {
       expect(mgr.pickCandidate(5, NONE)).toBe(target);
       // Connected ∪ cooldown excludes both candidates — nothing to dial
       expect(mgr.pickCandidate(5, new Set([target]))).toBeNull();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Floor phase skips a connected seed (NET_INTERFACE → Outbound Manager,
+  // Floor phase). planTick returns the seeds to dial, so an empty list is the
+  // node opening no fresh connection to a seed whose peer it already holds.
+  // -----------------------------------------------------------------------
+
+  describe('floor phase skips a seed whose peer is connected', () => {
+    const seed = '/ip4/10.0.0.1/tcp/9000'; // testConfig's single bootstrap seed
+
+    it('dials the seed while unconnected, skips it once its peer connects, dials it again after the peer drops', () => {
+      // Below minPeers, nothing learned yet: the seed is dialed.
+      expect(mgr.planTick([]).bootstrapDials).toEqual([seed]);
+
+      // The dial resolved to a peer id, which node hands back to the manager.
+      mgr.recordSeedPeer(seed, 'seed-peer');
+
+      // That peer now holds a live connection: the seed is skipped, so a second
+      // tick opens no fresh connection to it.
+      expect(mgr.planTick([conn('outbound', seed, 'seed-peer')]).bootstrapDials)
+        .toEqual([]);
+
+      // The peer dropped (no connection carries its id): the seed is dialed again.
+      expect(mgr.planTick([]).bootstrapDials).toEqual([seed]);
+    });
+
+    it('with two seeds, one connected, dials only the other', () => {
+      const other = '/ip4/10.0.0.2/tcp/9000';
+      const m = new OutboundManager({ ...testConfig, bootstrapPeers: [seed, other] }, db);
+      m.recordSeedPeer(seed, 'seed-1');
+      expect(m.planTick([conn('outbound', seed, 'seed-1')]).bootstrapDials)
+        .toEqual([other]);
     });
   });
 });

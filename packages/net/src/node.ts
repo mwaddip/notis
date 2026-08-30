@@ -774,11 +774,11 @@ export class NetNode {
         // phase's exclude set.
         const plan = this.outboundMgr.planTick(this.libp2p.getConnections());
 
-        // Floor phase: re-dial bootstrap peers while outbound < minPeers.
-        if (plan.dialBootstrap) {
-          for (const addr of this.config.bootstrapPeers) {
-            this.dialBootstrapPeer(addr);
-          }
+        // Floor phase: dial the bootstrap seeds the manager selected — each
+        // whose peer is not already connected (NET_INTERFACE → Outbound
+        // Manager, Floor phase).
+        for (const addr of plan.bootstrapDials) {
+          this.dialBootstrapPeer(addr);
         }
 
         // Fill phase: dial one PeerDb candidate per tick
@@ -842,6 +842,10 @@ export class NetNode {
     try {
       const conn = await this.libp2p.dial(multiaddr(addr));
       this.pendingBootstrapDials.delete(addr);
+      // NET_INTERFACE → Outbound Manager, Floor phase: the floor skips a seed
+      // whose peer holds a live connection; a bare seed has no peer id of its
+      // own, so remember the peer this dial resolved to.
+      this.outboundMgr?.recordSeedPeer(addr, conn.remotePeer.toString());
       console.log(`[net] bootstrap dial succeeded: ${addr} -> peer=${conn.remotePeer.toString()}`);
 
       try {

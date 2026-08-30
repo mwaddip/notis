@@ -148,7 +148,7 @@ describe('the outbound bootstrap record keeps the peer\'s declared version', () 
     const addr = '/ip4/9.9.9.9/tcp/9000';
     const peerDb = new PeerDb(null, 1000, []);
     internals.peerDb = peerDb;
-    internals.outboundMgr = { recordDialResult: () => {} };
+    internals.outboundMgr = { recordDialResult: () => {}, recordSeedPeer: () => {} };
     internals.libp2p = {
       dial: async () => ({ remotePeer: { toString: () => peerId }, direction: 'outbound' }),
       dialProtocol: async () => ({
@@ -168,5 +168,38 @@ describe('the outbound bootstrap record keeps the peer\'s declared version', () 
     expect(ok).toBe(true);
     expect(peerDb.get(addr)?.protocolVersion).toBe(2);
     expect(internals.peerMgr.getPeerMetadata(peerId)?.protocolVersion).toBe(2);
+  });
+
+  it('hands the peer the dial resolved to back to the manager (floor skips a connected seed)', async () => {
+    // NET_INTERFACE → Outbound Manager, Floor phase: the mapping a bootstrap
+    // dial establishes is what lets the floor skip the seed while its peer is
+    // connected. dialBootstrapPeer records it the moment the dial resolves.
+    const net = new NetNode(makeConfig(), validators);
+    const internals = net as unknown as Internals;
+    const peerId = 'boot-peer';
+    const addr = '/ip4/9.9.9.9/tcp/9000';
+    internals.peerDb = new PeerDb(null, 1000, []);
+    const learned: Array<[string, string]> = [];
+    internals.outboundMgr = {
+      recordDialResult: () => {},
+      recordSeedPeer: (a: string, p: string) => { learned.push([a, p]); },
+    };
+    internals.libp2p = {
+      dial: async () => ({ remotePeer: { toString: () => peerId }, direction: 'outbound' }),
+      dialProtocol: async () => ({
+        sink: async () => {},
+        source: (async function* () { yield replyFrame(1); })(),
+        close: async () => {},
+      }),
+      getPeers: () => [{ toString: () => peerId }],
+      getMultiaddrs: () => [],
+      peerId: { toString: () => 'self-peer-id' },
+    };
+    internals.peerMgr.addPeer({ id: peerId, multiaddrs: [], protocols: [], connectedAt: 0 });
+    net.setChainHeightProvider(() => 0);
+
+    await internals.dialBootstrapPeer(addr);
+
+    expect(learned).toEqual([[addr, peerId]]);
   });
 });
