@@ -38,7 +38,7 @@ import {
 } from '../../src/codec.js';
 import { MINT_REASON, hex, registerStruct, type ValueCodec } from './harness.js';
 
-export interface Probe {
+interface Probe {
   version: number;
   id: string;
   refs: string[];
@@ -69,7 +69,7 @@ export interface Probe {
  * | 9 | `mintReason` | `enum8`    |
  * | 10| `extra`   | `opt(vlqU)`   |
  */
-export const probeCodec: StructCodec<Probe> = {
+const probeCodec: StructCodec<Probe> = {
   name: 'Probe',
 
   write(w: ByteWriter, p: Probe): void {

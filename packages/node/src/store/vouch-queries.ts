@@ -117,17 +117,3 @@ export function getVouchesForVoucherPage(
   return { rows: vouches, next, count: countRow.cnt };
 }
 
-export function getVouchesByVoucher(voucherId: Uint8Array): VouchBox[] {
-  const db = getDb();
-  const rows = db
-    .prepare(
-      `SELECT id FROM utxo_boxes
-       WHERE box_type = 'vouch' AND spent_at_block IS NULL
-         AND json_extract(extra_data, '$.voucherId') = ?`,
-    )
-    .all(pubkeyToHex(voucherId)) as Array<{ id: string }>;
-  return rows
-    .map((r) => getBox(r.id))
-    .filter((b): b is VouchBox => b !== null && b.boxType === 'vouch');
-}
-

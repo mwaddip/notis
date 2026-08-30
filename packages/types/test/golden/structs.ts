@@ -60,7 +60,7 @@ import { hex, registerStruct, type ValueCodec } from './harness.js';
  * field is ever added to `PostCommit` that the encoder skips, this is where
  * that divergence has to be spelled out.
  */
-export type PostCommitFields = PostCommit;
+type PostCommitFields = PostCommit;
 
 const postCommitFieldsCodec: ValueCodec<PostCommitFields> = {
   parse(json: unknown): PostCommitFields {
@@ -123,7 +123,7 @@ const postBodyCodec: ValueCodec<string> = {
  * Boxes), so a corpus entry has no way to carry it and the decode direction
  * could not reconstruct it if it did.
  */
-export type BoxContent =
+type BoxContent =
   | { boxType: 'karma'; value: bigint; createdAtBlock: number; owner: Uint8Array }
   | { boxType: 'credit'; value: bigint; createdAtBlock: number; owner: Uint8Array; lockedUntilBlock: number | null }
   /** `payload` is `lp` — opaque bytes, not `lpUtf8`. `value` is always 0. */

@@ -33,7 +33,6 @@ import {
   VLQ_SENTINEL,
   arrByteLength,
   lpByteLength,
-  vlqU64ByteLength,
   vlqUByteLength,
 } from '../src/codec.js';
 import { encodeUtxoTxTree, utxoTxTreeByteLength } from '../src/serialization.js';
@@ -84,10 +83,9 @@ function expectSizeMatchesEncoder(tree: UtxoTxTree): number {
 // ---------------------------------------------------------------------------
 
 /**
- * `vlqUByteLength` and `vlqU64ByteLength` restate wire's two encoding loops as
- * digit counts. Pinning them against `encodeVlqU` / `encodeVlqBigInt` directly
- * is what catches a drift at the primitive rather than as an unattributed
- * few-byte gap on a whole body.
+ * `vlqUByteLength` restates wire's `encodeVlqU` loop as a digit count. Pinning
+ * it against `encodeVlqU` directly is what catches a drift at the primitive
+ * rather than as an unattributed few-byte gap on a whole body.
  */
 describe('VLQ width mirrors', () => {
   const NUMBER_BOUNDARIES = [
@@ -102,31 +100,11 @@ describe('VLQ width mirrors', () => {
     });
   }
 
-  const BIGINT_BOUNDARIES = [
-    0n, 1n, 127n, 128n, 16_383n, 16_384n,
-    2n ** 28n - 1n, 2n ** 28n, 2n ** 49n - 1n, 2n ** 49n, 2n ** 56n, 2n ** 63n,
-    VLQ_SENTINEL,
-  ];
-
-  for (const value of BIGINT_BOUNDARIES) {
-    it(`counts vlqU64(${value}) as ${encodeVlqBigInt(value).length} byte(s)`, () => {
-      expect(vlqU64ByteLength(value)).toBe(encodeVlqBigInt(value).length);
-    });
-  }
-
   // `writeVlqU` sentinels rather than throws, so this width is the ENCODER'S,
   // not a fallback: it is what the bytes cost.
   it('costs a vlqU field the sentinel when its value has no encoding', () => {
     for (const bad of [-1, 1.5, NaN, Infinity, 2 ** 53, undefined, 'seven']) {
       expect(vlqUByteLength(bad as unknown as number)).toBe(SENTINEL_WIDTH);
-    }
-  });
-
-  // `writeVlqU64OrThrow` throws instead, so this is the never-under-report
-  // maximum standing in for a width that does not exist.
-  it('costs a vlqU64 field the widest u64 when its value has no encoding', () => {
-    for (const bad of [-1n, 2n ** 64n, 7, undefined, null]) {
-      expect(vlqU64ByteLength(bad as unknown as bigint)).toBe(SENTINEL_WIDTH);
     }
   });
 

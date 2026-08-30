@@ -1,8 +1,6 @@
 import { PeerState, PenaltyKind } from './types.js';
 import type { NetConfig, Peer, PenaltyType, PeerMetadata } from './types.js';
 
-const STALL_TIMEOUT_MS = 30_000; // 30 seconds
-
 /**
  * Points drained from an accumulated penalty score per elapsed
  * `penaltySafeIntervalMs` (NET_INTERFACE → Accrual and decay).
@@ -136,10 +134,6 @@ export class PeerManager {
     this.peers.delete(peerId);
     this.metadata.delete(peerId);
     this.stalledPeers.delete(peerId);
-  }
-
-  getPeer(peerId: string): Peer | undefined {
-    return this.peers.get(peerId)?.peer;
   }
 
   // -----------------------------------------------------------------------
@@ -278,52 +272,6 @@ export class PeerManager {
     return meta?.state === PeerState.Active;
   }
 
-  // -----------------------------------------------------------------------
-  // Stall detection (contract: Stall Detection)
-  // -----------------------------------------------------------------------
-
-  /** Mark a peer as stalled and rotate to the next available peer. */
-  markStalled(peerId: string): void {
-    const peer = this.metadata.get(peerId);
-    if (peer) {
-      peer.stalled = true;
-      this.stalledPeers.add(peerId);
-    }
-  }
-
-  /** Clear the stalled set when any peer delivers data successfully. */
-  clearStalled(): void {
-    for (const peerId of this.stalledPeers) {
-      const peer = this.metadata.get(peerId);
-      if (peer) peer.stalled = false;
-    }
-    this.stalledPeers.clear();
-  }
-
-  /** Get the next non-stalled outbound peer. */
-  getNextActivePeer(): PeerMetadata | null {
-    for (const peer of this.metadata.values()) {
-      if (peer.state === PeerState.Active && !peer.stalled) {
-        return peer;
-      }
-    }
-    // All peers stalled — clear and retry
-    this.clearStalled();
-    return null;
-  }
-
-  /** Check if a peer has exceeded the stall timeout. */
-  isStallTimedOut(peerId: string): boolean {
-    const meta = this.metadata.get(peerId);
-    if (!meta) return false;
-    return meta.stalled && Date.now() - meta.lastSeenMs > STALL_TIMEOUT_MS;
-  }
-
-  /** Get the set of currently stalled peer IDs (read-only). */
-  getStalledPeers(): ReadonlySet<string> {
-    return this.stalledPeers;
-  }
-
   isBanned(peerId: string): boolean {
     const ban = this.bans.get(peerId);
     if (!ban) return false;
@@ -335,18 +283,5 @@ export class PeerManager {
       return false;
     }
     return true;
-  }
-
-  // -----------------------------------------------------------------------
-  // Eviction
-  // -----------------------------------------------------------------------
-
-  evictRandom(): string | null {
-    if (this.peers.size === 0) return null;
-    const ids = Array.from(this.peers.keys());
-    const idx = Math.floor(Math.random() * ids.length);
-    const id = ids[idx]!;
-    this.peers.delete(id);
-    return id;
   }
 }

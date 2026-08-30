@@ -766,7 +766,6 @@ export class SyncMachine {
    */
   private handleModifierResponseMsg(peerId: string, resp: ModifierResponse): void {
     if (resp.typeId === MODIFIER_ORDERING_BLOCK) {
-      if (resp.modifiers.length === 0) return;
       this.receiveOrderingBlocks(peerId, resp);
     }
   }

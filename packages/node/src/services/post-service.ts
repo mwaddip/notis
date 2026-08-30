@@ -22,13 +22,6 @@ export class PostServiceError extends ClientError {
   }
 }
 
-export class PostValidationError extends PostServiceError {
-  constructor(message: string) {
-    super(message);
-    this.name = 'PostValidationError';
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Dependencies
 // ---------------------------------------------------------------------------

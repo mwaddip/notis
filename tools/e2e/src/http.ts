@@ -101,22 +101,6 @@ export async function hasKarma(
   return karma.boxCount > 0;
 }
 
-export async function getCredits(
-  node: NodeProcess,
-  userId: string,
-): Promise<{
-  userId: string;
-  total: string;
-  boxes: { boxId: string; value: string }[];
-} | null> {
-  const data = await jsonGet(node, `/credits/${userId}`);
-  return data as {
-    userId: string;
-    total: string;
-    boxes: { boxId: string; value: string }[];
-  } | null;
-}
-
 export interface PostResponse {
   id: string;
   content: string | null;
@@ -217,14 +201,6 @@ export async function deleteVouch(
   return data as { status: string; txId: string; karmaReturnsAtBlock: number };
 }
 
-export async function getVouches(
-  node: NodeProcess,
-  query: string,
-): Promise<Record<string, unknown>> {
-  const data = await jsonGet(node, `/vouches?${query}`);
-  return data!;
-}
-
 export async function postPrune(
   node: NodeProcess,
   postId: string,
@@ -241,14 +217,6 @@ export async function postPostWithdraw(
 ): Promise<{ status: string; txId: string; postId: string }> {
   const data = await jsonPost(node, `/posts/${postId}/withdraw`, { tx: txJson });
   return data as { status: string; txId: string; postId: string };
-}
-
-export async function postCreditTransfer(
-  node: NodeProcess,
-  txJson: Record<string, unknown>,
-): Promise<{ status: string; txId: string }> {
-  const data = await jsonPost(node, '/credits/transfer', { tx: txJson });
-  return data as { status: string; txId: string };
 }
 
 export async function adminGet(

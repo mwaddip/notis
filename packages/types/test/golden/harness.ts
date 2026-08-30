@@ -123,7 +123,7 @@ export function hex(s: string): Uint8Array {
   return out;
 }
 
-export function toHex(bytes: Uint8Array): string {
+function toHex(bytes: Uint8Array): string {
   return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
@@ -203,7 +203,7 @@ export const MINT_REASON = enum8<'genesis' | 'genesis-committee'>('mintReason', 
 });
 
 /** The `PostType` tag table (`post.ts`). */
-export const POST_TYPE_ENUM = enum8<'regular' | 'profile'>('postType', { regular: 0, profile: 1 });
+const POST_TYPE_ENUM = enum8<'regular' | 'profile'>('postType', { regular: 0, profile: 1 });
 
 const ENUM_TABLES: Record<string, ReturnType<typeof enum8>> = {
   mintReason: MINT_REASON as ReturnType<typeof enum8>,

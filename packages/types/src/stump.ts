@@ -35,8 +35,6 @@ export interface Stump {
   compactedAtBlockHeight: number;
 }
 
-export type StumpId = string;
-
 // ---------------------------------------------------------------------------
 // Post-withdrawal commit (the payload inside a withdrawal transaction)
 // ---------------------------------------------------------------------------

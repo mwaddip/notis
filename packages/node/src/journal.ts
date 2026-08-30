@@ -108,8 +108,8 @@ export function emitPostIndexed(postId: string, parentRefCount: number): void {
 }
 
 // ---------------------------------------------------------------------------
-// Convenience emitters for peer events (JOURNAL_EVENTS → Peer Events —
-// NOT IMPLEMENTED; wrappers ahead of wiring)
+// Convenience emitters for peer events (JOURNAL_EVENTS → Peer Events),
+// wired at src/index.ts
 // ---------------------------------------------------------------------------
 
 export function emitPeerConnected(peerId: string, direction: 'inbound' | 'outbound'): void {

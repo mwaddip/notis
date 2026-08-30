@@ -312,21 +312,6 @@ export function readVlqU64(r: ByteReader): bigint {
 }
 
 /**
- * The width `writeVlqU64OrThrow` produces.
- *
- * ⚠ **Total where that writer throws**, per `VLQ_SENTINEL_BYTE_LENGTH`. The
- * bound is `VLQ_SENTINEL` itself, which *is* the u64 maximum — so the value
- * that marks "out of domain" everywhere else in this file is here the largest
- * in-domain one, and doubles as the width returned for anything past it.
- */
-export function vlqU64ByteLength(value: bigint): number {
-  if (typeof value !== 'bigint' || value < 0n || value > VLQ_SENTINEL) {
-    return VLQ_SENTINEL_BYTE_LENGTH;
-  }
-  return vlqBigIntWidth(value);
-}
-
-/**
  * `b32` / `b33` / `b64` from a hex `string` — fixed-length raw bytes, no
  * length prefix. The hex→bytes half of the boundary.
  *
