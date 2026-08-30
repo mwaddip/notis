@@ -677,7 +677,7 @@ the chain) is not served. The prover behind it is `Nipopow prover` below.
 
 | Method | Path | Response |
 |--------|------|----------|
-| `GET` | `/status` | `{ networkType, blockHeight, postCount, pendingPosts, totalKarma, liquidKarma, totalCredits, inviteProbationBlocks, vouchCooldownBlocks, inviteBondMin, inviteBondMax, membership: { memberCount, memberBar, memberLikesBar } }` |
+| `GET` | `/status` | `{ networkType, blockHeight, protocolVersion, postCount, pendingPosts, totalKarma, liquidKarma, totalCredits, inviteProbationBlocks, vouchCooldownBlocks, inviteBondMin, inviteBondMax, membership: { memberCount, memberBar, memberLikesBar } }` |
 
 > ⚠ **`totalKarma` is karma in existence; `liquidKarma` is karma its owner can spend now.**
 > `totalKarma` sums the karma-bearing types; `liquidKarma` sums `karma` alone. `credit` is the
@@ -871,7 +871,7 @@ admitted at the tip is judged exactly as the next block judges it.
 > locked until `L` is refused at tip `L − 1` though block `L` accepts it, and a transaction is judged
 > by the tip's era; step 7 compares against `PROTOCOL_VERSION`; the settlement, the stump, the rent
 > transaction and the template stamp the constant; fork resolution penalises a `'version'` verdict as
-> `misbehavior`; `/health` reports no era. The version-schedule unit's node dispatch.
+> `misbehavior`; `/status` and `/health` report no era. The version-schedule unit's node dispatch.
 
 Full read-only validation. Performs all checks without modifying state. The
 step numbers below are the code's own — one numbering, shared by every
@@ -1456,7 +1456,8 @@ The checks:
    Version), which holds `tx.post.protocolVersion` to the same era when a commit is present; the
    schedule rides on `deps`. Rider: `jsonToTx`'s default is `?? protocolVersionAt(schedule, tip + 1)`,
    so the HTTP edge cannot mint a foreign-era transaction; a signing client learns the era first
-   (`/health`), the field being in the id preimage.
+   (`/status` → `protocolVersion`, the era at `blockHeight + 1` — served, never known, like every
+   per-network value on that route), the field being in the id preimage.
 8. `likeTarget`: absent, or a 64-char lowercase-hex string.
 
 **Call sites (all of them, or the guarantee is path-dependent):**
