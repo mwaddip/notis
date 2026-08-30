@@ -1,6 +1,5 @@
 import {
   profileFor,
-  PROTOCOL_VERSION,
   NETWORK_PROFILES,
   RETARGET_HALFLIFE_BLOCKS,
   MAX_FUTURE_DRIFT_MS,
@@ -21,7 +20,7 @@ export interface Config {
   json: boolean;
 }
 
-// NIPOPOW_INTERFACE → verifyProof — the schedule's parameters are the profile band
+// NIPOPOW_INTERFACE → verifyProof — the retarget band and the version schedule are the profile's
 export function verifierProfile(profile: NetworkProfile, nowMs: number): VerifyProfile {
   const idealMs = profile.orderingBlockIdealMs;
   return {
@@ -35,7 +34,8 @@ export function verifierProfile(profile: NetworkProfile, nowMs: number): VerifyP
     maxFutureDriftMs: MAX_FUTURE_DRIFT_MS,
     nowMs,
     genesisId: profile.genesisId,
-    protocolVersion: PROTOCOL_VERSION,
+    // TYPES_INTERFACE → Version — verifyProof rule 3 checks each header at its own height
+    protocolVersionSchedule: profile.protocolVersionSchedule,
   };
 }
 

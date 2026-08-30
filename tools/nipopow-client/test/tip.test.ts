@@ -9,6 +9,7 @@ import {
 } from './helpers.js';
 import { blockHash } from '@dagsocial/validation';
 import { MAX_FUTURE_DRIFT_MS } from '@dagsocial/types';
+import type { NetworkProfile, ProtocolEra } from '@dagsocial/types';
 
 const M = 6;
 const K = 6;
@@ -193,5 +194,25 @@ describe('tip resolution', () => {
     expect(result.winner).not.toBeNull();
     expect(result.winner!.url).toBe('http://a:3000');
     expect(result.splits).toEqual([]);
+  });
+
+  it('proof spanning an era boundary verifies under the scheduled profile, fails "version" under one era', async () => {
+    // TYPES_INTERFACE → Version, NIPOPOW_INTERFACE → verifyProof — rule 3 judges each header's version
+    // at its own height, so the schedule the client hands the verifier is what decides.
+    const boundary = 8;
+    const schedule: ProtocolEra[] = [{ version: 1, fromHeight: 0 }, { version: 2, fromHeight: boundary }];
+    const chain = buildMinedChain({ count: 15, schedule });
+    const now = clockAfterChain(chain);
+    const node = createFakeNode({ url: 'http://a:3000', chain, m: M, k: K });
+
+    const scheduled: NetworkProfile = { ...devnetProfile(), protocolVersionSchedule: schedule };
+    const passed = await resolveTip(['http://a:3000'], M, K, scheduled, now, node.fetch);
+    expect(passed.nodes[0]!.verified).toBe(true);
+    expect(passed.tip).not.toBeNull();
+
+    // devnetProfile()'s schedule is [1@0]; the header past the boundary declares 2, its era there is 1.
+    const oneEra = await resolveTip(['http://a:3000'], M, K, devnetProfile(), now, node.fetch);
+    expect(oneEra.nodes[0]!.verified).toBe(false);
+    expect(oneEra.nodes[0]!.refuseReason).toContain('version');
   });
 });
