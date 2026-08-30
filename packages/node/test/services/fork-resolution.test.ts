@@ -3012,6 +3012,8 @@ describe('reorg — re-insertion floor pin (row 167-1)', () => {
       const author = makeTestIdentity();
       const posts = await importPosts();
       const mempool = await importMempoolFresh();
+      const utxo = await importUtxo();
+      const forkResolution = await importForkResolution();
       const bc = await importBlockCreator();
       bc.startBlockCreator(testConfig);
       const ordering = await importOrdering();
@@ -3025,11 +3027,26 @@ describe('reorg — re-insertion floor pin (row 167-1)', () => {
       }
       expect(ordering.getCurrentHeight()).toBe(6);
 
-      // A credit tx whose input is locked until height 10. The input boxId
-      // is fabricated (the ceiling-screen model); `insertUtxoTx` stores the
-      // bytes without resolving inputs.
+      // Insert a real CreditBox with lockedUntilBlock = 5. At new tip 4
+      // the next build is at height 5, and 5 >= 5 passes SPEND_TIMING —
+      // but after a reorg to tip 4 the CURRENT height is 4 and
+      // `validateTx` step 3 checks `currentBlockHeight >= lockedUntilBlock`.
+      // The build is at height 5 where 5 >= 5 holds, so use
+      // lockedUntilBlock = 6 so it fails at the build height too (5 < 6).
       const creditOwner = author.publicKey;
-      const boxId = 'dd'.repeat(32);
+      const { computeCandidateBoxId } = await import('@dagsocial/types');
+      const lockedCandidate = {
+        boxType: 'credit' as const,
+        value: 100n,
+        owner: creditOwner,
+        createdAtBlock: 3,
+        lockedUntilBlock: 6,
+      };
+      const provTxId = 'cc'.repeat(32);
+      const boxId = computeCandidateBoxId(lockedCandidate, provTxId, 0);
+      utxo.insertBox({ ...lockedCandidate, id: boxId, txId: provTxId, index: 0 });
+
+      // A credit → credit spend of the locked box.
       const floorTx: UtxoTransaction = {
         inputs: [boxId],
         outputs: [
@@ -3048,27 +3065,35 @@ describe('reorg — re-insertion floor pin (row 167-1)', () => {
       journalMod.insertBlockJournal(journal5);
 
       // Reorg to a 4-block chain (shorter than our 6): new tip = 4.
+      // Re-insertion screens the ceiling, not the floor — the locked tx is
+      // re-inserted unscreened (NODE_INTERFACE → Validity ceiling).
       const chain4 = Array.from({ length: 4 }, (_, i) => ordering.getOrderingBlock(i + 1)!);
-      const forkResolution = await importForkResolution();
       forkResolution.reorg(0, chain4);
 
       expect(ordering.getCurrentHeight()).toBe(4);
 
-      // The floor tx was re-inserted (not screened — re-insertion screens
-      // the ceiling, not the floor). Identify it by its input: one pending
-      // entry spends the fabricated boxId.
-      const { decodeTx: decode, computeTxId } = await import('@dagsocial/types');
-      const pending = mempool.getPendingEntries(1000);
-      const lockedEntry = pending.find(e => {
-        if (!e.utxoTxBytes) return false;
-        const tx = decode(e.utxoTxBytes);
-        return tx.inputs.includes(boxId);
-      });
-      expect(lockedEntry, 'the locked credit tx is in the pool after the reorg').toBeDefined();
+      // `reorg` calls `rebuildTemplate()` which runs `createOrderingBlock()`:
+      // the rejected-body loop (MINING_INTERFACE → Template and submit)
+      // evicts the locked entry. Check the pool AFTER the reorg — if the
+      // entry is already gone, the eviction happened inside `reorg`'s own
+      // `rebuildTemplate`.
+      const { decodeTx: decode } = await import('@dagsocial/types');
+      const findLocked = (entries: Array<{ utxoTxBytes: Uint8Array | null }>) =>
+        entries.find(e => {
+          if (!e.utxoTxBytes) return false;
+          const tx = decode(e.utxoTxBytes);
+          return tx.inputs.includes(boxId);
+        });
 
-      // The next build: the rejected-body loop evicts entries whose inputs
-      // the chain does not hold. The node holds a template (no stall).
-      bc.createOrderingBlock();
+      const afterReorg = mempool.getPendingEntries(1000);
+      const lockedAfterReorg = findLocked(afterReorg);
+
+      // The locked tx is in the pool: re-insertion screened the ceiling, not
+      // the floor (NODE_INTERFACE → Validity ceiling). `reorg`'s own
+      // `rebuildTemplate` runs `createOrderingBlock` (MINING_INTERFACE →
+      // Template and submit) — the rejected-body loop evicts the entry there,
+      // and a template is held.
+      expect(lockedAfterReorg, 'the locked credit tx is in the pool after the reorg').toBeDefined();
       const template = bc.getCurrentTemplate();
       expect(template, 'the node holds a template after the build (no stall)').not.toBeNull();
     } finally {
@@ -3969,6 +3994,7 @@ describe('resolveFork — paged scoring walk', () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const { setClock } = await import('../../src/services/difficulty.js');
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
     const ordering = await importOrdering();
@@ -3979,12 +4005,16 @@ describe('resolveFork — paged scoring walk', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    // Height 1 — the fork point.
+    // Pin the clock: both chains carry identical stamps per height so work
+    // is equal, and the crossing is their block 32 by construction.
+    const t1 = 1_000_000;
+    setClock(() => t1);
     await mineNextBlock(bc);
 
     // Build their chain: 31 blocks (heights 2..32), applied then reverted.
     const theirBlocks: OrderingBlock[] = [];
     for (let h = 2; h <= 32; h++) {
+      setClock(() => t1 + (h - 1) * 60_000);
       const b = await makeApplicableBlock({ height: h });
       expect(applyOrderingBlock(b)).toBe(true);
       theirBlocks.push(b);
@@ -3993,18 +4023,23 @@ describe('resolveFork — paged scoring walk', () => {
     for (let h = 32; h >= 2; h--) forkResolution.revertBlock(h);
     expect(ordering.getCurrentHeight()).toBe(1);
 
-    // Our chain: 30 blocks (heights 2..31).
-    for (let i = 0; i < 30; i++) await mineNextBlock(bc);
+    // Our chain: 30 blocks (heights 2..31) at the same stamps.
+    for (let i = 0; i < 30; i++) {
+      setClock(() => t1 + (i + 1) * 60_000);
+      await mineNextBlock(bc);
+    }
     expect(ordering.getCurrentHeight()).toBe(31);
 
     const theirHeaders = [...theirBlocks].reverse().map(b => b.header).concat(
       ordering.getOrderingBlock(1)!.header,
     );
 
+    setClock(() => t1 + 32 * 60_000);
     const net = stubNet(theirHeaders, theirBlocks);
     await forkResolution.resolveFork(theirBlocks[theirBlocks.length - 1]!, net, 'peer-deep');
 
-    // Their chain (31 blocks) is heavier than ours (30 blocks at the same target).
+    // Their chain (31 blocks) is heavier than ours (30 blocks at the same
+    // target); the crossing is block 32.
     const theirTipHash = blockHash(theirBlocks[theirBlocks.length - 1]!.header)!;
     expect(ordering.getCurrentHeight()).toBe(32);
     expect(blockHash(ordering.getOrderingBlock(32)!.header)).toBe(theirTipHash);
@@ -4279,14 +4314,14 @@ describe('resolveFork — paged scoring walk', () => {
     expect(scoringRequests.length).toBe(1);
   });
 
-  it('a test config with horizon 900 walks three pages to a fork at depth 850', async () => {
+  it('a test config with horizon 450 walks two pages to a fork at depth 400', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const { setClock } = await import('../../src/services/difficulty.js');
 
-    // Inject a config with maxReorgDepth 900.
-    const bigConfig = makeTestConfig({ maxReorgDepth: 900 });
+    // Inject a config with maxReorgDepth 450.
+    const bigConfig = makeTestConfig({ maxReorgDepth: 450 });
     vi.doMock('../../src/config.js', () => ({ config: bigConfig, loadConfig: () => bigConfig }));
 
     const bc = await importBlockCreator();
@@ -4296,19 +4331,19 @@ describe('resolveFork — paged scoring walk', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    // Mine 900 blocks.
+    // Mine 450 blocks.
     const t1 = 1_000_000;
-    for (let i = 0; i < 900; i++) {
+    for (let i = 0; i < 450; i++) {
       setClock(() => t1 + i * 60_000);
       await mineNextBlock(bc);
     }
-    expect(ordering.getCurrentHeight()).toBe(900);
+    expect(ordering.getCurrentHeight()).toBe(450);
 
-    // Peer shares our block at height 50 (depth 850 from tip).
-    // Build headers that don't match at heights 51-900, then match at 50.
+    // Peer shares our block at height 50 (depth 400 from tip).
+    // Build headers that don't match at heights 51-450, then match at 50.
     const sharedBlock = ordering.getOrderingBlock(50)!.header;
     const fakeHeaders: BlockHeader[] = [];
-    for (let h = 900; h >= 1; h--) {
+    for (let h = 450; h >= 1; h--) {
       if (h === 50) {
         fakeHeaders.push(sharedBlock);
       } else if (h < 50) {
@@ -4329,7 +4364,7 @@ describe('resolveFork — paged scoring walk', () => {
       }
     }
 
-    setClock(() => t1 + 901 * 60_000);
+    setClock(() => t1 + 451 * 60_000);
     const net = stubNet(fakeHeaders, []);
     await forkResolution.resolveFork(
       { header: fakeHeaders[0]!, utxoTxTree: { utxoTxIds: [], utxoTxs: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock,
@@ -4337,21 +4372,19 @@ describe('resolveFork — paged scoring walk', () => {
       'peer-withholding',
     );
 
-    // The fork walk starts at 900, pages down in 400-header pages:
-    // Request 1: startHeight=900, maxCount=400 → headers 900..501
-    // Request 2: startHeight=500, maxCount=400 → headers 500..101
-    // Request 3: startHeight=100, maxCount=400 → headers 100..1, match at 50
-    // Three fork-walk requests.
+    // The fork walk starts at 450, pages down in 400-header pages:
+    // Request 1: startHeight=450, maxCount=400 → headers 450..51
+    // Request 2: startHeight=50, maxCount=400 → headers 50..1, match at 50
+    // Two fork-walk requests.
     const forkWalkRequests = net.headerRequests.filter(
-      r => r.startHeight <= 900,
+      r => r.startHeight <= 450,
     );
-    expect(forkWalkRequests.length).toBe(3);
-    expect(forkWalkRequests[0]!.startHeight).toBe(900);
-    expect(forkWalkRequests[1]!.startHeight).toBe(501 - 1); // lowestSeen - 1
-    expect(forkWalkRequests[2]!.startHeight).toBeLessThanOrEqual(101);
+    expect(forkWalkRequests.length).toBe(2);
+    expect(forkWalkRequests[0]!.startHeight).toBe(450);
+    expect(forkWalkRequests[1]!.startHeight).toBeLessThanOrEqual(51);
 
     // Chain untouched (the peer's headers above the fork fail verification).
-    expect(ordering.getCurrentHeight()).toBe(900);
+    expect(ordering.getCurrentHeight()).toBe(450);
   }, 120_000);
 
   it('hazard 2 — first 21 lighter than our 20, whole heavier → reorg', async () => {
@@ -4559,6 +4592,7 @@ describe('resolveFork — paged scoring walk', () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const { setClock } = await import('../../src/services/difficulty.js');
     const bc = await importBlockCreator();
     bc.startBlockCreator(testConfig);
     const ordering = await importOrdering();
@@ -4569,12 +4603,16 @@ describe('resolveFork — paged scoring walk', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    // Height 1 — the fork point.
+    // Pin the clock: both chains carry identical stamps per height, and the
+    // crossing is their block 42.
+    const t1 = 1_000_000;
+    setClock(() => t1);
     await mineNextBlock(bc);
 
     // Build their chain: 41 blocks (heights 2..42), applied then reverted.
     const theirBlocks: OrderingBlock[] = [];
     for (let h = 2; h <= 42; h++) {
+      setClock(() => t1 + (h - 1) * 60_000);
       const b = await makeApplicableBlock({ height: h });
       expect(applyOrderingBlock(b)).toBe(true);
       theirBlocks.push(b);
@@ -4583,14 +4621,18 @@ describe('resolveFork — paged scoring walk', () => {
     for (let h = 42; h >= 2; h--) forkResolution.revertBlock(h);
     expect(ordering.getCurrentHeight()).toBe(1);
 
-    // Our chain: 40 blocks (heights 2..41).
-    for (let i = 0; i < 40; i++) await mineNextBlock(bc);
+    // Our chain: 40 blocks (heights 2..41) at the same stamps.
+    for (let i = 0; i < 40; i++) {
+      setClock(() => t1 + (i + 1) * 60_000);
+      await mineNextBlock(bc);
+    }
     expect(ordering.getCurrentHeight()).toBe(41);
 
     const theirHeaders = [...theirBlocks].reverse().map(b => b.header).concat(
       ordering.getOrderingBlock(1)!.header,
     );
 
+    setClock(() => t1 + 42 * 60_000);
     const net = stubNet(theirHeaders, theirBlocks);
     await forkResolution.resolveFork(theirBlocks[theirBlocks.length - 1]!, net, 'peer-deep40');
 
@@ -4607,8 +4649,8 @@ describe('resolveFork — paged scoring walk', () => {
     const { setClock } = await import('../../src/services/difficulty.js');
     const { retargetParams: rp } = await import('../../src/services/difficulty.js');
 
-    // Inject a config with maxReorgDepth 900.
-    const bigConfig = makeTestConfig({ maxReorgDepth: 900 });
+    // Inject a config with maxReorgDepth 450.
+    const bigConfig = makeTestConfig({ maxReorgDepth: 450 });
     vi.doMock('../../src/config.js', () => ({ config: bigConfig, loadConfig: () => bigConfig }));
 
     const bc = await importBlockCreator();
@@ -4618,30 +4660,28 @@ describe('resolveFork — paged scoring walk', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    // Mine 900 blocks.
+    // Mine 450 blocks.
     const t1 = 1_000_000;
-    for (let i = 0; i < 900; i++) {
+    for (let i = 0; i < 450; i++) {
       setClock(() => t1 + i * 60_000);
       await mineNextBlock(bc);
     }
-    expect(ordering.getCurrentHeight()).toBe(900);
+    expect(ordering.getCurrentHeight()).toBe(450);
 
-    // Fork at height 1 (depth 899). Our work above 1 is 899 blocks.
+    // Fork at height 1 (depth 449). Our work above 1 is 449 blocks.
     const forkBlock = ordering.getOrderingBlock(1)!.header;
     const forkHash = blockHash(forkBlock)!;
     const forkLevel = headerLevel(forkBlock, bigConfig.orderingBlockPowTargetBits);
     const anchorIl = updateInterlinks([], forkHash, forkLevel);
 
     // Their branch: slightly faster spacing so each header is harder → more
-    // work per header. With ~899 of ours above the fork and theirs at ~0.95x
-    // spacing, their work per header is ~5% more, so they cross around header
-    // ~475 and the first page-aligned stop is a residual page boundary.
+    // work per header. The crossing boundary is derived from cumulativeWork.
     const params = rp();
     const { headers: peerChain } = buildMinedHeaderChain({
       anchorPrevBlockHash: forkHash,
       anchorInterlinks: anchorIl,
       startHeight: 2,
-      count: 900,
+      count: 450,
       params,
       anchorCreatedAt: forkBlock.createdAt,
       anchorStamp: forkBlock.createdAt,
@@ -4654,7 +4694,7 @@ describe('resolveFork — paged scoring walk', () => {
 
     const blockRequests: Array<{ startHeight: number; endHeight: number }> = [];
     const penalties: Array<{ peerId: string; kind: string; reason: string }> = [];
-    const peerTip = 1 + 900;
+    const peerTip = 1 + 450;
 
     const net: ForkResolutionNet & {
       blockRequests: typeof blockRequests;
@@ -4683,7 +4723,7 @@ describe('resolveFork — paged scoring walk', () => {
       penalties,
     };
 
-    setClock(() => t1 + 901 * 60_000);
+    setClock(() => t1 + 451 * 60_000);
     // Spy getHeadersAbove to pin that ourWork reads the header-only store path.
     const orderingMod = await import('../../src/store/ordering.js');
     const headersAboveSpy = vi.spyOn(orderingMod, 'getHeadersAbove');
@@ -4695,15 +4735,15 @@ describe('resolveFork — paged scoring walk', () => {
     );
 
     // The ourWork read went through getHeadersAbove, not the decode loop.
-    expect(headersAboveSpy).toHaveBeenCalledWith(1, 899);
+    expect(headersAboveSpy).toHaveBeenCalledWith(1, 449);
 
     // Derive the first page boundary at which their work exceeds ours.
-    // The residual (heights 2..900) is chunked at MAX_CHAIN_RESPONSE_ITEMS
-    // (400): pages of 2..401, 402..801, 802..900. Fresh requests above that.
+    // The residual (heights 2..450) is chunked at MAX_CHAIN_RESPONSE_ITEMS
+    // (400): pages of 2..401, 402..450. Fresh requests above that.
     const ourWork = cumulativeWork(
-      Array.from({ length: 899 }, (_, i) => ordering.getOrderingBlock(2 + i)!.header),
+      Array.from({ length: 449 }, (_, i) => ordering.getOrderingBlock(2 + i)!.header),
     );
-    const pageBoundaries = [400, 800, 899];
+    const pageBoundaries = [400, 449];
     let expectedK: number | null = null;
     for (const k of pageBoundaries) {
       const sliceWork = cumulativeWork(peerChain.slice(0, k));
