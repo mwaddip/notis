@@ -45,6 +45,7 @@ import {
   getBox,
   getBoxProvenance,
   getCurrentHeight,
+  nextBlockHeight,
   MempoolFullError,
   PendingSpendConflictError,
   getOrderingBlock,
@@ -218,7 +219,9 @@ net.onTx((tx, content, fromPeerId) => {
     putIdentityRecord,
     protocolVersionSchedule: config.protocolVersionSchedule,
   };
-  const currentHeight = getCurrentHeight();
+  // Admission judges a transaction at the height of the block that would carry
+  // it — tip + 1 (NODE_INTERFACE → validateTx).
+  const currentHeight = nextBlockHeight();
   const validationStart = performance.now();
   const result = validateTx(deps, tx, currentHeight);
   if (!result.valid) {

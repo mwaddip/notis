@@ -1,7 +1,6 @@
 import { MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import {
-  getCurrentHeight,
   getTopologyHeight,
   getPost,
   isLivePost,
@@ -33,9 +32,11 @@ export function executePostWithdraw(
     throw new ClientError('Transaction carries no postWithdraw payload');
   }
 
-  const currentHeight = getCurrentHeight();
+  // The maturity bind judges at the withdrawal's block — the same judged-for
+  // height validateTx uses, one rule (NODE_INTERFACE → validateTx). The route
+  // passes tip + 1.
   const postHeight = getTopologyHeight(pw.postId);
-  if (postHeight === null || postHeight >= currentHeight) {
+  if (postHeight === null || postHeight >= currentBlockHeight) {
     throw new ClientError('Post is not confirmed in an earlier block');
   }
 

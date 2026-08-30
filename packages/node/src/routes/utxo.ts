@@ -155,7 +155,8 @@ export function createRouter(deps: UtxoDeps): Router {
     }
 
     try {
-      const currentHeight = deps.getCurrentHeight();
+      // Admission judges at tip + 1 (NODE_INTERFACE → validateTx).
+      const currentHeight = deps.getCurrentHeight() + 1;
       const result = sendCredits(deps.getUtxoEngineDeps(), tx, currentHeight);
 
       const net = getNet();

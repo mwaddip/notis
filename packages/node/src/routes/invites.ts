@@ -49,7 +49,8 @@ export function createRouter(deps: InvitesDeps): Router {
     }
 
     try {
-      const currentHeight = deps.getCurrentHeight();
+      // Admission judges at tip + 1 (NODE_INTERFACE → validateTx).
+      const currentHeight = deps.getCurrentHeight() + 1;
       const result = deps.createInvite(deps, tx, currentHeight);
 
       // Broadcast invite create tx to peers (fire-and-forget)

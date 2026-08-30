@@ -45,7 +45,8 @@ export function createRouter(deps: LikesDeps): Router {
     }
 
     try {
-      const currentHeight = deps.getCurrentHeight();
+      // Admission judges at tip + 1 (NODE_INTERFACE → validateTx).
+      const currentHeight = deps.getCurrentHeight() + 1;
       const result = deps.castLike(deps, tx, currentHeight);
 
       // Broadcast the like transaction to peers (fire-and-forget)

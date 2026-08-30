@@ -48,7 +48,8 @@ export function createRouter(deps: VouchesDeps): Router {
       return;
     }
     try {
-      const currentHeight = deps.getCurrentHeight();
+      // Admission judges at tip + 1 (NODE_INTERFACE → validateTx).
+      const currentHeight = deps.getCurrentHeight() + 1;
       const result = deps.castVouch(deps, tx, currentHeight);
       const net = getNet();
       if (net) {
@@ -80,7 +81,8 @@ export function createRouter(deps: VouchesDeps): Router {
       return;
     }
     try {
-      const currentHeight = deps.getCurrentHeight();
+      // Admission judges at tip + 1 (NODE_INTERFACE → validateTx).
+      const currentHeight = deps.getCurrentHeight() + 1;
       const result = deps.initiateUnvouch(deps, tx, currentHeight);
       const net = getNet();
       if (net) {

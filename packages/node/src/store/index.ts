@@ -81,6 +81,7 @@ export {
   getOrderingBlock,
   getBlockCreatedAt,
   getCurrentHeight,
+  nextBlockHeight,
   deleteOrderingBlock,
   getOrderingBlockHash,
   getHeightByBlockHash,

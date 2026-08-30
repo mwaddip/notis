@@ -1,7 +1,6 @@
 import { MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import {
-  getCurrentHeight,
   getTopologyHeight,
 } from '../store/index.js';
 import { ClientError } from './client-error.js';
@@ -24,9 +23,11 @@ export function executePrune(
     throw new ClientError('Transaction carries no prune payload');
   }
 
-  const currentHeight = getCurrentHeight();
+  // The maturity bind judges at the prune's block — the same judged-for height
+  // validateTx uses, one rule (NODE_INTERFACE → validateTx). The route passes
+  // tip + 1.
   const rootHeight = getTopologyHeight(prune.rootPostHash);
-  if (rootHeight === null || rootHeight >= currentHeight) {
+  if (rootHeight === null || rootHeight >= currentBlockHeight) {
     throw new ClientError('Post is not confirmed in an earlier block');
   }
 

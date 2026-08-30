@@ -78,7 +78,10 @@ export function createPost(
   tx: UtxoTransaction,
   content: string,
 ): PostCreateResult {
-  const currentHeight = deps.getCurrentHeight();
+  // The judged-for height — tip + 1, the block that would carry this
+  // transaction. The verifier and validateTx read the same height, one rule
+  // (NODE_INTERFACE → validateTx).
+  const currentHeight = deps.getCurrentHeight() + 1;
 
   const commit = tx.post;
   if (!commit) {

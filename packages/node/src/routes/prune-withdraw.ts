@@ -45,7 +45,8 @@ export function pruneWithdrawRoutes(deps: PruneWithdrawDeps): Router {
     }
 
     try {
-      const currentHeight = deps.getCurrentHeight();
+      // Admission judges at tip + 1 (NODE_INTERFACE → validateTx).
+      const currentHeight = deps.getCurrentHeight() + 1;
       const { txId } = deps.executePrune(deps, tx, currentHeight);
 
       const net = getNet();
@@ -88,7 +89,8 @@ export function pruneWithdrawRoutes(deps: PruneWithdrawDeps): Router {
     }
 
     try {
-      const currentHeight = deps.getCurrentHeight();
+      // Admission judges at tip + 1 (NODE_INTERFACE → validateTx).
+      const currentHeight = deps.getCurrentHeight() + 1;
       const { txId } = deps.executePostWithdraw(deps, tx, currentHeight);
 
       const net = getNet();
