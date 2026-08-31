@@ -223,8 +223,8 @@ leaves the bound unchanged.
 ```
    ┌────────────────────────────┐   ┌──────────────────┐
    │  API routes (POST /posts,  │   │  Gossip relay    │
-   │  /likes, /invites,         │   │  (onTx) — and    │
-   │  /vouches, /credits/…,     │   │  (onTx)          │
+   │  /likes, /invites,         │   │  (onTx)          │
+   │  /vouches, /credits/…,     │   │                  │
    │  /posts/:id/prune)         │   │                  │
    └─────────────┬──────────────┘   └────────┬─────────┘
                  │ insertUtxoTx              │ insertUtxoTx
@@ -372,8 +372,7 @@ settlement, and a size refusal at submit is unreachable (`MINING_INTERFACE` → 
 
 **Two paths clear a confirmed entry.** A block this node produced is cleaned by rowid
 (`confirmedRowids`, step 5), which reaches every included entry wherever it sits. A block arriving
-**from a peer** is cleaned by `removeUtxoTxEntry(txId)` — an indexed delete on `tx_id` — and by
-`removeUtxoTxEntry(txId)` — an indexed delete on `tx_id`; the key is written at
+**from a peer** is cleaned by `removeUtxoTxEntry(txId)` — an indexed delete on `tx_id`; the key is written at
 insert.
 
 **The rule is that cleanup reaches every row**, whatever its depth. An entry left behind holds a
@@ -600,8 +599,7 @@ rather than a rule.
 ### Blob storage
 
 Entries are stored as encoded blobs rather than parsed columns — a `utxo_tx`
-row holds positional `encodeTx` bytes
-blob. This avoids double-parsing (decode off the wire → JSON for SQLite →
+row holds positional `encodeTx` bytes. This avoids double-parsing (decode off the wire → JSON for SQLite →
 re-encode for broadcast) and keeps the mempool schema agnostic to entry
 structure. The block creator decodes entries when assembling blocks.
 
