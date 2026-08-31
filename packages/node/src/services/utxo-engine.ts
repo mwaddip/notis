@@ -987,7 +987,7 @@ export function ceilingOf(tx: UtxoTransaction): number | null {
 }
 
 // ---------------------------------------------------------------------------
-// Internal validation helpers (extracted from validateAndApplyTx)
+// Internal validation helpers
 // ---------------------------------------------------------------------------
 
 // The consensus bound on every `value` (and `originalValue`) is the schema's
@@ -1983,7 +1983,7 @@ function checkAuthorization(
 }
 
 // ---------------------------------------------------------------------------
-// Public API: validateTx, applyTx, validateAndApplyTx
+// Public API: validateTx, applyTx
 // ---------------------------------------------------------------------------
 
 /**
