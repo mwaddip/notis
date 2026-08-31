@@ -359,6 +359,11 @@ Handshake specifics:
   `MAX_ADDRESS_BYTES`); `capabilities` is a count-capped list of bounded codes (unknown
   capabilities preserved, not rejected — forward compat)
 
+**A banned peer's handshake is refused unread.** The inbound handshake handler checks `isBanned(peerId)`
+before it reads: a banned peer's stream is closed with no decode, no reply, and no `Active` transition.
+Reading and validating it would spend work on, and possibly re-admit, a peer whose ban is the whole
+point — the byte cap and read deadline bound that work but do not decline it.
+
 **Ban policy** — two tiers, split by what a failure is evidence of:
 
 *Frame tier — the payload never decoded as a frame, or the frame refused itself.* Close the
@@ -789,10 +794,18 @@ the cheapest possible table-poisoning primitive.
 ### Peers Intake
 
 On receiving `Peers`: for each entry where the address is not blacklisted,
-not bogus, and not self — record into PeerDb with `lastSeenMs = now`.
-Malformed Peers (cap exceeded, truncated body, invalid strings) triggers
-permanent ban of the source. Bogus addresses in a valid body do NOT
-penalize the source — they are silently dropped.
+not bogus, and not self — record into PeerDb. Malformed Peers (cap exceeded,
+truncated body, invalid strings) triggers permanent ban of the source. Bogus
+addresses in a valid body do NOT penalize the source — they are silently
+dropped.
+
+**A gossiped address is a hint below a seen peer.** A `Peers` entry is a third party's claim about a
+peer this node may never have met, so it is recorded with `lastSeenMs = 0` — below any peer we have
+actually connected to. It fills only cold capacity and is the first evicted (PeerDb's soft cap drops the
+oldest `lastSeenMs`), so a flood of junk addresses cannot displace a peer we have seen; and because
+`record` merges by the newer `lastSeenMs`, a gossiped entry never advances an existing entry's recency.
+This is the churn defence, and it dials nothing: liveness is verified on use, where a dead entry simply
+fails its dial.
 
 ### Bogus Address Classification
 

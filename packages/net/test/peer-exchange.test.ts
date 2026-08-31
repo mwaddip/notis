@@ -145,15 +145,17 @@ describe('intakePeersBody', () => {
     return { address, agentName: 'remote', nodeName: 'r1', protocolVersion: 1, capabilities: [8] };
   }
 
-  it('records every good entry with the local clock, not the wire', () => {
+  it('records every good entry ranked below a seen peer, never a wire timestamp', () => {
     const peerDb = new PeerDb(null, 100, []);
     const peerMgr = makePeerMgr();
     const usable = intakePeersBody(body({ peers: [entry(good1), entry(good2)] }), {
-      peerDb, peerMgr, peerId: 'sender', magic: MAGIC_MAINNET, nowMs: 5555,
+      peerDb, peerMgr, peerId: 'sender', magic: MAGIC_MAINNET,
     });
     expect(usable).toBe(2);
-    expect(peerDb.get(good1)?.lastSeenMs).toBe(5555);
-    expect(peerDb.get(good2)?.lastSeenMs).toBe(5555);
+    // Hearsay is stamped 0 — below any peer we have actually connected to, so
+    // it cannot evict one over cap (NET_INTERFACE → "A gossiped address is a hint below a seen peer").
+    expect(peerDb.get(good1)?.lastSeenMs).toBe(0);
+    expect(peerDb.get(good2)?.lastSeenMs).toBe(0);
     expect(peerMgr.isBanned('sender')).toBe(false);
   });
 
@@ -169,7 +171,7 @@ describe('intakePeersBody', () => {
           entry('/dns4/example.com/tcp/443'), // no IP component — bogus
         ],
       }),
-      { peerDb, peerMgr, peerId: 'sender', magic: MAGIC_MAINNET, nowMs: 1 },
+      { peerDb, peerMgr, peerId: 'sender', magic: MAGIC_MAINNET },
     );
     expect(usable).toBe(1);
     expect(peerDb.count()).toBe(1);
@@ -180,7 +182,7 @@ describe('intakePeersBody', () => {
   it('records a private address under testnet magic (NAT/LAN is normal there)', () => {
     const peerDb = new PeerDb(null, 100, []);
     const usable = intakePeersBody(body({ peers: [entry('/ip4/10.1.2.3/tcp/4001')] }), {
-      peerDb, peerMgr: makePeerMgr(), peerId: 'sender', magic: MAGIC_TESTNET, nowMs: 1,
+      peerDb, peerMgr: makePeerMgr(), peerId: 'sender', magic: MAGIC_TESTNET,
     });
     expect(usable).toBe(1);
     expect(peerDb.get('/ip4/10.1.2.3/tcp/4001')).not.toBeNull();
@@ -190,7 +192,7 @@ describe('intakePeersBody', () => {
     const peerDb = new PeerDb(null, 100, [good1]);
     const peerMgr = makePeerMgr();
     intakePeersBody(body({ peers: [entry(good1), entry(good2)] }), {
-      peerDb, peerMgr, peerId: 'sender', magic: MAGIC_MAINNET, nowMs: 1,
+      peerDb, peerMgr, peerId: 'sender', magic: MAGIC_MAINNET,
     });
     expect(peerDb.get(good1)).toBeNull();
     expect(peerDb.get(good2)).not.toBeNull();
@@ -202,7 +204,7 @@ describe('intakePeersBody', () => {
     peerDb.ban(good1);
     const peerMgr = makePeerMgr();
     intakePeersBody(body({ peers: [entry(good1)] }), {
-      peerDb, peerMgr, peerId: 'sender', magic: MAGIC_MAINNET, nowMs: 1,
+      peerDb, peerMgr, peerId: 'sender', magic: MAGIC_MAINNET,
     });
     expect(peerDb.get(good1)).toBeNull();
     expect(peerMgr.isBanned('sender')).toBe(false);
@@ -212,7 +214,7 @@ describe('intakePeersBody', () => {
     const peerDb = new PeerDb(null, 100, []);
     const peerMgr = makePeerMgr();
     const usable = intakePeersBody(GARBAGE, {
-      peerDb, peerMgr, peerId: 'sender', magic: MAGIC_MAINNET, nowMs: 1,
+      peerDb, peerMgr, peerId: 'sender', magic: MAGIC_MAINNET,
     });
     expect(usable).toBeNull();
     expect(peerDb.count()).toBe(0);
@@ -224,7 +226,7 @@ describe('intakePeersBody', () => {
     const peerMgr = makePeerMgr();
     const peers = Array.from({ length: 65 }, (_, i) => entry(`/ip4/51.15.1.${i % 256}/tcp/${4001 + i}`));
     const usable = intakePeersBody(body({ peers }), {
-      peerDb, peerMgr, peerId: 'sender', magic: MAGIC_MAINNET, nowMs: 1,
+      peerDb, peerMgr, peerId: 'sender', magic: MAGIC_MAINNET,
     });
     expect(usable).toBeNull();
     expect(peerDb.count()).toBe(0);

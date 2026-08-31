@@ -441,9 +441,13 @@ export function servePeersBody(
 }
 
 /**
- * Intake one Peers response body into PeerDb, stamping every recorded entry
- * with `nowMs` — the sender's opinion of when a peer was last seen is hearsay
- * and never travels on the wire.
+ * Intake one Peers response body into PeerDb. A gossiped address is hearsay — a
+ * third party's claim about a peer we may never have met — so every recorded
+ * entry is stamped `lastSeenMs: 0`, below any peer we have actually connected to
+ * (NET_INTERFACE → "A gossiped address is a hint below a seen peer"). It fills
+ * only cold capacity and is the first evicted, so a flood of junk addresses
+ * cannot displace a peer we have seen; and because `record` merges by the newer
+ * `lastSeenMs`, hearsay never advances an existing entry's recency either.
  *
  * A body that fails decode (malformed, or over the 64-entry cap) permanently
  * bans the sender. A bogus address inside a valid body is dropped silently
@@ -461,7 +465,6 @@ export function intakePeersBody(
     peerMgr: PeerManager;
     peerId: string;
     magic: number;
-    nowMs: number;
   },
 ): number | null {
   const msg = decodePeers(body);
@@ -475,7 +478,7 @@ export function intakePeersBody(
     if (isBogusAddress(e.address, deps.magic)) continue;
     deps.peerDb?.record({
       address: e.address,
-      lastSeenMs: deps.nowMs,
+      lastSeenMs: 0,
       agentName: e.agentName,
       nodeName: e.nodeName,
       protocolVersion: e.protocolVersion,
@@ -897,6 +900,14 @@ export class NetNode {
 
     libp2p.handle('/dagsocial/handshake/1', async ({ stream, connection }) => {
       const peerId = connection.remotePeer.toString();
+      // A banned peer's handshake is refused unread — no decode, no reply, no
+      // Active transition (NET_INTERFACE → "A banned peer's handshake is refused
+      // unread"). Reading and validating it would spend work on a peer whose ban
+      // is the whole point.
+      if (this.peerMgr.isBanned(peerId)) {
+        await stream.close().catch(() => { /* the peer is already gone */ });
+        return;
+      }
       try {
         const data = await readStreamBounded(stream.source, MAX_STREAM_BYTES, AbortSignal.timeout(this.config.syncRequestTimeoutMs));
         if (data === null) {
@@ -1522,7 +1533,6 @@ export class NetNode {
         peerMgr: this.peerMgr,
         peerId,
         magic,
-        nowMs: Date.now(),
       });
       if (usable !== null && usable > 0) {
         console.log(`[net] Peers from ${peerId}: recorded ${usable} address(es)`);
