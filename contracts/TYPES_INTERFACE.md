@@ -6,7 +6,7 @@
 
 ## Scope
 
-Shared data structures, serialization, base58 encoding, hash functions, and
+Shared data structures, serialization, hash functions, and
 protocol constants. Pure functions only — no side effects, no I/O, no imports
 from other DAGsocial packages.
 
@@ -2544,29 +2544,6 @@ merely that the heading still exists.
 
 ---
 
-## Base58 (`base58.ts`)
-
-> ⚠ **No consumer anywhere in the repo, and the round-trip is broken for zero-valued input.**
-> Nothing in node, net, validation, wire or the demo UI imports either function — the only
-> references are the barrel export and its own test. Meanwhile `base58Encode(Uint8Array([0]))`
-> → `"11"` and `base58Decode("11")` → `[0,0,0]`; a 32-byte zero buffer encodes to 33 `'1'`s
-> and decodes to 34 bytes. Empty input is asymmetric too (`""` encodes from empty, decodes to
-> one zero byte). Non-zero inputs, including those with leading zero bytes, round-trip fine —
-> the defect is confined to buffers whose numeric value is zero, which the existing test does
-> not cover.
->
-> Inert today because nothing calls it. **It becomes real the moment base58 is adopted for
-> what it exists for — rendering a key or an address — where an all-zero value is exactly
-> the case a fuzzer reaches first.** Fix the round-trip before adopting, or delete the
-> module.
-
-| Export | Signature | Description |
-|--------|-----------|-------------|
-| `base58Encode(buf)` | `(Uint8Array) => string` | Bitcoin-style base58 (alphabet: `123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz`) |
-| `base58Decode(str)` | `(string) => Uint8Array` | Throws on invalid characters |
-
----
-
 ## Protocol Constants (`constants.ts`)
 
 ### Chain reorganisation
@@ -3263,7 +3240,6 @@ provisional, and neither is a profile field.
 ## Invariants
 - Must not import from `@dagsocial/node`, `@dagsocial/net`, or `@dagsocial/web`
 - Hash algorithm: `blake2b512` with `.subarray(0, 32)` for all 32-byte outputs
-- Base58 alphabet: Bitcoin-style (no `0OIl`)
 - Positional binary is the canonical wire format; JSON for HTTP API
 - `protocolVersion` field present on all wire types
 - Secret keys never in any exported type or serialized output

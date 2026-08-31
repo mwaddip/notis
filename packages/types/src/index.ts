@@ -77,9 +77,6 @@ export type { NetworkType, NetworkProfile, ProtocolEra } from './network.js';
 export { generateKeyPair } from './identity.js';
 export type { KeyPair, UserId } from './identity.js';
 
-// Base58
-export { base58Encode, base58Decode } from './base58.js';
-
 // Merkle tree
 export { leafHash, nodeHash, buildMerkleRoot, hexToBuf } from './merkle.js';
 
