@@ -1,21 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { PeerManager, PenaltyKind } from '@dagsocial/net';
-import type { NetConfig, Peer } from '@dagsocial/net';
-
-function makeConfig(overrides: Partial<NetConfig> = {}): NetConfig {
-  return {
-    magic: 0x54444147,
-    protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
-    bootstrapPeers: [],
-    listenAddrs: '/ip4/0.0.0.0/tcp/0',
-    maxPeers: 50,
-    penaltyScoreThreshold: 500,
-    temporalBanDurationMs: 3_600_000,
-    penaltySafeIntervalMs: 120_000,
-    syncRequestTimeoutMs: 10_000,
-    ...overrides,
-  };
-}
+import type { Peer } from '@dagsocial/net';
+import { makeConfig } from './helpers.js';
 
 function makePeer(id: string): Peer {
   return {
@@ -30,7 +16,7 @@ describe('bogus vs malformed distinction', () => {
   let mgr: PeerManager;
 
   beforeEach(() => {
-    mgr = new PeerManager(makeConfig());
+    mgr = new PeerManager(makeConfig({ maxPeers: 50 }));
   });
 
   // -----------------------------------------------------------------------

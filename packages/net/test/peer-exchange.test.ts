@@ -25,23 +25,18 @@ import { encodeGetPeers, decodePeers } from '../src/sync-codec.js';
 import { decodeFrame, MAGIC_MAINNET, MAGIC_TESTNET } from '../src/frame.js';
 import { MSG_PEERS, PeerState } from '../src/types.js';
 import type { NetConfig, PeerRecord, PeersMsg } from '../src/types.js';
+import { makeConfig as makeBaseConfig } from './helpers.js';
 
 // These tests drive the exact functions the stream handler and the 30s timer
 // call (servePeersBody / intakePeersBody / duePeerExchange) with real PeerDb
 // and PeerManager instances — not a reimplementation of their logic.
 
 function makeConfig(): NetConfig {
-  return {
-    magic: MAGIC_TESTNET,
-    protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
-    bootstrapPeers: [],
-    listenAddrs: '/ip4/127.0.0.1/tcp/0',
+  return makeBaseConfig({
     maxPeers: 8,
-    penaltyScoreThreshold: 500,
-    temporalBanDurationMs: 3_600_000,
-    penaltySafeIntervalMs: 120_000,
+    listenAddrs: '/ip4/127.0.0.1/tcp/0',
     syncRequestTimeoutMs: 30_000,
-  };
+  });
 }
 
 function makePeerMgr(): PeerManager {

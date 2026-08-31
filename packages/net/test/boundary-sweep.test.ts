@@ -14,7 +14,8 @@ import { NetNode } from '../src/node.js';
 import { buildHandshakeFrame } from '../src/handshake.js';
 import { PeerDb } from '../src/peerdb.js';
 import { PeerState } from '../src/types.js';
-import type { NetConfig, NetValidators } from '../src/types.js';
+import type { NetValidators } from '../src/types.js';
+import { makeConfig } from './helpers.js';
 import type { PeerManager } from '../src/peer-mgr.js';
 
 // ---------------------------------------------------------------------------
@@ -39,22 +40,6 @@ const validators: NetValidators = {
   verifyPostBody,
 };
 
-function makeConfig(
-  schedule: readonly ProtocolEra[] = [{ version: 1, fromHeight: 0 }],
-): NetConfig {
-  return {
-    magic: MAGIC,
-    protocolVersionSchedule: schedule,
-    bootstrapPeers: [],
-    listenAddrs: '/ip4/0.0.0.0/tcp/0',
-    maxPeers: 10,
-    penaltyScoreThreshold: 500,
-    temporalBanDurationMs: 3_600_000,
-    penaltySafeIntervalMs: 120_000,
-    syncRequestTimeoutMs: 10_000,
-  };
-}
-
 const H = 5;
 const twoEra: readonly ProtocolEra[] = [
   { version: 1, fromHeight: 0 },
@@ -71,7 +56,7 @@ interface Internals {
 
 describe('tipApplied — the boundary sweep', () => {
   function makeSweepHarness() {
-    const net = new NetNode(makeConfig(twoEra), validators);
+    const net = new NetNode(makeConfig({ protocolVersionSchedule: twoEra }), validators);
     const internals = net as unknown as Internals;
     // One live connection per peer id, so disconnectPeer's getConnections().find
     // resolves a PeerId to hang up.
