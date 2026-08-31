@@ -690,6 +690,14 @@ served in `Peers` responses and re-dialed by the outbound fill phase.
 - Every `PeerManager` ban — temporal or permanent — propagates to
   `PeerDb.ban(address)` for the peer's recorded address, so the address
   leaves `recent()` and is refused re-entry by `record()`.
+
+**Ban tracking is a bounded hint, not a ledger.** Both surfaces cap what they hold — `MAX_TRACKED_BANS`
+peer ids in `PeerManager`, `MAX_BANNED_ADDRS` addresses in `PeerDb` — and drop the oldest past the cap.
+A permanent ban keys on a peer id or a declared address, both of which regenerate freely, so it deters a
+lazy repeat rather than guaranteeing exclusion; an unbounded set of such hints is instead a memory leak
+an attacker mints by misbehaving under fresh ids. Eviction lapses a hint — it is not the propagated
+unban that keeps the two surfaces in step (above), and it grants nothing a regenerated identity could
+not already take.
 - Expiry of a temporal ban calls `PeerDb.unban(address)`.
 
 **Known limitation, deliberately not solved here:** a libp2p peerId is

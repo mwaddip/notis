@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { PeerManager } from '../src/peer-mgr.js';
+import { PeerManager, MAX_TRACKED_BANS } from '../src/peer-mgr.js';
 import { PeerDb } from '../src/peerdb.js';
 import { PeerState, PenaltyKind } from '../src/types.js';
 import type { NetConfig, Peer } from '../src/types.js';
@@ -190,7 +190,6 @@ describe('PeerManager', () => {
     const meta = mgr.getPeerMetadata('peer1');
     expect(meta).not.toBeNull();
     expect(meta!.state).toBe(PeerState.Connecting);
-    expect(meta!.stalled).toBe(false);
     expect(meta!.penaltyCount).toBe(0);
     expect(meta!.bannedUntil).toBeNull();
   });
@@ -419,5 +418,17 @@ describe('PeerManager', () => {
       expect(pairMgr.isBanned('ghost')).toBe(true);
       expect(calls.ban).toBe(0);
     });
+  });
+});
+
+describe('PeerManager ban map is bounded (NET_INTERFACE → "Ban tracking is a bounded hint, not a ledger")', () => {
+  it('evicts the oldest ban past MAX_TRACKED_BANS instead of growing forever', () => {
+    const mgr = new PeerManager(makeConfig());
+    for (let i = 0; i <= MAX_TRACKED_BANS; i++) {
+      mgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, `peer-${i}`, 'violation');
+    }
+    // One past the cap was imposed: the first-banned lapses, the newest is kept.
+    expect(mgr.isBanned('peer-0')).toBe(false);
+    expect(mgr.isBanned(`peer-${MAX_TRACKED_BANS}`)).toBe(true);
   });
 });

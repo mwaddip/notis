@@ -48,6 +48,14 @@ function isServableRecord(rec: unknown): rec is PeerRecord {
   return true;
 }
 
+/**
+ * The most banned addresses to keep. Like the peer-id ban set, this is a bounded
+ * hint, not a ledger (NET_INTERFACE → "Ban tracking is a bounded hint, not a
+ * ledger"): a permanent ban whose address is never lifted otherwise grows without
+ * bound. Past the cap the oldest lapse first.
+ */
+export const MAX_BANNED_ADDRS = 10_000;
+
 export class PeerDb {
   private entries: Map<string, PeerRecord> = new Map();
   private bannedAddrs: Set<string> = new Set();
@@ -119,6 +127,12 @@ export class PeerDb {
   /** Ban a peer address — removes from entries and prevents re-add. */
   ban(addr: string): void {
     this.bannedAddrs.add(addr);
+    // Insertion order is chronological, so the first entries are the oldest bans.
+    while (this.bannedAddrs.size > MAX_BANNED_ADDRS) {
+      const oldest = this.bannedAddrs.values().next().value;
+      if (oldest === undefined) break;
+      this.bannedAddrs.delete(oldest);
+    }
     this.entries.delete(addr);
     this.storage?.delete(addr);
   }
