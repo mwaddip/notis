@@ -750,33 +750,41 @@ export function removeUtxoTxEntry(txId: string): number {
 
 export function purgeExpired(currentHeight: number): number {
   const db = getDb();
-  // NODE_INTERFACE → Post transactions — the pending-row rule: an unconfirmed
-  // post entry's DAG row dies with its pool row. Both expiry and ceiling
-  // reclaim go through this cleanup.
-  const expiring = db.prepare(
-    `SELECT tx_id FROM mempool
-      WHERE (expires_at_height < ? OR (max_valid_height IS NOT NULL AND max_valid_height < ?))
-        AND entry_type = 'utxo_tx' AND tx_id IS NOT NULL`,
-  ).all(currentHeight, currentHeight) as Array<{ tx_id: string }>;
-  for (const { tx_id } of expiring) {
-    deletePendingPost(computePostId(tx_id, 0));
-  }
-  // MEMPOOL_INTERFACE → Validity ceiling — reclaim while pooled.
-  const result = db.prepare(
-    'DELETE FROM mempool WHERE expires_at_height < ? OR (max_valid_height IS NOT NULL AND max_valid_height < ?)',
-  ).run(currentHeight, currentHeight);
-  return result.changes;
+  // The pool DELETE and each pending post's row deletion are one multi-table
+  // mutation (ARCHITECTURE → "Single-transaction atomic writes").
+  return db.transaction(() => {
+    // NODE_INTERFACE → Post transactions — the pending-row rule: an unconfirmed
+    // post entry's DAG row dies with its pool row. Both expiry and ceiling
+    // reclaim go through this cleanup.
+    const expiring = db.prepare(
+      `SELECT tx_id FROM mempool
+        WHERE (expires_at_height < ? OR (max_valid_height IS NOT NULL AND max_valid_height < ?))
+          AND entry_type = 'utxo_tx' AND tx_id IS NOT NULL`,
+    ).all(currentHeight, currentHeight) as Array<{ tx_id: string }>;
+    for (const { tx_id } of expiring) {
+      deletePendingPost(computePostId(tx_id, 0));
+    }
+    // MEMPOOL_INTERFACE → Validity ceiling — reclaim while pooled.
+    const result = db.prepare(
+      'DELETE FROM mempool WHERE expires_at_height < ? OR (max_valid_height IS NOT NULL AND max_valid_height < ?)',
+    ).run(currentHeight, currentHeight);
+    return result.changes;
+  })();
 }
 
 export function removeEntry(rowid: number): void {
   const db = getDb();
-  // NODE_INTERFACE → Post transactions — the pending-row rule.
-  const row = db.prepare(
-    "SELECT tx_id FROM mempool WHERE rowid = ? AND entry_type = 'utxo_tx' AND tx_id IS NOT NULL",
-  ).get(rowid) as { tx_id: string } | undefined;
-  if (row) {
-    deletePendingPost(computePostId(row.tx_id, 0));
-  }
-  db.prepare('DELETE FROM mempool WHERE rowid = ?').run(rowid);
+  // The pool DELETE and the pending post's row deletion are one multi-table
+  // mutation (ARCHITECTURE → "Single-transaction atomic writes").
+  db.transaction(() => {
+    // NODE_INTERFACE → Post transactions — the pending-row rule.
+    const row = db.prepare(
+      "SELECT tx_id FROM mempool WHERE rowid = ? AND entry_type = 'utxo_tx' AND tx_id IS NOT NULL",
+    ).get(rowid) as { tx_id: string } | undefined;
+    if (row) {
+      deletePendingPost(computePostId(row.tx_id, 0));
+    }
+    db.prepare('DELETE FROM mempool WHERE rowid = ?').run(rowid);
+  })();
 }
 
