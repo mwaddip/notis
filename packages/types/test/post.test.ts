@@ -15,7 +15,6 @@ import {
   PROTOCOL_VERSION,
   MAX_CONTENT_BYTES,
   MAX_PARENT_REFS,
-  KARMA_POSTING_MINIMUM,
   KARMA_STALE_THRESHOLD_BLOCKS,
   KARMA_DECAY_INTERVAL_BLOCKS,
   KARMA_DECAY_AMOUNT,
@@ -396,7 +395,6 @@ describe('constants', () => {
   });
 
   it('karma constants are defined', () => {
-    expect(KARMA_POSTING_MINIMUM).toBe(1n);
     expect(KARMA_STALE_THRESHOLD_BLOCKS).toBe(40320); // 28 days at 60s blocks
     expect(KARMA_DECAY_INTERVAL_BLOCKS).toBe(1440); // 24 hours at 60s blocks
     expect(KARMA_DECAY_AMOUNT).toBe(5n);

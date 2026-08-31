@@ -104,7 +104,6 @@ export const BOX_VALUE_BOUND = 1n << 63n;
 export const AVL_KEY_LENGTH = 32; // bytes — AVL+ key width; sets the shape of every stateRoot
 
 // Karma decay (virtual — ARCHITECTURE → Karma decay)
-export const KARMA_POSTING_MINIMUM = 1n;
 export const KARMA_STALE_THRESHOLD_BLOCKS = 40320; // 28 days at 60s blocks → profile: karmaStaleThresholdBlocks
 export const KARMA_DECAY_INTERVAL_BLOCKS = 1440;   // 24 hours at 60s blocks → profile: karmaDecayIntervalBlocks
 export const KARMA_DECAY_AMOUNT = 5n;              // karma burned per interval
@@ -138,7 +137,6 @@ export const VOUCH_CAST_HEIGHT_WINDOW = 5;
 // transaction creates a `BondBox`, the block's settlement transaction spends that
 // bond's own value out of the karma pool to its `inviteePublicKey`, and
 // `IdentityRecord.invitedAtBlock` is the invite's own height.
-export const INVITE_MIN_KARMA = KARMA_POSTING_MINIMUM;
 /**
  * The bond an inviter locks and — at 1:1 — the karma the invitee is granted out
  * of the pool. The inviter picks any value in `[INVITE_BOND_MIN,
