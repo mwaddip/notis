@@ -313,6 +313,16 @@ Raw stream reads are bounded by `MAX_STREAM_BYTES` (never buffer an unbounded
 attacker-controlled stream). Per-request serve work is bounded: handling a request must not be
 `O(ids × chainHeight)` — an unbounded id list must not each trigger a full-chain scan.
 
+**A stream read is bounded in time as well as in bytes.** Every `readStreamBounded` carries a
+deadline — the `syncRequestTimeoutMs` its dial uses at that site (×5 for the block read, whose payload
+is larger) — because the byte cap bounds a read's *volume*, not its *duration*: a peer that opens the
+stream and then trickles bytes under the cap, or sends nothing at all, otherwise parks the reader — and
+with it fork choice — for as long as it likes. The deadline holds in **both** directions: an outbound
+request's read of the response, and an inbound serve handler's read of the request. On expiry the read
+aborts, the stream closes, and the caller treats it as an absent response — **no ban**, because a slow
+or silent link is indistinguishable from a dead one (the frame tier's reasoning below) and is not
+evidence of misbehaviour.
+
 ⛔ **Every arm that assembles more than one stored object into a response is bounded by BYTES, not by
 item count alone.** A count bounds an array's length and says nothing about its weight, and both
 `ModifierResponse` and `Blocks` assemble whole blocks. Each arm accumulates encoded bytes, stops

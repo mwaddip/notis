@@ -898,7 +898,7 @@ export class NetNode {
     libp2p.handle('/dagsocial/handshake/1', async ({ stream, connection }) => {
       const peerId = connection.remotePeer.toString();
       try {
-        const data = await readStreamBounded(stream.source);
+        const data = await readStreamBounded(stream.source, MAX_STREAM_BYTES, AbortSignal.timeout(this.config.syncRequestTimeoutMs));
         if (data === null) {
           console.warn(`[net] handshake stream from ${peerId} exceeded ${MAX_STREAM_BYTES} bytes`);
           this.peerMgr.recordPenaltyKind(
@@ -1093,7 +1093,7 @@ export class NetNode {
       };
 
       try {
-        const data = await readStreamBounded(stream.source);
+        const data = await readStreamBounded(stream.source, MAX_STREAM_BYTES, AbortSignal.timeout(this.config.syncRequestTimeoutMs));
         if (data === null) {
           console.warn(`[net] sync stream from ${peerId} exceeded ${MAX_STREAM_BYTES} bytes`);
           this.peerMgr.recordPenaltyKind(
@@ -1281,7 +1281,7 @@ export class NetNode {
       await stream.sink([buildHandshakeFrame(magic, ourMsg)]);
 
       // Read their response
-      const data = await readStreamBounded(stream.source);
+      const data = await readStreamBounded(stream.source, MAX_STREAM_BYTES, AbortSignal.timeout(this.config.syncRequestTimeoutMs));
       if (data === null) {
         console.warn(`[net] handshake response from ${peerId} exceeded ${MAX_STREAM_BYTES} bytes`);
         this.peerMgr.recordPenaltyKind(
@@ -1500,9 +1500,11 @@ export class NetNode {
     const request = encodeGetPeers(magic);
     let stream: import('@libp2p/interface').Stream | undefined;
     try {
-      stream = await this.libp2p.dialProtocol(peer, SYNC_PROTOCOL);
+      stream = await this.libp2p.dialProtocol(peer, SYNC_PROTOCOL, {
+        signal: AbortSignal.timeout(this.config.syncRequestTimeoutMs),
+      });
       await stream.sink([request]);
-      const data = await readStreamBounded(stream.source);
+      const data = await readStreamBounded(stream.source, MAX_STREAM_BYTES, AbortSignal.timeout(this.config.syncRequestTimeoutMs));
       if (data === null) {
         console.warn(`[net] requestPeers: response from ${peerId} exceeded ${MAX_STREAM_BYTES} bytes`);
         return;
@@ -1650,7 +1652,7 @@ export class NetNode {
         signal: AbortSignal.timeout(this.config.syncRequestTimeoutMs),
       });
       await stream.sink([encodeModifierRequest(magic, req)]);
-      const raw = await readStreamBounded(stream.source);
+      const raw = await readStreamBounded(stream.source, MAX_STREAM_BYTES, AbortSignal.timeout(this.config.syncRequestTimeoutMs));
       if (raw === null || raw.length === 0) return [];
       const frame = decodeFrame(magic, raw);
       if (frame.code !== MSG_MODIFIER_RESPONSE) return [];

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readStreamBounded } from '../src/util.js';
+import { readStreamBounded, StreamReadTimeout } from '../src/util.js';
 import { MAX_STREAM_BYTES } from '../src/msg-guards.js';
 
 /**
@@ -96,5 +96,58 @@ describe('readStreamBounded (audit H-9)', () => {
     expect(result).toBeNull();
     expect(state.yields).toBe(MAX_STREAM_BYTES / megabyte.length + 1);
     expect(state.closed).toBe(true);
+  });
+});
+
+/**
+ * A source that never yields but whose `return()` resolves at once and records
+ * teardown — a libp2p stream aborted from our side behaves this way. It is what
+ * a silent peer holding the stream open gives us.
+ */
+function silentSource(state: { closed: boolean }): AsyncIterable<Uint8Array> {
+  return {
+    [Symbol.asyncIterator]() {
+      return {
+        next: () => new Promise<IteratorResult<Uint8Array>>(() => { /* never settles */ }),
+        return: () => {
+          state.closed = true;
+          return Promise.resolve({ value: undefined, done: true });
+        },
+      };
+    },
+  };
+}
+
+describe('readStreamBounded deadline (NET_INTERFACE → "A stream read is bounded in time as well as in bytes")', () => {
+  it('throws StreamReadTimeout when the deadline fires on a silent stream, and tears the source down', async () => {
+    const state = { closed: false };
+    const ac = new AbortController();
+
+    const read = readStreamBounded(silentSource(state), 1024, ac.signal);
+    ac.abort();
+
+    // Without a time deadline this call never returns — a silent peer parks it.
+    await expect(read).rejects.toBeInstanceOf(StreamReadTimeout);
+    expect(state.closed).toBe(true);
+  });
+
+  it('throws at once when the signal is already aborted, without pulling the source', async () => {
+    const state = { yields: 0, closed: false };
+    const ac = new AbortController();
+    ac.abort();
+
+    await expect(readStreamBounded(endless(new Uint8Array(4), state), 1024, ac.signal))
+      .rejects.toBeInstanceOf(StreamReadTimeout);
+    expect(state.yields).toBe(0);
+  });
+
+  it('reads normally when a deadline is present but does not fire', async () => {
+    const ac = new AbortController();
+    const result = await readStreamBounded(
+      fromChunks([new Uint8Array([1, 2]), new Uint8Array([3])]),
+      1024,
+      ac.signal,
+    );
+    expect(result).toEqual(new Uint8Array([1, 2, 3]));
   });
 });
