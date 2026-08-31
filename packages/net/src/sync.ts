@@ -58,7 +58,7 @@ export async function requestHeaders(
 
     await stream.sink([encodeGetHeaders(magic, { startHeight, maxCount })]);
 
-    const response = await readStreamBounded(stream.source);
+    const response = await readStreamBounded(stream.source, MAX_STREAM_BYTES, AbortSignal.timeout(config.syncRequestTimeoutMs));
     if (response === null) {
       throw new Error(`Headers response from peer ${peerId} exceeds ${MAX_STREAM_BYTES} bytes`);
     }
@@ -105,7 +105,7 @@ export async function requestBlocks(
 
     await stream.sink([encodeGetBlocks(magic, { startHeight, endHeight })]);
 
-    const raw = await readStreamBounded(stream.source);
+    const raw = await readStreamBounded(stream.source, MAX_STREAM_BYTES, AbortSignal.timeout(config.syncRequestTimeoutMs * 5));
     if (raw === null) {
       throw new Error(`Blocks response from peer ${peerId} exceeds ${MAX_STREAM_BYTES} bytes`);
     }

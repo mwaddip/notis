@@ -80,7 +80,6 @@ export interface PeerMetadata {
   state: PeerState;
   penaltyCount: number;
   bannedUntil: number | null; // null = not banned, timestamp = ban expiration
-  stalled: boolean;
   lastSeenMs: number;
   /**
    * The peer's declared multiaddr, or null until the handshake reveals it.

@@ -9,6 +9,16 @@ import type { NetConfig, Peer, PenaltyType, PeerMetadata } from './types.js';
  */
 const PENALTY_DECAY_PER_INTERVAL = 100;
 
+/**
+ * The most bans to keep. A ban keys on a peer id, which regenerates freely, so a
+ * permanent ban is a hint against a lazy repeat rather than a guarantee — and an
+ * unbounded set of hints is a leak an attacker mints by misbehaving under fresh
+ * ids (NET_INTERFACE → "Ban tracking is a bounded hint, not a ledger"). Past the
+ * cap the oldest lapse first; a lapsed hint grants nothing a fresh id could not
+ * already take.
+ */
+export const MAX_TRACKED_BANS = 10_000;
+
 interface PeerEntry {
   peer: Peer;
   penaltyScore: number;
@@ -45,7 +55,6 @@ export class PeerManager {
   private peers: Map<string, PeerEntry> = new Map();
   private bans: Map<string, BanEntry> = new Map();
   private metadata: Map<string, PeerMetadata> = new Map();
-  private stalledPeers: Set<string> = new Set();
   private config: NetConfig;
   private hooks: PeerBanHooks;
 
@@ -81,7 +90,6 @@ export class PeerManager {
         state: PeerState.Connecting,
         penaltyCount: 0,
         bannedUntil: null,
-        stalled: false,
         lastSeenMs: Date.now(),
         address: null,
         protocolVersion: null,
@@ -133,7 +141,6 @@ export class PeerManager {
   removePeer(peerId: string): void {
     this.peers.delete(peerId);
     this.metadata.delete(peerId);
-    this.stalledPeers.delete(peerId);
   }
 
   // -----------------------------------------------------------------------
@@ -149,7 +156,6 @@ export class PeerManager {
       this.imposeBan(peerId, now, null);
       this.peers.delete(peerId);
       this.metadata.delete(peerId);
-      this.stalledPeers.delete(peerId);
       this.hooks.onPenalty?.(peerId, type, reason);
       return;
     }
@@ -168,6 +174,12 @@ export class PeerManager {
   private imposeBan(peerId: string, now: number, banExpiresAt: number | null): void {
     const address = this.metadata.get(peerId)?.address ?? null;
     this.bans.set(peerId, { peerId, bannedAt: now, banExpiresAt, address });
+    // Insertion order is chronological, so the first keys are the oldest bans.
+    while (this.bans.size > MAX_TRACKED_BANS) {
+      const oldest = this.bans.keys().next().value;
+      if (oldest === undefined) break;
+      this.bans.delete(oldest);
+    }
     if (address !== null) this.hooks.onBan?.(address);
   }
 
@@ -192,7 +204,6 @@ export class PeerManager {
         this.imposeBan(peerId, now, null);
         this.peers.delete(peerId);
         this.metadata.delete(peerId);
-        this.stalledPeers.delete(peerId);
         this.hooks.onPenalty?.(peerId, kind, reason);
         return;
       }

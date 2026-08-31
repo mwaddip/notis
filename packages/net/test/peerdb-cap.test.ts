@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { PeerDb } from '@dagsocial/net';
+import { MAX_BANNED_ADDRS } from '../src/peerdb.js';
 import type { PeerRecord } from '@dagsocial/net';
 
 function makeRecord(addr: string, lastSeenMs: number): PeerRecord {
@@ -82,5 +83,15 @@ describe('PeerDb soft cap with LRU eviction', () => {
     expect(all.find((p) => p.address === 'b')).toBeUndefined(); // evicted
     expect(all.find((p) => p.address === 'c')).toBeDefined();
     expect(all.find((p) => p.address === 'd')).toBeDefined();
+  });
+});
+
+describe('PeerDb banned-address set is bounded (NET_INTERFACE → "Ban tracking is a bounded hint, not a ledger")', () => {
+  it('evicts the oldest banned address past MAX_BANNED_ADDRS', () => {
+    const db = new PeerDb(null, 1000, []);
+    for (let i = 0; i <= MAX_BANNED_ADDRS; i++) db.ban(`/ip4/10.0.0.1/tcp/${i}`);
+    // One past the cap was banned: the first lapses, the newest is kept.
+    expect(db.isBanned('/ip4/10.0.0.1/tcp/0')).toBe(false);
+    expect(db.isBanned(`/ip4/10.0.0.1/tcp/${MAX_BANNED_ADDRS}`)).toBe(true);
   });
 });

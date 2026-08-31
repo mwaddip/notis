@@ -17,7 +17,7 @@ import { NetNode } from '../src/node.js';
 import { buildHandshakeFrame, decodeHandshakeBody, parseHandshakeBody, validateHandshake } from '../src/handshake.js';
 import type { HandshakeResult } from '../src/handshake.js';
 import { decodeFrame } from '../src/frame.js';
-import { PeerState } from '../src/types.js';
+import { PeerState, PenaltyKind } from '../src/types.js';
 import type { NetConfig, NetValidators } from '../src/types.js';
 import type { PeerManager } from '../src/peer-mgr.js';
 import { PeerDb } from '../src/peerdb.js';
@@ -310,6 +310,20 @@ describe('inbound handshake handler — our own reply', () => {
     expect(written).toHaveLength(1);
     expect(written[0]!.length).toBeGreaterThan(0);
     expect(peerMgr.getPeerMetadata(peerId)?.state).toBe(PeerState.Active);
+  });
+
+  // NET_INTERFACE → "A banned peer's handshake is refused unread"
+  it('refuses a banned peer\'s handshake unread — no reply, not marked Active', async () => {
+    const { send, peerMgr, peerId } = makeHandshakeHarness({ chainHeight: 0 });
+    peerMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, peerId, 'earlier violation');
+    expect(peerMgr.isBanned(peerId)).toBe(true);
+
+    const written = await send(validHandshakeFrame());
+
+    // The guard closes the stream before reading: not even the empty-frame
+    // rejection is sent, and the peer never reaches Active.
+    expect(written).toHaveLength(0);
+    expect(peerMgr.getPeerMetadata(peerId)?.state).not.toBe(PeerState.Active);
   });
 
   it('names a sink failure on the reply as a handler failure, not a store one', async () => {

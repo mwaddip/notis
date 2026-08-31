@@ -441,9 +441,13 @@ export function servePeersBody(
 }
 
 /**
- * Intake one Peers response body into PeerDb, stamping every recorded entry
- * with `nowMs` — the sender's opinion of when a peer was last seen is hearsay
- * and never travels on the wire.
+ * Intake one Peers response body into PeerDb. A gossiped address is hearsay — a
+ * third party's claim about a peer we may never have met — so every recorded
+ * entry is stamped `lastSeenMs: 0`, below any peer we have actually connected to
+ * (NET_INTERFACE → "A gossiped address is a hint below a seen peer"). It fills
+ * only cold capacity and is the first evicted, so a flood of junk addresses
+ * cannot displace a peer we have seen; and because `record` merges by the newer
+ * `lastSeenMs`, hearsay never advances an existing entry's recency either.
  *
  * A body that fails decode (malformed, or over the 64-entry cap) permanently
  * bans the sender. A bogus address inside a valid body is dropped silently
@@ -461,7 +465,6 @@ export function intakePeersBody(
     peerMgr: PeerManager;
     peerId: string;
     magic: number;
-    nowMs: number;
   },
 ): number | null {
   const msg = decodePeers(body);
@@ -475,7 +478,7 @@ export function intakePeersBody(
     if (isBogusAddress(e.address, deps.magic)) continue;
     deps.peerDb?.record({
       address: e.address,
-      lastSeenMs: deps.nowMs,
+      lastSeenMs: 0,
       agentName: e.agentName,
       nodeName: e.nodeName,
       protocolVersion: e.protocolVersion,
@@ -897,8 +900,16 @@ export class NetNode {
 
     libp2p.handle('/dagsocial/handshake/1', async ({ stream, connection }) => {
       const peerId = connection.remotePeer.toString();
+      // A banned peer's handshake is refused unread — no decode, no reply, no
+      // Active transition (NET_INTERFACE → "A banned peer's handshake is refused
+      // unread"). Reading and validating it would spend work on a peer whose ban
+      // is the whole point.
+      if (this.peerMgr.isBanned(peerId)) {
+        await stream.close().catch(() => { /* the peer is already gone */ });
+        return;
+      }
       try {
-        const data = await readStreamBounded(stream.source);
+        const data = await readStreamBounded(stream.source, MAX_STREAM_BYTES, AbortSignal.timeout(this.config.syncRequestTimeoutMs));
         if (data === null) {
           console.warn(`[net] handshake stream from ${peerId} exceeded ${MAX_STREAM_BYTES} bytes`);
           this.peerMgr.recordPenaltyKind(
@@ -1093,7 +1104,7 @@ export class NetNode {
       };
 
       try {
-        const data = await readStreamBounded(stream.source);
+        const data = await readStreamBounded(stream.source, MAX_STREAM_BYTES, AbortSignal.timeout(this.config.syncRequestTimeoutMs));
         if (data === null) {
           console.warn(`[net] sync stream from ${peerId} exceeded ${MAX_STREAM_BYTES} bytes`);
           this.peerMgr.recordPenaltyKind(
@@ -1281,7 +1292,7 @@ export class NetNode {
       await stream.sink([buildHandshakeFrame(magic, ourMsg)]);
 
       // Read their response
-      const data = await readStreamBounded(stream.source);
+      const data = await readStreamBounded(stream.source, MAX_STREAM_BYTES, AbortSignal.timeout(this.config.syncRequestTimeoutMs));
       if (data === null) {
         console.warn(`[net] handshake response from ${peerId} exceeded ${MAX_STREAM_BYTES} bytes`);
         this.peerMgr.recordPenaltyKind(
@@ -1500,9 +1511,11 @@ export class NetNode {
     const request = encodeGetPeers(magic);
     let stream: import('@libp2p/interface').Stream | undefined;
     try {
-      stream = await this.libp2p.dialProtocol(peer, SYNC_PROTOCOL);
+      stream = await this.libp2p.dialProtocol(peer, SYNC_PROTOCOL, {
+        signal: AbortSignal.timeout(this.config.syncRequestTimeoutMs),
+      });
       await stream.sink([request]);
-      const data = await readStreamBounded(stream.source);
+      const data = await readStreamBounded(stream.source, MAX_STREAM_BYTES, AbortSignal.timeout(this.config.syncRequestTimeoutMs));
       if (data === null) {
         console.warn(`[net] requestPeers: response from ${peerId} exceeded ${MAX_STREAM_BYTES} bytes`);
         return;
@@ -1520,7 +1533,6 @@ export class NetNode {
         peerMgr: this.peerMgr,
         peerId,
         magic,
-        nowMs: Date.now(),
       });
       if (usable !== null && usable > 0) {
         console.log(`[net] Peers from ${peerId}: recorded ${usable} address(es)`);
@@ -1650,7 +1662,7 @@ export class NetNode {
         signal: AbortSignal.timeout(this.config.syncRequestTimeoutMs),
       });
       await stream.sink([encodeModifierRequest(magic, req)]);
-      const raw = await readStreamBounded(stream.source);
+      const raw = await readStreamBounded(stream.source, MAX_STREAM_BYTES, AbortSignal.timeout(this.config.syncRequestTimeoutMs));
       if (raw === null || raw.length === 0) return [];
       const frame = decodeFrame(magic, raw);
       if (frame.code !== MSG_MODIFIER_RESPONSE) return [];

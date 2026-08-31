@@ -313,6 +313,16 @@ Raw stream reads are bounded by `MAX_STREAM_BYTES` (never buffer an unbounded
 attacker-controlled stream). Per-request serve work is bounded: handling a request must not be
 `O(ids × chainHeight)` — an unbounded id list must not each trigger a full-chain scan.
 
+**A stream read is bounded in time as well as in bytes.** Every `readStreamBounded` carries a
+deadline — the `syncRequestTimeoutMs` its dial uses at that site (×5 for the block read, whose payload
+is larger) — because the byte cap bounds a read's *volume*, not its *duration*: a peer that opens the
+stream and then trickles bytes under the cap, or sends nothing at all, otherwise parks the reader — and
+with it fork choice — for as long as it likes. The deadline holds in **both** directions: an outbound
+request's read of the response, and an inbound serve handler's read of the request. On expiry the read
+aborts, the stream closes, and the caller treats it as an absent response — **no ban**, because a slow
+or silent link is indistinguishable from a dead one (the frame tier's reasoning below) and is not
+evidence of misbehaviour.
+
 ⛔ **Every arm that assembles more than one stored object into a response is bounded by BYTES, not by
 item count alone.** A count bounds an array's length and says nothing about its weight, and both
 `ModifierResponse` and `Blocks` assemble whole blocks. Each arm accumulates encoded bytes, stops
@@ -348,6 +358,11 @@ Handshake specifics:
 - `agentName` / `nodeName` / `declaredAddress` are byte-capped strings (`MAX_NAME_BYTES` /
   `MAX_ADDRESS_BYTES`); `capabilities` is a count-capped list of bounded codes (unknown
   capabilities preserved, not rejected — forward compat)
+
+**A banned peer's handshake is refused unread.** The inbound handshake handler checks `isBanned(peerId)`
+before it reads: a banned peer's stream is closed with no decode, no reply, and no `Active` transition.
+Reading and validating it would spend work on, and possibly re-admit, a peer whose ban is the whole
+point — the byte cap and read deadline bound that work but do not decline it.
 
 **Ban policy** — two tiers, split by what a failure is evidence of:
 
@@ -680,6 +695,14 @@ served in `Peers` responses and re-dialed by the outbound fill phase.
 - Every `PeerManager` ban — temporal or permanent — propagates to
   `PeerDb.ban(address)` for the peer's recorded address, so the address
   leaves `recent()` and is refused re-entry by `record()`.
+
+**Ban tracking is a bounded hint, not a ledger.** Both surfaces cap what they hold — `MAX_TRACKED_BANS`
+peer ids in `PeerManager`, `MAX_BANNED_ADDRS` addresses in `PeerDb` — and drop the oldest past the cap.
+A permanent ban keys on a peer id or a declared address, both of which regenerate freely, so it deters a
+lazy repeat rather than guaranteeing exclusion; an unbounded set of such hints is instead a memory leak
+an attacker mints by misbehaving under fresh ids. Eviction lapses a hint — it is not the propagated
+unban that keeps the two surfaces in step (above), and it grants nothing a regenerated identity could
+not already take.
 - Expiry of a temporal ban calls `PeerDb.unban(address)`.
 
 **Known limitation, deliberately not solved here:** a libp2p peerId is
@@ -771,10 +794,18 @@ the cheapest possible table-poisoning primitive.
 ### Peers Intake
 
 On receiving `Peers`: for each entry where the address is not blacklisted,
-not bogus, and not self — record into PeerDb with `lastSeenMs = now`.
-Malformed Peers (cap exceeded, truncated body, invalid strings) triggers
-permanent ban of the source. Bogus addresses in a valid body do NOT
-penalize the source — they are silently dropped.
+not bogus, and not self — record into PeerDb. Malformed Peers (cap exceeded,
+truncated body, invalid strings) triggers permanent ban of the source. Bogus
+addresses in a valid body do NOT penalize the source — they are silently
+dropped.
+
+**A gossiped address is a hint below a seen peer.** A `Peers` entry is a third party's claim about a
+peer this node may never have met, so it is recorded with `lastSeenMs = 0` — below any peer we have
+actually connected to. It fills only cold capacity and is the first evicted (PeerDb's soft cap drops the
+oldest `lastSeenMs`), so a flood of junk addresses cannot displace a peer we have seen; and because
+`record` merges by the newer `lastSeenMs`, a gossiped entry never advances an existing entry's recency.
+This is the churn defence, and it dials nothing: liveness is verified on use, where a dead entry simply
+fails its dial.
 
 ### Bogus Address Classification
 
