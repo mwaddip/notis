@@ -76,8 +76,7 @@ cat > "$APP/run-miner.sh" <<'MINEREOF'
 cd "$(dirname "$0")"
 export NETWORK_TYPE=testnet PORT=3000 FAUCET_URL=https://notis.fun/testnet/faucet
 export DB_PATH="./data/notis.db"; mkdir -p ./data
-./bin/node ./app/packages/node/scripts/gen-miner-key.mjs ./data/miner-key.json
-export MINER_PUBKEY="$(./bin/node -e "console.log(require(process.cwd()+'/data/miner-key.json').publicKey)")"
+export MINER_PUBKEY="$(./bin/node ./app/packages/node/scripts/gen-miner-key.mjs ./data/miner-key.json)"
 export MINING_SECRET="$(./bin/node -e "console.log(require('crypto').randomUUID())")"
 export NODE_ROLE=miner MINER_PCT="${MINER_PCT:-25}"
 ./bin/node ./app/packages/node/dist/index.js &
