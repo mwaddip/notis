@@ -401,22 +401,8 @@ export function createOrderingBlock(): OrderingBlock | null {
      * write the whole body — the users' entries then the settlement, last.
      */
     const rebuildBody = (): { valid: boolean; error?: string } => {
-      const decoded = userTxBytesList.map((raw) => {
-        const tx = decodeTx(raw);
-        const txId = computeTxId(tx);
-        return { txId, inputs: tx.inputs, outputs: tx.outputs.map((out, i) => materializeOutput(out as AnyBox, txId, i)) };
-      });
-      const postBody = collectPostBodyKarma(decoded);
-      const escrows = getVouchEscrowsReleasableAt(newHeight, MAX_ESCROW_RETURNS_PER_BLOCK);
-      const lapsed = getLapsedVouches(MAX_LAPSE_WITHDRAWALS_PER_BLOCK);
-      const built = buildSettlement(
-        settlementDepsWith(() => deriveKarmaDecay(decayDeps, postBody, newHeight, decayConfig()), escrows, lapsed),
-        newHeight,
-        nodeConfig.protocolVersionSchedule,
-        computeBlockReward(newHeight),
-        nodeConfig.creditMinerRewardDelay,
-        predictSettlementBody(userTxBytesList, validatorId),
-        currentMinerPubkey ?? validatorId,
+      const built = buildBlockSettlement(
+        userTxBytesList, newHeight, validatorId, currentMinerPubkey ?? validatorId,
       );
       if ('error' in built) return { valid: false, error: built.error };
       utxoTxTree.utxoTxIds = [...userTxIds, computeTxId(built.tx)];
