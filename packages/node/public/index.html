@@ -308,7 +308,8 @@ const API = window.location.pathname.startsWith('/testnet') ? '/testnet/api' : '
 // and the node serves no `/faucet` route (NODE_INTERFACE → "The node serves no
 // faucet, and holds no key it could sign one with"), so a request built from `API`
 // reaches the node and 404s. The deployed path proxies `/testnet/faucet` to it.
-const FAUCET = window.location.pathname.startsWith('/testnet') ? '/testnet/faucet' : '/faucet';
+const FAUCET = window.__NOTIS_CONFIG__?.faucetBase
+  || (window.location.pathname.startsWith('/testnet') ? '/testnet/faucet' : '/faucet');
 const encoder = new TextEncoder();
 
 // ===========================================================================

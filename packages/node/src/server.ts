@@ -20,6 +20,7 @@ import { createInvite } from './services/invites.js';
 import { executePrune } from './services/stump-engine.js';
 import { executePostWithdraw } from './services/post-withdraw.js';
 import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
 import { isLivePost, type StoredPost } from './store/posts.js';
 import { getDb } from './store/db.js';
 import { validateTx } from './services/utxo-engine.js';
@@ -72,15 +73,27 @@ export function createApp(config: Config): express.Express {
   app.use(express.json({ limit: '1mb' }));
 
   // Demo UI
-  const publicDir = new URL('../public', import.meta.url).pathname;
-  const indexPath = new URL('../public/index.html', import.meta.url).pathname;
+  const publicDir = fileURLToPath(new URL('../public', import.meta.url));
+  const indexPath = fileURLToPath(new URL('../public/index.html', import.meta.url));
   const indexHtml = readFileSync(indexPath, 'utf-8');
 
-  // Inject OG meta tags into index.html when ?post=<id> is present.
-  // This handles the case where a user copies the browser URL bar to share.
-  app.get('/', (req, res, next) => {
+  // NODE_INTERFACE → "The node serves no faucet, and holds no key it could sign
+  // one with": the demo UI reaches the faucet on its own host through this
+  // injected base (from FAUCET_URL), never a node-side proxy. Empty when unset,
+  // so the UI keeps its window.location fallback.
+  const configScript =
+    config.faucetUrl.length > 0
+      ? `<script>window.__NOTIS_CONFIG__ = ${JSON.stringify({ faucetBase: config.faucetUrl })};</script>\n`
+      : '';
+
+  // Inject window.__NOTIS_CONFIG__ (always) and OG meta tags (when ?post=<id> is
+  // present, for URL-bar sharing) into the served index.html.
+  app.get('/', (req, res) => {
     const postId = req.query['post'] as string | undefined;
-    if (!postId) return next();
+    if (!postId) {
+      res.type('html').send(indexHtml.replace('</head>', `${configScript}</head>`));
+      return;
+    }
 
     const result = store.getPost(postId);
     if (result && 'withdrawnAtHeight' in result && (result as StoredPost).withdrawnAtHeight !== null) {
@@ -89,10 +102,13 @@ export function createApp(config: Config): express.Express {
 <meta property="og:description" content="This post was withdrawn by its author.">
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="Notis">`;
-      res.type('html').send(indexHtml.replace('</head>', `${ogTags}\n</head>`));
+      res.type('html').send(indexHtml.replace('</head>', `${configScript}${ogTags}\n</head>`));
       return;
     }
-    if (!isLivePost(result) || result.content === null) return next();
+    if (!isLivePost(result) || result.content === null) {
+      res.type('html').send(indexHtml.replace('</head>', `${configScript}</head>`));
+      return;
+    }
 
     const authorHex = Buffer.from(result.author).toString('hex');
     const shortAuthor = authorHex.slice(0, 12);
@@ -115,7 +131,7 @@ export function createApp(config: Config): express.Express {
 <meta property="og:site_name" content="Notis">
 <meta name="twitter:card" content="summary">`;
 
-    const html = indexHtml.replace('</head>', `${ogTags}\n</head>`);
+    const html = indexHtml.replace('</head>', `${configScript}${ogTags}\n</head>`);
     res.type('html').send(html);
   });
 

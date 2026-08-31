@@ -30,6 +30,7 @@ export interface Config {
   nodeRole: 'server' | 'miner';
   /** Base path where the demo UI is served (e.g., "/testnet/" or "/"). */
   publicUrl: string;
+  faucetUrl: string;
   /**
    * Body bytes this node fills the blocks it **produces** to
    * (NODE_INTERFACE → Configuration). Local, because a
@@ -132,6 +133,7 @@ export function loadConfig(): Readonly<Config> {
     profile,
     nodeRole: parseNodeRole(process.env['NODE_ROLE'] ?? 'server'),
     publicUrl: process.env['PUBLIC_URL'] ?? '/',
+    faucetUrl: process.env['FAUCET_URL'] ?? '',
     blockBodyBudgetBytes: parseBlockBodyBudget(
       process.env['BLOCK_BODY_BUDGET_BYTES'],
     ),
