@@ -410,7 +410,7 @@ creation, so nothing stays open. `expiresAtHeight` on the response is the
 | `POST` | `/vouches` | `castVouch` | Signed UTXO tx (KarmaBox to KarmaBox + VouchBox) |
 | `DELETE` | `/vouches/:targetId` | `initiateUnvouch` | Signed UTXO tx (VouchBox to none) |
 | `GET` | `/vouches?target=X&limit=50&after=<boxId>` | `getVouchesForTargetPage` | `{ vouches: [{ voucherId, targetId }], count, next }` — one page of the identity's vouchers, ascending box id, strictly after `after`; `count` over the whole set, `next` the key to continue from (HTTP API → "Every list a view returns is a page") |
-| `GET` | `/vouches?voucher=X&limit=50&after=<boxId>` | `getVouchesByVoucherPage` | `{ vouches: [{ boxId, value, voucherId, targetId, createdAtBlock }], count, next }` — one page of the identity's live vouches, ascending box id strictly after `after`; `count` over the whole set, `next` the key to continue from. The one arm carrying `boxId`: the unvouch builder names the box it spends |
+| `GET` | `/vouches?voucher=X&limit=50&after=<boxId>` | `getVouchesForVoucherPage` | `{ vouches: [{ boxId, value, voucherId, targetId, createdAtBlock }], count, next }` — one page of the identity's live vouches, ascending box id strictly after `after`; `count` over the whole set, `next` the key to continue from. The one arm carrying `boxId`: the unvouch builder names the box it spends |
 | `GET` | `/vouches?voucher=X&cooldowns=1&limit=50&after=<boxId>` | `getVouchCooldownsPage` | `{ cooldowns: [{ boxId, value, releaseAtBlock }], count, next }` — one page of the identity's unspent escrows, ascending box id strictly after `after` |
 
 **Members vouch, without a cap.** `castVouch` refuses with a named `400`, ahead of the engine and
@@ -830,16 +830,14 @@ Verification order (fail-fast):
 0. **Field domains** — `verifyPostFieldDomains`. The precondition, not a
    courtesy: fixed-width writers throw on out-of-domain input, so the domain is
    established before the payload can reach `computeTxId`
-1. **Content** — 1–`MAX_CONTENT_BYTES` UTF-8 bytes, non-empty; then the
-   character restrictions (no control, zero-width, or bidi characters)
-2. **Parent refs count** — at most `MAX_PARENT_REFS`
-3. **Protocol version** — the commit's equals the era at `tip + 1` (VALIDATION_INTERFACE → Protocol
+1. **Parent refs count** — at most `MAX_PARENT_REFS`
+2. **Protocol version** — the commit's equals the era at `tip + 1` (VALIDATION_INTERFACE → Protocol
    Version); the early rejection — the envelope's `verifyTxProtocolVersion` is the consensus check
-4. **Karma** — the author's **summed** karma must cover the price: threads (no
+3. **Karma** — the author's **summed** karma must cover the price: threads (no
    parentRefs) ≥ `POST_PRICE_THREAD`, replies ≥ `POST_PRICE_REPLY`.
    ⚠ An early, friendlier rejection, NOT the enforcement point — the engine's
    post biconditional is what a block re-validates
-5. **Parent refs existence** — every referenced id resolves to a post or stump
+4. **Parent refs existence** — every referenced id resolves to a post or stump
 
 There is no challenge, no PoW and no signature check: authorship is the creating
 transaction's signature over its `TxId` ("Post transactions"), and a parent
@@ -1487,15 +1485,6 @@ applyTx(deps, tx: UtxoTransaction, outputsWithIds: AnyBox[], currentBlockHeight:
 
 Write-only. Consumes all input boxes and inserts all output boxes inside a
 SQLite transaction. Performs no validation — call `validateTx` first.
-
-### validateAndApplyTx (convenience)
-
-```
-validateAndApplyTx(deps, tx: UtxoTransaction, currentBlockHeight: number): UtxoResult
-```
-
-Delegates to `validateTx` + `applyTx`. Preserved for backward compatibility.
-New code should prefer the split functions.
 
 ### Legal box transitions
 
@@ -2496,7 +2485,7 @@ the karma pool, the emission box and the treasury box, and the only consumer of 
 
 | | |
 |---|---|
-| **Consumes, in this order** | the emission box (when this height releases) · the treasury box (when this block accrues to it) · every `LikeAccrualBox` marker the block's like and reply transactions emitted, in committed transaction order · every `KarmaPriceBox` the block's post transactions created, in committed transaction order · the carry box of every author the block credits, ascending author hex · **at most `MAX_BOND_SETTLEMENTS_PER_BLOCK`** `BondBox`es whose invitee's `invitedAtBlock` is at or past `height − inviteProbationBlocks` in pre-body state, ascending `(invitedAtBlock, box id)` · **at most `MAX_ESCROW_RETURNS_PER_BLOCK`** `VouchEscrowBox`es at or past their `releaseAtBlock` in pre-body state, ascending `(releaseAtBlock, box id)` · **at most `MAX_LAPSE_WITHDRAWALS_PER_BLOCK`** `VouchBox`es whose `voucherId` is not a member in pre-body state, ascending box id · the karma boxes decay charges · the karma pool box (when this block draws or returns) · every `FeeBox` the body's transactions created, in committed transaction order |
+| **Consumes, in this order** | the emission box (when this height releases) · the treasury box (when this block accrues to it) · every `LikeAccrualBox` marker the block's like and reply transactions emitted, in committed transaction order · every `KarmaPriceBox` the block's post transactions created, in committed transaction order · the carry box of every author the block credits, ascending author hex · **at most `MAX_BOND_SETTLEMENTS_PER_BLOCK`** `BondBox`es whose invitee's `invitedAtBlock` is at or before `height − inviteProbationBlocks` in pre-body state, ascending `(invitedAtBlock, box id)` · **at most `MAX_ESCROW_RETURNS_PER_BLOCK`** `VouchEscrowBox`es at or past their `releaseAtBlock` in pre-body state, ascending `(releaseAtBlock, box id)` · **at most `MAX_LAPSE_WITHDRAWALS_PER_BLOCK`** `VouchBox`es whose `voucherId` is not a member in pre-body state, ascending box id · the karma boxes decay charges · the karma pool box (when this block draws or returns) · every `FeeBox` the body's transactions created, in committed transaction order |
 | **Emits, in this order** | the successors of the three protocol boxes — emission, treasury, karma pool · the invite grants · like payouts and carry successors · the vested part of each settling bond, back to its inviter · each released escrow's value, back to its owner · one `VouchEscrowBox` per lapse withdrawal — the vouch's value, `owner` its voucher, `releaseAtBlock = vouch.createdAtBlock + vouchCooldownBlocks` · decay replacements · the coinbase's credit outputs |
 
 ⛔ **A leg the body does not drive is capped, and the remainder waits.** Bonds, escrows and
@@ -3123,7 +3112,7 @@ index lookup per row of the set, so a prune's derived set costs the set and not 
 | `getCreditBoxesPage(owner, page)` | `(Uint8Array, Page<BoxKey>) => { rows: CreditBox[], next: BoxKey \| null, count: number }` — the view's page of the set `getCreditBoxes` reads, the same order and clause, over the `CREDIT_UNSPENT_WHERE` fragment |
 | `getCreditValue(owner)` | `(Uint8Array) => bigint` — summed value of every unspent credit box: `COALESCE(SUM(value), 0)` over `CREDIT_UNSPENT_WHERE`, the fragment `getCreditBoxes` and the page share; a view read (`/credits/:userId`'s `total`), not a consensus input |
 | `getBondFor(inviteePublicKey)` | `(UserId) => BondBox \| null` — the bond naming this key; the settlement path resolves through this |
-| `getBondsInvitedAt(invitedAtBlock)` | `(number) => BondBox[]` — bonds whose invitee's record carries exactly this `invitedAtBlock`. The caller subtracts `INVITE_PROBATION_BLOCKS` from the settle height, so the store stays free of network parameters. ⛔ **The query MUST require `invitedAtBlock > 0`**: `0` is every never-invited identity, so at the single height where `settleHeight == INVITE_PROBATION_BLOCKS` the argument is `0` and an unguarded match sweeps the whole table |
+| `getBondsInvitedAt(maxInvitedAt, limit)` | `(number, number) => BondBox[]` — bonds whose invitee's record carries `invitedAtBlock` **at or before** `maxInvitedAt`, **ascending `(invitedAtBlock, box id)`**, capped at `limit` — the settlement's carry-forward bond leg. The caller subtracts `INVITE_PROBATION_BLOCKS` from the settle height, so the store stays free of network parameters. ⛔ **The query MUST require `invitedAtBlock > 0`**: `0` is every never-invited identity, so at the single height where `settleHeight == INVITE_PROBATION_BLOCKS` the argument is `0` and an unguarded match sweeps the whole table |
 | `getBondBoxesPage(inviterId, page)` | `(UserId, Page<string>) => { rows: BondBox[], next: string \| null, count: number }` — the inviter's **unspent** bonds (`spent_at_block IS NULL`), ascending `id` strictly after `after` (`id > ?`); `count` over the whole set |
 | `getVouchesForTargetPage(targetId, page)` | `(UserId, Page<string>) => { rows: VouchBox[], next: string \| null, count: number }` — the identity's unspent vouch boxes (`store/vouch-queries.ts`), ascending `id` strictly after `after`, the rows selected in the page statement; `count` over the whole set |
 | `insertBox(box)` | `(AnyBox) => void` — writes the provenance columns; records `{kind:'box', op:'insert', boxId, box}` while a block journal is open |
@@ -3506,7 +3495,7 @@ transaction). The escrow's create and spend are journalled by `insertBox` /
 |----------|-----------|
 | `hasActiveVouchEscrow(voucherId)` | `(UserId) => boolean` — true while any unspent `vouch_escrow` box names the voucher as `owner`. **Consensus input**: the cast gate (§Vouch transition rules) |
 | `getVouchEscrowsFor(voucherId)` | `(UserId) => VouchEscrowBox[]` — the API's cooldown listing (`GET /vouches?voucher=X&cooldowns=1`) |
-| `getVouchEscrowsReleasableAt(height)` | `(number) => VouchEscrowBox[]` — every unspent `vouch_escrow` with `releaseAtBlock <= height`, **ascending box id**. **Consensus input**: the settlement's escrow leg; read from pre-body state on both sides (§The settlement transaction), never at the check |
+| `getVouchEscrowsReleasableAt(height, limit)` | `(number, number) => VouchEscrowBox[]` — every unspent `vouch_escrow` with `releaseAtBlock <= height`, **ascending `(releaseAtBlock, box id)`**, capped at `limit`. **Consensus input**: the settlement's escrow leg; read from pre-body state on both sides (§The settlement transaction), never at the check |
 | `getLapsedVouches(limit)` | `(number) => VouchBox[]` — the unspent `vouch` boxes whose `voucherId`'s identity record fails `member(voucher)`, **ascending box id**, at most `limit`. **Consensus input**: the settlement's lapse leg; read from pre-body state on both sides (§The settlement transaction), never at the check |
 
 ⛔ **A block-application effect keyed on node-local SQL that no committed root
@@ -4200,15 +4189,13 @@ the handler.
 |---------|---------------|--------------|
 | `post-service.ts` | Create, verify (sig, PoW, DAG linkage, content), store | Networking, block assembly |
 | `feed-service.ts` | Query posts, paginate, assemble feed/thread views | Post creation |
-| `verifier.ts` | Post verification (sig, PoW, DAG linkage, content) | Network relay |
+| `verifier.ts` | Post verification (domains, parent refs, protocol, karma) | Network relay |
 | `credits.ts` | Credit transfer validation and execution | UTXO engine internals |
 | `invites.ts` | Invite lifecycle (create, commit, claim, cancel) | Bond box internals |
-| `faucet-service.ts` | Faucet allocation from system keypair | Credit system design |
 | `block-creator.ts` | Block creation, mining, template assembly | Post validation |
 | `block-apply.ts` | Block application, UTXO settlement, per-block like settlement | Block creation |
 | `utxo-engine.ts` | UTXO transaction validation and application | Block structure |
 | `stump-engine.ts` | Verifiable prune execution | DAG content |
-| `content-sweep.ts` | Placeholder resolution (missing post content pulled from peers) | Post creation |
 | `fork-resolution.ts` | Chain fork detection and reorg | Block creation |
 | `genesis-state.ts` | Cold-start seeding of the height-0 state, and the root check over it | Which boxes exist (`store/system.ts`) |
 
