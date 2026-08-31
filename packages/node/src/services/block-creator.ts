@@ -954,19 +954,11 @@ export function settlementDepsWith(
  * unappliable, which the speculation above is what catches.
  */
 function predictSettlementBody(
-  txBytesList: Uint8Array[],
+  decodedTxs: { tx: UtxoTransaction; txId: string; inputs: string[]; outputs: AnyBox[] }[],
   validator: Uint8Array,
 ): SettlementBody {
-  const txs = txBytesList.map((raw) => decodeTx(raw));
-
-  const materialized: AnyBox[][] = [];
   const ownOutputs = new Map<string, AnyBox>();
-  for (const tx of txs) {
-    const txId = computeTxId(tx);
-    const outputs = (tx.outputs ?? []).map((out, index) =>
-      materializeOutput(out, txId, index),
-    );
-    materialized.push(outputs);
+  for (const { outputs } of decodedTxs) {
     for (const box of outputs) if (box.id) ownOutputs.set(box.id, box);
   }
   const resolve = (boxId: string): AnyBox | null =>
@@ -974,14 +966,13 @@ function predictSettlementBody(
 
   const body = emptyBody();
   const embedded: EmbeddedTx[] = [];
-  for (let i = 0; i < txs.length; i++) {
-    const tx = txs[i]!;
-    const inputBoxes = (tx.inputs ?? [])
+  for (const { tx, inputs, outputs } of decodedTxs) {
+    const inputBoxes = inputs
       .map(resolve)
       .filter((box): box is AnyBox => box !== null);
     embedded.push({ tx, inputBoxes });
     const isRent = isCreditSideTx(tx) && Object.keys(tx.signatures).length === 0;
-    contributeToBody(body, materialized[i]!, isRent);
+    contributeToBody(body, outputs, isRent);
   }
 
   body.actors = countKarmaActors(embedded, validator);
@@ -1004,7 +995,8 @@ export function buildBlockSettlement(
   const decoded = txBytesList.map((raw) => {
     const tx = decodeTx(raw);
     const txId = computeTxId(tx);
-    return { txId, inputs: tx.inputs, outputs: tx.outputs.map((out, i) => materializeOutput(out as AnyBox, txId, i)) };
+    const outputs = tx.outputs.map((out, i) => materializeOutput(out as AnyBox, txId, i));
+    return { tx, txId, inputs: tx.inputs, outputs };
   });
   const postBody = collectPostBodyKarma(decoded);
   const escrows = getVouchEscrowsReleasableAt(height, MAX_ESCROW_RETURNS_PER_BLOCK);
@@ -1015,7 +1007,7 @@ export function buildBlockSettlement(
     nodeConfig.protocolVersionSchedule,
     computeBlockReward(height),
     nodeConfig.creditMinerRewardDelay,
-    predictSettlementBody(txBytesList, validator),
+    predictSettlementBody(decoded, validator),
     minerOwner,
   );
 }
