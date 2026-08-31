@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Economy — Notis docs</title>
-<meta name="description" content="How karma and notis work in Notis: invitations with a bond, likes that cost something, decay, mining, storage rent, and a launch with no premine.">
+<meta name="description" content="How karma and notis work in Notis: invitations earned from endorsement, likes that cost something, a price to post, decay, mining, storage rent, and a launch with no premine.">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Notis docs">
 <meta property="og:title" content="Economy — Notis docs">
@@ -77,11 +77,11 @@
       <p>Karma is a legible, on-chain record of who the community values. The protocol doesn't try to judge quality itself — its job is to record endorsements <em>honestly</em> and keep the patterns visible, so people and apps can interpret them. The node keeps the books; the community reads them.</p>
 
       <h3>Where karma comes from — invitations with skin in the game</h3>
-      <p>New karma is created in exactly one place: <span class="accent-k">invitations</span>. When you invite someone, you <strong>lock a bond of your own karma</strong>, and the newcomer <strong>instantly receives a starter grant</strong>. Your bond only flows back to you as that newcomer earns genuine likes — and it's forfeited if they turn out to be a ghost.</p>
+      <p>New karma is created in exactly one place: <span class="accent-k">invitations</span>. Only a <strong>member</strong> can send them, and only as many as they've <strong>earned the right to</strong>: the more the network has vouched for you, the larger your allowance, and every invite draws it down. Each one locks a <strong>bond</strong> of your own karma and grants the newcomer that same amount out of the shared pool; the bond flows back as they earn genuine likes, and forfeits if they never engage.</p>
       <div class="note">
         <div class="label">Why it's built this way</div>
-        <p>Picture farming karma by inviting your own fake accounts. You mint a grant to a sock puppet — but to claw your bond back, you have to make that puppet <em>genuinely liked</em>, which means spending real karma to like it, or eating the forfeit. The numbers are set so a self-invite always nets zero or less: the bond you'd lose (or the karma you'd burn faking engagement) is designed to exceed the grant you minted.</p>
-        <p>Inviting <em>real</em> people who genuinely get liked, meanwhile, is nearly free — those likes would have happened anyway. Honest growth costs nothing; faking it always costs more than it makes. That asymmetry is the entire defense.</p>
+        <p>The scarce resource is endorsement, and it's the one thing you can't mint for yourself. A vouch only counts when it comes from a member older than you, so every endorsement that raises your allowance traces back through real members to the founders. A ring of accounts you control can vouch for each other endlessly and gain nothing — none of them carries that weight — so a fake account earns no allowance and invites no one.</p>
+        <p>The bond is a supply dial, not the defence: equal to the grant, it only sets how much of a completed invite's karma stays in circulation. Inviting real people is nearly free — the likes that vest your bond would have happened anyway — while a fake account never clears the first gate at all. Endorsement you can't fake, spent through an allowance you had to earn: that's the whole of it.</p>
       </div>
 
       <h3>Likes — endorsements that have to cost something</h3>
@@ -93,14 +93,14 @@
       <p>To withdraw, you <strong>unvouch</strong>, and your karma is released back to you after a <strong>cooldown</strong>. That delay is the anti-spam: you can't flip a vouch on and off to manufacture a signal, because pulling it out locks your stake for the cooldown before it returns. So a vouch is a cheap, <em>reversible</em> way to put a little of your reputation on the line for someone — without the permanence of a like.</p>
 
       <h3>Decay — reputation you have to keep earning</h3>
-      <p>Karma isn't a trophy you win once. If an identity goes quiet, its karma <span class="accent-k">decays</span>; stay genuinely active and it doesn't. The hard part is stopping people from faking "active" on the cheap — so keeping your karma alive is tied to <strong>posting</strong>, and posting is itself bonded: a post locks a bond that only returns as it earns likes.</p>
+      <p>Karma isn't a trophy you win once. If an identity goes quiet, its karma <span class="accent-k">decays</span>; stay genuinely active and it doesn't. The hard part is stopping people from faking "active" on the cheap — so keeping your karma alive is tied to <strong>posting</strong>, and posting isn't free: a post pays a fixed <strong>price</strong> in karma to the shared pool, and nothing comes back.</p>
       <div class="note">
         <div class="label">The paradox that does the work</div>
-        <p>The only <em>cheap</em> way to keep your karma alive is to post things people actually like — that is, to genuinely contribute. Wash-posting junk just to reset the clock locks up bonds you can't recover, which costs more than simply letting the decay happen. You cannot fake activity without doing the real thing. (An unliked post's bond is burned after a grace period of about a week.)</p>
+        <p>The only <em>cheap</em> way to keep your karma alive is to post things people actually like — the likes a good post earns are paid on top of its price. Wash-posting junk just to reset the clock pays that price over and over for nothing, which bleeds karma faster than the decay it's dodging. You cannot fake activity without paying for it, and paying for it costs more than sitting still would.</p>
       </div>
 
       <h3>Sybil resistance, in one idea</h3>
-      <p>You can't make a network like this truly un-gameable — given enough patience and accounts, anything can be Sybil-attacked. So the goal isn't perfection; it's to make gaming <strong>slow, visible, and more expensive than it's worth</strong>. Every path that creates karma is gated by a real cost that a faker pays and an honest contributor doesn't. And because every endorsement lives on-chain, unnatural accumulation leaves patterns that apps and indexers can flag. The protocol stays a neutral record-keeper — judgment stays with the community.</p>
+      <p>You can't make a network like this truly un-gameable — given enough patience and accounts, anything can be Sybil-attacked. So the goal isn't perfection; it's to make gaming <strong>slow, visible, and more expensive than it's worth</strong>. The one door that mints karma — the invitation — opens only for members, and only as far as real endorsement has earned them, so a faker's reach is capped at what people who mean it will stake on them. And because every endorsement lives on-chain, unnatural accumulation leaves patterns that apps and indexers can flag. The protocol stays a neutral record-keeper — judgment stays with the community.</p>
     </section>
 
     <section>
@@ -163,7 +163,7 @@
       <h2>The through-line</h2>
       <div class="kicker">
         <p>If one idea ties it all together, it's this: <strong>value should be expensive to fake and cheap to earn honestly.</strong></p>
-        <p>Minting karma costs a bond that only real engagement returns. Endorsing costs something, so endorsements mean something. Staying reputable costs genuine contribution. Securing the chain is paid for in perpetuity, so attacking it never pays off. And money and reputation sit in separate sealed compartments, so neither can corrupt the other.</p>
+        <p>Minting karma takes an invitation, and invitations are rationed by endorsement you can't fake. Endorsing costs something, so endorsements mean something. Staying reputable costs genuine contribution. Securing the chain is paid for in perpetuity, so attacking it never pays off. And money and reputation sit in separate sealed compartments, so neither can corrupt the other.</p>
         <p>Notis doesn't try to make cheating <em>impossible</em> — it makes cheating a <strong>losing trade</strong>.</p>
       </div>
     </section>

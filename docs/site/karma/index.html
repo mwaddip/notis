@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Karma — Notis docs</title>
-<meta name="description" content="How karma works in Notis: standing that can't be bought, sold or transferred. Invitations with a bond, likes that cost the liker, decay, and two different ways to remove things.">
+<meta name="description" content="How karma works in Notis: standing that can't be bought, sold or transferred. Invitations you earn from endorsement, likes that cost the liker, a price to post, decay, and two ways to remove things.">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Notis docs">
 <meta property="og:title" content="Karma — Notis docs">
@@ -68,36 +68,19 @@
 
     <section>
       <h2>Getting in costs someone else something</h2>
-      <p>New karma enters the network through exactly one door: <span class="accent-k">invitations</span>.</p>
-      <p>Someone already here locks a <strong>bond</strong> of their own karma. The person they invite receives a <strong>grant</strong> immediately — enough to post a few times and start receiving likes. The bond returns to the inviter gradually, as the invitee earns real likes from real people. If the invitee never engages, the bond is <strong>forfeited</strong>.</p>
-      <p>So an invitation isn't a permission slip. You're underwriting someone. Your collateral comes back if they turn out to be a person; you lose it if you vouched for a ghost.</p>
+      <p>New karma enters the network through exactly one door: <span class="accent-k">invitations</span>. Not everyone holds the key, and no one holds an unlimited number of them.</p>
+      <p>Only a <strong>member</strong> can invite — and membership is itself conferred: enough people already inside have to vouch for you before you count as one of them. Once you're a member, your invitations are an <strong>allowance you earn and then spend</strong>. The more the network has vouched for you, the more people you may bring in, and every invite draws that allowance down. How far your reach extends is a standing measure of how much of the network stands behind you.</p>
+      <p>Each invitation locks a <strong>bond</strong> of the inviter's own karma; the newcomer receives a <strong>grant</strong> of exactly that size, paid from the shared pool — enough to post a few times and start receiving likes. The bond returns as the invitee earns real likes from real people, and forfeits if they never engage. So an invitation spends two things at once: a unit of an allowance you had to earn, and a slice of your standing held at risk on someone else.</p>
 
       <h3>Why this stops fake accounts without checking anyone</h3>
-      <p>Notis never verifies identity — no phone numbers, no documents, nothing. It doesn't need to, because inviting yourself is unprofitable in both directions it can be run.</p>
-      <p>Say you invite an account you control. You lock a bond of 12 and it receives a grant of 10. You now have two options, and here's what each costs:</p>
-      <div class="ledger">
-        <div class="row head"><span>Abandon it — take the grant and walk away</span><span></span></div>
-        <div class="row"><span>grant received</span><span class="pos">+10</span></div>
-        <div class="row"><span>bond forfeited</span><span class="neg">−12</span></div>
-        <div class="row total"><span>net</span><span class="neg">−2</span></div>
-      </div>
-      <div class="ledger">
-        <div class="row head"><span>Like it yourself until the bond vests</span><span></span></div>
-        <div class="row"><span>grant received</span><span class="pos">+10</span></div>
-        <div class="row"><span>60 likes given, at 1 each</span><span class="neg">−60</span></div>
-        <div class="row"><span>author reward from those likes</span><span class="pos">+48</span></div>
-        <div class="row"><span>bond returned in full</span><span class="pos">+12</span></div>
-        <div class="row"><span>bond originally locked</span><span class="neg">−12</span></div>
-        <div class="row total"><span>net</span><span class="neg">−2</span></div>
-      </div>
-      <p>Both roads lose. That isn't a coincidence — it's two constraints, and they're the ones that have to survive any retuning:</p>
-      <p><strong>The bond must be at least the grant.</strong> Otherwise "take the grant and abandon the bond" is simply profitable.</p>
-      <p><strong>Fully vesting the bond must burn more karma than the grant was worth.</strong> Likes burn a fraction of what they cost (below), so manufacturing enough endorsement to free your own bond destroys more than you gained.</p>
+      <p>Notis never verifies identity — no phone numbers, no documents, nothing. It doesn't need to, because the one input a fake account can't manufacture is <em>other people vouching for it</em>.</p>
+      <p>A vouch only counts when it comes from a member who has been here longer than you. Endorsement runs one direction — from the older, established network toward the newer — so every vouch that means anything traces back, member by member, to the founders. Your invite allowance is that counted endorsement divided by a figure that grows with the network: no endorsement, no allowance; no allowance, no invites.</p>
+      <p>That is what a ring of fake accounts runs into. They can vouch for each other all day and it buys them nothing — none of them is an older, established member, so none of those vouches count. To raise a puppet's allowance you need real members, already inside, to stake their own karma on it, and that is the one thing you cannot fake.</p>
       <div class="pull">
-        <p>A real newcomer earns those likes from people who were going to spend them anyway. A fake one has to manufacture every single one, and pays full retail.</p>
+        <p>A fake account can invite no one, because it can earn the endorsement of no one. The ring ends where it began.</p>
       </div>
-      <p>That asymmetry is the whole defence. The same action costs both of them the same karma — but for one of them the cost was already going to be paid by a community doing what it does, and for the other it's a bill.</p>
-      <p>Two things fall out of this for free. Bonds are locked collateral, so anyone has at most <em>balance ÷ bond</em> invitations outstanding — the population can't explode, not even from the founding set. And the founding set doesn't stay founding: their head start decays like everyone else's if they stop showing up.</p>
+      <p>The bond does a quieter job — it's a <strong>supply dial</strong>. Priced equal to the grant, it sets how much of a completed invite's karma stays in circulation versus drains back to the pool, tuned by how many of the invitee's likes vest it back. It meters supply; the allowance is what keeps the population honest.</p>
+      <p>Two things follow. Growth is bounded by real endorsement, not by anyone's balance, so the population can't explode — not even from the founding set. And the founders don't stay founders by default: their head start decays like everyone else's if they stop showing up.</p>
     </section>
 
     <section>
@@ -124,14 +107,13 @@
       <p>Two reasons this exists. It stops <strong>entrenchment</strong> — you can't earn standing once and coast on it for years; you keep it by continuing to be someone people endorse. And it keeps the books honest: if dormant hoards never shrank, the amount of karma that's actually in play would drift further and further from the amount that exists, and every measure built on the supply would quietly become a lie.</p>
       <p>Note what it doesn't do: tax everyone. Punishing active participants to control the supply is a tax on exactly the people you want. The hard part of the design isn't the decay — it's making <em>activity</em> expensive to fake.</p>
       <h3>The obvious dodge, and the answer</h3>
-      <p>If posting resets your clock, the exploit writes itself: post garbage every window and never decay. So posting isn't free. <strong>A post locks a bond, and the bond only comes back as the post earns likes.</strong></p>
-      <p>Now wash-posting locks up karma you'll never recover. Forfeiting a 3-karma post bond to avoid 2 karma of decay is a bad trade, and it stays a bad trade at every setting where the bond exceeds the decay — another of those relationships that has to hold across the tuning range.</p>
-      <p>Trying to rescue the bond by liking your own post is worse: you'd spend 15 karma of likes to recover 3.</p>
+      <p>If posting resets your clock, the exploit writes itself: post garbage every window and never decay. So posting isn't free. <strong>A post pays a price in karma — a fixed amount that leaves your balance for the shared pool and does not come back.</strong></p>
+      <p>That turns wash-posting into a losing trade against the very decay it dodges. Paying a post's price every window to defer a smaller trickle of decay bleeds karma faster than standing still — and it stays a bad trade wherever a post costs more than the decay it defers. Nothing is locked up to rescue and nothing to game: the price is spent the instant you post, the same whether the post is seen a thousand times or never at all. A post is charged for occupying the network, not judged for being worth reading.</p>
       <div class="pull">
-        <p>You can't fake activity without doing the real thing.</p>
+        <p>You can't fake activity without paying for it — and paying for it costs more than the decay you were dodging.</p>
       </div>
-      <p>Meanwhile the honest version costs nothing. A post that earns 15 likes returns its 3-karma bond <em>and</em> pays its author 12. Posting well is profitable; posting to game the clock is not. Same action, same price, opposite outcomes.</p>
-      <p>You might ask why receiving a like doesn't reset the clock instead — it seems simpler. Because a second account could then reset your clock for a single karma. Only a bond puts a floor under what a reset costs.</p>
+      <p>The honest version is just the cost of speaking: you pay because you had something to say, and the likes it earns are upside, paid on top.</p>
+      <p>You might ask why receiving a like doesn't reset the clock instead — it seems simpler. Because a second account could then reset your clock for a single karma. A price you pay yourself, every time, puts a floor under what a reset costs.</p>
     </section>
 
     <section>
@@ -144,20 +126,18 @@
       <p>That's why the interface says <strong>withdrawn</strong> and never <em>deleted</em>.</p>
 
       <h3>Pruning a whole subtree</h3>
-      <p>Pruning removes a post <em>and everything under it</em>, including other people's replies. It costs three things:</p>
+      <p>Pruning removes a post <em>and everything under it</em>, including other people's replies. Because it destroys words that aren't yours, it costs a <strong>price per post removed</strong>.</p>
       <div class="tbl-wrap">
         <table>
           <thead><tr><th>What</th><th>Happens</th></tr></thead>
           <tbody>
-            <tr><td>Your own post bonds — the root, and your own replies below it</td><td class="n">burned</td></tr>
-            <tr><td>Other people's post bonds</td><td class="n">returned to them</td></tr>
-            <tr><td>A price per post destroyed</td><td class="n">1 each</td></tr>
+            <tr><td>The subtree — your post and every reply beneath it</td><td class="n">removed</td></tr>
+            <tr><td>A price, per post destroyed</td><td class="n">1 each</td></tr>
           </tbody>
         </table>
       </div>
-      <p>The first two are one principle: <strong>you may destroy your own stake, never someone else's.</strong> Your bond is forfeited for changing your mind. Everyone else gets theirs back.</p>
-      <p>The third one is less obvious and matters most. Without it, cost runs <em>backwards</em> to harm. A well-received post has had most of its bond already returned by likes — so the post whose destruction wipes out five hundred replies would be the <em>cheapest</em> one to destroy. Charging per descendant fixes the direction: your bond prices your change of mind, and the per-post charge prices the damage to everyone else. Two different things, and one curve shouldn't be doing both jobs.</p>
-      <p>Getting a bond back doesn't give a replier their words back. Under a post you didn't write, that's the deal — but it should be a decision rather than an accident, which is why withdrawal exists. If all you regret is your own writing, you never need to reach for this.</p>
+      <p>Charging per descendant is the point, and it fixes a direction cost would otherwise run backwards. The damage of a prune is measured in other people's words, not your own — the post whose removal wipes out five hundred replies does five hundred times the harm of a lonely one. A flat fee would make the most destructive prune no dearer than the emptiest; a per-post charge prices the damage where it lands.</p>
+      <p>Removing your own words alone never needs this. Withdrawal — dropping the content of a post you wrote, leaving the replies intact — is free, because regret about your own writing harms no one else. Pruning is the heavier act, for when a whole branch has to go, and it's priced for what it takes down with it.</p>
     </section>
 
     <section>
@@ -169,14 +149,14 @@
           <tbody>
             <tr><td>Cost of a like</td><td class="n">1</td><td>The smallest unit — a like should be the cheapest meaningful act.</td></tr>
             <tr><td>Author's share</td><td class="n">4 per 5</td><td>Most of it reaches the author; the rest is the deflation dial.</td></tr>
-            <tr><td>Invite grant</td><td class="n">10</td><td>A few posts plus enough to participate before earning anything.</td></tr>
-            <tr><td>Invite bond</td><td class="n">12</td><td>Must exceed the grant, or abandoning it pays.</td></tr>
-            <tr><td>Bond fully vests at</td><td class="n">60 likes</td><td>Must burn more than the grant, or self-liking pays.</td></tr>
-            <tr><td>Post bond</td><td class="n">3</td><td>Must exceed the decay it could dodge.</td></tr>
-            <tr><td>Post bond vests at</td><td class="n">15 likes</td><td>Reachable for a real post, expensive to fake.</td></tr>
+            <tr><td>Invite bond (= the grant)</td><td class="n">10</td><td>Enough to participate before earning; a supply dial, not the gate on who can invite.</td></tr>
+            <tr><td>Bond fully vests at</td><td class="n">60 likes</td><td>How fast the inviter's stake returns as the invitee is liked.</td></tr>
+            <tr><td>Invite allowance</td><td class="n">⌊vouches ÷ D(N)⌋</td><td>Earned from endorsement by older members — the real cap on who can bring people in.</td></tr>
+            <tr><td>Post price, thread</td><td class="n">5</td><td>Rent for occupying the DAG; leaves for the pool, never returns.</td></tr>
+            <tr><td>Post price, reply</td><td class="n">3</td><td>A little of it goes to the author being answered.</td></tr>
             <tr><td>Decay</td><td class="n">2 / 5 days</td><td>Slow enough to ignore if you're around, real if you're not.</td></tr>
             <tr><td>Decay floor</td><td class="n">5</td><td>Nobody is decayed into being unable to act.</td></tr>
-            <tr><td>Prune, per post destroyed</td><td class="n">1</td><td>Scales with harm, not with what's left of your bond.</td></tr>
+            <tr><td>Prune, per post destroyed</td><td class="n">1</td><td>Scales with the harm — how much of others' writing the prune takes down.</td></tr>
             <tr><td>Withdraw your own post</td><td class="n">free</td><td>Regret shouldn't be expensive.</td></tr>
           </tbody>
         </table>
@@ -185,9 +165,9 @@
 
     <section>
       <h2>The same move, every time</h2>
-      <p>Read the mechanisms together and they're one idea wearing different clothes: <strong>make the identical action cheap for honest people and expensive for everyone else.</strong></p>
-      <p>A like costs the same whether it's sincere or manufactured — but the sincere one was going to be spent anyway. A bond costs the same whether you vouched for a person or a puppet — but the person vests it back. A post bond costs the same for something worth reading and something posted to game a clock — but only one of them earns it back.</p>
-      <p>Nowhere does the protocol decide who is genuine. It never has to. It just makes being fake cost full price, and being real cost almost nothing, for exactly the same move.</p>
+      <p>Read the social mechanisms together and they're one idea in different clothes: <strong>make the identical action cheap for honest people and worthless for everyone else.</strong></p>
+      <p>A like costs the same whether it's sincere or manufactured — but the sincere one was going to be spent anyway. An invitation draws the same allowance for a person or a puppet — but only real endorsement grants you that allowance, and a puppet can hand you none. The protocol never decides who is genuine; it makes the inputs a faker needs — attention that would have been spent, endorsement from members who mean it — the exact inputs a faker can't produce.</p>
+      <p>The post price sits a little apart, by design. It isn't a test of who you are; it's rent on the commons — a flat charge for occupying the shared record, paid the same by everyone, because a post costs the network the same whoever wrote it.</p>
       <div class="glance">
         <div class="card c">
           <div class="tag">Read next</div>
