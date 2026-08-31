@@ -442,7 +442,7 @@ computes different ids.
 
 Box ids, tx ids, identity-record keys and the network key share one 32-byte keyspace and the AVL
 tree holds three entity kinds, so the separation must be in the preimage; post ids and content
-hashes are 32 bytes of the same digest and carry their tags for the same reason. All seven are
+hashes are 32 bytes of the same digest and carry their tags for the same reason. All eight are
 exported, so a test over their distinctness reads the code's tags and not a copy. (`computePostId` already works
 this way via `POST_ID_DOMAIN`; box ids previously had no tag.)
 
@@ -1075,19 +1075,21 @@ UtxoTransaction {
   inputs: BoxId[]                          // Boxes consumed
   outputs: BoxCandidate[]                  // Boxes created — candidates: no id, no txId, no index
   signatures: Record<string, Uint8Array>   // publicKey (hex) → Ed25519 sig (64 bytes) over TxId
-  preimages?: Record<string, Uint8Array>   // boxId → hash preimage — encoded and hashed, read by nothing
   protocolVersion: number                  // 1
   likeTarget?: PostId                      // Present ⟺ this tx is a like (P2-D) — see below
   post?: PostCommit                        // Present ⟺ this tx creates a post — see below; the body rides the PACKET, not the tx
+  prune?: PruneCommit                      // Present ⟹ this tx prunes the author's own reply subtree — see below
+  postWithdraw?: PostWithdrawCommit        // Present ⟹ this tx withdraws one post's content from the DAG — see below
 }
 
 TxId = blake2b512( TX_ID_DOMAIN ‖ txIdBytes )[0:32]
 
 txIdBytes = arr(inputs, b32) ‖ arr(outputs, canonicalBoxBytes)
-            ‖ opt(arr(preimages sorted, b32(boxId) ‖ lp(preimage)))
             ‖ vlqU(protocolVersion)
             ‖ opt(likeTarget, b32)
             ‖ opt(post, postFieldBytes)
+            ‖ opt(prune, pruneFieldBytes)
+            ‖ opt(postWithdraw, postWithdrawFieldBytes)
 ```
 
 ⚠ **Where this section and "Layout — UtxoTransaction" disagree, the LAYOUT TABLE
@@ -1149,12 +1151,12 @@ without circularity, so ids are derived once `TxId` is known; the ledger materia
 `i` into a `BoxBase` with `txId` and `index: i` at apply. (Pre-Spec-G this was `AnyBox[]` whose
 per-output `id` was excluded from the hash — the same exclusion, now expressed in the type.)
 
-⛔ **`preimages` has no consumer.** No transition requires knowledge of a secret,
-so nothing reads the map — but it stays field 3 of the encoding, sorted by key and
-hashed into every `TxId`, so it is a consensus surface that carries no meaning.
-**Removing it changes every transaction id**, which is why it goes with the
-transaction-representation work rather than here. Until then it is encoded,
-validated for envelope shape, and never consulted.
+⛔ **`preimages` is removed, and its name RESERVED.** No transition requires
+knowledge of a secret, so nothing read the map; it is dropped from `txIdBytes`
+(→ Layout — UtxoTransaction) and the name must never be reused — a field in this
+list is inside every `TxId`, so re-adding one moves every transaction id and every
+box id derived from one. A field that belongs on the wire alone goes in the wire
+codec, not here.
 
 Transaction signatures are over the transaction hash (`computeTxId`), not over
 domain messages. The signer signs `TxId` with their Ed25519 key; verifiers
