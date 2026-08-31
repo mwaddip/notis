@@ -3,21 +3,7 @@ import { PeerManager, MAX_TRACKED_BANS } from '../src/peer-mgr.js';
 import { PeerDb } from '../src/peerdb.js';
 import { PeerState, PenaltyKind } from '../src/types.js';
 import type { NetConfig, Peer } from '../src/types.js';
-
-function makeConfig(overrides: Partial<NetConfig> = {}): NetConfig {
-  return {
-    magic: 0x54444147,
-    protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
-    bootstrapPeers: [],
-    listenAddrs: '/ip4/0.0.0.0/tcp/0',
-    maxPeers: 50,
-    penaltyScoreThreshold: 500,
-    temporalBanDurationMs: 3600000,
-    penaltySafeIntervalMs: 120000,
-    syncRequestTimeoutMs: 10000,
-    ...overrides,
-  };
-}
+import { makeConfig } from './helpers.js';
 
 function makePeer(id: string): Peer {
   return { id, multiaddrs: [`/ip4/127.0.0.1/tcp/${9000 + parseInt(id)}`], protocols: [], connectedAt: Date.now() };
@@ -28,7 +14,7 @@ describe('PeerManager', () => {
   let config: NetConfig;
 
   beforeEach(() => {
-    config = makeConfig();
+    config = makeConfig({ maxPeers: 50 });
     mgr = new PeerManager(config);
   });
 
@@ -282,7 +268,7 @@ describe('PeerManager', () => {
     function makeBanPair() {
       const peerDb = new PeerDb(null, 100, []);
       const calls = { ban: 0, unban: 0 };
-      const pairMgr = new PeerManager(makeConfig(), {
+      const pairMgr = new PeerManager(makeConfig({ maxPeers: 50 }), {
         onBan: (addr) => { calls.ban++; peerDb.ban(addr); },
         onUnban: (addr) => { calls.unban++; peerDb.unban(addr); },
       });
@@ -423,7 +409,7 @@ describe('PeerManager', () => {
 
 describe('PeerManager ban map is bounded (NET_INTERFACE → "Ban tracking is a bounded hint, not a ledger")', () => {
   it('evicts the oldest ban past MAX_TRACKED_BANS instead of growing forever', () => {
-    const mgr = new PeerManager(makeConfig());
+    const mgr = new PeerManager(makeConfig({ maxPeers: 50 }));
     for (let i = 0; i <= MAX_TRACKED_BANS; i++) {
       mgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, `peer-${i}`, 'violation');
     }

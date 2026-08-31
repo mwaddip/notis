@@ -16,7 +16,8 @@ import { SyncMachine } from '../src/sync-machine.js';
 import type { SyncStore } from '../src/sync-machine.js';
 import { buildHandshakeFrame } from '../src/handshake.js';
 import { MSG_SYNC_INFO, PenaltyKind } from '../src/types.js';
-import type { NetConfig, NetValidators } from '../src/types.js';
+import type { NetValidators } from '../src/types.js';
+import { makeConfig } from './helpers.js';
 import type { PeerManager } from '../src/peer-mgr.js';
 
 const MAGIC = 0x54444147;
@@ -31,20 +32,6 @@ const validators: NetValidators = {
   verifyOrderingBlockStructure,
   verifyPostBody,
 };
-
-function makeConfig(): NetConfig {
-  return {
-    magic: MAGIC,
-    protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
-    bootstrapPeers: [],
-    listenAddrs: '/ip4/0.0.0.0/tcp/0',
-    maxPeers: 10,
-    penaltyScoreThreshold: 500,
-    temporalBanDurationMs: 3_600_000,
-    penaltySafeIntervalMs: 120_000,
-    syncRequestTimeoutMs: 10_000,
-  };
-}
 
 function stubStore(overrides: Partial<SyncStore> = {}): SyncStore {
   return {

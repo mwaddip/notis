@@ -1,6 +1,8 @@
 import { getDb } from './db.js';
+import { rowToStump } from './stumps.js';
 import type { PostCommit, PostId, PostType, Stump } from '@dagsocial/types';
 import type { Page, PostKey } from './index.js';
+import type { StumpRow } from './stumps.js';
 
 // ---------------------------------------------------------------------------
 // Row shapes
@@ -18,16 +20,6 @@ interface PostRow {
   block_height: number | null;
   block_index: number | null;
   withdrawn_at_height: number | null;
-}
-
-interface StumpRow {
-  id: string;
-  root_post_hash: string;
-  author_id: Buffer;              // 32-byte Ed25519 public key
-  reply_count: number;
-  upvote_count: number;
-  protocol_version: number;
-  compacted_at_block_height: number;
 }
 
 interface TopologyRow {
@@ -112,17 +104,6 @@ function rowToPost(row: PostRow): StoredPost {
     blockHeight: row.block_height,
     blockIndex: row.block_index,
     withdrawnAtHeight: row.withdrawn_at_height,
-  };
-}
-
-function rowToStump(row: StumpRow): Stump {
-  return {
-    rootPostHash: row.root_post_hash,
-    authorId: new Uint8Array(row.author_id),
-    replyCount: row.reply_count,
-    upvoteCount: row.upvote_count,
-    protocolVersion: row.protocol_version,
-    compactedAtBlockHeight: row.compacted_at_block_height,
   };
 }
 

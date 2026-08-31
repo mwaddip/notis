@@ -4,24 +4,10 @@ import { SYNC_PROTOCOL, requestBlocks, requestHeaders } from '../src/sync.js';
 import { encodeFrame } from '../src/frame.js';
 import { encodePeers } from '../src/sync-codec.js';
 import { MSG_BLOCKS, MSG_HEADERS } from '../src/types.js';
-import type { NetConfig } from '../src/types.js';
+import { makeConfig } from './helpers.js';
 
 const MAGIC = 0x54444147;
 const PEER = 'peer-under-test';
-
-function makeConfig(): NetConfig {
-  return {
-    magic: MAGIC,
-    protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
-    bootstrapPeers: [],
-    listenAddrs: '/ip4/0.0.0.0/tcp/0',
-    maxPeers: 10,
-    penaltyScoreThreshold: 500,
-    temporalBanDurationMs: 3_600_000,
-    penaltySafeIntervalMs: 120_000,
-    syncRequestTimeoutMs: 10_000,
-  };
-}
 
 /**
  * A libp2p that answers one dial with `response`, and records what was asked.

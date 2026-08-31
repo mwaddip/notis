@@ -3,21 +3,7 @@ import { PeerManager } from '../src/peer-mgr.js';
 import { NetNode } from '../src/node.js';
 import { PenaltyKind } from '../src/types.js';
 import type { NetConfig, NetValidators, Peer } from '../src/types.js';
-
-function makeConfig(overrides: Partial<NetConfig> = {}): NetConfig {
-  return {
-    magic: 0x54444147,
-    protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
-    bootstrapPeers: [],
-    listenAddrs: '/ip4/0.0.0.0/tcp/0',
-    maxPeers: 50,
-    penaltyScoreThreshold: 500,
-    temporalBanDurationMs: 3600000,
-    penaltySafeIntervalMs: 120000,
-    syncRequestTimeoutMs: 10000,
-    ...overrides,
-  };
-}
+import { makeConfig } from './helpers.js';
 
 function makePeer(id: string): Peer {
   return {
@@ -33,7 +19,7 @@ describe('penalty attribution (using PeerManager)', () => {
   let config: NetConfig;
 
   beforeEach(() => {
-    config = makeConfig();
+    config = makeConfig({ maxPeers: 50 });
     mgr = new PeerManager(config);
   });
 
@@ -139,7 +125,7 @@ const stubValidators: NetValidators = {
 
 describe('NetNode.penalizePeer', () => {
   function setup() {
-    const config = makeConfig();
+    const config = makeConfig({ maxPeers: 50 });
     const net = new NetNode(config, stubValidators);
     const peerMgr: PeerManager = (net as any).peerMgr;
     peerMgr.addPeer(makePeer('peer1'));

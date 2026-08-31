@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { computeBoxId, MEMPOOL_CREDIT_SHARE_PCT } from '@dagsocial/types';
+import { computeBoxId, MEMPOOL_CREDIT_SHARE_PCT, computePostId } from '@dagsocial/types';
 import type Database from 'better-sqlite3';
 
 // Dynamic import pattern — fresh modules per test
@@ -142,6 +142,30 @@ function vouchTx(voucherHex: string, targetHex: string) {
 function txWithInput(label: string): unknown {
   const id = createHash('blake2b512').update(label).digest().subarray(0, 32).toString('hex');
   return { inputs: [id], outputs: [], signatures: {}, protocolVersion: 1 };
+}
+
+/**
+ * One pool row expiring at `expiresAtHeight`, and the pending post whose DAG row
+ * dies with it — the two tables `purgeExpired`/`removeEntry` mutate together. For
+ * the atomicity pins below (ARCHITECTURE → "Single-transaction atomic writes").
+ */
+function seedExpiringPostRow(
+  db: Database.Database,
+  insertUtxoTx: (tx: unknown, expiresAtHeight: number) => number,
+  label: string,
+  expiresAtHeight: number,
+): { rowid: number; postId: string } {
+  const rowid = insertUtxoTx(txWithInput(label), expiresAtHeight);
+  const txId = (
+    db.prepare('SELECT tx_id FROM mempool WHERE rowid = ?').get(rowid) as { tx_id: string }
+  ).tx_id;
+  const postId = computePostId(txId, 0);
+  db.prepare(
+    `INSERT INTO dag_posts
+       (id, content_hash, content, author, parent_refs, protocol_version, type, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
+  ).run(postId, '00'.repeat(32), 'x', bytes('ab'.repeat(32)), '[]', 1, 'regular');
+  return { rowid, postId };
 }
 
 /**
@@ -300,6 +324,34 @@ describe('mempool store', () => {
     const entries = getPendingEntries(10);
     expect(entries).toHaveLength(1);
     expect(entries[0].rowid).toBe(rowid1);
+  });
+
+  it('purgeExpired rolls back the pending-post deletion when the pool DELETE aborts', async () => {
+    const { insertUtxoTx, purgeExpired } = await importMempoolFresh();
+    const { getDb } = await importDbFresh();
+    const db = getDb();
+
+    const { postId } = seedExpiringPostRow(db, insertUtxoTx, 'atomic_purge', 10);
+    // Abort the pool DELETE, which runs after the pending-post deletions.
+    db.exec("CREATE TRIGGER fail_pool_delete BEFORE DELETE ON mempool BEGIN SELECT RAISE(ABORT, 'boom'); END");
+
+    expect(() => purgeExpired(25)).toThrow();
+
+    // One transaction: the post deletion rolls back with the aborted pool DELETE.
+    expect(db.prepare('SELECT id FROM dag_posts WHERE id = ?').get(postId)).toBeDefined();
+  });
+
+  it('removeEntry rolls back the pending-post deletion when the pool DELETE aborts', async () => {
+    const { insertUtxoTx, removeEntry } = await importMempoolFresh();
+    const { getDb } = await importDbFresh();
+    const db = getDb();
+
+    const { rowid, postId } = seedExpiringPostRow(db, insertUtxoTx, 'atomic_remove', 100);
+    db.exec("CREATE TRIGGER fail_pool_delete BEFORE DELETE ON mempool BEGIN SELECT RAISE(ABORT, 'boom'); END");
+
+    expect(() => removeEntry(rowid)).toThrow();
+
+    expect(db.prepare('SELECT id FROM dag_posts WHERE id = ?').get(postId)).toBeDefined();
   });
 
   it('handles multiple entries', async () => {

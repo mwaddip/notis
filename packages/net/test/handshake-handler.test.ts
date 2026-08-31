@@ -19,6 +19,7 @@ import type { HandshakeResult } from '../src/handshake.js';
 import { decodeFrame } from '../src/frame.js';
 import { PeerState, PenaltyKind } from '../src/types.js';
 import type { NetConfig, NetValidators } from '../src/types.js';
+import { makeConfig as makeBaseConfig } from './helpers.js';
 import type { PeerManager } from '../src/peer-mgr.js';
 import { PeerDb } from '../src/peerdb.js';
 
@@ -50,17 +51,7 @@ const validators: NetValidators = {
 function makeConfig(
   schedule: readonly ProtocolEra[] = [{ version: 1, fromHeight: 0 }],
 ): NetConfig {
-  return {
-    magic: MAGIC,
-    protocolVersionSchedule: schedule,
-    bootstrapPeers: [],
-    listenAddrs: '/ip4/0.0.0.0/tcp/0',
-    maxPeers: 10,
-    penaltyScoreThreshold: 500,
-    temporalBanDurationMs: 3_600_000,
-    penaltySafeIntervalMs: 120_000,
-    syncRequestTimeoutMs: 10_000,
-  };
+  return makeBaseConfig({ protocolVersionSchedule: schedule });
 }
 
 type StreamHandler = (arg: {

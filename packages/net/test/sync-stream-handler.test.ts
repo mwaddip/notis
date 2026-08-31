@@ -33,7 +33,8 @@ import {
   MODIFIER_POST_BODY,
   PeerState,
 } from '../src/types.js';
-import type { NetConfig, NetValidators } from '../src/types.js';
+import type { NetValidators } from '../src/types.js';
+import { makeConfig } from './helpers.js';
 import type { PeerManager } from '../src/peer-mgr.js';
 
 // ---------------------------------------------------------------------------
@@ -61,20 +62,6 @@ const validators: NetValidators = {
   verifyOrderingBlockStructure,
   verifyPostBody,
 };
-
-function makeConfig(): NetConfig {
-  return {
-    magic: MAGIC,
-    protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
-    bootstrapPeers: [],
-    listenAddrs: '/ip4/0.0.0.0/tcp/0',
-    maxPeers: 10,
-    penaltyScoreThreshold: 500,
-    temporalBanDurationMs: 3_600_000,
-    penaltySafeIntervalMs: 120_000,
-    syncRequestTimeoutMs: 10_000,
-  };
-}
 
 type StreamHandler = (arg: {
   stream: unknown;

@@ -18,23 +18,10 @@ import {
 } from '@dagsocial/validation';
 import { NetNode } from '../src/node.js';
 import type { NetConfig, NetValidators } from '../src/types.js';
+import { makeConfig as makeBaseConfig } from './helpers.js';
 
 function makeConfig(bootstrapPeers: string[] = []): NetConfig {
-  return {
-    // Testnet magic — both nodes must agree; also proves the wire path does
-    // not silently frame as mainnet (ARCHITECTURE → What varies per network,
-    // and what must not).
-    magic: 0x54444147,
-    protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
-    // Matches the 20-bit target the fixtures below are mined at.
-    bootstrapPeers,
-    listenAddrs: '/ip4/0.0.0.0/tcp/0',
-    maxPeers: 10,
-    penaltyScoreThreshold: 500,
-    temporalBanDurationMs: 3600000,
-    penaltySafeIntervalMs: 120000,
-    syncRequestTimeoutMs: 10000,
-  };
+  return makeBaseConfig({ bootstrapPeers });
 }
 
 const validators: NetValidators = {

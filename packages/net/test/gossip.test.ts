@@ -29,6 +29,7 @@ import type { Libp2pGossip } from '../src/gossip.js';
 import { PeerManager } from '../src/peer-mgr.js';
 import { PenaltyKind } from '../src/types.js';
 import type { NetConfig, NetValidators } from '../src/types.js';
+import { makeConfig as makeBaseConfig } from './helpers.js';
 
 // These tests drive the REAL topic validators registered by subscribeTopics —
 // not an inline copy of their bodies. A copied harness would contain the fix
@@ -48,17 +49,7 @@ const validators: NetValidators = {
 };
 
 function makeConfig(): NetConfig {
-  return {
-    magic: 0x54444147,
-    protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
-    bootstrapPeers: [],
-    listenAddrs: '/ip4/0.0.0.0/tcp/0',
-    maxPeers: 10,
-    penaltyScoreThreshold: 1000,
-    temporalBanDurationMs: 3_600_000,
-    penaltySafeIntervalMs: 0,
-    syncRequestTimeoutMs: 10_000,
-  };
+  return makeBaseConfig({ penaltyScoreThreshold: 1000, penaltySafeIntervalMs: 0 });
 }
 
 type CapturedValidator = (

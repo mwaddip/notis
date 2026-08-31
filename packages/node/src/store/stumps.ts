@@ -5,7 +5,7 @@ import type { Stump } from '@dagsocial/types';
 // Row shape
 // ---------------------------------------------------------------------------
 
-interface StumpRow {
+export interface StumpRow {
   id: string;
   root_post_hash: string;
   author_id: Buffer; // 32-byte Ed25519 public key
@@ -19,7 +19,7 @@ interface StumpRow {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function rowToStump(row: StumpRow): Stump {
+export function rowToStump(row: StumpRow): Stump {
   return {
     rootPostHash: row.root_post_hash,
     authorId: new Uint8Array(row.author_id),

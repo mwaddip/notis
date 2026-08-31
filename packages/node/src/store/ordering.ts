@@ -244,19 +244,27 @@ export function getPopowHeaderAtHeight(height: number): PoPowHeader | null {
   return row ? rowToPopowHeader(row, 'getPopowHeaderAtHeight', height) : null;
 }
 
+/** Decode each row's header, tagging a corrupt one with the reading function's name. */
+function decodeHeaderRows(
+  rows: Array<{ header_bytes: Buffer; height: number }>,
+  fnName: string,
+): BlockHeader[] {
+  return rows.map((row) => {
+    try {
+      return decodeHeader(new Uint8Array(row.header_bytes));
+    } catch (err) {
+      throw new UnreadableStoredBlockError(fnName, row.height, err);
+    }
+  });
+}
+
 export function getLastHeaders(n: number): BlockHeader[] {
   if (n > MAX_NIPOPOW_PARAM) n = MAX_NIPOPOW_PARAM;
   const rows = getDb()
     .prepare('SELECT header_bytes, height FROM ordering_blocks ORDER BY height DESC LIMIT ?')
     .all(n) as Array<{ header_bytes: Buffer; height: number }>;
   rows.reverse();
-  return rows.map((row) => {
-    try {
-      return decodeHeader(new Uint8Array(row.header_bytes));
-    } catch (err) {
-      throw new UnreadableStoredBlockError('getLastHeaders', row.height, err);
-    }
-  });
+  return decodeHeaderRows(rows, 'getLastHeaders');
 }
 
 export function getHeadersAfter(height: number, n: number): BlockHeader[] {
@@ -264,13 +272,7 @@ export function getHeadersAfter(height: number, n: number): BlockHeader[] {
   const rows = getDb()
     .prepare('SELECT header_bytes, height FROM ordering_blocks WHERE height > ? ORDER BY height ASC LIMIT ?')
     .all(height, n) as Array<{ header_bytes: Buffer; height: number }>;
-  return rows.map((row) => {
-    try {
-      return decodeHeader(new Uint8Array(row.header_bytes));
-    } catch (err) {
-      throw new UnreadableStoredBlockError('getHeadersAfter', row.height, err);
-    }
-  });
+  return decodeHeaderRows(rows, 'getHeadersAfter');
 }
 
 /**
@@ -285,11 +287,5 @@ export function getHeadersAbove(height: number, n: number): BlockHeader[] {
   const rows = getDb()
     .prepare('SELECT header_bytes, height FROM ordering_blocks WHERE height > ? ORDER BY height ASC LIMIT ?')
     .all(height, n) as Array<{ header_bytes: Buffer; height: number }>;
-  return rows.map((row) => {
-    try {
-      return decodeHeader(new Uint8Array(row.header_bytes));
-    } catch (err) {
-      throw new UnreadableStoredBlockError('getHeadersAbove', row.height, err);
-    }
-  });
+  return decodeHeaderRows(rows, 'getHeadersAbove');
 }
