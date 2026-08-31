@@ -12,7 +12,6 @@ export {
   MAX_LAPSE_WITHDRAWALS_PER_BLOCK,
   BOX_VALUE_BOUND,
   AVL_KEY_LENGTH,
-  KARMA_POSTING_MINIMUM,
   KARMA_STALE_THRESHOLD_BLOCKS,
   KARMA_DECAY_INTERVAL_BLOCKS,
   KARMA_DECAY_AMOUNT,
@@ -27,7 +26,6 @@ export {
   VOUCH_MIN_BALANCE,
   VOUCH_COOLDOWN_BLOCKS,
   VOUCH_CAST_HEIGHT_WINDOW,
-  INVITE_MIN_KARMA,
   INVITE_BOND_MIN,
   INVITE_BOND_MAX,
   INVITE_PROBATION_BLOCKS,
@@ -76,9 +74,6 @@ export type { NetworkType, NetworkProfile, ProtocolEra } from './network.js';
 // Identity
 export { generateKeyPair } from './identity.js';
 export type { KeyPair, UserId } from './identity.js';
-
-// Base58
-export { base58Encode, base58Decode } from './base58.js';
 
 // Merkle tree
 export { leafHash, nodeHash, buildMerkleRoot, hexToBuf } from './merkle.js';

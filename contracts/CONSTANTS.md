@@ -103,7 +103,6 @@ Three limits stand in a fixed order — `MAX_BLOCK_BODY_BYTES < MAX_SERVE_BODY_B
 
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
-| `KARMA_POSTING_MINIMUM` | `1n` | 1 karma to post | consensus | none stated | CHOSEN | `TYPES_INTERFACE → Karma` |
 | `KARMA_STALE_THRESHOLD_BLOCKS` | `40320` | 28 days at 60 s | consensus → profile | user ruling, 2026-08-19: 28 days | RULED | `TYPES_INTERFACE → Network profiles` |
 | `KARMA_DECAY_INTERVAL_BLOCKS` | `1440` | 24 h at 60 s | consensus → profile | none stated for the duration; the unit is 60-second blocks | CHOSEN | `TYPES_INTERFACE → Karma` |
 | `KARMA_DECAY_AMOUNT` | `5n` | 5 karma per period | consensus | none stated | CHOSEN | `ARCHITECTURE → Karma decay` |
@@ -140,7 +139,6 @@ Three limits stand in a fixed order — `MAX_BLOCK_BODY_BYTES < MAX_SERVE_BODY_B
 
 | Name | Value | Reads as | Kind | Argument | Status | Rule |
 |---|---|---|---|---|---|---|
-| `INVITE_MIN_KARMA` | `1n` | = `KARMA_POSTING_MINIMUM` | consensus | an alias | DERIVED | `TYPES_INTERFACE → Invites` |
 | `INVITE_BOND_MIN` | `100n` | the cheapest bond, and the smallest grant | consensus → profile | accepted 2026-08-29 as provisional, tuned on testnet; `G = B` keeps every ratio | PROVISIONAL | `TYPES_INTERFACE → Invites` |
 | `INVITE_BOND_MAX` | `250n` | the largest bond | consensus → profile | placeholder weight | PROVISIONAL | `TYPES_INTERFACE → Invites` |
 | `INVITE_PROBATION_BLOCKS` | `43200` | 30 days at 60 s | consensus → profile | decided 2026-08-14: an absolute one-month clock from the invite, so an inviter's exposure is time-bounded | DECIDED | `ARCHITECTURE → Bond outcomes` |

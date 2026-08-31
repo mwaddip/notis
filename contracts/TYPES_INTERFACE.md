@@ -6,7 +6,7 @@
 
 ## Scope
 
-Shared data structures, serialization, base58 encoding, hash functions, and
+Shared data structures, serialization, hash functions, and
 protocol constants. Pure functions only — no side effects, no I/O, no imports
 from other DAGsocial packages.
 
@@ -2544,29 +2544,6 @@ merely that the heading still exists.
 
 ---
 
-## Base58 (`base58.ts`)
-
-> ⚠ **No consumer anywhere in the repo, and the round-trip is broken for zero-valued input.**
-> Nothing in node, net, validation, wire or the demo UI imports either function — the only
-> references are the barrel export and its own test. Meanwhile `base58Encode(Uint8Array([0]))`
-> → `"11"` and `base58Decode("11")` → `[0,0,0]`; a 32-byte zero buffer encodes to 33 `'1'`s
-> and decodes to 34 bytes. Empty input is asymmetric too (`""` encodes from empty, decodes to
-> one zero byte). Non-zero inputs, including those with leading zero bytes, round-trip fine —
-> the defect is confined to buffers whose numeric value is zero, which the existing test does
-> not cover.
->
-> Inert today because nothing calls it. **It becomes real the moment base58 is adopted for
-> what it exists for — rendering a key or an address — where an all-zero value is exactly
-> the case a fuzzer reaches first.** Fix the round-trip before adopting, or delete the
-> module.
-
-| Export | Signature | Description |
-|--------|-----------|-------------|
-| `base58Encode(buf)` | `(Uint8Array) => string` | Bitcoin-style base58 (alphabet: `123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz`) |
-| `base58Decode(str)` | `(string) => Uint8Array` | Throws on invalid characters |
-
----
-
 ## Protocol Constants (`constants.ts`)
 
 ### Chain reorganisation
@@ -2838,9 +2815,9 @@ threshold / percentage / bits** constants stay `number`.
 - **Credit amounts → `bigint`, rescaled ×10⁸** (base units of 10⁻⁸ credit):
   `CREDIT_INITIAL_REWARD`, `CREDIT_REWARD_REDUCTION`, and the node/UI faucet credit amounts.
 - **Karma amounts → `bigint` literals, NOT rescaled** (karma is indivisible):
-  `KARMA_POSTING_MINIMUM`, `KARMA_DECAY_AMOUNT`, `KARMA_MINIMUM`,
+  `KARMA_DECAY_AMOUNT`, `KARMA_MINIMUM`,
   `POST_PRICE_THREAD`, `POST_PRICE_REPLY`, `REPLY_AUTHOR_SHARE`, `LIKE_KARMA_COST`,
-  `INVITE_MIN_KARMA`, `INVITE_BOND_MIN`, `INVITE_BOND_MAX`,
+  `INVITE_BOND_MIN`, `INVITE_BOND_MAX`,
   `VOUCH_KARMA_AMOUNT`, `VOUCH_MIN_BALANCE`,
   `GENESIS_KARMA_PER_MEMBER`.
 - **Stay `number`:** all `*_BLOCKS`, `*_TARGET_BITS`/`*_FLOOR`,
@@ -3013,7 +2990,6 @@ carries no PoW of its own.
 ### Karma
 
 ```typescript
-export const KARMA_POSTING_MINIMUM = 1n;             // consensus — minimum karma to post
 export const KARMA_STALE_THRESHOLD_BLOCKS = 40320;   // consensus — 28d grace at 60s blocks
 export const KARMA_DECAY_INTERVAL_BLOCKS = 1440;     // consensus — 24h decay period at 60s blocks
 export const KARMA_DECAY_AMOUNT = 5n;                // consensus — karma burned per interval
@@ -3051,9 +3027,7 @@ export const REPLY_AUTHOR_SHARE = 1n;            // consensus — the part of a 
 ```
 
 `REPLY_AUTHOR_SHARE < POST_PRICE_REPLY`, so a reply always returns something to the pool — the
-relation is the rule, the numbers are `CONSTANTS → Post price and likes`. `KARMA_POSTING_MINIMUM`
-(→ Karma) no longer states the minimum to post — the price does, by conservation — and survives
-only as `INVITE_MIN_KARMA`'s alias.
+relation is the rule, the numbers are `CONSTANTS → Post price and likes`.
 
 ### Likes
 
@@ -3066,7 +3040,6 @@ export const LIKES_PER_KARMA_PAYOUT = 5;       // x: per x likes an author accru
 ### Invites
 
 ```typescript
-export const INVITE_MIN_KARMA = KARMA_POSTING_MINIMUM;  // consensus
 export const INVITE_BOND_MIN = 100n;               // consensus → profile: inviteBondMin
 export const INVITE_BOND_MAX = 250n;               // consensus → profile: inviteBondMax
 export const INVITE_PROBATION_BLOCKS = 43200;      // consensus — 30 days at 60s → profile: inviteProbationBlocks
@@ -3263,7 +3236,6 @@ provisional, and neither is a profile field.
 ## Invariants
 - Must not import from `@dagsocial/node`, `@dagsocial/net`, or `@dagsocial/web`
 - Hash algorithm: `blake2b512` with `.subarray(0, 32)` for all 32-byte outputs
-- Base58 alphabet: Bitcoin-style (no `0OIl`)
 - Positional binary is the canonical wire format; JSON for HTTP API
 - `protocolVersion` field present on all wire types
 - Secret keys never in any exported type or serialized output

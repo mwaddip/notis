@@ -1407,7 +1407,6 @@ is byte-identical from creation to the block that consumes it.
 
 | Parameter | Description |
 |-----------|-------------|
-| `INVITE_MIN_KARMA` | Minimum karma an account must hold to invite (= `KARMA_POSTING_MINIMUM`) |
 | `inviteBondMin` / `inviteBondMax` | The inclusive range the inviter's bond may take (`B`), **per network** |
 | `INVITE_BOND_VEST_PER_LIKES` | Likes the invitee must receive per karma of bond returned (`V`) |
 | `INVITE_PROBATION_BLOCKS` | Blocks from invite creation to bond settlement |
