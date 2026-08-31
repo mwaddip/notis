@@ -947,11 +947,13 @@ export function settlementDepsWith(
  * every peer refuses.
  *
  * Inputs resolve against the confirmed set **and this block's own outputs**,
- * because a transaction may spend a box an earlier one here creates. Order does
- * not matter to the actor count — a set is commutative — and the fee box ids and
- * invitees are collected in the order the body itself fixes, which is the order
- * the applier walks them in. An input that resolves to neither leaves the body
- * unappliable, which the speculation above is what catches.
+ * because a transaction may spend a box another in the same block creates —
+ * block order need not be dependency order, so every output is gathered before
+ * any input resolves. Order does not matter to the actor count — a set is
+ * commutative — and the fee box ids and invitees are collected in the order the
+ * body itself fixes, which is the order the applier walks them in. An input
+ * that resolves to neither leaves the body unappliable, which the speculation
+ * above is what catches.
  */
 function predictSettlementBody(
   decodedTxs: { tx: UtxoTransaction; txId: string; inputs: string[]; outputs: AnyBox[] }[],
