@@ -1,0 +1,70 @@
+name: release
+
+# Manual only. Builds the three testnet packages, each on its own OS so the
+# native better-sqlite3 prebuild matches, and attaches them to a GitHub Release
+# for the given tag. The Release and its assets are public.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: bash scripts/build-tarball.sh
+      - run: bash scripts/build-deb.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          if-no-files-found: error
+          path: |
+            notis-node-*-linux-x64.tar.gz
+            dagsocial-node_*_amd64.deb
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pwsh -File scripts/windows/build-bundle.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          if-no-files-found: error
+          path: notis-node-*-win-x64-setup.exe
+
+  release:
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          name: Notis testnet ${{ inputs.tag }}
+          fail_on_unmatched_files: true
+          files: dist/**
