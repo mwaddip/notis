@@ -1,5 +1,11 @@
 import type { BoxRef } from './tx.js';
 
+/**
+ * A node call that has not answered in this many ms is treated as unreachable,
+ * so a hung node cannot stall a faucet request forever.
+ */
+const REQUEST_TIMEOUT_MS = 10_000;
+
 /** One `/status` read: the tip, and the era a client signs (NODE_INTERFACE → Status). */
 export interface NodeStatus {
   readonly blockHeight: number;
@@ -40,7 +46,7 @@ export class HttpNodeClient implements NodeClient {
    * sign the wrong era.
    */
   async status(): Promise<NodeStatus> {
-    const res = await fetch(`${this.base}/status`);
+    const res = await fetch(`${this.base}/status`, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
     if (!res.ok) throw new NodeError(res.status, await failure(res));
     const data = (await res.json()) as { blockHeight?: number; protocolVersion?: number };
     if (typeof data.blockHeight !== 'number') throw new NodeError(502, 'node status carried no height');
@@ -73,7 +79,7 @@ export class HttpNodeClient implements NodeClient {
    * passes through and the caller sees an empty set.
    */
   private async boxes(url: string): Promise<WireBox[]> {
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
     if (!res.ok) throw new NodeError(res.status, await failure(res));
     const data = (await res.json()) as { boxes?: WireBox[] };
     return data.boxes ?? [];
@@ -92,6 +98,7 @@ export class HttpNodeClient implements NodeClient {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     if (!res.ok) throw new NodeError(res.status, await failure(res));
   }

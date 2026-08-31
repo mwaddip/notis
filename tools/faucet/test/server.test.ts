@@ -80,16 +80,17 @@ describe('POST /faucet/karma', () => {
     expect(elsewhere.status).toBe(202);
   });
 
-  // nginx terminates in front, so the socket address is the proxy for every
-  // caller and only the first forwarded hop identifies the client.
-  it('reads the first forwarded hop, not the whole chain', async () => {
+  // A caller controls the leading X-Forwarded-For hops; nginx appends the one
+  // that identifies it. Keying on that appended hop means rotating the leading
+  // value cannot spend a key other than the caller's own.
+  it('keys on the hop nginx appends, so a spoofed leading hop cannot dodge the cap', async () => {
     const app = createApp(cfg, client);
     for (let i = 0; i < 2; i++) {
       await request(app).post('/faucet/karma').send({ pubkey: recipient })
-        .set(from('9.9.9.9, 10.0.0.1'));
+        .set(from(`${i + 1}.${i + 1}.${i + 1}.${i + 1}, 10.0.0.1`));
     }
     const capped = await request(app).post('/faucet/karma').send({ pubkey: recipient })
-      .set(from('9.9.9.9, 172.16.0.9'));
+      .set(from('9.9.9.9, 10.0.0.1'));
     expect(capped.status).toBe(429);
   });
 

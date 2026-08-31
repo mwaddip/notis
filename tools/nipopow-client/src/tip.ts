@@ -44,7 +44,7 @@ export async function resolveTip(
         verified: false,
         proof: null,
         verifyResult: null,
-        refuseReason: `HTTP ${res.status}: ${res.body}`,
+        refuseReason: res.status === 0 ? `unreachable: ${res.body}` : `HTTP ${res.status}: ${res.body}`,
       });
       continue;
     }

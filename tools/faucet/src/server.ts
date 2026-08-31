@@ -20,16 +20,18 @@ import type { FaucetConfig } from './config.js';
  */
 export function createApp(cfg: FaucetConfig, client: NodeClient): express.Express {
   const app = express();
+  // nginx runs on loopback in front and appends the caller to X-Forwarded-For,
+  // so with loopback trusted `req.ip` is that appended hop. A client controls
+  // the hops it sends but not the one nginx adds, so it cannot prepend a value
+  // to spend a rate-limit key other than its own.
+  app.set('trust proxy', 'loopback');
   app.use(express.json());
 
   const chain = new PendingChain();
   const karmaLimit = new RateLimiter(cfg.rateLimitPerHour);
   const creditLimit = new RateLimiter(cfg.rateLimitPerHour);
 
-  // nginx terminates in front, so the socket address is the proxy for every
-  // caller and the first forwarded hop is the client.
-  const ip = (req: express.Request): string =>
-    (req.header('x-forwarded-for') ?? '').split(',')[0]!.trim() || req.ip || 'unknown';
+  const ip = (req: express.Request): string => req.ip ?? 'unknown';
 
   /** The requested key, or `null` once the request has been answered. */
   const requested = (req: express.Request, res: express.Response): string | null => {
