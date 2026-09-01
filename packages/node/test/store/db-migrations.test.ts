@@ -273,7 +273,7 @@ describe('migrateBlockTopologyColumns', () => {
     expect(row.pruned_root).toBeNull();
 
     const indexes = db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='block_topology'").all() as Array<{ name: string }>;
-    expect(indexes.map(i => i.name)).toContain('idx_block_topology_pruned');
+    expect(indexes.map(i => i.name)).not.toContain('idx_block_topology_pruned');
 
     closeDb();
   });

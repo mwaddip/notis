@@ -186,7 +186,7 @@ describe('posts store', () => {
     const { initDb, getDb } = await importDbFresh();
     const { getPost, insertPost, confirmPost } = await importPostsFresh();
     const { insertStump } = await importStumpsFresh();
-    const { insertBlockTopology } = await importTopology();
+    const { insertBlockTopology, markPrunedTopology } = await importTopology();
 
     initDb(':memory:');
 
@@ -206,10 +206,12 @@ describe('posts store', () => {
     insertBlockTopology(rootId, [], hex(rootCommit.author), 1);
     insertBlockTopology(childId, [rootId], hex(childCommit.author), 1);
 
-    // Now delete the posts and insert a stump for the root
+    // Now delete the posts, insert a stump for the root, and mark the set —
+    // the prune arm's own order (NODE_INTERFACE → Prune transactions).
     getDb().prepare('DELETE FROM dag_parent_refs WHERE post_id IN (?, ?)').run(rootId, childId);
     getDb().prepare('DELETE FROM dag_posts WHERE id IN (?, ?)').run(rootId, childId);
     insertStump(makeStump({ rootPostHash: rootId, compactedAtBlockHeight: 5 }));
+    markPrunedTopology([rootId, childId], 5, rootId);
 
     // Root id → stump
     const rootResult = getPost(rootId);
@@ -223,6 +225,27 @@ describe('posts store', () => {
     expect(childResult.id).toBe(childId);
     expect(childResult.rootPostHash).toBe(rootId);
     expect(childResult.compactedAtBlockHeight).toBe(5);
+  });
+
+  it('getPrunedTombstone returns null for an unmarked topology row, even when its parent chain reaches a stump', async () => {
+    const { initDb } = await importDbFresh();
+    const { getPrunedTombstone } = await importPostsFresh();
+    const { insertStump } = await importStumpsFresh();
+    const { insertBlockTopology } = await importTopology();
+
+    initDb(':memory:');
+
+    const { commit: rootCommit } = makeCommit({ content: 'root' });
+    const rootId = fixturePostId(rootCommit);
+    const { commit: childCommit } = makeCommit({ content: 'child', parentRefs: [rootId] });
+    const childId = fixturePostId(childCommit);
+
+    insertBlockTopology(rootId, [], hex(rootCommit.author), 1);
+    insertBlockTopology(childId, [rootId], hex(childCommit.author), 1);
+    insertStump(makeStump({ rootPostHash: rootId, compactedAtBlockHeight: 5 }));
+
+    // No markPrunedTopology call: the row is confirmed but never pruned.
+    expect(getPrunedTombstone(childId)).toBeNull();
   });
 
   it('getMissingBodies returns placeholders newest first', async () => {
