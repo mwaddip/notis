@@ -761,6 +761,56 @@ describe('block-apply journal recording', () => {
       expect(utxo.getCreditBoxes(sender.userId)[0]!.value).toBe(85_000n);
     });
 
+    // The order pin. B's body position is 0 though its input is A's output —
+    // the deferral loop applies A first, but `predictSettlementBody` and §11a
+    // both collect the settlement in COMMITTED order, one of the three orders
+    // NODE_INTERFACE → "Three ordering sources are permitted and no fourth is"
+    // permits. This pins that the settlement's fee box ids follow body order,
+    // not apply order.
+    it('settles fee box ids in committed order, not dependency order, when a consumer precedes its producer', async () => {
+      const db = await importDb();
+      db.initDb(':memory:');
+      db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+      const utxo = await importUtxo();
+      const blockApply = await importBlockApply();
+      await import('../../src/services/block-creator.js');
+      const { materializeOutput } = await import('../../src/services/utxo-engine.js');
+      const { decodeTx } = await import('@dagsocial/types');
+
+      const sender = makeTestIdentity();
+      const miner = makeTestIdentity();
+      const boxA = makeCreditBox(100_000n, sender.userId, 0, 1);
+      utxo.insertBox(boxA);
+
+      // A: 100k → 90k, fee 10k. B spends A's output: 90k → 85k, fee 5k.
+      const txA = makeCreditTx(sender, [boxA], 10_000n);
+      const aOutput = materializeOutput(
+        txA.outputs[0] as never,
+        computeTxId(txA),
+        0,
+      ) as CreditBox;
+      const txB = makeCreditTx(sender, [aOutput], 5_000n);
+
+      // The body lists the consumer first: B ahead of the A it spends.
+      const block = await makeApplicableBlock({ miner, utxoTxs: [txB, txA] });
+
+      expect(blockApply.applyOrderingBlock(block)).toBe(true);
+      expect(utxo.getCreditBoxes(miner.userId)[0]!.value).toBe(await minerSliceAt1(15_000n, 0));
+
+      const materialize = (tx: UtxoTransaction) => {
+        const txId = computeTxId(tx);
+        return tx.outputs.map((out, i) => materializeOutput(out as never, txId, i));
+      };
+      const bFeeId = materialize(txB).find((b) => b.boxType === 'fee')!.id!;
+      const aFeeId = materialize(txA).find((b) => b.boxType === 'fee')!.id!;
+
+      const settlementTxs = block.utxoTxTree.utxoTxs;
+      const settlementTx = decodeTx(settlementTxs[settlementTxs.length - 1]!);
+      expect(
+        settlementTx.inputs.filter((id) => id === bFeeId || id === aFeeId),
+      ).toEqual([bFeeId, aFeeId]);
+    });
+
     // The attribution guard. A karma-side deficit is not a fee, and an unvouch
     // is the shape that catches a classifier keyed on outputs alone: it has NO
     // outputs, so `outputs.every(isCredit)` is vacuously true and the whole

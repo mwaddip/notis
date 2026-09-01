@@ -950,10 +950,13 @@ export function settlementDepsWith(
  * because a transaction may spend a box another in the same block creates —
  * block order need not be dependency order, so every output is gathered before
  * any input resolves. Order does not matter to the actor count — a set is
- * commutative — and the fee box ids and invitees are collected in the order the
- * body itself fixes, which is the order the applier walks them in. An input
- * that resolves to neither leaves the body unappliable, which the speculation
- * above is what catches.
+ * commutative — and the fee box ids and invitees are collected in the order
+ * the body itself fixes: committed transaction order, one of the three orders
+ * NODE_INTERFACE → "Three ordering sources are permitted and no fourth is"
+ * permits. The applier collects the settlement body in that same order — it
+ * applies in dependency order but reads `utxoTxIds` for the settlement
+ * (`block-apply` §11a). An input that resolves to neither leaves the body
+ * unappliable, which the speculation above is what catches.
  */
 function predictSettlementBody(
   decodedTxs: { tx: UtxoTransaction; txId: string; inputs: string[]; outputs: AnyBox[] }[],
