@@ -20,7 +20,7 @@ import {
   unconfirmPost,
   restorePostRows,
   clearWithdrawal,
-  clearPrunedTopology,
+  restorePrunedTopology,
   deleteStump,
   deleteLikeRecord,
   restoreLikeRecord,
@@ -158,13 +158,11 @@ export function revertBlock(height: number): void {
     deleteStump(stump.rootPostHash);
   }
   // Withdrawal inverses: restore content and clear the marker.
-  for (const wp of journal.withdrawnPosts ?? []) {
+  for (const wp of journal.withdrawnPosts) {
     clearWithdrawal(wp.id, wp.content);
   }
-  // Prune topology inverses: clear the pruned marks.
-  if ((journal.prunedTopologyRows ?? []).length > 0) {
-    clearPrunedTopology(journal.prunedTopologyRows!);
-  }
+  // Prune topology inverses: restore the pre-block marks.
+  restorePrunedTopology(journal.prunedTopologyRows);
   // ⛔ **The vouch escrow needs no side-record and no inverse of its own.** It
   // is a box, so `insertBox`/`consumeBox` journal its creation and its spend as
   // `{kind:'box'}` with the exact inverses loop 1 above already replays — and

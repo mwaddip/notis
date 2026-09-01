@@ -117,7 +117,7 @@ export {
   getTopologyHeight,
   rollbackBlockTopology,
   markPrunedTopology,
-  clearPrunedTopology,
+  restorePrunedTopology,
 } from './topology.js';
 
 export {

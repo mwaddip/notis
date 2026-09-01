@@ -89,11 +89,17 @@ export interface BlockJournal {
   /** Inverse: restore the prior content and clear the marker. */
   withdrawnPosts: Array<{ id: string; content: string | null }>;
   /**
-   * The post ids whose `block_topology` rows §8c marked pruned — inverse:
-   * `clearPrunedTopology`. The `?? []` guards journals written before this
-   * field existed (NODE_INTERFACE → Block Journal).
+   * One entry per `block_topology` row this block's prune phase marked,
+   * carrying the marks the row held before this block wrote it — null/null
+   * for a first prune, the inner prune's height and root for a row an outer
+   * prune re-marks. Inverse: `restorePrunedTopology` writes them back exactly
+   * (NODE_INTERFACE → Block Journal).
    */
-  prunedTopologyRows: string[];
+  prunedTopologyRows: Array<{
+    postId: string;
+    prunedAtHeight: number | null;
+    prunedRoot: string | null;
+  }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -336,9 +342,11 @@ export function recordWithdrawnPost(id: string, content: string | null): void {
   openJournal.withdrawnPosts.push({ id, content });
 }
 
-export function recordPrunedTopologyRows(postIds: string[]): void {
+export function recordPrunedTopologyRows(
+  rows: Array<{ postId: string; prunedAtHeight: number | null; prunedRoot: string | null }>,
+): void {
   if (openJournal === null) return;
-  openJournal.prunedTopologyRows.push(...postIds);
+  openJournal.prunedTopologyRows.push(...rows);
 }
 
 // ---------------------------------------------------------------------------
