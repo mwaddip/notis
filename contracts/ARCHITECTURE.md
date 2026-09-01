@@ -892,10 +892,8 @@ on the ledger.
 > - **The `Post.type` dependency is void.** A previous version of this marker said username
 >   claims required a post discriminator that does not exist. Under a UTXO asset they are
 >   not posts at all, so no post-typing change is implied and no post ids move.
-> - **`docs/site/architecture` still publishes the old model** ("Usernames and profiles are
->   DAG-native — they're just posts. A username is claimed first-come-first-served and can
->   be released by pruning the claim"). That page is normally authoritative; here it is
->   stale and needs correcting. See the Phase 1 plan's `docs/site/` disclosure item.
+> - **`docs/site/architecture` publishes this model** — usernames as a planned ledger asset, not
+>   built; profiles as single typed posts (§Profiles).
 > - **Profiles are NOT superseded — they stay DAG-native** (user, 2026-08-06: "a profile
 >   would indeed be a *self post*"). Only usernames leave the post model. **`Post.type`
 >   exists and profiles key on it:** see §Profiles below.

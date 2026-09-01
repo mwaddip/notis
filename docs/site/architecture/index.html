@@ -58,16 +58,16 @@
           </ul>
         </div>
       </div>
-      <p>A purely additive content graph can't model withdrawal or account balances; a pure ledger can't model threaded, withdrawable conversation. Splitting them keeps the strengths of both — and a third tiny layer, <strong>stumps</strong>, is what ties them together.</p>
+      <p>A purely additive content graph can't model withdrawal or account balances; a pure ledger can't model threaded, withdrawable conversation. Splitting them keeps the strengths of both — and what ties them together is that every post, like and prune is itself a transaction on the value ledger.</p>
     </section>
 
     <section>
       <h2>The content layer — Posts DAG</h2>
       <p>Every post is the <strong>root of a sovereign subtree</strong>. The author controls everything beneath it — replies, replies to replies, the whole transitive tree. Replying to someone's post is <em>consent</em> to that: it places your reply inside their tree.</p>
       <h3>What a post is</h3>
-      <p>A post carries its content (1–300 bytes), its author (an Ed25519 public key), <strong>at most one</strong> <em>parent reference</em>, a proof-of-work solution, and a signature. One parent rather than several is what keeps a subtree a clean cut: a reply with two parents would sit inside two authors' trees at once, and either of them could destroy it. Its hash <em>is</em> its identity — and that identity survives even if the content is later withdrawn, so links between posts never break.</p>
-      <h3>Pruning — withdrawal as a first-class right</h3>
-      <p>An author can <strong>prune</strong> their subtree at any time. Pruning cascades to every reply underneath — because even the replies to a withdrawn post can leak what it said, cascade pruning is the only privacy-preserving default. Pruning is <strong>irreversible</strong>, authorized solely by the author's signature, and what it leaves behind is a stump.</p>
+      <p>A post carries its content (1–300 bytes), its author (an Ed25519 public key), and <strong>at most one</strong> <em>parent reference</em>. It is created by a transaction the author signs, which also pays the post's price in karma. One parent rather than several is what keeps a subtree a clean cut: a reply with two parents would sit inside two authors' trees at once, and either of them could destroy it. Its identity comes from the transaction that created it — and that identity survives even if the content is later withdrawn, so links between posts never break.</p>
+      <h3>Withdrawal and pruning — first-class rights</h3>
+      <p>An author can <strong>withdraw</strong> a post: its content is emptied while its place in the thread stays, so replies keep their anchor. An author can also <strong>prune</strong> the whole subtree beneath a post they wrote. Pruning cascades to every reply underneath — because even the replies to a withdrawn post can leak what it said, cascade pruning is the only privacy-preserving default. Both are transactions the author signs; pruning is <strong>irreversible</strong>, and what it leaves behind is a stump.</p>
     </section>
 
     <section>
@@ -78,7 +78,7 @@
 
     <section>
       <h2>The value layer — UTXO ledger</h2>
-      <p>Value lives in <strong>boxes</strong> — ledger entries locked by a guard script, consumed and re-created in atomic transactions. The set of unspent boxes <em>is</em> the current state. Every transaction conserves value (in = out) except at explicit mint and burn points, and a box can only be spent if its guard permits it. Two asset types share this layer:</p>
+      <p>Value lives in <strong>boxes</strong> — ledger entries, each owned by a key, consumed and re-created in atomic transactions. The set of unspent boxes <em>is</em> the current state. Every transaction conserves value (in = out): every cost lands in a box the transaction itself creates, and minting and burning happen only when a block is applied, never inside a transaction. A box is spent only with its owner's signature, under the rules its kind of box sets. Two asset types share this layer:</p>
       <div class="glance">
         <div class="card k">
           <div class="tag">Reputation</div>
@@ -97,23 +97,20 @@
     </section>
 
     <section>
-      <h2>Consensus — two tiers of proof-of-work</h2>
-      <p>Notis mines at two levels, and keeping them separate is deliberate:</p>
-      <h3>Sub-blocks — users mine their own posts</h3>
-      <p>To publish, an author solves a <strong>lightweight proof-of-work</strong> against a fresh challenge from a node (the challenge prevents precomputation). That solved post <em>is</em> a <strong>sub-block</strong> — it gets fast inclusion without waiting on a validator.</p>
-      <h3>Ordering blocks — validators anchor the chain</h3>
-      <p><strong>Validators</strong> solve a full proof-of-work to produce <strong>ordering blocks</strong>, which batch the sub-blocks since the last one, put them in canonical order, and anchor the chain. Validator selection is <strong>pure PoW</strong> — no stake, no karma gating. Anyone who solves the puzzle can produce the next block.</p>
+      <h2>Consensus — one proof-of-work</h2>
+      <p>Notis has a single tier of mining. <strong>Validators</strong> solve a proof-of-work to produce <strong>ordering blocks</strong>; every post, like, prune, withdrawal, invite and vouch rides those blocks as an ordinary transaction, and each block puts them in canonical order and anchors the chain. Validator selection is <strong>pure PoW</strong> — no stake, no karma gating. Anyone who solves the puzzle can produce the next block.</p>
+      <p>Difficulty retargets every block from the chain's own headers, never from a clock, so every node computes the same target for the same chain. Headers also carry interlinks, so a light client can check the chain's work with a short proof instead of downloading every header.</p>
       <div class="note">
-        <div class="label">Why this separation matters</div>
+        <div class="label">Why work alone decides</div>
         <p>Because mining is decided by work alone — not by karma and not by wealth — the <em>security</em> layer stays independent of the <em>social</em> and <em>economic</em> layers. Being popular buys you no consensus power; being rich in notis buys you no reputation. Each layer is walled off from the others.</p>
       </div>
     </section>
 
     <section>
       <h2>Identity</h2>
-      <p>An account is just an <strong>Ed25519 keypair</strong> — there's no registration step and no account table. You come into existence the first time your key appears in a committed box on the ledger. Notis is <strong>invite-only</strong>: an existing account has to bring in each newcomer (the mechanics of that live on the <a href="/economy/">Economy</a> page).</p>
-      <p>Your <strong>profile</strong> is DAG-native — it's just posts. Display name, bio, avatar are a set of small posts under a profile anchor, so your identity is something you <em>publish</em>, not something a server grants you.</p>
-      <p>A <strong>username</strong> works differently: it's an asset on the ledger rather than a post. Free to claim while unused, tradeable for notis, and burnable by whoever holds it. Being a ledger object rather than a document is what lets a name be transferred at all — you can hand over a name the way you'd hand over anything else you own.</p>
+      <p>An account is an <strong>Ed25519 keypair</strong> — there's no registration step. Notis is <strong>invite-only</strong>: you come into existence when a member's invite naming your key is applied, which writes your identity record and grants your first karma (the mechanics of that live on the <a href="/economy/">Economy</a> page).</p>
+      <p>Your <strong>profile</strong> is DAG-native — it's a post. A profile is a single post of its own type: a small structured document (display name, bio) that clients interpret and consensus records without parsing. The latest one you publish is your profile, so your identity is something you <em>publish</em>, not something a server grants you.</p>
+      <p><strong>Usernames</strong> are planned as assets on the ledger rather than posts — free to claim while unused, tradeable for notis, burnable by whoever holds one — because a ledger object, unlike a document, can be handed over. They are not built yet.</p>
     </section>
 
     <section>
