@@ -1707,7 +1707,9 @@ There is **no other legal bond or invite shape**. In particular:
   `upvoteCount` = the tally); `dag_posts` and `dag_parent_refs` rows are deleted
   by the set; and **every `block_topology` row in the set is marked**
   `pruned_at_height = h`, `pruned_root = rootPostHash`. The marks are the
-  tombstone's source and are journalled (→ Block Journal). Nothing is refunded and
+  tombstone's source and are journalled (→ Block Journal): a row an earlier prune already
+  marked is re-marked with this root, and the marks it held ride the journal, so a revert
+  hands them back exactly. Nothing is refunded and
   nothing further is burned — every post in the set paid its price at posting
   (ARCHITECTURE → The post price) — so a subtree of any size prunes in one block.
 - ⛔ **`prune` is an IMPLICATION, never a biconditional.** `prune` present ⟹ the
@@ -3697,9 +3699,13 @@ BlockJournal {
                                    // still a PLACEHOLDER, and the inverse of that is a row with
                                    // null content AND a clear marker. A withdrawal MUTATES a row
                                    // rather than deleting it, so `deletedPosts` cannot carry it
-  prunedTopologyRows: string[]     // the post ids whose block_topology rows §8c marked pruned —
-                                   // inverse: clear pruned_at_height and pruned_root. The rows
-                                   // themselves survive a prune; only the marks are this block's.
+  prunedTopologyRows: Array<{ postId: string, prunedAtHeight: number | null,
+    prunedRoot: string | null }>   // one entry per block_topology row §8c marked, carrying the
+                                   // marks the row held BEFORE this block wrote it — null/null
+                                   // for a first prune; the inner prune's height and root for a
+                                   // row an outer prune re-marks. Inverse: restorePrunedTopology
+                                   // writes them back exactly. The rows themselves survive a
+                                   // prune; only the marks are this block's
 }
 ```
 The field names are the `journal_cbor` keys: the journal is the node's local format, with no
