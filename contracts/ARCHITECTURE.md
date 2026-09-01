@@ -2394,13 +2394,14 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   > and a rule keyed on a document nobody can open cannot be applied. What it was reaching for
   > is the fork surface, which the form above states directly.
   >
-  > ⚠ **The knowledge exists per-rule and is nowhere aggregated.** `verifyContentCharacters`
-  > declares itself at its own definition (`validation/src/content-charset.ts`) as *"a
-  > **consensus Stage-1 check**: every node must reach the same verdict for the same bytes"*,
-  > and derives its pinned-codepoint implementation from that. There is no repo-wide register,
-  > so a contract-side search cannot answer "which rules are protocol?" — **whether to derive
-  > that register or keep pointing at the definitions is open**, and it is the same question
-  > as the consumer-list one.
+  > ✅ **The declaration at the definition is the register, and no list is kept** (ruled
+  > 2026-09-01). `verifyContentCharacters` is the shape: it declares itself at its own definition
+  > (`validation/src/content-charset.ts`) as a consensus check and derives its pinned-codepoint
+  > implementation from that. A repo-wide table of rules by class would be one more enumeration
+  > that decays, and the question it would answer — does changing this rule fork the network? —
+  > is read where the rule is, which is where the change would be made. Numbers and flags are
+  > the exception: a value's class is not legible from the value, so `CONSTANTS.md`'s Kind
+  > column and the configuration table's class column (NODE_INTERFACE → Configuration) carry it.
 
 ### Storage guarantees
 - **Chain growth is bounded by consensus, at ~1.05 TB/yr.** `MAX_BLOCK_BODY_BYTES`
