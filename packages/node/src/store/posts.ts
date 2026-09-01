@@ -22,13 +22,6 @@ interface PostRow {
   withdrawn_at_height: number | null;
 }
 
-interface TopologyRow {
-  post_id: string;
-  parent_refs: string;            // JSON array
-  author: string;                 // hex
-  block_height: number;
-}
-
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -169,62 +162,25 @@ export function getPost(id: string): StoredPost | Stump | PrunedTombstone | null
     return rowToStump(stumpRow);
   }
 
-  // 3. block_topology chain to a stump → PrunedTombstone
+  // 3. block_topology's prune marks → PrunedTombstone
   return getPrunedTombstone(id);
 }
 
+// NODE_INTERFACE → Resolution order for a post id, step 3: the block_topology
+// row's prune marks, one read.
 export function getPrunedTombstone(id: string): PrunedTombstone | null {
-  const db = getDb();
+  const row = getDb()
+    .prepare('SELECT author, pruned_at_height, pruned_root FROM block_topology WHERE post_id = ?')
+    .get(id) as { author: string; pruned_at_height: number | null; pruned_root: string | null } | undefined;
+  if (!row || row.pruned_at_height === null || row.pruned_root === null) return null;
 
-  // NODE_INTERFACE → Resolution order for a post id, step 3: walk parent_refs from block_topology
-  // until a dag_stumps id is found. The chain is bounded by confirmed topology depth.
-  const topoRow = db
-    .prepare('SELECT * FROM block_topology WHERE post_id = ?')
-    .get(id) as TopologyRow | undefined;
-  if (!topoRow) return null;
-
-  let currentId = id;
-  const seen = new Set<string>();
-  while (true) {
-    seen.add(currentId);
-    const row = db
-      .prepare('SELECT * FROM block_topology WHERE post_id = ?')
-      .get(currentId) as TopologyRow | undefined;
-    if (!row) return null;
-
-    const parents: string[] = JSON.parse(row.parent_refs);
-    const parentId = parents[0];
-    if (!parentId) return null;
-
-    const stump = db
-      .prepare('SELECT compacted_at_block_height FROM dag_stumps WHERE id = ?')
-      .get(parentId) as { compacted_at_block_height: number } | undefined;
-    if (stump) {
-      return {
-        kind: 'pruned',
-        id,
-        author: topoRow.author,
-        rootPostHash: parentId,
-        compactedAtBlockHeight: stump.compacted_at_block_height,
-      };
-    }
-
-    const parentStump = db
-      .prepare('SELECT compacted_at_block_height FROM dag_stumps WHERE root_post_hash = ?')
-      .get(parentId) as { compacted_at_block_height: number } | undefined;
-    if (parentStump) {
-      return {
-        kind: 'pruned',
-        id,
-        author: topoRow.author,
-        rootPostHash: parentId,
-        compactedAtBlockHeight: parentStump.compacted_at_block_height,
-      };
-    }
-
-    if (seen.has(parentId)) return null;
-    currentId = parentId;
-  }
+  return {
+    kind: 'pruned',
+    id,
+    author: row.author,
+    rootPostHash: row.pruned_root,
+    compactedAtBlockHeight: row.pruned_at_height,
+  };
 }
 
 export function getMissingBodies(limit: number): Array<{ id: string; contentHash: string }> {

@@ -44,6 +44,8 @@ import {
   getKarmaValue,
   getPost,
   insertStump,
+  getStump,
+  deleteStump,
   insertBox,
   getBox,
   consumeBox,
@@ -86,6 +88,7 @@ import {
   recordAppliedUtxoTx,
   recordDeletedPosts,
   recordInsertedStump,
+  recordAbsorbedStump,
   recordWithdrawnPost,
   insertBlockJournal,
   purgeOldJournals,
@@ -1239,16 +1242,43 @@ function applyMutationPhase(
       return false;
     }
 
+    // A root prunes once (NODE_INTERFACE → Prune transactions). Judged as
+    // `dag_posts` stands when this prune applies — after §8b and after every
+    // prune earlier in committed order — so of two nested prunes in one block,
+    // outer first, the inner is refused here.
+    if (!isStoredPost(getPost(prune.rootPostHash))) {
+      console.error(
+        `Block ${height}: prune root ${prune.rootPostHash} is already pruned or unknown`,
+      );
+      return false;
+    }
+
     // The set is derived, not from the payload.
     const subtreePostIds = [...getSubtreeTopology(prune.rootPostHash)];
 
     const likeTally = deleteLikeRecordsForPosts(subtreePostIds);
 
+    // Absorb every stump inside the set — an earlier prune's, never the
+    // root's own: the root-prunes-once check above has already refused a
+    // root that resolves to a stump, so `getStump` never finds one for the
+    // root id in this loop. Point reads per id, not `WHERE id IN (…)` — a
+    // prune set can be thousands of rows, past SQLite's bound-variable limit
+    // (NODE_INTERFACE → "The prune's block deletes and marks, and settles
+    // nothing").
+    let absorbedUpvotes = 0;
+    for (const id of subtreePostIds) {
+      const inner = getStump(id);
+      if (inner === null) continue;
+      absorbedUpvotes += inner.upvoteCount;
+      deleteStump(id);
+      recordAbsorbedStump(inner);
+    }
+
     const stump = {
       rootPostHash: prune.rootPostHash,
       authorId: bp.author,
       replyCount: subtreePostIds.length - 1,
-      upvoteCount: likeTally,
+      upvoteCount: likeTally + absorbedUpvotes,
       // The stump carries the block's era — its compaction height is the block's,
       // whose header version step 2 verified equals the scheduled era
       // (NODE_INTERFACE → The settlement transaction; ARCHITECTURE → Protocol Versioning).

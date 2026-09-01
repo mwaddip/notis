@@ -412,7 +412,7 @@ the block creator to verify externally-submitted mining solutions.
 computePowHash(header: BlockHeader): Buffer | null
 ```
 
-**This function establishes its own domain** (Phase 1f). It returns `null` on exactly the inputs
+**This function establishes its own domain.** It returns `null` on exactly the inputs
 `verifyHeaderFieldDomains` rejects and the 32-byte preimage otherwise — see `blockHash` below for the
 full reasoning, which applies identically here.
 
@@ -441,14 +441,14 @@ and as the message the validator signs — `verifyValidatorSignature` recomputes
 Because `validatorSignature` lives on the block and not in the header, `blockHash`
 is stable before and after signing.
 
-**This function establishes its own domain** (Phase 1f). It returns `null` exactly when
+**This function establishes its own domain.** It returns `null` exactly when
 `verifyHeaderFieldDomains` rejects the header and the 64-char hex hash otherwise. Before Phase 1f it
 returned `string` and performed **no input check at all**, handing `header` straight to `encodeHeader`.
 
 > **Why the guard went inside rather than being required of callers.** `blockHash` had an
 > unenforced precondition and 13 `src` call sites, each independently responsible for remembering it.
 > `isEncodableHeader` was that precondition written down — and applied at three of them. The
-> enumeration behind Phase 1f (spec §6.2) found a caller that reaches this function with peer-supplied
+> enumeration of its callers found one that reaches this function with peer-supplied
 > data that has passed **no domain check**: `net`'s `requestHeaders` hands its result to node's fork
 > resolution, which passes those bare headers straight here. The positional codec those headers now
 > decode through checks each element's byte span and refuses a malformed one — **it does not check a
@@ -532,7 +532,7 @@ own `validatorId`) and the function performs no I/O.
 
 **No-panic (M-5).** Returns `false` — never throws — on malformed input: a
 `signature` that is not a byte view, or any header outside the domain, which
-since Phase 1f is **one** guard rather than two. `blockHash` returns `null` on
+is **one** guard rather than two. `blockHash` returns `null` on
 exactly the headers `verifyHeaderFieldDomains` rejects, and its non-null return
 *proves* `validatorId` is exactly 32 bytes — which is what keeps the SPKI wrap and
 `createPublicKey` ("Failed to read asymmetric key") out of reach without a
@@ -688,7 +688,7 @@ about a path that cannot happen.
 verifyPostCommitDomains(commit: unknown): { valid: boolean; error?: string }
 ```
 
-The **field-domain pin** (Phase 1c, `5c0bf71`) over the transaction's post payload, the
+The **field-domain pin** over the transaction's post payload, the
 `PostCommit` (TYPES_INTERFACE → Layout — PostCommit). Carries the type checks `isSignablePost`
 has always made, plus the domain rules `postFieldBytes` relies on:
 
@@ -738,7 +738,7 @@ single source of the header's encodable domain.
 The header's counterpart to `verifyPostFieldDomains`, and the reason it is one function rather than
 two: **the header domain used to be written down twice.** `isEncodableHeader` stated it as types
 only — `typeof prevBlockHash === 'string'` with no width and no alphabet, a bare `isBytes(validatorId)`
-with no length. `verifyOrderingBlockStructure` stated it again with widths and alphabets (Phase 1e).
+with no length. `verifyOrderingBlockStructure` stated it again with widths and alphabets.
 Two implementations of one domain drift; that is the class the positional format exists to close, so
 1f collapsed them and both callers use this.
 
@@ -793,8 +793,8 @@ length satisfied a check whose purpose was establishing bytes. A 64-character st
 and a 64-element `Array` all pass a length check and none of them encode.
 
 **Returns a reason, not a boolean.** `verifyOrderingBlockStructure` must keep emitting its existing
-error labels unchanged — Phase 1c established that a rejection's *diagnosis* is not subsumed by the
-rejection, and Phase 1e's teeth demonstration asserts exact labels.
+error labels unchanged — a rejection's *diagnosis* is not subsumed by the
+rejection, and the teeth demonstration asserts exact labels.
 
 Total on adversarial input, like every function here.
 
@@ -1073,9 +1073,9 @@ gate (see `NODE_INTERFACE.md`, "Structure validation in the apply funnel").
 
 **The header-field checks in this function** (`prevBlockHash`, `utxoTxRoot`,
 `stateRoot`, `validatorId`, `height`, `protocolVersion`, `powNonce`, `powTargetBits`, `createdAt`) are
-**delegated to `verifyHeaderFieldDomains`** (Phase 1f), which is the single statement of that
+**delegated to `verifyHeaderFieldDomains`**, which is the single statement of that
 domain. The error labels this function emits did not change — that is why the predicate returns a
-reason rather than a boolean, and Phase 1e's teeth demonstration asserts those strings exactly. The
+reason rather than a boolean, and the teeth demonstration asserts those strings exactly. The
 block-level checks (`utxoTxIds`, `utxoTxs` alignment and weight,
 `validatorSignature`) stay here: they are not header fields and no header predicate can see them.
 

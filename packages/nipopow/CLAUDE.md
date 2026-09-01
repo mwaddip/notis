@@ -19,7 +19,8 @@ standing context — read it and the linked docs before touching code.
 
 ## What Notis is
 An invite-only decentralized social network on a **dual-ledger** design: a **Posts DAG** (author-sovereign,
-prunable) and a **UTXO ledger** (non-tradeable **karma** + tradeable **credits**), bound by **stumps**.
+prunable) and a **UTXO ledger** (non-tradeable **karma** + tradeable **credits**); every post, like and
+prune is a transaction on the UTXO ledger, and a pruned subtree leaves a **stump**.
 Consensus is single-phase PoW over validator-produced ordering blocks. TypeScript, pnpm workspaces,
 Node.js ≥ 22.
 

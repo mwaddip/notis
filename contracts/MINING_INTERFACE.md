@@ -388,7 +388,7 @@ network by configuration. Waiting out a window would stand in for an event that 
 handed out the preimage while it was ready. Readiness is also **not latched** — a node whose only peer
 drops before the window elapses withholds again, which is correct: it is alone again.
 
-**This endpoint also returns 500** (Phase 1f), with `{ error: 'Block template header is not
+**This endpoint also returns 500**, with `{ error: 'Block template header is not
 encodable' }`. `computePowHash` returns `Buffer | null`, `null` for a header outside the encodable
 domain (`VALIDATION_INTERFACE` → `computePowHash`). The template header is built locally by
 `block-creator.ts`, so `null` means this node built a header it cannot itself encode — a bug in the

@@ -16,7 +16,8 @@ context — read it and the linked docs before touching code.
 
 ## What Notis is
 An invite-only decentralized social network on a **dual-ledger** design: a **Posts DAG** and a **UTXO
-ledger** (karma + credits), bound by **stumps**. Consensus is PoW. TypeScript, pnpm workspaces, Node ≥ 22.
+ledger** (karma + credits); every post, like and prune is a transaction on the UTXO ledger, and a
+pruned subtree leaves a **stump**. Consensus is PoW. TypeScript, pnpm workspaces, Node ≥ 22.
 
 ## This package (`@dagsocial/wire`)
 The low-level **wire codec**: the framed stream format, VLQ encoding, and `ByteReader`/`ByteWriter`. Frames

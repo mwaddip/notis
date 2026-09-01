@@ -225,7 +225,7 @@ StumpJson = {
 **PrunedJson shape — the tombstone (decided 2026-08-22).** A pruned **descendant** has no DAG
 row, but the node still knows it: `block_topology` keeps every confirmed post's id, parent
 refs and author (a reverted-and-reapplied prune re-verifies the entry's id set against it),
-and the root's `dag_stumps` row dates the prune. So a descendant's id answers a positive
+and its prune marks name the stump and date the prune. So a descendant's id answers a positive
 statement an indexer can overwrite with, never an absence:
 
 ```
@@ -233,8 +233,9 @@ PrunedJson = {
   kind: 'pruned',
   id: postId,                       // the descendant's own id (64-hex)
   author: hex(authorId),            // from block_topology — the consensus-recorded author
-  rootPostHash: postId,             // the stump this id was pruned under
-  compactedAtBlockHeight: number    // the stump's
+  rootPostHash: postId,             // the one stump above this id — an outer prune absorbs
+                                    // the inner stumps, so exactly one stands
+  compactedAtBlockHeight: number    // that stump's
 }
 ```
 
@@ -251,8 +252,10 @@ the rule:
    the transaction applied, the body has not arrived — Store Interface → Posts DAG, "Backfill
    after sync")
 2. else a `dag_stumps` row by id → `Stump` (a pruned root)
-3. else a `block_topology` row whose `parent_refs` chain reaches a `dag_stumps` id → the
-   `PrunedTombstone` above (a pruned descendant)
+3. else a `block_topology` row carrying the prune marks — `pruned_root` names the stump,
+   `pruned_at_height` its compaction height — → the `PrunedTombstone` above (a pruned
+   descendant). One row read; the marks are the tombstone's source (Prune transactions), and
+   an outer prune re-marks the rows it absorbs, so the row always names the one stump standing
 4. else `null` → 404: an id the node has never heard of
 
 **A placeholder is a live post.** It is confirmed structure: a like credits its topology author,
@@ -503,8 +506,8 @@ invites, vouches, credits, prune).
 
 **Stumps are derived state.** A `dag_stumps` row is a local projection of an
 applied prune transaction — never information in its own
-right. `insertStump` has exactly one caller: prune settlement in block
-application. The stump's `protocolVersion` is the era at its `compactedAtBlockHeight`, stamped by that
+right. `insertStump` has two callers, both block-application paths: the prune
+phase, and `revertBlock` restoring the stumps an outer prune absorbed. The stump's `protocolVersion` is the era at its `compactedAtBlockHeight`, stamped by that
 caller and checked by nothing — a stump is never on the wire (`ARCHITECTURE → Protocol Versioning`).
 No network input writes the table. Inbound stump gossip is not
 consumed, and no stump pull protocol exists: a gossiped stump is unverifiable
@@ -557,8 +560,8 @@ five fields holds a second implementation of a consensus predicate, the mirror c
 |--------|------|---------|----------|--------|
 | `POST` | `/credits/transfer` | `{ tx: UtxoTransaction }` — client-built, client-signed | `{ status: "pending", txId, expiresAtHeight }` | 400 on invalid tx or signature |
 
-**A credit transfer is a transaction, and it settles when it is mined**
-(P2-B phase 3). The client builds and signs it; the node decodes it with
+**A credit transfer is a transaction, and it settles when it is mined.**
+The client builds and signs it; the node decodes it with
 `jsonToTx`, validates it with `validateTx`, pools it with `insertUtxoTx` and
 relays it with `net.broadcastTx` — the same path invites, vouches and likes
 already take. Credits move at block application on every node, not when the
@@ -596,7 +599,7 @@ The `header` object in `/blocks/:height`'s response carries all ten header field
 included (`TYPES_INTERFACE` → Layout — Block) — the field a client that recomputes the interlink
 vector from served headers checks.
 
-**`hash` is `string | null`** (Phase 1f). It is `blockHash` of the stored tip
+**`hash` is `string | null`.** It is `blockHash` of the stored tip
 header, and that function returns `null` for a header outside the encodable domain
 (`VALIDATION_INTERFACE` → `blockHash`). A stored tip cannot be outside it — every header in the
 store passed `verifyOrderingBlockStructure` at apply, whose header checks *are*
@@ -1702,12 +1705,20 @@ There is **no other legal bond or invite shape**. In particular:
   and its inclusion invalidates nothing. Every node derives the same set from
   committed state; a node holding no DAG content reaches the same verdict.
 - ⛔ **The prune's block deletes and marks, and settles nothing.** §8c, per prune
-  in committed order: the maturity bind; the like-records
-  are deleted and tallied; the stump is inserted (`replyCount` = set size − 1,
-  `upvoteCount` = the tally); `dag_posts` and `dag_parent_refs` rows are deleted
+  in committed order: the maturity bind; the root-prunes-once check; the like-records
+  are deleted and tallied; **every stump inside the set is absorbed** — an earlier
+  prune's, never the root's own — its `upvoteCount` added to the tally, its row deleted
+  and journalled (→ Block Journal, `absorbedStumps`), so a thread carries one stump, the
+  outermost, and a pruned descendant's tombstone names it; the stump is inserted
+  (`replyCount` = set size − 1, `upvoteCount` = the tally, absorbed counts included) —
+  a plain `INSERT`, because the check above refuses a second prune of the root before
+  it runs, so a conflict here is local corruption and the apply funnel's totality catch
+  rejects the block; `dag_posts` and `dag_parent_refs` rows are deleted
   by the set; and **every `block_topology` row in the set is marked**
   `pruned_at_height = h`, `pruned_root = rootPostHash`. The marks are the
-  tombstone's source and are journalled (→ Block Journal). Nothing is refunded and
+  tombstone's source and are journalled (→ Block Journal): a row an earlier prune already
+  marked is re-marked with this root, and the marks it held ride the journal, so a revert
+  hands them back exactly. Nothing is refunded and
   nothing further is burned — every post in the set paid its price at posting
   (ARCHITECTURE → The post price) — so a subtree of any size prunes in one block.
 - ⛔ **`prune` is an IMPLICATION, never a biconditional.** `prune` present ⟹ the
@@ -1730,6 +1741,17 @@ There is **no other legal bond or invite shape**. In particular:
   and prunes properly. Reachable through the ordinary API, so
   the intent route enforces the same rule at submit. **The same bind governs
   withdrawal.**
+- ⛔ **A root prunes once.** The root must resolve to a `dag_posts` row — `isStoredPost`,
+  live or withdrawn — never a stump and never a tombstone. `block_topology` keeps a pruned
+  root's row (the marks are set, the row survives), so the authorship binding and the
+  maturity bind both hold for a root already pruned, and this read is what refuses it.
+  Enforced at both ends the way withdrawal's liveness is: the intent route refuses the
+  submission (`Post is already pruned or unknown`), and §8c rejects the block. The root is
+  judged as `dag_posts` stands when its prune applies — after this block's withdrawals and
+  after every prune earlier in committed order — so a block carrying a prune of a root that
+  an earlier prune in the same block removed is rejected, and a producer's own speculation
+  refuses that body (→ "The speculation has three outcomes, not two"). A withdrawn root stays
+  prunable: withdrawal empties the row and keeps it.
 - **`verifyPruneCommitDomains` is the single statement of the payload's
   structural domain** — `rootPostHash` hex-32, and nothing else. It lives in
   `@dagsocial/validation` and both the envelope check and the transition arm
@@ -1875,7 +1897,7 @@ There is **no other legal bond or invite shape**. In particular:
   `getBondsSettlingAt`'s shape. `checkTransitions` needs no karma-sum read
   and no settle height.
 
-### Karma transition rules (P2-B phase 4)
+### Karma transition rules
 
 ⛔ **The set of box types this arm admits as outputs is the TRANSITION set, and it is not the set
 `totalKarma` sums** — see "Three karma sets, and none derives from another" under Status.
@@ -1945,7 +1967,7 @@ inside the network's reported supply.
 > already states, and the marker inherits it. A placeholder row carries a zeroed author, so a marker
 > built from the wrong source would earmark karma to the zero key.
 
-### Vouch transition rules (P2-B phase 2)
+### Vouch transition rules
 
 - **The voucher's karma balance is at least `VOUCH_MIN_BALANCE` at cast**, summed across their
   karma boxes — not the value of any single one. Enforced at block application like every other
@@ -2114,13 +2136,13 @@ owedPeriods = floor( (height − max(lastActivityBlock, lastDecayBlock)) / inter
 effective   = clamp(faceTotal − owedPeriods · decayAmount)   // never below min(faceTotal, KARMA_MINIMUM)
 ```
 
-⚠ **The comparison is `>=`, not `>`.** This contract and Spec G §3.4 both said
-`>`, and both were wrong by one block. `isIdentityStale` treats a box as recent
+⚠ **The comparison is `>=`, not `>`.** This contract said `>`,
+and was wrong by one block. `isIdentityStale` treats a box as recent
 when `createdAtBlock > currentHeight − threshold`, so an identity is stale
 exactly when *no* box satisfies that — i.e. when
 `currentHeight − lastActivityBlock >= threshold`. `>` would delay every
 identity's first decay by one block, which is a behaviour change D10 forbids.
-Found by the phase D session against the code.
+Found by reading the code.
 
 **Staleness reads the record.** `lastActivityBlock` is the height of the owner's
 most recent karma-spending transaction (§Populating the record), so the predicate
@@ -2130,12 +2152,12 @@ is "no spend within the threshold window".
 code measures from the **oldest** non-decay box (falling back to the youngest
 when all are decay-burn). The record measures from the **most recent** activity.
 
-Spec G §3.4 claimed these were equivalent, on the premise that forced
+The two were held equivalent on the premise that forced
 consolidation means one karma box per owner so oldest == newest. **That premise
 is false:** settlement karma outputs land beside whatever karma the owner
 already holds — the settlement does not consolidate — so two unspent non-decay
 karma boxes at different heights is ordinary, and the two formulas then
-disagree. Measured on the phase D fixture: a burn of 45 under the old rule, 30
+disagree. Measured: a burn of 45 under the old rule, 30
 under the new.
 
 The new behaviour is the intended one — "time since you were last active" is
@@ -2298,7 +2320,7 @@ with nothing to catch it, while this contract's own subject table mandates the
 encoding. One implementation feeds both derivations. The demo UI cannot import
 it and so must still reproduce the sentinel behaviour, and must not throw.
 
-### The demo UI mirror carries the same strip defect (phase E)
+### The demo UI mirror carries the same strip defect
 
 `public/index.html`'s client-side `computeBoxId` does `const { id, ...rest } = box`
 — the **id-only strip** that phase C0 removed from `@dagsocial/types`. Both of
@@ -2349,8 +2371,7 @@ the enforceable rule is coverage, not documentation: with every box type in the
 mirror, a missing `binaryFields` entry fails mechanically instead of waiting for
 someone to notice the list is a manual copy of a type definition.
 
-⚠ **This is the second instance of the shape.** Phase C's report §4.2 records the
-same thing in a different file — a round-trip test that used only a karma box, so
+⚠ **This is the second instance of the shape** — a round-trip test that used only a karma box, so
 an in-range record tag at `0x03` could not collide with karma at `0x01` and the
 mutation died against the literal assertion instead of the behaviour. **A
 "representative" fixture in a test whose whole job is cross-implementation or
@@ -2426,8 +2447,8 @@ kept here as the record of what closed, and where the reasoning lives.
 **A bond names no box at all.** A box id in a **content** field is circular under
 the provenance derivation: the id derives from the creating `txId`, and a content
 field sits inside the bytes `computeTxId` hashes. Measured: no fixed point exists.
-Spec G §3.1's "no circularity" argument covers *provenance* fields and does not
-reach this.
+The no-circularity argument for provenance-derived ids covers *provenance* fields —
+they sit outside the bytes `computeTxId` hashes — and does not reach a content field.
 
 The pairing needs no reference of either kind. **An address may be invited only
 once**, so `inviteePublicKey` — which the invite and the bond both carry, pinned
@@ -2731,7 +2752,7 @@ unassigned config *is* a server-role node: it applies blocks and builds no templ
     the emission terminus carries that height's emission; above it
     (`MINING_INTERFACE → Emission Schedule`) an empty block's income is zero, so it
     carries **no coinbase outputs at all** — no output may hold `value === 0`.
-    ⚠ **One exception, and only one (P2-B phase 1c): a body its own mutation
+    ⚠ **One exception, and only one: a body its own mutation
     phase rejects.** See step 15b — the creator evicts every row the body
     carried and builds again from what remains, until it holds a template or a
     body carrying no row is rejected (`MINING_INTERFACE → Template and submit`).
@@ -2834,7 +2855,7 @@ apply path runs**, never by a second implementation of the state transition:
 The speculative run performs no block storage, no `clearTemplate`, no journal
 persistence, and no prover checkpoint.
 
-**The speculation has three outcomes, not two** (P2-B phase 1c — the code
+**The speculation has three outcomes, not two** (the code
 returns them as a discriminated union so no caller can conflate them):
 
 | Outcome | Meaning | Creator's obligation |
@@ -2925,7 +2946,7 @@ The schedule's parameters come from the profile through `Config` (→ Configurat
 needs no undo entry, because a target is a function of headers a reverted chain no longer has. There
 is **no wall-clock retargeting**: no node reads a clock to compute a target.
 
-### Per-block like settlement (P2-D — replaced the epoch tally)
+### Per-block like settlement
 
 Runs at the end of **every** block's mutation phase, through the block's settlement
 transaction. The quantities are **committed, not transported**: the markers ride the block as
@@ -2993,7 +3014,7 @@ because every box is) until their next liked block.
 ## Store Interface
 
 Storage backends implement this interface. SQLite is the backend.
-Fresh schema — no Phase 1 migration.
+Fresh schema — no migration.
 
 ### Database lifecycle
 
@@ -3017,7 +3038,7 @@ Fresh schema — no Phase 1 migration.
 | `deletePendingPost(postId)` | `(string) => void` — the pending row of a post transaction that left the pool unconfirmed (Post transactions → the pending-row rule) |
 | `deletePostRows(ids)` | `(string[]) => DeletedPostRow[]` — prune settlement: deletes the `dag_posts` and `dag_parent_refs` rows for the given ids and returns every deleted row for the journal; ids with no row are skipped |
 | `restorePostRows(rows)` | `(DeletedPostRow[]) => void` — the inverse, from the journal |
-| `getPrunedTombstone(id)` | `(string) => PrunedTombstone \| null` — step 3 of the resolution order: a `block_topology` row whose parent chain reaches a stump |
+| `getPrunedTombstone(id)` | `(string) => PrunedTombstone \| null` — step 3 of the resolution order: the `block_topology` row's prune marks, one read; `null` for an unmarked row |
 | `getParentRefs(postId)` | `(string) => PostId[]` |
 | `getAncestorsNearest(postId, limit)` | `(string, number) => { rows: StoredPost[], count: number }` — the nearest `limit` ancestors, oldest first, walking the parent chain upward from the post; `count` is the chain's whole depth. **The chain ends at the first ancestor with no `dag_posts` row** — a stump — so `count` never exceeds what `rows` can carry; one recursive CTE over `dag_parent_refs`, one lookup per level |
 | `getSubtreePage(postId, page)` | `(string, Page<PostKey>) => { rows: StoredPost[], next: PostKey \| null, count: number, pending: StoredPost[], pendingCount: number }` — `rows` one page of the subtree's committed rows (the recursive CTE, stated once) in committed order, `(block_height, block_index)` ascending, strictly after `after`; `count` over the whole subtree, pending included; `pending` the subtree's pending rows, newest arrival first, cut to `limit`; `pendingCount` over all of them. The CTE enumerates the subtree — O(subtree) on the `dag_parent_refs (parent_id)` index — and the page is `limit + 1` rows of that enumeration: the one page read whose cost is the set's, not the page's |
@@ -3071,7 +3092,7 @@ block height: the first request at creation, retries after 1, 2, 4, … blocks, 
 so an unserved body costs a bounded trickle and never a loop. A received body is verified and
 stored through `setPostBody`; `emitPostReceived(postId, peerId, via: 'pull')`.
 
-### Like-records (P2-D — replaces `dag_likes`)
+### Like-records
 
 **Table:** `like_records (target_post_id TEXT NOT NULL, liker_id BLOB NOT NULL,
 applied_at_block INTEGER NOT NULL, PRIMARY KEY (target_post_id, liker_id))`. Written
@@ -3124,7 +3145,7 @@ index lookup per row of the set, so a prune's derived set costs the set and not 
 `getUnprocessedLockedLikeBoxes`, `getPostTotalLikes` — and `markLikeBoxesTallied`, the
 epoch's sentinel-spend choke point. Like counts come from `getLikeRecordCount`.)
 
-#### Box provenance columns (Spec G phase B)
+#### Box provenance columns
 
 `utxo_boxes` carries each box's creating-transaction provenance, because
 `BoxBase` does (`TYPES_INTERFACE.md` → BoxId):
@@ -3173,13 +3194,12 @@ height from the **box field** (`TYPES_INTERFACE` → "createdAtBlock is a box fi
 and it is CREATOR-DECLARED"), which the `stateRoot` commits and this column only
 mirrors.
 
-### Identity Records (Spec G phase B)
+### Identity Records
 
 The second committed entity alongside boxes: the per-identity decay clock. It may
 read neither height that meets `insertBox` — a box's `createdAtBlock` is
 creator-declared, so a backdated box would backdate its owner's clock, and the
-`created_at_block` column is uncommitted. So the clock lives in committed state
-(Spec G D4).
+`created_at_block` column is uncommitted. So the clock lives in committed state.
 
 ```
 IdentityRecord {
@@ -3648,7 +3668,7 @@ BoxMutation {
   box?: AnyBox                     // full box — present iff op === 'insert'
 }
 
-RecordMutation {                   // Spec G phase B — identity records
+RecordMutation {                   // identity records
   kind: 'record'
   key: string                      // hex — H(IDENTITY_KEY_DOMAIN ‖ identityId), the AVL key
   identityId: UserId               // the raw 32 bytes, so rollback can address the SQL row
@@ -3670,15 +3690,17 @@ BlockJournal {
   confirmedPostIds: string[]       // inverse: unconfirmPost — not a mempool key
   appliedUtxoTxs: Array<{ txId: string, txBytes: Uint8Array }>  // mempool re-insertion only
   likeRecordInsertions: Array<{ targetPostId: string, likerId: UserId }>
-                                   // inverse: deleteLikeRecord (P2-D)
+                                   // inverse: deleteLikeRecord
   likeRecordDeletions: Array<{ targetPostId: string, likerId: UserId,
     appliedAtBlock: number }>      // inverse: restoreLikeRecord — a reverted prune
-                                   // restores the subtree's like-records exactly (P2-D)
+                                   // restores the subtree's like-records exactly
   deletedPosts: DeletedPostRow[]   // prune settlement's deleted dag_posts rows, bodies and
                                    // parent refs included — inverse: restorePostRows; the
                                    // only place a pruned body survives, and only until this
                                    // journal is purged (ARCHITECTURE → Subtree pruning)
-  insertedStumps: Stump[]          // prune settlement's stump rows — inverse: deleteStump
+  insertedStumps: Stump[]          // the prune phase's stump rows — inverse: deleteStump
+  absorbedStumps: Stump[]          // the stumps an outer prune absorbed, exactly as they stood —
+                                   // inverse: insertStump
   withdrawnPosts: Array<{ id: string, content: string | null }>
                                    // withdrawal's emptied dag_posts rows — inverse: restore the
                                    // content and clear withdrawn_at_height. ⛔ `content` is
@@ -3686,16 +3708,20 @@ BlockJournal {
                                    // still a PLACEHOLDER, and the inverse of that is a row with
                                    // null content AND a clear marker. A withdrawal MUTATES a row
                                    // rather than deleting it, so `deletedPosts` cannot carry it
-  prunedTopologyRows: string[]     // the post ids whose block_topology rows §8c marked pruned —
-                                   // inverse: clear pruned_at_height and pruned_root. The rows
-                                   // themselves survive a prune; only the marks are this block's.
+  prunedTopologyRows: Array<{ postId: string, prunedAtHeight: number | null,
+    prunedRoot: string | null }>   // one entry per block_topology row §8c marked, carrying the
+                                   // marks the row held BEFORE this block wrote it — null/null
+                                   // for a first prune; the inner prune's height and root for a
+                                   // row an outer prune re-marks. Inverse: restorePrunedTopology
+                                   // writes them back exactly. The rows themselves survive a
+                                   // prune; only the marks are this block's
 }
 ```
 The field names are the `journal_cbor` keys: the journal is the node's local format, with no
 migration path — a store written under a different key set is a different store.
 
 
-**One log, not parallel arrays (Spec G phase B).** `mutations` is a
+**One log, not parallel arrays.** `mutations` is a
 discriminated union over **every committed entity**, not a box-only log with
 sibling arrays. That is deliberate and load-bearing: a committed entity that
 never reaches the prover feed is silently absent from the `stateRoot`, and
@@ -3792,8 +3818,8 @@ writes the stump again when it re-settles.
 ### AVL+ State Root
 
 The `packages/node/src/state/` module provides an authenticated dictionary over
-**committed state** using AVL+ trees — the UTXO set, and from Spec G phase B
-also identity records and the network record (see "Three entity kinds" below).
+**committed state** using AVL+ trees — the UTXO set, identity records and
+the network record (see "Three entity kinds" below).
 
 - **avl-storage:** Persistent AVL+ tree, stateRoot computed at each block
   application and included in block headers
@@ -3899,7 +3925,7 @@ it, and a kind-dispatching decoder is what any value-reading caller uses.
 
 ⚠ **The box discriminator is `enum8(boxType)` from `TYPES_INTERFACE` →
 Layout — Boxes — NOT a second numbering owned by this package. Decided
-2026-08-10 (Phase 5).** The record tag stays `0x80`, high bit set, and the network record's `0x81` sits beside it, so
+2026-08-10.** The record tag stays `0x80`, high bit set, and the network record's `0x81` sits beside it, so
 "box" versus "not a box" is still a single bit test and the box-type space stays open.
 
 | | Discriminator space |

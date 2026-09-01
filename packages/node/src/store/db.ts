@@ -242,9 +242,6 @@ function migrateBlockTopology(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_block_topology_height
       ON block_topology(block_height);
-    CREATE INDEX IF NOT EXISTS idx_block_topology_pruned
-      ON block_topology(pruned_at_height, post_id)
-      WHERE pruned_at_height IS NOT NULL;
   `);
 }
 
@@ -355,11 +352,6 @@ function migrateBlockTopologyColumns(database: Database.Database): void {
 
   if (!has('pruned_at_height')) database.exec(`ALTER TABLE block_topology ADD COLUMN pruned_at_height INTEGER`);
   if (!has('pruned_root')) database.exec(`ALTER TABLE block_topology ADD COLUMN pruned_root TEXT`);
-  database.exec(`
-    CREATE INDEX IF NOT EXISTS idx_block_topology_pruned
-      ON block_topology(pruned_at_height, post_id)
-      WHERE pruned_at_height IS NOT NULL;
-  `);
 }
 
 function createMempoolGateIndexes(database: Database.Database): void {

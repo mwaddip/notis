@@ -76,11 +76,13 @@ architecture:
 |-------|---------|------------|
 | **Posts DAG** | Content, social graph | Author-sovereign (prunable) |
 | **UTXO Ledger** | Karma & credits state | Owner-controlled (spendable) |
-| **Stumps** | Compact proofs binding DAG → UTXO | Immutable once created |
+| **Stumps** | The record that a subtree existed and was pruned | Written by block application alone |
 
 These layers are interdependent but cryptographically independent: the DAG's
-integrity doesn't depend on the UTXO state, and vice versa. Stumps are the
-binding layer — they crystallize karma issuance from pruned DAG content.
+integrity doesn't depend on the UTXO state, and vice versa. A stump moves no
+karma — every post paid its price at posting (§The post price) — it keeps a
+pruned root resolvable, so a reply to it stays valid, and carries the subtree's
+counts.
 
 ### Why dual-ledger
 
@@ -402,7 +404,7 @@ IS the current state.
 
 Box `value` is a uniform **`bigint`** — credits are 8-decimal integer base units
 (10⁻⁸ credit), karma small bigints. No float arithmetic in consensus value math;
-`value < BOX_VALUE_BOUND`. See `TYPES_INTERFACE.md` → "Box value domain" and Spec B P0.
+`value < BOX_VALUE_BOUND`. See `TYPES_INTERFACE.md` → "Box value domain".
 
 #### Karma boxes
 
@@ -728,7 +730,7 @@ to verify box existence or absence without storing the full UTXO set.
 - **Proof endpoint:** `GET /api/v1/proof/:boxId?atHeight=N` — returns an
   inclusion or exclusion proof for a box at a given block height
 - **Config flags:** `VERIFY_STATE_ROOT` (`consensus-check` — validate stateRoot at
-  block apply, **default on** since Spec B P3), `MAX_PROOF_HISTORY` (`local` — prune
+  block apply, **default on**), `MAX_PROOF_HISTORY` (`local` — prune
   old proof versions). **`AVL_KEY_LENGTH`** is no longer configuration at all — it is a
   `@dagsocial/types` export (TYPES_INTERFACE → State format), imported by `config.ts` and
   plumbed through `Config.avlKeyLength`. It determines the **shape** of every `stateRoot`,
@@ -785,7 +787,7 @@ to verify box existence or absence without storing the full UTXO set.
   but cannot reach the prover's in-memory state — the reorg restores it
   explicitly)
 
-### 3. Stumps (Binding Layer)
+### 3. Stumps
 
 A stump is what remains after a post subtree is pruned: a compact record
 that the subtree existed and was settled. The stump itself carries no
@@ -814,15 +816,20 @@ Stump {
 2. Author signs the **transaction**, whose `TxId` preimage carries the prune payload — there
    is no payload signature of its own
 3. Client submits a signed prune **transaction** to a node via `POST /posts/:id/prune`
-4. Node verifies the maturity bind, then `validateTx`
+4. Node verifies the maturity bind and that the root is still a post row — a root prunes
+   once — then `validateTx`
 5. Node pools it and **broadcasts it to peers like any other transaction**, so any miner may
    include it — a prune submitted to a node that never mines still reaches consensus
 6. At block application, every node independently verifies the authorship
    binding (the karma input's owner equals the `block_topology`-recorded author
-   of the root; a root confirmed in the applying block is not prunable) and
+   of the root; a root confirmed in the applying block is not prunable, and neither is a
+   root already pruned — a stump or a tombstone — since a root prunes once) and
    **derives the subtree from `block_topology`** — same-block replies included —
    then vests this block's own likes on it, deletes its like-records
-   (journalled), and **marks its topology rows pruned**
+   (journalled), **absorbs every stump inside the set** — an earlier prune's
+   stump is deleted (journalled) and its count folded into the new one, so a
+   thread carries one stump, the outermost — and **marks its topology rows
+   pruned**, an earlier mark's values journalled
 7. The simplified Stump is inserted, derived from that set —
    unconditionally, so a node holding no DAG content records the same
    stump — then the subtree's DAG rows, bodies included, are deleted by the
@@ -842,15 +849,13 @@ specified here.
 
 #### Cryptographic guarantees
 
-- Settlement is deterministic from UTXO state + `block_topology`'s marks — any node
-  can verify independently without DAG content
+- The prune's whole effect is derived from `block_topology` — the set, the stump, the
+  marks — so any node reaches it without DAG content
 - The author's signature over the transaction's `txId`, whose preimage carries the
   `rootPostHash`, is the single point of authorization, and "the author" is pinned by
   consensus: the prune transaction's karma input owner must equal the author recorded for the
   root in `block_topology` (the signer of the root's creating transaction,
   verified against real content by every node that holds it at confirmation time)
-- A node that held the full subtree can verify the Merkle root against the
-  original content
 - Parent hashes remain valid — a reply referencing a pruned post still has a
   valid `parentRefs` entry; the parent is just a stump now
 
@@ -1040,7 +1045,7 @@ because a counter beside the box would be two representations of one quantity, f
 disagree. The carry is live supply by construction: it is karma, in the UTXO set, and in the
 `stateRoot` because every box is.
 
-The accumulator is **per author, not per post** (design track §1.3.1): outstanding carry is
+The accumulator is **per author, not per post**: outstanding carry is
 bounded by `x−1` per identity and deferred rather than lost, and the payout is independent
 of arrival pattern — the floor runs over a running total, never over a per-window group.
 
@@ -2038,7 +2043,7 @@ no object check compares against it and no producer stamps it.
   > reads the block's own `LikeAccrualBox` markers, the carry boxes and `like_records` —
   > consensus state written only at block application (`block_topology` tier), never by a
   > route.
-- Stumps are the sole bridge: DAG compaction → karma issuance
+- A prune moves no karma: every post in the set paid its price at posting (§The post price)
 - A like is a burn transaction plus a `(liker, post)` like-record — no box, no held
   value. Like-records are content-layer consensus state (`block_topology` tier):
   deterministic by replay, journalled with exact inverses, deleted with the post at
@@ -2101,8 +2106,8 @@ no object check compares against it and no producer stamps it.
   > ⚠ **SUPERSEDED (2026-08-06). Verified 2026-08-11 — no `username` code in any `src` tree.**
   > Usernames become a **UTXO asset**: tradeable for
   > credits, free to claim while unused, burnable by the owner. Not a claim post, so
-  > "DAG-native" and "prunable by holder" no longer apply. Deferred — see §Username claims
-  > and design track §5.9. **Profiles are unaffected and stay DAG-native as self-posts.**
+  > "DAG-native" and "prunable by holder" no longer apply. Deferred — see §Username claims.
+  > **Profiles are unaffected and stay DAG-native as self-posts.**
 
 ### UTXO conservation
 
@@ -2162,13 +2167,13 @@ no object check compares against it and no producer stamps it.
   > re-validation at apply.
 - Box `value` and all value/amount arithmetic are `bigint` integer base units
   (`value < BOX_VALUE_BOUND`, TYPES_INTERFACE → "Box value domain"); **no float math in any consensus value path** — floats are
-  non-deterministic across platforms and credit sums exceed 2⁵³ (Spec B P0)
+  non-deterministic across platforms and credit sums exceed 2⁵³
 - A box can only be consumed by a transition whose authorization requirement is satisfied
 - Karma decay is virtual — effective value at every sufficiency read — and is
   squared into committed state by the settlement of the block whose body
   touches the identity (§Karma decay)
 
-### Block application journal (Spec B P1)
+### Block application journal
 
 - **One record-once mutation log.** Block application maintains a single
   ordered journal of primitive box mutations —
@@ -2207,7 +2212,7 @@ no object check compares against it and no producer stamps it.
 - Ordering blocks are validator-produced; consensus is **single-phase PoW**,
   which is what it always effectively was
 - Like dedup is structural: the `(liker, post)` like-record exists or it does not
-- Like accrual and settlement happen every block — there is no epoch (P2-D)
+- Like accrual and settlement happen every block — there is no epoch
 - **A block body is bounded in bytes, and a valid block is always servable.**
   `MAX_BLOCK_BODY_BYTES` < `MAX_SERVE_BODY_BYTES` < `MAX_STREAM_BYTES`
   (`TYPES_INTERFACE` → Size caps). The bound is checked in structure validation,
@@ -2389,13 +2394,14 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   > and a rule keyed on a document nobody can open cannot be applied. What it was reaching for
   > is the fork surface, which the form above states directly.
   >
-  > ⚠ **The knowledge exists per-rule and is nowhere aggregated.** `verifyContentCharacters`
-  > declares itself at its own definition (`validation/src/content-charset.ts`) as *"a
-  > **consensus Stage-1 check**: every node must reach the same verdict for the same bytes"*,
-  > and derives its pinned-codepoint implementation from that. There is no repo-wide register,
-  > so a contract-side search cannot answer "which rules are protocol?" — **whether to derive
-  > that register or keep pointing at the definitions is open**, and it is the same question
-  > as the consumer-list one.
+  > ✅ **The declaration at the definition is the register, and no list is kept** (ruled
+  > 2026-09-01). `verifyContentCharacters` is the shape: it declares itself at its own definition
+  > (`validation/src/content-charset.ts`) as a consensus check and derives its pinned-codepoint
+  > implementation from that. A repo-wide table of rules by class would be one more enumeration
+  > that decays, and the question it would answer — does changing this rule fork the network? —
+  > is read where the rule is, which is where the change would be made. Numbers and flags are
+  > the exception: a value's class is not legible from the value, so `CONSTANTS.md`'s Kind
+  > column and the configuration table's class column (NODE_INTERFACE → Configuration) carry it.
 
 ### Storage guarantees
 - **Chain growth is bounded by consensus, at ~1.05 TB/yr.** `MAX_BLOCK_BODY_BYTES`

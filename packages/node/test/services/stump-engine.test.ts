@@ -3,7 +3,7 @@ import {
   computeTxId,
   PROTOCOL_VERSION,
 } from '@dagsocial/types';
-import type { UtxoTransaction, PruneCommit } from '@dagsocial/types';
+import type { UtxoTransaction, PruneCommit, Stump } from '@dagsocial/types';
 import { generateKeyPairSync, sign as cryptoSign, type KeyObject } from 'crypto';
 import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
 
@@ -89,6 +89,31 @@ function seedKarmaBox(
   ).run(id, Buffer.from(owner), '0'.repeat(64));
 }
 
+/**
+ * Seed a confirmed `dag_posts` row — the state a prunable root is in. A
+ * withdrawn root keeps its row with `content` NULL and the marker set
+ * (NODE_INTERFACE → Withdrawal transactions).
+ */
+function seedPostRow(
+  db: import('better-sqlite3').Database,
+  id: string,
+  author: Uint8Array,
+  opts: { withdrawnAt?: number } = {},
+): void {
+  db.prepare(
+    `INSERT INTO dag_posts
+       (id, content_hash, content, author, parent_refs, protocol_version, status,
+        block_height, block_index, withdrawn_at_height)
+     VALUES (?, ?, ?, ?, '[]', 1, 'confirmed', 1, 0, ?)`,
+  ).run(
+    id,
+    '0'.repeat(64),
+    opts.withdrawnAt === undefined ? 'hello' : null,
+    Buffer.from(author),
+    opts.withdrawnAt ?? null,
+  );
+}
+
 async function buildDeps(): Promise<UtxoEngineDeps> {
   const store = await importStore();
   const dbMod = await importDb();
@@ -150,6 +175,7 @@ describe('stump-engine (prune transaction rail)', () => {
     const topology = await importTopology();
     topology.insertBlockTopology(ROOT_POST_ID, [], authorHex(), 1);
     topology.insertBlockTopology(REPLY_POST_ID, [ROOT_POST_ID], authorHex(), 1);
+    seedPostRow(db, ROOT_POST_ID, ownerPub);
     seedHeight(db, 2);
     seedKarmaBox(db, KARMA_BOX_ID, ownerPub);
 
@@ -191,5 +217,67 @@ describe('stump-engine (prune transaction rail)', () => {
     const deps = await buildDeps();
     const engine = await importStumpEngine();
     expect(() => engine.executePrune(deps, tx, 2)).toThrow(/not confirmed in an earlier block/);
+  });
+
+  // A root prunes once (NODE_INTERFACE → Prune transactions). Topology keeps
+  // the pruned root's row, so the authorship binding and the maturity bind
+  // both still hold for it — the `dag_posts` read is the only thing that
+  // refuses a second prune.
+
+  function stumpOf(rootPostHash: string): Stump {
+    return {
+      rootPostHash,
+      authorId: ownerPub,
+      replyCount: 1,
+      upvoteCount: 0,
+      protocolVersion: PROTOCOL_VERSION,
+      compactedAtBlockHeight: 1,
+    };
+  }
+
+  it('rejects a prune whose root is already a stump', async () => {
+    const topology = await importTopology();
+    topology.insertBlockTopology(ROOT_POST_ID, [], authorHex(), 1);
+    topology.insertBlockTopology(REPLY_POST_ID, [ROOT_POST_ID], authorHex(), 1);
+    const store = await importStore();
+    store.insertStump(stumpOf(ROOT_POST_ID));
+    seedHeight(db, 2);
+    seedKarmaBox(db, KARMA_BOX_ID, ownerPub);
+
+    const tx = buildPruneTx(KARMA_BOX_ID, ownerPub, ownerPriv, makePruneCommit(ROOT_POST_ID));
+
+    const deps = await buildDeps();
+    const engine = await importStumpEngine();
+    expect(() => engine.executePrune(deps, tx, 2)).toThrow(/already pruned or unknown/);
+  });
+
+  it('rejects a prune whose root is a pruned descendant (a tombstone)', async () => {
+    const topology = await importTopology();
+    topology.insertBlockTopology(ROOT_POST_ID, [], authorHex(), 1);
+    topology.insertBlockTopology(REPLY_POST_ID, [ROOT_POST_ID], authorHex(), 1);
+    const store = await importStore();
+    store.insertStump(stumpOf(ROOT_POST_ID));
+    seedHeight(db, 2);
+    seedKarmaBox(db, KARMA_BOX_ID, ownerPub);
+
+    const tx = buildPruneTx(KARMA_BOX_ID, ownerPub, ownerPriv, makePruneCommit(REPLY_POST_ID));
+
+    const deps = await buildDeps();
+    const engine = await importStumpEngine();
+    expect(() => engine.executePrune(deps, tx, 2)).toThrow(/already pruned or unknown/);
+  });
+
+  it('accepts a prune whose root is withdrawn — the row survives a withdrawal', async () => {
+    const topology = await importTopology();
+    topology.insertBlockTopology(ROOT_POST_ID, [], authorHex(), 1);
+    seedPostRow(db, ROOT_POST_ID, ownerPub, { withdrawnAt: 1 });
+    seedHeight(db, 2);
+    seedKarmaBox(db, KARMA_BOX_ID, ownerPub);
+
+    const tx = buildPruneTx(KARMA_BOX_ID, ownerPub, ownerPriv, makePruneCommit(ROOT_POST_ID));
+
+    const deps = await buildDeps();
+    const engine = await importStumpEngine();
+    expect(engine.executePrune(deps, tx, 2).txId).toBe(computeTxId(tx));
   });
 });

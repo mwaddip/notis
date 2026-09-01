@@ -2,6 +2,8 @@ import { MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import {
   getTopologyHeight,
+  getPost,
+  isStoredPost,
 } from '../store/index.js';
 import { ClientError } from './client-error.js';
 import { validateTx } from './utxo-engine.js';
@@ -29,6 +31,14 @@ export function executePrune(
   const rootHeight = getTopologyHeight(prune.rootPostHash);
   if (rootHeight === null || rootHeight >= currentBlockHeight) {
     throw new ClientError('Post is not confirmed in an earlier block');
+  }
+
+  // A root prunes once (NODE_INTERFACE → Prune transactions). Topology keeps a
+  // pruned root's row, so the bind above and validateTx's authorship read both
+  // hold for a stump or a tombstone — this is the read that refuses them. A
+  // withdrawn root keeps its `dag_posts` row and stays prunable.
+  if (!isStoredPost(getPost(prune.rootPostHash))) {
+    throw new ClientError('Post is already pruned or unknown');
   }
 
   const result = validateTx(deps, tx, currentBlockHeight);

@@ -15,8 +15,8 @@ standing context — read it and the linked docs before touching code.
 
 ## What Notis is
 An invite-only decentralized social network on a **dual-ledger** design: a **Posts DAG** (author-sovereign,
-prunable) and a **UTXO ledger** (non-tradeable **karma** + tradeable **credits**), bound by **stumps**.
-Consensus is PoW. TypeScript, pnpm workspaces, Node.js ≥ 22.
+prunable) and a **UTXO ledger** (non-tradeable **karma** + tradeable **credits**); every post, like and
+prune is a transaction on the UTXO ledger, and a pruned subtree leaves a **stump**. Consensus is PoW. TypeScript, pnpm workspaces, Node.js ≥ 22.
 
 ## This package (`@dagsocial/validation`)
 **Pure, stateless validation** — the Stage-1 checks that run before an object enters the store or is

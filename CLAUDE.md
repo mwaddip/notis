@@ -2,8 +2,9 @@
 
 An invite-only decentralized social network on a **dual-ledger** design: a **Posts DAG**
 (author-sovereign, prunable content) and a **UTXO ledger** (non-tradeable **karma** + tradeable
-**credits**), bound together by **stumps**. Consensus is single-phase PoW — validator-produced
-ordering blocks; posts and likes ride them as ordinary transactions. TypeScript monorepo, pnpm
+**credits**); every post, like and prune is a transaction on the UTXO ledger, and a pruned subtree
+leaves a **stump**. Consensus is single-phase PoW — validator-produced ordering blocks; posts and
+likes ride them as ordinary transactions. TypeScript monorepo, pnpm
 workspaces, Node.js ≥ 22, SQLite storage.
 
 Repo directory is `dagsocial`; the project is Notis.

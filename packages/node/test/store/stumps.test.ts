@@ -91,4 +91,16 @@ describe('stumps store', () => {
     const result = getStump('nonexistent-stump-id');
     expect(result).toBeNull();
   });
+
+  it('insertStump refuses a second stump for the same root (throws)', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertStump } = await importStumpsFresh();
+
+    initDb(':memory:');
+
+    const stump = makeStump({ rootPostHash: 'hash-conflict' });
+    insertStump(stump);
+
+    expect(() => insertStump(makeStump({ rootPostHash: 'hash-conflict' }))).toThrow();
+  });
 });

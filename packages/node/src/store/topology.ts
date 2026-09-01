@@ -106,10 +106,17 @@ export function rollbackBlockTopology(blockHeight: number): void {
 }
 
 /**
- * Mark the named topology rows as pruned at the given height by the given root.
- * Rows survive a prune — `deletePostRows` touches `dag_posts` and
- * `dag_parent_refs` only (NODE_INTERFACE → Prune transactions). The two columns
- * are the tombstone's source.
+ * Mark the named topology rows as pruned at the given height by the given
+ * root, journalling each row's pre-image before overwriting it — inverse:
+ * `restorePrunedTopology`. Rows survive a prune — `deletePostRows` touches
+ * `dag_posts` and `dag_parent_refs` only (NODE_INTERFACE → Prune transactions
+ * → "The prune's block deletes and marks, and settles nothing"). The two
+ * columns are the tombstone's source.
+ *
+ * Every id in `postIds` is derived from `block_topology` itself
+ * (`getSubtreeTopology`), so a row missing here is local corruption, not
+ * input — this throws rather than skipping it, so the apply funnel's
+ * totality catch rejects the block.
  */
 export function markPrunedTopology(
   postIds: string[],
@@ -118,29 +125,43 @@ export function markPrunedTopology(
 ): void {
   if (postIds.length === 0) return;
   const db = getDb();
+  const selectStmt = db.prepare(
+    `SELECT pruned_at_height, pruned_root FROM block_topology WHERE post_id = ?`,
+  );
+  const updateStmt = db.prepare(
+    `UPDATE block_topology SET pruned_at_height = ?, pruned_root = ?
+     WHERE post_id = ?`,
+  );
+  const preImage: Array<{ postId: string; prunedAtHeight: number | null; prunedRoot: string | null }> = [];
+  for (const id of postIds) {
+    const row = selectStmt.get(id) as
+      | { pruned_at_height: number | null; pruned_root: string | null }
+      | undefined;
+    if (!row) {
+      throw new Error(`markPrunedTopology: no block_topology row for post ${id}`);
+    }
+    preImage.push({ postId: id, prunedAtHeight: row.pruned_at_height, prunedRoot: row.pruned_root });
+    updateStmt.run(height, rootPostHash, id);
+  }
+  recordPrunedTopologyRows(preImage);
+}
+
+/**
+ * Write the journalled pre-image back exactly — the inverse of
+ * `markPrunedTopology`, called by `revertBlock` through the journal's
+ * `prunedTopologyRows` side-record (NODE_INTERFACE → Block Journal).
+ */
+export function restorePrunedTopology(
+  rows: Array<{ postId: string; prunedAtHeight: number | null; prunedRoot: string | null }>,
+): void {
+  if (rows.length === 0) return;
+  const db = getDb();
   const stmt = db.prepare(
     `UPDATE block_topology SET pruned_at_height = ?, pruned_root = ?
      WHERE post_id = ?`,
   );
-  for (const id of postIds) {
-    stmt.run(height, rootPostHash, id);
-  }
-  recordPrunedTopologyRows(postIds);
-}
-
-/**
- * Clear the pruned marks — the inverse of `markPrunedTopology`, called by
- * `revertBlock` through the journal's `prunedTopologyRows` side-record.
- */
-export function clearPrunedTopology(postIds: string[]): void {
-  if (postIds.length === 0) return;
-  const db = getDb();
-  const stmt = db.prepare(
-    `UPDATE block_topology SET pruned_at_height = NULL, pruned_root = NULL
-     WHERE post_id = ?`,
-  );
-  for (const id of postIds) {
-    stmt.run(id);
+  for (const row of rows) {
+    stmt.run(row.prunedAtHeight, row.prunedRoot, row.postId);
   }
 }
 

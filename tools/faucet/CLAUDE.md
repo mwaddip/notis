@@ -22,7 +22,8 @@ ordinary transactions with an ordinary key, and every rule it must satisfy is al
 
 ## What Notis is
 An invite-only decentralized social network on a **dual-ledger** design: a **Posts DAG** and a **UTXO
-ledger** (karma + credits), bound by **stumps**. Consensus is PoW. TypeScript, pnpm workspaces, Node ≥ 22.
+ledger** (karma + credits); every post, like and prune is a transaction on the UTXO ledger, and a
+pruned subtree leaves a **stump**. Consensus is PoW. TypeScript, pnpm workspaces, Node ≥ 22.
 
 ## This package (`@dagsocial/faucet`)
 A small HTTP service that holds an Ed25519 owner key and does what any member can do — invite someone,

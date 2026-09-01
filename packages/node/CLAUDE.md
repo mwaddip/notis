@@ -20,8 +20,9 @@ context — read it and the linked docs before touching code.
 
 ## What Notis is
 An invite-only decentralized social network on a **dual-ledger** design: a **Posts DAG** (author-sovereign,
-prunable content) and a **UTXO ledger** (non-tradeable **karma** + tradeable **credits**), bound by
-**stumps**. Consensus is single-phase PoW — validator-produced ordering blocks; posts and likes ride
+prunable content) and a **UTXO ledger** (non-tradeable **karma** + tradeable **credits**); every post,
+like and prune is a transaction on the UTXO ledger, and a pruned subtree leaves a **stump**.
+Consensus is single-phase PoW — validator-produced ordering blocks; posts and likes ride
 them as ordinary transactions. TypeScript, pnpm workspaces, Node.js ≥ 22.
 
 ## This package (`@dagsocial/node`)
