@@ -1730,6 +1730,17 @@ There is **no other legal bond or invite shape**. In particular:
   and prunes properly. Reachable through the ordinary API, so
   the intent route enforces the same rule at submit. **The same bind governs
   withdrawal.**
+- ⛔ **A root prunes once.** The root must resolve to a `dag_posts` row — `isStoredPost`,
+  live or withdrawn — never a stump and never a tombstone. `block_topology` keeps a pruned
+  root's row (the marks are set, the row survives), so the authorship binding and the
+  maturity bind both hold for a root already pruned, and this read is what refuses it.
+  Enforced at both ends the way withdrawal's liveness is: the intent route refuses the
+  submission (`Post is already pruned or unknown`), and §8c rejects the block. The root is
+  judged as `dag_posts` stands when its prune applies — after this block's withdrawals and
+  after every prune earlier in committed order — so a block carrying a prune of a root that
+  an earlier prune in the same block removed is rejected, and a producer's own speculation
+  refuses that body (→ "The speculation has three outcomes, not two"). A withdrawn root stays
+  prunable: withdrawal empties the row and keeps it.
 - **`verifyPruneCommitDomains` is the single statement of the payload's
   structural domain** — `rootPostHash` hex-32, and nothing else. It lives in
   `@dagsocial/validation` and both the envelope check and the transition arm

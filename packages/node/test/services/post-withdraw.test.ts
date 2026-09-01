@@ -280,6 +280,42 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
   });
 
   // -----------------------------------------------------------------------
+  // 2b. A withdrawn root prunes in a later block — withdrawal keeps the row,
+  //     so the root is still a post (NODE_INTERFACE → Prune transactions,
+  //     "A root prunes once")
+  // -----------------------------------------------------------------------
+  it('a withdrawn root prunes in a later block', async () => {
+    const author = makeTestIdentity();
+    const { postId } = await postAndConfirm(author, 'withdraw then prune');
+
+    const withdrawKarma = makeKarmaBox(10n, author.userId, 1, 66);
+    utxo.insertBox(withdrawKarma);
+    const block2 = await makeApplicableBlock({
+      miner,
+      utxoTxs: [makePostWithdrawTx(author, postId, withdrawKarma)],
+      height: 2,
+    });
+    expect(apply.applyOrderingBlock(block2)).toBe(true);
+    expect(posts.isLivePost(posts.getPost(postId))).toBe(false);
+
+    const pruneKarma = makeKarmaBox(10n, author.userId, 2, 55);
+    utxo.insertBox(pruneKarma);
+    const pruneTx: UtxoTransaction = {
+      inputs: [pruneKarma.id!],
+      outputs: [
+        { boxType: 'karma', value: pruneKarma.value, createdAtBlock: pruneKarma.createdAtBlock, owner: author.userId } as never,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+      prune: { rootPostHash: postId },
+    };
+    signTransaction(pruneTx, author.privateKey, toHex(author.userId));
+    const block3 = await makeApplicableBlock({ miner, utxoTxs: [pruneTx], height: 3 });
+    expect(apply.applyOrderingBlock(block3)).toBe(true);
+    expect(posts.isStump(posts.getPost(postId))).toBe(true);
+  });
+
+  // -----------------------------------------------------------------------
   // 3. Two withdrawals of one post in one block → rejected
   // -----------------------------------------------------------------------
   it('rejects a block with two withdrawals of the same post', async () => {

@@ -1239,6 +1239,17 @@ function applyMutationPhase(
       return false;
     }
 
+    // A root prunes once (NODE_INTERFACE → Prune transactions). Judged as
+    // `dag_posts` stands when this prune applies — after §8b and after every
+    // prune earlier in committed order — so of two nested prunes in one block,
+    // outer first, the inner is refused here.
+    if (!isStoredPost(getPost(prune.rootPostHash))) {
+      console.error(
+        `Block ${height}: prune root ${prune.rootPostHash} is already pruned or unknown`,
+      );
+      return false;
+    }
+
     // The set is derived, not from the payload.
     const subtreePostIds = [...getSubtreeTopology(prune.rootPostHash)];
 

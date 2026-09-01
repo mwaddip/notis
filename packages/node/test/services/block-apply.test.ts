@@ -2550,6 +2550,85 @@ describe('block-apply funnel totality', () => {
     expect(blockApply.applyOrderingBlock(block2)).toBe(true);
   });
 
+  // A root prunes once (NODE_INTERFACE → Prune transactions). Both fixtures
+  // name the rejection they expect: a bare `toBe(false)` on this cluster can
+  // pass for the wrong reason, as the H-3 note above records.
+
+  function makePruneTx(author: TestIdentity, rootPostHash: string, nonce: number, utxo: { insertBox: (b: KarmaBox) => void }): UtxoTransaction {
+    const karma = makeKarmaBox(100n, author.userId, 0, nonce);
+    utxo.insertBox(karma);
+    const tx: UtxoTransaction = {
+      inputs: [karma.id!],
+      outputs: [{ boxType: 'karma' as const, value: 100n, createdAtBlock: 0, owner: author.userId }],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+      prune: { rootPostHash },
+    };
+    signTransaction(tx, author.privateKey, hex(author.userId));
+    return tx;
+  }
+
+  it('rejects a block carrying a second prune of a root that is already a stump, and leaves the stump as it was', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const utxo = await importUtxo();
+    const posts = await importPosts();
+    const blockApply = await importBlockApply();
+    const stumps = await import('../../src/store/stumps.js');
+
+    const author = makeTestIdentity();
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'pruned twice');
+    posts.insertPost(postId, commit, content);
+    expect(blockApply.applyOrderingBlock(await makeApplicableBlock({ utxoTxs: [postTx] }))).toBe(true);
+
+    expect(blockApply.applyOrderingBlock(
+      await makeApplicableBlock({ height: 2, utxoTxs: [makePruneTx(author, postId, 95, utxo)] }),
+    )).toBe(true);
+    const first = stumps.getStump(postId);
+    expect(first).not.toBeNull();
+
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(blockApply.applyOrderingBlock(
+      await makeApplicableBlock({ height: 3, utxoTxs: [makePruneTx(author, postId, 94, utxo)] }),
+    )).toBe(false);
+    expect(error.mock.calls.some(([m]) => String(m).includes('already pruned or unknown'))).toBe(true);
+    error.mockRestore();
+
+    expect(stumps.getStump(postId)).toEqual(first);
+  });
+
+  it('rejects a block carrying a prune whose root is a pruned descendant', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const utxo = await importUtxo();
+    const posts = await importPosts();
+    const blockApply = await importBlockApply();
+
+    const rootAuthor = makeTestIdentity();
+    const replyAuthor = makeTestIdentity();
+    const root = await seedPostTx(rootAuthor, 'the root');
+    posts.insertPost(root.postId, root.commit, root.content);
+    expect(blockApply.applyOrderingBlock(await makeApplicableBlock({ utxoTxs: [root.tx] }))).toBe(true);
+
+    const reply = await seedPostTx(replyAuthor, 'the reply', { parentRefs: [root.postId] }, rootAuthor.userId);
+    posts.insertPost(reply.postId, reply.commit, reply.content);
+    expect(blockApply.applyOrderingBlock(await makeApplicableBlock({ height: 2, utxoTxs: [reply.tx] }))).toBe(true);
+
+    expect(blockApply.applyOrderingBlock(
+      await makeApplicableBlock({ height: 3, utxoTxs: [makePruneTx(rootAuthor, root.postId, 93, utxo)] }),
+    )).toBe(true);
+    expect(posts.isPrunedTombstone(posts.getPost(reply.postId))).toBe(true);
+
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(blockApply.applyOrderingBlock(
+      await makeApplicableBlock({ height: 4, utxoTxs: [makePruneTx(replyAuthor, reply.postId, 92, utxo)] }),
+    )).toBe(false);
+    expect(error.mock.calls.some(([m]) => String(m).includes('already pruned or unknown'))).toBe(true);
+    error.mockRestore();
+  });
+
   it('rejects a block whose prune input owner is not the root topology author', async () => {
     const db = await importDb();
     db.initDb(':memory:');

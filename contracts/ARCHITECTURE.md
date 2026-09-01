@@ -814,12 +814,14 @@ Stump {
 2. Author signs the **transaction**, whose `TxId` preimage carries the prune payload — there
    is no payload signature of its own
 3. Client submits a signed prune **transaction** to a node via `POST /posts/:id/prune`
-4. Node verifies the maturity bind, then `validateTx`
+4. Node verifies the maturity bind and that the root is still a post row — a root prunes
+   once — then `validateTx`
 5. Node pools it and **broadcasts it to peers like any other transaction**, so any miner may
    include it — a prune submitted to a node that never mines still reaches consensus
 6. At block application, every node independently verifies the authorship
    binding (the karma input's owner equals the `block_topology`-recorded author
-   of the root; a root confirmed in the applying block is not prunable) and
+   of the root; a root confirmed in the applying block is not prunable, and neither is a
+   root already pruned — a stump or a tombstone — since a root prunes once) and
    **derives the subtree from `block_topology`** — same-block replies included —
    then vests this block's own likes on it, deletes its like-records
    (journalled), and **marks its topology rows pruned**
