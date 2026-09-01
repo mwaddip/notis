@@ -734,6 +734,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
       ],
       deletedPosts: [],
       insertedStumps: [],
+      absorbedStumps: [],
       withdrawnPosts: [],
       prunedTopologyRows: [],
     });

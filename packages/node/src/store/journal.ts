@@ -86,6 +86,11 @@ export interface BlockJournal {
   }>;
   deletedPosts: DeletedPostRow[];
   insertedStumps: Stump[];
+  /**
+   * Stumps an outer prune absorbed, exactly as they stood before the absorb.
+   * Inverse: insertStump (NODE_INTERFACE → Block Journal).
+   */
+  absorbedStumps: Stump[];
   /** Inverse: restore the prior content and clear the marker. */
   withdrawnPosts: Array<{ id: string; content: string | null }>;
   /**
@@ -156,6 +161,7 @@ export function beginBlockJournal(height: number): void {
     likeRecordDeletions: [],
     deletedPosts: [],
     insertedStumps: [],
+    absorbedStumps: [],
     withdrawnPosts: [],
     prunedTopologyRows: [],
   };
@@ -335,6 +341,11 @@ export function recordDeletedPosts(rows: DeletedPostRow[]): void {
 export function recordInsertedStump(stump: Stump): void {
   if (openJournal === null) return;
   openJournal.insertedStumps.push(stump);
+}
+
+export function recordAbsorbedStump(stump: Stump): void {
+  if (openJournal === null) return;
+  openJournal.absorbedStumps.push(stump);
 }
 
 export function recordWithdrawnPost(id: string, content: string | null): void {

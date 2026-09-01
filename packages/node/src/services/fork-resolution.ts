@@ -21,6 +21,7 @@ import {
   restorePostRows,
   clearWithdrawal,
   restorePrunedTopology,
+  insertStump,
   deleteStump,
   deleteLikeRecord,
   restoreLikeRecord,
@@ -156,6 +157,13 @@ export function revertBlock(height: number): void {
   }
   for (const stump of journal.insertedStumps) {
     deleteStump(stump.rootPostHash);
+  }
+  // The stumps this block's outer prune(s) absorbed come back exactly as
+  // they stood. Order against the loop above is immaterial: insertedStumps
+  // names this block's own new stump and absorbedStumps names a different,
+  // earlier one this block deleted, so the two loops never touch the same id.
+  for (const stump of journal.absorbedStumps) {
+    insertStump(stump);
   }
   // Withdrawal inverses: restore content and clear the marker.
   for (const wp of journal.withdrawnPosts) {

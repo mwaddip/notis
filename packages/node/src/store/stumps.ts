@@ -35,15 +35,20 @@ export function rowToStump(row: StumpRow): Stump {
 // ---------------------------------------------------------------------------
 
 /**
- * Insert a stump into dag_stumps.
- * The stump ID is its rootPostHash — the canonical lookup key.
+ * Insert a stump into dag_stumps. The stump ID is its rootPostHash — the
+ * canonical lookup key.
+ *
+ * A plain INSERT: the prune arm refuses a second prune of a root before this
+ * runs, so a conflict here is local corruption and the apply funnel's
+ * totality catch rejects the block (NODE_INTERFACE → "The prune's block
+ * deletes and marks, and settles nothing").
  */
 export function insertStump(stump: Stump): void {
   const db = getDb();
   const stumpId = stump.rootPostHash;
 
   db.prepare(
-    `INSERT OR REPLACE INTO dag_stumps
+    `INSERT INTO dag_stumps
        (id, root_post_hash, author_id, reply_count, upvote_count,
         protocol_version, compacted_at_block_height)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,

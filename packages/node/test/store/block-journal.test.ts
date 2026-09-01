@@ -1,7 +1,7 @@
 import {
   fixtureProvenance, uid } from '../helpers.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import type { AnyBox, KarmaBox, VouchBox } from '@dagsocial/types';
+import type { AnyBox, KarmaBox, Stump, VouchBox } from '@dagsocial/types';
 
 // ---------------------------------------------------------------------------
 // Dynamic import helpers (reset module-level state between tests — the
@@ -93,6 +93,7 @@ describe('block journal (store choke-point recording)', () => {
     // `{kind:'box'}` with the exact inverses those already carry
     // (ARCHITECTURE → Vouch boxes).
     expect(Object.keys(j).sort()).toEqual([
+      'absorbedStumps',
       'appliedUtxoTxs',
       'blockHeight',
       'confirmedPostIds',
@@ -286,6 +287,31 @@ describe('block journal (store choke-point recording)', () => {
       .prepare('SELECT COUNT(*) AS c FROM utxo_boxes')
       .get() as { c: number };
     expect(cnt.c).toBe(1);
+  });
+
+  // --- absorbedStumps round-trip -------------------------------------------
+
+  it('a journal carrying an absorbed stump round-trips through CBOR', async () => {
+    const s = await importAll();
+    s.initDb(':memory:');
+
+    const stump: Stump = {
+      rootPostHash: 'absorbed-root',
+      authorId: uid('absorbed-author'),
+      replyCount: 3,
+      upvoteCount: 5,
+      protocolVersion: 1,
+      compactedAtBlockHeight: 40,
+    };
+
+    s.beginBlockJournal(41);
+    s.recordAbsorbedStump(stump);
+    const journal = s.finishBlockJournal();
+    s.insertBlockJournal(journal);
+
+    const loaded = s.getBlockJournal(41);
+    expect(loaded).not.toBeNull();
+    expect(loaded!.absorbedStumps).toEqual([stump]);
   });
 });
 
