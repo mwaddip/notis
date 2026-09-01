@@ -29,7 +29,8 @@ workaround written into this tool.**
 
 ## What Notis is
 An invite-only decentralized social network on a **dual-ledger** design: a **Posts DAG** and a **UTXO
-ledger** (karma + credits), bound by **stumps**. Consensus is PoW. TypeScript, pnpm workspaces, Node ≥ 22.
+ledger** (karma + credits); every post, like and prune is a transaction on the UTXO ledger, and a
+pruned subtree leaves a **stump**. Consensus is PoW. TypeScript, pnpm workspaces, Node ≥ 22.
 
 ## This package (`@dagsocial/nipopow-client`)
 A headless light client — a CLI, no server. Given N node URLs and a network profile it fetches a

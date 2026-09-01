@@ -787,7 +787,7 @@ to verify box existence or absence without storing the full UTXO set.
   but cannot reach the prover's in-memory state — the reorg restores it
   explicitly)
 
-### 3. Stumps (Binding Layer)
+### 3. Stumps
 
 A stump is what remains after a post subtree is pruned: a compact record
 that the subtree existed and was settled. The stump itself carries no

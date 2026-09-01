@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Architecture — Notis docs</title>
-<meta name="description" content="How Notis is built: a Posts DAG for content, a UTXO ledger for karma and notis, stumps binding the two, and two tiers of proof-of-work.">
+<meta name="description" content="How Notis is built: a Posts DAG for content, a UTXO ledger for karma and notis, the transactions that join them, the stumps pruning leaves, and the proof-of-work that orders it all.">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Notis docs">
 <meta property="og:title" content="Architecture — Notis docs">
@@ -32,7 +32,7 @@
     <header class="page">
       <div class="crumb"><b>Notis</b> / architecture</div>
       <h1>One network, two ledgers.</h1>
-      <p class="lede">Notis keeps <strong>content</strong> and <strong>value</strong> on two separate ledgers — a Posts DAG for what people say, a UTXO ledger for karma and notis — bound together by <strong>stumps</strong> and secured by proof-of-work. Here's how the pieces fit.</p>
+      <p class="lede">Notis keeps <strong>content</strong> and <strong>value</strong> on two separate ledgers — a Posts DAG for what people say, a UTXO ledger for karma and notis. Every post, like and prune is a transaction on the value ledger, and the whole thing is ordered by proof-of-work. Here's how the pieces fit.</p>
     </header>
 
     <section>
@@ -71,9 +71,9 @@
     </section>
 
     <section>
-      <h2>Stumps — binding content to value</h2>
-      <p>A <strong>stump</strong> is the compact, signed proof left where a subtree used to be. It records that the subtree existed and <em>what value was earned inside it</em> — so withdrawn content still settles correctly on the value ledger.</p>
-      <p>This is the crucial property: settlement is <strong>deterministically computable from the ledger alone</strong>. Any node can verify a prune and its value effects <em>without ever having seen the withdrawn content</em>. Stumps are the single bridge from content-compaction to value on the ledger — the reason you can withdraw your words without corrupting anyone's karma.</p>
+      <h2>Stumps — what pruning leaves behind</h2>
+      <p>A <strong>stump</strong> is the record left where a subtree used to be: that the root existed, who wrote it, how many replies and likes the subtree carried, and the block that compacted it. Every node derives it from block data alone — it is never gossiped and carries no signature; the author's prune transaction is the authorization.</p>
+      <p>A stump keeps the root resolvable — a reply to a pruned post still has a valid parent — and it moves no karma: every post paid its price when it was posted, so pruning refunds nothing and burns nothing. Prune an ancestor later and the outer prune absorbs the inner stump; a thread carries one stump, the outermost.</p>
     </section>
 
     <section>
