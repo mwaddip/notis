@@ -557,8 +557,8 @@ five fields holds a second implementation of a consensus predicate, the mirror c
 |--------|------|---------|----------|--------|
 | `POST` | `/credits/transfer` | `{ tx: UtxoTransaction }` — client-built, client-signed | `{ status: "pending", txId, expiresAtHeight }` | 400 on invalid tx or signature |
 
-**A credit transfer is a transaction, and it settles when it is mined**
-(P2-B phase 3). The client builds and signs it; the node decodes it with
+**A credit transfer is a transaction, and it settles when it is mined.**
+The client builds and signs it; the node decodes it with
 `jsonToTx`, validates it with `validateTx`, pools it with `insertUtxoTx` and
 relays it with `net.broadcastTx` — the same path invites, vouches and likes
 already take. Credits move at block application on every node, not when the
@@ -596,7 +596,7 @@ The `header` object in `/blocks/:height`'s response carries all ten header field
 included (`TYPES_INTERFACE` → Layout — Block) — the field a client that recomputes the interlink
 vector from served headers checks.
 
-**`hash` is `string | null`** (Phase 1f). It is `blockHash` of the stored tip
+**`hash` is `string | null`.** It is `blockHash` of the stored tip
 header, and that function returns `null` for a header outside the encodable domain
 (`VALIDATION_INTERFACE` → `blockHash`). A stored tip cannot be outside it — every header in the
 store passed `verifyOrderingBlockStructure` at apply, whose header checks *are*
@@ -1888,7 +1888,7 @@ There is **no other legal bond or invite shape**. In particular:
   `getBondsSettlingAt`'s shape. `checkTransitions` needs no karma-sum read
   and no settle height.
 
-### Karma transition rules (P2-B phase 4)
+### Karma transition rules
 
 ⛔ **The set of box types this arm admits as outputs is the TRANSITION set, and it is not the set
 `totalKarma` sums** — see "Three karma sets, and none derives from another" under Status.
@@ -1958,7 +1958,7 @@ inside the network's reported supply.
 > already states, and the marker inherits it. A placeholder row carries a zeroed author, so a marker
 > built from the wrong source would earmark karma to the zero key.
 
-### Vouch transition rules (P2-B phase 2)
+### Vouch transition rules
 
 - **The voucher's karma balance is at least `VOUCH_MIN_BALANCE` at cast**, summed across their
   karma boxes — not the value of any single one. Enforced at block application like every other
@@ -2127,13 +2127,13 @@ owedPeriods = floor( (height − max(lastActivityBlock, lastDecayBlock)) / inter
 effective   = clamp(faceTotal − owedPeriods · decayAmount)   // never below min(faceTotal, KARMA_MINIMUM)
 ```
 
-⚠ **The comparison is `>=`, not `>`.** This contract and Spec G §3.4 both said
-`>`, and both were wrong by one block. `isIdentityStale` treats a box as recent
+⚠ **The comparison is `>=`, not `>`.** This contract said `>`,
+and was wrong by one block. `isIdentityStale` treats a box as recent
 when `createdAtBlock > currentHeight − threshold`, so an identity is stale
 exactly when *no* box satisfies that — i.e. when
 `currentHeight − lastActivityBlock >= threshold`. `>` would delay every
 identity's first decay by one block, which is a behaviour change D10 forbids.
-Found by the phase D session against the code.
+Found by reading the code.
 
 **Staleness reads the record.** `lastActivityBlock` is the height of the owner's
 most recent karma-spending transaction (§Populating the record), so the predicate
@@ -2143,12 +2143,12 @@ is "no spend within the threshold window".
 code measures from the **oldest** non-decay box (falling back to the youngest
 when all are decay-burn). The record measures from the **most recent** activity.
 
-Spec G §3.4 claimed these were equivalent, on the premise that forced
+The two were held equivalent on the premise that forced
 consolidation means one karma box per owner so oldest == newest. **That premise
 is false:** settlement karma outputs land beside whatever karma the owner
 already holds — the settlement does not consolidate — so two unspent non-decay
 karma boxes at different heights is ordinary, and the two formulas then
-disagree. Measured on the phase D fixture: a burn of 45 under the old rule, 30
+disagree. Measured: a burn of 45 under the old rule, 30
 under the new.
 
 The new behaviour is the intended one — "time since you were last active" is
@@ -2311,7 +2311,7 @@ with nothing to catch it, while this contract's own subject table mandates the
 encoding. One implementation feeds both derivations. The demo UI cannot import
 it and so must still reproduce the sentinel behaviour, and must not throw.
 
-### The demo UI mirror carries the same strip defect (phase E)
+### The demo UI mirror carries the same strip defect
 
 `public/index.html`'s client-side `computeBoxId` does `const { id, ...rest } = box`
 — the **id-only strip** that phase C0 removed from `@dagsocial/types`. Both of
@@ -2362,8 +2362,7 @@ the enforceable rule is coverage, not documentation: with every box type in the
 mirror, a missing `binaryFields` entry fails mechanically instead of waiting for
 someone to notice the list is a manual copy of a type definition.
 
-⚠ **This is the second instance of the shape.** Phase C's report §4.2 records the
-same thing in a different file — a round-trip test that used only a karma box, so
+⚠ **This is the second instance of the shape** — a round-trip test that used only a karma box, so
 an in-range record tag at `0x03` could not collide with karma at `0x01` and the
 mutation died against the literal assertion instead of the behaviour. **A
 "representative" fixture in a test whose whole job is cross-implementation or
@@ -2439,8 +2438,8 @@ kept here as the record of what closed, and where the reasoning lives.
 **A bond names no box at all.** A box id in a **content** field is circular under
 the provenance derivation: the id derives from the creating `txId`, and a content
 field sits inside the bytes `computeTxId` hashes. Measured: no fixed point exists.
-Spec G §3.1's "no circularity" argument covers *provenance* fields and does not
-reach this.
+The no-circularity argument for provenance-derived ids covers *provenance* fields —
+they sit outside the bytes `computeTxId` hashes — and does not reach a content field.
 
 The pairing needs no reference of either kind. **An address may be invited only
 once**, so `inviteePublicKey` — which the invite and the bond both carry, pinned
@@ -2744,7 +2743,7 @@ unassigned config *is* a server-role node: it applies blocks and builds no templ
     the emission terminus carries that height's emission; above it
     (`MINING_INTERFACE → Emission Schedule`) an empty block's income is zero, so it
     carries **no coinbase outputs at all** — no output may hold `value === 0`.
-    ⚠ **One exception, and only one (P2-B phase 1c): a body its own mutation
+    ⚠ **One exception, and only one: a body its own mutation
     phase rejects.** See step 15b — the creator evicts every row the body
     carried and builds again from what remains, until it holds a template or a
     body carrying no row is rejected (`MINING_INTERFACE → Template and submit`).
@@ -2847,7 +2846,7 @@ apply path runs**, never by a second implementation of the state transition:
 The speculative run performs no block storage, no `clearTemplate`, no journal
 persistence, and no prover checkpoint.
 
-**The speculation has three outcomes, not two** (P2-B phase 1c — the code
+**The speculation has three outcomes, not two** (the code
 returns them as a discriminated union so no caller can conflate them):
 
 | Outcome | Meaning | Creator's obligation |
@@ -2938,7 +2937,7 @@ The schedule's parameters come from the profile through `Config` (→ Configurat
 needs no undo entry, because a target is a function of headers a reverted chain no longer has. There
 is **no wall-clock retargeting**: no node reads a clock to compute a target.
 
-### Per-block like settlement (P2-D — replaced the epoch tally)
+### Per-block like settlement
 
 Runs at the end of **every** block's mutation phase, through the block's settlement
 transaction. The quantities are **committed, not transported**: the markers ride the block as
@@ -3006,7 +3005,7 @@ because every box is) until their next liked block.
 ## Store Interface
 
 Storage backends implement this interface. SQLite is the backend.
-Fresh schema — no Phase 1 migration.
+Fresh schema — no migration.
 
 ### Database lifecycle
 
@@ -3084,7 +3083,7 @@ block height: the first request at creation, retries after 1, 2, 4, … blocks, 
 so an unserved body costs a bounded trickle and never a loop. A received body is verified and
 stored through `setPostBody`; `emitPostReceived(postId, peerId, via: 'pull')`.
 
-### Like-records (P2-D — replaces `dag_likes`)
+### Like-records
 
 **Table:** `like_records (target_post_id TEXT NOT NULL, liker_id BLOB NOT NULL,
 applied_at_block INTEGER NOT NULL, PRIMARY KEY (target_post_id, liker_id))`. Written
@@ -3137,7 +3136,7 @@ index lookup per row of the set, so a prune's derived set costs the set and not 
 `getUnprocessedLockedLikeBoxes`, `getPostTotalLikes` — and `markLikeBoxesTallied`, the
 epoch's sentinel-spend choke point. Like counts come from `getLikeRecordCount`.)
 
-#### Box provenance columns (Spec G phase B)
+#### Box provenance columns
 
 `utxo_boxes` carries each box's creating-transaction provenance, because
 `BoxBase` does (`TYPES_INTERFACE.md` → BoxId):
@@ -3186,13 +3185,12 @@ height from the **box field** (`TYPES_INTERFACE` → "createdAtBlock is a box fi
 and it is CREATOR-DECLARED"), which the `stateRoot` commits and this column only
 mirrors.
 
-### Identity Records (Spec G phase B)
+### Identity Records
 
 The second committed entity alongside boxes: the per-identity decay clock. It may
 read neither height that meets `insertBox` — a box's `createdAtBlock` is
 creator-declared, so a backdated box would backdate its owner's clock, and the
-`created_at_block` column is uncommitted. So the clock lives in committed state
-(Spec G D4).
+`created_at_block` column is uncommitted. So the clock lives in committed state.
 
 ```
 IdentityRecord {
@@ -3661,7 +3659,7 @@ BoxMutation {
   box?: AnyBox                     // full box — present iff op === 'insert'
 }
 
-RecordMutation {                   // Spec G phase B — identity records
+RecordMutation {                   // identity records
   kind: 'record'
   key: string                      // hex — H(IDENTITY_KEY_DOMAIN ‖ identityId), the AVL key
   identityId: UserId               // the raw 32 bytes, so rollback can address the SQL row
@@ -3683,10 +3681,10 @@ BlockJournal {
   confirmedPostIds: string[]       // inverse: unconfirmPost — not a mempool key
   appliedUtxoTxs: Array<{ txId: string, txBytes: Uint8Array }>  // mempool re-insertion only
   likeRecordInsertions: Array<{ targetPostId: string, likerId: UserId }>
-                                   // inverse: deleteLikeRecord (P2-D)
+                                   // inverse: deleteLikeRecord
   likeRecordDeletions: Array<{ targetPostId: string, likerId: UserId,
     appliedAtBlock: number }>      // inverse: restoreLikeRecord — a reverted prune
-                                   // restores the subtree's like-records exactly (P2-D)
+                                   // restores the subtree's like-records exactly
   deletedPosts: DeletedPostRow[]   // prune settlement's deleted dag_posts rows, bodies and
                                    // parent refs included — inverse: restorePostRows; the
                                    // only place a pruned body survives, and only until this
@@ -3712,7 +3710,7 @@ The field names are the `journal_cbor` keys: the journal is the node's local for
 migration path — a store written under a different key set is a different store.
 
 
-**One log, not parallel arrays (Spec G phase B).** `mutations` is a
+**One log, not parallel arrays.** `mutations` is a
 discriminated union over **every committed entity**, not a box-only log with
 sibling arrays. That is deliberate and load-bearing: a committed entity that
 never reaches the prover feed is silently absent from the `stateRoot`, and
@@ -3809,8 +3807,8 @@ writes the stump again when it re-settles.
 ### AVL+ State Root
 
 The `packages/node/src/state/` module provides an authenticated dictionary over
-**committed state** using AVL+ trees — the UTXO set, and from Spec G phase B
-also identity records and the network record (see "Three entity kinds" below).
+**committed state** using AVL+ trees — the UTXO set, identity records and
+the network record (see "Three entity kinds" below).
 
 - **avl-storage:** Persistent AVL+ tree, stateRoot computed at each block
   application and included in block headers
@@ -3916,7 +3914,7 @@ it, and a kind-dispatching decoder is what any value-reading caller uses.
 
 ⚠ **The box discriminator is `enum8(boxType)` from `TYPES_INTERFACE` →
 Layout — Boxes — NOT a second numbering owned by this package. Decided
-2026-08-10 (Phase 5).** The record tag stays `0x80`, high bit set, and the network record's `0x81` sits beside it, so
+2026-08-10.** The record tag stays `0x80`, high bit set, and the network record's `0x81` sits beside it, so
 "box" versus "not a box" is still a single bit test and the box-type space stays open.
 
 | | Discriminator space |

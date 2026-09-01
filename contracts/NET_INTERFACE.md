@@ -1063,7 +1063,7 @@ the CBOR would have been the band-aid; the root cause was the second dialect, so
 
 - **Blocks:** `arr(blocks, lp(encodeOrderingBlock))`. **Headers:** `arr(headers, lp(encodeHeader))`.
 - **The per-element `lp` is load-bearing**: it gives each item its own byte span, so the four-part
-  boundary check (spec §2.1) runs over exactly that span — exhaustion and re-encode compare included —
+  boundary check (TYPES_INTERFACE → The boundary check) runs over exactly that span — exhaustion and re-encode compare included —
   and a malformed block is rejected at its own offset rather than as an outer mismatch.
 - **The requests are positional too**, and carry no `mode` field — the code pair is the
   discriminator:

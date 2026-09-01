@@ -402,7 +402,7 @@ IS the current state.
 
 Box `value` is a uniform **`bigint`** — credits are 8-decimal integer base units
 (10⁻⁸ credit), karma small bigints. No float arithmetic in consensus value math;
-`value < BOX_VALUE_BOUND`. See `TYPES_INTERFACE.md` → "Box value domain" and Spec B P0.
+`value < BOX_VALUE_BOUND`. See `TYPES_INTERFACE.md` → "Box value domain".
 
 #### Karma boxes
 
@@ -728,7 +728,7 @@ to verify box existence or absence without storing the full UTXO set.
 - **Proof endpoint:** `GET /api/v1/proof/:boxId?atHeight=N` — returns an
   inclusion or exclusion proof for a box at a given block height
 - **Config flags:** `VERIFY_STATE_ROOT` (`consensus-check` — validate stateRoot at
-  block apply, **default on** since Spec B P3), `MAX_PROOF_HISTORY` (`local` — prune
+  block apply, **default on**), `MAX_PROOF_HISTORY` (`local` — prune
   old proof versions). **`AVL_KEY_LENGTH`** is no longer configuration at all — it is a
   `@dagsocial/types` export (TYPES_INTERFACE → State format), imported by `config.ts` and
   plumbed through `Config.avlKeyLength`. It determines the **shape** of every `stateRoot`,
@@ -1042,7 +1042,7 @@ because a counter beside the box would be two representations of one quantity, f
 disagree. The carry is live supply by construction: it is karma, in the UTXO set, and in the
 `stateRoot` because every box is.
 
-The accumulator is **per author, not per post** (design track §1.3.1): outstanding carry is
+The accumulator is **per author, not per post**: outstanding carry is
 bounded by `x−1` per identity and deferred rather than lost, and the payout is independent
 of arrival pattern — the floor runs over a running total, never over a per-window group.
 
@@ -2103,8 +2103,8 @@ no object check compares against it and no producer stamps it.
   > ⚠ **SUPERSEDED (2026-08-06). Verified 2026-08-11 — no `username` code in any `src` tree.**
   > Usernames become a **UTXO asset**: tradeable for
   > credits, free to claim while unused, burnable by the owner. Not a claim post, so
-  > "DAG-native" and "prunable by holder" no longer apply. Deferred — see §Username claims
-  > and design track §5.9. **Profiles are unaffected and stay DAG-native as self-posts.**
+  > "DAG-native" and "prunable by holder" no longer apply. Deferred — see §Username claims.
+  > **Profiles are unaffected and stay DAG-native as self-posts.**
 
 ### UTXO conservation
 
@@ -2164,13 +2164,13 @@ no object check compares against it and no producer stamps it.
   > re-validation at apply.
 - Box `value` and all value/amount arithmetic are `bigint` integer base units
   (`value < BOX_VALUE_BOUND`, TYPES_INTERFACE → "Box value domain"); **no float math in any consensus value path** — floats are
-  non-deterministic across platforms and credit sums exceed 2⁵³ (Spec B P0)
+  non-deterministic across platforms and credit sums exceed 2⁵³
 - A box can only be consumed by a transition whose authorization requirement is satisfied
 - Karma decay is virtual — effective value at every sufficiency read — and is
   squared into committed state by the settlement of the block whose body
   touches the identity (§Karma decay)
 
-### Block application journal (Spec B P1)
+### Block application journal
 
 - **One record-once mutation log.** Block application maintains a single
   ordered journal of primitive box mutations —
@@ -2209,7 +2209,7 @@ no object check compares against it and no producer stamps it.
 - Ordering blocks are validator-produced; consensus is **single-phase PoW**,
   which is what it always effectively was
 - Like dedup is structural: the `(liker, post)` like-record exists or it does not
-- Like accrual and settlement happen every block — there is no epoch (P2-D)
+- Like accrual and settlement happen every block — there is no epoch
 - **A block body is bounded in bytes, and a valid block is always servable.**
   `MAX_BLOCK_BODY_BYTES` < `MAX_SERVE_BODY_BYTES` < `MAX_STREAM_BYTES`
   (`TYPES_INTERFACE` → Size caps). The bound is checked in structure validation,

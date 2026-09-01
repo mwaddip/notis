@@ -463,7 +463,7 @@ keys, no map framing, and nothing to sort — a mirror reproduces the field tabl
 The demo UI already encodes this way; full bytes are pinned as golden vectors in
 `test/utxo.test.ts`.
 
-#### Key ordering is canonical (Spec G phase G3b)
+#### Key ordering is canonical
 
 The positional layout is what enforces this now: **field order is fixed by the writer**
 (`canonicalBoxBytes`' shared prefix, then `writeBoxTypeFields`' per-type table), a producer's
@@ -1076,7 +1076,7 @@ UtxoTransaction {
   outputs: BoxCandidate[]                  // Boxes created — candidates: no id, no txId, no index
   signatures: Record<string, Uint8Array>   // publicKey (hex) → Ed25519 sig (64 bytes) over TxId
   protocolVersion: number                  // 1
-  likeTarget?: PostId                      // Present ⟺ this tx is a like (P2-D) — see below
+  likeTarget?: PostId                      // Present ⟺ this tx is a like — see below
   post?: PostCommit                        // Present ⟺ this tx creates a post — see below; the body rides the PACKET, not the tx
   prune?: PruneCommit                      // Present ⟹ this tx prunes the author's own reply subtree — see below
   postWithdraw?: PostWithdrawCommit        // Present ⟹ this tx withdraws one post's content from the DAG — see below
@@ -1258,7 +1258,7 @@ and `→ verifyCreatedAtBound`.
 >
 > That left the field's whole marginal value as the *wording of an error message*, bought
 > with a byte in every header forever. **`extensionDigest` was deleted from the same header for
-> committing to nothing** (§Layout — Block below; spec §5.1), and that spec's third point
+> committing to nothing** (§Layout — Block below), and the same reasoning
 > retires the "add it now
 > while header breaks are free" defence: the cost of a later header change is a second fresh
 > chain, which stays cheap until a live multi-node network exists.
@@ -1464,7 +1464,7 @@ keys produced a **byte-identical `blockHash`** while the encoding differed by 39
 `cbor-x`'s own output is not canonical CBOR (it emits `b9` + uint16 map counts where the shortest
 form is `a1`), which made the consensus format "whatever `cbor-x` 1.6.4 emits" — a specification no
 independent implementation can be written against, and one the demo UI already had to reverse-engineer
-by hand. See spec §1.
+by hand.
 
 ### The boundary check
 
@@ -1809,7 +1809,7 @@ width.** This cell said `vlqU` while the code has always called `writeVlqU64OrTh
 field is `bigint`. **The bytes are
 identical over the overlapping range, so nothing was broken** — which is exactly why it survived. But
 `vlqU` is total by sentinel and collapses anything past `MAX_SAFE_INTEGER`, while `vlqU64` **throws**
-outside `[0, 2⁶⁴)`, and spec §2.5 names the `OrThrow` writers precisely so that a totality exception
+outside `[0, 2⁶⁴)`, and the `OrThrow` writers are named so that a totality exception
 is visible at the call site. A contract that writes `vlqU` where the code throws hides the one thing
 the naming convention exists to show. Found by the Phase 5 executor while hand-deriving golden bytes
 from this table — a use that reads every cell as an instruction rather than as prose.
@@ -2183,7 +2183,7 @@ a field the contract has **decided** while the code has **not yet implemented** 
 code-first draft *by construction*. `networkType` is the only such field in the header; it was
 dropped that way and rode the draft into committed contract text.
 
-**Both directions are now required** (plan, Phase 0 gate): draft from `types/src`, then diff the
+**Both directions are required**: draft from `types/src`, then diff the
 finished table against the contract's own type definition, and resolve every field present in one and
 absent from the other explicitly — addition, deletion, or stated deferral. Neither artifact is the
 authority alone.
@@ -2221,7 +2221,7 @@ the outer level and at each nested `lp` section.
 
 ### Layout — Merkle leaf preimages are the struct's own wire bytes
 
-**Decided 2026-08-10, ahead of Phase 4.** `utxoTxRoot` commits leaves whose preimages are exactly
+**Decided 2026-08-10.** `utxoTxRoot` commits leaves whose preimages are exactly
 the committed struct's own wire bytes, and this package is the one place that says what those bytes
 are.
 
@@ -2237,7 +2237,7 @@ reader of the payload cannot drift apart.
 > signature invites a call.** (§How a dispatch decays this contract, below.)
 
 > ⚠ **`parentRefs` carries 0–`MAX_PARENT_REFS` (currently 1) entries at validation; the writer is
-> uncapped by design.** The domain sits upstream of the encoder (spec §2.5), never inside it —
+> uncapped by design.** The domain sits upstream of the encoder (§Totality), never inside it —
 > `arr(parentRefs, b32)` writes whatever length it is handed. **So a golden vector may legitimately
 > encode a count above the cap, and must say so in its note.** The corpus pins the *encodable*
 > domain, not the consensus-valid one, and already carries deliberately out-of-domain vectors for
@@ -2253,7 +2253,7 @@ body's `utxoTxIds` entry carries — which is what keeps `utxoTxRoot` byte-ident
 wire-codec changes (`serialization.ts` states the pair beside the codec). The alternative —
 `node` writing its own `ByteWriter` calls in `block-creator.ts` — puts a second statement of a
 layout in a second package, with **no compiler signal on divergence and no round-trip able to see
-it**: a consistent transposition round-trips perfectly (Phase 5 measured this), so only a golden
+it**: a consistent transposition round-trips perfectly (measured), so only a golden
 comparing the two byte strings across the package boundary would ever catch it.
 
 ⚠ **The `leafHash` domain tag stays outside the preimage.** `leafHash('prune' | 'utxotx', bytes)`
