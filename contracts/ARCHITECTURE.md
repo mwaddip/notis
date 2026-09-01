@@ -76,11 +76,13 @@ architecture:
 |-------|---------|------------|
 | **Posts DAG** | Content, social graph | Author-sovereign (prunable) |
 | **UTXO Ledger** | Karma & credits state | Owner-controlled (spendable) |
-| **Stumps** | Compact proofs binding DAG → UTXO | Immutable once created |
+| **Stumps** | The record that a subtree existed and was pruned | Written by block application alone |
 
 These layers are interdependent but cryptographically independent: the DAG's
-integrity doesn't depend on the UTXO state, and vice versa. Stumps are the
-binding layer — they crystallize karma issuance from pruned DAG content.
+integrity doesn't depend on the UTXO state, and vice versa. A stump moves no
+karma — every post paid its price at posting (§The post price) — it keeps a
+pruned root resolvable, so a reply to it stays valid, and carries the subtree's
+counts.
 
 ### Why dual-ledger
 
@@ -824,7 +826,10 @@ Stump {
    root already pruned — a stump or a tombstone — since a root prunes once) and
    **derives the subtree from `block_topology`** — same-block replies included —
    then vests this block's own likes on it, deletes its like-records
-   (journalled), and **marks its topology rows pruned**
+   (journalled), **absorbs every stump inside the set** — an earlier prune's
+   stump is deleted (journalled) and its count folded into the new one, so a
+   thread carries one stump, the outermost — and **marks its topology rows
+   pruned**, an earlier mark's values journalled
 7. The simplified Stump is inserted, derived from that set —
    unconditionally, so a node holding no DAG content records the same
    stump — then the subtree's DAG rows, bodies included, are deleted by the
@@ -844,15 +849,13 @@ specified here.
 
 #### Cryptographic guarantees
 
-- Settlement is deterministic from UTXO state + `block_topology`'s marks — any node
-  can verify independently without DAG content
+- The prune's whole effect is derived from `block_topology` — the set, the stump, the
+  marks — so any node reaches it without DAG content
 - The author's signature over the transaction's `txId`, whose preimage carries the
   `rootPostHash`, is the single point of authorization, and "the author" is pinned by
   consensus: the prune transaction's karma input owner must equal the author recorded for the
   root in `block_topology` (the signer of the root's creating transaction,
   verified against real content by every node that holds it at confirmation time)
-- A node that held the full subtree can verify the Merkle root against the
-  original content
 - Parent hashes remain valid — a reply referencing a pruned post still has a
   valid `parentRefs` entry; the parent is just a stump now
 
@@ -2040,7 +2043,7 @@ no object check compares against it and no producer stamps it.
   > reads the block's own `LikeAccrualBox` markers, the carry boxes and `like_records` —
   > consensus state written only at block application (`block_topology` tier), never by a
   > route.
-- Stumps are the sole bridge: DAG compaction → karma issuance
+- A prune moves no karma: every post in the set paid its price at posting (§The post price)
 - A like is a burn transaction plus a `(liker, post)` like-record — no box, no held
   value. Like-records are content-layer consensus state (`block_topology` tier):
   deterministic by replay, journalled with exact inverses, deleted with the post at

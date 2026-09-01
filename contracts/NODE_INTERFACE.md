@@ -233,8 +233,9 @@ PrunedJson = {
   kind: 'pruned',
   id: postId,                       // the descendant's own id (64-hex)
   author: hex(authorId),            // from block_topology — the consensus-recorded author
-  rootPostHash: postId,             // the stump this id was pruned under
-  compactedAtBlockHeight: number    // the stump's
+  rootPostHash: postId,             // the one stump above this id — an outer prune absorbs
+                                    // the inner stumps, so exactly one stands
+  compactedAtBlockHeight: number    // that stump's
 }
 ```
 
@@ -503,8 +504,8 @@ invites, vouches, credits, prune).
 
 **Stumps are derived state.** A `dag_stumps` row is a local projection of an
 applied prune transaction — never information in its own
-right. `insertStump` has exactly one caller: prune settlement in block
-application. The stump's `protocolVersion` is the era at its `compactedAtBlockHeight`, stamped by that
+right. `insertStump` has two callers, both block-application paths: the prune
+phase, and `revertBlock` restoring the stumps an outer prune absorbed. The stump's `protocolVersion` is the era at its `compactedAtBlockHeight`, stamped by that
 caller and checked by nothing — a stump is never on the wire (`ARCHITECTURE → Protocol Versioning`).
 No network input writes the table. Inbound stump gossip is not
 consumed, and no stump pull protocol exists: a gossiped stump is unverifiable
@@ -1702,9 +1703,15 @@ There is **no other legal bond or invite shape**. In particular:
   and its inclusion invalidates nothing. Every node derives the same set from
   committed state; a node holding no DAG content reaches the same verdict.
 - ⛔ **The prune's block deletes and marks, and settles nothing.** §8c, per prune
-  in committed order: the maturity bind; the like-records
-  are deleted and tallied; the stump is inserted (`replyCount` = set size − 1,
-  `upvoteCount` = the tally); `dag_posts` and `dag_parent_refs` rows are deleted
+  in committed order: the maturity bind; the root-prunes-once check; the like-records
+  are deleted and tallied; **every stump inside the set is absorbed** — an earlier
+  prune's, never the root's own — its `upvoteCount` added to the tally, its row deleted
+  and journalled (→ Block Journal, `absorbedStumps`), so a thread carries one stump, the
+  outermost, and a pruned descendant's tombstone names it; the stump is inserted
+  (`replyCount` = set size − 1, `upvoteCount` = the tally, absorbed counts included) —
+  a plain `INSERT`, because the check above refuses a second prune of the root before
+  it runs, so a conflict here is local corruption and the apply funnel's totality catch
+  rejects the block; `dag_posts` and `dag_parent_refs` rows are deleted
   by the set; and **every `block_topology` row in the set is marked**
   `pruned_at_height = h`, `pruned_root = rootPostHash`. The marks are the
   tombstone's source and are journalled (→ Block Journal): a row an earlier prune already
@@ -3689,7 +3696,9 @@ BlockJournal {
                                    // parent refs included — inverse: restorePostRows; the
                                    // only place a pruned body survives, and only until this
                                    // journal is purged (ARCHITECTURE → Subtree pruning)
-  insertedStumps: Stump[]          // prune settlement's stump rows — inverse: deleteStump
+  insertedStumps: Stump[]          // the prune phase's stump rows — inverse: deleteStump
+  absorbedStumps: Stump[]          // the stumps an outer prune absorbed, exactly as they stood —
+                                   // inverse: insertStump
   withdrawnPosts: Array<{ id: string, content: string | null }>
                                    // withdrawal's emptied dag_posts rows — inverse: restore the
                                    // content and clear withdrawn_at_height. ⛔ `content` is
