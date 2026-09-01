@@ -225,7 +225,7 @@ StumpJson = {
 **PrunedJson shape — the tombstone (decided 2026-08-22).** A pruned **descendant** has no DAG
 row, but the node still knows it: `block_topology` keeps every confirmed post's id, parent
 refs and author (a reverted-and-reapplied prune re-verifies the entry's id set against it),
-and the root's `dag_stumps` row dates the prune. So a descendant's id answers a positive
+and its prune marks name the stump and date the prune. So a descendant's id answers a positive
 statement an indexer can overwrite with, never an absence:
 
 ```
@@ -252,8 +252,10 @@ the rule:
    the transaction applied, the body has not arrived — Store Interface → Posts DAG, "Backfill
    after sync")
 2. else a `dag_stumps` row by id → `Stump` (a pruned root)
-3. else a `block_topology` row whose `parent_refs` chain reaches a `dag_stumps` id → the
-   `PrunedTombstone` above (a pruned descendant)
+3. else a `block_topology` row carrying the prune marks — `pruned_root` names the stump,
+   `pruned_at_height` its compaction height — → the `PrunedTombstone` above (a pruned
+   descendant). One row read; the marks are the tombstone's source (Prune transactions), and
+   an outer prune re-marks the rows it absorbs, so the row always names the one stump standing
 4. else `null` → 404: an id the node has never heard of
 
 **A placeholder is a live post.** It is confirmed structure: a like credits its topology author,
@@ -3036,7 +3038,7 @@ Fresh schema — no migration.
 | `deletePendingPost(postId)` | `(string) => void` — the pending row of a post transaction that left the pool unconfirmed (Post transactions → the pending-row rule) |
 | `deletePostRows(ids)` | `(string[]) => DeletedPostRow[]` — prune settlement: deletes the `dag_posts` and `dag_parent_refs` rows for the given ids and returns every deleted row for the journal; ids with no row are skipped |
 | `restorePostRows(rows)` | `(DeletedPostRow[]) => void` — the inverse, from the journal |
-| `getPrunedTombstone(id)` | `(string) => PrunedTombstone \| null` — step 3 of the resolution order: a `block_topology` row whose parent chain reaches a stump |
+| `getPrunedTombstone(id)` | `(string) => PrunedTombstone \| null` — step 3 of the resolution order: the `block_topology` row's prune marks, one read; `null` for an unmarked row |
 | `getParentRefs(postId)` | `(string) => PostId[]` |
 | `getAncestorsNearest(postId, limit)` | `(string, number) => { rows: StoredPost[], count: number }` — the nearest `limit` ancestors, oldest first, walking the parent chain upward from the post; `count` is the chain's whole depth. **The chain ends at the first ancestor with no `dag_posts` row** — a stump — so `count` never exceeds what `rows` can carry; one recursive CTE over `dag_parent_refs`, one lookup per level |
 | `getSubtreePage(postId, page)` | `(string, Page<PostKey>) => { rows: StoredPost[], next: PostKey \| null, count: number, pending: StoredPost[], pendingCount: number }` — `rows` one page of the subtree's committed rows (the recursive CTE, stated once) in committed order, `(block_height, block_index)` ascending, strictly after `after`; `count` over the whole subtree, pending included; `pending` the subtree's pending rows, newest arrival first, cut to `limit`; `pendingCount` over all of them. The CTE enumerates the subtree — O(subtree) on the `dag_parent_refs (parent_id)` index — and the page is `limit + 1` rows of that enumeration: the one page read whose cost is the set's, not the page's |
