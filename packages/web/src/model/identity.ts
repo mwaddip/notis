@@ -1,6 +1,6 @@
-// The identity spine's hue, derived from the author's public key. Carried whole
-// from thread-panes §3.2: the arc is 175–345° in OKLCH — what is left once the
-// hues that already mean something are excluded (clay ~40° warning, gold ~75°
+// The identity spine's hue, derived from the author's public key
+// (HOUSE_STYLE → Identity colour): the arc is 175–345° in OKLCH — what is left
+// once the hues that already mean something are excluded (clay ~40° warning, gold ~75°
 // credits, green ~135° karma, red banned) — quantised to twelve evenly spaced
 // stops rather than sampled anywhere on the arc, because uniform sampling of a
 // continuous range clumps. A near-miss sends the reader back to compare; an

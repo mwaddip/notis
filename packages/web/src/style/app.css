@@ -177,11 +177,12 @@ header .spacer { flex: 1 1 auto; }
 /* Identity tint. --idh is an OKLCH hue set per bar from the author's key.
    OKLCH because HSL degrees are perceptually uneven. The arc is 175–345°, which
    is what is left once clay/gold/green/red are excluded — widening it makes
-   identities collide with meaning (thread-panes → §3.2). Spine, not wash:
-   chroma is area-weighted, so a thin edge at high chroma is calmer and far more
-   legible than a whole-bar wash. The two cannot share a lightness — a spine
-   contrasts with the ground, a wash sits at it so text over it keeps its
-   ratio. */
+   identities collide with meaning (HOUSE_STYLE → Identity colour). Spine, not
+   wash: chroma is area-weighted, so a thin edge at high chroma is calmer and
+   far more legible than a whole-bar wash (HOUSE_STYLE → Chroma is area-weighted).
+   The two cannot share a lightness — a spine contrasts with the ground, a wash
+   sits at it so text over it keeps its ratio
+   (HOUSE_STYLE → A spine and a wash cannot share a lightness). */
 :root {
   --idw: 0%; --idwf: 0%;
   --idc: .14; --idl: .55;                    /* spine — seen against the ground */
