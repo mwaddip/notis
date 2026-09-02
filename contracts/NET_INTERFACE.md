@@ -368,10 +368,15 @@ Handshake specifics:
   `MAX_ADDRESS_BYTES`); `capabilities` is a count-capped list of bounded codes (unknown
   capabilities preserved, not rejected — forward compat)
 
-**A banned peer's handshake is refused unread.** The inbound handshake handler checks `isBanned(peerId)`
+**A banned peer's handshake is refused unread.** Inbound, the handshake handler checks `isBanned(peerId)`
 before it reads: a banned peer's stream is closed with no decode, no reply, and no `Active` transition.
-Reading and validating it would spend work on, and possibly re-admit, a peer whose ban is the whole
-point — the byte cap and read deadline bound that work but do not decline it.
+Outbound, the dial funnel checks the same predicate against the peer id the dial resolved to — after the
+own-peer check, before the handshake stream opens: the connection is closed, no handshake runs, nothing
+is recorded, and the dialled address joins the peer's ban (→ "Ban surfaces are unified"). Reading and
+validating either would spend work on, and possibly re-admit, a peer whose ban is the whole point — the
+byte cap and read deadline bound that work but do not decline it. The check is by peer id in both
+directions because that is the identity the transport proves; an address is tied to a peer only by a
+dial, so an address ban can cover no more spellings than dials have named.
 
 **Ban policy** — two tiers, split by what a failure is evidence of:
 
@@ -681,7 +686,10 @@ Key behaviors:
   address whose dial resolved to this node's own peer id is forgotten and dropped thereafter — a DNS
   name or a NAT-mapped address for this node matches no listen address, and the dial is the one test
   that names it (→ Handshake)
-- **Blacklist filter:** banned peers excluded from `recent()` lookups
+- **Blacklist filter:** banned addresses are excluded from `recent()` and `get()` and refused by
+  `record()`. The ban set holds and compares addresses without their `/p2p/` component, as the self
+  filter and the fill phase compare, and `ban(address)` removes every entry that matches that way — a
+  declared address carries the component, a seed or a gossiped entry for the same host may not
 - **Persistence:** write-through via `PeerStorage` trait. `put` failures
   logged and swallowed — in-memory state demotes to ephemeral.
 
@@ -701,12 +709,21 @@ valid test/embedded configuration, not the production one.
 must not drift apart: a peer that `PeerManager` bans is otherwise still
 served in `Peers` responses and re-dialed by the outbound fill phase.
 
-- `PeerMetadata` carries the peer's declared `address`, recorded when the
-  peer reaches `Active` (the handshake is the only place both identities
-  are known).
-- Every `PeerManager` ban — temporal or permanent — propagates to
-  `PeerDb.ban(address)` for the peer's recorded address, so the address
-  leaves `recent()` and is refused re-entry by `record()`.
+- `PeerMetadata` carries the peer's `address` — the address this node dialled, or the address the
+  peer declared — recorded when the peer reaches `Active` (the handshake is the only place both
+  identities are known).
+- **A ban carries every address its peer has been tied to.** The ban entry opens with the recorded
+  address, when there is one, and grows by one each time an outbound dial resolves to the banned
+  peer id under another spelling (→ Handshake, "A banned peer's handshake is refused unread"). Every
+  address in the set propagates to `PeerDb.ban(address)` as it is learned, so it leaves `recent()`
+  and is refused re-entry by `record()`; expiry of a temporal ban calls `PeerDb.unban(address)` for
+  each. A peer is held in PeerDb under as many spellings as there were ways to learn it — a seed's
+  bare string, its declared address, a gossiped one — and a `PeerRecord` names no peer id, so the
+  dial is the one test that ties a spelling to the ban. The set grows by at most one address per
+  outbound tick, and the address surface it feeds is capped at `MAX_BANNED_ADDRS`.
+- A spelling no dial has named yet stays served in `Peers` and stays dialable until one does; the
+  peer-id check at the funnel refuses that dial, so an unlearned spelling costs one dial and never a
+  handshake.
 
 **Ban tracking is a bounded hint, not a ledger.** Both surfaces cap what they hold — `MAX_TRACKED_BANS`
 peer ids in `PeerManager`, `MAX_BANNED_ADDRS` addresses in `PeerDb` — and drop the oldest past the cap.
@@ -715,7 +732,6 @@ lazy repeat rather than guaranteeing exclusion; an unbounded set of such hints i
 an attacker mints by misbehaving under fresh ids. Eviction lapses a hint — it is not the propagated
 unban that keeps the two surfaces in step (above), and it grants nothing a regenerated identity could
 not already take.
-- Expiry of a temporal ban calls `PeerDb.unban(address)`.
 
 **Known limitation, deliberately not solved here:** a libp2p peerId is
 freely regenerable and an address can be re-dialed from a new identity,
@@ -851,6 +867,9 @@ is how a node gets eclipsed. Inbound connections are counted toward
 - A seed whose dial resolved to this node's own peer id is retired from the floor for the life of the
   process — dialled once, closed, never listed again, connections or none (→ Handshake, "A connection
   whose remote peer id is this node's own is never a peer"); a restart re-learns it
+- A seed whose dial resolved to a banned peer id is closed at the funnel like any other dial to that
+  peer (→ Handshake); the floor keeps listing it while the ban stands, at the tick's cadence — the same
+  cost as an unreachable seed
 - PeerDb not consulted — seeds are the bootstrap source
 
 **Fill phase** (outbound connections >= `minPeers`, < `maxPeers`):
@@ -865,8 +884,10 @@ is how a node gets eclipsed. Inbound connections are counted toward
   seed is bare, a declared address carries it — so a raw string comparison misses a connected
   peer held under a bare key and re-dials it every tick
 - Dial one candidate per tick (most recently seen first), through the same funnel as a seed: the
-  dial, the own-peer check, then the outbound handshake — a dial that does not handshake yields no
-  Active peer. A candidate that resolved to this node is forgotten (→ PeerDb)
+  dial, the own-peer check, the ban check, then the outbound handshake — a dial that does not
+  handshake yields no Active peer. A candidate that resolved to this node is forgotten (→ PeerDb); one
+  that resolved to a banned peer id is closed and its spelling joins the ban (→ Handshake, "A banned
+  peer's handshake is refused unread")
 - Respect blacklist and redial cooldown (`outboundRedialCooldownMs`, 60s)
 - If PeerDb exhausted, idle until new gossip arrives
 
@@ -1432,6 +1453,8 @@ import `NetworkProfile`, and reads no environment variable for them.
 - Unknown message codes and peer capabilities are preserved, not rejected
 - A node is never its own peer: a connection to its own peer id is closed at the dial and refused
   at the handshake, and the PeerDb self-address filter keeps its own addresses out of the fill phase
+- A banned peer is never handshaken: refused unread inbound, closed at the dial outbound, and every
+  address a dial ties to it leaves PeerDb
 - Bogus addresses filtered silently; malformed Peers trigger permanent ban
 - Stage 1 reads no store — its one stateful input is the cached
   karma-membership set (`NODE_INTERFACE` → Post transactions); the body check reads only

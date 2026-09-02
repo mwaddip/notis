@@ -868,6 +868,19 @@ export class NetNode {
         return false;
       }
 
+      // NET_INTERFACE → "A banned peer's handshake is refused unread": the
+      // funnel checks the peer id the dial resolved to next, before
+      // recordSeedPeer and before the handshake stream opens — closed,
+      // unrecorded, and the dialled address joins the peer's ban (→ "A ban
+      // carries every address its peer has been tied to").
+      const remote = conn.remotePeer.toString();
+      if (this.peerMgr.isBanned(remote)) {
+        console.log(`[net] dial to ${addr} resolved to banned peer ${remote} — closing`);
+        await conn.close().catch(() => { /* already gone */ });
+        this.peerMgr.extendBan(remote, addr);
+        return false;
+      }
+
       // NET_INTERFACE → Outbound Manager, Floor phase: the floor skips a seed
       // whose peer holds a live connection; a bare seed has no peer id of its
       // own, so remember the peer this dial resolved to.

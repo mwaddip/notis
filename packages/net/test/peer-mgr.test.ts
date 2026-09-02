@@ -404,6 +404,88 @@ describe('PeerManager', () => {
       expect(pairMgr.isBanned('ghost')).toBe(true);
       expect(calls.ban).toBe(0);
     });
+
+    // -----------------------------------------------------------------
+    // extendBan (NET_INTERFACE → "A ban carries every address its peer
+    // has been tied to")
+    // -----------------------------------------------------------------
+
+    it('extendBan ties another address to an already-banned peer, fires onBan once more, is idempotent on a repeat address, and refuses an unbanned id', () => {
+      const { pairMgr, peerDb, calls } = makeBanPair();
+      trackPeer(pairMgr, peerDb, 'peer1', ADDR);
+      pairMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, 'peer1', 'malformed Peers');
+      expect(calls.ban).toBe(1);
+
+      expect(pairMgr.extendBan('peer1', OTHER)).toBe(true);
+      expect(calls.ban).toBe(2);
+      expect(peerDb.isBanned(OTHER)).toBe(true);
+
+      // Idempotent: the same address again fires nothing further.
+      expect(pairMgr.extendBan('peer1', OTHER)).toBe(true);
+      expect(calls.ban).toBe(2);
+
+      // An id that was never banned: refused, nothing fired.
+      expect(pairMgr.extendBan('ghost', ADDR)).toBe(false);
+      expect(calls.ban).toBe(2);
+    });
+
+    it('extendBan on a temporal ban: expiry fires onUnban once per address, both lifted; control one ms before expiry', () => {
+      const { pairMgr, peerDb, calls } = makeBanPair();
+      trackPeer(pairMgr, peerDb, 'peer1', ADDR);
+
+      vi.spyOn(Date, 'now').mockReturnValue(1_000);
+      pairMgr.recordPenalty('misbehavior', 'peer1', 500, 'threshold crossed');
+      expect(pairMgr.extendBan('peer1', OTHER)).toBe(true);
+      expect(peerDb.isBanned(OTHER)).toBe(true);
+
+      // Control: one ms before expiry, both spellings are still banned.
+      vi.spyOn(Date, 'now').mockReturnValue(1_000 + config.temporalBanDurationMs - 1);
+      expect(pairMgr.isBanned('peer1')).toBe(true);
+      expect(peerDb.isBanned(ADDR)).toBe(true);
+      expect(peerDb.isBanned(OTHER)).toBe(true);
+      expect(calls.unban).toBe(0);
+
+      vi.spyOn(Date, 'now').mockReturnValue(1_000 + config.temporalBanDurationMs);
+      expect(pairMgr.isBanned('peer1')).toBe(false);
+      expect(calls.unban).toBe(2);
+      expect(peerDb.isBanned(ADDR)).toBe(false);
+      expect(peerDb.isBanned(OTHER)).toBe(false);
+    });
+
+    it('extendBan on a permanent ban with no recorded address (untracked-address or never-added path): onBan fires once, the list having started empty', () => {
+      const { pairMgr, calls } = makeBanPair();
+      // Tracked, but the handshake never completed — no declared address.
+      pairMgr.addPeer(makePeer('peer1'));
+      pairMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, 'peer1', 'pre-handshake violation');
+      expect(calls.ban).toBe(0);
+      expect(pairMgr.extendBan('peer1', ADDR)).toBe(true);
+      expect(calls.ban).toBe(1);
+
+      // Never added at all (the works-even-if-never-added permanent path).
+      pairMgr.recordPenalty('permanent', 'ghost', 0, 'never added');
+      expect(calls.ban).toBe(1);
+      expect(pairMgr.extendBan('ghost', OTHER)).toBe(true);
+      expect(calls.ban).toBe(2);
+    });
+
+    it('extendBan on a temporal ban seeded with no address: onBan fires once on extend, and expiry unbans the extended address', () => {
+      const { pairMgr, peerDb, calls } = makeBanPair();
+      // Tracked and scored, but never declared an address.
+      pairMgr.addPeer(makePeer('peer1'));
+      vi.spyOn(Date, 'now').mockReturnValue(1_000);
+      pairMgr.recordPenalty('misbehavior', 'peer1', 500, 'threshold crossed');
+      expect(pairMgr.isBanned('peer1')).toBe(true);
+      expect(calls.ban).toBe(0); // seeded empty — nothing to propagate yet
+
+      expect(pairMgr.extendBan('peer1', ADDR)).toBe(true);
+      expect(calls.ban).toBe(1);
+      expect(peerDb.isBanned(ADDR)).toBe(true);
+
+      vi.spyOn(Date, 'now').mockReturnValue(1_000 + config.temporalBanDurationMs);
+      expect(pairMgr.isBanned('peer1')).toBe(false);
+      expect(calls.unban).toBe(1);
+      expect(peerDb.isBanned(ADDR)).toBe(false);
+    });
   });
 });
 

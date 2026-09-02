@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
   generateKeyPair,
   computeContentHash,
@@ -18,8 +18,10 @@ import {
 } from '@dagsocial/validation';
 import { NetNode } from '../src/node.js';
 import type { NetConfig, NetValidators } from '../src/types.js';
+import { PenaltyKind, PeerState } from '../src/types.js';
 import { makeConfig as makeBaseConfig } from './helpers.js';
 import type { PeerDb } from '../src/peerdb.js';
+import type { PeerManager } from '../src/peer-mgr.js';
 
 function makeConfig(bootstrapPeers: string[] = []): NetConfig {
   return makeBaseConfig({ bootstrapPeers });
@@ -310,6 +312,7 @@ describe('Two-node integration', () => {
 
 interface Internals {
   peerDb: PeerDb;
+  peerMgr: PeerManager;
   outboundTick(): void;
 }
 
@@ -460,5 +463,164 @@ describe('the fill phase does not re-dial a connected candidate recorded bare', 
       expect(nodeB.libp2pNode?.getConnections()).toHaveLength(1);
       expect(nodeB.getConnectedPeers()).toEqual([nodeA.peerId()]);
     }
+  }, TIMEOUT);
+});
+
+// ---------------------------------------------------------------------------
+// A banned peer is never handshaken (NET_INTERFACE → "A banned peer's
+// handshake is refused unread"; NET_INTERFACE → "A ban carries every address
+// its peer has been tied to") — driven through the real outbound funnel: the
+// dial, the own-peer check, the ban check, then the handshake for anyone else.
+// ---------------------------------------------------------------------------
+
+describe('the outbound funnel refuses a banned peer before the handshake', () => {
+  let nodeA: NetNode;
+  let nodeB: NetNode;
+
+  afterEach(async () => {
+    await nodeA?.stop();
+    await nodeB?.stop();
+  });
+
+  it('a permanently banned candidate is closed before the handshake', async () => {
+    nodeA = new NetNode(makeConfig(), validators);
+    await nodeA.start();
+    const aId = nodeA.peerId();
+    const aMultiaddr = nodeA.libp2pNode?.getMultiaddrs()[0]?.toString();
+    expect(aMultiaddr).toBeTruthy();
+    const bareAAddr = aMultiaddr!.split('/p2p/')[0]!;
+
+    nodeB = new NetNode(makeBaseConfig({ bootstrapPeers: [], minPeers: 0 }), validators);
+    await nodeB.start();
+    const internalsB = nodeB as unknown as Internals;
+
+    // Banned before any connection — the funnel is what has to catch this,
+    // not the inbound handler (there is no inbound handshake here at all).
+    internalsB.peerMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, aId, 'test');
+    internalsB.peerDb.record({
+      address: bareAAddr,
+      lastSeenMs: Date.now(),
+      agentName: 'test',
+      nodeName: '',
+      protocolVersion: PROTOCOL_VERSION,
+      capabilities: [],
+    });
+
+    const logSpy = vi.spyOn(console, 'log');
+    internalsB.outboundTick();
+    await new Promise((r) => setTimeout(r, 1500));
+    const logs = logSpy.mock.calls.map((args) => String(args[0]));
+    logSpy.mockRestore();
+
+    expect(nodeB.libp2pNode?.getConnections()).toEqual([]);
+    expect(nodeB.getConnectedPeers()).toEqual([]);
+    expect(nodeA.getConnectedPeers()).toEqual([]);
+    expect(internalsB.peerDb.isBanned(bareAAddr)).toBe(true);
+    expect(internalsB.peerDb.get(bareAAddr)).toBeNull();
+
+    // The mechanism, named: the funnel's own line fired, and no handshake
+    // line did — a test going green on some other guard would prove nothing
+    // about this one.
+    expect(logs.some((l) => l.includes(`resolved to banned peer ${aId}`))).toBe(true);
+    expect(logs.some((l) => l.includes('outbound handshake with'))).toBe(false);
+  }, TIMEOUT);
+
+  it('a temporally banned peer does not become Active through a second spelling', async () => {
+    nodeA = new NetNode(makeConfig(), validators);
+    await nodeA.start();
+    const aId = nodeA.peerId();
+    const aMultiaddr = nodeA.libp2pNode?.getMultiaddrs()[0]?.toString();
+    expect(aMultiaddr).toBeTruthy();
+    const port = aMultiaddr!.match(/tcp\/(\d+)/)?.[1];
+    expect(port).toBeTruthy();
+    const ipAddr = `/ip4/127.0.0.1/tcp/${port}`;
+    const dnsAddr = `/dns4/localhost/tcp/${port}`;
+
+    nodeB = new NetNode(makeBaseConfig({ bootstrapPeers: [], minPeers: 0 }), validators);
+    await nodeB.start();
+    const internalsB = nodeB as unknown as Internals;
+
+    // Record bare, tick, settle — the fill phase dials A and both sides go Active.
+    internalsB.peerDb.record({
+      address: ipAddr,
+      lastSeenMs: Date.now(),
+      agentName: 'test',
+      nodeName: '',
+      protocolVersion: PROTOCOL_VERSION,
+      capabilities: [],
+    });
+    internalsB.outboundTick();
+    await new Promise((r) => setTimeout(r, 3000));
+    expect(nodeB.getConnectedPeers()).toContain(aId);
+    expect(nodeB.libp2pNode?.getConnections()).toHaveLength(1);
+
+    // A second spelling of the same host, learned separately (a gossiped
+    // entry or a second seed would arrive this way — DNS resolves to the
+    // same loopback target the live connection already holds).
+    internalsB.peerDb.record({
+      address: dnsAddr,
+      lastSeenMs: Date.now(),
+      agentName: 'test',
+      nodeName: '',
+      protocolVersion: PROTOCOL_VERSION,
+      capabilities: [],
+    });
+
+    internalsB.peerMgr.recordPenalty('misbehavior', aId, 500, 'test');
+    // Control: the ban takes A out of the peers map at once and leaves the
+    // live connection open — a ban does not hang up a connection; it is the
+    // SECOND tick this test measures.
+    expect(nodeB.getConnectedPeers()).not.toContain(aId);
+    expect(nodeB.libp2pNode?.getConnections()).toHaveLength(1);
+
+    internalsB.outboundTick();
+    await new Promise((r) => setTimeout(r, 1500));
+
+    expect(nodeB.getConnectedPeers()).not.toContain(aId);
+    expect(internalsB.peerMgr.getPeerMetadata(aId)?.state).not.toBe(PeerState.Active);
+    expect(internalsB.peerDb.isBanned(dnsAddr)).toBe(true);
+    expect(nodeB.libp2pNode?.getConnections().length).toBeLessThanOrEqual(1);
+  }, TIMEOUT);
+
+  it('a seed that resolves to a banned peer is dialled again on the next tick', async () => {
+    nodeA = new NetNode(makeConfig(), validators);
+    await nodeA.start();
+    const aId = nodeA.peerId();
+    const aMultiaddr = nodeA.libp2pNode?.getMultiaddrs()[0]?.toString();
+    expect(aMultiaddr).toBeTruthy();
+    const bareAAddr = aMultiaddr!.split('/p2p/')[0]!;
+
+    const configB = makeConfig();
+    nodeB = new NetNode(configB, validators);
+    await nodeB.start();
+    const internalsB = nodeB as unknown as Internals;
+
+    internalsB.peerMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, aId, 'test');
+    // NetNode keeps the caller's config object by reference (this.config =
+    // config), so pushing after start() still reaches the manager's seed list.
+    configB.bootstrapPeers.push(bareAAddr);
+
+    const logSpy = vi.spyOn(console, 'log');
+
+    internalsB.outboundTick();
+    await new Promise((r) => setTimeout(r, 1500));
+
+    let logs = logSpy.mock.calls.map((args) => String(args[0]));
+    expect(logs.filter((l) => l.includes(`resolved to banned peer ${aId}`))).toHaveLength(1);
+    expect(logs.some((l) => l.includes('outbound handshake with'))).toBe(false);
+    expect(nodeB.libp2pNode?.getConnections()).toEqual([]);
+    expect(nodeB.getConnectedPeers()).toEqual([]);
+    expect(nodeA.getConnectedPeers()).toEqual([]);
+
+    // The floor keeps listing a banned seed while the ban stands
+    // (NET_INTERFACE → Outbound Manager, Floor phase) — a second tick dials
+    // it again, at the same cost as an unreachable seed.
+    internalsB.outboundTick();
+    await new Promise((r) => setTimeout(r, 1500));
+
+    logs = logSpy.mock.calls.map((args) => String(args[0]));
+    logSpy.mockRestore();
+    expect(logs.filter((l) => l.includes(`resolved to banned peer ${aId}`))).toHaveLength(2);
+    expect(nodeB.libp2pNode?.getConnections()).toEqual([]);
   }, TIMEOUT);
 });
