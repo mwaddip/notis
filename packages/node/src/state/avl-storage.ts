@@ -6,9 +6,15 @@ import type Database from 'better-sqlite3';
 /**
  * SQLite-backed VersionedAVLStorage.
  *
- * Stores each version's tree as individual serialized nodes keyed by
- * (version, node_label). All nodes are fully stored per version --
- * no cross-version deduplication, which keeps rollback self-contained.
+ * NODE_INTERFACE → AVL+ State Root → "AVL storage shares nodes across versions;
+ * a row is a node's lifetime". A node's label is the hash of its content and
+ * its children's labels, so an unchanged subtree carries the same label in
+ * every version and `avl_tree_nodes` holds it once per lifetime, keyed
+ * `(label, first_seen_height)`; `avl_tree_versions` is one row per applied
+ * block, the version being the digest (root label ‖ tree height). An update at
+ * height `h` orphans the previous tree's nodes the new tree no longer holds and
+ * writes the new tree's nodes that have no live row; a version resolves from
+ * its root label through the rows alive at its height.
  */
 export class SqliteAvlStorage implements VersionedAVLStorage {
   private db: Database.Database;
@@ -22,92 +28,97 @@ export class SqliteAvlStorage implements VersionedAVLStorage {
   update(prover: BatchAVLProver, additionalData: [Uint8Array, Uint8Array][]): void {
     const newVersion = prover.digest();
     if (!newVersion) throw new Error('Prover digest is null');
+    const height = blockHeightOf(additionalData);
 
+    // Valid here because `generateProofAndUpdateStorage` runs update before
+    // the proof that rebases the cycle: the previous cycle's nodes whose
+    // labels the current tree no longer holds.
+    const removed = prover.removedNodes();
+
+    const orphan = this.db.prepare(
+      'UPDATE avl_tree_nodes SET orphaned_at_height = ? WHERE label = ? AND orphaned_at_height IS NULL',
+    );
+    const hasLiveRow = this.db.prepare(
+      'SELECT 1 FROM avl_tree_nodes WHERE label = ? AND orphaned_at_height IS NULL LIMIT 1',
+    );
+    const insertNode = this.db.prepare(
+      'INSERT INTO avl_tree_nodes (label, node_data, first_seen_height, orphaned_at_height) VALUES (?, ?, ?, NULL)',
+    );
     const insertVersion = this.db.prepare(
       'INSERT INTO avl_tree_versions (version, height) VALUES (?, ?)',
     );
 
-    // Extract block height from additionalData (HEIGHT_SENTINEL -> height)
-    let height = 0;
-    for (const [k, v] of additionalData) {
-      if (k.length === 32 && k.every(b => b === 0)) {
-        height = new DataView(
-          v.buffer,
-          v.byteOffset,
-          v.length,
-        ).getUint32(0, false);
-        break;
-      }
-    }
-
-    const insertNode = this.db.prepare(
-      'INSERT OR REPLACE INTO avl_tree_nodes (version, label, node_data) VALUES (?, ?, ?)',
-    );
-
-    const transaction = this.db.transaction(() => {
+    this.db.transaction(() => {
+      // Orphan before writing. The removed set and the new tree are disjoint,
+      // so the walk never consults a row the orphaning touches; the order is
+      // stated so that every live row the walk reads is a row the new tree
+      // holds. A reported label with no live row is the never-persisted
+      // first-cycle sentinel leaf — zero rows updated is fine.
+      for (const node of removed) orphan.run(height, label(node));
+      this.writeLifetimes(prover.root, height, hasLiveRow, insertNode);
       insertVersion.run(newVersion, height);
-
-      // Walk tree post-order, serialize and store every node
-      if (prover.root) {
-        this.walkAndStore(prover.root, insertNode, newVersion);
-      }
-    });
-
-    transaction();
+    })();
   }
 
-  private walkAndStore(
+  /**
+   * Walk from the root: a label with a live row is a subtree shared with a
+   * retained version — a live ancestor has live descendants — so the walk
+   * stops there; every other node is a new lifetime first seen at `height`.
+   */
+  private writeLifetimes(
     node: AvlNode,
-    insertStmt: Database.Statement,
-    version: Uint8Array,
+    height: number,
+    hasLiveRow: Database.Statement,
+    insertNode: Database.Statement,
   ): void {
-    if (node.kind === 'internal') {
-      this.walkAndStore(node.left, insertStmt, version);
-      this.walkAndStore(node.right, insertStmt, version);
-    }
-
     const nodeLabel = label(node);
-    const nodeData = serializeNode(node, this.config);
-    insertStmt.run(version, nodeLabel, nodeData);
+    if (hasLiveRow.get(nodeLabel) !== undefined) return;
+    insertNode.run(nodeLabel, serializeNode(node, this.config), height);
+    if (node.kind === 'internal') {
+      this.writeLifetimes(node.left, height, hasLiveRow, insertNode);
+      this.writeLifetimes(node.right, height, hasLiveRow, insertNode);
+    }
   }
 
   rollback(version: Uint8Array): [AvlNode, number] {
-    const rows = this.db
-      .prepare('SELECT label, node_data FROM avl_tree_nodes WHERE version = ?')
-      .all(version) as Array<{ label: Buffer; node_data: Buffer }>;
-
-    if (rows.length === 0) {
+    const atHeight = this.versionHeight(version);
+    if (atHeight === null) {
       throw new Error(`Version not found: ${Buffer.from(version).toString('hex')}`);
     }
 
-    // Deserialize all nodes, index by label hex
-    const nodeMap = new Map<string, AvlNode>();
-    for (const row of rows) {
-      const node = deserializeNode(new Uint8Array(row.node_data), this.config);
-      const lbl = Buffer.from(row.label).toString('hex');
-      nodeMap.set(lbl, node);
-    }
+    const alive = this.db.prepare(
+      'SELECT node_data FROM avl_tree_nodes WHERE label = ? ' +
+      'AND first_seen_height <= ? AND (orphaned_at_height IS NULL OR orphaned_at_height > ?)',
+    );
 
-    // Rebuild the tree bottom-up from the root label (version = rootLabel || height).
-    // deserializeNode returns each internal node's children as LabelNode stubs;
-    // nodes are immutable, so stubs are resolved into real subtrees by
-    // constructing fresh internal nodes rather than relinking in place.
-    // A stored version is self-contained -- a missing child means the stored
-    // data is corrupt, so fail closed instead of returning a tree the prover
-    // cannot traverse. The internal `key` is not part of the node's label but
-    // the prover needs it for descent, so it is carried through.
-    const resolve = (labelHex: string): AvlNode => {
-      const node = nodeMap.get(labelHex);
-      if (!node) throw new Error(`Missing node for label ${labelHex} in stored version`);
+    // Resolve from the root label (version = rootLabel || tree height), reading
+    // per label the row alive at the version's height. Lifetimes of one label
+    // never overlap, so exactly one row answers; none is local corruption, and
+    // the resolution fails closed rather than hand the prover a tree it cannot
+    // traverse. deserializeNode returns an internal node's children as
+    // LabelNode stubs; nodes are immutable, so stubs are resolved into real
+    // subtrees by constructing fresh internal nodes. The internal `key` is not
+    // part of the label but the prover descends by it, so it is carried through.
+    const resolve = (nodeLabel: Uint8Array): AvlNode => {
+      const rows = alive.all(nodeLabel, atHeight, atHeight) as Array<{ node_data: Buffer }>;
+      if (rows.length !== 1) {
+        const hex = Buffer.from(nodeLabel).toString('hex');
+        throw new Error(
+          rows.length === 0
+            ? `Missing node for label ${hex} alive at height ${atHeight}`
+            : `Overlapping lifetimes for label ${hex} at height ${atHeight} (${rows.length} rows)`,
+        );
+      }
+      const node = deserializeNode(new Uint8Array(rows[0]!.node_data), this.config);
       if (node.kind !== 'internal') return node;
-      const left = resolve(Buffer.from(label(node.left)).toString('hex'));
-      const right = resolve(Buffer.from(label(node.right)).toString('hex'));
+      const left = resolve(label(node.left));
+      const right = resolve(label(node.right));
       return newInternal(left, right, node.balance, node.key);
     };
 
-    const root = resolve(Buffer.from(version.slice(0, 32)).toString('hex'));
-    const height = version[32]!;
-    return [root, height];
+    const root = resolve(version.slice(0, 32));
+    const treeHeight = version[32]!;
+    return [root, treeHeight];
   }
 
   version(): Uint8Array | null {
@@ -144,43 +155,49 @@ export class SqliteAvlStorage implements VersionedAVLStorage {
   }
 
   /**
-   * Delete the stored version(s) recorded at exactly this block height.
-   * Fork rollback: a reverted height's version rows are per-block derived
-   * state, deleted alongside the block and journal rows. Leaving them behind
-   * makes `versionAtOrBeforeHeight` resolve rolled-back state, and re-applying
-   * a block at the height (reorg back to a previously-reverted chain) would
-   * re-insert the same content-addressed version and trip the PRIMARY KEY.
+   * The fork revert's inverse of the update at this height: the rows first
+   * seen at `height` go, the rows orphaned at `height` are live again, and the
+   * version row(s) at `height` go, so the version below reads exactly as it
+   * did. A block re-applied at the height then writes fresh rows — nothing
+   * first seen there remains to clash with — and the same content-addressed
+   * version row inserts again.
    */
   deleteVersionAtHeight(height: number): void {
-    const transaction = this.db.transaction(() => {
+    this.db.transaction(() => {
+      this.db.prepare('DELETE FROM avl_tree_nodes WHERE first_seen_height = ?').run(height);
       this.db.prepare(
-        'DELETE FROM avl_tree_nodes WHERE version IN ' +
-        '(SELECT version FROM avl_tree_versions WHERE height = ?)',
+        'UPDATE avl_tree_nodes SET orphaned_at_height = NULL WHERE orphaned_at_height = ?',
       ).run(height);
-      this.db.prepare(
-        'DELETE FROM avl_tree_versions WHERE height = ?',
-      ).run(height);
-    });
-    transaction();
+      this.db.prepare('DELETE FROM avl_tree_versions WHERE height = ?').run(height);
+    })();
   }
 
+  /**
+   * A row orphaned at or below the cutoff was read by versions below its
+   * orphan height only, all of them deleted here, so it goes with them; a row
+   * orphaned above the cutoff is still read by a retained version.
+   */
   pruneVersionsBefore(cutoffHeight: number): void {
-    const transaction = this.db.transaction(() => {
-      // Delete nodes first (FK to versions)
+    this.db.transaction(() => {
       this.db.prepare(
-        'DELETE FROM avl_tree_nodes WHERE version IN ' +
-        '(SELECT version FROM avl_tree_versions WHERE height < ?)',
+        'DELETE FROM avl_tree_nodes WHERE orphaned_at_height IS NOT NULL AND orphaned_at_height <= ?',
       ).run(cutoffHeight);
-      // Delete versions
-      this.db.prepare(
-        'DELETE FROM avl_tree_versions WHERE height < ?',
-      ).run(cutoffHeight);
-    });
-    transaction();
+      this.db.prepare('DELETE FROM avl_tree_versions WHERE height < ?').run(cutoffHeight);
+    })();
   }
 
   flush(): void {
     // SQLite WAL is auto-flushed; explicit checkpoint for durability
     this.db.pragma('wal_checkpoint(TRUNCATE)');
   }
+}
+
+/** The block height rides `additionalData` under the all-zero sentinel key, 4-byte big-endian. */
+function blockHeightOf(additionalData: [Uint8Array, Uint8Array][]): number {
+  for (const [k, v] of additionalData) {
+    if (k.length === 32 && k.every(b => b === 0)) {
+      return new DataView(v.buffer, v.byteOffset, v.length).getUint32(0, false);
+    }
+  }
+  return 0;
 }

@@ -198,26 +198,41 @@ const MIGRATIONS = [
   )`,
 ];
 
+// NODE_INTERFACE → AVL+ State Root → "AVL storage shares nodes across versions; a row is a node's lifetime"
+const AVL_NODES_TABLE = (name: string): string => `
+  CREATE TABLE ${name} (
+    label BLOB NOT NULL,
+    node_data BLOB NOT NULL,
+    first_seen_height INTEGER NOT NULL,
+    orphaned_at_height INTEGER,
+    PRIMARY KEY (label, first_seen_height)
+  )`;
+
+// The prune deletes by orphan height; the fork revert deletes and clears by
+// first-seen and orphan height. Label lookups ride the primary key.
+const AVL_NODES_INDEXES = `
+  CREATE INDEX IF NOT EXISTS idx_avl_tree_nodes_orphaned ON avl_tree_nodes(orphaned_at_height);
+  CREATE INDEX IF NOT EXISTS idx_avl_tree_nodes_first_seen ON avl_tree_nodes(first_seen_height);
+`;
+
 function migrateAvlTree(database: Database.Database): void {
   const tables = database
     .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='avl_tree_versions'")
     .all() as Array<{ name: string }>;
-  if (tables.length > 0) return;
+  if (tables.length === 0) {
+    database.exec(`
+      CREATE TABLE avl_tree_versions (
+        version BLOB PRIMARY KEY,
+        height INTEGER NOT NULL,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+      ${AVL_NODES_TABLE('avl_tree_nodes')};
+      ${AVL_NODES_INDEXES}
+    `);
+    return;
+  }
 
-  database.exec(`
-    CREATE TABLE avl_tree_versions (
-      version BLOB PRIMARY KEY,
-      height INTEGER NOT NULL,
-      created_at INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-
-    CREATE TABLE avl_tree_nodes (
-      version BLOB NOT NULL REFERENCES avl_tree_versions(version),
-      label BLOB NOT NULL,
-      node_data BLOB NOT NULL,
-      PRIMARY KEY (version, label)
-    );
-  `);
+  database.exec(AVL_NODES_INDEXES);
 }
 
 function migrateBlockTopology(database: Database.Database): void {

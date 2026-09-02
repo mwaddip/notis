@@ -162,8 +162,9 @@ describe('seedGenesisState', () => {
         version BLOB PRIMARY KEY, height INTEGER NOT NULL,
         created_at INTEGER NOT NULL DEFAULT (unixepoch()));
       CREATE TABLE avl_tree_nodes (
-        version BLOB NOT NULL REFERENCES avl_tree_versions(version),
-        label BLOB NOT NULL, node_data BLOB NOT NULL, PRIMARY KEY (version, label));
+        label BLOB NOT NULL, node_data BLOB NOT NULL,
+        first_seen_height INTEGER NOT NULL, orphaned_at_height INTEGER,
+        PRIMARY KEY (label, first_seen_height));
     `);
     const mirror = s.prover.createAvlProver(mirrorDb);
     s.prover.bootstrapAvlProver(mirror, boxes, 0, records, networkPuts);
@@ -190,8 +191,9 @@ describe('seedGenesisState', () => {
         version BLOB PRIMARY KEY, height INTEGER NOT NULL,
         created_at INTEGER NOT NULL DEFAULT (unixepoch()));
       CREATE TABLE avl_tree_nodes (
-        version BLOB NOT NULL REFERENCES avl_tree_versions(version),
-        label BLOB NOT NULL, node_data BLOB NOT NULL, PRIMARY KEY (version, label));
+        label BLOB NOT NULL, node_data BLOB NOT NULL,
+        first_seen_height INTEGER NOT NULL, orphaned_at_height INTEGER,
+        PRIMARY KEY (label, first_seen_height));
     `);
     const mirror = s.prover.createAvlProver(mirrorDb);
     s.prover.bootstrapAvlProver(mirror, [...boxes].reverse(), 0, [...records].reverse(), networkPuts);
@@ -466,8 +468,9 @@ describe('seedGenesisState — a store that is not empty', () => {
         version BLOB PRIMARY KEY, height INTEGER NOT NULL,
         created_at INTEGER NOT NULL DEFAULT (unixepoch()));
       CREATE TABLE avl_tree_nodes (
-        version BLOB NOT NULL REFERENCES avl_tree_versions(version),
-        label BLOB NOT NULL, node_data BLOB NOT NULL, PRIMARY KEY (version, label));
+        label BLOB NOT NULL, node_data BLOB NOT NULL,
+        first_seen_height INTEGER NOT NULL, orphaned_at_height INTEGER,
+        PRIMARY KEY (label, first_seen_height));
     `);
     const mirror = s.prover.createAvlProver(mirrorDb);
     s.prover.bootstrapAvlProver(mirror, boxes, 0, records, networkPuts);

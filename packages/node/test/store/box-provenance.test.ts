@@ -76,10 +76,11 @@ function makeAvlDb(): Database.Database {
       created_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
     CREATE TABLE avl_tree_nodes (
-      version BLOB NOT NULL REFERENCES avl_tree_versions(version),
       label BLOB NOT NULL,
       node_data BLOB NOT NULL,
-      PRIMARY KEY (version, label)
+      first_seen_height INTEGER NOT NULL,
+      orphaned_at_height INTEGER,
+      PRIMARY KEY (label, first_seen_height)
     );
   `);
   return database;
