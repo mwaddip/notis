@@ -51,7 +51,7 @@ interface Internals {
   peerMgr: PeerManager;
   peerDb: PeerDb;
   outboundMgr: unknown;
-  dialBootstrapPeer(addr: string): Promise<boolean>;
+  dialAndHandshake(addr: string, source: 'seed' | 'candidate'): Promise<boolean>;
 }
 
 describe('tipApplied — the boundary sweep', () => {
@@ -148,7 +148,7 @@ describe('the outbound bootstrap record keeps the peer\'s declared version', () 
     internals.peerMgr.addPeer({ id: peerId, multiaddrs: [], protocols: [], connectedAt: 0 });
     net.setChainHeightProvider(() => 0); // era at 1 = 1; the peer declaring 2 covers it
 
-    const ok = await internals.dialBootstrapPeer(addr);
+    const ok = await internals.dialAndHandshake(addr, 'seed');
 
     expect(ok).toBe(true);
     expect(peerDb.get(addr)?.protocolVersion).toBe(2);
@@ -158,7 +158,7 @@ describe('the outbound bootstrap record keeps the peer\'s declared version', () 
   it('hands the peer the dial resolved to back to the manager (floor skips a connected seed)', async () => {
     // NET_INTERFACE → Outbound Manager, Floor phase: the mapping a bootstrap
     // dial establishes is what lets the floor skip the seed while its peer is
-    // connected. dialBootstrapPeer records it the moment the dial resolves.
+    // connected. dialAndHandshake records it the moment the dial resolves.
     const net = new NetNode(makeConfig(), validators);
     const internals = net as unknown as Internals;
     const peerId = 'boot-peer';
@@ -183,7 +183,7 @@ describe('the outbound bootstrap record keeps the peer\'s declared version', () 
     internals.peerMgr.addPeer({ id: peerId, multiaddrs: [], protocols: [], connectedAt: 0 });
     net.setChainHeightProvider(() => 0);
 
-    await internals.dialBootstrapPeer(addr);
+    await internals.dialAndHandshake(addr, 'seed');
 
     expect(learned).toEqual([[addr, peerId]]);
   });

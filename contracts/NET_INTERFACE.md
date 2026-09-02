@@ -255,6 +255,15 @@ and the stream closed; there is **no unframed fallback**, so no handshake byte i
 parsed except as the body of a checksum-verified frame. The
 classification of each frame-decode failure is the Ban policy's first tier below.
 
+**A connection whose remote peer id is this node's own is never a peer.** libp2p refuses a dial
+that names its own peer id, and a bare seed names none — so a seed that resolves to this node
+(the seed host dialling its own profile entry) connects to it, in both directions. The dial closes
+such a connection the moment it resolves, before any handshake and before any record; the inbound
+handler refuses a handshake stream from this node's own id the way it refuses any other — an empty
+frame — with no penalty, there being nobody to penalise. A seed that resolved to this node leaves
+the floor for the life of the process (→ Outbound Manager); a PeerDb address that did is forgotten
+and filtered thereafter (→ PeerDb). `peers()` and `getConnectedPeers()` never contain `peerId()`.
+
 ### Handshake Body
 
 ```
@@ -667,8 +676,11 @@ interface PeerRecord {
 Key behaviors:
 - **Soft cap:** 1000 entries (`peerDbCap`). Evict oldest `lastSeenMs` on
   overflow.
-- **Self-address filter:** entries matching our own listen addresses are
-  silently dropped
+- **Self-address filter:** entries matching our own listen addresses (compared without their
+  `/p2p/` component, as the fill phase compares) are silently dropped, and an
+  address whose dial resolved to this node's own peer id is forgotten and dropped thereafter — a DNS
+  name or a NAT-mapped address for this node matches no listen address, and the dial is the one test
+  that names it (→ Handshake)
 - **Blacklist filter:** banned peers excluded from `recent()` lookups
 - **Persistence:** write-through via `PeerStorage` trait. `put` failures
   logged and swallowed — in-memory state demotes to ephemeral.
@@ -836,6 +848,9 @@ is how a node gets eclipsed. Inbound connections are counted toward
   holds a live connection is skipped: a network with fewer seeds than `minPeers` stays below the
   floor by construction, and re-dialing a connected seed every tick would open a fresh connection
   and run a fresh handshake against it each time
+- A seed whose dial resolved to this node's own peer id is retired from the floor for the life of the
+  process — dialled once, closed, never listed again, connections or none (→ Handshake, "A connection
+  whose remote peer id is this node's own is never a peer"); a restart re-learns it
 - PeerDb not consulted — seeds are the bootstrap source
 
 **Fill phase** (outbound connections >= `minPeers`, < `maxPeers`):
@@ -844,8 +859,14 @@ is how a node gets eclipsed. Inbound connections are counted toward
 - `exclude` is the union of **currently-connected addresses** and
   addresses in redial cooldown. Excluding connected addresses is
   required, not an optimization — without it the manager re-dials peers
-  it already holds and starves genuinely new candidates.
-- Dial one candidate per tick (most recently seen first)
+  it already holds and starves genuinely new candidates. **Addresses compare without their
+  `/p2p/` component**: libp2p stamps the remote peer id onto a connection's address once the
+  upgrade identifies it, while a PeerDb key carries the id or not by where it was learned — a
+  seed is bare, a declared address carries it — so a raw string comparison misses a connected
+  peer held under a bare key and re-dials it every tick
+- Dial one candidate per tick (most recently seen first), through the same funnel as a seed: the
+  dial, the own-peer check, then the outbound handshake — a dial that does not handshake yields no
+  Active peer. A candidate that resolved to this node is forgotten (→ PeerDb)
 - Respect blacklist and redial cooldown (`outboundRedialCooldownMs`, 60s)
 - If PeerDb exhausted, idle until new gossip arrives
 
@@ -884,7 +905,7 @@ Node start
   │     ├── Send GetPeers → receive Peers → feed PeerDb
   │     └── If peer ahead → initiate sync
   │
-  └── Outbound manager fills from PeerDb
+  └── Outbound manager fills from PeerDb — dial, own-peer check, handshake, Active, as a seed
 ```
 
 ---
@@ -1182,8 +1203,8 @@ structure, PoW, and signatures.
 | `start(config)` | `(NetConfig) => Promise<void>` | Create libp2p node, connect to bootstrap peers, subscribe to topics |
 | `stop()` | `() => Promise<void>` | Graceful shutdown |
 | `peerId()` | `() => string` | This node's libp2p peer ID |
-| `peers()` | `() => Peer[]` | Connected peers with metadata |
-| `getConnectedPeers()` | `() => string[]` | Peer IDs of currently connected peers |
+| `peers()` | `() => Peer[]` | Connected peers with metadata, at any peer state; never this node itself (→ Handshake) |
+| `getConnectedPeers()` | `() => string[]` | Peer IDs of the Active peers — the DAGsocial handshake completed; never this node's own (→ Handshake) |
 | `tipApplied(height)` | `(number) => void` | The node reports each applied tip — every successful apply and the tip a reorg leaves, at the seam where it stamps `dag_tip_height`. When `protocolVersionAt(schedule, height + 1)` is above the era last in force, the boundary sweep runs (→ Post-Handshake Routing); inside an era it does nothing |
 | `syncPhase()` | `() => 'idle' \| 'syncing' \| 'backfill' \| 'synced'` | The sync machine's phase (Sync State Machine). `'idle'` means no sync has been needed: before `start()`, after `stop()`, and on a node that never met a peer ahead of it — a co-started mesh follows gossip at `'idle'` and never enters `'synced'`; only a node that fell behind passes through `'syncing'` → `'backfill'` → `'synced'`. A reader wanting "not behind" tests for `'syncing'`/`'backfill'` absent, not for `'synced'` present |
 
@@ -1409,7 +1430,8 @@ import `NetworkProfile`, and reads no environment variable for them.
   own positional wire encoding, unframed
 - Sync is bidirectional — nodes serve peers behind them, not just consume
 - Unknown message codes and peer capabilities are preserved, not rejected
-- PeerDb self-address filter prevents self-dial loops
+- A node is never its own peer: a connection to its own peer id is closed at the dial and refused
+  at the handshake, and the PeerDb self-address filter keeps its own addresses out of the fill phase
 - Bogus addresses filtered silently; malformed Peers trigger permanent ban
 - Stage 1 reads no store — its one stateful input is the cached
   karma-membership set (`NODE_INTERFACE` → Post transactions); the body check reads only

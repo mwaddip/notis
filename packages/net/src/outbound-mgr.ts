@@ -1,5 +1,6 @@
 import type { PeerDb } from './peerdb.js';
 import type { NetConfig } from './types.js';
+import { addressWithoutPeerId } from './util.js';
 
 /**
  * The slice of a libp2p Connection the outbound manager reads. Structural, so
@@ -22,6 +23,7 @@ export interface OutboundTickPlan {
 export class OutboundManager {
   private cooldowns: Map<string, number> = new Map();
   private seedPeerIds: Map<string, string> = new Map();
+  private retiredSeeds: Set<string> = new Set();
   private readonly redialCooldownMs: number;
   private readonly minPeers: number;
 
@@ -33,12 +35,18 @@ export class OutboundManager {
     this.minPeers = config.minPeers ?? 3;
   }
 
-  /** Call after a dial succeeds or fails. */
+  /**
+   * Call after a dial succeeds or fails. Keyed on the address without its
+   * `/p2p/` component (NET_INTERFACE → Outbound Manager), the same
+   * comparison `pickCandidate`'s exclude set and `PeerDb.recent()` use, so a
+   * cooldown recorded under one spelling still matches the other.
+   */
   recordDialResult(addr: string, success: boolean): void {
+    const key = addressWithoutPeerId(addr);
     if (!success) {
-      this.cooldowns.set(addr, Date.now() + this.redialCooldownMs);
+      this.cooldowns.set(key, Date.now() + this.redialCooldownMs);
     } else {
-      this.cooldowns.delete(addr);
+      this.cooldowns.delete(key);
     }
   }
 
@@ -50,6 +58,16 @@ export class OutboundManager {
    */
   recordSeedPeer(addr: string, peerId: string): void {
     this.seedPeerIds.set(addr, peerId);
+  }
+
+  /**
+   * A seed whose dial resolved to this node's own peer id: retired from the
+   * floor for the manager's lifetime — dialled once, closed, never listed
+   * again, connections or none (NET_INTERFACE → Outbound Manager). A restart
+   * re-learns it — there is no un-retiring within one manager's lifetime.
+   */
+  recordSeedSelf(addr: string): void {
+    this.retiredSeeds.add(addr);
   }
 
   /**
@@ -66,7 +84,10 @@ export class OutboundManager {
     const connectedPeerIds = new Set<string>();
     for (const conn of connections) {
       if (conn.direction === 'outbound') connectedOutbound++;
-      connectedAddrs.add(conn.remoteAddr.toString());
+      // NET_INTERFACE → Outbound Manager → "Addresses compare without their
+      // /p2p/ component": libp2p stamps the remote peer id onto remoteAddr
+      // once the upgrade identifies it, but a PeerDb key may be bare.
+      connectedAddrs.add(addressWithoutPeerId(conn.remoteAddr.toString()));
       connectedPeerIds.add(conn.remotePeer.toString());
     }
     return {
@@ -79,6 +100,7 @@ export class OutboundManager {
         connectedOutbound >= this.minPeers
           ? []
           : this.config.bootstrapPeers.filter((addr) => {
+              if (this.retiredSeeds.has(addr)) return false;
               const learned = this.seedPeerIds.get(addr);
               return learned === undefined || !connectedPeerIds.has(learned);
             }),

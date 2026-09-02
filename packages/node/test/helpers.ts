@@ -1,4 +1,5 @@
 import { createHash, generateKeyPairSync, sign as cryptoSign, type KeyObject } from 'crypto';
+import Database from 'better-sqlite3';
 import {
   computeTxId,
   decodeTx,
@@ -26,6 +27,7 @@ import { verifyOrderingBlockPoW, blockHash, level as headerLevel, asertTargetBit
 import { materializeOutput } from '../src/services/utxo-engine.js';
 import { config } from '../src/config.js';
 import type { Config } from '../src/config.js';
+import { AVL_SCHEMA } from '../src/store/db.js';
 import type { AvlProverHandle, RecordPut } from '../src/state/avl-prover.js';
 import type {
   UtxoTransaction,
@@ -41,6 +43,18 @@ import type {
   BlockHeader,
   OrderingBlock,
 } from '@dagsocial/types';
+
+/**
+ * An in-memory database carrying the AVL tables (NODE_INTERFACE → AVL+ State
+ * Root → "AVL storage shares nodes across versions; a row is a node's
+ * lifetime") — `AVL_SCHEMA` is the same text the fresh-database path in
+ * `src/store/db.ts` executes, so a fixture built here cannot drift from it.
+ */
+export function openAvlDb(): Database.Database {
+  const db = new Database(':memory:');
+  db.exec(AVL_SCHEMA);
+  return db;
+}
 
 /**
  * Convert a short string label to a deterministic 32-byte Uint8Array

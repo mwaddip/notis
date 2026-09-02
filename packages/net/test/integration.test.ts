@@ -19,6 +19,7 @@ import {
 import { NetNode } from '../src/node.js';
 import type { NetConfig, NetValidators } from '../src/types.js';
 import { makeConfig as makeBaseConfig } from './helpers.js';
+import type { PeerDb } from '../src/peerdb.js';
 
 function makeConfig(bootstrapPeers: string[] = []): NetConfig {
   return makeBaseConfig({ bootstrapPeers });
@@ -297,5 +298,167 @@ describe('Two-node integration', () => {
     const afterSwap = await nodeB.requestHeaders(3, 3, nodeA.peerId());
 
     expect(afterSwap.map((h) => h.height)).toEqual([2, 1]);
+  }, TIMEOUT);
+});
+
+// ---------------------------------------------------------------------------
+// A connection to our own peer id is never a peer (NET_INTERFACE →
+// "A connection whose remote peer id is this node's own is never a peer") —
+// driven through the real outbound funnel: the dial, the own-peer check, then
+// the handshake for anyone else.
+// ---------------------------------------------------------------------------
+
+interface Internals {
+  peerDb: PeerDb;
+  outboundTick(): void;
+}
+
+describe('the outbound funnel and our own peer id', () => {
+  let nodeA: NetNode;
+  let nodeB: NetNode;
+
+  afterEach(async () => {
+    await nodeA?.stop();
+    await nodeB?.stop();
+  });
+
+  it('a seed that resolves to ourselves is dialled once, closed, and never dialled again', async () => {
+    const configA = makeConfig();
+    nodeA = new NetNode(configA, validators);
+    await nodeA.start();
+
+    // Bare — no `/p2p/<peerId>` suffix, the shape the testnet profile's real
+    // seed has (NET_INTERFACE → "A connection whose remote peer id is this
+    // node's own is never a peer"). A multiaddr that names a peer id is
+    // refused by libp2p's own dial-queue before it ever reaches this node's
+    // own-peer check; only a bare address reaches TCP, upgrades, and resolves
+    // to our own id afterward.
+    const selfMultiaddr = nodeA.libp2pNode?.getMultiaddrs()[0]?.toString();
+    expect(selfMultiaddr).toBeTruthy();
+    const bareSelfAddr = selfMultiaddr!.split('/p2p/')[0]!;
+    // NetNode keeps the caller's config object by reference (this.config =
+    // config), so pushing after start() still reaches the manager's seed list.
+    configA.bootstrapPeers.push(bareSelfAddr);
+
+    const internals = nodeA as unknown as Internals;
+    internals.outboundTick();
+    await new Promise((r) => setTimeout(r, 1000));
+
+    expect(nodeA.peers()).toEqual([]);
+    expect(nodeA.getConnectedPeers()).toEqual([]);
+    expect(nodeA.libp2pNode?.getConnections()).toEqual([]);
+
+    // Retired for the manager's lifetime: a second tick plans no seed dial.
+    internals.outboundTick();
+    await new Promise((r) => setTimeout(r, 300));
+    expect(nodeA.libp2pNode?.getConnections()).toEqual([]);
+  }, TIMEOUT);
+
+  it('the fill phase runs the outbound handshake', async () => {
+    nodeA = new NetNode(makeConfig(), validators);
+    await nodeA.start();
+    const aAddr = nodeA.libp2pNode?.getMultiaddrs()[0]?.toString();
+    expect(aAddr).toBeTruthy();
+
+    nodeB = new NetNode(makeBaseConfig({ bootstrapPeers: [], minPeers: 0 }), validators);
+    await nodeB.start();
+
+    const internalsB = nodeB as unknown as Internals;
+    internalsB.peerDb.record({
+      address: aAddr!,
+      lastSeenMs: Date.now(),
+      agentName: 'test',
+      nodeName: '',
+      protocolVersion: PROTOCOL_VERSION,
+      capabilities: [],
+    });
+
+    internalsB.outboundTick();
+    await new Promise((r) => setTimeout(r, 3000));
+
+    expect(nodeB.getConnectedPeers()).toContain(nodeA.peerId());
+    expect(nodeA.getConnectedPeers()).toContain(nodeB.peerId());
+  }, TIMEOUT);
+
+  it('a PeerDb candidate that resolves to ourselves is closed and forgotten', async () => {
+    nodeB = new NetNode(makeBaseConfig({ bootstrapPeers: [], minPeers: 0 }), validators);
+    await nodeB.start();
+
+    // A spelling PeerDb's self-address filter does not match — the listen
+    // addresses recorded at start() are IP literals, not this DNS name — so
+    // the record is admitted, and only the funnel's peer-id check catches it.
+    const bAddrs = nodeB.libp2pNode?.getMultiaddrs() ?? [];
+    const port = bAddrs[0]?.toString().match(/tcp\/(\d+)/)?.[1];
+    expect(port).toBeTruthy();
+    const selfCandidate = `/dns4/localhost/tcp/${port}`;
+
+    const internalsB = nodeB as unknown as Internals;
+    const record = {
+      address: selfCandidate,
+      lastSeenMs: Date.now(),
+      agentName: 'test',
+      nodeName: '',
+      protocolVersion: PROTOCOL_VERSION,
+      capabilities: [],
+    };
+    internalsB.peerDb.record(record);
+
+    internalsB.outboundTick();
+    await new Promise((r) => setTimeout(r, 1500));
+
+    expect(nodeB.libp2pNode?.getConnections()).toEqual([]);
+    expect(internalsB.peerDb.get(selfCandidate)).toBeNull();
+
+    // Forgotten AND filtered thereafter — a later record of the same address
+    // is dropped (NET_INTERFACE → PeerDb).
+    internalsB.peerDb.record(record);
+    expect(internalsB.peerDb.get(selfCandidate)).toBeNull();
+  }, TIMEOUT);
+});
+
+// ---------------------------------------------------------------------------
+// Addresses compare without their `/p2p/` component (NET_INTERFACE →
+// Outbound Manager → "Addresses compare without their `/p2p/` component") —
+// a connected candidate recorded bare must not be re-dialled every tick.
+// ---------------------------------------------------------------------------
+
+describe('the fill phase does not re-dial a connected candidate recorded bare', () => {
+  let nodeA: NetNode;
+  let nodeB: NetNode;
+
+  afterEach(async () => {
+    await nodeA?.stop();
+    await nodeB?.stop();
+  });
+
+  it('B holds exactly one connection to A across three ticks', async () => {
+    nodeA = new NetNode(makeConfig(), validators);
+    await nodeA.start();
+    const aMultiaddr = nodeA.libp2pNode?.getMultiaddrs()[0]?.toString();
+    expect(aMultiaddr).toBeTruthy();
+    // Bare — the shape every seed carries and the shape this pin measured
+    // the bug under (declaredAddress-learned keys already carry /p2p/ and
+    // are unaffected).
+    const bareAAddr = aMultiaddr!.split('/p2p/')[0]!;
+
+    nodeB = new NetNode(makeBaseConfig({ bootstrapPeers: [], minPeers: 0 }), validators);
+    await nodeB.start();
+
+    const internalsB = nodeB as unknown as Internals;
+    internalsB.peerDb.record({
+      address: bareAAddr,
+      lastSeenMs: Date.now(),
+      agentName: 'test',
+      nodeName: '',
+      protocolVersion: PROTOCOL_VERSION,
+      capabilities: [],
+    });
+
+    for (let tick = 0; tick < 3; tick++) {
+      internalsB.outboundTick();
+      await new Promise((r) => setTimeout(r, 1500));
+      expect(nodeB.libp2pNode?.getConnections()).toHaveLength(1);
+      expect(nodeB.getConnectedPeers()).toEqual([nodeA.peerId()]);
+    }
   }, TIMEOUT);
 });

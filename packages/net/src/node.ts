@@ -558,7 +558,7 @@ export class NetNode {
   // NET_INTERFACE → Sync Handler Registration: post body seams
   private postBodyProvider: ((postId: string) => string | null) | null = null;
   private postBodyHandlers: Array<(postId: string, content: string, fromPeerId: string) => boolean> = [];
-  private pendingBootstrapDials: Set<string> = new Set();
+  private pendingDials: Set<string> = new Set();
   private lastGetPeersSentMs: Map<string, number> = new Map();
 
   constructor(config: NetConfig, validators: NetValidators, peerStorage?: PeerStorage) {
@@ -697,6 +697,10 @@ export class NetNode {
 
     this.libp2p.addEventListener('peer:connect', (evt: any) => {
       const peerId = evt.detail?.toString() ?? 'unknown';
+      // NET_INTERFACE → "A connection whose remote peer id is this node's own
+      // is never a peer": never added, so peers() never lists it even between
+      // the upgrade and the funnel's close.
+      if (peerId === libp2p.peerId.toString()) return;
       console.log(`[net] peer:connect ${peerId} (total=${this.peerMgr.getPeerCount() + 1})`);
       this.peerMgr.addPeer({
         id: peerId,
@@ -764,50 +768,53 @@ export class NetNode {
     // Connect to bootstrap peers (awaited — must complete before caller
     // registers blocksHandler so the initial sync burst isn't dropped).
     for (const addr of this.config.bootstrapPeers) {
-      await this.dialBootstrapPeer(addr);
+      await this.dialAndHandshake(addr, 'seed');
     }
 
     // Start periodic timer: outbound manager + peer discovery. The sync machine
-    // keeps its own tick cadence inside its event loop.
-    this.syncTimer = setInterval(() => {
-      if (this.libp2p && this.outboundMgr) {
-        // Both phases count outbound connections only — inbound connections
-        // filling our slots must never suppress our own dialing (eclipse
-        // setup). planTick also feeds the connected addresses into the fill
-        // phase's exclude set.
-        const plan = this.outboundMgr.planTick(this.libp2p.getConnections());
-
-        // Floor phase: dial the bootstrap seeds the manager selected — each
-        // whose peer is not already connected (NET_INTERFACE → Outbound
-        // Manager, Floor phase).
-        for (const addr of plan.bootstrapDials) {
-          this.dialBootstrapPeer(addr);
-        }
-
-        // Fill phase: dial one PeerDb candidate per tick
-        const candidate = plan.candidate;
-        if (candidate) {
-          console.log(`[net] outbound manager dialing: ${candidate}`);
-          this.libp2p.dial(multiaddr(candidate)).then((conn) => {
-            console.log(`[net] outbound dial succeeded: ${candidate} -> peer=${conn.remotePeer.toString()}`);
-            this.outboundMgr?.recordDialResult(candidate, true);
-          }).catch((err: any) => {
-            console.warn(`[net] outbound dial FAILED: ${candidate} — ${err?.message ?? err}`);
-            this.outboundMgr?.recordDialResult(candidate, false);
-          });
-        }
-      }
-
-      // Peer discovery cadence: GetPeers to each Active peer every
-      // GET_PEERS_INTERVAL_MS, riding this tick rather than a second timer.
-      if (this.libp2p) {
-        for (const peerId of duePeerExchange(this.peerMgr, this.lastGetPeersSentMs, Date.now())) {
-          this.requestPeers(peerId);
-        }
-      }
-    }, OUTBOUND_TICK_INTERVAL_MS);
+    // keeps its own tick cadence inside its event loop. A method, not an
+    // inline closure, so a test can drive one tick without waiting
+    // OUTBOUND_TICK_INTERVAL_MS.
+    this.syncTimer = setInterval(() => this.outboundTick(), OUTBOUND_TICK_INTERVAL_MS);
 
     this.started = true;
+  }
+
+  /**
+   * One outbound-timer tick: the floor and fill phases (NET_INTERFACE →
+   * Outbound Manager), then the peer-discovery cadence they ride.
+   */
+  private outboundTick(): void {
+    if (this.libp2p && this.outboundMgr) {
+      // Both phases count outbound connections only — inbound connections
+      // filling our slots must never suppress our own dialing (eclipse
+      // setup). planTick also feeds the connected addresses into the fill
+      // phase's exclude set.
+      const plan = this.outboundMgr.planTick(this.libp2p.getConnections());
+
+      // Floor phase: dial the bootstrap seeds the manager selected — each
+      // whose peer is not already connected (NET_INTERFACE → Outbound
+      // Manager, Floor phase).
+      for (const addr of plan.bootstrapDials) {
+        this.dialAndHandshake(addr, 'seed');
+      }
+
+      // Fill phase: dial one PeerDb candidate per tick, through the same
+      // funnel as a seed — the dial, the own-peer check, then the outbound
+      // handshake (NET_INTERFACE → Outbound Manager).
+      const candidate = plan.candidate;
+      if (candidate) {
+        this.dialAndHandshake(candidate, 'candidate');
+      }
+    }
+
+    // Peer discovery cadence: GetPeers to each Active peer every
+    // GET_PEERS_INTERVAL_MS, riding this tick rather than a second timer.
+    if (this.libp2p) {
+      for (const peerId of duePeerExchange(this.peerMgr, this.lastGetPeersSentMs, Date.now())) {
+        this.requestPeers(peerId);
+      }
+    }
   }
 
   async stop(): Promise<void> {
@@ -816,7 +823,7 @@ export class NetNode {
       clearInterval(this.syncTimer);
       this.syncTimer = null;
     }
-    this.pendingBootstrapDials.clear();
+    this.pendingDials.clear();
     this.lastGetPeersSentMs.clear();
     await this.libp2p.stop();
     this.libp2p = null;
@@ -828,28 +835,46 @@ export class NetNode {
   }
 
   /**
-   * Dial a bootstrap peer (or any multiaddr), run the outbound handshake,
-   * and notify the sync machine + peer-active callbacks on success.
+   * Dial a bootstrap seed or a PeerDb candidate and run the outbound
+   * handshake, notifying the sync machine + peer-active callbacks on
+   * success. The one dial funnel for both outbound paths — `start()`'s seed
+   * loop, the floor, and the fill all call this (NET_INTERFACE → Outbound
+   * Manager).
    *
    * Returns a Promise that resolves to `true` when the handshake succeeds,
    * `false` otherwise.  Safe to call from the periodic timer without
    * awaiting — concurrent dials to the same address are deduplicated via
-   * `pendingBootstrapDials`.
+   * `pendingDials`.
    */
-  private async dialBootstrapPeer(addr: string): Promise<boolean> {
+  private async dialAndHandshake(addr: string, source: 'seed' | 'candidate'): Promise<boolean> {
     if (!this.libp2p || !this.outboundMgr) return false;
-    if (this.pendingBootstrapDials.has(addr)) return false;
-    this.pendingBootstrapDials.add(addr);
+    if (this.pendingDials.has(addr)) return false;
+    this.pendingDials.add(addr);
+    const libp2p = this.libp2p;
 
-    console.log(`[net] dialing bootstrap peer: ${addr}`);
+    console.log(`[net] dialing ${source}: ${addr}`);
     try {
-      const conn = await this.libp2p.dial(multiaddr(addr));
-      this.pendingBootstrapDials.delete(addr);
+      const conn = await libp2p.dial(multiaddr(addr));
+      this.pendingDials.delete(addr);
+
+      // NET_INTERFACE → "A connection whose remote peer id is this node's own
+      // is never a peer": closed the moment it resolves, before any handshake
+      // and before any record.
+      if (conn.remotePeer.toString() === libp2p.peerId.toString()) {
+        console.log(`[net] dial to ${addr} resolved to our own peer id — closing`);
+        await conn.close().catch(() => { /* already gone */ });
+        if (source === 'seed') this.outboundMgr?.recordSeedSelf(addr);
+        else this.peerDb?.forgetSelf(addr);
+        return false;
+      }
+
       // NET_INTERFACE → Outbound Manager, Floor phase: the floor skips a seed
       // whose peer holds a live connection; a bare seed has no peer id of its
       // own, so remember the peer this dial resolved to.
-      this.outboundMgr?.recordSeedPeer(addr, conn.remotePeer.toString());
-      console.log(`[net] bootstrap dial succeeded: ${addr} -> peer=${conn.remotePeer.toString()}`);
+      if (source === 'seed') {
+        this.outboundMgr?.recordSeedPeer(addr, conn.remotePeer.toString());
+      }
+      console.log(`[net] dial succeeded: ${addr} -> peer=${conn.remotePeer.toString()}`);
 
       try {
         const result = await this.runOutboundHandshake(conn.remotePeer.toString());
@@ -863,8 +888,8 @@ export class NetNode {
           this.peerDb?.record({
             address: addr,
             lastSeenMs: Date.now(),
-            agentName: 'bootstrap',
-            nodeName: '',
+            agentName: result.msg.agentName,
+            nodeName: result.msg.nodeName,
             protocolVersion: result.msg.protocolVersion,
             capabilities: result.peerCapabilities,
           });
@@ -879,12 +904,12 @@ export class NetNode {
         }
         return false;
       } catch (handshakeErr: any) {
-        console.warn(`[net] handshake with bootstrap peer ${addr} failed: ${handshakeErr?.message ?? handshakeErr}`);
+        console.warn(`[net] handshake with ${addr} failed: ${handshakeErr?.message ?? handshakeErr}`);
         return false;
       }
     } catch (err: any) {
-      this.pendingBootstrapDials.delete(addr);
-      console.warn(`[net] bootstrap dial FAILED: ${addr} — ${err?.message ?? err}`);
+      this.pendingDials.delete(addr);
+      console.warn(`[net] dial FAILED: ${addr} — ${err?.message ?? err}`);
       this.outboundMgr?.recordDialResult(addr, false);
       return false;
     }
@@ -906,6 +931,14 @@ export class NetNode {
       // is the whole point.
       if (this.peerMgr.isBanned(peerId)) {
         await stream.close().catch(() => { /* the peer is already gone */ });
+        return;
+      }
+      // NET_INTERFACE → "A connection whose remote peer id is this node's own
+      // is never a peer": refused the way any other handshake stream is — an
+      // empty frame — with no penalty, there being nobody to penalise.
+      if (peerId === libp2p.peerId.toString()) {
+        console.log(`[net] inbound handshake from ${peerId}: this is our own peer id — refusing`);
+        await stream.sink([new Uint8Array(0)]).catch(() => { /* the peer is already gone */ });
         return;
       }
       try {

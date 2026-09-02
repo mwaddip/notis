@@ -8,6 +8,7 @@ import {
   MAX_NAME_BYTES,
   MAX_ADDRESS_BYTES,
 } from './msg-guards.js';
+import { addressWithoutPeerId } from './util.js';
 
 export interface PeerStorage {
   loadAll(): PeerRecord[];
@@ -66,7 +67,10 @@ export class PeerDb {
     private cap: number,
     selfAddresses: string[],
   ) {
-    this.selfAddrs = new Set(selfAddresses);
+    // NET_INTERFACE → Outbound Manager → "Addresses compare without their
+    // /p2p/ component": our own listen addresses come from getMultiaddrs()
+    // and carry the suffix; a self-matching seed or PeerDb key may not.
+    this.selfAddrs = new Set(selfAddresses.map(addressWithoutPeerId));
     // Load persisted entries on construction. An unservable row is dropped, not
     // repaired: a capability code is an identity rather than a magnitude, so a
     // clamped one advertises a capability the peer never declared. The row
@@ -79,7 +83,7 @@ export class PeerDb {
           console.warn(`[net] not loading peer row ${addr}: out of domain for a Peers body`);
           continue;
         }
-        if (!this.selfAddrs.has(rec.address)) {
+        if (!this.selfAddrs.has(addressWithoutPeerId(rec.address))) {
           this.entries.set(rec.address, rec);
         }
       }
@@ -87,7 +91,9 @@ export class PeerDb {
   }
 
   record(record: PeerRecord): void {
-    if (this.selfAddrs.has(record.address)) return;
+    // NET_INTERFACE → Outbound Manager → "Addresses compare without their
+    // /p2p/ component" — the self filter uses the same comparison.
+    if (this.selfAddrs.has(addressWithoutPeerId(record.address))) return;
     if (this.bannedAddrs.has(record.address)) return;
 
     const existing = this.entries.get(record.address);
@@ -124,6 +130,17 @@ export class PeerDb {
     this.storage?.delete(addr);
   }
 
+  /**
+   * An address whose dial resolved to this node's own peer id: forgotten now,
+   * and filtered from every later `record` the way our own listen addresses
+   * are — a Peers intake or a handshake naming the same address is dropped
+   * thereafter (NET_INTERFACE → PeerDb).
+   */
+  forgetSelf(addr: string): void {
+    this.forget(addr);
+    this.selfAddrs.add(addressWithoutPeerId(addr));
+  }
+
   /** Ban a peer address — removes from entries and prevents re-add. */
   ban(addr: string): void {
     this.bannedAddrs.add(addr);
@@ -152,9 +169,16 @@ export class PeerDb {
     return this.entries.get(addr) ?? null;
   }
 
+  /**
+   * `excludeAddrs` is compared without `/p2p/` (NET_INTERFACE → Outbound
+   * Manager → "Addresses compare without their `/p2p/` component") — the
+   * caller (`OutboundManager`) normalises what it puts in the set; here only
+   * each candidate's own address needs the same treatment. `bannedAddrs`
+   * compares raw — out of scope for this comparison (NET_INTERFACE → PeerDb).
+   */
   recent(limit: number, excludeAddrs: Set<string>): PeerRecord[] {
     const filtered = Array.from(this.entries.values())
-      .filter((r) => !excludeAddrs.has(r.address) && !this.bannedAddrs.has(r.address));
+      .filter((r) => !excludeAddrs.has(addressWithoutPeerId(r.address)) && !this.bannedAddrs.has(r.address));
     filtered.sort((a, b) => b.lastSeenMs - a.lastSeenMs);
     return filtered.slice(0, limit);
   }

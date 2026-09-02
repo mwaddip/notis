@@ -1,3 +1,4 @@
+import { multiaddr } from '@multiformats/multiaddr';
 import { MAX_STREAM_BYTES } from './msg-guards.js';
 
 export function mergeUint8Arrays(chunks: Uint8Array[]): Uint8Array {
@@ -113,4 +114,23 @@ async function closeAwaited(it: AsyncIterator<unknown>): Promise<void> {
 /** Signal teardown without waiting — used when the source may be parked mid-read. */
 function closeQuietly(it: AsyncIterator<unknown>): void {
   void Promise.resolve(it.return?.()).catch(() => { /* the source is already torn down */ });
+}
+
+/**
+ * An address with any `/p2p/<peerId>` component removed — the comparison the
+ * fill phase and PeerDb's self filter both use instead of a raw string match
+ * (NET_INTERFACE → Outbound Manager → "Addresses compare without their
+ * `/p2p/` component"). libp2p stamps the remote peer id onto a connection's
+ * address once the upgrade identifies it, while a PeerDb key carries it or
+ * not by where it was learned — a seed is bare, a declared address carries
+ * it. `421` is the `p2p` multicodec. A string that fails to parse as a
+ * multiaddr is returned unchanged — a malformed key must not fail the tick
+ * it is compared in.
+ */
+export function addressWithoutPeerId(addr: string): string {
+  try {
+    return multiaddr(addr).decapsulateCode(421).toString();
+  } catch {
+    return addr;
+  }
 }

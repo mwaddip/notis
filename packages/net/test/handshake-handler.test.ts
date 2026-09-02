@@ -75,9 +75,11 @@ function makeHandshakeHarness(opts: {
   sinkThrows?: boolean;
   schedule?: readonly ProtocolEra[];
   multiaddrs?: string[];
+  /** The stream's `connection.remotePeer` — defaults to an ordinary remote id. */
+  remotePeerId?: string;
 } = {}) {
   const net = new NetNode(makeConfig(opts.schedule), validators);
-  const peerId = 'peer-under-test';
+  const peerId = opts.remotePeerId ?? 'peer-under-test';
 
   let captured: StreamHandler | null = null;
   const internals = net as unknown as {
@@ -489,5 +491,31 @@ describe('inbound handshake handler — the record keeps the declared version', 
 
     expect(peerDb.get(addr)?.protocolVersion).toBe(2);
     expect(peerMgr.getPeerMetadata(peerId)?.protocolVersion).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A stream from our own peer id — NET_INTERFACE → "A connection whose remote
+// peer id is this node's own is never a peer": refused the way any other
+// handshake stream is, an empty frame, with no penalty, there being nobody to
+// penalise.
+// ---------------------------------------------------------------------------
+
+describe('inbound handshake handler — a stream from our own peer id', () => {
+  it('answers the empty frame, does not mark it Active, writes no PeerDb record, and does not penalise it', async () => {
+    const { send, peerMgr, peerDb } = makeHandshakeHarness({
+      chainHeight: 0,
+      remotePeerId: 'self-peer-id',
+    });
+    const before = peerMgr.getPeerMetadata('self-peer-id')?.penaltyCount ?? 0;
+
+    const written = await send(validHandshakeFrame());
+
+    expect(isEmptyReply(written)).toBe(true);
+    expect(peerMgr.getPeerMetadata('self-peer-id')?.state).not.toBe(PeerState.Active);
+    // validHandshakeFrame() declares no address, so a written record would
+    // land under the stream's remoteAddr — the harness's fixed value.
+    expect(peerDb.get('/ip4/127.0.0.1/tcp/1234')).toBeNull();
+    expect(peerMgr.getPeerMetadata('self-peer-id')?.penaltyCount ?? 0).toBe(before);
   });
 });

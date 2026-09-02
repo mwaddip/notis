@@ -19,32 +19,12 @@ import {
 import { BOX_TYPE_TAGS } from '@dagsocial/types';
 import type { KarmaBox, AnyBox } from '@dagsocial/types';
 import type { IdentityRecord } from '../../src/store/identity-records.js';
-import { fixtureProvenance } from '../helpers.js';
+import { fixtureProvenance, openAvlDb } from '../helpers.js';
 
 /**
  * Identity records as the AVL tree's second entity kind — NODE_INTERFACE →
  * Three entity kinds and Layout — IdentityRecord.
  */
-
-function makeAvlDb(): Database.Database {
-  const database = new Database(':memory:');
-  database.pragma('journal_mode = WAL');
-  database.exec(`
-    CREATE TABLE avl_tree_versions (
-      version BLOB PRIMARY KEY,
-      height INTEGER NOT NULL,
-      created_at INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-    CREATE TABLE avl_tree_nodes (
-      label BLOB NOT NULL,
-      node_data BLOB NOT NULL,
-      first_seen_height INTEGER NOT NULL,
-      orphaned_at_height INTEGER,
-      PRIMARY KEY (label, first_seen_height)
-    );
-  `);
-  return database;
-}
 
 function makeKarmaBox(id: string, value = 10n): KarmaBox {
   const candidate = {
@@ -62,7 +42,7 @@ describe('identity records in the AVL tree (Spec G phase B3)', () => {
   let db: Database.Database;
   let db2: Database.Database;
 
-  beforeEach(() => { db = makeAvlDb(); db2 = makeAvlDb(); });
+  beforeEach(() => { db = openAvlDb(); db2 = openAvlDb(); });
   afterEach(() => { db.close(); db2.close(); });
 
   // --- serialization: both kinds round-trip, neither decodes as the other ---
@@ -328,7 +308,7 @@ describe('the always-present fields in the record encoding', () => {
   let db: Database.Database;
   let db2: Database.Database;
 
-  beforeEach(() => { db = makeAvlDb(); db2 = makeAvlDb(); });
+  beforeEach(() => { db = openAvlDb(); db2 = openAvlDb(); });
   afterEach(() => { db.close(); db2.close(); });
 
   it('a non-zero like counter round-trips as bigint', () => {

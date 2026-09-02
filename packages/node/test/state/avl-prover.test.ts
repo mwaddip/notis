@@ -8,7 +8,7 @@ import {
   checkpointProver,
 } from '../../src/state/avl-prover.js';
 import { config } from '../../src/config.js';
-import { fixtureProvenance } from '../helpers.js';
+import { fixtureProvenance, openAvlDb } from '../helpers.js';
 import type { AnyBox } from '@dagsocial/types';
 
 /** Storage codec config -- must match the prover createAvlProver() builds. */
@@ -18,22 +18,7 @@ describe('avl-prover', () => {
   let db: Database.Database;
 
   beforeEach(() => {
-    db = new Database(':memory:');
-    db.pragma('journal_mode = WAL');
-    db.exec(`
-      CREATE TABLE avl_tree_versions (
-        version BLOB PRIMARY KEY,
-        height INTEGER NOT NULL,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-      CREATE TABLE avl_tree_nodes (
-        label BLOB NOT NULL,
-        node_data BLOB NOT NULL,
-        first_seen_height INTEGER NOT NULL,
-        orphaned_at_height INTEGER,
-        PRIMARY KEY (label, first_seen_height)
-      );
-    `);
+    db = openAvlDb();
   });
 
   afterEach(() => { db.close(); });
@@ -89,22 +74,7 @@ describe('block-apply integration', () => {
   let db: Database.Database;
 
   beforeEach(() => {
-    db = new Database(':memory:');
-    db.pragma('journal_mode = WAL');
-    db.exec(`
-      CREATE TABLE avl_tree_versions (
-        version BLOB PRIMARY KEY,
-        height INTEGER NOT NULL,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-      CREATE TABLE avl_tree_nodes (
-        label BLOB NOT NULL,
-        node_data BLOB NOT NULL,
-        first_seen_height INTEGER NOT NULL,
-        orphaned_at_height INTEGER,
-        PRIMARY KEY (label, first_seen_height)
-      );
-    `);
+    db = openAvlDb();
   });
 
   afterEach(() => { db.close(); });
@@ -155,8 +125,8 @@ describe('canonical prover-feed ordering (M-12)', () => {
   let db2: Database.Database;
 
   beforeEach(() => {
-    db = makeAvlDb();
-    db2 = makeAvlDb();
+    db = openAvlDb();
+    db2 = openAvlDb();
   });
 
   afterEach(() => {
@@ -330,27 +300,6 @@ describe('canonical prover-feed ordering (M-12)', () => {
     ).toBe(false);
   });
 });
-
-/** In-memory DB carrying the AVL storage schema (mirrors the suite setup). */
-function makeAvlDb(): Database.Database {
-  const database = new Database(':memory:');
-  database.pragma('journal_mode = WAL');
-  database.exec(`
-    CREATE TABLE avl_tree_versions (
-      version BLOB PRIMARY KEY,
-      height INTEGER NOT NULL,
-      created_at INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-    CREATE TABLE avl_tree_nodes (
-      label BLOB NOT NULL,
-      node_data BLOB NOT NULL,
-      first_seen_height INTEGER NOT NULL,
-      orphaned_at_height INTEGER,
-      PRIMARY KEY (label, first_seen_height)
-    );
-  `);
-  return database;
-}
 
 /**
  * A karma box with a **caller-chosen id**, which is what this suite is for: the
