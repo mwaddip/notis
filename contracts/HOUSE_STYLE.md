@@ -181,6 +181,58 @@ that many states worth raising its voice about.
 
 There is no red anywhere.
 
+### Identity colour
+
+The one categorical palette this contract defines: a per-identity hue derived from a public key and
+rendered as a 4px spine.
+
+**The arc is 175–345° in OKLCH** — cyan through blue and violet to magenta. That is what is left
+after excluding every hue that already carries meaning: clay ~40° (warning), gold ~75° (credits),
+green ~135° (karma), and red, which this contract bans outright.
+
+**Widening the arc is not a free win**, and it is the rule here most likely to be found inconvenient.
+A wider arc makes identities collide with meaning — one that hashes gold-ish reads as being about the
+reader's balance, which is the same comprehension failure that forbids gold warnings.
+
+**OKLCH, not HSL.** HSL degrees are perceptually uneven: 15° in the blues is nearly invisible while
+15° in the yellows is a different colour, so even spacing in HSL is uneven spacing to the eye.
+
+**Quantised to twelve evenly spaced stops, never sampled continuously.** Uniform sampling of a
+continuous range *clumps*; it does not spread. Measured on a first cut, eight identities all landed
+inside 196–253° — using 57° of the 120° then available — with one pair identical and another 1°
+apart. Quantising turns every near-miss into either a clear difference or an exact repeat, **and an
+exact repeat is better than a near-miss**: it reads as "same author" instead of sending the reader
+back to compare.
+
+⛔ **Identity colour is a texture, never an identifier.** Twelve stops collide at 43% with four
+identities on screen and 78% with six, so colour cannot be what keeps them apart — the name and the
+text are the discriminator. And nothing in an interface may invite a reader to check who someone is
+by colour: if it did, impersonation would be cheap, because keys can be ground until one lands on a
+target's stop.
+
+### Chroma is area-weighted
+
+A refinement of principle 1, and a general one. What raises arousal is coloured **area**, not
+saturation alone. A whole-bar wash at low chroma reads as nothing; a 4px edge at high chroma reads
+instantly and leaves the surface calm — roughly 100px² of colour against some 10,000px² for the wash.
+
+A small, high-chroma mark therefore spends almost none of the arousal budget. That is what licenses
+both the identity spine above and Fern at 2.92:1 for the logotype.
+
+### A spine and a wash cannot share a lightness
+
+A spine must contrast with the ground to be visible at 4px. A wash must sit *at* the ground's
+lightness so text over it keeps its ratio. One value cannot do both: built from a single lightness, a
+dark wash put `inkMute` at **2.94:1** on a focused bar.
+
+**The wash steps away from the text, never toward it** — lighter than the base on Sand, darker on
+Bistre. Solved that way against the measured grounds (OKLCH L .897/.929 on Sand, .236/.270 on Bistre)
+the tint costs zero contrast in every combination of theme, mode and hue.
+
+⚠ **A contrast-safe wash is nearly invisible on Sand**, whose ground already sits at L .929 with
+almost no room for colour above it; it reads properly on Bistre. **Spine is the only mode that works
+in both**, which is why it is the default and a wash is opt-in.
+
 ## Typography
 
 | Role | Face | Licence |
@@ -359,8 +411,9 @@ Not preachy. The visual register avoids the manifesto; the copy has to as well.
 - **A grid or layout system.** Owned by each surface.
 - **Iconography.** Whether the illustration technique scales down to UI icons at 16–24px is
   untested and may need a separate, plainer treatment.
-- **Data visualisation.** Nothing here covers charts; a categorical palette drawn from one hue
-  at three stops will not stretch far.
+- **Data visualisation.** Nothing here covers charts. The only categorical palette this contract
+  defines is the identity arc, and it is bounded by the hues that already carry meaning — see
+  "Identity colour" — so it does not stretch to a chart's series either.
 
 ## Where the artwork lives
 
