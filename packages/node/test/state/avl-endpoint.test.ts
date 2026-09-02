@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { fixtureProvenance } from '../helpers.js';
+import { fixtureProvenance, openAvlDb } from '../helpers.js';
 import Database from 'better-sqlite3';
 import express from 'express';
 import request from 'supertest';
@@ -14,12 +14,7 @@ describe('GET /api/v1/proof/:boxId', () => {
   let db: Database.Database;
 
   beforeEach(() => {
-    db = new Database(':memory:');
-    db.pragma('journal_mode = WAL');
-    db.exec(`
-      CREATE TABLE avl_tree_versions (version BLOB PRIMARY KEY, height INTEGER NOT NULL, created_at INTEGER NOT NULL DEFAULT (unixepoch()));
-      CREATE TABLE avl_tree_nodes (label BLOB NOT NULL, node_data BLOB NOT NULL, first_seen_height INTEGER NOT NULL, orphaned_at_height INTEGER, PRIMARY KEY (label, first_seen_height));
-    `);
+    db = openAvlDb();
 
     const handle = createAvlProver(db);
 

@@ -1,6 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import { computeBoxId } from '@dagsocial/types';
-import { seedBond, uid } from './helpers.js';
+import { seedBond, uid, openAvlDb } from './helpers.js';
+import { initDb, getDb, closeDb } from '../src/store/db.js';
+
+/** The AVL table/index rows a fresh database carries, keyed for comparison. */
+function avlSchemaRows(db: { prepare: (sql: string) => { all: () => unknown[] } }): unknown[] {
+  return db
+    .prepare(
+      "SELECT type, name, sql FROM sqlite_master WHERE name LIKE 'avl_tree%' OR name LIKE 'idx_avl_tree%' ORDER BY name",
+    )
+    .all();
+}
 
 /**
  * Pins the fixture helpers themselves.
@@ -67,5 +77,26 @@ describe('seedBond — distinct provenance per call', () => {
     const a = seedBond({ label: 'stable', inviterId });
     const b = seedBond({ label: 'stable', inviterId });
     expect(a.bond.id).toBe(b.bond.id);
+  });
+});
+
+/**
+ * `openAvlDb` and the fresh-database branch of `initDb` both execute
+ * `AVL_SCHEMA` (NODE_INTERFACE → AVL+ State Root → "AVL storage shares nodes
+ * across versions; a row is a node's lifetime") — one exported text, not a
+ * copy on each side. A future edit that hands the fresh-database path a
+ * different string fails this pin.
+ */
+describe('openAvlDb — one schema source with the fresh-database path', () => {
+  it('the tables and indexes it creates match initDb(\':memory:\')', () => {
+    const fixtureDb = openAvlDb();
+    const fixtureRows = avlSchemaRows(fixtureDb);
+    fixtureDb.close();
+
+    initDb(':memory:');
+    const liveRows = avlSchemaRows(getDb());
+    closeDb();
+
+    expect(fixtureRows).toEqual(liveRows);
   });
 });

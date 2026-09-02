@@ -3,30 +3,7 @@ import Database from 'better-sqlite3';
 import { BatchAVLProver, PersistentBatchAVLProver, label } from '@ergots/avltree';
 import type { AvlNode } from '@ergots/avltree';
 import { SqliteAvlStorage } from '../../src/state/avl-storage.js';
-
-// The tables initDb creates (NODE_INTERFACE → AVL+ State Root → "AVL storage
-// shares nodes across versions; a row is a node's lifetime").
-function createTestDb() {
-  const db = new Database(':memory:');
-  db.pragma('journal_mode = WAL');
-  db.exec(`
-    CREATE TABLE avl_tree_versions (
-      version BLOB PRIMARY KEY,
-      height INTEGER NOT NULL,
-      created_at INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-    CREATE TABLE avl_tree_nodes (
-      label BLOB NOT NULL,
-      node_data BLOB NOT NULL,
-      first_seen_height INTEGER NOT NULL,
-      orphaned_at_height INTEGER,
-      PRIMARY KEY (label, first_seen_height)
-    );
-    CREATE INDEX idx_avl_tree_nodes_orphaned ON avl_tree_nodes(orphaned_at_height);
-    CREATE INDEX idx_avl_tree_nodes_first_seen ON avl_tree_nodes(first_seen_height);
-  `);
-  return db;
-}
+import { openAvlDb } from '../helpers.js';
 
 const HEIGHT_SENTINEL = new Uint8Array(32); // all zeros
 
@@ -87,7 +64,7 @@ function rootLabelOf(version: Uint8Array): Buffer {
 describe('SqliteAvlStorage', () => {
   let db: Database.Database;
 
-  beforeEach(() => { db = createTestDb(); });
+  beforeEach(() => { db = openAvlDb(); });
   afterEach(() => { db.close(); });
 
   it('version() returns null on empty storage', () => {

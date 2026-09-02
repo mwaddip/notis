@@ -2,10 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import Database from 'better-sqlite3';
 import { hexToBuf, profileFor } from '@dagsocial/types';
 import type { NetworkType } from '@dagsocial/types';
-import { makeTestConfig, mineNextBlock } from '../helpers.js';
+import { makeTestConfig, mineNextBlock, openAvlDb } from '../helpers.js';
 
 /**
  * Genesis is **state, not a block**, and this suite pins the half of that claim
@@ -156,16 +155,7 @@ describe('seedGenesisState', () => {
     const nr = s.records.getNetworkRecord();
     const networkPuts = [{ key: s.records.networkRecordKey(), network: nr }];
 
-    const mirrorDb = new Database(':memory:');
-    mirrorDb.exec(`
-      CREATE TABLE avl_tree_versions (
-        version BLOB PRIMARY KEY, height INTEGER NOT NULL,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()));
-      CREATE TABLE avl_tree_nodes (
-        label BLOB NOT NULL, node_data BLOB NOT NULL,
-        first_seen_height INTEGER NOT NULL, orphaned_at_height INTEGER,
-        PRIMARY KEY (label, first_seen_height));
-    `);
+    const mirrorDb = openAvlDb();
     const mirror = s.prover.createAvlProver(mirrorDb);
     s.prover.bootstrapAvlProver(mirror, boxes, 0, records, networkPuts);
     expect(Buffer.from(mirror.prover.digest()!).toString('hex')).toBe(root);
@@ -185,16 +175,7 @@ describe('seedGenesisState', () => {
     const nr = s.records.getNetworkRecord();
     const networkPuts = [{ key: s.records.networkRecordKey(), network: nr }];
 
-    const mirrorDb = new Database(':memory:');
-    mirrorDb.exec(`
-      CREATE TABLE avl_tree_versions (
-        version BLOB PRIMARY KEY, height INTEGER NOT NULL,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()));
-      CREATE TABLE avl_tree_nodes (
-        label BLOB NOT NULL, node_data BLOB NOT NULL,
-        first_seen_height INTEGER NOT NULL, orphaned_at_height INTEGER,
-        PRIMARY KEY (label, first_seen_height));
-    `);
+    const mirrorDb = openAvlDb();
     const mirror = s.prover.createAvlProver(mirrorDb);
     s.prover.bootstrapAvlProver(mirror, [...boxes].reverse(), 0, [...records].reverse(), networkPuts);
     expect(Buffer.from(mirror.prover.digest()!).toString('hex')).toBe(root);
@@ -462,16 +443,7 @@ describe('seedGenesisState — a store that is not empty', () => {
     const nr = s.records.getNetworkRecord();
     const networkPuts = [{ key: s.records.networkRecordKey(), network: nr }];
 
-    const mirrorDb = new Database(':memory:');
-    mirrorDb.exec(`
-      CREATE TABLE avl_tree_versions (
-        version BLOB PRIMARY KEY, height INTEGER NOT NULL,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch()));
-      CREATE TABLE avl_tree_nodes (
-        label BLOB NOT NULL, node_data BLOB NOT NULL,
-        first_seen_height INTEGER NOT NULL, orphaned_at_height INTEGER,
-        PRIMARY KEY (label, first_seen_height));
-    `);
+    const mirrorDb = openAvlDb();
     const mirror = s.prover.createAvlProver(mirrorDb);
     s.prover.bootstrapAvlProver(mirror, boxes, 0, records, networkPuts);
     expect(Buffer.from(mirror.prover.digest()!).toString('hex')).toBe(root);

@@ -215,20 +215,25 @@ const AVL_NODES_INDEXES = `
   CREATE INDEX IF NOT EXISTS idx_avl_tree_nodes_first_seen ON avl_tree_nodes(first_seen_height);
 `;
 
+// The schema the fresh-database branch below and the test fixtures both execute
+// (NODE_INTERFACE → AVL+ State Root → "AVL storage shares nodes across versions;
+// a row is a node's lifetime") — one exported text, so the two cannot drift apart.
+export const AVL_SCHEMA = `
+  CREATE TABLE avl_tree_versions (
+    version BLOB PRIMARY KEY,
+    height INTEGER NOT NULL,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+  );
+  ${AVL_NODES_TABLE('avl_tree_nodes')};
+  ${AVL_NODES_INDEXES}
+`;
+
 function migrateAvlTree(database: Database.Database): void {
   const tables = database
     .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='avl_tree_versions'")
     .all() as Array<{ name: string }>;
   if (tables.length === 0) {
-    database.exec(`
-      CREATE TABLE avl_tree_versions (
-        version BLOB PRIMARY KEY,
-        height INTEGER NOT NULL,
-        created_at INTEGER NOT NULL DEFAULT (unixepoch())
-      );
-      ${AVL_NODES_TABLE('avl_tree_nodes')};
-      ${AVL_NODES_INDEXES}
-    `);
+    database.exec(AVL_SCHEMA);
     return;
   }
 

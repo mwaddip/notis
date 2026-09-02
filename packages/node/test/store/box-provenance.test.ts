@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { randomBytes } from 'node:crypto';
 import type { AnyBox, KarmaBox, CreditBox } from '@dagsocial/types';
-import { fixtureProvenance } from '../helpers.js';
+import { fixtureProvenance, openAvlDb } from '../helpers.js';
 
 /**
  * Box provenance columns (`tx_id`, `output_index`).
@@ -63,27 +63,6 @@ function hashNonce(s: string): number {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
   return h % 1_000_000;
-}
-
-/** In-memory DB carrying just the AVL storage schema, for an isolated prover. */
-function makeAvlDb(): Database.Database {
-  const database = new Database(':memory:');
-  database.pragma('journal_mode = WAL');
-  database.exec(`
-    CREATE TABLE avl_tree_versions (
-      version BLOB PRIMARY KEY,
-      height INTEGER NOT NULL,
-      created_at INTEGER NOT NULL DEFAULT (unixepoch())
-    );
-    CREATE TABLE avl_tree_nodes (
-      label BLOB NOT NULL,
-      node_data BLOB NOT NULL,
-      first_seen_height INTEGER NOT NULL,
-      orphaned_at_height INTEGER,
-      PRIMARY KEY (label, first_seen_height)
-    );
-  `);
-  return database;
 }
 
 describe('box provenance columns (Spec G phase B)', () => {
@@ -187,11 +166,11 @@ describe('box provenance columns (Spec G phase B)', () => {
     for (const box of produced) insertBox(box);
 
     // "Stayed up": the prover was fed the producer-built objects.
-    const live = createAvlProver(makeAvlDb());
+    const live = createAvlProver(openAvlDb());
     bootstrapAvlProver(live, produced, 0, []);
 
     // "Restarted": the prover re-bootstraps from the store.
-    const restarted = createAvlProver(makeAvlDb());
+    const restarted = createAvlProver(openAvlDb());
     bootstrapAvlProver(restarted, getUnspentBoxes(), 0, []);
 
     const dLive = live.prover.digest();

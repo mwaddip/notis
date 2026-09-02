@@ -66,6 +66,7 @@ import {
   seedProvenance,
   signTransaction,
   txToJson,
+  openAvlDb,
 } from '../helpers.js';
 import { config } from '../../src/config.js';
 import type Database from 'better-sqlite3';
@@ -649,12 +650,7 @@ describe('POST /invites — membership 400', () => {
 
 describe('proof endpoint — kind: network', () => {
   it('serves the network record as kind: network', async () => {
-    const proofDb = new (await import('better-sqlite3')).default(':memory:');
-    proofDb.pragma('journal_mode = WAL');
-    proofDb.exec(`
-      CREATE TABLE avl_tree_versions (version BLOB PRIMARY KEY, height INTEGER NOT NULL, created_at INTEGER NOT NULL DEFAULT (unixepoch()));
-      CREATE TABLE avl_tree_nodes (label BLOB NOT NULL, node_data BLOB NOT NULL, first_seen_height INTEGER NOT NULL, orphaned_at_height INTEGER, PRIMARY KEY (label, first_seen_height));
-    `);
+    const proofDb = openAvlDb();
 
     const handle = createAvlProver(proofDb);
     const nrKey = networkRecordKey();
