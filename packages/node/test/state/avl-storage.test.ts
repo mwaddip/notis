@@ -243,8 +243,8 @@ describe('SqliteAvlStorage', () => {
     // predecessor (whose nextLeafKey changes) plus a bounded rotation, so it
     // adds O(height) rows; an AVL tree over 250 keys is at most
     // ceil(1.44 · log2(252)) ≈ 12 deep. 3 · ceil(log2(250)) = 24 per version
-    // is a loose ceiling on that; the per-version layout wrote every node
-    // (rowsAfterSeed ≈ 400) each time.
+    // is a loose ceiling on that, and far below the ≈ 400 rows a copy of the
+    // whole tree per version would add.
     const added = rowsFinal - rowsAfterSeed;
     expect(added).toBeLessThan(VERSIONS * 3 * Math.ceil(Math.log2(SEED + VERSIONS)));
     expect(added).toBeGreaterThan(VERSIONS); // at least the new leaf and a new root each time
