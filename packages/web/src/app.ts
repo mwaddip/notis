@@ -1,11 +1,11 @@
-import { NodeClient } from './api/client';
+import { NodeClient, type Api } from './api/client';
 import type { PostJson, Tombstone, FeedRow, ThreadResult } from './api/dto';
-import { isWithdrawn } from './api/dto';
 import { el } from './dom';
 import { prefs, setTheme, setIdTint, setNode, writeStore, KEY_LAYOUT, type Theme, type IdTint } from './prefs';
 import { renderFeedInto } from './view/feed';
 import { renderPanesInto, renderRegionElement } from './view/panes';
 import { serialise, parse } from './model/arrangement';
+import { reconcileNewer, isLivePost } from './model/feed-reconcile';
 import {
   newWorkspace, openWindow, closeWindow, moveLeft, moveRight, moveBelow, focusWindow, openSet,
   type Origin, type Region,
@@ -16,20 +16,20 @@ const FEED_LIMIT = 30;
 const THREAD_LIMIT = 50;
 const REFRESH_PAGE_CAP = 40; // a refresh re-reads a whole thread; this bounds the loop
 
-const isLivePost = (r: FeedRow): r is PostJson => !isWithdrawn(r);
 const isWin = (k: string): boolean => k.charAt(0) === '@';
 const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 export class App {
   private state: AppState;
-  private client: NodeClient;
+  private client: Api;
   private appbar!: HTMLElement;
   private feedEl!: HTMLElement;
   private panesEl!: HTMLElement;
   private handlers: Handlers;
 
-  constructor() {
-    this.client = new NodeClient(() => prefs.node);
+  // The client is injectable so a test can drive the App over a fake API.
+  constructor(client?: Api) {
+    this.client = client ?? new NodeClient(() => prefs.node);
     this.state = {
       feed: { posts: [], pending: [], next: null, report: null, olderReport: null, loaded: false, loading: false, error: null },
       threads: new Map(),
@@ -59,15 +59,20 @@ export class App {
   // Mount + boot
   // -------------------------------------------------------------------------
 
-  start(appbar: HTMLElement, feedEl: HTMLElement, panesEl: HTMLElement): void {
+  // Set the DOM refs and paint the initial shell. Split from `start` so a test
+  // can mount and drive actions without the network boot.
+  mount(appbar: HTMLElement, feedEl: HTMLElement, panesEl: HTMLElement): void {
     this.appbar = appbar;
     this.feedEl = feedEl;
     this.panesEl = panesEl;
-
     this.restoreLayout();
     this.renderHeader();
     this.renderFeed();
     this.renderPanes();
+  }
+
+  start(appbar: HTMLElement, feedEl: HTMLElement, panesEl: HTMLElement): void {
+    this.mount(appbar, feedEl, panesEl);
     this.suppressHoverWhileScrolling();
 
     void this.loadFeed();
@@ -232,41 +237,22 @@ export class App {
 
   private async refreshFeed(): Promise<void> {
     const feed = this.state.feed;
-    const have = new Set(feed.posts.map((p) => p.id));
-    const collected: PostJson[] = []; // newest → older
-    let after: string | null = null;
-    let lastNext: string | null = null;
-    let reconnected = false;
     try {
-      // Page from the newest toward older, collecting posts not already held,
-      // until a page reaches one that is — the reconnection point. Without this
-      // a burst larger than one page would leave the new rows sitting above the
-      // old ones with an unmarked hole between them.
-      for (let page = 0; page < REFRESH_PAGE_CAP; page++) {
-        const res = await this.client.feed(after === null ? { limit: FEED_LIMIT } : { limit: FEED_LIMIT, after });
-        this.indexRows([...res.posts, ...res.pending]);
-        if (page === 0) feed.pending = res.pending.filter(isLivePost);
-        for (const row of res.posts) {
-          if (!isLivePost(row)) continue;
-          if (have.has(row.id)) { reconnected = true; break; }
-          collected.push(row);
-        }
-        lastNext = res.next;
-        if (reconnected || res.next === null) break;
-        after = res.next;
-      }
-      if (reconnected || collected.length === 0) {
-        // Contiguous with the existing top. The feed head is not sticky, so a
-        // refresh is read at the top of the column and the new rows land above.
-        feed.posts = [...collected, ...feed.posts];
-      } else {
-        // The whole span up to the page cap is new and never reconnected — the
-        // rows below it are older than this window, so replace rather than
-        // prepend a hole. `load older` continues from where paging stopped.
-        feed.posts = collected;
-        feed.next = lastNext;
-      }
-      feed.report = collected.length ? `${collected.length} new ${collected.length === 1 ? 'post' : 'posts'}` : 'no new posts';
+      // The reconnection paging lives in reconcileNewer; this fetches each page
+      // and takes the mempool from page 0 (the only call with a null cursor).
+      const r = await reconcileNewer(
+        feed.posts,
+        async (after) => {
+          const res = await this.client.feed(after === null ? { limit: FEED_LIMIT } : { limit: FEED_LIMIT, after });
+          this.indexRows([...res.posts, ...res.pending]);
+          if (after === null) feed.pending = res.pending.filter(isLivePost);
+          return { posts: res.posts, next: res.next };
+        },
+        REFRESH_PAGE_CAP,
+      );
+      feed.posts = r.posts;
+      if (r.next !== undefined) feed.next = r.next; // reset only on the replace branch
+      feed.report = r.newCount ? `${r.newCount} new ${r.newCount === 1 ? 'post' : 'posts'}` : 'no new posts';
       feed.error = null;
     } catch (e) {
       feed.error = msg(e);
