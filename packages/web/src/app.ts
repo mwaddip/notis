@@ -92,8 +92,8 @@ export class App {
   }
 
   // -------------------------------------------------------------------------
-  // Render orchestration — per surface, so one action never tears down another
-  // (spec → §5.1: the prototype's one defect).
+  // Render orchestration — per surface, so one action never tears down another:
+  // a thread refresh leaves the feed and every other region untouched.
   // -------------------------------------------------------------------------
 
   private ctx(): RenderCtx {

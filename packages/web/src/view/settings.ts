@@ -3,8 +3,8 @@ import { prefs, type IdTint } from '../prefs';
 import type { Handlers, RenderCtx } from '../model/state';
 
 // @settings — the second window kind, and the proof the frame holds more than
-// threads (workspace-windows → §1). No avatar and no identity colour on it
-// (spec → §7): nothing here may invite a reader to check identity by colour.
+// threads. No avatar and no identity colour on it: nothing here may invite a
+// reader to check identity by colour.
 
 const ID_TINTS: IdTint[] = ['spine', 'wash', 'both', 'off'];
 
@@ -48,7 +48,7 @@ export function settingsBody(handlers: Handlers, ctx: RenderCtx): HTMLElement {
   }
 
   // Node — same-origin by default; a foreign origin fails until the node gains
-  // CORS, and the field says so rather than failing silently (spec → §2.1).
+  // CORS, and the field says so rather than failing silently.
   {
     const { row: r, field } = row('node');
     const input = el('input') as HTMLInputElement;
@@ -62,7 +62,7 @@ export function settingsBody(handlers: Handlers, ctx: RenderCtx): HTMLElement {
   }
 
   // Arrangement — the workspace as the #r1,r2|r5 text form, readable and
-  // copyable (workspace-windows → §4).
+  // copyable.
   {
     const { row: r, field } = row('arrangement');
     const text = ctx.arrangement;

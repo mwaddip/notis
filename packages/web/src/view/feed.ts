@@ -3,7 +3,7 @@ import { card, type ParentRef } from './card';
 import type { PostJson } from '../api/dto';
 import type { FeedState, RenderCtx, Handlers } from '../model/state';
 
-// The feed: roots and replies in one column, newest first (spec → §3 ruling 3).
+// The feed: roots and replies in one column, newest first.
 // A reply shows its parent as a one-line reference, not a rendered card.
 
 function ctlBtn(glyph: string, label: string, fn: () => void): HTMLElement {
@@ -47,7 +47,7 @@ export function renderFeedInto(container: HTMLElement, feed: FeedState, handlers
   }
 
   // Pending (mempool) posts are the newest — they sit above the confirmed ones,
-  // hollow, before any composer exists to create one (spec → §3).
+  // hollow, before any composer exists to create one.
   for (const p of feed.pending) {
     container.appendChild(card(p, { replyCount: null, parentRef: parentRefFor(p, ctx), onOpen: (id) => handlers.openThread(id, { from: 'feed' }) }));
   }

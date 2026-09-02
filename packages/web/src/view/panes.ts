@@ -8,8 +8,8 @@ import type { Region, Workspace } from '../model/workspace';
 import type { Handlers, RenderCtx } from '../model/state';
 
 // The tiling workspace on screen: columns of regions, each region a stack of
-// title bars in a fixed block at the top, then the body of whichever is focused
-// (thread-panes → §2.4). Nothing is an accordion; no bar moves when the focus
+// title bars in a fixed block at the top, then the body of whichever is
+// focused. Nothing is an accordion; no bar moves when the focus
 // changes.
 
 const EMPTY_TEXT =
@@ -65,7 +65,7 @@ function bar(k: string, ci: number, focused: boolean, handlers: Handlers, ctx: R
     label.setAttribute('aria-label', 'show this window');
     label.appendChild(el('span', 'name', 'settings'));
     // Nothing to refresh on a window; ↻ stays in place disabled, the same
-    // reason ← does in the leftmost column (workspace-windows → §1).
+    // reason ← does in the leftmost column.
     ctl.appendChild(ctlBtn('↻', 'nothing to refresh here', null, true));
   } else {
     const m = threadLabel(k, ctx);
@@ -113,7 +113,7 @@ function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handl
   const rootId = t.root.id;
   for (const node of flattenThread(t.root, t.descendants)) {
     // A pane's own root does not advertise that it is open — you are looking at
-    // it. A reply open in another pane still does (thread-panes → §2.8).
+    // it. A reply open in another pane still does.
     body.appendChild(
       card(node.row, {
         open: node.row.id !== rootId && ctx.openSet.has(node.row.id),
@@ -125,9 +125,8 @@ function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handl
     );
   }
 
-  // Descendants load oldest-first (posts.ts → ORDER BY block_height ASC), so
-  // paging forward loads newer replies below — a conversation read top to
-  // bottom. The button reports what it did (spec → §5).
+  // Descendants load oldest-first, so paging forward loads newer replies below
+  // — a conversation read top to bottom. The button reports what it did.
   if (t.next !== null) {
     const foot = el('div', 'feed-foot');
     const b = el('button', 'mini');

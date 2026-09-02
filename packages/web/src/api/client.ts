@@ -21,8 +21,8 @@ export interface Page {
 
 export class NodeClient {
   // The origin is read fresh on every call, never captured — the settings
-  // window can repoint it, and a foreign origin fails until the node gains CORS
-  // (spec → §2.1). The default is same-origin: an empty base.
+  // window can repoint it, and a foreign origin fails until the node gains CORS.
+  // The default is same-origin: an empty base.
   constructor(private origin: () => string) {}
 
   private url(path: string, query?: Record<string, string | number | undefined>): string {

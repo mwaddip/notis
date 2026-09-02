@@ -6,14 +6,14 @@
 :root {
   --mono: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
   --sans: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  /* Light — Sand (HOUSE_STYLE → Colour → Light — Sand) */
+  /* Light — Sand (HOUSE_STYLE → Colour) */
   --ground: #E7DCC6; --surface: #EFE7D5; --border: #CFC1A6; --borderStrong: #8B7A61;
   --ink: #2A2419; --inkMute: #696051; --green: #5E8C3A; --greenText: #476A2C;
   --onGreen: #FAF6EC; --gold: #7F5A1C; --goldFill: #9B762D; --clay: #9A4A2F;
   /* spacing scale: 4 8 12 16 24 32 48 64 96 */
 }
 :root[data-t="dark"] {
-  /* Dark — Bistre (HOUSE_STYLE → Colour → Dark — Bistre) */
+  /* Dark — Bistre (HOUSE_STYLE → Colour) */
   --ground: #211E18; --surface: #2A261D; --border: #3D3830; --borderStrong: #7A6E5C;
   --ink: #E9E1CF; --inkMute: #978B77; --green: #5E8C3A; --greenText: #679A40;
   --onGreen: #141A0C; --gold: #B78328; --goldFill: #E8B84B; --clay: #CC7658;
@@ -95,7 +95,7 @@ header .spacer { flex: 1 1 auto; }
 .card-absent { font-style: italic; color: var(--inkMute); font-size: 14px; }
 
 /* One-line reference to a reply's parent, so a reply is legible as an answer to
-   something without pulling its ancestor into the feed (spec → §4). */
+   something without pulling its ancestor into the feed. */
 .parentref { display: flex; align-items: baseline; gap: 6px; margin-bottom: 8px;
              font-size: 12px; color: var(--inkMute); }
 .parentref .g { flex: 0 0 auto; }
@@ -115,13 +115,13 @@ header .spacer { flex: 1 1 auto; }
 /* the three absence states */
 .withdrawn { font-style: italic; color: var(--inkMute); font-size: 14px; }
 /* A stump keeps the dashed texture reserved for it; pending is hollow and
-   pruned is solid, so the three never converge (spec → §6). */
+   pruned is solid, so the three never converge. */
 .stump { border-style: dashed; }
 .stump-body, .pruned-body { font-size: 14px; color: var(--inkMute); }
 .stump-body .n, .pruned-body .n { font-family: var(--mono); color: var(--ink); }
 
 /* the strip — a control, never the container. Its left edge is the control's
-   sole boundary, so it takes borderStrong (HOUSE_STYLE → Accessibility). */
+   sole boundary, so it takes borderStrong (HOUSE_STYLE → Accessibility contract). */
 .strip {
   flex: 0 0 44px; display: flex; align-items: center; justify-content: center;
   border: 0; border-left: 1px solid var(--borderStrong);
@@ -160,7 +160,7 @@ header .spacer { flex: 1 1 auto; }
 }
 
 /* i3-style stacking: every bar stays at the top and stays readable. Focusing a
-   different window swaps only the body — no bar ever moves (thread-panes → §2.4). */
+   different window swaps only the body — no bar ever moves. */
 .bars { flex: 0 0 auto; border-bottom: 1px solid var(--border); }
 .bar {
   width: 100%; display: flex; align-items: baseline; gap: 8px;
@@ -202,7 +202,7 @@ header .spacer { flex: 1 1 auto; }
 :root[data-idtint="off"] .bar.focused { background: var(--ground); }
 :root[data-idtint="nospine"] .bar { border-left: 0; }
 /* Windows that are not threads carry no spine — a window has no author, and
-   that also keeps the identity arc meaning one thing (workspace-windows → §1). */
+   that also keeps the identity arc meaning one thing. */
 .bar.win { border-left: 0; background: var(--surface); }
 .bar.win.focused { background: var(--ground); }
 

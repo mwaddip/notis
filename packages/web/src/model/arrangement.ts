@@ -1,15 +1,15 @@
 import { newWorkspace, newRegion, type Workspace, type Column } from './workspace';
 
 // The workspace as text: `#r1,r2|r5/r10` — comma stacks windows in a region,
-// `|` starts a new column, `/` a new region (row) in the current column
-// (workspace-windows → §4). Readable, diffable, and the persistence format —
+// `|` starts a new column, `/` a new region (row) in the current column.
+// Readable, diffable, and the persistence format —
 // `serialise` and `parse` are inverses.
 
 const HEX64 = /^[0-9a-f]{64}$/i;
 const WINDOW_IDS = new Set<string>(['@settings']);
 
 /** A token is a real window id — a 64-hex post id, or a known @-window. The
- *  `@` prefix cannot collide with a 64-hex id (workspace-windows → §1). */
+ *  `@` prefix cannot collide with a 64-hex id. */
 export function isWindowId(k: string): boolean {
   return WINDOW_IDS.has(k) || HEX64.test(k);
 }

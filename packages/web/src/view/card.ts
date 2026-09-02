@@ -3,7 +3,7 @@ import type { PostJson, Tombstone, StumpJson, PrunedJson, WithdrawnJson } from '
 import { isTombstone } from '../api/dto';
 
 // One post card, used by both the feed and a thread. The strip is the only
-// control (thread-panes → §2.1); the card is not a button, so its text stays
+// control; the card is not a button, so its text stays
 // selectable and a pointer can be parked on it.
 
 export interface ParentRef {
@@ -36,7 +36,7 @@ function whenText(ms: number): string {
 
 function whoRow(authorKey: string, whenMs: number | null): HTMLElement {
   const who = el('div', 'who');
-  // No naming layer exists — the public key is the identity (spec → §8). The
+  // No naming layer exists — the public key is the identity. The
   // prefix is machine data, so mono.
   who.appendChild(el('span', 'hex', shortHex(authorKey, 16)));
   if (whenMs != null) who.appendChild(el('span', 'when', whenText(whenMs)));
@@ -46,7 +46,7 @@ function whoRow(authorKey: string, whenMs: number | null): HTMLElement {
 function replyCountNode(count: number | null): HTMLElement | null {
   if (count === null) {
     // Honest: the feed row carries no descendant count, so '?'. Finding out
-    // would cost a thread fetch per card (WEB_INTERFACE → the feed section).
+    // would cost a thread fetch per card.
     const r = el('span', 'replies');
     r.appendChild(el('span', 'n', '?'));
     r.appendChild(document.createTextNode(' replies'));
@@ -85,7 +85,7 @@ function strip(id: string, opts: CardOpts, card: HTMLElement): void {
   if (!onOpen) {
     // Nothing to open — a stump has nothing beneath it, a pending post is not on
     // the network yet. The band still draws its edge so the text column lands
-    // one width down the whole column (thread-panes → §2.1).
+    // one width down the whole column.
     const band = el('div', 'strip inert');
     band.setAttribute('aria-hidden', 'true');
     card.appendChild(band);
@@ -118,8 +118,7 @@ function livePostCard(post: PostJson, opts: CardOpts): HTMLElement {
 
   if (post.content === null) {
     // Held by commit, body not yet backfilled on this node. Says what is,
-    // without implying withdrawal (spec → §10 records this as a fourth case the
-    // three absence states do not cover).
+    // without implying withdrawal — it is not one of the three absence states.
     body.appendChild(el('div', 'card-absent', 'content not on this node yet'));
   } else {
     body.appendChild(el('div', 'card-content', post.content));

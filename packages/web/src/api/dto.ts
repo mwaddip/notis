@@ -4,8 +4,8 @@
 // `packages/node/src/services/feed-service.ts` and the route wrappers over it,
 // measured at 207e1c9.
 //
-// A shared DTO module for the HTTP surface is the better long-term answer and
-// is recorded as a node-side gap (spec → §10), not this unit's.
+// The demo UI and tools/e2e hand-declare the same shapes; there is no shared
+// DTO module in the tree.
 
 /** `PostStatus` on the node — 'pending' is a mempool post, 'confirmed' is in a block. */
 export type PostStatus = 'pending' | 'confirmed';

@@ -1,5 +1,5 @@
-// Small imperative-DOM helpers. The client keeps the prototype's vanilla DOM
-// (spec → §0 ruling 2); these are the primitives every renderer is built from.
+// Small imperative-DOM helpers — the client renders with vanilla DOM, and these
+// are the primitives every renderer is built from.
 
 export function el(tag: string, cls?: string | null, txt?: string | null): HTMLElement {
   const n = document.createElement(tag);
@@ -28,8 +28,7 @@ export function shortHex(hex: string, n: number): string {
 }
 
 /** Save a scrollable element's position, run a mutation that rebuilds it, then
- *  restore the position — the prototype rebuilt on every change and restored
- *  neither scroll nor selection (spec → §5.1). */
+ *  restore the position, so a rebuild does not lose the reader's place. */
 export function preservingScroll(node: HTMLElement, mutate: () => void): void {
   const top = node.scrollTop;
   const left = node.scrollLeft;

@@ -1,6 +1,6 @@
-// The tiling workspace: columns of regions, each region a stack of windows
-// (thread-panes → §2.3, workspace-windows → §1). A thread is one kind of
-// window; @settings is the other. These are pure state transforms — the
+// The tiling workspace: columns of regions, each region a stack of windows. A
+// thread is one kind of window; @settings is the other. These are pure state
+// transforms — the
 // controller decides what to re-render from what each returns.
 //
 //   workspace := column+
@@ -66,7 +66,7 @@ export interface OpenResult {
 
 /** Opening targets the column immediately right of the surface the click came
  *  from, and creates it only if it is not already there — which is what stops
- *  panes multiplying as you drill (thread-panes → §2.5). An already-open window
+ *  panes multiplying as you drill. An already-open window
  *  is raised, never duplicated. */
 export function openWindow(ws: Workspace, k: string, origin?: Origin): OpenResult {
   const at = locate(ws, k);
@@ -100,7 +100,7 @@ export function closeWindow(ws: Workspace, k: string): void {
 }
 
 /** ← is the inverse of →: it rejoins the stack in the column to its left rather
- *  than carving out another one (thread-panes → §2.6). */
+ *  than carving out another one. */
 export function moveLeft(ws: Workspace, k: string): void {
   const at = locate(ws, k);
   if (!at || at.ci === 0) return;

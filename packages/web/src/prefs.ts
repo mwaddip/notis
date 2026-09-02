@@ -1,6 +1,6 @@
 // Persisted preferences: theme, identity tint, and which node the client reads.
-// Stored in localStorage and restored painted, not transitioned (spec → §7;
-// HOUSE_STYLE → Motion). The theme's first-paint flip is handled inline in
+// Stored in localStorage and restored painted, not transitioned
+// (HOUSE_STYLE → Motion). The theme's first-paint flip is handled inline in
 // index.html's <head>; this module re-applies on load and owns every later
 // change. Every read and write is guarded — storage is absent in private mode.
 
@@ -14,7 +14,7 @@ export const KEY_LAYOUT = 'notis.layout';
 
 // The wash percentages are large because the wash colour sits at the ground's
 // own lightness — the mix controls how much hue comes through and nothing else,
-// so it cannot move the text ratio (thread-panes → §3.2).
+// so it cannot move the text ratio.
 const ID_MODES: Record<IdTint, { w: string; attr: 'on' | 'nospine' | 'off' }> = {
   spine: { w: '0%', attr: 'on' },
   both: { w: '55%', attr: 'on' },
