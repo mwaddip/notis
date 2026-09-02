@@ -232,16 +232,42 @@ export class App {
 
   private async refreshFeed(): Promise<void> {
     const feed = this.state.feed;
+    const have = new Set(feed.posts.map((p) => p.id));
+    const collected: PostJson[] = []; // newest → older
+    let after: string | null = null;
+    let lastNext: string | null = null;
+    let reconnected = false;
     try {
-      const res = await this.client.feed({ limit: FEED_LIMIT });
-      const fresh = res.posts.filter(isLivePost);
-      const have = new Set(feed.posts.map((p) => p.id));
-      const added = fresh.filter((p) => !have.has(p.id));
-      feed.posts = [...added, ...feed.posts]; // newest prepend, nothing above the eye moves
-      feed.pending = res.pending.filter(isLivePost);
-      feed.report = added.length ? `${added.length} new ${added.length === 1 ? 'post' : 'posts'}` : 'no new posts';
+      // Page from the newest toward older, collecting posts not already held,
+      // until a page reaches one that is — the reconnection point. Without this
+      // a burst larger than one page would leave the new rows sitting above the
+      // old ones with an unmarked hole between them.
+      for (let page = 0; page < REFRESH_PAGE_CAP; page++) {
+        const res = await this.client.feed(after === null ? { limit: FEED_LIMIT } : { limit: FEED_LIMIT, after });
+        this.indexRows([...res.posts, ...res.pending]);
+        if (page === 0) feed.pending = res.pending.filter(isLivePost);
+        for (const row of res.posts) {
+          if (!isLivePost(row)) continue;
+          if (have.has(row.id)) { reconnected = true; break; }
+          collected.push(row);
+        }
+        lastNext = res.next;
+        if (reconnected || res.next === null) break;
+        after = res.next;
+      }
+      if (reconnected || collected.length === 0) {
+        // Contiguous with the existing top. The feed head is not sticky, so a
+        // refresh is read at the top of the column and the new rows land above.
+        feed.posts = [...collected, ...feed.posts];
+      } else {
+        // The whole span up to the page cap is new and never reconnected — the
+        // rows below it are older than this window, so replace rather than
+        // prepend a hole. `load older` continues from where paging stopped.
+        feed.posts = collected;
+        feed.next = lastNext;
+      }
+      feed.report = collected.length ? `${collected.length} new ${collected.length === 1 ? 'post' : 'posts'}` : 'no new posts';
       feed.error = null;
-      this.indexRows([...res.posts, ...res.pending]);
     } catch (e) {
       feed.error = msg(e);
     }
