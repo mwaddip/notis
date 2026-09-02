@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en" class="no-anim">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Notis</title>
+<link rel="icon" href="/favicon.svg">
+<link rel="stylesheet" href="/fonts/fonts.css">
+<link rel="stylesheet" href="/src/style/app.css">
+<script>
+  /* Theme resolved here, before first paint — a stored dark theme must be
+     painted, never transitioned into, or the page paints light and flips
+     (HOUSE_STYLE → Motion: "Restoring a stored preference is not motion"). The
+     body's ground is the only thing on screen before the script fills it, so
+     this is the one preference that must land in <head>. The identity tint is
+     applied by the module before it draws its first bar, so it needs no flash
+     guard here. */
+  try {
+    if (localStorage.getItem('notis.theme') === 'dark') {
+      document.documentElement.setAttribute('data-t', 'dark');
+    }
+  } catch (e) { /* private mode, blocked storage — fall through to light */ }
+</script>
+</head>
+<body>
+  <header id="appbar" aria-label="application"></header>
+  <div class="workspace">
+    <section class="feed" id="feed" aria-label="feed"></section>
+    <section class="panes" id="panes" aria-label="open threads"></section>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

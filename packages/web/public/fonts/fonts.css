@@ -1,0 +1,17 @@
+/* Self-hosted, never fetched from a third party (HOUSE_STYLE → Typography:
+   "Self-hosted, always"). Plus Jakarta Sans for anything a human reads,
+   JetBrains Mono for machine data — hashes, keys, heights, amounts. */
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/Plus-Jakarta-Sans.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/JetBrains-Mono.woff2') format('woff2');
+}
