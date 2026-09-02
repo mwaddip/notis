@@ -1,0 +1,13 @@
+{
+  // The browser app. Vite builds it, so nothing is emitted here — this config
+  // is the typecheck (`build` erases types exactly as tsup does).
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    // No ambient @types: the app runs in a browser, and pulling Node globals in
+    // makes `setTimeout` and `fetch` ambiguous between the two lib sets.
+    "types": []
+  },
+  "include": ["src"]
+}

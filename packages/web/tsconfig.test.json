@@ -1,0 +1,16 @@
+{
+  // Typechecks the TEST tree alongside src (ARCHITECTURE → "Build and test
+  // resolution"). Extends the base directly rather than tsconfig.json, so the
+  // app config's `include` does not narrow the test tree out.
+  //
+  // No `paths` block: this package depends on no other workspace package, so
+  // there is no `@dagsocial/*` alias to mirror. No `types` either — every test
+  // imports from 'vitest' explicitly rather than leaning on globals.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": []
+  },
+  "include": ["src", "test"]
+}

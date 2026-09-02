@@ -1,0 +1,317 @@
+/* ==================================================================== *
+ * Notis — the read surface. Colour, type and motion are HOUSE_STYLE.md; *
+ * every token value here is copied from its tables, not re-derived.     *
+ * ==================================================================== */
+
+:root {
+  --mono: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
+  --sans: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  /* Light — Sand (HOUSE_STYLE → Colour) */
+  --ground: #E7DCC6; --surface: #EFE7D5; --border: #CFC1A6; --borderStrong: #8B7A61;
+  --ink: #2A2419; --inkMute: #696051; --green: #5E8C3A; --greenText: #476A2C;
+  --onGreen: #FAF6EC; --gold: #7F5A1C; --goldFill: #9B762D; --clay: #9A4A2F;
+  /* The mark drives its colours through these two custom properties (Fern +
+     Bottle, one value in both themes) — that is why it is inline SVG, not <img>
+     (HOUSE_STYLE → The mark). */
+  --notis-green: var(--green); --notis-keyline: #1B2A12;
+  /* spacing scale: 4 8 12 16 24 32 48 64 96 */
+}
+:root[data-t="dark"] {
+  /* Dark — Bistre (HOUSE_STYLE → Colour) */
+  --ground: #211E18; --surface: #2A261D; --border: #3D3830; --borderStrong: #7A6E5C;
+  --ink: #E9E1CF; --inkMute: #978B77; --green: #5E8C3A; --greenText: #679A40;
+  --onGreen: #141A0C; --gold: #B78328; --goldFill: #E8B84B; --clay: #CC7658;
+}
+
+/* Restoring a stored preference is painted, never transitioned
+   (HOUSE_STYLE → Motion). Suppressed until after first paint; reduced-motion
+   means none, not less. */
+.no-anim * { transition: none !important; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--ground); color: var(--ink);
+  font-family: var(--sans); font-size: 15px; line-height: 1.5;
+  display: flex; flex-direction: column;
+}
+
+/* ---------- header ---------- */
+header {
+  flex: 0 0 auto; display: flex; align-items: baseline; gap: 16px;
+  padding: 16px 48px; border-bottom: 1px solid var(--border);
+}
+header h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: .01em; }
+header .spacer { flex: 1 1 auto; }
+/* The mark + wordmark lockup: a 24px micro-tier mark beside the 15px wordmark.
+   The mark stays inline SVG so --notis-green / --notis-keyline reach it. */
+.brand { display: flex; align-items: center; gap: 8px; }
+.mark { width: 24px; height: 24px; display: block; flex: 0 0 auto; }
+/* The sprite defs sit in the DOM for <use> to resolve, and render nothing
+   themselves. */
+.notis-sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+.theme-btn {
+  font-family: var(--sans); font-size: 12.5px; padding: 4px 12px; cursor: pointer;
+  border: 1px solid transparent; border-radius: 4px;
+  background: var(--ink); color: var(--ground);
+  transition: opacity .15s ease-out;
+}
+.theme-btn:hover { opacity: .85; }
+.theme-btn:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: 2px; }
+
+/* ---------- workspace ---------- */
+.workspace {
+  flex: 1 1 auto; min-height: 0; display: flex; gap: 24px;
+  padding: 24px 48px;             /* 48px inert gutter each side (HOUSE_STYLE → Spacing) */
+}
+
+/* ---------- feed ---------- */
+.feed { flex: 0 0 660px; max-width: 660px; min-width: 0; overflow-y: auto; padding-right: 8px; }
+/* The feed's own bar sits at a title bar's height so the two surfaces agree. It
+   carries the ranking note — the feed's honesty mechanism, not decoration. */
+.feed-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 0; margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px; color: var(--inkMute);
+}
+.feed-head b { color: var(--ink); font-weight: 600; font-size: 13px; flex: 0 0 auto; }
+.feed-head .note { flex: 1 1 auto; min-width: 0; overflow: hidden;
+                   text-overflow: ellipsis; white-space: nowrap; }
+.feed-head .ctl { width: 22px; height: 22px; font-size: 12.5px; }
+
+/* The foot control: load older, reporting what it did. */
+.feed-foot { padding: 4px 0 24px; }
+
+/* Cards cap at the 660px §Spacing sets for the feed column: a 300-byte post
+   reads as a card at that width and not wider. */
+.card { max-width: 660px; }
+.card {
+  display: flex; align-items: stretch;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  margin-bottom: 12px; overflow: hidden;
+}
+.card-body { flex: 1 1 auto; min-width: 0; padding: 12px 16px; }
+.card.open .card-content { color: var(--inkMute); }   /* fade bottoms out at inkMute — the last stop still meeting the 4.5:1 body-text floor */
+.card.open .who .hex { opacity: .75; }
+
+.who { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.who .name { font-size: 13px; font-weight: 600; color: var(--ink); }
+.who .hex { font-family: var(--mono); font-size: 11.5px; color: var(--inkMute); }
+.who .when { font-family: var(--mono); font-size: 11.5px; color: var(--inkMute); margin-left: auto; }
+.card-content { font-size: 15px; color: var(--ink); word-wrap: break-word; }
+/* A body a node holds by commit but has not backfilled yet. Says what is,
+   without implying the post is gone — it is not a withdrawal. */
+.card-absent { font-style: italic; color: var(--inkMute); font-size: 14px; }
+
+/* One-line reference to a reply's parent, so a reply is legible as an answer to
+   something without pulling its ancestor into the feed. */
+.parentref { display: flex; align-items: baseline; gap: 6px; margin-bottom: 8px;
+             font-size: 12px; color: var(--inkMute); }
+.parentref .g { flex: 0 0 auto; }
+/* The label never breaks or gives up width — the excerpt is the only item that
+   shrinks, so a long parent excerpt ellipses instead of pushing the row taller. */
+.parentref .lbl { flex: 0 0 auto; white-space: nowrap; }
+.parentref .hex { font-family: var(--mono); font-size: 11px; color: var(--inkMute); flex: 0 0 auto; }
+.parentref .excerpt { flex: 1 1 auto; min-width: 0; overflow: hidden;
+                      text-overflow: ellipsis; white-space: nowrap; }
+
+/* A fixed line box so what the row contains cannot change the card's height. */
+.meta { display: flex; align-items: baseline; gap: 12px; margin-top: 8px;
+        height: 22px; font-size: 12.5px; color: var(--inkMute); }
+.meta .n { font-family: var(--mono); }
+/* like is read-only here: no viewer is sent, so there is no "you liked this"
+   state and no unlike. A plain count of people, never pluralised — "7 like" is
+   a present-tense verb, not a tally of objects (there is no like object). */
+.meta .like { color: var(--inkMute); }
+
+/* the three absence states */
+.withdrawn { font-style: italic; color: var(--inkMute); font-size: 14px; }
+/* A stump keeps the dashed texture reserved for it; pending is hollow and
+   pruned is solid, so the three never converge. */
+.stump { border-style: dashed; }
+.stump-body, .pruned-body { font-size: 14px; color: var(--inkMute); }
+.stump-body .n, .pruned-body .n { font-family: var(--mono); color: var(--ink); }
+
+/* the strip — a control, never the container. Its left edge is the control's
+   sole boundary, so it takes borderStrong (HOUSE_STYLE → Accessibility contract). */
+.strip {
+  flex: 0 0 44px; display: flex; align-items: center; justify-content: center;
+  border: 0; border-left: 1px solid var(--borderStrong);
+  background: transparent; color: var(--inkMute); cursor: pointer;
+  font-family: var(--sans); font-size: 20px; font-weight: 600; line-height: 1;
+  transition: background-color .15s ease-out, color .15s ease-out;
+}
+.strip:hover { background: rgba(0,0,0,.05); color: var(--ink); }
+:root[data-t="dark"] .strip:hover { background: rgba(255,255,255,.06); }
+.card.open .strip {
+  background: color-mix(in srgb, var(--greenText) 16%, transparent);
+  color: var(--greenText); border-left-color: var(--greenText);
+}
+.card.open .strip:hover { background: color-mix(in srgb, var(--greenText) 22%, transparent); }
+.strip:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: -2px; }
+/* The band with no control in it — a stump has nothing beneath it to open, a
+   pending post is not on the network yet. Keeps borderStrong so the line runs
+   unbroken down the column. */
+.strip.inert { cursor: default; pointer-events: none; }
+
+/* Pending — hollow. Every landed post is a raised surface; a pending one sits
+   at ground and reads as an outline waiting to be filled. Not dashed (the
+   stump's), not gold (credits), not clay (warning). */
+.card.pending { background: var(--ground); }
+
+/* ---------- panes ---------- */
+.panes { flex: 1 1 auto; min-width: 0; display: flex; gap: 16px; overflow-x: auto; }
+.empty {
+  flex: 1 1 auto; display: flex; align-items: center; justify-content: center;
+  color: var(--inkMute); font-size: 13px; text-align: center; padding: 0 24px;
+}
+.col { flex: 1 1 0; min-width: 330px; display: flex; flex-direction: column; gap: 16px; }
+.region {
+  flex: 1 1 0; min-height: 0; display: flex; flex-direction: column;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
+}
+
+/* i3-style stacking: every bar stays at the top and stays readable. Focusing a
+   different window swaps only the body — no bar ever moves. */
+.bars { flex: 0 0 auto; border-bottom: 1px solid var(--border); }
+.bar {
+  width: 100%; display: flex; align-items: baseline; gap: 8px;
+  padding: 8px 8px 8px 12px; background: transparent; border: 0;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--sans); font-size: 13px; color: var(--inkMute);
+  text-align: left;
+  transition: background-color .15s ease-out;
+}
+.bars .bar:last-child { border-bottom: 0; }
+.bar:hover { background: rgba(0,0,0,.04); }
+:root[data-t="dark"] .bar:hover { background: rgba(255,255,255,.05); }
+
+/* Identity tint. --idh is an OKLCH hue set per bar from the author's key.
+   OKLCH because HSL degrees are perceptually uneven. The arc is 175–345°, which
+   is what is left once clay/gold/green/red are excluded — widening it makes
+   identities collide with meaning (HOUSE_STYLE → Identity colour). Spine, not
+   wash: chroma is area-weighted, so a thin edge at high chroma is calmer and
+   far more legible than a whole-bar wash (HOUSE_STYLE → Chroma is area-weighted).
+   The two cannot share a lightness — a spine contrasts with the ground, a wash
+   sits at it so text over it keeps its ratio
+   (HOUSE_STYLE → A spine and a wash cannot share a lightness). */
+:root {
+  --idw: 0%; --idwf: 0%;
+  --idc: .14; --idl: .55;                    /* spine — seen against the ground */
+  --idwc: .06; --idwl: .942; --idwlf: .906;  /* wash — steps away from the text */
+}
+:root[data-t="dark"] {
+  --idc: .15; --idl: .72;
+  --idwc: .06; --idwl: .240; --idwlf: .208;
+}
+.bar {
+  background: color-mix(in srgb, oklch(var(--idwl) var(--idwc) var(--idh)) var(--idw), var(--surface));
+  border-left: 4px solid oklch(var(--idl) var(--idc) var(--idh));
+}
+.bar.focused {
+  background: color-mix(in srgb, oklch(var(--idwlf) var(--idwc) var(--idh)) var(--idwf), var(--ground));
+}
+:root[data-idtint="off"] .bar { background: transparent; border-left: 0; }
+:root[data-idtint="off"] .bar.focused { background: var(--ground); }
+:root[data-idtint="nospine"] .bar { border-left: 0; }
+/* Windows that are not threads carry no spine — a window has no author, and
+   that also keeps the identity arc meaning one thing. */
+.bar.win { border-left: 0; background: var(--surface); }
+.bar.win.focused { background: var(--ground); }
+
+.bar-label {
+  flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; gap: 8px;
+  border: 0; padding: 0; background: transparent; cursor: pointer; text-align: left;
+  font-family: var(--sans); font-size: 13px; color: var(--inkMute);
+}
+.bar-label:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: 2px; }
+.bar .name { font-weight: 600; color: var(--ink); font-size: 13px; flex: 0 0 auto; }
+.bar .hex { font-family: var(--mono); font-size: 11px; flex: 0 0 auto; }
+.bar .excerpt {
+  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 12.5px; color: var(--inkMute);
+}
+.bar .n { font-family: var(--mono); font-size: 11px; flex: 0 0 auto; }
+.bar .nested { font-size: 11px; color: var(--greenText); flex: 0 0 auto; }
+.bar-ctl { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; align-self: center; }
+.ctl {
+  width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
+  border: 0; border-radius: 3px; background: transparent; color: var(--inkMute);
+  cursor: pointer; font-family: var(--sans); font-size: 13px; line-height: 1;
+  transition: background-color .15s ease-out, color .15s ease-out;
+}
+.ctl:hover { background: rgba(0,0,0,.08); color: var(--ink); }
+:root[data-t="dark"] .ctl:hover { background: rgba(255,255,255,.09); }
+.ctl:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: -2px; }
+.ctl:disabled { opacity: .28; cursor: default; }
+.ctl:disabled:hover { background: transparent; color: var(--inkMute); }
+
+.report {
+  flex: 0 0 auto; padding: 6px 12px; font-size: 12.5px; color: var(--greenText);
+  background: var(--ground); border-bottom: 1px solid var(--border);
+}
+.report .n { font-family: var(--mono); }
+
+.region-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 12px; background: var(--ground); }
+.region-body .loading { color: var(--inkMute); font-size: 13px; padding: 8px 0; }
+.region-body .error { color: var(--clay); font-size: 13px; padding: 8px 0; }
+.depth-1 { margin-left: 16px; }
+.depth-2 { margin-left: 32px; }
+.depth-3 { margin-left: 48px; }
+.thread-root { border-color: var(--borderStrong); }
+
+/* A small ghost control (load older, try again). Its outline is its sole
+   boundary — the 3:1 case the accessibility contract licenses, so borderStrong,
+   the same token as the strip's edge. */
+.mini {
+  font-family: var(--sans); font-size: 11.5px; line-height: 1.35; padding: 2px 8px;
+  display: inline-flex; align-items: baseline; gap: 5px; cursor: pointer;
+  background: transparent; color: var(--ink);
+  border: 1px solid var(--borderStrong); border-radius: 4px;
+  transition: background-color .15s ease-out;
+}
+.mini:hover { background: rgba(0,0,0,.05); }
+:root[data-t="dark"] .mini:hover { background: rgba(255,255,255,.06); }
+.mini:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: 2px; }
+.mini:disabled { opacity: .35; cursor: default; }
+.mini:disabled:hover { background: transparent; }
+
+/* ---------- @settings window ---------- */
+.winbody { max-width: 660px; }
+.winbody .row { display: flex; align-items: baseline; gap: 8px; margin-bottom: 14px; }
+.winbody label { font-size: 12.5px; color: var(--inkMute); flex: 0 0 96px; }
+.winbody .field { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.winbody input {
+  font-family: var(--mono); font-size: 12.5px;
+  padding: 5px 8px; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--surface); color: var(--ink);
+}
+.winbody input:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: -1px; }
+/* The theme control sizes to its label rather than stretching the field. */
+.winbody .theme-btn { align-self: flex-start; }
+.winbody .hint { font-size: 11.5px; color: var(--inkMute); }
+.winbody .arr { font-family: var(--mono); font-size: 12px; color: var(--ink);
+                word-break: break-all; padding: 5px 8px;
+                border: 1px solid var(--border); border-radius: 4px; background: var(--surface); }
+.winbody .arr.empty { color: var(--inkMute); }
+
+/* A segmented control (theme, identity tint). Selected reads as a filled chip. */
+.seg { display: flex; border: 1px solid var(--borderStrong); border-radius: 4px; overflow: hidden; }
+.seg button {
+  font-family: var(--sans); font-size: 12px; padding: 4px 10px; cursor: pointer;
+  border: 0; border-right: 1px solid var(--border);
+  background: transparent; color: var(--inkMute);
+  transition: background-color .15s ease-out, color .15s ease-out;
+}
+.seg button:last-child { border-right: 0; }
+.seg button:hover { color: var(--ink); }
+.seg button[aria-pressed="true"] { background: var(--greenText); color: var(--onGreen); }
+.seg button:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: -2px; }
+
+/* hover is suppressed while scrolling and ~100ms after it stops
+   (HOUSE_STYLE → Interaction). */
+.scrolling { pointer-events: none; }
+
+.feed, .panes, .region-body, .bars { scrollbar-width: thin; scrollbar-color: var(--borderStrong) transparent; }
