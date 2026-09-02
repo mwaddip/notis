@@ -110,6 +110,9 @@ header .spacer { flex: 1 1 auto; }
 .parentref { display: flex; align-items: baseline; gap: 6px; margin-bottom: 8px;
              font-size: 12px; color: var(--inkMute); }
 .parentref .g { flex: 0 0 auto; }
+/* The label never breaks or gives up width — the excerpt is the only item that
+   shrinks, so a long parent excerpt ellipses instead of pushing the row taller. */
+.parentref .lbl { flex: 0 0 auto; white-space: nowrap; }
 .parentref .hex { font-family: var(--mono); font-size: 11px; color: var(--inkMute); flex: 0 0 auto; }
 .parentref .excerpt { flex: 1 1 auto; min-width: 0; overflow: hidden;
                       text-overflow: ellipsis; white-space: nowrap; }

@@ -73,7 +73,7 @@ function likeNode(likeCount: number): HTMLElement | null {
 function parentRefNode(ref: ParentRef): HTMLElement {
   const line = el('div', 'parentref');
   line.appendChild(el('span', 'g', '↳'));
-  line.appendChild(document.createTextNode('in reply to'));
+  line.appendChild(el('span', 'lbl', 'in reply to'));
   if (ref.authorKey) line.appendChild(el('span', 'hex', shortHex(ref.authorKey, 10)));
   line.appendChild(el('span', 'hex', shortHex(ref.id, 10)));
   if (ref.excerpt) line.appendChild(el('span', 'excerpt', ref.excerpt));
