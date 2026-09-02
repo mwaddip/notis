@@ -10,6 +10,10 @@
   --ground: #E7DCC6; --surface: #EFE7D5; --border: #CFC1A6; --borderStrong: #8B7A61;
   --ink: #2A2419; --inkMute: #696051; --green: #5E8C3A; --greenText: #476A2C;
   --onGreen: #FAF6EC; --gold: #7F5A1C; --goldFill: #9B762D; --clay: #9A4A2F;
+  /* The mark drives its colours through these two custom properties (Fern +
+     Bottle, one value in both themes) — that is why it is inline SVG, not <img>
+     (HOUSE_STYLE → The mark). */
+  --notis-green: var(--green); --notis-keyline: #1B2A12;
   /* spacing scale: 4 8 12 16 24 32 48 64 96 */
 }
 :root[data-t="dark"] {
@@ -40,6 +44,13 @@ header {
 }
 header h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: .01em; }
 header .spacer { flex: 1 1 auto; }
+/* The mark + wordmark lockup: a 24px micro-tier mark beside the 15px wordmark.
+   The mark stays inline SVG so --notis-green / --notis-keyline reach it. */
+.brand { display: flex; align-items: center; gap: 8px; }
+.mark { width: 24px; height: 24px; display: block; flex: 0 0 auto; }
+/* The sprite defs sit in the DOM for <use> to resolve, and render nothing
+   themselves. */
+.notis-sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
 .theme-btn {
   font-family: var(--sans); font-size: 12.5px; padding: 4px 12px; cursor: pointer;
   border: 1px solid transparent; border-radius: 4px;

@@ -113,7 +113,13 @@ export class App {
   private renderHeader(): void {
     const bar = this.appbar;
     bar.textContent = '';
-    bar.appendChild(el('h1', null, 'Notis'));
+    // The mark + wordmark lockup. The mark is the micro tier — abstract at 24px
+    // — so the wordmark stays to name it; together they are the standard mark.
+    // <use> resolves against the sprite inlined in index.html.
+    const brand = el('div', 'brand');
+    brand.innerHTML = '<svg class="mark" viewBox="0 0 1000 1000" aria-hidden="true"><use href="#mark-micro"></use></svg>';
+    brand.appendChild(el('h1', null, 'Notis'));
+    bar.appendChild(brand);
     bar.appendChild(el('span', 'spacer'));
 
     const settings = el('button', 'theme-btn');
