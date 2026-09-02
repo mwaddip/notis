@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { PeerDb } from '@dagsocial/net';
-import type { PeerRecord } from '@dagsocial/net';
+import type { PeerRecord, PeerStorage } from '@dagsocial/net';
 
 function makeRecord(addr: string, lastSeenMs: number): PeerRecord {
   return {
@@ -123,5 +123,104 @@ describe('PeerDb', () => {
     bareSelf.record(makeRecord(`/ip4/1.2.3.4/tcp/9/p2p/${PEER_ID}`, 1000));
     expect(bareSelf.get(`/ip4/1.2.3.4/tcp/9/p2p/${PEER_ID}`)).toBeNull();
     expect(bareSelf.count()).toBe(0);
+  });
+
+  // ---------------------------------------------------------------------
+  // The ban set compares without `/p2p/` (NET_INTERFACE → PeerDb — the
+  // Blacklist filter bullet; NET_INTERFACE → Outbound Manager → "Addresses
+  // compare without their `/p2p/` component").
+  // ---------------------------------------------------------------------
+
+  describe('the ban set compares without /p2p/', () => {
+    /** Storage stub whose `delete` calls are recorded, in call order. */
+    function makeRecordingStorage(): { storage: PeerStorage; deletes: string[] } {
+      const stored: PeerRecord[] = [];
+      const deletes: string[] = [];
+      const storage: PeerStorage = {
+        loadAll: () => stored,
+        put: (rec) => {
+          const idx = stored.findIndex((r) => r.address === rec.address);
+          if (idx >= 0) stored[idx] = rec;
+          else stored.push(rec);
+        },
+        delete: (addr) => {
+          deletes.push(addr);
+          const idx = stored.findIndex((r) => r.address === addr);
+          if (idx >= 0) stored.splice(idx, 1);
+        },
+      };
+      return { storage, deletes };
+    }
+
+    const BARE = '/ip4/1.2.3.4/tcp/9';
+    const SUFFIXED = `${BARE}/p2p/${PEER_ID}`;
+
+    it('banning the /p2p/ spelling evicts an entry recorded bare, deletes the bare key from storage, and bans both spellings', () => {
+      const { storage, deletes } = makeRecordingStorage();
+      const db = new PeerDb(storage, 100, []);
+      db.record(makeRecord(BARE, 1000));
+
+      db.ban(SUFFIXED);
+
+      expect(db.get(BARE)).toBeNull();
+      expect(db.recent(10, new Set())).toEqual([]);
+      expect(db.all()).toEqual([]);
+      expect(deletes).toContain(BARE);
+      expect(db.isBanned(BARE)).toBe(true);
+      expect(db.isBanned(SUFFIXED)).toBe(true);
+      db.record(makeRecord(BARE, 2000));
+      expect(db.get(BARE)).toBeNull();
+      db.record(makeRecord(SUFFIXED, 2000));
+      expect(db.get(SUFFIXED)).toBeNull();
+    });
+
+    it('banning the bare spelling evicts an entry recorded with /p2p/, deletes the /p2p/ key from storage, and bans both spellings', () => {
+      const { storage, deletes } = makeRecordingStorage();
+      const db = new PeerDb(storage, 100, []);
+      db.record(makeRecord(SUFFIXED, 1000));
+
+      db.ban(BARE);
+
+      expect(db.get(SUFFIXED)).toBeNull();
+      expect(db.recent(10, new Set())).toEqual([]);
+      expect(db.all()).toEqual([]);
+      expect(deletes).toContain(SUFFIXED);
+      expect(db.isBanned(BARE)).toBe(true);
+      expect(db.isBanned(SUFFIXED)).toBe(true);
+      db.record(makeRecord(BARE, 2000));
+      expect(db.get(BARE)).toBeNull();
+      db.record(makeRecord(SUFFIXED, 2000));
+      expect(db.get(SUFFIXED)).toBeNull();
+    });
+
+    it('unban of either spelling lifts both, and a later record is admitted', () => {
+      const db = new PeerDb(null, 100, []);
+
+      db.ban(SUFFIXED);
+      db.unban(BARE);
+      expect(db.isBanned(BARE)).toBe(false);
+      expect(db.isBanned(SUFFIXED)).toBe(false);
+      db.record(makeRecord(BARE, 1000));
+      expect(db.get(BARE)).not.toBeNull();
+
+      db.ban(BARE);
+      db.unban(SUFFIXED);
+      expect(db.isBanned(BARE)).toBe(false);
+      expect(db.isBanned(SUFFIXED)).toBe(false);
+      db.record(makeRecord(SUFFIXED, 1000));
+      expect(db.get(SUFFIXED)).not.toBeNull();
+    });
+
+    it('control: a record on another port survives a ban of either spelling', () => {
+      const db = new PeerDb(null, 100, []);
+      const other = '/ip4/1.2.3.4/tcp/10';
+      db.record(makeRecord(other, 1000));
+
+      db.ban(SUFFIXED);
+      expect(db.get(other)).not.toBeNull();
+
+      db.ban(BARE);
+      expect(db.get(other)).not.toBeNull();
+    });
   });
 });

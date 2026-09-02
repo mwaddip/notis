@@ -94,7 +94,7 @@ export class PeerDb {
     // NET_INTERFACE → Outbound Manager → "Addresses compare without their
     // /p2p/ component" — the self filter uses the same comparison.
     if (this.selfAddrs.has(addressWithoutPeerId(record.address))) return;
-    if (this.bannedAddrs.has(record.address)) return;
+    if (this.bannedAddrs.has(addressWithoutPeerId(record.address))) return;
 
     const existing = this.entries.get(record.address);
     const merged: PeerRecord = existing
@@ -141,31 +141,42 @@ export class PeerDb {
     this.selfAddrs.add(addressWithoutPeerId(addr));
   }
 
-  /** Ban a peer address — removes from entries and prevents re-add. */
+  /**
+   * Ban a peer address — keys the ban on the address without its `/p2p/`
+   * component (NET_INTERFACE → PeerDb) and removes every entry that
+   * normalises to the same key, under that entry's own spelling: a declared
+   * address carries the component, a seed or a gossiped entry for the same
+   * host may not. A scan over at most `cap` entries.
+   */
   ban(addr: string): void {
-    this.bannedAddrs.add(addr);
+    const key = addressWithoutPeerId(addr);
+    this.bannedAddrs.add(key);
     // Insertion order is chronological, so the first entries are the oldest bans.
     while (this.bannedAddrs.size > MAX_BANNED_ADDRS) {
       const oldest = this.bannedAddrs.values().next().value;
       if (oldest === undefined) break;
       this.bannedAddrs.delete(oldest);
     }
-    this.entries.delete(addr);
-    this.storage?.delete(addr);
+    for (const entryAddr of this.entries.keys()) {
+      if (addressWithoutPeerId(entryAddr) === key) {
+        this.entries.delete(entryAddr);
+        this.storage?.delete(entryAddr);
+      }
+    }
   }
 
-  /** Check if an address is banned. */
+  /** Check if an address is banned, without `/p2p/` (NET_INTERFACE → PeerDb). */
   isBanned(addr: string): boolean {
-    return this.bannedAddrs.has(addr);
+    return this.bannedAddrs.has(addressWithoutPeerId(addr));
   }
 
-  /** Lift a ban (e.g., temporal ban expired). */
+  /** Lift a ban (e.g., temporal ban expired), without `/p2p/` (NET_INTERFACE → PeerDb). */
   unban(addr: string): void {
-    this.bannedAddrs.delete(addr);
+    this.bannedAddrs.delete(addressWithoutPeerId(addr));
   }
 
   get(addr: string): PeerRecord | null {
-    if (this.bannedAddrs.has(addr)) return null;
+    if (this.bannedAddrs.has(addressWithoutPeerId(addr))) return null;
     return this.entries.get(addr) ?? null;
   }
 
@@ -174,11 +185,11 @@ export class PeerDb {
    * Manager → "Addresses compare without their `/p2p/` component") — the
    * caller (`OutboundManager`) normalises what it puts in the set; here only
    * each candidate's own address needs the same treatment. `bannedAddrs`
-   * compares raw — out of scope for this comparison (NET_INTERFACE → PeerDb).
+   * compares the same way (NET_INTERFACE → PeerDb).
    */
   recent(limit: number, excludeAddrs: Set<string>): PeerRecord[] {
     const filtered = Array.from(this.entries.values())
-      .filter((r) => !excludeAddrs.has(addressWithoutPeerId(r.address)) && !this.bannedAddrs.has(r.address));
+      .filter((r) => !excludeAddrs.has(addressWithoutPeerId(r.address)) && !this.bannedAddrs.has(addressWithoutPeerId(r.address)));
     filtered.sort((a, b) => b.lastSeenMs - a.lastSeenMs);
     return filtered.slice(0, limit);
   }
