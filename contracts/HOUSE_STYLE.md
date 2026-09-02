@@ -3,7 +3,7 @@
 **Component:** cross-cutting — every human-facing surface
 **Status:** implemented in full on `docs/site/*`; partially on the demo UI — see below
 **Applies to:** `docs.notis.fun` (`docs/site/*`), `packages/node/public/index.html` (partial),
-`@dagsocial/web` (Phase 2), any future product surface
+`@dagsocial/web`, any future product surface
 
 > **`docs/site/*` implements this contract in full**, measured 2026-08-10: both token sets under
 > the names used here, the inverse-styled theme control, the paint-don't-transition restore, all
@@ -21,15 +21,16 @@
 > motion** — changed 2026-08-10, having previously been excluded outright.
 >
 > The exclusion's ground was that the demo UI is scaffolding about to die when `@dagsocial/web`
-> lands. `@dagsocial/web` is now gated on this protocol's interfaces being defined and frozen
-> first, so the demo UI is the only surface a human looks at for an open-ended period. **A
-> surface nobody will replace soon is not scaffolding.**
+> lands. It is the only browser surface that can **write** — it builds, signs and submits post,
+> like, withdraw, invite, vouch and unvouch transactions, and `@dagsocial/web`'s read surface does
+> none of that — so it is what a human uses for an open-ended period. **A surface nobody will
+> replace soon is not scaffolding.**
 >
 > **The inclusion is deliberately partial.** Layout, information architecture, interaction and
 > illustration stay out — the demo UI keeps its own shell. `WEB_INTERFACE.md` also still holds:
-> it gets no interface contract, no documented flows, no UX commitments, and it dies when
-> `@dagsocial/web` ships. The claim here is narrow — that a surface humans look at should not be
-> built out of the exact register "Why there is a house style at all" was written to avoid.
+> it gets no interface contract, no documented flows and no UX commitments. The claim here is
+> narrow — that a surface humans look at should not be built out of the exact register "Why there
+> is a house style at all" was written to avoid.
 
 ## Scope
 

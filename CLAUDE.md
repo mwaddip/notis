@@ -36,7 +36,7 @@ refuses to run against a missing or stale `dist`. See ARCHITECTURE → "Build an
 
 ## Architecture
 
-Six packages, in dependency order:
+Seven packages, in dependency order:
 
 - `@dagsocial/types` — data structures, base58, positional codecs, hashing, protocol constants. **Pure functions only.**
 - `@dagsocial/wire` — stream framing (VLQ, blake2b checksums, magic bytes).
@@ -44,14 +44,17 @@ Six packages, in dependency order:
 - `@dagsocial/nipopow` — NiPoPoW proofs over ordering-block headers: the proof codecs, `verifyProof`, `compareProofs`, `proveWithReader`. **Pure functions only.**
 - `@dagsocial/net` — libp2p + Gossipsub relay, whole-block sync, peer management.
 - `@dagsocial/node` — Express server, PoW, verifier, SQLite store, UTXO engine, AVL+ state root, block creator, demo UI.
+- `@dagsocial/web` — the browser client, built with vite. The **read surface** only: feed, threads, a
+  tiling workspace, both themes. Every call a `GET`, so it holds no key and computes no hash. Depends on
+  no other workspace package.
 
-Two tools live under `tools/` — in the workspace by the `tools/*` glob, so in `pnpm -r test`:
+Three tools live under `tools/` — in the workspace by the `tools/*` glob, so in `pnpm -r test`:
 
 - `@dagsocial/faucet` — an ordinary-key service that invites and sends credits through the node's HTTP API.
 - `@dagsocial/e2e` — the mesh suite: spawns a mesh of built nodes and asserts the protocol across them over
   HTTP; mines on demand, paces on block height. A client of the contracts, with none of its own.
-
-Future: `@dagsocial/web` (React client).
+- `@dagsocial/nipopow-client` — the light client: verifies and compares NiPoPoW proofs from N≥2 nodes,
+  then proves a key's boxes against the verified `stateRoot`.
 
 ## Design by Contract
 
@@ -66,7 +69,7 @@ contract first, then implement against it, never the reverse.
 - `contracts/NET_INTERFACE.md` — libp2p, gossip, sync
 - `contracts/NIPOPOW_INTERFACE.md` — the proof package: objects, codecs, verifier, comparator, prover
 - `contracts/MEMPOOL_INTERFACE.md` · `contracts/MINING_INTERFACE.md` · `contracts/JOURNAL_EVENTS.md`
-- `contracts/WEB_INTERFACE.md` — web client (Phase 2)
+- `contracts/WEB_INTERFACE.md` — web client
 - `contracts/HOUSE_STYLE.md` — colour, type, the mark, motion, interaction, spacing, voice
 - `contracts/SPECIAL.md` — per-subsystem attention weights
 - `contracts/CONSTANTS.md` — every protocol number in one place, with what argues it and its standing
