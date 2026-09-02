@@ -315,9 +315,11 @@ interface Internals {
 
 describe('the outbound funnel and our own peer id', () => {
   let nodeA: NetNode;
+  let nodeB: NetNode;
 
   afterEach(async () => {
     await nodeA?.stop();
+    await nodeB?.stop();
   });
 
   it('a seed that resolves to ourselves is dialled once, closed, and never dialled again', async () => {
@@ -350,5 +352,66 @@ describe('the outbound funnel and our own peer id', () => {
     internals.outboundTick();
     await new Promise((r) => setTimeout(r, 300));
     expect(nodeA.libp2pNode?.getConnections()).toEqual([]);
+  }, TIMEOUT);
+
+  it('the fill phase runs the outbound handshake', async () => {
+    nodeA = new NetNode(makeConfig(), validators);
+    await nodeA.start();
+    const aAddr = nodeA.libp2pNode?.getMultiaddrs()[0]?.toString();
+    expect(aAddr).toBeTruthy();
+
+    nodeB = new NetNode(makeBaseConfig({ bootstrapPeers: [], minPeers: 0 }), validators);
+    await nodeB.start();
+
+    const internalsB = nodeB as unknown as Internals;
+    internalsB.peerDb.record({
+      address: aAddr!,
+      lastSeenMs: Date.now(),
+      agentName: 'test',
+      nodeName: '',
+      protocolVersion: PROTOCOL_VERSION,
+      capabilities: [],
+    });
+
+    internalsB.outboundTick();
+    await new Promise((r) => setTimeout(r, 3000));
+
+    expect(nodeB.getConnectedPeers()).toContain(nodeA.peerId());
+    expect(nodeA.getConnectedPeers()).toContain(nodeB.peerId());
+  }, TIMEOUT);
+
+  it('a PeerDb candidate that resolves to ourselves is closed and forgotten', async () => {
+    nodeB = new NetNode(makeBaseConfig({ bootstrapPeers: [], minPeers: 0 }), validators);
+    await nodeB.start();
+
+    // A spelling PeerDb's self-address filter does not match — the listen
+    // addresses recorded at start() are IP literals, not this DNS name — so
+    // the record is admitted, and only the funnel's peer-id check catches it.
+    const bAddrs = nodeB.libp2pNode?.getMultiaddrs() ?? [];
+    const port = bAddrs[0]?.toString().match(/tcp\/(\d+)/)?.[1];
+    expect(port).toBeTruthy();
+    const selfCandidate = `/dns4/localhost/tcp/${port}`;
+
+    const internalsB = nodeB as unknown as Internals;
+    const record = {
+      address: selfCandidate,
+      lastSeenMs: Date.now(),
+      agentName: 'test',
+      nodeName: '',
+      protocolVersion: PROTOCOL_VERSION,
+      capabilities: [],
+    };
+    internalsB.peerDb.record(record);
+
+    internalsB.outboundTick();
+    await new Promise((r) => setTimeout(r, 1500));
+
+    expect(nodeB.libp2pNode?.getConnections()).toEqual([]);
+    expect(internalsB.peerDb.get(selfCandidate)).toBeNull();
+
+    // Forgotten AND filtered thereafter — a later record of the same address
+    // is dropped (NET_INTERFACE → PeerDb).
+    internalsB.peerDb.record(record);
+    expect(internalsB.peerDb.get(selfCandidate)).toBeNull();
   }, TIMEOUT);
 });

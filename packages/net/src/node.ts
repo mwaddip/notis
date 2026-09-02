@@ -799,17 +799,12 @@ export class NetNode {
         this.dialAndHandshake(addr, 'seed');
       }
 
-      // Fill phase: dial one PeerDb candidate per tick
+      // Fill phase: dial one PeerDb candidate per tick, through the same
+      // funnel as a seed — the dial, the own-peer check, then the outbound
+      // handshake (NET_INTERFACE → Outbound Manager).
       const candidate = plan.candidate;
       if (candidate) {
-        console.log(`[net] outbound manager dialing: ${candidate}`);
-        this.libp2p.dial(multiaddr(candidate)).then((conn) => {
-          console.log(`[net] outbound dial succeeded: ${candidate} -> peer=${conn.remotePeer.toString()}`);
-          this.outboundMgr?.recordDialResult(candidate, true);
-        }).catch((err: any) => {
-          console.warn(`[net] outbound dial FAILED: ${candidate} — ${err?.message ?? err}`);
-          this.outboundMgr?.recordDialResult(candidate, false);
-        });
+        this.dialAndHandshake(candidate, 'candidate');
       }
     }
 
