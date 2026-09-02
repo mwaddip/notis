@@ -82,12 +82,13 @@ export interface PeerMetadata {
   bannedUntil: number | null; // null = not banned, timestamp = ban expiration
   lastSeenMs: number;
   /**
-   * The peer's declared multiaddr, or null until the handshake reveals it.
-   * This is the join key between the two ban surfaces: PeerManager bans by
-   * peerId, PeerDb bans by address. A ban's address set opens with this
-   * field, when there is one, and grows through `extendBan` as further
-   * addresses are tied to the same peer id (contract: "Ban surfaces are
-   * unified").
+   * The address this node dialled, or the address the peer declared —
+   * recorded when the peer reaches Active, the handshake being the only
+   * place both identities are known. Null until then. This is the join key
+   * between the two ban surfaces: PeerManager bans by peerId, PeerDb bans by
+   * address. A ban's address set opens with this field, when there is one,
+   * and grows through `extendBan` as further addresses are tied to the same
+   * peer id (NET_INTERFACE → Ban surfaces are unified).
    */
   address: string | null;
   /**
