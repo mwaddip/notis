@@ -567,9 +567,9 @@ describe('the outbound funnel refuses a banned peer before the handshake', () =>
     });
 
     internalsB.peerMgr.recordPenalty('misbehavior', aId, 500, 'test');
-    // Control: the temporal ban's own bookkeeping takes A out of the peers
-    // map immediately, and closing the live connection is out of scope for
-    // this unit — it is the SECOND tick this test measures.
+    // Control: the ban takes A out of the peers map at once and leaves the
+    // live connection open — a ban does not hang up a connection; it is the
+    // SECOND tick this test measures.
     expect(nodeB.getConnectedPeers()).not.toContain(aId);
     expect(nodeB.libp2pNode?.getConnections()).toHaveLength(1);
 
