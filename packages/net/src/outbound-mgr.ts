@@ -22,6 +22,7 @@ export interface OutboundTickPlan {
 export class OutboundManager {
   private cooldowns: Map<string, number> = new Map();
   private seedPeerIds: Map<string, string> = new Map();
+  private retiredSeeds: Set<string> = new Set();
   private readonly redialCooldownMs: number;
   private readonly minPeers: number;
 
@@ -53,6 +54,16 @@ export class OutboundManager {
   }
 
   /**
+   * A seed whose dial resolved to this node's own peer id: retired from the
+   * floor for the manager's lifetime — dialled once, closed, never listed
+   * again, connections or none (NET_INTERFACE → Outbound Manager). A restart
+   * re-learns it — there is no un-retiring within one manager's lifetime.
+   */
+  recordSeedSelf(addr: string): void {
+    this.retiredSeeds.add(addr);
+  }
+
+  /**
    * Decide this tick's actions from the live connection list. Both phases key
    * off the count of OUTBOUND connections only — an attacker who fills every
    * inbound slot must not be able to stop us from dialing out, which is how a
@@ -79,6 +90,7 @@ export class OutboundManager {
         connectedOutbound >= this.minPeers
           ? []
           : this.config.bootstrapPeers.filter((addr) => {
+              if (this.retiredSeeds.has(addr)) return false;
               const learned = this.seedPeerIds.get(addr);
               return learned === undefined || !connectedPeerIds.has(learned);
             }),

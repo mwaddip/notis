@@ -124,6 +124,17 @@ export class PeerDb {
     this.storage?.delete(addr);
   }
 
+  /**
+   * An address whose dial resolved to this node's own peer id: forgotten now,
+   * and filtered from every later `record` the way our own listen addresses
+   * are — a Peers intake or a handshake naming the same address is dropped
+   * thereafter (NET_INTERFACE → PeerDb).
+   */
+  forgetSelf(addr: string): void {
+    this.forget(addr);
+    this.selfAddrs.add(addr);
+  }
+
   /** Ban a peer address — removes from entries and prevents re-add. */
   ban(addr: string): void {
     this.bannedAddrs.add(addr);

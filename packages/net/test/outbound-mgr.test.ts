@@ -264,4 +264,29 @@ describe('OutboundManager', () => {
         .toEqual([other]);
     });
   });
+
+  // -----------------------------------------------------------------------
+  // A seed that resolved to this node's own peer id: retired from the floor
+  // for the manager's lifetime — dialled once, closed, never listed again,
+  // connections or none (NET_INTERFACE → Outbound Manager).
+  // -----------------------------------------------------------------------
+
+  describe('a seed recorded as self is retired from the floor for good', () => {
+    const seed = '/ip4/10.0.0.1/tcp/9000'; // testConfig's single bootstrap seed
+
+    it('is absent from bootstrapDials with zero connections, and stays absent across a tick where another peer connects and one where it drops', () => {
+      mgr.recordSeedSelf(seed);
+
+      expect(mgr.planTick([]).bootstrapDials).toEqual([]);
+
+      // An unrelated peer connects this tick — retirement is not "the seed's
+      // own peer is connected" (that path is the control above); a retired
+      // seed stays off the list regardless of who else is connected.
+      expect(mgr.planTick([conn('outbound', '/ip4/9.9.9.9/tcp/9000', 'other-peer')]).bootstrapDials)
+        .toEqual([]);
+
+      // The unrelated peer drops: still absent — retirement does not expire.
+      expect(mgr.planTick([]).bootstrapDials).toEqual([]);
+    });
+  });
 });

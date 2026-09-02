@@ -19,6 +19,7 @@ import {
 import { NetNode } from '../src/node.js';
 import type { NetConfig, NetValidators } from '../src/types.js';
 import { makeConfig as makeBaseConfig } from './helpers.js';
+import type { PeerDb } from '../src/peerdb.js';
 
 function makeConfig(bootstrapPeers: string[] = []): NetConfig {
   return makeBaseConfig({ bootstrapPeers });
@@ -297,5 +298,57 @@ describe('Two-node integration', () => {
     const afterSwap = await nodeB.requestHeaders(3, 3, nodeA.peerId());
 
     expect(afterSwap.map((h) => h.height)).toEqual([2, 1]);
+  }, TIMEOUT);
+});
+
+// ---------------------------------------------------------------------------
+// A connection to our own peer id is never a peer (NET_INTERFACE →
+// "A connection whose remote peer id is this node's own is never a peer") —
+// driven through the real outbound funnel: the dial, the own-peer check, then
+// the handshake for anyone else.
+// ---------------------------------------------------------------------------
+
+interface Internals {
+  peerDb: PeerDb;
+  outboundTick(): void;
+}
+
+describe('the outbound funnel and our own peer id', () => {
+  let nodeA: NetNode;
+
+  afterEach(async () => {
+    await nodeA?.stop();
+  });
+
+  it('a seed that resolves to ourselves is dialled once, closed, and never dialled again', async () => {
+    const configA = makeConfig();
+    nodeA = new NetNode(configA, validators);
+    await nodeA.start();
+
+    // Bare — no `/p2p/<peerId>` suffix, the shape the testnet profile's real
+    // seed has (NET_INTERFACE → "A connection whose remote peer id is this
+    // node's own is never a peer"). A multiaddr that names a peer id is
+    // refused by libp2p's own dial-queue before it ever reaches this node's
+    // own-peer check; only a bare address reaches TCP, upgrades, and resolves
+    // to our own id afterward.
+    const selfMultiaddr = nodeA.libp2pNode?.getMultiaddrs()[0]?.toString();
+    expect(selfMultiaddr).toBeTruthy();
+    const bareSelfAddr = selfMultiaddr!.split('/p2p/')[0]!;
+    // NetNode keeps the caller's config object by reference (this.config =
+    // config), so pushing after start() still reaches the manager's seed list.
+    configA.bootstrapPeers.push(bareSelfAddr);
+
+    const internals = nodeA as unknown as Internals;
+    internals.outboundTick();
+    await new Promise((r) => setTimeout(r, 1000));
+
+    expect(nodeA.peers()).toEqual([]);
+    expect(nodeA.getConnectedPeers()).toEqual([]);
+    expect(nodeA.libp2pNode?.getConnections()).toEqual([]);
+
+    // Retired for the manager's lifetime: a second tick plans no seed dial.
+    internals.outboundTick();
+    await new Promise((r) => setTimeout(r, 300));
+    expect(nodeA.libp2pNode?.getConnections()).toEqual([]);
   }, TIMEOUT);
 });
