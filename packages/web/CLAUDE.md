@@ -99,3 +99,24 @@ pnpm --filter @dagsocial/web dev        # vite dev server, proxying the API
 # a live node with blocks to read, in one command (throwaway devnet, dies with the process):
 pnpm -r build && node packages/node/scripts/dev.mjs --nodes 1 --miners 1
 ```
+
+## Building for a deployment — two bases, and both are required
+
+**They are different things and neither implies the other:**
+
+- **`--base`** is where the client's *own* files live. It rewrites the asset URLs in `index.html`.
+  Omitted, they are root-absolute (`/assets/…`, `/fonts/…`, `/favicon.svg`), which resolve only if the
+  client is served from the site root.
+- **`VITE_API_BASE`** is where the *node's API* lives, relative to the same origin. Omitted, it is
+  empty, which is right for `pnpm dev` because the dev server proxies the bare API paths.
+
+A client served from a subpath, reading an API mounted on a different subpath, needs both. Run vite
+directly rather than through `pnpm --filter`, so no flag has to survive pnpm's argument passing:
+
+```bash
+cd packages/web && VITE_API_BASE=<api path> npx vite build --base=<client path>/
+```
+
+⚠ **Getting `--base` wrong yields a blank page, not an error.** The HTML loads, every asset 404s, and
+nothing in the console names the cause. Check `dist/index.html` after building: every `href` and `src`
+must begin with the client path.
