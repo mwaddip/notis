@@ -96,4 +96,32 @@ describe('PeerDb', () => {
     expect(recent[0]!.address).toBe('c');
     expect(recent[1]!.address).toBe('b');
   });
+
+  // ---------------------------------------------------------------------
+  // Addresses compare without their `/p2p/` component (NET_INTERFACE →
+  // Outbound Manager → "Addresses compare without their `/p2p/`
+  // component"; NET_INTERFACE → PeerDb).
+  // ---------------------------------------------------------------------
+
+  const PEER_ID = '12D3KooWKze1ug3uVs8EkynoWPGFY7GQKgT67VKMzvHVe3v6UhwV';
+
+  it('recent excludes a candidate carrying /p2p/ when the exclude set holds its bare form', () => {
+    db.record(makeRecord(`/ip4/1.2.3.4/tcp/9/p2p/${PEER_ID}`, 1000));
+    db.record(makeRecord('/ip4/1.2.3.4/tcp/10', 900)); // control: different port
+
+    const recent = db.recent(10, new Set(['/ip4/1.2.3.4/tcp/9']));
+    expect(recent.map((r) => r.address)).toEqual(['/ip4/1.2.3.4/tcp/10']);
+  });
+
+  it('the self filter drops a record whose /p2p/ suffix differs from the self address, and the reverse', () => {
+    const suffixedSelf = new PeerDb(null, 100, [`/ip4/1.2.3.4/tcp/9/p2p/${PEER_ID}`]);
+    suffixedSelf.record(makeRecord('/ip4/1.2.3.4/tcp/9', 1000));
+    expect(suffixedSelf.get('/ip4/1.2.3.4/tcp/9')).toBeNull();
+    expect(suffixedSelf.count()).toBe(0);
+
+    const bareSelf = new PeerDb(null, 100, ['/ip4/1.2.3.4/tcp/9']);
+    bareSelf.record(makeRecord(`/ip4/1.2.3.4/tcp/9/p2p/${PEER_ID}`, 1000));
+    expect(bareSelf.get(`/ip4/1.2.3.4/tcp/9/p2p/${PEER_ID}`)).toBeNull();
+    expect(bareSelf.count()).toBe(0);
+  });
 });

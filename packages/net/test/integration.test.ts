@@ -415,3 +415,50 @@ describe('the outbound funnel and our own peer id', () => {
     expect(internalsB.peerDb.get(selfCandidate)).toBeNull();
   }, TIMEOUT);
 });
+
+// ---------------------------------------------------------------------------
+// Addresses compare without their `/p2p/` component (NET_INTERFACE →
+// Outbound Manager → "Addresses compare without their `/p2p/` component") —
+// a connected candidate recorded bare must not be re-dialled every tick.
+// ---------------------------------------------------------------------------
+
+describe('the fill phase does not re-dial a connected candidate recorded bare', () => {
+  let nodeA: NetNode;
+  let nodeB: NetNode;
+
+  afterEach(async () => {
+    await nodeA?.stop();
+    await nodeB?.stop();
+  });
+
+  it('B holds exactly one connection to A across three ticks', async () => {
+    nodeA = new NetNode(makeConfig(), validators);
+    await nodeA.start();
+    const aMultiaddr = nodeA.libp2pNode?.getMultiaddrs()[0]?.toString();
+    expect(aMultiaddr).toBeTruthy();
+    // Bare — the shape every seed carries and the shape this pin measured
+    // the bug under (declaredAddress-learned keys already carry /p2p/ and
+    // are unaffected).
+    const bareAAddr = aMultiaddr!.split('/p2p/')[0]!;
+
+    nodeB = new NetNode(makeBaseConfig({ bootstrapPeers: [], minPeers: 0 }), validators);
+    await nodeB.start();
+
+    const internalsB = nodeB as unknown as Internals;
+    internalsB.peerDb.record({
+      address: bareAAddr,
+      lastSeenMs: Date.now(),
+      agentName: 'test',
+      nodeName: '',
+      protocolVersion: PROTOCOL_VERSION,
+      capabilities: [],
+    });
+
+    for (let tick = 0; tick < 3; tick++) {
+      internalsB.outboundTick();
+      await new Promise((r) => setTimeout(r, 1500));
+      expect(nodeB.libp2pNode?.getConnections()).toHaveLength(1);
+      expect(nodeB.getConnectedPeers()).toEqual([nodeA.peerId()]);
+    }
+  }, TIMEOUT);
+});

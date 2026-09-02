@@ -289,4 +289,57 @@ describe('OutboundManager', () => {
       expect(mgr.planTick([]).bootstrapDials).toEqual([]);
     });
   });
+
+  // -----------------------------------------------------------------------
+  // The fill-phase exclude set compares addresses without their `/p2p/`
+  // component (NET_INTERFACE → Outbound Manager → "Addresses compare
+  // without their `/p2p/` component").
+  // -----------------------------------------------------------------------
+
+  describe('fill-phase exclude compares addresses without /p2p/', () => {
+    const PEER_ID = '12D3KooWKze1ug3uVs8EkynoWPGFY7GQKgT67VKMzvHVe3v6UhwV';
+    const target = '/ip4/10.0.0.2/tcp/9000';
+    const control = '/ip4/10.0.0.3/tcp/9000'; // a different port — not connected
+
+    function recordTargetAndControl(at: string, into: PeerDb): void {
+      into.record({
+        address: at,
+        lastSeenMs: Date.now(),
+        agentName: 'test',
+        nodeName: 'target',
+        protocolVersion: 1,
+        capabilities: [],
+      });
+      into.record({
+        address: control,
+        lastSeenMs: Date.now() - 1, // older, so an unfixed exclude would still rank target first
+        agentName: 'test',
+        nodeName: 'control',
+        protocolVersion: 1,
+        capabilities: [],
+      });
+    }
+
+    it('a connection carrying /p2p/ excludes a candidate keyed bare; a different port is still returned', () => {
+      recordTargetAndControl(target, db);
+      const conns = [
+        conn('outbound', '/ip4/51.15.9.1/tcp/4001'),
+        conn('outbound', '/ip4/51.15.9.2/tcp/4001'),
+        conn('outbound', `${target}/p2p/${PEER_ID}`),
+      ];
+      expect(mgr.planTick(conns).candidate).toBe(control);
+    });
+
+    it('the reverse spelling — a bare connection excludes a candidate keyed with /p2p/ — excludes too', () => {
+      const db2 = new PeerDb(null, 100, []);
+      const mgr2 = new OutboundManager(testConfig, db2);
+      recordTargetAndControl(`${target}/p2p/${PEER_ID}`, db2);
+      const conns = [
+        conn('outbound', '/ip4/51.15.9.1/tcp/4001'),
+        conn('outbound', '/ip4/51.15.9.2/tcp/4001'),
+        conn('outbound', target),
+      ];
+      expect(mgr2.planTick(conns).candidate).toBe(control);
+    });
+  });
 });
