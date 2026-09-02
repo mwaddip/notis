@@ -198,26 +198,93 @@ const MIGRATIONS = [
   )`,
 ];
 
+// NODE_INTERFACE → AVL+ State Root → "AVL storage shares nodes across versions; a row is a node's lifetime"
+const AVL_NODES_TABLE = (name: string): string => `
+  CREATE TABLE ${name} (
+    label BLOB NOT NULL,
+    node_data BLOB NOT NULL,
+    first_seen_height INTEGER NOT NULL,
+    orphaned_at_height INTEGER,
+    PRIMARY KEY (label, first_seen_height)
+  )`;
+
+// The prune deletes by orphan height; the fork revert deletes and clears by
+// first-seen and orphan height. Label lookups ride the primary key.
+const AVL_NODES_INDEXES = `
+  CREATE INDEX IF NOT EXISTS idx_avl_tree_nodes_orphaned ON avl_tree_nodes(orphaned_at_height);
+  CREATE INDEX IF NOT EXISTS idx_avl_tree_nodes_first_seen ON avl_tree_nodes(first_seen_height);
+`;
+
 function migrateAvlTree(database: Database.Database): void {
   const tables = database
     .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='avl_tree_versions'")
     .all() as Array<{ name: string }>;
-  if (tables.length > 0) return;
+  if (tables.length === 0) {
+    database.exec(`
+      CREATE TABLE avl_tree_versions (
+        version BLOB PRIMARY KEY,
+        height INTEGER NOT NULL,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+      ${AVL_NODES_TABLE('avl_tree_nodes')};
+      ${AVL_NODES_INDEXES}
+    `);
+    return;
+  }
 
-  database.exec(`
-    CREATE TABLE avl_tree_versions (
-      version BLOB PRIMARY KEY,
-      height INTEGER NOT NULL,
-      created_at INTEGER NOT NULL DEFAULT (unixepoch())
-    );
+  // A `version` column is the per-version layout: every node copied under
+  // every version, keyed `(version, label)`.
+  const cols = database.prepare("PRAGMA table_info('avl_tree_nodes')").all() as Array<{ name: string }>;
+  if (cols.some(c => c.name === 'version')) convertAvlNodesToSharedLayout(database);
+  database.exec(AVL_NODES_INDEXES);
+}
 
-    CREATE TABLE avl_tree_nodes (
-      version BLOB NOT NULL REFERENCES avl_tree_versions(version),
-      label BLOB NOT NULL,
-      node_data BLOB NOT NULL,
-      PRIMARY KEY (version, label)
-    );
-  `);
+/**
+ * Converts the per-version `avl_tree_nodes` to shared nodes in place, once, in
+ * one transaction (NODE_INTERFACE → AVL+ State Root → "AVL storage shares nodes
+ * across versions; a row is a node's lifetime", the conversion paragraph): one
+ * row per label with its node bytes unchanged, `first_seen_height` the lowest
+ * height whose version holds the label, `orphaned_at_height` the height after
+ * the highest and NULL when the newest version holds it. Refuses unless the
+ * retained versions are contiguous heights. `VACUUM` runs after the commit —
+ * it cannot run inside a transaction — and returns the file to its content.
+ */
+function convertAvlNodesToSharedLayout(database: Database.Database): void {
+  const startedAt = Date.now();
+  const rowsBefore = (database.prepare('SELECT COUNT(*) AS n FROM avl_tree_nodes').get() as { n: number }).n;
+
+  database.transaction(() => {
+    const span = database.prepare(
+      'SELECT COUNT(*) AS n, COUNT(DISTINCT height) AS d, MIN(height) AS lo, MAX(height) AS hi FROM avl_tree_versions',
+    ).get() as { n: number; d: number; lo: number | null; hi: number | null };
+    if (span.n > 0 && span.d !== span.hi! - span.lo! + 1) {
+      throw new Error(
+        'AVL store conversion refused: the retained versions are not contiguous heights ' +
+        `(${span.d} distinct heights over ${span.lo}..${span.hi})`,
+      );
+    }
+
+    database.exec(AVL_NODES_TABLE('avl_tree_nodes_shared'));
+    database.prepare(`
+      INSERT INTO avl_tree_nodes_shared (label, node_data, first_seen_height, orphaned_at_height)
+      SELECT n.label, n.node_data, MIN(v.height),
+             CASE WHEN MAX(v.height) = ? THEN NULL ELSE MAX(v.height) + 1 END
+      FROM avl_tree_nodes n JOIN avl_tree_versions v ON v.version = n.version
+      GROUP BY n.label
+    `).run(span.hi);
+    database.exec('DROP TABLE avl_tree_nodes');
+    database.exec('ALTER TABLE avl_tree_nodes_shared RENAME TO avl_tree_nodes');
+    database.exec(AVL_NODES_INDEXES);
+  })();
+
+  const convertedAt = Date.now();
+  const rowsAfter = (database.prepare('SELECT COUNT(*) AS n FROM avl_tree_nodes').get() as { n: number }).n;
+  database.exec('VACUUM');
+  const vacuumedAt = Date.now();
+  console.log(
+    `AVL store converted to shared nodes: ${rowsBefore} rows -> ${rowsAfter} rows ` +
+    `in ${((convertedAt - startedAt) / 1000).toFixed(1)}s, VACUUM ${((vacuumedAt - convertedAt) / 1000).toFixed(1)}s`,
+  );
 }
 
 function migrateBlockTopology(database: Database.Database): void {

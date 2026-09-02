@@ -3840,6 +3840,36 @@ the network record (see "Three entity kinds" below).
   independently of the chain and a startup rebuild is not a recovery path. `bootstrapAvlProver`
   has exactly one production caller, `seedGenesisState`, over the empty genesis tree — the one
   case with no history to lose
+- ⛔ **AVL storage shares nodes across versions; a row is a node's lifetime.** A node's label is the
+  hash of its content and its children's labels, so an unchanged subtree carries the same label in
+  every version and is stored **once per lifetime**: `avl_tree_nodes` is
+  `label, node_data, first_seen_height, orphaned_at_height NULL` with `(label, first_seen_height)`
+  the primary key, and `avl_tree_versions` one row per applied block, the version being the digest
+  (root label ‖ tree height). **`update` at height `h` first orphans the previous cycle's nodes the
+  tree no longer holds** — the prover reports them (`removedNodes()`, valid inside `update` because
+  `generateProofAndUpdateStorage` runs update before the proof; a reported label with no live row is
+  tolerated) — setting `orphaned_at_height = h` on the label's live row; **then it walks the new tree
+  from the root, stops at any label that has a live row (that subtree is shared), and writes every
+  other node as a new lifetime** (`first_seen_height = h`). A live ancestor therefore has live
+  descendants, and a subtree that recurs after its rows were orphaned gets fresh rows rather than a
+  revived one. The cost is the changed paths, never the tree. **`rollback(version)` resolves the tree
+  from the version's root label**, reading for each label the row alive at the version's height —
+  `first_seen_height <= H` and `orphaned_at_height` NULL or `> H` — and a label with no such row is
+  local corruption that fails closed. **`pruneVersionsBefore(cutoff)`** deletes the version rows below
+  the cutoff and every row with `orphaned_at_height <= cutoff`: such a row was referenced by versions
+  below its orphan height only, all of them gone. **`deleteVersionAtHeight(h)`** (a fork revert)
+  deletes the rows with `first_seen_height = h` and clears `orphaned_at_height` where it equals `h`,
+  so the version below reads exactly as it did. The store's steady size is the live tree plus the
+  rows the retained versions replaced — proportional to changed paths per block times
+  `MAX_PROOF_HISTORY`, not to the tree times the history.
+  **A store carrying the per-version layout** (`avl_tree_nodes` keyed by `(version, label)`, every
+  node copied into every version) **is converted in place at `initDb`, once**: one row per label
+  keeps the node bytes unchanged, `first_seen_height` is the lowest height whose version holds the
+  label and `orphaned_at_height` the height after the highest, NULL when the newest version holds
+  it; the retained versions must be contiguous heights or the conversion refuses. A label absent
+  from heights in between resolves the same, because resolution starts from each version's root. No
+  node byte and no label changes, so every version's root is exactly what it was and nothing is
+  rebuilt (→ "AVL+ tree shape is history-dependent").
 - ⛔ **A box block application SPENDS must already be in the tree, and THE TREE IS ASKED.**
   `applyBlockMutations` and `bootstrapAvlProver` read `performOneOperation`'s verdict at every
   operation that can refuse one — `Remove` of an absent key, `Insert` of a present one — and throw

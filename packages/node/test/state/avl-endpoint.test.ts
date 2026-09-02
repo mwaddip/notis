@@ -18,7 +18,7 @@ describe('GET /api/v1/proof/:boxId', () => {
     db.pragma('journal_mode = WAL');
     db.exec(`
       CREATE TABLE avl_tree_versions (version BLOB PRIMARY KEY, height INTEGER NOT NULL, created_at INTEGER NOT NULL DEFAULT (unixepoch()));
-      CREATE TABLE avl_tree_nodes (version BLOB NOT NULL REFERENCES avl_tree_versions(version), label BLOB NOT NULL, node_data BLOB NOT NULL, PRIMARY KEY (version, label));
+      CREATE TABLE avl_tree_nodes (label BLOB NOT NULL, node_data BLOB NOT NULL, first_seen_height INTEGER NOT NULL, orphaned_at_height INTEGER, PRIMARY KEY (label, first_seen_height));
     `);
 
     const handle = createAvlProver(db);
