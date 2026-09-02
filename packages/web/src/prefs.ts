@@ -12,6 +12,12 @@ const KEY_IDTINT = 'notis.idtint';
 const KEY_NODE = 'notis.node';
 export const KEY_LAYOUT = 'notis.layout';
 
+// The client's default API base, baked at build time — empty for `pnpm dev`
+// (the vite proxy makes the node same-origin), a path like /testnet/api for a
+// deploy served under one. A stored node value overrides it; the source never
+// hardcodes an origin.
+export const BUILD_BASE = import.meta.env.VITE_API_BASE ?? '';
+
 // The wash percentages are large because the wash colour sits at the ground's
 // own lightness — the mix controls how much hue comes through and nothing else,
 // so it cannot move the text ratio.
@@ -38,13 +44,21 @@ export function writeStore(key: string, value: string): void {
   }
 }
 
+export function removeStore(key: string): void {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    /* private mode, blocked storage */
+  }
+}
+
 export const prefs = {
   theme: (readStore(KEY_THEME) === 'dark' ? 'dark' : 'light') as Theme,
   idtint: ((): IdTint => {
     const v = readStore(KEY_IDTINT);
     return v === 'wash' || v === 'both' || v === 'off' ? v : 'spine';
   })(),
-  node: readStore(KEY_NODE) ?? '',
+  node: readStore(KEY_NODE) ?? BUILD_BASE,
 };
 
 const root = document.documentElement;
@@ -80,6 +94,13 @@ export function setIdTint(m: IdTint): void {
 }
 
 export function setNode(origin: string): void {
-  prefs.node = origin.trim();
-  writeStore(KEY_NODE, prefs.node);
+  const trimmed = origin.trim();
+  if (trimmed) {
+    prefs.node = trimmed;
+    writeStore(KEY_NODE, trimmed);
+  } else {
+    // Cleared — reset to the build default rather than forcing same-origin.
+    prefs.node = BUILD_BASE;
+    removeStore(KEY_NODE);
+  }
 }

@@ -1,5 +1,5 @@
 import { el } from '../dom';
-import { prefs, type IdTint } from '../prefs';
+import { prefs, BUILD_BASE, type IdTint } from '../prefs';
 import type { Handlers, RenderCtx } from '../model/state';
 
 // @settings — the second window kind, and the proof the frame holds more than
@@ -47,17 +47,20 @@ export function settingsBody(handlers: Handlers, ctx: RenderCtx): HTMLElement {
     b.appendChild(r);
   }
 
-  // Node — same-origin by default; a foreign origin fails until the node gains
-  // CORS, and the field says so rather than failing silently.
+  // Node — the effective base, defaulting to the one baked at build time; a
+  // foreign origin fails until the node gains CORS, and the field says so rather
+  // than failing silently.
   {
     const { row: r, field } = row('node');
     const input = el('input') as HTMLInputElement;
+    // Shows the effective base — the stored value, or the build default when
+    // nothing is stored — rather than an empty box.
     input.value = prefs.node;
-    input.placeholder = 'same-origin (default)';
+    input.placeholder = BUILD_BASE || 'same-origin (default)';
     input.setAttribute('aria-label', 'the node this client reads');
     input.addEventListener('change', () => handlers.setNode(input.value));
     field.appendChild(input);
-    field.appendChild(el('div', 'hint', 'blank reads this page’s own origin. a foreign origin needs CORS the node does not send yet, and will fail.'));
+    field.appendChild(el('div', 'hint', 'blank resets to the build default. a foreign origin needs CORS the node does not send yet, and will fail.'));
     b.appendChild(r);
   }
 
