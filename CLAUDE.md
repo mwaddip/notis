@@ -44,9 +44,11 @@ Seven packages, in dependency order:
 - `@dagsocial/nipopow` — NiPoPoW proofs over ordering-block headers: the proof codecs, `verifyProof`, `compareProofs`, `proveWithReader`. **Pure functions only.**
 - `@dagsocial/net` — libp2p + Gossipsub relay, whole-block sync, peer management.
 - `@dagsocial/node` — Express server, PoW, verifier, SQLite store, UTXO engine, AVL+ state root, block creator, demo UI.
-- `@dagsocial/web` — the browser client, built with vite. The **read surface** only: feed, threads, a
-  tiling workspace, both themes. Every call a `GET`, so it holds no key and signs nothing; it hashes only
-  through `@dagsocial/types`, reached by a build-time `crypto` shim.
+- `@dagsocial/web` — the browser client, built with vite. The **read surface** — feed, threads, a
+  tiling workspace, both themes — and the **write surface's first slice**: an identity held in the
+  browser, the composer for a root and a reply, and like, on transactions the client builds and signs
+  itself. It hashes only through `@dagsocial/types`, reached by a build-time `crypto` shim, and signs
+  with `@noble/curves`; with no identity loaded it is the read surface exactly.
 
 Three tools live under `tools/` — in the workspace by the `tools/*` glob, so in `pnpm -r test`:
 

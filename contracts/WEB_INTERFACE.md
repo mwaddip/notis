@@ -1,19 +1,17 @@
 # WEB Interface Contract
 
 **Component:** `@dagsocial/web`
-**Status:** the **read surface** is implemented; the **write surface's first slice** — the identity
-machinery, the composer for a root and a reply, and like — is contracted below and **ahead of the
-code** (the dated marker under Scope); vouch, invite, the faucet call, withdraw, prune, the profile
-window and every identity interface are not built
+**Status:** the **read surface** and the **write surface's first slice** — the identity machinery,
+the composer for a root and a reply, and like — are implemented; vouch, invite, the faucet call,
+withdraw, prune, the profile window and every identity interface are not built
 **Protocol version:** read from the node, never held — see Invariants
 
 > **The demo UI (`packages/node/public/index.html`) is not this contract's subject.** It is a debug
 > interface. Do not write an interface contract for it, and do not treat it as a product surface.
 >
-> ⚠ **The demo UI outlives the read surface.** It is the only browser surface that can *write* — it
-> builds, signs and submits post, like, withdraw, invite, vouch and unvouch transactions, and
-> `@dagsocial/web` does none of that yet. Nothing about it is superseded by this contract's read
-> surface.
+> ⚠ **The demo UI outlives this client's first slices.** It is the only browser surface that
+> *writes* withdraw, invite, vouch and unvouch transactions; `@dagsocial/web` posts and likes, and
+> does none of the rest. Nothing about it is superseded by this contract.
 >
 > **One thing about the demo UI IS binding:** it hand-rolls `computeBoxId`, `computeTxId`,
 > `postFieldBytes` and the positional writers under them, so it is a third implementation of
@@ -51,7 +49,8 @@ never a copy. That is what keeps it from being a further implementation of anyth
 consensus-critical, and it is why no mirror test applies to it.
 
 Owns: the feed, threads, the tiling workspace of columns and regions, both themes, the identity
-spine, and a `@settings` window. Reads posts, threads and node status. Sends nothing.
+spine, and a `@settings` window. Reads posts, threads and node status. Sends nothing — every write
+is the write surface's, through its own module.
 
 **With no identity loaded it sends no `viewer` parameter**, because it has none to name, and every
 `likedByViewer` it receives is `null` — the correct value for an anonymous reader rather than a
@@ -61,9 +60,8 @@ and one rule is cleaner than a local record of likes kept beside the node's.
 
 ### The write surface — the first slice: identity, post and like
 
-> ⚠ **AHEAD OF CODE (2026-09-03) — the write surface's first slice.** Every section and invariant
-> below marked *(write surface)* states the rule the slice implements and is ahead of the tree; the
-> marker retires in the unit's contract pass.
+Every section and invariant below marked *(write surface)* belongs to this slice; the read surface
+is the rest.
 
 **The slice is the identity machinery, the composer for a root and a reply, and like**, on
 transactions the browser builds and signs. Vouch, invite, the faucet call, withdraw, prune, the profile

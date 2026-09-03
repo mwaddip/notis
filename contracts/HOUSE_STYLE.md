@@ -21,10 +21,10 @@
 > motion** — changed 2026-08-10, having previously been excluded outright.
 >
 > The exclusion's ground was that the demo UI is scaffolding about to die when `@dagsocial/web`
-> lands. It is the only browser surface that can **write** — it builds, signs and submits post,
-> like, withdraw, invite, vouch and unvouch transactions, and `@dagsocial/web`'s read surface does
-> none of that — so it is what a human uses for an open-ended period. **A surface nobody will
-> replace soon is not scaffolding.**
+> lands. It is the only browser surface that **writes** withdraw, invite, vouch and unvouch
+> transactions — `@dagsocial/web` posts and likes, and does none of the rest — so it is what a
+> human uses for those for an open-ended period. **A surface nobody will replace soon is not
+> scaffolding.**
 >
 > **The inclusion is deliberately partial.** Layout, information architecture, interaction and
 > illustration stay out — the demo UI keeps its own shell. `WEB_INTERFACE.md` also still holds:
