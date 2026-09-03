@@ -67,6 +67,10 @@ export async function submitPostFlow(
   }
   const body = await deps.write.submitPost(signedJson(built.tx, deps.identity, built.txId, id.pubKeyHex), content);
   if (isRejection(body)) return { ok: false, rejection: body };
+  // The node echoes the id it computed over the same tx; a mismatch means the
+  // encodings diverged — the class the mirror tests exist for — so the entry is
+  // refused rather than tracked under an id the node does not share.
+  if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
 
   const entry: PendingEntry = {
     txId: built.txId,
@@ -101,6 +105,7 @@ export async function submitLikeFlow(deps: SubmitDeps, targetId: string): Promis
   }
   const body = await deps.write.submitLike(signedJson(built.tx, deps.identity, built.txId, id.pubKeyHex));
   if (isRejection(body)) return { ok: false, rejection: body };
+  if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
 
   const entry: PendingEntry = {
     txId: built.txId,

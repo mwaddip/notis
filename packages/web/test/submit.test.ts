@@ -4,6 +4,7 @@ import { submitPostFlow, submitLikeFlow, type SubmitDeps } from '../src/wallet/s
 import { PendingLedger } from '../src/wallet/ledger';
 import type { Api } from '../src/api/client';
 import type { KarmaBoxRow, KarmaResult, PostResult, StatusResult } from '../src/api/dto';
+import { isRejection } from '../src/api/write';
 import type { PostSubmitResult, LikeSubmitResult, Rejection } from '../src/api/write';
 
 // submit ties the reads, the builders, the ledger, the identity and the write
@@ -60,15 +61,19 @@ const identity = {
     return SIG;
   },
 };
+// The node echoes the id it computed over the received tx; the client signs its
+// own id before POSTing, so the last signed id IS the client's built id — a
+// matching node responds with it.
+const lastSignedTxId = (): string => signCalls[signCalls.length - 1]!;
 function write(postResp: PostSubmitResult | Rejection, likeResp: LikeSubmitResult | Rejection): SubmitDeps['write'] {
   return {
     submitPost: async (tx, content) => {
       writeCalls.push({ kind: 'post', tx, content });
-      return postResp;
+      return isRejection(postResp) ? postResp : { ...postResp, txId: lastSignedTxId() };
     },
     submitLike: async (tx) => {
       writeCalls.push({ kind: 'like', tx });
-      return likeResp;
+      return isRejection(likeResp) ? likeResp : { ...likeResp, txId: lastSignedTxId() };
     },
   };
 }
@@ -177,6 +182,39 @@ describe('submitLikeFlow', () => {
     const res = await submitLikeFlow(deps, TARGET_ID);
     expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough karma to like right now.' } });
     expect(writeCalls).toEqual([]);
+    expect(ledger.size).toBe(0);
+  });
+});
+
+describe('the node txId is compared to the client id', () => {
+  // A node whose id disagrees with the client's over the same tx: the encodings
+  // diverged, so the entry is refused and the mismatch named.
+  function writeMismatch(): SubmitDeps['write'] {
+    return {
+      submitPost: async (tx, content) => {
+        writeCalls.push({ kind: 'post', tx, content });
+        return { ...okPost, txId: 'ff'.repeat(32) };
+      },
+      submitLike: async (tx) => {
+        writeCalls.push({ kind: 'like', tx });
+        return { ...okLike, txId: 'ff'.repeat(32) };
+      },
+    };
+  }
+
+  it('a post whose node id disagrees refuses the entry and names the mismatch', async () => {
+    const ledger = new PendingLedger();
+    const deps: SubmitDeps = { reads: reads(), write: writeMismatch(), ledger, identity };
+    const res = await submitPostFlow(deps, 'a thread', null);
+    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'the node computed a different transaction id' } });
+    expect(ledger.size).toBe(0);
+  });
+
+  it('a like whose node id disagrees refuses the entry too', async () => {
+    const ledger = new PendingLedger();
+    const deps: SubmitDeps = { reads: reads(), write: writeMismatch(), ledger, identity };
+    const res = await submitLikeFlow(deps, TARGET_ID);
+    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'the node computed a different transaction id' } });
     expect(ledger.size).toBe(0);
   });
 });
