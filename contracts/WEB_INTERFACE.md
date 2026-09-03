@@ -42,9 +42,10 @@ boundary is drawn so that the boundary itself is checkable, not so that it is co
 
 ### The read surface — every call is a GET
 
-**The read surface performs no cryptography of any kind.** No key generation, no signing, no hashing,
-no transaction construction, no positional encoding. It is therefore not a fourth implementation of
-anything consensus-critical, and no mirror test applies to it.
+**The read surface holds no key and signs nothing.** No key generation, no signing, no transaction
+construction. It **does** hash — and it does so with `@dagsocial/types`, the shared implementation,
+never a copy. That is what keeps it from being a further implementation of anything
+consensus-critical, and it is why no mirror test applies to it.
 
 Owns: the feed, threads, the tiling workspace of columns and regions, both themes, the identity
 spine, and a `@settings` window. Reads posts, threads and node status. Sends nothing.
@@ -57,6 +58,46 @@ placeholder for one.
 
 Identity, signing, the composer, likes, vouches, invites, the profile window and export are named in
 this contract's later sections and **none of them exists**. Each is marked where it appears.
+
+## The browser reaches `@dagsocial/types` through a build-time shim
+
+`@dagsocial/types` and `@dagsocial/validation` are written against Node: `createHash('blake2b512')`
+in five files, `generateKeyPairSync`, `createPublicKey` and `verify` in one, and `Buffer` as a
+**global that is never imported**. A browser has none of them.
+
+The client supplies them **at build time and changes neither package**: `crypto` resolves to a shim
+over pure-TS primitives, and `Buffer` is supplied to the bundle. Nothing in `types` or `validation`
+knows the difference, and when those packages stop depending on Node the shim is deleted rather than
+migrated.
+
+**The shim carries only what the client's own module graph reaches, and nothing on speculation.**
+`createPublicKey` and `verify` are `@dagsocial/validation`'s, and the client does not depend on that
+package; they arrive with the code that calls them. An unreached primitive cannot be pinned by any
+test that runs, and an unpinned consensus-critical primitive is a liability rather than a
+convenience — which is the whole argument against a hand-rolled copy, applied to the shim itself.
+
+⛔ **The shim's hashing must be byte-identical to `createHash('blake2b512')`, and that must be
+pinned.** Every id in the protocol is a blake2b-512 digest truncated to 32 bytes; a shim that
+differs by one byte produces ids the node rejects, and neither package's own tests would notice
+because neither exercises the other's code. This is the same failure class the demo UI's mirror
+exists for.
+
+⛔ **A substituted module is pinned by absolute path, never by a bare specifier.** A bare specifier
+resolves from **the module that imports it**, which for a substituted Node global is a file inside
+`@dagsocial/types` — a package that declares no such dependency, so the specifier resolves to the Node
+builtin and the browser build externalizes it to nothing. The failure is invisible in a populated
+working tree, where the layout happens to make the package reachable, and appears only on a clean
+install. **This is what the throwaway-worktree gate is for; a build that succeeds in the main tree is
+not evidence.**
+
+⚠ **A test running under Node does not prove the shim.** The shim is a build-time substitution, so
+under Node the real `crypto` and the real `Buffer` are present and the substitution never happens —
+a green Node suite is consistent with a bundle in which the shim was never wired at all. **The
+binding check runs the built bundle in a browser** and recomputes, against live data, a value the
+node independently produced.
+
+⚠ **No WASM.** The substitutes are pure TS, per the preference order the project holds for every
+package.
 
 ## The client is served from the node's own origin
 
@@ -180,5 +221,5 @@ client that expects to announce itself first is built against an endpoint that d
 - **Content length is enforced in UTF-8 bytes before submission** — `MAX_CONTENT_BYTES` is 300 bytes,
   and one emoji is four of them. *(write surface)*
 - **All hashing is client-side; the node verifies, it does not assist.** *(write surface)*
-- **The read surface holds no key and computes no hash.** Its boundary is checkable: it issues `GET`
-  requests and nothing else.
+- **The read surface holds no key and signs nothing.** Its boundary is checkable: it issues `GET`
+  requests and nothing else, and it constructs no transaction.

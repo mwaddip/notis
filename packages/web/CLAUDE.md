@@ -33,12 +33,13 @@ a tiling workspace of columns and regions, both themes, the identity spine, and 
 ## The boundary that defines this slice
 
 ⛔ **The read surface issues `GET` requests and nothing else.** No `POST`, no `DELETE`. No keys, no
-signing, no hashing, no positional encoding, no transaction construction.
+signing, no transaction construction.
 
-This is checkable, and it is the property the whole slice rests on: because there is no cryptography
-here, this package is **not** a further implementation of anything consensus-critical, and no mirror
-test applies to it. If you find yourself needing to hash something, you have left the slice — stop and
-report, do not implement it.
+**It does hash** — and only ever through `@dagsocial/types`, reached by the build-time shim. That is
+the property the whole slice rests on: the package is **not** a further implementation of anything
+consensus-critical, because it runs the shared one rather than a copy, which is why no mirror test
+applies to it. **If you find yourself hand-writing an encoder or a hash, you have left the slice —
+stop and report, do not implement it.**
 
 **It sends no `viewer` parameter**, so every `likedByViewer` is `null`. That is correct for an
 anonymous reader, not a placeholder.
@@ -99,6 +100,29 @@ pnpm --filter @dagsocial/web dev        # vite dev server, proxying the API
 # a live node with blocks to read, in one command (throwaway devnet, dies with the process):
 pnpm -r build && node packages/node/scripts/dev.mjs --nodes 1 --miners 1
 ```
+
+## The binding check — the only proof the crypto shim is wired
+
+`@dagsocial/types` reaches the browser through a build-time `crypto` shim
+(`WEB_INTERFACE → The browser reaches @dagsocial/types through a build-time shim`).
+Under Node the real `crypto` is present and the substitution never happens, so
+**no committed test proves the shim** — each would pass against a bundle where the
+alias was never wired. Only the built bundle, run in a browser over live data,
+does:
+
+```bash
+# against a local dev node (default http://localhost:3000):
+node packages/web/scripts/binding-check/run.mjs
+# or against a live network:
+node packages/web/scripts/binding-check/run.mjs https://notis.fun/testnet/api
+```
+
+It builds the shim's path through the real alias + Buffer inject, evaluates the
+bundle in headless Chromium (no Node `process`, `Buffer` or Web Crypto in the
+page), and asserts each live post's recomputed `computeContentHash` equals the
+`contentHash` the node served. Exit 0 = all matched. Needs a Chromium binary
+(`CHROME=…`, else Playwright's cached one). Not in `pnpm test` by design — it
+needs a browser and a node.
 
 ## Building for a deployment — two bases, and both are required
 
