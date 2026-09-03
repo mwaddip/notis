@@ -16,6 +16,7 @@ import type { KarmaResult, PostResult, StatusResult, FeedResult, BlockCurrent } 
 const PUB = 'aa'.repeat(32);
 const AUTHOR = 'bb'.repeat(32);
 const BOX = '11'.repeat(32);
+const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
 function statusResult(): StatusResult {
   return {
@@ -35,6 +36,7 @@ function confirmedPost(id: string, likedByViewer: boolean | null = null): PostRe
 interface Harness {
   app: App;
   ledger: PendingLedger;
+  panes: HTMLElement;
   drive: {
     submitComposer(parentId: string | null, text: string): Promise<void>;
     likePost(postId: string): Promise<void>;
@@ -81,14 +83,17 @@ function harness(): Harness {
   app.mount(appbar, feed, panes);
 
   return {
-    app, ledger, feedViewers,
+    app, ledger, panes, feedViewers,
     drive: app as unknown as Harness['drive'],
     setHeight: (h) => { blockHeight = h; },
     setLiked: (v) => { liked = v; },
   };
 }
 
-beforeEach(() => localStorage.clear());
+beforeEach(() => {
+  localStorage.clear();
+  document.body.innerHTML = '';
+});
 afterEach(() => {
   vi.useRealTimers();
 });
@@ -123,6 +128,30 @@ describe('the App write surface — a post flight', () => {
     h.drive.state.submissions[0]!.stage = 'landed';
     await (h.app as unknown as { refreshFeed(): Promise<void> }).refreshFeed();
     expect(h.drive.state.submissions).toHaveLength(0);
+  });
+
+  it('a landing re-renders only the region holding the reply — others survive by reference', async () => {
+    const h = harness();
+    const drive = h.app as unknown as {
+      openThread(id: string, origin: { from: 'feed' } | { from: 'pane'; ci: number }): void;
+    };
+    const P1 = 'a'.repeat(64);
+    const P2 = 'd'.repeat(64);
+    drive.openThread(P1, { from: 'feed' });
+    drive.openThread(P2, { from: 'pane', ci: 0 });
+    await flush();
+    const panes = h.panes;
+    expect(panes.querySelectorAll('.region').length).toBe(2);
+    const region2Before = panes.querySelectorAll('.region')[1];
+
+    // A reply under P1's thread lands through the poll.
+    await h.drive.submitComposer(P1, 'a reply');
+    await h.drive.pollTick();
+
+    // The reply's region was re-rendered, but the unrelated region survived by
+    // reference — a landing must not replace the DOM of a surface it does not touch.
+    expect(panes.querySelectorAll('.region')[1]).toBe(region2Before);
+    expect(h.drive.state.submissions[0]!.stage).toBe('landed');
   });
 });
 

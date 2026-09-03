@@ -653,7 +653,7 @@ export class App {
     // The wallet). A number that moves in direct response to the reader's own
     // click is not the ticking readout the motion contract bans.
     this.optimisticLikes.add(postId);
-    this.renderPanes();
+    this.renderRegionsForPost(postId);
     const result = await submitLikeFlow(this.submitDeps(), postId);
     if (result.ok) {
       this.startPoll();
@@ -661,7 +661,7 @@ export class App {
       this.optimisticLikes.delete(postId);
       this.setReportForPost(postId, 'like rejected: ' + likeRejectionCopy(result.rejection));
     }
-    this.renderPanes();
+    this.renderRegionsForPost(postId);
   }
 
   // ---- the bounded landing poll (WEB_INTERFACE → The wallet) ----
@@ -691,9 +691,13 @@ export class App {
   }
 
   /** Reconcile the ledger's entries against the node and nothing else — no feed,
-   *  no thread, no injected row (WEB_INTERFACE → The wallet). */
+   *  no thread, no injected row (WEB_INTERFACE → The wallet). Only the surfaces
+   *  holding a settled entry are re-rendered: the one unsolicited update may not
+   *  replace the DOM of a surface it does not touch, or a selection and a parked
+   *  pointer are lost even where the pixels match. */
   private async reconcile(tip: number): Promise<void> {
-    let changed = false;
+    let feedTouched = false;
+    const touchedPosts = new Set<string>();
     for (const entry of this.ledger.all()) {
       const fetched = await this.client.post(entry.postId, this.viewer());
       if (entry.kind === 'post') {
@@ -703,30 +707,48 @@ export class App {
         if (sub) {
           sub.stage = outcome;
           if (outcome === 'landed' && fetched !== null && !('kind' in fetched)) sub.blockHeight = fetched.blockHeight;
+          if (sub.parentId === null) feedTouched = true;
+          else touchedPosts.add(sub.parentId);
         }
         this.ledger.remove(entry.txId);
-        changed = true;
       } else {
         const outcome = reconcileLike(entry, fetched, tip);
         if (outcome === 'pending') continue;
         this.optimisticLikes.delete(entry.postId);
         this.ledger.remove(entry.txId);
         if (outcome === 'expired') this.setReportForPost(entry.postId, 'a like expired before any block took it');
-        changed = true;
+        touchedPosts.add(entry.postId);
       }
     }
-    if (changed) {
-      // A landed card changes colour and nothing else; the geometry is identical.
-      this.renderFeed();
-      this.renderPanes();
-    }
+    // A landed card changes colour and nothing else; the geometry is identical.
+    if (feedTouched) this.renderFeed();
+    this.renderRegionsForPosts(touchedPosts);
   }
 
   // ---- placement, focus and reports for the write surface ----
 
   private renderForParent(parentId: string | null): void {
     if (parentId === null) this.renderFeed();
-    else this.renderPanes();
+    else this.renderRegionsForPost(parentId);
+  }
+
+  private renderRegionsForPost(postId: string): void {
+    this.renderRegionsForPosts(new Set([postId]));
+  }
+
+  /** Re-render only the regions whose focused thread contains one of the posts —
+   *  every other region survives by reference. */
+  private renderRegionsForPosts(postIds: Set<string>): void {
+    if (postIds.size === 0) return;
+    const wanted = [...postIds];
+    for (const col of this.state.workspace.columns) {
+      for (const region of col.regions) {
+        const fk = region.wins[region.focus];
+        if (fk !== undefined && !isWin(fk) && wanted.some((p) => this.threadContains(fk, p))) {
+          this.renderRegion(region.uid);
+        }
+      }
+    }
   }
 
   private focusOpener(parentId: string | null): void {
