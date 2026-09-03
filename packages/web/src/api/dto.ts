@@ -102,6 +102,25 @@ export interface BlockCurrent {
   hash: string | null;
 }
 
+export interface KarmaBoxRow {
+  boxId: string;
+  value: string;                  // decimal — the client holds it as bigint
+}
+
+/** `GET /karma/:userId` — the spendable view's confirmed boxes, paged by `next`.
+ *  A box row carries no `createdAtBlock`, which is why the wallet reads `/status`
+ *  after the boxes. The node also returns membership and decay fields the write
+ *  surface does not read; the identity unit will. */
+export interface KarmaResult {
+  userId: string;
+  total: string;
+  effective: string;
+  boxes: KarmaBoxRow[];
+  boxCount: number;
+  next: string | null;            // a formatted box key, or null at the end
+  height: number;
+}
+
 // ---------------------------------------------------------------------------
 // Discriminators — PostJson carries no `kind`; every tombstone does.
 // ---------------------------------------------------------------------------
