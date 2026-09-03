@@ -139,7 +139,9 @@ function stageLine(flight: Flight): HTMLElement {
     // Say what happened, never a status code (HOUSE_STYLE → Voice).
     said.textContent = flight.reason ?? '';
   } else {
-    said.appendChild(document.createTextNode('no block took this before height '));
+    // "by", not "before": the entry is still eligible at its expiry height and is
+    // purged once the tip passes it (reconcile's tip > expiresAtHeight).
+    said.appendChild(document.createTextNode('no block took this by height '));
     said.appendChild(el('span', 'n', (flight.expiresAtHeight ?? 0).toLocaleString('en-GB')));
     said.appendChild(document.createTextNode('.'));
     s.appendChild(said);
