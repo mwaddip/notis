@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { submitPostFlow, submitLikeFlow, type SubmitDeps } from '../src/wallet/submit';
 import { PendingLedger } from '../src/wallet/ledger';
 import type { Api } from '../src/api/client';
-import type { KarmaResult, PostResult, StatusResult } from '../src/api/dto';
+import type { KarmaBoxRow, KarmaResult, PostResult, StatusResult } from '../src/api/dto';
 import type { PostSubmitResult, LikeSubmitResult, Rejection } from '../src/api/write';
 
 // submit ties the reads, the builders, the ledger, the identity and the write
@@ -31,9 +31,10 @@ function statusResult(): StatusResult {
     inviteBondMin: '0', inviteBondMax: '0', membership: { memberCount: 1, memberBar: 1, memberLikesBar: 2 },
   };
 }
-function karmaResult(): KarmaResult {
-  return { userId: PUB, total: '227', effective: '227', boxes: [{ boxId: BOX_ID, value: '227' }], boxCount: 1, next: null, height: 6000 };
+function karmaResult(boxes: KarmaBoxRow[]): KarmaResult {
+  return { userId: PUB, total: '0', effective: '0', boxes, boxCount: boxes.length, next: null, height: 6000 };
 }
+const FULL_BOXES: KarmaBoxRow[] = [{ boxId: BOX_ID, value: '227' }];
 function postResult(id: string, confirmedAuthor: string | null): PostResult {
   return {
     id, content: 'parent', contentHash: '00'.repeat(32), author: 'ff'.repeat(32), parentRefs: [],
@@ -42,9 +43,9 @@ function postResult(id: string, confirmedAuthor: string | null): PostResult {
   };
 }
 
-function reads(confirmedAuthor: string | null = PARENT_AUTHOR): Pick<Api, 'karma' | 'status' | 'post'> {
+function reads(confirmedAuthor: string | null = PARENT_AUTHOR, boxes: KarmaBoxRow[] = FULL_BOXES): Pick<Api, 'karma' | 'status' | 'post'> {
   return {
-    karma: async () => karmaResult(),
+    karma: async () => karmaResult(boxes),
     status: async () => statusResult(),
     post: async (id, viewer) => {
       postReads.push({ id, viewer });
@@ -132,6 +133,16 @@ describe('submitPostFlow', () => {
     expect(writeCalls).toEqual([]);
     expect(ledger.size).toBe(0);
   });
+
+  it('a spendable view that cannot cover the price comes back as one rejection, not a throw', async () => {
+    const ledger = new PendingLedger();
+    // Four karma cannot cover a thread's price of five.
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, [{ boxId: BOX_ID, value: '4' }]), write: write(okPost, okLike), ledger, identity };
+    const res = await submitPostFlow(deps, 'a thread', null);
+    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough karma to post right now.' } });
+    expect(writeCalls).toEqual([]);
+    expect(ledger.size).toBe(0);
+  });
 });
 
 describe('submitLikeFlow', () => {
@@ -157,6 +168,15 @@ describe('submitLikeFlow', () => {
     const deps: SubmitDeps = { reads: reads(), write: write(okPost, rejection), ledger, identity };
     const res = await submitLikeFlow(deps, TARGET_ID);
     expect(res).toEqual({ ok: false, rejection });
+    expect(ledger.size).toBe(0);
+  });
+
+  it('an empty spendable view refuses a like in the voice register', async () => {
+    const ledger = new PendingLedger();
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, []), write: write(okPost, okLike), ledger, identity };
+    const res = await submitLikeFlow(deps, TARGET_ID);
+    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough karma to like right now.' } });
+    expect(writeCalls).toEqual([]);
     expect(ledger.size).toBe(0);
   });
 });

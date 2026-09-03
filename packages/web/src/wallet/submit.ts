@@ -1,5 +1,5 @@
 import { readBuildContext } from './reads';
-import { buildPost, buildLike, txToJson } from './builders';
+import { buildPost, buildLike, txToJson, InsufficientKarma } from './builders';
 import type { PendingLedger } from './ledger';
 import type { PendingEntry } from './types';
 import type { Api } from '../api/client';
@@ -55,7 +55,16 @@ export async function submitPostFlow(
   }
 
   const ctx = await readBuildContext(deps.reads, deps.ledger, id.pubKeyHex);
-  const built = buildPost(ctx, content, parent);
+  // The composer checks affordability first, but the spendable view is re-read
+  // here and can have moved; a shortfall comes back as one rejection shape, not a
+  // bare throw the app would have to special-case.
+  let built;
+  try {
+    built = buildPost(ctx, content, parent);
+  } catch (e) {
+    if (e instanceof InsufficientKarma) return clientRejection('not enough karma to post right now.');
+    throw e;
+  }
   const body = await deps.write.submitPost(signedJson(built.tx, deps.identity, built.txId, id.pubKeyHex), content);
   if (isRejection(body)) return { ok: false, rejection: body };
 
@@ -83,7 +92,13 @@ export async function submitLikeFlow(deps: SubmitDeps, targetId: string): Promis
   }
 
   const ctx = await readBuildContext(deps.reads, deps.ledger, id.pubKeyHex);
-  const built = buildLike(ctx, targetId, target.confirmedAuthor);
+  let built;
+  try {
+    built = buildLike(ctx, targetId, target.confirmedAuthor);
+  } catch (e) {
+    if (e instanceof InsufficientKarma) return clientRejection('not enough karma to like right now.');
+    throw e;
+  }
   const body = await deps.write.submitLike(signedJson(built.tx, deps.identity, built.txId, id.pubKeyHex));
   if (isRejection(body)) return { ok: false, rejection: body };
 
