@@ -52,7 +52,13 @@ interface Harness {
   setLiked(v: boolean): void;
 }
 
-function harness(): Harness {
+interface ThrowOpts {
+  submit?: boolean;
+  like?: boolean;
+  currentBlock?: boolean;
+}
+
+function harness(thrown: ThrowOpts = {}): Harness {
   const signCalls: string[] = [];
   const identity: Signer = { current: () => ({ pubKeyHex: PUB }), sign: (t) => { signCalls.push(t); return 'ab'.repeat(64); } };
   const last = (): string => signCalls[signCalls.length - 1]!;
@@ -66,12 +72,21 @@ function harness(): Harness {
     thread: async () => null,
     post: async (id) => confirmedPost(id, liked),
     status: async () => statusResult(),
-    currentBlock: async (): Promise<BlockCurrent> => ({ height: blockHeight, hash: null }),
+    currentBlock: async (): Promise<BlockCurrent> => {
+      if (thrown.currentBlock) throw new Error('node unreachable');
+      return { height: blockHeight, hash: null };
+    },
     karma: async () => karma,
   };
   const writeClient = {
-    submitPost: async () => ({ postId: 'newpost', status: 'pending', expiresAtHeight: 6720, txId: last() }),
-    submitLike: async () => ({ status: 'pending', txId: last(), expiresAtHeight: 6720 }),
+    submitPost: async () => {
+      if (thrown.submit) throw new Error('node unreachable');
+      return { postId: 'newpost', status: 'pending', expiresAtHeight: 6720, txId: last() };
+    },
+    submitLike: async () => {
+      if (thrown.like) throw new Error('node unreachable');
+      return { status: 'pending', txId: last(), expiresAtHeight: 6720 };
+    },
   } as unknown as WriteClient;
 
   const ledger = new PendingLedger();
@@ -168,5 +183,31 @@ describe('the App write surface — like and reads', () => {
     await h.drive.loadFeed();
     expect(h.feedViewers.every((v) => v === PUB)).toBe(true);
     expect(h.feedViewers.length).toBeGreaterThan(0);
+  });
+});
+
+describe('the App write surface — transport failures end cleanly', () => {
+  it('a submit that throws ends the flight as rejected, never stuck submitting', async () => {
+    const h = harness({ submit: true });
+    await h.drive.submitComposer(null, 'a thread');
+    const sub = h.drive.state.submissions[0]!;
+    expect(sub.stage).toBe('rejected');
+    expect(sub.reason).toBe("can't reach the node right now.");
+    expect(h.ledger.size).toBe(0);
+  });
+
+  it('a like that throws leaves no like optimistic', async () => {
+    const h = harness({ like: true });
+    await h.drive.likePost('cc'.repeat(32));
+    expect(h.drive.optimisticLikes.has('cc'.repeat(32))).toBe(false);
+    expect(h.ledger.size).toBe(0);
+  });
+
+  it('the poll survives a failed read and keeps its cadence', async () => {
+    const h = harness({ currentBlock: true });
+    await h.drive.submitComposer(null, 'a thread'); // succeeds; only currentBlock throws
+    expect(h.ledger.size).toBe(1);
+    await expect(h.drive.pollTick()).resolves.toBeUndefined(); // no unhandled rejection
+    expect(h.ledger.size).toBe(1); // nothing reconciled, the entry stands
   });
 });

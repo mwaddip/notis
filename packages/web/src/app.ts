@@ -632,7 +632,17 @@ export class App {
     sub: Submission,
     run: () => Promise<{ ok: true; entry: { txId: string; postId: string; expiresAtHeight: number } } | { ok: false; rejection: Rejection }>,
   ): Promise<void> {
-    const result = await run();
+    let result;
+    try {
+      result = await run();
+    } catch {
+      // A transport failure is an ending, not a stuck 'submitting' (WEB_INTERFACE →
+      // The wallet: every flight ends in one of the three endings).
+      sub.stage = 'rejected';
+      sub.reason = "can't reach the node right now.";
+      this.renderForParent(sub.parentId);
+      return;
+    }
     if (result.ok) {
       sub.stage = 'submitted';
       sub.txId = result.entry.txId;
@@ -654,7 +664,17 @@ export class App {
     // click is not the ticking readout the motion contract bans.
     this.optimisticLikes.add(postId);
     this.renderRegionsForPost(postId);
-    const result = await submitLikeFlow(this.submitDeps(), postId);
+    let result;
+    try {
+      result = await submitLikeFlow(this.submitDeps(), postId);
+    } catch {
+      // A transport failure leaves no like optimistic — the reader is told and
+      // the control returns to `like`.
+      this.optimisticLikes.delete(postId);
+      this.setReportForPost(postId, "like rejected: can't reach the node right now.");
+      this.renderRegionsForPost(postId);
+      return;
+    }
     if (result.ok) {
       this.startPoll();
     } else {
@@ -683,10 +703,17 @@ export class App {
       this.stopPoll();
       return;
     }
-    const block = await this.client.currentBlock();
-    if (block.height === this.lastPolledHeight) return; // reconcile only when the height moves
-    this.lastPolledHeight = block.height;
-    await this.reconcile(block.height);
+    try {
+      const block = await this.client.currentBlock();
+      if (block.height !== this.lastPolledHeight) {
+        this.lastPolledHeight = block.height; // reconcile only when the height moves
+        await this.reconcile(block.height);
+      }
+    } catch {
+      // A failed read keeps the cadence rather than an unhandled rejection every
+      // interval; the next tick retries.
+      return;
+    }
     if (this.ledger.size === 0) this.stopPoll();
   }
 
