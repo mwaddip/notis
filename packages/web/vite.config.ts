@@ -12,10 +12,13 @@ import inject from '@rollup/plugin-inject';
 // NOTIS_NODE to point the proxy elsewhere.
 const NODE_ORIGIN = process.env['NOTIS_NODE'] ?? 'http://localhost:3000';
 
-// The read surface's routes, mounted bare on the node: GET /posts, /posts/:id,
-// /posts/:id/thread, /status, /blocks/current. Proxied so the browser sees them
-// as same-origin.
-const API_PATHS = ['/posts', '/status', '/blocks'];
+// The API paths mounted bare on the node, proxied so the browser sees them
+// same-origin — the node and nginx send no CORS
+// (WEB_INTERFACE → The client is served from the node's own origin). The read
+// routes (/posts, /status, /blocks) and the write surface's: /karma the spendable
+// view and /likes, plus /credits, /vouches and /invites whose builders arrive
+// with their interface.
+const API_PATHS = ['/posts', '/status', '/blocks', '/karma', '/credits', '/likes', '/vouches', '/invites'];
 
 // @dagsocial/types is written against Node — createHash and generateKeyPairSync
 // from `crypto`, and `Buffer` as a global it never imports. The browser has
