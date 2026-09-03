@@ -118,7 +118,7 @@ mirror implementation must reproduce this, not reintroduce a throw.
 ⚠ **No field takes an out-of-domain sentinel that consensus then reads.** `vlqU`'s sentinel
 guards `protocolVersion`, and an out-of-domain version encodes to a value the era check
 refuses — the sentinel never reaches a rule as a meaning.
-`type`'s writer (`enum8`, → Layout — Post) is **total the same way, at byte width**: an
+`type`'s writer (`enum8`, → Layout — PostCommit) is **total the same way, at byte width**: an
 off-table value takes the reserved `0xff` sentinel, which no table may claim and which the
 decode boundary refuses as `invalid-tag`. `verifyPostFieldDomains`' membership rule keeps
 that sentinel path unreachable from validated input — without it, two distinct malformed
@@ -279,9 +279,9 @@ Two shapes, not one:
 
 ```
 interface BoxCandidate {              // the shared BASE — no per-type fields
-  boxType: "karma" | "credit" | "invite" | "genesis_proof" | "bond" | "vouch"
+  boxType: "karma" | "credit" | "genesis_proof" | "bond" | "vouch"
          | "emission" | "treasury" | "fee" | "karma_pool" | "like_accrual" | "vouch_escrow"
-         | "karma_price"
+         | "karma_price"        // the live members of BOX_TYPE_TAGS — see Layout — Boxes
   value: bigint                // integer base units — uniform bigint (see "Value denomination")
 }
 
@@ -292,7 +292,7 @@ interface BoxBase extends BoxCandidate {
 }
 
 type CandidateOf<B extends BoxBase> = Omit<B, "id" | "txId" | "index">
-type AnyBoxCandidate = CandidateOf<KarmaBox> | CandidateOf<CreditBox> | …   // all nine
+type AnyBoxCandidate = CandidateOf<KarmaBox> | CandidateOf<CreditBox> | …   // one per live type in BOX_TYPE_TAGS
 ```
 
 **`BoxCandidate` is the base, `CandidateOf<B>` is the per-type candidate.** An earlier draft of
@@ -1796,7 +1796,7 @@ construction throw, not a type error.
 > from any list, because no list of readers existed to be short.
 >
 > `boxRecordFromBytes` carries the four-part boundary check like every other decoder. **The proof
-> obligation is a round-trip over all nine box types**, which is strictly stronger than a frozen
+> obligation is a round-trip over every live box type in `BOX_TYPE_TAGS`**, which is strictly stronger than a frozen
 > vector: a frozen vector can pass while writer and reader disagree, a round-trip cannot.
 >
 > Found by the Phase 5 executor, who identified it as a types change and declined to write the reader
