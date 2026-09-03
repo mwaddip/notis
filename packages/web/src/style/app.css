@@ -161,6 +161,72 @@ header .spacer { flex: 1 1 auto; }
    stump's), not gold (credits), not clay (warning). */
 .card.pending { background: var(--ground); }
 
+/* ---------- write surface: stage line, composer, controls ---------- */
+
+/* The stage line shares the meta row's fixed 22px line box, so what it contains
+   — submitting…, submitted, an ending — cannot change the card's height. Landing
+   changes colour and nothing else (HOUSE_STYLE → "Pending state is the one
+   legitimate unsolicited update, and it pays for itself in geometry"). */
+.stage { display: flex; align-items: baseline; gap: 8px; margin-top: 8px;
+         height: 22px; font-size: 12.5px; color: var(--inkMute); }
+.stage .n { font-family: var(--mono); color: var(--ink); }
+
+/* The composer sits at the slot the post will land in. The right padding is the
+   strip's band less its shared border, so the textarea's right edge falls on the
+   strips' column below. */
+.composer { max-width: 660px; background: var(--surface); border: 1px solid var(--borderStrong);
+            border-radius: 6px; margin-bottom: 12px; padding: 12px 43px 12px 12px; }
+.composer textarea { display: block; width: 100%; resize: vertical; min-height: 76px;
+                     font-family: var(--sans); font-size: 15px; line-height: 1.5;
+                     color: var(--ink); background: var(--ground);
+                     border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; }
+.composer textarea:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: -1px; }
+.composer-foot { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.composer-foot .spacer { flex: 1 1 auto; }
+.composer-foot .ask { font-size: 12.5px; color: var(--ink); }
+
+/* UTF-8 bytes, not characters — silent until it matters, clay past the cap. */
+.budget { font-family: var(--mono); font-size: 11.5px; color: var(--inkMute); }
+.budget.over { color: var(--clay); }
+
+/* The price, beside the button that spends it — the one balance-shaped number on
+   the reading surface, and only while spending it. Not greenText despite karma
+   being green elsewhere: a green figure next to a green-filled post button muddles
+   the two. Clay when the action is blocked, the same signal an over draft gets. */
+.karma { font-size: 11.5px; color: var(--inkMute); }
+.karma .n { font-family: var(--mono); color: var(--ink); }
+.karma.short, .karma.short .n { color: var(--clay); }
+
+.btn { font-family: var(--sans); font-size: 12.5px; line-height: 1.2; padding: 5px 12px;
+       border-radius: 4px; cursor: pointer;
+       transition: background-color .15s ease-out, opacity .15s ease-out; }
+.btn:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: 2px; }
+.btn-primary { background: var(--greenText); color: var(--onGreen); border: 1px solid var(--greenText); }
+.btn-primary:hover { opacity: .88; }
+.btn-primary:disabled { opacity: .38; cursor: default; }
+.btn-ghost { background: transparent; color: var(--ink); border: 1px solid var(--borderStrong); }
+.btn-ghost:hover { background: rgba(0,0,0,.05); }
+:root[data-t="dark"] .btn-ghost:hover { background: rgba(255,255,255,.06); }
+
+/* like and ↩ reply, the same ghost weight in the meta row. `like` never takes an
+   s — a present-tense verb, not a tally. Once liked it stops being a control (no
+   undoing it): inkMute until a block takes it, greenText after, the karma colour. */
+.meta .likebtn {
+  font-family: var(--sans); font-size: 11.5px; line-height: 1.35; padding: 2px 8px;
+  display: inline-flex; align-items: baseline; gap: 5px; cursor: pointer;
+  background: transparent; color: var(--inkMute);
+  border: 1px solid var(--borderStrong); border-radius: 4px;
+  transition: background-color .15s ease-out, color .15s ease-out;
+}
+.meta .likebtn:hover { color: var(--greenText); background: rgba(0,0,0,.05); }
+:root[data-t="dark"] .meta .likebtn:hover { background: rgba(255,255,255,.06); }
+.meta .likebtn:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: 2px; }
+.meta .likebtn .n { font-family: var(--mono); }
+.meta .liked { display: inline-flex; align-items: baseline; gap: 5px; color: var(--inkMute); }
+.meta .liked.settled { color: var(--greenText); }
+.meta .liked .n { font-family: var(--mono); }
+.meta .reply-ctl .g { color: var(--inkMute); }
+
 /* ---------- panes ---------- */
 .panes { flex: 1 1 auto; min-width: 0; display: flex; gap: 16px; overflow-x: auto; }
 .empty {
