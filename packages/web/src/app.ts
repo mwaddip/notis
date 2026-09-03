@@ -19,13 +19,13 @@ import {
   newWorkspace, openWindow, closeWindow, moveLeft, moveRight, moveBelow, focusWindow, openSet,
   type Origin, type Region,
 } from './model/workspace';
-import type { AppState, ThreadState, RenderCtx, Handlers, Submission, FlightStage } from './model/state';
+import { FEED_COMPOSER_KEY, type AppState, type ThreadState, type RenderCtx, type Handlers, type Submission, type FlightStage } from './model/state';
 
 const FEED_LIMIT = 30;
 const THREAD_LIMIT = 50;
 const REFRESH_PAGE_CAP = 40; // a refresh re-reads a whole thread; this bounds the loop
 const POLL_MS = 15000;       // the bounded landing poll, only while own submissions are pending
-const FEED_COMPOSER = '@feed'; // the composer key for the feed's new post; a reply keys on its parent id
+const FEED_COMPOSER = FEED_COMPOSER_KEY;
 
 const isWin = (k: string): boolean => k.charAt(0) === '@';
 const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e));

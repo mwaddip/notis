@@ -5,6 +5,10 @@ import type { Theme, IdTint } from '../prefs';
 // The read surface's runtime state, and the handler contract the pure view
 // modules render against. Types only — no cycle between controller and views.
 
+/** The composer key for the feed's new post; a reply composer keys on its parent
+ *  id. Shared so the opener's data-composer-open matches composerFor(null). */
+export const FEED_COMPOSER_KEY = '@feed';
+
 export interface FeedState {
   posts: PostJson[];        // confirmed live posts (withdrawn/tombstones filtered out)
   pending: PostJson[];      // mempool posts, newest and not yet in a block

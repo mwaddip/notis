@@ -2,6 +2,7 @@ import { el, shortHex } from '../dom';
 import type { PostJson, Tombstone, StumpJson, PrunedJson, WithdrawnJson } from '../api/dto';
 import { isTombstone } from '../api/dto';
 import { assertContentHash } from '../integrity';
+import type { Submission, FlightStage } from '../model/state';
 
 // One post card, used by both the feed and a thread. The strip is the only
 // control; the card is not a button, so its text stays
@@ -13,6 +14,14 @@ export interface ParentRef {
   excerpt?: string | undefined;
 }
 
+/** A client submission's flight, driving the stage line on its own pending card. */
+export interface Flight {
+  stage: FlightStage;
+  reason?: string | null;
+  expiresAtHeight?: number | null;
+  onTryAgain?: (() => void) | null;
+}
+
 export interface CardOpts {
   open?: boolean;                        // this thread is open in a pane
   root?: boolean;                        // the pane's own root
@@ -20,6 +29,13 @@ export interface CardOpts {
   replyCount?: number | null;            // null → '?' (a feed row does not know)
   parentRef?: ParentRef | null;          // a feed reply's one-line reference
   onOpen?: ((id: string) => void) | null; // strip handler; null → no open control
+  // Write surface (panes only) — absent on a read-only feed card.
+  flight?: Flight | null;                // the stage line for the client's own submission
+  onReply?: ((id: string) => void) | null; // ↩ reply — present on withdrawn and stumps too
+  onLike?: ((id: string) => void) | null;   // like — absent by §7's exclusions
+  liked?: boolean;                       // show 'liked' rather than a control
+  likePending?: boolean;                 // the like has not settled — inkMute, count + 1
+  composerKey?: string;                  // for the data-composer-open focus hook
 }
 
 /** Compact absolute local time; the on-chain marker is the block height, this
@@ -109,8 +125,116 @@ function shellClasses(extra: string, opts: CardOpts): string {
   );
 }
 
+/** The stage line — two stages then one of three endings (WEB_INTERFACE → The
+ *  wallet). One fixed line box, so what it contains cannot change the card's
+ *  height. */
+function stageLine(flight: Flight): HTMLElement {
+  const s = el('div', 'stage');
+  const said = el('span', null);
+  if (flight.stage === 'submitting') {
+    said.textContent = 'submitting…';
+  } else if (flight.stage === 'submitted') {
+    said.textContent = 'submitted';
+  } else if (flight.stage === 'rejected') {
+    // Say what happened, never a status code (HOUSE_STYLE → Voice).
+    said.textContent = flight.reason ?? '';
+  } else {
+    said.appendChild(document.createTextNode('no block took this before height '));
+    said.appendChild(el('span', 'n', (flight.expiresAtHeight ?? 0).toLocaleString('en-GB')));
+    said.appendChild(document.createTextNode('.'));
+    s.appendChild(said);
+    if (flight.onTryAgain) {
+      const again = el('button', 'mini');
+      again.setAttribute('aria-label', 'build this again from your current balance and post it');
+      again.appendChild(el('span', null, 'try again'));
+      again.addEventListener('click', flight.onTryAgain);
+      s.appendChild(again);
+    }
+    return s;
+  }
+  s.appendChild(said);
+  return s;
+}
+
+/** The like area — 'liked' once done (no undoing it), a like button otherwise, or
+ *  the read-only count on a feed card. `like` never takes an s. */
+function likeArea(post: PostJson, opts: CardOpts): HTMLElement | null {
+  if (opts.liked) {
+    // inkMute until a block takes it, greenText after — the karma colour.
+    const l = el('span', 'liked' + (opts.likePending ? '' : ' settled'));
+    const count = post.likeCount + (opts.likePending ? 1 : 0);
+    if (count > 0) l.appendChild(el('span', 'n', String(count)));
+    l.appendChild(el('span', null, 'liked'));
+    return l;
+  }
+  if (opts.onLike) {
+    const lb = el('button', 'likebtn');
+    lb.setAttribute('aria-label', 'like this post — permanent, and moves karma to its author');
+    if (post.likeCount > 0) lb.appendChild(el('span', 'n', String(post.likeCount)));
+    lb.appendChild(el('span', null, 'like'));
+    lb.addEventListener('click', () => opts.onLike!(post.id));
+    return lb;
+  }
+  return likeNode(post.likeCount);
+}
+
+/** ↩ reply — a ghost button in the meta row (WEB_INTERFACE → The write surface). */
+function replyButton(id: string, opts: CardOpts): HTMLElement | null {
+  if (!opts.onReply) return null;
+  const rb = el('button', 'mini reply-ctl');
+  if (opts.composerKey) rb.setAttribute('data-composer-open', opts.composerKey);
+  rb.setAttribute('aria-label', 'reply to this post');
+  rb.appendChild(el('span', 'g', '↩'));
+  rb.appendChild(el('span', null, 'reply'));
+  rb.addEventListener('click', () => opts.onReply!(id));
+  return rb;
+}
+
+function inBlockNode(height: number): HTMLElement {
+  const b = el('span', null);
+  b.appendChild(document.createTextNode('in block '));
+  b.appendChild(el('span', 'n', height.toLocaleString('en-GB')));
+  return b;
+}
+
+/** A submission as a PostJson: status 'pending' until it lands, the identity's
+ *  key as author, a locally-computed contentHash — so the render-path check is
+ *  silent on it (WEB_INTERFACE → The wallet). */
+export function submissionToPost(sub: Submission): PostJson {
+  return {
+    id: sub.postId ?? sub.txId ?? sub.localKey, // the node's id once it lands, so the strip opens the thread
+
+    content: sub.content,
+    contentHash: sub.contentHash,
+    author: sub.author,
+    parentRefs: sub.parentId ? [sub.parentId] : [],
+    protocolVersion: 0,
+    type: 'regular',
+    status: sub.stage === 'landed' ? 'confirmed' : 'pending',
+    blockHeight: sub.blockHeight,
+    blockIndex: null,
+    blockCreatedAt: null,
+    likeCount: 0,
+    likedByViewer: null,
+  };
+}
+
+/** The flight opt for a submission — `try again` only on an expired one. */
+export function flightFor(sub: Submission, tryAgain: (localKey: string) => void): Flight {
+  return {
+    stage: sub.stage,
+    reason: sub.reason,
+    expiresAtHeight: sub.expiresAtHeight,
+    onTryAgain: sub.stage === 'expired' ? () => tryAgain(sub.localKey) : null,
+  };
+}
+
 function livePostCard(post: PostJson, opts: CardOpts): HTMLElement {
-  const pending = post.status === 'pending';
+  const flight = opts.flight ?? null;
+  const landed = flight?.stage === 'landed';
+  // A node's mempool post is pending; the client's own submission is pending
+  // until it lands, when it fills and gains its meta row.
+  const pending = post.status === 'pending' && !landed;
   const card = el('div', shellClasses(pending ? ' pending' : '', opts));
   const body = el('div', 'card-body');
 
@@ -130,14 +254,23 @@ function livePostCard(post: PostJson, opts: CardOpts): HTMLElement {
     body.appendChild(el('div', 'card-content', post.content));
   }
 
-  const meta = el('div', 'meta');
-  const rc = replyCountNode(opts.replyCount ?? null);
-  if (rc) meta.appendChild(rc);
-  if (!pending) {
-    const lk = likeNode(post.likeCount);
-    if (lk) meta.appendChild(lk);
+  if (flight && flight.stage !== 'landed') {
+    // The client's own in-flight submission — the stage line takes the meta's slot.
+    body.appendChild(stageLine(flight));
+  } else {
+    const meta = el('div', 'meta');
+    const rc = replyCountNode(opts.replyCount ?? null);
+    if (rc) meta.appendChild(rc);
+    // Controls only on a landed or confirmed card, never a node's pending one.
+    if (!pending) {
+      const lk = likeArea(post, opts);
+      if (lk) meta.appendChild(lk);
+      if (landed && post.blockHeight !== null) meta.appendChild(inBlockNode(post.blockHeight));
+      const rb = replyButton(post.id, opts);
+      if (rb) meta.appendChild(rb);
+    }
+    body.appendChild(meta);
   }
-  body.appendChild(meta);
   card.appendChild(body);
 
   // A pending post reserves the band but has no control — that also removes the
@@ -157,6 +290,10 @@ function withdrawnCard(row: WithdrawnJson, opts: CardOpts): HTMLElement {
   const meta = el('div', 'meta');
   const rc = replyCountNode(opts.replyCount ?? null);
   if (rc) meta.appendChild(rc);
+  // Reply survives withdrawal — replies to one are the whole difference from
+  // deletion (WEB_INTERFACE → The write surface).
+  const rb = replyButton(row.id, opts);
+  if (rb) meta.appendChild(rb);
   body.appendChild(meta);
   card.appendChild(body);
   strip(row.id, opts, card); // there is something beneath — keep the control
@@ -176,6 +313,14 @@ function stumpCard(row: StumpJson, opts: CardOpts): HTMLElement {
   s.appendChild(el('span', 'n', row.compactedAtBlockHeight.toLocaleString('en-GB')));
   s.appendChild(document.createTextNode('.'));
   body.appendChild(s);
+  // A stump accepts a reply — parent refs may point at one and the interface
+  // should not forbid what the protocol permits (WEB_INTERFACE → The write surface).
+  const rb = replyButton(row.id, opts);
+  if (rb) {
+    const meta = el('div', 'meta');
+    meta.appendChild(rb);
+    body.appendChild(meta);
+  }
   card.appendChild(body);
   strip(row.id, { ...opts, onOpen: null }, card); // no strip — nothing beneath
   return card;

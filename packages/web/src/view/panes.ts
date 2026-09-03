@@ -1,9 +1,10 @@
 import { el, reportNode, shortHex } from '../dom';
-import { card } from './card';
+import { card, submissionToPost, flightFor, type CardOpts } from './card';
 import { settingsBody } from './settings';
 import { flattenThread } from '../model/thread';
 import { identityHue } from '../model/identity';
 import { isTombstone } from '../api/dto';
+import type { PostJson, Tombstone } from '../api/dto';
 import type { Region, Workspace } from '../model/workspace';
 import type { Handlers, RenderCtx } from '../model/state';
 
@@ -91,6 +92,30 @@ function bar(k: string, ci: number, focused: boolean, handlers: Handlers, ctx: R
   return b;
 }
 
+/** The write-surface opts for a card inside a pane: ↩ reply on every card (the
+ *  card itself withholds it on a pending or pruned one), and the like control by
+ *  §7's exclusions — live confirmed posts only, never withdrawn, stumps, pending
+ *  or the reader's own. */
+function writeCardOpts(row: PostJson | Tombstone, ctx: RenderCtx, handlers: Handlers): Partial<CardOpts> {
+  if (!ctx.writeEnabled) return {};
+  const opts: Partial<CardOpts> = {
+    onReply: (id) => handlers.openComposer(id),
+    composerKey: row.id, // a reply composer keys on its parent id
+  };
+  if (!isTombstone(row) && row.status === 'confirmed') {
+    const overlaid = ctx.likePending(row.id);
+    const liked = overlaid || row.likedByViewer === true;
+    const isOwn = ctx.ownKey !== null && row.author === ctx.ownKey;
+    if (liked) {
+      opts.liked = true;
+      opts.likePending = overlaid && row.likedByViewer !== true;
+    } else if (!isOwn) {
+      opts.onLike = (id) => handlers.likePost(id);
+    }
+  }
+  return opts;
+}
+
 function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handlers: Handlers, ctx: RenderCtx): void {
   if (isWin(focusedK)) {
     body.appendChild(settingsBody(handlers, ctx));
@@ -112,17 +137,36 @@ function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handl
 
   const rootId = t.root.id;
   for (const node of flattenThread(t.root, t.descendants)) {
+    const row = node.row;
     // A pane's own root does not advertise that it is open — you are looking at
     // it. A reply open in another pane still does.
     body.appendChild(
-      card(node.row, {
-        open: node.row.id !== rootId && ctx.openSet.has(node.row.id),
-        root: node.row.id === rootId,
+      card(row, {
+        open: row.id !== rootId && ctx.openSet.has(row.id),
+        root: row.id === rootId,
         depth: node.depth,
-        replyCount: node.row.id === rootId ? t.descendantCount : node.replyCount,
+        replyCount: row.id === rootId ? t.descendantCount : node.replyCount,
         onOpen: (id) => handlers.openThread(id, { from: 'pane', ci }),
+        ...writeCardOpts(row, ctx, handlers),
       }),
     );
+    // A reply composer open under this post, reused by reference across the
+    // rebuild, and the client's own reply submissions beneath it.
+    const composerEl = ctx.composerFor(row.id);
+    if (composerEl) body.appendChild(composerEl);
+    for (const sub of ctx.submissionsFor(row.id)) {
+      const landed = sub.stage === 'landed' && sub.postId !== null;
+      body.appendChild(
+        card(submissionToPost(sub), {
+          depth: Math.min(node.depth + 1, 3),
+          replyCount: null,
+          flight: flightFor(sub, handlers.tryAgain),
+          ...(landed
+            ? { onOpen: (id) => handlers.openThread(id, { from: 'pane', ci }), onReply: (id) => handlers.openComposer(id), composerKey: sub.postId ?? undefined }
+            : {}),
+        }),
+      );
+    }
   }
 
   // Descendants load oldest-first, so paging forward loads newer replies below
