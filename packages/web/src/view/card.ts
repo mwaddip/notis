@@ -1,6 +1,7 @@
 import { el, shortHex } from '../dom';
 import type { PostJson, Tombstone, StumpJson, PrunedJson, WithdrawnJson } from '../api/dto';
 import { isTombstone } from '../api/dto';
+import { assertContentHash } from '../integrity';
 
 // One post card, used by both the feed and a thread. The strip is the only
 // control; the card is not a button, so its text stays
@@ -121,6 +122,11 @@ function livePostCard(post: PostJson, opts: CardOpts): HTMLElement {
     // without implying withdrawal — it is not one of the three absence states.
     body.appendChild(el('div', 'card-absent', 'content not on this node yet'));
   } else {
+    // The read surface hashes here: recompute the body's commitment with the
+    // shared implementation and assert it matches what the node served, showing
+    // nothing.
+    // WEB_INTERFACE → The browser reaches @dagsocial/types through a build-time shim
+    assertContentHash(post.id, post.content, post.contentHash);
     body.appendChild(el('div', 'card-content', post.content));
   }
 

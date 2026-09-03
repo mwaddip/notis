@@ -2,10 +2,11 @@ import type {
   FeedResult, ThreadResult, PostResult, StatusResult, BlockCurrent,
 } from './dto';
 
-// ⛔ The read surface issues GET requests and nothing else (WEB_INTERFACE →
-// "The read surface holds no key and computes no hash"). There is no method,
-// body, or viewer parameter anywhere in this module. If a call here ever needs
-// a POST, the slice has been left — stop and report, do not add it.
+// ⛔ The read surface issues GET requests and nothing else — no method, body, or
+// viewer parameter anywhere in this module. Hashing it does (with the shared
+// implementation, elsewhere); a key, a signature or a write it does not.
+// WEB_INTERFACE → "The read surface holds no key and signs nothing". If a call
+// here ever needs a POST, the slice has been left — stop and report, do not add it.
 
 export class ApiError extends Error {
   constructor(readonly status: number, message: string) {

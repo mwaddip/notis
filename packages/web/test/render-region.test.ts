@@ -3,13 +3,16 @@ import { describe, it, expect } from 'vitest';
 import { App } from '../src/app';
 import type { Api } from '../src/api/client';
 import type { FeedResult, ThreadResult, PostJson } from '../src/api/dto';
+import { contentHashHex } from '../src/integrity';
 
 const HEX = (c: string): string => c.repeat(64);
 const P1 = HEX('a'), P2 = HEX('b'), R1 = HEX('1'), R2 = HEX('2');
 
+// A real contentHash for the content, so the render surface's integrity check
+// stays silent — the read surface recomputes it on render.
 function post(id: string, content: string, parents: string[] = []): PostJson {
   return {
-    id, content, contentHash: HEX('0'), author: HEX('7'), parentRefs: parents,
+    id, content, contentHash: contentHashHex(content), author: HEX('7'), parentRefs: parents,
     protocolVersion: 1, type: 'regular', status: 'confirmed',
     blockHeight: 1, blockIndex: 0, blockCreatedAt: 0, likeCount: 0, likedByViewer: null,
   };
