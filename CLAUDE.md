@@ -99,7 +99,7 @@ can check it against the tree.
 ## Comment style
 
 **Cite the CONTRACT.** A comment either states the rule as it stands now, or names the contract section
-that states it — `TYPES_INTERFACE → Layout — Stump / PruneEntry`.
+that states it — `TYPES_INTERFACE → Layout — PruneCommit`.
 
 ⛔ **`contracts/` is the only citable directory.** A comment pointing anywhere else in this repo may be
 pointing at nothing: `.gitignore` excludes whole directories of working material, so a citation that
@@ -168,7 +168,8 @@ makes a title plain.
 - Parent refs: 0–1 per post (`MAX_PARENT_REFS`)
 - **On-chain time is block height**, never wall clock — one named exemption: the ordering-block
   difficulty schedule reads header `createdAt` stamps (`MINING_INTERFACE` → Difficulty Schedule)
-- Signatures: raw Ed25519 (64 bytes), base64 on wire. Verified with `crypto.verify(null, …)` and a KeyObject
+- Signatures: raw Ed25519 — 64 raw bytes on the positional wire, hex at the HTTP JSON edge. Verified with
+  `crypto.verify(null, …)` and a KeyObject
 - Hashing: `blake2b512` with `.subarray(0, 32)` for every 32-byte output
 - Wire format: positional binary. HTTP API: JSON
 - **Value conservation** — every user transaction conserves, unconditionally: each cost lands in a
