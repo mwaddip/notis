@@ -113,9 +113,9 @@ pinned offline against the demo UI's frozen vectors instead. Iterate deliberatel
 on the next reload, when a fresh App builds a ledger for the new key; a second key never sees the
 first's predicted change.
 
-⛔ **The identity file (`~/Documents/dagsocial-identity.json`) never enters the repo, a test, a commit,
-a log or a report** — not the file, not its path in code, not any value from it. It is loaded through
-the dev door in the browser console (`notis.identity.importJson(<text>)`) and nowhere else. It holds
+⛔ **The reader's identity file — kept outside the repo — never enters the repo, a test, a commit, a
+log or a report:** not the file, not its path in code, not any value from it. It is loaded through the
+dev door in the browser console (`notis.identity.importJson(<text>)`) and nowhere else. It holds
 `{ pubKeyHex, privKeyBase64 }` in the demo UI's export shape, so one key moves between the demo UI and
 this client both ways.
 
