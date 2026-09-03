@@ -1,10 +1,14 @@
 // The build-time `crypto` shim
 // (WEB_INTERFACE → The browser reaches @dagsocial/types through a build-time shim).
 // vite resolves the bare `crypto` specifier to this module, so @dagsocial/types
-// and @dagsocial/validation reach the four symbols they import from Node's
-// `crypto` — and only those four — over pure-TS primitives. `Buffer`, the other
-// Node global those packages use (never imported), is provided separately:
-// injected as a global at build time.
+// reaches the two symbols it imports from Node's `crypto` — createHash and
+// generateKeyPairSync — over pure-TS primitives. `Buffer`, the other Node global
+// it uses but never imports, is supplied to the bundle separately.
+//
+// The shim carries only what the client's module graph reaches: createPublicKey
+// and verify are @dagsocial/validation's, and the client does not depend on it,
+// so they arrive with the code that calls them, not here.
+// WEB_INTERFACE → "The shim carries only what the client's own module graph reaches, and nothing on speculation"
 //
 // ⛔ The hashing MUST be byte-identical to Node's createHash('blake2b512'):
 // every protocol id is a blake2b-512 digest truncated to 32 bytes, so a shim
@@ -49,21 +53,21 @@ export function createHash(algorithm: string): Blake2b512 {
 }
 
 // ---------------------------------------------------------------------------
-// Ed25519 — key generation and signature verification
+// Ed25519 — key generation
 // ---------------------------------------------------------------------------
 //
-// The consumers speak Node's KeyObject dialect: `generateKeyPairSync('ed25519')`
-// yields objects with `.export({ type, format })`, and `verify(null, …)` takes a
-// KeyObject. Ed25519 SPKI/PKCS8 DER are the fixed RFC 8410 wrappers — a 12-byte
-// prefix before the 32 raw public-key bytes, a 16-byte prefix before the 32-byte
-// seed — so a KeyObject here is just the raw key it carries.
+// @dagsocial/types speaks Node's KeyObject dialect: `generateKeyPairSync('ed25519')`
+// yields objects with `.export({ type, format })`. Ed25519 SPKI/PKCS8 DER are the
+// fixed RFC 8410 wrappers — a 12-byte prefix before the 32 raw public-key bytes,
+// a 16-byte prefix before the 32-byte seed — so a KeyObject here is just the raw
+// key it carries.
 
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
 const ED25519_PKCS8_PREFIX = Buffer.from('302e020100300506032b657004220420', 'hex');
 
 /** A public KeyObject: it carries the 32 raw Ed25519 bytes and exports SPKI DER. */
 export class PublicKeyObject {
-  constructor(readonly raw: Uint8Array) {}
+  constructor(private readonly raw: Uint8Array) {}
 
   export(opts: { type: string; format: string }): Buffer {
     if (opts.type !== 'spki' || opts.format !== 'der') {
@@ -92,27 +96,4 @@ export function generateKeyPairSync(type: string): { publicKey: PublicKeyObject;
   const seed = ed25519.utils.randomSecretKey();
   const publicKey = new PublicKeyObject(ed25519.getPublicKey(seed));
   return { publicKey, privateKey: new PrivateKeyObject(seed) };
-}
-
-/** Node `createPublicKey`, for the one shape the verifier passes: SPKI DER. */
-export function createPublicKey(input: { key: Uint8Array; format: string; type: string }): PublicKeyObject {
-  if (input.format !== 'der' || input.type !== 'spki') {
-    throw new Error(`crypto shim: unsupported public key import ${input.type}/${input.format}`);
-  }
-  const der = input.key;
-  const prefix = ED25519_SPKI_PREFIX;
-  if (der.length !== prefix.length + 32 || !Buffer.from(der.subarray(0, prefix.length)).equals(prefix)) {
-    throw new Error('crypto shim: malformed Ed25519 SPKI key');
-  }
-  return new PublicKeyObject(new Uint8Array(der.subarray(prefix.length)));
-}
-
-/**
- * Node `crypto.verify(null, data, key, signature)` for Ed25519 — strict RFC 8032
- * acceptance. `{ zip215: false }` is load-bearing: noble verifies under the
- * permissive ZIP215 rule by default, which accepts signatures Node rejects.
- */
-export function verify(_algorithm: null, data: Uint8Array, key: PublicKeyObject, signature: Uint8Array): boolean {
-  if (signature.length !== 64) return false;
-  return ed25519.verify(signature, data, key.raw, { zip215: false });
 }

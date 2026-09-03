@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { createHash as nodeCreateHash, generateKeyPairSync as nodeGenerateKeyPairSync, createPublicKey as nodeCreatePublicKey, sign as nodeSign, verify as nodeVerify } from 'node:crypto';
+import { createHash as nodeCreateHash, createPublicKey as nodeCreatePublicKey, verify as nodeVerify } from 'node:crypto';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { Buffer } from 'buffer';
-import { createHash, generateKeyPairSync, createPublicKey, verify } from '../src/shim/crypto';
+import { createHash, generateKeyPairSync } from '../src/shim/crypto';
 
 // The shim is a BUILD-TIME substitution: under Node the real `crypto` is present
 // and the substitution never happens, so this suite cannot prove the shim is
@@ -73,28 +73,6 @@ describe('crypto shim — createHash(blake2b512) is byte-identical to Node', () 
   });
 });
 
-describe('crypto shim — Ed25519 verify interoperates with Node', () => {
-  const message = enc.encode('an ordering-block hash the validator signs');
-
-  it('accepts a signature Node produced, over the SPKI DER the verifier wraps', () => {
-    const { publicKey, privateKey } = nodeGenerateKeyPairSync('ed25519');
-    const signature = nodeSign(null, message, privateKey);
-    const spkiDer = publicKey.export({ type: 'spki', format: 'der' });
-
-    const keyObj = createPublicKey({ key: spkiDer, format: 'der', type: 'spki' });
-    expect(verify(null, message, keyObj, signature)).toBe(true);
-
-    // A flipped signature byte and a flipped message byte both fail.
-    const badSig = Uint8Array.from(signature);
-    badSig[0] = badSig[0]! ^ 0x01;
-    expect(verify(null, message, keyObj, badSig)).toBe(false);
-    const badMsg = Uint8Array.from(message);
-    badMsg[0] = badMsg[0]! ^ 0x01;
-    expect(verify(null, badMsg, keyObj, signature)).toBe(false);
-    expect(verify(null, message, keyObj, signature.subarray(0, 63))).toBe(false);
-  });
-});
-
 describe('crypto shim — generateKeyPairSync yields Node-compatible Ed25519 DER', () => {
   it('exports canonical SPKI/PKCS8 DER that Node parses and that round-trips', () => {
     const { publicKey, privateKey } = generateKeyPairSync('ed25519');
@@ -114,8 +92,5 @@ describe('crypto shim — generateKeyPairSync yields Node-compatible Ed25519 DER
     const signature = ed25519.sign(message, seed);
     const nodeKey = nodeCreatePublicKey({ key: spki, format: 'der', type: 'spki' });
     expect(nodeVerify(null, message, nodeKey, signature)).toBe(true);
-
-    // And the shim verifies the same signature through its own KeyObject.
-    expect(verify(null, message, publicKey, signature)).toBe(true);
   });
 });

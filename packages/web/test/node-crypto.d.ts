@@ -13,11 +13,11 @@ declare module 'node:crypto' {
   }
   export function createHash(algorithm: string): Hash;
 
+  // A KeyObject the keygen test round-trips through Node: `createPublicKey` parses
+  // the shim's SPKI DER, `verify` accepts a signature the shim's seed produced.
   interface KeyObject {
-    export(opts: { type: string; format: string }): Uint8Array;
+    readonly type: string;
   }
-  export function generateKeyPairSync(type: 'ed25519'): { publicKey: KeyObject; privateKey: KeyObject };
   export function createPublicKey(input: { key: Uint8Array; format: string; type: string }): KeyObject;
-  export function sign(algorithm: null, data: Uint8Array, key: KeyObject): Uint8Array;
   export function verify(algorithm: null, data: Uint8Array, key: KeyObject, signature: Uint8Array): boolean;
 }
