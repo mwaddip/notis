@@ -66,15 +66,29 @@ in five files, `generateKeyPairSync`, `createPublicKey` and `verify` in one, and
 **global that is never imported**. A browser has none of them.
 
 The client supplies them **at build time and changes neither package**: `crypto` resolves to a shim
-over pure-TS primitives, and `Buffer` is injected as a global. Nothing in `types` or `validation`
+over pure-TS primitives, and `Buffer` is supplied to the bundle. Nothing in `types` or `validation`
 knows the difference, and when those packages stop depending on Node the shim is deleted rather than
 migrated.
+
+**The shim carries only what the client's own module graph reaches, and nothing on speculation.**
+`createPublicKey` and `verify` are `@dagsocial/validation`'s, and the client does not depend on that
+package; they arrive with the code that calls them. An unreached primitive cannot be pinned by any
+test that runs, and an unpinned consensus-critical primitive is a liability rather than a
+convenience — which is the whole argument against a hand-rolled copy, applied to the shim itself.
 
 ⛔ **The shim's hashing must be byte-identical to `createHash('blake2b512')`, and that must be
 pinned.** Every id in the protocol is a blake2b-512 digest truncated to 32 bytes; a shim that
 differs by one byte produces ids the node rejects, and neither package's own tests would notice
 because neither exercises the other's code. This is the same failure class the demo UI's mirror
 exists for.
+
+⛔ **A substituted module is pinned by absolute path, never by a bare specifier.** A bare specifier
+resolves from **the module that imports it**, which for a substituted Node global is a file inside
+`@dagsocial/types` — a package that declares no such dependency, so the specifier resolves to the Node
+builtin and the browser build externalizes it to nothing. The failure is invisible in a populated
+working tree, where the layout happens to make the package reachable, and appears only on a clean
+install. **This is what the throwaway-worktree gate is for; a build that succeeds in the main tree is
+not evidence.**
 
 ⚠ **A test running under Node does not prove the shim.** The shim is a build-time substitution, so
 under Node the real `crypto` and the real `Buffer` are present and the substitution never happens —
