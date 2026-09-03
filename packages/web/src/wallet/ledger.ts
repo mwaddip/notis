@@ -1,7 +1,7 @@
 import { readStore, writeStore } from '../prefs';
 import { isTombstone } from '../api/dto';
 import type { PostResult } from '../api/dto';
-import type { SpendableBox, PendingEntry, EntryOutcome } from './types';
+import type { SpendableBox, ChangeRef, PendingEntry, EntryOutcome } from './types';
 
 // The persisted pending ledger and the spendable view over it
 // (WEB_INTERFACE → The wallet). A reload that forgot the ledger would re-spend a
@@ -57,20 +57,23 @@ export class PendingLedger {
     writeStore(PENDING_KEY, JSON.stringify(this.all().map(toStored)));
   }
 
-  /** localStorage is untrusted input, guarded like prefs.ts: a value that no
-   *  longer parses starts the ledger empty rather than throwing. */
+  /** localStorage is untrusted input, validated rather than trusted the way the
+   *  identity module refuses a malformed file: every entry's shape is checked and
+   *  any malformed one starts the ledger empty — all or nothing, so a single bad
+   *  row cannot let a partial ledger re-spend a box the node holds pending. */
   private restore(): void {
     const raw = readStore(PENDING_KEY);
     if (raw === null) return;
+    let entries: PendingEntry[];
     try {
-      const parsed = JSON.parse(raw) as StoredEntry[];
-      for (const s of parsed) {
-        const e = fromStored(s);
-        this.entries.set(e.txId, e);
-      }
+      const parsed: unknown = JSON.parse(raw);
+      if (!Array.isArray(parsed)) throw new Error('pending ledger is not an array');
+      entries = parsed.map((v) => parseStoredEntry(v)); // throws before any insert on a bad entry
     } catch {
       this.entries.clear();
+      return;
     }
+    for (const e of entries) this.entries.set(e.txId, e);
   }
 }
 
@@ -137,14 +140,32 @@ function toStored(e: PendingEntry): StoredEntry {
   };
 }
 
-function fromStored(s: StoredEntry): PendingEntry {
+/** Validate and convert one stored entry, throwing on any malformed field so
+ *  restore() can drop the whole ledger rather than load a partial one. */
+function parseStoredEntry(v: unknown): PendingEntry {
+  if (typeof v !== 'object' || v === null) throw new Error('entry is not an object');
+  const o = v as Record<string, unknown>;
+  if (typeof o.txId !== 'string' || typeof o.postId !== 'string') throw new Error('entry has non-string ids');
+  if (o.kind !== 'post' && o.kind !== 'like') throw new Error('entry has an unknown kind');
+  if (!Array.isArray(o.inputs) || !o.inputs.every((x) => typeof x === 'string')) throw new Error('entry inputs are not strings');
+  if (typeof o.expiresAtHeight !== 'number' || typeof o.submittedAtHeight !== 'number') throw new Error('entry heights are not numbers');
+  let change: ChangeRef | undefined;
+  if (o.change !== undefined) {
+    const c = o.change;
+    if (typeof c !== 'object' || c === null) throw new Error('entry change is not an object');
+    const co = c as Record<string, unknown>;
+    if (typeof co.boxId !== 'string' || typeof co.value !== 'string' || typeof co.createdAtBlock !== 'number') {
+      throw new Error('entry change has a malformed field');
+    }
+    change = { boxId: co.boxId, value: BigInt(co.value), createdAtBlock: co.createdAtBlock };
+  }
   return {
-    txId: s.txId,
-    kind: s.kind,
-    postId: s.postId,
-    inputs: s.inputs,
-    ...(s.change ? { change: { boxId: s.change.boxId, value: BigInt(s.change.value), createdAtBlock: s.change.createdAtBlock } } : {}),
-    expiresAtHeight: s.expiresAtHeight,
-    submittedAtHeight: s.submittedAtHeight,
+    txId: o.txId,
+    kind: o.kind,
+    postId: o.postId,
+    inputs: o.inputs as string[],
+    ...(change ? { change } : {}),
+    expiresAtHeight: o.expiresAtHeight,
+    submittedAtHeight: o.submittedAtHeight,
   };
 }

@@ -81,6 +81,32 @@ describe('PendingLedger — persistence and removal', () => {
   it('a corrupt store starts the ledger empty rather than throwing', () => {
     localStorage.setItem(PENDING_KEY, '{ not an array');
     expect(new PendingLedger().size).toBe(0);
+    localStorage.setItem(PENDING_KEY, JSON.stringify({ notAn: 'array' }));
+    expect(new PendingLedger().size).toBe(0);
+  });
+
+  it('a single malformed entry starts the whole ledger empty — all or nothing', () => {
+    const good = {
+      txId: 't1', kind: 'post', postId: 'p1', inputs: ['in1'],
+      change: { boxId: 'chg1', value: '222', createdAtBlock: 5000 }, expiresAtHeight: 5720, submittedAtHeight: 5000,
+    };
+    // A well-formed array loads.
+    localStorage.setItem(PENDING_KEY, JSON.stringify([good]));
+    expect(new PendingLedger().size).toBe(1);
+    // One good entry beside a bad-kind one → the whole ledger is dropped.
+    localStorage.setItem(PENDING_KEY, JSON.stringify([good, { ...good, txId: 't2', kind: 'nope' }]));
+    expect(new PendingLedger().size).toBe(0);
+    // Each shape fault drops the ledger: non-string inputs, non-numeric height,
+    // and a change whose value is not a decimal string.
+    for (const bad of [
+      { ...good, inputs: [1, 2] },
+      { ...good, expiresAtHeight: 'soon' },
+      { ...good, change: { boxId: 'c', value: 5, createdAtBlock: 1 } },
+      { ...good, txId: 42 },
+    ]) {
+      localStorage.setItem(PENDING_KEY, JSON.stringify([bad]));
+      expect(new PendingLedger().size, JSON.stringify(bad)).toBe(0);
+    }
   });
 });
 
