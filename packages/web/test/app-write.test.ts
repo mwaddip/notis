@@ -93,7 +93,7 @@ function harness(thrown: ThrowOpts = {}): Harness {
     },
   } as unknown as WriteClient;
 
-  const ledger = new PendingLedger();
+  const ledger = new PendingLedger(PUB);
   const app = new App(fakeApi, writeClient, identity, ledger);
   const appbar = document.createElement('div');
   const feed = document.createElement('section'); feed.id = 'feed';

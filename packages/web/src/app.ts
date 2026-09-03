@@ -75,7 +75,10 @@ export class App {
     this.client = client ?? new NodeClient(() => prefs.node);
     this.writeClient = writeClient ?? new WriteClient(() => prefs.node);
     this.identity = identity ?? identitySingleton;
-    this.ledger = ledger ?? new PendingLedger();
+    // The ledger is for whichever identity is loaded at construction; a change of
+    // identity takes effect on the next reload, when a fresh App constructs a
+    // ledger for the new key (WEB_INTERFACE → The wallet).
+    this.ledger = ledger ?? new PendingLedger(this.identity.current()?.pubKeyHex ?? null);
     this.state = {
       feed: { posts: [], pending: [], next: null, report: null, olderReport: null, loaded: false, loading: false, error: null },
       threads: new Map(),

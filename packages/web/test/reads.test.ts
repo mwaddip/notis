@@ -48,7 +48,7 @@ describe('readBuildContext — the §5.1 read order', () => {
       karmaPage([{ boxId: 'b1', value: '100' }], 'k1'),
       karmaPage([{ boxId: 'b2', value: '50' }], null),
     ];
-    const ctx = await readBuildContext(fakeReads(pages), new PendingLedger(), AUTHOR);
+    const ctx = await readBuildContext(fakeReads(pages), new PendingLedger(AUTHOR), AUTHOR);
     // Every karma call precedes the single status call.
     expect(calls).toEqual([`karma(${AUTHOR},after=null)`, `karma(${AUTHOR},after=k1)`, 'status']);
     // Box values crossed as bigint; no pending entries, so both are spendable.
@@ -59,7 +59,7 @@ describe('readBuildContext — the §5.1 read order', () => {
   });
 
   it('the ledger removes a pending input and adds the predicted change', async () => {
-    const ledger = new PendingLedger();
+    const ledger = new PendingLedger(AUTHOR);
     ledger.add({
       txId: 't1', kind: 'post', postId: 'p1', inputs: ['b1'],
       change: { boxId: 'chg', value: 95n, createdAtBlock: 5333 }, expiresAtHeight: 6053, submittedAtHeight: 5333,

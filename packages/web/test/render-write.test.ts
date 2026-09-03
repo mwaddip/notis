@@ -77,7 +77,7 @@ function harness(): Harness {
     submitLike: async () => ({ status: 'pending', txId: echoTxId(), expiresAtHeight: 6720 }),
   } as unknown as WriteClient;
 
-  const app = new App(fakeApi, writeClient, identity, new PendingLedger());
+  const app = new App(fakeApi, writeClient, identity, new PendingLedger(PUB));
   const appbar = document.createElement('div');
   const feed = document.createElement('section'); feed.id = 'feed';
   const panes = document.createElement('section'); panes.id = 'panes';

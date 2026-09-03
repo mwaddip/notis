@@ -90,7 +90,7 @@ beforeEach(() => {
 
 describe('submitPostFlow', () => {
   it('builds, signs the id, POSTs { tx, content } and lands a ledger entry', async () => {
-    const ledger = new PendingLedger();
+    const ledger = new PendingLedger(PUB);
     const deps: SubmitDeps = { reads: reads(), write: write(okPost, okLike), ledger, identity };
     const res = await submitPostFlow(deps, 'a thread', null);
 
@@ -108,7 +108,7 @@ describe('submitPostFlow', () => {
   });
 
   it('a reply resolves the parent confirmedAuthor and addresses the share to it', async () => {
-    const ledger = new PendingLedger();
+    const ledger = new PendingLedger(PUB);
     const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR), write: write(okPost, okLike), ledger, identity };
     const res = await submitPostFlow(deps, 'a reply', PARENT_ID);
 
@@ -122,7 +122,7 @@ describe('submitPostFlow', () => {
   });
 
   it('a rejection short-circuits: no ledger entry', async () => {
-    const ledger = new PendingLedger();
+    const ledger = new PendingLedger(PUB);
     const rejection: Rejection = { status: 503, message: 'mempool full' };
     const deps: SubmitDeps = { reads: reads(), write: write(rejection, okLike), ledger, identity };
     const res = await submitPostFlow(deps, 'a thread', null);
@@ -131,7 +131,7 @@ describe('submitPostFlow', () => {
   });
 
   it('a parent with no confirmed author is refused client-side before any POST', async () => {
-    const ledger = new PendingLedger();
+    const ledger = new PendingLedger(PUB);
     const deps: SubmitDeps = { reads: reads(null), write: write(okPost, okLike), ledger, identity };
     const res = await submitPostFlow(deps, 'a reply', PARENT_ID);
     expect(res.ok).toBe(false);
@@ -140,7 +140,7 @@ describe('submitPostFlow', () => {
   });
 
   it('a spendable view that cannot cover the price comes back as one rejection, not a throw', async () => {
-    const ledger = new PendingLedger();
+    const ledger = new PendingLedger(PUB);
     // Four karma cannot cover a thread's price of five.
     const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, [{ boxId: BOX_ID, value: '4' }]), write: write(okPost, okLike), ledger, identity };
     const res = await submitPostFlow(deps, 'a thread', null);
@@ -152,7 +152,7 @@ describe('submitPostFlow', () => {
 
 describe('submitLikeFlow', () => {
   it('resolves the target confirmedAuthor, POSTs { tx }, and lands a like entry', async () => {
-    const ledger = new PendingLedger();
+    const ledger = new PendingLedger(PUB);
     const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR), write: write(okPost, okLike), ledger, identity };
     const res = await submitLikeFlow(deps, TARGET_ID);
 
@@ -168,7 +168,7 @@ describe('submitLikeFlow', () => {
   });
 
   it('a like rejection short-circuits: no ledger entry', async () => {
-    const ledger = new PendingLedger();
+    const ledger = new PendingLedger(PUB);
     const rejection: Rejection = { status: 409, message: 'Already liked this post' };
     const deps: SubmitDeps = { reads: reads(), write: write(okPost, rejection), ledger, identity };
     const res = await submitLikeFlow(deps, TARGET_ID);
@@ -177,7 +177,7 @@ describe('submitLikeFlow', () => {
   });
 
   it('an empty spendable view refuses a like in the voice register', async () => {
-    const ledger = new PendingLedger();
+    const ledger = new PendingLedger(PUB);
     const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, []), write: write(okPost, okLike), ledger, identity };
     const res = await submitLikeFlow(deps, TARGET_ID);
     expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough karma to like right now.' } });
@@ -203,7 +203,7 @@ describe('the node txId is compared to the client id', () => {
   }
 
   it('a post whose node id disagrees refuses the entry and names the mismatch', async () => {
-    const ledger = new PendingLedger();
+    const ledger = new PendingLedger(PUB);
     const deps: SubmitDeps = { reads: reads(), write: writeMismatch(), ledger, identity };
     const res = await submitPostFlow(deps, 'a thread', null);
     expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'the node computed a different transaction id' } });
@@ -211,7 +211,7 @@ describe('the node txId is compared to the client id', () => {
   });
 
   it('a like whose node id disagrees refuses the entry too', async () => {
-    const ledger = new PendingLedger();
+    const ledger = new PendingLedger(PUB);
     const deps: SubmitDeps = { reads: reads(), write: writeMismatch(), ledger, identity };
     const res = await submitLikeFlow(deps, TARGET_ID);
     expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'the node computed a different transaction id' } });

@@ -6,14 +6,26 @@ import type { SpendableBox, ChangeRef, PendingEntry, EntryOutcome } from './type
 // The persisted pending ledger and the spendable view over it
 // (WEB_INTERFACE → The wallet). A reload that forgot the ledger would re-spend a
 // box the node holds pending and receive a 409 for a failure the reader never
-// saw, so it is persisted under `notis.pending`, bigints as decimal strings.
+// saw, so it is persisted, bigints as decimal strings.
+//
+// ⛔ Keyed by the identity that owns the entries — `notis.pending.<pubKeyHex>`.
+// One browser ledger shared across keys would let a second identity try to spend
+// the first's predicted change; a per-identity key keeps them apart.
 
-export const PENDING_KEY = 'notis.pending';
+export const PENDING_KEY_PREFIX = 'notis.pending.';
+
+/** The per-identity storage key, or null with no identity loaded. */
+export function pendingKeyFor(pubKeyHex: string | null): string | null {
+  return pubKeyHex === null ? null : PENDING_KEY_PREFIX + pubKeyHex;
+}
 
 export class PendingLedger {
   private entries = new Map<string, PendingEntry>();
+  private readonly storageKey: string | null;
 
-  constructor() {
+  /** No identity → an empty ledger that persists nothing. */
+  constructor(pubKeyHex: string | null) {
+    this.storageKey = pendingKeyFor(pubKeyHex);
     this.restore();
   }
 
@@ -54,7 +66,8 @@ export class PendingLedger {
   }
 
   private persist(): void {
-    writeStore(PENDING_KEY, JSON.stringify(this.all().map(toStored)));
+    if (this.storageKey === null) return; // no identity → persists nothing
+    writeStore(this.storageKey, JSON.stringify(this.all().map(toStored)));
   }
 
   /** localStorage is untrusted input, validated rather than trusted the way the
@@ -62,7 +75,8 @@ export class PendingLedger {
    *  any malformed one starts the ledger empty — all or nothing, so a single bad
    *  row cannot let a partial ledger re-spend a box the node holds pending. */
   private restore(): void {
-    const raw = readStore(PENDING_KEY);
+    if (this.storageKey === null) return;
+    const raw = readStore(this.storageKey);
     if (raw === null) return;
     let entries: PendingEntry[];
     try {

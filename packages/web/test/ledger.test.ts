@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   PendingLedger,
-  PENDING_KEY,
+  pendingKeyFor,
   reconcilePost,
   reconcileLike,
   dedupePending,
@@ -10,6 +10,9 @@ import {
 } from '../src/wallet/ledger';
 import type { PendingEntry } from '../src/wallet/types';
 import type { PostJson, PostResult, WithdrawnJson } from '../src/api/dto';
+
+const KEY = 'aa'.repeat(32); // the identity that owns the ledger
+const STORE = pendingKeyFor(KEY)!; // notis.pending.<KEY>
 
 const postEntry: PendingEntry = {
   txId: 't1', kind: 'post', postId: 'p1', inputs: ['in1'],
@@ -35,7 +38,7 @@ beforeEach(() => localStorage.clear());
 
 describe('PendingLedger — the spendable view', () => {
   it('drops a spent input and adds the predicted change', () => {
-    const ledger = new PendingLedger();
+    const ledger = new PendingLedger(KEY);
     ledger.add(postEntry);
     const confirmed = [{ boxId: 'in1', value: 100n }, { boxId: 'in3', value: 50n }];
     expect(ledger.spendable(confirmed)).toEqual([
@@ -45,7 +48,7 @@ describe('PendingLedger — the spendable view', () => {
   });
 
   it('a change already chained into a later pending transaction drops out too', () => {
-    const ledger = new PendingLedger();
+    const ledger = new PendingLedger(KEY);
     ledger.add(postEntry); // change 'chg1'
     ledger.add({
       txId: 't9', kind: 'post', postId: 'p9', inputs: ['chg1'],
@@ -58,11 +61,11 @@ describe('PendingLedger — the spendable view', () => {
 
 describe('PendingLedger — persistence and removal', () => {
   it('round-trips entries through localStorage with bigints intact', () => {
-    const a = new PendingLedger();
+    const a = new PendingLedger(KEY);
     a.add(postEntry);
     a.add(likeEntry);
     a.add(noChangeEntry);
-    const b = new PendingLedger();
+    const b = new PendingLedger(KEY);
     expect(b.all()).toEqual(a.all());
     const restored = b.all().find((e) => e.txId === 't1');
     expect(restored?.change?.value).toBe(222n);
@@ -70,19 +73,19 @@ describe('PendingLedger — persistence and removal', () => {
   });
 
   it('remove() drops an entry and persists the removal — the 409 drop', () => {
-    const ledger = new PendingLedger();
+    const ledger = new PendingLedger(KEY);
     ledger.add(postEntry);
     expect(ledger.size).toBe(1);
     ledger.remove('t1');
     expect(ledger.size).toBe(0);
-    expect(new PendingLedger().size).toBe(0);
+    expect(new PendingLedger(KEY).size).toBe(0);
   });
 
   it('a corrupt store starts the ledger empty rather than throwing', () => {
-    localStorage.setItem(PENDING_KEY, '{ not an array');
-    expect(new PendingLedger().size).toBe(0);
-    localStorage.setItem(PENDING_KEY, JSON.stringify({ notAn: 'array' }));
-    expect(new PendingLedger().size).toBe(0);
+    localStorage.setItem(STORE, '{ not an array');
+    expect(new PendingLedger(KEY).size).toBe(0);
+    localStorage.setItem(STORE, JSON.stringify({ notAn: 'array' }));
+    expect(new PendingLedger(KEY).size).toBe(0);
   });
 
   it('a single malformed entry starts the whole ledger empty — all or nothing', () => {
@@ -91,11 +94,11 @@ describe('PendingLedger — persistence and removal', () => {
       change: { boxId: 'chg1', value: '222', createdAtBlock: 5000 }, expiresAtHeight: 5720, submittedAtHeight: 5000,
     };
     // A well-formed array loads.
-    localStorage.setItem(PENDING_KEY, JSON.stringify([good]));
-    expect(new PendingLedger().size).toBe(1);
+    localStorage.setItem(STORE, JSON.stringify([good]));
+    expect(new PendingLedger(KEY).size).toBe(1);
     // One good entry beside a bad-kind one → the whole ledger is dropped.
-    localStorage.setItem(PENDING_KEY, JSON.stringify([good, { ...good, txId: 't2', kind: 'nope' }]));
-    expect(new PendingLedger().size).toBe(0);
+    localStorage.setItem(STORE, JSON.stringify([good, { ...good, txId: 't2', kind: 'nope' }]));
+    expect(new PendingLedger(KEY).size).toBe(0);
     // Each shape fault drops the ledger: non-string inputs, non-numeric height,
     // and a change whose value is not a decimal string.
     for (const bad of [
@@ -104,9 +107,32 @@ describe('PendingLedger — persistence and removal', () => {
       { ...good, change: { boxId: 'c', value: 5, createdAtBlock: 1 } },
       { ...good, txId: 42 },
     ]) {
-      localStorage.setItem(PENDING_KEY, JSON.stringify([bad]));
-      expect(new PendingLedger().size, JSON.stringify(bad)).toBe(0);
+      localStorage.setItem(STORE, JSON.stringify([bad]));
+      expect(new PendingLedger(KEY).size, JSON.stringify(bad)).toBe(0);
     }
+  });
+
+  it('two identities never see each other\'s entries', () => {
+    const KEY2 = 'bb'.repeat(32);
+    new PendingLedger(KEY).add(postEntry);
+    // A ledger for a second key sees none of the first's predicted change.
+    const b = new PendingLedger(KEY2);
+    expect(b.size).toBe(0);
+    b.add({ ...postEntry, txId: 'other' });
+    // Each persists under its own key; neither leaks into the other.
+    expect(new PendingLedger(KEY).all().map((e) => e.txId)).toEqual(['t1']);
+    expect(new PendingLedger(KEY2).all().map((e) => e.txId)).toEqual(['other']);
+    expect(localStorage.getItem(pendingKeyFor(KEY)!)).not.toBeNull();
+    expect(localStorage.getItem(pendingKeyFor(KEY2)!)).not.toBeNull();
+  });
+
+  it('no identity → an empty ledger that persists nothing', () => {
+    const before = localStorage.length;
+    const l = new PendingLedger(null);
+    expect(l.size).toBe(0);
+    l.add(postEntry); // held in memory, but nothing is written
+    expect(l.size).toBe(1);
+    expect(localStorage.length).toBe(before);
   });
 });
 
