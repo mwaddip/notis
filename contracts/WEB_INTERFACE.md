@@ -216,8 +216,11 @@ selected box is newer than the height declared.
 
 **The spendable view** is the confirmed boxes, minus the inputs of the client's own pending
 transactions, plus their predicted change — `computeCandidateBoxId(change, txId, 0)`, exact because
-ids are provenance-derived. **The pending ledger is persisted** (`notis.pending`): a reload that forgot
-it would re-spend a box the node holds pending and receive a 409 for a failure the reader never saw.
+ids are provenance-derived. **The pending ledger is persisted, per identity** —
+`notis.pending.<pubKeyHex>`, constructed for the loaded identity at start, so a key never sees another
+key's entries and cannot try to spend its predicted change; a reload that forgot the ledger would
+re-spend a box the node holds pending and receive a 409 for a failure the reader never saw. **An
+identity loaded through the dev door takes effect on reload.**
 
 **Builders exist for a post and a like, and nothing else.** A root post: change and a `karma_price` of
 `POST_PRICE_THREAD`. A reply: change, a `karma_price` of `POST_PRICE_REPLY − REPLY_AUTHOR_SHARE`, and a
