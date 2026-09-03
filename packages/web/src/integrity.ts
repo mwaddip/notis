@@ -1,10 +1,11 @@
 import { computeContentHash } from '@dagsocial/types';
 
 // The read surface's one use of cryptography: it recomputes a post body's
-// commitment with @dagsocial/types — the shared implementation reached through
-// the build-time shim, never a copy — and checks it against what the node
-// served. This is what keeps the read surface from being a further
-// implementation of anything consensus-critical.
+// commitment with @dagsocial/types and checks it against what the node served.
+// It reaches computeContentHash through the build-time shim and imports it rather
+// than copying it — the importing, not this check, is what keeps the read surface
+// from being a further implementation of anything consensus-critical. This check
+// is a use of the shared code, not the reason it is safe.
 // WEB_INTERFACE → The browser reaches @dagsocial/types through a build-time shim
 
 /** Hex without a Node `Buffer`: the read surface holds no Node global. */
