@@ -21,10 +21,10 @@
 > motion** — changed 2026-08-10, having previously been excluded outright.
 >
 > The exclusion's ground was that the demo UI is scaffolding about to die when `@dagsocial/web`
-> lands. It is the only browser surface that can **write** — it builds, signs and submits post,
-> like, withdraw, invite, vouch and unvouch transactions, and `@dagsocial/web`'s read surface does
-> none of that — so it is what a human uses for an open-ended period. **A surface nobody will
-> replace soon is not scaffolding.**
+> lands. It is the only browser surface that **writes** withdraw, invite, vouch and unvouch
+> transactions — `@dagsocial/web` posts and likes, and does none of the rest — so it is what a
+> human uses for those for an open-ended period. **A surface nobody will replace soon is not
+> scaffolding.**
 >
 > **The inclusion is deliberately partial.** Layout, information architecture, interaction and
 > illustration stay out — the demo UI keeps its own shell. `WEB_INTERFACE.md` also still holds:
@@ -320,7 +320,23 @@ Every rule here is a prohibition, and together they are most of what keeps the p
   and it reports what it did.
 - **Numbers never animate.** No count-ups on karma or credits. A ticking number is a slot
   readout and it is the fastest way to make standing feel like a score.
-- **Nothing already on screen may move.** No content reflowing under a cursor mid-read.
+- **Nothing already on screen may move.** No content reflowing under a cursor mid-read. The working
+  form of this rule, with its boundary, is the next one.
+- **Downward, below the point of action, in direct response to the reader's own click.** That is the
+  working form of the rule above, and none of its three parts is optional. A composer opening under a
+  post moves every card below it, and that is allowed: everything above the click holds still,
+  everything below shifts down, and the reader's eye is at the post they acted on. Drop *downward*
+  and content moves up under a cursor; drop *below the point of action* and things move above the
+  reader's eye; drop *in direct response to the reader's own click* and it licenses exactly the
+  injected "12 new posts" banner this section exists to forbid. New replies appending at the bottom of
+  a thread on a pressed refresh are the same rule.
+- **Pending state is the one legitimate unsolicited update, and it pays for itself in geometry.** A
+  post the reader submitted may turn from hollow to landed without the reader asking, because the
+  reader asked for the post. The price is identical geometry before and after — colour only, the meta
+  row and the stage line one fixed line box, so what either contains cannot change the card's height —
+  and a bounded watch: it runs only while the reader's own submissions are pending and stops at zero,
+  it reconciles those entries and refreshes nothing else, and it moves no count. Anything else arriving
+  unasked is the banner.
 - **150ms ceiling, ease-out. `prefers-reduced-motion` means none** — not less, none.
 - **Honest loading.** No fake progress, no skeleton shimmer. Shimmer is decorative motion
   impersonating progress.

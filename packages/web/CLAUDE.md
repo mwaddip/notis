@@ -23,8 +23,10 @@ ledger** (karma + credits); every post, like and prune is a transaction on the U
 pruned subtree leaves a **stump**. TypeScript, pnpm workspaces, Node ≥ 22.
 
 ## This package (`@dagsocial/web`)
-The **browser client**. Built in slices, and today only the **read surface** exists: the feed, threads,
-a tiling workspace of columns and regions, both themes, the identity spine, and a `@settings` window.
+The **browser client**. Built in slices: the **read surface** (the feed, threads, a tiling workspace of
+columns and regions, both themes, the identity spine, a `@settings` window) and the **write surface's
+first slice** — the identity machinery, the composer for a root and a reply, and like, on transactions
+the browser builds and signs.
 
 - **Owns:** `packages/web/*` — its own source, tests, build config and static assets.
 - **Does NOT own:** any other package, `contracts/`, `prompts/`, or `packages/node/public/index.html`
@@ -32,17 +34,23 @@ a tiling workspace of columns and regions, both themes, the identity spine, and 
 
 ## The boundary that defines this slice
 
-⛔ **The read surface issues `GET` requests and nothing else.** No `POST`, no `DELETE`. No keys, no
-signing, no transaction construction.
+⛔ **The read client (`src/api/client.ts`) issues `GET` requests and nothing else.** No `POST`, no
+`DELETE`. The writes live next door in `src/api/write.ts` — `POST /posts` and `POST /likes`, and no
+more. A `viewer` parameter is a query on a `GET`, so it stays in the read client.
 
-**It does hash** — and only ever through `@dagsocial/types`, reached by the build-time shim. That is
-the property the whole slice rests on: the package is **not** a further implementation of anything
-consensus-critical, because it runs the shared one rather than a copy, which is why no mirror test
-applies to it. **If you find yourself hand-writing an encoder or a hash, you have left the slice —
-stop and report, do not implement it.**
+**It hashes only through `@dagsocial/types`**, reached by the build-time shim — the wallet builders type
+their box candidates and compute every id through the shared implementation, never a copy, which is why
+no mirror test applies. **If you find yourself hand-writing an encoder or a hash, you have left the
+slice — stop and report, do not implement it.**
 
-**It sends no `viewer` parameter**, so every `likedByViewer` is `null`. That is correct for an
-anonymous reader, not a placeholder.
+**With no identity loaded the client is the read surface exactly** — no `new post`, no `↩ reply`, no
+`like`, no `viewer` parameter, and `render-region.test.ts` stays green by node identity. **Once an
+identity is loaded, every read carries `viewer=<pubKeyHex>`** and `likedByViewer` is the node's answer.
+
+**The identity machinery ships; the identity interface does not.** A key is generated, imported,
+exported and signed with — but nothing in the interface creates one. In a development build only, the
+module hangs off `globalThis.notis.identity`; a production build exposes nothing. `sign(txIdHex)` is the
+only path to the seed, and `current()` never returns it.
 
 ## Web-relevant invariants
 
@@ -80,7 +88,36 @@ anonymous reader, not a placeholder.
 **From `OVERRIDES.md`:**
 - **No WASM.** Pure TS only.
 - **Root-cause only.** No `setTimeout` to wait for readiness, no try/catch that swallows, no retry loop
-  around something flaky.
+  around something flaky. (The bounded landing poll is a designed interval, not a wait; and a `catch`
+  that turns a transport failure into one of the flight's three endings surfaces it, it does not
+  swallow it.)
+
+## The write surface — the testnet dev loop and the identity file
+
+**No local devnet for the write surface — it iterates against notis.fun testnet.** One variable points
+the vite proxy there:
+
+```bash
+NOTIS_NODE=https://notis.fun/testnet/api pnpm --filter @dagsocial/web dev
+```
+
+The node and nginx send no CORS, so the proxy is the only route. `API_PATHS` in `vite.config.ts` proxies
+`/posts`, `/status`, `/blocks`, `/karma`, `/credits`, `/likes`, `/vouches`, `/invites` — a path the
+client calls that is not in the table returns the HTML shell, not the API.
+
+**Every transaction spends real testnet karma:** a thread 5, a reply 3, a like 1. There is no automated
+test that posts — an automated writer would drain the key and litter testnet; the wallet builders are
+pinned offline against the demo UI's frozen vectors instead. Iterate deliberately.
+
+**The pending ledger is per identity** — `notis.pending.<pubKeyHex>`. A change of identity takes effect
+on the next reload, when a fresh App builds a ledger for the new key; a second key never sees the
+first's predicted change.
+
+⛔ **The reader's identity file — kept outside the repo — never enters the repo, a test, a commit, a
+log or a report:** not the file, not its path in code, not any value from it. It is loaded through the
+dev door in the browser console (`notis.identity.importJson(<text>)`) and nowhere else. It holds
+`{ pubKeyHex, privKeyBase64 }` in the demo UI's export shape, so one key moves between the demo UI and
+this client both ways.
 
 ## Component-session rules (Design by Contract)
 - **Contracts lead, code follows.** Implement to `WEB_INTERFACE.md` and `HOUSE_STYLE.md`; **flag

@@ -37,6 +37,7 @@ function fakeApi(): Api {
       membership: { memberCount: 1, memberBar: 1, memberLikesBar: 2 },
     }),
     currentBlock: async () => ({ height: 1, hash: null }),
+    karma: async () => ({ userId: 'x', total: '0', effective: '0', boxes: [], boxCount: 0, next: null, height: 1 }),
   };
 }
 

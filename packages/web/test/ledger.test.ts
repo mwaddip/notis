@@ -1,0 +1,176 @@
+// @vitest-environment happy-dom
+import { describe, it, expect, beforeEach } from 'vitest';
+import {
+  PendingLedger,
+  pendingKeyFor,
+  reconcilePost,
+  reconcileLike,
+  dedupePending,
+  pendingLikeTargets,
+} from '../src/wallet/ledger';
+import type { PendingEntry } from '../src/wallet/types';
+import type { PostJson, PostResult, WithdrawnJson } from '../src/api/dto';
+
+const KEY = 'aa'.repeat(32); // the identity that owns the ledger
+const STORE = pendingKeyFor(KEY)!; // notis.pending.<KEY>
+
+const postEntry: PendingEntry = {
+  txId: 't1', kind: 'post', postId: 'p1', inputs: ['in1'],
+  change: { boxId: 'chg1', value: 222n, createdAtBlock: 5000 }, expiresAtHeight: 5720, submittedAtHeight: 5000,
+};
+const likeEntry: PendingEntry = {
+  txId: 't2', kind: 'like', postId: 'target1', inputs: ['in2'],
+  change: { boxId: 'chg2', value: 226n, createdAtBlock: 5000 }, expiresAtHeight: 5720, submittedAtHeight: 5000,
+};
+const noChangeEntry: PendingEntry = {
+  txId: 't3', kind: 'post', postId: 'p3', inputs: ['in5'], expiresAtHeight: 5720, submittedAtHeight: 5000,
+};
+
+function postResult(over: Partial<PostJson>): PostResult {
+  return {
+    id: 'p1', content: 'x', contentHash: '00'.repeat(32), author: 'aa'.repeat(32), parentRefs: [],
+    protocolVersion: 1, type: 'regular', status: 'confirmed', blockHeight: 5050, blockIndex: 0,
+    blockCreatedAt: 0, likeCount: 0, likedByViewer: null, confirmedAuthor: 'aa'.repeat(32), ...over,
+  };
+}
+
+beforeEach(() => localStorage.clear());
+
+describe('PendingLedger — the spendable view', () => {
+  it('drops a spent input and adds the predicted change', () => {
+    const ledger = new PendingLedger(KEY);
+    ledger.add(postEntry);
+    const confirmed = [{ boxId: 'in1', value: 100n }, { boxId: 'in3', value: 50n }];
+    expect(ledger.spendable(confirmed)).toEqual([
+      { boxId: 'in3', value: 50n },
+      { boxId: 'chg1', value: 222n },
+    ]);
+  });
+
+  it('a change already chained into a later pending transaction drops out too', () => {
+    const ledger = new PendingLedger(KEY);
+    ledger.add(postEntry); // change 'chg1'
+    ledger.add({
+      txId: 't9', kind: 'post', postId: 'p9', inputs: ['chg1'],
+      change: { boxId: 'chg9', value: 217n, createdAtBlock: 5001 }, expiresAtHeight: 5721, submittedAtHeight: 5001,
+    });
+    // 'chg1' is now an input, so it is not spendable; only 'chg9' remains from the changes.
+    expect(ledger.spendable([{ boxId: 'in1', value: 100n }])).toEqual([{ boxId: 'chg9', value: 217n }]);
+  });
+});
+
+describe('PendingLedger — persistence and removal', () => {
+  it('round-trips entries through localStorage with bigints intact', () => {
+    const a = new PendingLedger(KEY);
+    a.add(postEntry);
+    a.add(likeEntry);
+    a.add(noChangeEntry);
+    const b = new PendingLedger(KEY);
+    expect(b.all()).toEqual(a.all());
+    const restored = b.all().find((e) => e.txId === 't1');
+    expect(restored?.change?.value).toBe(222n);
+    expect(b.all().find((e) => e.txId === 't3')?.change).toBeUndefined();
+  });
+
+  it('remove() drops an entry and persists the removal — the 409 drop', () => {
+    const ledger = new PendingLedger(KEY);
+    ledger.add(postEntry);
+    expect(ledger.size).toBe(1);
+    ledger.remove('t1');
+    expect(ledger.size).toBe(0);
+    expect(new PendingLedger(KEY).size).toBe(0);
+  });
+
+  it('a corrupt store starts the ledger empty rather than throwing', () => {
+    localStorage.setItem(STORE, '{ not an array');
+    expect(new PendingLedger(KEY).size).toBe(0);
+    localStorage.setItem(STORE, JSON.stringify({ notAn: 'array' }));
+    expect(new PendingLedger(KEY).size).toBe(0);
+  });
+
+  it('a single malformed entry starts the whole ledger empty — all or nothing', () => {
+    const good = {
+      txId: 't1', kind: 'post', postId: 'p1', inputs: ['in1'],
+      change: { boxId: 'chg1', value: '222', createdAtBlock: 5000 }, expiresAtHeight: 5720, submittedAtHeight: 5000,
+    };
+    // A well-formed array loads.
+    localStorage.setItem(STORE, JSON.stringify([good]));
+    expect(new PendingLedger(KEY).size).toBe(1);
+    // One good entry beside a bad-kind one → the whole ledger is dropped.
+    localStorage.setItem(STORE, JSON.stringify([good, { ...good, txId: 't2', kind: 'nope' }]));
+    expect(new PendingLedger(KEY).size).toBe(0);
+    // Each shape fault drops the ledger: non-string inputs, non-numeric height,
+    // and a change whose value is not a decimal string.
+    for (const bad of [
+      { ...good, inputs: [1, 2] },
+      { ...good, expiresAtHeight: 'soon' },
+      { ...good, change: { boxId: 'c', value: 5, createdAtBlock: 1 } },
+      { ...good, txId: 42 },
+    ]) {
+      localStorage.setItem(STORE, JSON.stringify([bad]));
+      expect(new PendingLedger(KEY).size, JSON.stringify(bad)).toBe(0);
+    }
+  });
+
+  it('two identities never see each other\'s entries', () => {
+    const KEY2 = 'bb'.repeat(32);
+    new PendingLedger(KEY).add(postEntry);
+    // A ledger for a second key sees none of the first's predicted change.
+    const b = new PendingLedger(KEY2);
+    expect(b.size).toBe(0);
+    b.add({ ...postEntry, txId: 'other' });
+    // Each persists under its own key; neither leaks into the other.
+    expect(new PendingLedger(KEY).all().map((e) => e.txId)).toEqual(['t1']);
+    expect(new PendingLedger(KEY2).all().map((e) => e.txId)).toEqual(['other']);
+    expect(localStorage.getItem(pendingKeyFor(KEY)!)).not.toBeNull();
+    expect(localStorage.getItem(pendingKeyFor(KEY2)!)).not.toBeNull();
+  });
+
+  it('no identity → an empty ledger that persists nothing', () => {
+    const before = localStorage.length;
+    const l = new PendingLedger(null);
+    expect(l.size).toBe(0);
+    l.add(postEntry); // held in memory, but nothing is written
+    expect(l.size).toBe(1);
+    expect(localStorage.length).toBe(before);
+  });
+});
+
+describe('reconcile', () => {
+  it('a post lands when confirmed, expires on 404 or past the tip, else pending', () => {
+    expect(reconcilePost(postEntry, postResult({ status: 'confirmed' }), 5100)).toBe('landed');
+    expect(reconcilePost(postEntry, null, 5100)).toBe('expired');
+    expect(reconcilePost(postEntry, postResult({ status: 'pending', blockHeight: null }), 5100)).toBe('pending');
+    expect(reconcilePost(postEntry, postResult({ status: 'pending', blockHeight: null }), 5721)).toBe('expired');
+  });
+
+  it('a post that landed then became a tombstone still counts as landed', () => {
+    const tomb: WithdrawnJson & { confirmedAuthor: string | null } = {
+      kind: 'withdrawn', id: 'p1', author: 'aa'.repeat(32), withdrawnAtHeight: 5050, confirmedAuthor: null,
+    };
+    expect(reconcilePost(postEntry, tomb, 5100)).toBe('landed');
+  });
+
+  it('a like lands when likedByViewer turns true, expires past the tip while still false', () => {
+    expect(reconcileLike(likeEntry, postResult({ likedByViewer: true }), 5100)).toBe('landed');
+    expect(reconcileLike(likeEntry, postResult({ likedByViewer: false }), 5100)).toBe('pending');
+    expect(reconcileLike(likeEntry, postResult({ likedByViewer: false }), 5721)).toBe('expired');
+    expect(reconcileLike(likeEntry, null, 5100)).toBe('pending');
+    expect(reconcileLike(likeEntry, null, 5721)).toBe('expired');
+  });
+});
+
+describe('dedupe and the pending-like overlay', () => {
+  it('drops the node pending rows the ledger holds as posts, keeping the rest', () => {
+    const nodePending = [{ id: 'p1' }, { id: 'p9' }, { id: 'target1' }];
+    // Only the post entry's postId ('p1') is dropped; a like's target is not a post row.
+    expect(dedupePending(nodePending, [postEntry, likeEntry]).map((r) => r.id)).toEqual(['p9', 'target1']);
+  });
+
+  it('the overlay names only the like targets', () => {
+    const targets = pendingLikeTargets([postEntry, likeEntry, noChangeEntry]);
+    expect(targets.has('target1')).toBe(true);
+    expect(targets.has('p1')).toBe(false);
+    expect(targets.size).toBe(1);
+  });
+});

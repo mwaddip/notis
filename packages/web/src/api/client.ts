@@ -1,12 +1,12 @@
 import type {
-  FeedResult, ThreadResult, PostResult, StatusResult, BlockCurrent,
+  FeedResult, ThreadResult, PostResult, StatusResult, BlockCurrent, KarmaResult,
 } from './dto';
 
-// ⛔ The read surface issues GET requests and nothing else — no method, body, or
-// viewer parameter anywhere in this module. Hashing it does (with the shared
-// implementation, elsewhere); a key, a signature or a write it does not.
-// WEB_INTERFACE → "The read surface holds no key and signs nothing". If a call
-// here ever needs a POST, the slice has been left — stop and report, do not add it.
+// This module issues GET requests and nothing else — no POST, no body. A `viewer`
+// parameter is a query on a GET, not a write, so it is carried here now that an
+// identity can be loaded; a key, a signature or a write this module does not hold.
+// The writes live next door in write.ts.
+// WEB_INTERFACE → "The write client is its own module beside the read client".
 
 export class ApiError extends Error {
   constructor(readonly status: number, message: string) {
@@ -20,14 +20,17 @@ export interface Page {
   after?: string | null;
 }
 
-/** The read surface the client offers — the seam the App depends on, so a test
- *  can drive it over a fake. Every call is a GET. */
+/** The reads the client offers — the seam the App depends on, so a test can drive
+ *  it over a fake. Every call is a GET. `viewer` is the loaded identity's key,
+ *  carried once one exists so `likedByViewer` is the node's answer
+ *  (WEB_INTERFACE → "Every read carries the viewer's key once an identity is loaded, and none does before"). */
 export interface Api {
-  feed(page?: Page): Promise<FeedResult>;
-  thread(id: string, page?: Page): Promise<ThreadResult | null>;
-  post(id: string): Promise<PostResult | null>;
+  feed(page?: Page, viewer?: string): Promise<FeedResult>;
+  thread(id: string, page?: Page, viewer?: string): Promise<ThreadResult | null>;
+  post(id: string, viewer?: string): Promise<PostResult | null>;
   status(): Promise<StatusResult>;
   currentBlock(): Promise<BlockCurrent>;
+  karma(key: string, page?: Page): Promise<KarmaResult>;
 }
 
 export class NodeClient implements Api {
@@ -61,18 +64,18 @@ export class NodeClient implements Api {
     return (await res.json()) as T;
   }
 
-  feed(page: Page = {}): Promise<FeedResult> {
-    return this.get<FeedResult>(this.url('/posts', { limit: page.limit, after: page.after ?? undefined }));
+  feed(page: Page = {}, viewer?: string): Promise<FeedResult> {
+    return this.get<FeedResult>(this.url('/posts', { limit: page.limit, after: page.after ?? undefined, viewer }));
   }
 
-  thread(id: string, page: Page = {}): Promise<ThreadResult | null> {
+  thread(id: string, page: Page = {}, viewer?: string): Promise<ThreadResult | null> {
     return this.getOrNull<ThreadResult>(
-      this.url(`/posts/${encodeURIComponent(id)}/thread`, { limit: page.limit, after: page.after ?? undefined }),
+      this.url(`/posts/${encodeURIComponent(id)}/thread`, { limit: page.limit, after: page.after ?? undefined, viewer }),
     );
   }
 
-  post(id: string): Promise<PostResult | null> {
-    return this.getOrNull<PostResult>(this.url(`/posts/${encodeURIComponent(id)}`));
+  post(id: string, viewer?: string): Promise<PostResult | null> {
+    return this.getOrNull<PostResult>(this.url(`/posts/${encodeURIComponent(id)}`, { viewer }));
   }
 
   status(): Promise<StatusResult> {
@@ -81,5 +84,11 @@ export class NodeClient implements Api {
 
   currentBlock(): Promise<BlockCurrent> {
     return this.get<BlockCurrent>(this.url('/blocks/current'));
+  }
+
+  // The spendable view's confirmed boxes, paged by `next`. No viewer — a balance
+  // read is keyed by the identity in the path, not by a viewer query.
+  karma(key: string, page: Page = {}): Promise<KarmaResult> {
+    return this.get<KarmaResult>(this.url(`/karma/${encodeURIComponent(key)}`, { limit: page.limit, after: page.after ?? undefined }));
   }
 }

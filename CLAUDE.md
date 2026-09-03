@@ -44,9 +44,11 @@ Seven packages, in dependency order:
 - `@dagsocial/nipopow` — NiPoPoW proofs over ordering-block headers: the proof codecs, `verifyProof`, `compareProofs`, `proveWithReader`. **Pure functions only.**
 - `@dagsocial/net` — libp2p + Gossipsub relay, whole-block sync, peer management.
 - `@dagsocial/node` — Express server, PoW, verifier, SQLite store, UTXO engine, AVL+ state root, block creator, demo UI.
-- `@dagsocial/web` — the browser client, built with vite. The **read surface** only: feed, threads, a
-  tiling workspace, both themes. Every call a `GET`, so it holds no key and signs nothing; it hashes only
-  through `@dagsocial/types`, reached by a build-time `crypto` shim.
+- `@dagsocial/web` — the browser client, built with vite. The **read surface** — feed, threads, a
+  tiling workspace, both themes — and the **write surface's first slice**: an identity held in the
+  browser, the composer for a root and a reply, and like, on transactions the client builds and signs
+  itself. It hashes only through `@dagsocial/types`, reached by a build-time `crypto` shim, and signs
+  with `@noble/curves`; with no identity loaded it is the read surface exactly.
 
 Three tools live under `tools/` — in the workspace by the `tools/*` glob, so in `pnpm -r test`:
 
@@ -99,7 +101,7 @@ can check it against the tree.
 ## Comment style
 
 **Cite the CONTRACT.** A comment either states the rule as it stands now, or names the contract section
-that states it — `TYPES_INTERFACE → Layout — Stump / PruneEntry`.
+that states it — `TYPES_INTERFACE → Layout — PruneCommit`.
 
 ⛔ **`contracts/` is the only citable directory.** A comment pointing anywhere else in this repo may be
 pointing at nothing: `.gitignore` excludes whole directories of working material, so a citation that
@@ -168,7 +170,8 @@ makes a title plain.
 - Parent refs: 0–1 per post (`MAX_PARENT_REFS`)
 - **On-chain time is block height**, never wall clock — one named exemption: the ordering-block
   difficulty schedule reads header `createdAt` stamps (`MINING_INTERFACE` → Difficulty Schedule)
-- Signatures: raw Ed25519 (64 bytes), base64 on wire. Verified with `crypto.verify(null, …)` and a KeyObject
+- Signatures: raw Ed25519 — 64 raw bytes on the positional wire, hex at the HTTP JSON edge. Verified with
+  `crypto.verify(null, …)` and a KeyObject
 - Hashing: `blake2b512` with `.subarray(0, 32)` for every 32-byte output
 - Wire format: positional binary. HTTP API: JSON
 - **Value conservation** — every user transaction conserves, unconditionally: each cost lands in a

@@ -1,7 +1,7 @@
 import { el, reportNode } from '../dom';
-import { card, type ParentRef } from './card';
+import { card, submissionToPost, flightFor, type ParentRef } from './card';
 import type { PostJson } from '../api/dto';
-import type { FeedState, RenderCtx, Handlers } from '../model/state';
+import { FEED_COMPOSER_KEY, type FeedState, type RenderCtx, type Handlers } from '../model/state';
 
 // The feed: roots and replies in one column, newest first.
 // A reply shows its parent as a one-line reference, not a rendered card.
@@ -33,6 +33,17 @@ export function renderFeedInto(container: HTMLElement, feed: FeedState, handlers
   head.appendChild(ctlBtn('↻', 'refresh the feed', handlers.refreshFeed));
   // Ruling 8: the note reads "newest first", and nothing else.
   head.appendChild(el('span', 'note', 'newest first'));
+  // `new post`, not `post`: the composer it opens has its own post button, and
+  // two controls with different words a few pixels apart is a trap. Only with an
+  // identity loaded (WEB_INTERFACE → The write surface).
+  if (ctx.writeEnabled) {
+    const nb = el('button', 'mini');
+    nb.setAttribute('data-composer-open', FEED_COMPOSER_KEY);
+    nb.setAttribute('aria-label', 'write a new post');
+    nb.appendChild(el('span', null, 'new post'));
+    nb.addEventListener('click', () => handlers.openComposer(null));
+    head.appendChild(nb);
+  }
   container.appendChild(head);
 
   if (feed.error) {
@@ -44,6 +55,16 @@ export function renderFeedInto(container: HTMLElement, feed: FeedState, handlers
   if (!feed.loaded && feed.loading) {
     container.appendChild(el('div', 'loading', 'loading…'));
     return;
+  }
+
+  // Directly under the bar, which is where a new thread will land — the feed is
+  // newest first. The composer collapses into the pending card in the same slot.
+  const feedComposer = ctx.composerFor(null);
+  if (feedComposer) container.appendChild(feedComposer);
+
+  // The client's own root submissions, newest first, above the node's rows.
+  for (const sub of [...ctx.submissionsFor(null)].reverse()) {
+    container.appendChild(card(submissionToPost(sub), { replyCount: null, flight: flightFor(sub, handlers.tryAgain), onOpen: (id) => handlers.openThread(id, { from: 'feed' }) }));
   }
 
   // Pending (mempool) posts are the newest — they sit above the confirmed ones,
