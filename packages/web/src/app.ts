@@ -577,8 +577,9 @@ export class App {
       const total = ctx.spendable.reduce((sum, b) => sum + b.value, 0n);
       this.composers.get(key)?.setAffordable(total >= price);
     } catch {
-      // The spendable view could not be read; post stays disabled, since
-      // affordability cannot be confirmed and neither could the submit succeed.
+      // The spendable view could not be read; the foot says so and post stays
+      // disabled, rather than a disabled button with no reason.
+      this.composers.get(key)?.setKarmaError("can't read your karma right now");
     }
   }
 

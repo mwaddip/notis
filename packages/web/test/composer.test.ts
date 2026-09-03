@@ -47,6 +47,18 @@ describe('composer — the foot', () => {
     expect(ctrl.el.querySelector('.karma')?.textContent).toBe('not enough karma to post right now');
   });
 
+  it('a failed affordability read shows a reason in the foot, post disabled, and clears on a later read', () => {
+    const { ctrl, ta } = open();
+    type(ta, 'a real post');
+    ctrl.setKarmaError("can't read your karma right now");
+    expect(ctrl.el.querySelector('.karma')?.textContent).toBe("can't read your karma right now");
+    expect(postBtn(ctrl.el).disabled).toBe(true);
+    ctrl.setAffordable(true);
+    expect(ctrl.el.querySelector('.karma')?.textContent).toContain('karma');
+    expect(ctrl.el.querySelector('.karma .n')?.textContent).toBe('5');
+    expect(postBtn(ctrl.el).disabled).toBe(false);
+  });
+
   it('the byte budget is silent under 240 bytes, then counts down, then over in clay', () => {
     const { ctrl, ta } = open();
     ctrl.setAffordable(true);

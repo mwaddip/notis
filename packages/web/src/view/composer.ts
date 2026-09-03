@@ -16,6 +16,9 @@ export interface ComposerController {
   /** Affordability is read once when the composer opens; until it is known, post
    *  is held disabled so the reader cannot spend a rejection to learn it. */
   setAffordable(affordable: boolean): void;
+  /** The affordability read failed — the foot says so and post stays disabled,
+   *  rather than a disabled button with no reason. */
+  setKarmaError(message: string): void;
 }
 
 export interface ComposerOpts {
@@ -29,6 +32,7 @@ export interface ComposerOpts {
 export function makeComposer(opts: ComposerOpts): ComposerController {
   let discarding = false;
   let affordable: boolean | null = null; // null → not yet read
+  let karmaError: string | null = null; // a foot message when the read fails
 
   const box = el('div', 'composer' + (opts.depth ? ' depth-' + Math.min(opts.depth, 3) : ''));
 
@@ -49,10 +53,12 @@ export function makeComposer(opts: ComposerOpts): ComposerController {
 
   function drawKarma(): void {
     karma.textContent = '';
-    if (affordable === false) {
-      // Say what happens, not what went wrong (HOUSE_STYLE → Voice).
+    // Say what happens, not what went wrong (HOUSE_STYLE → Voice).
+    const message =
+      karmaError ?? (affordable === false ? (opts.isReply ? 'not enough karma to reply right now' : 'not enough karma to post right now') : null);
+    if (message !== null) {
       karma.classList.add('short');
-      karma.textContent = opts.isReply ? 'not enough karma to reply right now' : 'not enough karma to post right now';
+      karma.textContent = message;
       return;
     }
     // The price in mono — the one balance-shaped number on the reading surface,
@@ -145,6 +151,12 @@ export function makeComposer(opts: ComposerOpts): ComposerController {
     focus: () => ta.focus(),
     setAffordable: (a: boolean) => {
       affordable = a;
+      karmaError = null;
+      if (!discarding) sync();
+    },
+    setKarmaError: (message: string) => {
+      karmaError = message;
+      affordable = false; // post disabled — affordability is unknown
       if (!discarding) sync();
     },
   };

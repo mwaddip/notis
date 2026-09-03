@@ -56,6 +56,7 @@ interface ThrowOpts {
   submit?: boolean;
   like?: boolean;
   currentBlock?: boolean;
+  karma?: boolean;
 }
 
 function harness(thrown: ThrowOpts = {}): Harness {
@@ -76,7 +77,10 @@ function harness(thrown: ThrowOpts = {}): Harness {
       if (thrown.currentBlock) throw new Error('node unreachable');
       return { height: blockHeight, hash: null };
     },
-    karma: async () => karma,
+    karma: async () => {
+      if (thrown.karma) throw new Error('node unreachable');
+      return karma;
+    },
   };
   const writeClient = {
     submitPost: async () => {
@@ -209,5 +213,13 @@ describe('the App write surface — transport failures end cleanly', () => {
     expect(h.ledger.size).toBe(1);
     await expect(h.drive.pollTick()).resolves.toBeUndefined(); // no unhandled rejection
     expect(h.ledger.size).toBe(1); // nothing reconciled, the entry stands
+  });
+
+  it('a failed karma read on open shows the reason in the composer foot', async () => {
+    const h = harness({ karma: true });
+    (h.app as unknown as { openComposer(p: string | null): void }).openComposer(null);
+    await flush(); // let the fire-and-forget affordability read settle
+    const ctrl = (h.drive.composers as Map<string, { el: HTMLElement }>).get('@feed')!;
+    expect(ctrl.el.querySelector('.karma')?.textContent).toBe("can't read your karma right now");
   });
 });
