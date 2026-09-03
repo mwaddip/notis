@@ -33,12 +33,13 @@ a tiling workspace of columns and regions, both themes, the identity spine, and 
 ## The boundary that defines this slice
 
 ⛔ **The read surface issues `GET` requests and nothing else.** No `POST`, no `DELETE`. No keys, no
-signing, no hashing, no positional encoding, no transaction construction.
+signing, no transaction construction.
 
-This is checkable, and it is the property the whole slice rests on: because there is no cryptography
-here, this package is **not** a further implementation of anything consensus-critical, and no mirror
-test applies to it. If you find yourself needing to hash something, you have left the slice — stop and
-report, do not implement it.
+**It does hash** — and only ever through `@dagsocial/types`, reached by the build-time shim. That is
+the property the whole slice rests on: the package is **not** a further implementation of anything
+consensus-critical, because it runs the shared one rather than a copy, which is why no mirror test
+applies to it. **If you find yourself hand-writing an encoder or a hash, you have left the slice —
+stop and report, do not implement it.**
 
 **It sends no `viewer` parameter**, so every `likedByViewer` is `null`. That is correct for an
 anonymous reader, not a placeholder.

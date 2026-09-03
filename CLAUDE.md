@@ -45,8 +45,8 @@ Seven packages, in dependency order:
 - `@dagsocial/net` — libp2p + Gossipsub relay, whole-block sync, peer management.
 - `@dagsocial/node` — Express server, PoW, verifier, SQLite store, UTXO engine, AVL+ state root, block creator, demo UI.
 - `@dagsocial/web` — the browser client, built with vite. The **read surface** only: feed, threads, a
-  tiling workspace, both themes. Every call a `GET`, so it holds no key and computes no hash. Depends on
-  no other workspace package.
+  tiling workspace, both themes. Every call a `GET`, so it holds no key and signs nothing; it hashes only
+  through `@dagsocial/types`, reached by a build-time `crypto` shim.
 
 Three tools live under `tools/` — in the workspace by the `tools/*` glob, so in `pnpm -r test`:
 
