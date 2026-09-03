@@ -98,9 +98,13 @@ export class IdentityModule {
   }
 
   /** Ed25519 over the 32 transaction-id bytes, 128 hex out — the only path to the
-   *  seed (WEB_INTERFACE → "sign is the only path to the seed"). */
+   *  seed (WEB_INTERFACE → "sign is the only path to the seed"). The input is
+   *  validated because this method is reachable from the console in a dev build:
+   *  a transaction id is exactly 64 lowercase hex, and anything else is refused
+   *  rather than signed over garbage bytes. */
   sign(txIdHex: string): string {
     if (this.seed === null) throw new IdentityError('no identity is loaded to sign with.');
+    if (!HEX64.test(txIdHex)) throw new IdentityError('a transaction id to sign must be 64 hex characters.');
     return toHex(ed25519.sign(hexToBytes(txIdHex), this.seed));
   }
 

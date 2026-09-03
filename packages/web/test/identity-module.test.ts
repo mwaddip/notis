@@ -164,6 +164,15 @@ describe('identity module — signing interop with the node verifier', () => {
     // A different message does not verify against that signature.
     expect(nodeVerify(null, hexToBytes('00'.repeat(32)), key, hexToBytes(sigHex))).toBe(false);
   });
+
+  it('sign refuses anything but 64 lowercase hex — it is the one path to the seed', () => {
+    const m = new IdentityModule();
+    m.generate();
+    for (const bad of ['', 'abc', 'ab'.repeat(31), 'ab'.repeat(33), 'zz'.repeat(32), 'AB'.repeat(32), `${'ab'.repeat(32)} `]) {
+      expect(() => m.sign(bad), bad).toThrow(/64 hex/);
+    }
+    expect(m.sign('ab'.repeat(32))).toHaveLength(128);
+  });
 });
 
 describe('identity module — the dev door', () => {
