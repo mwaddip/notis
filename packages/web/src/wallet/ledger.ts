@@ -153,10 +153,10 @@ export function reconcileVouch(
  *  `GET /vouches?voucher=<me>` — the `vouch` box is spent (WEB_INTERFACE → The
  *  wallet). The escrow it creates is not the signal: a vouch held past one
  *  cooldown yields an escrow born already releasable, which the next block's
- *  settlement returns (NODE_INTERFACE → Vouch escrows), so the cooldown row can
- *  stand for a single block the poll never catches. The one absence the target
- *  does not distinguish — the lapse leg spending the box first — leaves the reader
- *  the same state. */
+ *  settlement returns (NODE_INTERFACE → Vouch transition rules), so the cooldown
+ *  row can stand for a single block the poll never catches. The one absence the
+ *  target does not distinguish — the lapse leg spending the box first — leaves the
+ *  reader the same state. */
 export function reconcileUnvouch(
   entry: PendingEntry,
   vouches: ReadonlyArray<{ targetId: string }>,

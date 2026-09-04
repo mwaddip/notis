@@ -124,7 +124,8 @@ export async function submitLikeFlow(deps: SubmitDeps, targetId: string): Promis
 }
 
 /** Submit a vouch for an identity. Karma in, one `vouch` box out; the mark's
- *  optimistic state is the App's, this is the flight (WEB_INTERFACE → Vouch). */
+ *  optimistic state is the App's, this is the flight (WEB_INTERFACE → The
+ *  identity display). */
 export async function submitVouchFlow(deps: SubmitDeps, targetKey: string): Promise<SubmitResult<VouchSubmitResult>> {
   const id = deps.identity.current();
   if (id === null) throw new Error('submitVouchFlow: no identity loaded');
