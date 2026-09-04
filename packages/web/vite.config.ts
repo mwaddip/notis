@@ -12,6 +12,15 @@ import inject from '@rollup/plugin-inject';
 // NOTIS_NODE to point the proxy elsewhere.
 const NODE_ORIGIN = process.env['NOTIS_NODE'] ?? 'http://localhost:3000';
 
+// The faucet is a separate service, not on the node's API prefix
+// (NODE_INTERFACE → Faucet); its dev target is NOTIS_FAUCET, carried by the proxy
+// only when set. http-proxy prepends the target's path, so the client's
+// /faucet/karma against a target holding the deploy's /testnet/faucet prefix
+// doubles to /testnet/faucet/faucet/karma — a 404 — unless the /faucet prefix is
+// stripped first; stripped, it resolves to /testnet/faucet/karma, the faucet's own
+// route (a 400 for a bad body). The rewrite strips it.
+const FAUCET_ORIGIN = process.env['NOTIS_FAUCET'];
+
 // The API paths mounted bare on the node, proxied so the browser sees them
 // same-origin — the node and nginx send no CORS
 // (WEB_INTERFACE → The client is served from the node's own origin). The read
@@ -43,9 +52,12 @@ export default defineConfig({
     alias: [{ find: /^crypto$/, replacement: CRYPTO_SHIM }],
   },
   server: {
-    proxy: Object.fromEntries(
-      API_PATHS.map((p) => [p, { target: NODE_ORIGIN, changeOrigin: true }]),
-    ),
+    proxy: {
+      ...Object.fromEntries(API_PATHS.map((p) => [p, { target: NODE_ORIGIN, changeOrigin: true }])),
+      ...(FAUCET_ORIGIN
+        ? { '/faucet': { target: FAUCET_ORIGIN, changeOrigin: true, rewrite: (p: string) => p.replace(/^\/faucet/, '') } }
+        : {}),
+    },
   },
   build: {
     rollupOptions: {

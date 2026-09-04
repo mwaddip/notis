@@ -1,5 +1,5 @@
-// Persisted preferences: theme, identity tint, and which node the client reads.
-// Stored in localStorage and restored painted, not transitioned
+// Persisted preferences: theme, identity tint, and which node and faucet the
+// client reaches. Stored in localStorage and restored painted, not transitioned
 // (HOUSE_STYLE → Motion). The theme's first-paint flip is handled inline in
 // index.html's <head>; this module re-applies on load and owns every later
 // change. Every read and write is guarded — storage is absent in private mode.
@@ -10,6 +10,7 @@ export type IdTint = 'spine' | 'wash' | 'both' | 'off';
 const KEY_THEME = 'notis.theme';
 const KEY_IDTINT = 'notis.idtint';
 const KEY_NODE = 'notis.node';
+const KEY_FAUCET = 'notis.faucet';
 export const KEY_LAYOUT = 'notis.layout';
 
 // The client's default API base, baked at build time — empty for `pnpm dev`
@@ -17,6 +18,11 @@ export const KEY_LAYOUT = 'notis.layout';
 // deploy served under one. A stored node value overrides it; the source never
 // hardcodes an origin.
 export const BUILD_BASE = import.meta.env.VITE_API_BASE ?? '';
+
+// The faucet's default base, baked at build time — empty means no faucet and no
+// button (WEB_INTERFACE → The faucet step), a path like /testnet/faucet on a
+// deploy. A stored faucet value overrides it; the source hardcodes no origin.
+export const BUILD_FAUCET_BASE = import.meta.env.VITE_FAUCET_BASE ?? '';
 
 // The wash percentages are large because the wash colour sits at the ground's
 // own lightness — the mix controls how much hue comes through and nothing else,
@@ -59,6 +65,7 @@ export const prefs = {
     return v === 'wash' || v === 'both' || v === 'off' ? v : 'spine';
   })(),
   node: readStore(KEY_NODE) ?? BUILD_BASE,
+  faucet: readStore(KEY_FAUCET) ?? BUILD_FAUCET_BASE,
 };
 
 const root = document.documentElement;
@@ -102,5 +109,17 @@ export function setNode(origin: string): void {
     // Cleared — reset to the build default rather than forcing same-origin.
     prefs.node = BUILD_BASE;
     removeStore(KEY_NODE);
+  }
+}
+
+export function setFaucet(origin: string): void {
+  const trimmed = origin.trim();
+  if (trimmed) {
+    prefs.faucet = trimmed;
+    writeStore(KEY_FAUCET, trimmed);
+  } else {
+    // Cleared — reset to the build default (empty means no faucet).
+    prefs.faucet = BUILD_FAUCET_BASE;
+    removeStore(KEY_FAUCET);
   }
 }
