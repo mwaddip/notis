@@ -407,6 +407,9 @@ header .spacer { flex: 1 1 auto; }
    colour, since identity colour may never identify anyone (HOUSE_STYLE → Identity colour). */
 .you { color: var(--inkMute); }
 
+/* A locked like's unlock form, in a row under the card's meta row (HOUSE_STYLE → Motion). */
+.card-unlock { margin-top: 8px; }
+
 /* hover is suppressed while scrolling and ~100ms after it stops
    (HOUSE_STYLE → Interaction). */
 .scrolling { pointer-events: none; }

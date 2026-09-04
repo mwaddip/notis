@@ -56,3 +56,33 @@ describe('card — · you', () => {
     expect(card(confirmed(PUB)).querySelector('.you')).toBeNull(); // no opt → no mark
   });
 });
+
+describe('card — a locked like', () => {
+  it('shows the unlock form under the meta on the press, then the like proceeds', async () => {
+    const unlocked: string[] = [];
+    const liked: string[] = [];
+    const c = card(confirmed('bb'.repeat(32)), {
+      onLike: (id) => liked.push(id),
+      locked: true,
+      ownKey: PUB,
+      onUnlock: async (p) => { unlocked.push(p); },
+    });
+    [...c.querySelectorAll('button')].find((b) => b.textContent === 'like')!.click();
+    const form = c.querySelector('.card-unlock form.pf') as HTMLFormElement;
+    expect(form).not.toBeNull(); // the unlock form appeared under the meta
+    expect(liked).toHaveLength(0); // the like has not fired yet
+    (form.querySelector('input[type="password"]') as HTMLInputElement).value = 'pw';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(unlocked).toEqual(['pw']); // the seed was unlocked
+    expect(liked).toEqual(['p1']); // and the like proceeded
+  });
+
+  it('an unlocked like fires at once — no unlock form', () => {
+    const liked: string[] = [];
+    const c = card(confirmed('bb'.repeat(32)), { onLike: (id) => liked.push(id), locked: false, ownKey: PUB, onUnlock: async () => {} });
+    [...c.querySelectorAll('button')].find((b) => b.textContent === 'like')!.click();
+    expect(c.querySelector('.card-unlock')).toBeNull();
+    expect(liked).toEqual(['p1']);
+  });
+});

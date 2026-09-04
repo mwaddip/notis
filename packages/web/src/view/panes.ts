@@ -112,6 +112,10 @@ function writeCardOpts(row: PostJson | Tombstone, ctx: RenderCtx, handlers: Hand
       opts.likePending = overlaid && row.likedByViewer !== true;
     } else if (!isOwn) {
       opts.onLike = (id) => handlers.likePost(id);
+      // A locked identity unlocks in a row under the card before the like flies.
+      opts.locked = ctx.identity?.locked ?? false;
+      opts.ownKey = ctx.ownKey ?? undefined;
+      opts.onUnlock = (p) => handlers.unlockIdentity(p);
     }
   }
   return opts;

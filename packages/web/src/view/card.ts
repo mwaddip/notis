@@ -1,4 +1,5 @@
 import { el, shortHex } from '../dom';
+import { unlockForm } from './passphrase';
 import type { PostJson, Tombstone, StumpJson, PrunedJson, WithdrawnJson } from '../api/dto';
 import { isTombstone } from '../api/dto';
 import { assertContentHash } from '../integrity';
@@ -37,6 +38,9 @@ export interface CardOpts {
   likePending?: boolean;                 // the like has not settled — inkMute, count + 1
   composerKey?: string;                  // for the data-composer-open focus hook
   you?: boolean;                         // the reader's own card — · you after the prefix
+  locked?: boolean;                      // the identity is locked — a like prompts unlock first
+  ownKey?: string;                       // the reader's key, the unlock form's username
+  onUnlock?: (passphrase: string) => Promise<void>; // load the seed, then the like proceeds
 }
 
 /** Compact absolute local time; the on-chain marker is the block height, this
@@ -178,10 +182,37 @@ function likeArea(post: PostJson, opts: CardOpts): HTMLElement | null {
     lb.setAttribute('aria-label', 'like this post — permanent, and moves karma to its author');
     if (post.likeCount > 0) lb.appendChild(el('span', 'n', String(post.likeCount)));
     lb.appendChild(el('span', null, 'like'));
-    lb.addEventListener('click', () => opts.onLike!(post.id));
+    lb.addEventListener('click', () => {
+      // A locked identity unlocks first, in a row under the meta and in response to
+      // the press; on success the like proceeds (WEB_INTERFACE → The identity module).
+      if (opts.locked && opts.ownKey && opts.onUnlock) {
+        mountLikeUnlock(lb, opts.ownKey, opts.onUnlock, () => opts.onLike!(post.id));
+        return;
+      }
+      opts.onLike!(post.id);
+    });
     return lb;
   }
   return likeNode(post.likeCount);
+}
+
+/** The unlock form in a row under the card's meta; a correct passphrase loads the
+ *  seed and the like proceeds, Esc drops the row. */
+function mountLikeUnlock(likeBtn: HTMLElement, ownKey: string, onUnlock: (p: string) => Promise<void>, onLiked: () => void): void {
+  const meta = likeBtn.closest('.meta');
+  if (!meta || meta.parentElement?.querySelector('.card-unlock')) return; // already open
+  const row = el('div', 'card-unlock');
+  row.appendChild(
+    unlockForm(
+      ownKey,
+      async (p) => {
+        await onUnlock(p);
+        onLiked();
+      },
+      () => row.remove(),
+    ),
+  );
+  meta.insertAdjacentElement('afterend', row);
 }
 
 /** ↩ reply — a ghost button in the meta row (WEB_INTERFACE → The write surface). */
