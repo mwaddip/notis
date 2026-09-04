@@ -55,3 +55,34 @@ describe('read client — karma', () => {
     expect(calls[1]).not.toContain('viewer');
   });
 });
+
+describe('read client — the membership arms', () => {
+  it('builds the four GET urls, none carrying viewer', async () => {
+    const c = client();
+    await c.vouchesByTarget('key1', { limit: 1 });
+    expect(calls[0]).toBe('/vouches?target=key1&limit=1');
+
+    await c.vouchesByVoucher('key1', { after: 'box9' });
+    expect(calls[1]).toBe('/vouches?voucher=key1&after=box9');
+
+    await c.vouchCooldowns('key1');
+    expect(calls[2]).toBe('/vouches?voucher=key1&cooldowns=1');
+
+    await c.bonds('key1', { limit: 50, after: 'b3' });
+    expect(calls[3]).toBe('/invites/key1?limit=50&after=b3');
+
+    for (const url of calls) expect(url).not.toContain('viewer');
+  });
+});
+
+describe('read client — the author-posts filter', () => {
+  it('feed carries author when passed and omits it when not', async () => {
+    const c = client();
+    await c.feed({ limit: 30 }, VIEWER, 'authorkey');
+    expect(calls[0]).toBe(`/posts?limit=30&author=authorkey&viewer=${VIEWER}`);
+
+    await c.feed({ limit: 30 }, VIEWER);
+    expect(calls[1]).toBe(`/posts?limit=30&viewer=${VIEWER}`);
+    expect(calls[1]).not.toContain('author');
+  });
+});

@@ -1,12 +1,14 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, beforeEach } from 'vitest';
-import { submitPostFlow, submitLikeFlow, type SubmitDeps } from '../src/wallet/submit';
+import {
+  submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, type SubmitDeps,
+} from '../src/wallet/submit';
 import { PendingLedger } from '../src/wallet/ledger';
 import type { Api } from '../src/api/client';
-import type { KarmaBoxRow, KarmaResult, PostResult, StatusResult } from '../src/api/dto';
+import type { KarmaBoxRow, KarmaResult, PostResult, StatusResult, VouchesVoucherResult } from '../src/api/dto';
 import { karmaResult as karmaFixture } from './karma-fixture';
 import { isRejection } from '../src/api/write';
-import type { PostSubmitResult, LikeSubmitResult, Rejection } from '../src/api/write';
+import type { PostSubmitResult, LikeSubmitResult, VouchSubmitResult, InviteSubmitResult, Rejection } from '../src/api/write';
 
 // submit ties the reads, the builders, the ledger, the identity and the write
 // client into one path. These drive it over fakes and watch what it does: the
@@ -21,10 +23,13 @@ const SIG = 'cc'.repeat(64);
 const BOX_ID = '11'.repeat(32);
 const PARENT_ID = 'dd'.repeat(32);
 const TARGET_ID = 'ee'.repeat(32);
+const VOUCH_TARGET = '22'.repeat(32);
+const INVITEE = '33'.repeat(32);
+const VOUCH_BOX = '44'.repeat(32);
 
 let signCalls: string[];
 let postReads: Array<{ id: string; viewer?: string }>;
-let writeCalls: Array<{ kind: 'post' | 'like'; tx: Record<string, unknown>; content?: string }>;
+let writeCalls: Array<{ kind: 'post' | 'like' | 'vouch' | 'unvouch' | 'invite'; tx: Record<string, unknown>; content?: string; targetHex?: string }>;
 
 function statusResult(): StatusResult {
   return {
@@ -45,7 +50,11 @@ function postResult(id: string, confirmedAuthor: string | null): PostResult {
   };
 }
 
-function reads(confirmedAuthor: string | null = PARENT_AUTHOR, boxes: KarmaBoxRow[] = FULL_BOXES): Pick<Api, 'karma' | 'status' | 'post'> {
+function reads(
+  confirmedAuthor: string | null = PARENT_AUTHOR,
+  boxes: KarmaBoxRow[] = FULL_BOXES,
+  vouches: VouchesVoucherResult['vouches'] = [],
+): Pick<Api, 'karma' | 'status' | 'post' | 'vouchesByVoucher'> {
   return {
     karma: async () => karmaResult(boxes),
     status: async () => statusResult(),
@@ -53,8 +62,12 @@ function reads(confirmedAuthor: string | null = PARENT_AUTHOR, boxes: KarmaBoxRo
       postReads.push({ id, viewer });
       return postResult(id, confirmedAuthor);
     },
+    vouchesByVoucher: async () => ({ vouches, count: vouches.length, next: null }),
   };
 }
+const vouchRow = (over: Partial<VouchesVoucherResult['vouches'][number]> = {}): VouchesVoucherResult['vouches'][number] => ({
+  boxId: VOUCH_BOX, value: '1', createdAtBlock: 5900, voucherId: PUB, targetId: VOUCH_TARGET, ...over,
+});
 const identity = {
   current: () => ({ pubKeyHex: PUB }),
   sign: (txId: string) => {
@@ -66,7 +79,18 @@ const identity = {
 // own id before POSTing, so the last signed id IS the client's built id — a
 // matching node responds with it.
 const lastSignedTxId = (): string => signCalls[signCalls.length - 1]!;
-function write(postResp: PostSubmitResult | Rejection, likeResp: LikeSubmitResult | Rejection): SubmitDeps['write'] {
+const okPost: PostSubmitResult = { postId: 'newpost', status: 'pending', expiresAtHeight: 6720, txId: 'ignored' };
+const okLike: LikeSubmitResult = { status: 'pending', txId: 'ignored', expiresAtHeight: 6720 };
+const okVouch: VouchSubmitResult = { status: 'pending', txId: 'ignored', expiresAtHeight: 6720 };
+const okInvite: InviteSubmitResult = { status: 'pending', txId: 'ignored', expiresAtHeight: 6720, bondBoxId: 'bond1' };
+
+function write(
+  postResp: PostSubmitResult | Rejection = okPost,
+  likeResp: LikeSubmitResult | Rejection = okLike,
+  vouchResp: VouchSubmitResult | Rejection = okVouch,
+  inviteResp: InviteSubmitResult | Rejection = okInvite,
+  unvouchResp: VouchSubmitResult | Rejection = okVouch,
+): SubmitDeps['write'] {
   return {
     submitPost: async (tx, content) => {
       writeCalls.push({ kind: 'post', tx, content });
@@ -76,11 +100,20 @@ function write(postResp: PostSubmitResult | Rejection, likeResp: LikeSubmitResul
       writeCalls.push({ kind: 'like', tx });
       return isRejection(likeResp) ? likeResp : { ...likeResp, txId: lastSignedTxId() };
     },
+    submitVouch: async (tx) => {
+      writeCalls.push({ kind: 'vouch', tx });
+      return isRejection(vouchResp) ? vouchResp : { ...vouchResp, txId: lastSignedTxId() };
+    },
+    submitUnvouch: async (targetHex, tx) => {
+      writeCalls.push({ kind: 'unvouch', tx, targetHex });
+      return isRejection(unvouchResp) ? unvouchResp : { ...unvouchResp, txId: lastSignedTxId() };
+    },
+    submitInvite: async (tx) => {
+      writeCalls.push({ kind: 'invite', tx });
+      return isRejection(inviteResp) ? inviteResp : { ...inviteResp, txId: lastSignedTxId() };
+    },
   };
 }
-
-const okPost: PostSubmitResult = { postId: 'newpost', status: 'pending', expiresAtHeight: 6720, txId: 'ignored' };
-const okLike: LikeSubmitResult = { status: 'pending', txId: 'ignored', expiresAtHeight: 6720 };
 
 beforeEach(() => {
   signCalls = [];
@@ -191,14 +224,27 @@ describe('the node txId is compared to the client id', () => {
   // A node whose id disagrees with the client's over the same tx: the encodings
   // diverged, so the entry is refused and the mismatch named.
   function writeMismatch(): SubmitDeps['write'] {
+    const wrong = 'ff'.repeat(32);
     return {
       submitPost: async (tx, content) => {
         writeCalls.push({ kind: 'post', tx, content });
-        return { ...okPost, txId: 'ff'.repeat(32) };
+        return { ...okPost, txId: wrong };
       },
       submitLike: async (tx) => {
         writeCalls.push({ kind: 'like', tx });
-        return { ...okLike, txId: 'ff'.repeat(32) };
+        return { ...okLike, txId: wrong };
+      },
+      submitVouch: async (tx) => {
+        writeCalls.push({ kind: 'vouch', tx });
+        return { ...okVouch, txId: wrong };
+      },
+      submitUnvouch: async (targetHex, tx) => {
+        writeCalls.push({ kind: 'unvouch', tx, targetHex });
+        return { ...okVouch, txId: wrong };
+      },
+      submitInvite: async (tx) => {
+        writeCalls.push({ kind: 'invite', tx });
+        return { ...okInvite, txId: wrong };
       },
     };
   }
@@ -216,6 +262,111 @@ describe('the node txId is compared to the client id', () => {
     const deps: SubmitDeps = { reads: reads(), write: writeMismatch(), ledger, identity };
     const res = await submitLikeFlow(deps, TARGET_ID);
     expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'the node computed a different transaction id' } });
+    expect(ledger.size).toBe(0);
+  });
+});
+
+describe('submitVouchFlow', () => {
+  it('builds, signs the id, POSTs { tx } and lands a vouch entry for the target', async () => {
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity };
+    const res = await submitVouchFlow(deps, VOUCH_TARGET);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(signCalls).toEqual([res.entry.txId]);
+    expect(writeCalls[0]).toMatchObject({ kind: 'vouch' });
+    expect((writeCalls[0]!.tx.signatures as Record<string, string>)[PUB]).toBe(SIG);
+    const outputs = writeCalls[0]!.tx.outputs as Array<Record<string, unknown>>;
+    expect(outputs.find((o) => o.boxType === 'vouch')?.targetId).toBe(VOUCH_TARGET);
+    expect(res.entry).toMatchObject({ kind: 'vouch', postId: VOUCH_TARGET, expiresAtHeight: 6720, submittedAtHeight: 6000 });
+    expect(ledger.all().map((e) => e.kind)).toEqual(['vouch']);
+  });
+
+  it('a vouch rejection short-circuits: no ledger entry', async () => {
+    const ledger = new PendingLedger(PUB);
+    const rejection: Rejection = { status: 400, message: 'already vouched for this pair' };
+    const deps: SubmitDeps = { reads: reads(), write: write(okPost, okLike, rejection), ledger, identity };
+    const res = await submitVouchFlow(deps, VOUCH_TARGET);
+    expect(res).toEqual({ ok: false, rejection });
+    expect(ledger.size).toBe(0);
+  });
+
+  it('an empty spendable view refuses a vouch in the voice register', async () => {
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, []), write: write(), ledger, identity };
+    const res = await submitVouchFlow(deps, VOUCH_TARGET);
+    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough karma to vouch right now.' } });
+    expect(writeCalls).toEqual([]);
+    expect(ledger.size).toBe(0);
+  });
+});
+
+describe('submitUnvouchFlow', () => {
+  it('resolves the box at the press, DELETEs { tx } to the target, lands an unvouch entry with no change', async () => {
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [vouchRow()]), write: write(), ledger, identity };
+    const res = await submitUnvouchFlow(deps, VOUCH_TARGET);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(writeCalls[0]).toMatchObject({ kind: 'unvouch', targetHex: VOUCH_TARGET });
+    // One input, the resolved vouch box; the voucher's own signature.
+    expect(writeCalls[0]!.tx.inputs).toEqual([VOUCH_BOX]);
+    expect((writeCalls[0]!.tx.signatures as Record<string, string>)[PUB]).toBe(SIG);
+    const outputs = writeCalls[0]!.tx.outputs as Array<Record<string, unknown>>;
+    expect(outputs).toHaveLength(1);
+    expect(outputs[0]!.boxType).toBe('vouch_escrow');
+    expect(outputs.some((o) => o.boxType === 'karma')).toBe(false);
+    expect(res.entry).toMatchObject({ kind: 'unvouch', postId: VOUCH_TARGET, inputs: [VOUCH_BOX] });
+    expect(res.entry.change).toBeUndefined();
+  });
+
+  it('a pair already gone re-reports withdrawn before any write', async () => {
+    const ledger = new PendingLedger(PUB);
+    // No vouch row for the target → the box was spent between render and press.
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, []), write: write(), ledger, identity };
+    const res = await submitUnvouchFlow(deps, VOUCH_TARGET);
+    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'that vouch was already withdrawn.' } });
+    expect(writeCalls).toEqual([]);
+    expect(ledger.size).toBe(0);
+  });
+
+  it('a node txId that disagrees refuses the unvouch entry', async () => {
+    const ledger = new PendingLedger(PUB);
+    const w = write();
+    // The node echoes a different id than the client signed → refused.
+    w.submitUnvouch = async (targetHex, tx) => { writeCalls.push({ kind: 'unvouch', tx, targetHex }); return { ...okVouch, txId: 'ff'.repeat(32) }; };
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [vouchRow()]), write: w, ledger, identity };
+    const res = await submitUnvouchFlow(deps, VOUCH_TARGET);
+    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'the node computed a different transaction id' } });
+    expect(ledger.size).toBe(0);
+  });
+});
+
+describe('submitInviteFlow', () => {
+  it('builds, POSTs { tx } and lands an invite entry for the invitee', async () => {
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity };
+    const res = await submitInviteFlow(deps, INVITEE, 100n);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(writeCalls[0]).toMatchObject({ kind: 'invite' });
+    const outputs = writeCalls[0]!.tx.outputs as Array<Record<string, unknown>>;
+    const bond = outputs.find((o) => o.boxType === 'bond');
+    expect(bond?.inviteePublicKey).toBe(INVITEE);
+    expect(bond?.value).toBe('100');
+    expect(res.entry).toMatchObject({ kind: 'invite', postId: INVITEE });
+    expect(ledger.all().map((e) => e.kind)).toEqual(['invite']);
+  });
+
+  it('a spendable view below the bond refuses in the voice register', async () => {
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, [{ boxId: BOX_ID, value: '50' }]), write: write(), ledger, identity };
+    const res = await submitInviteFlow(deps, INVITEE, 100n);
+    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough karma to cover the bond right now.' } });
+    expect(writeCalls).toEqual([]);
     expect(ledger.size).toBe(0);
   });
 });

@@ -133,6 +133,44 @@ export interface KarmaResult {
 }
 
 // ---------------------------------------------------------------------------
+// The membership reads (NODE_INTERFACE → Vouches, → UTXO queries). Every list is
+// keyset-paged: a `next` key or null. Values cross as decimal strings, keys as
+// hex. None is viewer-bearing.
+// ---------------------------------------------------------------------------
+
+/** `GET /vouches?target=<key>` — who vouches for this identity, and the count over
+ *  the whole set whatever the page size (NODE_INTERFACE → Vouches). */
+export interface VouchesTargetResult {
+  vouches: { voucherId: string; targetId: string }[];
+  count: number;
+  next: string | null;
+}
+
+/** `GET /vouches?voucher=<key>` — the reader's own vouches, the one arm carrying
+ *  `boxId` and `value`, so an unvouch can name the box it spends. */
+export interface VouchesVoucherResult {
+  vouches: { boxId: string; value: string; createdAtBlock: number; voucherId: string; targetId: string }[];
+  count: number;
+  next: string | null;
+}
+
+/** `GET /vouches?voucher=<key>&cooldowns=1` — the reader's unspent escrows, the
+ *  escrow gate (NODE_INTERFACE → Vouch escrows). */
+export interface VouchCooldownsResult {
+  cooldowns: { boxId: string; value: string; releaseAtBlock: number }[];
+  count: number;
+  next: string | null;
+}
+
+/** `GET /invites/<key>` — the inviter's standing bonds (NODE_INTERFACE → UTXO
+ *  queries). No settle height: no view serves one. */
+export interface BondsResult {
+  bonds: { id: string; value: string; inviterId: string; inviteePublicKey: string }[];
+  bondCount: number;
+  next: string | null;
+}
+
+// ---------------------------------------------------------------------------
 // Discriminators — PostJson carries no `kind`; every tombstone does.
 // ---------------------------------------------------------------------------
 

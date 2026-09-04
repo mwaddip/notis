@@ -58,6 +58,37 @@ describe('write client — request envelopes', () => {
     expect(last.body).toEqual({ tx });
     expect(res).toEqual({ status: 'pending', txId: 't2', expiresAtHeight: 5720 });
   });
+
+  it('submitVouch POSTs { tx } to /vouches', async () => {
+    mockResponse({ ok: true, status: 200, body: { status: 'pending', txId: 'tv', expiresAtHeight: 5720 } });
+    const tx = { inputs: [], outputs: [], signatures: {}, protocolVersion: 1 };
+    const res = await write().submitVouch(tx);
+    expect(last.url).toBe('/vouches');
+    expect(last.method).toBe('POST');
+    expect(last.body).toEqual({ tx });
+    expect(res).toEqual({ status: 'pending', txId: 'tv', expiresAtHeight: 5720 });
+  });
+
+  it('submitUnvouch DELETEs { tx } to /vouches/:targetId — the one non-POST write', async () => {
+    mockResponse({ ok: true, status: 200, body: { status: 'pending', txId: 'tu', expiresAtHeight: 5720, karmaReturnsAtBlock: 5800 } });
+    const tx = { inputs: ['44'.repeat(32)], outputs: [], signatures: {}, protocolVersion: 1 };
+    const res = await write().submitUnvouch('ee'.repeat(32), tx);
+    expect(last.url).toBe(`/vouches/${'ee'.repeat(32)}`);
+    expect(last.method).toBe('DELETE');
+    expect(last.body).toEqual({ tx });
+    // The node's extra karmaReturnsAtBlock is not modelled; the three bounded fields stand.
+    expect(res).toMatchObject({ status: 'pending', txId: 'tu', expiresAtHeight: 5720 });
+  });
+
+  it('submitInvite POSTs { tx } to /invites and returns bondBoxId', async () => {
+    mockResponse({ ok: true, status: 201, body: { status: 'pending', txId: 'ti', expiresAtHeight: 5720, bondBoxId: 'bond1' } });
+    const tx = { inputs: [], outputs: [], signatures: {}, protocolVersion: 1 };
+    const res = await write().submitInvite(tx);
+    expect(last.url).toBe('/invites');
+    expect(last.method).toBe('POST');
+    expect(last.body).toEqual({ tx });
+    expect(res).toEqual({ status: 'pending', txId: 'ti', expiresAtHeight: 5720, bondBoxId: 'bond1' });
+  });
 });
 
 describe('write client — rejection normalisation', () => {

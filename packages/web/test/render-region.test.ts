@@ -39,6 +39,11 @@ function fakeApi(): Api {
     }),
     currentBlock: async () => ({ height: 1, hash: null }),
     karma: async () => karmaResult({ userId: 'x', height: 1 }),
+    // The membership arms — unreached with no identity loaded (the read surface).
+    vouchesByTarget: async () => ({ vouches: [], count: 0, next: null }),
+    vouchesByVoucher: async () => ({ vouches: [], count: 0, next: null }),
+    vouchCooldowns: async () => ({ cooldowns: [], count: 0, next: null }),
+    bonds: async () => ({ bonds: [], bondCount: 0, next: null }),
   };
 }
 

@@ -19,6 +19,23 @@ export interface LikeSubmitResult {
   expiresAtHeight: number;
 }
 
+/** `POST /vouches` and `DELETE /vouches/:targetId` 2xx — bounded like a like's.
+ *  The node's unvouch reply also carries `karmaReturnsAtBlock`; the client reads
+ *  the release from the cooldown arm, so it is not modelled here. */
+export interface VouchSubmitResult {
+  status: string; // 'pending'
+  txId: string;
+  expiresAtHeight: number;
+}
+
+/** `POST /invites` 2xx — the bond box's id beside the bounded fields. */
+export interface InviteSubmitResult {
+  status: string; // 'pending'
+  txId: string;
+  expiresAtHeight: number;
+  bondBoxId: string;
+}
+
 /** One shape for both of the node's rejection bodies: the HTTP status and the
  *  message, normalised from `{ error: <status>, reason }` and `{ error: <message> }`
  *  both (WEB_INTERFACE → Writes). */
@@ -28,7 +45,9 @@ export interface Rejection {
 }
 
 /** A success body carries no `message`; a rejection always does. */
-export function isRejection(r: PostSubmitResult | LikeSubmitResult | Rejection): r is Rejection {
+export function isRejection(
+  r: PostSubmitResult | LikeSubmitResult | VouchSubmitResult | InviteSubmitResult | Rejection,
+): r is Rejection {
   return 'message' in r;
 }
 
@@ -38,16 +57,31 @@ export class WriteClient {
   constructor(private origin: () => string) {}
 
   submitPost(tx: Record<string, unknown>, content: string): Promise<PostSubmitResult | Rejection> {
-    return this.post<PostSubmitResult>('/posts', { tx, content });
+    return this.send<PostSubmitResult>('POST', '/posts', { tx, content });
   }
 
   submitLike(tx: Record<string, unknown>): Promise<LikeSubmitResult | Rejection> {
-    return this.post<LikeSubmitResult>('/likes', { tx });
+    return this.send<LikeSubmitResult>('POST', '/likes', { tx });
   }
 
-  private async post<T>(path: string, body: unknown): Promise<T | Rejection> {
+  submitVouch(tx: Record<string, unknown>): Promise<VouchSubmitResult | Rejection> {
+    return this.send<VouchSubmitResult>('POST', '/vouches', { tx });
+  }
+
+  /** The one non-`POST` write: `DELETE /vouches/:targetId` with a JSON `{ tx }`
+   *  body, the same body the node's route decodes as a cast does
+   *  (WEB_INTERFACE → Writes). */
+  submitUnvouch(targetHex: string, tx: Record<string, unknown>): Promise<VouchSubmitResult | Rejection> {
+    return this.send<VouchSubmitResult>('DELETE', `/vouches/${encodeURIComponent(targetHex)}`, { tx });
+  }
+
+  submitInvite(tx: Record<string, unknown>): Promise<InviteSubmitResult | Rejection> {
+    return this.send<InviteSubmitResult>('POST', '/invites', { tx });
+  }
+
+  private async send<T>(method: string, path: string, body: unknown): Promise<T | Rejection> {
     const res = await fetch(this.origin().replace(/\/$/, '') + path, {
-      method: 'POST',
+      method,
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
     });
