@@ -14,6 +14,9 @@ const BUDGET_QUIET = 240; // silent until it matters — an input that stops acc
 export interface ComposerController {
   el: HTMLElement;
   focus(): void;
+  /** The current draft — re-read after a deferred unlock, since the reader may have
+   *  edited it while the unlock form was open (WEB_INTERFACE → The identity module). */
+  text(): string;
   /** Affordability is read once when the composer opens; until it is known, post
    *  is held disabled so the reader cannot spend a rejection to learn it. */
   setAffordable(affordable: boolean): void;
@@ -154,6 +157,7 @@ export function makeComposer(opts: ComposerOpts): ComposerController {
   return {
     el: box,
     focus: () => ta.focus(),
+    text: () => ta.value,
     setAffordable: (a: boolean) => {
       affordable = a;
       karmaError = null;

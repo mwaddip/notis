@@ -772,9 +772,13 @@ export class App {
       // The seed is not loaded and sign is synchronous, so the unlock is a form in
       // the composer foot; on success the flight continues (WEB_INTERFACE → The
       // identity module). Esc returns to editing with the draft intact.
-      this.composers.get(composerKey(parentId))?.showUnlock(cur.pubKeyHex, async (p) => {
+      const ctrl = this.composers.get(composerKey(parentId));
+      if (!ctrl) return;
+      ctrl.showUnlock(cur.pubKeyHex, async (p) => {
         await this.idm.unlock(p);
-        await this.submitComposer(parentId, text);
+        // Re-read the current draft — the reader may have edited it while the unlock
+        // form was open, so the captured text would be stale.
+        await this.submitComposer(parentId, ctrl.text());
       });
       return;
     }

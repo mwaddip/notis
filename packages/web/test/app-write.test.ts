@@ -146,23 +146,28 @@ describe('the App write surface — a post flight', () => {
     expect(h.drive.pollTimer).not.toBeNull();
   });
 
-  it('a locked post shows the unlock form in the composer foot, then the flight continues', async () => {
+  it('a locked post unlocks in the foot and posts the current draft, edits and all', async () => {
     const h = harness();
     h.setLocked(true);
     (h.app as unknown as { openComposer(p: string | null): void }).openComposer(null);
     await flush();
-    await h.drive.submitComposer(null, 'a locked thread');
+    const composer = (h.drive.composers as Map<string, { el: HTMLElement }>).get('@feed')!;
+    const ta = composer.el.querySelector('.composer-text') as HTMLTextAreaElement;
+    ta.value = 'first draft';
+    await h.drive.submitComposer(null, ta.value);
     // No submission yet — the composer foot holds the unlock form, draft intact.
     expect(h.drive.state.submissions).toHaveLength(0);
-    const composer = (h.drive.composers as Map<string, { el: HTMLElement }>).get('@feed')!;
     const form = composer.el.querySelector('form.pf') as HTMLFormElement;
     expect(form).not.toBeNull();
+    // The reader edits the draft while the unlock form is open.
+    ta.value = 'edited while unlocking';
     (form.querySelector('input[type="password"]') as HTMLInputElement).value = 'pw';
     form.dispatchEvent(new Event('submit', { cancelable: true }));
     await flush();
-    // Unlocked — the flight ran, landing a submission and a ledger entry.
+    // Unlocked — the flight posts the CURRENT draft, not the stale captured text.
     expect(h.drive.state.submissions).toHaveLength(1);
     expect(h.drive.state.submissions[0]!.stage).toBe('submitted');
+    expect(h.drive.state.submissions[0]!.content).toBe('edited while unlocking');
     expect(h.ledger.all().map((e) => e.kind)).toEqual(['post']);
   });
 
