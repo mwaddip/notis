@@ -2,8 +2,10 @@
 
 **Component:** `@dagsocial/web`
 **Status:** the **read surface** and the **write surface's first slice** — the identity machinery,
-the composer for a root and a reply, and like — are implemented; vouch, invite, the faucet call,
-withdraw, prune, the profile window and every identity interface are not built
+the composer for a root and a reply, and like — are implemented. **The identity interface's first
+unit** — the `@profile` window, create / import / export / forget, encryption at rest with unlock per
+tab, the reader's own posts marked, the faucet karma step — is **AHEAD OF CODE (2026-09-04)**, marked
+where it appears. Vouch, invite, withdraw and prune are not built
 **Protocol version:** read from the node, never held — see Invariants
 
 > **The demo UI (`packages/node/public/index.html`) is not this contract's subject.** It is a debug
@@ -49,8 +51,8 @@ never a copy. That is what keeps it from being a further implementation of anyth
 consensus-critical, and it is why no mirror test applies to it.
 
 Owns: the feed, threads, the tiling workspace of columns and regions, both themes, the identity
-spine, and a `@settings` window. Reads posts, threads and node status. Sends nothing — every write
-is the write surface's, through its own module.
+spine, and the client's preference rows — in the `@profile` window (→ The profile window). Reads posts,
+threads and node status. Sends nothing — every write is the write surface's, through its own module.
 
 **With no identity loaded it sends no `viewer` parameter**, because it has none to name, and every
 `likedByViewer` it receives is `null` — the correct value for an anonymous reader rather than a
@@ -64,14 +66,19 @@ Every section and invariant below marked *(write surface)* belongs to this slice
 is the rest.
 
 **The slice is the identity machinery, the composer for a root and a reply, and like**, on
-transactions the browser builds and signs. Vouch, invite, the faucet call, withdraw, prune, the profile
-window and every interface for generating, exporting or importing an identity are **not built**; each
-is named as such where it appears.
+transactions the browser builds and signs. Vouch, invite, withdraw and prune are **not built**; each is
+named as such where it appears. The identity interface — the `@profile` window, its six operations and
+the faucet karma step — is stated below (→ The identity module, → The profile window, → The faucet
+step) and is **AHEAD OF CODE (2026-09-04)** until its unit lands.
 
 **With no identity loaded, the client is the read surface exactly.** No `new post`, no `↩ reply`, no
-`like`, no `viewer` parameter — and nothing in the interface creates an identity. The machinery is
-reached in a development build only, through `globalThis.notis.identity`; a production build exposes
-nothing.
+`like`, no `viewer` parameter. The way in is `create` or `import` in the `@profile` window (→ The
+profile window); nothing else in the interface creates an identity, and a production build exposes no
+other door.
+
+> ⚠ **AHEAD OF CODE (2026-09-04)** — until the identity-interface unit lands, nothing in the interface
+> creates an identity: the machinery is reached in a development build only, through
+> `globalThis.notis.identity`, and a production build exposes nothing.
 
 ## The browser reaches `@dagsocial/types` through a build-time shim
 
@@ -183,20 +190,64 @@ is not an error.
 
 ### The identity module *(write surface)*
 
-**One identity at a time**, stored under `notis.identity` in `localStorage` in the demo UI's export
-shape — `{ pubKeyHex, privKeyBase64 }`, the private half the 48-byte PKCS8 DER of the Ed25519 seed —
-so one key moves between the demo UI and this client in both directions. No encryption at rest; a
-passphrase is interface, and the identity interface is not this slice's.
+> ⚠ **AHEAD OF CODE (2026-09-04)** — this section states the module as the identity interface's first
+> unit builds it. Today it holds one clear `{ pubKeyHex, privKeyBase64 }` under `notis.identity`, has
+> no locked state, and is reached only through a development build's `globalThis.notis.identity`.
+
+**One identity at a time, encrypted at rest.** Storage holds an **envelope** under `notis.identity`, and
+the exported file is the same envelope — one codec, and importing an encrypted file is storing it:
+
+```json
+{ "version": 1, "pubKeyHex": "<64 hex>",
+  "kdf":    { "name": "scrypt", "salt": "<16 bytes hex>", "N": 65536, "r": 8, "p": 1 },
+  "cipher": { "name": "chacha20-poly1305", "nonce": "<12 bytes hex>" },
+  "ciphertext": "<the 32-byte seed ‖ the 16-byte tag, hex>" }
+```
 
 | Operation | Algorithm | Notes |
 |-----------|-----------|-------|
-| Key generation | `generateKeyPair()` from `@dagsocial/types`, through the shim | its `secretKey` is already the PKCS8 DER the stored shape carries |
-| Import | base64 → 48 bytes; the RFC 8410 prefix `302e020100300506032b657004220420`; the public key recomputed from the seed **must equal** `pubKeyHex` | a file that names one key and carries another is refused with a reason |
-| Signing | `ed25519.sign` from `@noble/curves` over the 32 transaction-id bytes | 64 raw bytes, hex in JSON, keyed by the hex public key; no Web Crypto, no secure-context requirement |
+| Key generation | `generateKeyPair()` from `@dagsocial/types`, through the shim | the seed is the DER's last 32 bytes; the RFC 8410 wrapper `302e020100300506032b657004220420` is a constant the codec re-adds |
+| Seal | scrypt (`@noble/hashes`) → a 32-byte key; ChaCha20-Poly1305 (`@noble/ciphers`) over the seed with `pubKeyHex` and `version` as associated data | a fresh salt and nonce per seal; a derived key is used once, which is what makes a random 12-byte nonce safe. The parameters travel in the envelope, so `N` can rise with no version bump |
+| Open | scrypt with the envelope's own parameters; the tag verified; the public key recomputed from the seed **must equal** `pubKeyHex` | a wrong passphrase, an edited header and a flipped byte are each refused with a reason |
+| Import | an envelope, stored verbatim after one successful open; **or** the demo UI's clear `{ pubKeyHex, privKeyBase64 }`, validated as before (48 bytes, the prefix, the recomputed key) and sealed under a passphrase the reader sets | the clear shape is a **file shape only** — a clear value found in storage reads as no identity and is left in place. Interop with the demo UI is one-way: its files import here; it cannot read this client's |
+| Export | a **fresh** seal under a password the reader types, downloaded as `notis-identity-<prefix>.json` | needs the seed, so a locked identity unlocks first |
+| Signing | `ed25519.sign` from `@noble/curves` over the 32 transaction-id bytes | 64 raw bytes, hex in JSON, keyed by the hex public key; **throws while locked** |
 | Post ID | the node's `postId` from the `POST /posts` response | never derived client-side — the node is authoritative and the value is in the reply |
 
-**`sign` is the only path to the seed.** `current()` returns the public key and nothing else, and no
-DTO carries the seed.
+**No Web Crypto, still.** scrypt and ChaCha20 are pure TS in the family the shim carries, and the
+randomness is `getRandomValues`, which no secure context gates. Both primitives are in Node's own
+`crypto` (`scryptSync`, `createDecipheriv('chacha20-poly1305')`), so any Node tool opens the file with
+the standard library — pinned by a test that decrypts a browser-sealed envelope under Node. ChaCha over
+AES because a pure-JS AES leans on table lookups a pure-JS ChaCha does not need.
+
+**The seed is decrypted on demand and lives for the tab.** A page load restores the envelope and the
+public key only: `current()` answers `{ pubKeyHex, locked: true }`, reads carry `viewer`, the write
+controls render. The first write — or the profile's own `unlock` — takes the passphrase, and the seed
+then sits in JS memory until `lock`, a reload or the tab's end. No idle timeout. **Every write checks
+`locked` before its flight**, because the unlock is a form and `sign` is synchronous: `post` shows the
+unlock form in the composer's foot, `like` in a row under the card's meta row, downward and in response
+to the press (`HOUSE_STYLE → Motion`), and success continues the flight.
+
+**`sign` is the only path to the seed.** `current()` returns the public key and the lock state and
+nothing else, and no DTO carries the seed. The module's surface:
+
+```
+current(): { pubKeyHex, locked } | null          generate(passphrase): Promise<Identity>
+inspectFile(text): { kind: 'clear' | 'encrypted', pubKeyHex }
+importFile(text, passphrase): Promise<Identity>  exportFile(password): Promise<string>
+unlock(passphrase): Promise<void>                lock(): void            forget(): void
+sign(txIdHex): string                            backedUp(): boolean     onChange(listener): void
+```
+
+**The browser may remember the passphrase.** Every passphrase form is a real `<form>` with a read-only
+`username` field carrying the key and `autocomplete` of `current-password` (unlock) or `new-password`
+(create, import, export), so a password manager saves and fills. The export form's username is
+`<pubKeyHex> · file`, so a file password that differs from the at-rest passphrase does not offer to
+overwrite the identity's saved entry.
+
+**An identity change takes effect at once.** `onChange` fires on create, import and forget; the App
+builds the pending ledger for the new key, drops the old key's poll and optimistic likes, and re-reads
+every open surface with the new `viewer`.
 
 ### The wallet *(write surface)*
 
@@ -218,7 +269,7 @@ ids are provenance-derived. **The pending ledger is persisted, per identity** �
 `notis.pending.<pubKeyHex>`, constructed for the loaded identity at start, so a key never sees another
 key's entries and cannot try to spend its predicted change; a reload that forgot the ledger would
 re-spend a box the node holds pending and receive a 409 for a failure the reader never saw. **An
-identity loaded through the dev door takes effect on reload.**
+identity change rebuilds the ledger for the new key at once** (→ The identity module, `onChange`).
 
 **Builders exist for a post and a like, and nothing else.** A root post: change and a `karma_price` of
 `POST_PRICE_THREAD`. A reply: change, a `karma_price` of `POST_PRICE_REPLY − REPLY_AUTHOR_SHARE`, and a
@@ -242,10 +293,100 @@ ledger's entries. It runs only while the client's own submissions are pending an
 refreshes no feed, no thread and no count; a landed card changes colour and nothing else
 (`HOUSE_STYLE → Motion`).
 
+### The profile window *(identity interface)*
+
+> ⚠ **AHEAD OF CODE (2026-09-04)** — the identity interface's first unit. Today the header carries a
+> `settings` button opening `@settings`, which holds the preference rows alone.
+
+**One header control, at the right of the app bar beside the theme toggle.** With no identity it reads
+`profile`; with one, the key prefix in mono — `shortHex(pubKeyHex, 16)`, the card's own rule, so an
+identity reads the same way in the header and on a card. No avatar and no identity colour: nothing may
+invite a reader to check identity by colour (`HOUSE_STYLE → Identity colour`). It opens `@profile` in the
+workspace by the placement rule every window follows, and a second press raises the open window.
+`@settings` is retired: a stored arrangement naming it parses to `@profile`, so a saved workspace
+survives the rename.
+
+**The window is rows, label and field, in two states.** With no identity: one line — *"no identity in
+this browser. create one, or import a file."* — then `create` and `import`. With one:
+
+```
+key          the whole 64 hex, mono, selectable
+standing     resident · member · root — the node's word
+karma        the balance that spends, or the faucet step
+passphrase   locked · unlock  /  unlocked · lock
+export · import · forget — each a form in place
+────
+theme · identity tint · node · faucet · arrangement — the preferences
+```
+
+The window's `↻` is live — the first window with something to refresh — and re-reads `/karma/:key`.
+
+**The six operations are forms in place, and each is a real `<form>`** the browser's password manager
+can save from (→ The identity module). Enter submits, Esc cancels and returns focus to the button that
+opened it, and a refusal is one sentence in the voice register under the fields.
+
+- **Create** and **import** are offered only with no identity loaded — switching keys is `forget`, then
+  one of them, so a loaded key is never silently replaced. Create generates through the shim, takes two
+  `new-password` fields (matching, non-empty, **no minimum length** — the manager makes the strong ones
+  and a rule only nags), seals and stores, and leaves one standing line under `key` until the first
+  export: *"this key lives in this browser only. export it to keep it."* Import is a native file picker:
+  a clear file gets a set-passphrase form, an encrypted one a `current-password` form whose successful
+  open admits it.
+- **Export** unlocks first if locked, takes two `new-password` fields under the username
+  `<pubKeyHex> · file`, seals fresh and downloads `notis-identity-<prefix>.json`; the backup line clears.
+- **Forget** asks in place — *"forget this key on this browser? without an exported file it cannot be
+  recovered."*, the never-exported fact first when it applies — `forget` and `keep`, focus on `keep`.
+  It clears the envelope, the seed and the backup flag, leaves the key's pending ledger, and returns the
+  window to its empty state.
+- **Lock** drops the seed; **unlock** takes the passphrase — *"that passphrase does not open this
+  key."* when it does not.
+
+**Standing is a word the node chose, and the client derives none of it.** `member` is the node's
+predicate and `invitesAvailable: null` is the node saying root (`NODE_INTERFACE → UTXO queries`). Under
+the word, one muted line with its numbers in mono, never the headline (`HOUSE_STYLE → Voice`): a
+resident — *"members are made by other members' vouches and likes. this key has N and M."*, the bars
+from `/status` `membership` since a resident's own `memberBar` is still zero; a member — *"since block
+H · K invites available."*; a root — nothing more.
+
+**Karma is `effective`**, the value every sufficiency check on the node reads — `E effective · T held`
+when decay has opened a gap, because the face `total` would promise karma the next spend does not have.
+This is the one place a balance rests on the reading surface. **No credits row** while the client spends
+no credits. **A card by the loaded key reads `· you`** after the prefix, muted ink, text only.
+
+### The faucet step *(identity interface)*
+
+> ⚠ **AHEAD OF CODE (2026-09-04)** — with the identity interface's first unit.
+
+**In the karma row, one ghost button — `ask the faucet for karma` — while three things hold:** an
+identity is loaded, its `/karma` `boxCount` is 0, and a faucet base is configured. Not a header control:
+a grant is once per key for ever (`NODE_INTERFACE → Faucet`), so a standing button would sit dead before
+its one press and after it. The request carries only the public key, so a **locked** identity can ask.
+
+**A faucet is a fact of the deployment, not of the network**, so the client reaches it as it reaches the
+node: `VITE_FAUCET_BASE` baked at build time — empty means no faucet and no button — and a `faucet`
+preference row that overrides it. In development the proxy takes a second target from `NOTIS_FAUCET`.
+The call, `POST <faucet>/karma { pubkey }`, lives in its own module beside the write client — the read
+client stays GET-only and the write client stays the node's edge — and the faucet's `{ error }` bodies
+normalise to the same `Rejection { status, message }`. In the register: a relayed 400 → *"this key
+already had its faucet grant."*; 429 → *"the faucet is busy right now. try again in a while."*; 503 →
+*"the faucet is empty right now."*; anything else → *"the faucet said:"* and the message, lowercased.
+
+**The wait rides the bounded poll, as a `grant` entry in the pending ledger.** A 202 adds
+`{ kind: 'grant', txId, expiresAtHeight, submittedAtHeight }`, so the tip poll runs while it stands and
+stops at zero (→ The wallet). Reconcile is `GET /karma/:key`: `boxCount` risen → landed, and the row's
+fixed line box reads the balance; past `expiresAtHeight` and still zero → expired — *"no block took the
+faucet's invite by height N."* with `ask again`. Colour and text in a fixed box: the geometry price the
+motion contract asks of pending state (`HOUSE_STYLE → Motion`).
+
+⛔ **A 202 without `expiresAtHeight` is refused** — *"the faucet did not say when its invite expires."*
+— never bounded by a guess: a grant with no expiry would run the poll for ever, which the motion
+contract forbids. The faucet relays the field (`NODE_INTERFACE → Faucet`).
+
 ## Writes
 
 | Client action | Endpoint | Standing |
 |---------------|----------|----------|
+| Ask the faucet for karma | `POST <faucet>/karma` — `{ pubkey }` → `{ txId, status, expiresAtHeight }` | *(identity interface, AHEAD OF CODE 2026-09-04)* — the faucet's edge, not the node's (`NODE_INTERFACE → Faucet`) |
 | Submit a post | `POST /posts` — `{ tx, content }` → `{ postId, status, expiresAtHeight, txId }` | *(write surface)* |
 | Like | `POST /likes` — `{ tx }` → `{ status, txId, expiresAtHeight }` | *(write surface)* |
 | Standing and balance | `GET /karma/:userId`, `GET /credits/:userId` | *(write surface)* — the spendable view |
@@ -269,7 +410,9 @@ client that expects to announce itself first is built against an endpoint that d
 - No server-side rendering — a static bundle served same-origin with the API.
 - Modern browser. **No Web Crypto.** Keys and signatures are pure TS through `@noble/curves`, the
   family the shim already carries, so the write surface needs no secure context and adds no
-  primitive the read surface lacks.
+  primitive the read surface lacks. The identity envelope's scrypt and ChaCha20-Poly1305 are the same
+  family — `@noble/hashes` and `@noble/ciphers` — and its randomness is `getRandomValues`, which no
+  secure context gates (→ The identity module).
 
 ## Preconditions
 
@@ -279,7 +422,10 @@ client that expects to announce itself first is built against an endpoint that d
 ## Invariants
 
 - **A private key never travels to any server.** It is stored, used and exported in the browser, and
-  an export is the reader's own file in the shape the demo UI reads. *(write surface)*
+  an export is the reader's own file (→ The identity module). *(write surface)*
+- **Storage never holds the seed in the clear.** The stored identity is an encrypted envelope, the seed
+  is decrypted into memory on demand and for the tab only, and a clear value in storage reads as no
+  identity (→ The identity module). *(identity interface — AHEAD OF CODE 2026-09-04)*
 - **Every read carries the viewer's key once an identity is loaded, and none does before.** *(write
   surface)*
 - **A consensus constant is imported; a per-network number is read.** `POST_PRICE_THREAD`,

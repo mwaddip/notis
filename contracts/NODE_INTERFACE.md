@@ -619,6 +619,17 @@ lie this whole bundle exists to remove. A client seeing `null` learns something 
 service's own port; the node's own origin has nothing to answer them with. A node served without
 that mapping renders the buttons and 404s them.
 
+**The service's edge, for any client that calls it.** `POST <faucet>/karma { pubkey }` answers
+`202 { txId, status: "pending", expiresAtHeight }` once the invite is in the node's pool —
+`expiresAtHeight` the node's own mempool expiry for that invite (→ Invites), relayed so a client can
+bound its wait rather than guess a bound; `400 { error }` relays the node's refusal (a key that already
+holds a record — the once-per-identity rule) or names a malformed key; `429 { error }` is the service's
+own rate limit; `503 { error }` is a drained faucet. `POST <faucet>/credits { pubkey }` answers
+`202 { txId, status }` and repeats.
+
+> ⚠ **AHEAD OF CODE (2026-09-04)** — `expiresAtHeight` on the karma answer. The service receives it
+> from `/invites` and discards it today; `tools/faucet` relays it with the identity-interface unit.
+
 A faucet is an **ordinary account** whose secret lives in a service outside the node. Genesis seeds
 that account's karma and credit boxes on the networks whose profile names a `faucetPublicKey`;
 mainnet's does not, so no faucet identity exists in mainnet state. **Absence of the field is the whole
