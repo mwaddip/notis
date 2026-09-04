@@ -1,6 +1,8 @@
-import type { PostJson, Tombstone, FeedRow, StatusResult, KarmaResult } from '../api/dto';
+import type { PostJson, Tombstone, FeedRow, StatusResult, KarmaResult, VouchesTargetResult, BondsResult } from '../api/dto';
 import type { Workspace, Origin } from './workspace';
 import type { Theme, IdTint } from '../prefs';
+import type { Mark, Flight } from '../view/card';
+import type { YourVouch } from '../view/author';
 
 // The read surface's runtime state, and the handler contract the pure view
 // modules render against. Types only — no cycle between controller and views.
@@ -85,6 +87,34 @@ export interface RenderCtx {
   karma: KarmaResult | null;
   grant: { state: 'pending' } | { state: 'expired'; atHeight: number } | null;
   membershipBars: { memberBar: number; memberLikesBar: number } | null;
+  // Membership actions (WEB_INTERFACE → The identity display). The reader is a
+  // member (may vouch); the mark for any identity, its state and count computed
+  // from the vouch set, the pending overlay, the escrow gate and the count cache.
+  member: boolean;
+  markFor: (key: string) => Mark | null;
+  // The your-vouch row's state for an identity — the App derives it from the
+  // vouch set, member, the escrow and /status's cooldown (WEB_INTERFACE → The
+  // author window). null with no identity loaded — no row.
+  yourVouch: (key: string) => YourVouch | null;
+  // The author and author-posts windows, one entry per open window
+  // (WEB_INTERFACE → The author window).
+  author: Map<string, AuthorWindowData>;
+  authorPosts: Map<string, FeedState>;
+  // The profile's invites row (WEB_INTERFACE → The profile window). The bond
+  // range and probation from /status, whether the spendable covers the minimum,
+  // the reader's standing bonds, and the invite flight.
+  invite: { bondMin: string; bondMax: string; probationBlocks: number } | null;
+  canAffordMinBond: boolean;
+  bonds: BondsResult | null;
+  inviteFlight: Flight | null;
+}
+
+/** One open author window's reads and flight (WEB_INTERFACE → The author window). */
+export interface AuthorWindowData {
+  karma: KarmaResult | null;
+  endorsers: VouchesTargetResult | null;
+  endorsersNext: boolean;
+  flight: Flight | null;
 }
 
 export interface Handlers {
@@ -122,6 +152,17 @@ export interface Handlers {
   openComposer: (parentId: string | null) => void; // null → the feed's new post; a post id → a reply
   likePost: (postId: string) => void;
   tryAgain: (localKey: string) => void;            // rebuild a fresh transaction from the current view
+  // membership actions (WEB_INTERFACE → The identity display, → The author window)
+  vouch: (key: string) => void;                    // + at once, no confirmation
+  unvouch: (key: string) => void;                  // from the author window, the box resolved at the press
+  openAuthor: (key: string, origin: Origin) => void;
+  refreshAuthor: (key: string) => void;            // the author window's ↻ — re-reads /karma and the endorsers
+  openAuthorPosts: (key: string, origin: Origin) => void;
+  refreshAuthorPosts: (key: string) => void;       // the posts window's ↻ — reports what it did
+  authorPostsMore: (key: string) => void;          // the posts window's `more`, following next
+  moreEndorsers: (key: string) => void;            // the endorsers page's `more`, following next
+  invite: (inviteeKey: string, bond: bigint) => void; // from the profile's invites row
+  moreBonds: () => void;                           // the standing-bonds `more`, following next
 }
 
 /** What the App calls on the identity module — the single reference it holds

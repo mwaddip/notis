@@ -6,8 +6,12 @@ import {
   reconcilePost,
   reconcileLike,
   reconcileGrant,
+  reconcileVouch,
+  reconcileUnvouch,
+  reconcileInvite,
   dedupePending,
   pendingLikeTargets,
+  pendingVouchTargets,
 } from '../src/wallet/ledger';
 import type { PendingEntry } from '../src/wallet/types';
 import type { PostJson, PostResult, WithdrawnJson } from '../src/api/dto';
@@ -29,6 +33,21 @@ const noChangeEntry: PendingEntry = {
 };
 const grantEntry: PendingEntry = {
   txId: 'g1', kind: 'grant', postId: KEY, inputs: [], expiresAtHeight: 5900, submittedAtHeight: 5800,
+};
+
+const TARGET = '11'.repeat(32); // vouch/unvouch subject
+const INVITEE = '22'.repeat(32); // invite subject
+const VOUCH_BOX = '33'.repeat(32); // the vouch box an unvouch spends
+const vouchEntry: PendingEntry = {
+  txId: 'v1', kind: 'vouch', postId: TARGET, inputs: ['in6'],
+  change: { boxId: 'chg6', value: 226n, createdAtBlock: 5000 }, expiresAtHeight: 5720, submittedAtHeight: 5000,
+};
+const unvouchEntry: PendingEntry = {
+  txId: 'u1', kind: 'unvouch', postId: TARGET, inputs: [VOUCH_BOX], expiresAtHeight: 5720, submittedAtHeight: 5000,
+};
+const inviteEntry: PendingEntry = {
+  txId: 'i1', kind: 'invite', postId: INVITEE, inputs: ['in7'],
+  change: { boxId: 'chg7', value: 127n, createdAtBlock: 5000 }, expiresAtHeight: 5720, submittedAtHeight: 5000,
 };
 
 function postResult(over: Partial<PostJson>): PostResult {
@@ -177,6 +196,55 @@ describe('dedupe and the pending-like overlay', () => {
     expect(targets.has('target1')).toBe(true);
     expect(targets.has('p1')).toBe(false);
     expect(targets.size).toBe(1);
+  });
+});
+
+describe('the membership reconciles', () => {
+  it('a vouch lands when the pair is listed, expires past the tip, else pending', () => {
+    expect(reconcileVouch(vouchEntry, [{ targetId: TARGET }], 5100)).toBe('landed');
+    expect(reconcileVouch(vouchEntry, [{ targetId: 'ff'.repeat(32) }], 5100)).toBe('pending');
+    expect(reconcileVouch(vouchEntry, [], 5721)).toBe('expired');
+  });
+
+  it('an unvouch lands on the pair\'s absence alone — the escrow can settle before the poll sees it', () => {
+    // The pair still present → the vouch box is unspent → pending.
+    expect(reconcileUnvouch(unvouchEntry, [{ targetId: TARGET }], 5100)).toBe('pending');
+    // The pair gone → landed, whether or not a cooldown row stands: a vouch held
+    // past one cooldown yields an escrow the next block's settlement returns, so
+    // the row can stand for a single block the poll never catches.
+    expect(reconcileUnvouch(unvouchEntry, [], 5100)).toBe('landed');
+    // Never landed, past the tip → expired.
+    expect(reconcileUnvouch(unvouchEntry, [{ targetId: TARGET }], 5721)).toBe('expired');
+  });
+
+  it('an invite lands when a bond names the invitee, expires past the tip, else pending', () => {
+    expect(reconcileInvite(inviteEntry, [{ inviteePublicKey: INVITEE }], 5100)).toBe('landed');
+    expect(reconcileInvite(inviteEntry, [{ inviteePublicKey: 'ff'.repeat(32) }], 5100)).toBe('pending');
+    expect(reconcileInvite(inviteEntry, [], 5721)).toBe('expired');
+  });
+
+  it('pendingVouchTargets names only the vouch entries', () => {
+    const targets = pendingVouchTargets([vouchEntry, unvouchEntry, inviteEntry, likeEntry]);
+    expect(targets.has(TARGET)).toBe(true);
+    expect(targets.has(INVITEE)).toBe(false);
+    expect(targets.size).toBe(1);
+  });
+
+  it('an unvouch entry does not touch the spendable view — its input is a vouch box', () => {
+    const ledger = new PendingLedger(KEY);
+    ledger.add(unvouchEntry);
+    const confirmed = [{ boxId: 'k1', value: 100n }, { boxId: 'k2', value: 50n }];
+    // The vouch box the unvouch spends is not among the confirmed karma boxes, and
+    // the entry predicts no change, so the view is unchanged.
+    expect(ledger.spendable(confirmed)).toEqual(confirmed);
+  });
+
+  it('round-trips the three kinds through localStorage', () => {
+    const a = new PendingLedger(KEY);
+    a.add(vouchEntry);
+    a.add(unvouchEntry);
+    a.add(inviteEntry);
+    expect(new PendingLedger(KEY).all()).toEqual(a.all());
   });
 });
 

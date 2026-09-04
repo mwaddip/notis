@@ -26,9 +26,12 @@ pruned subtree leaves a **stump**. TypeScript, pnpm workspaces, Node ≥ 22.
 The **browser client**. Built in slices: the **read surface** (the feed, threads, a tiling workspace of
 columns and regions, both themes, the identity spine), the **write surface's first slice** — the identity
 machinery, the composer for a root and a reply, and like, on transactions the browser builds and signs —
-and the **identity interface's first unit**: the `@profile` window (identity, standing, karma, the
+the **identity interface's first unit**: the `@profile` window (identity, standing, karma, the
 faucet step, the preferences), create / import / export / forget / lock / unlock as forms in place, the
-identity encrypted at rest, the reader's own cards marked `· you`.
+identity encrypted at rest, the reader's own cards marked `· you` — and the **membership actions**: the
+identity display standard (the prefix, the `✓`/`+` vouch mark with the count as its `title`, `· you`)
+wherever an identity renders, the `@author:<key>` and `@posts:<key>` windows, vouch from the mark,
+unvouch from the author window, invite from the profile's `invites` row with the standing bonds.
 
 - **Owns:** `packages/web/*` — its own source, tests, build config and static assets.
 - **Does NOT own:** any other package, `contracts/`, `prompts/`, or `packages/node/public/index.html`
@@ -37,8 +40,10 @@ identity encrypted at rest, the reader's own cards marked `· you`.
 ## The boundary that defines this slice
 
 ⛔ **The read client (`src/api/client.ts`) issues `GET` requests and nothing else.** No `POST`, no
-`DELETE`. The writes live next door in `src/api/write.ts` — `POST /posts` and `POST /likes`, and no
-more. A `viewer` parameter is a query on a `GET`, so it stays in the read client.
+`DELETE` for a read. The writes live next door in `src/api/write.ts` — `POST /posts`, `POST /likes`,
+`POST /vouches`, `DELETE /vouches/:targetId` (the one non-`POST` write) and `POST /invites`, and no
+more. A `viewer` parameter is a query on a `GET`, so it stays in the read client; the four membership
+reads (`GET /vouches` by target, by voucher, the cooldown arm; `GET /invites/:userId`) are `GET`s in it.
 
 **It hashes only through `@dagsocial/types`**, reached by the build-time shim — the wallet builders type
 their box candidates and compute every id through the shared implementation, never a copy, which is why
@@ -118,9 +123,17 @@ own path). The client's faucet base is `/faucet` in development and `VITE_FAUCET
 empty means no faucet and no button. **The faucet must relay `expiresAtHeight`** — the client refuses a
 202 without it — so a faucet that does not relay it answers the honest refusal, not a grant.
 
-**Every transaction spends real testnet karma:** a thread 5, a reply 3, a like 1. There is no automated
-test that posts — an automated writer would drain the key and litter testnet; the wallet builders are
-pinned offline against the demo UI's frozen vectors instead. Iterate deliberately.
+**Every transaction spends real testnet karma:** a thread 5, a reply 3, a like 1, a vouch 1 staked, an
+invite its bond. There is no automated test that posts — an automated writer would drain the key and
+litter testnet; the wallet builders are pinned offline against the demo UI's frozen vectors instead.
+Iterate deliberately.
+
+**A vouch cannot be exercised on testnet.** Only a member casts, and testnet's one member is the
+faucet root, which neither vouches nor likes. The membership actions are proven on a local devnet stack:
+`node packages/web/scripts/promote.mjs` (devnet-only; it refuses any other network) has the public
+devnet faucet key promote a throwaway to member the earned way, and the client is then driven against
+that stack. On testnet the reader is a resident: the marks are absent and the author window and the
+invites row say why.
 
 **The pending ledger is per identity** — `notis.pending.<pubKeyHex>`, rebuilt at once on an identity
 change; a second key never sees the first's predicted change. A faucet grant rides it as a `grant` entry
@@ -147,6 +160,7 @@ uses a fresh throwaway key; its public key may appear in a report, nothing else 
 pnpm --filter @dagsocial/web typecheck
 pnpm --filter @dagsocial/web test
 pnpm --filter @dagsocial/web dev        # vite dev server, proxying the API (NOTIS_NODE, NOTIS_FAUCET)
+node packages/web/scripts/promote.mjs   # devnet only: a throwaway becomes a member, for the membership proof
 
 # a live node with blocks to read, in one command (throwaway devnet, dies with the process):
 pnpm -r build && node packages/node/scripts/dev.mjs --nodes 1 --miners 1

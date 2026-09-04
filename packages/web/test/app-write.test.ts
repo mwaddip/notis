@@ -98,6 +98,10 @@ function harness(thrown: ThrowOpts = {}): Harness {
       if (thrown.karma) throw new Error('node unreachable');
       return karma;
     },
+    vouchesByTarget: async () => ({ vouches: [], count: 0, next: null }),
+    vouchesByVoucher: async () => ({ vouches: [], count: 0, next: null }),
+    vouchCooldowns: async () => ({ cooldowns: [], count: 0, next: null }),
+    bonds: async () => ({ bonds: [], bondCount: 0, next: null }),
   };
   const writeClient = {
     submitPost: async () => {

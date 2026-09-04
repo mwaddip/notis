@@ -1,8 +1,11 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, beforeEach } from 'vitest';
-import { profileBody, type ProfileHandlers, type ProfileCtx } from '../src/view/profile';
+import { profileBody, renderInvitesRow, type ProfileHandlers, type ProfileCtx } from '../src/view/profile';
 import { karmaResult } from './karma-fixture';
 import { prefs } from '../src/prefs';
+import type { Origin } from '../src/model/workspace';
+
+const ORIGIN: Origin = { from: 'pane', ci: 0 };
 
 // The @profile window rendered from a fake handlers/ctx (WEB_INTERFACE → The
 // profile window): the two states, the six operations' forms, standing per tier,
@@ -28,15 +31,22 @@ function handlers(over: Partial<ProfileHandlers> = {}): ProfileHandlers {
     lockIdentity: () => {},
     unlockIdentity: async () => {},
     askFaucet: () => {},
+    invite: () => {},
+    openAuthor: () => {},
+    vouch: () => {},
+    moreBonds: () => {},
     ...over,
   };
 }
 
 function ctx(over: Partial<ProfileCtx> = {}): ProfileCtx {
-  return { arrangement: '', identity: null, backedUp: false, karma: null, grant: null, membershipBars: null, ...over };
+  return {
+    arrangement: '', identity: null, backedUp: false, karma: null, grant: null, membershipBars: null,
+    invite: null, canAffordMinBond: false, bonds: null, inviteFlight: null, markFor: () => null, ...over,
+  };
 }
 
-const render = (h: ProfileHandlers, c: ProfileCtx): HTMLElement => profileBody(h, c);
+const render = (h: ProfileHandlers, c: ProfileCtx): HTMLElement => profileBody(h, c, ORIGIN);
 
 function rowField(body: HTMLElement, label: string): HTMLElement | null {
   for (const r of body.querySelectorAll('.row')) {
@@ -52,9 +62,130 @@ function button(root: HTMLElement, text: string): HTMLButtonElement | null {
 
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
+const INVITEE = 'cd'.repeat(32);
+const INVITE_PARAMS = { bondMin: '100', bondMax: '1000', probationBlocks: 43200 };
+function memberCtx(over: Partial<ProfileCtx> = {}): ProfileCtx {
+  return ctx({
+    identity: unlocked,
+    karma: karmaResult({ userId: KEY, member: true, invitesAvailable: 2, memberSinceBlock: 5 }),
+    invite: INVITE_PARAMS,
+    canAffordMinBond: true,
+    ...over,
+  });
+}
+
 beforeEach(() => {
   localStorage.clear();
   prefs.faucet = '';
+});
+
+describe('profile window — the invites row', () => {
+  it('the line per tier: member available, root "covers", resident "comes with membership"', () => {
+    const member = rowField(render(handlers(), memberCtx()), 'invites')!;
+    expect(member.textContent).toContain('2 invites available');
+    const root = rowField(render(handlers(), memberCtx({ karma: karmaResult({ userId: KEY, member: true, invitesAvailable: null }) })), 'invites')!;
+    expect(root.textContent).toContain('as many as your karma covers');
+    const resident = rowField(render(handlers(), memberCtx({ karma: karmaResult({ userId: KEY, member: false, invitesAvailable: 0 }) })), 'invites')!;
+    expect(resident.textContent).toContain('invites come with membership');
+  });
+
+  it('the form shows only with an invite available AND karma for the minimum; the default bond is the minimum', () => {
+    // Available but cannot afford → no form.
+    const poor = rowField(render(handlers(), memberCtx({ canAffordMinBond: false })), 'invites')!;
+    expect(poor.querySelector('form.invite-form')).toBeNull();
+    // Available and affordable → the form, bond defaulting to the minimum, min/max from /status.
+    const form = rowField(render(handlers(), memberCtx()), 'invites')!.querySelector('form.invite-form') as HTMLFormElement;
+    expect(form).not.toBeNull();
+    const bond = form.querySelector('input[type="number"]') as HTMLInputElement;
+    expect(bond.value).toBe('100');
+    expect(bond.min).toBe('100');
+    expect(bond.max).toBe('1000');
+    // The copy's numbers come from /status and types.
+    expect(form.textContent).toContain('43200');
+    expect(form.textContent).toContain('one karma per 3');
+  });
+
+  it('submitting a valid key and bond calls invite; an invalid key refuses with no invite', () => {
+    const invited: Array<[string, bigint]> = [];
+    const h = handlers({ invite: (k, b) => invited.push([k, b]) });
+    const form = rowField(render(h, memberCtx()), 'invites')!.querySelector('form.invite-form') as HTMLFormElement;
+    const key = form.querySelector('input[type="text"]') as HTMLInputElement;
+    const bond = form.querySelector('input[type="number"]') as HTMLInputElement;
+    // An invalid key → a refusal, no invite.
+    key.value = 'nope';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    expect((form.querySelector('.pf-refusal') as HTMLElement | null)?.hidden).toBe(false);
+    expect(invited).toHaveLength(0);
+    // A valid key and the default bond → invite(key, 100n).
+    key.value = INVITEE;
+    bond.value = '150';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    expect(invited).toEqual([[INVITEE, 150n]]);
+  });
+
+  it('the standing bonds show the invitee identity and value; the invitee prefix opens their window', () => {
+    const opened: string[] = [];
+    const h = handlers({ openAuthor: (k) => opened.push(k) });
+    const c = memberCtx({
+      bonds: { bonds: [{ id: 'b1', value: '100', inviterId: KEY, inviteePublicKey: INVITEE }], bondCount: 1, next: 'cursor' },
+      markFor: () => ({ state: 'plus', count: 0 }),
+    });
+    const field = rowField(render(h, c), 'invites')!;
+    const bondRow = field.querySelector('.bond')!;
+    expect(bondRow.textContent).toContain('100 karma');
+    expect(bondRow.querySelector('.vmark')).not.toBeNull(); // the reader can vouch their invitee here
+    (bondRow.querySelector('.authorbtn') as HTMLElement).click();
+    expect(opened).toEqual([INVITEE]);
+    // `more` follows next.
+    expect(button(field, 'more')).not.toBeNull();
+  });
+
+  it('a locked vouch from a standing bond mounts the unlock under the bond row, then vouches', async () => {
+    const vouched: string[] = [];
+    const unlocked: string[] = [];
+    const h = handlers({ vouch: (k) => vouched.push(k), unlockIdentity: async (p) => { unlocked.push(p); } });
+    const c = memberCtx({
+      identity: { pubKeyHex: KEY, locked: true },
+      bonds: { bonds: [{ id: 'b1', value: '100', inviterId: KEY, inviteePublicKey: INVITEE }], bondCount: 1, next: null },
+      markFor: () => ({ state: 'plus', count: 0 }),
+    });
+    const field = rowField(render(h, c), 'invites')!;
+    const bondRow = field.querySelector('.bond')!;
+    (bondRow.querySelector('.vmark.plus') as HTMLElement).click();
+    const form = field.querySelector('.card-unlock form.pf') as HTMLFormElement;
+    expect(form).not.toBeNull(); // the unlock mounted under the bond row, not a transport failure
+    expect(vouched).toHaveLength(0);
+    (form.querySelector('input[type="password"]') as HTMLInputElement).value = 'pw';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(unlocked).toEqual(['pw']);
+    expect(vouched).toEqual([INVITEE]);
+  });
+
+  it('the invite flight shows its stage line in the row', () => {
+    const field = rowField(render(handlers(), memberCtx({ inviteFlight: { stage: 'rejected', reason: 'invite rejected: that key already holds an account' } })), 'invites')!;
+    expect(field.querySelector('.stage')?.textContent).toContain('already holds an account');
+  });
+
+  it('renderInvitesRow updates the line and bonds in place, leaving the form the reader is filling', () => {
+    const field = rowField(render(handlers(), memberCtx()), 'invites')!;
+    const form = field.querySelector('form.invite-form') as HTMLFormElement;
+    const key = form.querySelector('input[type="text"]') as HTMLInputElement;
+    key.value = 'a-key-in-progress'; // the reader is filling it for the next invite
+    // An invite lands: fewer available, a new bond — updated in place.
+    const landed = memberCtx({
+      karma: karmaResult({ userId: KEY, member: true, invitesAvailable: 1 }),
+      bonds: { bonds: [{ id: 'b1', value: '100', inviterId: KEY, inviteePublicKey: INVITEE }], bondCount: 1, next: null },
+      markFor: () => ({ state: 'plus', count: 0 }),
+    });
+    renderInvitesRow(field, handlers(), landed, ORIGIN);
+    // The same form element, its value intact — an unsolicited landing moves no form.
+    expect(field.querySelector('form.invite-form')).toBe(form);
+    expect((field.querySelector('input[type="text"]') as HTMLInputElement).value).toBe('a-key-in-progress');
+    // The line dropped by one and the bond appeared.
+    expect(field.querySelector('.invites-line')?.textContent).toContain('1 invite available');
+    expect(field.querySelector('.invites-bonds')?.textContent).toContain('100 karma');
+  });
 });
 
 describe('profile window — the two states', () => {

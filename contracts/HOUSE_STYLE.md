@@ -333,10 +333,12 @@ Every rule here is a prohibition, and together they are most of what keeps the p
 - **Pending state is the one legitimate unsolicited update, and it pays for itself in geometry.** A
   post the reader submitted may turn from hollow to landed without the reader asking, because the
   reader asked for the post; a faucet grant the reader asked for may turn the profile's karma line
-  from `working…` to the balance for the same reason. The price is identical geometry before and after — colour only, the meta
+  from `working…` to the balance for the same reason; a vouch the reader cast may turn its mark from
+  a muted check to ink, an unvouch may turn the mark to its held state, and an invite may lower the
+  reader's own available count, each in its fixed slot. The price is identical geometry before and after — colour only, the meta
   row and the stage line one fixed line box, so what either contains cannot change the card's height —
   and a bounded watch: it runs only while the reader's own submissions are pending and stops at zero,
-  it reconciles those entries and refreshes nothing else, and it moves no count. Anything else arriving
+  it reconciles those entries and refreshes nothing else, and it moves no count but the reader's own. Anything else arriving
   unasked is the banner.
 - **150ms ceiling, ease-out. `prefers-reduced-motion` means none** — not less, none.
 - **Honest loading.** No fake progress, no skeleton shimmer. Shimmer is decorative motion
@@ -361,8 +363,11 @@ it for anything.
 - **The control is the click target, never the container.** Cards and rows are not buttons.
   Text stays selectable and the pointer can be parked on it. This also removes the
   accidental-click pattern that quietly inflates engagement figures.
-- **Hover may change appearance; it may never reveal content or move layout.** No hover menus,
-  no hover previews, no tooltips that open on hover alone.
+- **Hover may change appearance; it may never reveal page content or move layout.** No hover menus,
+  no hover previews, no hover cards — nothing the page renders on hover alone. A control may carry
+  the browser's own `title`: it renders outside the page, holds no links, moves nothing, and repeats
+  what the control's action reaches, so hover is still never the only route (see "Accessibility
+  contract").
 - **Hover is suppressed while scrolling and for ~100ms after it stops** (`pointer-events: none`
   on the container during scroll). A wheel-scrolling reader leaves the pointer parked, and
   without this whatever lands beneath it fires.

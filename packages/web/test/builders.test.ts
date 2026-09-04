@@ -1,6 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { buildPost, buildLike, txToJson, InsufficientKarma, type BuildContext } from '../src/wallet/builders';
-import type { UtxoTransaction } from '@dagsocial/types';
+import {
+  buildPost,
+  buildLike,
+  buildVouch,
+  buildUnvouch,
+  buildInvite,
+  txToJson,
+  InsufficientKarma,
+  type BuildContext,
+} from '../src/wallet/builders';
+import { VOUCH_KARMA_AMOUNT, type UtxoTransaction } from '@dagsocial/types';
 
 // The builders produce the box shapes validateTx demands, encoded through
 // @dagsocial/types. They are pinned to a SECOND implementation — the demo UI's
@@ -26,6 +35,21 @@ const REPLY_CHANGE = 'a9cd35ae743223e7ce731b38cf6ea52042eccb2a8262fdc04f53d864ed
 const LIKE_TXID = '1506de0492fe03e091c80f5347296be86a0f08e4bc44bd902995036732c5c3f3';
 const LIKE_CHANGE = 'abc49c9370884b362ecad4cc7f043695d46168abbfefce75b2006e245994760d';
 const THREAD_CONTENT_HASH = '8bc41f00d29d7adc055bc479bf21e13473a34426470b92aa675c6f83eba2429f';
+
+// The membership vectors, generated the same way — the demo UI's buildVouchTx /
+// buildCreateInviteTx / buildUnvouchTx lifted by name from
+// packages/node/public/index.html and run through computeTxId at height 5000,
+// era 1, one spendable box of 227 ('cc'*32), author 'aa'*32, over a vouch target
+// '11'*32, an invitee '22'*32 with a bond of 100, and an unvouch of a vouch box
+// '33'*32 (stake 1, cast at 4990, cooldown 60 → release 5050).
+const VOUCH_TARGET = '11'.repeat(32);
+const INVITEE = '22'.repeat(32);
+const VOUCH_BOX = '33'.repeat(32);
+const VOUCH_TXID = '8afa40f04ad8c2cd8eda42cad01495f9d448a300fe4a9b0ecd086f59a0391758';
+const VOUCH_CHANGE = 'b82df0bdb2085761f378baefc7f42eca94392826a64952a507958b5151eb7b65';
+const INVITE_TXID = '42226c9cc552a97def81788fcd01c8afacb9a5a9d90551afca8ce1f052a07d84';
+const INVITE_CHANGE = '7971f96c1ef879c5e200c60f4089be5ba8de0a5f354800d71a245cce2ea9c27d';
+const UNVOUCH_TXID = '5ed21bb1fedca5f69b55c38702028f91eccb3cc44f3e9938af3ab28ffb39ab85';
 
 function hexToBytes(hex: string): Uint8Array {
   const out = new Uint8Array(hex.length / 2);
@@ -121,6 +145,71 @@ describe('builders — structural rules', () => {
   });
 });
 
+describe('membership builders — frozen against the demo UI vectors', () => {
+  it('a vouch matches the demo UI txId and change box, and stakes exactly VOUCH_KARMA_AMOUNT', () => {
+    const built = buildVouch(ctx(), VOUCH_TARGET);
+    expect(built.txId).toBe(VOUCH_TXID);
+    expect(built.change).toEqual({ boxId: VOUCH_CHANGE, value: 226n, createdAtBlock: 5000 });
+    expect(built.tx.inputs).toEqual([BOX_ID]);
+    expect(built.tx.outputs).toEqual([
+      { boxType: 'karma', value: 226n, createdAtBlock: 5000, owner: hexToBytes(PUB) },
+      { boxType: 'vouch', value: VOUCH_KARMA_AMOUNT, createdAtBlock: 5000, voucherId: hexToBytes(PUB), targetId: hexToBytes(VOUCH_TARGET) },
+    ]);
+    expect((built.tx.outputs[1] as { value: bigint }).value).toBe(VOUCH_KARMA_AMOUNT);
+    expect(built.tx.post).toBeUndefined();
+    expect(built.tx.likeTarget).toBeUndefined();
+    // Conservation: the change plus the stake equals the one selected box.
+    expect(built.change!.value + VOUCH_KARMA_AMOUNT).toBe(227n);
+  });
+
+  it('an unvouch matches: one input, one escrow of the box value, release = cast + cooldown, no karma', () => {
+    const built = buildUnvouch(ctx(), { boxId: VOUCH_BOX, value: 1n, createdAtBlock: 4990 }, 60);
+    expect(built.txId).toBe(UNVOUCH_TXID);
+    expect(built.change).toBeNull();
+    expect(built.tx.inputs).toEqual([VOUCH_BOX]);
+    expect(built.tx.outputs).toEqual([
+      { boxType: 'vouch_escrow', value: 1n, createdAtBlock: 5000, owner: hexToBytes(PUB), releaseAtBlock: 5050 },
+    ]);
+    // No karma output — the stake is held, not returned as change.
+    expect(built.tx.outputs.every((o) => o.boxType !== 'karma')).toBe(true);
+  });
+
+  it('an invite matches the demo UI txId and carries the bond named', () => {
+    const built = buildInvite(ctx(), INVITEE, 100n);
+    expect(built.txId).toBe(INVITE_TXID);
+    expect(built.change).toEqual({ boxId: INVITE_CHANGE, value: 127n, createdAtBlock: 5000 });
+    expect(built.tx.outputs).toEqual([
+      { boxType: 'karma', value: 127n, createdAtBlock: 5000, owner: hexToBytes(PUB) },
+      { boxType: 'bond', value: 100n, createdAtBlock: 5000, inviterId: hexToBytes(PUB), inviteePublicKey: hexToBytes(INVITEE) },
+    ]);
+    // Conservation: 127 + 100 = 227.
+    expect(built.change!.value + 100n).toBe(227n);
+  });
+});
+
+describe('membership builders — structural rules', () => {
+  it('a vouch from a single 1-karma box emits no change', () => {
+    const built = buildVouch({ ...ctx(), spendable: [{ boxId: BOX_ID, value: 1n }] }, VOUCH_TARGET);
+    expect(built.change).toBeNull();
+    expect(built.tx.outputs).toEqual([
+      { boxType: 'vouch', value: VOUCH_KARMA_AMOUNT, createdAtBlock: 5000, voucherId: hexToBytes(PUB), targetId: hexToBytes(VOUCH_TARGET) },
+    ]);
+  });
+
+  it('InsufficientKarma names the bond when the view cannot cover it', () => {
+    expect(() => buildInvite({ ...ctx(), spendable: [{ boxId: BOX_ID, value: 50n }] }, INVITEE, 100n)).toThrow(InsufficientKarma);
+    try {
+      buildInvite({ ...ctx(), spendable: [{ boxId: BOX_ID, value: 50n }] }, INVITEE, 100n);
+    } catch (e) {
+      expect(e).toBeInstanceOf(InsufficientKarma);
+      expect((e as InsufficientKarma).required).toBe(100n);
+      expect((e as InsufficientKarma).available).toBe(50n);
+    }
+    // A vouch is unaffordable below VOUCH_KARMA_AMOUNT.
+    expect(() => buildVouch({ ...ctx(), spendable: [] }, VOUCH_TARGET)).toThrow(InsufficientKarma);
+  });
+});
+
 describe('txToJson — the node JSON edge', () => {
   const sign = (tx: UtxoTransaction): UtxoTransaction => ({ ...tx, signatures: { [PUB]: new Uint8Array(64) } });
 
@@ -152,6 +241,35 @@ describe('txToJson — the node JSON edge', () => {
     expect(body.outputs).toEqual([
       { boxType: 'karma', value: '226', createdAtBlock: 5000, owner: PUB },
       { boxType: 'like_accrual', value: '1', createdAtBlock: 5000, author: PARENT_AUTHOR },
+    ]);
+  });
+
+  it('renders a vouch: hex voucherId/targetId, decimal value', () => {
+    const built = buildVouch(ctx(), VOUCH_TARGET);
+    const body = txToJson(sign(built.tx));
+    expect(body.outputs).toEqual([
+      { boxType: 'karma', value: '226', createdAtBlock: 5000, owner: PUB },
+      { boxType: 'vouch', value: '1', createdAtBlock: 5000, voucherId: PUB, targetId: VOUCH_TARGET },
+    ]);
+    expect(body.post).toBeUndefined();
+    expect(body.likeTarget).toBeUndefined();
+  });
+
+  it('renders an unvouch: escrow owner hex, decimal value, releaseAtBlock a number', () => {
+    const built = buildUnvouch(ctx(), { boxId: VOUCH_BOX, value: 1n, createdAtBlock: 4990 }, 60);
+    const body = txToJson(sign(built.tx));
+    expect(body.inputs).toEqual([VOUCH_BOX]);
+    expect(body.outputs).toEqual([
+      { boxType: 'vouch_escrow', value: '1', createdAtBlock: 5000, owner: PUB, releaseAtBlock: 5050 },
+    ]);
+  });
+
+  it('renders an invite: hex inviterId/inviteePublicKey, decimal value', () => {
+    const built = buildInvite(ctx(), INVITEE, 100n);
+    const body = txToJson(sign(built.tx));
+    expect(body.outputs).toEqual([
+      { boxType: 'karma', value: '127', createdAtBlock: 5000, owner: PUB },
+      { boxType: 'bond', value: '100', createdAtBlock: 5000, inviterId: PUB, inviteePublicKey: INVITEE },
     ]);
   });
 });

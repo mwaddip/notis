@@ -7,11 +7,30 @@ import { newWorkspace, newRegion, type Workspace, type Column } from './workspac
 
 const HEX64 = /^[0-9a-f]{64}$/i;
 const WINDOW_IDS = new Set<string>(['@profile']);
+// `@author:<64hex>` and `@posts:<64hex>` — the two membership windows
+// (WEB_INTERFACE → The author window). The `:` and `@` cannot collide with a
+// 64-hex post id.
+const AT_SUBJECT = /^@(author|posts):([0-9a-f]{64})$/i;
 
-/** A token is a real window id — a 64-hex post id, or a known @-window. The
- *  `@` prefix cannot collide with a 64-hex id. */
+/** A token is a real window id — a 64-hex post id, a known @-window, or an
+ *  `@author:`/`@posts:` window naming a 64-hex key. */
 export function isWindowId(k: string): boolean {
-  return WINDOW_IDS.has(k) || HEX64.test(k);
+  return WINDOW_IDS.has(k) || HEX64.test(k) || AT_SUBJECT.test(k);
+}
+
+/** The window id for an author's window and its posts window. */
+export function authorWindowId(key: string): string {
+  return '@author:' + key;
+}
+export function postsWindowId(key: string): string {
+  return '@posts:' + key;
+}
+
+/** The kind and 64-hex key an `@author:`/`@posts:` window names, or null for any
+ *  other token (a thread id, `@profile`). */
+export function windowSubject(k: string): { kind: 'author' | 'posts'; key: string } | null {
+  const m = AT_SUBJECT.exec(k);
+  return m ? { kind: m[1]!.toLowerCase() as 'author' | 'posts', key: m[2]!.toLowerCase() } : null;
 }
 
 /** A stored arrangement naming the retired `@settings` maps to `@profile`, so a

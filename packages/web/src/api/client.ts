@@ -1,5 +1,6 @@
 import type {
   FeedResult, ThreadResult, PostResult, StatusResult, BlockCurrent, KarmaResult,
+  VouchesTargetResult, VouchesVoucherResult, VouchCooldownsResult, BondsResult,
 } from './dto';
 
 // This module issues GET requests and nothing else — no POST, no body. A `viewer`
@@ -25,12 +26,18 @@ export interface Page {
  *  carried once one exists so `likedByViewer` is the node's answer
  *  (WEB_INTERFACE → "Every read carries the viewer's key once an identity is loaded, and none does before"). */
 export interface Api {
-  feed(page?: Page, viewer?: string): Promise<FeedResult>;
+  feed(page?: Page, viewer?: string, author?: string): Promise<FeedResult>;
   thread(id: string, page?: Page, viewer?: string): Promise<ThreadResult | null>;
   post(id: string, viewer?: string): Promise<PostResult | null>;
   status(): Promise<StatusResult>;
   currentBlock(): Promise<BlockCurrent>;
   karma(key: string, page?: Page): Promise<KarmaResult>;
+  // The membership reads — GETs, none viewer-bearing (WEB_INTERFACE → The author
+  // window, → The profile window). Keyset-paged like `karma`.
+  vouchesByTarget(key: string, page?: Page): Promise<VouchesTargetResult>;
+  vouchesByVoucher(key: string, page?: Page): Promise<VouchesVoucherResult>;
+  vouchCooldowns(key: string, page?: Page): Promise<VouchCooldownsResult>;
+  bonds(key: string, page?: Page): Promise<BondsResult>;
 }
 
 export class NodeClient implements Api {
@@ -64,8 +71,10 @@ export class NodeClient implements Api {
     return (await res.json()) as T;
   }
 
-  feed(page: Page = {}, viewer?: string): Promise<FeedResult> {
-    return this.get<FeedResult>(this.url('/posts', { limit: page.limit, after: page.after ?? undefined, viewer }));
+  feed(page: Page = {}, viewer?: string, author?: string): Promise<FeedResult> {
+    // `author` filters to one identity's committed posts — the author-posts window
+    // (WEB_INTERFACE → The author window); the feed passes it undefined.
+    return this.get<FeedResult>(this.url('/posts', { limit: page.limit, after: page.after ?? undefined, author, viewer }));
   }
 
   thread(id: string, page: Page = {}, viewer?: string): Promise<ThreadResult | null> {
@@ -90,5 +99,21 @@ export class NodeClient implements Api {
   // read is keyed by the identity in the path, not by a viewer query.
   karma(key: string, page: Page = {}): Promise<KarmaResult> {
     return this.get<KarmaResult>(this.url(`/karma/${encodeURIComponent(key)}`, { limit: page.limit, after: page.after ?? undefined }));
+  }
+
+  vouchesByTarget(key: string, page: Page = {}): Promise<VouchesTargetResult> {
+    return this.get<VouchesTargetResult>(this.url('/vouches', { target: key, limit: page.limit, after: page.after ?? undefined }));
+  }
+
+  vouchesByVoucher(key: string, page: Page = {}): Promise<VouchesVoucherResult> {
+    return this.get<VouchesVoucherResult>(this.url('/vouches', { voucher: key, limit: page.limit, after: page.after ?? undefined }));
+  }
+
+  vouchCooldowns(key: string, page: Page = {}): Promise<VouchCooldownsResult> {
+    return this.get<VouchCooldownsResult>(this.url('/vouches', { voucher: key, cooldowns: 1, limit: page.limit, after: page.after ?? undefined }));
+  }
+
+  bonds(key: string, page: Page = {}): Promise<BondsResult> {
+    return this.get<BondsResult>(this.url(`/invites/${encodeURIComponent(key)}`, { limit: page.limit, after: page.after ?? undefined }));
   }
 }

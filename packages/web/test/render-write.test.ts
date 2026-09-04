@@ -83,6 +83,10 @@ function harness(): Harness {
     status: async () => statusResult(),
     currentBlock: async () => ({ height: 6000, hash: null }),
     karma: async () => karmaResult({ userId: PUB, total: '227', effective: '227', boxes: [{ boxId: '11'.repeat(32), value: '227' }], boxCount: 1, height: 6000 }),
+    vouchesByTarget: async () => ({ vouches: [], count: 0, next: null }),
+    vouchesByVoucher: async () => ({ vouches: [], count: 0, next: null }),
+    vouchCooldowns: async () => ({ cooldowns: [], count: 0, next: null }),
+    bonds: async () => ({ bonds: [], bondCount: 0, next: null }),
   };
   const writeClient = {
     submitPost: async () => ({ postId: 'newpost', status: 'pending', expiresAtHeight: 6720, txId: echoTxId() }),
