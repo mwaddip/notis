@@ -50,6 +50,8 @@ function button(root: HTMLElement, text: string): HTMLButtonElement | null {
   return null;
 }
 
+const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+
 beforeEach(() => {
   localStorage.clear();
   prefs.faucet = '';
@@ -130,6 +132,25 @@ describe('profile window — the forms in place', () => {
     const user = form.querySelector('input[autocomplete="username"]') as HTMLInputElement;
     expect(user.value).toBe(KEY);
     expect(user.readOnly).toBe(true);
+  });
+
+  it('unlocking in place turns the passphrase row to unlocked · lock', async () => {
+    const field = rowField(render(handlers(), ctx({ identity: { pubKeyHex: KEY, locked: true } })), 'passphrase')!;
+    button(field, 'unlock')!.click();
+    const form = field.querySelector('form.pf') as HTMLFormElement;
+    (form.querySelector('input[type="password"]') as HTMLInputElement).value = 'pw';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    expect(field.querySelector('form.pf')).toBeNull(); // the form is gone
+    expect(field.textContent).toContain('unlocked');
+    expect(button(field, 'lock')).not.toBeNull();
+  });
+
+  it('locking in place turns the row back to locked · unlock', () => {
+    const field = rowField(render(handlers(), ctx({ identity: { pubKeyHex: KEY, locked: false } })), 'passphrase')!;
+    button(field, 'lock')!.click();
+    expect(field.textContent).toContain('locked');
+    expect(button(field, 'unlock')).not.toBeNull();
   });
 
   it('export reveals the file set form under the username <key> · file when unlocked', () => {
