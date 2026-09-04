@@ -86,3 +86,52 @@ describe('card — a locked like', () => {
     expect(liked).toEqual(['p1']);
   });
 });
+
+describe('card — the author prefix and a locked vouch', () => {
+  const AUTHOR = 'bb'.repeat(32);
+
+  it('the card prefix is a button that opens the author window', () => {
+    const opened: string[] = [];
+    const c = card(confirmed(AUTHOR), { onAuthor: (k) => opened.push(k) });
+    const btn = c.querySelector('.who .hex') as HTMLElement;
+    expect(btn.tagName).toBe('BUTTON'); // a ghost button, not text — opening a window spends nothing
+    expect(btn.getAttribute('aria-label')).toBe('open this author');
+    btn.click();
+    expect(opened).toEqual([AUTHOR]);
+  });
+
+  it('with no onAuthor the prefix stays text', () => {
+    const btn = card(confirmed(AUTHOR)).querySelector('.who .hex') as HTMLElement;
+    expect(btn.tagName).toBe('SPAN');
+  });
+
+  it('a locked vouch shows the unlock form under the meta on the press, then the vouch proceeds', async () => {
+    const unlocked: string[] = [];
+    const vouched: string[] = [];
+    const c = card(confirmed(AUTHOR), {
+      mark: { state: 'plus', count: 0 },
+      onVouch: (k) => vouched.push(k),
+      onAuthor: () => {},
+      locked: true,
+      ownKey: PUB,
+      onUnlock: async (p) => { unlocked.push(p); },
+    });
+    (c.querySelector('.who .mark') as HTMLElement).click();
+    const form = c.querySelector('.card-unlock form.pf') as HTMLFormElement;
+    expect(form).not.toBeNull(); // the unlock form appeared under the meta, not by the mark up top
+    expect(vouched).toHaveLength(0); // the vouch has not fired yet
+    (form.querySelector('input[type="password"]') as HTMLInputElement).value = 'pw';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(unlocked).toEqual(['pw']);
+    expect(vouched).toEqual([AUTHOR]);
+  });
+
+  it('an unlocked vouch fires at once — no unlock form', () => {
+    const vouched: string[] = [];
+    const c = card(confirmed(AUTHOR), { mark: { state: 'plus', count: 0 }, onVouch: (k) => vouched.push(k), onAuthor: () => {}, locked: false, ownKey: PUB, onUnlock: async () => {} });
+    (c.querySelector('.who .mark') as HTMLElement).click();
+    expect(c.querySelector('.card-unlock')).toBeNull();
+    expect(vouched).toEqual([AUTHOR]);
+  });
+});
