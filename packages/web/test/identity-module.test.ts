@@ -2,13 +2,14 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createPublicKey as nodeCreatePublicKey, verify as nodeVerify } from 'node:crypto';
 import { generateKeyPair, ED25519_SPKI_PREFIX } from '@dagsocial/types';
-import { IdentityModule, IDENTITY_KEY } from '../src/identity/identity';
+import { IdentityModule, IDENTITY_KEY, type Identity } from '../src/identity/identity';
 
-// The identity module holds one key, signs with it, and never lets the seed
-// cross its boundary (WEB_INTERFACE → The identity module). Under vitest the
-// vite alias routes @dagsocial/types' `crypto` through the shim, and Node's real
-// `crypto.verify(null, …)` — the node's verifier path — confirms a signature the
-// module makes, the way crypto-shim.test.ts reaches real Node crypto.
+// The identity module holds one key as an encrypted envelope, decrypts the seed on
+// demand, and never lets the seed cross its boundary (WEB_INTERFACE → The identity
+// module). Under vitest the vite alias routes @dagsocial/types' `crypto` through the
+// shim, and Node's real `crypto.verify(null, …)` — the node's verifier path —
+// confirms a signature the module makes, the way crypto-shim.test.ts reaches real
+// Node crypto. scrypt runs at the production N here; each generate/unlock pays it.
 
 function toHex(bytes: Uint8Array): string {
   let s = '';
@@ -30,98 +31,158 @@ beforeEach(() => {
   localStorage.clear();
 });
 
-describe('identity module — generation, export, import', () => {
-  it('generate → export → import round trips in the demo UI shape', () => {
+describe('identity module — generate, export, import', () => {
+  it('generate → export → import round trips the key through an encrypted envelope', async () => {
     const a = new IdentityModule();
-    const id = a.generate();
+    const id = await a.generate('at-rest passphrase');
     expect(id.pubKeyHex).toMatch(/^[0-9a-f]{64}$/);
 
-    const text = a.exportJson();
-    const parsed = JSON.parse(text);
-    expect(parsed).toEqual({ pubKeyHex: id.pubKeyHex, privKeyBase64: expect.any(String) });
+    const text = await a.exportFile('file password');
+    const env = JSON.parse(text);
+    expect(env).toMatchObject({ version: 1, pubKeyHex: id.pubKeyHex, cipher: { name: 'chacha20-poly1305' } });
+    // The exported file is encrypted — no clear private key in it.
+    expect(env.privKeyBase64).toBeUndefined();
 
     // A fresh module with cleared storage has no identity, then imports that exact text.
     localStorage.clear();
     const b = new IdentityModule();
     expect(b.current()).toBeNull();
-    expect(b.importJson(text).pubKeyHex).toBe(id.pubKeyHex);
-    // The imported module can sign — the seed came across, not just the public key.
+    const imported = await b.importFile(text, 'file password');
+    expect(imported.pubKeyHex).toBe(id.pubKeyHex);
+    // Import leaves it unlocked, so it can sign — the seed came across.
+    expect(b.current()).toEqual({ pubKeyHex: id.pubKeyHex, locked: false });
     expect(b.sign('ab'.repeat(32))).toHaveLength(128);
   });
 
-  it('import validates rather than trusts: wrong length, wrong prefix, mismatched key', () => {
-    const m = new IdentityModule();
+  it('a clear file imports under a set passphrase, stored as an envelope, and can sign', async () => {
     const kp = generateKeyPair();
     const pubKeyHex = toHex(kp.publicKey);
-    const good = JSON.stringify({ pubKeyHex, privKeyBase64: bytesToBase64(kp.secretKey) });
-    expect(m.importJson(good).pubKeyHex).toBe(pubKeyHex);
+    const clear = JSON.stringify({ pubKeyHex, privKeyBase64: bytesToBase64(kp.secretKey) });
+    const m = new IdentityModule();
+    const id = await m.importFile(clear, 'chosen passphrase');
+    expect(id.pubKeyHex).toBe(pubKeyHex);
+    expect(m.current()).toEqual({ pubKeyHex, locked: false });
+    expect(m.sign('cd'.repeat(32))).toHaveLength(128);
 
-    // 47 bytes — not a PKCS8 Ed25519 key.
+    // Storage never holds the clear shape — it is sealed on import.
+    const stored = JSON.parse(localStorage.getItem(IDENTITY_KEY) as string);
+    expect(stored.ciphertext).toEqual(expect.any(String));
+    expect(stored.privKeyBase64).toBeUndefined();
+  });
+
+  it('importFile refuses a clear file for a wrong length, prefix or mismatched key, and non-JSON', async () => {
+    const kp = generateKeyPair();
+    const pubKeyHex = toHex(kp.publicKey);
+    const m = new IdentityModule();
+
     const short = JSON.stringify({ pubKeyHex, privKeyBase64: bytesToBase64(kp.secretKey.subarray(0, 47)) });
-    expect(() => m.importJson(short)).toThrow(/48-byte/);
+    await expect(m.importFile(short, 'x')).rejects.toThrow(/48-byte/);
 
-    // 48 bytes, but the RFC 8410 prefix's first byte (0x30) is corrupted.
-    const badPrefixBytes = new Uint8Array(kp.secretKey);
-    badPrefixBytes[0] = 0xff;
-    const badPrefix = JSON.stringify({ pubKeyHex, privKeyBase64: bytesToBase64(badPrefixBytes) });
-    expect(() => m.importJson(badPrefix)).toThrow(/PKCS8/);
+    const badPrefix = new Uint8Array(kp.secretKey);
+    badPrefix[0] = 0xff;
+    await expect(m.importFile(JSON.stringify({ pubKeyHex, privKeyBase64: bytesToBase64(badPrefix) }), 'x')).rejects.toThrow(
+      /PKCS8/,
+    );
 
-    // A valid shape whose named key is a different keypair's — the seed does not produce it.
     const other = generateKeyPair();
     const mismatch = JSON.stringify({ pubKeyHex: toHex(other.publicKey), privKeyBase64: bytesToBase64(kp.secretKey) });
-    expect(() => m.importJson(mismatch)).toThrow(/does not produce/);
+    await expect(m.importFile(mismatch, 'x')).rejects.toThrow(/does not produce/);
 
-    // A failed import leaves the good identity loaded, uncorrupted.
-    expect(m.current()).toEqual({ pubKeyHex });
+    await expect(m.importFile('not json at all', 'x')).rejects.toThrow(/valid identity file/);
+    // A failed import loads nothing.
+    expect(m.current()).toBeNull();
   });
 
-  it('import refuses non-JSON and a non-object', () => {
+  it('current() carries the public key and lock state alone — never the seed', async () => {
     const m = new IdentityModule();
-    expect(() => m.importJson('not json at all')).toThrow(/valid identity file/);
-    expect(() => m.importJson('123')).toThrow(/identity file/);
-    expect(() => m.importJson(JSON.stringify({ pubKeyHex: 'zz' }))).toThrow(/public key/);
-  });
-
-  it('current() carries the public key alone — never the seed', () => {
-    const m = new IdentityModule();
-    m.generate();
+    await m.generate('pw');
     const cur = m.current();
     expect(cur).not.toBeNull();
-    expect(Object.keys(cur!)).toEqual(['pubKeyHex']);
-    // No private material by any name reachable through the public view.
+    expect(Object.keys(cur as object).sort()).toEqual(['locked', 'pubKeyHex']);
     const asRecord = cur as unknown as Record<string, unknown>;
     expect(asRecord.privKeyBase64).toBeUndefined();
     expect(asRecord.seed).toBeUndefined();
   });
 
-  it('forget() drops the identity from memory and storage', () => {
+  it('forget() drops the identity from memory, storage and the backup flag', async () => {
     const m = new IdentityModule();
-    m.generate();
+    await m.generate('pw');
+    await m.exportFile('file'); // sets the backup flag
+    expect(m.backedUp()).toBe(true);
+
     m.forget();
     expect(m.current()).toBeNull();
     expect(localStorage.getItem(IDENTITY_KEY)).toBeNull();
+    expect(m.backedUp()).toBe(false);
     expect(() => m.sign('ab'.repeat(32))).toThrow(/no identity/);
-    expect(() => m.exportJson()).toThrow(/no identity/);
+    await expect(m.exportFile('file')).rejects.toThrow(/no unlocked identity/);
+  });
+});
+
+describe('identity module — locked at rest, unlocked on demand', () => {
+  it('a stored identity restores locked; unlock loads the seed, lock drops it', async () => {
+    const id = await new IdentityModule().generate('the passphrase');
+
+    const b = new IdentityModule(); // reads the stored envelope
+    expect(b.current()).toEqual({ pubKeyHex: id.pubKeyHex, locked: true });
+    expect(() => b.sign('ab'.repeat(32))).toThrow(/locked/);
+
+    await b.unlock('the passphrase');
+    expect(b.current()).toEqual({ pubKeyHex: id.pubKeyHex, locked: false });
+    expect(b.sign('ab'.repeat(32))).toHaveLength(128);
+
+    b.lock();
+    expect(b.current()).toEqual({ pubKeyHex: id.pubKeyHex, locked: true });
+    expect(() => b.sign('ab'.repeat(32))).toThrow(/locked/);
+  });
+
+  it('unlock refuses a wrong passphrase and stays locked', async () => {
+    const id = await new IdentityModule().generate('right');
+    const b = new IdentityModule();
+    await expect(b.unlock('wrong')).rejects.toThrow(/does not open this key/);
+    expect(b.current()).toEqual({ pubKeyHex: id.pubKeyHex, locked: true });
+  });
+
+  it('the backup flag: unset on generate, set on export and import, cleared on forget', async () => {
+    const m = new IdentityModule();
+    await m.generate('pw');
+    expect(m.backedUp()).toBe(false); // created — no file yet
+    const text = await m.exportFile('file pw');
+    expect(m.backedUp()).toBe(true); // exported — a file exists
+    m.forget();
+    expect(m.backedUp()).toBe(false); // cleared
+    await m.importFile(text, 'file pw');
+    expect(m.backedUp()).toBe(true); // imported — a file already existed
+  });
+
+  it('onChange fires on generate, forget and import', async () => {
+    const m = new IdentityModule();
+    const events: Array<Identity | null> = [];
+    m.onChange((id) => events.push(id));
+
+    const gen = await m.generate('pw');
+    expect(events.at(-1)).toEqual({ pubKeyHex: gen.pubKeyHex });
+
+    const text = await m.exportFile('file pw');
+    m.forget();
+    expect(events.at(-1)).toBeNull();
+
+    const imp = await m.importFile(text, 'file pw');
+    expect(events.at(-1)).toEqual({ pubKeyHex: imp.pubKeyHex });
+    expect(events).toHaveLength(3); // export does not fire onChange
   });
 });
 
 describe('identity module — persistence and storage guards', () => {
-  it('a generated identity is restored by a fresh module, seed included', () => {
-    const id = new IdentityModule().generate();
-    const b = new IdentityModule();
-    expect(b.current()).toEqual({ pubKeyHex: id.pubKeyHex });
-    expect(b.sign('cd'.repeat(32))).toHaveLength(128);
-  });
-
-  it('a write that throws does not break a load — the identity lives for the session', () => {
+  it('a write that throws does not break a load — the identity lives for the session', async () => {
     const m = new IdentityModule();
     const orig = localStorage.setItem.bind(localStorage);
     localStorage.setItem = () => {
       throw new Error('storage blocked');
     };
     try {
-      const id = m.generate();
-      expect(m.current()).toEqual({ pubKeyHex: id.pubKeyHex });
+      const id = await m.generate('pw');
+      expect(m.current()).toEqual({ pubKeyHex: id.pubKeyHex, locked: false });
     } finally {
       localStorage.setItem = orig;
     }
@@ -139,18 +200,27 @@ describe('identity module — persistence and storage guards', () => {
     }
   });
 
-  it('a corrupt stored identity is left unloaded, not trusted', () => {
+  it('a corrupt stored value is left unloaded, not trusted', () => {
     localStorage.setItem(IDENTITY_KEY, '{ this is not valid json');
     expect(new IdentityModule().current()).toBeNull();
     localStorage.setItem(IDENTITY_KEY, JSON.stringify({ pubKeyHex: 'ab'.repeat(32), privKeyBase64: 'notbase64!!' }));
     expect(new IdentityModule().current()).toBeNull();
   });
+
+  it('a clear stored value reads as no identity and is left in place', () => {
+    const kp = generateKeyPair();
+    const clear = JSON.stringify({ pubKeyHex: toHex(kp.publicKey), privKeyBase64: bytesToBase64(kp.secretKey) });
+    localStorage.setItem(IDENTITY_KEY, clear);
+    const m = new IdentityModule();
+    expect(m.current()).toBeNull();
+    expect(localStorage.getItem(IDENTITY_KEY)).toBe(clear); // left in place, overwritten only by the next create or import
+  });
 });
 
 describe('identity module — signing interop with the node verifier', () => {
-  it('a signature verifies under Node crypto.verify(null, …) with the SPKI-wrapped key', () => {
+  it('a signature verifies under Node crypto.verify(null, …) with the SPKI-wrapped key', async () => {
     const m = new IdentityModule();
-    const { pubKeyHex } = m.generate();
+    const { pubKeyHex } = await m.generate('pw');
     const txIdHex = '9a'.repeat(32);
     const sigHex = m.sign(txIdHex);
     expect(sigHex).toHaveLength(128);
@@ -164,9 +234,9 @@ describe('identity module — signing interop with the node verifier', () => {
     expect(nodeVerify(null, hexToBytes('00'.repeat(32)), key, hexToBytes(sigHex))).toBe(false);
   });
 
-  it('sign refuses anything but 64 lowercase hex — it is the one path to the seed', () => {
+  it('sign refuses anything but 64 lowercase hex — it is the one path to the seed', async () => {
     const m = new IdentityModule();
-    m.generate();
+    await m.generate('pw');
     for (const bad of ['', 'abc', 'ab'.repeat(31), 'ab'.repeat(33), 'zz'.repeat(32), 'AB'.repeat(32), `${'ab'.repeat(32)} `]) {
       expect(() => m.sign(bad), bad).toThrow(/64 hex/);
     }
