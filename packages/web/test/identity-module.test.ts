@@ -3,7 +3,6 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { createPublicKey as nodeCreatePublicKey, verify as nodeVerify } from 'node:crypto';
 import { generateKeyPair, ED25519_SPKI_PREFIX } from '@dagsocial/types';
 import { IdentityModule, IDENTITY_KEY } from '../src/identity/identity';
-import { installDevDoor } from '../src/identity/dev-door';
 
 // The identity module holds one key, signs with it, and never lets the seed
 // cross its boundary (WEB_INTERFACE → The identity module). Under vitest the
@@ -172,18 +171,5 @@ describe('identity module — signing interop with the node verifier', () => {
       expect(() => m.sign(bad), bad).toThrow(/64 hex/);
     }
     expect(m.sign('ab'.repeat(32))).toHaveLength(128);
-  });
-});
-
-describe('identity module — the dev door', () => {
-  it('hangs the module off globalThis.notis under a dev build', () => {
-    delete (globalThis as unknown as { notis?: unknown }).notis;
-    const m = new IdentityModule();
-    installDevDoor(m);
-    // Read globalThis fresh after the install rather than a reference narrowed by
-    // the delete above.
-    const notis = (globalThis as unknown as { notis?: { identity?: unknown } }).notis;
-    expect(notis?.identity).toBe(m);
-    delete (globalThis as unknown as { notis?: unknown }).notis;
   });
 });

@@ -141,7 +141,7 @@ export class IdentityModule {
   }
 }
 
-/** The single identity — the app and the dev door share it. */
+/** The single identity module the app loads. */
 export const identity = new IdentityModule();
 
 // ---------------------------------------------------------------------------
