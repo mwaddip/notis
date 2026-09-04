@@ -1,5 +1,5 @@
 import { el, reportNode } from '../dom';
-import { card, submissionToPost, flightFor, type ParentRef } from './card';
+import { card, submissionToPost, flightFor, type ParentRef, type CardOpts } from './card';
 import type { PostJson } from '../api/dto';
 import { FEED_COMPOSER_KEY, type FeedState, type RenderCtx, type Handlers } from '../model/state';
 
@@ -27,7 +27,27 @@ function parentRefFor(post: PostJson, ctx: RenderCtx): ParentRef | null {
     id: parentId,
     authorKey: parent?.author,
     excerpt: excerpt ? excerpt.slice(0, 80) : undefined,
+    // The parent author's mark — the prefix stays text on a reply-ref line, so
+    // the mark's ✓ is the way into their window (WEB_INTERFACE → The identity display).
+    mark: parent ? ctx.markFor(parent.author) : null,
   };
+}
+
+/** The identity-display opts a feed card carries: the prefix opens the author
+ *  window (a read, present even with no identity) and the vouch mark; the vouch
+ *  and its unlock only with an identity loaded (WEB_INTERFACE → The identity display). */
+function markOpts(author: string, ctx: RenderCtx, handlers: Handlers): Partial<CardOpts> {
+  const opts: Partial<CardOpts> = {
+    onAuthor: (key) => handlers.openAuthor(key, { from: 'feed' }),
+    mark: ctx.markFor(author),
+  };
+  if (ctx.writeEnabled) {
+    opts.onVouch = (key) => handlers.vouch(key);
+    opts.locked = ctx.identity?.locked ?? false;
+    opts.ownKey = ctx.ownKey ?? undefined;
+    opts.onUnlock = (p) => handlers.unlockIdentity(p);
+  }
+  return opts;
 }
 
 export function renderFeedInto(container: HTMLElement, feed: FeedState, handlers: Handlers, ctx: RenderCtx): void {
@@ -69,13 +89,13 @@ export function renderFeedInto(container: HTMLElement, feed: FeedState, handlers
 
   // The client's own root submissions, newest first, above the node's rows.
   for (const sub of [...ctx.submissionsFor(null)].reverse()) {
-    container.appendChild(card(submissionToPost(sub), { replyCount: null, flight: flightFor(sub, handlers.tryAgain), onOpen: (id) => handlers.openThread(id, { from: 'feed' }), you: isYou(sub.author, ctx) }));
+    container.appendChild(card(submissionToPost(sub), { replyCount: null, flight: flightFor(sub, handlers.tryAgain), onOpen: (id) => handlers.openThread(id, { from: 'feed' }), you: isYou(sub.author, ctx), ...markOpts(sub.author, ctx, handlers) }));
   }
 
   // Pending (mempool) posts are the newest — they sit above the confirmed ones,
   // hollow, before any composer exists to create one.
   for (const p of feed.pending) {
-    container.appendChild(card(p, { replyCount: null, parentRef: parentRefFor(p, ctx), onOpen: (id) => handlers.openThread(id, { from: 'feed' }), you: isYou(p.author, ctx) }));
+    container.appendChild(card(p, { replyCount: null, parentRef: parentRefFor(p, ctx), onOpen: (id) => handlers.openThread(id, { from: 'feed' }), you: isYou(p.author, ctx), ...markOpts(p.author, ctx, handlers) }));
   }
   for (const p of feed.posts) {
     container.appendChild(
@@ -85,6 +105,7 @@ export function renderFeedInto(container: HTMLElement, feed: FeedState, handlers
         parentRef: parentRefFor(p, ctx),
         onOpen: (id) => handlers.openThread(id, { from: 'feed' }),
         you: isYou(p.author, ctx),
+        ...markOpts(p.author, ctx, handlers),
       }),
     );
   }

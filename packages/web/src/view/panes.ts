@@ -1,9 +1,11 @@
 import { el, reportNode, shortHex } from '../dom';
-import { card, submissionToPost, flightFor, type CardOpts } from './card';
+import { card, submissionToPost, flightFor, displayMark, type CardOpts } from './card';
 import { profileBody } from './profile';
+import { authorBody, authorPostsBody, type AuthorCtx, type PostsCtx } from './author';
 import { flattenThread } from '../model/thread';
 import { identityHue } from '../model/identity';
 import { isTombstone } from '../api/dto';
+import { windowSubject } from '../model/arrangement';
 import type { PostJson, Tombstone } from '../api/dto';
 import type { Region, Workspace } from '../model/workspace';
 import type { Handlers, RenderCtx } from '../model/state';
@@ -62,7 +64,22 @@ function bar(k: string, ci: number, focused: boolean, handlers: Handlers, ctx: R
   label.addEventListener('click', () => handlers.focus(k));
   const ctl = el('div', 'bar-ctl');
 
-  if (win) {
+  const sub = windowSubject(k);
+  if (sub) {
+    // An author or posts window — the kind, the prefix in mono (text), and the
+    // display-only mark; a control cannot nest in the bar's focus label, so the
+    // mark is a span (WEB_INTERFACE → The identity display). ↻ refreshes it.
+    label.setAttribute('aria-label', 'show this window');
+    label.appendChild(el('span', 'name', sub.kind === 'author' ? 'author' : 'posts'));
+    label.appendChild(el('span', 'hex', shortHex(sub.key, 10)));
+    const dm = displayMark(ctx.markFor(sub.key));
+    if (dm) label.appendChild(dm);
+    ctl.appendChild(
+      ctlBtn('↻', sub.kind === 'author' ? 'refresh this author' : 'refresh these posts', () =>
+        sub.kind === 'author' ? handlers.refreshAuthor(sub.key) : handlers.refreshAuthorPosts(sub.key),
+      ),
+    );
+  } else if (win) {
     label.setAttribute('aria-label', 'show this window');
     label.appendChild(el('span', 'name', 'profile'));
     // The profile window's ↻ re-reads standing and karma — the first window with
@@ -92,16 +109,27 @@ function bar(k: string, ci: number, focused: boolean, handlers: Handlers, ctx: R
   return b;
 }
 
-/** The write-surface opts for a card inside a pane: ↩ reply on every card (the
- *  card itself withholds it on a pending or pruned one), and the like control by
- *  §7's exclusions — live confirmed posts only, never withdrawn, stumps, pending
- *  or the reader's own. */
-function writeCardOpts(row: PostJson | Tombstone, ctx: RenderCtx, handlers: Handlers): Partial<CardOpts> {
-  if (!ctx.writeEnabled) return {};
+/** The card opts for a pane card. The prefix always opens the author window — a
+ *  read, so it is present even with no identity (WEB_INTERFACE → The identity
+ *  display) — and carries the vouch mark, absent when markFor returns null. The
+ *  write-surface controls — ↩ reply, the like control by §7's exclusions, the
+ *  vouch's unlock — are added only with an identity loaded. */
+function writeCardOpts(row: PostJson | Tombstone, ci: number, ctx: RenderCtx, handlers: Handlers): Partial<CardOpts> {
+  const base: Partial<CardOpts> = {
+    onAuthor: (key) => handlers.openAuthor(key, { from: 'pane', ci }),
+    mark: ctx.markFor(row.author),
+  };
+  if (!ctx.writeEnabled) return base; // the read surface: a prefix button and an absent mark
   const opts: Partial<CardOpts> = {
+    ...base,
     onReply: (id) => handlers.openComposer(id),
     composerKey: row.id, // a reply composer keys on its parent id
     you: ctx.ownKey !== null && row.author === ctx.ownKey, // · you on the reader's own card
+    onVouch: (key) => handlers.vouch(key),
+    // A locked identity unlocks in a row under the card before a like or a vouch.
+    locked: ctx.identity?.locked ?? false,
+    ownKey: ctx.ownKey ?? undefined,
+    onUnlock: (p) => handlers.unlockIdentity(p),
   };
   if (!isTombstone(row) && row.status === 'confirmed') {
     const overlaid = ctx.likePending(row.id);
@@ -112,16 +140,55 @@ function writeCardOpts(row: PostJson | Tombstone, ctx: RenderCtx, handlers: Hand
       opts.likePending = overlaid && row.likedByViewer !== true;
     } else if (!isOwn) {
       opts.onLike = (id) => handlers.likePost(id);
-      // A locked identity unlocks in a row under the card before the like flies.
-      opts.locked = ctx.identity?.locked ?? false;
-      opts.ownKey = ctx.ownKey ?? undefined;
-      opts.onUnlock = (p) => handlers.unlockIdentity(p);
     }
   }
   return opts;
 }
 
+/** The author window's ctx, adapted from the App's RenderCtx — the App satisfies
+ *  AuthorHandlers structurally, so `handlers` is passed straight through. */
+function authorCtxFrom(key: string, ci: number, ctx: RenderCtx): AuthorCtx {
+  const d = ctx.author.get(key);
+  return {
+    authorKey: key,
+    origin: { from: 'pane', ci },
+    karma: d?.karma ?? null,
+    endorsers: d?.endorsers ?? null,
+    endorsersNext: d?.endorsersNext ?? false,
+    membershipBars: ctx.membershipBars,
+    writeEnabled: ctx.writeEnabled,
+    ownKey: ctx.ownKey,
+    locked: ctx.identity?.locked ?? false,
+    subjectMark: ctx.markFor(key),
+    markFor: (k) => ctx.markFor(k),
+    yourVouch: ctx.yourVouch(key),
+    flight: d?.flight ?? null,
+  };
+}
+
+function postsCtxFrom(key: string, ci: number, ctx: RenderCtx): PostsCtx {
+  const f = ctx.authorPosts.get(key);
+  return {
+    authorKey: key,
+    origin: { from: 'pane', ci },
+    feed: f ?? { posts: [], pending: [], next: null, report: null, olderReport: null, loaded: false, loading: true, error: null },
+    writeEnabled: ctx.writeEnabled,
+    ownKey: ctx.ownKey,
+    locked: ctx.identity?.locked ?? false,
+    markFor: (k) => ctx.markFor(k),
+  };
+}
+
 function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handlers: Handlers, ctx: RenderCtx): void {
+  const sub = windowSubject(focusedK);
+  if (sub?.kind === 'author') {
+    body.appendChild(authorBody(handlers, authorCtxFrom(sub.key, ci, ctx)));
+    return;
+  }
+  if (sub?.kind === 'posts') {
+    body.appendChild(authorPostsBody(handlers, postsCtxFrom(sub.key, ci, ctx)));
+    return;
+  }
   if (isWin(focusedK)) {
     body.appendChild(profileBody(handlers, ctx));
     return;
@@ -152,7 +219,7 @@ function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handl
         depth: node.depth,
         replyCount: row.id === rootId ? t.descendantCount : node.replyCount,
         onOpen: (id) => handlers.openThread(id, { from: 'pane', ci }),
-        ...writeCardOpts(row, ctx, handlers),
+        ...writeCardOpts(row, ci, ctx, handlers),
       }),
     );
     // A reply composer open under this post, reused by reference across the

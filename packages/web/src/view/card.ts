@@ -132,6 +132,7 @@ function checkSvg(): SVGSVGElement {
 export function markNode(key: string, mark: Mark, opts: CardOpts): HTMLElement {
   if (mark.state === 'disabled') {
     const b = el('button', 'vmark plus disabled');
+    b.dataset['markAuthor'] = key; // the App finds it to set the count title (skipping disabled)
     (b as HTMLButtonElement).disabled = true;
     b.appendChild(el('span', 'g', '+'));
     if (mark.reason) {
@@ -142,6 +143,7 @@ export function markNode(key: string, mark: Mark, opts: CardOpts): HTMLElement {
   }
   if (mark.state === 'plus') {
     const b = el('button', 'vmark plus');
+    b.dataset['markAuthor'] = key;
     b.appendChild(el('span', 'g', '+'));
     b.setAttribute('aria-label', 'vouch for this author — stakes 1 karma');
     const t = countTitle(mark.count);
@@ -157,6 +159,7 @@ export function markNode(key: string, mark: Mark, opts: CardOpts): HTMLElement {
   }
   // check or pending — the ✓ opens the author window, where unvouch lives.
   const b = el('button', 'vmark check' + (mark.state === 'pending' ? ' pending' : ''));
+  b.dataset['markAuthor'] = key;
   b.appendChild(checkSvg());
   b.setAttribute('aria-label', 'you vouched for this author — open their window');
   const t = countTitle(mark.count);
