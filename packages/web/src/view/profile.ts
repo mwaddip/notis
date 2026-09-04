@@ -26,7 +26,9 @@ export interface ProfileHandlers {
   setFaucet: (origin: string) => void;
   // identity operations
   inspectFile: (text: string) => { kind: 'clear' | 'encrypted'; pubKeyHex: string };
-  createIdentity: (passphrase: string) => Promise<void>;
+  draftIdentity: () => { pubKeyHex: string }; // a key held before the passphrase, so the form names it
+  createIdentity: (passphrase: string) => Promise<void>; // seals and stores the drafted key
+  discardDraft: () => void; // the reader cancelled create
   importIdentity: (text: string, passphrase: string) => Promise<void>;
   exportIdentity: (password: string) => Promise<void>;
   forgetIdentity: () => void;
@@ -77,8 +79,15 @@ function emptyState(b: HTMLElement, handlers: ProfileHandlers): void {
 
   const create = el('button', 'mini', 'create') as HTMLButtonElement;
   create.addEventListener('click', () => {
+    // Draft the key first so the form shows its prefix as the username — the key
+    // exists before the passphrase, so the manager's saved entry names it
+    // (WEB_INTERFACE → The profile window). Cancelling discards the draft.
+    const { pubKeyHex } = handlers.draftIdentity();
     field.replaceChildren(
-      setPassphraseForm('new identity', (p) => handlers.createIdentity(p), () => restoreInline()),
+      setPassphraseForm(pubKeyHex, (p) => handlers.createIdentity(p), () => {
+        handlers.discardDraft();
+        restoreInline();
+      }),
     );
   });
 

@@ -19,7 +19,9 @@ function handlers(over: Partial<ProfileHandlers> = {}): ProfileHandlers {
     setNode: () => {},
     setFaucet: () => {},
     inspectFile: () => ({ kind: 'clear', pubKeyHex: KEY }),
+    draftIdentity: () => ({ pubKeyHex: KEY }),
     createIdentity: async () => {},
+    discardDraft: () => {},
     importIdentity: async () => {},
     exportIdentity: async () => {},
     forgetIdentity: () => {},
@@ -91,15 +93,31 @@ describe('profile window — the two states', () => {
 });
 
 describe('profile window — the forms in place', () => {
-  it('create reveals a two-field set form (new-password) with a read-only username', () => {
-    const body = render(handlers(), ctx());
+  it('create drafts a key first and names it as the set form username; cancel discards', () => {
+    const drafted: number[] = [];
+    const discarded: number[] = [];
+    const body = render(
+      handlers({
+        draftIdentity: () => {
+          drafted.push(1);
+          return { pubKeyHex: KEY };
+        },
+        discardDraft: () => discarded.push(1),
+      }),
+      ctx(),
+    );
     button(body, 'create')!.click();
-    const form = body.querySelector('form.pf')!;
+    expect(drafted).toHaveLength(1); // the key exists before the passphrase
+    const form = body.querySelector('form.pf') as HTMLElement;
     const pws = [...form.querySelectorAll('input')].filter((i) => (i as HTMLInputElement).type === 'password') as HTMLInputElement[];
     expect(pws).toHaveLength(2);
     expect(pws.every((i) => i.autocomplete === 'new-password')).toBe(true);
     const user = form.querySelector('input[autocomplete="username"]') as HTMLInputElement;
-    expect(user.readOnly).toBe(true); // the username value is pinned with the draft split (4c)
+    expect(user.readOnly).toBe(true);
+    expect(user.value).toBe(KEY); // the draft key, so the manager saves against the key it will later unlock
+    // Cancelling the form discards the draft.
+    button(form, 'cancel')!.click();
+    expect(discarded).toHaveLength(1);
   });
 
   it('unlock reveals a one-field current-password form with the key as username', () => {

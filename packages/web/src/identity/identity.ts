@@ -37,6 +37,9 @@ export class IdentityModule {
   private seed: Uint8Array | null = null;
   private pubKeyHex: string | null = null;
   private envelope: Envelope | null = null;
+  // A key drafted but not yet sealed — held so the create form shows its prefix as
+  // the username before the passphrase is typed (WEB_INTERFACE → The identity module).
+  private draftKp: { pubKeyHex: string; seed: Uint8Array } | null = null;
   private listeners: Array<(id: Identity | null) => void> = [];
 
   constructor() {
@@ -50,14 +53,30 @@ export class IdentityModule {
     return this.pubKeyHex === null ? null : { pubKeyHex: this.pubKeyHex, locked: this.seed === null };
   }
 
-  /** Generate a fresh key, seal it under the passphrase, and store it unlocked. A
-   *  created key has no file yet, so the backup flag is unset. */
-  async generate(passphrase: string): Promise<Identity> {
+  /** Draft a fresh key — generated through the shim and held privately, not stored;
+   *  current() is unchanged until create seals it. A second draft replaces the first
+   *  (WEB_INTERFACE → The identity module). */
+  draft(): Identity {
     const kp = generateKeyPair();
-    const seed = new Uint8Array(kp.secretKey.subarray(16)); // the PKCS8 DER's last 32 bytes
     const pubKeyHex = toHex(kp.publicKey);
+    this.draftKp = { pubKeyHex, seed: new Uint8Array(kp.secretKey.subarray(16)) }; // the DER's last 32 bytes
+    return { pubKeyHex };
+  }
+
+  /** Seal the drafted key under the passphrase and store it unlocked — the created
+   *  key is the drafted key, so a passphrase saved against the draft's prefix opens
+   *  it later. A created key has no file yet, so the backup flag is unset. */
+  async create(passphrase: string): Promise<Identity> {
+    if (this.draftKp === null) throw new IdentityError('no drafted key to create.');
+    const { pubKeyHex, seed } = this.draftKp;
     const envelope = await seal(seed, pubKeyHex, passphrase);
+    this.draftKp = null;
     return this.adopt(envelope, seed, false);
+  }
+
+  /** Drop a drafted key the reader did not create. */
+  discardDraft(): void {
+    this.draftKp = null;
   }
 
   /** Say whether a file's text is the demo UI's clear shape or an encrypted

@@ -9,7 +9,7 @@ import { IdentityModule, IDENTITY_KEY, type Identity } from '../src/identity/ide
 // module). Under vitest the vite alias routes @dagsocial/types' `crypto` through the
 // shim, and Node's real `crypto.verify(null, …)` — the node's verifier path —
 // confirms a signature the module makes, the way crypto-shim.test.ts reaches real
-// Node crypto. scrypt runs at the production N here; each generate/unlock pays it.
+// Node crypto. scrypt runs at the production N here; each create/unlock pays it.
 
 function toHex(bytes: Uint8Array): string {
   let s = '';
@@ -27,14 +27,20 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(bin);
 }
 
+// The common path: draft a key, then seal and store it under a passphrase.
+function mint(m: IdentityModule, passphrase: string): Promise<Identity> {
+  m.draft();
+  return m.create(passphrase);
+}
+
 beforeEach(() => {
   localStorage.clear();
 });
 
-describe('identity module — generate, export, import', () => {
-  it('generate → export → import round trips the key through an encrypted envelope', async () => {
+describe('identity module — create, export, import', () => {
+  it('create → export → import round trips the key through an encrypted envelope', async () => {
     const a = new IdentityModule();
-    const id = await a.generate('at-rest passphrase');
+    const id = await mint(a, 'at-rest passphrase');
     expect(id.pubKeyHex).toMatch(/^[0-9a-f]{64}$/);
 
     const text = await a.exportFile('file password');
@@ -95,7 +101,7 @@ describe('identity module — generate, export, import', () => {
 
   it('current() carries the public key and lock state alone — never the seed', async () => {
     const m = new IdentityModule();
-    await m.generate('pw');
+    await mint(m, 'pw');
     const cur = m.current();
     expect(cur).not.toBeNull();
     expect(Object.keys(cur as object).sort()).toEqual(['locked', 'pubKeyHex']);
@@ -106,7 +112,7 @@ describe('identity module — generate, export, import', () => {
 
   it('forget() drops the identity from memory, storage and the backup flag', async () => {
     const m = new IdentityModule();
-    await m.generate('pw');
+    await mint(m, 'pw');
     await m.exportFile('file'); // sets the backup flag
     expect(m.backedUp()).toBe(true);
 
@@ -121,7 +127,7 @@ describe('identity module — generate, export, import', () => {
 
 describe('identity module — locked at rest, unlocked on demand', () => {
   it('a stored identity restores locked; unlock loads the seed, lock drops it', async () => {
-    const id = await new IdentityModule().generate('the passphrase');
+    const id = await mint(new IdentityModule(), 'the passphrase');
 
     const b = new IdentityModule(); // reads the stored envelope
     expect(b.current()).toEqual({ pubKeyHex: id.pubKeyHex, locked: true });
@@ -137,15 +143,15 @@ describe('identity module — locked at rest, unlocked on demand', () => {
   });
 
   it('unlock refuses a wrong passphrase and stays locked', async () => {
-    const id = await new IdentityModule().generate('right');
+    const id = await mint(new IdentityModule(), 'right');
     const b = new IdentityModule();
     await expect(b.unlock('wrong')).rejects.toThrow(/does not open this key/);
     expect(b.current()).toEqual({ pubKeyHex: id.pubKeyHex, locked: true });
   });
 
-  it('the backup flag: unset on generate, set on export and import, cleared on forget', async () => {
+  it('the backup flag: unset on create, set on export and import, cleared on forget', async () => {
     const m = new IdentityModule();
-    await m.generate('pw');
+    await mint(m, 'pw');
     expect(m.backedUp()).toBe(false); // created — no file yet
     const text = await m.exportFile('file pw');
     expect(m.backedUp()).toBe(true); // exported — a file exists
@@ -155,12 +161,12 @@ describe('identity module — locked at rest, unlocked on demand', () => {
     expect(m.backedUp()).toBe(true); // imported — a file already existed
   });
 
-  it('onChange fires on generate, forget and import', async () => {
+  it('onChange fires on create, forget and import', async () => {
     const m = new IdentityModule();
     const events: Array<Identity | null> = [];
     m.onChange((id) => events.push(id));
 
-    const gen = await m.generate('pw');
+    const gen = await mint(m, 'pw');
     expect(events.at(-1)).toEqual({ pubKeyHex: gen.pubKeyHex });
 
     const text = await m.exportFile('file pw');
@@ -181,7 +187,7 @@ describe('identity module — persistence and storage guards', () => {
       throw new Error('storage blocked');
     };
     try {
-      const id = await m.generate('pw');
+      const id = await mint(m, 'pw');
       expect(m.current()).toEqual({ pubKeyHex: id.pubKeyHex, locked: false });
     } finally {
       localStorage.setItem = orig;
@@ -220,7 +226,7 @@ describe('identity module — persistence and storage guards', () => {
 describe('identity module — signing interop with the node verifier', () => {
   it('a signature verifies under Node crypto.verify(null, …) with the SPKI-wrapped key', async () => {
     const m = new IdentityModule();
-    const { pubKeyHex } = await m.generate('pw');
+    const { pubKeyHex } = await mint(m, 'pw');
     const txIdHex = '9a'.repeat(32);
     const sigHex = m.sign(txIdHex);
     expect(sigHex).toHaveLength(128);
@@ -236,10 +242,57 @@ describe('identity module — signing interop with the node verifier', () => {
 
   it('sign refuses anything but 64 lowercase hex — it is the one path to the seed', async () => {
     const m = new IdentityModule();
-    await m.generate('pw');
+    await mint(m, 'pw');
     for (const bad of ['', 'abc', 'ab'.repeat(31), 'ab'.repeat(33), 'zz'.repeat(32), 'AB'.repeat(32), `${'ab'.repeat(32)} `]) {
       expect(() => m.sign(bad), bad).toThrow(/64 hex/);
     }
     expect(m.sign('ab'.repeat(32))).toHaveLength(128);
+  });
+});
+
+describe('identity module — the draft split', () => {
+  it('draft() holds a key privately — not stored, current() unchanged', () => {
+    const m = new IdentityModule();
+    const d = m.draft();
+    expect(d.pubKeyHex).toMatch(/^[0-9a-f]{64}$/);
+    expect(m.current()).toBeNull();
+    expect(localStorage.getItem(IDENTITY_KEY)).toBeNull();
+  });
+
+  it('create() seals and stores the drafted key, loaded unlocked; the created key is the drafted one', async () => {
+    const m = new IdentityModule();
+    const d = m.draft();
+    const id = await m.create('pw');
+    expect(id.pubKeyHex).toBe(d.pubKeyHex);
+    expect(m.current()).toEqual({ pubKeyHex: d.pubKeyHex, locked: false });
+    expect(m.sign('ab'.repeat(32))).toHaveLength(128);
+  });
+
+  it('a second draft replaces the first', async () => {
+    const m = new IdentityModule();
+    const d1 = m.draft();
+    const d2 = m.draft();
+    expect(d2.pubKeyHex).not.toBe(d1.pubKeyHex);
+    expect((await m.create('pw')).pubKeyHex).toBe(d2.pubKeyHex);
+  });
+
+  it('discardDraft drops the draft, and create with no draft throws', async () => {
+    const m = new IdentityModule();
+    m.draft();
+    m.discardDraft();
+    await expect(m.create('pw')).rejects.toThrow(/no drafted key/);
+    await expect(new IdentityModule().create('pw')).rejects.toThrow(/no drafted key/);
+  });
+
+  it('draft and discardDraft do not fire onChange; create does', async () => {
+    const m = new IdentityModule();
+    const events: Array<Identity | null> = [];
+    m.onChange((id) => events.push(id));
+    m.draft();
+    m.discardDraft();
+    expect(events).toHaveLength(0);
+    m.draft();
+    const id = await m.create('pw');
+    expect(events).toEqual([{ pubKeyHex: id.pubKeyHex }]);
   });
 });
