@@ -1,5 +1,5 @@
 // The tiling workspace: columns of regions, each region a stack of windows. A
-// thread is one kind of window; @settings is the other. These are pure state
+// thread is one kind of window; @profile is the other. These are pure state
 // transforms — the
 // controller decides what to re-render from what each returns.
 //

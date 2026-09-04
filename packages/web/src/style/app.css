@@ -345,7 +345,7 @@ header .spacer { flex: 1 1 auto; }
 .mini:disabled { opacity: .35; cursor: default; }
 .mini:disabled:hover { background: transparent; }
 
-/* ---------- window body — the profile window's rows (and @settings until it retires) ---------- */
+/* ---------- window body — the profile window's rows ---------- */
 .winbody { max-width: 660px; }
 .winbody .row { display: flex; align-items: baseline; gap: 8px; margin-bottom: 14px; }
 .winbody label { font-size: 12.5px; color: var(--inkMute); flex: 0 0 96px; }
