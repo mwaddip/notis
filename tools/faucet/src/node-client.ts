@@ -23,7 +23,7 @@ export interface NodeClient {
   status(): Promise<NodeStatus>;
   karmaBoxes(pubKeyHex: string): Promise<BoxRef[]>;
   creditBoxes(pubKeyHex: string): Promise<BoxRef[]>;
-  submitInvite(tx: Record<string, unknown>): Promise<void>;
+  submitInvite(tx: Record<string, unknown>): Promise<{ expiresAtHeight: number }>;
   submitTransfer(tx: Record<string, unknown>): Promise<void>;
 }
 
@@ -85,15 +85,25 @@ export class HttpNodeClient implements NodeClient {
     return data.boxes ?? [];
   }
 
-  submitInvite(tx: Record<string, unknown>): Promise<void> {
-    return this.post(`${this.base}/invites`, { tx });
+  /**
+   * NODE_INTERFACE → Invites: the 201 body carries `expiresAtHeight`, the
+   * mempool entry's expiry, relayed so a caller can bound its wait rather
+   * than guess one. A 2xx body with no numeric `expiresAtHeight` is refused
+   * — the posture `status()` already takes for a missing field.
+   */
+  async submitInvite(tx: Record<string, unknown>): Promise<{ expiresAtHeight: number }> {
+    const body = (await this.post(`${this.base}/invites`, { tx })) as { expiresAtHeight?: number };
+    if (typeof body.expiresAtHeight !== 'number') {
+      throw new NodeError(502, 'invite response carried no expiresAtHeight');
+    }
+    return { expiresAtHeight: body.expiresAtHeight };
   }
 
-  submitTransfer(tx: Record<string, unknown>): Promise<void> {
-    return this.post(`${this.base}/credits/transfer`, { tx });
+  async submitTransfer(tx: Record<string, unknown>): Promise<void> {
+    await this.post(`${this.base}/credits/transfer`, { tx });
   }
 
-  private async post(url: string, body: unknown): Promise<void> {
+  private async post(url: string, body: unknown): Promise<unknown> {
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -101,6 +111,7 @@ export class HttpNodeClient implements NodeClient {
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     if (!res.ok) throw new NodeError(res.status, await failure(res));
+    return res.json();
   }
 }
 

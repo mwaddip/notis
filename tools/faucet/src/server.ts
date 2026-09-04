@@ -58,9 +58,9 @@ export function createApp(cfg: FaucetConfig, client: NodeClient): express.Expres
       const built = buildInviteTx(
         cfg, chain.view(await client.karmaBoxes(cfg.publicKeyHex)), pubkey, blockHeight, protocolVersion,
       );
-      await client.submitInvite(built.tx);
+      const { expiresAtHeight } = await client.submitInvite(built.tx);
       chain.advance(built);
-      res.status(202).json({ txId: built.txId, status: 'pending' });
+      res.status(202).json({ txId: built.txId, status: 'pending', expiresAtHeight });
     } catch (err) {
       // Whatever went wrong, the tip is no longer known to be what the node
       // holds. The cost of dropping it is one reselection.
