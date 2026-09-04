@@ -157,6 +157,21 @@ describe('the author window', () => {
     expect(h.calls.unlock).toEqual(['pw']);
     expect(h.calls.vouch).toEqual([AUTHOR]);
   });
+
+  it('a locked unvouch mounts the unlock under the your-vouch row, then unvouches', async () => {
+    const h = noHandlers();
+    const b = authorBody(h, baseCtx({ locked: true, yourVouch: { kind: 'vouched', sinceBlock: 5000, cooldownBlocks: 60 } }));
+    const yv = [...b.querySelectorAll('.row')].find((r) => r.querySelector('label')?.textContent === 'your vouch')!;
+    [...yv.querySelectorAll('button')].find((x) => x.textContent === 'unvouch')!.click();
+    const form = b.querySelector('.card-unlock form.pf') as HTMLFormElement;
+    expect(form).not.toBeNull();
+    expect(h.calls.unvouch).toHaveLength(0); // the unvouch waits on the unlock
+    (form.querySelector('input[type="password"]') as HTMLInputElement).value = 'pw';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.calls.unlock).toEqual(['pw']);
+    expect(h.calls.unvouch).toEqual([AUTHOR]);
+  });
 });
 
 // ---------------------------------------------------------------------------

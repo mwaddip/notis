@@ -71,6 +71,16 @@ export function authorBody(handlers: AuthorHandlers, ctx: AuthorCtx): HTMLElemen
     }
     handlers.vouch(key);
   };
+  // Unvouch is a write too, so a locked identity unlocks under the your-vouch row
+  // first, exactly as the vouch does (WEB_INTERFACE → The identity module: every
+  // write checks locked before its flight).
+  const unvouchAction = (key: string): void => {
+    if (ctx.locked && ctx.ownKey && yourVouchRow) {
+      mountRowUnlock(yourVouchRow, ctx.ownKey, handlers.unlockIdentity, () => handlers.unvouch(key));
+      return;
+    }
+    handlers.unvouch(key);
+  };
   // The mark's handlers: no `locked`, so markNode calls onVouch directly and the
   // unlock is this window's, not a card's.
   const markHandlers = { onVouch: vouchAction, onAuthor: (k: string) => handlers.openAuthor(k, ctx.origin) };
@@ -102,7 +112,7 @@ export function authorBody(handlers: AuthorHandlers, ctx: AuthorCtx): HTMLElemen
   if (ctx.yourVouch) {
     const { row: r, field } = row('your vouch');
     yourVouchRow = r;
-    yourVouch(field, handlers, ctx, vouchAction);
+    yourVouch(field, handlers, ctx, vouchAction, unvouchAction);
     b.appendChild(r);
   }
 
@@ -151,7 +161,7 @@ function endorsers(field: HTMLElement, handlers: AuthorHandlers, ctx: AuthorCtx,
   }
 }
 
-function yourVouch(field: HTMLElement, handlers: AuthorHandlers, ctx: AuthorCtx, vouchAction: (k: string) => void): void {
+function yourVouch(field: HTMLElement, handlers: AuthorHandlers, ctx: AuthorCtx, vouchAction: (k: string) => void, unvouchAction: (k: string) => void): void {
   const yv = ctx.yourVouch!;
   if (yv.kind === 'reason') {
     // A one-line reason the reader cannot vouch (WEB_INTERFACE → The author
@@ -174,7 +184,7 @@ function yourVouch(field: HTMLElement, handlers: AuthorHandlers, ctx: AuthorCtx,
     }
     const unvouch = el('button', 'mini', 'unvouch');
     unvouch.setAttribute('aria-label', 'withdraw your vouch');
-    unvouch.addEventListener('click', () => handlers.unvouch(ctx.authorKey));
+    unvouch.addEventListener('click', () => unvouchAction(ctx.authorKey));
     field.appendChild(unvouch);
     // The voice rule says what happens, in text — an aria-label is not that
     // (HOUSE_STYLE → Voice), parallel to the plus state's stakes sentence.
