@@ -9,10 +9,6 @@ identity display with the vouch mark, the author window and the author-posts win
 unvouch, invite from the profile — are implemented; withdraw and prune are not built
 **Protocol version:** read from the node, never held — see Invariants
 
-> ⚠ **AHEAD OF CODE (2026-09-04)** — the membership actions: the `Status:` line above, → The identity
-> display, → The author window, the three builders and entry kinds in → The wallet, the `invites` row in
-> → The profile window, the Writes rows and the read-surface note on `author=`, and the `title` sentence
-> in `HOUSE_STYLE → Interaction` state the unit as it lands on this branch; retired at the contract pass.
 
 > **The demo UI (`packages/node/public/index.html`) is not this contract's subject.** It is a debug
 > interface. Do not write an interface contract for it, and do not treat it as a product surface.
@@ -298,8 +294,10 @@ when `GET /posts/:postId` answers `confirmed`, expired on a 404 or once the tip 
 `expiresAtHeight`; a pending like is landed when `likedByViewer` turns `true`. That field reflects
 store records only, so **the client overlays its own pending likes** onto it until they land or expire.
 A pending vouch is landed when `GET /vouches?voucher=<key>` lists the pair; a pending unvouch when the
-pair is absent and a cooldown row of the box's value stands; a pending invite when `GET /invites/<key>`
-lists a bond naming the invitee — each expired once the tip passes its `expiresAtHeight`.
+pair is absent — the escrow it creates is no signal, since one born past its release height is returned
+by the next block's settlement and its cooldown row can stand for a single block the poll never sees
+(`NODE_INTERFACE → Vouch transition rules`); a pending invite when `GET /invites/<key>` lists a bond
+naming the invitee — each expired once the tip passes its `expiresAtHeight`.
 
 **The reader's vouch set is client state read from the node, never stored:** `GET /vouches?voucher=<key>`
 to the end of `next` at identity load, again on every vouch or unvouch landing, and the cooldown arm
@@ -477,7 +475,7 @@ another identity. **`unvouch`** resolves the vouch box at the press (→ The wal
 re-renders the row to `+ vouch` and says so — *"that vouch was already withdrawn."* Its copy states what
 happens: the stake is held until block N and no new vouch until then. The reasons the reader cannot
 vouch, one line each: *"vouching comes with membership"*, *"your stake from an unvouch is held until
-block N"*, *"this is you"*, *"load an identity to vouch"*. With no identity loaded the window is the
+block N"*, *"this is you"*. With no identity loaded the window is the
 read surface exactly — key, standing, endorsers, no marks and no `your vouch` row.
 
 **The author-posts window — `@posts:<64hex>`** — opened from `posts`, placed by the same rule (from the
@@ -496,7 +494,7 @@ pane the strip opens. `↻` reports what it did — `4 new posts` / `no new post
 | Like | `POST /likes` — `{ tx }` → `{ status, txId, expiresAtHeight }` | *(write surface)* |
 | Standing and balance | `GET /karma/:userId`, `GET /credits/:userId` | *(write surface)* — the spendable view |
 | Vouch | `POST /vouches` — `{ tx }` → `{ status, txId, expiresAtHeight }` | *(membership actions)* |
-| Unvouch | `DELETE /vouches/:targetId` — `{ tx }` → `{ status, txId, expiresAtHeight }` — the one non-`POST` write | *(membership actions)* |
+| Unvouch | `DELETE /vouches/:targetId` — `{ tx }` → `{ status, txId, expiresAtHeight, karmaReturnsAtBlock }` — the one non-`POST` write; the client reads the release from the cooldown arm, not the last field | *(membership actions)* |
 | Invite | `POST /invites` — `{ tx }` → `{ status, txId, expiresAtHeight, bondBoxId }` | *(membership actions)* |
 | The reader's vouches, cooldowns and standing bonds; an identity's endorsers and count | `GET /vouches?voucher=`, `GET /vouches?voucher=&cooldowns=1`, `GET /invites/:userId`, `GET /vouches?target=` | *(membership actions)* — reads, in the read client |
 | Withdraw content | `POST /posts/:id/withdraw` | not built |
