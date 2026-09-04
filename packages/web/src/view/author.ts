@@ -28,9 +28,9 @@ function mono(text: string): HTMLElement {
 /** The your-vouch row's state, computed by the App (WEB_INTERFACE → The author
  *  window). `null` with no identity loaded — the row is absent. */
 export type YourVouch =
-  | { kind: 'plus'; cooldownBlocks: number }        // + vouch, the stakes sentence
-  | { kind: 'vouched'; sinceBlock: number | null }  // ✓ vouched since block N · unvouch
-  | { kind: 'reason'; text: string };               // the one line the reader cannot vouch
+  | { kind: 'plus'; cooldownBlocks: number }                          // + vouch, the stakes sentence
+  | { kind: 'vouched'; sinceBlock: number | null; cooldownBlocks: number } // ✓ vouched since N · unvouch, the held sentence
+  | { kind: 'reason'; text: string };                                 // the one line the reader cannot vouch
 
 export interface AuthorCtx {
   authorKey: string;
@@ -153,15 +153,19 @@ function endorsers(field: HTMLElement, handlers: AuthorHandlers, ctx: AuthorCtx,
 
 function yourVouch(field: HTMLElement, handlers: AuthorHandlers, ctx: AuthorCtx, vouchAction: (k: string) => void): void {
   const yv = ctx.yourVouch!;
+  if (yv.kind === 'reason') {
+    // A one-line reason the reader cannot vouch (WEB_INTERFACE → The author
+    // window); no flight applies — there is nothing in flight.
+    field.appendChild(el('span', 'hint', yv.text));
+    return;
+  }
   if (yv.kind === 'plus') {
     // The mark as on a card, with the sentence stating what a vouch stakes.
     field.appendChild(markNode(ctx.authorKey, { state: 'plus', count: null }, { onVouch: vouchAction, onAuthor: (k) => handlers.openAuthor(k, ctx.origin) }));
     const line = el('span', 'hint');
     line.append('stakes 1 karma, returned when you unvouch after a cooldown of ', mono(String(yv.cooldownBlocks)), ' blocks.');
     field.appendChild(line);
-    return;
-  }
-  if (yv.kind === 'vouched') {
+  } else {
     field.append(el('span', 'standing', 'vouched'));
     if (yv.sinceBlock !== null) {
       const since = el('span', 'hint');
@@ -169,15 +173,19 @@ function yourVouch(field: HTMLElement, handlers: AuthorHandlers, ctx: AuthorCtx,
       field.appendChild(since);
     }
     const unvouch = el('button', 'mini', 'unvouch');
-    unvouch.setAttribute('aria-label', 'withdraw your vouch — the stake is held through a cooldown, then returns');
+    unvouch.setAttribute('aria-label', 'withdraw your vouch');
     unvouch.addEventListener('click', () => handlers.unvouch(ctx.authorKey));
     field.appendChild(unvouch);
-    // The flight's stage line below the action while it runs.
-    if (ctx.flight) field.appendChild(stageLine(ctx.flight));
-    return;
+    // The voice rule says what happens, in text — an aria-label is not that
+    // (HOUSE_STYLE → Voice), parallel to the plus state's stakes sentence.
+    const held = el('span', 'hint');
+    held.append('your stake is held for ', mono(String(yv.cooldownBlocks)), ' blocks after an unvouch, and no new vouch until then.');
+    field.appendChild(held);
   }
-  // A one-line reason the reader cannot vouch (WEB_INTERFACE → The author window).
-  field.appendChild(el('span', 'hint', yv.text));
+  // The flight's stage line, whatever its ending — a vouch or unvouch rejected or
+  // expired from this window shows it here, not nowhere (WEB_INTERFACE → The
+  // author window).
+  if (ctx.flight) field.appendChild(stageLine(ctx.flight));
 }
 
 /** The unlock form in a row under the your-vouch row; a correct passphrase loads

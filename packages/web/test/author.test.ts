@@ -82,15 +82,30 @@ describe('the author window', () => {
     expect(h.calls.vouch).toEqual([AUTHOR]);
   });
 
-  it('the your-vouch row: ✓ vouched since block N · unvouch, and unvouch fires', () => {
+  it('the your-vouch row: ✓ vouched since block N · unvouch, a visible held hint, and unvouch fires', () => {
     const h = noHandlers();
-    const b = authorBody(h, baseCtx({ yourVouch: { kind: 'vouched', sinceBlock: 5000 } }));
+    const b = authorBody(h, baseCtx({ yourVouch: { kind: 'vouched', sinceBlock: 5000, cooldownBlocks: 60 } }));
     const yv = [...b.querySelectorAll('.row')].find((r) => r.querySelector('label')?.textContent === 'your vouch')!;
     expect(yv.textContent).toContain('vouched');
     expect(yv.textContent).toContain('5000');
+    // The voice rule: what happens stated in visible text, not only an aria-label.
+    expect(yv.textContent).toContain('held for');
+    expect(yv.textContent).toContain('60');
     const unvouch = [...yv.querySelectorAll('button')].find((x) => x.textContent === 'unvouch')!;
     unvouch.click();
     expect(h.calls.unvouch).toEqual([AUTHOR]);
+  });
+
+  it('a flight ending shows in the your-vouch row whatever its ending — plus and vouched alike', () => {
+    const h = noHandlers();
+    // A rejected vouch from this window shows its reason in the row's stage line.
+    const plus = authorBody(h, baseCtx({ yourVouch: { kind: 'plus', cooldownBlocks: 60 }, flight: { stage: 'rejected', reason: 'vouch rejected: already vouched' } }));
+    const plusRow = [...plus.querySelectorAll('.row')].find((r) => r.querySelector('label')?.textContent === 'your vouch')!;
+    expect(plusRow.querySelector('.stage')?.textContent).toContain('already vouched');
+    // An unvouch's stage line shows on the vouched state too.
+    const vouched = authorBody(h, baseCtx({ yourVouch: { kind: 'vouched', sinceBlock: 5000, cooldownBlocks: 60 }, flight: { stage: 'submitting' } }));
+    const vRow = [...vouched.querySelectorAll('.row')].find((r) => r.querySelector('label')?.textContent === 'your vouch')!;
+    expect(vRow.querySelector('.stage')?.textContent).toContain('submitting');
   });
 
   it('the your-vouch row: a one-line reason the reader cannot vouch', () => {
