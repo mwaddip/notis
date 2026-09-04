@@ -18,6 +18,14 @@ function pending(content: string): PostJson {
 }
 const stageText = (flight: Flight): string => card(pending('x'), { flight }).querySelector('.stage')?.textContent ?? '';
 
+function confirmed(author: string): PostJson {
+  return {
+    id: 'p1', content: 'hello', contentHash: contentHashHex('hello'), author, parentRefs: [],
+    protocolVersion: 1, type: 'regular', status: 'confirmed', blockHeight: 6001, blockIndex: 0,
+    blockCreatedAt: 0, likeCount: 0, likedByViewer: null,
+  };
+}
+
 describe('card — the stage line', () => {
   it('reads submitting…, then submitted', () => {
     expect(stageText({ stage: 'submitting' })).toContain('submitting');
@@ -37,5 +45,44 @@ describe('card — the stage line', () => {
 
   it('a rejected card reads the node reason, never a status code', () => {
     expect(stageText({ stage: 'rejected', reason: 'the node is full right now.' })).toBe('the node is full right now.');
+  });
+});
+
+describe('card — · you', () => {
+  it('marks the reader\'s own card with · you after the prefix, and no other', () => {
+    const own = card(confirmed(PUB), { you: true });
+    expect(own.querySelector('.you')?.textContent).toBe('· you');
+    expect(card(confirmed('bb'.repeat(32)), { you: false }).querySelector('.you')).toBeNull();
+    expect(card(confirmed(PUB)).querySelector('.you')).toBeNull(); // no opt → no mark
+  });
+});
+
+describe('card — a locked like', () => {
+  it('shows the unlock form under the meta on the press, then the like proceeds', async () => {
+    const unlocked: string[] = [];
+    const liked: string[] = [];
+    const c = card(confirmed('bb'.repeat(32)), {
+      onLike: (id) => liked.push(id),
+      locked: true,
+      ownKey: PUB,
+      onUnlock: async (p) => { unlocked.push(p); },
+    });
+    [...c.querySelectorAll('button')].find((b) => b.textContent === 'like')!.click();
+    const form = c.querySelector('.card-unlock form.pf') as HTMLFormElement;
+    expect(form).not.toBeNull(); // the unlock form appeared under the meta
+    expect(liked).toHaveLength(0); // the like has not fired yet
+    (form.querySelector('input[type="password"]') as HTMLInputElement).value = 'pw';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(unlocked).toEqual(['pw']); // the seed was unlocked
+    expect(liked).toEqual(['p1']); // and the like proceeded
+  });
+
+  it('an unlocked like fires at once — no unlock form', () => {
+    const liked: string[] = [];
+    const c = card(confirmed('bb'.repeat(32)), { onLike: (id) => liked.push(id), locked: false, ownKey: PUB, onUnlock: async () => {} });
+    [...c.querySelectorAll('button')].find((b) => b.textContent === 'like')!.click();
+    expect(c.querySelector('.card-unlock')).toBeNull();
+    expect(liked).toEqual(['p1']);
   });
 });

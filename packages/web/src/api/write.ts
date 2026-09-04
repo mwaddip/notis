@@ -63,7 +63,7 @@ export class WriteClient {
  * which 503 `mempool full` and 500 use even on the post and like routes). A body
  * that is not JSON — a bare 413, say — keeps the status text.
  */
-async function normalizeRejection(res: Response): Promise<Rejection> {
+export async function normalizeRejection(res: Response): Promise<Rejection> {
   let message = res.statusText || `HTTP ${res.status}`;
   try {
     const body: unknown = await res.json();

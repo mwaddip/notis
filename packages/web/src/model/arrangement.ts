@@ -6,12 +6,18 @@ import { newWorkspace, newRegion, type Workspace, type Column } from './workspac
 // `serialise` and `parse` are inverses.
 
 const HEX64 = /^[0-9a-f]{64}$/i;
-const WINDOW_IDS = new Set<string>(['@settings']);
+const WINDOW_IDS = new Set<string>(['@profile']);
 
 /** A token is a real window id — a 64-hex post id, or a known @-window. The
  *  `@` prefix cannot collide with a 64-hex id. */
 export function isWindowId(k: string): boolean {
   return WINDOW_IDS.has(k) || HEX64.test(k);
+}
+
+/** A stored arrangement naming the retired `@settings` maps to `@profile`, so a
+ *  saved workspace survives the rename (WEB_INTERFACE → The profile window). */
+function mapRetired(k: string): string {
+  return k === '@settings' ? '@profile' : k;
 }
 
 export function serialise(ws: Workspace): string {
@@ -32,7 +38,7 @@ export function parse(spec: string): Workspace {
   for (const colSpec of s.split('|')) {
     const col: Column = { regions: [] };
     for (const regionSpec of colSpec.split('/')) {
-      const wins = regionSpec.split(',').map((x) => x.trim()).filter(isWindowId);
+      const wins = regionSpec.split(',').map((x) => x.trim()).map(mapRetired).filter(isWindowId);
       if (wins.length) col.regions.push(newRegion(wins));
     }
     if (col.regions.length) ws.columns.push(col);

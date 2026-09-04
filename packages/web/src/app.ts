@@ -1,9 +1,9 @@
 import { NodeClient, type Api } from './api/client';
-import type { PostJson, Tombstone, FeedRow, ThreadResult } from './api/dto';
+import type { PostJson, Tombstone, FeedRow, ThreadResult, KarmaResult } from './api/dto';
 import { POST_PRICE_THREAD, POST_PRICE_REPLY } from '@dagsocial/types';
-import { el } from './dom';
+import { el, shortHex } from './dom';
 import { contentHashHex } from './integrity';
-import { prefs, setTheme, setIdTint, setNode, writeStore, KEY_LAYOUT, type Theme, type IdTint } from './prefs';
+import { prefs, setTheme, setIdTint, setNode, setFaucet, writeStore, KEY_LAYOUT, type Theme, type IdTint } from './prefs';
 import { renderFeedInto } from './view/feed';
 import { renderPanesInto, renderRegionElement } from './view/panes';
 import { makeComposer, type ComposerController } from './view/composer';
@@ -11,15 +11,18 @@ import { serialise, parse } from './model/arrangement';
 import { reconcileNewer, isLivePost } from './model/feed-reconcile';
 import { flattenThread } from './model/thread';
 import { WriteClient, type Rejection } from './api/write';
-import { PendingLedger, reconcilePost, reconcileLike, pendingLikeTargets } from './wallet/ledger';
+import { FaucetClient, faucetLine } from './api/faucet';
+import { PendingLedger, reconcilePost, reconcileLike, reconcileGrant, pendingLikeTargets } from './wallet/ledger';
+import type { PendingEntry } from './wallet/types';
 import { readBuildContext } from './wallet/reads';
-import { submitPostFlow, submitLikeFlow, type SubmitDeps, type Signer } from './wallet/submit';
+import { submitPostFlow, submitLikeFlow, type SubmitDeps } from './wallet/submit';
 import { identity as identitySingleton } from './identity/identity';
+import { renderKarmaField } from './view/profile';
 import {
   newWorkspace, openWindow, closeWindow, moveLeft, moveRight, moveBelow, focusWindow, openSet,
   type Origin, type Region,
 } from './model/workspace';
-import { FEED_COMPOSER_KEY, type AppState, type ThreadState, type RenderCtx, type Handlers, type Submission, type FlightStage } from './model/state';
+import { FEED_COMPOSER_KEY, type AppState, type ThreadState, type RenderCtx, type Handlers, type Submission, type FlightStage, type AppIdentity } from './model/state';
 
 const FEED_LIMIT = 30;
 const THREAD_LIMIT = 50;
@@ -31,6 +34,15 @@ const isWin = (k: string): boolean => k.charAt(0) === '@';
 const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 const composerKey = (parentId: string | null): string => parentId ?? FEED_COMPOSER;
 const isSettled = (stage: FlightStage): boolean => stage === 'landed' || stage === 'expired' || stage === 'rejected';
+
+/** Hand the reader a file — an exported identity. A data: URL needs no object-URL
+ *  lifecycle and works from a static bundle (WEB_INTERFACE → The profile window). */
+function download(filename: string, text: string): void {
+  const a = document.createElement('a');
+  a.href = 'data:application/json;charset=utf-8,' + encodeURIComponent(text);
+  a.download = filename;
+  a.click();
+}
 
 // A rejection in the voice register — say what happened, never a status code
 // (HOUSE_STYLE → Voice). A client-side refusal (status 0) already reads that way.
@@ -53,7 +65,10 @@ export class App {
   private state: AppState;
   private client: Api;
   private writeClient: WriteClient;
-  private identity: Signer;
+  // The one identity reference the App holds; the wallet keeps its own narrower
+  // Signer seam (submit.ts), the extension swap point (WEB_INTERFACE → The identity module).
+  private idm: AppIdentity;
+  private faucetClient: FaucetClient;
   private ledger: PendingLedger;
   private appbar!: HTMLElement;
   private feedEl!: HTMLElement;
@@ -69,16 +84,21 @@ export class App {
   private submitSeq = 0;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private lastPolledHeight = 0;
+  // The loaded key's /karma, read on the profile window's open and its ↻, and a
+  // faucet grant in flight or one that lapsed — both feed the profile window's ctx.
+  private profileKarma: KarmaResult | null = null;
+  private grantView: { state: 'pending' } | { state: 'expired'; atHeight: number } | null = null;
 
   // Every dependency is injectable so a test can drive the App over fakes.
-  constructor(client?: Api, writeClient?: WriteClient, identity?: Signer, ledger?: PendingLedger) {
+  constructor(client?: Api, writeClient?: WriteClient, identity?: AppIdentity, ledger?: PendingLedger) {
     this.client = client ?? new NodeClient(() => prefs.node);
     this.writeClient = writeClient ?? new WriteClient(() => prefs.node);
-    this.identity = identity ?? identitySingleton;
-    // The ledger is for whichever identity is loaded at construction; a change of
-    // identity takes effect on the next reload, when a fresh App constructs a
-    // ledger for the new key (WEB_INTERFACE → The wallet).
-    this.ledger = ledger ?? new PendingLedger(this.identity.current()?.pubKeyHex ?? null);
+    this.idm = identity ?? identitySingleton;
+    this.faucetClient = new FaucetClient(() => prefs.faucet);
+    // The ledger is for the identity loaded at construction; a change of identity
+    // rebuilds it at once through onChange (WEB_INTERFACE → "An identity change
+    // takes effect at once").
+    this.ledger = ledger ?? new PendingLedger(this.idm.current()?.pubKeyHex ?? null);
     this.state = {
       feed: { posts: [], pending: [], next: null, report: null, olderReport: null, loaded: false, loading: false, error: null },
       threads: new Map(),
@@ -91,7 +111,8 @@ export class App {
       openThread: (id, origin) => this.openThread(id, origin),
       refreshFeed: () => void this.refreshFeed(),
       loadOlder: () => void this.loadOlder(),
-      openSettings: () => this.openSettings(),
+      openProfile: () => this.openProfile(),
+      refreshProfile: () => void this.refreshProfileKarma(),
       focus: (id) => this.focus(id),
       refreshThread: (id) => void this.refreshThread(id),
       threadMore: (id) => void this.threadMore(id),
@@ -102,6 +123,17 @@ export class App {
       setTheme: (t) => this.changeTheme(t),
       setIdTint: (m) => this.changeIdTint(m),
       setNode: (origin) => void this.changeNode(origin),
+      setFaucet: (origin) => this.changeFaucet(origin),
+      inspectFile: (text) => this.idm.inspectFile(text),
+      draftIdentity: () => this.idm.draft(),
+      createIdentity: async (p) => { await this.idm.create(p); },
+      discardDraft: () => this.idm.discardDraft(),
+      importIdentity: async (text, p) => { await this.idm.importFile(text, p); },
+      exportIdentity: (p) => this.exportIdentity(p),
+      forgetIdentity: () => this.idm.forget(),
+      lockIdentity: () => this.idm.lock(),
+      unlockIdentity: (p) => this.idm.unlock(p),
+      askFaucet: () => void this.askFaucet(),
       openComposer: (parentId) => this.openComposer(parentId),
       likePost: (postId) => void this.likePost(postId),
       tryAgain: (localKey) => void this.tryAgain(localKey),
@@ -111,7 +143,7 @@ export class App {
   /** The loaded identity's key, sent on every read once one exists and never
    *  before (WEB_INTERFACE → "Every read carries the viewer's key once an identity is loaded, and none does before"). */
   private viewer(): string | undefined {
-    return this.identity.current()?.pubKeyHex ?? undefined;
+    return this.idm.current()?.pubKeyHex ?? undefined;
   }
 
   // -------------------------------------------------------------------------
@@ -124,10 +156,16 @@ export class App {
     this.appbar = appbar;
     this.feedEl = feedEl;
     this.panesEl = panesEl;
+    // An identity change takes effect at once (WEB_INTERFACE → The identity module).
+    this.idm.onChange(() => this.onIdentityChange());
     this.restoreLayout();
     this.renderHeader();
     this.renderFeed();
     this.renderPanes();
+    // A restored ledger may already hold pending entries from a prior session; the
+    // poll runs while it holds one (WEB_INTERFACE → The wallet). startPoll guards on
+    // an empty ledger, so this is a no-op when there is nothing to reconcile.
+    this.startPoll();
   }
 
   start(appbar: HTMLElement, feedEl: HTMLElement, panesEl: HTMLElement): void {
@@ -161,7 +199,7 @@ export class App {
   // -------------------------------------------------------------------------
 
   private ctx(): RenderCtx {
-    const cur = this.identity.current();
+    const cur = this.idm.current();
     const likeTargets = pendingLikeTargets(this.ledger.all());
     return {
       openSet: openSet(this.state.workspace),
@@ -173,6 +211,13 @@ export class App {
       composerFor: (parentId) => this.composers.get(composerKey(parentId))?.el ?? null,
       submissionsFor: (parentId) => this.state.submissions.filter((s) => s.parentId === parentId),
       likePending: (postId) => this.optimisticLikes.has(postId) || likeTargets.has(postId),
+      // Profile window (WEB_INTERFACE → The profile window). identity carries the
+      // lock state the header prefix does not need.
+      identity: this.idm.current(),
+      backedUp: this.idm.backedUp(),
+      karma: this.profileKarma,
+      grant: this.grantView,
+      membershipBars: this.state.status?.membership ?? null,
     };
   }
 
@@ -188,14 +233,24 @@ export class App {
     bar.appendChild(brand);
     bar.appendChild(el('span', 'spacer'));
 
-    const settings = el('button', 'theme-btn');
-    settings.style.background = 'transparent';
-    settings.style.color = 'var(--ink)';
-    settings.style.border = '1px solid var(--borderStrong)';
-    settings.textContent = 'settings';
-    settings.setAttribute('aria-label', 'open settings');
-    settings.addEventListener('click', () => this.openSettings());
-    bar.appendChild(settings);
+    // The identity control — 'profile' with no identity, the key prefix in mono
+    // with one (shortHex(pubKeyHex, 16), the card's own rule), so an identity reads
+    // the same way in the header and on a card. No avatar, no identity colour
+    // (WEB_INTERFACE → The profile window; HOUSE_STYLE → Identity colour).
+    const cur = this.idm.current();
+    const profile = el('button', 'theme-btn');
+    profile.style.background = 'transparent';
+    profile.style.color = 'var(--ink)';
+    profile.style.border = '1px solid var(--borderStrong)';
+    if (cur === null) {
+      profile.textContent = 'profile';
+    } else {
+      profile.style.fontFamily = 'var(--mono)';
+      profile.textContent = shortHex(cur.pubKeyHex, 16);
+    }
+    profile.setAttribute('aria-label', 'open profile');
+    profile.addEventListener('click', () => this.openProfile());
+    bar.appendChild(profile);
 
     // The theme control names and shows the theme it would switch TO
     // (HOUSE_STYLE → Colour).
@@ -381,11 +436,17 @@ export class App {
     if (!isWin(id) && !this.threadLoaded(id)) void this.fetchThread(id);
   }
 
-  private openSettings(): void {
-    const res = openWindow(this.state.workspace, '@settings', { from: 'feed' });
+  private openProfile(): void {
+    const res = openWindow(this.state.workspace, '@profile', { from: 'feed' });
     this.saveLayout();
-    if (res.raised) this.renderRegion(res.region.uid);
-    else this.renderPanes();
+    if (res.raised) {
+      this.renderRegion(res.region.uid);
+    } else {
+      this.renderPanes();
+      // Read /karma for the loaded key when the window opens (WEB_INTERFACE → The
+      // profile window); a raise just brings the existing window forward.
+      void this.refreshProfileKarma();
+    }
   }
 
   private focus(id: string): void {
@@ -519,12 +580,12 @@ export class App {
   private changeTheme(t: Theme): void {
     setTheme(t);
     this.renderHeader();
-    this.renderRegionsFor('@settings');
+    this.renderRegionsFor('@profile');
   }
 
   private changeIdTint(m: IdTint): void {
     setIdTint(m); // the bars follow the CSS custom properties — no re-render needed
-    this.renderRegionsFor('@settings');
+    this.renderRegionsFor('@profile');
   }
 
   private async changeNode(origin: string): Promise<void> {
@@ -532,10 +593,122 @@ export class App {
     // Everything loaded came from the old node; drop it and re-read.
     this.state.threads.clear();
     this.state.posts.clear();
-    this.renderRegionsFor('@settings');
+    this.renderRegionsFor('@profile');
     this.renderPanes();
     await this.loadFeed();
     for (const id of openSet(this.state.workspace)) if (!isWin(id)) void this.fetchThread(id);
+  }
+
+  private changeFaucet(origin: string): void {
+    setFaucet(origin);
+    this.renderRegionsFor('@profile'); // the faucet row shows the new base, the step its availability
+  }
+
+  // -------------------------------------------------------------------------
+  // Identity — the profile window's operations, the /karma read, the faucet step
+  // (WEB_INTERFACE → The profile window, → The faucet step).
+  // -------------------------------------------------------------------------
+
+  /** An identity change (create, import, forget) takes effect at once: a fresh
+   *  ledger for the new key, the old key's poll and optimistic likes dropped, and
+   *  every open surface re-read with the new viewer (WEB_INTERFACE → "An identity
+   *  change takes effect at once"). */
+  private onIdentityChange(): void {
+    this.stopPoll();
+    this.optimisticLikes.clear();
+    this.state.submissions = [];
+    this.lastPolledHeight = 0;
+    this.profileKarma = null;
+    this.grantView = null;
+    this.ledger = new PendingLedger(this.idm.current()?.pubKeyHex ?? null);
+    this.startPoll(); // the new key's restored ledger may hold entries; guarded on empty
+    this.renderHeader();
+    this.renderPanes();
+    void this.loadFeed();
+    for (const id of openSet(this.state.workspace)) if (!isWin(id)) void this.fetchThread(id);
+    if (this.idm.current() !== null) void this.refreshProfileKarma();
+  }
+
+  /** A fresh sealed file for the reader to keep. Needs the seed, so the profile
+   *  unlocks first; the backup line then clears (WEB_INTERFACE → The profile window). */
+  private async exportIdentity(password: string): Promise<void> {
+    const text = await this.idm.exportFile(password);
+    const cur = this.idm.current();
+    download(`notis-identity-${cur ? cur.pubKeyHex.slice(0, 8) : 'key'}.json`, text);
+    this.renderRegionsFor('@profile'); // export fires no onChange; re-render clears the backup line
+  }
+
+  /** Read the loaded key's /karma for the profile window — on open and on the
+   *  window's ↻ (WEB_INTERFACE → The profile window). */
+  private async refreshProfileKarma(): Promise<void> {
+    const cur = this.idm.current();
+    if (cur === null) return;
+    try {
+      this.profileKarma = await this.client.karma(cur.pubKeyHex);
+    } catch {
+      return; // a failed read leaves the last-known karma; the ↻ retries
+    }
+    // The reader's own open/↻ re-renders the whole window, so standing (read from
+    // ctx.karma at body time) updates with the karma field, not just the karma
+    // field in place — that is the unsolicited grant landing's path (reconcileGrantEntry).
+    this.renderRegionsFor('@profile');
+  }
+
+  /** Ask the faucet — a 202 rides the bounded poll as a grant entry; a rejection is
+   *  one register line (WEB_INTERFACE → The faucet step). The request carries only
+   *  the public key, so a locked identity can ask. */
+  private async askFaucet(): Promise<void> {
+    const cur = this.idm.current();
+    if (cur === null) return;
+    const res = await this.faucetClient.askKarma(cur.pubKeyHex);
+    if ('message' in res) {
+      const region = this.regionFocusedOn('@profile');
+      if (region) {
+        region.report = faucetLine(res);
+        this.renderRegion(region.uid);
+      }
+      return;
+    }
+    const entry: PendingEntry = {
+      txId: res.txId,
+      kind: 'grant',
+      postId: cur.pubKeyHex, // the key the grant was asked for; a grant has no post
+      inputs: [],
+      expiresAtHeight: res.expiresAtHeight,
+      submittedAtHeight: this.lastPolledHeight,
+    };
+    this.ledger.add(entry);
+    this.grantView = { state: 'pending' };
+    this.startPoll();
+    this.renderProfileKarma();
+  }
+
+  /** Reconcile a grant against /karma: landed when a box appears, expired past its
+   *  height while still zero (WEB_INTERFACE → The faucet step). The karma field
+   *  updates in place — colour and text in a fixed box (HOUSE_STYLE → Motion). */
+  private async reconcileGrantEntry(entry: PendingEntry, tip: number): Promise<void> {
+    let karma;
+    try {
+      karma = await this.client.karma(entry.postId);
+    } catch {
+      return; // a failed read keeps the entry; the next tick retries
+    }
+    const outcome = reconcileGrant(entry, karma, tip);
+    if (outcome === 'pending') return;
+    this.ledger.remove(entry.txId);
+    if (outcome === 'landed') {
+      this.profileKarma = karma;
+      this.grantView = null;
+    } else {
+      this.grantView = { state: 'expired', atHeight: entry.expiresAtHeight };
+    }
+    this.renderProfileKarma();
+  }
+
+  /** Rebuild the profile window's karma field in place from the current ctx. */
+  private renderProfileKarma(): void {
+    const field = document.querySelector<HTMLElement>('.karma-field');
+    if (field) renderKarmaField(field, this.handlers, this.ctx());
   }
 
   // -------------------------------------------------------------------------
@@ -544,11 +717,11 @@ export class App {
   // -------------------------------------------------------------------------
 
   private submitDeps(): SubmitDeps {
-    return { reads: this.client, write: this.writeClient, ledger: this.ledger, identity: this.identity };
+    return { reads: this.client, write: this.writeClient, ledger: this.ledger, identity: this.idm };
   }
 
   private openComposer(parentId: string | null): void {
-    if (this.identity.current() === null) return;
+    if (this.idm.current() === null) return;
     const key = composerKey(parentId);
     const open = this.composers.get(key);
     if (open) {
@@ -573,7 +746,7 @@ export class App {
   }
 
   private async readAffordability(key: string, price: bigint): Promise<void> {
-    const cur = this.identity.current();
+    const cur = this.idm.current();
     if (cur === null) return;
     try {
       const ctx = await readBuildContext(this.client, this.ledger, cur.pubKeyHex);
@@ -593,8 +766,22 @@ export class App {
   }
 
   private async submitComposer(parentId: string | null, text: string): Promise<void> {
-    const cur = this.identity.current();
+    const cur = this.idm.current();
     if (cur === null) return;
+    if (cur.locked) {
+      // The seed is not loaded and sign is synchronous, so the unlock is a form in
+      // the composer foot; on success the flight continues (WEB_INTERFACE → The
+      // identity module). Esc returns to editing with the draft intact.
+      const ctrl = this.composers.get(composerKey(parentId));
+      if (!ctrl) return;
+      ctrl.showUnlock(cur.pubKeyHex, async (p) => {
+        await this.idm.unlock(p);
+        // Re-read the current draft — the reader may have edited it while the unlock
+        // form was open, so the captured text would be stale.
+        await this.submitComposer(parentId, ctrl.text());
+      });
+      return;
+    }
     // Collapse the composer into the hollow card in the same slot at once.
     this.composers.delete(composerKey(parentId));
     const submission: Submission = {
@@ -661,7 +848,7 @@ export class App {
   }
 
   private async likePost(postId: string): Promise<void> {
-    const cur = this.identity.current();
+    const cur = this.idm.current();
     if (cur === null || this.optimisticLikes.has(postId)) return;
     // The reader did it — show liked and move the count at once (WEB_INTERFACE →
     // The wallet). A number that moves in direct response to the reader's own
@@ -730,6 +917,10 @@ export class App {
     let feedTouched = false;
     const touchedPosts = new Set<string>();
     for (const entry of this.ledger.all()) {
+      if (entry.kind === 'grant') {
+        await this.reconcileGrantEntry(entry, tip);
+        continue;
+      }
       const fetched = await this.client.post(entry.postId, this.viewer());
       if (entry.kind === 'post') {
         const outcome = reconcilePost(entry, fetched, tip);

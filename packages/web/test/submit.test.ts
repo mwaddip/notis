@@ -4,6 +4,7 @@ import { submitPostFlow, submitLikeFlow, type SubmitDeps } from '../src/wallet/s
 import { PendingLedger } from '../src/wallet/ledger';
 import type { Api } from '../src/api/client';
 import type { KarmaBoxRow, KarmaResult, PostResult, StatusResult } from '../src/api/dto';
+import { karmaResult as karmaFixture } from './karma-fixture';
 import { isRejection } from '../src/api/write';
 import type { PostSubmitResult, LikeSubmitResult, Rejection } from '../src/api/write';
 
@@ -33,7 +34,7 @@ function statusResult(): StatusResult {
   };
 }
 function karmaResult(boxes: KarmaBoxRow[]): KarmaResult {
-  return { userId: PUB, total: '0', effective: '0', boxes, boxCount: boxes.length, next: null, height: 6000 };
+  return karmaFixture({ userId: PUB, boxes, boxCount: boxes.length, height: 6000 });
 }
 const FULL_BOXES: KarmaBoxRow[] = [{ boxId: BOX_ID, value: '227' }];
 function postResult(id: string, confirmedAuthor: string | null): PostResult {

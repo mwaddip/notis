@@ -1,4 +1,5 @@
 import { el, shortHex } from '../dom';
+import { unlockForm } from './passphrase';
 import type { PostJson, Tombstone, StumpJson, PrunedJson, WithdrawnJson } from '../api/dto';
 import { isTombstone } from '../api/dto';
 import { assertContentHash } from '../integrity';
@@ -36,6 +37,10 @@ export interface CardOpts {
   liked?: boolean;                       // show 'liked' rather than a control
   likePending?: boolean;                 // the like has not settled — inkMute, count + 1
   composerKey?: string;                  // for the data-composer-open focus hook
+  you?: boolean;                         // the reader's own card — · you after the prefix
+  locked?: boolean;                      // the identity is locked — a like prompts unlock first
+  ownKey?: string;                       // the reader's key, the unlock form's username
+  onUnlock?: (passphrase: string) => Promise<void>; // load the seed, then the like proceeds
 }
 
 /** Compact absolute local time; the on-chain marker is the block height, this
@@ -51,11 +56,14 @@ function whenText(ms: number): string {
   return d.toLocaleString(undefined, opts);
 }
 
-function whoRow(authorKey: string, whenMs: number | null): HTMLElement {
+function whoRow(authorKey: string, whenMs: number | null, you?: boolean): HTMLElement {
   const who = el('div', 'who');
   // No naming layer exists — the public key is the identity. The
   // prefix is machine data, so mono.
   who.appendChild(el('span', 'hex', shortHex(authorKey, 16)));
+  // The reader's own card — · you after the prefix, muted ink, text only, no
+  // colour (HOUSE_STYLE → Identity colour; WEB_INTERFACE → The profile window).
+  if (you) who.appendChild(el('span', 'you', '· you'));
   if (whenMs != null) who.appendChild(el('span', 'when', whenText(whenMs)));
   return who;
 }
@@ -174,10 +182,37 @@ function likeArea(post: PostJson, opts: CardOpts): HTMLElement | null {
     lb.setAttribute('aria-label', 'like this post — permanent, and moves karma to its author');
     if (post.likeCount > 0) lb.appendChild(el('span', 'n', String(post.likeCount)));
     lb.appendChild(el('span', null, 'like'));
-    lb.addEventListener('click', () => opts.onLike!(post.id));
+    lb.addEventListener('click', () => {
+      // A locked identity unlocks first, in a row under the meta and in response to
+      // the press; on success the like proceeds (WEB_INTERFACE → The identity module).
+      if (opts.locked && opts.ownKey && opts.onUnlock) {
+        mountLikeUnlock(lb, opts.ownKey, opts.onUnlock, () => opts.onLike!(post.id));
+        return;
+      }
+      opts.onLike!(post.id);
+    });
     return lb;
   }
   return likeNode(post.likeCount);
+}
+
+/** The unlock form in a row under the card's meta; a correct passphrase loads the
+ *  seed and the like proceeds, Esc drops the row. */
+function mountLikeUnlock(likeBtn: HTMLElement, ownKey: string, onUnlock: (p: string) => Promise<void>, onLiked: () => void): void {
+  const meta = likeBtn.closest('.meta');
+  if (!meta || meta.parentElement?.querySelector('.card-unlock')) return; // already open
+  const row = el('div', 'card-unlock');
+  row.appendChild(
+    unlockForm(
+      ownKey,
+      async (p) => {
+        await onUnlock(p);
+        onLiked();
+      },
+      () => row.remove(),
+    ),
+  );
+  meta.insertAdjacentElement('afterend', row);
 }
 
 /** ↩ reply — a ghost button in the meta row (WEB_INTERFACE → The write surface). */
@@ -241,7 +276,7 @@ function livePostCard(post: PostJson, opts: CardOpts): HTMLElement {
   const body = el('div', 'card-body');
 
   if (opts.parentRef) body.appendChild(parentRefNode(opts.parentRef));
-  body.appendChild(whoRow(post.author, post.blockCreatedAt));
+  body.appendChild(whoRow(post.author, post.blockCreatedAt, opts.you));
 
   if (post.content === null) {
     // Held by commit, body not yet backfilled on this node. Says what is,
@@ -285,7 +320,7 @@ function withdrawnCard(row: WithdrawnJson, opts: CardOpts): HTMLElement {
   const card = el('div', shellClasses('', opts));
   const body = el('div', 'card-body');
   if (opts.parentRef) body.appendChild(parentRefNode(opts.parentRef));
-  body.appendChild(whoRow(row.author, null));
+  body.appendChild(whoRow(row.author, null, opts.you));
   // Withdrawn is never "deleted": its replies survive and hang off it. Saying
   // so is the whole difference (WEB_INTERFACE → The three absence states).
   body.appendChild(el('div', 'withdrawn', 'withdrawn by its author — the replies below are untouched'));
@@ -305,7 +340,7 @@ function withdrawnCard(row: WithdrawnJson, opts: CardOpts): HTMLElement {
 function stumpCard(row: StumpJson, opts: CardOpts): HTMLElement {
   const card = el('div', shellClasses(' stump', opts));
   const body = el('div', 'card-body');
-  body.appendChild(whoRow(row.author, null));
+  body.appendChild(whoRow(row.author, null, opts.you));
   const s = el('div', 'stump-body');
   s.appendChild(document.createTextNode('subtree withdrawn by its author. '));
   s.appendChild(el('span', 'n', String(row.replyCount)));
@@ -331,7 +366,7 @@ function stumpCard(row: StumpJson, opts: CardOpts): HTMLElement {
 function prunedCard(row: PrunedJson, opts: CardOpts): HTMLElement {
   const card = el('div', shellClasses('', opts));
   const body = el('div', 'card-body');
-  body.appendChild(whoRow(row.author, null));
+  body.appendChild(whoRow(row.author, null, opts.you));
   const s = el('div', 'pruned-body');
   s.appendChild(document.createTextNode('pruned under root '));
   s.appendChild(el('span', 'n', shortHex(row.rootPostHash, 16)));

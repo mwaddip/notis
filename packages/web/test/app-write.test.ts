@@ -3,10 +3,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { App } from '../src/app';
 import { PendingLedger } from '../src/wallet/ledger';
 import type { Api } from '../src/api/client';
-import type { Signer } from '../src/wallet/submit';
+import type { AppIdentity } from '../src/model/state';
 import type { WriteClient } from '../src/api/write';
 import type { AppState } from '../src/model/state';
 import type { KarmaResult, PostResult, StatusResult, FeedResult, BlockCurrent } from '../src/api/dto';
+import { karmaResult } from './karma-fixture';
 
 // The App's write-surface wiring: a submission's flight, the bounded poll, and
 // the optimistic like — driven over fakes, asserted on state (the DOM rendering
@@ -50,6 +51,7 @@ interface Harness {
   feedViewers: Array<string | undefined>;
   setHeight(h: number): void;
   setLiked(v: boolean): void;
+  setLocked(v: boolean): void;
 }
 
 interface ThrowOpts {
@@ -61,13 +63,28 @@ interface ThrowOpts {
 
 function harness(thrown: ThrowOpts = {}): Harness {
   const signCalls: string[] = [];
-  const identity: Signer = { current: () => ({ pubKeyHex: PUB }), sign: (t) => { signCalls.push(t); return 'ab'.repeat(64); } };
+  const identity: AppIdentity = {
+    current: () => ({ pubKeyHex: PUB, locked }),
+    sign: (t) => { signCalls.push(t); return 'ab'.repeat(64); },
+    draft: () => ({ pubKeyHex: PUB }),
+    create: async () => ({ pubKeyHex: PUB }),
+    discardDraft: () => {},
+    inspectFile: () => ({ kind: 'clear', pubKeyHex: PUB }),
+    importFile: async () => ({ pubKeyHex: PUB }),
+    exportFile: async () => '{}',
+    unlock: async () => { locked = false; },
+    lock: () => { locked = true; },
+    forget: () => {},
+    backedUp: () => false,
+    onChange: () => {},
+  };
   const last = (): string => signCalls[signCalls.length - 1]!;
   const feedViewers: Array<string | undefined> = [];
   let blockHeight = 6001;
   let liked = false;
+  let locked = false;
 
-  const karma: KarmaResult = { userId: PUB, total: '227', effective: '227', boxes: [{ boxId: BOX, value: '227' }], boxCount: 1, next: null, height: 6000 };
+  const karma: KarmaResult = karmaResult({ userId: PUB, total: '227', effective: '227', boxes: [{ boxId: BOX, value: '227' }], boxCount: 1, height: 6000 });
   const fakeApi: Api = {
     feed: async (_p, viewer): Promise<FeedResult> => { feedViewers.push(viewer); return { posts: [], next: null, pending: [], pendingCount: 0 }; },
     thread: async () => null,
@@ -106,6 +123,7 @@ function harness(thrown: ThrowOpts = {}): Harness {
     drive: app as unknown as Harness['drive'],
     setHeight: (h) => { blockHeight = h; },
     setLiked: (v) => { liked = v; },
+    setLocked: (v) => { locked = v; },
   };
 }
 
@@ -126,6 +144,31 @@ describe('the App write surface — a post flight', () => {
     expect(sub).toMatchObject({ parentId: null, author: PUB, stage: 'submitted', postId: 'newpost' });
     expect(h.ledger.all().map((e) => e.kind)).toEqual(['post']);
     expect(h.drive.pollTimer).not.toBeNull();
+  });
+
+  it('a locked post unlocks in the foot and posts the current draft, edits and all', async () => {
+    const h = harness();
+    h.setLocked(true);
+    (h.app as unknown as { openComposer(p: string | null): void }).openComposer(null);
+    await flush();
+    const composer = (h.drive.composers as Map<string, { el: HTMLElement }>).get('@feed')!;
+    const ta = composer.el.querySelector('.composer-text') as HTMLTextAreaElement;
+    ta.value = 'first draft';
+    await h.drive.submitComposer(null, ta.value);
+    // No submission yet — the composer foot holds the unlock form, draft intact.
+    expect(h.drive.state.submissions).toHaveLength(0);
+    const form = composer.el.querySelector('form.pf') as HTMLFormElement;
+    expect(form).not.toBeNull();
+    // The reader edits the draft while the unlock form is open.
+    ta.value = 'edited while unlocking';
+    (form.querySelector('input[type="password"]') as HTMLInputElement).value = 'pw';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    // Unlocked — the flight posts the CURRENT draft, not the stale captured text.
+    expect(h.drive.state.submissions).toHaveLength(1);
+    expect(h.drive.state.submissions[0]!.stage).toBe('submitted');
+    expect(h.drive.state.submissions[0]!.content).toBe('edited while unlocking');
+    expect(h.ledger.all().map((e) => e.kind)).toEqual(['post']);
   });
 
   it('the bounded poll lands the submission on a height change and stops at zero', async () => {

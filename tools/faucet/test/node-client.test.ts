@@ -88,3 +88,35 @@ describe('HttpNodeClient status', () => {
     expect(init?.signal).toBeInstanceOf(AbortSignal);
   });
 });
+
+describe('HttpNodeClient submitInvite', () => {
+  const client = new HttpNodeClient('http://localhost:3000');
+  const tx = { inputs: [], outputs: [] };
+
+  // NODE_INTERFACE → Invites: the 201 body carries expiresAtHeight, relayed
+  // so a caller can bound its wait rather than guess one.
+  it('returns expiresAtHeight from the 201 body', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      json(201, {
+        status: 'pending', txId: 'cc'.repeat(32), expiresAtHeight: 821, bondBoxId: 'dd'.repeat(32),
+      }),
+    );
+    await expect(client.submitInvite(tx)).resolves.toEqual({ expiresAtHeight: 821 });
+  });
+
+  // NODE_INTERFACE → Faucet: a 2xx with no numeric expiresAtHeight is refused
+  // rather than relayed as an unbounded grant.
+  it('refuses a 201 with no expiresAtHeight', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      json(201, { status: 'pending', txId: 'cc'.repeat(32) }),
+    );
+    await expect(client.submitInvite(tx)).rejects.toThrow(NodeError);
+  });
+
+  it('a non-ok response is still a NodeError', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      json(400, { error: 'An invite may not name an existing account' }),
+    );
+    await expect(client.submitInvite(tx)).rejects.toThrow(NodeError);
+  });
+});

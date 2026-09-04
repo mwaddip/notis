@@ -13,6 +13,11 @@ function ctlBtn(glyph: string, label: string, fn: () => void): HTMLElement {
   return b;
 }
 
+/** The reader's own card, once an identity is loaded (WEB_INTERFACE → The profile window). */
+function isYou(author: string, ctx: RenderCtx): boolean {
+  return ctx.ownKey !== null && author === ctx.ownKey;
+}
+
 function parentRefFor(post: PostJson, ctx: RenderCtx): ParentRef | null {
   const parentId = post.parentRefs[0];
   if (!parentId) return null;
@@ -64,13 +69,13 @@ export function renderFeedInto(container: HTMLElement, feed: FeedState, handlers
 
   // The client's own root submissions, newest first, above the node's rows.
   for (const sub of [...ctx.submissionsFor(null)].reverse()) {
-    container.appendChild(card(submissionToPost(sub), { replyCount: null, flight: flightFor(sub, handlers.tryAgain), onOpen: (id) => handlers.openThread(id, { from: 'feed' }) }));
+    container.appendChild(card(submissionToPost(sub), { replyCount: null, flight: flightFor(sub, handlers.tryAgain), onOpen: (id) => handlers.openThread(id, { from: 'feed' }), you: isYou(sub.author, ctx) }));
   }
 
   // Pending (mempool) posts are the newest — they sit above the confirmed ones,
   // hollow, before any composer exists to create one.
   for (const p of feed.pending) {
-    container.appendChild(card(p, { replyCount: null, parentRef: parentRefFor(p, ctx), onOpen: (id) => handlers.openThread(id, { from: 'feed' }) }));
+    container.appendChild(card(p, { replyCount: null, parentRef: parentRefFor(p, ctx), onOpen: (id) => handlers.openThread(id, { from: 'feed' }), you: isYou(p.author, ctx) }));
   }
   for (const p of feed.posts) {
     container.appendChild(
@@ -79,6 +84,7 @@ export function renderFeedInto(container: HTMLElement, feed: FeedState, handlers
         replyCount: null,
         parentRef: parentRefFor(p, ctx),
         onOpen: (id) => handlers.openThread(id, { from: 'feed' }),
+        you: isYou(p.author, ctx),
       }),
     );
   }

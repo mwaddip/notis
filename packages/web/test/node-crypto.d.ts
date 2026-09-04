@@ -20,4 +20,25 @@ declare module 'node:crypto' {
   }
   export function createPublicKey(input: { key: Uint8Array; format: string; type: string }): KeyObject;
   export function verify(algorithm: null, data: Uint8Array, key: KeyObject, signature: Uint8Array): boolean;
+
+  // The scrypt + ChaCha20-Poly1305 the envelope interop test decrypts with — the
+  // standard-library half of the "any Node tool opens the file" claim (envelope.test.ts).
+  export function scryptSync(
+    password: Uint8Array,
+    salt: Uint8Array,
+    keylen: number,
+    options: { N: number; r: number; p: number; maxmem?: number },
+  ): Uint8Array;
+  interface Decipher {
+    setAAD(buffer: Uint8Array, options: { plaintextLength: number }): Decipher;
+    setAuthTag(buffer: Uint8Array): Decipher;
+    update(data: Uint8Array): Uint8Array;
+    final(): Uint8Array;
+  }
+  export function createDecipheriv(
+    algorithm: string,
+    key: Uint8Array,
+    iv: Uint8Array,
+    options: { authTagLength: number },
+  ): Decipher;
 }

@@ -17,7 +17,7 @@ beforeEach(() => {
     status: async () => ({ blockHeight: 100, protocolVersion: ERA }),
     karmaBoxes: async () => [{ boxId: K1, value: 1000n }],
     creditBoxes: async () => [{ boxId: C1, value: 1000n }],
-    submitInvite: async (tx) => { submitted.push(tx); },
+    submitInvite: async (tx) => { submitted.push(tx); return { expiresAtHeight: 821 }; },
     submitTransfer: async (tx) => { submitted.push(tx); },
   };
 });
@@ -31,6 +31,7 @@ describe('POST /faucet/karma', () => {
     expect(res.status).toBe(202);
     expect(res.body.txId).toMatch(/^[0-9a-f]{64}$/);
     expect(res.body.status).toBe('pending');
+    expect(res.body.expiresAtHeight).toBe(821);
     expect(submitted).toHaveLength(1);
   });
 
@@ -111,7 +112,7 @@ describe('POST /faucet/karma', () => {
     await request(app).post('/faucet/karma').send({ pubkey: recipient }).set(from('7.7.7.1'));
     client.submitInvite = async () => { throw new NodeError(400, 'nope'); };
     await request(app).post('/faucet/karma').send({ pubkey: other }).set(from('7.7.7.2'));
-    client.submitInvite = async (tx) => { submitted.push(tx); };
+    client.submitInvite = async (tx) => { submitted.push(tx); return { expiresAtHeight: 821 }; };
     await request(app).post('/faucet/karma').send({ pubkey: other }).set(from('7.7.7.3'));
     expect(submitted[1]!.inputs).toEqual([K1]);
   });

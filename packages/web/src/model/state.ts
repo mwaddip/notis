@@ -1,4 +1,4 @@
-import type { PostJson, Tombstone, FeedRow, StatusResult } from '../api/dto';
+import type { PostJson, Tombstone, FeedRow, StatusResult, KarmaResult } from '../api/dto';
 import type { Workspace, Origin } from './workspace';
 import type { Theme, IdTint } from '../prefs';
 
@@ -68,7 +68,7 @@ export interface RenderCtx {
   openSet: Set<string>;
   thread: (id: string) => ThreadState | undefined;
   post: (id: string) => PostJson | undefined;
-  arrangement: string; // the workspace as #r1,r2|r5 text, for @settings
+  arrangement: string; // the workspace as #r1,r2|r5 text, for @profile
   // Write surface — all inert with no identity loaded, so the client renders
   // exactly as the read surface does (WEB_INTERFACE → The write surface).
   writeEnabled: boolean;                                  // an identity is loaded
@@ -76,6 +76,15 @@ export interface RenderCtx {
   composerFor: (parentId: string | null) => HTMLElement | null; // the reused composer element, null → none open here
   submissionsFor: (parentId: string | null) => Submission[];    // own pending cards to place under a parent (null → the feed)
   likePending: (postId: string) => boolean;              // overlay onto likedByViewer until a like lands
+  // Profile window (WEB_INTERFACE → The profile window). identity carries the lock
+  // state; karma and membershipBars come from the node; grant is a faucet grant in
+  // flight or one that lapsed. These inline shapes structurally match
+  // view/profile.ts's ProfileCtx, so one contract serves both.
+  identity: { pubKeyHex: string; locked: boolean } | null;
+  backedUp: boolean;
+  karma: KarmaResult | null;
+  grant: { state: 'pending' } | { state: 'expired'; atHeight: number } | null;
+  membershipBars: { memberBar: number; memberLikesBar: number } | null;
 }
 
 export interface Handlers {
@@ -83,7 +92,8 @@ export interface Handlers {
   openThread: (id: string, origin: Origin) => void;
   refreshFeed: () => void;
   loadOlder: () => void;
-  openSettings: () => void;
+  openProfile: () => void;
+  refreshProfile: () => void; // the @profile window's ↻ re-reads /karma
   // region / window
   focus: (id: string) => void;
   refreshThread: (id: string) => void;
@@ -92,12 +102,43 @@ export interface Handlers {
   moveRight: (id: string) => void;
   moveBelow: (id: string) => void;
   close: (id: string) => void;
-  // settings
+  // preferences
   setTheme: (t: Theme) => void;
   setIdTint: (m: IdTint) => void;
   setNode: (origin: string) => void;
+  setFaucet: (origin: string) => void;
+  // identity operations (WEB_INTERFACE → The profile window)
+  inspectFile: (text: string) => { kind: 'clear' | 'encrypted'; pubKeyHex: string };
+  draftIdentity: () => { pubKeyHex: string };
+  createIdentity: (passphrase: string) => Promise<void>;
+  discardDraft: () => void;
+  importIdentity: (text: string, passphrase: string) => Promise<void>;
+  exportIdentity: (password: string) => Promise<void>;
+  forgetIdentity: () => void;
+  lockIdentity: () => void;
+  unlockIdentity: (passphrase: string) => Promise<void>;
+  askFaucet: () => void;
   // write surface
   openComposer: (parentId: string | null) => void; // null → the feed's new post; a post id → a reply
   likePost: (postId: string) => void;
   tryAgain: (localKey: string) => void;            // rebuild a fresh transaction from the current view
+}
+
+/** What the App calls on the identity module — the single reference it holds
+ *  (WEB_INTERFACE → The identity module). The wallet keeps its own narrower Signer
+ *  seam (submit.ts), the extension swap point, so this is not it. */
+export interface AppIdentity {
+  current(): { pubKeyHex: string; locked: boolean } | null;
+  sign(txIdHex: string): string;
+  draft(): { pubKeyHex: string };
+  create(passphrase: string): Promise<{ pubKeyHex: string }>;
+  discardDraft(): void;
+  inspectFile(text: string): { kind: 'clear' | 'encrypted'; pubKeyHex: string };
+  importFile(text: string, passphrase: string): Promise<{ pubKeyHex: string }>;
+  exportFile(password: string): Promise<string>;
+  unlock(passphrase: string): Promise<void>;
+  lock(): void;
+  forget(): void;
+  backedUp(): boolean;
+  onChange(listener: (id: { pubKeyHex: string } | null) => void): void;
 }

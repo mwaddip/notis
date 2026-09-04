@@ -1,6 +1,6 @@
 import { el, reportNode, shortHex } from '../dom';
 import { card, submissionToPost, flightFor, type CardOpts } from './card';
-import { settingsBody } from './settings';
+import { profileBody } from './profile';
 import { flattenThread } from '../model/thread';
 import { identityHue } from '../model/identity';
 import { isTombstone } from '../api/dto';
@@ -64,10 +64,10 @@ function bar(k: string, ci: number, focused: boolean, handlers: Handlers, ctx: R
 
   if (win) {
     label.setAttribute('aria-label', 'show this window');
-    label.appendChild(el('span', 'name', 'settings'));
-    // Nothing to refresh on a window; ↻ stays in place disabled, the same
-    // reason ← does in the leftmost column.
-    ctl.appendChild(ctlBtn('↻', 'nothing to refresh here', null, true));
+    label.appendChild(el('span', 'name', 'profile'));
+    // The profile window's ↻ re-reads standing and karma — the first window with
+    // something to refresh (WEB_INTERFACE → The profile window).
+    ctl.appendChild(ctlBtn('↻', 'refresh standing and karma', () => handlers.refreshProfile()));
   } else {
     const m = threadLabel(k, ctx);
     // The spine: a 4px OKLCH edge from the author key. Set even while the thread
@@ -101,6 +101,7 @@ function writeCardOpts(row: PostJson | Tombstone, ctx: RenderCtx, handlers: Hand
   const opts: Partial<CardOpts> = {
     onReply: (id) => handlers.openComposer(id),
     composerKey: row.id, // a reply composer keys on its parent id
+    you: ctx.ownKey !== null && row.author === ctx.ownKey, // · you on the reader's own card
   };
   if (!isTombstone(row) && row.status === 'confirmed') {
     const overlaid = ctx.likePending(row.id);
@@ -111,6 +112,10 @@ function writeCardOpts(row: PostJson | Tombstone, ctx: RenderCtx, handlers: Hand
       opts.likePending = overlaid && row.likedByViewer !== true;
     } else if (!isOwn) {
       opts.onLike = (id) => handlers.likePost(id);
+      // A locked identity unlocks in a row under the card before the like flies.
+      opts.locked = ctx.identity?.locked ?? false;
+      opts.ownKey = ctx.ownKey ?? undefined;
+      opts.onUnlock = (p) => handlers.unlockIdentity(p);
     }
   }
   return opts;
@@ -118,7 +123,7 @@ function writeCardOpts(row: PostJson | Tombstone, ctx: RenderCtx, handlers: Hand
 
 function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handlers: Handlers, ctx: RenderCtx): void {
   if (isWin(focusedK)) {
-    body.appendChild(settingsBody(handlers, ctx));
+    body.appendChild(profileBody(handlers, ctx));
     return;
   }
   const t = ctx.thread(focusedK);
@@ -161,6 +166,7 @@ function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handl
           depth: Math.min(node.depth + 1, 3),
           replyCount: null,
           flight: flightFor(sub, handlers.tryAgain),
+          you: ctx.ownKey !== null && sub.author === ctx.ownKey,
           ...(landed
             ? { onOpen: (id) => handlers.openThread(id, { from: 'pane', ci }), onReply: (id) => handlers.openComposer(id), composerKey: sub.postId ?? undefined }
             : {}),
