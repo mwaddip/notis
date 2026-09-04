@@ -1,6 +1,6 @@
 import { el, reportNode, shortHex } from '../dom';
 import { card, submissionToPost, flightFor, type CardOpts } from './card';
-import { settingsBody } from './settings';
+import { profileBody } from './profile';
 import { flattenThread } from '../model/thread';
 import { identityHue } from '../model/identity';
 import { isTombstone } from '../api/dto';
@@ -64,10 +64,10 @@ function bar(k: string, ci: number, focused: boolean, handlers: Handlers, ctx: R
 
   if (win) {
     label.setAttribute('aria-label', 'show this window');
-    label.appendChild(el('span', 'name', 'settings'));
-    // Nothing to refresh on a window; ↻ stays in place disabled, the same
-    // reason ← does in the leftmost column.
-    ctl.appendChild(ctlBtn('↻', 'nothing to refresh here', null, true));
+    label.appendChild(el('span', 'name', 'profile'));
+    // The profile window's ↻ re-reads standing and karma — the first window with
+    // something to refresh (WEB_INTERFACE → The profile window).
+    ctl.appendChild(ctlBtn('↻', 'refresh standing and karma', () => handlers.refreshProfile()));
   } else {
     const m = threadLabel(k, ctx);
     // The spine: a 4px OKLCH edge from the author key. Set even while the thread
@@ -118,7 +118,7 @@ function writeCardOpts(row: PostJson | Tombstone, ctx: RenderCtx, handlers: Hand
 
 function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handlers: Handlers, ctx: RenderCtx): void {
   if (isWin(focusedK)) {
-    body.appendChild(settingsBody(handlers, ctx));
+    body.appendChild(profileBody(handlers, ctx));
     return;
   }
   const t = ctx.thread(focusedK);

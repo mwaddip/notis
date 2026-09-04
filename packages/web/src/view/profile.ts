@@ -172,7 +172,7 @@ function loadedState(b: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx)
   {
     const { row: r, field } = row('passphrase');
     field.classList.add('pp-field'); // inline flow: the word and its button on one line
-    passphraseRow(field, handlers, id);
+    passphraseRow(field, handlers, id.pubKeyHex, id.locked);
     b.appendChild(r);
   }
 
@@ -282,23 +282,38 @@ function balance(field: HTMLElement, k: KarmaResult): void {
   }
 }
 
-function passphraseRow(field: HTMLElement, handlers: ProfileHandlers, id: { pubKeyHex: string; locked: boolean }): void {
+// Lock and unlock are local to the window — they fire no onChange, so the row
+// re-renders itself rather than waiting for the App (WEB_INTERFACE → The profile
+// window).
+function passphraseRow(field: HTMLElement, handlers: ProfileHandlers, pubKeyHex: string, locked: boolean): void {
   field.replaceChildren();
-  if (id.locked) {
+  if (locked) {
     field.append(el('span', 'inkmute', 'locked'), ' ');
     const unlock = el('button', 'mini', 'unlock') as HTMLButtonElement;
     unlock.addEventListener('click', () => {
       const restore = (): void => {
-        passphraseRow(field, handlers, id);
+        passphraseRow(field, handlers, pubKeyHex, true);
         (field.querySelector('button') as HTMLButtonElement | null)?.focus();
       };
-      field.replaceChildren(unlockForm(id.pubKeyHex, (p) => handlers.unlockIdentity(p), restore));
+      field.replaceChildren(
+        unlockForm(
+          pubKeyHex,
+          async (p) => {
+            await handlers.unlockIdentity(p);
+            passphraseRow(field, handlers, pubKeyHex, false); // now unlocked
+          },
+          restore,
+        ),
+      );
     });
     field.appendChild(unlock);
   } else {
     field.append(el('span', 'inkmute', 'unlocked'), ' ');
     const lock = el('button', 'mini', 'lock') as HTMLButtonElement;
-    lock.addEventListener('click', () => handlers.lockIdentity());
+    lock.addEventListener('click', () => {
+      handlers.lockIdentity();
+      passphraseRow(field, handlers, pubKeyHex, true); // now locked
+    });
     field.appendChild(lock);
   }
 }
