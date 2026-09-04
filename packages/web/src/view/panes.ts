@@ -101,6 +101,7 @@ function writeCardOpts(row: PostJson | Tombstone, ctx: RenderCtx, handlers: Hand
   const opts: Partial<CardOpts> = {
     onReply: (id) => handlers.openComposer(id),
     composerKey: row.id, // a reply composer keys on its parent id
+    you: ctx.ownKey !== null && row.author === ctx.ownKey, // · you on the reader's own card
   };
   if (!isTombstone(row) && row.status === 'confirmed') {
     const overlaid = ctx.likePending(row.id);
@@ -161,6 +162,7 @@ function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handl
           depth: Math.min(node.depth + 1, 3),
           replyCount: null,
           flight: flightFor(sub, handlers.tryAgain),
+          you: ctx.ownKey !== null && sub.author === ctx.ownKey,
           ...(landed
             ? { onOpen: (id) => handlers.openThread(id, { from: 'pane', ci }), onReply: (id) => handlers.openComposer(id), composerKey: sub.postId ?? undefined }
             : {}),

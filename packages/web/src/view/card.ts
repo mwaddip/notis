@@ -36,6 +36,7 @@ export interface CardOpts {
   liked?: boolean;                       // show 'liked' rather than a control
   likePending?: boolean;                 // the like has not settled — inkMute, count + 1
   composerKey?: string;                  // for the data-composer-open focus hook
+  you?: boolean;                         // the reader's own card — · you after the prefix
 }
 
 /** Compact absolute local time; the on-chain marker is the block height, this
@@ -51,11 +52,14 @@ function whenText(ms: number): string {
   return d.toLocaleString(undefined, opts);
 }
 
-function whoRow(authorKey: string, whenMs: number | null): HTMLElement {
+function whoRow(authorKey: string, whenMs: number | null, you?: boolean): HTMLElement {
   const who = el('div', 'who');
   // No naming layer exists — the public key is the identity. The
   // prefix is machine data, so mono.
   who.appendChild(el('span', 'hex', shortHex(authorKey, 16)));
+  // The reader's own card — · you after the prefix, muted ink, text only, no
+  // colour (HOUSE_STYLE → Identity colour; WEB_INTERFACE → The profile window).
+  if (you) who.appendChild(el('span', 'you', '· you'));
   if (whenMs != null) who.appendChild(el('span', 'when', whenText(whenMs)));
   return who;
 }
@@ -241,7 +245,7 @@ function livePostCard(post: PostJson, opts: CardOpts): HTMLElement {
   const body = el('div', 'card-body');
 
   if (opts.parentRef) body.appendChild(parentRefNode(opts.parentRef));
-  body.appendChild(whoRow(post.author, post.blockCreatedAt));
+  body.appendChild(whoRow(post.author, post.blockCreatedAt, opts.you));
 
   if (post.content === null) {
     // Held by commit, body not yet backfilled on this node. Says what is,
@@ -285,7 +289,7 @@ function withdrawnCard(row: WithdrawnJson, opts: CardOpts): HTMLElement {
   const card = el('div', shellClasses('', opts));
   const body = el('div', 'card-body');
   if (opts.parentRef) body.appendChild(parentRefNode(opts.parentRef));
-  body.appendChild(whoRow(row.author, null));
+  body.appendChild(whoRow(row.author, null, opts.you));
   // Withdrawn is never "deleted": its replies survive and hang off it. Saying
   // so is the whole difference (WEB_INTERFACE → The three absence states).
   body.appendChild(el('div', 'withdrawn', 'withdrawn by its author — the replies below are untouched'));
@@ -305,7 +309,7 @@ function withdrawnCard(row: WithdrawnJson, opts: CardOpts): HTMLElement {
 function stumpCard(row: StumpJson, opts: CardOpts): HTMLElement {
   const card = el('div', shellClasses(' stump', opts));
   const body = el('div', 'card-body');
-  body.appendChild(whoRow(row.author, null));
+  body.appendChild(whoRow(row.author, null, opts.you));
   const s = el('div', 'stump-body');
   s.appendChild(document.createTextNode('subtree withdrawn by its author. '));
   s.appendChild(el('span', 'n', String(row.replyCount)));
@@ -331,7 +335,7 @@ function stumpCard(row: StumpJson, opts: CardOpts): HTMLElement {
 function prunedCard(row: PrunedJson, opts: CardOpts): HTMLElement {
   const card = el('div', shellClasses('', opts));
   const body = el('div', 'card-body');
-  body.appendChild(whoRow(row.author, null));
+  body.appendChild(whoRow(row.author, null, opts.you));
   const s = el('div', 'pruned-body');
   s.appendChild(document.createTextNode('pruned under root '));
   s.appendChild(el('span', 'n', shortHex(row.rootPostHash, 16)));
