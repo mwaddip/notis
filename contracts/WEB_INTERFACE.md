@@ -420,8 +420,8 @@ reader's own** — cards in the feed and in panes, a reply's parent reference, a
 row and a bond row, the author window's subject line. The prefix is `shortHex(key, 16)` on a card and
 the whole key in a window.
 
-**The mark is one character, a control, and never a word:** `✓` in ink when the reader's live vouch
-names this identity; `+` in muted ink when the reader may vouch and has not; `✓` in muted ink while the
+**The mark is one character, a control wherever it renders but on a title bar (below), and never a
+word:** `✓` in ink when the reader's live vouch names this identity; `+` in muted ink when the reader may vouch and has not; `✓` in muted ink while the
 reader's vouch is pending; **absent** with no identity loaded, for a reader who is not a member, and on
 the reader's own identity; **present but disabled** while the reader's stake from an unvouch is held or
 the spendable view is below `VOUCH_MIN_BALANCE`. Its state is glyph and ink weight and nothing else — no
@@ -449,6 +449,12 @@ node**; a count on the post view retires it.
 stays selectable text (`HOUSE_STYLE → Interaction`). On a title bar and a reply reference the prefix
 stays text: the bar is the tightest space in the design. Opening a window spends nothing, so the
 panes-only rule that governs like and reply does not bind it.
+
+**On a title bar the mark is display only** — `✓` in ink when the reader's live vouch names the
+author, muted while it is pending, absent otherwise, and never `+`: the bar's label is itself the focus
+control, a control cannot nest inside a control, and the bar carries no action but focus. The cards
+inside the pane carry the control. A reply reference's mark is the full control; only its prefix is
+text.
 
 ### The author window *(membership actions)*
 
