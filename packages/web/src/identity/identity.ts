@@ -160,9 +160,10 @@ export class IdentityModule {
 
   /** Load a stored envelope at construction — the envelope and public key only,
    *  never the seed, so current() reads locked (WEB_INTERFACE → The identity
-   *  module). A clear stored value (a leftover of the earlier shape) reads as no
-   *  identity and is left in place; a value that does not parse is left too.
-   *  localStorage is untrusted input, guarded like prefs.ts guards its reads. */
+   *  module). The clear shape is a file shape only (WEB_INTERFACE → The identity
+   *  module, the Import row), so a clear stored value reads as no identity and is
+   *  left in place; a value that does not parse is left too. localStorage is
+   *  untrusted input, guarded like prefs.ts guards its reads. */
   private restore(): void {
     const raw = readStore(IDENTITY_KEY);
     if (raw === null) return;
