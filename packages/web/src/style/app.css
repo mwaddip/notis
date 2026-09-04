@@ -345,7 +345,7 @@ header .spacer { flex: 1 1 auto; }
 .mini:disabled { opacity: .35; cursor: default; }
 .mini:disabled:hover { background: transparent; }
 
-/* ---------- @settings window ---------- */
+/* ---------- window body — the profile window's rows (and @settings until it retires) ---------- */
 .winbody { max-width: 660px; }
 .winbody .row { display: flex; align-items: baseline; gap: 8px; margin-bottom: 14px; }
 .winbody label { font-size: 12.5px; color: var(--inkMute); flex: 0 0 96px; }
@@ -376,6 +376,36 @@ header .spacer { flex: 1 1 auto; }
 .seg button:hover { color: var(--ink); }
 .seg button[aria-pressed="true"] { background: var(--greenText); color: var(--onGreen); }
 .seg button:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: -2px; }
+
+/* ---------- profile window — identity, standing, karma, the forms ---------- */
+.winrule { border: 0; border-top: 1px solid var(--border); margin: 6px 0 18px; }
+.mono { font-family: var(--mono); }
+.winbody .inkmute { color: var(--inkMute); }
+.winbody .standing { color: var(--greenText); }
+/* The key row's full hex wraps within the 660px cap rather than overflowing. */
+.winbody .field .mono { word-break: break-all; }
+
+/* The karma and passphrase fields flow inline — the balance and its unit, or the
+   word and its button, on one line — where the default field stacks its rows. The
+   karma field is a fixed line box: a grant landing changes colour and text, not
+   height, the geometry price the motion contract asks (HOUSE_STYLE → Motion). */
+.karma-field { display: block; min-height: 22px; }
+.pp-field { display: block; }
+
+/* The empty state's line and its create / import buttons. */
+.pf-lead { font-size: 12.5px; color: var(--ink); margin-bottom: 12px; }
+.pf-inline { flex-direction: row; gap: 8px; }
+
+/* A passphrase form in place — a real <form>; its fields stack, the refusal sits
+   under them in clay, the actions in a row. */
+.pf { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.pf-actions { display: flex; gap: 8px; }
+.pf-refusal { font-size: 11.5px; color: var(--clay); }
+.pf-confirm { display: flex; flex-direction: column; gap: 6px; }
+
+/* A card by the loaded key reads · you after the prefix — muted ink, text only, no
+   colour, since identity colour may never identify anyone (HOUSE_STYLE → Identity colour). */
+.you { color: var(--inkMute); }
 
 /* hover is suppressed while scrolling and ~100ms after it stops
    (HOUSE_STYLE → Interaction). */
