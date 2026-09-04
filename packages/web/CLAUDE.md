@@ -24,9 +24,11 @@ pruned subtree leaves a **stump**. TypeScript, pnpm workspaces, Node ≥ 22.
 
 ## This package (`@dagsocial/web`)
 The **browser client**. Built in slices: the **read surface** (the feed, threads, a tiling workspace of
-columns and regions, both themes, the identity spine, a `@settings` window) and the **write surface's
-first slice** — the identity machinery, the composer for a root and a reply, and like, on transactions
-the browser builds and signs.
+columns and regions, both themes, the identity spine), the **write surface's first slice** — the identity
+machinery, the composer for a root and a reply, and like, on transactions the browser builds and signs —
+and the **identity interface's first unit**: the `@profile` window (identity, standing, karma, the
+faucet step, the preferences), create / import / export / forget / lock / unlock as forms in place, the
+identity encrypted at rest, the reader's own cards marked `· you`.
 
 - **Owns:** `packages/web/*` — its own source, tests, build config and static assets.
 - **Does NOT own:** any other package, `contracts/`, `prompts/`, or `packages/node/public/index.html`
@@ -47,10 +49,16 @@ slice — stop and report, do not implement it.**
 `like`, no `viewer` parameter, and `render-region.test.ts` stays green by node identity. **Once an
 identity is loaded, every read carries `viewer=<pubKeyHex>`** and `likedByViewer` is the node's answer.
 
-**The identity machinery ships; the identity interface does not.** A key is generated, imported,
-exported and signed with — but nothing in the interface creates one. In a development build only, the
-module hangs off `globalThis.notis.identity`; a production build exposes nothing. `sign(txIdHex)` is the
-only path to the seed, and `current()` never returns it.
+**The identity is encrypted at rest and unlocked per tab** (`WEB_INTERFACE → The identity module`).
+Storage holds an envelope — scrypt and ChaCha20-Poly1305 over the seed, `identity/envelope.ts` — never
+the seed in the clear; a page load restores the envelope and the public key only, so `current()` reads
+`{ pubKeyHex, locked: true }` until an unlock, and `sign(txIdHex)` — the only path to the seed — throws
+while locked. **Every write checks `locked` before its flight** and mounts the unlock form in place: the
+composer's foot for `post`, a row under the card's meta for `like`. The way in is the `@profile`
+window's `create` and `import`; a production build has no other door. `draft()` makes the key before
+the passphrase is typed so the browser's saved entry names the key it later unlocks. An identity change
+takes effect at once through `onChange`: the App rebuilds the pending ledger for the new key, drops the
+old poll, and re-reads every open surface with the new `viewer`.
 
 ## Web-relevant invariants
 
@@ -94,30 +102,36 @@ only path to the seed, and `current()` never returns it.
 
 ## The write surface — the testnet dev loop and the identity file
 
-**No local devnet for the write surface — it iterates against notis.fun testnet.** One variable points
-the vite proxy there:
+**No local devnet for the write surface — it iterates against notis.fun testnet.** Two variables point
+the vite proxy there — the node, and the faucet, which is a separate service under its own prefix
+(`NODE_INTERFACE → Faucet`):
 
 ```bash
-NOTIS_NODE=https://notis.fun/testnet/api pnpm --filter @dagsocial/web dev
+NOTIS_NODE=https://notis.fun/testnet/api NOTIS_FAUCET=https://notis.fun/testnet/faucet pnpm --filter @dagsocial/web dev
 ```
 
 The node and nginx send no CORS, so the proxy is the only route. `API_PATHS` in `vite.config.ts` proxies
 `/posts`, `/status`, `/blocks`, `/karma`, `/credits`, `/likes`, `/vouches`, `/invites` — a path the
-client calls that is not in the table returns the HTML shell, not the API.
+client calls that is not in the table returns the HTML shell, not the API. `/faucet` is proxied to
+`NOTIS_FAUCET` only when it is set, with the `/faucet` prefix stripped (http-proxy prepends the target's
+own path). The client's faucet base is `/faucet` in development and `VITE_FAUCET_BASE` on a deploy;
+empty means no faucet and no button. **The faucet must relay `expiresAtHeight`** — the client refuses a
+202 without it — so a faucet that does not relay it answers the honest refusal, not a grant.
 
 **Every transaction spends real testnet karma:** a thread 5, a reply 3, a like 1. There is no automated
 test that posts — an automated writer would drain the key and litter testnet; the wallet builders are
 pinned offline against the demo UI's frozen vectors instead. Iterate deliberately.
 
-**The pending ledger is per identity** — `notis.pending.<pubKeyHex>`. A change of identity takes effect
-on the next reload, when a fresh App builds a ledger for the new key; a second key never sees the
-first's predicted change.
+**The pending ledger is per identity** — `notis.pending.<pubKeyHex>`, rebuilt at once on an identity
+change; a second key never sees the first's predicted change. A faucet grant rides it as a `grant` entry
+so the bounded poll runs while it stands.
 
 ⛔ **The reader's identity file — kept outside the repo — never enters the repo, a test, a commit, a
-log or a report:** not the file, not its path in code, not any value from it. It is loaded through the
-dev door in the browser console (`notis.identity.importJson(<text>)`) and nowhere else. It holds
-`{ pubKeyHex, privKeyBase64 }` in the demo UI's export shape, so one key moves between the demo UI and
-this client both ways.
+log or a report:** not the file, not its path in code, not its passphrase, not any value from it. It is
+imported through the `@profile` window's file picker and nowhere else. The demo UI's clear
+`{ pubKeyHex, privKeyBase64 }` shape imports here and is sealed under a passphrase the reader sets; this
+client exports the encrypted envelope, which the demo UI cannot read — interop is one-way. A proof run
+uses a fresh throwaway key; its public key may appear in a report, nothing else may.
 
 ## Component-session rules (Design by Contract)
 - **Contracts lead, code follows.** Implement to `WEB_INTERFACE.md` and `HOUSE_STYLE.md`; **flag
@@ -132,7 +146,7 @@ this client both ways.
 ```bash
 pnpm --filter @dagsocial/web typecheck
 pnpm --filter @dagsocial/web test
-pnpm --filter @dagsocial/web dev        # vite dev server, proxying the API
+pnpm --filter @dagsocial/web dev        # vite dev server, proxying the API (NOTIS_NODE, NOTIS_FAUCET)
 
 # a live node with blocks to read, in one command (throwaway devnet, dies with the process):
 pnpm -r build && node packages/node/scripts/dev.mjs --nodes 1 --miners 1
@@ -170,12 +184,14 @@ needs a browser and a node.
   client is served from the site root.
 - **`VITE_API_BASE`** is where the *node's API* lives, relative to the same origin. Omitted, it is
   empty, which is right for `pnpm dev` because the dev server proxies the bare API paths.
+- **`VITE_FAUCET_BASE`** is where the *faucet* lives, the same way — `/testnet/faucet` on notis.fun.
+  Omitted, it is empty, which means no faucet and no `ask the faucet for karma` button.
 
 A client served from a subpath, reading an API mounted on a different subpath, needs both. Run vite
 directly rather than through `pnpm --filter`, so no flag has to survive pnpm's argument passing:
 
 ```bash
-cd packages/web && VITE_API_BASE=<api path> npx vite build --base=<client path>/
+cd packages/web && VITE_API_BASE=<api path> VITE_FAUCET_BASE=<faucet path> npx vite build --base=<client path>/
 ```
 
 ⚠ **Getting `--base` wrong yields a blank page, not an error.** The HTML loads, every asset 404s, and
