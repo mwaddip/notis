@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, beforeEach } from 'vitest';
-import { profileBody, type ProfileHandlers, type ProfileCtx } from '../src/view/profile';
+import { profileBody, renderInvitesRow, type ProfileHandlers, type ProfileCtx } from '../src/view/profile';
 import { karmaResult } from './karma-fixture';
 import { prefs } from '../src/prefs';
 import type { Origin } from '../src/model/workspace';
@@ -143,6 +143,26 @@ describe('profile window — the invites row', () => {
   it('the invite flight shows its stage line in the row', () => {
     const field = rowField(render(handlers(), memberCtx({ inviteFlight: { stage: 'rejected', reason: 'invite rejected: that key already holds an account' } })), 'invites')!;
     expect(field.querySelector('.stage')?.textContent).toContain('already holds an account');
+  });
+
+  it('renderInvitesRow updates the line and bonds in place, leaving the form the reader is filling', () => {
+    const field = rowField(render(handlers(), memberCtx()), 'invites')!;
+    const form = field.querySelector('form.invite-form') as HTMLFormElement;
+    const key = form.querySelector('input[type="text"]') as HTMLInputElement;
+    key.value = 'a-key-in-progress'; // the reader is filling it for the next invite
+    // An invite lands: fewer available, a new bond — updated in place.
+    const landed = memberCtx({
+      karma: karmaResult({ userId: KEY, member: true, invitesAvailable: 1 }),
+      bonds: { bonds: [{ id: 'b1', value: '100', inviterId: KEY, inviteePublicKey: INVITEE }], bondCount: 1, next: null },
+      markFor: () => ({ state: 'plus', count: 0 }),
+    });
+    renderInvitesRow(field, handlers(), landed, ORIGIN);
+    // The same form element, its value intact — an unsolicited landing moves no form.
+    expect(field.querySelector('form.invite-form')).toBe(form);
+    expect((field.querySelector('input[type="text"]') as HTMLInputElement).value).toBe('a-key-in-progress');
+    // The line dropped by one and the bond appeared.
+    expect(field.querySelector('.invites-line')?.textContent).toContain('1 invite available');
+    expect(field.querySelector('.invites-bonds')?.textContent).toContain('100 karma');
   });
 });
 

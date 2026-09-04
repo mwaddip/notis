@@ -263,30 +263,56 @@ export function standing(
 
 /** The invites row (WEB_INTERFACE → The profile window): the tier line, the form
  *  when an invite is available and the minimum bond is affordable, the flight, and
- *  the reader's standing bonds. */
+ *  the reader's standing bonds. Built into four slots so a landing can update the
+ *  line, the flight and the bonds in place while the form the reader is filling
+ *  for the next key stays put (renderInvitesRow). */
 function invitesRow(field: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx, origin: Origin): void {
+  field.classList.add('invites-field'); // the App updates it in place on an invite landing
+  field.replaceChildren(el('div', 'invites-line'), el('div', 'invites-form'), el('div', 'invites-flight'), el('div', 'invites-bonds'));
+  // The form is built once, here, and left alone by the in-place update.
+  const k = ctx.karma;
+  const isMember = k !== null && (k.member || k.invitesAvailable === null);
+  const available = k !== null && (k.invitesAvailable === null || (k.invitesAvailable ?? 0) >= 1);
+  if (isMember && available && ctx.canAffordMinBond && ctx.invite) {
+    inviteForm(field.querySelector('.invites-form') as HTMLElement, handlers, ctx, ctx.invite);
+  }
+  updateInvites(field, handlers, ctx, origin);
+}
+
+/** Update the invites row's line, flight and standing bonds in place, leaving the
+ *  form the reader may be filling untouched — the way the grant landing updates the
+ *  karma field (renderKarmaField), so an unsolicited landing moves colour and text,
+ *  not a form (WEB_INTERFACE → The profile window; HOUSE_STYLE → Motion). */
+export function renderInvitesRow(field: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx, origin: Origin): void {
+  updateInvites(field, handlers, ctx, origin);
+}
+
+function updateInvites(field: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx, origin: Origin): void {
+  const line = field.querySelector('.invites-line');
+  const flight = field.querySelector('.invites-flight');
+  const bonds = field.querySelector('.invites-bonds');
+  if (!line || !flight || !bonds) return;
+  line.replaceChildren();
+  flight.replaceChildren();
+  bonds.replaceChildren();
   const k = ctx.karma;
   if (k === null) {
-    field.appendChild(el('span', 'inkmute', '—'));
+    line.appendChild(el('span', 'inkmute', '—'));
     return;
   }
-  const isRoot = k.invitesAvailable === null;
-  if (isRoot) {
-    field.appendChild(el('div', 'hint', 'as many as your karma covers.'));
+  if (k.invitesAvailable === null) {
+    line.appendChild(el('div', 'hint', 'as many as your karma covers.'));
   } else if (k.member) {
-    const line = el('div', 'hint');
-    line.append(mono(String(k.invitesAvailable)), k.invitesAvailable === 1 ? ' invite available.' : ' invites available.');
-    field.appendChild(line);
+    const l = el('div', 'hint');
+    l.append(mono(String(k.invitesAvailable)), k.invitesAvailable === 1 ? ' invite available.' : ' invites available.');
+    line.appendChild(l);
   } else {
     // A resident: no form, no bonds (WEB_INTERFACE → The profile window).
-    field.appendChild(el('div', 'hint', 'invites come with membership.'));
+    line.appendChild(el('div', 'hint', 'invites come with membership.'));
     return;
   }
-
-  const available = isRoot || (k.invitesAvailable ?? 0) >= 1;
-  if (available && ctx.canAffordMinBond && ctx.invite) inviteForm(field, handlers, ctx, ctx.invite);
-  if (ctx.inviteFlight) field.appendChild(stageLine(ctx.inviteFlight));
-  standingBonds(field, handlers, ctx, origin);
+  if (ctx.inviteFlight) flight.appendChild(stageLine(ctx.inviteFlight));
+  standingBonds(bonds as HTMLElement, handlers, ctx, origin);
 }
 
 /** A real `<form>` the password manager ignores — the invitee's key pasted out of

@@ -20,7 +20,7 @@ import type { PendingEntry } from './wallet/types';
 import { readBuildContext } from './wallet/reads';
 import { submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, type SubmitDeps } from './wallet/submit';
 import { identity as identitySingleton } from './identity/identity';
-import { renderKarmaField } from './view/profile';
+import { renderKarmaField, renderInvitesRow } from './view/profile';
 import type { Mark, Flight } from './view/card';
 import type { YourVouch } from './view/author';
 import {
@@ -1375,13 +1375,13 @@ export class App {
     const cur = this.idm.current();
     if (cur === null) return;
     this.inviteFlight = { stage: 'submitting' };
-    this.renderRegionsFor('@profile');
+    this.renderInvitesRowInPlace();
     let result;
     try {
       result = await submitInviteFlow(this.submitDeps(), inviteeKey, bond);
     } catch {
       this.inviteFlight = { stage: 'rejected', reason: "invite rejected: can't reach the node right now." };
-      this.renderRegionsFor('@profile');
+      this.renderInvitesRowInPlace();
       return;
     }
     if (result.ok) {
@@ -1390,7 +1390,7 @@ export class App {
     } else {
       this.inviteFlight = { stage: 'rejected', reason: 'invite rejected: ' + inviteRejectionCopy(result.rejection) };
     }
-    this.renderRegionsFor('@profile');
+    this.renderInvitesRowInPlace();
   }
 
   private async moreBonds(): Promise<void> {
@@ -1402,7 +1402,25 @@ export class App {
     } catch {
       return;
     }
-    this.renderRegionsFor('@profile');
+    this.renderInvitesRowInPlace();
+  }
+
+  /** Rebuild the invites row's line, flight and bonds in place from the current
+   *  ctx — the invite flight and its landing move colour and text, never the form
+   *  the reader may be filling (WEB_INTERFACE → The profile window). A closed
+   *  profile has no field; the state is already updated for the next open. */
+  private renderInvitesRowInPlace(): void {
+    const field = document.querySelector<HTMLElement>('.invites-field');
+    if (field) renderInvitesRow(field, this.handlers, this.ctx(), this.profileOrigin());
+  }
+
+  private profileOrigin(): Origin {
+    for (let ci = 0; ci < this.state.workspace.columns.length; ci++) {
+      for (const region of this.state.workspace.columns[ci]!.regions) {
+        if (region.wins[region.focus] === '@profile') return { from: 'pane', ci };
+      }
+    }
+    return { from: 'feed' };
   }
 
   // ---- the bounded landing poll (WEB_INTERFACE → The wallet) ----
@@ -1446,7 +1464,7 @@ export class App {
    *  pointer are lost even where the pixels match. */
   private async reconcile(tip: number): Promise<void> {
     let feedTouched = false;
-    let profileTouched = false;
+    let inviteChanged = false;
     const touchedPosts = new Set<string>();
     const touchedAuthors = new Set<string>();
 
@@ -1505,7 +1523,7 @@ export class App {
         } else {
           this.inviteFlight = { stage: 'expired', expiresAtHeight: entry.expiresAtHeight };
         }
-        profileTouched = true;
+        inviteChanged = true;
         continue;
       }
       const fetched = await this.client.post(entry.postId, this.viewer());
@@ -1533,7 +1551,9 @@ export class App {
     if (feedTouched) this.renderFeed();
     this.renderRegionsForPosts(touchedPosts);
     for (const key of touchedAuthors) this.renderRegionsForAuthor(key);
-    if (profileTouched) this.renderRegionsFor('@profile');
+    // An invite landing updates the invites row in place, so a form the reader is
+    // filling for the next key survives (WEB_INTERFACE → The profile window).
+    if (inviteChanged) this.renderInvitesRowInPlace();
   }
 
   // ---- placement, focus and reports for the write surface ----
