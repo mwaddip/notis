@@ -361,8 +361,11 @@ it for anything.
 - **The control is the click target, never the container.** Cards and rows are not buttons.
   Text stays selectable and the pointer can be parked on it. This also removes the
   accidental-click pattern that quietly inflates engagement figures.
-- **Hover may change appearance; it may never reveal content or move layout.** No hover menus,
-  no hover previews, no tooltips that open on hover alone.
+- **Hover may change appearance; it may never reveal page content or move layout.** No hover menus,
+  no hover previews, no hover cards — nothing the page renders on hover alone. A control may carry
+  the browser's own `title`: it renders outside the page, holds no links, moves nothing, and repeats
+  what the control's action reaches, so hover is still never the only route (see "Accessibility
+  contract").
 - **Hover is suppressed while scrolling and for ~100ms after it stops** (`pointer-events: none`
   on the container during scroll). A wheel-scrolling reader leaves the pointer parked, and
   without this whatever lands beneath it fires.

@@ -1,19 +1,25 @@
 # WEB Interface Contract
 
 **Component:** `@dagsocial/web`
-**Status:** the **read surface** and the **write surface's first slice** — the identity machinery,
-the composer for a root and a reply, and like — and the **identity interface's first unit** — the
+**Status:** the **read surface**, the **write surface's first slice** — the identity machinery,
+the composer for a root and a reply, and like — the **identity interface's first unit** — the
 `@profile` window, create / import / export / forget / lock / unlock, encryption at rest with unlock per
-tab, the reader's own posts marked, the faucet karma step — are implemented; vouch, invite, withdraw
-and prune are not built
+tab, the reader's own posts marked, the faucet karma step — and the **membership actions** — the
+identity display with the vouch mark, the author window and the author-posts window, vouch and
+unvouch, invite from the profile — are implemented; withdraw and prune are not built
 **Protocol version:** read from the node, never held — see Invariants
+
+> ⚠ **AHEAD OF CODE (2026-09-04)** — the membership actions: the `Status:` line above, → The identity
+> display, → The author window, the three builders and entry kinds in → The wallet, the `invites` row in
+> → The profile window, the Writes rows and the read-surface note on `author=`, and the `title` sentence
+> in `HOUSE_STYLE → Interaction` state the unit as it lands on this branch; retired at the contract pass.
 
 > **The demo UI (`packages/node/public/index.html`) is not this contract's subject.** It is a debug
 > interface. Do not write an interface contract for it, and do not treat it as a product surface.
 >
 > ⚠ **The demo UI outlives this client's first slices.** It is the only browser surface that
-> *writes* withdraw, invite, vouch and unvouch transactions; `@dagsocial/web` posts and likes, and
-> does none of the rest. Nothing about it is superseded by this contract.
+> *writes* a withdrawal; `@dagsocial/web` posts, likes, vouches, unvouches and invites, and neither
+> withdraws nor prunes. Nothing about it is superseded by this contract.
 >
 > **One thing about the demo UI IS binding:** it hand-rolls `computeBoxId`, `computeTxId`,
 > `postFieldBytes` and the positional writers under them, so it is a third implementation of
@@ -60,19 +66,19 @@ placeholder for one. **Once an identity is loaded, every read carries `viewer=<p
 `likedByViewer` is the node's answer. A light client carries its identity on every request anyway,
 and one rule is cleaner than a local record of likes kept beside the node's.
 
-### The write surface — the first slice: identity, post and like
+### The write surface — identity, post and like, and the membership actions
 
 Every section and invariant below marked *(write surface)* belongs to this slice; the read surface
 is the rest.
 
-**The slice is the identity machinery, the composer for a root and a reply, and like**, on
-transactions the browser builds and signs. Vouch, invite, withdraw and prune are **not built**; each is
-named as such where it appears. The identity interface — the `@profile` window, its six operations and
+**The slice is the identity machinery, the composer for a root and a reply, like, and the membership
+actions — vouch, unvouch and invite** — on transactions the browser builds and signs. Withdraw and
+prune are **not built**; each is named as such where it appears. The identity interface — the `@profile` window, its six operations and
 the faucet karma step — is stated below (→ The identity module, → The profile window, → The faucet
 step).
 
 **With no identity loaded, the client is the read surface exactly.** No `new post`, no `↩ reply`, no
-`like`, no `viewer` parameter. The way in is `create` or `import` in the `@profile` window (→ The
+`like`, no mark beside any identity (→ The identity display), no `viewer` parameter. The way in is `create` or `import` in the `@profile` window (→ The
 profile window); nothing else in the interface creates an identity, and a production build exposes no
 other door.
 
@@ -144,6 +150,9 @@ elsewhere.
 **Paging is keyset, never offset.** `after=<key>` goes in, `next` comes back — a formatted key, or
 `null` at the end of the collection. A client that counts rows it rendered, rather than following
 `next`, pages wrongly the moment anything is filtered out of a page.
+
+**The author-posts window reads the same view with `author=<key>`** (→ The author window) — the one
+place the client passes the filter; the feed never does.
 
 **The feed carries four things**: `posts`, `next`, `pending` and `pendingCount`. A post sitting in the
 mempool is part of the read surface, so a pending post renders before any composer exists to create
@@ -264,12 +273,21 @@ key's entries and cannot try to spend its predicted change; a reload that forgot
 re-spend a box the node holds pending and receive a 409 for a failure the reader never saw. **An
 identity change rebuilds the ledger for the new key at once** (→ The identity module, `onChange`).
 
-**Builders exist for a post and a like, and nothing else.** A root post: change and a `karma_price` of
-`POST_PRICE_THREAD`. A reply: change, a `karma_price` of `POST_PRICE_REPLY − REPLY_AUTHOR_SHARE`, and a
-`like_accrual` of `REPLY_AUTHOR_SHARE` to the parent's **`confirmedAuthor`** from `GET /posts/:id` —
-never the row's `author`, which is a claim rather than the topology. A like: change and a
-`like_accrual` of `LIKE_KARMA_COST` to the target's confirmed author, `likeTarget` set, exactly one
-signature. Zero change is no box (`TYPES_INTERFACE → Box value domain`).
+**Builders exist for a post, a like, a vouch, an unvouch and an invite, and nothing else.** A root
+post: change and a `karma_price` of `POST_PRICE_THREAD`. A reply: change, a `karma_price` of
+`POST_PRICE_REPLY − REPLY_AUTHOR_SHARE`, and a `like_accrual` of `REPLY_AUTHOR_SHARE` to the parent's
+**`confirmedAuthor`** from `GET /posts/:id` — never the row's `author`, which is a claim rather than the
+topology. A like: change and a `like_accrual` of `LIKE_KARMA_COST` to the target's confirmed author,
+`likeTarget` set, exactly one signature. A vouch: change and a `vouch` box of exactly
+`VOUCH_KARMA_AMOUNT`, `voucherId` the reader's key, `targetId` the identity. An unvouch: one input — the
+reader's live `vouch` box naming that identity, resolved from `GET /vouches?voucher=` **at the press**,
+never from a cached set, since a box can be spent between a render and a click — and one
+`vouch_escrow` output of the same value, `owner` the reader's key, `releaseAtBlock` the vouch's
+`createdAtBlock` plus `vouchCooldownBlocks` from `/status` (`NODE_INTERFACE → Vouch transition rules`:
+the cooldown runs from the cast); no karma input and no change. An invite: change and a `bond` box of
+the amount the reader chose inside `/status`'s `inviteBondMin`–`inviteBondMax`, `inviterId` the reader's
+key, `inviteePublicKey` the pasted key. Zero change is no box (`TYPES_INTERFACE → Box value domain`).
+Every builder is frozen against the demo UI's own, the second implementation (`builders.test.ts`).
 
 **Nothing retries.** A rejection is one `Rejection { status, message }`, normalised from both body
 shapes the node uses — `{ error: <status>, reason }` and `{ error: <message> }`; a 409 drops the entry
@@ -279,6 +297,16 @@ and re-reads the spendable view, and the reader sees the rejection.
 when `GET /posts/:postId` answers `confirmed`, expired on a 404 or once the tip passes
 `expiresAtHeight`; a pending like is landed when `likedByViewer` turns `true`. That field reflects
 store records only, so **the client overlays its own pending likes** onto it until they land or expire.
+A pending vouch is landed when `GET /vouches?voucher=<key>` lists the pair; a pending unvouch when the
+pair is absent and a cooldown row of the box's value stands; a pending invite when `GET /invites/<key>`
+lists a bond naming the invitee — each expired once the tip passes its `expiresAtHeight`.
+
+**The reader's vouch set is client state read from the node, never stored:** `GET /vouches?voucher=<key>`
+to the end of `next` at identity load, again on every vouch or unvouch landing, and the cooldown arm
+beside it. The set, with the ledger's pending vouches overlaid, is what the mark reads (→ The identity
+display). The cooldown arm is the escrow gate — after any unvouch, no cast until `releaseAtBlock`
+(`NODE_INTERFACE → Vouch transition rules`) — which the client withholds as a courtesy, like the vouch
+floor `VOUCH_MIN_BALANCE`; the node's refusal stays the truth for every other rule.
 
 **Landing is the one unsolicited update, and it is bounded.** While the ledger holds an entry the
 client reads `GET /blocks/current` every 15 seconds, and when the height moves it reconciles the
@@ -303,6 +331,7 @@ this browser. create one, or import a file."* — then `create` and `import`. Wi
 key          the whole 64 hex, mono, selectable
 standing     resident · member · root — the node's word
 karma        the balance that spends, or the faucet step
+invites      K available · the invite form · the reader's standing bonds
 passphrase   locked · unlock  /  unlocked · lock
 export · forget — each a form in place (import is offered only with no identity loaded)
 ────
@@ -339,6 +368,19 @@ resident — *"members are made by other members' vouches and likes. this key ha
 from `/status` `membership` since a resident's own `memberBar` is still zero; a member — *"since block
 H · K invites available."*; a root — nothing more.
 
+**The `invites` row** *(membership actions)*: the line — `K invites available` for a member, *"as many
+as your karma covers"* for a root, *"invites come with membership"* for a resident; the form, a real
+`<form>` in place shown only when an invite is available and the spendable view covers the minimum
+bond — the invitee's key, 64 hex pasted out of band, and the bond, a number inside `/status`'s
+`inviteBondMin`–`inviteBondMax`, **default the minimum** — with what happens under it: *"they receive the
+bond's karma from the pool. your bond comes back as they receive likes, one karma per three, and the
+rest goes to the pool after N blocks."* (`INVITE_BOND_VEST_PER_LIKES` from `@dagsocial/types`,
+`inviteProbationBlocks` from `/status`); the flight in the row, the deferred unlock in the row when
+locked; and beneath, **the reader's standing bonds** from `GET /invites/<key>`, one row per bond —
+the invitee's identity (→ The identity display, so the reader can vouch for their own invitee here)
+and the bond's value — following `next`. No settle height: no view serves it, and the client invents
+no number. The available count drops when the bond lands, in place, never animated.
+
 **Karma is `effective`**, the value every sufficiency check on the node reads — `E effective · T held`
 when decay has opened a gap, because the face `total` would promise karma the next spend does not have.
 This is the one place a balance rests on the reading surface. **No credits row** while the client spends
@@ -371,6 +413,74 @@ motion contract asks of pending state (`HOUSE_STYLE → Motion`).
 — never bounded by a guess: a grant with no expiry would run the poll for ever, which the motion
 contract forbids. The faucet relays the field (`NODE_INTERFACE → Faucet`).
 
+### The identity display *(membership actions)*
+
+**Wherever an identity is shown it is the key prefix in mono, then the mark, then `· you` on the
+reader's own** — cards in the feed and in panes, a reply's parent reference, a title bar, an endorser
+row and a bond row, the author window's subject line. The prefix is `shortHex(key, 16)` on a card and
+the whole key in a window.
+
+**The mark is one character, a control, and never a word:** `✓` in ink when the reader's live vouch
+names this identity; `+` in muted ink when the reader may vouch and has not; `✓` in muted ink while the
+reader's vouch is pending; **absent** with no identity loaded, for a reader who is not a member, and on
+the reader's own identity; **present but disabled** while the reader's stake from an unvouch is held or
+the spendable view is below `VOUCH_MIN_BALANCE`. Its state is glyph and ink weight and nothing else — no
+hue (`HOUSE_STYLE → Identity colour`: nothing may invite a reader to read identity by colour) and no
+word. `✓` U+2713 and `+` are typographic, like the workspace's arrows, not iconography
+(`HOUSE_STYLE → Deliberately not decided`); if the self-hosted faces lack U+2713 the check is a
+two-stroke SVG in `currentColor` at x-height, never a fallback font.
+
+**A press on `+` vouches at once — no confirmation, the feed included.** A press on `✓` opens the author
+window, where unvouch lives one step further on purpose. The visible glyph is small; the click target
+is the meta row's button height with the ghost outline (`HOUSE_STYLE → Accessibility contract`: a
+control's sole boundary), reachable by keyboard and touch. A locked identity mounts the unlock form in a
+row under the meta, as a like does (→ The identity module).
+
+**The mark's `title` is the count and nothing else** — `3 vouches`, from `GET /vouches?target=<key>`'s
+`count`, read once per distinct author on a rendered page, cached for the session, re-read on the
+region's `↻` and on the reader's own vouch or unvouch landing for that identity. The mark renders before
+its count arrives, and a failed read leaves the `title` empty, never wrong. A disabled mark's `title` is
+the reason instead, and the author window carries the same sentence in text, so hover is never the only
+route (`HOUSE_STYLE → Interaction`). ⚠ **The per-author read is the price of the count on today's
+node**; a count on the post view retires it.
+
+**The prefix on a card is the way into the author window** — a ghost button in the meta row beside
+`↩ reply` and `like`; the strip stays the card's only control for opening a thread and the card body
+stays selectable text (`HOUSE_STYLE → Interaction`). On a title bar and a reply reference the prefix
+stays text: the bar is the tightest space in the design. Opening a window spends nothing, so the
+panes-only rule that governs like and reply does not bind it.
+
+### The author window *(membership actions)*
+
+**`@author:<64hex>`** — an `@`-window like `@profile`, opened from an identity's prefix by the placement
+rule every window follows, raised rather than duplicated, persisted in the arrangement (`isWindowId`
+accepts the prefix with 64 hex). The bar reads `author · <prefix>` and carries no spine. `↻` is live and
+re-reads `/karma/:key` and the endorsers page. Rows:
+
+```
+key          the whole key, mono, and the mark
+standing     root · member since block N · resident, with the progress line the profile shows
+endorsers    N vouches, then one row per voucher — their identity, following next
+your vouch   + vouch · ✓ vouched since block N · unvouch — or the one-line reason the reader cannot
+posts        a word that opens the author-posts window beside this one
+```
+
+**Standing is the node's word**, as in the profile (`member`; `invitesAvailable: null` for root); a
+resident's line reads the counts against the bars from `/status` — the only place a bar is read for
+another identity. **`unvouch`** resolves the vouch box at the press (→ The wallet); a pair already gone
+re-renders the row to `+ vouch` and says so — *"that vouch was already withdrawn."* Its copy states what
+happens: the stake is held until block N and no new vouch until then. The reasons the reader cannot
+vouch, one line each: *"vouching comes with membership"*, *"your stake from an unvouch is held until
+block N"*, *"this is you"*, *"load an identity to vouch"*. With no identity loaded the window is the
+read surface exactly — key, standing, endorsers, no marks and no `your vouch` row.
+
+**The author-posts window — `@posts:<64hex>`** — opened from `posts`, placed by the same rule (from the
+feed, the author window takes the first column and the posts the next), raised when open, persisted.
+Its body is `GET /posts?author=<key>` — the author's committed posts, newest first, following `next` —
+as feed cards: the strip, the prefix and the mark, `· you`, and no like and no reply, which live in the
+pane the strip opens. `↻` reports what it did — `4 new posts` / `no new posts`. The bar reads
+`posts · <prefix>`, no spine.
+
 ## Writes
 
 | Client action | Endpoint | Standing |
@@ -379,11 +489,12 @@ contract forbids. The faucet relays the field (`NODE_INTERFACE → Faucet`).
 | Submit a post | `POST /posts` — `{ tx, content }` → `{ postId, status, expiresAtHeight, txId }` | *(write surface)* |
 | Like | `POST /likes` — `{ tx }` → `{ status, txId, expiresAtHeight }` | *(write surface)* |
 | Standing and balance | `GET /karma/:userId`, `GET /credits/:userId` | *(write surface)* — the spendable view |
+| Vouch | `POST /vouches` — `{ tx }` → `{ status, txId, expiresAtHeight }` | *(membership actions)* |
+| Unvouch | `DELETE /vouches/:targetId` — `{ tx }` → `{ status, txId, expiresAtHeight }` — the one non-`POST` write | *(membership actions)* |
+| Invite | `POST /invites` — `{ tx }` → `{ status, txId, expiresAtHeight, bondBoxId }` | *(membership actions)* |
+| The reader's vouches, cooldowns and standing bonds; an identity's endorsers and count | `GET /vouches?voucher=`, `GET /vouches?voucher=&cooldowns=1`, `GET /invites/:userId`, `GET /vouches?target=` | *(membership actions)* — reads, in the read client |
 | Withdraw content | `POST /posts/:id/withdraw` | not built |
 | Prune a subtree | `POST /posts/:id/prune` | not built |
-| Vouch, unvouch | `POST /vouches`, `DELETE /vouches/:targetId` | not built |
-| Invite | `POST /invites` | not built |
-| Invites available | `GET /invites/:userId` | not built |
 
 **The write client is its own module beside the read client.** The read client issues `GET` requests
 and nothing else, and that stays literally checkable; the writes live next door, and a `viewer`
@@ -417,6 +528,8 @@ client that expects to announce itself first is built against an endpoint that d
   identity (→ The identity module). *(identity interface)*
 - **Every read carries the viewer's key once an identity is loaded, and none does before.** *(write
   surface)*
+- **The mark is never a word and never carries a colour** — its state is glyph and ink weight, and its
+  `title` is a count or a reason (→ The identity display). *(membership actions)*
 - **A consensus constant is imported; a per-network number is read.** `POST_PRICE_THREAD`,
   `POST_PRICE_REPLY`, `REPLY_AUTHOR_SHARE` and `LIKE_KARMA_COST` are consensus and ruled
   (`CONSTANTS → Post price and likes`) and come from `@dagsocial/types`; what `/status` serves
