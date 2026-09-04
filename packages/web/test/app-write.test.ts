@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { App } from '../src/app';
 import { PendingLedger } from '../src/wallet/ledger';
 import type { Api } from '../src/api/client';
-import type { Signer } from '../src/wallet/submit';
+import type { AppIdentity } from '../src/model/state';
 import type { WriteClient } from '../src/api/write';
 import type { AppState } from '../src/model/state';
 import type { KarmaResult, PostResult, StatusResult, FeedResult, BlockCurrent } from '../src/api/dto';
@@ -62,7 +62,21 @@ interface ThrowOpts {
 
 function harness(thrown: ThrowOpts = {}): Harness {
   const signCalls: string[] = [];
-  const identity: Signer = { current: () => ({ pubKeyHex: PUB }), sign: (t) => { signCalls.push(t); return 'ab'.repeat(64); } };
+  const identity: AppIdentity = {
+    current: () => ({ pubKeyHex: PUB, locked: false }),
+    sign: (t) => { signCalls.push(t); return 'ab'.repeat(64); },
+    draft: () => ({ pubKeyHex: PUB }),
+    create: async () => ({ pubKeyHex: PUB }),
+    discardDraft: () => {},
+    inspectFile: () => ({ kind: 'clear', pubKeyHex: PUB }),
+    importFile: async () => ({ pubKeyHex: PUB }),
+    exportFile: async () => '{}',
+    unlock: async () => {},
+    lock: () => {},
+    forget: () => {},
+    backedUp: () => false,
+    onChange: () => {},
+  };
   const last = (): string => signCalls[signCalls.length - 1]!;
   const feedViewers: Array<string | undefined> = [];
   let blockHeight = 6001;

@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { App } from '../src/app';
 import { PendingLedger } from '../src/wallet/ledger';
 import type { Api } from '../src/api/client';
-import type { Signer } from '../src/wallet/submit';
+import type { AppIdentity } from '../src/model/state';
 import type { WriteClient } from '../src/api/write';
 import type { FeedResult, ThreadResult, PostJson, PostResult, StatusResult } from '../src/api/dto';
 import { karmaResult } from './karma-fixture';
@@ -50,12 +50,23 @@ interface Harness {
 
 function harness(): Harness {
   const signed: string[] = [];
-  const identity: Signer = {
-    current: () => ({ pubKeyHex: PUB }),
+  const identity: AppIdentity = {
+    current: () => ({ pubKeyHex: PUB, locked: false }),
     sign: (txId) => {
       signed.push(txId);
       return 'ab'.repeat(64);
     },
+    draft: () => ({ pubKeyHex: PUB }),
+    create: async () => ({ pubKeyHex: PUB }),
+    discardDraft: () => {},
+    inspectFile: () => ({ kind: 'clear', pubKeyHex: PUB }),
+    importFile: async () => ({ pubKeyHex: PUB }),
+    exportFile: async () => '{}',
+    unlock: async () => {},
+    lock: () => {},
+    forget: () => {},
+    backedUp: () => false,
+    onChange: () => {},
   };
   const echoTxId = (): string => signed[signed.length - 1]!; // a matching node echoes the client's id
   const feedResult: FeedResult = { posts: [post(ROOT, OTHER, 'a root by someone else')], next: null, pending: [], pendingCount: 0 };

@@ -91,7 +91,7 @@ interface Harness {
   setHeight(h: number): void;
 }
 
-function harness(): Harness {
+function harness(ledger: PendingLedger = new PendingLedger(null)): Harness {
   const idn = fakeIdentity();
   const feedViewers: Array<string | undefined> = [];
   const karmaKeys: string[] = [];
@@ -118,7 +118,7 @@ function harness(): Harness {
   };
   const writeClient = {} as unknown as WriteClient;
 
-  const app = new App(fakeApi, writeClient, idn, new PendingLedger(null), idn);
+  const app = new App(fakeApi, writeClient, idn, ledger);
   const appbar = document.createElement('div');
   const feed = document.createElement('section'); feed.id = 'feed';
   const panes = document.createElement('section'); panes.id = 'panes';
@@ -185,6 +185,14 @@ describe('the App identity control', () => {
     await flush();
     expect(h.drive.ledger).not.toBe(before); // a fresh ledger, keyed by the new identity
   });
+
+  it('a restored ledger with a pending entry starts the poll on mount', () => {
+    vi.useFakeTimers();
+    const ledger = new PendingLedger(KEY);
+    ledger.add({ txId: 'cc'.repeat(32), kind: 'grant', postId: KEY, inputs: [], expiresAtHeight: 6100, submittedAtHeight: 6000 });
+    const h = harness(ledger);
+    expect(h.drive.pollTimer).not.toBeNull(); // the poll runs while the ledger holds an entry
+  });
 });
 
 describe('the App profile window — /karma and the faucet grant', () => {
@@ -196,6 +204,17 @@ describe('the App profile window — /karma and the faucet grant', () => {
     h.drive.openProfile();
     await flush();
     expect(h.karmaKeys).toContain(KEY);
+  });
+
+  it('the standing row reads the tier after the /karma read on open', async () => {
+    const h = harness();
+    await h.idn.create('pw');
+    await flush();
+    h.drive.openProfile();
+    await flush();
+    // The read re-renders the whole region, so standing updates from ctx.karma
+    // rather than being left at "—" by a karma-field-only update.
+    expect(document.querySelector('.winbody .standing')?.textContent).toBe('resident');
   });
 
   it('askFaucet adds a grant entry and starts the poll; the grant lands when a box appears', async () => {

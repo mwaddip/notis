@@ -15,7 +15,7 @@ import { FaucetClient, faucetLine } from './api/faucet';
 import { PendingLedger, reconcilePost, reconcileLike, reconcileGrant, pendingLikeTargets } from './wallet/ledger';
 import type { PendingEntry } from './wallet/types';
 import { readBuildContext } from './wallet/reads';
-import { submitPostFlow, submitLikeFlow, type SubmitDeps, type Signer } from './wallet/submit';
+import { submitPostFlow, submitLikeFlow, type SubmitDeps } from './wallet/submit';
 import { identity as identitySingleton } from './identity/identity';
 import { renderKarmaField } from './view/profile';
 import {
@@ -65,9 +65,8 @@ export class App {
   private state: AppState;
   private client: Api;
   private writeClient: WriteClient;
-  private identity: Signer;
-  // The identity module the App drives — its own reference beside the wallet's
-  // Signer seam (submit.ts), which stays the extension swap point.
+  // The one identity reference the App holds; the wallet keeps its own narrower
+  // Signer seam (submit.ts), the extension swap point (WEB_INTERFACE → The identity module).
   private idm: AppIdentity;
   private faucetClient: FaucetClient;
   private ledger: PendingLedger;
@@ -91,16 +90,15 @@ export class App {
   private grantView: { state: 'pending' } | { state: 'expired'; atHeight: number } | null = null;
 
   // Every dependency is injectable so a test can drive the App over fakes.
-  constructor(client?: Api, writeClient?: WriteClient, identity?: Signer, ledger?: PendingLedger, idm?: AppIdentity) {
+  constructor(client?: Api, writeClient?: WriteClient, identity?: AppIdentity, ledger?: PendingLedger) {
     this.client = client ?? new NodeClient(() => prefs.node);
     this.writeClient = writeClient ?? new WriteClient(() => prefs.node);
-    this.identity = identity ?? identitySingleton;
-    this.idm = idm ?? identitySingleton;
+    this.idm = identity ?? identitySingleton;
     this.faucetClient = new FaucetClient(() => prefs.faucet);
     // The ledger is for the identity loaded at construction; a change of identity
     // rebuilds it at once through onChange (WEB_INTERFACE → "An identity change
     // takes effect at once").
-    this.ledger = ledger ?? new PendingLedger(this.identity.current()?.pubKeyHex ?? null);
+    this.ledger = ledger ?? new PendingLedger(this.idm.current()?.pubKeyHex ?? null);
     this.state = {
       feed: { posts: [], pending: [], next: null, report: null, olderReport: null, loaded: false, loading: false, error: null },
       threads: new Map(),
@@ -145,7 +143,7 @@ export class App {
   /** The loaded identity's key, sent on every read once one exists and never
    *  before (WEB_INTERFACE → "Every read carries the viewer's key once an identity is loaded, and none does before"). */
   private viewer(): string | undefined {
-    return this.identity.current()?.pubKeyHex ?? undefined;
+    return this.idm.current()?.pubKeyHex ?? undefined;
   }
 
   // -------------------------------------------------------------------------
@@ -164,6 +162,10 @@ export class App {
     this.renderHeader();
     this.renderFeed();
     this.renderPanes();
+    // A restored ledger may already hold pending entries from a prior session; the
+    // poll runs while it holds one (WEB_INTERFACE → The wallet). startPoll guards on
+    // an empty ledger, so this is a no-op when there is nothing to reconcile.
+    this.startPoll();
   }
 
   start(appbar: HTMLElement, feedEl: HTMLElement, panesEl: HTMLElement): void {
@@ -197,7 +199,7 @@ export class App {
   // -------------------------------------------------------------------------
 
   private ctx(): RenderCtx {
-    const cur = this.identity.current();
+    const cur = this.idm.current();
     const likeTargets = pendingLikeTargets(this.ledger.all());
     return {
       openSet: openSet(this.state.workspace),
@@ -235,7 +237,7 @@ export class App {
     // with one (shortHex(pubKeyHex, 16), the card's own rule), so an identity reads
     // the same way in the header and on a card. No avatar, no identity colour
     // (WEB_INTERFACE → The profile window; HOUSE_STYLE → Identity colour).
-    const cur = this.identity.current();
+    const cur = this.idm.current();
     const profile = el('button', 'theme-btn');
     profile.style.background = 'transparent';
     profile.style.color = 'var(--ink)';
@@ -618,12 +620,13 @@ export class App {
     this.lastPolledHeight = 0;
     this.profileKarma = null;
     this.grantView = null;
-    this.ledger = new PendingLedger(this.identity.current()?.pubKeyHex ?? null);
+    this.ledger = new PendingLedger(this.idm.current()?.pubKeyHex ?? null);
+    this.startPoll(); // the new key's restored ledger may hold entries; guarded on empty
     this.renderHeader();
     this.renderPanes();
     void this.loadFeed();
     for (const id of openSet(this.state.workspace)) if (!isWin(id)) void this.fetchThread(id);
-    if (this.identity.current() !== null) void this.refreshProfileKarma();
+    if (this.idm.current() !== null) void this.refreshProfileKarma();
   }
 
   /** A fresh sealed file for the reader to keep. Needs the seed, so the profile
@@ -638,21 +641,24 @@ export class App {
   /** Read the loaded key's /karma for the profile window — on open and on the
    *  window's ↻ (WEB_INTERFACE → The profile window). */
   private async refreshProfileKarma(): Promise<void> {
-    const cur = this.identity.current();
+    const cur = this.idm.current();
     if (cur === null) return;
     try {
       this.profileKarma = await this.client.karma(cur.pubKeyHex);
     } catch {
       return; // a failed read leaves the last-known karma; the ↻ retries
     }
-    this.renderProfileKarma();
+    // The reader's own open/↻ re-renders the whole window, so standing (read from
+    // ctx.karma at body time) updates with the karma field, not just the karma
+    // field in place — that is the unsolicited grant landing's path (reconcileGrantEntry).
+    this.renderRegionsFor('@profile');
   }
 
   /** Ask the faucet — a 202 rides the bounded poll as a grant entry; a rejection is
    *  one register line (WEB_INTERFACE → The faucet step). The request carries only
    *  the public key, so a locked identity can ask. */
   private async askFaucet(): Promise<void> {
-    const cur = this.identity.current();
+    const cur = this.idm.current();
     if (cur === null) return;
     const res = await this.faucetClient.askKarma(cur.pubKeyHex);
     if ('message' in res) {
@@ -711,11 +717,11 @@ export class App {
   // -------------------------------------------------------------------------
 
   private submitDeps(): SubmitDeps {
-    return { reads: this.client, write: this.writeClient, ledger: this.ledger, identity: this.identity };
+    return { reads: this.client, write: this.writeClient, ledger: this.ledger, identity: this.idm };
   }
 
   private openComposer(parentId: string | null): void {
-    if (this.identity.current() === null) return;
+    if (this.idm.current() === null) return;
     const key = composerKey(parentId);
     const open = this.composers.get(key);
     if (open) {
@@ -740,7 +746,7 @@ export class App {
   }
 
   private async readAffordability(key: string, price: bigint): Promise<void> {
-    const cur = this.identity.current();
+    const cur = this.idm.current();
     if (cur === null) return;
     try {
       const ctx = await readBuildContext(this.client, this.ledger, cur.pubKeyHex);
@@ -760,7 +766,7 @@ export class App {
   }
 
   private async submitComposer(parentId: string | null, text: string): Promise<void> {
-    const cur = this.identity.current();
+    const cur = this.idm.current();
     if (cur === null) return;
     // Collapse the composer into the hollow card in the same slot at once.
     this.composers.delete(composerKey(parentId));
@@ -828,7 +834,7 @@ export class App {
   }
 
   private async likePost(postId: string): Promise<void> {
-    const cur = this.identity.current();
+    const cur = this.idm.current();
     if (cur === null || this.optimisticLikes.has(postId)) return;
     // The reader did it — show liked and move the count at once (WEB_INTERFACE →
     // The wallet). A number that moves in direct response to the reader's own
