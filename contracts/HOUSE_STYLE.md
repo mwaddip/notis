@@ -332,7 +332,8 @@ Every rule here is a prohibition, and together they are most of what keeps the p
   a thread on a pressed refresh are the same rule.
 - **Pending state is the one legitimate unsolicited update, and it pays for itself in geometry.** A
   post the reader submitted may turn from hollow to landed without the reader asking, because the
-  reader asked for the post. The price is identical geometry before and after — colour only, the meta
+  reader asked for the post; a faucet grant the reader asked for may turn the profile's karma line
+  from `working…` to the balance for the same reason. The price is identical geometry before and after — colour only, the meta
   row and the stage line one fixed line box, so what either contains cannot change the card's height —
   and a bounded watch: it runs only while the reader's own submissions are pending and stops at zero,
   it reconciles those entries and refreshes nothing else, and it moves no count. Anything else arriving

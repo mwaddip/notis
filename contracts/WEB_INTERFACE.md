@@ -2,10 +2,10 @@
 
 **Component:** `@dagsocial/web`
 **Status:** the **read surface** and the **write surface's first slice** — the identity machinery,
-the composer for a root and a reply, and like — are implemented. **The identity interface's first
-unit** — the `@profile` window, create / import / export / forget, encryption at rest with unlock per
-tab, the reader's own posts marked, the faucet karma step — is **AHEAD OF CODE (2026-09-04)**, marked
-where it appears. Vouch, invite, withdraw and prune are not built
+the composer for a root and a reply, and like — and the **identity interface's first unit** — the
+`@profile` window, create / import / export / forget / lock / unlock, encryption at rest with unlock per
+tab, the reader's own posts marked, the faucet karma step — are implemented; vouch, invite, withdraw
+and prune are not built
 **Protocol version:** read from the node, never held — see Invariants
 
 > **The demo UI (`packages/node/public/index.html`) is not this contract's subject.** It is a debug
@@ -69,16 +69,12 @@ is the rest.
 transactions the browser builds and signs. Vouch, invite, withdraw and prune are **not built**; each is
 named as such where it appears. The identity interface — the `@profile` window, its six operations and
 the faucet karma step — is stated below (→ The identity module, → The profile window, → The faucet
-step) and is **AHEAD OF CODE (2026-09-04)** until its unit lands.
+step).
 
 **With no identity loaded, the client is the read surface exactly.** No `new post`, no `↩ reply`, no
 `like`, no `viewer` parameter. The way in is `create` or `import` in the `@profile` window (→ The
 profile window); nothing else in the interface creates an identity, and a production build exposes no
 other door.
-
-> ⚠ **AHEAD OF CODE (2026-09-04)** — until the identity-interface unit lands, nothing in the interface
-> creates an identity: the machinery is reached in a development build only, through
-> `globalThis.notis.identity`, and a production build exposes nothing.
 
 ## The browser reaches `@dagsocial/types` through a build-time shim
 
@@ -190,10 +186,6 @@ is not an error.
 
 ### The identity module *(write surface)*
 
-> ⚠ **AHEAD OF CODE (2026-09-04)** — this section states the module as the identity interface's first
-> unit builds it. Today it holds one clear `{ pubKeyHex, privKeyBase64 }` under `notis.identity`, has
-> no locked state, and is reached only through a development build's `globalThis.notis.identity`.
-
 **One identity at a time, encrypted at rest.** Storage holds an **envelope** under `notis.identity`, and
 the exported file is the same envelope — one codec, and importing an encrypted file is storing it:
 
@@ -296,9 +288,6 @@ refreshes no feed, no thread and no count; a landed card changes colour and noth
 
 ### The profile window *(identity interface)*
 
-> ⚠ **AHEAD OF CODE (2026-09-04)** — the identity interface's first unit. Today the header carries a
-> `settings` button opening `@settings`, which holds the preference rows alone.
-
 **One header control, at the right of the app bar beside the theme toggle.** With no identity it reads
 `profile`; with one, the key prefix in mono — `shortHex(pubKeyHex, 16)`, the card's own rule, so an
 identity reads the same way in the header and on a card. No avatar and no identity colour: nothing may
@@ -328,8 +317,8 @@ opened it, and a refusal is one sentence in the voice register under the fields.
 
 - **Create** and **import** are offered only with no identity loaded — switching keys is `forget`, then
   one of them, so a loaded key is never silently replaced. Create drafts a key through the shim first and
-  shows its prefix as the form's username — the key exists before the passphrase is typed, so the
-  browser's saved entry names the key it will later unlock — takes two `new-password` fields (matching,
+  shows it as the form's username — the key exists before the passphrase is typed, so the browser's
+  saved entry names the key it will later unlock, as the unlock form's username does — takes two `new-password` fields (matching,
   non-empty, **no minimum length** — the manager makes the strong ones and a rule only nags), seals and
   stores the draft, and leaves one standing line under `key` until the first export: *"this key lives in this browser only. export it to keep it."* Import is a native file picker:
   a clear file gets a set-passphrase form, an encrypted one a `current-password` form whose successful
@@ -356,8 +345,6 @@ This is the one place a balance rests on the reading surface. **No credits row**
 no credits. **A card by the loaded key reads `· you`** after the prefix, muted ink, text only.
 
 ### The faucet step *(identity interface)*
-
-> ⚠ **AHEAD OF CODE (2026-09-04)** — with the identity interface's first unit.
 
 **In the karma row, one ghost button — `ask the faucet for karma` — while three things hold:** an
 identity is loaded, its `/karma` `boxCount` is 0, and a faucet base is configured. Not a header control:
@@ -388,7 +375,7 @@ contract forbids. The faucet relays the field (`NODE_INTERFACE → Faucet`).
 
 | Client action | Endpoint | Standing |
 |---------------|----------|----------|
-| Ask the faucet for karma | `POST <faucet>/karma` — `{ pubkey }` → `{ txId, status, expiresAtHeight }` | *(identity interface, AHEAD OF CODE 2026-09-04)* — the faucet's edge, not the node's (`NODE_INTERFACE → Faucet`) |
+| Ask the faucet for karma | `POST <faucet>/karma` — `{ pubkey }` → `{ txId, status, expiresAtHeight }` | *(identity interface)* — the faucet's edge, not the node's (`NODE_INTERFACE → Faucet`) |
 | Submit a post | `POST /posts` — `{ tx, content }` → `{ postId, status, expiresAtHeight, txId }` | *(write surface)* |
 | Like | `POST /likes` — `{ tx }` → `{ status, txId, expiresAtHeight }` | *(write surface)* |
 | Standing and balance | `GET /karma/:userId`, `GET /credits/:userId` | *(write surface)* — the spendable view |
@@ -427,7 +414,7 @@ client that expects to announce itself first is built against an endpoint that d
   an export is the reader's own file (→ The identity module). *(write surface)*
 - **Storage never holds the seed in the clear.** The stored identity is an encrypted envelope, the seed
   is decrypted into memory on demand and for the tab only, and a clear value in storage reads as no
-  identity (→ The identity module). *(identity interface — AHEAD OF CODE 2026-09-04)*
+  identity (→ The identity module). *(identity interface)*
 - **Every read carries the viewer's key once an identity is loaded, and none does before.** *(write
   surface)*
 - **A consensus constant is imported; a per-network number is read.** `POST_PRICE_THREAD`,

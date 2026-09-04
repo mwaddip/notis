@@ -627,9 +627,6 @@ holds a record — the once-per-identity rule) or names a malformed key; `429 { 
 own rate limit; `503 { error }` is a drained faucet. `POST <faucet>/credits { pubkey }` answers
 `202 { txId, status }` and repeats.
 
-> ⚠ **AHEAD OF CODE (2026-09-04)** — `expiresAtHeight` on the karma answer. The service receives it
-> from `/invites` and discards it today; `tools/faucet` relays it with the identity-interface unit.
-
 A faucet is an **ordinary account** whose secret lives in a service outside the node. Genesis seeds
 that account's karma and credit boxes on the networks whose profile names a `faucetPublicKey`;
 mainnet's does not, so no faucet identity exists in mainnet state. **Absence of the field is the whole
