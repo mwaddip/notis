@@ -1,5 +1,6 @@
 import { MAX_CONTENT_BYTES } from '@dagsocial/types';
 import { el } from '../dom';
+import { unlockForm } from './passphrase';
 
 // The composer — a self-contained widget the App holds and reuses across a
 // region rebuild rather than recreating, so the caret and selection survive
@@ -19,6 +20,10 @@ export interface ComposerController {
   /** The affordability read failed — the foot says so and post stays disabled,
    *  rather than a disabled button with no reason. */
   setKarmaError(message: string): void;
+  /** The key is locked: the unlock form takes the foot, below the byte budget;
+   *  success continues the flight, Esc returns to editing with the draft intact
+   *  (WEB_INTERFACE → The identity module). */
+  showUnlock(pubKeyHex: string, onSubmit: (passphrase: string) => Promise<void>): void;
 }
 
 export interface ComposerOpts {
@@ -158,6 +163,18 @@ export function makeComposer(opts: ComposerOpts): ComposerController {
       karmaError = message;
       affordable = false; // post disabled — affordability is unknown
       if (!discarding) sync();
+    },
+    showUnlock: (pubKeyHex: string, onSubmit: (passphrase: string) => Promise<void>) => {
+      // The draft in the textarea is untouched; only the foot changes. Esc or
+      // cancel restores the foot and returns focus to the draft.
+      foot.textContent = '';
+      foot.appendChild(el('span', 'ask', 'your key is locked — unlock to post'));
+      foot.appendChild(
+        unlockForm(pubKeyHex, onSubmit, () => {
+          drawFoot();
+          ta.focus();
+        }),
+      );
     },
   };
 }

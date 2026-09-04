@@ -51,6 +51,7 @@ interface Harness {
   feedViewers: Array<string | undefined>;
   setHeight(h: number): void;
   setLiked(v: boolean): void;
+  setLocked(v: boolean): void;
 }
 
 interface ThrowOpts {
@@ -63,7 +64,7 @@ interface ThrowOpts {
 function harness(thrown: ThrowOpts = {}): Harness {
   const signCalls: string[] = [];
   const identity: AppIdentity = {
-    current: () => ({ pubKeyHex: PUB, locked: false }),
+    current: () => ({ pubKeyHex: PUB, locked }),
     sign: (t) => { signCalls.push(t); return 'ab'.repeat(64); },
     draft: () => ({ pubKeyHex: PUB }),
     create: async () => ({ pubKeyHex: PUB }),
@@ -71,8 +72,8 @@ function harness(thrown: ThrowOpts = {}): Harness {
     inspectFile: () => ({ kind: 'clear', pubKeyHex: PUB }),
     importFile: async () => ({ pubKeyHex: PUB }),
     exportFile: async () => '{}',
-    unlock: async () => {},
-    lock: () => {},
+    unlock: async () => { locked = false; },
+    lock: () => { locked = true; },
     forget: () => {},
     backedUp: () => false,
     onChange: () => {},
@@ -81,6 +82,7 @@ function harness(thrown: ThrowOpts = {}): Harness {
   const feedViewers: Array<string | undefined> = [];
   let blockHeight = 6001;
   let liked = false;
+  let locked = false;
 
   const karma: KarmaResult = karmaResult({ userId: PUB, total: '227', effective: '227', boxes: [{ boxId: BOX, value: '227' }], boxCount: 1, height: 6000 });
   const fakeApi: Api = {
@@ -121,6 +123,7 @@ function harness(thrown: ThrowOpts = {}): Harness {
     drive: app as unknown as Harness['drive'],
     setHeight: (h) => { blockHeight = h; },
     setLiked: (v) => { liked = v; },
+    setLocked: (v) => { locked = v; },
   };
 }
 
@@ -141,6 +144,26 @@ describe('the App write surface — a post flight', () => {
     expect(sub).toMatchObject({ parentId: null, author: PUB, stage: 'submitted', postId: 'newpost' });
     expect(h.ledger.all().map((e) => e.kind)).toEqual(['post']);
     expect(h.drive.pollTimer).not.toBeNull();
+  });
+
+  it('a locked post shows the unlock form in the composer foot, then the flight continues', async () => {
+    const h = harness();
+    h.setLocked(true);
+    (h.app as unknown as { openComposer(p: string | null): void }).openComposer(null);
+    await flush();
+    await h.drive.submitComposer(null, 'a locked thread');
+    // No submission yet — the composer foot holds the unlock form, draft intact.
+    expect(h.drive.state.submissions).toHaveLength(0);
+    const composer = (h.drive.composers as Map<string, { el: HTMLElement }>).get('@feed')!;
+    const form = composer.el.querySelector('form.pf') as HTMLFormElement;
+    expect(form).not.toBeNull();
+    (form.querySelector('input[type="password"]') as HTMLInputElement).value = 'pw';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    // Unlocked — the flight ran, landing a submission and a ledger entry.
+    expect(h.drive.state.submissions).toHaveLength(1);
+    expect(h.drive.state.submissions[0]!.stage).toBe('submitted');
+    expect(h.ledger.all().map((e) => e.kind)).toEqual(['post']);
   });
 
   it('the bounded poll lands the submission on a height change and stops at zero', async () => {

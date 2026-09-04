@@ -768,6 +768,16 @@ export class App {
   private async submitComposer(parentId: string | null, text: string): Promise<void> {
     const cur = this.idm.current();
     if (cur === null) return;
+    if (cur.locked) {
+      // The seed is not loaded and sign is synchronous, so the unlock is a form in
+      // the composer foot; on success the flight continues (WEB_INTERFACE → The
+      // identity module). Esc returns to editing with the draft intact.
+      this.composers.get(composerKey(parentId))?.showUnlock(cur.pubKeyHex, async (p) => {
+        await this.idm.unlock(p);
+        await this.submitComposer(parentId, text);
+      });
+      return;
+    }
     // Collapse the composer into the hollow card in the same slot at once.
     this.composers.delete(composerKey(parentId));
     const submission: Submission = {
