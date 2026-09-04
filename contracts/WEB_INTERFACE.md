@@ -232,7 +232,8 @@ to the press (`HOUSE_STYLE → Motion`), and success continues the flight.
 nothing else, and no DTO carries the seed. The module's surface:
 
 ```
-current(): { pubKeyHex, locked } | null          generate(passphrase): Promise<Identity>
+current(): { pubKeyHex, locked } | null          draft(): Identity — a key held, not yet stored
+create(passphrase): Promise<Identity> — seals and stores the draft      discardDraft(): void
 inspectFile(text): { kind: 'clear' | 'encrypted', pubKeyHex }
 importFile(text, passphrase): Promise<Identity>  exportFile(password): Promise<string>
 unlock(passphrase): Promise<void>                lock(): void            forget(): void
@@ -326,10 +327,11 @@ can save from (→ The identity module). Enter submits, Esc cancels and returns 
 opened it, and a refusal is one sentence in the voice register under the fields.
 
 - **Create** and **import** are offered only with no identity loaded — switching keys is `forget`, then
-  one of them, so a loaded key is never silently replaced. Create generates through the shim, takes two
-  `new-password` fields (matching, non-empty, **no minimum length** — the manager makes the strong ones
-  and a rule only nags), seals and stores, and leaves one standing line under `key` until the first
-  export: *"this key lives in this browser only. export it to keep it."* Import is a native file picker:
+  one of them, so a loaded key is never silently replaced. Create drafts a key through the shim first and
+  shows its prefix as the form's username — the key exists before the passphrase is typed, so the
+  browser's saved entry names the key it will later unlock — takes two `new-password` fields (matching,
+  non-empty, **no minimum length** — the manager makes the strong ones and a rule only nags), seals and
+  stores the draft, and leaves one standing line under `key` until the first export: *"this key lives in this browser only. export it to keep it."* Import is a native file picker:
   a clear file gets a set-passphrase form, an encrypted one a `current-password` form whose successful
   open admits it.
 - **Export** unlocks first if locked, takes two `new-password` fields under the username
