@@ -150,18 +150,20 @@ export function reconcileVouch(
 }
 
 /** A pending unvouch is landed when the pair is absent from
- *  `GET /vouches?voucher=<me>` — the `vouch` box is spent — and a cooldown row
- *  stands for the escrow it created (WEB_INTERFACE → The wallet). Every vouch
- *  holds VOUCH_KARMA_AMOUNT, so the escrow's value is that same amount and the
- *  discriminator is the pair's absence, keyed on the target. */
+ *  `GET /vouches?voucher=<me>` — the `vouch` box is spent (WEB_INTERFACE → The
+ *  wallet). The escrow it creates is not the signal: a vouch held past one
+ *  cooldown yields an escrow born already releasable, which the next block's
+ *  settlement returns (NODE_INTERFACE → Vouch escrows), so the cooldown row can
+ *  stand for a single block the poll never catches. The one absence the target
+ *  does not distinguish — the lapse leg spending the box first — leaves the reader
+ *  the same state. */
 export function reconcileUnvouch(
   entry: PendingEntry,
   vouches: ReadonlyArray<{ targetId: string }>,
-  cooldowns: ReadonlyArray<{ releaseAtBlock: number }>,
   tip: number,
 ): EntryOutcome {
   const gone = !vouches.some((v) => v.targetId === entry.postId);
-  if (gone && cooldowns.length > 0) return 'landed';
+  if (gone) return 'landed';
   return tip > entry.expiresAtHeight ? 'expired' : 'pending';
 }
 

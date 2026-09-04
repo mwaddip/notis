@@ -206,15 +206,15 @@ describe('the membership reconciles', () => {
     expect(reconcileVouch(vouchEntry, [], 5721)).toBe('expired');
   });
 
-  it('an unvouch lands when the pair is absent and a cooldown stands, else pending', () => {
+  it('an unvouch lands on the pair\'s absence alone — the escrow can settle before the poll sees it', () => {
     // The pair still present → the vouch box is unspent → pending.
-    expect(reconcileUnvouch(unvouchEntry, [{ targetId: TARGET }], [{ releaseAtBlock: 5050 }], 5100)).toBe('pending');
-    // The pair gone and a cooldown row present → landed.
-    expect(reconcileUnvouch(unvouchEntry, [], [{ releaseAtBlock: 5050 }], 5100)).toBe('landed');
-    // Gone but no cooldown yet → still pending.
-    expect(reconcileUnvouch(unvouchEntry, [], [], 5100)).toBe('pending');
+    expect(reconcileUnvouch(unvouchEntry, [{ targetId: TARGET }], 5100)).toBe('pending');
+    // The pair gone → landed, whether or not a cooldown row stands: a vouch held
+    // past one cooldown yields an escrow the next block's settlement returns, so
+    // the row can stand for a single block the poll never catches.
+    expect(reconcileUnvouch(unvouchEntry, [], 5100)).toBe('landed');
     // Never landed, past the tip → expired.
-    expect(reconcileUnvouch(unvouchEntry, [{ targetId: TARGET }], [], 5721)).toBe('expired');
+    expect(reconcileUnvouch(unvouchEntry, [{ targetId: TARGET }], 5721)).toBe('expired');
   });
 
   it('an invite lands when a bond names the invitee, expires past the tip, else pending', () => {
