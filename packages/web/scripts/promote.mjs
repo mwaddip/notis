@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Promote a throwaway key to a member on a LOCAL DEVNET — the setup for the web
-// membership actions' proof (docs/specs → the proof). ⛔ DEVNET ONLY: it refuses
+// membership actions' proof. ⛔ DEVNET ONLY: it refuses
 // any node whose /status.networkType is not `devnet`, because it drives the
 // public DEVNET_FAUCET key, which is a secret nowhere else.
 //

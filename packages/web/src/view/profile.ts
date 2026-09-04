@@ -406,9 +406,32 @@ function standingBonds(field: HTMLElement, handlers: ProfileHandlers, ctx: Profi
     bondRow.appendChild(btn);
     const mark = ctx.markFor(bond.inviteePublicKey);
     if (mark) {
+      // A vouch is a write, so a locked identity unlocks under the bond row first,
+      // then the vouch flies (WEB_INTERFACE → The identity module: every write
+      // checks locked before its flight), as the author window's your-vouch row does.
+      const vouchAction = (key: string): void => {
+        const id = ctx.identity;
+        if (id?.locked) {
+          if (bondRow.parentElement?.querySelector('.card-unlock')) return; // already open
+          const urow = el('div', 'card-unlock');
+          urow.appendChild(
+            unlockForm(
+              id.pubKeyHex,
+              async (p) => {
+                await handlers.unlockIdentity(p);
+                handlers.vouch(key);
+              },
+              () => urow.remove(),
+            ),
+          );
+          bondRow.insertAdjacentElement('afterend', urow);
+          return;
+        }
+        handlers.vouch(key);
+      };
       bondRow.appendChild(
         markNode(bond.inviteePublicKey, mark, {
-          onVouch: (key) => handlers.vouch(key),
+          onVouch: vouchAction,
           onAuthor: (key) => handlers.openAuthor(key, origin),
         }),
       );

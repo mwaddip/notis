@@ -1150,7 +1150,7 @@ export class App {
     }
   }
 
-  // ---- vouch, from the mark (WEB_INTERFACE → Vouch) ----
+  // ---- vouch, from the mark (WEB_INTERFACE → The identity display) ----
 
   private async vouch(key: string): Promise<void> {
     const cur = this.idm.current();
@@ -1178,7 +1178,7 @@ export class App {
     this.renderRegionsForAuthor(key);
   }
 
-  // ---- unvouch, from the author window (WEB_INTERFACE → Unvouch) ----
+  // ---- unvouch, from the author window (WEB_INTERFACE → The author window) ----
 
   private async unvouch(key: string): Promise<void> {
     const cur = this.idm.current();
