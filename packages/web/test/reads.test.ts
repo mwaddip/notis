@@ -4,6 +4,7 @@ import { readBuildContext } from '../src/wallet/reads';
 import { PendingLedger } from '../src/wallet/ledger';
 import type { Api } from '../src/api/client';
 import type { KarmaResult, KarmaBoxRow, StatusResult } from '../src/api/dto';
+import { karmaResult } from './karma-fixture';
 
 // The §5.1 read order — /karma fully paged, THEN /status — is embodied here, not
 // at call sites; the fake records call order so the test can see it.
@@ -12,7 +13,7 @@ const AUTHOR = 'aa'.repeat(32);
 let calls: string[];
 
 function karmaPage(boxes: KarmaBoxRow[], next: string | null): KarmaResult {
-  return { userId: AUTHOR, total: '0', effective: '0', boxes, boxCount: boxes.length, next, height: 5333 };
+  return karmaResult({ userId: AUTHOR, boxes, boxCount: boxes.length, next, height: 5333 });
 }
 
 function statusResult(): StatusResult {

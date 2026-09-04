@@ -7,6 +7,7 @@ import type { Signer } from '../src/wallet/submit';
 import type { WriteClient } from '../src/api/write';
 import type { AppState } from '../src/model/state';
 import type { KarmaResult, PostResult, StatusResult, FeedResult, BlockCurrent } from '../src/api/dto';
+import { karmaResult } from './karma-fixture';
 
 // The App's write-surface wiring: a submission's flight, the bounded poll, and
 // the optimistic like — driven over fakes, asserted on state (the DOM rendering
@@ -67,7 +68,7 @@ function harness(thrown: ThrowOpts = {}): Harness {
   let blockHeight = 6001;
   let liked = false;
 
-  const karma: KarmaResult = { userId: PUB, total: '227', effective: '227', boxes: [{ boxId: BOX, value: '227' }], boxCount: 1, next: null, height: 6000 };
+  const karma: KarmaResult = karmaResult({ userId: PUB, total: '227', effective: '227', boxes: [{ boxId: BOX, value: '227' }], boxCount: 1, height: 6000 });
   const fakeApi: Api = {
     feed: async (_p, viewer): Promise<FeedResult> => { feedViewers.push(viewer); return { posts: [], next: null, pending: [], pendingCount: 0 }; },
     thread: async () => null,

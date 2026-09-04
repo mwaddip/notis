@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import { App } from '../src/app';
 import type { Api } from '../src/api/client';
 import type { FeedResult, ThreadResult, PostJson } from '../src/api/dto';
+import { karmaResult } from './karma-fixture';
 import { contentHashHex } from '../src/integrity';
 
 const HEX = (c: string): string => c.repeat(64);
@@ -37,7 +38,7 @@ function fakeApi(): Api {
       membership: { memberCount: 1, memberBar: 1, memberLikesBar: 2 },
     }),
     currentBlock: async () => ({ height: 1, hash: null }),
-    karma: async () => ({ userId: 'x', total: '0', effective: '0', boxes: [], boxCount: 0, next: null, height: 1 }),
+    karma: async () => karmaResult({ userId: 'x', height: 1 }),
   };
 }
 

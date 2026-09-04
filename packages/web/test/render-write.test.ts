@@ -6,6 +6,7 @@ import type { Api } from '../src/api/client';
 import type { Signer } from '../src/wallet/submit';
 import type { WriteClient } from '../src/api/write';
 import type { FeedResult, ThreadResult, PostJson, PostResult, StatusResult } from '../src/api/dto';
+import { karmaResult } from './karma-fixture';
 import { contentHashHex } from '../src/integrity';
 
 // The write surface rendered: the composer opens in its slot and collapses to a
@@ -70,7 +71,7 @@ function harness(): Harness {
     post: async (id): Promise<PostResult> => ({ ...post(id, OTHER, 'x'), confirmedAuthor: OTHER }),
     status: async () => statusResult(),
     currentBlock: async () => ({ height: 6000, hash: null }),
-    karma: async () => ({ userId: PUB, total: '227', effective: '227', boxes: [{ boxId: '11'.repeat(32), value: '227' }], boxCount: 1, next: null, height: 6000 }),
+    karma: async () => karmaResult({ userId: PUB, total: '227', effective: '227', boxes: [{ boxId: '11'.repeat(32), value: '227' }], boxCount: 1, height: 6000 }),
   };
   const writeClient = {
     submitPost: async () => ({ postId: 'newpost', status: 'pending', expiresAtHeight: 6720, txId: echoTxId() }),

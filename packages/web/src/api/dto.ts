@@ -109,8 +109,9 @@ export interface KarmaBoxRow {
 
 /** `GET /karma/:userId` — the spendable view's confirmed boxes, paged by `next`.
  *  A box row carries no `createdAtBlock`, which is why the wallet reads `/status`
- *  after the boxes. The node also returns membership and decay fields the write
- *  surface does not read; the identity unit will. */
+ *  after the boxes. The membership and decay fields are the profile window's
+ *  standing row; the node derives every predicate and the client evaluates none
+ *  of it (NODE_INTERFACE → UTXO queries). */
 export interface KarmaResult {
   userId: string;
   total: string;
@@ -118,6 +119,16 @@ export interface KarmaResult {
   boxes: KarmaBoxRow[];
   boxCount: number;
   next: string | null;            // a formatted box key, or null at the end
+  lastActivityBlock: number;      // the record's clocks — 0 where no record exists
+  lastDecayBlock: number;
+  lifetimeLikesReceived: string;  // decimal string — the record's counter, "0" where none
+  memberSinceBlock: number;
+  memberBar: number;
+  memberVouches: number;
+  memberLikes: string;            // decimal string — the record's second counter
+  invitesUsed: number;
+  member: boolean;                // the node's derived predicate
+  invitesAvailable: number | null; // 0 for a resident, null for a root
   height: number;
 }
 
