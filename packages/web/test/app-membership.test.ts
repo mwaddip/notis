@@ -30,6 +30,7 @@ let blockHeight: number;
 let writeCalls: Array<{ kind: string; targetHex?: string }>;
 let vouchResp: { ok: boolean };
 let lastSigned: string; // the txId the App signed — the node echoes it back
+let effective: string; // the reader's effective karma — the vouch floor courtesy
 
 function post(id: string, author: string): PostJson {
   return {
@@ -48,8 +49,8 @@ function statusResult(): StatusResult {
 }
 const KBOX = '11'.repeat(32); // a valid 64-hex box id — computeTxId encodes inputs as b32
 function memberKarma(key: string): KarmaResult {
-  // A member with plenty of karma so the mark is enabled.
-  return karmaResult({ userId: key, member: true, invitesAvailable: 2, memberSinceBlock: 5, boxCount: 1, total: '250', effective: '250', boxes: [{ boxId: KBOX, value: '250' }], height: blockHeight });
+  // A member; `effective` drives the vouch-floor courtesy.
+  return karmaResult({ userId: key, member: true, invitesAvailable: 2, memberSinceBlock: 5, boxCount: 1, total: effective, effective, boxes: [{ boxId: KBOX, value: effective }], height: blockHeight });
 }
 
 function fakeApi(): Api {
@@ -109,6 +110,7 @@ interface Drive {
   loadFeed(): Promise<void>;
   loadMembershipState(): Promise<void>;
   vouch(key: string): Promise<void>;
+  unvouch(key: string): Promise<void>;
   openAuthor(key: string, origin: { from: 'feed' } | { from: 'pane'; ci: number }): void;
   pollTick(): Promise<void>;
   ledger: { all(): Array<{ kind: string; postId: string }>; size: number };
@@ -126,6 +128,7 @@ function harness() {
   writeCalls = [];
   vouchResp = { ok: true };
   lastSigned = '';
+  effective = '250';
 
   const app = new App(fakeApi(), fakeWrite(), fakeIdentity());
   const appbar = document.createElement('div');
@@ -194,7 +197,7 @@ describe('vouch from the mark', () => {
     await h.drive.vouch(X);
     await flush();
     // The node now lists the pair; the tip moves and the poll reconciles.
-    vouchSet = [{ boxId: 'vb1', value: '1', createdAtBlock: 100, voucherId: ME, targetId: X }];
+    vouchSet = [{ boxId: '22'.repeat(32), value: '1', createdAtBlock: 100, voucherId: ME, targetId: X }];
     blockHeight = 101;
     await h.drive.pollTick();
     await flush();
@@ -222,13 +225,71 @@ describe('the author window', () => {
   });
 });
 
+describe('the mark disabled gates', () => {
+  it('an escrow held past the tip disables the mark with the held reason (plain digits)', async () => {
+    const h = harness();
+    cooldowns = [{ boxId: 'e1', value: '1', releaseAtBlock: 200 }]; // > tip (100)
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    await flush();
+    const mark = h.feed.querySelector('.vmark') as HTMLButtonElement;
+    expect(mark.classList.contains('disabled')).toBe(true);
+    expect(mark.disabled).toBe(true);
+    expect(mark.title).toBe('your stake from an unvouch is held until block 200');
+  });
+
+  it('a balance below the floor disables the mark with the floor reason', async () => {
+    const h = harness();
+    effective = '5'; // below VOUCH_MIN_BALANCE (11)
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    await flush();
+    const mark = h.feed.querySelector('.vmark') as HTMLButtonElement;
+    expect(mark.classList.contains('disabled')).toBe(true);
+    expect(mark.title).toContain('11 karma');
+  });
+});
+
+describe('the author window through the App', () => {
+  it("a vouched author's window carries the display ✓ on its bar", async () => {
+    const h = harness();
+    vouchSet = [{ boxId: '22'.repeat(32), value: '1', createdAtBlock: 50, voucherId: ME, targetId: X }];
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    await flush();
+    h.drive.openAuthor(X, { from: 'feed' });
+    await flush();
+    expect(h.panes.querySelector('.bar .vmark.display.check')).not.toBeNull();
+  });
+
+  it('an unvouch flight lands with an escrow — the your-vouch row reads the held reason', async () => {
+    const h = harness();
+    vouchSet = [{ boxId: '22'.repeat(32), value: '1', createdAtBlock: 50, voucherId: ME, targetId: X }];
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    await flush();
+    h.drive.openAuthor(X, { from: 'feed' });
+    await flush();
+    await h.drive.unvouch(X);
+    await flush();
+    // The node drops the pair and posts a cooldown; the poll lands the unvouch.
+    vouchSet = [];
+    cooldowns = [{ boxId: 'e1', value: '1', releaseAtBlock: 200 }];
+    blockHeight = 101;
+    await h.drive.pollTick();
+    await flush();
+    const yv = [...h.panes.querySelectorAll('.row')].find((r) => r.querySelector('label')?.textContent === 'your vouch');
+    expect(yv?.textContent).toContain('held until block 200');
+  });
+});
+
 describe('an identity change', () => {
   it('clears the vouch set for the new key', async () => {
     const h = harness();
     await h.drive.loadFeed();
     await h.drive.loadMembershipState();
     await flush();
-    vouchSet = [{ boxId: 'vb1', value: '1', createdAtBlock: 100, voucherId: ME, targetId: X }];
+    vouchSet = [{ boxId: '22'.repeat(32), value: '1', createdAtBlock: 100, voucherId: ME, targetId: X }];
     await h.drive.loadMembershipState();
     await flush();
     expect(h.drive.vouched.has(X)).toBe(true);

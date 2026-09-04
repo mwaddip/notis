@@ -1,4 +1,4 @@
-import type { PostJson, Tombstone, FeedRow, StatusResult, KarmaResult, VouchesTargetResult } from '../api/dto';
+import type { PostJson, Tombstone, FeedRow, StatusResult, KarmaResult, VouchesTargetResult, BondsResult } from '../api/dto';
 import type { Workspace, Origin } from './workspace';
 import type { Theme, IdTint } from '../prefs';
 import type { Mark, Flight } from '../view/card';
@@ -100,6 +100,13 @@ export interface RenderCtx {
   // (WEB_INTERFACE → The author window).
   author: Map<string, AuthorWindowData>;
   authorPosts: Map<string, FeedState>;
+  // The profile's invites row (WEB_INTERFACE → The profile window). The bond
+  // range and probation from /status, whether the spendable covers the minimum,
+  // the reader's standing bonds, and the invite flight.
+  invite: { bondMin: string; bondMax: string; probationBlocks: number } | null;
+  canAffordMinBond: boolean;
+  bonds: BondsResult | null;
+  inviteFlight: Flight | null;
 }
 
 /** One open author window's reads and flight (WEB_INTERFACE → The author window). */
@@ -154,6 +161,8 @@ export interface Handlers {
   refreshAuthorPosts: (key: string) => void;       // the posts window's ↻ — reports what it did
   authorPostsMore: (key: string) => void;          // the posts window's `more`, following next
   moreEndorsers: (key: string) => void;            // the endorsers page's `more`, following next
+  invite: (inviteeKey: string, bond: bigint) => void; // from the profile's invites row
+  moreBonds: () => void;                           // the standing-bonds `more`, following next
 }
 
 /** What the App calls on the identity module — the single reference it holds

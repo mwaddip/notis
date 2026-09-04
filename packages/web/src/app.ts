@@ -1,5 +1,5 @@
 import { NodeClient, type Api } from './api/client';
-import type { PostJson, Tombstone, FeedRow, ThreadResult, KarmaResult } from './api/dto';
+import type { PostJson, Tombstone, FeedRow, ThreadResult, KarmaResult, BondsResult } from './api/dto';
 import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE } from '@dagsocial/types';
 import { el, shortHex } from './dom';
 import { contentHashHex } from './integrity';
@@ -13,15 +13,15 @@ import { flattenThread } from './model/thread';
 import { WriteClient, type Rejection } from './api/write';
 import { FaucetClient, faucetLine } from './api/faucet';
 import {
-  PendingLedger, reconcilePost, reconcileLike, reconcileGrant, reconcileVouch, reconcileUnvouch,
+  PendingLedger, reconcilePost, reconcileLike, reconcileGrant, reconcileVouch, reconcileUnvouch, reconcileInvite,
   pendingLikeTargets, pendingVouchTargets,
 } from './wallet/ledger';
 import type { PendingEntry } from './wallet/types';
 import { readBuildContext } from './wallet/reads';
-import { submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, type SubmitDeps } from './wallet/submit';
+import { submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, type SubmitDeps } from './wallet/submit';
 import { identity as identitySingleton } from './identity/identity';
 import { renderKarmaField } from './view/profile';
-import type { Mark } from './view/card';
+import type { Mark, Flight } from './view/card';
 import type { YourVouch } from './view/author';
 import {
   newWorkspace, openWindow, closeWindow, moveLeft, moveRight, moveBelow, focusWindow, openSet,
@@ -83,6 +83,17 @@ function vouchRejectionCopy(r: Rejection): string {
   return 'the node said: ' + m;
 }
 
+/** An invite rejection in the voice register (HOUSE_STYLE → Voice). */
+function inviteRejectionCopy(r: Rejection): string {
+  if (r.status === 0) return r.message;
+  const m = r.message.toLowerCase();
+  if (/already|holds|account|record|exist/.test(m)) return 'that key already holds an account';
+  if (/no invites|available/.test(m)) return 'no invites available right now';
+  if (/bond|range|min|max/.test(m)) return 'that bond is outside the allowed range';
+  if (/karma|balance/.test(m)) return 'not enough karma to cover the bond';
+  return 'the node said: ' + m;
+}
+
 /** A fresh empty feed state — the author-posts window's body shape, the feed's own. */
 function emptyFeedState(): FeedState {
   return { posts: [], pending: [], next: null, report: null, olderReport: null, loaded: false, loading: false, error: null };
@@ -126,6 +137,10 @@ export class App {
   private viewerTip = 0;
   private authorData = new Map<string, AuthorWindowData>();
   private authorPostsData = new Map<string, FeedState>();
+  // The profile's invites row (WEB_INTERFACE → The profile window): the reader's
+  // standing bonds and the invite flight.
+  private bondsView: BondsResult | null = null;
+  private inviteFlight: Flight | null = null;
 
   // Every dependency is injectable so a test can drive the App over fakes.
   constructor(client?: Api, writeClient?: WriteClient, identity?: AppIdentity, ledger?: PendingLedger) {
@@ -183,6 +198,8 @@ export class App {
       refreshAuthorPosts: (key) => void this.refreshAuthorPosts(key),
       authorPostsMore: (key) => void this.authorPostsMore(key),
       moreEndorsers: (key) => void this.moreEndorsers(key),
+      invite: (inviteeKey, bond) => void this.invite(inviteeKey, bond),
+      moreBonds: () => void this.moreBonds(),
     };
   }
 
@@ -278,7 +295,21 @@ export class App {
       yourVouch: (key) => this.yourVouchFor(key),
       author: this.authorData,
       authorPosts: this.authorPostsData,
+      invite: this.state.status
+        ? { bondMin: this.state.status.inviteBondMin, bondMax: this.state.status.inviteBondMax, probationBlocks: this.state.status.inviteProbationBlocks }
+        : null,
+      canAffordMinBond: this.canAffordMinBond(),
+      bonds: this.bondsView,
+      inviteFlight: this.inviteFlight,
     };
+  }
+
+  /** The spendable view covers the minimum bond — a courtesy that shows the invite
+   *  form only when it can be filled; the effective balance is the proxy, the
+   *  node's refusal the truth (WEB_INTERFACE → The profile window). */
+  private canAffordMinBond(): boolean {
+    if (this.profileKarma === null || this.state.status === null) return false;
+    return BigInt(this.profileKarma.effective) >= BigInt(this.state.status.inviteBondMin);
   }
 
   private renderHeader(): void {
@@ -438,6 +469,7 @@ export class App {
   private async refreshFeed(): Promise<void> {
     const feed = this.state.feed;
     this.clearSettledFeed();
+    await this.refreshTip(); // a ↻ re-reads the tip, so a held mark can re-enable
     try {
       // The reconnection paging lives in reconcileNewer; this fetches each page
       // and takes the mempool from page 0 (the only call with a null cursor).
@@ -458,7 +490,15 @@ export class App {
     } catch (e) {
       feed.error = msg(e);
     }
+    // A region's ↻ re-reads the vouch count for the authors it re-renders.
+    this.clearCountsFor(feed.posts.map((p) => p.author));
     this.renderFeed();
+  }
+
+  /** Drop the cached vouch count for these authors, so the next render re-reads
+   *  it (WEB_INTERFACE → The identity display: re-read on the region's ↻). */
+  private clearCountsFor(keys: Iterable<string>): void {
+    for (const k of keys) this.vouchCounts.delete(k);
   }
 
   private async loadOlder(): Promise<void> {
@@ -577,6 +617,7 @@ export class App {
     const before = t.descendantCount;
     const region = this.regionFocusedOn(id);
     this.clearSettledThread(id);
+    await this.refreshTip(); // a ↻ re-reads the tip
     try {
       let res = await this.client.thread(id, { limit: THREAD_LIMIT }, this.viewer());
       if (res === null) {
@@ -607,6 +648,8 @@ export class App {
     } catch (e) {
       t.error = msg(e);
     }
+    // The ↻ re-reads the vouch count for the authors in this thread.
+    if (t.root) this.clearCountsFor(flattenThread(t.root, t.descendants).map((n) => n.row).filter((r): r is PostJson => !('kind' in r)).map((r) => r.author));
     this.renderRegionsFor(id);
   }
 
@@ -692,6 +735,8 @@ export class App {
     this.viewerTip = 0;
     this.authorData.clear();
     this.authorPostsData.clear();
+    this.bondsView = null;
+    this.inviteFlight = null;
     this.ledger = new PendingLedger(this.idm.current()?.pubKeyHex ?? null);
     this.startPoll(); // the new key's restored ledger may hold entries; guarded on empty
     this.renderHeader();
@@ -963,7 +1008,7 @@ export class App {
     if (cur === null || key === cur.pubKeyHex || !this.isMember()) return null;
     const count = this.vouchCounts.get(key) ?? null;
     if (this.escrowHeldUntil !== null && this.escrowHeldUntil > this.viewerTip) {
-      return { state: 'disabled', count, reason: `your stake from an unvouch is held until block ${this.escrowHeldUntil.toLocaleString('en-GB')}` };
+      return { state: 'disabled', count, reason: `your stake from an unvouch is held until block ${this.escrowHeldUntil}` };
     }
     if (this.profileKarma !== null && BigInt(this.profileKarma.effective) < VOUCH_MIN_BALANCE) {
       return { state: 'disabled', count, reason: `vouching needs ${VOUCH_MIN_BALANCE} karma held` };
@@ -983,7 +1028,7 @@ export class App {
     if (!this.isMember()) return { kind: 'reason', text: 'vouching comes with membership' };
     const cooldownBlocks = this.state.status?.vouchCooldownBlocks ?? 0;
     if (this.escrowHeldUntil !== null && this.escrowHeldUntil > this.viewerTip) {
-      return { kind: 'reason', text: `your stake from an unvouch is held until block ${this.escrowHeldUntil.toLocaleString('en-GB')}` };
+      return { kind: 'reason', text: `your stake from an unvouch is held until block ${this.escrowHeldUntil}` };
     }
     if (this.profileKarma !== null && BigInt(this.profileKarma.effective) < VOUCH_MIN_BALANCE) {
       return { kind: 'reason', text: `vouching needs ${VOUCH_MIN_BALANCE} karma held` };
@@ -1000,23 +1045,44 @@ export class App {
     const cur = this.idm.current();
     if (cur === null) return;
     try {
-      const [karma, status, vouched, escrow] = await Promise.all([
+      const [karma, status, vouched, escrow, bonds] = await Promise.all([
         this.client.karma(cur.pubKeyHex),
         this.client.status(),
         this.readVouchSet(cur.pubKeyHex),
         this.readEscrow(cur.pubKeyHex),
+        this.client.bonds(cur.pubKeyHex),
       ]);
       this.profileKarma = karma;
-      this.state.status = status; // vouchCooldownBlocks for the your-vouch copy, and the bars
-      this.viewerTip = karma.height;
+      this.state.status = status; // vouchCooldownBlocks + the bond range for the invites row
+      this.bumpTip(status.blockHeight);
+      this.bumpTip(karma.height);
       this.vouched = vouched;
       this.escrowHeldUntil = escrow;
+      this.bondsView = bonds;
     } catch {
       return; // a failed read leaves the last-known state; the ↻ retries
     }
     this.renderHeader();
     this.renderFeed();
     this.renderPanes();
+  }
+
+  /** The mark's gates read `viewerTip`, so it must follow every height the client
+   *  reads — /status, /karma, /blocks/current — or a mark held "until block N"
+   *  stays disabled past N once the poll stops (WEB_INTERFACE → The identity
+   *  display). Monotonic: a stale read never rewinds it. */
+  private bumpTip(h: number): void {
+    if (h > this.viewerTip) this.viewerTip = h;
+  }
+
+  /** A ↻ is the reader asking for fresh state, so a feed, pane or profile refresh
+   *  re-reads the tip even when no membership entry is pending. */
+  private async refreshTip(): Promise<void> {
+    try {
+      this.bumpTip((await this.client.currentBlock()).height);
+    } catch {
+      // A failed read leaves the last-known tip; the next ↻ or the poll retries.
+    }
   }
 
   private async readVouchSet(key: string): Promise<Map<string, { boxId: string; createdAtBlock: number }>> {
@@ -1206,7 +1272,10 @@ export class App {
       d.karma = karma;
       d.endorsers = endorsers;
       d.endorsersNext = endorsers.next !== null;
-      this.vouchCounts.set(key, endorsers.count); // the subject's count, now known
+      this.bumpTip(karma.height); // an author read carries the node's tip too
+      this.vouchCounts.set(key, endorsers.count); // the subject's count, re-read on the window's ↻
+      this.clearCountsFor(endorsers.vouches.map((v) => v.voucherId)); // the endorsers' counts too
+
     } catch {
       return; // leave the window's last data; the ↻ retries
     }
@@ -1300,6 +1369,42 @@ export class App {
     this.renderRegionsFor(postsWindowId(key));
   }
 
+  // ---- invite, from the profile's invites row (WEB_INTERFACE → The profile window) ----
+
+  private async invite(inviteeKey: string, bond: bigint): Promise<void> {
+    const cur = this.idm.current();
+    if (cur === null) return;
+    this.inviteFlight = { stage: 'submitting' };
+    this.renderRegionsFor('@profile');
+    let result;
+    try {
+      result = await submitInviteFlow(this.submitDeps(), inviteeKey, bond);
+    } catch {
+      this.inviteFlight = { stage: 'rejected', reason: "invite rejected: can't reach the node right now." };
+      this.renderRegionsFor('@profile');
+      return;
+    }
+    if (result.ok) {
+      this.inviteFlight = { stage: 'submitted' };
+      this.startPoll();
+    } else {
+      this.inviteFlight = { stage: 'rejected', reason: 'invite rejected: ' + inviteRejectionCopy(result.rejection) };
+    }
+    this.renderRegionsFor('@profile');
+  }
+
+  private async moreBonds(): Promise<void> {
+    const cur = this.idm.current();
+    if (cur === null || this.bondsView === null || this.bondsView.next === null) return;
+    try {
+      const page = await this.client.bonds(cur.pubKeyHex, { after: this.bondsView.next });
+      this.bondsView = { bonds: [...this.bondsView.bonds, ...page.bonds], bondCount: page.bondCount, next: page.next };
+    } catch {
+      return;
+    }
+    this.renderRegionsFor('@profile');
+  }
+
   // ---- the bounded landing poll (WEB_INTERFACE → The wallet) ----
 
   private startPoll(): void {
@@ -1321,6 +1426,7 @@ export class App {
     }
     try {
       const block = await this.client.currentBlock();
+      this.bumpTip(block.height);
       if (block.height !== this.lastPolledHeight) {
         this.lastPolledHeight = block.height; // reconcile only when the height moves
         await this.reconcile(block.height);
@@ -1340,19 +1446,27 @@ export class App {
    *  pointer are lost even where the pixels match. */
   private async reconcile(tip: number): Promise<void> {
     let feedTouched = false;
+    let profileTouched = false;
     const touchedPosts = new Set<string>();
     const touchedAuthors = new Set<string>();
 
     // The vouch and unvouch entries reconcile against the reader's own vouch set
-    // and escrow, read once when one stands (WEB_INTERFACE → The wallet).
+    // and escrow, and the invite entries against the bonds — read once when one
+    // stands (WEB_INTERFACE → The wallet).
     const cur = this.idm.current();
     const hasMembership = cur !== null && this.ledger.all().some((e) => e.kind === 'vouch' || e.kind === 'unvouch');
+    const hasInvite = cur !== null && this.ledger.all().some((e) => e.kind === 'invite');
     let vouchRows: { targetId: string }[] = [];
+    let bondRows: { inviteePublicKey: string }[] = [];
     if (hasMembership && cur !== null) {
       this.vouched = await this.readVouchSet(cur.pubKeyHex);
       this.escrowHeldUntil = await this.readEscrow(cur.pubKeyHex);
-      this.viewerTip = tip;
+      this.bumpTip(tip);
       vouchRows = [...this.vouched.keys()].map((targetId) => ({ targetId }));
+    }
+    if (hasInvite && cur !== null) {
+      this.bondsView = await this.client.bonds(cur.pubKeyHex);
+      bondRows = this.bondsView.bonds;
     }
 
     for (const entry of this.ledger.all()) {
@@ -1380,7 +1494,20 @@ export class App {
         touchedAuthors.add(entry.postId);
         continue;
       }
-      if (entry.kind === 'invite') continue; // the invite reconcile lands with the profile row
+      if (entry.kind === 'invite') {
+        const outcome = reconcileInvite(entry, bondRows, tip);
+        if (outcome === 'pending') continue;
+        this.ledger.remove(entry.txId);
+        if (outcome === 'landed') {
+          // The line re-reads /karma for the new invitesAvailable, in place.
+          this.inviteFlight = null;
+          if (cur !== null) this.profileKarma = await this.client.karma(cur.pubKeyHex);
+        } else {
+          this.inviteFlight = { stage: 'expired', expiresAtHeight: entry.expiresAtHeight };
+        }
+        profileTouched = true;
+        continue;
+      }
       const fetched = await this.client.post(entry.postId, this.viewer());
       if (entry.kind === 'post') {
         const outcome = reconcilePost(entry, fetched, tip);
@@ -1406,6 +1533,7 @@ export class App {
     if (feedTouched) this.renderFeed();
     this.renderRegionsForPosts(touchedPosts);
     for (const key of touchedAuthors) this.renderRegionsForAuthor(key);
+    if (profileTouched) this.renderRegionsFor('@profile');
   }
 
   // ---- placement, focus and reports for the write surface ----

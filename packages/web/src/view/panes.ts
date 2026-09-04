@@ -190,7 +190,7 @@ function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handl
     return;
   }
   if (isWin(focusedK)) {
-    body.appendChild(profileBody(handlers, ctx));
+    body.appendChild(profileBody(handlers, ctx, { from: 'pane', ci }));
     return;
   }
   const t = ctx.thread(focusedK);

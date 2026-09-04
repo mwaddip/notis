@@ -1,7 +1,10 @@
-import { el } from '../dom';
+import { el, shortHex } from '../dom';
 import { prefs, BUILD_BASE, BUILD_FAUCET_BASE, type Theme, type IdTint } from '../prefs';
 import { unlockForm, setPassphraseForm } from './passphrase';
-import type { KarmaResult } from '../api/dto';
+import { markNode, stageLine, type Mark, type Flight } from './card';
+import { INVITE_BOND_VEST_PER_LIKES } from '@dagsocial/types';
+import type { KarmaResult, BondsResult } from '../api/dto';
+import type { Origin } from '../model/workspace';
 
 // The @profile window — WEB_INTERFACE → The profile window. Identity, standing,
 // karma and the faucet step, with the preference rows folded in from the settings
@@ -35,6 +38,11 @@ export interface ProfileHandlers {
   lockIdentity: () => void;
   unlockIdentity: (passphrase: string) => Promise<void>;
   askFaucet: () => void;
+  // membership actions — the invites row (WEB_INTERFACE → The profile window)
+  invite: (inviteeKey: string, bond: bigint) => void;
+  openAuthor: (key: string, origin: Origin) => void; // a standing bond's invitee window
+  vouch: (key: string) => void;                       // vouch a standing bond's invitee
+  moreBonds: () => void;
 }
 
 export interface ProfileCtx {
@@ -44,6 +52,12 @@ export interface ProfileCtx {
   karma: KarmaResult | null; // the loaded key's /karma, once read
   grant: GrantView | null; // a faucet grant in flight, or one that lapsed
   membershipBars: { memberBar: number; memberLikesBar: number } | null; // from /status
+  // The invites row (WEB_INTERFACE → The profile window).
+  invite: { bondMin: string; bondMax: string; probationBlocks: number } | null; // from /status
+  canAffordMinBond: boolean;   // the spendable covers the minimum bond
+  bonds: BondsResult | null;   // the reader's standing bonds
+  inviteFlight: Flight | null; // the invite in the row
+  markFor: (key: string) => Mark | null; // a standing bond's invitee mark
 }
 
 const ID_TINTS: IdTint[] = ['spine', 'wash', 'both', 'off'];
@@ -60,10 +74,10 @@ function mono(text: string): HTMLElement {
   return el('span', 'mono', text);
 }
 
-export function profileBody(handlers: ProfileHandlers, ctx: ProfileCtx): HTMLElement {
+export function profileBody(handlers: ProfileHandlers, ctx: ProfileCtx, origin: Origin): HTMLElement {
   const b = el('div', 'winbody');
   if (ctx.identity === null) emptyState(b, handlers);
-  else loadedState(b, handlers, ctx);
+  else loadedState(b, handlers, ctx, origin);
   b.appendChild(el('hr', 'winrule'));
   for (const r of preferenceRows(handlers, ctx)) b.appendChild(r);
   return b;
@@ -140,7 +154,7 @@ function revealImport(field: HTMLElement, handlers: ProfileHandlers, text: strin
 // An identity loaded — key, standing, karma, passphrase, export, forget.
 // ---------------------------------------------------------------------------
 
-function loadedState(b: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx): void {
+function loadedState(b: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx, origin: Origin): void {
   const id = ctx.identity!;
 
   // key — the whole 64 hex, mono, selectable; the backup line until the first export.
@@ -165,6 +179,13 @@ function loadedState(b: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx)
     const { row: r, field } = row('karma');
     field.classList.add('karma-field'); // the App updates this in place when a grant lands
     renderKarmaField(field, handlers, ctx);
+    b.appendChild(r);
+  }
+
+  // invites — the tier line, the form, the flight, and the standing bonds.
+  {
+    const { row: r, field } = row('invites');
+    invitesRow(field, handlers, ctx, origin);
     b.appendChild(r);
   }
 
@@ -238,6 +259,145 @@ export function standing(
     ' likes.',
   );
   field.appendChild(line);
+}
+
+/** The invites row (WEB_INTERFACE → The profile window): the tier line, the form
+ *  when an invite is available and the minimum bond is affordable, the flight, and
+ *  the reader's standing bonds. */
+function invitesRow(field: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx, origin: Origin): void {
+  const k = ctx.karma;
+  if (k === null) {
+    field.appendChild(el('span', 'inkmute', '—'));
+    return;
+  }
+  const isRoot = k.invitesAvailable === null;
+  if (isRoot) {
+    field.appendChild(el('div', 'hint', 'as many as your karma covers.'));
+  } else if (k.member) {
+    const line = el('div', 'hint');
+    line.append(mono(String(k.invitesAvailable)), k.invitesAvailable === 1 ? ' invite available.' : ' invites available.');
+    field.appendChild(line);
+  } else {
+    // A resident: no form, no bonds (WEB_INTERFACE → The profile window).
+    field.appendChild(el('div', 'hint', 'invites come with membership.'));
+    return;
+  }
+
+  const available = isRoot || (k.invitesAvailable ?? 0) >= 1;
+  if (available && ctx.canAffordMinBond && ctx.invite) inviteForm(field, handlers, ctx, ctx.invite);
+  if (ctx.inviteFlight) field.appendChild(stageLine(ctx.inviteFlight));
+  standingBonds(field, handlers, ctx, origin);
+}
+
+/** A real `<form>` the password manager ignores — the invitee's key pasted out of
+ *  band, the bond inside the range with the minimum as the default, and what
+ *  happens under it. A locked identity unlocks in the row first. */
+function inviteForm(
+  field: HTMLElement,
+  handlers: ProfileHandlers,
+  ctx: ProfileCtx,
+  params: { bondMin: string; bondMax: string; probationBlocks: number },
+): void {
+  const form = el('form', 'pf invite-form') as HTMLFormElement;
+
+  const keyInput = el('input') as HTMLInputElement;
+  keyInput.type = 'text';
+  keyInput.placeholder = 'invitee public key — 64 hex';
+  keyInput.setAttribute('aria-label', "the invitee's public key");
+
+  const bondInput = el('input') as HTMLInputElement;
+  bondInput.type = 'number';
+  bondInput.min = params.bondMin;
+  bondInput.max = params.bondMax;
+  bondInput.step = '1';
+  bondInput.value = params.bondMin; // default the minimum
+  bondInput.setAttribute('aria-label', 'the bond, in karma');
+
+  const submit = el('button', 'mini', 'invite') as HTMLButtonElement;
+  submit.type = 'submit';
+
+  const copy = el('div', 'hint');
+  copy.append(
+    "they receive the bond's karma from the pool. your bond comes back as they receive likes, one karma per ",
+    String(INVITE_BOND_VEST_PER_LIKES),
+    ', and the rest goes to the pool after ',
+    mono(String(params.probationBlocks)),
+    ' blocks.',
+  );
+
+  const refusal = el('div', 'pf-refusal');
+  refusal.hidden = true;
+
+  form.append(keyInput, bondInput, submit, refusal, copy);
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const key = keyInput.value.trim().toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(key)) {
+      refusal.textContent = 'that is not a 64-character key.';
+      refusal.hidden = false;
+      return;
+    }
+    refusal.hidden = true;
+    const bond = BigInt(bondInput.value || params.bondMin);
+    const go = (): void => handlers.invite(key, bond);
+    const id = ctx.identity;
+    if (id?.locked) {
+      // The seed is not loaded and sign is synchronous, so unlock in a row under
+      // the form first; on success the invite proceeds, Esc drops the row
+      // (WEB_INTERFACE → The profile window).
+      if (form.parentElement?.querySelector('.card-unlock')) return; // already open
+      const urow = el('div', 'card-unlock');
+      urow.appendChild(
+        unlockForm(
+          id.pubKeyHex,
+          async (p) => {
+            await handlers.unlockIdentity(p);
+            go();
+          },
+          () => urow.remove(),
+        ),
+      );
+      form.insertAdjacentElement('afterend', urow);
+      return;
+    }
+    go();
+  });
+  field.appendChild(form);
+}
+
+/** The reader's standing bonds — the invitee's identity (so the reader can vouch
+ *  for their own invitee here) and the bond's value, following `next`. Empty:
+ *  nothing (WEB_INTERFACE → The profile window). */
+function standingBonds(field: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx, origin: Origin): void {
+  const b = ctx.bonds;
+  if (b === null || b.bonds.length === 0) return;
+  for (const bond of b.bonds) {
+    const bondRow = el('div', 'bond');
+    const btn = el('button', 'hex authorbtn');
+    btn.textContent = shortHex(bond.inviteePublicKey, 10);
+    btn.setAttribute('aria-label', 'open this author');
+    btn.addEventListener('click', () => handlers.openAuthor(bond.inviteePublicKey, origin));
+    bondRow.appendChild(btn);
+    const mark = ctx.markFor(bond.inviteePublicKey);
+    if (mark) {
+      bondRow.appendChild(
+        markNode(bond.inviteePublicKey, mark, {
+          onVouch: (key) => handlers.vouch(key),
+          onAuthor: (key) => handlers.openAuthor(key, origin),
+        }),
+      );
+    }
+    const value = el('span', 'hint');
+    value.append(mono(bond.value), ' karma');
+    bondRow.appendChild(value);
+    field.appendChild(bondRow);
+  }
+  if (b.next !== null) {
+    const more = el('button', 'mini', 'more');
+    more.setAttribute('aria-label', 'load more standing bonds');
+    more.addEventListener('click', () => handlers.moreBonds());
+    field.appendChild(more);
+  }
 }
 
 /** The karma field's content, rebuilt from ctx — the App calls this in place when a
