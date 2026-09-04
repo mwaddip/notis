@@ -7,15 +7,19 @@ import {
   POST_PRICE_REPLY,
   REPLY_AUTHOR_SHARE,
   LIKE_KARMA_COST,
+  VOUCH_KARMA_AMOUNT,
 } from '@dagsocial/types';
 import type {
   AnyBoxCandidate,
+  BondBox,
   CandidateOf,
   KarmaBox,
   KarmaPriceBox,
   LikeAccrualBox,
   PostCommit,
   UtxoTransaction,
+  VouchBox,
+  VouchEscrowBox,
 } from '@dagsocial/types';
 import type { SpendableBox, ChangeRef } from './types';
 
@@ -26,11 +30,15 @@ import type { SpendableBox, ChangeRef } from './types';
 // but the builders are pinned to the demo UI's frozen vectors, a second
 // implementation, in builders.test.ts.
 //
-// Builders exist for a post and a like, and nothing else (WEB_INTERFACE → The
-// wallet). A root post: change and a `karma_price` of POST_PRICE_THREAD. A reply:
-// change, a `karma_price` of POST_PRICE_REPLY − REPLY_AUTHOR_SHARE, and a
-// `like_accrual` of REPLY_AUTHOR_SHARE to the parent's confirmedAuthor. A like:
-// change and a `like_accrual` of LIKE_KARMA_COST to the target's confirmedAuthor.
+// Builders exist for a post, a like, a vouch, an unvouch and an invite, and
+// nothing else (WEB_INTERFACE → The wallet). A root post: change and a
+// `karma_price` of POST_PRICE_THREAD. A reply: change, a `karma_price` of
+// POST_PRICE_REPLY − REPLY_AUTHOR_SHARE, and a `like_accrual` of
+// REPLY_AUTHOR_SHARE to the parent's confirmedAuthor. A like: change and a
+// `like_accrual` of LIKE_KARMA_COST to the target's confirmedAuthor. A vouch:
+// change and a `vouch` box of VOUCH_KARMA_AMOUNT. An unvouch: one `vouch` box in,
+// one `vouch_escrow` out, no karma input and no change. An invite: change and a
+// `bond` box of the chosen amount.
 
 /** Not enough karma for the price — a typed refusal the composer maps to its
  *  copy, so it never sees selectBoxes' bare throw (WEB_INTERFACE → "Affordability
@@ -123,6 +131,88 @@ export function buildLike(ctx: BuildContext, targetId: string, targetAuthorHex: 
     signatures: {},
     protocolVersion: ctx.era,
     likeTarget: targetId,
+  };
+  return finish(tx, changeBox, change, ctx.height);
+}
+
+/** Build a vouch: karma in, change out, one `vouch` box of VOUCH_KARMA_AMOUNT to
+ *  the target. `voucherId` is the reader's own key, `targetId` the identity
+ *  vouched for (WEB_INTERFACE → The wallet). */
+export function buildVouch(ctx: BuildContext, targetHex: string): BuiltTx {
+  const { selected, change } = selectForPrice(ctx.spendable, VOUCH_KARMA_AMOUNT);
+
+  const vouch: CandidateOf<VouchBox> = {
+    boxType: 'vouch',
+    value: VOUCH_KARMA_AMOUNT,
+    createdAtBlock: ctx.height,
+    voucherId: hexToBytes(ctx.author),
+    targetId: hexToBytes(targetHex),
+  };
+  const outputs: AnyBoxCandidate[] = [vouch];
+  const changeBox = changeBoxOf(change, ctx);
+  // Change leads at index 0, as it does on a like — the demo UI's buildVouchTx
+  // unshifts it, and the ledger predicts index 0.
+  if (changeBox) outputs.unshift(changeBox);
+
+  const tx: UtxoTransaction = {
+    inputs: selected.map((b) => b.boxId),
+    outputs,
+    signatures: {},
+    protocolVersion: ctx.era,
+  };
+  return finish(tx, changeBox, change, ctx.height);
+}
+
+/** Build an unvouch: one `vouch` box in, one `vouch_escrow` out of the same
+ *  value, no karma input and no change (WEB_INTERFACE → The wallet). The box is
+ *  resolved at the press from `GET /vouches?voucher=`; `releaseAtBlock` runs from
+ *  the cast, `vouch.createdAtBlock + cooldownBlocks` (NODE_INTERFACE → Vouch
+ *  transition rules). */
+export function buildUnvouch(
+  ctx: BuildContext,
+  vouch: { boxId: string; value: bigint; createdAtBlock: number },
+  cooldownBlocks: number,
+): BuiltTx {
+  const escrow: CandidateOf<VouchEscrowBox> = {
+    boxType: 'vouch_escrow',
+    value: vouch.value,
+    createdAtBlock: ctx.height,
+    owner: hexToBytes(ctx.author),
+    releaseAtBlock: vouch.createdAtBlock + cooldownBlocks,
+  };
+  const tx: UtxoTransaction = {
+    inputs: [vouch.boxId],
+    outputs: [escrow],
+    signatures: {},
+    protocolVersion: ctx.era,
+  };
+  return finish(tx, null, 0n, ctx.height);
+}
+
+/** Build an invite: karma in, change out, one `bond` box of the chosen amount to
+ *  the invitee. `inviterId` is the reader's own key, `inviteePublicKey` the pasted
+ *  key (WEB_INTERFACE → The wallet). InsufficientKarma names the bond. */
+export function buildInvite(ctx: BuildContext, inviteeHex: string, bond: bigint): BuiltTx {
+  const { selected, change } = selectForPrice(ctx.spendable, bond);
+
+  const bondBox: CandidateOf<BondBox> = {
+    boxType: 'bond',
+    value: bond,
+    createdAtBlock: ctx.height,
+    inviterId: hexToBytes(ctx.author),
+    inviteePublicKey: hexToBytes(inviteeHex),
+  };
+  const outputs: AnyBoxCandidate[] = [bondBox];
+  const changeBox = changeBoxOf(change, ctx);
+  // Change leads at index 0, as it does on a like — the demo UI's
+  // buildCreateInviteTx unshifts it, and the ledger predicts index 0.
+  if (changeBox) outputs.unshift(changeBox);
+
+  const tx: UtxoTransaction = {
+    inputs: selected.map((b) => b.boxId),
+    outputs,
+    signatures: {},
+    protocolVersion: ctx.era,
   };
   return finish(tx, changeBox, change, ctx.height);
 }

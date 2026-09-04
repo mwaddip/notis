@@ -131,6 +131,51 @@ export function pendingLikeTargets(entries: PendingEntry[]): Set<string> {
   return new Set(entries.filter((e) => e.kind === 'like').map((e) => e.postId));
 }
 
+/** The targets the client has a pending vouch for — overlaid onto the vouch set
+ *  so the mark reads `✓` (muted) the moment the vouch is submitted, before it
+ *  lands (WEB_INTERFACE → The identity display). */
+export function pendingVouchTargets(entries: PendingEntry[]): Set<string> {
+  return new Set(entries.filter((e) => e.kind === 'vouch').map((e) => e.postId));
+}
+
+/** A pending vouch is landed when `GET /vouches?voucher=<me>` lists the pair —
+ *  the target names the reader's `vouch` box (WEB_INTERFACE → The wallet). */
+export function reconcileVouch(
+  entry: PendingEntry,
+  vouches: ReadonlyArray<{ targetId: string }>,
+  tip: number,
+): EntryOutcome {
+  if (vouches.some((v) => v.targetId === entry.postId)) return 'landed';
+  return tip > entry.expiresAtHeight ? 'expired' : 'pending';
+}
+
+/** A pending unvouch is landed when the pair is absent from
+ *  `GET /vouches?voucher=<me>` — the `vouch` box is spent — and a cooldown row
+ *  stands for the escrow it created (WEB_INTERFACE → The wallet). Every vouch
+ *  holds VOUCH_KARMA_AMOUNT, so the escrow's value is that same amount and the
+ *  discriminator is the pair's absence, keyed on the target. */
+export function reconcileUnvouch(
+  entry: PendingEntry,
+  vouches: ReadonlyArray<{ targetId: string }>,
+  cooldowns: ReadonlyArray<{ releaseAtBlock: number }>,
+  tip: number,
+): EntryOutcome {
+  const gone = !vouches.some((v) => v.targetId === entry.postId);
+  if (gone && cooldowns.length > 0) return 'landed';
+  return tip > entry.expiresAtHeight ? 'expired' : 'pending';
+}
+
+/** A pending invite is landed when `GET /invites/<me>` lists a bond naming the
+ *  invitee (WEB_INTERFACE → The wallet). */
+export function reconcileInvite(
+  entry: PendingEntry,
+  bonds: ReadonlyArray<{ inviteePublicKey: string }>,
+  tip: number,
+): EntryOutcome {
+  if (bonds.some((b) => b.inviteePublicKey === entry.postId)) return 'landed';
+  return tip > entry.expiresAtHeight ? 'expired' : 'pending';
+}
+
 // ---------------------------------------------------------------------------
 // Persisted shape — bigints as decimal strings.
 // ---------------------------------------------------------------------------
@@ -168,7 +213,9 @@ function parseStoredEntry(v: unknown): PendingEntry {
   if (typeof v !== 'object' || v === null) throw new Error('entry is not an object');
   const o = v as Record<string, unknown>;
   if (typeof o.txId !== 'string' || typeof o.postId !== 'string') throw new Error('entry has non-string ids');
-  if (o.kind !== 'post' && o.kind !== 'like' && o.kind !== 'grant') throw new Error('entry has an unknown kind');
+  if (o.kind !== 'post' && o.kind !== 'like' && o.kind !== 'grant' && o.kind !== 'vouch' && o.kind !== 'unvouch' && o.kind !== 'invite') {
+    throw new Error('entry has an unknown kind');
+  }
   if (!Array.isArray(o.inputs) || !o.inputs.every((x) => typeof x === 'string')) throw new Error('entry inputs are not strings');
   if (typeof o.expiresAtHeight !== 'number' || typeof o.submittedAtHeight !== 'number') throw new Error('entry heights are not numbers');
   let change: ChangeRef | undefined;
