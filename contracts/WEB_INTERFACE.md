@@ -314,7 +314,7 @@ key          the whole 64 hex, mono, selectable
 standing     resident · member · root — the node's word
 karma        the balance that spends, or the faucet step
 passphrase   locked · unlock  /  unlocked · lock
-export · import · forget — each a form in place
+export · forget — each a form in place (import is offered only with no identity loaded)
 ────
 theme · identity tint · node · faucet · arrangement — the preferences
 ```
