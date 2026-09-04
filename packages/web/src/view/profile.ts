@@ -156,7 +156,7 @@ function loadedState(b: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx)
   // standing — the node's word, and a muted line beneath with its numbers.
   {
     const { row: r, field } = row('standing');
-    standing(field, ctx);
+    standing(field, ctx.karma, ctx.membershipBars);
     b.appendChild(r);
   }
 
@@ -203,8 +203,14 @@ function loadedState(b: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx)
   }
 }
 
-function standing(field: HTMLElement, ctx: ProfileCtx): void {
-  const k = ctx.karma;
+/** The standing word and its muted numbers line, for a key's own /karma. Shared
+ *  with the author window, which reads it for another identity (WEB_INTERFACE →
+ *  The author window: "the same function, given another key's KarmaResult"). */
+export function standing(
+  field: HTMLElement,
+  k: KarmaResult | null,
+  bars: { memberBar: number; memberLikesBar: number } | null,
+): void {
   if (k === null) {
     field.appendChild(el('span', 'inkmute', '—'));
     return;
@@ -221,8 +227,8 @@ function standing(field: HTMLElement, ctx: ProfileCtx): void {
     return;
   }
   field.appendChild(el('span', 'standing', 'resident'));
-  const vBar = ctx.membershipBars?.memberBar ?? k.memberBar;
-  const lBar = ctx.membershipBars?.memberLikesBar ?? 0;
+  const vBar = bars?.memberBar ?? k.memberBar;
+  const lBar = bars?.memberLikesBar ?? 0;
   const line = el('div', 'hint');
   line.append(
     "members are made by other members' vouches and likes. this key has ",

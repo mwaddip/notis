@@ -126,8 +126,10 @@ function checkSvg(): SVGSVGElement {
  *  and ink weight (WEB_INTERFACE → The identity display). `+` (U+002B, in the
  *  faces) vouches at once; `✓` (the SVG) opens the author window; a disabled mark
  *  carries its reason as the `title`. A locked identity unlocks in a row under the
- *  meta before the vouch flies, as a like does (WEB_INTERFACE → The identity module). */
-function markNode(key: string, mark: Mark, opts: CardOpts): HTMLElement {
+ *  meta before the vouch flies, as a like does (WEB_INTERFACE → The identity
+ *  module); the author window passes a wrapped `onVouch` and no `locked`, so its
+ *  own unlock mounts under the your-vouch row instead. Exported for that window. */
+export function markNode(key: string, mark: Mark, opts: CardOpts): HTMLElement {
   if (mark.state === 'disabled') {
     const b = el('button', 'vmark plus disabled');
     (b as HTMLButtonElement).disabled = true;
@@ -248,8 +250,8 @@ function shellClasses(extra: string, opts: CardOpts): string {
 
 /** The stage line — two stages then one of three endings (WEB_INTERFACE → The
  *  wallet). One fixed line box, so what it contains cannot change the card's
- *  height. */
-function stageLine(flight: Flight): HTMLElement {
+ *  height. Exported for the author window's your-vouch row. */
+export function stageLine(flight: Flight): HTMLElement {
   const s = el('div', 'stage');
   const said = el('span', null);
   if (flight.stage === 'submitting') {

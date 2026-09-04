@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { serialise, parse, isWindowId } from '../src/model/arrangement';
+import { serialise, parse, isWindowId, authorWindowId, postsWindowId, windowSubject } from '../src/model/arrangement';
 import { newWorkspace, newRegion } from '../src/model/workspace';
 
 // 64-hex post ids and the one @-window kind.
@@ -9,6 +9,8 @@ const C = 'c'.repeat(64);
 const D = 'd'.repeat(64);
 const P = '@profile'; // the one @-window kind
 const S = '@settings'; // the retired id, mapped to @profile on parse
+const AUTHOR = '@author:' + 'e'.repeat(64);
+const POSTS = '@posts:' + 'f'.repeat(64);
 
 describe('arrangement codec', () => {
   it('serialise and parse are inverses over valid ids', () => {
@@ -57,5 +59,28 @@ describe('arrangement codec', () => {
     expect(isWindowId(S)).toBe(false); // @settings is rewritten on parse, never a live window id
     expect(isWindowId('a'.repeat(63))).toBe(false);
     expect(isWindowId('g'.repeat(64))).toBe(false); // g is not hex
+  });
+
+  it('the author and posts windows round-trip; a bad suffix is not a window id', () => {
+    expect(isWindowId(AUTHOR)).toBe(true);
+    expect(isWindowId(POSTS)).toBe(true);
+    // Round-trip through a full arrangement, mixed with a thread and a profile.
+    expect(serialise(parse(`${A},${AUTHOR}|${POSTS}/${P}`))).toBe(`${A},${AUTHOR}|${POSTS}/${P}`);
+    // A bad suffix (not 64 hex, or the wrong kind) is dropped like any non-id token.
+    expect(isWindowId('@author:' + 'e'.repeat(63))).toBe(false);
+    expect(isWindowId('@author:' + 'g'.repeat(64))).toBe(false);
+    expect(isWindowId('@author:')).toBe(false);
+    expect(isWindowId('@follows:' + 'e'.repeat(64))).toBe(false);
+    expect(serialise(parse(`${A},@author:xyz|${B}`))).toBe(`${A}|${B}`);
+  });
+
+  it('the id helpers build and read back the subject key', () => {
+    expect(authorWindowId('e'.repeat(64))).toBe(AUTHOR);
+    expect(postsWindowId('f'.repeat(64))).toBe(POSTS);
+    expect(windowSubject(AUTHOR)).toEqual({ kind: 'author', key: 'e'.repeat(64) });
+    expect(windowSubject(POSTS)).toEqual({ kind: 'posts', key: 'f'.repeat(64) });
+    // Not an @author/@posts window → null.
+    expect(windowSubject(A)).toBeNull();
+    expect(windowSubject(P)).toBeNull();
   });
 });
