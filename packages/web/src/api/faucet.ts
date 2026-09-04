@@ -5,6 +5,8 @@ import { type Rejection, normalizeRejection } from './write';
 // client stays GET-only. The faucet's { error } bodies normalise to the same
 // Rejection { status, message } the write client uses; nothing retries.
 
+const HEX64 = /^[0-9a-f]{64}$/;
+
 /** The faucet's 202 grant — the invite is pooled and settles by expiresAtHeight. */
 export interface FaucetGrant {
   txId: string;
@@ -29,11 +31,16 @@ export class FaucetClient {
     });
     if (!res.ok) return normalizeRejection(res);
     const body = (await res.json()) as Partial<FaucetGrant>;
+    if (typeof body.txId !== 'string' || !HEX64.test(body.txId)) {
+      // Without a real transaction id the grant entry would record "undefined";
+      // an honest client-side refusal instead (WEB_INTERFACE → The faucet step).
+      return { status: 0, message: 'the faucet did not name the transaction it made.' };
+    }
     if (typeof body.expiresAtHeight !== 'number') {
       return { status: 0, message: 'the faucet did not say when its invite expires.' };
     }
     return {
-      txId: String(body.txId),
+      txId: body.txId,
       status: String(body.status ?? 'pending'),
       expiresAtHeight: body.expiresAtHeight,
     };

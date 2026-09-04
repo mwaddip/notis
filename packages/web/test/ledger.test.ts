@@ -5,11 +5,13 @@ import {
   pendingKeyFor,
   reconcilePost,
   reconcileLike,
+  reconcileGrant,
   dedupePending,
   pendingLikeTargets,
 } from '../src/wallet/ledger';
 import type { PendingEntry } from '../src/wallet/types';
 import type { PostJson, PostResult, WithdrawnJson } from '../src/api/dto';
+import { karmaResult } from './karma-fixture';
 
 const KEY = 'aa'.repeat(32); // the identity that owns the ledger
 const STORE = pendingKeyFor(KEY)!; // notis.pending.<KEY>
@@ -24,6 +26,9 @@ const likeEntry: PendingEntry = {
 };
 const noChangeEntry: PendingEntry = {
   txId: 't3', kind: 'post', postId: 'p3', inputs: ['in5'], expiresAtHeight: 5720, submittedAtHeight: 5000,
+};
+const grantEntry: PendingEntry = {
+  txId: 'g1', kind: 'grant', postId: KEY, inputs: [], expiresAtHeight: 5900, submittedAtHeight: 5800,
 };
 
 function postResult(over: Partial<PostJson>): PostResult {
@@ -172,5 +177,34 @@ describe('dedupe and the pending-like overlay', () => {
     expect(targets.has('target1')).toBe(true);
     expect(targets.has('p1')).toBe(false);
     expect(targets.size).toBe(1);
+  });
+});
+
+describe('the faucet grant entry', () => {
+  it('lands when /karma boxCount rises, expires past the tip while still zero, else pending', () => {
+    expect(reconcileGrant(grantEntry, karmaResult({ boxCount: 1 }), 5850)).toBe('landed');
+    expect(reconcileGrant(grantEntry, karmaResult({ boxCount: 0 }), 5850)).toBe('pending');
+    expect(reconcileGrant(grantEntry, karmaResult({ boxCount: 0 }), 5901)).toBe('expired');
+    // A risen boxCount lands even past the expiry height.
+    expect(reconcileGrant(grantEntry, karmaResult({ boxCount: 1 }), 5901)).toBe('landed');
+  });
+
+  it('round-trips through localStorage — inputs [], no change, postId the key asked', () => {
+    const a = new PendingLedger(KEY);
+    a.add(grantEntry);
+    expect(new PendingLedger(KEY).all()).toEqual([grantEntry]);
+  });
+
+  it('is inert in the spendable view — a grant spends and predicts nothing', () => {
+    const ledger = new PendingLedger(KEY);
+    ledger.add(grantEntry);
+    const confirmed = [{ boxId: 'b1', value: 100n }, { boxId: 'b2', value: 50n }];
+    // The same view an empty ledger gives — inputs [] and no change touch nothing.
+    expect(ledger.spendable(confirmed)).toEqual(confirmed);
+  });
+
+  it('is neither a dedupe target nor a like-overlay target', () => {
+    expect(dedupePending([{ id: KEY }], [grantEntry]).map((r) => r.id)).toEqual([KEY]);
+    expect(pendingLikeTargets([grantEntry]).size).toBe(0);
   });
 });

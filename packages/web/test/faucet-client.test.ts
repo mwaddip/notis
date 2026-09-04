@@ -39,27 +39,36 @@ afterEach(() => {
 
 const faucet = (base = '/faucet'): FaucetClient => new FaucetClient(() => base);
 const KEY = 'ab'.repeat(32);
+const TX = 'cc'.repeat(32); // a well-formed 64-hex transaction id
 
 describe('faucet client — the request and the grant', () => {
   it('askKarma POSTs { pubkey } to <base>/karma and returns the grant', async () => {
-    mockResponse({ ok: true, status: 202, body: { txId: 't1', status: 'pending', expiresAtHeight: 5900 } });
+    mockResponse({ ok: true, status: 202, body: { txId: TX, status: 'pending', expiresAtHeight: 5900 } });
     const res = await faucet().askKarma(KEY);
     expect(last.url).toBe('/faucet/karma');
     expect(last.method).toBe('POST');
     expect(last.body).toEqual({ pubkey: KEY });
-    expect(res).toEqual({ txId: 't1', status: 'pending', expiresAtHeight: 5900 });
+    expect(res).toEqual({ txId: TX, status: 'pending', expiresAtHeight: 5900 });
   });
 
   it('the deploy base carries its own prefix — <base>/karma', async () => {
-    mockResponse({ ok: true, status: 202, body: { txId: 't1', status: 'pending', expiresAtHeight: 1 } });
+    mockResponse({ ok: true, status: 202, body: { txId: TX, status: 'pending', expiresAtHeight: 1 } });
     await faucet('/testnet/faucet').askKarma(KEY);
     expect(last.url).toBe('/testnet/faucet/karma');
   });
 
   it('a 202 without a numeric expiresAtHeight is refused client-side', async () => {
-    mockResponse({ ok: true, status: 202, body: { txId: 't1', status: 'pending' } });
+    mockResponse({ ok: true, status: 202, body: { txId: TX, status: 'pending' } });
     const res = await faucet().askKarma(KEY);
     expect(res).toEqual({ status: 0, message: 'the faucet did not say when its invite expires.' });
+  });
+
+  it('a 202 whose txId is not 64 lowercase hex is refused — never "undefined" as a txId', async () => {
+    mockResponse({ ok: true, status: 202, body: { txId: 'nope', status: 'pending', expiresAtHeight: 5900 } });
+    expect(await faucet().askKarma(KEY)).toEqual({ status: 0, message: 'the faucet did not name the transaction it made.' });
+    // A missing txId would have stringified to "undefined" — refused the same way.
+    mockResponse({ ok: true, status: 202, body: { status: 'pending', expiresAtHeight: 5900 } });
+    expect(await faucet().askKarma(KEY)).toEqual({ status: 0, message: 'the faucet did not name the transaction it made.' });
   });
 
   it("the faucet's { error } bodies normalise to { status, message }", async () => {

@@ -1,6 +1,6 @@
 import { readStore, writeStore } from '../prefs';
 import { isTombstone } from '../api/dto';
-import type { PostResult } from '../api/dto';
+import type { PostResult, KarmaResult } from '../api/dto';
 import type { SpendableBox, ChangeRef, PendingEntry, EntryOutcome } from './types';
 
 // The persisted pending ledger and the spendable view over it
@@ -109,6 +109,14 @@ export function reconcileLike(entry: PendingEntry, fetched: PostResult | null, t
   return tip > entry.expiresAtHeight ? 'expired' : 'pending';
 }
 
+/** A faucet grant is landed once `/karma` shows any box — the key held none when
+ *  the grant was asked, so a risen boxCount is the grant — expired past its height
+ *  while still zero, else pending (WEB_INTERFACE → The faucet step). */
+export function reconcileGrant(entry: PendingEntry, karma: KarmaResult, tip: number): EntryOutcome {
+  if (karma.boxCount > 0) return 'landed';
+  return tip > entry.expiresAtHeight ? 'expired' : 'pending';
+}
+
 /** Drop the node's pending rows the ledger already holds, so the client's own
  *  submission never renders twice (WEB_INTERFACE → "The feed carries four things"). */
 export function dedupePending<T extends { id: string }>(nodePending: T[], entries: PendingEntry[]): T[] {
@@ -160,7 +168,7 @@ function parseStoredEntry(v: unknown): PendingEntry {
   if (typeof v !== 'object' || v === null) throw new Error('entry is not an object');
   const o = v as Record<string, unknown>;
   if (typeof o.txId !== 'string' || typeof o.postId !== 'string') throw new Error('entry has non-string ids');
-  if (o.kind !== 'post' && o.kind !== 'like') throw new Error('entry has an unknown kind');
+  if (o.kind !== 'post' && o.kind !== 'like' && o.kind !== 'grant') throw new Error('entry has an unknown kind');
   if (!Array.isArray(o.inputs) || !o.inputs.every((x) => typeof x === 'string')) throw new Error('entry inputs are not strings');
   if (typeof o.expiresAtHeight !== 'number' || typeof o.submittedAtHeight !== 'number') throw new Error('entry heights are not numbers');
   let change: ChangeRef | undefined;

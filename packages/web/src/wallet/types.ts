@@ -18,11 +18,13 @@ export interface ChangeRef {
   createdAtBlock: number;
 }
 
-export type EntryKind = 'post' | 'like';
+export type EntryKind = 'post' | 'like' | 'grant';
 
 /** One of the client's own pending transactions (WEB_INTERFACE → The wallet). For
- *  a post, `postId` is the node's own id from the 200 body; for a like, the
- *  target. */
+ *  a post, `postId` is the node's own id from the 200 body; for a like, the target;
+ *  for a faucet grant, the key the grant was asked for — there is no post, and the
+ *  entry carries `inputs: []` and no `change`, so it is inert in the spendable view
+ *  (WEB_INTERFACE → The faucet step). */
 export interface PendingEntry {
   txId: string;
   kind: EntryKind;
