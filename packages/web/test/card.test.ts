@@ -116,7 +116,7 @@ describe('card — the author prefix and a locked vouch', () => {
       ownKey: PUB,
       onUnlock: async (p) => { unlocked.push(p); },
     });
-    (c.querySelector('.who .mark') as HTMLElement).click();
+    (c.querySelector('.who .vmark') as HTMLElement).click();
     const form = c.querySelector('.card-unlock form.pf') as HTMLFormElement;
     expect(form).not.toBeNull(); // the unlock form appeared under the meta, not by the mark up top
     expect(vouched).toHaveLength(0); // the vouch has not fired yet
@@ -130,7 +130,7 @@ describe('card — the author prefix and a locked vouch', () => {
   it('an unlocked vouch fires at once — no unlock form', () => {
     const vouched: string[] = [];
     const c = card(confirmed(AUTHOR), { mark: { state: 'plus', count: 0 }, onVouch: (k) => vouched.push(k), onAuthor: () => {}, locked: false, ownKey: PUB, onUnlock: async () => {} });
-    (c.querySelector('.who .mark') as HTMLElement).click();
+    (c.querySelector('.who .vmark') as HTMLElement).click();
     expect(c.querySelector('.card-unlock')).toBeNull();
     expect(vouched).toEqual([AUTHOR]);
   });

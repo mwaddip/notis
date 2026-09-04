@@ -22,7 +22,7 @@ function confirmed(author: string): PostJson {
 }
 function markEl(mark: Mark | null): HTMLElement | null {
   const c = card(confirmed(AUTHOR), { mark, onAuthor: () => {}, onVouch: () => {} });
-  return c.querySelector('.who .mark');
+  return c.querySelector('.who .vmark');
 }
 
 describe('the vouch mark — states by node identity', () => {
@@ -71,20 +71,20 @@ describe('the vouch mark — states by node identity', () => {
   it('a + press vouches at once — onVouch, no confirmation; a ✓ press opens the author window', () => {
     const vouched: string[] = [];
     const plus = card(confirmed(AUTHOR), { mark: { state: 'plus', count: 0 }, onVouch: (k) => vouched.push(k), onAuthor: () => {} });
-    (plus.querySelector('.who .mark') as HTMLElement).click();
+    (plus.querySelector('.who .vmark') as HTMLElement).click();
     expect(vouched).toEqual([AUTHOR]);
 
     const opened: string[] = [];
     const check = card(confirmed(AUTHOR), { mark: { state: 'check', count: 1 }, onAuthor: (k) => opened.push(k), onVouch: () => {} });
-    (check.querySelector('.who .mark') as HTMLElement).click();
+    (check.querySelector('.who .vmark') as HTMLElement).click();
     expect(opened).toEqual([AUTHOR]);
   });
 
   it('the mark is absent with no opt, and · you is exclusive with it', () => {
-    expect(card(confirmed(AUTHOR), { onAuthor: () => {} }).querySelector('.mark')).toBeNull();
+    expect(card(confirmed(AUTHOR), { onAuthor: () => {} }).querySelector('.vmark')).toBeNull();
     // · you wins over a mark on the reader's own card.
     const own = card(confirmed(PUB), { you: true, mark: { state: 'plus', count: 0 }, onAuthor: () => {} });
-    expect(own.querySelector('.mark')).toBeNull();
+    expect(own.querySelector('.vmark')).toBeNull();
     expect(own.querySelector('.you')?.textContent).toBe('· you');
   });
 

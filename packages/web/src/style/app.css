@@ -413,26 +413,27 @@ header .spacer { flex: 1 1 auto; }
    and never a word. The glyph is small; the click target is a ghost button whose
    outline is its sole boundary — the 3:1 case, so borderStrong (HOUSE_STYLE →
    Accessibility contract). */
-.mark {
+.vmark {
+  font-family: var(--sans); /* a control glyph, like ↻ ← ✕ › and like — mono is machine data only (HOUSE_STYLE → Typography) */
   display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box;
   min-width: 20px; height: 19px; padding: 0 5px; cursor: pointer; line-height: 1;
   background: transparent; border: 1px solid var(--borderStrong); border-radius: 4px;
   transition: background-color .15s ease-out, color .15s ease-out;
 }
-.mark.plus { color: var(--inkMute); }
-.mark.plus .g { font-family: var(--mono); font-size: 13px; font-weight: 600; }
-.mark.check { color: var(--ink); }
-.mark.check.pending { color: var(--inkMute); }
-.mark .ck { width: 12px; height: 12px; display: block; }
-.mark:hover { background: rgba(0,0,0,.05); }
-:root[data-t="dark"] .mark:hover { background: rgba(255,255,255,.06); }
-.mark:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: 2px; }
-.mark.disabled { color: var(--inkMute); opacity: .4; cursor: default; }
-.mark.disabled:hover { background: transparent; }
+.vmark.plus { color: var(--inkMute); }
+.vmark.plus .g { font-size: 14px; font-weight: 600; }
+.vmark.check { color: var(--ink); }
+.vmark.check.pending { color: var(--inkMute); }
+.vmark .ck { width: 12px; height: 12px; display: block; }
+.vmark:hover { background: rgba(0,0,0,.05); }
+:root[data-t="dark"] .vmark:hover { background: rgba(255,255,255,.06); }
+.vmark:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: 2px; }
+.vmark.disabled { color: var(--inkMute); opacity: .4; cursor: default; }
+.vmark.disabled:hover { background: transparent; }
 /* The title bar's mark is display only — the ✓ glyph alone, no button and no
    border, because a control cannot nest inside the bar's focus label. */
-.mark.display { border: none; min-width: 0; height: auto; padding: 0 0 0 2px; cursor: default; }
-.mark.display:hover { background: transparent; }
+.vmark.display { border: none; min-width: 0; height: auto; padding: 0 0 0 2px; cursor: default; }
+.vmark.display:hover { background: transparent; }
 
 /* A locked like's or vouch's unlock form, in a row under the card's meta row
    (HOUSE_STYLE → Motion). */

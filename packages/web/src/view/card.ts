@@ -129,7 +129,7 @@ function checkSvg(): SVGSVGElement {
  *  meta before the vouch flies, as a like does (WEB_INTERFACE → The identity module). */
 function markNode(key: string, mark: Mark, opts: CardOpts): HTMLElement {
   if (mark.state === 'disabled') {
-    const b = el('button', 'mark plus disabled');
+    const b = el('button', 'vmark plus disabled');
     (b as HTMLButtonElement).disabled = true;
     b.appendChild(el('span', 'g', '+'));
     if (mark.reason) {
@@ -139,7 +139,7 @@ function markNode(key: string, mark: Mark, opts: CardOpts): HTMLElement {
     return b;
   }
   if (mark.state === 'plus') {
-    const b = el('button', 'mark plus');
+    const b = el('button', 'vmark plus');
     b.appendChild(el('span', 'g', '+'));
     b.setAttribute('aria-label', 'vouch for this author — stakes 1 karma');
     const t = countTitle(mark.count);
@@ -154,7 +154,7 @@ function markNode(key: string, mark: Mark, opts: CardOpts): HTMLElement {
     return b;
   }
   // check or pending — the ✓ opens the author window, where unvouch lives.
-  const b = el('button', 'mark check' + (mark.state === 'pending' ? ' pending' : ''));
+  const b = el('button', 'vmark check' + (mark.state === 'pending' ? ' pending' : ''));
   b.appendChild(checkSvg());
   b.setAttribute('aria-label', 'you vouched for this author — open their window');
   const t = countTitle(mark.count);
@@ -169,7 +169,7 @@ function markNode(key: string, mark: Mark, opts: CardOpts): HTMLElement {
  *  control cannot nest inside one. */
 export function displayMark(mark: Mark | null): HTMLElement | null {
   if (!mark || (mark.state !== 'check' && mark.state !== 'pending')) return null;
-  const span = el('span', 'mark check display' + (mark.state === 'pending' ? ' pending' : ''));
+  const span = el('span', 'vmark check display' + (mark.state === 'pending' ? ' pending' : ''));
   span.appendChild(checkSvg());
   span.setAttribute('aria-label', 'you vouched for this author');
   return span;
