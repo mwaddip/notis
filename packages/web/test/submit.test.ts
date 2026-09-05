@@ -436,8 +436,8 @@ describe('submitWithdrawFlow', () => {
   it('a 2xx without a numeric expiresAtHeight is a client rejection and adds no entry', async () => {
     const ledger = new PendingLedger(PUB);
     const w = write();
-    // The deployed node's shape until the withdraw route carries the field: a 2xx
-    // that echoes the id but no expiry height.
+    // A 2xx that echoes the id but carries no expiry height — untrackable, so the
+    // flow refuses it and records nothing.
     w.submitWithdraw = async (postId, tx) => {
       writeCalls.push({ kind: 'withdraw', tx, postId });
       return { status: 'submitted', txId: lastSignedTxId(), postId } as WithdrawSubmitResult;

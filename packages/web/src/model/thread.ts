@@ -10,8 +10,9 @@ export interface ThreadNode {
 }
 
 function parentOf(row: FeedRow): string | undefined {
-  // A withdrawn row keeps its parentRefs at withdrawal (NODE_INTERFACE →
-  // Pruning), so it renders at its own depth like any live row.
+  // A withdrawn row keeps its parentRefs at withdrawal (NODE_INTERFACE → "The
+  // JSON projection has a fourth arm where the store has three"), so it renders
+  // at its own depth like any live row.
   return row.parentRefs[0];
 }
 

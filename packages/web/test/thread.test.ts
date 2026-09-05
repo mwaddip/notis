@@ -3,8 +3,9 @@ import { flattenThread } from '../src/model/thread';
 import type { PostJson, WithdrawnJson, FeedRow } from '../src/api/dto';
 
 // flattenThread walks the loaded rows into render order and depth. A withdrawn row
-// keeps its parentRefs at withdrawal (NODE_INTERFACE → Pruning), so it renders at
-// its own depth rather than collapsing under the root.
+// keeps its parentRefs at withdrawal (NODE_INTERFACE → "The JSON projection has a
+// fourth arm where the store has three"), so it renders at its own depth rather
+// than collapsing under the root.
 
 const ROOT = 'a'.repeat(64);
 const REPLY = 'b'.repeat(64);

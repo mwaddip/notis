@@ -232,8 +232,7 @@ export async function submitInviteFlow(deps: SubmitDeps, inviteeKey: string, bon
  *  equal karma output back out, `postWithdraw` naming the post (WEB_INTERFACE →
  *  The withdraw control). A 2xx whose body carries no numeric `expiresAtHeight`
  *  is a client rejection: the ledger's poll has no height to expire against, so
- *  the client records no entry it cannot track — the deployed node answers this
- *  way until the withdraw route carries the field (NODE_INTERFACE → Pruning). */
+ *  the client records no entry it cannot track. */
 export async function submitWithdrawFlow(deps: SubmitDeps, postId: string): Promise<SubmitResult<WithdrawSubmitResult>> {
   const id = deps.identity.current();
   if (id === null) throw new Error('submitWithdrawFlow: no identity loaded');
