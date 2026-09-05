@@ -8,7 +8,13 @@ import { getNet } from '../services/net-instance.js';
 import { jsonToTx } from './json-to-tx.js';
 import { respondError } from './respond-error.js';
 import type { PostKey } from '../store/index.js';
-import { parseLimit, isLimitError, parseAfter, isAfterError, parseViewer, isViewerError, formatKey } from './page.js';
+import {
+  parseLimit, isLimitError,
+  parseAfter, isAfterError,
+  parseRoots, isRootsError,
+  parseViewer, isViewerError,
+  formatKey,
+} from './page.js';
 
 // ---------------------------------------------------------------------------
 // Dependency types
@@ -123,6 +129,8 @@ export function createRouter(deps: PostsDeps): Router {
     if (isLimitError(limit)) { res.status(400).json({ error: limit.error }); return; }
     const after = parseAfter(req.query as Record<string, unknown>, 'post');
     if (isAfterError(after)) { res.status(400).json({ error: after.error }); return; }
+    const roots = parseRoots(req.query as Record<string, unknown>);
+    if (isRootsError(roots)) { res.status(400).json({ error: roots.error }); return; }
     const viewer = parseViewer(req.query as Record<string, unknown>);
     if (isViewerError(viewer)) {
       res.status(400).json({ error: viewer.error });
@@ -133,6 +141,7 @@ export function createRouter(deps: PostsDeps): Router {
 
     const result = feedService.queryPosts({
       author,
+      roots,
       limit,
       after: after as PostKey | undefined,
       viewer,

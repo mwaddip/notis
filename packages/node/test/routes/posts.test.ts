@@ -9,7 +9,8 @@ import express from 'express';
 import http from 'http';
 import { generateKeyPairSync, createPrivateKey } from 'crypto';
 import { initDb, closeDb, getDb } from '../../src/store/db.js';
-import { insertPost, getPost, queryPostsPage, getAncestorsNearest, getSubtreePage, deletePostRows, confirmPost, withdrawPost, getPendingPostAuthor } from '../../src/store/posts.js';
+import { insertPost, getPost, queryPostsPage, getAncestorsNearest, getSubtreePage, getDescendantCount, deletePostRows, confirmPost, withdrawPost, getPendingPostAuthor } from '../../src/store/posts.js';
+import { getVouchCountForTarget } from '../../src/store/vouch-queries.js';
 import { getCurrentHeight, getBlockCreatedAt } from '../../src/store/ordering.js';
 import {
   getKarmaBox,
@@ -82,6 +83,8 @@ async function request(
       getBoxProvenance: () => null,
       getKarmaBox,
       getLikeRecordCount,
+      getDescendantCount,
+      getVouchCountForTarget,
       hasLikeRecord,
       getAncestorsNearest,
       getSubtreePage,
@@ -451,6 +454,66 @@ describe('posts routes', () => {
   it('GET /posts with no params returns 200', async () => {
     const res = await request('/', 'GET');
     expect(res.status).toBe(200);
+  });
+
+  // -----------------------------------------------------------------------
+  // roots filter and the two counts (NODE_INTERFACE → Posts)
+  // -----------------------------------------------------------------------
+
+  it('GET /posts?roots=1 restricts the listing to posts with no parent', async () => {
+    const kp = generateKeyPair();
+    const rootCommit = makePostCommit(kp.publicKey, 'a root for the roots filter');
+    const rootId = fixturePostId(rootCommit);
+    insertPost(rootId, rootCommit, 'a root for the roots filter');
+    confirmPost(rootId, 900, 0);
+
+    const replyCommit = makePostCommit(kp.publicKey, 'a reply excluded by roots=1', { parentRefs: [rootId] });
+    const replyId = fixturePostId(replyCommit);
+    insertPost(replyId, replyCommit, 'a reply excluded by roots=1');
+    confirmPost(replyId, 901, 0);
+
+    const res = await request('/?roots=1', 'GET');
+    expect(res.status).toBe(200);
+    const ids = (res.data as { posts: Array<{ id: string }> }).posts.map((p) => p.id);
+    expect(ids).toContain(rootId);
+    expect(ids).not.toContain(replyId);
+  });
+
+  it('GET /posts?roots=0 answers 400 roots must be 1', async () => {
+    const res = await request('/?roots=0', 'GET');
+    expect(res.status).toBe(400);
+    expect((res.data as { error: string }).error).toBe('roots must be 1');
+  });
+
+  it('GET /posts?roots=true answers 400 roots must be 1', async () => {
+    const res = await request('/?roots=true', 'GET');
+    expect(res.status).toBe(400);
+    expect((res.data as { error: string }).error).toBe('roots must be 1');
+  });
+
+  it('GET /posts?roots= answers 400 roots must be 1', async () => {
+    const res = await request('/?roots=', 'GET');
+    expect(res.status).toBe(400);
+    expect((res.data as { error: string }).error).toBe('roots must be 1');
+  });
+
+  it('a GET /posts listing row carries descendantCount and authorVouchCount', async () => {
+    const kp = generateKeyPair();
+    const rootCommit = makePostCommit(kp.publicKey, 'a root carrying both counts');
+    const rootId = fixturePostId(rootCommit);
+    insertPost(rootId, rootCommit, 'a root carrying both counts');
+    confirmPost(rootId, 902, 0);
+
+    const replyCommit = makePostCommit(kp.publicKey, 'its reply', { parentRefs: [rootId] });
+    const replyId = fixturePostId(replyCommit);
+    insertPost(replyId, replyCommit, 'its reply');
+    confirmPost(replyId, 903, 0);
+
+    const res = await request('/', 'GET');
+    expect(res.status).toBe(200);
+    const row = (res.data as { posts: Array<Record<string, unknown>> }).posts.find((p) => p['id'] === rootId)!;
+    expect(row['descendantCount']).toBe(1);
+    expect(typeof row['authorVouchCount']).toBe('number');
   });
 
   // -----------------------------------------------------------------------

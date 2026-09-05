@@ -99,13 +99,16 @@ async function importUtxo() {
 async function importFeedReadPath() {
   const posts = await import('../../src/store/posts.js');
   const likes = await import('../../src/store/likes.js');
+  const vouches = await import('../../src/store/vouch-queries.js');
   const feed = await import('../../src/services/feed-service.js');
   return {
     queryPostsPage: posts.queryPostsPage,
     getAncestorsNearest: posts.getAncestorsNearest,
     getSubtreePage: posts.getSubtreePage,
+    getDescendantCount: posts.getDescendantCount,
     getLikeRecordCount: likes.getLikeRecordCount,
     hasLikeRecord: likes.hasLikeRecord,
+    getVouchCountForTarget: vouches.getVouchCountForTarget,
     FeedService: feed.FeedService,
   };
 }
@@ -403,6 +406,8 @@ describe('full-pipeline', () => {
       getPost: posts.getPost,
       queryPostsPage: f.queryPostsPage,
       getLikeRecordCount: f.getLikeRecordCount,
+      getDescendantCount: f.getDescendantCount,
+      getVouchCountForTarget: f.getVouchCountForTarget,
       hasLikeRecord: f.hasLikeRecord,
       getAncestorsNearest: f.getAncestorsNearest,
       getSubtreePage: f.getSubtreePage,

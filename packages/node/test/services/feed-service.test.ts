@@ -1,7 +1,8 @@
-import { fixturePostId, makePostCommit } from '../helpers.js';
+import { fixturePostId, makePostCommit, seedProvenance, uid } from '../helpers.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { generateKeyPairSync, type KeyObject } from 'crypto';
 import { PROTOCOL_VERSION } from '@dagsocial/types';
+import type { VouchBox } from '@dagsocial/types';
 import {
   initDb,
   closeDb,
@@ -9,10 +10,13 @@ import {
   getPost as storeGetPost,
   queryPostsPage,
   getLikeRecordCount,
+  getDescendantCount,
+  getVouchCountForTarget,
   hasLikeRecord,
   getAncestorsNearest,
   getSubtreePage,
   insertStump,
+  insertBox,
   deletePostRows,
   confirmPost,
   withdrawPost,
@@ -82,6 +86,8 @@ describe('feed-service', () => {
       getPost: storeGetPost,
       queryPostsPage,
       getLikeRecordCount,
+      getDescendantCount,
+      getVouchCountForTarget,
       hasLikeRecord,
       getAncestorsNearest,
       getSubtreePage,
@@ -214,5 +220,84 @@ describe('feed-service', () => {
 
     const rootThread = feedService.getThread(liveRootId, { limit: 50 })!;
     expect(rootThread.pending.map((p) => (p as PostJson).status)).toEqual(['pending']);
+  });
+
+  // -----------------------------------------------------------------------
+  // descendantCount and authorVouchCount — NODE_INTERFACE → Posts
+  // -----------------------------------------------------------------------
+
+  it('descendantCount and authorVouchCount ride every PostJson arm', () => {
+    const grandchildId = insertTestPost('A pending grandchild', authorId, [liveReplyId]);
+    confirmPost(liveRootId, 10, 0);
+    confirmPost(liveReplyId, 11, 0);
+
+    const vouch = seedProvenance<VouchBox>({
+      boxType: 'vouch' as const,
+      value: 1n,
+      createdAtBlock: 0,
+      voucherId: uid('counts-voucher'),
+      targetId: authorId,
+    }, 1);
+    insertBox(vouch);
+
+    // Feed row: the confirmed root, 2 descendants (reply + grandchild), pending included
+    const feed = feedService.queryPosts({ limit: 50 });
+    const feedRow = feed.posts.find((p) => p.id === liveRootId) as PostJson;
+    expect(feedRow.descendantCount).toBe(2);
+    expect(feedRow.authorVouchCount).toBe(1);
+
+    // Pending row: the grandchild, still pending, a leaf
+    const pendingRow = feed.pending.find((p) => p.id === grandchildId) as PostJson;
+    expect(pendingRow.descendantCount).toBe(0);
+    expect(pendingRow.authorVouchCount).toBe(1);
+
+    // Head
+    const head = feedService.getPost(liveReplyId) as PostJson;
+    expect(head.descendantCount).toBe(1);
+    expect(head.authorVouchCount).toBe(1);
+
+    // Ancestor
+    const replyThread = feedService.getThread(liveReplyId, { limit: 50 })!;
+    const ancestor = replyThread.ancestors[0] as PostJson;
+    expect(ancestor.id).toBe(liveRootId);
+    expect(ancestor.descendantCount).toBe(2);
+    expect(ancestor.authorVouchCount).toBe(1);
+
+    // Descendant
+    const rootThread2 = feedService.getThread(liveRootId, { limit: 50 })!;
+    const descendant = rootThread2.descendants[0] as PostJson;
+    expect(descendant.id).toBe(liveReplyId);
+    expect(descendant.descendantCount).toBe(1);
+    expect(descendant.authorVouchCount).toBe(1);
+  });
+
+  it('authorVouchCount is read once per distinct author per response, and again on the next call', () => {
+    const keysB = generateKeyPairSync('ed25519');
+    const authorB = rawPublicKey(keysB.publicKey);
+    insertTestPost('A second post by A', authorId, []);
+    insertTestPost('A post by B', authorB, []);
+
+    let vouchCalls = 0;
+    const countingService = new FeedService({
+      getPost: storeGetPost,
+      queryPostsPage,
+      getLikeRecordCount,
+      getDescendantCount,
+      getVouchCountForTarget: (targetId: Uint8Array) => {
+        vouchCalls++;
+        return getVouchCountForTarget(targetId);
+      },
+      hasLikeRecord,
+      getAncestorsNearest,
+      getSubtreePage,
+      getBlockCreatedAt,
+    });
+
+    // The pending window holds 4 posts (liveRootId, liveReplyId, +2 new) across 2 distinct authors.
+    countingService.queryPosts({ limit: 50 });
+    expect(vouchCalls).toBe(2);
+
+    countingService.queryPosts({ limit: 50 });
+    expect(vouchCalls).toBe(4);
   });
 });

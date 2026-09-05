@@ -11,10 +11,13 @@ export interface FeedServiceDeps {
   getPost: (id: string) => StoredPost | Stump | PrunedTombstone | null;
   queryPostsPage: (opts: {
     author?: Uint8Array;
+    roots?: boolean;
     limit: number;
     after?: PostKey;
   }) => { rows: StoredPost[]; next: PostKey | null; pending: StoredPost[]; pendingCount: number };
   getLikeRecordCount: (postId: string) => number;
+  getDescendantCount: (postId: string) => number;
+  getVouchCountForTarget: (targetId: Uint8Array) => number;
   hasLikeRecord: (postId: string, likerId: Uint8Array) => boolean;
   getAncestorsNearest: (postId: string, limit: number) => { rows: StoredPost[]; count: number };
   getSubtreePage: (postId: string, page: Page<PostKey>) => {
@@ -44,6 +47,8 @@ export interface PostJson {
   blockIndex: number | null;
   blockCreatedAt: number | null;
   likeCount: number;
+  descendantCount: number;
+  authorVouchCount: number;
   likedByViewer: boolean | null;
 }
 
@@ -99,6 +104,8 @@ export interface FeedResult {
 function postToJson(
   post: StoredPost,
   likeCount: number,
+  descendantCount: number,
+  authorVouchCount: number,
   likedByViewer: boolean | null,
   blockCreatedAt: number | null,
 ): PostJson {
@@ -115,6 +122,8 @@ function postToJson(
     blockIndex: post.blockIndex,
     blockCreatedAt,
     likeCount,
+    descendantCount,
+    authorVouchCount,
     likedByViewer,
   };
 }
@@ -169,19 +178,41 @@ export class FeedService {
     return this.deps.hasLikeRecord(postId, viewer);
   }
 
-  private storedPostToJson(post: StoredPost, viewer: Uint8Array | null): PostJson | WithdrawnJson {
+  private storedPostToJson(
+    post: StoredPost,
+    viewer: Uint8Array | null,
+    vouchCountCache: Map<string, number>,
+  ): PostJson | WithdrawnJson {
     if (post.withdrawnAtHeight !== null) return withdrawnToJson(post);
     const likeCount = this.deps.getLikeRecordCount(post.id);
-    return postToJson(post, likeCount, this.likedByViewer(post.id, viewer), this.blockCreatedAtFor(post));
+    const descendantCount = this.deps.getDescendantCount(post.id);
+    const authorVouchCount = this.authorVouchCountFor(post.author, vouchCountCache);
+    return postToJson(
+      post,
+      likeCount,
+      descendantCount,
+      authorVouchCount,
+      this.likedByViewer(post.id, viewer),
+      this.blockCreatedAtFor(post),
+    );
+  }
+
+  // NODE_INTERFACE → Posts: authorVouchCount is read once per distinct author
+  // per response — vouchCountCache is a Map local to one queryPosts/getThread/getPost call.
+  private authorVouchCountFor(author: Uint8Array, vouchCountCache: Map<string, number>): number {
+    const key = Buffer.from(author).toString('hex');
+    const cached = vouchCountCache.get(key);
+    if (cached !== undefined) return cached;
+    const count = this.deps.getVouchCountForTarget(author);
+    vouchCountCache.set(key, count);
+    return count;
   }
 
   getPost(id: string, viewer: Uint8Array | null = null): PostJson | StumpJson | PrunedJson | WithdrawnJson | null {
     const result = this.deps.getPost(id);
     if (!result) return null;
     if (isStoredPost(result)) {
-      if (result.withdrawnAtHeight !== null) return withdrawnToJson(result);
-      const likeCount = this.deps.getLikeRecordCount(id);
-      return postToJson(result, likeCount, this.likedByViewer(id, viewer), this.blockCreatedAtFor(result));
+      return this.storedPostToJson(result, viewer, new Map());
     }
     if (isStump(result)) return stumpToJson(result);
     if (isPrunedTombstone(result)) return prunedToJson(result);
@@ -190,16 +221,23 @@ export class FeedService {
 
   queryPosts(opts: {
     author?: Uint8Array;
+    roots?: boolean;
     limit: number;
     after?: PostKey;
     viewer?: Uint8Array | null;
   }): FeedResult {
-    const result = this.deps.queryPostsPage({ author: opts.author, limit: opts.limit, after: opts.after });
+    const result = this.deps.queryPostsPage({
+      author: opts.author,
+      roots: opts.roots,
+      limit: opts.limit,
+      after: opts.after,
+    });
     const viewer = opts.viewer ?? null;
+    const vouchCountCache = new Map<string, number>();
     return {
-      posts: result.rows.map((post) => this.storedPostToJson(post, viewer)),
+      posts: result.rows.map((post) => this.storedPostToJson(post, viewer, vouchCountCache)),
       next: result.next,
-      pending: result.pending.map((post) => this.storedPostToJson(post, viewer)),
+      pending: result.pending.map((post) => this.storedPostToJson(post, viewer, vouchCountCache)),
       pendingCount: result.pendingCount,
     };
   }
@@ -233,13 +271,14 @@ export class FeedService {
     // and pending as a live subject does — the row, its topology and every
     // descendant's anchor survive the withdrawal.
     const post = result;
-    const postJson = this.storedPostToJson(post, viewer);
+    const vouchCountCache = new Map<string, number>();
+    const postJson = this.storedPostToJson(post, viewer, vouchCountCache);
 
     const ancestorResult = this.deps.getAncestorsNearest(id, page.limit);
-    const ancestors = ancestorResult.rows.map((p) => this.storedPostToJson(p, viewer));
+    const ancestors = ancestorResult.rows.map((p) => this.storedPostToJson(p, viewer, vouchCountCache));
 
     const descendantResult = this.deps.getSubtreePage(id, page);
-    const descendants = descendantResult.rows.map((p) => this.storedPostToJson(p, viewer));
+    const descendants = descendantResult.rows.map((p) => this.storedPostToJson(p, viewer, vouchCountCache));
 
     return {
       post: postJson,
@@ -248,7 +287,7 @@ export class FeedService {
       descendants,
       descendantCount: descendantResult.count,
       next: descendantResult.next,
-      pending: descendantResult.pending.map((p) => this.storedPostToJson(p, viewer)),
+      pending: descendantResult.pending.map((p) => this.storedPostToJson(p, viewer, vouchCountCache)),
       pendingCount: descendantResult.pendingCount,
     };
   }

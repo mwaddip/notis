@@ -3,6 +3,7 @@ import {
   parseViewer, isViewerError,
   parseLimit, isLimitError,
   parseAfter, isAfterError,
+  parseRoots, isRootsError,
   formatKey,
   PAGE_LIMIT_DEFAULT, PAGE_LIMIT_MAX,
 } from '../../src/routes/page.js';
@@ -80,6 +81,27 @@ describe('parseLimit', () => {
 
   it('rejects scientific notation', () => {
     expect(isLimitError(parseLimit({ limit: '1e2' }))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseRoots
+// ---------------------------------------------------------------------------
+
+describe('parseRoots', () => {
+  it('returns false when roots is absent', () => {
+    expect(parseRoots({})).toBe(false);
+  });
+
+  it('returns true for roots=1', () => {
+    expect(parseRoots({ roots: '1' })).toBe(true);
+  });
+
+  it('returns an error for any other value', () => {
+    const r = parseRoots({ roots: '0' });
+    expect(isRootsError(r)).toBe(true);
+    if (!isRootsError(r)) return;
+    expect(r.error).toBe('roots must be 1');
   });
 });
 
