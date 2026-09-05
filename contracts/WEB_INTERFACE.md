@@ -502,8 +502,9 @@ pane the strip opens. `↻` reports what it did — `4 new posts` / `no new post
 ### The withdraw control *(author's own controls)*
 
 **Withdraw is the author's first own control, and it lives in the card's meta row inside a pane.** On the
-reader's own confirmed live post — the pane's root included — the meta row's first slot, empty of `like`
-on an own card, holds a `withdraw` button beside `↩ reply`. `· you` in the who row stays text. The control
+reader's own confirmed live post — the pane's root included — the meta row's first slot — where `like`
+sits on another's card, and the read-only like count on the reader's own — gains a `withdraw` button
+after that count, beside `↩ reply`; the count stays. `· you` in the who row stays text. The control
 appears nowhere else: not on a feed card (write controls live inside a pane), not on a pending card or the
 client's own submission, not on a withdrawn card, a stump or a tombstone (a post withdraws once, and a
 tombstone has nothing to withdraw), not in the `@posts:` window's read-only cards, never with no identity
@@ -521,8 +522,9 @@ spends and returns one karma box, so with an empty spendable view the button ren
 reason as its `title` — *"needs one karma box to sign with; this key has none"* (`HOUSE_STYLE →
 Interaction`). The maturity bind, liveness and authorship are the node's to refuse.
 
-**The flight runs in the slot.** The second press replaces the slot with the stage line — `submitting…`,
-then `submitted` — and the ledger holds a `withdraw` entry: its subject the post, its one input the spent
+**The flight runs in the slot.** The second press replaces the `withdraw` button with the stage line —
+`submitting…`, then `submitted`, the like count staying beside it — and the ledger holds a `withdraw` entry:
+its subject the post, its one input the spent
 box, its `change` the returned box under its predicted id, its `expiresAtHeight` the body's. A reload
 renders `submitted` from the entry. **Landed:** the entry's `GET /posts/:id` answered a tombstone, and the
 client replaces the row in place with what it fetched — in every open thread the post becomes the
