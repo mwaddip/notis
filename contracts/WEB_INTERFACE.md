@@ -533,9 +533,10 @@ withdrawn card at its depth (the tombstone's `parentRefs`, `NODE_INTERFACE → P
 it; no thread and no feed is refreshed. This is the one landing that changes a card's shape (→ The wallet,
 `HOUSE_STYLE → Motion`). **Expired:** the stage line reads *"no block took this by height N."* with `try
 again`, which rebuilds from the current view and submits anew; the entry is removed and the box returns to
-the spendable view. **Rejected:** the region's report line reads *"withdraw rejected: <the node's
-reason>"* and the control returns; a transport failure reads *"withdraw rejected: can't reach the node
-right now."* and leaves nothing pending. A 2xx whose body carries no `expiresAtHeight` is a client
+the spendable view. **Rejected:** the region's report line reads *"withdraw rejected: …"* with the node's
+refusal in the voice register — its known refusals mapped to sentences, as the like's and the vouch's
+are (`HOUSE_STYLE → Voice`) — and the control returns; a transport failure reads *"withdraw rejected:
+can't reach the node right now."* and leaves nothing pending. A 2xx whose body carries no `expiresAtHeight` is a client
 rejection — *"the node answered without an expiry height"* — the way a txId that differs from the built
 one is: the client records no entry it cannot track.
 
