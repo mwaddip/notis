@@ -677,4 +677,95 @@ describe('posts routes', () => {
       expect(body['pendingCount']).toBe(0);
     });
   });
+
+  // -----------------------------------------------------------------------
+  // Withdrawn view carries parentRefs
+  // NODE_INTERFACE → "The JSON projection has a fourth arm where the store
+  // has three"
+  // -----------------------------------------------------------------------
+
+  describe('withdrawn post view carries parentRefs', () => {
+    let author: Uint8Array;
+    let liveRootId: string;
+    let withdrawnReplyId: string;
+    let withdrawnSoloRootId: string;
+
+    beforeAll(() => {
+      const keys = generateKeyPairSync('ed25519');
+      author = rawPublicKey(keys.publicKey);
+
+      const rootCommit = makePostCommit(author, 'a live root, later given a withdrawn reply', { parentRefs: [] });
+      liveRootId = fixturePostId(rootCommit);
+      insertPost(liveRootId, rootCommit, 'a live root, later given a withdrawn reply');
+      confirmPost(liveRootId, 50, 0);
+
+      const replyCommit = makePostCommit(author, 'a reply, later withdrawn', { parentRefs: [liveRootId] });
+      withdrawnReplyId = fixturePostId(replyCommit);
+      insertPost(withdrawnReplyId, replyCommit, 'a reply, later withdrawn');
+      confirmPost(withdrawnReplyId, 51, 0);
+      withdrawPost(withdrawnReplyId, 52);
+
+      const soloRootCommit = makePostCommit(author, 'a root, later withdrawn', { parentRefs: [] });
+      withdrawnSoloRootId = fixturePostId(soloRootCommit);
+      insertPost(withdrawnSoloRootId, soloRootCommit, 'a root, later withdrawn');
+      confirmPost(withdrawnSoloRootId, 53, 0);
+      withdrawPost(withdrawnSoloRootId, 54);
+    });
+
+    it('GET /posts/:id on a withdrawn reply answers parentRefs equal to its parent', async () => {
+      const res = await request(`/${withdrawnReplyId}`, 'GET');
+      expect(res.status).toBe(200);
+      expect(res.data).toEqual({
+        kind: 'withdrawn',
+        id: withdrawnReplyId,
+        author: Buffer.from(author).toString('hex'),
+        parentRefs: [liveRootId],
+        withdrawnAtHeight: 52,
+        confirmedAuthor: null,
+      });
+    });
+
+    it('GET /posts/:id on a withdrawn root answers parentRefs: []', async () => {
+      const res = await request(`/${withdrawnSoloRootId}`, 'GET');
+      expect(res.status).toBe(200);
+      expect(res.data).toEqual({
+        kind: 'withdrawn',
+        id: withdrawnSoloRootId,
+        author: Buffer.from(author).toString('hex'),
+        parentRefs: [],
+        withdrawnAtHeight: 54,
+        confirmedAuthor: null,
+      });
+    });
+
+    it("the live root's thread carries the withdrawn reply's parentRefs in descendants", async () => {
+      const res = await request(`/${liveRootId}/thread`, 'GET');
+      expect(res.status).toBe(200);
+      const body = res.data as Record<string, unknown>;
+      const descendants = body['descendants'] as Array<Record<string, unknown>>;
+      const found = descendants.find((d) => d['id'] === withdrawnReplyId);
+      expect(found).toEqual({
+        kind: 'withdrawn',
+        id: withdrawnReplyId,
+        author: Buffer.from(author).toString('hex'),
+        parentRefs: [liveRootId],
+        withdrawnAtHeight: 52,
+      });
+    });
+
+    it("the feed carries the withdrawn reply's parentRefs", async () => {
+      const res = await request('/', 'GET');
+      expect(res.status).toBe(200);
+      const body = res.data as Record<string, unknown>;
+      const posts = body['posts'] as Array<Record<string, unknown>>;
+      const found = posts.find((p) => p['id'] === withdrawnReplyId);
+      expect(found).toEqual({
+        kind: 'withdrawn',
+        id: withdrawnReplyId,
+        author: Buffer.from(author).toString('hex'),
+        parentRefs: [liveRootId],
+        withdrawnAtHeight: 52,
+      });
+    });
+  });
 });

@@ -65,10 +65,12 @@ export interface PrunedJson {
   compactedAtBlockHeight: number;
 }
 
+// NODE_INTERFACE → "The JSON projection has a fourth arm where the store has three"
 export interface WithdrawnJson {
   kind: 'withdrawn';
   id: string;
   author: string;
+  parentRefs: string[];
   withdrawnAtHeight: number;
 }
 
@@ -144,6 +146,7 @@ function withdrawnToJson(post: StoredPost): WithdrawnJson {
     kind: 'withdrawn',
     id: post.id,
     author: Buffer.from(post.author).toString('hex'),
+    parentRefs: post.parentRefs,
     withdrawnAtHeight: post.withdrawnAtHeight!,
   };
 }
