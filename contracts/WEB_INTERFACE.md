@@ -157,14 +157,15 @@ place the client passes the filter; the feed never does.
 mempool is part of the read surface, so a pending post renders before any composer exists to create
 one.
 
-### What the feed does not carry, and what the client does about it
+### What the client does not read from the feed, and what it does instead
 
-- **No roots-only filter.** `GET /posts` returns roots and replies alike; there is no root column in
-  the store. The feed shows both. **A reply renders with its parent as a one-line reference**, not
-  with the parent's card pulled in beside it.
-- **No descendant count on a feed row.** A card's reply count therefore reads `?`. The count is real
-  on a thread (`descendantCount`), which is what a title bar shows; a feed card does not know it, and
-  finding out would cost one thread fetch per card.
+- **The feed shows roots and replies alike.** `GET /posts` takes `roots=1` (`NODE_INTERFACE → Posts`);
+  this client passes no `roots`, so the feed shows both. **A reply renders with its parent as a
+  one-line reference**, not with the parent's card pulled in beside it.
+- **A card's reply count reads `?`.** Every `PostJson` carries `descendantCount` and `authorVouchCount`
+  (`NODE_INTERFACE → Posts`); this client's DTO declares neither and its cards read neither, so a feed
+  card's count reads `?`, the count a title bar shows is the thread's own `descendantCount`, and the
+  mark's `title` comes from `GET /vouches?target=`'s `count` (→ The identity display).
 - **Stumps and pruned tombstones never appear.** The feed's rows are posts and withdrawn markers only.
   The client filters the withdrawn ones out, which costs it rows from a page and is the second reason
   paging follows `next`.
