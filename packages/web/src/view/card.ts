@@ -494,10 +494,19 @@ function livePostCard(post: PostJson, opts: CardOpts): HTMLElement {
     if (rc) meta.appendChild(rc);
     // Controls only on a landed or confirmed card, never a node's pending one.
     if (!pending) {
-      // The first slot: withdraw on the reader's own confirmed post, like on
-      // another's (WEB_INTERFACE → The withdraw control).
-      const slot = withdrawArea(post, opts) ?? likeArea(post, opts);
-      if (slot) meta.appendChild(slot);
+      // The first slot: on the reader's own confirmed post the read-only like
+      // count stays and the withdraw control — or its stage line in flight —
+      // follows it; on another's, the like control (WEB_INTERFACE → The withdraw
+      // control).
+      const wa = withdrawArea(post, opts);
+      if (wa) {
+        const count = likeNode(post.likeCount);
+        if (count) meta.appendChild(count);
+        meta.appendChild(wa);
+      } else {
+        const lk = likeArea(post, opts);
+        if (lk) meta.appendChild(lk);
+      }
       if (landed && post.blockHeight !== null) meta.appendChild(inBlockNode(post.blockHeight));
       const rb = replyButton(post.id, opts);
       if (rb) meta.appendChild(rb);

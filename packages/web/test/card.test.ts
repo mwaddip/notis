@@ -143,13 +143,17 @@ describe('card — the withdraw control', () => {
   const confirmBtn = (c: HTMLElement, text: string): HTMLButtonElement =>
     [...c.querySelector('.card-confirm')!.querySelectorAll('button')].find((b) => b.textContent === text) as HTMLButtonElement;
 
-  it('an own confirmed card renders withdraw in the like slot and no like — the bare count is gone', () => {
+  it('an own confirmed card keeps the read-only like count, the withdraw control after it, no like button', () => {
     const c = card(ownWithLikes(), { you: true, onWithdraw: () => {}, canWithdraw: true, onReply: () => {} });
     expect(metaWithdraw(c)).not.toBeNull();
-    // No like control and no bare like count on an own card — withdraw fills the slot.
+    // No like BUTTON — the self-like is withheld — but the read-only count stays.
     expect(c.querySelector('.likebtn')).toBeNull();
-    expect(c.querySelector('.meta .like')).toBeNull();
-    // · you stays a span, and reply follows withdraw.
+    const count = c.querySelector('.meta .like');
+    expect(count).not.toBeNull();
+    expect(count!.textContent).toContain('3');
+    // The withdraw control follows the count.
+    expect(count!.nextElementSibling).toBe(metaWithdraw(c));
+    // · you stays a span, and reply follows.
     expect(c.querySelector('.you')?.textContent).toBe('· you');
     expect(c.querySelector('.meta .reply-ctl')).not.toBeNull();
   });
@@ -220,10 +224,14 @@ describe('card — the withdraw control', () => {
     c.remove();
   });
 
-  it("withdraw 'pending' renders the stage line submitted; an expired flight the sentence and try again", () => {
-    const p = card(confirmed(PUB), { you: true, withdraw: 'pending' });
+  it("withdraw 'pending' renders the stage line submitted, the like count staying beside it; an expired flight the sentence and try again", () => {
+    const p = card(ownWithLikes(), { you: true, withdraw: 'pending' });
     expect(p.querySelector('.stage')?.textContent).toBe('submitted');
-    expect(p.querySelector('.withdraw-ctl')).toBeNull(); // the flight takes the slot, not the button
+    expect(p.querySelector('.withdraw-ctl')).toBeNull(); // the flight replaces the button, not the count
+    // The count stays beside the stage line.
+    const count = p.querySelector('.meta .like');
+    expect(count).not.toBeNull();
+    expect(count!.nextElementSibling).toBe(p.querySelector('.stage'));
     const onTryAgain = vi.fn();
     const e = card(confirmed(PUB), { you: true, withdraw: { stage: 'expired', expiresAtHeight: 7000, onTryAgain } });
     const text = e.querySelector('.stage')!.textContent!;
