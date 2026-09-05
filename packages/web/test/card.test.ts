@@ -135,3 +135,121 @@ describe('card — the author prefix and a locked vouch', () => {
     expect(vouched).toEqual([AUTHOR]);
   });
 });
+
+describe('card — the withdraw control', () => {
+  const OTHER = 'bb'.repeat(32);
+  const ownWithLikes = (): PostJson => ({ ...confirmed(PUB), likeCount: 3 });
+  const metaWithdraw = (c: HTMLElement): HTMLButtonElement => c.querySelector('.meta .withdraw-ctl') as HTMLButtonElement;
+  const confirmBtn = (c: HTMLElement, text: string): HTMLButtonElement =>
+    [...c.querySelector('.card-confirm')!.querySelectorAll('button')].find((b) => b.textContent === text) as HTMLButtonElement;
+
+  it('an own confirmed card renders withdraw in the like slot and no like — the bare count is gone', () => {
+    const c = card(ownWithLikes(), { you: true, onWithdraw: () => {}, canWithdraw: true, onReply: () => {} });
+    expect(metaWithdraw(c)).not.toBeNull();
+    // No like control and no bare like count on an own card — withdraw fills the slot.
+    expect(c.querySelector('.likebtn')).toBeNull();
+    expect(c.querySelector('.meta .like')).toBeNull();
+    // · you stays a span, and reply follows withdraw.
+    expect(c.querySelector('.you')?.textContent).toBe('· you');
+    expect(c.querySelector('.meta .reply-ctl')).not.toBeNull();
+  });
+
+  it('a press mounts the confirm row after the meta: the sentence, withdraw and keep, focus on keep', () => {
+    const c = card(confirmed(PUB), { you: true, onWithdraw: () => {}, canWithdraw: true });
+    document.body.appendChild(c); // focus() needs the node in the document
+    metaWithdraw(c).click();
+    const row = c.querySelector('.card-confirm');
+    expect(row).not.toBeNull();
+    expect(row!.querySelector('.q')?.textContent).toBe('withdraw this post? the content goes; the replies stay.');
+    expect([...row!.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['withdraw', 'keep']);
+    // One row, mounted right after the meta.
+    expect(c.querySelector('.meta')!.nextElementSibling).toBe(row);
+    expect(document.activeElement?.textContent).toBe('keep');
+    // A second press opens no second row.
+    metaWithdraw(c).click();
+    expect(c.querySelectorAll('.card-confirm')).toHaveLength(1);
+    c.remove();
+  });
+
+  it('keep removes the row and signs nothing; the confirm withdraw calls onWithdraw', () => {
+    const withdrawn: string[] = [];
+    const c = card(confirmed(PUB), { you: true, onWithdraw: (id) => withdrawn.push(id), canWithdraw: true });
+    document.body.appendChild(c);
+    metaWithdraw(c).click();
+    confirmBtn(c, 'keep').click();
+    expect(c.querySelector('.card-confirm')).toBeNull();
+    expect(withdrawn).toEqual([]);
+    // Press again, and this time confirm.
+    metaWithdraw(c).click();
+    confirmBtn(c, 'withdraw').click();
+    expect(withdrawn).toEqual(['p1']);
+    c.remove();
+  });
+
+  it('locked: the confirm withdraw mounts the unlock form in the row\'s place, then withdraws', async () => {
+    const unlocked: string[] = [];
+    const withdrawn: string[] = [];
+    const c = card(confirmed(PUB), {
+      you: true, onWithdraw: (id) => withdrawn.push(id), canWithdraw: true,
+      locked: true, ownKey: PUB, onUnlock: async (p) => { unlocked.push(p); },
+    });
+    document.body.appendChild(c);
+    metaWithdraw(c).click();
+    confirmBtn(c, 'withdraw').click();
+    expect(c.querySelector('.card-confirm')).toBeNull(); // the confirm made way for the unlock
+    const form = c.querySelector('.card-unlock form.pf') as HTMLFormElement;
+    expect(form).not.toBeNull();
+    expect(withdrawn).toHaveLength(0); // nothing signed yet
+    (form.querySelector('input[type="password"]') as HTMLInputElement).value = 'pw';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(unlocked).toEqual(['pw']);
+    expect(withdrawn).toEqual(['p1']);
+    c.remove();
+  });
+
+  it('canWithdraw false renders the button disabled with the reason as the title', () => {
+    const c = card(confirmed(PUB), { you: true, onWithdraw: () => {}, canWithdraw: false });
+    const wb = metaWithdraw(c);
+    expect(wb.disabled).toBe(true);
+    expect(wb.title).toBe('needs one karma box to sign with; this key has none');
+    // A disabled control opens no confirm row.
+    document.body.appendChild(c);
+    wb.click();
+    expect(c.querySelector('.card-confirm')).toBeNull();
+    c.remove();
+  });
+
+  it("withdraw 'pending' renders the stage line submitted; an expired flight the sentence and try again", () => {
+    const p = card(confirmed(PUB), { you: true, withdraw: 'pending' });
+    expect(p.querySelector('.stage')?.textContent).toBe('submitted');
+    expect(p.querySelector('.withdraw-ctl')).toBeNull(); // the flight takes the slot, not the button
+    const onTryAgain = vi.fn();
+    const e = card(confirmed(PUB), { you: true, withdraw: { stage: 'expired', expiresAtHeight: 7000, onTryAgain } });
+    const text = e.querySelector('.stage')!.textContent!;
+    expect(text).toContain('no block took this by height');
+    expect(text).toContain('7,000');
+    [...e.querySelectorAll('button')].find((b) => b.textContent === 'try again')!.click();
+    expect(onTryAgain).toHaveBeenCalledTimes(1);
+  });
+
+  it('no withdraw control on another\'s card, a pending card, or a withdrawn card', () => {
+    expect(card(confirmed(OTHER), { onLike: () => {} }).querySelector('.withdraw-ctl')).toBeNull();
+    expect(card(pending('x'), { you: true, onWithdraw: () => {}, canWithdraw: true }).querySelector('.withdraw-ctl')).toBeNull();
+    const tomb = { kind: 'withdrawn' as const, id: 'p1', author: PUB, withdrawnAtHeight: 10, parentRefs: [] };
+    expect(card(tomb, { you: true, onWithdraw: () => {}, canWithdraw: true }).querySelector('.withdraw-ctl')).toBeNull();
+  });
+
+  it('the word delete appears nowhere on the control or its confirm row', () => {
+    const c = card(confirmed(PUB), { you: true, onWithdraw: () => {}, canWithdraw: true });
+    document.body.appendChild(c);
+    metaWithdraw(c).click();
+    expect(c.textContent!.toLowerCase()).not.toContain('delete');
+    // aria-labels and titles too, not only visible text.
+    for (const b of c.querySelectorAll('button')) {
+      expect((b.getAttribute('aria-label') ?? '').toLowerCase()).not.toContain('delete');
+      expect((b.title ?? '').toLowerCase()).not.toContain('delete');
+    }
+    c.remove();
+  });
+});

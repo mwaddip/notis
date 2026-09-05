@@ -439,6 +439,14 @@ header .spacer { flex: 1 1 auto; }
    (HOUSE_STYLE → Motion). */
 .card-unlock { margin-top: 8px; }
 
+/* The withdraw confirm row, in a row under the card's meta row, one at a time
+   (WEB_INTERFACE → The withdraw control). The profile's forget-confirm column,
+   on a card — its own namespace, never pf-confirm; the question in the refusal
+   line's clay, the actions reusing .mini. */
+.card-confirm { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.card-confirm .q { font-size: 12px; color: var(--clay); }
+.card-confirm .actions { display: flex; gap: 8px; }
+
 /* hover is suppressed while scrolling and ~100ms after it stops
    (HOUSE_STYLE → Interaction). */
 .scrolling { pointer-events: none; }
