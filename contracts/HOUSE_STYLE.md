@@ -334,9 +334,13 @@ Every rule here is a prohibition, and together they are most of what keeps the p
   post the reader submitted may turn from hollow to landed without the reader asking, because the
   reader asked for the post; a faucet grant the reader asked for may turn the profile's karma line
   from `working…` to the balance for the same reason; a vouch the reader cast may turn its mark from
-  a muted check to ink, an unvouch may turn the mark to its held state, and an invite may lower the
-  reader's own available count, each in its fixed slot. The price is identical geometry before and after — colour only, the meta
-  row and the stage line one fixed line box, so what either contains cannot change the card's height —
+  a muted check to ink, an unvouch may turn the mark to its held state, an invite may lower the
+  reader's own available count, each in its fixed slot, and a withdrawal the reader confirmed may turn
+  their own card into its withdrawn form — the one change of shape, because the content's absence is
+  what was asked for and the withdrawn card's geometry is the thread's own (`WEB_INTERFACE → The
+  withdraw control`). The price is identical geometry before and after — colour only, the withdrawal
+  excepted — the meta row and the stage line one fixed line box, so what either contains cannot change
+  the card's height —
   and a bounded watch: it runs only while the reader's own submissions are pending and stops at zero,
   it reconciles those entries and refreshes nothing else, and it moves no count but the reader's own. Anything else arriving
   unasked is the banner.
@@ -349,6 +353,9 @@ Every rule here is a prohibition, and together they are most of what keeps the p
   nobody asked for. Suppress transitions until after the first paint. This one was found by
   measuring a screenshot that had caught the animation 11% of the way through, which is also a
   reminder that a rendered check catches what reasoning about the CSS does not.
+
+> ⚠ **AHEAD OF CODE (2026-09-05)** — the withdrawal clause in the pending-state bullet above
+> (`WEB_INTERFACE → The withdraw control`).
 
 ## Interaction
 

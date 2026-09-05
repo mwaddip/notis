@@ -4,18 +4,25 @@
 **Status:** the **read surface**, the **write surface's first slice** — the identity machinery,
 the composer for a root and a reply, and like — the **identity interface's first unit** — the
 `@profile` window, create / import / export / forget / lock / unlock, encryption at rest with unlock per
-tab, the reader's own posts marked, the faucet karma step — and the **membership actions** — the
+tab, the reader's own posts marked, the faucet karma step — the **membership actions** — the
 identity display with the vouch mark, the author window and the author-posts window, vouch and
-unvouch, invite from the profile — are implemented; withdraw and prune are not built
+unvouch, invite from the profile — and the **author's own controls' first unit** — withdraw from the
+reader's own card — are implemented; prune is not built
 **Protocol version:** read from the node, never held — see Invariants
+
+> ⚠ **AHEAD OF CODE (2026-09-05)** — the author's own controls' first unit, withdraw: the `Status:` line
+> above, → The withdraw control, the builder and the entry kind in → The wallet and the landing's exception
+> there, the Writes row; `HOUSE_STYLE → Motion`'s withdrawal clause; `NODE_INTERFACE → Pruning`'s two
+> answers carrying `expiresAtHeight` and the withdrawn view's `parentRefs`.
 
 
 > **The demo UI (`packages/node/public/index.html`) is not this contract's subject.** It is a debug
 > interface. Do not write an interface contract for it, and do not treat it as a product surface.
 >
-> ⚠ **The demo UI outlives this client's first slices.** It is the only browser surface that
-> *writes* a withdrawal; `@dagsocial/web` posts, likes, vouches, unvouches and invites, and neither
-> withdraws nor prunes. Nothing about it is superseded by this contract.
+> ⚠ **The demo UI outlives this client's first slices.** It withdraws through a builder of its own, the
+> second implementation the web's vector is frozen against; `@dagsocial/web` posts, likes, vouches,
+> unvouches, invites and withdraws, and neither surface prunes. Nothing about it is superseded by this
+> contract.
 >
 > **One thing about the demo UI IS binding:** it hand-rolls `computeBoxId`, `computeTxId`,
 > `postFieldBytes` and the positional writers under them, so it is a third implementation of
@@ -62,14 +69,15 @@ placeholder for one. **Once an identity is loaded, every read carries `viewer=<p
 `likedByViewer` is the node's answer. A light client carries its identity on every request anyway,
 and one rule is cleaner than a local record of likes kept beside the node's.
 
-### The write surface — identity, post and like, and the membership actions
+### The write surface — identity, post and like, the membership actions, and withdraw
 
 Every section and invariant below marked *(write surface)* belongs to this slice; the read surface
 is the rest.
 
-**The slice is the identity machinery, the composer for a root and a reply, like, and the membership
-actions — vouch, unvouch and invite** — on transactions the browser builds and signs. Withdraw and
-prune are **not built**; each is named as such where it appears. The identity interface — the `@profile` window, its six operations and
+**The slice is the identity machinery, the composer for a root and a reply, like, the membership
+actions — vouch, unvouch and invite — and withdraw, the author's own controls' first unit** — on
+transactions the browser builds and signs. Prune is **not built** and is named as such where it
+appears. The identity interface — the `@profile` window, its six operations and
 the faucet karma step — is stated below (→ The identity module, → The profile window, → The faucet
 step).
 
@@ -269,7 +277,7 @@ key's entries and cannot try to spend its predicted change; a reload that forgot
 re-spend a box the node holds pending and receive a 409 for a failure the reader never saw. **An
 identity change rebuilds the ledger for the new key at once** (→ The identity module, `onChange`).
 
-**Builders exist for a post, a like, a vouch, an unvouch and an invite, and nothing else.** A root
+**Builders exist for a post, a like, a vouch, an unvouch, an invite and a withdrawal, and nothing else.** A root
 post: change and a `karma_price` of `POST_PRICE_THREAD`. A reply: change, a `karma_price` of
 `POST_PRICE_REPLY − REPLY_AUTHOR_SHARE`, and a `like_accrual` of `REPLY_AUTHOR_SHARE` to the parent's
 **`confirmedAuthor`** from `GET /posts/:id` — never the row's `author`, which is a claim rather than the
@@ -282,7 +290,10 @@ never from a cached set, since a box can be spent between a render and a click �
 `createdAtBlock` plus `vouchCooldownBlocks` from `/status` (`NODE_INTERFACE → Vouch transition rules`:
 the cooldown runs from the cast); no karma input and no change. An invite: change and a `bond` box of
 the amount the reader chose inside `/status`'s `inviteBondMin`–`inviteBondMax`, `inviterId` the reader's
-key, `inviteePublicKey` the pasted key. Zero change is no box (`TYPES_INTERFACE → Box value domain`).
+key, `inviteePublicKey` the pasted key. A withdrawal: one karma input — the smallest spendable box, so a
+pending withdrawal ties up the least — and one karma output of its value to the reader's key,
+`postWithdraw` naming the post; the returned box is the entry's `change` (→ The withdraw control). Zero
+change is no box (`TYPES_INTERFACE → Box value domain`).
 Every builder is frozen against the demo UI's own, the second implementation (`builders.test.ts`).
 
 **Nothing retries.** A rejection is one `Rejection { status, message }`, normalised from both body
@@ -297,7 +308,9 @@ A pending vouch is landed when `GET /vouches?voucher=<key>` lists the pair; a pe
 pair is absent — the escrow it creates is no signal, since one born past its release height is returned
 by the next block's settlement and its cooldown row can stand for a single block the poll never sees
 (`NODE_INTERFACE → Vouch transition rules`); a pending invite when `GET /invites/<key>` lists a bond
-naming the invitee — each expired once the tip passes its `expiresAtHeight`.
+naming the invitee; a pending withdrawal when `GET /posts/:id` answers a tombstone — the withdrawn
+marker, or a stump or pruned tombstone when the thread went first (`NODE_INTERFACE → The prune and
+withdrawal phase`) — each expired once the tip passes its `expiresAtHeight`.
 
 **The reader's vouch set is client state read from the node, never stored:** `GET /vouches?voucher=<key>`
 to the end of `next` at identity load, again on every vouch or unvouch landing, and the cooldown arm
@@ -310,7 +323,8 @@ floor `VOUCH_MIN_BALANCE`; the node's refusal stays the truth for every other ru
 client reads `GET /blocks/current` every 15 seconds, and when the height moves it reconciles the
 ledger's entries. It runs only while the client's own submissions are pending and stops at zero; it
 refreshes no feed, no thread and no count; a landed card changes colour and nothing else
-(`HOUSE_STYLE → Motion`).
+(`HOUSE_STYLE → Motion`) — with one exception: a landed withdrawal turns the reader's own card into the
+withdrawn card, the shape they asked for (→ The withdraw control).
 
 ### The profile window *(identity interface)*
 
@@ -485,6 +499,44 @@ as feed cards: the strip, the prefix and the mark, `· you`, and no like and no 
 pane the strip opens. `↻` reports what it did — `4 new posts` / `no new posts`. The bar reads
 `posts · <prefix>`, no spine.
 
+### The withdraw control *(author's own controls)*
+
+**Withdraw is the author's first own control, and it lives in the card's meta row inside a pane.** On the
+reader's own confirmed live post — the pane's root included — the meta row's first slot, empty of `like`
+on an own card, holds a `withdraw` button beside `↩ reply`. `· you` in the who row stays text. The control
+appears nowhere else: not on a feed card (write controls live inside a pane), not on a pending card or the
+client's own submission, not on a withdrawn card, a stump or a tombstone (a post withdraws once, and a
+tombstone has nothing to withdraw), not in the `@posts:` window's read-only cards, never with no identity
+loaded.
+
+**Two presses, the second in a confirm row.** The first press mounts a confirm row after the meta row —
+where the unlock row mounts, one row at a time — reading *"withdraw this post? the content goes; the
+replies stay."* with two actions, `withdraw` and `keep`, focus on `keep`; `keep` and Esc remove it. The
+second press, on the row's `withdraw`, signs: a locked identity gets the unlock form in that row's place
+first, and success continues the flight (→ The identity module). The copy never says "deleted" (→ The
+three absence states).
+
+**The client withholds one gate: a key with no karma box cannot sign a withdrawal.** The transaction
+spends and returns one karma box, so with an empty spendable view the button renders disabled with the
+reason as its `title` — *"needs one karma box to sign with; this key has none"* (`HOUSE_STYLE →
+Interaction`). The maturity bind, liveness and authorship are the node's to refuse.
+
+**The flight runs in the slot.** The second press replaces the slot with the stage line — `submitting…`,
+then `submitted` — and the ledger holds a `withdraw` entry: its subject the post, its one input the spent
+box, its `change` the returned box under its predicted id, its `expiresAtHeight` the body's. A reload
+renders `submitted` from the entry. **Landed:** the entry's `GET /posts/:id` answered a tombstone, and the
+client replaces the row in place with what it fetched — in every open thread the post becomes the
+withdrawn card at its depth (the tombstone's `parentRefs`, `NODE_INTERFACE → Pruning`), the feed and any
+`@posts:` window drop the row, the live-post index forgets it — and re-renders only the regions holding
+it; no thread and no feed is refreshed. This is the one landing that changes a card's shape (→ The wallet,
+`HOUSE_STYLE → Motion`). **Expired:** the stage line reads *"no block took this by height N."* with `try
+again`, which rebuilds from the current view and submits anew; the entry is removed and the box returns to
+the spendable view. **Rejected:** the region's report line reads *"withdraw rejected: <the node's
+reason>"* and the control returns; a transport failure reads *"withdraw rejected: can't reach the node
+right now."* and leaves nothing pending. A 2xx whose body carries no `expiresAtHeight` is a client
+rejection — *"the node answered without an expiry height"* — the way a txId that differs from the built
+one is: the client records no entry it cannot track.
+
 ## Writes
 
 | Client action | Endpoint | Standing |
@@ -497,7 +549,7 @@ pane the strip opens. `↻` reports what it did — `4 new posts` / `no new post
 | Unvouch | `DELETE /vouches/:targetId` — `{ tx }` → `{ status, txId, expiresAtHeight, karmaReturnsAtBlock }` — the one non-`POST` write; the client reads the release from the cooldown arm, not the last field | *(membership actions)* |
 | Invite | `POST /invites` — `{ tx }` → `{ status, txId, expiresAtHeight, bondBoxId }` | *(membership actions)* |
 | The reader's vouches, cooldowns and standing bonds; an identity's endorsers and count | `GET /vouches?voucher=`, `GET /vouches?voucher=&cooldowns=1`, `GET /invites/:userId`, `GET /vouches?target=` | *(membership actions)* — reads, in the read client |
-| Withdraw content | `POST /posts/:id/withdraw` | not built |
+| Withdraw | `POST /posts/:id/withdraw` — `{ tx }` → `{ status, txId, postId, expiresAtHeight }` | *(author's own controls)* |
 | Prune a subtree | `POST /posts/:id/prune` | not built |
 
 **The write client is its own module beside the read client.** The read client issues `GET` requests

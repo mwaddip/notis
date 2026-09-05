@@ -278,8 +278,9 @@ the whole of the guard: a placeholder is *waiting for* its body and a withdrawn 
 receive one. Every read that distinguishes them reads the **marker**, never the null.
 
 **The JSON projection has a fourth arm where the store has three.** `feedService` answers
-`WithdrawnJson { kind: 'withdrawn', id, author, withdrawnAtHeight }` — carrying **no content
-field** — for the subject of a thread, for its ancestors and descendants, and in the feed.
+`WithdrawnJson { kind: 'withdrawn', id, author, parentRefs, withdrawnAtHeight }` — carrying **no content
+field** and the row's `parentRefs`, which the withdrawal keeps (→ Withdrawal transactions) — for the
+subject of a thread, for its ancestors and descendants, and in the feed.
 A withdrawn post that answered `404` would be indistinguishable from an id the node never heard
 of, and one projected as a live post with `content: null` would render as a body still loading.
 
@@ -462,8 +463,11 @@ invites, vouches, credits, prune).
 
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
-| `POST` | `/posts/:id/prune` | `{ tx }` — a prune transaction, JSON-encoded like every other route's (`jsonToTx`) | `{ status: "submitted", txId: hex, postId: hex }` (201) — no `replyCount`: the count is a property of apply, read off the stump | 400 if the payload is absent, the root is unconfirmed or confirmed at or above the block the prune is judged for (`tip + 1` at admission, → validateTx), or `validateTx` refuses it; 404 if the post is unknown; 409 on a pending-spend conflict; 503 if the pool is full |
-| `POST` | `/posts/:id/withdraw` | `{ tx }` — a withdrawal transaction, JSON-encoded like every other route's (`jsonToTx`) | `{ status: "submitted", txId: hex, postId: hex }` (201) | 400 if the payload is absent, the post is unconfirmed or confirmed at or above the block the withdrawal is judged for (`tip + 1` at admission, → validateTx), the signer is not its author, the post is already withdrawn, or `validateTx` refuses it; 404 if the post is unknown; 409 on a pending-spend conflict; 503 if the pool is full |
+| `POST` | `/posts/:id/prune` | `{ tx }` — a prune transaction, JSON-encoded like every other route's (`jsonToTx`) | `{ status: "submitted", txId: hex, postId: hex, expiresAtHeight }` (201) — no `replyCount`: the count is a property of apply, read off the stump | 400 if the payload is absent, the root is unconfirmed or confirmed at or above the block the prune is judged for (`tip + 1` at admission, → validateTx), or `validateTx` refuses it; 404 if the post is unknown; 409 on a pending-spend conflict; 503 if the pool is full |
+| `POST` | `/posts/:id/withdraw` | `{ tx }` — a withdrawal transaction, JSON-encoded like every other route's (`jsonToTx`) | `{ status: "submitted", txId: hex, postId: hex, expiresAtHeight }` (201) | 400 if the payload is absent, the post is unconfirmed or confirmed at or above the block the withdrawal is judged for (`tip + 1` at admission, → validateTx), the signer is not its author, the post is already withdrawn, or `validateTx` refuses it; 404 if the post is unknown; 409 on a pending-spend conflict; 503 if the pool is full |
+
+> ⚠ **AHEAD OF CODE (2026-09-05)** — `expiresAtHeight` in the two answers above, and `parentRefs` in the
+> withdrawn view (→ "The JSON projection has a fourth arm where the store has three").
 
 **Prune flow:**
 
