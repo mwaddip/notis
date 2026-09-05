@@ -135,10 +135,16 @@ function writeCardOpts(row: PostJson | Tombstone, ci: number, ctx: RenderCtx, ha
     const overlaid = ctx.likePending(row.id);
     const liked = overlaid || row.likedByViewer === true;
     const isOwn = ctx.ownKey !== null && row.author === ctx.ownKey;
-    if (liked) {
+    if (isOwn) {
+      // The author's own control fills the slot after the read-only like count,
+      // where like sits on another's (WEB_INTERFACE → The withdraw control).
+      opts.onWithdraw = (id) => handlers.withdrawPost(id);
+      opts.withdraw = ctx.withdrawState(row.id);
+      opts.canWithdraw = ctx.canSignWithdraw;
+    } else if (liked) {
       opts.liked = true;
       opts.likePending = overlaid && row.likedByViewer !== true;
-    } else if (!isOwn) {
+    } else {
       opts.onLike = (id) => handlers.likePost(id);
     }
   }

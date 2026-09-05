@@ -1,5 +1,5 @@
 import { NodeClient, type Api } from './api/client';
-import type { PostJson, Tombstone, FeedRow, ThreadResult, KarmaResult, BondsResult } from './api/dto';
+import type { PostJson, Tombstone, FeedRow, PostResult, ThreadResult, KarmaResult, BondsResult } from './api/dto';
 import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE } from '@dagsocial/types';
 import { el, shortHex } from './dom';
 import { contentHashHex } from './integrity';
@@ -13,12 +13,12 @@ import { flattenThread } from './model/thread';
 import { WriteClient, type Rejection } from './api/write';
 import { FaucetClient, faucetLine } from './api/faucet';
 import {
-  PendingLedger, reconcilePost, reconcileLike, reconcileGrant, reconcileVouch, reconcileUnvouch, reconcileInvite,
-  pendingLikeTargets, pendingVouchTargets,
+  PendingLedger, reconcilePost, reconcileLike, reconcileGrant, reconcileVouch, reconcileUnvouch, reconcileInvite, reconcileWithdraw,
+  pendingLikeTargets, pendingVouchTargets, pendingWithdrawTargets,
 } from './wallet/ledger';
 import type { PendingEntry } from './wallet/types';
 import { readBuildContext } from './wallet/reads';
-import { submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, type SubmitDeps } from './wallet/submit';
+import { submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, type SubmitDeps } from './wallet/submit';
 import { identity as identitySingleton } from './identity/identity';
 import { renderKarmaField, renderInvitesRow } from './view/profile';
 import type { Mark, Flight } from './view/card';
@@ -119,6 +119,9 @@ export class App {
   // Targets the reader pressed like on, shown liked at once and reverted on a
   // rejection or expiry (WEB_INTERFACE → The wallet).
   private optimisticLikes = new Set<string>();
+  // The transient withdraw flight per post — submitting and expired; 'submitted'
+  // is the ledger's durable state (WEB_INTERFACE → The withdraw control).
+  private withdrawFlights = new Map<string, Flight>();
   private submitSeq = 0;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private lastPolledHeight = 0;
@@ -189,6 +192,7 @@ export class App {
       askFaucet: () => void this.askFaucet(),
       openComposer: (parentId) => this.openComposer(parentId),
       likePost: (postId) => void this.likePost(postId),
+      withdrawPost: (postId) => void this.withdrawPost(postId),
       tryAgain: (localKey) => void this.tryAgain(localKey),
       vouch: (key) => void this.vouch(key),
       unvouch: (key) => void this.unvouch(key),
@@ -301,7 +305,26 @@ export class App {
       canAffordMinBond: this.canAffordMinBond(),
       bonds: this.bondsView,
       inviteFlight: this.inviteFlight,
+      withdrawState: (postId) => this.withdrawState(postId),
+      canSignWithdraw: this.canSignWithdraw(),
     };
+  }
+
+  /** The withdraw slot's state for a post: 'pending' when the ledger holds its
+   *  entry — the durable 'submitted' that survives a reload — else the transient
+   *  flight, or null (WEB_INTERFACE → The withdraw control). */
+  private withdrawState(postId: string): 'pending' | Flight | null {
+    if (pendingWithdrawTargets(this.ledger.all()).has(postId)) return 'pending';
+    return this.withdrawFlights.get(postId) ?? null;
+  }
+
+  /** The spendable view is non-empty — the courtesy gate the withdraw button reads,
+   *  from the wallet's view the App already holds; the node's refusal is the truth
+   *  (WEB_INTERFACE → The withdraw control). */
+  private canSignWithdraw(): boolean {
+    if (this.profileKarma === null) return false;
+    const confirmed = this.profileKarma.boxes.map((b) => ({ boxId: b.boxId, value: BigInt(b.value) }));
+    return this.ledger.spendable(confirmed).length > 0;
   }
 
   /** The spendable view covers the minimum bond — a courtesy that shows the invite
@@ -722,6 +745,7 @@ export class App {
   private onIdentityChange(): void {
     this.stopPoll();
     this.optimisticLikes.clear();
+    this.withdrawFlights.clear();
     this.state.submissions = [];
     this.lastPolledHeight = 0;
     this.profileKarma = null;
@@ -982,6 +1006,62 @@ export class App {
       this.setReportForPost(postId, 'like rejected: ' + likeRejectionCopy(result.rejection));
     }
     this.renderRegionsForPost(postId);
+  }
+
+  /** Withdraw the reader's own post: the flight in the slot, then submit. On a 2xx
+   *  the ledger's entry renders 'submitted' and the poll lands it; a rejection or a
+   *  transport failure reports in the region line and returns the control, leaving
+   *  nothing pending (WEB_INTERFACE → The withdraw control). */
+  private async withdrawPost(postId: string): Promise<void> {
+    const cur = this.idm.current();
+    if (cur === null) return;
+    // A second press is ignored while one is in flight or already pending.
+    if (this.withdrawFlights.has(postId) || pendingWithdrawTargets(this.ledger.all()).has(postId)) return;
+    this.withdrawFlights.set(postId, { stage: 'submitting' });
+    this.renderRegionsForPost(postId);
+    let result;
+    try {
+      result = await submitWithdrawFlow(this.submitDeps(), postId);
+    } catch {
+      this.withdrawFlights.delete(postId);
+      this.setReportForPost(postId, "withdraw rejected: can't reach the node right now.");
+      this.renderRegionsForPost(postId);
+      return;
+    }
+    // Either way the transient flight steps aside: on ok the ledger's entry now
+    // renders 'submitted'; on a rejection the control returns.
+    this.withdrawFlights.delete(postId);
+    if (result.ok) {
+      this.startPoll();
+    } else {
+      this.setReportForPost(postId, 'withdraw rejected: ' + result.rejection.message);
+    }
+    this.renderRegionsForPost(postId);
+  }
+
+  /** A withdrawal landed: replace the post in place with the fetched tombstone
+   *  (WEB_INTERFACE → The withdraw control). In every open thread the row becomes
+   *  the withdrawn card at its depth (the tombstone's parentRefs); the feed, the
+   *  author-posts windows and the live-post index drop it. Returns whether the feed
+   *  held it, so only a feed that carried the row is re-rendered. */
+  private applyWithdrawLanding(postId: string, fetched: PostResult | null): boolean {
+    const tomb = fetched !== null && 'kind' in fetched ? fetched : null;
+    // A withdrawn marker is a FeedRow and slots into a thread's descendants; a
+    // stump or pruned answer (the thread went first) can only stand as a root.
+    const asFeedRow = tomb && tomb.kind === 'withdrawn' ? tomb : null;
+    for (const t of this.state.threads.values()) {
+      if (t.root && t.root.id === postId && tomb) t.root = tomb;
+      if (asFeedRow) t.descendants = t.descendants.map((r) => (r.id === postId ? asFeedRow : r));
+    }
+    const feedHeld = this.state.feed.posts.some((p) => p.id === postId);
+    this.state.feed.posts = this.state.feed.posts.filter((p) => p.id !== postId);
+    this.state.feed.pending = this.state.feed.pending.filter((p) => p.id !== postId);
+    for (const f of this.authorPostsData.values()) {
+      f.posts = f.posts.filter((p) => p.id !== postId);
+      f.pending = f.pending.filter((p) => p.id !== postId);
+    }
+    this.state.posts.delete(postId); // the live-post index holds live rows only
+    return feedHeld;
   }
 
   // -------------------------------------------------------------------------
@@ -1538,12 +1618,28 @@ export class App {
           else touchedPosts.add(sub.parentId);
         }
         this.ledger.remove(entry.txId);
-      } else {
+      } else if (entry.kind === 'like') {
         const outcome = reconcileLike(entry, fetched, tip);
         if (outcome === 'pending') continue;
         this.optimisticLikes.delete(entry.postId);
         this.ledger.remove(entry.txId);
         if (outcome === 'expired') this.setReportForPost(entry.postId, 'a like expired before any block took it');
+        touchedPosts.add(entry.postId);
+      } else {
+        // withdraw — landed on any tombstone, the row replaced in place; expired
+        // renders the sentence and `try again` (WEB_INTERFACE → The withdraw control).
+        const outcome = reconcileWithdraw(entry, fetched, tip);
+        if (outcome === 'pending') continue;
+        this.ledger.remove(entry.txId);
+        if (outcome === 'landed') {
+          if (this.applyWithdrawLanding(entry.postId, fetched)) feedTouched = true;
+        } else {
+          this.withdrawFlights.set(entry.postId, {
+            stage: 'expired',
+            expiresAtHeight: entry.expiresAtHeight,
+            onTryAgain: () => { this.withdrawFlights.delete(entry.postId); void this.withdrawPost(entry.postId); },
+          });
+        }
         touchedPosts.add(entry.postId);
       }
     }
