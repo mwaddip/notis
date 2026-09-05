@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import express from 'express';
 import http from 'http';
-import { computeTxId } from '@dagsocial/types';
+import { computeTxId, MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
 import { pruneWithdrawRoutes } from '../../src/routes/prune-withdraw.js';
 import { setNet } from '../../src/services/net-instance.js';
@@ -50,13 +50,13 @@ const STUB_DEPS: UtxoEngineDeps = {
 async function request(
   postId: string,
   body: unknown,
-  executePruneImpl?: (deps: UtxoEngineDeps, tx: UtxoTransaction, height: number) => { txId: string },
+  executePruneImpl?: (deps: UtxoEngineDeps, tx: UtxoTransaction, height: number) => { txId: string; expiresAtHeight: number },
 ): Promise<{ status: number; data: unknown }> {
   return new Promise((resolve) => {
     const deps = {
       ...STUB_DEPS,
-      executePrune: executePruneImpl ?? ((_d: UtxoEngineDeps, _t: UtxoTransaction, _h: number) => ({ txId: 'b'.repeat(64) })),
-      executePostWithdraw: (_d: UtxoEngineDeps, _t: UtxoTransaction, _h: number) => ({ txId: 'c'.repeat(64) }),
+      executePrune: executePruneImpl ?? ((_d: UtxoEngineDeps, _t: UtxoTransaction, h: number) => ({ txId: 'b'.repeat(64), expiresAtHeight: h + MEMPOOL_EXPIRY_BLOCKS })),
+      executePostWithdraw: (_d: UtxoEngineDeps, _t: UtxoTransaction, h: number) => ({ txId: 'c'.repeat(64), expiresAtHeight: h + MEMPOOL_EXPIRY_BLOCKS }),
       getCurrentHeight: () => 10,
     };
     const app = express();
@@ -111,6 +111,7 @@ describe('pruning routes', () => {
     expect(body.status).toBe('submitted');
     expect(typeof body.txId).toBe('string');
     expect(body.postId).toBe(TEST_POST_HASH);
+    expect(body.expiresAtHeight).toBe(11 + MEMPOOL_EXPIRY_BLOCKS);
   });
 
   it('POST /posts/:id/prune without tx field returns 400', async () => {
@@ -151,9 +152,9 @@ describe('pruning routes', () => {
     setNet({ broadcastTx } as unknown as Parameters<typeof setNet>[0]);
 
     let captured: UtxoTransaction | undefined;
-    const res = await request(TEST_POST_HASH, { tx: makeJsonPruneTxBody() }, (_deps, tx) => {
+    const res = await request(TEST_POST_HASH, { tx: makeJsonPruneTxBody() }, (_deps, tx, h) => {
       captured = tx;
-      return { txId: 'b'.repeat(64) };
+      return { txId: 'b'.repeat(64), expiresAtHeight: h + MEMPOOL_EXPIRY_BLOCKS };
     });
 
     expect(res.status).toBe(201);

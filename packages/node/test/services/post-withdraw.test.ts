@@ -9,6 +9,7 @@ import {
 import {
   PROTOCOL_VERSION,
   MAX_BLOCK_BODY_BYTES,
+  MEMPOOL_EXPIRY_BLOCKS,
 } from '@dagsocial/types';
 import type {
   KarmaBox,
@@ -634,8 +635,8 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
       membershipBarMultiplier: 1,
       putIdentityRecord: () => {},
       protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
-      executePrune: () => ({ txId: 'b'.repeat(64) }),
-      executePostWithdraw: () => ({ txId: 'c'.repeat(64) }),
+      executePrune: (_d: any, _t: any, h: number) => ({ txId: 'b'.repeat(64), expiresAtHeight: h + MEMPOOL_EXPIRY_BLOCKS }),
+      executePostWithdraw: (_d: any, _t: any, h: number) => ({ txId: 'c'.repeat(64), expiresAtHeight: h + MEMPOOL_EXPIRY_BLOCKS }),
       getCurrentHeight: () => 10,
     };
 
@@ -685,6 +686,7 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
     expect(result.data.status).toBe('submitted');
     expect(result.data.txId).toBe('c'.repeat(64));
     expect(result.data.postId).toBe(postId);
+    expect(result.data.expiresAtHeight).toBe(11 + MEMPOOL_EXPIRY_BLOCKS);
     expect(broadcastCalled).toBe(true);
 
     setNet(null as any);
