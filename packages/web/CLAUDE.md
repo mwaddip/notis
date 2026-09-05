@@ -34,7 +34,8 @@ wherever an identity renders, the `@author:<key>` and `@posts:<key>` windows, vo
 unvouch from the author window, invite from the profile's `invites` row with the standing bonds — and the
 **author's own controls' first unit**: `withdraw` on the reader's own confirmed card inside a pane, after
 its like count, two presses with a confirm row in place, the landing turning the card into the withdrawn
-card at its depth.
+card at its depth and settling the post's own submission card — a root's leaves the feed, a reply's becomes
+the withdrawn card beneath its parent.
 
 - **Owns:** `packages/web/*` — its own source, tests, build config and static assets.
 - **Does NOT own:** any other package, `contracts/`, `prompts/`, or `packages/node/public/index.html`

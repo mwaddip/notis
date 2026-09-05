@@ -402,7 +402,8 @@ its one press and after it. The request carries only the public key, so a **lock
 
 **A faucet is a fact of the deployment, not of the network**, so the client reaches it as it reaches the
 node: `VITE_FAUCET_BASE` baked at build time — empty means no faucet and no button — and a `faucet`
-preference row that overrides it. In development the proxy takes a second target from `NOTIS_FAUCET`.
+preference row that overrides it. In development the proxy takes a second target from `NOTIS_FAUCET`,
+and the base is `/faucet` while it does, so the one knob carries both.
 The call, `POST <faucet>/karma { pubkey }`, lives in its own module beside the write client — the read
 client stays GET-only and the write client stays the node's edge — and the faucet's `{ error }` bodies
 normalise to the same `Rejection { status, message }`. In the register: a relayed 400 → *"this key
@@ -549,9 +550,6 @@ are (`HOUSE_STYLE → Voice`) — and the control returns; a transport failure r
 can't reach the node right now."* and leaves nothing pending. A 2xx whose body carries no `expiresAtHeight` is a client
 rejection — *"the node answered without an expiry height"* — the way a txId that differs from the built
 one is: the client records no entry it cannot track.
-> ⚠ **AHEAD OF CODE (2026-09-05)** — the submission clause: the landing leaves the client's own submission
-> card standing — a withdrawn root's in the feed, a withdrawn reply's in its parent's pane — until the
-> reader's ↻. Retired when the landing takes it.
 
 ## Writes
 
