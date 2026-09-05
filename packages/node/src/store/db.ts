@@ -467,6 +467,9 @@ function createPageIndexes(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_utxo_boxes_vouch_target
       ON utxo_boxes(json_extract(extra_data, '$.targetId'), id)
       WHERE box_type = 'vouch' AND spent_at_block IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_dag_posts_pending
+      ON dag_posts(status)
+      WHERE status = 'pending';
   `);
 }
 

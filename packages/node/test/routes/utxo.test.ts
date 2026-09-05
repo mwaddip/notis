@@ -189,6 +189,7 @@ describe('UTXO routes', () => {
       value: 5n,
       inviterId: inviteUserId,
       inviteePublicKey,
+      createdAtBlock: 7,
     }, 1);
     insertBox(bondBox);
 
@@ -292,6 +293,37 @@ describe('UTXO routes', () => {
     expect(res.status).toBe(200);
     const body = res.data as Record<string, unknown>;
     expect(body.lifetimeLikesReceived).toBe('0');
+    expect(body.invitedAtBlock).toBe(0);
+  });
+
+  it('GET /karma/:userId serves invitedAtBlock from the record', async () => {
+    putIdentityRecord(karmaUserId, {
+      lastActivityBlock: 0,
+      lastDecayBlock: 0,
+      invitedAtBlock: 55,
+      lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
+    });
+    const res = await request(`/karma/${karmaUserIdHex}`);
+    expect(res.status).toBe(200);
+    const body = res.data as Record<string, unknown>;
+    expect(body.invitedAtBlock).toBe(55);
+
+    putIdentityRecord(karmaUserId, {
+      lastActivityBlock: 0,
+      lastDecayBlock: 0,
+      invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n,
+      memberSinceBlock: 0,
+      memberBar: 0,
+      memberVouches: 0,
+      memberLikes: 0n,
+      invitesUsed: 0,
+    });
   });
 
   it('GET /credits/:userId returns credit balance with boxCount', async () => {
@@ -319,6 +351,7 @@ describe('UTXO routes', () => {
     const bond = (body.bonds as Record<string, unknown>[])[0]!;
     expect(bond.inviterId).toBe(inviteUserIdHex);
     expect(bond.inviteePublicKey).toBe('bb'.repeat(32));
+    expect(bond.createdAtBlock).toBe(7);
   });
 
   it('GET /invites/:userId answers { bonds: [], bondCount: 0, next: null } for an inviter with no live bond', async () => {

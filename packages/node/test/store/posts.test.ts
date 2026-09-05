@@ -354,6 +354,103 @@ describe('posts store', () => {
     expect(result.pendingCount).toBe(1);
   });
 
+  it('queryPostsPage roots: true pages roots alone, with replies interleaved across blocks', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertPost, confirmPost, queryPostsPage } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    const rootIds: string[] = [];
+    function makeRootPost(content: string, height: number, index: number): string {
+      const { commit, content: body } = makeCommit({ content });
+      const id = fixturePostId(commit);
+      insertPost(id, commit, body);
+      confirmPost(id, height, index);
+      return id;
+    }
+    function makeReplyPost(content: string, parent: string, height: number, index: number): void {
+      const { commit, content: body } = makeCommit({ content, parentRefs: [parent] });
+      const id = fixturePostId(commit);
+      insertPost(id, commit, body);
+      confirmPost(id, height, index);
+    }
+
+    rootIds.push(makeRootPost('root-0', 1, 0));
+    makeReplyPost('reply-to-0', rootIds[0]!, 1, 1);
+    rootIds.push(makeRootPost('root-1', 2, 0));
+    rootIds.push(makeRootPost('root-2', 2, 1));
+    makeReplyPost('reply-to-1', rootIds[1]!, 3, 0);
+    rootIds.push(makeRootPost('root-3', 4, 0));
+    rootIds.push(makeRootPost('root-4', 5, 0));
+
+    const page1 = queryPostsPage({ roots: true, limit: 2 });
+    expect(page1.rows).toHaveLength(2);
+    expect(page1.rows.every(p => p.parentRefs.length === 0)).toBe(true);
+    expect(page1.next).not.toBeNull();
+
+    const page2 = queryPostsPage({ roots: true, limit: 2, after: page1.next! });
+    expect(page2.rows).toHaveLength(2);
+    expect(page2.rows.every(p => p.parentRefs.length === 0)).toBe(true);
+    expect(page2.next).not.toBeNull();
+
+    const page3 = queryPostsPage({ roots: true, limit: 2, after: page2.next! });
+    expect(page3.rows).toHaveLength(1);
+    expect(page3.rows.every(p => p.parentRefs.length === 0)).toBe(true);
+    expect(page3.next).toBeNull();
+
+    const pagedIds = [...page1.rows, ...page2.rows, ...page3.rows].map(p => p.id).sort();
+    expect(pagedIds).toEqual([...rootIds].sort());
+  });
+
+  it('queryPostsPage roots: true composes with author', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertPost, confirmPost, queryPostsPage } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    const alice = uid('alice-roots');
+    const bob = uid('bob-roots');
+
+    const { commit: aliceRoot, content: aliceRootContent } = makeCommit({ content: 'alice-root', author: alice });
+    const aliceRootId = fixturePostId(aliceRoot);
+    insertPost(aliceRootId, aliceRoot, aliceRootContent);
+    confirmPost(aliceRootId, 1, 0);
+
+    const { commit: aliceReply, content: aliceReplyContent } =
+      makeCommit({ content: 'alice-reply', author: alice, parentRefs: [aliceRootId] });
+    insertPost(fixturePostId(aliceReply), aliceReply, aliceReplyContent);
+    confirmPost(fixturePostId(aliceReply), 2, 0);
+
+    const { commit: bobRoot, content: bobRootContent } = makeCommit({ content: 'bob-root', author: bob });
+    const bobRootId = fixturePostId(bobRoot);
+    insertPost(bobRootId, bobRoot, bobRootContent);
+    confirmPost(bobRootId, 3, 0);
+
+    const result = queryPostsPage({ roots: true, author: alice, limit: 50 });
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]!.id).toBe(aliceRootId);
+  });
+
+  it('queryPostsPage roots: true filters the pending window and pendingCount', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertPost, queryPostsPage } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    const { commit: rootCommit, content: rootContent } = makeCommit({ content: 'pending-root' });
+    const rootId = fixturePostId(rootCommit);
+    insertPost(rootId, rootCommit, rootContent);
+
+    const { commit: replyCommit, content: replyContent } =
+      makeCommit({ content: 'pending-reply', parentRefs: [rootId] });
+    insertPost(fixturePostId(replyCommit), replyCommit, replyContent);
+
+    const result = queryPostsPage({ roots: true, limit: 50 });
+    expect(result.pending).toHaveLength(1);
+    expect(result.pending[0]!.id).toBe(rootId);
+    expect(result.pendingCount).toBe(1);
+  });
+
   it('confirmPost updates status, blockHeight and blockIndex', async () => {
     const { initDb } = await importDbFresh();
     const { insertPost, confirmPost, getPost } = await importPostsFresh();
@@ -634,6 +731,8 @@ describe('posts store', () => {
       getPost,
       queryPostsPage: () => ({ rows: [], next: null, pending: [], pendingCount: 0 }),
       getLikeRecordCount: () => 0,
+      getDescendantCount: () => 0,
+      getVouchCountForTarget: () => 0,
       hasLikeRecord: () => false,
       getAncestorsNearest: () => ({ rows: [], count: 0 }),
       getSubtreePage: () => ({ rows: [], next: null, count: 0, pending: [], pendingCount: 0 }),
@@ -702,6 +801,8 @@ describe('posts store', () => {
       getPost,
       queryPostsPage: () => ({ rows: [], next: null, pending: [], pendingCount: 0 }),
       getLikeRecordCount: () => 0,
+      getDescendantCount: () => 0,
+      getVouchCountForTarget: () => 0,
       hasLikeRecord: () => false,
       getAncestorsNearest,
       getSubtreePage,
@@ -743,6 +844,8 @@ describe('posts store', () => {
       getPost,
       queryPostsPage,
       getLikeRecordCount: () => 0,
+      getDescendantCount: () => 0,
+      getVouchCountForTarget: () => 0,
       hasLikeRecord: () => false,
       getAncestorsNearest: () => ({ rows: [], count: 0 }),
       getSubtreePage: () => ({ rows: [], next: null, count: 0, pending: [], pendingCount: 0 }),
@@ -942,6 +1045,71 @@ describe('posts store', () => {
     expect(page.next).not.toBeNull();
   });
 
+  // -------------------------------------------------------------------------
+  // getDescendantCount
+  // -------------------------------------------------------------------------
+
+  it('getDescendantCount equals getSubtreePage count on a nested fixture', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertPost, confirmPost, getSubtreePage, getDescendantCount } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    const { commit: rootCommit, content: rootContent } = makeCommit({ content: 'root', parentRefs: [] });
+    const rootId = fixturePostId(rootCommit);
+    insertPost(rootId, rootCommit, rootContent);
+    confirmPost(rootId, 1, 0);
+
+    const { commit: childCommit, content: childContent } = makeCommit({ content: 'child', parentRefs: [rootId] });
+    const childId = fixturePostId(childCommit);
+    insertPost(childId, childCommit, childContent);
+    confirmPost(childId, 2, 0);
+
+    const { commit: gcCommit, content: gcContent } = makeCommit({ content: 'grandchild', parentRefs: [childId] });
+    insertPost(fixturePostId(gcCommit), gcCommit, gcContent);
+    confirmPost(fixturePostId(gcCommit), 3, 0);
+
+    const page = getSubtreePage(rootId, { limit: 50 });
+    expect(getDescendantCount(rootId)).toBe(page.count);
+    expect(getDescendantCount(rootId)).toBe(2);
+  });
+
+  it('getDescendantCount counts a withdrawn reply', async () => {
+    const { initDb, getDb } = await importDbFresh();
+    const { insertPost, confirmPost, getDescendantCount } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    const { commit: rootCommit, content: rootContent } = makeCommit({ content: 'root', parentRefs: [] });
+    const rootId = fixturePostId(rootCommit);
+    insertPost(rootId, rootCommit, rootContent);
+    confirmPost(rootId, 1, 0);
+
+    const { commit: replyCommit, content: replyContent } = makeCommit({ content: 'reply', parentRefs: [rootId] });
+    const replyId = fixturePostId(replyCommit);
+    insertPost(replyId, replyCommit, replyContent);
+    confirmPost(replyId, 2, 0);
+
+    // A withdrawn reply keeps its row (NODE_INTERFACE → Withdrawal transactions).
+    getDb().prepare('UPDATE dag_posts SET withdrawn_at_height = 5, content = NULL WHERE id = ?').run(replyId);
+
+    expect(getDescendantCount(rootId)).toBe(1);
+  });
+
+  it('getDescendantCount is 0 on a leaf', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertPost, confirmPost, getDescendantCount } = await importPostsFresh();
+
+    initDb(':memory:');
+
+    const { commit, content } = makeCommit({ content: 'leaf', parentRefs: [] });
+    const id = fixturePostId(commit);
+    insertPost(id, commit, content);
+    confirmPost(id, 1, 0);
+
+    expect(getDescendantCount(id)).toBe(0);
+  });
+
   // --- keyset pins ---
 
   it('feed continuation across a head insert: no overlap, no gap', async () => {
@@ -1120,5 +1288,36 @@ describe('posts store', () => {
        ORDER BY dp.block_height, dp.block_index LIMIT ?`,
     ).all('ab'.repeat(32), 11) as Array<{ detail: string }>;
     expect(plan.some(r => r.detail.includes('idx_dag_parent_refs_parent'))).toBe(true);
+  });
+
+  it('EXPLAIN QUERY PLAN: the pending window and its count use idx_dag_posts_pending, no dag_posts scan', async () => {
+    const { initDb, getDb } = await importDbFresh();
+    const { PENDING_WINDOW_SQL, PENDING_WINDOW_COUNT_SQL } = await importPostsFresh();
+
+    initDb(':memory:');
+    const db = getDb();
+
+    const windowPlan = db.prepare(`EXPLAIN QUERY PLAN ${PENDING_WINDOW_SQL}`).all(11) as Array<{ detail: string }>;
+    const windowDetail = windowPlan.map(r => r.detail).join(' ');
+    expect(windowDetail).toContain('idx_dag_posts_pending');
+    expect(windowDetail).not.toContain('SCAN dag_posts');
+
+    const countPlan = db.prepare(`EXPLAIN QUERY PLAN ${PENDING_WINDOW_COUNT_SQL}`).all() as Array<{ detail: string }>;
+    const countDetail = countPlan.map(r => r.detail).join(' ');
+    expect(countDetail).toContain('idx_dag_posts_pending');
+    expect(countDetail).not.toContain('SCAN dag_posts');
+  });
+
+  it('EXPLAIN QUERY PLAN: getDescendantCount has no join back to dag_posts after the walk', async () => {
+    const { initDb, getDb } = await importDbFresh();
+    const { DESCENDANT_COUNT_SQL } = await importPostsFresh();
+
+    initDb(':memory:');
+    const db = getDb();
+
+    const plan = db.prepare(`EXPLAIN QUERY PLAN ${DESCENDANT_COUNT_SQL}`).all('dummy') as Array<{ detail: string }>;
+    const detail = plan.map(r => r.detail).join(' ');
+    expect(detail).not.toContain('SCAN dp');
+    expect(detail).not.toContain('AUTOMATIC COVERING INDEX');
   });
 });

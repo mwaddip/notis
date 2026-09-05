@@ -103,3 +103,15 @@ export function parseViewer(query: Record<string, unknown>): Uint8Array | null |
 export function isViewerError(v: Uint8Array | null | { error: string }): v is { error: string } {
   return v !== null && typeof v === 'object' && 'error' in v && !(v instanceof Uint8Array);
 }
+
+// NODE_INTERFACE → Posts
+export function parseRoots(query: Record<string, unknown>): boolean | { error: string } {
+  const raw = query['roots'] as string | undefined;
+  if (raw === undefined) return false;
+  if (raw === '1') return true;
+  return { error: 'roots must be 1' };
+}
+
+export function isRootsError(v: boolean | { error: string }): v is { error: string } {
+  return typeof v === 'object' && 'error' in v;
+}

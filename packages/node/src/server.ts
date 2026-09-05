@@ -253,6 +253,8 @@ export function createApp(config: Config): express.Express {
       getCurrentHeight: store.getCurrentHeight,
       protocolVersionSchedule: config.protocolVersionSchedule,
       getLikeRecordCount: store.getLikeRecordCount,
+      getDescendantCount: store.getDescendantCount,
+      getVouchCountForTarget: store.getVouchCountForTarget,
       hasLikeRecord: store.hasLikeRecord,
       getAncestorsNearest: store.getAncestorsNearest,
       getSubtreePage: store.getSubtreePage,
