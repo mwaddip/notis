@@ -29,6 +29,17 @@ export function getVouchBox(
 // NODE_INTERFACE → "Every list a view returns is a page"
 const VOUCH_TARGET_WHERE =
   `box_type = 'vouch' AND spent_at_block IS NULL AND json_extract(extra_data, '$.targetId') = ?`;
+
+// NODE_INTERFACE → Store Interface, getVouchCountForTarget(targetId) — feeds
+// PostJson.authorVouchCount and getVouchesForTargetPage's own count, which
+// delegates here so VOUCH_TARGET_WHERE's count is computed in one place.
+export function getVouchCountForTarget(targetId: Uint8Array): number {
+  const row = getDb()
+    .prepare(`SELECT COUNT(*) AS cnt FROM utxo_boxes WHERE ${VOUCH_TARGET_WHERE}`)
+    .get(pubkeyToHex(targetId)) as { cnt: number };
+  return row.cnt;
+}
+
 export function getVouchesForTargetPage(
   targetId: Uint8Array,
   page: Page<string>,
@@ -54,11 +65,7 @@ export function getVouchesForTargetPage(
   const last = resultRows[resultRows.length - 1];
   const next: string | null = hasMore && last ? last.id : null;
 
-  const countRow = db
-    .prepare(`SELECT COUNT(*) AS cnt FROM utxo_boxes WHERE ${VOUCH_TARGET_WHERE}`)
-    .get(hex) as { cnt: number };
-
-  return { rows: vouches, next, count: countRow.cnt };
+  return { rows: vouches, next, count: getVouchCountForTarget(targetId) };
 }
 
 /**

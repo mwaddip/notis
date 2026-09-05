@@ -205,9 +205,34 @@ export function getPlaceholdersAt(height: number): Array<{ id: string; contentHa
   return rows.map(r => ({ id: r.id, contentHash: r.content_hash }));
 }
 
+// NODE_INTERFACE → "A page read touches limit + 1 entries of one index that
+// serves both its predicate and its order" — the pending window's predicate,
+// shared by the row read and its count so neither can name a different set;
+// `roots` narrows it exactly as the committed query.
+function pendingWindowWhere(opts: { author?: boolean; roots?: boolean }): string {
+  let where = `status = 'pending'`;
+  if (opts.author) where += ` AND author = ?`;
+  if (opts.roots) where += ` AND parent_refs = '[]'`;
+  return where;
+}
+
+function pendingWindowSql(opts: { author?: boolean; roots?: boolean }): string {
+  return `SELECT * FROM dag_posts WHERE ${pendingWindowWhere(opts)} ORDER BY rowid DESC LIMIT ?`;
+}
+
+function pendingWindowCountSql(opts: { author?: boolean; roots?: boolean }): string {
+  return `SELECT COUNT(*) AS cnt FROM dag_posts WHERE ${pendingWindowWhere(opts)}`;
+}
+
+// Exported so their EXPLAIN QUERY PLAN pin explains the unfiltered text
+// `queryPostsPage` actually prepares for its pending window, not a retyped copy.
+export const PENDING_WINDOW_SQL = pendingWindowSql({});
+export const PENDING_WINDOW_COUNT_SQL = pendingWindowCountSql({});
+
 // NODE_INTERFACE → "Every list a view returns is a page"
 export function queryPostsPage(opts: {
   author?: Uint8Array;
+  roots?: boolean;
   limit: number;
   after?: PostKey;
 }): { rows: StoredPost[]; next: PostKey | null; pending: StoredPost[]; pendingCount: number } {
@@ -219,6 +244,9 @@ export function queryPostsPage(opts: {
   if (opts.author) {
     committedSql += ` AND author = ?`;
     committedParams.push(Buffer.from(opts.author));
+  }
+  if (opts.roots) {
+    committedSql += ` AND parent_refs = '[]'`;
   }
   if (opts.after) {
     committedSql += ` AND (block_height, block_index) < (?, ?)`;
@@ -236,16 +264,12 @@ export function queryPostsPage(opts: {
     ? { blockHeight: last.block_height!, blockIndex: last.block_index! }
     : null;
 
-  // Pending window
-  let pendingSql = `SELECT * FROM dag_posts WHERE status = 'pending'`;
+  // Pending window — the same predicate function the unfiltered exports run.
+  const pendingFilter = { author: !!opts.author, roots: !!opts.roots };
+  const pendingSql = pendingWindowSql(pendingFilter);
+  const pendingCountSql = pendingWindowCountSql(pendingFilter);
   const pendingParams: unknown[] = [];
-  if (opts.author) {
-    pendingSql += ` AND author = ?`;
-    pendingParams.push(Buffer.from(opts.author));
-  }
-  const pendingCountSql = pendingSql.replace('SELECT *', 'SELECT COUNT(*) AS cnt');
-
-  pendingSql += ` ORDER BY rowid DESC LIMIT ?`;
+  if (opts.author) pendingParams.push(Buffer.from(opts.author));
   pendingParams.push(opts.limit);
 
   const pendingRows = db.prepare(pendingSql).all(...pendingParams) as PostRow[];
@@ -420,6 +444,16 @@ const SUBTREE_CTE =
      JOIN subtree s ON dpr.parent_id = s.id
    )`;
 
+// NODE_INTERFACE → Store Interface, getDescendantCount(postId) — exported so
+// its EXPLAIN QUERY PLAN pin explains the text this runs; getSubtreePage's
+// own count delegates here so the form lives once.
+export const DESCENDANT_COUNT_SQL = `${SUBTREE_CTE} SELECT COUNT(*) AS cnt FROM subtree`;
+
+export function getDescendantCount(postId: string): number {
+  const row = getDb().prepare(DESCENDANT_COUNT_SQL).get(postId) as { cnt: number };
+  return row.cnt;
+}
+
 // NODE_INTERFACE → "Every list a view returns is a page"
 export function getSubtreePage(
   postId: string,
@@ -469,12 +503,9 @@ export function getSubtreePage(
   ).get(postId) as { cnt: number };
   const pendingCount = pendingCountRow.cnt;
 
-  // Count over the whole subtree, pending included
-  const countRow = db
-    .prepare(`${SUBTREE_CTE} SELECT COUNT(*) AS cnt FROM subtree`)
-    .get(postId) as { cnt: number };
-
-  return { rows, next, count: countRow.cnt, pending, pendingCount };
+  // Count over the whole subtree, pending included; getDescendantCount is the
+  // one statement, so the form lives once (NODE_INTERFACE → Store Interface).
+  return { rows, next, count: getDescendantCount(postId), pending, pendingCount };
 }
 
 export function getPendingPostAuthor(postId: string): Uint8Array | null {

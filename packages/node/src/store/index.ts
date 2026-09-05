@@ -22,6 +22,7 @@ export {
   getParentRefs,
   getAncestorsNearest,
   getSubtreePage,
+  getDescendantCount,
   isStoredPost,
   isLivePost,
   isStump,
@@ -151,6 +152,7 @@ export {
   getVouchBox,
   getVouchesForTargetPage,
   getVouchesForVoucherPage,
+  getVouchCountForTarget,
   getLapsedVouches,
 } from './vouch-queries.js';
 

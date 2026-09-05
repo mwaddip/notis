@@ -1,5 +1,5 @@
 import {
-  fixtureProvenance, uid } from '../helpers.js';
+  fixtureProvenance, seedProvenance, uid } from '../helpers.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type Database from 'better-sqlite3';
 import { randomBytes } from 'node:crypto';
@@ -9,6 +9,7 @@ import type {
   KarmaBox,
   CreditBox,
   BondBox,
+  VouchBox,
 } from '@dagsocial/types';
 
 // ---------------------------------------------------------------------------
@@ -785,6 +786,47 @@ describe('utxo store', () => {
       `EXPLAIN QUERY PLAN SELECT COUNT(*) AS cnt FROM utxo_boxes WHERE box_type = 'bond' AND spent_at_block IS NULL AND json_extract(extra_data, '$.inviterId') = ?`,
     ).all(hex) as Array<{ detail: string }>;
     expect(countPlan.some(r => r.detail.includes('idx_utxo_boxes_bond_inviter'))).toBe(true);
+  });
+
+  it('getVouchCountForTarget equals getVouchesForTargetPage.count, per target', async () => {
+    const { initDb } = await importDbFresh();
+    const vouchQueries = await import('../../src/store/vouch-queries.js');
+    const utxo = await import('../../src/store/utxo.js');
+
+    initDb(':memory:');
+
+    const targetA = uid('vouch-count-target-a');
+    const targetB = uid('vouch-count-target-b');
+
+    for (const voucherLabel of ['vouch-count-voucher-1', 'vouch-count-voucher-2']) {
+      const box = seedProvenance<VouchBox>({
+        boxType: 'vouch' as const,
+        value: 1n,
+        createdAtBlock: 0,
+        voucherId: uid(voucherLabel),
+        targetId: targetA,
+      }, 1);
+      utxo.insertBox(box);
+    }
+    const soleVouch = seedProvenance<VouchBox>({
+      boxType: 'vouch' as const,
+      value: 1n,
+      createdAtBlock: 0,
+      voucherId: uid('vouch-count-voucher-3'),
+      targetId: targetB,
+    }, 1);
+    utxo.insertBox(soleVouch);
+
+    expect(vouchQueries.getVouchCountForTarget(targetA)).toBe(2);
+    expect(vouchQueries.getVouchCountForTarget(targetB)).toBe(1);
+
+    const pageA = vouchQueries.getVouchesForTargetPage(targetA, { limit: 50 });
+    expect(pageA.rows).toHaveLength(2);
+    expect(pageA.count).toBe(vouchQueries.getVouchCountForTarget(targetA));
+
+    const pageB = vouchQueries.getVouchesForTargetPage(targetB, { limit: 50 });
+    expect(pageB.rows).toHaveLength(1);
+    expect(pageB.count).toBe(vouchQueries.getVouchCountForTarget(targetB));
   });
 
   it('EXPLAIN QUERY PLAN: vouch pages use idx_utxo_boxes_vouch_target', async () => {
