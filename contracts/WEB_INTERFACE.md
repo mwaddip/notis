@@ -451,11 +451,20 @@ the reason instead, and the author window carries the same sentence in text, so 
 route (`HOUSE_STYLE → Interaction`). ⚠ **The per-author read is the price of the count on today's
 node**; a count on the post view retires it.
 
-**The prefix on a card is the way into the author window** — a ghost button in the meta row beside
-`↩ reply` and `like`; the strip stays the card's only control for opening a thread and the card body
-stays selectable text (`HOUSE_STYLE → Interaction`). On a title bar and a reply reference the prefix
-stays text: the bar is the tightest space in the design. Opening a window spends nothing, so the
-panes-only rule that governs like and reply does not bind it.
+**The prefix on a card is the way into the author window, and it looks exactly like the text prefix
+it stands in for.** It is a `<button>` in the who row (`aria-label` *"open this author"*) rendered as the
+prefix itself — mono, muted ink, no outline, no fill, no padding, the same box and baseline as the text
+prefix a card shows where the prefix is not a control — so a card reads the same with or without an
+identity loaded and nothing on it is styled as a browser button. Its affordances are the pointer cursor,
+the keyboard focus ring (`HOUSE_STYLE → Accessibility contract`: hover is never the only route) and a
+hover that darkens the ink to `ink` and changes nothing else (`HOUSE_STYLE → Interaction`). It has no
+boundary but its text, so the border floor does not apply; the text meets the text floor as `inkMute`
+does. **The same rendering holds wherever a prefix is a control** — an endorser row in the author
+window, a standing-bond row in the profile — at that row's prefix size. The strip stays the card's only
+control for opening a thread and the card body stays selectable text (`HOUSE_STYLE → Interaction`). On
+a title bar and a reply reference the prefix is text and opens nothing: the bar is the tightest space in
+the design. Opening a window spends nothing, so the panes-only rule that governs like and reply does not
+bind it.
 
 **On a title bar the mark is display only** — `✓` in ink when the reader's live vouch names the
 author, muted while it is pending, absent otherwise, and never `+`: the bar's label is itself the focus
