@@ -41,7 +41,7 @@ function tomb(id: string, parentRefs: string[]): PostResult {
   return { kind: 'withdrawn', id, author: PUB, withdrawnAtHeight: 6002, parentRefs, confirmedAuthor: PUB } as WithdrawnJson & { confirmedAuthor: string | null };
 }
 
-interface WithdrawResp { kind: 'ok' | 'reject' | 'throw'; }
+type WithdrawResp = { kind: 'ok' } | { kind: 'throw' } | { kind: 'reject'; rejection?: Rejection };
 
 function harness(resp: WithdrawResp = { kind: 'ok' }) {
   const signCalls: string[] = [];
@@ -85,7 +85,7 @@ function harness(resp: WithdrawResp = { kind: 'ok' }) {
   const writeClient = {
     submitWithdraw: async (postId: string): Promise<WithdrawSubmitResult | Rejection> => {
       if (resp.kind === 'throw') throw new Error('node unreachable');
-      if (resp.kind === 'reject') return { status: 403, message: 'not the post author' };
+      if (resp.kind === 'reject') return resp.rejection ?? { status: 403, message: 'not the post author' };
       return { status: 'submitted', txId: last(), postId, expiresAtHeight: 6720 };
     },
   } as unknown as WriteClient;
@@ -104,6 +104,7 @@ function harness(resp: WithdrawResp = { kind: 'ok' }) {
     loadFeed(): Promise<void>;
     loadMembershipState(): Promise<void>;
     openThread(id: string, origin: { from: 'feed' } | { from: 'pane'; ci: number }): void;
+    openAuthorPosts(key: string, origin: { from: 'feed' } | { from: 'pane'; ci: number }): void;
     state: AppState;
     withdrawFlights: Map<string, unknown>;
   };
@@ -237,15 +238,46 @@ describe('the App withdraw flight', () => {
   });
 
   it('a rejection reports in the region line and returns the control, leaving nothing pending', async () => {
-    const h = harness({ kind: 'reject' });
+    const h = harness({ kind: 'reject' }); // the default 403 authorship refusal
     const { P } = await ownRootOpen(h);
     await h.drive.withdrawPost(P);
     expect(h.ledger.size).toBe(0);
     expect(h.drive.withdrawFlights.has(P)).toBe(false);
-    // The region's report line names the rejection; the withdraw control is back.
+    // The region's report line names the rejection in the voice register; the control is back.
     const region = h.panes.querySelector('.region');
-    expect(region?.textContent).toContain('withdraw rejected: not the post author');
+    expect(region?.textContent).toContain('withdraw rejected: only the author can withdraw this post');
     expect(h.panes.querySelector('.withdraw-ctl')).not.toBeNull();
+  });
+
+  it.each([
+    [{ status: 400, message: 'Post is not confirmed in an earlier block' }, 'this post has not landed yet'],
+    [{ status: 400, message: 'Post is already withdrawn, pruned or unknown' }, 'this post is already withdrawn or pruned'],
+    [{ status: 400, message: "Invalid postWithdraw transaction: PostWithdraw post x is not authored by the karma input's owner" }, 'only the author can withdraw this post'],
+    [{ status: 409, message: 'conflict' }, 'that karma box is still tied up in a transaction that has not landed'],
+    [{ status: 503, message: 'mempool full' }, "the node's pool is full right now"],
+  ] as [Rejection, string][])('maps the node refusal %o into the voice register', async (rejection, copy) => {
+    const h = harness({ kind: 'reject', rejection });
+    const { P } = await ownRootOpen(h);
+    await h.drive.withdrawPost(P);
+    expect(h.panes.querySelector('.region')?.textContent).toContain('withdraw rejected: ' + copy);
+  });
+
+  it('a landing drops the post from an open @posts window and re-renders it without its ↻', async () => {
+    const h = harness();
+    const { P } = await ownRootOpen(h); // P in a pane (region 0) and in the feed
+    h.drive.openAuthorPosts(PUB, { from: 'pane', ci: 1 }); // the reader's own @posts window lists P
+    await flush();
+    const postsRegion = (): Element =>
+      [...h.panes.querySelectorAll('.region')].find((r) => [...r.querySelectorAll('.bar .name')].some((n) => n.textContent === 'posts'))!;
+    expect(postsRegion().querySelectorAll('.card').length).toBe(1); // P listed
+
+    await h.drive.withdrawPost(P);
+    h.setNode(P, tomb(P, []));
+    h.setHeight(6002);
+    await h.drive.pollTick();
+
+    // The @posts window dropped P's card on the landing, without the reader's ↻.
+    expect(postsRegion().querySelectorAll('.card').length).toBe(0);
   });
 
   it('a transport failure ends the flight and leaves nothing pending', async () => {

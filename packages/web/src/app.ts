@@ -94,6 +94,21 @@ function inviteRejectionCopy(r: Rejection): string {
   return 'the node said: ' + m;
 }
 
+/** A withdraw rejection in the voice register — the like's and the vouch's sibling,
+ *  the node's known refusals mapped to their sentences (HOUSE_STYLE → Voice,
+ *  WEB_INTERFACE → The withdraw control). A client-side refusal (status 0) already
+ *  reads that way. */
+function withdrawRejectionCopy(r: Rejection): string {
+  if (r.status === 0) return r.message;
+  if (r.status === 409) return 'that karma box is still tied up in a transaction that has not landed';
+  if (r.status === 503) return "the node's pool is full right now";
+  const m = r.message.toLowerCase();
+  if (/earlier block|not confirmed/.test(m)) return 'this post has not landed yet';
+  if (/already/.test(m)) return 'this post is already withdrawn or pruned';
+  if (/author/.test(m)) return 'only the author can withdraw this post';
+  return 'the node said: ' + m;
+}
+
 /** A fresh empty feed state — the author-posts window's body shape, the feed's own. */
 function emptyFeedState(): FeedState {
   return { posts: [], pending: [], next: null, report: null, olderReport: null, loaded: false, loading: false, error: null };
@@ -1034,7 +1049,7 @@ export class App {
     if (result.ok) {
       this.startPoll();
     } else {
-      this.setReportForPost(postId, 'withdraw rejected: ' + result.rejection.message);
+      this.setReportForPost(postId, 'withdraw rejected: ' + withdrawRejectionCopy(result.rejection));
     }
     this.renderRegionsForPost(postId);
   }
@@ -1044,7 +1059,7 @@ export class App {
    *  the withdrawn card at its depth (the tombstone's parentRefs); the feed, the
    *  author-posts windows and the live-post index drop it. Returns whether the feed
    *  held it, so only a feed that carried the row is re-rendered. */
-  private applyWithdrawLanding(postId: string, fetched: PostResult | null): boolean {
+  private applyWithdrawLanding(postId: string, fetched: PostResult | null): { feedHeld: boolean; postsKeys: string[] } {
     const tomb = fetched !== null && 'kind' in fetched ? fetched : null;
     // A withdrawn marker is a FeedRow and slots into a thread's descendants; a
     // stump or pruned answer (the thread went first) can only stand as a root.
@@ -1056,12 +1071,16 @@ export class App {
     const feedHeld = this.state.feed.posts.some((p) => p.id === postId);
     this.state.feed.posts = this.state.feed.posts.filter((p) => p.id !== postId);
     this.state.feed.pending = this.state.feed.pending.filter((p) => p.id !== postId);
-    for (const f of this.authorPostsData.values()) {
+    // Any open @posts window that listed the row loses it; the caller re-renders
+    // those windows, which renderRegionsForPosts skips (it re-renders threads only).
+    const postsKeys: string[] = [];
+    for (const [key, f] of this.authorPostsData) {
+      if (f.posts.some((p) => p.id === postId) || f.pending.some((p) => p.id === postId)) postsKeys.push(key);
       f.posts = f.posts.filter((p) => p.id !== postId);
       f.pending = f.pending.filter((p) => p.id !== postId);
     }
     this.state.posts.delete(postId); // the live-post index holds live rows only
-    return feedHeld;
+    return { feedHeld, postsKeys };
   }
 
   // -------------------------------------------------------------------------
@@ -1547,6 +1566,7 @@ export class App {
     let inviteChanged = false;
     const touchedPosts = new Set<string>();
     const touchedAuthors = new Set<string>();
+    const postsWindowsTouched = new Set<string>(); // @posts windows a withdrawal landing emptied a row from
 
     // The vouch and unvouch entries reconcile against the reader's own vouch set
     // and escrow, and the invite entries against the bonds — read once when one
@@ -1632,7 +1652,9 @@ export class App {
         if (outcome === 'pending') continue;
         this.ledger.remove(entry.txId);
         if (outcome === 'landed') {
-          if (this.applyWithdrawLanding(entry.postId, fetched)) feedTouched = true;
+          const landing = this.applyWithdrawLanding(entry.postId, fetched);
+          if (landing.feedHeld) feedTouched = true;
+          for (const key of landing.postsKeys) postsWindowsTouched.add(key);
         } else {
           this.withdrawFlights.set(entry.postId, {
             stage: 'expired',
@@ -1647,6 +1669,9 @@ export class App {
     if (feedTouched) this.renderFeed();
     this.renderRegionsForPosts(touchedPosts);
     for (const key of touchedAuthors) this.renderRegionsForAuthor(key);
+    // A withdrawal landing empties a row from an open @posts window; renderRegionsForPosts
+    // skips windows, so re-render those windows explicitly (WEB_INTERFACE → The withdraw control).
+    for (const key of postsWindowsTouched) this.renderRegionsFor(postsWindowId(key));
     // An invite landing updates the invites row in place, so a form the reader is
     // filling for the next key survives (WEB_INTERFACE → The profile window).
     if (inviteChanged) this.renderInvitesRowInPlace();
