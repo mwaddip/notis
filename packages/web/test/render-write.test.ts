@@ -18,6 +18,7 @@ const PUB = 'aa'.repeat(32); // the reader
 const OTHER = 'ee'.repeat(32); // someone else
 const ROOT = 'b'.repeat(64);
 const OWN_POST = 'c'.repeat(64);
+const MY_POST = 'a'.repeat(64); // the reader's own post, listed in the @posts window
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
 function post(id: string, author: string, content: string, status: 'confirmed' | 'pending' = 'confirmed'): PostJson {
@@ -43,6 +44,7 @@ interface Harness {
     submitComposer(parentId: string | null, text: string): Promise<void>;
     refreshFeed(): Promise<void>;
     refreshThread(id: string): Promise<void>;
+    openAuthorPosts(key: string, origin: { from: 'feed' } | { from: 'pane'; ci: number }): void;
   };
   feed: HTMLElement;
   panes: HTMLElement;
@@ -77,7 +79,12 @@ function harness(): Harness {
     descendantCount: 1, next: null, pending: [], pendingCount: 0,
   };
   const fakeApi: Api = {
-    feed: async () => feedResult,
+    // The @posts window reads with the author arg; the reader's own posts come back
+    // there, everywhere else the shared feed.
+    feed: async (_page, _viewer, author) =>
+      author === PUB
+        ? { posts: [post(MY_POST, PUB, 'my own post')], next: null, pending: [], pendingCount: 0 }
+        : feedResult,
     thread: async (id) => (id === ROOT ? thread : null),
     post: async (id): Promise<PostResult> => ({ ...post(id, OTHER, 'x'), confirmedAuthor: OTHER }),
     status: async () => statusResult(),
@@ -152,19 +159,36 @@ describe('a reply composer in a pane', () => {
 });
 
 describe('the like control obeys the exclusions', () => {
-  it('a like button on someone else\'s post, none on the reader\'s own', async () => {
+  it('a like button on someone else\'s post, the withdraw control on the reader\'s own', async () => {
     const h = harness();
     await h.drive.loadFeed();
     h.drive.openThread(ROOT, { from: 'feed' });
     await flush();
     const cards = [...h.panes.querySelectorAll('.card')];
-    // The root is by OTHER → a like button; the descendant is by PUB (own) → none.
+    // The root is by OTHER → a like button; the descendant is by PUB (own) → the
+    // withdraw control fills the slot, no like button.
     const rootCard = cards.find((c) => c.textContent?.includes('a root by someone else'))!;
     const ownCard = cards.find((c) => c.textContent?.includes('my own reply'))!;
     expect(rootCard.querySelector('.likebtn')).toBeTruthy();
+    expect(rootCard.querySelector('.withdraw-ctl')).toBeNull();
     expect(ownCard.querySelector('.likebtn')).toBeNull();
+    expect(ownCard.querySelector('.withdraw-ctl')).toBeTruthy();
     // Both carry a ↩ reply control.
     expect(rootCard.querySelector('.reply-ctl')).toBeTruthy();
     expect(ownCard.querySelector('.reply-ctl')).toBeTruthy();
+  });
+});
+
+describe('the @posts window is read-only', () => {
+  it("the reader's own posts there carry no withdraw — nor like, nor reply", async () => {
+    const h = harness();
+    h.drive.openAuthorPosts(PUB, { from: 'feed' });
+    await flush();
+    const ownCard = [...h.panes.querySelectorAll('.card')].find((c) => c.textContent?.includes('my own post'))!;
+    expect(ownCard).toBeTruthy();
+    expect(ownCard.querySelector('.you')?.textContent).toBe('· you'); // recognised as own
+    expect(ownCard.querySelector('.withdraw-ctl')).toBeNull(); // the write controls live in the pane, not here
+    expect(ownCard.querySelector('.likebtn')).toBeNull();
+    expect(ownCard.querySelector('.reply-ctl')).toBeNull();
   });
 });

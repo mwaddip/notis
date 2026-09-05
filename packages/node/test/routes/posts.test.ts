@@ -611,8 +611,9 @@ describe('posts routes', () => {
     let rootId: string;
     let childId: string;
     let grandchildId: string;
-    let withdrawnRootId: string;
-    let withdrawnChildId: string;
+    let withdrawnSubjectParentId: string;
+    let withdrawnSubjectId: string;
+    let withdrawnSubjectChildId: string;
 
     beforeAll(() => {
       const keys = generateKeyPairSync('ed25519');
@@ -634,17 +635,22 @@ describe('posts routes', () => {
       insertPost(grandchildId, c2, 'thread grandchild');
       confirmPost(grandchildId, 22, 0);
 
-      // A withdrawn root for the empty-thread test
-      const cw = makePostCommit(author, 'withdrawn root', { parentRefs: [] });
-      withdrawnRootId = fixturePostId(cw);
-      insertPost(withdrawnRootId, cw, 'withdrawn root');
-      confirmPost(withdrawnRootId, 23, 0);
-      withdrawPost(withdrawnRootId, 24);
+      // A live parent, a withdrawn reply beneath it, and a live reply beneath that.
+      const cp = makePostCommit(author, 'a root whose reply is withdrawn', { parentRefs: [] });
+      withdrawnSubjectParentId = fixturePostId(cp);
+      insertPost(withdrawnSubjectParentId, cp, 'a root whose reply is withdrawn');
+      confirmPost(withdrawnSubjectParentId, 23, 0);
 
-      const cwc = makePostCommit(author, 'withdrawn child', { parentRefs: [withdrawnRootId] });
-      withdrawnChildId = fixturePostId(cwc);
-      insertPost(withdrawnChildId, cwc, 'withdrawn child');
-      confirmPost(withdrawnChildId, 23, 1);
+      const cr = makePostCommit(author, 'the withdrawn reply', { parentRefs: [withdrawnSubjectParentId] });
+      withdrawnSubjectId = fixturePostId(cr);
+      insertPost(withdrawnSubjectId, cr, 'the withdrawn reply');
+      confirmPost(withdrawnSubjectId, 23, 1);
+      withdrawPost(withdrawnSubjectId, 24);
+
+      const cg = makePostCommit(author, 'a live reply under the withdrawn one', { parentRefs: [withdrawnSubjectId] });
+      withdrawnSubjectChildId = fixturePostId(cg);
+      insertPost(withdrawnSubjectChildId, cg, 'a live reply under the withdrawn one');
+      confirmPost(withdrawnSubjectChildId, 25, 0);
     });
 
     it('thread?limit=1 on grandchild: one ancestor row, ancestorCount 2', async () => {
@@ -664,17 +670,145 @@ describe('posts routes', () => {
       expect(body['descendantCount']).toBe(2);
     });
 
-    it('thread on a withdrawn subject: all lists empty, all counts 0, next null', async () => {
-      const res = await request(`/${withdrawnRootId}/thread`, 'GET');
+    it("thread on a withdrawn subject: its live ancestor and descendant answer as a live subject's would", async () => {
+      const res = await request(`/${withdrawnSubjectId}/thread`, 'GET');
       expect(res.status).toBe(200);
       const body = res.data as Record<string, unknown>;
-      expect(body['ancestors']).toEqual([]);
-      expect(body['ancestorCount']).toBe(0);
-      expect(body['descendants']).toEqual([]);
-      expect(body['descendantCount']).toBe(0);
+      const post = body['post'] as Record<string, unknown>;
+      expect(post['kind']).toBe('withdrawn');
+      expect(post['parentRefs']).toEqual([withdrawnSubjectParentId]);
+      const ancestors = body['ancestors'] as Array<Record<string, unknown>>;
+      expect(ancestors.map((a) => a['id'])).toEqual([withdrawnSubjectParentId]);
+      expect(body['ancestorCount']).toBe(1);
+      const descendants = body['descendants'] as Array<Record<string, unknown>>;
+      expect(descendants.map((d) => d['id'])).toEqual([withdrawnSubjectChildId]);
+      expect(body['descendantCount']).toBe(1);
       expect(body['next']).toBeNull();
       expect(body['pending']).toEqual([]);
       expect(body['pendingCount']).toBe(0);
+    });
+
+    it("a withdrawn post between two live posts still appears in its child's ancestors", async () => {
+      const res = await request(`/${withdrawnSubjectChildId}/thread`, 'GET');
+      expect(res.status).toBe(200);
+      const body = res.data as Record<string, unknown>;
+      const ancestors = body['ancestors'] as Array<Record<string, unknown>>;
+      expect(ancestors.map((a) => a['id'])).toEqual([withdrawnSubjectParentId, withdrawnSubjectId]);
+      expect(ancestors[0]!['kind']).toBeUndefined();
+      expect(ancestors[1]).toMatchObject({
+        kind: 'withdrawn',
+        id: withdrawnSubjectId,
+        withdrawnAtHeight: 24,
+      });
+      expect(body['ancestorCount']).toBe(2);
+    });
+
+    it("withdrawing the parent too: its thread carries the withdrawn reply and the reply's own reply", async () => {
+      withdrawPost(withdrawnSubjectParentId, 26);
+      const res = await request(`/${withdrawnSubjectParentId}/thread`, 'GET');
+      expect(res.status).toBe(200);
+      const body = res.data as Record<string, unknown>;
+      const post = body['post'] as Record<string, unknown>;
+      expect(post['kind']).toBe('withdrawn');
+      const descendants = body['descendants'] as Array<Record<string, unknown>>;
+      expect(descendants.map((d) => d['id'])).toEqual([withdrawnSubjectId, withdrawnSubjectChildId]);
+      expect(descendants[0]).toMatchObject({
+        kind: 'withdrawn',
+        id: withdrawnSubjectId,
+        parentRefs: [withdrawnSubjectParentId],
+      });
+      expect(body['descendantCount']).toBe(2);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Withdrawn view carries parentRefs
+  // NODE_INTERFACE → "The JSON projection has a fourth arm where the store
+  // has three"
+  // -----------------------------------------------------------------------
+
+  describe('withdrawn post view carries parentRefs', () => {
+    let author: Uint8Array;
+    let liveRootId: string;
+    let withdrawnReplyId: string;
+    let withdrawnSoloRootId: string;
+
+    beforeAll(() => {
+      const keys = generateKeyPairSync('ed25519');
+      author = rawPublicKey(keys.publicKey);
+
+      const rootCommit = makePostCommit(author, 'a live root, later given a withdrawn reply', { parentRefs: [] });
+      liveRootId = fixturePostId(rootCommit);
+      insertPost(liveRootId, rootCommit, 'a live root, later given a withdrawn reply');
+      confirmPost(liveRootId, 50, 0);
+
+      const replyCommit = makePostCommit(author, 'a reply, later withdrawn', { parentRefs: [liveRootId] });
+      withdrawnReplyId = fixturePostId(replyCommit);
+      insertPost(withdrawnReplyId, replyCommit, 'a reply, later withdrawn');
+      confirmPost(withdrawnReplyId, 51, 0);
+      withdrawPost(withdrawnReplyId, 52);
+
+      const soloRootCommit = makePostCommit(author, 'a root, later withdrawn', { parentRefs: [] });
+      withdrawnSoloRootId = fixturePostId(soloRootCommit);
+      insertPost(withdrawnSoloRootId, soloRootCommit, 'a root, later withdrawn');
+      confirmPost(withdrawnSoloRootId, 53, 0);
+      withdrawPost(withdrawnSoloRootId, 54);
+    });
+
+    it('GET /posts/:id on a withdrawn reply answers parentRefs equal to its parent', async () => {
+      const res = await request(`/${withdrawnReplyId}`, 'GET');
+      expect(res.status).toBe(200);
+      expect(res.data).toEqual({
+        kind: 'withdrawn',
+        id: withdrawnReplyId,
+        author: Buffer.from(author).toString('hex'),
+        parentRefs: [liveRootId],
+        withdrawnAtHeight: 52,
+        confirmedAuthor: null,
+      });
+    });
+
+    it('GET /posts/:id on a withdrawn root answers parentRefs: []', async () => {
+      const res = await request(`/${withdrawnSoloRootId}`, 'GET');
+      expect(res.status).toBe(200);
+      expect(res.data).toEqual({
+        kind: 'withdrawn',
+        id: withdrawnSoloRootId,
+        author: Buffer.from(author).toString('hex'),
+        parentRefs: [],
+        withdrawnAtHeight: 54,
+        confirmedAuthor: null,
+      });
+    });
+
+    it("the live root's thread carries the withdrawn reply's parentRefs in descendants", async () => {
+      const res = await request(`/${liveRootId}/thread`, 'GET');
+      expect(res.status).toBe(200);
+      const body = res.data as Record<string, unknown>;
+      const descendants = body['descendants'] as Array<Record<string, unknown>>;
+      const found = descendants.find((d) => d['id'] === withdrawnReplyId);
+      expect(found).toEqual({
+        kind: 'withdrawn',
+        id: withdrawnReplyId,
+        author: Buffer.from(author).toString('hex'),
+        parentRefs: [liveRootId],
+        withdrawnAtHeight: 52,
+      });
+    });
+
+    it("the feed carries the withdrawn reply's parentRefs", async () => {
+      const res = await request('/', 'GET');
+      expect(res.status).toBe(200);
+      const body = res.data as Record<string, unknown>;
+      const posts = body['posts'] as Array<Record<string, unknown>>;
+      const found = posts.find((p) => p['id'] === withdrawnReplyId);
+      expect(found).toEqual({
+        kind: 'withdrawn',
+        id: withdrawnReplyId,
+        author: Buffer.from(author).toString('hex'),
+        parentRefs: [liveRootId],
+        withdrawnAtHeight: 52,
+      });
     });
   });
 });

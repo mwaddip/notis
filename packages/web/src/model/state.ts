@@ -107,6 +107,11 @@ export interface RenderCtx {
   canAffordMinBond: boolean;
   bonds: BondsResult | null;
   inviteFlight: Flight | null;
+  // The author's own controls (WEB_INTERFACE → The withdraw control). withdrawState
+  // is 'pending' from the ledger's entry (durable across a reload), else the
+  // transient flight; canSignWithdraw is the spendable view non-empty.
+  withdrawState: (postId: string) => 'pending' | Flight | null;
+  canSignWithdraw: boolean;
 }
 
 /** One open author window's reads and flight (WEB_INTERFACE → The author window). */
@@ -151,6 +156,7 @@ export interface Handlers {
   // write surface
   openComposer: (parentId: string | null) => void; // null → the feed's new post; a post id → a reply
   likePost: (postId: string) => void;
+  withdrawPost: (postId: string) => void;          // the author's own control (WEB_INTERFACE → The withdraw control)
   tryAgain: (localKey: string) => void;            // rebuild a fresh transaction from the current view
   // membership actions (WEB_INTERFACE → The identity display, → The author window)
   vouch: (key: string) => void;                    // + at once, no confirmation

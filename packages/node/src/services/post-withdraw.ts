@@ -26,7 +26,7 @@ export function executePostWithdraw(
   deps: UtxoEngineDeps,
   tx: UtxoTransaction,
   currentBlockHeight: number,
-): { txId: string } {
+): { txId: string; expiresAtHeight: number } {
   const pw = tx.postWithdraw;
   if (!pw) {
     throw new ClientError('Transaction carries no postWithdraw payload');
@@ -53,5 +53,5 @@ export function executePostWithdraw(
   const expiresAtHeight = currentBlockHeight + MEMPOOL_EXPIRY_BLOCKS;
   admitTx(tx, expiresAtHeight);
 
-  return { txId: result.txId! };
+  return { txId: result.txId!, expiresAtHeight };
 }

@@ -5,6 +5,7 @@ import {
   buildVouch,
   buildUnvouch,
   buildInvite,
+  buildWithdraw,
   txToJson,
   InsufficientKarma,
   type BuildContext,
@@ -50,6 +51,14 @@ const VOUCH_CHANGE = 'b82df0bdb2085761f378baefc7f42eca94392826a64952a507958b5151
 const INVITE_TXID = '42226c9cc552a97def81788fcd01c8afacb9a5a9d90551afca8ce1f052a07d84';
 const INVITE_CHANGE = '7971f96c1ef879c5e200c60f4089be5ba8de0a5f354800d71a245cce2ea9c27d';
 const UNVOUCH_TXID = '5ed21bb1fedca5f69b55c38702028f91eccb3cc44f3e9938af3ab28ffb39ab85';
+
+// The withdraw vector, generated the same way — the demo UI's
+// buildPostWithdrawTx lifted by name from packages/node/public/index.html and run
+// through computeTxId / computeCandidateBoxId at height 5000, era 1, one spendable
+// box of 227 ('cc'*32), author 'aa'*32, over a post id 'ff'*32.
+const WITHDRAW_POST_ID = 'ff'.repeat(32);
+const WITHDRAW_TXID = '2fe448f1d62f1ba4cff6ac77f4b7aeacc07752bd4876309dd82f17ee32df1a9c';
+const WITHDRAW_OUTPUT = '4d2284cc4792e0aaa8ac6bc5daedf52d43636b127eab7e5a2ff922a88cc8de9f';
 
 function hexToBytes(hex: string): Uint8Array {
   const out = new Uint8Array(hex.length / 2);
@@ -210,6 +219,50 @@ describe('membership builders — structural rules', () => {
   });
 });
 
+describe('withdraw builder — frozen against the demo UI vector', () => {
+  it('a withdrawal matches the demo UI txId and output id, spends and returns one karma box', () => {
+    const built = buildWithdraw(ctx(), WITHDRAW_POST_ID);
+    expect(built.txId).toBe(WITHDRAW_TXID);
+    expect(built.change).toEqual({ boxId: WITHDRAW_OUTPUT, value: 227n, createdAtBlock: 5000 });
+    expect(built.tx.inputs).toEqual([BOX_ID]);
+    expect(built.tx.outputs).toEqual([
+      { boxType: 'karma', value: 227n, createdAtBlock: 5000, owner: hexToBytes(PUB) },
+    ]);
+    expect(built.tx.postWithdraw).toEqual({ postId: WITHDRAW_POST_ID });
+    expect(built.tx.post).toBeUndefined();
+    expect(built.tx.likeTarget).toBeUndefined();
+    // Conservation: one box in, its whole value back out.
+    expect(built.change!.value).toBe(227n);
+  });
+});
+
+describe('withdraw builder — structural rules', () => {
+  it('spends the smallest box when the view holds several', () => {
+    const spendable = [
+      { boxId: 'a'.repeat(64), value: 10n },
+      { boxId: 'b'.repeat(64), value: 3n },
+      { boxId: 'c'.repeat(64), value: 7n },
+    ];
+    const built = buildWithdraw({ ...ctx(), spendable }, WITHDRAW_POST_ID);
+    expect(built.tx.inputs).toEqual(['b'.repeat(64)]);
+    expect(built.change!.value).toBe(3n);
+    expect(built.tx.outputs).toEqual([
+      { boxType: 'karma', value: 3n, createdAtBlock: 5000, owner: hexToBytes(PUB) },
+    ]);
+  });
+
+  it('InsufficientKarma names one box when the spendable view is empty', () => {
+    expect(() => buildWithdraw({ ...ctx(), spendable: [] }, WITHDRAW_POST_ID)).toThrow(InsufficientKarma);
+    try {
+      buildWithdraw({ ...ctx(), spendable: [] }, WITHDRAW_POST_ID);
+    } catch (e) {
+      expect(e).toBeInstanceOf(InsufficientKarma);
+      expect((e as InsufficientKarma).required).toBe(1n);
+      expect((e as InsufficientKarma).available).toBe(0n);
+    }
+  });
+});
+
 describe('txToJson — the node JSON edge', () => {
   const sign = (tx: UtxoTransaction): UtxoTransaction => ({ ...tx, signatures: { [PUB]: new Uint8Array(64) } });
 
@@ -271,5 +324,17 @@ describe('txToJson — the node JSON edge', () => {
       { boxType: 'karma', value: '127', createdAtBlock: 5000, owner: PUB },
       { boxType: 'bond', value: '100', createdAtBlock: 5000, inviterId: PUB, inviteePublicKey: INVITEE },
     ]);
+  });
+
+  it('renders a withdrawal: postWithdraw present, one karma output, no post/likeTarget', () => {
+    const built = buildWithdraw(ctx(), WITHDRAW_POST_ID);
+    const body = txToJson(sign(built.tx));
+    expect(body.inputs).toEqual([BOX_ID]);
+    expect(body.outputs).toEqual([
+      { boxType: 'karma', value: '227', createdAtBlock: 5000, owner: PUB },
+    ]);
+    expect(body.postWithdraw).toEqual({ postId: WITHDRAW_POST_ID });
+    expect(body.post).toBeUndefined();
+    expect(body.likeTarget).toBeUndefined();
   });
 });

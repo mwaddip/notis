@@ -65,10 +65,12 @@ export interface PrunedJson {
   compactedAtBlockHeight: number;
 }
 
+// NODE_INTERFACE → "The JSON projection has a fourth arm where the store has three"
 export interface WithdrawnJson {
   kind: 'withdrawn';
   id: string;
   author: string;
+  parentRefs: string[];
   withdrawnAtHeight: number;
 }
 
@@ -144,6 +146,7 @@ function withdrawnToJson(post: StoredPost): WithdrawnJson {
     kind: 'withdrawn',
     id: post.id,
     author: Buffer.from(post.author).toString('hex'),
+    parentRefs: post.parentRefs,
     withdrawnAtHeight: post.withdrawnAtHeight!,
   };
 }
@@ -209,16 +212,6 @@ export class FeedService {
     const result = this.deps.getPost(id);
     if (!result) return null;
 
-    if (isStoredPost(result)) {
-      if (result.withdrawnAtHeight !== null) {
-        return {
-          post: withdrawnToJson(result),
-          ancestors: [], ancestorCount: 0,
-          descendants: [], descendantCount: 0,
-          next: null, pending: [], pendingCount: 0,
-        };
-      }
-    }
     if (isStump(result)) {
       return {
         post: stumpToJson(result),
@@ -236,9 +229,11 @@ export class FeedService {
       };
     }
 
+    // NODE_INTERFACE → Posts: a withdrawn subject answers ancestors, descendants
+    // and pending as a live subject does — the row, its topology and every
+    // descendant's anchor survive the withdrawal.
     const post = result;
-    const likeCount = this.deps.getLikeRecordCount(id);
-    const postJson = postToJson(post, likeCount, this.likedByViewer(id, viewer), this.blockCreatedAtFor(post));
+    const postJson = this.storedPostToJson(post, viewer);
 
     const ancestorResult = this.deps.getAncestorsNearest(id, page.limit);
     const ancestors = ancestorResult.rows.map((p) => this.storedPostToJson(p, viewer));

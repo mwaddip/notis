@@ -1,11 +1,11 @@
 import { readBuildContext } from './reads';
-import { buildPost, buildLike, buildVouch, buildUnvouch, buildInvite, txToJson, InsufficientKarma } from './builders';
+import { buildPost, buildLike, buildVouch, buildUnvouch, buildInvite, buildWithdraw, txToJson, InsufficientKarma } from './builders';
 import type { PendingLedger } from './ledger';
 import type { BuildContext } from './builders';
 import type { PendingEntry } from './types';
 import type { Api } from '../api/client';
 import type {
-  WriteClient, Rejection, PostSubmitResult, LikeSubmitResult, VouchSubmitResult, InviteSubmitResult,
+  WriteClient, Rejection, PostSubmitResult, LikeSubmitResult, VouchSubmitResult, InviteSubmitResult, WithdrawSubmitResult,
 } from '../api/write';
 import { isRejection } from '../api/write';
 
@@ -24,7 +24,7 @@ export interface Signer {
 
 export interface SubmitDeps {
   reads: Pick<Api, 'karma' | 'status' | 'post' | 'vouchesByVoucher'>;
-  write: Pick<WriteClient, 'submitPost' | 'submitLike' | 'submitVouch' | 'submitUnvouch' | 'submitInvite'>;
+  write: Pick<WriteClient, 'submitPost' | 'submitLike' | 'submitVouch' | 'submitUnvouch' | 'submitInvite' | 'submitWithdraw'>;
   ledger: PendingLedger;
   identity: Signer;
 }
@@ -219,6 +219,41 @@ export async function submitInviteFlow(deps: SubmitDeps, inviteeKey: string, bon
     txId: built.txId,
     kind: 'invite',
     postId: inviteeKey, // the key invited
+    inputs: built.tx.inputs,
+    ...(built.change ? { change: built.change } : {}),
+    expiresAtHeight: body.expiresAtHeight,
+    submittedAtHeight: ctx.height,
+  };
+  deps.ledger.add(entry);
+  return { ok: true, entry, body };
+}
+
+/** Submit a withdrawal of the reader's own post. The smallest karma box in, one
+ *  equal karma output back out, `postWithdraw` naming the post (WEB_INTERFACE →
+ *  The withdraw control). A 2xx whose body carries no numeric `expiresAtHeight`
+ *  is a client rejection: the ledger's poll has no height to expire against, so
+ *  the client records no entry it cannot track. */
+export async function submitWithdrawFlow(deps: SubmitDeps, postId: string): Promise<SubmitResult<WithdrawSubmitResult>> {
+  const id = deps.identity.current();
+  if (id === null) throw new Error('submitWithdrawFlow: no identity loaded');
+
+  const ctx = await readBuildContext(deps.reads, deps.ledger, id.pubKeyHex);
+  let built;
+  try {
+    built = buildWithdraw(ctx, postId);
+  } catch (e) {
+    if (e instanceof InsufficientKarma) return clientRejection('no karma box to sign a withdrawal with.');
+    throw e;
+  }
+  const body = await deps.write.submitWithdraw(postId, signedJson(built.tx, deps.identity, built.txId, id.pubKeyHex));
+  if (isRejection(body)) return { ok: false, rejection: body };
+  if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
+  if (typeof body.expiresAtHeight !== 'number') return clientRejection('the node answered without an expiry height');
+
+  const entry: PendingEntry = {
+    txId: built.txId,
+    kind: 'withdraw',
+    postId, // the post the withdrawal empties
     inputs: built.tx.inputs,
     ...(built.change ? { change: built.change } : {}),
     expiresAtHeight: body.expiresAtHeight,

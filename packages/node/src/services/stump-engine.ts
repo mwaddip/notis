@@ -19,7 +19,7 @@ export function executePrune(
   deps: UtxoEngineDeps,
   tx: UtxoTransaction,
   currentBlockHeight: number,
-): { txId: string } {
+): { txId: string; expiresAtHeight: number } {
   const prune = tx.prune;
   if (!prune) {
     throw new ClientError('Transaction carries no prune payload');
@@ -49,5 +49,5 @@ export function executePrune(
   const expiresAtHeight = currentBlockHeight + MEMPOOL_EXPIRY_BLOCKS;
   admitTx(tx, expiresAtHeight);
 
-  return { txId: result.txId! };
+  return { txId: result.txId!, expiresAtHeight };
 }

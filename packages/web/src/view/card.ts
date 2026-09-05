@@ -55,6 +55,10 @@ export interface CardOpts {
   onAuthor?: ((key: string) => void) | null; // the prefix button — and a ✓ mark — open the author window
   onVouch?: ((key: string) => void) | null;  // a + mark vouches at once, no confirmation
   mark?: Mark | null;                    // the vouch mark after the prefix; null → none (· you, or no identity)
+  // The author's own controls (WEB_INTERFACE → The withdraw control).
+  onWithdraw?: ((id: string) => void) | null; // the confirm row's withdraw signs
+  withdraw?: 'pending' | Flight | null;  // 'pending' from the ledger, else the transient flight in the slot
+  canWithdraw?: boolean;                 // false → disabled with the reason as the title
 }
 
 /** Compact absolute local time; the on-chain marker is the block height, this
@@ -337,6 +341,74 @@ function mountCardUnlock(anchor: HTMLElement, ownKey: string, onUnlock: (p: stri
   meta.insertAdjacentElement('afterend', row);
 }
 
+/** The withdraw slot — the meta row's first control on the reader's own confirmed
+ *  live post, where `like` sits on another's (WEB_INTERFACE → The withdraw
+ *  control). A pending or flighted withdrawal shows the stage line — `submitted`
+ *  from the ledger, or the transient `submitting…`/expired flight; otherwise the
+ *  `withdraw` button, disabled with the reason as its `title` when the key has no
+ *  karma box to sign with (HOUSE_STYLE → Interaction). */
+function withdrawArea(post: PostJson, opts: CardOpts): HTMLElement | null {
+  const w = opts.withdraw ?? null;
+  if (w === 'pending') return stageLine({ stage: 'submitted' });
+  if (w !== null) return stageLine(w); // the transient flight — submitting or expired
+  if (!opts.onWithdraw) return null;
+
+  const wb = el('button', 'mini withdraw-ctl');
+  wb.appendChild(el('span', null, 'withdraw'));
+  if (opts.canWithdraw === false) {
+    (wb as HTMLButtonElement).disabled = true;
+    const reason = 'needs one karma box to sign with; this key has none';
+    wb.title = reason;
+    wb.setAttribute('aria-label', reason);
+    return wb;
+  }
+  wb.setAttribute('aria-label', 'withdraw this post — its content goes, its replies stay');
+  wb.addEventListener('click', () => mountCardConfirm(wb, post.id, opts));
+  return wb;
+}
+
+/** The confirm row — mounted after the card's one meta row, one row at a time
+ *  (where the unlock row mounts), reading the question with `withdraw` and `keep`,
+ *  focus on `keep`; `keep` and Esc remove it (WEB_INTERFACE → The withdraw
+ *  control). The row's `withdraw` signs — through the unlock form in this row's
+ *  place first when the identity is locked, the withdraw button in the meta
+ *  anchoring it, and the withdrawal continuing on success (WEB_INTERFACE → The
+ *  identity module). Never says "deleted" (WEB_INTERFACE → The three absence
+ *  states). */
+function mountCardConfirm(anchor: HTMLElement, postId: string, opts: CardOpts): void {
+  const cardBody = anchor.closest('.card-body');
+  const meta = cardBody?.querySelector('.meta');
+  if (!meta || cardBody!.querySelector('.card-confirm') || cardBody!.querySelector('.card-unlock')) return;
+
+  const row = el('div', 'card-confirm');
+  row.appendChild(el('div', 'q', 'withdraw this post? the content goes; the replies stay.'));
+  const actions = el('div', 'actions');
+  const yes = el('button', 'mini', 'withdraw') as HTMLButtonElement;
+  yes.setAttribute('aria-label', 'withdraw this post now');
+  const keep = el('button', 'mini', 'keep') as HTMLButtonElement;
+  keep.setAttribute('aria-label', 'keep this post');
+  const dismiss = (): void => {
+    row.remove();
+    (anchor as HTMLButtonElement).focus();
+  };
+  yes.addEventListener('click', () => {
+    if (opts.locked && opts.ownKey && opts.onUnlock) {
+      row.remove();
+      mountCardUnlock(anchor, opts.ownKey, opts.onUnlock, () => opts.onWithdraw!(postId));
+      return;
+    }
+    opts.onWithdraw!(postId);
+  });
+  keep.addEventListener('click', dismiss);
+  row.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') dismiss();
+  });
+  actions.append(yes, keep);
+  row.appendChild(actions);
+  meta.insertAdjacentElement('afterend', row);
+  keep.focus(); // focus on keep — the non-destructive choice
+}
+
 /** ↩ reply — a ghost button in the meta row (WEB_INTERFACE → The write surface). */
 function replyButton(id: string, opts: CardOpts): HTMLElement | null {
   if (!opts.onReply) return null;
@@ -422,8 +494,19 @@ function livePostCard(post: PostJson, opts: CardOpts): HTMLElement {
     if (rc) meta.appendChild(rc);
     // Controls only on a landed or confirmed card, never a node's pending one.
     if (!pending) {
-      const lk = likeArea(post, opts);
-      if (lk) meta.appendChild(lk);
+      // The first slot: on the reader's own confirmed post the read-only like
+      // count stays and the withdraw control — or its stage line in flight —
+      // follows it; on another's, the like control (WEB_INTERFACE → The withdraw
+      // control).
+      const wa = withdrawArea(post, opts);
+      if (wa) {
+        const count = likeNode(post.likeCount);
+        if (count) meta.appendChild(count);
+        meta.appendChild(wa);
+      } else {
+        const lk = likeArea(post, opts);
+        if (lk) meta.appendChild(lk);
+      }
       if (landed && post.blockHeight !== null) meta.appendChild(inBlockNode(post.blockHeight));
       const rb = replyButton(post.id, opts);
       if (rb) meta.appendChild(rb);

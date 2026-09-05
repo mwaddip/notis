@@ -89,6 +89,16 @@ describe('write client — request envelopes', () => {
     expect(last.body).toEqual({ tx });
     expect(res).toEqual({ status: 'pending', txId: 'ti', expiresAtHeight: 5720, bondBoxId: 'bond1' });
   });
+
+  it('submitWithdraw POSTs { tx } to /posts/:id/withdraw and returns the 2xx body', async () => {
+    mockResponse({ ok: true, status: 201, body: { status: 'submitted', txId: 'tw', postId: 'p7', expiresAtHeight: 5720 } });
+    const tx = { inputs: ['cc'.repeat(32)], outputs: [], signatures: {}, protocolVersion: 1, postWithdraw: { postId: 'p7' } };
+    const res = await write().submitWithdraw('p7', tx);
+    expect(last.url).toBe('/posts/p7/withdraw');
+    expect(last.method).toBe('POST');
+    expect(last.body).toEqual({ tx });
+    expect(res).toEqual({ status: 'submitted', txId: 'tw', postId: 'p7', expiresAtHeight: 5720 });
+  });
 });
 
 describe('write client — rejection normalisation', () => {
@@ -117,5 +127,10 @@ describe('write client — rejection normalisation', () => {
   it('a 500 message-shape body', async () => {
     mockResponse({ ok: false, status: 500, body: { error: 'Internal error' } });
     expect(await write().submitLike({})).toEqual({ status: 500, message: 'Internal error' });
+  });
+
+  it('a withdraw rejection normalises — the 403 not the author', async () => {
+    mockResponse({ ok: false, status: 403, body: { error: 403, reason: 'not the post author' } });
+    expect(await write().submitWithdraw('p7', {})).toEqual({ status: 403, message: 'not the post author' });
   });
 });

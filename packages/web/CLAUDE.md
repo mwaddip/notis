@@ -31,7 +31,10 @@ faucet step, the preferences), create / import / export / forget / lock / unlock
 identity encrypted at rest, the reader's own cards marked `· you` — and the **membership actions**: the
 identity display standard (the prefix, the `✓`/`+` vouch mark with the count as its `title`, `· you`)
 wherever an identity renders, the `@author:<key>` and `@posts:<key>` windows, vouch from the mark,
-unvouch from the author window, invite from the profile's `invites` row with the standing bonds.
+unvouch from the author window, invite from the profile's `invites` row with the standing bonds — and the
+**author's own controls' first unit**: `withdraw` on the reader's own confirmed card inside a pane, after
+its like count, two presses with a confirm row in place, the landing turning the card into the withdrawn
+card at its depth.
 
 - **Owns:** `packages/web/*` — its own source, tests, build config and static assets.
 - **Does NOT own:** any other package, `contracts/`, `prompts/`, or `packages/node/public/index.html`
@@ -41,8 +44,8 @@ unvouch from the author window, invite from the profile's `invites` row with the
 
 ⛔ **The read client (`src/api/client.ts`) issues `GET` requests and nothing else.** No `POST`, no
 `DELETE` for a read. The writes live next door in `src/api/write.ts` — `POST /posts`, `POST /likes`,
-`POST /vouches`, `DELETE /vouches/:targetId` (the one non-`POST` write) and `POST /invites`, and no
-more. A `viewer` parameter is a query on a `GET`, so it stays in the read client; the four membership
+`POST /vouches`, `DELETE /vouches/:targetId` (the one non-`POST` write), `POST /invites` and
+`POST /posts/:id/withdraw`, and no more. A `viewer` parameter is a query on a `GET`, so it stays in the read client; the four membership
 reads (`GET /vouches` by target, by voucher, the cooldown arm; `GET /invites/:userId`) are `GET`s in it.
 
 **It hashes only through `@dagsocial/types`**, reached by the build-time shim — the wallet builders type
@@ -59,7 +62,8 @@ Storage holds an envelope — scrypt and ChaCha20-Poly1305 over the seed, `ident
 the seed in the clear; a page load restores the envelope and the public key only, so `current()` reads
 `{ pubKeyHex, locked: true }` until an unlock, and `sign(txIdHex)` — the only path to the seed — throws
 while locked. **Every write checks `locked` before its flight** and mounts the unlock form in place: the
-composer's foot for `post`, a row under the card's meta for `like`. The way in is the `@profile`
+composer's foot for `post`, a row under the card's meta for `like`, the confirm row's place for
+`withdraw`. The way in is the `@profile`
 window's `create` and `import`; a production build has no other door. `draft()` makes the key before
 the passphrase is typed so the browser's saved entry names the key it later unlocks. An identity change
 takes effect at once through `onChange`: the App rebuilds the pending ledger for the new key, drops the
@@ -124,7 +128,8 @@ empty means no faucet and no button. **The faucet must relay `expiresAtHeight`**
 202 without it — so a faucet that does not relay it answers the honest refusal, not a grant.
 
 **Every transaction spends real testnet karma:** a thread 5, a reply 3, a like 1, a vouch 1 staked, an
-invite its bond. There is no automated test that posts — an automated writer would drain the key and
+invite its bond; a withdrawal costs nothing but spends and returns one karma box, so a key with none
+cannot sign one. There is no automated test that posts — an automated writer would drain the key and
 litter testnet; the wallet builders are pinned offline against the demo UI's frozen vectors instead.
 Iterate deliberately.
 
@@ -134,6 +139,11 @@ faucet root, which neither vouches nor likes. The membership actions are proven 
 devnet faucet key promote a throwaway to member the earned way, and the client is then driven against
 that stack. On testnet the reader is a resident: the marks are absent and the author window and the
 invites row say why.
+
+**A withdrawal is exercisable on testnet once the deployed node answers `expiresAtHeight` on
+`POST /posts/:id/withdraw`** and carries `parentRefs` on the withdrawn view (`NODE_INTERFACE → Pruning`).
+Against an older node the client ends the flight in the client rejection *"the node answered without an
+expiry height"* and records no entry — it tracks nothing it cannot expire.
 
 **The pending ledger is per identity** — `notis.pending.<pubKeyHex>`, rebuilt at once on an identity
 change; a second key never sees the first's predicted change. A faucet grant rides it as a `grant` entry

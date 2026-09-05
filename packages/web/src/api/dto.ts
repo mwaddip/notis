@@ -52,6 +52,7 @@ export interface WithdrawnJson {
   id: string;
   author: string;                 // hex
   withdrawnAtHeight: number;
+  parentRefs: string[];           // hex ids — kept at withdrawal (NODE_INTERFACE → "The JSON projection has a fourth arm where the store has three")
 }
 
 /** The absence states the API can hand back where a post is expected. */

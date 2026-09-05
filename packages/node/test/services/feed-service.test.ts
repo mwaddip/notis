@@ -15,10 +15,11 @@ import {
   insertStump,
   deletePostRows,
   confirmPost,
+  withdrawPost,
   getBlockCreatedAt,
 } from '../../src/store/index.js';
 import { FeedService } from '../../src/services/feed-service.js';
-import type { PostJson } from '../../src/services/feed-service.js';
+import type { PostJson, WithdrawnJson } from '../../src/services/feed-service.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -163,6 +164,26 @@ describe('feed-service', () => {
       author: Buffer.from(authorId).toString('hex'),
       ...stumpScalars,
     });
+  });
+
+  it('getThread on a withdrawn subject carries its live ancestor and descendant, as a live subject would', () => {
+    const parentId = insertTestPost('A root whose reply is withdrawn', authorId, []);
+    confirmPost(parentId, 60, 0);
+    const subjectId = insertTestPost('The withdrawn reply', authorId, [parentId]);
+    confirmPost(subjectId, 60, 1);
+    withdrawPost(subjectId, 61);
+    const childId = insertTestPost('A live reply under the withdrawn one', authorId, [subjectId]);
+    confirmPost(childId, 62, 0);
+
+    const t = feedService.getThread(subjectId, { limit: 50 });
+    expect(t).not.toBeNull();
+    expect((t!.post as WithdrawnJson).kind).toBe('withdrawn');
+    expect((t!.post as WithdrawnJson).parentRefs).toEqual([parentId]);
+    expect(t!.ancestors.map((p) => p.id)).toEqual([parentId]);
+    expect(t!.ancestorCount).toBe(1);
+    expect(t!.descendants.map((p) => p.id)).toEqual([childId]);
+    expect(t!.descendantCount).toBe(1);
+    expect(t!.next).toBeNull();
   });
 
   it('getThread returns null for an unknown id', () => {

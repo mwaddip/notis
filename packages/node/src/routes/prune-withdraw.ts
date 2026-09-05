@@ -11,8 +11,8 @@ import { respondError } from './respond-error.js';
 // ---------------------------------------------------------------------------
 
 export interface PruneWithdrawDeps extends UtxoEngineDeps {
-  executePrune: (deps: UtxoEngineDeps, tx: UtxoTransaction, currentBlockHeight: number) => { txId: string };
-  executePostWithdraw: (deps: UtxoEngineDeps, tx: UtxoTransaction, currentBlockHeight: number) => { txId: string };
+  executePrune: (deps: UtxoEngineDeps, tx: UtxoTransaction, currentBlockHeight: number) => { txId: string; expiresAtHeight: number };
+  executePostWithdraw: (deps: UtxoEngineDeps, tx: UtxoTransaction, currentBlockHeight: number) => { txId: string; expiresAtHeight: number };
   getCurrentHeight: () => number;
 }
 
@@ -48,7 +48,7 @@ export function pruneWithdrawRoutes(deps: PruneWithdrawDeps): Router {
     try {
       // Admission judges at tip + 1 (NODE_INTERFACE → validateTx).
       const currentHeight = deps.getCurrentHeight() + 1;
-      const { txId } = deps.executePrune(deps, tx, currentHeight);
+      const { txId, expiresAtHeight } = deps.executePrune(deps, tx, currentHeight);
 
       const net = getNet();
       if (net) {
@@ -61,6 +61,7 @@ export function pruneWithdrawRoutes(deps: PruneWithdrawDeps): Router {
         status: 'submitted',
         txId,
         postId: tx.prune.rootPostHash,
+        expiresAtHeight,
       });
     } catch (err: unknown) {
       respondError(res, err, 'POST /posts/:id/prune', 'message');
@@ -92,7 +93,7 @@ export function pruneWithdrawRoutes(deps: PruneWithdrawDeps): Router {
     try {
       // Admission judges at tip + 1 (NODE_INTERFACE → validateTx).
       const currentHeight = deps.getCurrentHeight() + 1;
-      const { txId } = deps.executePostWithdraw(deps, tx, currentHeight);
+      const { txId, expiresAtHeight } = deps.executePostWithdraw(deps, tx, currentHeight);
 
       const net = getNet();
       if (net) {
@@ -105,6 +106,7 @@ export function pruneWithdrawRoutes(deps: PruneWithdrawDeps): Router {
         status: 'submitted',
         txId,
         postId: tx.postWithdraw.postId,
+        expiresAtHeight,
       });
     } catch (err: unknown) {
       respondError(res, err, 'POST /posts/:id/withdraw', 'message');

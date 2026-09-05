@@ -36,6 +36,16 @@ export interface InviteSubmitResult {
   bondBoxId: string;
 }
 
+/** `POST /posts/:id/withdraw` 2xx — the post the withdrawal empties, bounded like
+ *  the rest. `expiresAtHeight` is checked in the flow: a 2xx without it cannot be
+ *  tracked (WEB_INTERFACE → The withdraw control). */
+export interface WithdrawSubmitResult {
+  status: string; // 'submitted'
+  txId: string;
+  postId: string;
+  expiresAtHeight: number;
+}
+
 /** One shape for both of the node's rejection bodies: the HTTP status and the
  *  message, normalised from `{ error: <status>, reason }` and `{ error: <message> }`
  *  both (WEB_INTERFACE → Writes). */
@@ -46,7 +56,7 @@ export interface Rejection {
 
 /** A success body carries no `message`; a rejection always does. */
 export function isRejection(
-  r: PostSubmitResult | LikeSubmitResult | VouchSubmitResult | InviteSubmitResult | Rejection,
+  r: PostSubmitResult | LikeSubmitResult | VouchSubmitResult | InviteSubmitResult | WithdrawSubmitResult | Rejection,
 ): r is Rejection {
   return 'message' in r;
 }
@@ -77,6 +87,12 @@ export class WriteClient {
 
   submitInvite(tx: Record<string, unknown>): Promise<InviteSubmitResult | Rejection> {
     return this.send<InviteSubmitResult>('POST', '/invites', { tx });
+  }
+
+  /** The sixth write: `POST /posts/:id/withdraw` with a JSON `{ tx }` body
+   *  (WEB_INTERFACE → Writes). */
+  submitWithdraw(postId: string, tx: Record<string, unknown>): Promise<WithdrawSubmitResult | Rejection> {
+    return this.send<WithdrawSubmitResult>('POST', `/posts/${encodeURIComponent(postId)}/withdraw`, { tx });
   }
 
   private async send<T>(method: string, path: string, body: unknown): Promise<T | Rejection> {

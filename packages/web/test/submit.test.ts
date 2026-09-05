@@ -1,14 +1,14 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, type SubmitDeps,
+  submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, type SubmitDeps,
 } from '../src/wallet/submit';
 import { PendingLedger } from '../src/wallet/ledger';
 import type { Api } from '../src/api/client';
 import type { KarmaBoxRow, KarmaResult, PostResult, StatusResult, VouchesVoucherResult } from '../src/api/dto';
 import { karmaResult as karmaFixture } from './karma-fixture';
 import { isRejection } from '../src/api/write';
-import type { PostSubmitResult, LikeSubmitResult, VouchSubmitResult, InviteSubmitResult, Rejection } from '../src/api/write';
+import type { PostSubmitResult, LikeSubmitResult, VouchSubmitResult, InviteSubmitResult, WithdrawSubmitResult, Rejection } from '../src/api/write';
 
 // submit ties the reads, the builders, the ledger, the identity and the write
 // client into one path. These drive it over fakes and watch what it does: the
@@ -29,7 +29,7 @@ const VOUCH_BOX = '44'.repeat(32);
 
 let signCalls: string[];
 let postReads: Array<{ id: string; viewer?: string }>;
-let writeCalls: Array<{ kind: 'post' | 'like' | 'vouch' | 'unvouch' | 'invite'; tx: Record<string, unknown>; content?: string; targetHex?: string }>;
+let writeCalls: Array<{ kind: 'post' | 'like' | 'vouch' | 'unvouch' | 'invite' | 'withdraw'; tx: Record<string, unknown>; content?: string; targetHex?: string; postId?: string }>;
 
 function statusResult(): StatusResult {
   return {
@@ -83,6 +83,7 @@ const okPost: PostSubmitResult = { postId: 'newpost', status: 'pending', expires
 const okLike: LikeSubmitResult = { status: 'pending', txId: 'ignored', expiresAtHeight: 6720 };
 const okVouch: VouchSubmitResult = { status: 'pending', txId: 'ignored', expiresAtHeight: 6720 };
 const okInvite: InviteSubmitResult = { status: 'pending', txId: 'ignored', expiresAtHeight: 6720, bondBoxId: 'bond1' };
+const okWithdraw: WithdrawSubmitResult = { status: 'submitted', txId: 'ignored', postId: 'ignored', expiresAtHeight: 6720 };
 
 function write(
   postResp: PostSubmitResult | Rejection = okPost,
@@ -90,6 +91,7 @@ function write(
   vouchResp: VouchSubmitResult | Rejection = okVouch,
   inviteResp: InviteSubmitResult | Rejection = okInvite,
   unvouchResp: VouchSubmitResult | Rejection = okVouch,
+  withdrawResp: WithdrawSubmitResult | Rejection = okWithdraw,
 ): SubmitDeps['write'] {
   return {
     submitPost: async (tx, content) => {
@@ -111,6 +113,10 @@ function write(
     submitInvite: async (tx) => {
       writeCalls.push({ kind: 'invite', tx });
       return isRejection(inviteResp) ? inviteResp : { ...inviteResp, txId: lastSignedTxId() };
+    },
+    submitWithdraw: async (postId, tx) => {
+      writeCalls.push({ kind: 'withdraw', tx, postId });
+      return isRejection(withdrawResp) ? withdrawResp : { ...withdrawResp, txId: lastSignedTxId() };
     },
   };
 }
@@ -246,6 +252,10 @@ describe('the node txId is compared to the client id', () => {
         writeCalls.push({ kind: 'invite', tx });
         return { ...okInvite, txId: wrong };
       },
+      submitWithdraw: async (postId, tx) => {
+        writeCalls.push({ kind: 'withdraw', tx, postId });
+        return { ...okWithdraw, txId: wrong };
+      },
     };
   }
 
@@ -261,6 +271,14 @@ describe('the node txId is compared to the client id', () => {
     const ledger = new PendingLedger(PUB);
     const deps: SubmitDeps = { reads: reads(), write: writeMismatch(), ledger, identity };
     const res = await submitLikeFlow(deps, TARGET_ID);
+    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'the node computed a different transaction id' } });
+    expect(ledger.size).toBe(0);
+  });
+
+  it('a withdrawal whose node id disagrees refuses the entry too', async () => {
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(), write: writeMismatch(), ledger, identity };
+    const res = await submitWithdrawFlow(deps, TARGET_ID);
     expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'the node computed a different transaction id' } });
     expect(ledger.size).toBe(0);
   });
@@ -367,6 +385,66 @@ describe('submitInviteFlow', () => {
     const res = await submitInviteFlow(deps, INVITEE, 100n);
     expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough karma to cover the bond right now.' } });
     expect(writeCalls).toEqual([]);
+    expect(ledger.size).toBe(0);
+  });
+});
+
+describe('submitWithdrawFlow', () => {
+  it('reads karma then status, signs the id, POSTs { tx } to the post, and lands the entry with the output as change', async () => {
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity };
+    const res = await submitWithdrawFlow(deps, TARGET_ID);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    // No parent/target read — a withdrawal reads only the spendable view and status.
+    expect(postReads).toEqual([]);
+    expect(signCalls).toEqual([res.entry.txId]);
+    expect(writeCalls[0]).toMatchObject({ kind: 'withdraw', postId: TARGET_ID });
+    expect((writeCalls[0]!.tx.signatures as Record<string, string>)[PUB]).toBe(SIG);
+    // One karma input, one karma output carrying postWithdraw.
+    expect(writeCalls[0]!.tx.inputs).toEqual([BOX_ID]);
+    expect(writeCalls[0]!.tx.postWithdraw).toEqual({ postId: TARGET_ID });
+    const outputs = writeCalls[0]!.tx.outputs as Array<Record<string, unknown>>;
+    expect(outputs).toHaveLength(1);
+    expect(outputs[0]).toMatchObject({ boxType: 'karma', value: '227', owner: PUB });
+    // The entry carries the body's expiresAtHeight and the output box as change.
+    expect(res.entry).toMatchObject({ kind: 'withdraw', postId: TARGET_ID, expiresAtHeight: 6720, submittedAtHeight: 6000 });
+    expect(res.entry.change?.value).toBe(227n);
+    expect(res.entry.inputs).toEqual([BOX_ID]);
+    expect(ledger.all().map((e) => e.kind)).toEqual(['withdraw']);
+  });
+
+  it('an empty spendable view refuses in the voice register — no box to sign with', async () => {
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, []), write: write(), ledger, identity };
+    const res = await submitWithdrawFlow(deps, TARGET_ID);
+    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'no karma box to sign a withdrawal with.' } });
+    expect(writeCalls).toEqual([]);
+    expect(ledger.size).toBe(0);
+  });
+
+  it('a rejection short-circuits: no ledger entry', async () => {
+    const ledger = new PendingLedger(PUB);
+    const rejection: Rejection = { status: 403, message: 'not the post author' };
+    const deps: SubmitDeps = { reads: reads(), write: write(okPost, okLike, okVouch, okInvite, okVouch, rejection), ledger, identity };
+    const res = await submitWithdrawFlow(deps, TARGET_ID);
+    expect(res).toEqual({ ok: false, rejection });
+    expect(ledger.size).toBe(0);
+  });
+
+  it('a 2xx without a numeric expiresAtHeight is a client rejection and adds no entry', async () => {
+    const ledger = new PendingLedger(PUB);
+    const w = write();
+    // A 2xx that echoes the id but carries no expiry height — untrackable, so the
+    // flow refuses it and records nothing.
+    w.submitWithdraw = async (postId, tx) => {
+      writeCalls.push({ kind: 'withdraw', tx, postId });
+      return { status: 'submitted', txId: lastSignedTxId(), postId } as WithdrawSubmitResult;
+    };
+    const deps: SubmitDeps = { reads: reads(), write: w, ledger, identity };
+    const res = await submitWithdrawFlow(deps, TARGET_ID);
+    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'the node answered without an expiry height' } });
     expect(ledger.size).toBe(0);
   });
 });
