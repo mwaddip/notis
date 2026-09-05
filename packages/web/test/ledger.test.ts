@@ -178,7 +178,7 @@ describe('reconcile', () => {
 
   it('a post that landed then became a tombstone still counts as landed', () => {
     const tomb: WithdrawnJson & { confirmedAuthor: string | null } = {
-      kind: 'withdrawn', id: 'p1', author: 'aa'.repeat(32), withdrawnAtHeight: 5050, confirmedAuthor: null,
+      kind: 'withdrawn', id: 'p1', author: 'aa'.repeat(32), withdrawnAtHeight: 5050, parentRefs: [], confirmedAuthor: null,
     };
     expect(reconcilePost(postEntry, tomb, 5100)).toBe('landed');
   });
@@ -258,7 +258,7 @@ describe('the membership reconciles', () => {
 
 describe('the withdraw reconcile', () => {
   const withdrawnTomb: PostResult = {
-    kind: 'withdrawn', id: WITHDRAW_TARGET, author: KEY, withdrawnAtHeight: 5050, confirmedAuthor: null,
+    kind: 'withdrawn', id: WITHDRAW_TARGET, author: KEY, withdrawnAtHeight: 5050, parentRefs: [], confirmedAuthor: null,
   } as WithdrawnJson & { confirmedAuthor: string | null };
   const stumpTomb: PostResult = {
     kind: 'stump', id: WITHDRAW_TARGET, author: KEY, replyCount: 2, upvoteCount: 0,

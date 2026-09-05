@@ -1,5 +1,4 @@
 import type { FeedRow, PostJson, Tombstone } from '../api/dto';
-import { isWithdrawn } from '../api/dto';
 
 // Build the render order of a thread from the flat descendants the API returns.
 // Subtrees are laminar (one parent per post), so this is a plain tree walk.
@@ -11,10 +10,8 @@ export interface ThreadNode {
 }
 
 function parentOf(row: FeedRow): string | undefined {
-  // A withdrawn row carries no parentRefs in its DTO (only kind/id/author/
-  // withdrawnAtHeight), so its true parent is not linkable here — it falls under
-  // the root. Recorded as a node-side gap (its exact depth cannot be rebuilt).
-  if (isWithdrawn(row)) return undefined;
+  // A withdrawn row keeps its parentRefs at withdrawal (NODE_INTERFACE →
+  // Pruning), so it renders at its own depth like any live row.
   return row.parentRefs[0];
 }
 
