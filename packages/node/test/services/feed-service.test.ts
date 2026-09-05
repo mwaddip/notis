@@ -300,4 +300,36 @@ describe('feed-service', () => {
     countingService.queryPosts({ limit: 50 });
     expect(vouchCalls).toBe(4);
   });
+
+  it('getThread reads the head\'s descendantCount once, and the head and the thread agree', () => {
+    const descendantCalls: Record<string, number> = {};
+    const countingGetDescendantCount = (postId: string): number => {
+      descendantCalls[postId] = (descendantCalls[postId] ?? 0) + 1;
+      return getDescendantCount(postId);
+    };
+    // Mirrors the store's own delegation (Store Interface → Posts DAG:
+    // getSubtreePage's count runs getDescendantCount, stated once) through the
+    // same dependency seam, since the store's own internal call is not
+    // observable through injected deps.
+    const countingGetSubtreePage: typeof getSubtreePage = (postId, page) => {
+      const real = getSubtreePage(postId, page);
+      return { ...real, count: countingGetDescendantCount(postId) };
+    };
+
+    const countingService = new FeedService({
+      getPost: storeGetPost,
+      queryPostsPage,
+      getLikeRecordCount,
+      getDescendantCount: countingGetDescendantCount,
+      getVouchCountForTarget,
+      hasLikeRecord,
+      getAncestorsNearest,
+      getSubtreePage: countingGetSubtreePage,
+      getBlockCreatedAt,
+    });
+
+    const t = countingService.getThread(liveReplyId, { limit: 50 })!;
+    expect(descendantCalls[liveReplyId]).toBe(1);
+    expect((t.post as PostJson).descendantCount).toBe(t.descendantCount);
+  });
 });

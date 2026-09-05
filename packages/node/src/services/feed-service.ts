@@ -182,10 +182,11 @@ export class FeedService {
     post: StoredPost,
     viewer: Uint8Array | null,
     vouchCountCache: Map<string, number>,
+    precomputedDescendantCount?: number,
   ): PostJson | WithdrawnJson {
     if (post.withdrawnAtHeight !== null) return withdrawnToJson(post);
     const likeCount = this.deps.getLikeRecordCount(post.id);
-    const descendantCount = this.deps.getDescendantCount(post.id);
+    const descendantCount = precomputedDescendantCount ?? this.deps.getDescendantCount(post.id);
     const authorVouchCount = this.authorVouchCountFor(post.author, vouchCountCache);
     return postToJson(
       post,
@@ -272,13 +273,19 @@ export class FeedService {
     // descendant's anchor survive the withdrawal.
     const post = result;
     const vouchCountCache = new Map<string, number>();
-    const postJson = this.storedPostToJson(post, viewer, vouchCountCache);
 
     const ancestorResult = this.deps.getAncestorsNearest(id, page.limit);
     const ancestors = ancestorResult.rows.map((p) => this.storedPostToJson(p, viewer, vouchCountCache));
 
     const descendantResult = this.deps.getSubtreePage(id, page);
     const descendants = descendantResult.rows.map((p) => this.storedPostToJson(p, viewer, vouchCountCache));
+
+    // NODE_INTERFACE → "A page read touches limit + 1 entries of one index
+    // that serves both its predicate and its order": getDescendantCount is one
+    // walk per row it is read for — descendantResult.count is already the
+    // head's own walk, so its PostJson takes that value rather than reading it
+    // again.
+    const postJson = this.storedPostToJson(post, viewer, vouchCountCache, descendantResult.count);
 
     return {
       post: postJson,
