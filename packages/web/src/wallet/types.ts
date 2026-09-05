@@ -18,16 +18,19 @@ export interface ChangeRef {
   createdAtBlock: number;
 }
 
-export type EntryKind = 'post' | 'like' | 'grant' | 'vouch' | 'unvouch' | 'invite';
+export type EntryKind = 'post' | 'like' | 'grant' | 'vouch' | 'unvouch' | 'invite' | 'withdraw';
 
 /** One of the client's own pending transactions (WEB_INTERFACE → The wallet).
  *  `postId` is the entry's subject: for a post the node's own id from the 200
  *  body; for a like the target post; for a vouch and an unvouch the target key;
- *  for an invite the invitee key; for a faucet grant the key the grant was asked
- *  for — a grant has no post and carries `inputs: []` and no `change`, so it is
- *  inert in the spendable view (WEB_INTERFACE → The faucet step). An unvouch's one
- *  input is a `vouch` box, not a karma box, so the spendable view ignores it, and
- *  it has no change. */
+ *  for an invite the invitee key; for a withdrawal the post it empties; for a
+ *  faucet grant the key the grant was asked for — a grant has no post and carries
+ *  `inputs: []` and no `change`, so it is inert in the spendable view
+ *  (WEB_INTERFACE → The faucet step). An unvouch's one input is a `vouch` box, not
+ *  a karma box, so the spendable view ignores it, and it has no change. A
+ *  withdrawal's one karma input is spent and its equal-value output is the
+ *  entry's `change`, so the spendable view stays whole while it is pending
+ *  (WEB_INTERFACE → The withdraw control). */
 export interface PendingEntry {
   txId: string;
   kind: EntryKind;

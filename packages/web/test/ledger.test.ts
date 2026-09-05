@@ -9,12 +9,14 @@ import {
   reconcileVouch,
   reconcileUnvouch,
   reconcileInvite,
+  reconcileWithdraw,
   dedupePending,
   pendingLikeTargets,
   pendingVouchTargets,
+  pendingWithdrawTargets,
 } from '../src/wallet/ledger';
 import type { PendingEntry } from '../src/wallet/types';
-import type { PostJson, PostResult, WithdrawnJson } from '../src/api/dto';
+import type { PostJson, PostResult, StumpJson, PrunedJson, WithdrawnJson } from '../src/api/dto';
 import { karmaResult } from './karma-fixture';
 
 const KEY = 'aa'.repeat(32); // the identity that owns the ledger
@@ -48,6 +50,12 @@ const unvouchEntry: PendingEntry = {
 const inviteEntry: PendingEntry = {
   txId: 'i1', kind: 'invite', postId: INVITEE, inputs: ['in7'],
   change: { boxId: 'chg7', value: 127n, createdAtBlock: 5000 }, expiresAtHeight: 5720, submittedAtHeight: 5000,
+};
+
+const WITHDRAW_TARGET = 'ee'.repeat(32); // the post a withdrawal empties
+const withdrawEntry: PendingEntry = {
+  txId: 'w1', kind: 'withdraw', postId: WITHDRAW_TARGET, inputs: ['in8'],
+  change: { boxId: 'chg8', value: 227n, createdAtBlock: 5000 }, expiresAtHeight: 5720, submittedAtHeight: 5000,
 };
 
 function postResult(over: Partial<PostJson>): PostResult {
@@ -244,6 +252,52 @@ describe('the membership reconciles', () => {
     a.add(vouchEntry);
     a.add(unvouchEntry);
     a.add(inviteEntry);
+    expect(new PendingLedger(KEY).all()).toEqual(a.all());
+  });
+});
+
+describe('the withdraw reconcile', () => {
+  const withdrawnTomb: PostResult = {
+    kind: 'withdrawn', id: WITHDRAW_TARGET, author: KEY, withdrawnAtHeight: 5050, confirmedAuthor: null,
+  } as WithdrawnJson & { confirmedAuthor: string | null };
+  const stumpTomb: PostResult = {
+    kind: 'stump', id: WITHDRAW_TARGET, author: KEY, replyCount: 2, upvoteCount: 0,
+    protocolVersion: 1, compactedAtBlockHeight: 5050, confirmedAuthor: null,
+  } as StumpJson & { confirmedAuthor: string | null };
+  const prunedTomb: PostResult = {
+    kind: 'pruned', id: WITHDRAW_TARGET, author: KEY, rootPostHash: 'aa'.repeat(32),
+    compactedAtBlockHeight: 5050, confirmedAuthor: null,
+  } as PrunedJson & { confirmedAuthor: string | null };
+
+  it('lands on any tombstone — withdrawn, or a stump/pruned when the thread went first', () => {
+    expect(reconcileWithdraw(withdrawEntry, withdrawnTomb, 5100)).toBe('landed');
+    expect(reconcileWithdraw(withdrawEntry, stumpTomb, 5100)).toBe('landed');
+    expect(reconcileWithdraw(withdrawEntry, prunedTomb, 5100)).toBe('landed');
+  });
+
+  it('a live post is still pending — a confirmed live post is not a withdrawal landing', () => {
+    const live = postResult({ id: WITHDRAW_TARGET, status: 'confirmed' });
+    expect(reconcileWithdraw(withdrawEntry, live, 5100)).toBe('pending');
+    expect(reconcileWithdraw(withdrawEntry, live, 5721)).toBe('expired');
+  });
+
+  it('a 404 is expired — the post is unknown to this node, so nothing can land', () => {
+    // The resolution-order case a pruned descendant can take: a 404 rather than a
+    // tombstone (NODE_INTERFACE → Resolution order for a post id) — still a done
+    // withdrawal, read as expired.
+    expect(reconcileWithdraw(withdrawEntry, null, 5100)).toBe('expired');
+  });
+
+  it('pendingWithdrawTargets names only the withdraw entries', () => {
+    const targets = pendingWithdrawTargets([withdrawEntry, likeEntry, postEntry]);
+    expect(targets.has(WITHDRAW_TARGET)).toBe(true);
+    expect(targets.has('target1')).toBe(false);
+    expect(targets.size).toBe(1);
+  });
+
+  it('round-trips a withdraw entry through localStorage', () => {
+    const a = new PendingLedger(KEY);
+    a.add(withdrawEntry);
     expect(new PendingLedger(KEY).all()).toEqual(a.all());
   });
 });

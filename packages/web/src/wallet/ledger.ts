@@ -178,6 +178,26 @@ export function reconcileInvite(
   return tip > entry.expiresAtHeight ? 'expired' : 'pending';
 }
 
+/** A pending withdrawal is landed when `GET /posts/:id` answers a tombstone — the
+ *  withdrawn marker, or a stump or pruned tombstone when the thread went first
+ *  (NODE_INTERFACE → The prune and withdrawal phase): any tombstone is the post
+ *  gone, and the entry is done. A 404 is expired — the post is unknown to this
+ *  node, so nothing can land — as is the tip passing `expiresAtHeight`. A live
+ *  post is still pending, unlike a post entry: a confirmed live post is not a
+ *  landing for a withdrawal (WEB_INTERFACE → The withdraw control). */
+export function reconcileWithdraw(entry: PendingEntry, fetched: PostResult | null, tip: number): EntryOutcome {
+  if (fetched === null) return 'expired';
+  if (isTombstone(fetched)) return 'landed';
+  return tip > entry.expiresAtHeight ? 'expired' : 'pending';
+}
+
+/** The posts the client has a pending withdrawal for — the flight renders
+ *  `submitted` from the ledger after a reload, the way a pending like overlays
+ *  `likedByViewer` (WEB_INTERFACE → The withdraw control). */
+export function pendingWithdrawTargets(entries: PendingEntry[]): Set<string> {
+  return new Set(entries.filter((e) => e.kind === 'withdraw').map((e) => e.postId));
+}
+
 // ---------------------------------------------------------------------------
 // Persisted shape — bigints as decimal strings.
 // ---------------------------------------------------------------------------
@@ -215,7 +235,7 @@ function parseStoredEntry(v: unknown): PendingEntry {
   if (typeof v !== 'object' || v === null) throw new Error('entry is not an object');
   const o = v as Record<string, unknown>;
   if (typeof o.txId !== 'string' || typeof o.postId !== 'string') throw new Error('entry has non-string ids');
-  if (o.kind !== 'post' && o.kind !== 'like' && o.kind !== 'grant' && o.kind !== 'vouch' && o.kind !== 'unvouch' && o.kind !== 'invite') {
+  if (o.kind !== 'post' && o.kind !== 'like' && o.kind !== 'grant' && o.kind !== 'vouch' && o.kind !== 'unvouch' && o.kind !== 'invite' && o.kind !== 'withdraw') {
     throw new Error('entry has an unknown kind');
   }
   if (!Array.isArray(o.inputs) || !o.inputs.every((x) => typeof x === 'string')) throw new Error('entry inputs are not strings');

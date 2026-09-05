@@ -30,15 +30,17 @@ import type { SpendableBox, ChangeRef } from './types';
 // but the builders are pinned to the demo UI's frozen vectors, a second
 // implementation, in builders.test.ts.
 //
-// Builders exist for a post, a like, a vouch, an unvouch and an invite, and
-// nothing else (WEB_INTERFACE → The wallet). A root post: change and a
-// `karma_price` of POST_PRICE_THREAD. A reply: change, a `karma_price` of
+// Builders exist for a post, a like, a vouch, an unvouch, an invite and a
+// withdrawal, and nothing else (WEB_INTERFACE → The wallet). A root post: change
+// and a `karma_price` of POST_PRICE_THREAD. A reply: change, a `karma_price` of
 // POST_PRICE_REPLY − REPLY_AUTHOR_SHARE, and a `like_accrual` of
 // REPLY_AUTHOR_SHARE to the parent's confirmedAuthor. A like: change and a
 // `like_accrual` of LIKE_KARMA_COST to the target's confirmedAuthor. A vouch:
 // change and a `vouch` box of VOUCH_KARMA_AMOUNT. An unvouch: one `vouch` box in,
 // one `vouch_escrow` out, no karma input and no change. An invite: change and a
-// `bond` box of the chosen amount.
+// `bond` box of the chosen amount. A withdrawal: the smallest karma box in, one
+// karma output of its value back out, carrying `postWithdraw` — a conserving
+// self-transfer whose output is the entry's change.
 
 /** Not enough karma for the price — a typed refusal the composer maps to its
  *  copy, so it never sees selectBoxes' bare throw (WEB_INTERFACE → "Affordability
@@ -217,12 +219,39 @@ export function buildInvite(ctx: BuildContext, inviteeHex: string, bond: bigint)
   return finish(tx, changeBox, change, ctx.height);
 }
 
+/** Build a withdrawal: the smallest karma box in, one karma output of its value
+ *  back out to the reader's own key, `postWithdraw` naming the post — a
+ *  conserving self-transfer whose single output is the entry's change
+ *  (WEB_INTERFACE → The withdraw control). The smallest box ties up the least
+ *  while the withdrawal is pending. An empty spendable view throws
+ *  InsufficientKarma, because the transaction needs one box to spend. */
+export function buildWithdraw(ctx: BuildContext, postId: string): BuiltTx {
+  const spent = smallestBox(ctx.spendable);
+  if (spent === null) throw new InsufficientKarma(1n, 0n);
+
+  const output: CandidateOf<KarmaBox> = {
+    boxType: 'karma',
+    value: spent.value,
+    createdAtBlock: ctx.height,
+    owner: hexToBytes(ctx.author),
+  };
+  const tx: UtxoTransaction = {
+    inputs: [spent.boxId],
+    outputs: [output],
+    signatures: {},
+    protocolVersion: ctx.era,
+    postWithdraw: { postId },
+  };
+  // The output is the returned box and the entry's change, at index 0.
+  return finish(tx, output, spent.value, ctx.height);
+}
+
 /**
  * Render a signed transaction for the node's JSON edge — the inverse of its
  * `jsonToTx` (WEB_INTERFACE → Writes). Values cross as decimal strings, binary
  * fields as hex, converted by the value's type rather than a hand-kept field
- * list. A `post` and a `likeTarget` are carried when present, because both sit
- * inside the signed bytes.
+ * list. A `post`, a `likeTarget` and a `postWithdraw` are carried when present,
+ * because each sits inside the signed bytes.
  */
 export function txToJson(tx: UtxoTransaction): Record<string, unknown> {
   const body: Record<string, unknown> = {
@@ -233,6 +262,7 @@ export function txToJson(tx: UtxoTransaction): Record<string, unknown> {
   };
   if (tx.likeTarget !== undefined) body.likeTarget = tx.likeTarget;
   if (tx.post !== undefined) body.post = postToJson(tx.post);
+  if (tx.postWithdraw !== undefined) body.postWithdraw = { postId: tx.postWithdraw.postId };
   return body;
 }
 
@@ -251,6 +281,15 @@ function selectForPrice(
   const selected = selectBoxes(sorted, price);
   const selectedTotal = selected.reduce((sum, b) => sum + b.value, 0n);
   return { selected, change: selectedTotal - price };
+}
+
+/** The smallest-valued spendable box, or null on an empty view. A withdrawal
+ *  spends one box and returns its value, so the smallest ties up the least
+ *  (WEB_INTERFACE → The withdraw control). */
+function smallestBox(spendable: SpendableBox[]): SpendableBox | null {
+  let min: SpendableBox | null = null;
+  for (const b of spendable) if (min === null || b.value < min.value) min = b;
+  return min;
 }
 
 /** A change box, or null when the change is zero — a zero change is no box
