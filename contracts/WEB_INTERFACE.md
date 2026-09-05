@@ -466,9 +466,6 @@ a title bar and a reply reference the prefix is text and opens nothing: the bar 
 the design. Opening a window spends nothing, so the panes-only rule that governs like and reply does not
 bind it.
 
-> ⚠ **AHEAD OF CODE (2026-09-05)** — the prefix control's rendering: the stylesheet carries no rule for
-> the prefix button, so it renders as the browser's own button. Retired when the rule lands.
-
 **On a title bar the mark is display only** — `✓` in ink when the reader's live vouch names the
 author, muted while it is pending, absent otherwise, and never `+`: the bar's label is itself the focus
 control, a control cannot nest inside a control, and the bar carries no action but focus. The cards
