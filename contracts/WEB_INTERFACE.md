@@ -10,11 +10,6 @@ unvouch, invite from the profile — and the **author's own controls' first unit
 reader's own card — are implemented; prune is not built
 **Protocol version:** read from the node, never held — see Invariants
 
-> ⚠ **AHEAD OF CODE (2026-09-05)** — the author's own controls' first unit, withdraw: the `Status:` line
-> above, → The withdraw control, the builder and the entry kind in → The wallet and the landing's exception
-> there, the Writes row; `HOUSE_STYLE → Motion`'s withdrawal clause; `NODE_INTERFACE → Pruning`'s two
-> answers carrying `expiresAtHeight` and the withdrawn view's `parentRefs`.
-
 
 > **The demo UI (`packages/node/public/index.html`) is not this contract's subject.** It is a debug
 > interface. Do not write an interface contract for it, and do not treat it as a product surface.
@@ -310,7 +305,7 @@ by the next block's settlement and its cooldown row can stand for a single block
 (`NODE_INTERFACE → Vouch transition rules`); a pending invite when `GET /invites/<key>` lists a bond
 naming the invitee; a pending withdrawal when `GET /posts/:id` answers a tombstone — the withdrawn
 marker, or a stump or pruned tombstone when the thread went first (`NODE_INTERFACE → The prune and
-withdrawal phase`) — each expired once the tip passes its `expiresAtHeight`.
+withdrawal phase`), and expired at once on a 404 — each expired once the tip passes its `expiresAtHeight`.
 
 **The reader's vouch set is client state read from the node, never stored:** `GET /vouches?voucher=<key>`
 to the end of `next` at identity load, again on every vouch or unvouch landing, and the cooldown arm

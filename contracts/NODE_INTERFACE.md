@@ -126,9 +126,6 @@ are hex-encoded.
 | `GET` | `/posts/:id/thread` | `?viewer=hex&limit=50&after=<blockHeight>:<blockIndex>` — `viewer` optional; `limit` and `after` page the descendants ("Every list a view returns is a page" below) | `{ post, ancestors, ancestorCount, descendants, descendantCount, next, pending, pendingCount }` — `post` is `PostJson`, `StumpJson`, `PrunedJson` or `WithdrawnJson`; `ancestors` the nearest `limit` ancestors, oldest first (`after` does not apply — the context above the topmost one is that post's own thread); `descendants` one page of the subtree's **committed** rows in committed order, `(blockHeight, blockIndex)` ascending, strictly after `after`, with `next` the key to continue from; `pending` the subtree's pending posts, newest arrival first, cut to `limit`, with `pendingCount` over all of them; `ancestorCount` and `descendantCount` are over the whole chain and the whole subtree, pending included. On a stump or a pruned tombstone every list is empty, every count 0 and `next` null; **a withdrawn subject answers its `ancestors`, `descendants`, `pending` and counts as a live subject does** — the row, its topology and every descendant's anchor survive the withdrawal (→ Withdrawal transactions), so its replies hang off it | 404 as above; 400 as `/posts` |
 | `GET` | `/posts` | `?author=hex&viewer=hex&limit=50&after=<blockHeight>:<blockIndex>` — `author` and `viewer` optional; `limit` and `after` page the committed rows ("Every list a view returns is a page" below) | `{ posts: PostJson[], next, pending: PostJson[], pendingCount }` — `posts` one page of the live committed rows, newest first in committed order (placeholders included, no stumps, no tombstones; ordering below), `next` the key to continue from; `pending` the live pending rows — the author's when `author` is present — newest arrival first, cut to `limit`, `pendingCount` over all of them | 400 if a present `limit` or `after` does not parse ("Every list a view returns is a page"), or a present `viewer` is not 64 hex chars |
 
-> ⚠ **AHEAD OF CODE (2026-09-05)** — the thread row's withdrawn subject: `getThread` answers a withdrawn
-> subject empty lists, the shape a stump or a pruned tombstone takes.
-
 **Every list a view returns is a page.** `limit` defaults to `PAGE_LIMIT_DEFAULT` (50) and clamps
 to `PAGE_LIMIT_MAX` (100); a present `limit` that does not parse as a positive safe integer is a
 400. `after` names the key of the last row the client holds, spelled as the list's stated total
@@ -468,9 +465,6 @@ invites, vouches, credits, prune).
 |--------|------|---------|----------|--------|
 | `POST` | `/posts/:id/prune` | `{ tx }` — a prune transaction, JSON-encoded like every other route's (`jsonToTx`) | `{ status: "submitted", txId: hex, postId: hex, expiresAtHeight }` (201) — no `replyCount`: the count is a property of apply, read off the stump | 400 if the payload is absent, the root is unconfirmed or confirmed at or above the block the prune is judged for (`tip + 1` at admission, → validateTx), or `validateTx` refuses it; 404 if the post is unknown; 409 on a pending-spend conflict; 503 if the pool is full |
 | `POST` | `/posts/:id/withdraw` | `{ tx }` — a withdrawal transaction, JSON-encoded like every other route's (`jsonToTx`) | `{ status: "submitted", txId: hex, postId: hex, expiresAtHeight }` (201) | 400 if the payload is absent, the post is unconfirmed or confirmed at or above the block the withdrawal is judged for (`tip + 1` at admission, → validateTx), the signer is not its author, the post is already withdrawn, or `validateTx` refuses it; 404 if the post is unknown; 409 on a pending-spend conflict; 503 if the pool is full |
-
-> ⚠ **AHEAD OF CODE (2026-09-05)** — `expiresAtHeight` in the two answers above, and `parentRefs` in the
-> withdrawn view (→ "The JSON projection has a fourth arm where the store has three").
 
 **Prune flow:**
 
