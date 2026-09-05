@@ -1057,10 +1057,16 @@ export class App {
   /** A withdrawal landed: replace the post in place with the fetched tombstone
    *  (WEB_INTERFACE → The withdraw control). In every open thread the row becomes
    *  the withdrawn card at its depth (the tombstone's parentRefs); the feed, the
-   *  author-posts windows and the live-post index drop it. Returns whether the feed
-   *  held it and the keys of the @posts windows that lost it, so the caller
+   *  author-posts windows and the live-post index drop it. The client's own
+   *  submission of the post is settled the same way, not left standing until the ↻:
+   *  a root's leaves the feed, a reply's becomes the withdrawn card at its depth by
+   *  joining every open thread that holds its parent, the count staying the node's
+   *  (WEB_INTERFACE → The withdraw control, → The wallet). Returns whether the feed
+   *  changed, the keys of the @posts windows that lost the row, and the parent ids
+   *  whose regions the caller must re-render explicitly — the reply-submission case
+   *  a stump or pruned answer leaves with no marker to append — so the caller
    *  re-renders exactly those surfaces. */
-  private applyWithdrawLanding(postId: string, fetched: PostResult | null): { feedHeld: boolean; postsKeys: string[] } {
+  private applyWithdrawLanding(postId: string, fetched: PostResult | null): { feedChanged: boolean; postsKeys: string[]; touchParents: string[] } {
     const tomb = fetched !== null && 'kind' in fetched ? fetched : null;
     // A withdrawn marker is a FeedRow and slots into a thread's descendants; a
     // stump or pruned answer (the thread went first) can only stand as a root.
@@ -1069,7 +1075,7 @@ export class App {
       if (t.root && t.root.id === postId && tomb) t.root = tomb;
       if (asFeedRow) t.descendants = t.descendants.map((r) => (r.id === postId ? asFeedRow : r));
     }
-    const feedHeld = this.state.feed.posts.some((p) => p.id === postId);
+    let feedChanged = this.state.feed.posts.some((p) => p.id === postId);
     this.state.feed.posts = this.state.feed.posts.filter((p) => p.id !== postId);
     this.state.feed.pending = this.state.feed.pending.filter((p) => p.id !== postId);
     // Any open @posts window that listed the row loses it; the caller re-renders
@@ -1081,7 +1087,29 @@ export class App {
       f.pending = f.pending.filter((p) => p.id !== postId);
     }
     this.state.posts.delete(postId); // the live-post index holds live rows only
-    return { feedHeld, postsKeys };
+
+    // The client's own submission of the withdrawn post is settled here, sooner
+    // than the ↻ (WEB_INTERFACE → The withdraw control). A root's drop is a feed
+    // change. A reply's becomes the withdrawn card at its depth by joining the
+    // descendants of every open thread that holds its parent, where the marker is
+    // not already a row — a route that listed the reply as a real row replaced it
+    // above; the caller's touch of the withdrawn id then reaches those threads,
+    // since each now contains it. A stump or pruned answer has no marker to slot
+    // in, so the submission drops and the caller re-renders the parent's regions.
+    const sub = this.state.submissions.find((s) => s.postId === postId);
+    const touchParents: string[] = [];
+    if (sub) {
+      if (sub.parentId === null) feedChanged = true;
+      else if (asFeedRow) {
+        for (const t of this.state.threads.values()) {
+          if (this.threadContains(t.id, sub.parentId) && !t.descendants.some((r) => r.id === postId)) {
+            t.descendants = [...t.descendants, asFeedRow];
+          }
+        }
+      } else touchParents.push(sub.parentId);
+      this.state.submissions = this.state.submissions.filter((s) => s.postId !== postId);
+    }
+    return { feedChanged, postsKeys, touchParents };
   }
 
   // -------------------------------------------------------------------------
@@ -1654,8 +1682,9 @@ export class App {
         this.ledger.remove(entry.txId);
         if (outcome === 'landed') {
           const landing = this.applyWithdrawLanding(entry.postId, fetched);
-          if (landing.feedHeld) feedTouched = true;
+          if (landing.feedChanged) feedTouched = true;
           for (const key of landing.postsKeys) postsWindowsTouched.add(key);
+          for (const parent of landing.touchParents) touchedPosts.add(parent);
         } else {
           this.withdrawFlights.set(entry.postId, {
             stage: 'expired',
