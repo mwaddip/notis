@@ -402,7 +402,8 @@ its one press and after it. The request carries only the public key, so a **lock
 
 **A faucet is a fact of the deployment, not of the network**, so the client reaches it as it reaches the
 node: `VITE_FAUCET_BASE` baked at build time — empty means no faucet and no button — and a `faucet`
-preference row that overrides it. In development the proxy takes a second target from `NOTIS_FAUCET`.
+preference row that overrides it. In development the proxy takes a second target from `NOTIS_FAUCET`,
+and the base is `/faucet` while it does, so the one knob carries both.
 The call, `POST <faucet>/karma { pubkey }`, lives in its own module beside the write client — the read
 client stays GET-only and the write client stays the node's edge — and the faucet's `{ error }` bodies
 normalise to the same `Rejection { status, message }`. In the register: a relayed 400 → *"this key
@@ -534,8 +535,14 @@ renders `submitted` from the entry. **Landed:** the entry's `GET /posts/:id` ans
 client replaces the row in place with what it fetched — in every open thread the post becomes the
 withdrawn card at its depth (the tombstone's `parentRefs`, `NODE_INTERFACE → Pruning`), the feed and any
 `@posts:` window drop the row, the live-post index forgets it — and re-renders only the regions holding
-it; no thread and no feed is refreshed. This is the one landing that changes a card's shape (→ The wallet,
-`HOUSE_STYLE → Motion`). **Expired:** the stage line reads *"no block took this by height N."* with `try
+it; no thread and no feed is refreshed. **The client's own submission of the post goes the same way:** a
+landed root submission leaves the feed as the row does, and a landed reply submission becomes the
+withdrawn card at its depth in every open thread that holds its parent — the tombstone joins that
+thread's descendants ahead of its ↻, so no rendering of the reply implies it was deleted; the count
+stays the node's until the ↻. A submission card is the composer's placeholder until the reader's ↻
+replaces it with the node's row, and a withdrawal landing is the one event that settles it sooner.
+This is the one landing that changes a card's shape (→ The wallet, `HOUSE_STYLE → Motion`).
+**Expired:** the stage line reads *"no block took this by height N."* with `try
 again`, which rebuilds from the current view and submits anew; the entry is removed and the box returns to
 the spendable view. **Rejected:** the region's report line reads *"withdraw rejected: …"* with the node's
 refusal in the voice register — its known refusals mapped to sentences, as the like's and the vouch's

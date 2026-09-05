@@ -6,7 +6,7 @@ import type { Api } from '../src/api/client';
 import type { AppIdentity, AppState } from '../src/model/state';
 import type { WriteClient, Rejection, WithdrawSubmitResult } from '../src/api/write';
 import type {
-  KarmaResult, PostJson, PostResult, StatusResult, ThreadResult, FeedResult, BlockCurrent, WithdrawnJson,
+  KarmaResult, PostJson, PostResult, StatusResult, ThreadResult, FeedResult, BlockCurrent, WithdrawnJson, FeedRow,
 } from '../src/api/dto';
 import { karmaResult } from './karma-fixture';
 import { contentHashHex } from '../src/integrity';
@@ -20,6 +20,7 @@ const PUB = 'aa'.repeat(32);   // the reader
 const S = 'bb'.repeat(32);     // another author, replying
 const OTHER = 'cc'.repeat(32); // a root by someone else
 const BOX = '11'.repeat(32);
+const NEW = '77'.repeat(32);   // the node id the composer's own post lands under
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
 function statusResult(): StatusResult {
@@ -37,9 +38,8 @@ function postJson(id: string, author: string, parentRefs: string[] = []): PostJs
   };
 }
 const asResult = (p: PostJson): PostResult => ({ ...p, confirmedAuthor: p.author });
-function tomb(id: string, parentRefs: string[]): PostResult {
-  return { kind: 'withdrawn', id, author: PUB, withdrawnAtHeight: 6002, parentRefs, confirmedAuthor: PUB } as WithdrawnJson & { confirmedAuthor: string | null };
-}
+const tombRow = (id: string, parentRefs: string[]): WithdrawnJson => ({ kind: 'withdrawn', id, author: PUB, withdrawnAtHeight: 6002, parentRefs });
+const tomb = (id: string, parentRefs: string[]): PostResult => ({ ...tombRow(id, parentRefs), confirmedAuthor: PUB });
 
 type WithdrawResp = { kind: 'ok' } | { kind: 'throw' } | { kind: 'reject'; rejection?: Rejection };
 
@@ -83,6 +83,9 @@ function harness(resp: WithdrawResp = { kind: 'ok' }) {
     bonds: async () => ({ bonds: [], bondCount: 0, next: null }),
   };
   const writeClient = {
+    // The composer's own path, so a submission is driven through the client, not
+    // placed into the state by hand; the node answers NEW as the post's id.
+    submitPost: async () => ({ postId: NEW, status: 'pending', expiresAtHeight: 6720, txId: last() }),
     submitWithdraw: async (postId: string): Promise<WithdrawSubmitResult | Rejection> => {
       if (resp.kind === 'throw') throw new Error('node unreachable');
       if (resp.kind === 'reject') return resp.rejection ?? { status: 403, message: 'not the post author' };
@@ -99,10 +102,12 @@ function harness(resp: WithdrawResp = { kind: 'ok' }) {
   app.mount(appbar, feed, panes);
 
   const drive = app as unknown as {
+    submitComposer(parentId: string | null, text: string): Promise<void>;
     withdrawPost(postId: string): Promise<void>;
     pollTick(): Promise<void>;
     loadFeed(): Promise<void>;
     loadMembershipState(): Promise<void>;
+    refreshThread(id: string): Promise<void>;
     openThread(id: string, origin: { from: 'feed' } | { from: 'pane'; ci: number }): void;
     openAuthorPosts(key: string, origin: { from: 'feed' } | { from: 'pane'; ci: number }): void;
     state: AppState;
@@ -119,7 +124,7 @@ function harness(resp: WithdrawResp = { kind: 'ok' }) {
   };
 }
 
-const singleThread = (root: PostJson, descendants: PostJson[]): ThreadResult => ({
+const singleThread = (root: PostJson, descendants: FeedRow[]): ThreadResult => ({
   post: root, ancestors: [], ancestorCount: 0, descendants, descendantCount: descendants.length,
   next: null, pending: [], pendingCount: 0,
 });
@@ -301,5 +306,93 @@ describe('the App withdraw flight', () => {
     expect(h.drive.withdrawFlights.has(P)).toBe(true);
     h.fireIdentityChange();
     expect(h.drive.withdrawFlights.size).toBe(0);
+  });
+});
+
+// The landing settles the client's own submission of the withdrawn post, sooner
+// than the reader's ↻ (WEB_INTERFACE → The withdraw control). The post travels
+// the composer's own path — submitComposer, then the poll — so the submission is
+// the client's own, never one placed into the state by hand.
+describe("the App withdraw landing settles the post's own submission card", () => {
+  const textOf = (root: Element): string[] =>
+    [...root.querySelectorAll('.card-content')].map((n) => n.textContent ?? '');
+
+  it('a root composed and withdrawn in one session leaves the feed on the landing', async () => {
+    const h = harness();
+    const text = 'a fresh thread, then withdrawn';
+    await h.drive.loadFeed();            // an empty feed to compose into
+    await h.drive.loadMembershipState(); // profileKarma → canSignWithdraw
+    // The node confirms NEW, then the poll lands the submission.
+    h.setNode(NEW, asResult(postJson(NEW, PUB)));
+    await h.drive.submitComposer(null, text);
+    await h.drive.pollTick();
+    expect(h.drive.state.submissions[0]!.stage).toBe('landed');
+    expect(textOf(h.feed)).toContain(text); // the landed submission card is in the feed
+
+    // Its own pane, and an unrelated pane to prove the landing spares it.
+    h.setThread(NEW, singleThread(postJson(NEW, PUB), []));
+    h.drive.openThread(NEW, { from: 'feed' });
+    const other = postJson('f'.repeat(64), OTHER);
+    h.setNode(other.id, asResult(other));
+    h.setThread(other.id, singleThread(other, []));
+    h.drive.openThread(other.id, { from: 'pane', ci: 1 });
+    await flush();
+    const region1Before = h.panes.querySelectorAll('.region')[1];
+
+    await h.drive.withdrawPost(NEW);
+    h.setNode(NEW, tomb(NEW, []));
+    h.setHeight(6002);
+    await h.drive.pollTick();
+
+    // The submission is settled: gone from the state and from the feed's DOM.
+    expect(h.drive.state.submissions.some((s) => s.postId === NEW)).toBe(false);
+    expect(textOf(h.feed)).not.toContain(text);
+    // Its pane root is the withdrawn card; the ledger cleared.
+    const region0 = h.panes.querySelectorAll('.region')[0]!;
+    expect(region0.querySelector('.withdrawn')?.textContent).toContain('withdrawn by its author');
+    expect(h.ledger.size).toBe(0);
+    // The unrelated region survived by reference — nothing else re-rendered.
+    expect(h.panes.querySelectorAll('.region')[1]).toBe(region1Before);
+  });
+
+  it("a reply composed and withdrawn in one session becomes the withdrawn card in its parent's pane", async () => {
+    const h = harness();
+    const text = 'a fresh reply, then withdrawn';
+    const { P, R } = await ownRootOpen(h); // P (own) open in a pane, one reply R by S
+    // A reply under P through the composer; the node confirms NEW and the poll lands it.
+    h.setNode(NEW, asResult(postJson(NEW, PUB, [P])));
+    await h.drive.submitComposer(P, text);
+    await h.drive.pollTick();
+    expect(h.drive.state.submissions[0]!).toMatchObject({ stage: 'landed', postId: NEW, parentId: P });
+    // The landed reply submission card stands in P's pane before the withdrawal.
+    const pRegion = (): Element =>
+      [...h.panes.querySelectorAll('.region')].find((r) => textOf(r).includes(text) || r.querySelector('.card.depth-1 .withdrawn'))!;
+    expect(textOf(pRegion())).toContain(text);
+
+    // Open the reply's own pane, then withdraw it there.
+    h.setThread(NEW, singleThread(postJson(NEW, PUB, [P]), []));
+    h.drive.openThread(NEW, { from: 'pane', ci: 0 });
+    await flush();
+    await h.drive.withdrawPost(NEW);
+    h.setNode(NEW, tomb(NEW, [P])); // the marker keeps its parentRef
+    h.setHeight(6002);
+    await h.drive.pollTick();
+
+    // P's pane shows the withdrawn card at depth 1, no card content carries the
+    // reply's text, and the submission is gone.
+    expect(h.panes.querySelector('.card.depth-1 .withdrawn')).not.toBeNull();
+    expect(textOf(h.panes)).not.toContain(text);
+    expect(h.drive.state.submissions.some((s) => s.postId === NEW)).toBe(false);
+    // P's descendants hold the marker exactly once; the reply's own pane root is
+    // the withdrawn card.
+    expect(h.drive.state.threads.get(P)!.descendants.filter((r) => r.id === NEW).length).toBe(1);
+    expect(h.panes.querySelector('.card.thread-root .withdrawn')).not.toBeNull();
+
+    // A ↻ of P's thread, the node now listing the marker among the descendants,
+    // replaces the appended one rather than doubling it.
+    h.setThread(P, singleThread(postJson(P, PUB), [postJson(R, S, [P]), tombRow(NEW, [P])]));
+    await h.drive.refreshThread(P);
+    expect(h.drive.state.threads.get(P)!.descendants.filter((r) => r.id === NEW).length).toBe(1);
+    expect(h.panes.querySelectorAll('.card.depth-1 .withdrawn').length).toBe(1);
   });
 });

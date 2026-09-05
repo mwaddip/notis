@@ -21,6 +21,17 @@ const NODE_ORIGIN = process.env['NOTIS_NODE'] ?? 'http://localhost:3000';
 // route (a 400 for a bad body). The rewrite strips it.
 const FAUCET_ORIGIN = process.env['NOTIS_FAUCET'];
 
+// In development the client's faucet base follows its proxy: when NOTIS_FAUCET
+// wires the proxy above, VITE_FAUCET_BASE defaults to /faucet, so the one knob
+// carries both the proxy target and the base the client reads. An explicit
+// VITE_FAUCET_BASE still wins — the deploy recipe bakes it. Vite's loadEnv reads
+// VITE_-prefixed variables from process.env after this config module is
+// evaluated, so a default set here reaches import.meta.env.VITE_FAUCET_BASE.
+// WEB_INTERFACE → "A faucet is a fact of the deployment, not of the network"
+if (FAUCET_ORIGIN && !process.env['VITE_FAUCET_BASE']) {
+  process.env['VITE_FAUCET_BASE'] = '/faucet';
+}
+
 // The API paths mounted bare on the node, proxied so the browser sees them
 // same-origin — the node and nginx send no CORS
 // (WEB_INTERFACE → The client is served from the node's own origin). The read
