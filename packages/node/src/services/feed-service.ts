@@ -212,16 +212,6 @@ export class FeedService {
     const result = this.deps.getPost(id);
     if (!result) return null;
 
-    if (isStoredPost(result)) {
-      if (result.withdrawnAtHeight !== null) {
-        return {
-          post: withdrawnToJson(result),
-          ancestors: [], ancestorCount: 0,
-          descendants: [], descendantCount: 0,
-          next: null, pending: [], pendingCount: 0,
-        };
-      }
-    }
     if (isStump(result)) {
       return {
         post: stumpToJson(result),
@@ -239,9 +229,11 @@ export class FeedService {
       };
     }
 
+    // NODE_INTERFACE → Posts: a withdrawn subject answers ancestors, descendants
+    // and pending as a live subject does — the row, its topology and every
+    // descendant's anchor survive the withdrawal.
     const post = result;
-    const likeCount = this.deps.getLikeRecordCount(id);
-    const postJson = postToJson(post, likeCount, this.likedByViewer(id, viewer), this.blockCreatedAtFor(post));
+    const postJson = this.storedPostToJson(post, viewer);
 
     const ancestorResult = this.deps.getAncestorsNearest(id, page.limit);
     const ancestors = ancestorResult.rows.map((p) => this.storedPostToJson(p, viewer));
