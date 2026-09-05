@@ -1058,7 +1058,8 @@ export class App {
    *  (WEB_INTERFACE → The withdraw control). In every open thread the row becomes
    *  the withdrawn card at its depth (the tombstone's parentRefs); the feed, the
    *  author-posts windows and the live-post index drop it. Returns whether the feed
-   *  held it, so only a feed that carried the row is re-rendered. */
+   *  held it and the keys of the @posts windows that lost it, so the caller
+   *  re-renders exactly those surfaces. */
   private applyWithdrawLanding(postId: string, fetched: PostResult | null): { feedHeld: boolean; postsKeys: string[] } {
     const tomb = fetched !== null && 'kind' in fetched ? fetched : null;
     // A withdrawn marker is a FeedRow and slots into a thread's descendants; a
