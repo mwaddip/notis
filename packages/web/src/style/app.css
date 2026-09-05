@@ -423,12 +423,18 @@ header .spacer { flex: 1 1 auto; }
   font: inherit; line-height: inherit; letter-spacing: inherit;
   text-align: inherit; color: inherit; cursor: pointer;
 }
-.authorbtn:hover { color: var(--ink); }
-.authorbtn:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: 2px; }
 /* An endorser row (author window) and a standing-bond row (profile) carry no
    `.who`, so they give the prefix the card who row's face directly — mono,
-   11.5px, inkMute (WEB_INTERFACE → The identity display). */
+   11.5px, inkMute (WEB_INTERFACE → The identity display). This precedes the hover
+   so the hover's `ink` wins the equal-specificity (0,2,0) tie in the two rows,
+   exactly as `.who .hex` above lets it on a card. */
 .endorser .hex, .bond .hex { font-family: var(--mono); font-size: 11.5px; color: var(--inkMute); }
+/* The hover darkens the ink to `ink` wherever the prefix is a control — the card
+   who row, an endorser row, a bond row — and nothing else. It follows every
+   context's `.hex` colour rule so its `ink` wins the (0,2,0) tie
+   (WEB_INTERFACE → The identity display). */
+.authorbtn:hover { color: var(--ink); }
+.authorbtn:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: 2px; }
 
 /* The vouch mark — WEB_INTERFACE → The identity display. A control after the
    prefix: + to vouch (muted ink), ✓ once vouched (ink), a muted ✓ while pending.
