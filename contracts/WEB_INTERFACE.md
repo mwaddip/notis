@@ -534,8 +534,14 @@ renders `submitted` from the entry. **Landed:** the entry's `GET /posts/:id` ans
 client replaces the row in place with what it fetched — in every open thread the post becomes the
 withdrawn card at its depth (the tombstone's `parentRefs`, `NODE_INTERFACE → Pruning`), the feed and any
 `@posts:` window drop the row, the live-post index forgets it — and re-renders only the regions holding
-it; no thread and no feed is refreshed. This is the one landing that changes a card's shape (→ The wallet,
-`HOUSE_STYLE → Motion`). **Expired:** the stage line reads *"no block took this by height N."* with `try
+it; no thread and no feed is refreshed. **The client's own submission of the post goes the same way:** a
+landed root submission leaves the feed as the row does, and a landed reply submission becomes the
+withdrawn card at its depth in every open thread that holds its parent — the tombstone joins that
+thread's descendants ahead of its ↻, so no rendering of the reply implies it was deleted; the count
+stays the node's until the ↻. A submission card is the composer's placeholder until the reader's ↻
+replaces it with the node's row, and a withdrawal landing is the one event that settles it sooner.
+This is the one landing that changes a card's shape (→ The wallet, `HOUSE_STYLE → Motion`).
+**Expired:** the stage line reads *"no block took this by height N."* with `try
 again`, which rebuilds from the current view and submits anew; the entry is removed and the box returns to
 the spendable view. **Rejected:** the region's report line reads *"withdraw rejected: …"* with the node's
 refusal in the voice register — its known refusals mapped to sentences, as the like's and the vouch's
@@ -543,6 +549,9 @@ are (`HOUSE_STYLE → Voice`) — and the control returns; a transport failure r
 can't reach the node right now."* and leaves nothing pending. A 2xx whose body carries no `expiresAtHeight` is a client
 rejection — *"the node answered without an expiry height"* — the way a txId that differs from the built
 one is: the client records no entry it cannot track.
+> ⚠ **AHEAD OF CODE (2026-09-05)** — the submission clause: the landing leaves the client's own submission
+> card standing — a withdrawn root's in the feed, a withdrawn reply's in its parent's pane — until the
+> reader's ↻. Retired when the landing takes it.
 
 ## Writes
 
