@@ -36,8 +36,8 @@ export const EMPTY_STATE_ROOT = '00'.repeat(33);
 
 /**
  * **The block's one committed body** (TYPES_INTERFACE → Ordering block). Posts
- * and prunes are transactions, so they ride `utxoTxIds` with everything else
- * and there is no second section.
+ * and withdrawals are transactions, so they ride `utxoTxIds` with everything
+ * else and there is no second section.
  *
  * ⛔ **ONE LEAF CLASS.** `computeUtxoTxRoot` builds its leaves from `utxoTxIds`
  * alone — `leafHash('utxotx', id)`. Every block carries one settlement
@@ -47,7 +47,7 @@ export const EMPTY_STATE_ROOT = '00'.repeat(33);
  * reservation (TYPES_INTERFACE → Tracked reservations).
  */
 export interface UtxoTxTree {
-  utxoTxIds: TxId[];            // UTXO transactions — posts, likes, prunes and the settlement included
+  utxoTxIds: TxId[];            // UTXO transactions — posts, likes, withdrawals and the settlement included
   utxoTxs: Uint8Array[];        // encoded UtxoTransactions (aligned with utxoTxIds)
 }
 

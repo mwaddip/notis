@@ -14,8 +14,8 @@ export function hexToBuf(hex: string): Buffer {
 
 /**
  * Domain-separated leaf hash for Merkle trees.
- * Prevents cross-tree collision (a prune leaf hash can't collide with a
- * utxotx leaf hash even if the underlying bytes match).
+ * Prevents cross-tree collision (two different domains hash the same
+ * underlying bytes to different leaves).
  */
 export function leafHash(domain: string, data: Uint8Array): Uint8Array {
   const domainBytes = new TextEncoder().encode(domain + '\0');

@@ -19,8 +19,9 @@
  * `blockHash` while the encoding differs by 395 bytes.
  *
  * The `utxoTxTree` codec carries two sections, `utxoTxIds` and `utxoTxs`. A
- * prune rides the transaction rail as a `UtxoTransaction.prune` payload, so it
- * needs no section of its own (TYPES_INTERFACE → Ordering block).
+ * post or a withdrawal rides the transaction rail as a `UtxoTransaction`
+ * payload field, so neither needs a section of its own (TYPES_INTERFACE →
+ * Ordering block).
  */
 
 import { ByteReader, ByteWriter } from '@dagsocial/wire';
@@ -253,8 +254,8 @@ export function decodeHeader(bytes: Uint8Array): BlockHeader {
 /**
  * `arr(utxoTxIds, b32)` ‖ `arr(utxoTxs, lp)`.
  *
- * **The block's one committed body.** Prunes are transactions, so they ride
- * `utxoTxIds` with everything else and there is no second section.
+ * **The block's one committed body.** Withdrawals are transactions, so they
+ * ride `utxoTxIds` with everything else and there is no second section.
  *
  * ⛔ **TWO SECTIONS.** Coinbase outputs are outputs of the block's settlement
  * transaction, so they arrive inside `utxoTxs` like every other transaction's

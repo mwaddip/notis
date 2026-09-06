@@ -78,7 +78,7 @@ function makeBlockHeader(): BlockHeader {
 }
 
 /**
- * ⛔ **TWO SECTIONS.** Prunes ride the transaction rail, so the tree is
+ * ⛔ **TWO SECTIONS.** Withdrawals ride the transaction rail, so the tree is
  * `utxoTxIds` and `utxoTxs` only.
  */
 function makeUtxoTxTree(): UtxoTxTree {
@@ -159,7 +159,7 @@ describe('positional serialization', () => {
       expect(decodeHeader(encodeHeader(makeBlockHeader()))).toEqual(makeBlockHeader());
     });
 
-    it('UtxoTxTree — two sections, no prune entries', () => {
+    it('UtxoTxTree — two sections, no withdrawal entries', () => {
       expect(decodeUtxoTxTree(encodeUtxoTxTree(makeUtxoTxTree()))).toEqual(makeUtxoTxTree());
     });
 
@@ -248,20 +248,20 @@ describe('positional serialization', () => {
       expect(computeTxId(decodeTx(encodeTx(signed)))).toBe(computeTxId(signed));
     });
 
-    it('no field name reaches the bytes, and the whole transaction is 44 bytes', () => {
+    it('no field name reaches the bytes, and the whole transaction is 43 bytes', () => {
       // Hand-derived from the layout: arr(inputs)=1, arr(outputs)=1+36 for the
       // karma candidate, vlqU(protocolVersion)=1, opt(likeTarget)=1,
-      // opt(post)=1, opt(prune)=1, opt(postWithdraw)=1, arr(signatures)=1.
+      // opt(post)=1, opt(postWithdraw)=1, arr(signatures)=1.
       //
       // 36: the shared prefix is three fields, and this candidate's
       // `createdAtBlock` of 300 takes two VLQ groups.
       //
       // ⚠ **Every `opt` costs its tag byte whether or not the field is there**, so
-      // an eighth field would show up here as 45 even on a transaction that
+      // a seventh field would show up here as 44 even on a transaction that
       // carries none of it — which is why an optional field is inside every id,
       // not only the ids that use it.
       const bytes = encodeTx(makeTx());
-      expect(bytes.length).toBe(44);
+      expect(bytes.length).toBe(43);
       for (const name of ['inputs', 'outputs', 'signatures', 'protocolVersion', 'boxType', 'karma']) {
         expect(hex(bytes)).not.toContain(Buffer.from(name, 'utf8').toString('hex'));
       }
@@ -428,7 +428,7 @@ describe('positional serialization', () => {
       // decoded block.
       const withSub = {
         ...makeOrderingBlock(),
-        extraJunk: { entries: [{ postId: 'de'.repeat(32) }], pruneEntries: [] },
+        extraJunk: { entries: [{ postId: 'de'.repeat(32) }], likeEntries: [] },
       };
       expect(hex(encodeOrderingBlock(withSub as OrderingBlock)))
         .toBe(hex(encodeOrderingBlock(makeOrderingBlock())));
@@ -674,7 +674,7 @@ describe('positional serialization', () => {
       // them apart. The pins that decide are elsewhere: the BlockHeader pin above
       // for the header, and the frozen ids in `utxo.test.ts` for consensus. **Read
       // this one only as "the frame changed" — never as evidence about what.**
-      expect(hash(encodeOrderingBlock(makeOrderingBlock()))).toBe('495114d3e51dbc82b86b89539fcab77ebedcacc902854af55a7159c915903d0e');
+      expect(hash(encodeOrderingBlock(makeOrderingBlock()))).toBe('16eb1fa2a5ead687aba9bf45864da2c825481e2546edfd9dde15d9b1246a6aa9');
     });
 
     it('Post: the wire codec IS the payload preimage, with no tail at all', () => {
