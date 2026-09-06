@@ -59,6 +59,7 @@ import {
   getIdentityRecord,
   putIdentityRecord,
   hasActiveVouchEscrow,
+  getVouchCountForTarget,
 } from '../../src/store/index.js';
 import { castVouch, initiateUnvouch } from '../../src/services/vouch.js';
 
@@ -195,6 +196,7 @@ describe('vouch routes — the JSON edge', () => {
     path: string,
     method: 'GET' | 'POST' | 'DELETE',
     body?: unknown,
+    overrides?: { getVouchCountForTarget?: (targetId: Uint8Array) => number },
   ): Promise<{ status: number; data: unknown }> {
     return new Promise((resolve) => {
       const deps = {
@@ -202,6 +204,7 @@ describe('vouch routes — the JSON edge', () => {
         castVouch,
         initiateUnvouch,
         getCurrentHeight: () => HEIGHT,
+        getVouchCountForTarget: overrides?.getVouchCountForTarget ?? getVouchCountForTarget,
       };
       const app = express();
       app.use(express.json());
@@ -414,6 +417,52 @@ describe('vouch routes — the JSON edge', () => {
     expect(body['status']).toBe('pending');
     expect(body['txId']).toBe(computeTxId(tx));
     expect(body['karmaReturnsAtBlock']).toBe(COOLDOWN);
+  });
+
+  // -------------------------------------------------------------------------
+  // GET /vouches?target= — the endorsers list's own standing
+  // NODE_INTERFACE → Vouches, "?target=X&limit=…" row
+  // -------------------------------------------------------------------------
+
+  it("GET /vouches?target=X carries each row's voucherVouchCount — the voucher's own standing", async () => {
+    // voucher vouches for target; a third identity vouches for voucher.
+    seedVouchBox(voucher.pub, target.pub);
+    const endorserOfVoucher = makeKeys();
+    seedVouchBox(endorserOfVoucher.pub, voucher.pub, 1);
+
+    const res = await request(`/?target=${target.hex}`, 'GET');
+    expect(res.status).toBe(200);
+    const body = res.data as { vouches: Array<Record<string, unknown>>; count: number };
+    expect(body.count).toBe(1);
+    expect(body.vouches[0]).toEqual({
+      voucherId: voucher.hex,
+      targetId: target.hex,
+      voucherVouchCount: 1,
+    });
+  });
+
+  it('voucherVouchCount is read once per distinct voucher on the page', async () => {
+    // Two live vouch boxes naming the SAME voucher for the SAME target —
+    // unreachable through castVouch (NODE_INTERFACE → Vouches: no live vouch
+    // for the same (voucher, target) pair), seeded directly to exercise the
+    // page's own dedup independent of that gate.
+    seedVouchBox(voucher.pub, target.pub, 0);
+    seedVouchBox(voucher.pub, target.pub, 1);
+
+    let calls = 0;
+    const countingGetVouchCountForTarget = (targetId: Uint8Array): number => {
+      calls++;
+      return getVouchCountForTarget(targetId);
+    };
+
+    const res = await request(`/?target=${target.hex}`, 'GET', undefined, {
+      getVouchCountForTarget: countingGetVouchCountForTarget,
+    });
+    expect(res.status).toBe(200);
+    const body = res.data as { vouches: Array<Record<string, unknown>>; count: number };
+    expect(body.vouches).toHaveLength(2);
+    expect(body.vouches.every((v) => v['voucherVouchCount'] === 0)).toBe(true);
+    expect(calls).toBe(1);
   });
 
   // -------------------------------------------------------------------------

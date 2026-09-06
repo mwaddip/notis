@@ -667,6 +667,10 @@ describe('posts routes', () => {
       const post = body['post'] as Record<string, unknown>;
       expect(post['kind']).toBe('withdrawn');
       expect(post['parentRefs']).toEqual([withdrawnSubjectParentId]);
+      // NODE_INTERFACE → "The JSON projection has two arms where the store
+      // has one shape": the thread head's WithdrawnJson carries both counts.
+      expect(post['descendantCount']).toBe(1);
+      expect(post['authorVouchCount']).toBe(0);
       const ancestors = body['ancestors'] as Array<Record<string, unknown>>;
       expect(ancestors.map((a) => a['id'])).toEqual([withdrawnSubjectParentId]);
       expect(body['ancestorCount']).toBe(1);
@@ -689,6 +693,8 @@ describe('posts routes', () => {
         kind: 'withdrawn',
         id: withdrawnSubjectId,
         withdrawnAtHeight: 24,
+        descendantCount: 1,
+        authorVouchCount: 0,
       });
       expect(body['ancestorCount']).toBe(2);
     });
@@ -706,6 +712,8 @@ describe('posts routes', () => {
         kind: 'withdrawn',
         id: withdrawnSubjectId,
         parentRefs: [withdrawnSubjectParentId],
+        descendantCount: 1,
+        authorVouchCount: 0,
       });
       expect(body['descendantCount']).toBe(2);
     });
@@ -754,6 +762,8 @@ describe('posts routes', () => {
         author: Buffer.from(author).toString('hex'),
         parentRefs: [liveRootId],
         withdrawnAtHeight: 52,
+        descendantCount: 0,
+        authorVouchCount: 0,
         confirmedAuthor: null,
       });
     });
@@ -767,6 +777,8 @@ describe('posts routes', () => {
         author: Buffer.from(author).toString('hex'),
         parentRefs: [],
         withdrawnAtHeight: 54,
+        descendantCount: 0,
+        authorVouchCount: 0,
         confirmedAuthor: null,
       });
     });
@@ -783,6 +795,8 @@ describe('posts routes', () => {
         author: Buffer.from(author).toString('hex'),
         parentRefs: [liveRootId],
         withdrawnAtHeight: 52,
+        descendantCount: 0,
+        authorVouchCount: 0,
       });
     });
 
@@ -798,6 +812,8 @@ describe('posts routes', () => {
         author: Buffer.from(author).toString('hex'),
         parentRefs: [liveRootId],
         withdrawnAtHeight: 52,
+        descendantCount: 0,
+        authorVouchCount: 0,
       });
     });
   });

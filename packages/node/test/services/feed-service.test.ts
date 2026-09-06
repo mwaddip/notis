@@ -249,6 +249,92 @@ describe('feed-service', () => {
     expect(vouchCalls).toBe(4);
   });
 
+  it('authorVouchCount is read once per distinct author across a withdrawn row and a live row by the same author', () => {
+    const withdrawnId = insertTestPost('A post about to be withdrawn', authorId, []);
+    confirmPost(withdrawnId, 40, 0);
+    withdrawPost(withdrawnId, 41);
+
+    let vouchCalls = 0;
+    const countingService = new FeedService({
+      getPost: storeGetPost,
+      queryPostsPage,
+      getLikeRecordCount,
+      getDescendantCount,
+      getVouchCountForTarget: (targetId: Uint8Array) => {
+        vouchCalls++;
+        return getVouchCountForTarget(targetId);
+      },
+      hasLikeRecord,
+      getAncestorsNearest,
+      getSubtreePage,
+      getBlockCreatedAt,
+    });
+
+    // One confirmed row (the withdrawn post) plus liveRootId/liveReplyId still
+    // pending — three rows, one distinct author, in one response.
+    const feed = countingService.queryPosts({ limit: 50 });
+    expect(feed.posts.some((p) => p.id === withdrawnId)).toBe(true);
+    expect(feed.pending.length).toBe(2);
+    expect(vouchCalls).toBe(1);
+  });
+
+  // -----------------------------------------------------------------------
+  // WithdrawnJson carries the same two counts — NODE_INTERFACE →
+  // "The JSON projection has two arms where the store has one shape"
+  // -----------------------------------------------------------------------
+
+  it('descendantCount and authorVouchCount ride every WithdrawnJson arm too', () => {
+    // A withdrawn root with one live child — getPost, listing and thread-head arms.
+    const withdrawnRootId = insertTestPost('A root about to be withdrawn', authorId, []);
+    confirmPost(withdrawnRootId, 30, 0);
+    const rootChildId = insertTestPost('Its live child', authorId, [withdrawnRootId]);
+    confirmPost(rootChildId, 31, 0);
+    withdrawPost(withdrawnRootId, 32);
+
+    // A live root with a withdrawn child — the thread-descendant arm.
+    const liveParentId = insertTestPost('A live parent whose reply withdraws', authorId, []);
+    confirmPost(liveParentId, 33, 0);
+    const withdrawnChildId = insertTestPost('A reply about to be withdrawn', authorId, [liveParentId]);
+    confirmPost(withdrawnChildId, 34, 0);
+    withdrawPost(withdrawnChildId, 35);
+
+    const vouch = seedProvenance<VouchBox>({
+      boxType: 'vouch' as const,
+      value: 1n,
+      createdAtBlock: 0,
+      voucherId: uid('withdrawn-counts-voucher'),
+      targetId: authorId,
+    }, 1);
+    insertBox(vouch);
+
+    // getPost
+    const head = feedService.getPost(withdrawnRootId) as WithdrawnJson;
+    expect(head.kind).toBe('withdrawn');
+    expect(head.descendantCount).toBe(1);
+    expect(head.authorVouchCount).toBe(1);
+
+    // listing
+    const feed = feedService.queryPosts({ limit: 50 });
+    const feedRow = feed.posts.find((p) => p.id === withdrawnRootId) as WithdrawnJson;
+    expect(feedRow.descendantCount).toBe(1);
+    expect(feedRow.authorVouchCount).toBe(1);
+
+    // thread head
+    const thread = feedService.getThread(withdrawnRootId, { limit: 50 })!;
+    const threadHead = thread.post as WithdrawnJson;
+    expect(threadHead.kind).toBe('withdrawn');
+    expect(threadHead.descendantCount).toBe(1);
+    expect(threadHead.authorVouchCount).toBe(1);
+
+    // thread descendant
+    const parentThread = feedService.getThread(liveParentId, { limit: 50 })!;
+    const descendant = parentThread.descendants[0] as WithdrawnJson;
+    expect(descendant.id).toBe(withdrawnChildId);
+    expect(descendant.kind).toBe('withdrawn');
+    expect(descendant.descendantCount).toBe(0);
+    expect(descendant.authorVouchCount).toBe(1);
+  });
+
   it('getThread reads the head\'s descendantCount once, and the head and the thread agree', () => {
     const descendantCalls: Record<string, number> = {};
     const countingGetDescendantCount = (postId: string): number => {

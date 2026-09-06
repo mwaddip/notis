@@ -58,6 +58,8 @@ export interface WithdrawnJson {
   author: string;
   parentRefs: string[];
   withdrawnAtHeight: number;
+  descendantCount: number;
+  authorVouchCount: number;
 }
 
 export interface ThreadResult {
@@ -109,13 +111,19 @@ function postToJson(
   };
 }
 
-function withdrawnToJson(post: StoredPost): WithdrawnJson {
+function withdrawnToJson(
+  post: StoredPost,
+  descendantCount: number,
+  authorVouchCount: number,
+): WithdrawnJson {
   return {
     kind: 'withdrawn',
     id: post.id,
     author: Buffer.from(post.author).toString('hex'),
     parentRefs: post.parentRefs,
     withdrawnAtHeight: post.withdrawnAtHeight!,
+    descendantCount,
+    authorVouchCount,
   };
 }
 
@@ -143,10 +151,16 @@ export class FeedService {
     vouchCountCache: Map<string, number>,
     precomputedDescendantCount?: number,
   ): PostJson | WithdrawnJson {
-    if (post.withdrawnAtHeight !== null) return withdrawnToJson(post);
-    const likeCount = this.deps.getLikeRecordCount(post.id);
+    // NODE_INTERFACE → "The JSON projection has two arms where the store has
+    // one shape": both arms carry descendantCount and authorVouchCount under
+    // PostJson's definitions, the author counted once per distinct author per
+    // response across withdrawn and live rows in the same dedup.
     const descendantCount = precomputedDescendantCount ?? this.deps.getDescendantCount(post.id);
     const authorVouchCount = this.authorVouchCountFor(post.author, vouchCountCache);
+    if (post.withdrawnAtHeight !== null) {
+      return withdrawnToJson(post, descendantCount, authorVouchCount);
+    }
+    const likeCount = this.deps.getLikeRecordCount(post.id);
     return postToJson(
       post,
       likeCount,

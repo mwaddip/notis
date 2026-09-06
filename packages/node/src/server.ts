@@ -285,6 +285,7 @@ export function createApp(config: Config): express.Express {
       initiateUnvouch,
       ...utxoEngineDeps,
       getCurrentHeight: store.getCurrentHeight,
+      getVouchCountForTarget: store.getVouchCountForTarget,
     }),
   );
 
