@@ -224,8 +224,8 @@ function mountRowUnlock(anchorRow: HTMLElement, ownKey: string, onUnlock: (p: st
 
 export interface PostsCtx {
   authorKey: string;
-  origin: Origin;                         // the author's posts, the feed's own state shape
-  feed: FeedState;
+  origin: Origin;
+  feed: FeedState;                        // the author's posts, the feed's own state shape
   writeEnabled: boolean;
   ownKey: string | null;
   locked: boolean;
