@@ -1462,10 +1462,8 @@ chain or owed one:
 | **prune removal** (2026-09-06) | the prune field of `UtxoTransaction`, removed (TYPES_INTERFACE → Layout — UtxoTransaction) — every `TxId`, and every box id derived from one |
 | **the committee rule** (2026-09-06) | the identity record a root's grant writes — `memberSinceBlock`, `memberBar` — and the network record's `N` (§Earned, standing, and well-founded by age) |
 
-**Outstanding against the live node: the prune removal and the committee rule.** Testnet's chain
-began at the 2026-08-30 reset whose block 1 the profile pins as `genesisId`
-(§What varies per network), and every earlier row is in it; the two outstanding rows ship in one
-reset, which re-pins `genesisId`.
+**Outstanding against the live node: nothing.** Testnet's chain began at the 2026-09-06 reset, whose
+block 1 the profile pins as `genesisId` (§What varies per network); every row is in it.
 
 > ⚠ **Wiping the AVL store alone is a fork trigger. Wipe chain and AVL store together, always.**
 >
