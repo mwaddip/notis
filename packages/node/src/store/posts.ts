@@ -1,8 +1,6 @@
 import { getDb } from './db.js';
-import { rowToStump } from './stumps.js';
-import type { PostCommit, PostId, PostType, Stump } from '@dagsocial/types';
+import type { PostCommit, PostId, PostType } from '@dagsocial/types';
 import type { Page, PostKey } from './index.js';
-import type { StumpRow } from './stumps.js';
 
 // ---------------------------------------------------------------------------
 // Row shapes
@@ -42,42 +40,8 @@ export interface StoredPost {
   withdrawnAtHeight: number | null;
 }
 
-export interface PrunedTombstone {
-  kind: 'pruned';
-  id: PostId;
-  author: string;                 // hex, from block_topology
-  rootPostHash: PostId;
-  compactedAtBlockHeight: number;
-}
-
-export interface DeletedPostRow {
-  id: PostId;
-  contentHash: string;
-  content: string | null;
-  author: Uint8Array;
-  parentRefs: PostId[];
-  protocolVersion: number;
-  type: PostType;
-  status: PostStatus;
-  blockHeight: number | null;
-  blockIndex: number | null;
-  withdrawnAtHeight: number | null;
-}
-
-export function isStoredPost(x: StoredPost | Stump | PrunedTombstone | null): x is StoredPost {
-  return x !== null && 'status' in x && !('rootPostHash' in x) && !('kind' in x);
-}
-
-export function isLivePost(x: StoredPost | Stump | PrunedTombstone | null): x is StoredPost {
-  return isStoredPost(x) && x.withdrawnAtHeight === null;
-}
-
-export function isStump(x: StoredPost | Stump | PrunedTombstone | null): x is Stump {
-  return x !== null && 'rootPostHash' in x && !('kind' in x);
-}
-
-export function isPrunedTombstone(x: StoredPost | Stump | PrunedTombstone | null): x is PrunedTombstone {
-  return x !== null && 'kind' in x && (x as PrunedTombstone).kind === 'pruned';
+export function isLivePost(x: StoredPost | null): x is StoredPost {
+  return x !== null && x.withdrawnAtHeight === null;
 }
 
 // ---------------------------------------------------------------------------
@@ -142,45 +106,15 @@ export function setPostBody(postId: string, content: string): boolean {
   return result.changes > 0;
 }
 
-export function getPost(id: string): StoredPost | Stump | PrunedTombstone | null {
+// NODE_INTERFACE → Resolution order for a post id
+export function getPost(id: string): StoredPost | null {
   const db = getDb();
 
-  // 1. dag_posts row → StoredPost
   const postRow = db
     .prepare('SELECT * FROM dag_posts WHERE id = ?')
     .get(id) as PostRow | undefined;
 
-  if (postRow) {
-    return rowToPost(postRow);
-  }
-
-  // 2. dag_stumps by id → Stump
-  const stumpRow = db
-    .prepare('SELECT * FROM dag_stumps WHERE id = ?')
-    .get(id) as StumpRow | undefined;
-  if (stumpRow) {
-    return rowToStump(stumpRow);
-  }
-
-  // 3. block_topology's prune marks → PrunedTombstone
-  return getPrunedTombstone(id);
-}
-
-// NODE_INTERFACE → Resolution order for a post id, step 3: the block_topology
-// row's prune marks, one read.
-export function getPrunedTombstone(id: string): PrunedTombstone | null {
-  const row = getDb()
-    .prepare('SELECT author, pruned_at_height, pruned_root FROM block_topology WHERE post_id = ?')
-    .get(id) as { author: string; pruned_at_height: number | null; pruned_root: string | null } | undefined;
-  if (!row || row.pruned_at_height === null || row.pruned_root === null) return null;
-
-  return {
-    kind: 'pruned',
-    id,
-    author: row.author,
-    rootPostHash: row.pruned_root,
-    compactedAtBlockHeight: row.pruned_at_height,
-  };
+  return postRow ? rowToPost(postRow) : null;
 }
 
 export function getMissingBodies(limit: number): Array<{ id: string; contentHash: string }> {
@@ -320,81 +254,10 @@ export function deletePendingPost(postId: string): void {
   })();
 }
 
-export function deletePostRows(ids: string[]): DeletedPostRow[] {
-  if (ids.length === 0) return [];
-  const db = getDb();
-  const deleted: DeletedPostRow[] = [];
-
-  const selectPost = db.prepare('SELECT * FROM dag_posts WHERE id = ?');
-  const deleteRefs = db.prepare('DELETE FROM dag_parent_refs WHERE post_id = ?');
-  const deletePost = db.prepare('DELETE FROM dag_posts WHERE id = ?');
-
-  for (const id of ids) {
-    const row = selectPost.get(id) as PostRow | undefined;
-    if (!row) continue;
-
-    const parentRefs = db
-      .prepare('SELECT parent_id FROM dag_parent_refs WHERE post_id = ?')
-      .all(id) as Array<{ parent_id: string }>;
-
-    deleted.push({
-      id: row.id,
-      contentHash: row.content_hash,
-      content: row.content,
-      author: new Uint8Array(row.author),
-      parentRefs: parentRefs.map(r => r.parent_id),
-      protocolVersion: row.protocol_version,
-      type: row.type as PostType,
-      status: row.status as PostStatus,
-      blockHeight: row.block_height,
-      blockIndex: row.block_index,
-      withdrawnAtHeight: row.withdrawn_at_height,
-    });
-
-    deleteRefs.run(id);
-    deletePost.run(id);
-  }
-
-  return deleted;
-}
-
-export function restorePostRows(rows: DeletedPostRow[]): void {
-  const db = getDb();
-  const insertPostStmt = db.prepare(
-    `INSERT INTO dag_posts
-       (id, content_hash, content, author, parent_refs,
-        protocol_version, type, status, block_height, block_index,
-        withdrawn_at_height)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  );
-  const insertRef = db.prepare(
-    'INSERT OR IGNORE INTO dag_parent_refs (post_id, parent_id) VALUES (?, ?)',
-  );
-
-  for (const row of rows) {
-    insertPostStmt.run(
-      row.id,
-      row.contentHash,
-      row.content,
-      Buffer.from(row.author),
-      JSON.stringify(row.parentRefs),
-      row.protocolVersion,
-      row.type,
-      row.status,
-      row.blockHeight,
-      row.blockIndex,
-      row.withdrawnAtHeight,
-    );
-    for (const parentId of row.parentRefs) {
-      insertRef.run(row.id, parentId);
-    }
-  }
-}
-
 // NODE_INTERFACE → Store Interface, getAncestorsNearest.
-// The chain is the ancestors that are posts; a stump ends it. A post's id is
-// a hash over its parentRefs, so no id can be its own ancestor — the recursion
-// needs no depth bound.
+// The chain ends at the root — every ancestor keeps its dag_posts row,
+// withdrawn or not. A post's id is a hash over its parentRefs, so no id can
+// be its own ancestor — the recursion needs no depth bound.
 const ANCESTOR_CTE =
   `WITH RECURSIVE chain(pid, depth) AS (
      SELECT dpr.parent_id, 1

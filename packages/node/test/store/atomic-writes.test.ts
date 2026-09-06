@@ -151,38 +151,6 @@ describe('atomic writes', () => {
     expect(refRow).toBeUndefined();
   });
 
-  it('deletePostRows + restorePostRows round-trip preserves all data', async () => {
-    const { initDb } = await importDbFresh();
-    const { insertPost, confirmPost, deletePostRows, restorePostRows, getPost, isLivePost, getParentRefs } = await importPostsFresh();
-
-    initDb(':memory:');
-
-    const { commit: rootCommit, content: rootContent } = makeCommit({ content: 'root' });
-    const rootId = fixturePostId(rootCommit);
-    const { commit: childCommit, content: childContent } = makeCommit({ content: 'child', parentRefs: [rootId] });
-    const childId = fixturePostId(childCommit);
-
-    insertPost(rootId, rootCommit, rootContent);
-    insertPost(childId, childCommit, childContent);
-    confirmPost(rootId, 1, 0);
-    confirmPost(childId, 1, 1);
-
-    const deleted = deletePostRows([rootId, childId]);
-    expect(deleted).toHaveLength(2);
-    expect(getPost(rootId)).toBeNull();
-    expect(getPost(childId)).toBeNull();
-
-    restorePostRows(deleted);
-    const restored = getPost(rootId);
-    expect(isLivePost(restored)).toBe(true);
-    expect((restored as any).content).toBe('root');
-    expect((restored as any).blockHeight).toBe(1);
-
-    const childRestored = getPost(childId);
-    expect(isLivePost(childRestored)).toBe(true);
-    expect(getParentRefs(childId)).toEqual([rootId]);
-  });
-
   it('confirmPost updates status, block_height and block_index', async () => {
     const { initDb, getDb } = await importDbFresh();
     const { insertPost, confirmPost } = await importPostsFresh();

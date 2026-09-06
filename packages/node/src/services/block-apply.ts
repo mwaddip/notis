@@ -50,7 +50,6 @@ import {
   insertPost,
   withdrawPost,
   isLivePost,
-  isStoredPost,
   getCurrentHeight,
   createOrderingBlock as storeCreateOrderingBlock,
   getOrderingBlock,
@@ -1193,7 +1192,7 @@ function applyMutationPhase(
     }
 
     const existing = getPost(postId);
-    if (!isStoredPost(existing) || existing.withdrawnAtHeight !== null) {
+    if (existing === null || existing.withdrawnAtHeight !== null) {
       console.error(
         `Block ${height}: postWithdraw ${postId} targets an already-withdrawn or unknown post`,
       );

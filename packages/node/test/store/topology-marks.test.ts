@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { seedProvenance, uid, uidHex } from '../helpers.js';
+import { seedProvenance, uid } from '../helpers.js';
 import type { VouchEscrowBox, BondBox } from '@dagsocial/types';
 
 // ---------------------------------------------------------------------------
@@ -8,11 +8,9 @@ import type { VouchEscrowBox, BondBox } from '@dagsocial/types';
 
 async function importAll() {
   const db = await import('../../src/store/db.js');
-  const topology = await import('../../src/store/topology.js');
   const utxo = await import('../../src/store/utxo.js');
-  const journal = await import('../../src/store/journal.js');
   const identityRecords = await import('../../src/store/identity-records.js');
-  return { ...db, ...topology, ...utxo, ...journal, ...identityRecords };
+  return { ...db, ...utxo, ...identityRecords };
 }
 
 // ---------------------------------------------------------------------------
@@ -54,105 +52,6 @@ function makeBondBox(
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
-
-describe('topology marks (pruned_at_height / pruned_root)', () => {
-  beforeEach(() => { vi.resetModules(); });
-  afterEach(() => { vi.resetModules(); });
-
-  it('markPrunedTopology sets columns and journals the pre-image, restorePrunedTopology writes it back', async () => {
-    const s = await importAll();
-    s.initDb(':memory:');
-
-    s.insertBlockTopology('p1', [], uidHex('author1'), 10);
-    s.insertBlockTopology('p2', ['p1'], uidHex('author2'), 10);
-
-    s.beginBlockJournal(11);
-    s.markPrunedTopology(['p1', 'p2'], 11, 'p1');
-    const j = s.finishBlockJournal();
-
-    const db = s.getDb();
-    const r1 = db.prepare('SELECT pruned_at_height, pruned_root FROM block_topology WHERE post_id = ?').get('p1') as any;
-    expect(r1.pruned_at_height).toBe(11);
-    expect(r1.pruned_root).toBe('p1');
-
-    const r2 = db.prepare('SELECT pruned_at_height, pruned_root FROM block_topology WHERE post_id = ?').get('p2') as any;
-    expect(r2.pruned_at_height).toBe(11);
-    expect(r2.pruned_root).toBe('p1');
-
-    expect(j.prunedTopologyRows).toEqual([
-      { postId: 'p1', prunedAtHeight: null, prunedRoot: null },
-      { postId: 'p2', prunedAtHeight: null, prunedRoot: null },
-    ]);
-
-    s.restorePrunedTopology(j.prunedTopologyRows);
-    const c1 = db.prepare('SELECT pruned_at_height, pruned_root FROM block_topology WHERE post_id = ?').get('p1') as any;
-    expect(c1.pruned_at_height).toBeNull();
-    expect(c1.pruned_root).toBeNull();
-    const c2 = db.prepare('SELECT pruned_at_height, pruned_root FROM block_topology WHERE post_id = ?').get('p2') as any;
-    expect(c2.pruned_at_height).toBeNull();
-    expect(c2.pruned_root).toBeNull();
-  });
-
-  it('a row an earlier prune marked is re-marked, and restore hands it back its earlier marks', async () => {
-    const s = await importAll();
-    s.initDb(':memory:');
-
-    s.insertBlockTopology('p1', [], uidHex('author1'), 10);
-    s.insertBlockTopology('p2', ['p1'], uidHex('author2'), 10);
-
-    s.beginBlockJournal(11);
-    s.markPrunedTopology(['p1', 'p2'], 11, 'p1');
-    const journalA = s.finishBlockJournal();
-    expect(journalA.prunedTopologyRows).toEqual([
-      { postId: 'p1', prunedAtHeight: null, prunedRoot: null },
-      { postId: 'p2', prunedAtHeight: null, prunedRoot: null },
-    ]);
-
-    s.beginBlockJournal(20);
-    s.markPrunedTopology(['p1', 'p2'], 20, 'p0');
-    const journalB = s.finishBlockJournal();
-    expect(journalB.prunedTopologyRows).toEqual([
-      { postId: 'p1', prunedAtHeight: 11, prunedRoot: 'p1' },
-      { postId: 'p2', prunedAtHeight: 11, prunedRoot: 'p1' },
-    ]);
-
-    const db = s.getDb();
-    const afterMarkB = db.prepare('SELECT pruned_at_height, pruned_root FROM block_topology WHERE post_id = ?').get('p1') as any;
-    expect(afterMarkB.pruned_at_height).toBe(20);
-    expect(afterMarkB.pruned_root).toBe('p0');
-
-    s.restorePrunedTopology(journalB.prunedTopologyRows);
-    const p1AfterRestoreB = db.prepare('SELECT pruned_at_height, pruned_root FROM block_topology WHERE post_id = ?').get('p1') as any;
-    expect(p1AfterRestoreB.pruned_at_height).toBe(11);
-    expect(p1AfterRestoreB.pruned_root).toBe('p1');
-    const p2AfterRestoreB = db.prepare('SELECT pruned_at_height, pruned_root FROM block_topology WHERE post_id = ?').get('p2') as any;
-    expect(p2AfterRestoreB.pruned_at_height).toBe(11);
-    expect(p2AfterRestoreB.pruned_root).toBe('p1');
-
-    s.restorePrunedTopology(journalA.prunedTopologyRows);
-    const p1AfterRestoreA = db.prepare('SELECT pruned_at_height, pruned_root FROM block_topology WHERE post_id = ?').get('p1') as any;
-    expect(p1AfterRestoreA.pruned_at_height).toBeNull();
-    expect(p1AfterRestoreA.pruned_root).toBeNull();
-    const p2AfterRestoreA = db.prepare('SELECT pruned_at_height, pruned_root FROM block_topology WHERE post_id = ?').get('p2') as any;
-    expect(p2AfterRestoreA.pruned_at_height).toBeNull();
-    expect(p2AfterRestoreA.pruned_root).toBeNull();
-  });
-
-  it('restorePrunedTopology is a no-op on an empty list', async () => {
-    const s = await importAll();
-    s.initDb(':memory:');
-    expect(() => s.restorePrunedTopology([])).not.toThrow();
-  });
-
-  it('markPrunedTopology is a no-op on an empty list', async () => {
-    const s = await importAll();
-    s.initDb(':memory:');
-    s.beginBlockJournal(1);
-    s.markPrunedTopology([], 1, 'root');
-    const j = s.finishBlockJournal();
-    expect(j.prunedTopologyRows).toEqual([]);
-  });
-});
 
 describe('getBondsInvitedAt — range, limit, order', () => {
   beforeEach(() => { vi.resetModules(); });
@@ -288,43 +187,6 @@ describe('getVouchEscrowsReleasableAt — order and limit', () => {
     expect(limited).toHaveLength(2);
     expect(limited[0]!.releaseAtBlock).toBe(10);
     expect(limited[1]!.releaseAtBlock).toBe(10);
-  });
-});
-
-describe('journal round-trip for prunedTopologyRows', () => {
-  beforeEach(() => { vi.resetModules(); });
-  afterEach(() => { vi.resetModules(); });
-
-  it('round-trips through CBOR, nulls and numbers both', async () => {
-    const s = await importAll();
-    s.initDb(':memory:');
-
-    s.insertBlockTopology('rt1', [], uidHex('rtauthor'), 49);
-    s.insertBlockTopology('rt2', ['rt1'], uidHex('rtauthor'), 49);
-
-    s.beginBlockJournal(50);
-    s.markPrunedTopology(['rt1', 'rt2'], 50, 'rt1');
-    const journalA = s.finishBlockJournal();
-    s.insertBlockJournal(journalA);
-
-    s.beginBlockJournal(60);
-    s.markPrunedTopology(['rt1', 'rt2'], 60, 'rt0');
-    const journalB = s.finishBlockJournal();
-    s.insertBlockJournal(journalB);
-
-    const loadedA = s.getBlockJournal(50);
-    expect(loadedA).not.toBeNull();
-    expect(loadedA!.prunedTopologyRows).toEqual([
-      { postId: 'rt1', prunedAtHeight: null, prunedRoot: null },
-      { postId: 'rt2', prunedAtHeight: null, prunedRoot: null },
-    ]);
-
-    const loadedB = s.getBlockJournal(60);
-    expect(loadedB).not.toBeNull();
-    expect(loadedB!.prunedTopologyRows).toEqual([
-      { postId: 'rt1', prunedAtHeight: 50, prunedRoot: 'rt1' },
-      { postId: 'rt2', prunedAtHeight: 50, prunedRoot: 'rt1' },
-    ]);
   });
 });
 

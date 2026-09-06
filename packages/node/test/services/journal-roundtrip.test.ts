@@ -28,7 +28,6 @@ import {
   makeTestConfig,
   makeTestIdentity,
   mineNextBlock,
-  seedPostTx,
   seedProvenance,
   signTransaction,
   activateProverOverStore,
@@ -167,9 +166,9 @@ function dumpState(db: Database.Database) {
     // `{kind:'box'}` inverses rather than through a hand-written side-record.
     // ✅ **Every piece of block-application state this dumps is inside the
     // `stateRoot`** (ARCHITECTURE → Vouch boxes).
-    // P2-D N3b: prune settlement deletes the subtree's like-records, so "DB
-    // identity after revert" has to cover the table (mirrors the
-    // like-settlement suite's dumpState).
+    // Every applied like writes a like_records row, so "DB identity after
+    // revert" has to cover the table (mirrors the like-settlement suite's
+    // dumpState).
     likeRecords: db
       .prepare('SELECT * FROM like_records ORDER BY target_post_id, liker_id')
       .all(),
@@ -416,67 +415,6 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
     expect(utxo.getCreditBoxes(recipient.userId)).toHaveLength(1);
 
     await assertRoundTrip(db, handle, pre, classBlock!);
-  });
-
-  // -----------------------------------------------------------------------
-  // Prune — deletes the subtree's like-records and marks topology; revert
-  // restores the deleted rows and the records exactly.
-  // -----------------------------------------------------------------------
-
-  it('prune: the stump, the deleted posts and the topology marks all revert', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-
-    const author = makeTestIdentity();
-    const utxo = await importUtxo();
-
-    // The author needs karma both to post (block 1) and to prune (block 2).
-    // Two separate boxes so each block's tx has its own unspent input.
-    const { tx: postTx, postId } = await seedPostTx(author, 'pruned');
-    const pruneKarma = makeKarmaBox(1n, author.userId, 0, 999);
-    utxo.insertBox(pruneKarma);
-
-    const handle = await activateProver();
-    const blockApply = await importBlockApply();
-
-    // Block 1: carries the post — topology is populated by apply.
-    const block1 = await makeApplicableBlock({ utxoTxs: [postTx] });
-    expect(blockApply.applyOrderingBlock(block1)).toBe(true);
-    const pre = takeSnapshot(db, handle, 1);
-
-    // Build the prune: a karma self-transfer with a PruneCommit.
-    const pruneTx: UtxoTransaction = {
-      inputs: [pruneKarma.id!],
-      outputs: [
-        { boxType: 'karma', value: 1n, createdAtBlock: 0, owner: author.userId } as never,
-      ],
-      signatures: {},
-      protocolVersion: PROTOCOL_VERSION,
-      prune: { rootPostHash: postId },
-    };
-    signTransaction(pruneTx, author.privateKey, hex(author.userId));
-
-    // Block 2: carries the prune.
-    const block2 = await makeApplicableBlock({ height: 2, utxoTxs: [pruneTx] });
-    expect(blockApply.applyOrderingBlock(block2)).toBe(true);
-
-    // The prune created a stump, marked topology, and deleted the post.
-    const stumps = db.getDb()
-      .prepare('SELECT * FROM dag_stumps WHERE root_post_hash = ?')
-      .all(postId);
-    expect(stumps).toHaveLength(1);
-
-    const topology = db.getDb()
-      .prepare('SELECT pruned_at_height FROM block_topology WHERE post_id = ?')
-      .get(postId) as { pruned_at_height: number | null } | undefined;
-    expect(topology?.pruned_at_height).toBe(2);
-
-    const posts = await import('../../src/store/posts.js');
-    const afterPrune = posts.getPost(postId);
-    expect(afterPrune && 'rootPostHash' in afterPrune).toBe(true);
-
-    await assertRoundTrip(db, handle, pre, block2);
   });
 
   // -----------------------------------------------------------------------

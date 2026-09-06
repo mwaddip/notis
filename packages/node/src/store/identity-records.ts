@@ -67,14 +67,11 @@ export interface IdentityRecord {
    * only input, `min(floor(n / INVITE_BOND_VEST_PER_LIKES), bond.value)`.
    *
    * **Monotonic: incremented by per-block like settlement and decremented by
-   * nothing, prune included.** That is the whole reason it is a committed
-   * counter rather than a count over `like_records`. Those records die with the
-   * post, so a join through them would let a *third party* destroy value: Bob
-   * replies in Carol's thread and earns likes, Carol prunes her own thread, and
-   * Alice — who bonded for Bob and did nothing at all — loses karma at
-   * settlement. Design track §1.4.1 forbids exactly that ("you may destroy your
-   * own stake, never someone else's"), which is also why prune returns other
-   * authors' post bonds.
+   * nothing.** `like_records` is deliberately outside the `stateRoot`
+   * (NODE_INTERFACE → Like-records), so a consensus-critical settlement input
+   * cannot be sourced from it; the counter is the committed value instead. A
+   * withdrawal of the reply that earned the likes empties its content but
+   * leaves its like-records in place, so the counter is unaffected either way.
    *
    * `bigint` for the same two reasons the counter is: the value is consensus
    * input to bigint arithmetic, and the row boundary (`safeIntegers`) hands back

@@ -1,7 +1,7 @@
 import {
   fixtureProvenance, uid } from '../helpers.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import type { AnyBox, KarmaBox, Stump, VouchBox } from '@dagsocial/types';
+import type { AnyBox, KarmaBox, VouchBox } from '@dagsocial/types';
 
 // ---------------------------------------------------------------------------
 // Dynamic import helpers (reset module-level state between tests — the
@@ -86,23 +86,17 @@ describe('block journal (store choke-point recording)', () => {
     expect(j.confirmedPostIds).toEqual([]);
     expect(j.appliedUtxoTxs).toEqual([]);
     expect(j.likeRecordInsertions).toEqual([]);
-    expect(j.likeRecordDeletions).toEqual([]);
     // ⛔ **The journal carries no vouch side-record, and the key set is the
     // assertion.** An unvouched stake waits in a `VouchEscrowBox`, so its
     // creation and its spend are journalled by `insertBox`/`consumeBox` as
     // `{kind:'box'}` with the exact inverses those already carry
     // (ARCHITECTURE → Vouch boxes).
     expect(Object.keys(j).sort()).toEqual([
-      'absorbedStumps',
       'appliedUtxoTxs',
       'blockHeight',
       'confirmedPostIds',
-      'deletedPosts',
-      'insertedStumps',
-      'likeRecordDeletions',
       'likeRecordInsertions',
       'mutations',
-      'prunedTopologyRows',
       'withdrawnPosts',
     ]);
     expect(s.isBlockJournalOpen()).toBe(false);
@@ -235,7 +229,6 @@ describe('block journal (store choke-point recording)', () => {
     const j = s.finishBlockJournal();
     expect(j.mutations).toEqual([]);
     expect(j.likeRecordInsertions).toEqual([]);
-    expect(j.likeRecordDeletions).toEqual([]);
   });
 
   it('deleteBox, unconsumeBox never record even while open', async () => {
@@ -289,30 +282,6 @@ describe('block journal (store choke-point recording)', () => {
     expect(cnt.c).toBe(1);
   });
 
-  // --- absorbedStumps round-trip -------------------------------------------
-
-  it('a journal carrying an absorbed stump round-trips through CBOR', async () => {
-    const s = await importAll();
-    s.initDb(':memory:');
-
-    const stump: Stump = {
-      rootPostHash: 'absorbed-root',
-      authorId: uid('absorbed-author'),
-      replyCount: 3,
-      upvoteCount: 5,
-      protocolVersion: 1,
-      compactedAtBlockHeight: 40,
-    };
-
-    s.beginBlockJournal(41);
-    s.recordAbsorbedStump(stump);
-    const journal = s.finishBlockJournal();
-    s.insertBlockJournal(journal);
-
-    const loaded = s.getBlockJournal(41);
-    expect(loaded).not.toBeNull();
-    expect(loaded!.absorbedStumps).toEqual([stump]);
-  });
 });
 
 /** Stable small integer from a fixture id, so distinct boxes get distinct provenance. */

@@ -8,8 +8,6 @@ import {
   getMissingBodies,
   queryPostsPage,
   confirmPost,
-  deletePostRows,
-  restorePostRows,
   getParentRefs,
   getSubtreePage,
   isLivePost,
@@ -152,24 +150,6 @@ describe('posts store (integration)', () => {
     const result = getSubtreePage(rootId, { limit: 50 });
     const contents = result.rows.map((p) => p.content);
     expect(contents).toEqual(['tree-child', 'tree-grandchild']);
-  });
-
-  it('deletePostRows deletes rows, restorePostRows restores them', () => {
-    const { commit: rootCommit, content: rootContent } = makeCommit({ content: 'del-root' });
-    const rootId = fixturePostId(rootCommit);
-    insertPost(rootId, rootCommit, rootContent);
-    confirmPost(rootId, 99, 0);
-
-    const deleted = deletePostRows([rootId]);
-    expect(deleted).toHaveLength(1);
-    expect(deleted[0]!.content).toBe('del-root');
-    expect(getPost(rootId)).toBeNull();
-
-    restorePostRows(deleted);
-    const restored = getPost(rootId);
-    expect(isLivePost(restored)).toBe(true);
-    expect((restored as any).content).toBe('del-root');
-    expect((restored as any).blockHeight).toBe(99);
   });
 
   it('getPost returns null for unknown id', () => {

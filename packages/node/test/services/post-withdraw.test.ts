@@ -210,11 +210,8 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
 
     const stored = posts.getPost(postId);
     expect(stored).not.toBeNull();
-    expect(posts.isStoredPost(stored!)).toBe(true);
-    if (posts.isStoredPost(stored!)) {
-      expect(stored!.content).toBeNull();
-      expect(stored!.withdrawnAtHeight).toBe(2);
-    }
+    expect(stored!.content).toBeNull();
+    expect(stored!.withdrawnAtHeight).toBe(2);
     expect(posts.isLivePost(stored!)).toBe(false);
 
     // Topology survives
@@ -324,11 +321,9 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
 
     // Verify content before withdrawal
     const before = posts.getPost(postId);
-    expect(posts.isStoredPost(before!)).toBe(true);
-    if (posts.isStoredPost(before!)) {
-      expect(before!.content).toBe('journal-test');
-      expect(before!.withdrawnAtHeight).toBeNull();
-    }
+    expect(before).not.toBeNull();
+    expect(before!.content).toBe('journal-test');
+    expect(before!.withdrawnAtHeight).toBeNull();
 
     const withdrawKarma = makeKarmaBox(10n, author.userId, 1, 60);
     utxo.insertBox(withdrawKarma);
@@ -343,11 +338,9 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
 
     // After withdrawal: content is null, marker set
     const after = posts.getPost(postId);
-    expect(posts.isStoredPost(after!)).toBe(true);
-    if (posts.isStoredPost(after!)) {
-      expect(after!.content).toBeNull();
-      expect(after!.withdrawnAtHeight).toBe(2);
-    }
+    expect(after).not.toBeNull();
+    expect(after!.content).toBeNull();
+    expect(after!.withdrawnAtHeight).toBe(2);
 
     // Check the journal recorded the withdrawal
     const journal = journalStore.getBlockJournal(2);
@@ -362,11 +355,9 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
 
     // After revert: content and marker restored
     const restored = posts.getPost(postId);
-    expect(posts.isStoredPost(restored!)).toBe(true);
-    if (posts.isStoredPost(restored!)) {
-      expect(restored!.content).toBe('journal-test');
-      expect(restored!.withdrawnAtHeight).toBeNull();
-    }
+    expect(restored).not.toBeNull();
+    expect(restored!.content).toBe('journal-test');
+    expect(restored!.withdrawnAtHeight).toBeNull();
   });
 
   // -----------------------------------------------------------------------
@@ -386,11 +377,9 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
       .run(postId);
 
     const beforeW = posts.getPost(postId);
-    expect(posts.isStoredPost(beforeW!)).toBe(true);
-    if (posts.isStoredPost(beforeW!)) {
-      expect(beforeW!.content).toBeNull();
-      expect(beforeW!.withdrawnAtHeight).toBeNull();
-    }
+    expect(beforeW).not.toBeNull();
+    expect(beforeW!.content).toBeNull();
+    expect(beforeW!.withdrawnAtHeight).toBeNull();
 
     // Withdraw the placeholder
     const withdrawKarma = makeKarmaBox(10n, author.userId, 1, 61);
@@ -415,11 +404,9 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
     forkRes.revertBlock(2);
 
     const restored = posts.getPost(postId);
-    expect(posts.isStoredPost(restored!)).toBe(true);
-    if (posts.isStoredPost(restored!)) {
-      expect(restored!.content).toBeNull();
-      expect(restored!.withdrawnAtHeight).toBeNull();
-    }
+    expect(restored).not.toBeNull();
+    expect(restored!.content).toBeNull();
+    expect(restored!.withdrawnAtHeight).toBeNull();
   });
 
   // -----------------------------------------------------------------------

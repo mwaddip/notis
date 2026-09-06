@@ -2,7 +2,7 @@ import { uid, fixturePostId } from '../helpers.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type Database from 'better-sqlite3';
 import { computeContentHash } from '@dagsocial/types';
-import type { PostCommit, Stump } from '@dagsocial/types';
+import type { PostCommit } from '@dagsocial/types';
 
 function hex(u: Uint8Array): string { return Buffer.from(u).toString('hex'); }
 
@@ -17,18 +17,6 @@ async function importDbFresh() {
 
 async function importPostsFresh() {
   return import('../../src/store/posts.js');
-}
-
-async function importStumpsFresh() {
-  const mod = await import('../../src/store/stumps.js');
-  return mod as {
-    insertStump: (stump: Stump) => void;
-    deleteStump: (id: string) => void;
-  };
-}
-
-async function importTopology() {
-  return import('../../src/store/topology.js');
 }
 
 // ---------------------------------------------------------------------------
@@ -47,18 +35,6 @@ function makeCommit(overrides: Partial<PostCommit> & { content?: string } = {}):
     ...rest,
   };
   return { commit, content };
-}
-
-function makeStump(overrides: Partial<Stump>): Stump {
-  return {
-    rootPostHash: '0000000000000000000000000000000000000000000000000000000000000000',
-    authorId: uid('alice123'),
-    replyCount: 0,
-    upvoteCount: 0,
-    protocolVersion: 1,
-    compactedAtBlockHeight: 10,
-    ...overrides,
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -157,95 +133,6 @@ describe('posts store', () => {
 
     const result = getPost('nonexistent-id');
     expect(result).toBeNull();
-  });
-
-  it('getPost returns Stump for a stump id', async () => {
-    const { initDb } = await importDbFresh();
-    const { getPost } = await importPostsFresh();
-    const { insertStump } = await importStumpsFresh();
-
-    initDb(':memory:');
-
-    const stumpId = 'a1'.repeat(32);
-    const stump = makeStump({
-      rootPostHash: stumpId,
-      replyCount: 5,
-      upvoteCount: 10,
-      compactedAtBlockHeight: 7,
-    });
-    insertStump(stump);
-
-    const result = getPost(stumpId);
-    expect(result).not.toBeNull();
-    const retrieved = result as Stump;
-    expect(retrieved.rootPostHash).toBe(stumpId);
-    expect(retrieved.replyCount).toBe(5);
-  });
-
-  it('getPost returns PrunedTombstone for a pruned descendant', async () => {
-    const { initDb, getDb } = await importDbFresh();
-    const { getPost, insertPost, confirmPost } = await importPostsFresh();
-    const { insertStump } = await importStumpsFresh();
-    const { insertBlockTopology, markPrunedTopology } = await importTopology();
-
-    initDb(':memory:');
-
-    // Set up a root and a child in topology
-    const { commit: rootCommit } = makeCommit({ content: 'root' });
-    const rootId = fixturePostId(rootCommit);
-    const { commit: childCommit } = makeCommit({ content: 'child', parentRefs: [rootId] });
-    const childId = fixturePostId(childCommit);
-
-    // Insert both posts so topology can be built
-    insertPost(rootId, rootCommit, 'root');
-    insertPost(childId, childCommit, 'child');
-    confirmPost(rootId, 1, 0);
-    confirmPost(childId, 1, 1);
-
-    // Insert topology rows
-    insertBlockTopology(rootId, [], hex(rootCommit.author), 1);
-    insertBlockTopology(childId, [rootId], hex(childCommit.author), 1);
-
-    // Now delete the posts, insert a stump for the root, and mark the set —
-    // the prune arm's own order (NODE_INTERFACE → Prune transactions).
-    getDb().prepare('DELETE FROM dag_parent_refs WHERE post_id IN (?, ?)').run(rootId, childId);
-    getDb().prepare('DELETE FROM dag_posts WHERE id IN (?, ?)').run(rootId, childId);
-    insertStump(makeStump({ rootPostHash: rootId, compactedAtBlockHeight: 5 }));
-    markPrunedTopology([rootId, childId], 5, rootId);
-
-    // Root id → stump
-    const rootResult = getPost(rootId);
-    expect(rootResult).not.toBeNull();
-    expect('rootPostHash' in rootResult!).toBe(true);
-
-    // Child id → PrunedTombstone
-    const childResult = getPost(childId) as any;
-    expect(childResult).not.toBeNull();
-    expect(childResult.kind).toBe('pruned');
-    expect(childResult.id).toBe(childId);
-    expect(childResult.rootPostHash).toBe(rootId);
-    expect(childResult.compactedAtBlockHeight).toBe(5);
-  });
-
-  it('getPrunedTombstone returns null for an unmarked topology row, even when its parent chain reaches a stump', async () => {
-    const { initDb } = await importDbFresh();
-    const { getPrunedTombstone } = await importPostsFresh();
-    const { insertStump } = await importStumpsFresh();
-    const { insertBlockTopology } = await importTopology();
-
-    initDb(':memory:');
-
-    const { commit: rootCommit } = makeCommit({ content: 'root' });
-    const rootId = fixturePostId(rootCommit);
-    const { commit: childCommit } = makeCommit({ content: 'child', parentRefs: [rootId] });
-    const childId = fixturePostId(childCommit);
-
-    insertBlockTopology(rootId, [], hex(rootCommit.author), 1);
-    insertBlockTopology(childId, [rootId], hex(childCommit.author), 1);
-    insertStump(makeStump({ rootPostHash: rootId, compactedAtBlockHeight: 5 }));
-
-    // No markPrunedTopology call: the row is confirmed but never pruned.
-    expect(getPrunedTombstone(childId)).toBeNull();
   });
 
   it('getMissingBodies returns placeholders newest first', async () => {
@@ -514,63 +401,6 @@ describe('posts store', () => {
     expect(result.pendingCount).toBe(0);
   });
 
-  it('deletePostRows deletes rows and returns them for the journal', async () => {
-    const { initDb, getDb } = await importDbFresh();
-    const { insertPost, confirmPost, deletePostRows, getPost } = await importPostsFresh();
-
-    initDb(':memory:');
-
-    const { commit: c1, content: content1 } = makeCommit({ content: 'root' });
-    const id1 = fixturePostId(c1);
-    const { commit: c2, content: content2 } = makeCommit({ content: 'child', parentRefs: [id1] });
-    const id2 = fixturePostId(c2);
-
-    insertPost(id1, c1, content1);
-    insertPost(id2, c2, content2);
-    confirmPost(id1, 1, 0);
-    confirmPost(id2, 1, 1);
-
-    const deleted = deletePostRows([id1, id2]);
-    expect(deleted).toHaveLength(2);
-    expect(deleted[0]!.id).toBe(id1);
-    expect(deleted[0]!.content).toBe('root');
-    expect(deleted[1]!.id).toBe(id2);
-    expect(deleted[1]!.parentRefs).toEqual([id1]);
-
-    // Rows are gone
-    expect(getPost(id1)).toBeNull();
-    expect(getPost(id2)).toBeNull();
-
-    // Parent refs are gone
-    const refs = getDb()
-      .prepare('SELECT * FROM dag_parent_refs WHERE post_id IN (?, ?)')
-      .all(id1, id2);
-    expect(refs).toHaveLength(0);
-  });
-
-  it('restorePostRows restores deleted rows', async () => {
-    const { initDb } = await importDbFresh();
-    const { insertPost, confirmPost, deletePostRows, restorePostRows, getPost, isLivePost } = await importPostsFresh();
-
-    initDb(':memory:');
-
-    const { commit, content } = makeCommit({ content: 'restore me' });
-    const postId = fixturePostId(commit);
-
-    insertPost(postId, commit, content);
-    confirmPost(postId, 1, 0);
-
-    const deleted = deletePostRows([postId]);
-    expect(getPost(postId)).toBeNull();
-
-    restorePostRows(deleted);
-    const restored = getPost(postId);
-    expect(isLivePost(restored)).toBe(true);
-    expect((restored as any).content).toBe('restore me');
-    expect((restored as any).status).toBe('confirmed');
-    expect((restored as any).blockHeight).toBe(1);
-  });
-
   it('deletePendingPost removes a pending row', async () => {
     const { initDb } = await importDbFresh();
     const { insertPost, deletePendingPost, getPost } = await importPostsFresh();
@@ -623,8 +453,6 @@ describe('posts store', () => {
     const { isLivePost } = await importPostsFresh();
 
     expect(isLivePost(null)).toBe(false);
-    expect(isLivePost({ rootPostHash: 'abc', authorId: new Uint8Array(32), replyCount: 0, upvoteCount: 0, protocolVersion: 1, compactedAtBlockHeight: 1 })).toBe(false);
-    expect(isLivePost({ kind: 'pruned' as const, id: 'x', author: '00', rootPostHash: 'y', compactedAtBlockHeight: 1 })).toBe(false);
     expect(isLivePost({
       id: 'x', content: null, contentHash: '00', author: new Uint8Array(32),
       parentRefs: [], protocolVersion: 1, type: 'regular' as const,
@@ -663,9 +491,9 @@ describe('posts store', () => {
     expect(setPostBody(postId, 'resurrected')).toBe(false);
   });
 
-  it('reorg round-trip: a withdrawn row through deletePostRows → restorePostRows comes back still withdrawn', async () => {
-    const { initDb, getDb } = await importDbFresh();
-    const { insertPost, confirmPost, deletePostRows, restorePostRows, getPost } = await importPostsFresh();
+  it('reorg round-trip: withdrawPost → clearWithdrawal comes back exactly as it stood', async () => {
+    const { initDb } = await importDbFresh();
+    const { insertPost, confirmPost, withdrawPost, clearWithdrawal, getPost, getMissingBodies } = await importPostsFresh();
 
     initDb(':memory:');
 
@@ -674,22 +502,19 @@ describe('posts store', () => {
     insertPost(postId, commit, content);
     confirmPost(postId, 5, 0);
 
-    // Mark as withdrawn directly, then null the content (as withdrawal does)
-    getDb().prepare('UPDATE dag_posts SET withdrawn_at_height = 10, content = NULL WHERE id = ?').run(postId);
+    withdrawPost(postId, 10);
+    const withdrawn = getPost(postId) as any;
+    expect(withdrawn).not.toBeNull();
+    expect(withdrawn.withdrawnAtHeight).toBe(10);
+    expect(withdrawn.content).toBeNull();
 
-    const deleted = deletePostRows([postId]);
-    expect(deleted).toHaveLength(1);
-    expect(deleted[0]!.withdrawnAtHeight).toBe(10);
-    expect(deleted[0]!.content).toBeNull();
-
-    restorePostRows(deleted);
+    clearWithdrawal(postId, content);
     const restored = getPost(postId) as any;
     expect(restored).not.toBeNull();
-    expect(restored.withdrawnAtHeight).toBe(10);
-    expect(restored.content).toBeNull();
+    expect(restored.withdrawnAtHeight).toBeNull();
+    expect(restored.content).toBe(content);
 
     // The restored row must NOT appear in getMissingBodies
-    const { getMissingBodies } = await importPostsFresh();
     expect(getMissingBodies(100)).toEqual([]);
   });
 
@@ -744,25 +569,6 @@ describe('posts store', () => {
     expect((result as any).kind).toBe('withdrawn');
     expect((result as any).withdrawnAtHeight).toBe(10);
     expect((result as any).author).toBe(hex(commit.author));
-  });
-
-  it('isStoredPost is true and isLivePost is false for the same withdrawn row', async () => {
-    const { initDb, getDb } = await importDbFresh();
-    const { insertPost, confirmPost, getPost } = await importPostsFresh();
-    const { isStoredPost, isLivePost } = await importPostsFresh();
-
-    initDb(':memory:');
-
-    const { commit, content } = makeCommit({ content: 'guard test' });
-    const postId = fixturePostId(commit);
-    insertPost(postId, commit, content);
-    confirmPost(postId, 5, 0);
-
-    getDb().prepare('UPDATE dag_posts SET withdrawn_at_height = 10, content = NULL WHERE id = ?').run(postId);
-
-    const result = getPost(postId);
-    expect(isStoredPost(result)).toBe(true);
-    expect(isLivePost(result)).toBe(false);
   });
 
   it('withdrawn ancestor and descendant in a thread come back as WithdrawnJson, not PostJson', async () => {
@@ -910,32 +716,6 @@ describe('posts store', () => {
     expect(result.count).toBe(1);
     expect(result.rows).toHaveLength(1);
     expect(result.rows[0]!.content).toBe('root');
-  });
-
-  it('getAncestorsNearest stops at an ancestor with no dag_posts row', async () => {
-    const { initDb } = await importDbFresh();
-    const { insertPost, deletePostRows, getAncestorsNearest } = await importPostsFresh();
-
-    initDb(':memory:');
-
-    const { commit: cS, content: ctS } = makeCommit({ content: 'stump', parentRefs: [] });
-    const idS = fixturePostId(cS);
-    insertPost(idS, cS, ctS);
-
-    const { commit: cR, content: ctR } = makeCommit({ content: 'reply', parentRefs: [idS] });
-    const idR = fixturePostId(cR);
-    insertPost(idR, cR, ctR);
-
-    const { commit: cR2, content: ctR2 } = makeCommit({ content: 'reply2', parentRefs: [idR] });
-    const idR2 = fixturePostId(cR2);
-    insertPost(idR2, cR2, ctR2);
-
-    deletePostRows([idS]);
-
-    const result = getAncestorsNearest(idR2, 10);
-    expect(result.count).toBe(1);
-    expect(result.rows).toHaveLength(1);
-    expect(result.rows[0]!.content).toBe('reply');
   });
 
   it('getAncestorsNearest CTE recursive step searches dag_parent_refs and dag_posts on PK', async () => {
@@ -1138,35 +918,6 @@ describe('posts store', () => {
     const page2 = queryPostsPage({ limit: 2, after: page1.next! });
     for (const p of page2.rows) expect(page1Ids.has(p.id)).toBe(false);
     expect(page2.rows).toHaveLength(2);
-  });
-
-  it('subtree continuation across a prune: no skip', async () => {
-    const { initDb } = await importDbFresh();
-    const { insertPost, confirmPost, deletePostRows, getSubtreePage } = await importPostsFresh();
-
-    initDb(':memory:');
-    const { commit: rootC, content: rootCt } = makeCommit({ content: 'root', parentRefs: [] });
-    const rootId = fixturePostId(rootC);
-    insertPost(rootId, rootC, rootCt);
-    confirmPost(rootId, 1, 0);
-
-    const childIds: string[] = [];
-    for (let i = 0; i < 3; i++) {
-      const { commit, content } = makeCommit({ content: `child-${i}`, parentRefs: [rootId] });
-      const id = fixturePostId(commit);
-      insertPost(id, commit, content);
-      confirmPost(id, 2, i);
-      childIds.push(id);
-    }
-
-    const page1 = getSubtreePage(rootId, { limit: 2 });
-    expect(page1.rows).toHaveLength(2);
-    expect(page1.next).not.toBeNull();
-
-    deletePostRows([childIds[0]!]);
-
-    const page2 = getSubtreePage(rootId, { limit: 2, after: page1.next! });
-    expect(page2.rows).toHaveLength(1);
   });
 
   it('exact next on feed: exactly limit → null; limit + 1 → key', async () => {
