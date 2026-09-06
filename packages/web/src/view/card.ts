@@ -33,6 +33,10 @@ export interface CardOpts {
   depth?: number;                        // indentation inside a thread
   replyCount?: number | null;            // the row's descendantCount; null → '?' (a submission alone)
   onOpen?: ((id: string) => void) | null; // strip handler; null → no open control
+  // Content — an image loads on the reader's press (WEB_INTERFACE → Content).
+  expanded?: ReadonlySet<string>;        // keys of images already shown: <postId>:<index in document order>
+  onExpand?: (key: string) => void;      // the reader pressed to load one
+  onCollapse?: (key: string) => void;    // a shown image failed to load — drop its key
   // Write surface (panes only) — absent on a read-only feed card.
   flight?: Flight | null;                // the stage line for the client's own submission
   onReply?: ((id: string) => void) | null; // ↩ reply — present on a withdrawn card too
@@ -463,7 +467,14 @@ function livePostCard(post: PostJson, opts: CardOpts): HTMLElement {
     assertContentHash(post.id, post.content, post.contentHash);
     // The content grammar builds the body's nodes (WEB_INTERFACE → Content →
     // "A newline is a line break, a blank line a paragraph").
-    body.appendChild(renderContent(parseContent(post.content), { postId: post.id }));
+    body.appendChild(
+      renderContent(parseContent(post.content), {
+        postId: post.id,
+        expanded: opts.expanded,
+        onExpand: opts.onExpand,
+        onCollapse: opts.onCollapse,
+      }),
+    );
   }
 
   if (flight && flight.stage !== 'landed') {

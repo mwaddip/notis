@@ -8,6 +8,7 @@ import { parseContent, linkCard, gateUrl, type Inline } from '../src/view/conten
 const t = (text: string): Inline => ({ kind: 'text', text });
 const link = (url: string, text: string): Inline => ({ kind: 'link', url, text });
 const bare = (url: string): Inline => ({ kind: 'bareUrl', url });
+const image = (url: string, alt: string): Inline => ({ kind: 'image', url, alt });
 const strong = (...children: Inline[]): Inline => ({ kind: 'strong', children });
 const em = (...children: Inline[]): Inline => ({ kind: 'em', children });
 
@@ -81,12 +82,15 @@ describe('parseContent — inlines', () => {
     expect(il('https://en.wikipedia.org/wiki/Foo_(bar)')).toEqual([bare('https://en.wikipedia.org/wiki/Foo_(bar)')]);
   });
 
-  it('bold before italic; emphasis holds links but no nested emphasis', () => {
+  it('bold before italic; emphasis holds links; a lone * inside bold is text', () => {
     expect(il('**bold**')).toEqual([strong(t('bold'))]);
     expect(il('*italic*')).toEqual([em(t('italic'))]);
     expect(il('**a [x](https://ok.com) b**')).toEqual([strong(t('a '), link('https://ok.com', 'x'), t(' b'))]);
     // ** is tried first: **x** is bold, not two italics
     expect(il('**x**')[0]!.kind).toBe('strong');
+    // the closer is the first ** at or after the opener; a lone * inside is a text char
+    expect(il('**2*3**')).toEqual([strong(t('2*3'))]);
+    expect(il('**a *b* c**')).toEqual([strong(t('a *b* c'))]);
   });
 
   it('the emphasis whitespace rule — 2 * 3 * 4 is text; an unclosed opener is text', () => {
@@ -133,10 +137,30 @@ describe('the URL gate', () => {
   });
 });
 
+describe('parseContent — images', () => {
+  it('the image construct, its alt optional', () => {
+    expect(il('![a cat](https://img.example/c.png)')).toEqual([image('https://img.example/c.png', 'a cat')]);
+    expect(il('![](https://img.example/c.png)')).toEqual([image('https://img.example/c.png', '')]);
+  });
+
+  it('a bare URL by the extension list is an image; .PNG passes by lowercasing, .svg does not', () => {
+    for (const ext of ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif']) {
+      expect(il(`https://img.example/p.${ext}`)).toEqual([image(`https://img.example/p.${ext}`, '')]);
+    }
+    expect(il('https://img.example/p.PNG')).toEqual([image('https://img.example/p.PNG', '')]);
+    expect(il('https://img.example/p.svg')).toEqual([bare('https://img.example/p.svg')]);
+  });
+
+  it('a [text](url) link is a link whatever its extension', () => {
+    expect(il('[pic](https://img.example/p.png)')).toEqual([link('https://img.example/p.png', 'pic')]);
+  });
+});
+
 describe('the link card', () => {
-  it('one link, or one bare URL, with surrounding whitespace, is the link card', () => {
+  it('one link, one bare URL, or one image, with surrounding whitespace, is the link card', () => {
     expect(linkCard(parseContent('[words](https://ok.com/p)'))).toEqual(link('https://ok.com/p', 'words'));
     expect(linkCard(parseContent('   https://ok.com   '))).toEqual(bare('https://ok.com'));
+    expect(linkCard(parseContent('![a cat](https://img.example/c.png)'))).toEqual(image('https://img.example/c.png', 'a cat'));
   });
 
   it('extra words, a title line, or two links are not a link card', () => {

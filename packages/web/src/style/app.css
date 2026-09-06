@@ -116,6 +116,24 @@ header .spacer { flex: 1 1 auto; }
    only control beneath (WEB_INTERFACE → Content → "The link card"). The host is
    inline-block so the 8px block gap above reaches it. */
 .card-content .lc-host { display: inline-block; font-family: var(--mono); font-size: 12.5px; }
+/* An image loads on the reader's press — the control names the host first, in
+   mono; the image is capped at the card's width and 480px high; a failed load
+   says so in place (WEB_INTERFACE → Content → "An image loads on the reader's
+   press"). The host in a control or a failure line is mono, as the link card's is. */
+.card-content .card-image.block { display: block; }
+.card-content .img-show {
+  font-family: var(--sans); font-size: 12.5px; line-height: 1.35; padding: 4px 10px;
+  display: inline-flex; align-items: baseline; gap: 4px; cursor: pointer;
+  background: transparent; color: var(--ink);
+  border: 1px solid var(--borderStrong); border-radius: 4px;
+  transition: background-color .15s ease-out;
+}
+.card-content .img-show:hover { background: rgba(0,0,0,.05); }
+:root[data-t="dark"] .card-content .img-show:hover { background: rgba(255,255,255,.06); }
+.card-content .img-show:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: 2px; }
+.card-content .host { font-family: var(--mono); font-size: 11.5px; }
+.card-content .card-img { display: block; max-width: 100%; max-height: 480px; object-fit: contain; border-radius: 4px; }
+.card-content .img-failed { color: var(--inkMute); font-style: italic; }
 /* A body a node holds by commit but has not backfilled yet. Says what is,
    without implying the post is gone — it is not a withdrawal. */
 .card-absent { font-style: italic; color: var(--inkMute); font-size: 14px; }
