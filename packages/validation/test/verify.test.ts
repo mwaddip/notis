@@ -16,7 +16,6 @@ import {
   computePowHash,
   isValidVouchTarget,
   verifyPostCommitDomains,
-  verifyPruneCommitDomains,
   verifyPostWithdrawCommitDomains,
   verifyPostBody,
   verifyHeaderFieldDomains,
@@ -2361,45 +2360,6 @@ describe('verifyPostBody', () => {
       expect(() => verifyPostBody(bad, validHash)).not.toThrow();
       expect(() => verifyPostBody(validContent, bad as any)).not.toThrow();
       expect(() => verifyPostBody(bad, bad as any)).not.toThrow();
-    }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// verifyPruneCommitDomains
-// ---------------------------------------------------------------------------
-
-describe('verifyPruneCommitDomains', () => {
-  const GOOD = 'ab'.repeat(32);
-
-  const makeValid = () => ({ rootPostHash: GOOD });
-
-  it('accepts a well-formed PruneCommit', () => {
-    expect(verifyPruneCommitDomains(makeValid())).toEqual({ valid: true });
-  });
-
-  it('rejects a non-object', () => {
-    expect(verifyPruneCommitDomains(null)).toEqual({ valid: false, error: 'PruneCommit is not an object' });
-    expect(verifyPruneCommitDomains(42)).toEqual({ valid: false, error: 'PruneCommit is not an object' });
-    expect(verifyPruneCommitDomains('string')).toEqual({ valid: false, error: 'PruneCommit is not an object' });
-  });
-
-  it('rejects invalid rootPostHash', () => {
-    for (const bad of ['aa', 42, new Uint8Array(32), 'zz'.repeat(32), 'AA'.repeat(32)]) {
-      const result = verifyPruneCommitDomains({ ...makeValid(), rootPostHash: bad });
-      expect(result.valid).toBe(false);
-      expect(result.error).toContain('rootPostHash');
-    }
-  });
-
-  it('never throws on adversarial input', () => {
-    const HOSTILE = [
-      null, undefined, 42, 'string', true, NaN, Infinity,
-      [], {}, { rootPostHash: null }, { rootPostHash: 99 },
-      { rootPostHash: 'AA'.repeat(32) },
-    ];
-    for (const bad of HOSTILE) {
-      expect(() => verifyPruneCommitDomains(bad)).not.toThrow();
     }
   });
 });

@@ -188,26 +188,6 @@ export function verifyPostCommitDomains(commit: unknown): { valid: boolean; erro
 }
 
 // ---------------------------------------------------------------------------
-// Prune-commit payload domain
-// ---------------------------------------------------------------------------
-
-/**
- * The prune payload's structural domain — one field
- * (VALIDATION_INTERFACE → `verifyPruneCommitDomains`; TYPES_INTERFACE →
- * Layout — PruneCommit). The subtree is derived at apply, so the payload
- * carries no set to check for repeats and no root to check for type.
- *
- * Total on adversarial input, like every function here.
- */
-export function verifyPruneCommitDomains(commit: unknown): { valid: boolean; error?: string } {
-  if (!isObject(commit)) return { valid: false, error: 'PruneCommit is not an object' };
-  if (!isHex32(commit.rootPostHash)) {
-    return { valid: false, error: 'PruneCommit rootPostHash must be 64 lowercase hex characters' };
-  }
-  return { valid: true };
-}
-
-// ---------------------------------------------------------------------------
 // Post-withdraw-commit payload domain
 // ---------------------------------------------------------------------------
 
