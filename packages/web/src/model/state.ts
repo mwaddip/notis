@@ -78,6 +78,9 @@ export interface RenderCtx {
   composerFor: (parentId: string | null) => HTMLElement | null; // the reused composer element, null → none open here
   submissionsFor: (parentId: string | null) => Submission[];    // own pending cards to place under a parent (null → the feed)
   likePending: (postId: string) => boolean;              // overlay onto likedByViewer until a like lands
+  // Content — the images the reader has expanded this session, keyed
+  // <postId>:<index in document order> (WEB_INTERFACE → Content).
+  expandedImages: ReadonlySet<string>;
   // Profile window (WEB_INTERFACE → The profile window). identity carries the lock
   // state; karma and membershipBars come from the node; grant is a faucet grant in
   // flight or one that lapsed. These inline shapes structurally match
@@ -155,6 +158,9 @@ export interface Handlers {
   askFaucet: () => void;
   // write surface
   openComposer: (parentId: string | null) => void; // null → the feed's new post; a post id → a reply
+  // Content — an image loads on the reader's press (WEB_INTERFACE → Content).
+  expandImage: (key: string) => void;   // the reader pressed to load an image
+  collapseImage: (key: string) => void; // a shown image failed to load — drop its key
   likePost: (postId: string) => void;
   withdrawPost: (postId: string) => void;          // the author's own control (WEB_INTERFACE → The withdraw control)
   tryAgain: (localKey: string) => void;            // rebuild a fresh transaction from the current view

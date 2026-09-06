@@ -197,12 +197,14 @@ const postsHandlers = (): PostsHandlers & { calls: Record<string, unknown[]> } =
     vouch: (k) => calls.vouch!.push(k),
     authorPostsMore: (k) => calls.more!.push(k),
     unlockIdentity: async () => {},
+    expandImage: () => {},
+    collapseImage: () => {},
   };
 };
 function postsCtx(over: Partial<PostsCtx> = {}): PostsCtx {
   return {
     authorKey: AUTHOR, origin: ORIGIN, feed: feedState(), writeEnabled: true, ownKey: ME, locked: false,
-    markFor: (k) => (k === ME ? null : ({ state: 'plus', count: 0 } as Mark)), ...over,
+    markFor: (k) => (k === ME ? null : ({ state: 'plus', count: 0 } as Mark)), expandedImages: new Set(), ...over,
   };
 }
 
