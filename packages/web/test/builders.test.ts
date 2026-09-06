@@ -21,14 +21,9 @@ import { VOUCH_KARMA_AMOUNT, type UtxoTransaction } from '@dagsocial/types';
 // a reply parent 'bb'*32 / 'dd'*32 and a like target 'bb'*32 / 'ee'*32, over the
 // content strings named here. A disagreement is a finding, not a value to adjust.
 //
-// txIdBytes has six fields, not seven (TYPES_INTERFACE → Layout — UtxoTransaction):
-// none of these transactions ever carried a prune payload, so the retired field 6
-// contributed exactly one absent-`opt` 0x00 byte between `post`'s contribution and
-// `postWithdraw`'s tag. Every vector below is the old vector's hash with that one
-// byte removed, re-derived (not re-pinned from this file's own code) by reading
-// the current txIdBytes off the public wire codec (`encodeTx` minus its trailing
-// empty-signatures byte), reinserting the retired byte to reproduce the old
-// vector as a check, then hashing the asserted new bytes.
+// txIdBytes has six fields (TYPES_INTERFACE → Layout — UtxoTransaction); every
+// txId below is computeTxId over the demo UI's declarations under that layout,
+// and every change-box id is computeCandidateBoxId over that txId.
 
 const PUB = 'aa'.repeat(32);
 const PARENT_AUTHOR = 'bb'.repeat(32);
