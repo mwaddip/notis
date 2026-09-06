@@ -215,6 +215,8 @@ header .spacer { flex: 1 1 auto; }
   border: 1px solid var(--borderStrong); border-radius: 4px; cursor: pointer;
   background: transparent; color: var(--ink);
 }
+.composer-foot select:hover { background: rgba(0,0,0,.05); }
+:root[data-t="dark"] .composer-foot select:hover { background: rgba(255,255,255,.06); }
 .composer-foot select:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: 2px; }
 .composer-foot { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .composer-foot .spacer { flex: 1 1 auto; }
