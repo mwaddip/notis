@@ -46,8 +46,8 @@ export function serialise(ws: Workspace): string {
 }
 
 /** Rebuild a workspace from its text form. Unknown tokens are dropped — a
- *  restored arrangement may name a post that has since been pruned, and its
- *  window renders the tombstone (WEB_INTERFACE → The three absence states); a
+ *  restored arrangement may name a post that has since been withdrawn, and its
+ *  window renders the withdrawn marker (WEB_INTERFACE → The withdrawn state); a
  *  token that is not even a well-formed id is discarded here. Focus is not
  *  encoded, so every region opens focused on its first window. */
 export function parse(spec: string): Workspace {

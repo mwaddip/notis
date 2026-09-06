@@ -4,9 +4,9 @@ import { profileBody } from './profile';
 import { authorBody, authorPostsBody, type AuthorCtx, type PostsCtx } from './author';
 import { flattenThread } from '../model/thread';
 import { identityHue } from '../model/identity';
-import { isTombstone } from '../api/dto';
+import { isWithdrawn } from '../api/dto';
 import { windowSubject } from '../model/arrangement';
-import type { PostJson, Tombstone } from '../api/dto';
+import type { PostJson, WithdrawnJson } from '../api/dto';
 import type { Region, Workspace } from '../model/workspace';
 import type { Handlers, RenderCtx } from '../model/state';
 
@@ -49,9 +49,8 @@ function threadLabel(k: string, ctx: RenderCtx): BarLabel {
     return { authorKey: ctx.post(k)?.author, excerpt: t?.error ? 'unavailable' : 'loading…', replyCount: 0, nested: false };
   }
   const nested = [...t.ancestorIds].some((a) => a !== k && ctx.openSet.has(a));
-  if (isTombstone(root)) {
-    const label = root.kind === 'withdrawn' ? 'withdrawn' : root.kind === 'stump' ? 'pruned subtree' : 'pruned';
-    return { authorKey: root.author, excerpt: label, replyCount: 0, nested };
+  if (isWithdrawn(root)) {
+    return { authorKey: root.author, excerpt: 'withdrawn', replyCount: 0, nested };
   }
   return { authorKey: root.author, excerpt: root.content ?? 'content not on this node yet', replyCount: t.descendantCount, nested };
 }
@@ -114,7 +113,7 @@ function bar(k: string, ci: number, focused: boolean, handlers: Handlers, ctx: R
  *  display) — and carries the vouch mark, absent when markFor returns null. The
  *  write-surface controls — ↩ reply, the like control by §7's exclusions, the
  *  vouch's unlock — are added only with an identity loaded. */
-function writeCardOpts(row: PostJson | Tombstone, ci: number, ctx: RenderCtx, handlers: Handlers): Partial<CardOpts> {
+function writeCardOpts(row: PostJson | WithdrawnJson, ci: number, ctx: RenderCtx, handlers: Handlers): Partial<CardOpts> {
   const base: Partial<CardOpts> = {
     onAuthor: (key) => handlers.openAuthor(key, { from: 'pane', ci }),
     mark: ctx.markFor(row.author),
@@ -131,7 +130,7 @@ function writeCardOpts(row: PostJson | Tombstone, ci: number, ctx: RenderCtx, ha
     ownKey: ctx.ownKey ?? undefined,
     onUnlock: (p) => handlers.unlockIdentity(p),
   };
-  if (!isTombstone(row) && row.status === 'confirmed') {
+  if (!isWithdrawn(row) && row.status === 'confirmed') {
     const overlaid = ctx.likePending(row.id);
     const liked = overlaid || row.likedByViewer === true;
     const isOwn = ctx.ownKey !== null && row.author === ctx.ownKey;

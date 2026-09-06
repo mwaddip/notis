@@ -16,7 +16,7 @@ import {
   pendingWithdrawTargets,
 } from '../src/wallet/ledger';
 import type { PendingEntry } from '../src/wallet/types';
-import type { PostJson, PostResult, StumpJson, PrunedJson, WithdrawnJson } from '../src/api/dto';
+import type { PostJson, PostResult, WithdrawnJson } from '../src/api/dto';
 import { karmaResult } from './karma-fixture';
 
 const KEY = 'aa'.repeat(32); // the identity that owns the ledger
@@ -178,7 +178,8 @@ describe('reconcile', () => {
 
   it('a post that landed then became a tombstone still counts as landed', () => {
     const tomb: WithdrawnJson & { confirmedAuthor: string | null } = {
-      kind: 'withdrawn', id: 'p1', author: 'aa'.repeat(32), withdrawnAtHeight: 5050, parentRefs: [], confirmedAuthor: null,
+      kind: 'withdrawn', id: 'p1', author: 'aa'.repeat(32), withdrawnAtHeight: 5050, parentRefs: [],
+      descendantCount: 0, authorVouchCount: 0, confirmedAuthor: null,
     };
     expect(reconcilePost(postEntry, tomb, 5100)).toBe('landed');
   });
@@ -258,21 +259,12 @@ describe('the membership reconciles', () => {
 
 describe('the withdraw reconcile', () => {
   const withdrawnTomb: PostResult = {
-    kind: 'withdrawn', id: WITHDRAW_TARGET, author: KEY, withdrawnAtHeight: 5050, parentRefs: [], confirmedAuthor: null,
+    kind: 'withdrawn', id: WITHDRAW_TARGET, author: KEY, withdrawnAtHeight: 5050, parentRefs: [],
+    descendantCount: 0, authorVouchCount: 0, confirmedAuthor: null,
   } as WithdrawnJson & { confirmedAuthor: string | null };
-  const stumpTomb: PostResult = {
-    kind: 'stump', id: WITHDRAW_TARGET, author: KEY, replyCount: 2, upvoteCount: 0,
-    protocolVersion: 1, compactedAtBlockHeight: 5050, confirmedAuthor: null,
-  } as StumpJson & { confirmedAuthor: string | null };
-  const prunedTomb: PostResult = {
-    kind: 'pruned', id: WITHDRAW_TARGET, author: KEY, rootPostHash: 'aa'.repeat(32),
-    compactedAtBlockHeight: 5050, confirmedAuthor: null,
-  } as PrunedJson & { confirmedAuthor: string | null };
 
-  it('lands on any tombstone — withdrawn, or a stump/pruned when the thread went first', () => {
+  it('lands on the withdrawn marker', () => {
     expect(reconcileWithdraw(withdrawEntry, withdrawnTomb, 5100)).toBe('landed');
-    expect(reconcileWithdraw(withdrawEntry, stumpTomb, 5100)).toBe('landed');
-    expect(reconcileWithdraw(withdrawEntry, prunedTomb, 5100)).toBe('landed');
   });
 
   it('a live post is still pending — a confirmed live post is not a withdrawal landing', () => {
@@ -282,9 +274,8 @@ describe('the withdraw reconcile', () => {
   });
 
   it('a 404 is expired — the post is unknown to this node, so nothing can land', () => {
-    // The resolution-order case a pruned descendant can take: a 404 rather than a
-    // tombstone (NODE_INTERFACE → Resolution order for a post id) — still a done
-    // withdrawal, read as expired.
+    // An id the node has never heard of (NODE_INTERFACE → Resolution order for a
+    // post id) — still a done withdrawal, read as expired.
     expect(reconcileWithdraw(withdrawEntry, null, 5100)).toBe('expired');
   });
 

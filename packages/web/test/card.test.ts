@@ -70,9 +70,9 @@ describe('card — the reply count is the row\'s', () => {
     expect(card(zero, { replyCount: zero.descendantCount }).querySelector('.replies')).toBeNull();
   });
 
-  it('a withdrawn card carries no count — ?', () => {
-    const tomb = { kind: 'withdrawn' as const, id: 'p1', author: PUB, withdrawnAtHeight: 10, parentRefs: [] };
-    expect(card(tomb, { replyCount: null }).querySelector('.replies .n')?.textContent).toBe('?');
+  it('a withdrawn card shows its row\'s count, never ?', () => {
+    const tomb = { kind: 'withdrawn' as const, id: 'p1', author: PUB, withdrawnAtHeight: 10, parentRefs: [], descendantCount: 4, authorVouchCount: 0 };
+    expect(card(tomb, { replyCount: tomb.descendantCount }).querySelector('.replies')?.textContent).toBe('4 replies');
   });
 });
 
@@ -263,7 +263,7 @@ describe('card — the withdraw control', () => {
   it('no withdraw control on another\'s card, a pending card, or a withdrawn card', () => {
     expect(card(confirmed(OTHER), { onLike: () => {} }).querySelector('.withdraw-ctl')).toBeNull();
     expect(card(pending('x'), { you: true, onWithdraw: () => {}, canWithdraw: true }).querySelector('.withdraw-ctl')).toBeNull();
-    const tomb = { kind: 'withdrawn' as const, id: 'p1', author: PUB, withdrawnAtHeight: 10, parentRefs: [] };
+    const tomb = { kind: 'withdrawn' as const, id: 'p1', author: PUB, withdrawnAtHeight: 10, parentRefs: [], descendantCount: 0, authorVouchCount: 0 };
     expect(card(tomb, { you: true, onWithdraw: () => {}, canWithdraw: true }).querySelector('.withdraw-ctl')).toBeNull();
   });
 

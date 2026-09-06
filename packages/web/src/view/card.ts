@@ -1,7 +1,7 @@
 import { el, shortHex } from '../dom';
 import { unlockForm } from './passphrase';
-import type { PostJson, Tombstone, StumpJson, PrunedJson, WithdrawnJson } from '../api/dto';
-import { isTombstone } from '../api/dto';
+import type { PostJson, WithdrawnJson } from '../api/dto';
+import { isWithdrawn } from '../api/dto';
 import { assertContentHash } from '../integrity';
 import type { Submission, FlightStage } from '../model/state';
 
@@ -30,11 +30,11 @@ export interface CardOpts {
   open?: boolean;                        // this thread is open in a pane
   root?: boolean;                        // the pane's own root
   depth?: number;                        // indentation inside a thread
-  replyCount?: number | null;            // the row's descendantCount; null → '?' (a submission, a withdrawn row)
+  replyCount?: number | null;            // the row's descendantCount; null → '?' (a submission alone)
   onOpen?: ((id: string) => void) | null; // strip handler; null → no open control
   // Write surface (panes only) — absent on a read-only feed card.
   flight?: Flight | null;                // the stage line for the client's own submission
-  onReply?: ((id: string) => void) | null; // ↩ reply — present on withdrawn and stumps too
+  onReply?: ((id: string) => void) | null; // ↩ reply — present on a withdrawn card too
   onLike?: ((id: string) => void) | null;   // like — absent by §7's exclusions
   liked?: boolean;                       // show 'liked' rather than a control
   likePending?: boolean;                 // the like has not settled — inkMute, count + 1
@@ -178,9 +178,8 @@ export function displayMark(mark: Mark | null): HTMLElement | null {
 
 function replyCountNode(count: number | null): HTMLElement | null {
   if (count === null) {
-    // '?' remains on two rows without a count: the reader's own submission (no
-    // node row until it lands) and a withdrawn card (its shape carries no count)
-    // (WEB_INTERFACE → What the feed reads).
+    // '?' remains on the reader's own submission alone — no node row until it
+    // lands (WEB_INTERFACE → What the feed reads).
     const r = el('span', 'replies');
     r.appendChild(el('span', 'n', '?'));
     r.appendChild(document.createTextNode(' replies'));
@@ -207,9 +206,8 @@ function likeNode(likeCount: number): HTMLElement | null {
 function strip(id: string, opts: CardOpts, card: HTMLElement): void {
   const onOpen = opts.onOpen;
   if (!onOpen) {
-    // Nothing to open — a stump has nothing beneath it, a pending post is not on
-    // the network yet. The band still draws its edge so the text column lands
-    // one width down the whole column.
+    // Nothing to open — a pending post is not on the network yet. The band still
+    // draws its edge so the text column lands one width down the whole column.
     const band = el('div', 'strip inert');
     band.setAttribute('aria-hidden', 'true');
     card.appendChild(band);
@@ -350,8 +348,8 @@ function withdrawArea(post: PostJson, opts: CardOpts): HTMLElement | null {
  *  control). The row's `withdraw` signs — through the unlock form in this row's
  *  place first when the identity is locked, the withdraw button in the meta
  *  anchoring it, and the withdrawal continuing on success (WEB_INTERFACE → The
- *  identity module). Never says "deleted" (WEB_INTERFACE → The three absence
- *  states). */
+ *  identity module). Never says "deleted" (WEB_INTERFACE → The withdrawn
+ *  state). */
 function mountCardConfirm(anchor: HTMLElement, postId: string, opts: CardOpts): void {
   const cardBody = anchor.closest('.card-body');
   const meta = cardBody?.querySelector('.meta');
@@ -454,7 +452,7 @@ function livePostCard(post: PostJson, opts: CardOpts): HTMLElement {
 
   if (post.content === null) {
     // Held by commit, body not yet backfilled on this node. Says what is,
-    // without implying withdrawal — it is not one of the three absence states.
+    // without implying withdrawal — it is not the withdrawn state.
     body.appendChild(el('div', 'card-absent', 'content not on this node yet'));
   } else {
     // The read surface hashes here: recompute the body's commitment with the
@@ -506,7 +504,7 @@ function withdrawnCard(row: WithdrawnJson, opts: CardOpts): HTMLElement {
   const body = el('div', 'card-body');
   body.appendChild(whoRow(row.author, null, opts));
   // Withdrawn is never "deleted": its replies survive and hang off it. Saying
-  // so is the whole difference (WEB_INTERFACE → The three absence states).
+  // so is the whole difference (WEB_INTERFACE → The withdrawn state).
   body.appendChild(el('div', 'withdrawn', 'withdrawn by its author — the replies below are untouched'));
   const meta = el('div', 'meta');
   const rc = replyCountNode(opts.replyCount ?? null);
@@ -521,55 +519,8 @@ function withdrawnCard(row: WithdrawnJson, opts: CardOpts): HTMLElement {
   return card;
 }
 
-function stumpCard(row: StumpJson, opts: CardOpts): HTMLElement {
-  const card = el('div', shellClasses(' stump', opts));
-  const body = el('div', 'card-body');
-  body.appendChild(whoRow(row.author, null, opts));
-  const s = el('div', 'stump-body');
-  s.appendChild(document.createTextNode('subtree withdrawn by its author. '));
-  s.appendChild(el('span', 'n', String(row.replyCount)));
-  s.appendChild(document.createTextNode(' replies and '));
-  s.appendChild(el('span', 'n', String(row.upvoteCount)));
-  s.appendChild(document.createTextNode(' upvotes settled at height '));
-  s.appendChild(el('span', 'n', row.compactedAtBlockHeight.toLocaleString('en-GB')));
-  s.appendChild(document.createTextNode('.'));
-  body.appendChild(s);
-  // A stump accepts a reply — parent refs may point at one and the interface
-  // should not forbid what the protocol permits (WEB_INTERFACE → The write surface).
-  const rb = replyButton(row.id, opts);
-  if (rb) {
-    const meta = el('div', 'meta');
-    meta.appendChild(rb);
-    body.appendChild(meta);
-  }
-  card.appendChild(body);
-  strip(row.id, { ...opts, onOpen: null }, card); // no strip — nothing beneath
-  return card;
-}
-
-function prunedCard(row: PrunedJson, opts: CardOpts): HTMLElement {
-  const card = el('div', shellClasses('', opts));
-  const body = el('div', 'card-body');
-  body.appendChild(whoRow(row.author, null, opts));
-  const s = el('div', 'pruned-body');
-  s.appendChild(document.createTextNode('pruned under root '));
-  s.appendChild(el('span', 'n', shortHex(row.rootPostHash, 16)));
-  s.appendChild(document.createTextNode(' at height '));
-  s.appendChild(el('span', 'n', row.compactedAtBlockHeight.toLocaleString('en-GB')));
-  s.appendChild(document.createTextNode('.'));
-  body.appendChild(s);
-  card.appendChild(body);
-  strip(row.id, { ...opts, onOpen: null }, card); // no strip — nothing beneath
-  return card;
-}
-
-/** Render any post-shaped row: a live/pending post, or one of the three
- *  absence states. */
-export function card(row: PostJson | Tombstone, opts: CardOpts = {}): HTMLElement {
-  if (isTombstone(row)) {
-    if (row.kind === 'withdrawn') return withdrawnCard(row, opts);
-    if (row.kind === 'stump') return stumpCard(row, opts);
-    return prunedCard(row, opts);
-  }
+/** Render any post-shaped row: a live/pending post, or the withdrawn state. */
+export function card(row: PostJson | WithdrawnJson, opts: CardOpts = {}): HTMLElement {
+  if (isWithdrawn(row)) return withdrawnCard(row, opts);
   return livePostCard(row, opts);
 }

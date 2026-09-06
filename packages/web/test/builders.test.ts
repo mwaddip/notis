@@ -20,6 +20,15 @@ import { VOUCH_KARMA_AMOUNT, type UtxoTransaction } from '@dagsocial/types';
 // height 5000, era 1, one spendable box of 227 (boxId 'cc'*32), author 'aa'*32,
 // a reply parent 'bb'*32 / 'dd'*32 and a like target 'bb'*32 / 'ee'*32, over the
 // content strings named here. A disagreement is a finding, not a value to adjust.
+//
+// txIdBytes has six fields, not seven (TYPES_INTERFACE → Layout — UtxoTransaction):
+// none of these transactions ever carried a prune payload, so the retired field 6
+// contributed exactly one absent-`opt` 0x00 byte between `post`'s contribution and
+// `postWithdraw`'s tag. Every vector below is the old vector's hash with that one
+// byte removed, re-derived (not re-pinned from this file's own code) by reading
+// the current txIdBytes off the public wire codec (`encodeTx` minus its trailing
+// empty-signatures byte), reinserting the retired byte to reproduce the old
+// vector as a check, then hashing the asserted new bytes.
 
 const PUB = 'aa'.repeat(32);
 const PARENT_AUTHOR = 'bb'.repeat(32);
@@ -29,12 +38,12 @@ const TARGET_ID = 'ee'.repeat(32);
 const THREAD_CONTENT = 'a test thread ✓';
 const REPLY_CONTENT = 'a test reply ✓';
 
-const THREAD_TXID = 'b01650fb9d56400431bcc95602ff05d9cd0863b4ea9ace6423bdb2f3df55b9b1';
-const THREAD_CHANGE = 'f84a0f09fecb361d81619f12d0c5a0b008e594c48dc68ee0a0b5b287a0a7256e';
-const REPLY_TXID = 'c7d91980fd0b29a910b713b80b0b61d3ae269ab9cd0c6011eab9362418fa2fbe';
-const REPLY_CHANGE = 'a9cd35ae743223e7ce731b38cf6ea52042eccb2a8262fdc04f53d864eda91457';
-const LIKE_TXID = '1506de0492fe03e091c80f5347296be86a0f08e4bc44bd902995036732c5c3f3';
-const LIKE_CHANGE = 'abc49c9370884b362ecad4cc7f043695d46168abbfefce75b2006e245994760d';
+const THREAD_TXID = 'c44b433f6a46671d9dc3977fd85fb9ddbad951c9dfc17e39e07a017e4c3b8197';
+const THREAD_CHANGE = 'ca865902ed1a20c9ad69b3fbe54c770ac9f54c7f02e4d8188ae2cc0702d80eec';
+const REPLY_TXID = '367d003c4e7480f96481ccf36b7a984b6c5b18240d1c2722f47b0b947ca5065f';
+const REPLY_CHANGE = '65326b56c014d1f40933ebcf1d071a253eabe341a25eee07b51fe430a143eeff';
+const LIKE_TXID = '7ccf15c3b930fa33eb8558e594f2c192cede855c6e558a896313f03ac1f6639c';
+const LIKE_CHANGE = '24e438a4227fc1a99fdff98cd6942907c614c1bf200f7a7316c7c52b8e337281';
 const THREAD_CONTENT_HASH = '8bc41f00d29d7adc055bc479bf21e13473a34426470b92aa675c6f83eba2429f';
 
 // The membership vectors, generated the same way — the demo UI's buildVouchTx /
@@ -46,19 +55,19 @@ const THREAD_CONTENT_HASH = '8bc41f00d29d7adc055bc479bf21e13473a34426470b92aa675
 const VOUCH_TARGET = '11'.repeat(32);
 const INVITEE = '22'.repeat(32);
 const VOUCH_BOX = '33'.repeat(32);
-const VOUCH_TXID = '8afa40f04ad8c2cd8eda42cad01495f9d448a300fe4a9b0ecd086f59a0391758';
-const VOUCH_CHANGE = 'b82df0bdb2085761f378baefc7f42eca94392826a64952a507958b5151eb7b65';
-const INVITE_TXID = '42226c9cc552a97def81788fcd01c8afacb9a5a9d90551afca8ce1f052a07d84';
-const INVITE_CHANGE = '7971f96c1ef879c5e200c60f4089be5ba8de0a5f354800d71a245cce2ea9c27d';
-const UNVOUCH_TXID = '5ed21bb1fedca5f69b55c38702028f91eccb3cc44f3e9938af3ab28ffb39ab85';
+const VOUCH_TXID = '6b5e1ba32c2bfe23b6db0db940fbadf1166ff2a5cbd472d1a2017934149e3e50';
+const VOUCH_CHANGE = '80626928e3ad938060005951abb752273d45ab6965f7593c955b20670723cf45';
+const INVITE_TXID = '764853c48611aa6d2a6d568d59a048af5a251d0e60caa80b22846e7215437d30';
+const INVITE_CHANGE = '2e1beb54dd3028bd7acace8edafaea4bef9ab23b2f89890c9ae20619963c3a1d';
+const UNVOUCH_TXID = '5988584f619b498ca161e9d7739c975370bb75ea0c6ce6d3c87ac7efcfd11f6b';
 
 // The withdraw vector, generated the same way — the demo UI's
 // buildPostWithdrawTx lifted by name from packages/node/public/index.html and run
 // through computeTxId / computeCandidateBoxId at height 5000, era 1, one spendable
 // box of 227 ('cc'*32), author 'aa'*32, over a post id 'ff'*32.
 const WITHDRAW_POST_ID = 'ff'.repeat(32);
-const WITHDRAW_TXID = '2fe448f1d62f1ba4cff6ac77f4b7aeacc07752bd4876309dd82f17ee32df1a9c';
-const WITHDRAW_OUTPUT = '4d2284cc4792e0aaa8ac6bc5daedf52d43636b127eab7e5a2ff922a88cc8de9f';
+const WITHDRAW_TXID = '1ee0e7e76e1d2c03414a37135b7d08930bfe7d477b4504379978f2cbf6bacf89';
+const WITHDRAW_OUTPUT = '0aa7e4a5c67536ccee34946d3276bd2631752a5df5eddca32115e9ab44cd4658';
 
 function hexToBytes(hex: string): Uint8Array {
   const out = new Uint8Array(hex.length / 2);

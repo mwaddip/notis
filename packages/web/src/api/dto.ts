@@ -35,34 +35,19 @@ export interface PostJson {
   likedByViewer: boolean | null;
 }
 
-export interface StumpJson {
-  kind: 'stump';
-  id: string;                     // the rootPostHash
-  author: string;                 // hex
-  replyCount: number;
-  upvoteCount: number;
-  protocolVersion: number;
-  compactedAtBlockHeight: number;
-}
-
-export interface PrunedJson {
-  kind: 'pruned';
-  id: string;
-  author: string;                 // hex
-  rootPostHash: string;
-  compactedAtBlockHeight: number;
-}
-
 export interface WithdrawnJson {
   kind: 'withdrawn';
   id: string;
   author: string;                 // hex
   withdrawnAtHeight: number;
-  parentRefs: string[];           // hex ids — kept at withdrawal (NODE_INTERFACE → "The JSON projection has a fourth arm where the store has three")
+  parentRefs: string[];           // hex ids — kept at withdrawal (NODE_INTERFACE → "The JSON projection has two arms where the store has one shape")
+  /** The whole subtree's size, pending included — the same definition
+   *  `PostJson.descendantCount` carries (NODE_INTERFACE → Posts). */
+  descendantCount: number;
+  /** The author's unspent vouch count over the whole set, the mark's title
+   *  (NODE_INTERFACE → Posts). */
+  authorVouchCount: number;
 }
-
-/** The absence states the API can hand back where a post is expected. */
-export type Tombstone = StumpJson | PrunedJson | WithdrawnJson;
 
 /** A feed or descendant row: a live post or a withdrawn marker. */
 export type FeedRow = PostJson | WithdrawnJson;
@@ -74,11 +59,11 @@ export interface FeedResult {
   pendingCount: number;
 }
 
-/** `GET /posts/:id` — a post, a tombstone, plus the topology-confirmed author. */
-export type PostResult = (PostJson | Tombstone) & { confirmedAuthor: string | null };
+/** `GET /posts/:id` — a post or the withdrawn marker, plus the topology-confirmed author. */
+export type PostResult = (PostJson | WithdrawnJson) & { confirmedAuthor: string | null };
 
 export interface ThreadResult {
-  post: PostJson | Tombstone | null;
+  post: PostJson | WithdrawnJson | null;
   ancestors: FeedRow[];
   ancestorCount: number;
   descendants: FeedRow[];
@@ -146,9 +131,11 @@ export interface KarmaResult {
 // ---------------------------------------------------------------------------
 
 /** `GET /vouches?target=<key>` — who vouches for this identity, and the count over
- *  the whole set whatever the page size (NODE_INTERFACE → Vouches). */
+ *  the whole set whatever the page size (NODE_INTERFACE → Vouches). Each voucher's
+ *  own unspent vouch count rides its row, so an endorser's mark is titled from the
+ *  page it comes with. */
 export interface VouchesTargetResult {
-  vouches: { voucherId: string; targetId: string }[];
+  vouches: { voucherId: string; targetId: string; voucherVouchCount: number }[];
   count: number;
   next: string | null;
 }
@@ -178,13 +165,9 @@ export interface BondsResult {
 }
 
 // ---------------------------------------------------------------------------
-// Discriminators — PostJson carries no `kind`; every tombstone does.
+// Discriminator — PostJson carries no `kind`; the withdrawn marker does.
 // ---------------------------------------------------------------------------
 
-export function isTombstone(row: PostJson | Tombstone): row is Tombstone {
-  return 'kind' in row;
-}
-
-export function isWithdrawn(row: FeedRow): row is WithdrawnJson {
+export function isWithdrawn(row: PostJson | WithdrawnJson): row is WithdrawnJson {
   return 'kind' in row;
 }

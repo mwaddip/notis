@@ -39,7 +39,7 @@ function baseCtx(over: Partial<AuthorCtx> = {}): AuthorCtx {
     authorKey: AUTHOR,
     origin: ORIGIN,
     karma: memberKarma(),
-    endorsers: { vouches: [{ voucherId: E1, targetId: AUTHOR }], count: 1, next: null },
+    endorsers: { vouches: [{ voucherId: E1, targetId: AUTHOR, voucherVouchCount: 2 }], count: 1, next: null },
     endorsersNext: false,
     membershipBars: { memberBar: 3, memberLikesBar: 6 },
     writeEnabled: true,

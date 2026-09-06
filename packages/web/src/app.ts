@@ -1,5 +1,5 @@
 import { NodeClient, type Api } from './api/client';
-import type { PostJson, Tombstone, FeedRow, PostResult, ThreadResult, KarmaResult, BondsResult } from './api/dto';
+import type { PostJson, WithdrawnJson, FeedRow, PostResult, ThreadResult, KarmaResult, BondsResult } from './api/dto';
 import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE } from '@dagsocial/types';
 import { el, shortHex } from './dom';
 import { contentHashHex } from './integrity';
@@ -104,7 +104,7 @@ function withdrawRejectionCopy(r: Rejection): string {
   if (r.status === 503) return "the node's pool is full right now";
   const m = r.message.toLowerCase();
   if (/earlier block|not confirmed/.test(m)) return 'this post has not landed yet';
-  if (/already/.test(m)) return 'this post is already withdrawn or pruned';
+  if (/already/.test(m)) return 'this post is already withdrawn';
   if (/author/.test(m)) return 'only the author can withdraw this post';
   return 'the node said: ' + m;
 }
@@ -256,7 +256,8 @@ export class App {
 
     void this.loadFeed();
     // A restored arrangement names post ids that must be fetched, and one may
-    // have been pruned since — its window renders the tombstone, not an error.
+    // have been withdrawn since — its window renders the withdrawn marker, not
+    // an error.
     for (const id of openSet(this.state.workspace)) if (!isWin(id)) void this.fetchThread(id);
     // A restored identity's membership state — the vouch set, the member flag —
     // so the marks resolve on the read the reader's own load triggers.
@@ -472,16 +473,16 @@ export class App {
 
   // -------------------------------------------------------------------------
   // Row intake — the post index (author lookup for a pane's spine) and the
-  // vouch-count cache: every PostJson row carries its author's count, so the
-  // cache fills as pages land, no per-author read (WEB_INTERFACE → The identity display).
+  // vouch-count cache: every rendered row carries its author's count, live or
+  // withdrawn, so the cache fills as pages land, no per-author read
+  // (WEB_INTERFACE → The identity display).
   // -------------------------------------------------------------------------
 
-  private indexRows(rows: Array<PostJson | Tombstone | null>): void {
+  private indexRows(rows: Array<PostJson | WithdrawnJson | null>): void {
     for (const row of rows) {
-      if (row && !('kind' in row)) {
-        this.state.posts.set(row.id, row);
-        this.vouchCounts.set(row.author, row.authorVouchCount);
-      }
+      if (!row) continue;
+      if (!('kind' in row)) this.state.posts.set(row.id, row); // the live-post index holds live rows only
+      this.vouchCounts.set(row.author, row.authorVouchCount);
     }
   }
 
@@ -1049,26 +1050,21 @@ export class App {
     this.renderRegionsForPost(postId);
   }
 
-  /** A withdrawal landed: replace the post in place with the fetched tombstone
-   *  (WEB_INTERFACE → The withdraw control). In every open thread the row becomes
-   *  the withdrawn card at its depth (the tombstone's parentRefs); the feed, the
-   *  author-posts windows and the live-post index drop it. The client's own
+  /** A withdrawal landed: replace the post in place with the fetched withdrawn
+   *  marker (WEB_INTERFACE → The withdraw control). In every open thread the row
+   *  becomes the withdrawn card at its depth (the marker's parentRefs); the feed,
+   *  the author-posts windows and the live-post index drop it. The client's own
    *  submission of the post is settled the same way, not left standing until the ↻:
    *  a root's leaves the feed, a reply's becomes the withdrawn card at its depth by
    *  joining every open thread that holds its parent, the count staying the node's
    *  (WEB_INTERFACE → The withdraw control, → The wallet). Returns whether the feed
    *  changed, the keys of the @posts windows that lost the row, and the parent ids
-   *  whose regions the caller must re-render explicitly — the reply-submission case
-   *  a stump or pruned answer leaves with no marker to append — so the caller
-   *  re-renders exactly those surfaces. */
+   *  whose regions the caller must re-render explicitly. */
   private applyWithdrawLanding(postId: string, fetched: PostResult | null): { feedChanged: boolean; postsKeys: string[]; touchParents: string[] } {
-    const tomb = fetched !== null && 'kind' in fetched ? fetched : null;
-    // A withdrawn marker is a FeedRow and slots into a thread's descendants; a
-    // stump or pruned answer (the thread went first) can only stand as a root.
-    const asFeedRow = tomb && tomb.kind === 'withdrawn' ? tomb : null;
+    const withdrawn = fetched !== null && 'kind' in fetched ? fetched : null;
     for (const t of this.state.threads.values()) {
-      if (t.root && t.root.id === postId && tomb) t.root = tomb;
-      if (asFeedRow) t.descendants = t.descendants.map((r) => (r.id === postId ? asFeedRow : r));
+      if (t.root && t.root.id === postId && withdrawn) t.root = withdrawn;
+      if (withdrawn) t.descendants = t.descendants.map((r) => (r.id === postId ? withdrawn : r));
     }
     let feedChanged = this.state.feed.posts.some((p) => p.id === postId);
     this.state.feed.posts = this.state.feed.posts.filter((p) => p.id !== postId);
@@ -1089,16 +1085,15 @@ export class App {
     // descendants of every open thread that holds its parent, where the marker is
     // not already a row — a route that listed the reply as a real row replaced it
     // above; the caller's touch of the withdrawn id then reaches those threads,
-    // since each now contains it. A stump or pruned answer has no marker to slot
-    // in, so the submission drops and the caller re-renders the parent's regions.
+    // since each now contains it.
     const sub = this.state.submissions.find((s) => s.postId === postId);
     const touchParents: string[] = [];
     if (sub) {
       if (sub.parentId === null) feedChanged = true;
-      else if (asFeedRow) {
+      else if (withdrawn) {
         for (const t of this.state.threads.values()) {
           if (this.threadContains(t.id, sub.parentId) && !t.descendants.some((r) => r.id === postId)) {
-            t.descendants = [...t.descendants, asFeedRow];
+            t.descendants = [...t.descendants, withdrawn];
           }
         }
       } else touchParents.push(sub.parentId);
@@ -1387,6 +1382,9 @@ export class App {
       d.endorsersNext = endorsers.next !== null;
       this.bumpTip(karma.height); // an author read carries the node's tip too
       this.vouchCounts.set(key, endorsers.count); // the subject's count, re-read on the window's ↻
+      // Each endorser's own count rides its row (NODE_INTERFACE → Vouches), so
+      // the cache fills for them too — no per-endorser read.
+      for (const v of endorsers.vouches) this.vouchCounts.set(v.voucherId, v.voucherVouchCount);
     } catch {
       return; // leave the window's last data; the ↻ retries
     }
@@ -1404,6 +1402,7 @@ export class App {
       const page = await this.client.vouchesByTarget(key, { after: d.endorsers.next });
       d.endorsers = { vouches: [...d.endorsers.vouches, ...page.vouches], count: page.count, next: page.next };
       d.endorsersNext = page.next !== null;
+      for (const v of page.vouches) this.vouchCounts.set(v.voucherId, v.voucherVouchCount);
     } catch {
       return;
     }

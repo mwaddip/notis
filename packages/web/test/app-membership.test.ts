@@ -19,6 +19,8 @@ import { contentHashHex } from '../src/integrity';
 const ME = 'aa'.repeat(32);
 const X = 'bb'.repeat(32); // another author, present in the feed
 const X_VOUCHES = 7; // X's count carried by every feed row — distinct from the target read (3), so the title's source is provable
+const V1 = 'dd'.repeat(32); // an endorser of X, distinct from the reader and the subject
+const V1_VOUCHES = 9; // V1's own count, carried by the endorser row it comes with — distinct from every other count here
 const SIG = 'cc'.repeat(64);
 
 let idState: { pubKeyHex: string; locked: boolean } | null;
@@ -67,7 +69,7 @@ function fakeApi(): Api {
     karma: async (key) => memberKarma(key),
     vouchesByTarget: async (key): Promise<VouchesTargetResult> => {
       targetReads.push(key);
-      return { vouches: [{ voucherId: ME, targetId: key }], count: 3, next: null };
+      return { vouches: [{ voucherId: V1, targetId: key, voucherVouchCount: V1_VOUCHES }], count: 3, next: null };
     },
     vouchesByVoucher: async (): Promise<VouchesVoucherResult> => ({ vouches: vouchSet, count: vouchSet.length, next: null }),
     vouchCooldowns: async (): Promise<VouchCooldownsResult> => ({ cooldowns, count: cooldowns.length, next: null }),
@@ -236,6 +238,20 @@ describe('the author window', () => {
     expect(h.panes.textContent).toContain(X);
     // The endorsers were read (vouchesByTarget for the subject).
     expect(targetReads).toContain(X);
+  });
+
+  it("an endorser row's mark is titled from the row's voucherVouchCount, with no read for it", async () => {
+    const h = harness();
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    await flush();
+    h.drive.openAuthor(X, { from: 'feed' });
+    await flush();
+    const mark = h.panes.querySelector('.endorser .vmark') as HTMLElement;
+    expect(mark).not.toBeNull();
+    expect(mark.getAttribute('title')).toBe(`${V1_VOUCHES} vouches`);
+    // Only the subject was read — the endorser's own count came with its row.
+    expect(targetReads).toEqual([X]);
   });
 });
 
