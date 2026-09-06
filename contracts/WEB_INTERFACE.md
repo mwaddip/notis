@@ -170,8 +170,6 @@ one.
   The client filters the withdrawn ones out, which costs it rows from a page and is the second reason
   paging follows `next`.
 
-> ⚠ **AHEAD OF CODE (2026-09-06)** — the feed's `roots=1`, the card's `descendantCount`, the mark's `authorVouchCount` from the row.
-
 ## The three absence states
 
 Every one of these is on screen in ordinary use, and no other social interface has any of them.
@@ -427,8 +425,8 @@ contract forbids. The faucet relays the field (`NODE_INTERFACE → Faucet`).
 ### The identity display *(membership actions)*
 
 **Wherever an identity is shown it is the key prefix in mono, then the mark, then `· you` on the
-reader's own** — cards in the feed and in panes, a reply's parent reference, a title bar, an endorser
-row and a bond row, the author window's subject line. The prefix is `shortHex(key, 16)` on a card and
+reader's own** — cards in the feed and in panes, a title bar, an endorser row and a bond row, the
+author window's subject line. The prefix is `shortHex(key, 16)` on a card and
 the whole key in a window.
 
 **The mark is one character, a control wherever it renders but on a title bar (below), and never a
@@ -451,9 +449,11 @@ row under the meta, as a like does (→ The identity module).
 (`NODE_INTERFACE → Posts`): every rendered row carries its author's count, the session's cache fills as
 pages land, and the title is set on the live node. One read of `GET /vouches?target=<key>` remains, after
 the reader's own vouch or unvouch lands for that identity, so the count stays the node's and is never a
-client-side guess; the author window's endorsers read fills the same cache. A failed read leaves the
-`title` empty, never wrong. A disabled mark's `title` is the reason instead, and the author window
-carries the same sentence in text, so hover is never the only route (`HOUSE_STYLE → Interaction`).
+client-side guess; the author window's endorsers read fills the same cache. An endorser row's mark has
+no count source of its own — the vouch row carries no voucher count — so its title is set only once a
+row by that voucher has landed in the session. A failed read leaves the `title` empty, never wrong. A
+disabled mark's `title` is the reason instead, and the author window carries the same sentence in text,
+so hover is never the only route (`HOUSE_STYLE → Interaction`).
 
 **The prefix on a card is the way into the author window, and it looks exactly like the text prefix
 it stands in for.** It is a `<button>` in the who row (`aria-label` *"open this author"*) rendered as the
@@ -466,15 +466,13 @@ boundary but its text, so the border floor does not apply; the text meets the te
 does. **The same rendering holds wherever a prefix is a control** — an endorser row in the author
 window, a standing-bond row in the profile — at that row's prefix size. The strip stays the card's only
 control for opening a thread and the card body stays selectable text (`HOUSE_STYLE → Interaction`). On
-a title bar and a reply reference the prefix is text and opens nothing: the bar is the tightest space in
-the design. Opening a window spends nothing, so the panes-only rule that governs like and reply does not
-bind it.
+a title bar the prefix is text and opens nothing: the bar is the tightest space in the design. Opening
+a window spends nothing, so the panes-only rule that governs like and reply does not bind it.
 
 **On a title bar the mark is display only** — `✓` in ink when the reader's live vouch names the
 author, muted while it is pending, absent otherwise, and never `+`: the bar's label is itself the focus
 control, a control cannot nest inside a control, and the bar carries no action but focus. The cards
-inside the pane carry the control. A reply reference's mark is the full control; only its prefix is
-text.
+inside the pane carry the control.
 
 ### The author window *(membership actions)*
 
