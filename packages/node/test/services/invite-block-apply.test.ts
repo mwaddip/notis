@@ -868,8 +868,8 @@ describe('the invite at block application', () => {
     // ⚠ The defect the counter exists to close: a count DERIVED from
     // `like_records` rows would let anyone who could delete those rows — a
     // THIRD PARTY's action — lower a count the inviter's bond settles on,
-    // though the inviter did nothing. Design track §1.4.1 forbids destroying
-    // someone else's stake.
+    // though the inviter did nothing. You may destroy your own stake, never
+    // someone else's (ARCHITECTURE → Bond outcomes).
     const { utxo, inviter, invitee, bond, likeBatches } = await seedPair(
       FIXTURE_BOND_KARMA,
       [{ count: INVITE_BOND_VEST_PER_LIKES, nonceBase: 100 }],
