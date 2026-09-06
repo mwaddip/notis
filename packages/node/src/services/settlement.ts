@@ -14,8 +14,8 @@
  *
  * | | |
  * |---|---|
- * | Consumes | the emission box (when this height releases) · the treasury box (when this block accrues to it) · the karma pool box (when this block draws or returns) · every `FeeBox` the body's transactions created · every marker box the block's like transactions emitted · the carry box of every credited author · the `BondBox` of every bond settling at this height · every `VouchEscrowBox` at or past its `releaseAtBlock` in pre-body state · the karma boxes decay charges and the locks a prune entry names |
- * | Emits | the successors of the three protocol boxes · the coinbase's credit outputs · the invite grants · the vested part of each settling bond · each released escrow's value back to its owner · like payouts and carry successors · decay replacements · prune refunds |
+ * | Consumes | the emission box (when this height releases) · the treasury box (when this block accrues to it) · the karma pool box (when this block draws or returns) · every `FeeBox` the body's transactions created · every marker box the block's like transactions emitted · the carry box of every credited author · the `BondBox` of every bond settling at this height · every `VouchEscrowBox` at or past its `releaseAtBlock` in pre-body state · the karma boxes decay charges |
+ * | Emits | the successors of the three protocol boxes · the coinbase's credit outputs · the invite grants · the vested part of each settling bond · each released escrow's value back to its owner · like payouts and carry successors · decay replacements |
  *
  * ⛔ **The emission box is spent on EVERY block** (TYPES_INTERFACE →
  * EmissionBox), because the forfeited inclusion bonus returns to it even when
@@ -208,7 +208,7 @@ interface DerivedSettlement {
    * ⚠ **This is stricter than matching the output MULTISET**, and the extra
    * strictness is load-bearing now rather than tidy. A settlement emits many
    * karma outputs — grants, payouts, vested bonds, escrow returns,
-   * decay replacements, prune refunds — and two of them can name one owner in one
+   * decay replacements — and two of them can name one owner in one
    * block, so a content match has no single answer to give.
    */
   derivedOutputs: AnyBoxCandidate[];
@@ -260,8 +260,8 @@ function derive(
   // What the pool owes and what it is owed, accumulated across every leg below
   // and settled once. ⛔ **The pool box is spent by this transaction and by
   // nothing else** (NODE_INTERFACE → The settlement transaction), so a leg
-  // cannot reach it on its own, which is why decay, the bond forfeit, the like
-  // remainder and the pruner's own locks are all derived here.
+  // cannot reach it on its own, which is why decay, the bond forfeit and the
+  // like remainder are all derived here.
   let poolDraw = 0n;
   let poolSink = 0n;
 
@@ -657,7 +657,7 @@ export function checkSettlement(
 
   // ---- 2. Nothing but the transaction ----
   //
-  // A settlement carries no signature, no like, no post, no prune and no
+  // A settlement carries no signature, no like, no post and no
   // withdrawal. Each would be bytes inside `utxoTxRoot` that no rule reads,
   // which is the malleability `checkTxEnvelope`'s closed key set refuses for
   // user transactions.
@@ -669,9 +669,6 @@ export function checkSettlement(
   }
   if (settlement.post !== undefined) {
     return { valid: false, error: 'settlement carries a post' };
-  }
-  if (settlement.prune !== undefined) {
-    return { valid: false, error: 'settlement carries a prune' };
   }
   if (settlement.postWithdraw !== undefined) {
     return { valid: false, error: 'settlement carries a postWithdraw' };

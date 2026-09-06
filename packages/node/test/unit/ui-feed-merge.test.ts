@@ -54,7 +54,7 @@ describe('mergeRange — feed (newest first)', () => {
     expect(keys).toHaveLength(5);
   });
 
-  it('head refresh keeps older pages and drops a pruned key', () => {
+  it('head refresh keeps older pages and drops a key the head page no longer serves', () => {
     const map = new Map<string, unknown>();
     mergeRange(map, keyOf, compareFeedKeys, null, [row(5, 0), row(4, 0), row(3, 0)], key(3, 0));
     mergeRange(map, keyOf, compareFeedKeys, key(3, 0), [row(2, 0), row(1, 0)], null);
@@ -88,7 +88,7 @@ describe('mergeRange — thread (ascending)', () => {
     expect([...map.keys()]).toEqual([key(1, 0), key(2, 0), key(3, 0), key(4, 0)]);
   });
 
-  it('head refresh drops pruned key in range', () => {
+  it('head refresh drops a key the head page no longer serves, in range', () => {
     const map = new Map<string, unknown>();
     mergeRange(map, keyOf, compareDescKeys, null, [row(1, 0), row(2, 0), row(3, 0)], key(3, 0));
     mergeRange(map, keyOf, compareDescKeys, key(3, 0), [row(4, 0)], null);

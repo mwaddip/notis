@@ -3,8 +3,8 @@ import {
   POST_PRICE_REPLY,
   protocolVersionAt,
 } from '@dagsocial/types';
-import type { PostCommit, Stump, ProtocolEra } from '@dagsocial/types';
-import type { StoredPost, PrunedTombstone } from '../store/posts.js';
+import type { PostCommit, ProtocolEra } from '@dagsocial/types';
+import type { StoredPost } from '../store/posts.js';
 import {
   verifyParentRefsCount,
   verifyProtocolVersion,
@@ -23,7 +23,7 @@ export interface VerifierDeps {
   getIdentityRecord: (owner: Uint8Array) => IdentityRecord | null;
   currentHeight: number;
   decayCfg: DecayCfg;
-  getPost: (id: string) => StoredPost | Stump | PrunedTombstone | null;
+  getPost: (id: string) => StoredPost | null;
   /** The profile's era schedule — the version check reads the era at `currentHeight`. */
   protocolVersionSchedule: readonly ProtocolEra[];
 }
@@ -89,10 +89,10 @@ export function verifyPost(
     };
   }
 
-  // 4. Parent refs: a live post or a stump resolves; a tombstone or null does not.
+  // 4. Parent refs: a stored post (live or withdrawn) resolves; null does not.
   for (const parentId of commit.parentRefs) {
     const parent = deps.getPost(parentId);
-    if (parent === null || (parent !== null && 'kind' in parent && parent.kind === 'pruned')) {
+    if (parent === null) {
       return { valid: false, error: `Parent post not found: ${parentId}` };
     }
   }

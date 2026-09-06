@@ -1,7 +1,6 @@
 import { fixturePostId, makePostCommit, seedProvenance, uid } from '../helpers.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { generateKeyPairSync, type KeyObject } from 'crypto';
-import { PROTOCOL_VERSION } from '@dagsocial/types';
 import type { VouchBox } from '@dagsocial/types';
 import {
   initDb,
@@ -15,9 +14,7 @@ import {
   hasLikeRecord,
   getAncestorsNearest,
   getSubtreePage,
-  insertStump,
   insertBox,
-  deletePostRows,
   confirmPost,
   withdrawPost,
   getBlockCreatedAt,
@@ -52,17 +49,9 @@ function insertTestPost(content: string, author: Uint8Array, parentRefs: string[
 
 describe('feed-service', () => {
   let authorId: Uint8Array;
-  let prunedRootId: string;
   let liveRootId: string;
   let liveReplyId: string;
   let feedService: FeedService;
-
-  const stumpScalars = {
-    replyCount: 1,
-    upvoteCount: 0,
-    protocolVersion: PROTOCOL_VERSION,
-    compactedAtBlockHeight: 7,
-  } as const;
 
   beforeEach(() => {
     initDb(':memory:');
@@ -71,16 +60,6 @@ describe('feed-service', () => {
 
     liveRootId = insertTestPost('Live root', authorId, []);
     liveReplyId = insertTestPost('Live reply', authorId, [liveRootId]);
-
-    // A pruned thread: insertStump then deletePostRows, as block-apply does.
-    prunedRootId = insertTestPost('Doomed root', authorId, []);
-    const doomedReplyId = insertTestPost('Doomed reply', authorId, [prunedRootId]);
-    insertStump({
-      rootPostHash: prunedRootId,
-      authorId,
-      ...stumpScalars,
-    });
-    deletePostRows([prunedRootId, doomedReplyId]);
 
     feedService = new FeedService({
       getPost: storeGetPost,
@@ -114,22 +93,6 @@ describe('feed-service', () => {
     expect(r['likedByViewer']).toBeNull();
   });
 
-  it('getPost on a pruned root returns StumpJson, not the raw Stump', () => {
-    const r = asRecord(feedService.getPost(prunedRootId));
-    expect(r).not.toBeNull();
-    expect(r).toEqual({
-      kind: 'stump',
-      id: prunedRootId,
-      author: Buffer.from(authorId).toString('hex'),
-      ...stumpScalars,
-    });
-    expect(r['author']).toMatch(/^[0-9a-f]{64}$/);
-    expect(r['authorId']).toBeUndefined();
-    expect(r['rootPostHash']).toBeUndefined();
-    expect('content' in r).toBe(false);
-    expect('likeCount' in r).toBe(false);
-  });
-
   it('a live post carries no `kind` — clients discriminate on its presence', () => {
     const r = asRecord(feedService.getPost(liveRootId));
     expect('kind' in r).toBe(false);
@@ -155,21 +118,6 @@ describe('feed-service', () => {
     expect(t!.next).toBeNull();
     expect(t!.pending).toEqual([]);
     expect(t!.pendingCount).toBe(0);
-  });
-
-  it('getThread on a pruned root returns the stump shell as StumpJson', () => {
-    const t = feedService.getThread(prunedRootId, { limit: 50 });
-    expect(t).not.toBeNull();
-    expect(t!.ancestors).toEqual([]);
-    expect(t!.ancestorCount).toBe(0);
-    expect(t!.descendants).toEqual([]);
-    expect(t!.descendantCount).toBe(0);
-    expect(t!.post).toEqual({
-      kind: 'stump',
-      id: prunedRootId,
-      author: Buffer.from(authorId).toString('hex'),
-      ...stumpScalars,
-    });
   });
 
   it('getThread on a withdrawn subject carries its live ancestor and descendant, as a live subject would', () => {

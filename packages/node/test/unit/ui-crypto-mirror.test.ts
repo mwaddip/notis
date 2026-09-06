@@ -103,18 +103,17 @@ const GOLDEN_UTXO_TX: UtxoTransaction = {
   protocolVersion: 1,
 };
 
-// ⛔ **EVERY ID BELOW MOVED WITH THE SEVENTH `txIdBytes` FIELD, AND THE BOX
-// BYTES DID NOT.** `txIdBytes` gained `postWithdraw` as field 7
-// (TYPES_INTERFACE → Layout — UtxoTransaction), so every `TxId` moved and,
-// through `computeCandidateBoxId(candidate, txId, index)`, every box id
-// derived from one. The two frozen byte vectors further down are **unchanged**
-// — measured, not assumed — which is what localises the move to the
-// transaction preimage rather than to the box layout.
+// ⛔ **EVERY ID BELOW IS PINNED TO THE SIX-FIELD `txIdBytes` LAYOUT, AND THE
+// BOX BYTES ARE NOT.** `txIdBytes` writes `postWithdraw` as field 6, the last
+// (TYPES_INTERFACE → Layout — UtxoTransaction), so every `TxId` here is a
+// function of that layout and, through `computeCandidateBoxId(candidate,
+// txId, index)`, every box id derived from one moves if it does. The two
+// frozen byte vectors further down are **unchanged** — measured, not assumed
+// — which is what localises the dependency to the transaction preimage
+// rather than to the box layout.
 //
-// ⚠ **Re-pinned to `@dagsocial/types`** (TYPES_INTERFACE → A mirror test's
-// golden must be pinned to the AUTHORITY, never to the mirror). While the page
-// still writes the retired field it will disagree with them, and that
-// disagreement is the point.
+// ⚠ **Pinned to `@dagsocial/types`** (TYPES_INTERFACE → A mirror test's
+// golden must be pinned to the AUTHORITY, never to the mirror).
 //
 // ⚠ **The INPUT each was regenerated from** (TYPES_INTERFACE → A regenerated
 // pin's INPUT is unchecked, so state it): `computeTxId` / `computeCandidateBoxId`
@@ -122,11 +121,11 @@ const GOLDEN_UTXO_TX: UtxoTransaction = {
 // `0x12345678` for the wide-index case. The sentinel's input is stated at its
 // own declaration, because it is the one that is not a neighbour of these.
 const GOLDEN_KARMA_BOX_ID =
-  '9f0777a506547b897a5b27b40a120bf06a8ba5077bc43176a1d060d5f2bd97ca';
+  'ab1d30192ff65a58f20c4cac226bf8c5ee58309829b277fa85e2a85ca8326da8';
 const GOLDEN_CREDIT_BOX_ID =
-  '37354b53d9e1b9c71474158a4befa9d7d8f1f373c8f8a375e1878557ffba307a';
+  'eaa89e587d34bfaea6cf617ad3bcc7b4140ffe667cf36e4f88fa73608f14defd';
 const GOLDEN_UTXO_TX_ID =
-  '54cf097e49db50c1adbba0212990cb62d43fa3b773f22ee27a70c3f3239f715b';
+  'b907fc923be1041b652434c8d277e350394e6889716e23327073b09c022ad623';
 
 /**
  * The exact canonical bytes for the two golden candidates, frozen. Stronger
@@ -167,11 +166,11 @@ const GOLDEN_CREDIT_BOX: CreditBox =
 // ---------------------------------------------------------------------------
 
 const GOLDEN_KARMA_CANDIDATE_ID =            // (GOLDEN_UTXO_TX_ID, index 0)
-  '9f0777a506547b897a5b27b40a120bf06a8ba5077bc43176a1d060d5f2bd97ca';
+  'ab1d30192ff65a58f20c4cac226bf8c5ee58309829b277fa85e2a85ca8326da8';
 const GOLDEN_CREDIT_CANDIDATE_ID =           // (GOLDEN_UTXO_TX_ID, index 1)
-  '37354b53d9e1b9c71474158a4befa9d7d8f1f373c8f8a375e1878557ffba307a';
+  'eaa89e587d34bfaea6cf617ad3bcc7b4140ffe667cf36e4f88fa73608f14defd';
 const GOLDEN_KARMA_CANDIDATE_ID_WIDE_INDEX = // index 0x12345678 — five VLQ bytes
-  '77286bdf52845eaf7bf361576d7c1a330015fe86734d9225e85bd1dc6cbb4a41';
+  'd83183bab73f08dcf8fd453b17e67437f79ec1834d0d6ed0280f6ada963276af';
 // ⚠ **Input: a genuinely malformed index (`NaN`), NOT `2**32`** (TYPES_INTERFACE
 // → A regenerated pin's INPUT is unchecked, so state it). `2**32` is inside
 // `vlqU`'s domain and encodes faithfully, so it is a valid index and pinning it
@@ -179,7 +178,7 @@ const GOLDEN_KARMA_CANDIDATE_ID_WIDE_INDEX = // index 0x12345678 — five VLQ by
 // from the wrong input, which no mirror check can see because the mirror is
 // fine.
 const GOLDEN_KARMA_CANDIDATE_ID_SENTINEL =   // any index outside the vlqU domain
-  '13bc64363f2b69a2de36624732cd3ab9a20bc097b573e17344e699d982b5c762';
+  '7c946af15bc7035147d8371651d3a4058f82a19d4926218bb77f2e911bcd6106';
 
 // ---------------------------------------------------------------------------
 // One fixture per box type
@@ -1151,7 +1150,7 @@ describe('demo UI ↔ @dagsocial/types likeTarget tail mirror (P2-D)', () => {
   // Measured from @dagsocial/types computeTxId — both implementations pin to
   // constants, not just to each other.
   const GOLDEN_LIKE_TX_ID =
-    'fee109acb3a8a7a6fd70f564f5e99ef39eae74699d88160238f2802aaf721eb7';
+    'ffe6f2108ac09560f7f89277ce09d82eed9abedb968485198844d8398e6799a0';
 
   const GOLDEN_LIKE_TX: UtxoTransaction = {
     ...GOLDEN_UTXO_TX,
@@ -1271,10 +1270,8 @@ const AUDIT_VOCABULARY: readonly string[] = [
  * what it concedes rather than treating the list as a second column of coverage.
  */
 const AUDIT_ALLOW: Record<string, string> = {
-  pruneFieldBytes:
-    'mirrors @dagsocial/types pruneFieldBytes — the prune payload encoder for field 6 of txIdBytes',
   postWithdrawFieldBytes:
-    'mirrors @dagsocial/types postWithdrawFieldBytes — the withdrawal payload encoder for field 7 of txIdBytes',
+    'mirrors @dagsocial/types postWithdrawFieldBytes — the withdrawal payload encoder for field 6 of txIdBytes',
 };
 
 interface Scope { name: string; start: number; end: number; }

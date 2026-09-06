@@ -114,7 +114,7 @@ import {
  * The settlement is the last `utxoTxIds` entry, so it is the last leaf and its
  * position is committed here rather than stated anywhere else.
  *
- * The `'coinbase'` and `'prune'` domains are tracked reservations
+ * The `'coinbase'` domain is a tracked reservation
  * (TYPES_INTERFACE → Tracked reservations).
  */
 export function computeUtxoTxRoot(tree: UtxoTxTree): string {

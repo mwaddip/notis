@@ -3,7 +3,7 @@ import express from 'express';
 import http from 'http';
 import { computeTxId, MEMPOOL_EXPIRY_BLOCKS } from '@dagsocial/types';
 import type { UtxoTransaction } from '@dagsocial/types';
-import { pruneWithdrawRoutes } from '../../src/routes/prune-withdraw.js';
+import { withdrawRoutes } from '../../src/routes/withdraw.js';
 import { setNet } from '../../src/services/net-instance.js';
 import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
 
@@ -11,14 +11,14 @@ import type { UtxoEngineDeps } from '../../src/services/utxo-engine.js';
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeJsonPruneTxBody(): Record<string, unknown> {
+function makeJsonPostWithdrawTxBody(): Record<string, unknown> {
   return {
     inputs: ['a'.repeat(64)],
     outputs: [{ boxType: 'karma', value: '10', owner: '0'.repeat(64), createdAtBlock: 1 }],
     signatures: {},
     protocolVersion: 1,
-    prune: {
-      rootPostHash: 'd'.repeat(64),
+    postWithdraw: {
+      postId: 'd'.repeat(64),
     },
   };
 }
@@ -50,25 +50,24 @@ const STUB_DEPS: UtxoEngineDeps = {
 async function request(
   postId: string,
   body: unknown,
-  executePruneImpl?: (deps: UtxoEngineDeps, tx: UtxoTransaction, height: number) => { txId: string; expiresAtHeight: number },
+  executePostWithdrawImpl?: (deps: UtxoEngineDeps, tx: UtxoTransaction, height: number) => { txId: string; expiresAtHeight: number },
 ): Promise<{ status: number; data: unknown }> {
   return new Promise((resolve) => {
     const deps = {
       ...STUB_DEPS,
-      executePrune: executePruneImpl ?? ((_d: UtxoEngineDeps, _t: UtxoTransaction, h: number) => ({ txId: 'b'.repeat(64), expiresAtHeight: h + MEMPOOL_EXPIRY_BLOCKS })),
-      executePostWithdraw: (_d: UtxoEngineDeps, _t: UtxoTransaction, h: number) => ({ txId: 'c'.repeat(64), expiresAtHeight: h + MEMPOOL_EXPIRY_BLOCKS }),
+      executePostWithdraw: executePostWithdrawImpl ?? ((_d: UtxoEngineDeps, _t: UtxoTransaction, h: number) => ({ txId: 'c'.repeat(64), expiresAtHeight: h + MEMPOOL_EXPIRY_BLOCKS })),
       getCurrentHeight: () => 10,
     };
     const app = express();
     app.use(express.json());
-    app.use(pruneWithdrawRoutes(deps));
+    app.use(withdrawRoutes(deps));
     const server = app.listen(0, () => {
       const addr = server.address() as { port: number };
       const r = http.request(
         {
           hostname: 'localhost',
           port: addr.port,
-          path: `/posts/${postId}/prune`,
+          path: `/posts/${postId}/withdraw`,
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
         },
@@ -99,13 +98,13 @@ const TEST_POST_HASH = 'd'.repeat(64);
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('pruning routes', () => {
+describe('withdraw route', () => {
   afterEach(() => {
     setNet(null as unknown as Parameters<typeof setNet>[0]);
   });
 
-  it('POST /posts/:id/prune with a prune transaction returns 201', async () => {
-    const res = await request(TEST_POST_HASH, { tx: makeJsonPruneTxBody() });
+  it('POST /posts/:id/withdraw with a postWithdraw transaction returns 201', async () => {
+    const res = await request(TEST_POST_HASH, { tx: makeJsonPostWithdrawTxBody() });
     expect(res.status).toBe(201);
     const body = res.data as Record<string, unknown>;
     expect(body.status).toBe('submitted');
@@ -114,25 +113,25 @@ describe('pruning routes', () => {
     expect(body.expiresAtHeight).toBe(11 + MEMPOOL_EXPIRY_BLOCKS);
   });
 
-  it('POST /posts/:id/prune without tx field returns 400', async () => {
+  it('POST /posts/:id/withdraw without tx field returns 400', async () => {
     const res = await request(TEST_POST_HASH, {});
     expect(res.status).toBe(400);
     const body = res.data as Record<string, unknown>;
-    expect(body.error).toContain('prune transaction');
+    expect(body.error).toContain('postWithdraw transaction');
   });
 
-  it('POST /posts/:id/prune without prune payload returns 400', async () => {
-    const txBody = makeJsonPruneTxBody();
-    delete txBody.prune;
+  it('POST /posts/:id/withdraw without postWithdraw payload returns 400', async () => {
+    const txBody = makeJsonPostWithdrawTxBody();
+    delete txBody.postWithdraw;
     const res = await request(TEST_POST_HASH, { tx: txBody });
     expect(res.status).toBe(400);
     const body = res.data as Record<string, unknown>;
-    expect(body.error).toContain('prune transaction');
+    expect(body.error).toContain('postWithdraw transaction');
   });
 
-  it('POST /posts/:id/prune returns 400 when executePrune throws ClientError', async () => {
+  it('POST /posts/:id/withdraw returns 400 when executePostWithdraw throws ClientError', async () => {
     const { ClientError } = await import('../../src/services/client-error.js');
-    const res = await request(TEST_POST_HASH, { tx: makeJsonPruneTxBody() }, () => {
+    const res = await request(TEST_POST_HASH, { tx: makeJsonPostWithdrawTxBody() }, () => {
       throw new ClientError('Post is not confirmed in an earlier block');
     });
     expect(res.status).toBe(400);
@@ -140,21 +139,21 @@ describe('pruning routes', () => {
     expect(body.error).toBe('Post is not confirmed in an earlier block');
   });
 
-  it('POST /posts/:id/prune returns 500 for unexpected errors', async () => {
-    const res = await request(TEST_POST_HASH, { tx: makeJsonPruneTxBody() }, () => {
+  it('POST /posts/:id/withdraw returns 500 for unexpected errors', async () => {
+    const res = await request(TEST_POST_HASH, { tx: makeJsonPostWithdrawTxBody() }, () => {
       throw new Error('unexpected');
     });
     expect(res.status).toBe(500);
   });
 
-  it('broadcasts the pooled prune transaction to peers', async () => {
+  it('broadcasts the pooled postWithdraw transaction to peers', async () => {
     const broadcastTx = vi.fn((_tx: UtxoTransaction) => Promise.resolve());
     setNet({ broadcastTx } as unknown as Parameters<typeof setNet>[0]);
 
     let captured: UtxoTransaction | undefined;
-    const res = await request(TEST_POST_HASH, { tx: makeJsonPruneTxBody() }, (_deps, tx, h) => {
+    const res = await request(TEST_POST_HASH, { tx: makeJsonPostWithdrawTxBody() }, (_deps, tx, h) => {
       captured = tx;
-      return { txId: 'b'.repeat(64), expiresAtHeight: h + MEMPOOL_EXPIRY_BLOCKS };
+      return { txId: 'c'.repeat(64), expiresAtHeight: h + MEMPOOL_EXPIRY_BLOCKS };
     });
 
     expect(res.status).toBe(201);

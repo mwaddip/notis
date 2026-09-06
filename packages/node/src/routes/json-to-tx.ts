@@ -1,5 +1,5 @@
 import { BOX_VALUE_BOUND } from '@dagsocial/types';
-import type { AnyBox, PostCommit, PostType, PostWithdrawCommit, PruneCommit, UtxoTransaction } from '@dagsocial/types';
+import type { AnyBox, PostCommit, PostType, PostWithdrawCommit, UtxoTransaction } from '@dagsocial/types';
 import { ClientError } from '../services/client-error.js';
 
 /**
@@ -89,9 +89,6 @@ export function jsonToTx(raw: Record<string, unknown>, defaultVersion: number): 
   // check, as `castLike` owns `likeTarget`'s.
   const post = raw.post === undefined ? undefined : jsonToPostCommit(raw.post, defaultVersion);
 
-  // ---- prune ----
-  const prune = raw.prune === undefined ? undefined : jsonToPruneCommit(raw.prune);
-
   // ---- postWithdraw ----
   const postWithdraw = raw.postWithdraw === undefined ? undefined : jsonToPostWithdrawCommit(raw.postWithdraw);
 
@@ -102,7 +99,6 @@ export function jsonToTx(raw: Record<string, unknown>, defaultVersion: number): 
     protocolVersion,
     ...(likeTarget !== undefined ? { likeTarget } : {}),
     ...(post !== undefined ? { post } : {}),
-    ...(prune !== undefined ? { prune } : {}),
     ...(postWithdraw !== undefined ? { postWithdraw } : {}),
   };
 }
@@ -141,17 +137,6 @@ function jsonToPostCommit(raw: unknown, defaultVersion: number): PostCommit {
     protocolVersion: (p.protocolVersion as number) ?? defaultVersion,
     type: ((p.type as string) ?? 'regular') as PostType,
   };
-}
-
-function jsonToPruneCommit(raw: unknown): PruneCommit {
-  if (typeof raw !== 'object' || raw === null) {
-    throw new ClientError('prune must be an object');
-  }
-  const p = raw as Record<string, unknown>;
-  if (typeof p.rootPostHash !== 'string') {
-    throw new ClientError('prune rootPostHash must be a string');
-  }
-  return { rootPostHash: p.rootPostHash };
 }
 
 function jsonToPostWithdrawCommit(raw: unknown): PostWithdrawCommit {
