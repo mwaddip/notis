@@ -645,11 +645,6 @@ function postFieldBytes(contentHash, authorBytes, parentRefs, protocolVersion, t
   ]);
 }
 
-// TYPES_INTERFACE → Layout — PruneCommit
-function pruneFieldBytes(prune) {
-  return b32Hex(prune.rootPostHash, 32);
-}
-
 function postWithdrawFieldBytes(pw) {
   return b32Hex(pw.postId, 32);
 }
@@ -795,8 +790,7 @@ const TX_ID_DOMAIN = encoder.encode('dagsocial/tx-id/1');
  *   | 3 | protocolVersion | vlqU                                         |
  *   | 4 | likeTarget      | opt(b32)                                     |
  *   | 5 | post            | opt(postFieldBytes)                          |
- *   | 6 | prune           | opt(pruneFieldBytes)                         |
- *   | 7 | postWithdraw    | opt(postWithdrawFieldBytes)                   |
+ *   | 6 | postWithdraw    | opt(postWithdrawFieldBytes)                   |
  *
  * Three properties this layout secures, each of which a bare concatenation
  * would not (TYPES_INTERFACE → Layout — UtxoTransaction):
@@ -814,7 +808,7 @@ const TX_ID_DOMAIN = encoder.encode('dagsocial/tx-id/1');
  *
  * Signatures are absent and stay absent: they are Ed25519 *over* this id.
  *
- * ⛔ **SEVEN FIELDS, AND THE COUNT IS LOAD-BEARING.** `signTx` signs whatever this
+ * ⛔ **SIX FIELDS, AND THE COUNT IS LOAD-BEARING.** `signTx` signs whatever this
  * returns, so a field here that the node does not write makes the browser sign
  * an id the node never computes — and **every transaction this page builds is
  * rejected**, with nothing in the repo able to see it (NODE_INTERFACE → the
@@ -834,7 +828,6 @@ function computeTxId(tx) {
       post.protocolVersion,
       post.type,
     )),
-    opt(tx.prune, (prune) => pruneFieldBytes(prune)),
     opt(tx.postWithdraw, (pw) => postWithdrawFieldBytes(pw)),
   ]);
   const hash = blake2b(combined, null, 64).slice(0, 32);
@@ -2019,20 +2012,6 @@ function renderPost(p, id, depth, highlighted = false) {
   const borderStyle = depth > 0 ? '2px solid var(--border)' : 'none';
   const padLeft = depth > 0 ? '10px' : '12px';
 
-  if (p.kind === 'stump') {
-    return `
-      <div class="post${hlClass}" style="margin-left:${indent}px;border-left:${borderStyle};padding-left:${padLeft};opacity:0.5">
-        <div class="post-author">${esc(p.author.slice(0, 12))}...</div>
-        <div class="post-content" style="font-style:italic;color:var(--inkMute)">[pruned — ${p.replyCount} replies, ${p.upvoteCount} likes]</div>
-      </div>`;
-  }
-  if (p.kind === 'pruned') {
-    return `
-      <div class="post${hlClass}" style="margin-left:${indent}px;border-left:${borderStyle};padding-left:${padLeft};opacity:0.5">
-        <div class="post-author">${esc(p.author.slice(0, 12))}...</div>
-        <div class="post-content" style="font-style:italic;color:var(--inkMute)">[pruned]</div>
-      </div>`;
-  }
   if (p.kind === 'withdrawn') {
     return `
       <div class="post${hlClass}" style="margin-left:${indent}px;border-left:${borderStyle};padding-left:${padLeft};opacity:0.5">

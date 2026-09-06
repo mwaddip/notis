@@ -44,7 +44,7 @@
         "utxoTxs": []
       },
       "bytes": "0000",
-      "note": "TWO count prefixes. Prunes ride the transaction rail, so the body is utxoTxIds and utxoTxs only. A section added or removed here moves this vector."
+      "note": "TWO count prefixes. Withdrawals ride the transaction rail, so the body is utxoTxIds and utxoTxs only. A section added or removed here moves this vector."
     },
     {
       "name": "utxoTxTree/two-txs",

@@ -13,8 +13,8 @@ import {
   KARMA_MINIMUM,
   computeContentHash,
 } from '@dagsocial/types';
-import type { PostCommit, Stump } from '@dagsocial/types';
-import type { StoredPost, PrunedTombstone } from '../../src/store/posts.js';
+import type { PostCommit } from '@dagsocial/types';
+import type { StoredPost } from '../../src/store/posts.js';
 import { verifyPost } from '../../src/services/verifier.js';
 import type { VerifierDeps } from '../../src/services/verifier.js';
 
@@ -25,7 +25,7 @@ import type { VerifierDeps } from '../../src/services/verifier.js';
 interface MockStore {
   identities: ByteKeyedMap<{ userId: Uint8Array; publicKey: Uint8Array; createdAt: number }>;
   karmaBoxes: Map<string, { value: bigint }[]>;
-  posts: Map<string, StoredPost | Stump | PrunedTombstone>;
+  posts: Map<string, StoredPost>;
 }
 
 function createMockDeps(store: MockStore): VerifierDeps {
@@ -149,36 +149,22 @@ describe('verifyPost', () => {
     expect(result.valid).toBe(true);
   });
 
-  it('accepts a parent ref that names a stump', () => {
+  it('accepts a parent ref that names a withdrawn post', () => {
     const store = makeStore();
     store.identities.set(userId, { userId, publicKey: pubKeyRaw, createdAt: Date.now() });
     store.karmaBoxes.set(Buffer.from(pubKeyRaw).toString('hex'), [
       { value: POST_PRICE_REPLY },
     ]);
-    const stumpId = 'cd'.repeat(32);
-    store.posts.set(stumpId, {
-      rootPostHash: stumpId, authorId: userId, replyCount: 0, upvoteCount: 0,
-      protocolVersion: PROTOCOL_VERSION, compactedAtBlockHeight: 5,
+    const withdrawnId = 'cd'.repeat(32);
+    store.posts.set(withdrawnId, {
+      id: withdrawnId, content: null, contentHash: Buffer.from(computeContentHash('withdrawn')).toString('hex'),
+      author: userId, parentRefs: [], protocolVersion: PROTOCOL_VERSION,
+      type: 'regular', status: 'confirmed', blockHeight: 1, blockIndex: 0,
+      withdrawnAtHeight: 5,
     });
-    const commit = makeCommit({ parentRefs: [stumpId] });
+    const commit = makeCommit({ parentRefs: [withdrawnId] });
     const result = verifyPost(createMockDeps(store), commit);
     expect(result.valid).toBe(true);
-  });
-
-  it('rejects a parent ref that names a tombstone', () => {
-    const store = makeStore();
-    store.karmaBoxes.set(Buffer.from(pubKeyRaw).toString('hex'), [
-      { value: POST_PRICE_REPLY },
-    ]);
-    const tombId = 'ef'.repeat(32);
-    store.posts.set(tombId, {
-      kind: 'pruned', id: tombId,
-      author: Buffer.from(userId).toString('hex'),
-      rootPostHash: 'aa'.repeat(32), compactedAtBlockHeight: 3,
-    });
-    const result = verifyPost(createMockDeps(store), makeCommit({ parentRefs: [tombId] }));
-    expect(result.valid).toBe(false);
-    expect(result.error).toBe(`Parent post not found: ${tombId}`);
   });
 
   it('rejects insufficient karma', () => {

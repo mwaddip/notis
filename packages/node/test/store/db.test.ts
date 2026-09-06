@@ -17,7 +17,6 @@ async function importFresh() {
 const EXPECTED_TABLES = [
   'dag_posts',
   'dag_parent_refs',
-  'dag_stumps',
   'like_records',
   'mempool',
   'network_record',

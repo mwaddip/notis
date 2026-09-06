@@ -1,5 +1,5 @@
 import { computePostId, decodeTx } from '@dagsocial/types';
-import type { OrderingBlock, PostCommit, PostId, PostWithdrawCommit, PruneCommit, TxId } from '@dagsocial/types';
+import type { OrderingBlock, PostCommit, PostId, PostWithdrawCommit, TxId } from '@dagsocial/types';
 
 /** One post a block creates, with the transaction identity that names it. */
 export interface BlockPost {
@@ -95,45 +95,4 @@ export function withdrawalsOf(
     withdrawals.push({ txId: utxoTxIds[i]!, author, postWithdraw: tx.postWithdraw });
   }
   return withdrawals;
-}
-
-/** One prune a block carries, with the transaction identity that authorises it. */
-export interface BlockPrune {
-  txId: TxId;
-  author: Uint8Array;
-  prune: PruneCommit;
-}
-
-/**
- * The prunes a block carries, read from the **committed** transaction list.
- *
- * ⛔ **One derivation, used by the forward pass and by every inverse.** Same
- * rule as `postsOf` — the journal's rollback must read the same list apply read.
- *
- * `author` is the root's consensus-recorded author from `block_topology`,
- * resolved during the scan. The transaction's own validation (the prune
- * transition arm) has already verified that `inputKarma.owner` equals this
- * author, so the two sources agree on every valid block.
- */
-export function prunesOf(
-  block: OrderingBlock,
-  getAuthor: (postId: string) => Uint8Array | null,
-): BlockPrune[] {
-  const prunes: BlockPrune[] = [];
-  const { utxoTxIds, utxoTxs } = block.utxoTxTree;
-  for (let i = 0; i < utxoTxIds.length; i++) {
-    const raw = utxoTxs[i];
-    if (!raw) continue;
-    let tx;
-    try {
-      tx = decodeTx(raw);
-    } catch {
-      continue;
-    }
-    if (!tx.prune) continue;
-    const author = getAuthor(tx.prune.rootPostHash);
-    if (!author) continue;
-    prunes.push({ txId: utxoTxIds[i]!, author, prune: tx.prune });
-  }
-  return prunes;
 }

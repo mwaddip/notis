@@ -428,7 +428,6 @@ describe('envelope exclusivity — at most one payload field', () => {
     protocolVersion: PROTOCOL_VERSION,
     type: 'regular' as const,
   };
-  const PRUNE = { rootPostHash: 'c'.repeat(64) };
   const WITHDRAW = { postId: 'd'.repeat(64) };
 
   it('like + post (with a price box) is refused', () => {
@@ -455,20 +454,12 @@ describe('envelope exclusivity — at most one payload field', () => {
     expect(r.error).toMatch(/post/);
   });
 
-  it('like + prune is refused', () => {
-    const tx = { ...base, likeTarget: LIKE_TARGET, prune: PRUNE };
+  it('like + withdraw is refused', () => {
+    const tx = { ...base, likeTarget: LIKE_TARGET, postWithdraw: WITHDRAW };
     const r = checkEnvelope(tx);
     expect(r.valid).toBe(false);
     expect(r.error).toMatch(/likeTarget/);
-    expect(r.error).toMatch(/prune/);
-  });
-
-  it('post + prune is refused', () => {
-    const tx = { ...base, post: POST_COMMIT, prune: PRUNE };
-    const r = checkEnvelope(tx);
-    expect(r.valid).toBe(false);
-    expect(r.error).toMatch(/post/);
-    expect(r.error).toMatch(/prune/);
+    expect(r.error).toMatch(/postWithdraw/);
   });
 
   it('post + withdraw is refused', () => {
@@ -476,14 +467,6 @@ describe('envelope exclusivity — at most one payload field', () => {
     const r = checkEnvelope(tx);
     expect(r.valid).toBe(false);
     expect(r.error).toMatch(/post/);
-    expect(r.error).toMatch(/postWithdraw/);
-  });
-
-  it('prune + withdraw is refused', () => {
-    const tx = { ...base, prune: PRUNE, postWithdraw: WITHDRAW };
-    const r = checkEnvelope(tx);
-    expect(r.valid).toBe(false);
-    expect(r.error).toMatch(/prune/);
     expect(r.error).toMatch(/postWithdraw/);
   });
 });

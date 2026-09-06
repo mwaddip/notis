@@ -38,8 +38,9 @@ function postJson(id: string, author: string, parentRefs: string[] = []): PostJs
   };
 }
 const asResult = (p: PostJson): PostResult => ({ ...p, confirmedAuthor: p.author });
-const tombRow = (id: string, parentRefs: string[]): WithdrawnJson => ({ kind: 'withdrawn', id, author: PUB, withdrawnAtHeight: 6002, parentRefs });
-const tomb = (id: string, parentRefs: string[]): PostResult => ({ ...tombRow(id, parentRefs), confirmedAuthor: PUB });
+const tombRow = (id: string, parentRefs: string[], descendantCount = 0): WithdrawnJson =>
+  ({ kind: 'withdrawn', id, author: PUB, withdrawnAtHeight: 6002, parentRefs, descendantCount, authorVouchCount: 0 });
+const tomb = (id: string, parentRefs: string[], descendantCount = 0): PostResult => ({ ...tombRow(id, parentRefs, descendantCount), confirmedAuthor: PUB });
 
 type WithdrawResp = { kind: 'ok' } | { kind: 'throw' } | { kind: 'reject'; rejection?: Rejection };
 
@@ -187,6 +188,8 @@ describe('the App withdraw flight', () => {
     const region0 = h.panes.querySelectorAll('.region')[0]!;
     expect(region0.querySelector('.withdrawn')?.textContent).toContain('withdrawn by its author');
     expect(region0.querySelectorAll('.card-content').length).toBe(1); // only the reply keeps content
+    // The withdrawn root's card shows the thread's own count, never '?'.
+    expect(region0.querySelector('.card.thread-root .replies')?.textContent).toBe('1 reply');
     // Dropped from the feed and the live-post index; the entry cleared.
     expect(h.drive.state.feed.posts.some((x) => x.id === P)).toBe(false);
     expect(h.drive.state.posts.has(P)).toBe(false);
@@ -212,15 +215,17 @@ describe('the App withdraw flight', () => {
     await flush();
 
     await h.drive.withdrawPost(R);
-    h.setNode(R, tomb(R, [P])); // the tombstone keeps its parentRef
+    h.setNode(R, tomb(R, [P], 5)); // the marker keeps its parentRef; the node's own count, not the one loaded child (G)
     h.setHeight(6002);
     await h.drive.pollTick();
 
     // R renders as the withdrawn card at depth 1; G stays beneath it at depth 2.
-    const withdrawn = h.panes.querySelector('.card.depth-1 .withdrawn');
-    expect(withdrawn).not.toBeNull();
+    const withdrawnCard = h.panes.querySelector('.card.depth-1');
+    expect(withdrawnCard?.querySelector('.withdrawn')).not.toBeNull();
     expect(h.panes.querySelector('.card.depth-2')).not.toBeNull();
     expect(h.drive.state.feed.posts.some((x) => x.id === R)).toBe(false);
+    // The count is the row's own descendantCount, never the loaded subtree of 1.
+    expect(withdrawnCard?.querySelector('.replies')?.textContent).toBe('5 replies');
   });
 
   it('expired renders the sentence and try again; try again submits anew', async () => {
@@ -256,7 +261,7 @@ describe('the App withdraw flight', () => {
 
   it.each([
     [{ status: 400, message: 'Post is not confirmed in an earlier block' }, 'this post has not landed yet'],
-    [{ status: 400, message: 'Post is already withdrawn, pruned or unknown' }, 'this post is already withdrawn or pruned'],
+    [{ status: 400, message: 'Post is already withdrawn or unknown' }, 'this post is already withdrawn'],
     [{ status: 400, message: "Invalid postWithdraw transaction: PostWithdraw post x is not authored by the karma input's owner" }, 'only the author can withdraw this post'],
     [{ status: 409, message: 'conflict' }, 'that karma box is still tied up in a transaction that has not landed'],
     [{ status: 503, message: 'mempool full' }, "the node's pool is full right now"],

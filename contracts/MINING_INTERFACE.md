@@ -313,7 +313,7 @@ when one is produced are separate questions, and a rebuild mid-solve would void 
 in-flight work.
 
 **A build whose body the mutation phase rejects is repeated, not abandoned.** The creator evicts
-every pool row the rejected body carried — transaction and prune rows alike, the cleanup a rejected
+every pool row the rejected body carried — the cleanup a rejected
 finalize runs — and fills again from what the pool still holds, until it holds a template or a body
 carrying **no pool row** is rejected. Every repetition strictly shrinks the pool, which is what bounds
 the loop. A rejected body that carried nothing is terminal: the chain state cannot back even the

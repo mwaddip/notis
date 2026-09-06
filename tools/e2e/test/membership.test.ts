@@ -275,6 +275,13 @@ describe('membership', () => {
     for (const node of mesh.nodes) {
       const v = await getVouchesTarget(node, B.publicKeyHex);
       expect(v.vouches.some(vi => vi.voucherId === A.publicKeyHex)).toBe(true);
+
+      // ---- every row's voucherVouchCount matches that voucher's own target count ----
+      // NODE_INTERFACE → Vouches
+      for (const row of v.vouches) {
+        const voucherAsTarget = await getVouchesTarget(node, row.voucherId);
+        expect(row.voucherVouchCount).toBe(voucherAsTarget.count);
+      }
     }
 
     // ---- the cascade: faucet unvouches A ----

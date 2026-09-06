@@ -15,16 +15,16 @@ context — read it and the linked docs before touching code.
 7. Your task's spec in `../../docs/specs/`.
 
 ## What Notis is
-An invite-only decentralized social network on a **dual-ledger** design: a **Posts DAG** (author-sovereign,
-prunable) and a **UTXO ledger** (non-tradeable **karma** + tradeable **credits**); every post, like and
-prune is a transaction on the UTXO ledger, and a pruned subtree leaves a **stump**. Consensus is PoW. TypeScript, pnpm workspaces, Node.js ≥ 22.
+An invite-only decentralized social network on a **dual-ledger** design: a **Posts DAG** (author-sovereign)
+and a **UTXO ledger** (non-tradeable **karma** + tradeable **credits**); every post, like and withdrawal
+is a transaction on the UTXO ledger, and withdrawal is the author's only act over a post. Consensus is PoW. TypeScript, pnpm workspaces, Node.js ≥ 22.
 
 ## This package (`@dagsocial/types`)
-The shared data model and cryptographic/encoding primitives: posts, blocks, stumps, boxes, identity,
-base58, merkle, positional serialization, protocol constants, and the hash/id helpers (`computePostId`,
+The shared data model and cryptographic/encoding primitives: posts, blocks, boxes, identity,
+merkle, positional serialization, protocol constants, and the hash/id helpers (`computePostId`,
 `computeBoxId`, `computeTxId`). **Pure functions only** — no I/O, no state.
 
-- **Owns:** `src/*` (post, block, stump, utxo, identity, base58, merkle, serialization, constants, index).
+- **Owns:** `src/*` (post, post-withdraw, block, utxo, identity, codec, merkle, serialization, interlinks, membership, network, constants, index).
 - **Does NOT own:** node logic, networking, stateless validation, wire codec. Depends only on Node `crypto`
   and `@dagsocial/wire`. A consumer needs a change? It comes back through the main session.
 

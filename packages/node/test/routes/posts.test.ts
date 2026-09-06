@@ -9,7 +9,7 @@ import express from 'express';
 import http from 'http';
 import { generateKeyPairSync, createPrivateKey } from 'crypto';
 import { initDb, closeDb, getDb } from '../../src/store/db.js';
-import { insertPost, getPost, queryPostsPage, getAncestorsNearest, getSubtreePage, getDescendantCount, deletePostRows, confirmPost, withdrawPost, getPendingPostAuthor } from '../../src/store/posts.js';
+import { insertPost, getPost, queryPostsPage, getAncestorsNearest, getSubtreePage, getDescendantCount, confirmPost, withdrawPost, getPendingPostAuthor } from '../../src/store/posts.js';
 import { getVouchCountForTarget } from '../../src/store/vouch-queries.js';
 import { getCurrentHeight, getBlockCreatedAt } from '../../src/store/ordering.js';
 import {
@@ -517,79 +517,6 @@ describe('posts routes', () => {
   });
 
   // -----------------------------------------------------------------------
-  // Stumps over HTTP
-  // -----------------------------------------------------------------------
-
-  describe('GET on a pruned root', () => {
-    const stumpScalars = {
-      replyCount: 3,
-      upvoteCount: 2,
-      protocolVersion: PROTOCOL_VERSION,
-      compactedAtBlockHeight: 11,
-    };
-    let stumpAuthor: Uint8Array;
-    let prunedRootId: string;
-
-    beforeAll(async () => {
-      const { insertStump } = await import('../../src/store/stumps.js');
-      const keys = generateKeyPairSync('ed25519');
-      stumpAuthor = rawPublicKey(keys.publicKey);
-
-      const commit = makePostCommit(stumpAuthor, 'doomed root');
-      prunedRootId = fixturePostId(commit);
-      insertPost(prunedRootId, commit, 'doomed root');
-      insertStump({ rootPostHash: prunedRootId, authorId: stumpAuthor, ...stumpScalars });
-      deletePostRows([prunedRootId]);
-    });
-
-    it('GET /posts/:id answers 200 with the exact StumpJson', async () => {
-      const res = await request(`/${prunedRootId}`, 'GET');
-      expect(res.status).toBe(200);
-      expect(res.data).toEqual({
-        kind: 'stump',
-        id: prunedRootId,
-        author: Buffer.from(stumpAuthor).toString('hex'),
-        confirmedAuthor: null,
-        ...stumpScalars,
-      });
-      const body = res.data as Record<string, unknown>;
-      expect(typeof body['author']).toBe('string');
-      expect(body['author']).toMatch(/^[0-9a-f]{64}$/);
-      expect(body['authorId']).toBeUndefined();
-      expect(JSON.stringify(res.data)).not.toContain('"0":');
-    });
-
-    it('GET /posts/:id/thread wraps the StumpJson in an empty thread', async () => {
-      const res = await request(`/${prunedRootId}/thread`, 'GET');
-      expect(res.status).toBe(200);
-      expect(res.data).toEqual({
-        post: {
-          kind: 'stump',
-          id: prunedRootId,
-          author: Buffer.from(stumpAuthor).toString('hex'),
-          ...stumpScalars,
-        },
-        ancestors: [],
-        ancestorCount: 0,
-        descendants: [],
-        descendantCount: 0,
-        next: null,
-        pending: [],
-        pendingCount: 0,
-      });
-    });
-
-    it('GET /posts stays live-only — the stump never appears in the feed', async () => {
-      const res = await request('/', 'GET');
-      expect(res.status).toBe(200);
-      const body = res.data as Record<string, unknown>;
-      const feed = body['posts'] as Array<Record<string, unknown>>;
-      expect(feed.some((p) => p['id'] === prunedRootId)).toBe(false);
-      expect(feed.some((p) => p['kind'] === 'stump')).toBe(false);
-    });
-  });
-
-  // -----------------------------------------------------------------------
   // viewer / likedByViewer
   // -----------------------------------------------------------------------
 
@@ -740,6 +667,10 @@ describe('posts routes', () => {
       const post = body['post'] as Record<string, unknown>;
       expect(post['kind']).toBe('withdrawn');
       expect(post['parentRefs']).toEqual([withdrawnSubjectParentId]);
+      // NODE_INTERFACE → "The JSON projection has two arms where the store
+      // has one shape": the thread head's WithdrawnJson carries both counts.
+      expect(post['descendantCount']).toBe(1);
+      expect(post['authorVouchCount']).toBe(0);
       const ancestors = body['ancestors'] as Array<Record<string, unknown>>;
       expect(ancestors.map((a) => a['id'])).toEqual([withdrawnSubjectParentId]);
       expect(body['ancestorCount']).toBe(1);
@@ -762,6 +693,8 @@ describe('posts routes', () => {
         kind: 'withdrawn',
         id: withdrawnSubjectId,
         withdrawnAtHeight: 24,
+        descendantCount: 1,
+        authorVouchCount: 0,
       });
       expect(body['ancestorCount']).toBe(2);
     });
@@ -779,6 +712,8 @@ describe('posts routes', () => {
         kind: 'withdrawn',
         id: withdrawnSubjectId,
         parentRefs: [withdrawnSubjectParentId],
+        descendantCount: 1,
+        authorVouchCount: 0,
       });
       expect(body['descendantCount']).toBe(2);
     });
@@ -786,8 +721,8 @@ describe('posts routes', () => {
 
   // -----------------------------------------------------------------------
   // Withdrawn view carries parentRefs
-  // NODE_INTERFACE → "The JSON projection has a fourth arm where the store
-  // has three"
+  // NODE_INTERFACE → "The JSON projection has two arms where the store has
+  // one shape"
   // -----------------------------------------------------------------------
 
   describe('withdrawn post view carries parentRefs', () => {
@@ -827,6 +762,8 @@ describe('posts routes', () => {
         author: Buffer.from(author).toString('hex'),
         parentRefs: [liveRootId],
         withdrawnAtHeight: 52,
+        descendantCount: 0,
+        authorVouchCount: 0,
         confirmedAuthor: null,
       });
     });
@@ -840,6 +777,8 @@ describe('posts routes', () => {
         author: Buffer.from(author).toString('hex'),
         parentRefs: [],
         withdrawnAtHeight: 54,
+        descendantCount: 0,
+        authorVouchCount: 0,
         confirmedAuthor: null,
       });
     });
@@ -856,6 +795,8 @@ describe('posts routes', () => {
         author: Buffer.from(author).toString('hex'),
         parentRefs: [liveRootId],
         withdrawnAtHeight: 52,
+        descendantCount: 0,
+        authorVouchCount: 0,
       });
     });
 
@@ -871,6 +812,8 @@ describe('posts routes', () => {
         author: Buffer.from(author).toString('hex'),
         parentRefs: [liveRootId],
         withdrawnAtHeight: 52,
+        descendantCount: 0,
+        authorVouchCount: 0,
       });
     });
   });

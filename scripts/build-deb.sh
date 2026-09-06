@@ -188,7 +188,7 @@ Architecture: amd64
 Depends: nodejs (>= 22)
 Maintainer: DAGsocial
 Description: DAGsocial node — decentralized social network
- DAGsocial is a decentralized social network with a prunable content DAG
+ DAGsocial is a decentralized social network with an author-owned content DAG
  and a UTXO-based karma/credit ledger. This package provides the node
  daemon (Express API, libp2p networking, SQLite store, AVL+ state proofs)
  and the faucet service, which holds an ordinary owner key and invites.

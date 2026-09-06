@@ -63,7 +63,7 @@ surfaces as a vector that mysteriously needs re-pinning.
 regression test.
 
 `structs.ts` is the opposite, deliberately: **its write half IS the production function**
-(`canonicalBoxBytes`, `serializePruneEntry`), and only the reader is written
+(`canonicalBoxBytes`, `encodeHeader`), and only the reader is written
 test-side, from the layout tables in `contracts/TYPES_INTERFACE.md`. An encode assertion therefore
 pins the shipped encoder rather than a lookalike, and the decode direction — parse with the
 independent reader, assert exhaustion, re-encode through the *production* writer, byte-compare —

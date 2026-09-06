@@ -715,13 +715,6 @@ describe('mempool store', () => {
     });
   });
 
-  // The pool row is the only copy of a queued prune between `POST
-  // /posts/:id/prune` and the block that carries it, and `selectMempoolPrunes`
-  // is the miner's first read of it — inside `createOrderingBlock`, which no
-  // frame wraps in a try/catch. A prune test that stops at the insert leaves
-  // the writer and the reader free to speak different codecs, so what this
-  // needs to assert is the PAIR.
-
   // -------------------------------------------------------------------------
   // Size cap — per class. The karma-side class rejects and never evicts; the
   // credit class displaces its cheapest resident for a higher bidder
@@ -741,9 +734,8 @@ describe('mempool store', () => {
     it('rejects every karma-side insert path at that class’s cap', async () => {
       // 6 entries, 50/50: three karma-side slots, three credit slots. Every
       // fixture below is karma-side — `txWithInput` has no outputs, a like has
-      // a karma output, a prune entry is not a transaction at all — so the
-      // three of them fill that class exactly, and the credit class stays
-      // untouched throughout.
+      // a karma output — so the three inserts fill that class exactly, and
+      // the credit class stays untouched throughout.
       const mem = await importCapped(6);
 
       expect(() => mem.insertUtxoTx(txWithInput('sb_1') as any, 100)).not.toThrow();

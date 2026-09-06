@@ -1,9 +1,9 @@
 # Notis
 
 An invite-only decentralized social network on a **dual-ledger** design: a **Posts DAG**
-(author-sovereign, prunable content) and a **UTXO ledger** (non-tradeable **karma** + tradeable
-**credits**); every post, like and prune is a transaction on the UTXO ledger, and a pruned subtree
-leaves a **stump**. Consensus is single-phase PoW — validator-produced ordering blocks; posts and
+(author-sovereign content) and a **UTXO ledger** (non-tradeable **karma** + tradeable
+**credits**); every post, like and withdrawal is a transaction on the UTXO ledger, and withdrawal is
+the author's only act over a post. Consensus is single-phase PoW — validator-produced ordering blocks; posts and
 likes ride them as ordinary transactions. TypeScript monorepo, pnpm
 workspaces, Node.js ≥ 22, SQLite storage.
 
@@ -101,7 +101,7 @@ can check it against the tree.
 ## Comment style
 
 **Cite the CONTRACT.** A comment either states the rule as it stands now, or names the contract section
-that states it — `TYPES_INTERFACE → Layout — PruneCommit`.
+that states it — `TYPES_INTERFACE → Layout — PostWithdrawCommit`.
 
 ⛔ **`contracts/` is the only citable directory.** A comment pointing anywhere else in this repo may be
 pointing at nothing: `.gitignore` excludes whole directories of working material, so a citation that
@@ -178,12 +178,12 @@ makes a title plain.
   box the transaction itself outputs (`NODE_INTERFACE` → `validateTx` step 7). All mints and burns
   happen in block-application paths, never inside a user transaction
 - Secret keys never appear in API responses or in DTOs crossing component boundaries
-- Protocol version on every post commit, block, transaction and stump, equal to the era scheduled at its height
+- Protocol version on every post commit, block and transaction, equal to the era scheduled at its height
 - Single-transaction atomic writes for any multi-table mutation
 
 ## Protocol versioning
 
-Every post commit, block, transaction and stump carries a `protocolVersion`. The version in force is
+Every post commit, block and transaction carries a `protocolVersion`. The version in force is
 scheduled by height, per network (`NetworkProfile.protocolVersionSchedule`); a declared version must equal
 the era at the object's height — a block's own, a transaction's the block that carries it (`tip + 1` at
 admission) — so an old object validates under its era's rules because its height fixes them, and a new one

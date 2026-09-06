@@ -147,7 +147,7 @@ and reads nothing else from it; there is no content sniffing anywhere.
 (≤ `MAX_CONTENT_BYTES`) is a structured document clients interpret — consensus records it
 and never parses it. The profile of an identity is the **latest confirmed `profile` post by
 that author** in committed order; editing is posting a new one (latest-wins supersedes), and
-pruning the old is optional hygiene. The type field is what keeps structured content
+withdrawing the old is optional hygiene. The type field is what keeps structured content
 unambiguous: a `regular` post whose text looks like a profile document is just text.
 
 Usernames are not a post type — they leave the post model for the UTXO ledger
@@ -241,10 +241,10 @@ could be presented as `nodeHash(left,right)` for a forged inclusion proof
 > **Forward constraint — this is a consensus rule with no test behind it.** The scheme is
 > sound only while **every** leaf domain is a non-empty printable ASCII string, so that no
 > leaf preimage can ever begin with `0x00`. The **one** live domain is `utxotx` — printable, so
-> the NUL delimiter suffices. **Three retired domain strings are tracked reservations**
-> (→ Tracked reservations, below the boxType tag table): `coinbase`, `prune` and `stump` — each
+> the NUL delimiter suffices. **Two retired domain strings are tracked reservations**
+> (→ Tracked reservations, below the boxType tag table): `coinbase` and `prune` — each
 > remnant-bounded by the live concept that carries the word, so each holds while that concept does.
-> `subblock` is retired and free: no live identifier carries the word.
+> `subblock` and `stump` are retired and free: no live identifier carries the word.
 >
 > ⛔ **A live/retired list restated in two places is the drift class this file names
 > everywhere else; there is one list and it is here.**
@@ -712,7 +712,7 @@ identity record, so carrying it here would be a second copy of committed state.
 
 **There is no post lock.** A post pays a price rather than locking a bond (→ KarmaPriceBox;
 `ARCHITECTURE → The post price`), so no box holds an author's karma against their post, nothing
-vests per block and nothing is released at a prune. The boxType string **`'post_lock'` and tag `5`
+vests per block and nothing is released at a withdrawal. The boxType string **`'post_lock'` and tag `5`
 are a tracked reservation** (→ Tracked reservations), reserved while this record and its in-code
 citations stand.
 
@@ -749,8 +749,8 @@ returns their sum to the pool (`NODE_INTERFACE → The settlement transaction`).
 - **Sets** (`NODE_INTERFACE → Three karma sets, and none derives from another`): transition
   **yes** — a karma spend creates it; supply **no** — it is karma on its way out of circulation;
   conservation **yes** — it holds karma until the settlement returns it.
-- **It is the transition any later karma price takes** — the prune's descendant charge, when it
-  lands, is a `KarmaPriceBox` on the prune transaction.
+- **It is the transition any later karma price takes** — a `KarmaPriceBox` on the transaction that
+  pays it.
 
 ### VouchBox
 
@@ -1078,7 +1078,6 @@ UtxoTransaction {
   protocolVersion: number                  // 1
   likeTarget?: PostId                      // Present ⟺ this tx is a like — see below
   post?: PostCommit                        // Present ⟺ this tx creates a post — see below; the body rides the PACKET, not the tx
-  prune?: PruneCommit                      // Present ⟹ this tx prunes the author's own reply subtree — see below
   postWithdraw?: PostWithdrawCommit        // Present ⟹ this tx withdraws one post's content from the DAG — see below
 }
 
@@ -1088,7 +1087,6 @@ txIdBytes = arr(inputs, b32) ‖ arr(outputs, canonicalBoxBytes)
             ‖ vlqU(protocolVersion)
             ‖ opt(likeTarget, b32)
             ‖ opt(post, postFieldBytes)
-            ‖ opt(prune, pruneFieldBytes)
             ‖ opt(postWithdraw, postWithdrawFieldBytes)
 ```
 
@@ -1104,8 +1102,8 @@ field whose presence is biconditional with a rule. It takes `opt()`'s presence t
 by `postFieldBytes(commit)`, appended **only when present**, after `likeTarget`'s
 contribution. The body is bound to the transaction by `contentHash` alone; on gossip it rides
 beside the transaction's bytes as the packet's trailing `opt` (→ Layout — UtxoTransaction,
-the packet codec), outside `txIdBytes` and outside every id. **The payload fields are mutually exclusive by rule** — a transaction is a like, a post, a
-prune or a withdrawal, never two of them (`NODE_INTERFACE → Transaction envelope shape`) — and the
+the packet codec), outside `txIdBytes` and outside every id. **The payload fields are mutually exclusive by rule** — a transaction is a like, a post or a
+withdrawal, never two of them (`NODE_INTERFACE → Transaction envelope shape`) — and the
 encoding does not rely on it either: each carries
 its own tag, so the tail stays unambiguous however the fields combine.
 
@@ -1175,26 +1173,17 @@ recompute the hash and check the signature.
 
 ---
 
-## Stump Types (`stump.ts`)
+## Post-withdraw types (`post-withdraw.ts`)
 
 ```
-PruneCommit {
-  rootPostHash: PostId               // the subtree is derived from block_topology at apply — Layout — PruneCommit
-}
-
-Stump {
-  rootPostHash: PostId
-  authorId: UserId
-  replyCount: number
-  upvoteCount: number
-  protocolVersion: number
-  compactedAtBlockHeight: number
+PostWithdrawCommit {
+  postId: PostId                     // the post whose content is dropped — Layout — PostWithdrawCommit
 }
 ```
 
 | Export | Signature | Description |
 |--------|-----------|-------------|
-| `pruneFieldBytes(prune)` | `(PruneCommit) => Uint8Array` | Positional canonical bytes — `txIdBytes` field 6 — see Layout — PruneCommit |
+| `postWithdrawFieldBytes(commit)` | `(PostWithdrawCommit) => Uint8Array` | Positional canonical bytes — `txIdBytes` field 6 — see Layout — PostWithdrawCommit |
 
 ---
 
@@ -1207,7 +1196,7 @@ BlockHeader {
   protocolVersion: number        // 1
   height: number                 // Monotonically increasing, starting from 1
   prevBlockHash: string          // hex(32) — hash of the previous block's header
-  utxoTxRoot: string             // hex(32) — Merkle root over the body's transactions (→ Ordering block; a prune is a transaction)
+  utxoTxRoot: string             // hex(32) — Merkle root over the body's transactions (→ Ordering block)
   stateRoot: string              // hex(33) — the AVL+ digest after this block is applied (NODE_INTERFACE → Post-block stateRoot)
   validatorId: UserId            // Block producer's 32-byte public key
   powNonce: number               // PoW solution
@@ -1363,12 +1352,11 @@ UtxoTxTree {
 }
 ```
 
-⛔ **ONE COMMITTED LIST, AND ONE LEAF CLASS.** Posts, likes, prunes and the settlement are all
+⛔ **ONE COMMITTED LIST, AND ONE LEAF CLASS.** Posts, likes, withdrawals and the settlement are all
 transactions, so they ride `utxoTxIds` together and the body has no second section.
 `computeUtxoTxRoot` therefore builds every leaf as `leafHash('utxotx', id)` — one domain, one
-preimage shape, and the only live one: `'stump'`, `'prune'` and `'coinbase'` are tracked
-reservations (→ Tracked reservations; `'stump'` joins them with D5, whose prune payload carries no
-subtree proof — Layout — PruneCommit).
+preimage shape, and the only live one: `'prune'` and `'coinbase'` are tracked
+reservations (→ Tracked reservations).
 
 Every block carries **one settlement transaction**, riding `utxoTxIds` / `utxoTxs` like any
 other (`ARCHITECTURE` → Block architecture, `NODE_INTERFACE` → the settlement transaction);
@@ -1381,7 +1369,7 @@ coinbase outputs are **its outputs**, so no block-body field carries the reward.
 gates `MAX_BLOCK_BODY_BYTES` — a body-layout change edits both computations or neither, and
 `serialization.ts` states the pairing at both sites.
 
-**The H-3 property — prune authorship checkable without DAG content — holds through the
+**The H-3 property — withdrawal authorship checkable without DAG content — holds through the
 body itself.** A post transaction carries the **whole post** in `utxoTxs` plus the
 author's signature over the `TxId`, so a node syncing from ordering blocks alone holds
 the thing an authorship claim would be about, and verifies it rather than trusts it.
@@ -1401,7 +1389,7 @@ key-order-divergence problem is closed by not existing.)
 it. A post transaction is signed over its `TxId` by the author's key, so the
 `signatures` map names the author directly — there is no separate authorship claim to
 contradict, and therefore no apply-time reconciliation between a claim and the content.
-This is what makes prune authorship (audit H-3) checkable deterministically, and it
+This is what makes withdrawal authorship (audit H-3) checkable deterministically, and it
 replaces a rule that required nodes holding the post to reject a block whose entry
 disagreed with it.
 
@@ -1675,58 +1663,16 @@ The body's standalone wire form — a pull response's element, and the packet's 
 The encodings are positional and injective (audit M-1); the frozen golden vectors are the
 cross-implementation anchor, reproduced by the demo-UI mirror.
 
-### Layout — Stump
-
-**A `Stump` has no wire form.** It is a local projection of an applied prune — derived at
-settlement, never transmitted, never re-read as bytes (`NODE_INTERFACE` → "Stumps are derived
-state"). Its id is its `rootPostHash`, not a hash of any encoding.
-
-**A prune has no `trigger` field.** Every prune is the author's act — the author signs the
-transaction and the author's locks pay for it — so the cause is a constant and carries no field
-anywhere: not in `PruneCommit` or `Stump`.
-
-### Layout — PruneCommit
-
-**The prune payload carried by a karma transaction** (`UtxoTransaction.prune`), written into
-`txIdBytes` field 6 through `pruneFieldBytes`:
-
-```
-b32(rootPostHash)
-```
-
-**One field, and the set is the node's to derive.** The subtree a prune removes is
-`block_topology`'s answer for the root at the applying height, same-block replies included, and
-every node derives it identically (NODE_INTERFACE → Prune transactions). **The payload does not
-carry the set, and that is a rule with two reasons**: a carried set pins the author to a snapshot,
-so a reply confirmed between signing and inclusion is a block-invalidating mismatch that two
-unrelated users can hand a producer; and a carried set puts the transaction's byte bound on the
-subtrees an author can prune at all. The author signs "this thread", which is exactly what subtree
-ownership grants (ARCHITECTURE → Subtree ownership).
-
-`authorId` and `authorSignature` do not appear: the payload sits inside the `computeTxId` preimage,
-so the transaction's own signature covers it and the author is `inputKarma.owner`. The layout is
-the shape `PostWithdrawCommit` has.
-
-**Fixed-width, so the writer throws outside its domain** (→ Totality) and the encoding is
-self-delimiting. `verifyPruneCommitDomains` (`@dagsocial/validation`) is the single statement of
-the domain that writer assumes.
-
-⛔ **A `PruneCommit` has no id of its own, and needs none.** A prune is a transaction: its `TxId`
-identifies it and its spent inputs are its dedup, since a pooled prune cannot be duplicated once
-its boxes are gone.
-
-
 ### Layout — PostWithdrawCommit
 
 **The withdrawal payload carried by a karma transaction** (`UtxoTransaction.postWithdraw`),
-written into `txIdBytes` field 7 through `postWithdrawFieldBytes`:
+written into `txIdBytes` field 6 through `postWithdrawFieldBytes`:
 
 ```
 b32(postId)
 ```
 
-**One field, and one is the whole payload.** A prune's effect spans a subtree that has to be
-pinned against topology; a withdrawal's effect is one post. Authorship is `inputKarma.owner`
+**One field, and one is the whole payload.** A withdrawal's effect is one post. Authorship is `inputKarma.owner`
 against that post's `block_topology` author, and the payload sits inside the `computeTxId`
 preimage, so there is no separate preimage to domain-tag and no `authorId` or signature of its
 own (NODE_INTERFACE → Withdrawal transactions).
@@ -1842,8 +1788,7 @@ from this table — a use that reads every cell as an instruction rather than as
 > | tag `5` + boxType `'post_lock'` | §PostLockBox's retired record and its in-code citations; the tag-5 reject vector |
 > | boxType `'like'` | the live illegal-transition rule (`utxo-engine`'s like clause) and its reject vectors |
 > | leaf domain `'coinbase'` | the live coinbase concept (`coinbase-split.ts`, `COINBASE_*` constants) — the string is permanently collision-prone while the concept lives |
-> | leaf domain `'prune'` | the live prune concept (`PruneCommit`, `pruneFieldBytes`, `PrunedTombstone`, `executePrune`, `prunesOf`, `routes/prune-withdraw.ts`) — a prune is a transaction, not a Merkle leaf, and the string stays collision-prone while the concept lives |
-> | leaf domain `'stump'` | the live stump concept (`Stump`, `dag_stumps`, `insertStump`, `stump-engine.ts`, the `'stump'` resolution shape) — a stump is derived state with no Merkle leaf, and the string stays collision-prone while the concept lives |
+> | leaf domain `'prune'` | the AVL version pruning (`pruneVersionsBefore`, `checkpointProver`'s retention under `MAX_PROOF_HISTORY`) — a storage mechanism, not a Merkle leaf, and the string stays collision-prone while an identifier carries the word |
 
 > ## ⛔ TAG 2 IS A TRACKED HOLE
 >
@@ -2029,8 +1974,7 @@ and both were found by someone searching from a direction the previous searcher 
 **Id preimage** (`txIdBytes`) — signatures are Ed25519 *over* the txId and are correctly absent:
 
 `arr(inputs, b32)` ‖ `arr(outputs, boxContentBytes)` ‖ `vlqU(protocolVersion)` ‖
-`opt(likeTarget, b32)` ‖ `opt(post, postFieldBytes)` ‖ `opt(prune, pruneFieldBytes)` ‖
-`opt(postWithdraw, postWithdrawFieldBytes)`
+`opt(likeTarget, b32)` ‖ `opt(post, postFieldBytes)` ‖ `opt(postWithdraw, postWithdrawFieldBytes)`
 
 > ⛔ **`TX_ID_DOMAIN` IS NOT IN `txIdBytes`. Corrected 2026-08-17.** This line listed it first while
 > §UtxoTransaction's formula applies it outside — `TxId = blake2b512(TX_ID_DOMAIN ‖ txIdBytes)[0:32]`
@@ -2048,7 +1992,7 @@ and both were found by someone searching from a direction the previous searcher 
 > every `TxId` in existence**, because `opt` spends a one-byte absence marker even on a transaction
 > that never carried one. See "Re-pinning a frozen vector when a preimage changes".
 
-No payload needs a length prefix inside its `opt`: `postFieldBytes`, `pruneFieldBytes` and
+No payload needs a length prefix inside its `opt`: `postFieldBytes` and
 `postWithdrawFieldBytes` are each **self-delimiting** — every field within them is fixed-width,
 length-prefixed or a VLQ — so each one's end is decidable from its own bytes wherever it sits.
 
@@ -2058,12 +2002,11 @@ field's position expires the next time the layout grows**, and it expires quietl
 paragraph next to the field that was appended. The property stated above holds wherever a
 payload sits.
 
-⛔ **SEVEN FIELDS, and an absent `opt` still spends its tag byte.** Appending field 7 moved every
-`TxId` in existence and every box id derived from one, exactly as appending field 6 and removing
+⛔ **SIX FIELDS, and an absent `opt` still spends its tag byte.** Removing a field moves every
+`TxId` in existence and every box id derived from one, exactly as appending one and removing
 `preimages` did — see "Re-pinning a frozen vector when a preimage changes". A reader that keeps
-six offsets reads
-`prune`'s tag as the end of the struct; the count is load-bearing, and the demo UI's mirror
-(`public/index.html`) states it too.
+five offsets reads `postWithdraw`'s tag as the end of the struct; the count is load-bearing, and
+the demo UI's mirror (`public/index.html`) states it too.
 
 Order preserves today's sequence. This satisfies **C1 structurally**: the prior preimage used
 `String(protocolVersion)` (the M-1 pattern) and concatenated inputs and variable-length outputs with
@@ -2086,8 +2029,7 @@ biconditional is a check, not a property of the bytes.
 > **`encodeTx` is positional and reaches `writeTxIdFields`**, so the wire form and the `TxId`
 > preimage share one writer rather than agreeing by inspection. This banner read `⚠ UNENFORCED`
 > against a `cbor-x` implementation; the gap `serialization.ts` recorded in its own words is closed
-> on both halves — `encodeTx` is positional, and the `Stump` codec is deleted rather than
-> converted: a stump has no wire form (Layout — Stump).
+> on both halves — `encodeTx` is positional, and no struct has a CBOR codec.
 >
 > **What the gap cost, measured against `packages/types/dist` on 2026-08-17** — a like transaction
 > with one karma input, one karma output, one signature and a `likeTarget`:
@@ -2227,7 +2169,7 @@ are.
 
 | Export | Signature | Bytes |
 |---|---|---|
-| `pruneFieldBytes` | `(PruneCommit) => Uint8Array` | see Layout — PruneCommit |
+| `postWithdrawFieldBytes` | `(PostWithdrawCommit) => Uint8Array` | see Layout — PostWithdrawCommit |
 
 `txIdBytes` **delegates** to it rather than restating the layout, so the transaction id and any
 reader of the payload cannot drift apart.
@@ -2256,14 +2198,14 @@ layout in a second package, with **no compiler signal on divergence and no round
 it**: a consistent transposition round-trips perfectly (measured), so only a golden
 comparing the two byte strings across the package boundary would ever catch it.
 
-⚠ **The `leafHash` domain tag stays outside the preimage.** `leafHash('prune' | 'utxotx', bytes)`
-supplies the tag; the preimage is the entry's own bytes alone. That is what makes the prune leaf's
+⚠ **The `leafHash` domain tag stays outside the preimage.** `leafHash('utxotx', bytes)`
+supplies the tag; the preimage is the entry's own bytes alone. That is what makes the leaf's
 wire form and preimage byte-identical rather than merely parallel.
 
 ⚠ **No `...FromBytes` pair is added, and that does not breach the pairing rule under Layout —
 Boxes.** What that rule forbids is one layout whose writer and reader live in **different packages**
-and are free to drift — the `boxRecordBytes` / node-`deserializeBox` split. `pruneFieldBytes`
-and the reader that recovers a `PruneCommit` from `txIdBytes` both live in this package, and the
+and are free to drift — the `boxRecordBytes` / node-`deserializeBox` split. `postWithdrawFieldBytes`
+and the reader that recovers a `PostWithdrawCommit` from `txIdBytes` both live in this package, and the
 transaction round-trip exercises the pair. Nothing crosses a package boundary unpaired.
 
 ### Re-pinning a frozen vector when a preimage changes
@@ -2349,7 +2291,7 @@ neighbouring one. A constant with no stated input cannot be re-checked without r
 that produced it, which is the analysis nobody repeats.
 
 Naming follows the positional format's `...Bytes` family (`txIdBytes`, `boxContentBytes`,
-`boxRecordBytes`), which `pruneFieldBytes` follows.
+`boxRecordBytes`), which `postWithdrawFieldBytes` follows.
 
 **The delegation is byte-identical by construction** — same writers, same order — so it is not
 itself a consensus change. The consensus change is node's: the leaf preimage stops being JSON.
@@ -2392,8 +2334,7 @@ discriminate are the VLQ width boundaries and the sentinel branches above.
 > the bytes they produce and the guarantees they carry: the positional layout above, plus the
 > four-step boundary check on every `decodeX`.
 >
-> Nothing in this package encodes CBOR. Every row below describes the positional codec it names;
-> `Stump` has no codec and no row — a stump has no wire form (Layout — Stump).
+> Nothing in this package encodes CBOR. Every row below describes the positional codec it names.
 
 `serializeBox` was removed here by Spec G phase 0. No `src` caller existed — box serialization
 goes through node's tagged `state/serialize-box.ts` (AVL values) or the identity encoder in

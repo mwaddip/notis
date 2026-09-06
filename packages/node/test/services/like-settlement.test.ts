@@ -101,10 +101,6 @@ async function importRecords() {
   };
 }
 
-async function importJournalStore() {
-  return (await import('../../src/store/journal.js')) as typeof import('../../src/store/journal.js');
-}
-
 async function importOrdering() {
   return (await import('../../src/store/ordering.js')) as {
     getCurrentHeight: () => number;
@@ -701,63 +697,7 @@ describe('per-block like settlement (P2-D N2b)', () => {
     expect(utxo.getKarmaValue(author.userId)).toBe(100n + POST_CHANGE + 4n); // re-applied
   });
 
-  it('revertBlock restores prune-deleted like-records (all three columns) and removes inserted ones', async () => {
-    // The likeRecordDeletions inverse, seeded via direct store calls: the
-    // prune-time producer (settle-post-lock-utxo) is N3 — this pins the revert
-    // machinery it will rely on. One journal carries BOTH inverse classes for
-    // DIFFERENT records (the same-block exclusion only forbids them for the
-    // same record).
-    const db = await importDb();
-    db.initDb(':memory:');
-    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-    const likes = await import('../../src/store/likes.js');
-    const journalStore = await importJournalStore();
-    const forkResolution = await importForkResolution();
-
-    const likerA = makeTestIdentity();
-    const likerB = makeTestIdentity();
-    const prunedPost = 'aa'.repeat(32);
-    const likedPost = 'bb'.repeat(32);
-
-    // Post-block state: the block at height 7 pruned P (deleting A's and B's
-    // records on P, captured in the journal) and inserted B's record on Q.
-    likes.insertLikeRecord(likedPost, likerB.userId, 7); // no journal open — not recorded
-    journalStore.insertBlockJournal({
-      blockHeight: 7,
-      mutations: [],
-      confirmedPostIds: [],
-      appliedUtxoTxs: [],
-      likeRecordInsertions: [{ targetPostId: likedPost, likerId: likerB.userId }],
-      likeRecordDeletions: [
-        { targetPostId: prunedPost, likerId: likerA.userId, appliedAtBlock: 3 },
-        { targetPostId: prunedPost, likerId: likerB.userId, appliedAtBlock: 5 },
-      ],
-      deletedPosts: [],
-      insertedStumps: [],
-      absorbedStumps: [],
-      withdrawnPosts: [],
-      prunedTopologyRows: [],
-    });
-
-    forkResolution.revertBlock(7);
-
-    // Deleted records restored exactly — original applied heights included.
-    const rows = db
-      .getDb()
-      .prepare(
-        'SELECT target_post_id, liker_id, applied_at_block FROM like_records ORDER BY target_post_id, liker_id',
-      )
-      .all() as Array<{ target_post_id: string; liker_id: Buffer; applied_at_block: number }>;
-    expect(rows).toHaveLength(2);
-    expect(rows.every((r) => r.target_post_id === prunedPost)).toBe(true);
-    const byLiker = new Map(rows.map((r) => [r.liker_id.toString('hex'), r.applied_at_block]));
-    expect(byLiker.get(hex(likerA.userId))).toBe(3);
-    expect(byLiker.get(hex(likerB.userId))).toBe(5);
-    // The inserted record is gone.
-    expect(likes.hasLikeRecord(likedPost, likerB.userId)).toBe(false);
-  });
-
-  it('a like on a pruned target rejects the block — the stump is created by the real prune path', async () => {
+  it('a like on a withdrawn target rejects the block', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
@@ -767,36 +707,33 @@ describe('per-block like settlement (P2-D N2b)', () => {
     const blockApply = await importBlockApply();
 
     const author = makeTestIdentity();
-    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'pruned-like-target');
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'withdrawn-like-target');
     posts.insertPost(postId, commit, content);
 
     // Block 1: confirms the post.
     expect(blockApply.applyOrderingBlock(await confirmPostBlock(postTx))).toBe(true);
 
-    // Block 2: prune the post through the real path.
-    const pruneKarma = makeKarmaBox(1n, author.userId, 0, 8001);
-    utxo.insertBox(pruneKarma);
-    const pruneTx: UtxoTransaction = {
-      inputs: [pruneKarma.id!],
+    // Block 2: withdraw the post through the real path.
+    const withdrawKarma = makeKarmaBox(1n, author.userId, 0, 8001);
+    utxo.insertBox(withdrawKarma);
+    const withdrawTx: UtxoTransaction = {
+      inputs: [withdrawKarma.id!],
       outputs: [
         { boxType: 'karma', value: 1n, createdAtBlock: 0, owner: author.userId } as never,
       ],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
-      prune: { rootPostHash: postId },
+      postWithdraw: { postId },
     };
-    signTransaction(pruneTx, author.privateKey, hex(author.userId));
+    signTransaction(withdrawTx, author.privateKey, hex(author.userId));
     expect(blockApply.applyOrderingBlock(
-      await makeApplicableBlock({ height: 2, utxoTxs: [pruneTx] }),
+      await makeApplicableBlock({ height: 2, utxoTxs: [withdrawTx] }),
     )).toBe(true);
 
-    // The stump exists.
-    const stumps = db.getDb()
-      .prepare('SELECT * FROM dag_stumps WHERE root_post_hash = ?')
-      .all(postId);
-    expect(stumps).toHaveLength(1);
+    // The post is withdrawn, and no longer live.
+    expect(posts.isLivePost(posts.getPost(postId))).toBe(false);
 
-    // Block 3: a like on the pruned post rejects the block.
+    // Block 3: a like on the withdrawn post rejects the block.
     const [liker] = await seedLikers(1, 9001);
     const likeTx = makeLikeTx(
       liker!.id, liker!.box, postId,

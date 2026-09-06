@@ -1,7 +1,6 @@
 import { getDb } from './db.js';
 import { encode, decode } from 'cbor-x';
-import type { AnyBox, Stump, UserId } from '@dagsocial/types';
-import type { DeletedPostRow } from './posts.js';
+import type { AnyBox, UserId } from '@dagsocial/types';
 // Type-only: erased at compile time, so this does not create a runtime cycle
 // with identity-records.ts, which imports the recording hook below.
 import type { IdentityRecord, NetworkRecord } from './identity-records.js';
@@ -75,36 +74,8 @@ export interface BlockJournal {
   appliedUtxoTxs: Array<{ txId: string; txBytes: Uint8Array }>;
   /** Inverse: deleteLikeRecord. */
   likeRecordInsertions: Array<{ targetPostId: string; likerId: UserId }>;
-  /**
-   * Inverse: restoreLikeRecord — a reverted prune restores the pruned
-   * subtree's like-records exactly, all three columns.
-   */
-  likeRecordDeletions: Array<{
-    targetPostId: string;
-    likerId: UserId;
-    appliedAtBlock: number;
-  }>;
-  deletedPosts: DeletedPostRow[];
-  insertedStumps: Stump[];
-  /**
-   * Stumps an outer prune absorbed, exactly as they stood before the absorb.
-   * Inverse: insertStump (NODE_INTERFACE → Block Journal).
-   */
-  absorbedStumps: Stump[];
   /** Inverse: restore the prior content and clear the marker. */
   withdrawnPosts: Array<{ id: string; content: string | null }>;
-  /**
-   * One entry per `block_topology` row this block's prune phase marked,
-   * carrying the marks the row held before this block wrote it — null/null
-   * for a first prune, the inner prune's height and root for a row an outer
-   * prune re-marks. Inverse: `restorePrunedTopology` writes them back exactly
-   * (NODE_INTERFACE → Block Journal).
-   */
-  prunedTopologyRows: Array<{
-    postId: string;
-    prunedAtHeight: number | null;
-    prunedRoot: string | null;
-  }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -113,11 +84,9 @@ export interface BlockJournal {
 // Module-level singleton: block application is synchronous single-threaded
 // better-sqlite3, so at most one journal is ever open. While open, the store
 // mutation primitives (insertBox, consumeBox, putIdentityRecord,
-// insertLikeRecord, deleteLikeRecordsForPosts) record automatically — call
-// sites never maintain
+// insertLikeRecord) record automatically — call sites never maintain
 // parallel mutation bookkeeping. The rollback inverses (deleteBox,
-// unconsumeBox, deleteIdentityRecord, deleteLikeRecord, restoreLikeRecord)
-// never record.
+// unconsumeBox, deleteIdentityRecord, deleteLikeRecord) never record.
 // ---------------------------------------------------------------------------
 
 let openJournal: BlockJournal | null = null;
@@ -158,12 +127,7 @@ export function beginBlockJournal(height: number): void {
     confirmedPostIds: [],
     appliedUtxoTxs: [],
     likeRecordInsertions: [],
-    likeRecordDeletions: [],
-    deletedPosts: [],
-    insertedStumps: [],
-    absorbedStumps: [],
     withdrawnPosts: [],
-    prunedTopologyRows: [],
   };
   openKarmaSupplyDelta = 0n;
 }
@@ -307,18 +271,6 @@ export function recordLikeRecordInsertion(targetPostId: string, likerId: UserId)
 }
 
 /**
- * Record like-record rows captured BEFORE deletion
- * (deleteLikeRecordsForPosts), full rows so rollback restores them
- * exactly.
- */
-export function recordLikeRecordDeletions(
-  rows: Array<{ targetPostId: string; likerId: UserId; appliedAtBlock: number }>,
-): void {
-  if (openJournal === null) return;
-  openJournal.likeRecordDeletions.push(...rows);
-}
-
-/**
  * Record the post ids this block committed (NODE_INTERFACE → Block Journal).
  * Inverse: unconfirmPost.
  */
@@ -333,31 +285,9 @@ export function recordAppliedUtxoTx(txId: string, txBytes: Uint8Array): void {
   openJournal.appliedUtxoTxs.push({ txId, txBytes });
 }
 
-export function recordDeletedPosts(rows: DeletedPostRow[]): void {
-  if (openJournal === null) return;
-  openJournal.deletedPosts.push(...rows);
-}
-
-export function recordInsertedStump(stump: Stump): void {
-  if (openJournal === null) return;
-  openJournal.insertedStumps.push(stump);
-}
-
-export function recordAbsorbedStump(stump: Stump): void {
-  if (openJournal === null) return;
-  openJournal.absorbedStumps.push(stump);
-}
-
 export function recordWithdrawnPost(id: string, content: string | null): void {
   if (openJournal === null) return;
   openJournal.withdrawnPosts.push({ id, content });
-}
-
-export function recordPrunedTopologyRows(
-  rows: Array<{ postId: string; prunedAtHeight: number | null; prunedRoot: string | null }>,
-): void {
-  if (openJournal === null) return;
-  openJournal.prunedTopologyRows.push(...rows);
 }
 
 // ---------------------------------------------------------------------------

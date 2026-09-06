@@ -12,7 +12,7 @@ standing context — read it and the linked docs before touching code.
    `Invariants`, `Invite System`, `Likes`, `Deploy gate`.
 5. `../../contracts/NODE_INTERFACE.md` — **the contract this package CONSUMES**: `HTTP API` (every
    route table), the transition rules (karma, bond, vouch, credit), `Post transactions`,
-   `Per-block like settlement`, `Stumps`, `Fork resolution`.
+   `Per-block like settlement`, `Withdrawal transactions`, `Fork resolution`.
 6. `../../contracts/MINING_INTERFACE.md` — `Template and submit`, `The peer-readiness gate`,
    `POST /mining/submit`, `Miner Script` (the solve loop this suite mirrors by importing the predicate).
 7. `../../contracts/NET_INTERFACE.md` — `Gossip Topics`, `Sync Flow`, `Bootstrap Flow (New Node)`,
@@ -30,12 +30,12 @@ FINDING to report to main — never a workaround written into a test.**
 
 ## What Notis is
 An invite-only decentralized social network on a **dual-ledger** design: a **Posts DAG** and a **UTXO
-ledger** (karma + credits); every post, like and prune is a transaction on the UTXO ledger, and a
-pruned subtree leaves a **stump**. Consensus is PoW. TypeScript, pnpm workspaces, Node ≥ 22.
+ledger** (karma + credits); every post, like and withdrawal is a transaction on the UTXO ledger, and
+withdrawal is the author's only act over a post. Consensus is PoW. TypeScript, pnpm workspaces, Node ≥ 22.
 
 ## This package (`@dagsocial/e2e`)
 The end-to-end suite: it spawns a **mesh of real, built nodes** (`packages/node/dist/index.js`, real
-libp2p, real HTTP), drives them as a client would — invites, posts, likes, vouches, prunes, credit
+libp2p, real HTTP), drives them as a client would — invites, posts, likes, vouches, withdrawals, credit
 transfers, mining on demand — and asserts the protocol's behaviour **on every node** of the mesh. It
 lives under `tools/` because it is a tool, not a peer of `validation`, and it is in the gate because
 `pnpm-workspace.yaml` globs `tools/*` — nothing has to remember to run it.

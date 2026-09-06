@@ -1,4 +1,4 @@
-import type { PostJson, Tombstone, FeedRow, StatusResult, KarmaResult, VouchesTargetResult, BondsResult } from '../api/dto';
+import type { PostJson, WithdrawnJson, FeedRow, StatusResult, KarmaResult, VouchesTargetResult, BondsResult } from '../api/dto';
 import type { Workspace, Origin } from './workspace';
 import type { Theme, IdTint } from '../prefs';
 import type { Mark, Flight } from '../view/card';
@@ -12,7 +12,7 @@ import type { YourVouch } from '../view/author';
 export const FEED_COMPOSER_KEY = '@feed';
 
 export interface FeedState {
-  posts: PostJson[];        // confirmed live posts (withdrawn/tombstones filtered out)
+  posts: PostJson[];        // confirmed live posts (withdrawn rows filtered out)
   pending: PostJson[];      // mempool posts, newest and not yet in a block
   next: string | null;      // keyset cursor for older posts
   report: string | null;    // what the last ↻ did
@@ -24,7 +24,7 @@ export interface FeedState {
 
 export interface ThreadState {
   id: string;
-  root: PostJson | Tombstone | null;
+  root: PostJson | WithdrawnJson | null;
   ancestorIds: Set<string>;   // for the "↳ nested" check
   descendants: FeedRow[];
   descendantCount: number;

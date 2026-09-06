@@ -18,9 +18,9 @@ standing context — read it and the linked docs before touching code.
    map from `@ergots/nipopow`, §4 this package, §8 its tests).
 
 ## What Notis is
-An invite-only decentralized social network on a **dual-ledger** design: a **Posts DAG** (author-sovereign,
-prunable) and a **UTXO ledger** (non-tradeable **karma** + tradeable **credits**); every post, like and
-prune is a transaction on the UTXO ledger, and a pruned subtree leaves a **stump**.
+An invite-only decentralized social network on a **dual-ledger** design: a **Posts DAG** (author-sovereign)
+and a **UTXO ledger** (non-tradeable **karma** + tradeable **credits**); every post, like and withdrawal
+is a transaction on the UTXO ledger, and withdrawal is the author's only act over a post.
 Consensus is single-phase PoW over validator-produced ordering blocks. TypeScript, pnpm workspaces,
 Node.js ≥ 22.
 

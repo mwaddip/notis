@@ -1,7 +1,6 @@
 import { fixturePostId, makePostCommit, seedProvenance, uid } from '../helpers.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { generateKeyPairSync, type KeyObject } from 'crypto';
-import { PROTOCOL_VERSION } from '@dagsocial/types';
 import type { VouchBox } from '@dagsocial/types';
 import {
   initDb,
@@ -15,9 +14,7 @@ import {
   hasLikeRecord,
   getAncestorsNearest,
   getSubtreePage,
-  insertStump,
   insertBox,
-  deletePostRows,
   confirmPost,
   withdrawPost,
   getBlockCreatedAt,
@@ -52,17 +49,9 @@ function insertTestPost(content: string, author: Uint8Array, parentRefs: string[
 
 describe('feed-service', () => {
   let authorId: Uint8Array;
-  let prunedRootId: string;
   let liveRootId: string;
   let liveReplyId: string;
   let feedService: FeedService;
-
-  const stumpScalars = {
-    replyCount: 1,
-    upvoteCount: 0,
-    protocolVersion: PROTOCOL_VERSION,
-    compactedAtBlockHeight: 7,
-  } as const;
 
   beforeEach(() => {
     initDb(':memory:');
@@ -71,16 +60,6 @@ describe('feed-service', () => {
 
     liveRootId = insertTestPost('Live root', authorId, []);
     liveReplyId = insertTestPost('Live reply', authorId, [liveRootId]);
-
-    // A pruned thread: insertStump then deletePostRows, as block-apply does.
-    prunedRootId = insertTestPost('Doomed root', authorId, []);
-    const doomedReplyId = insertTestPost('Doomed reply', authorId, [prunedRootId]);
-    insertStump({
-      rootPostHash: prunedRootId,
-      authorId,
-      ...stumpScalars,
-    });
-    deletePostRows([prunedRootId, doomedReplyId]);
 
     feedService = new FeedService({
       getPost: storeGetPost,
@@ -114,22 +93,6 @@ describe('feed-service', () => {
     expect(r['likedByViewer']).toBeNull();
   });
 
-  it('getPost on a pruned root returns StumpJson, not the raw Stump', () => {
-    const r = asRecord(feedService.getPost(prunedRootId));
-    expect(r).not.toBeNull();
-    expect(r).toEqual({
-      kind: 'stump',
-      id: prunedRootId,
-      author: Buffer.from(authorId).toString('hex'),
-      ...stumpScalars,
-    });
-    expect(r['author']).toMatch(/^[0-9a-f]{64}$/);
-    expect(r['authorId']).toBeUndefined();
-    expect(r['rootPostHash']).toBeUndefined();
-    expect('content' in r).toBe(false);
-    expect('likeCount' in r).toBe(false);
-  });
-
   it('a live post carries no `kind` — clients discriminate on its presence', () => {
     const r = asRecord(feedService.getPost(liveRootId));
     expect('kind' in r).toBe(false);
@@ -155,21 +118,6 @@ describe('feed-service', () => {
     expect(t!.next).toBeNull();
     expect(t!.pending).toEqual([]);
     expect(t!.pendingCount).toBe(0);
-  });
-
-  it('getThread on a pruned root returns the stump shell as StumpJson', () => {
-    const t = feedService.getThread(prunedRootId, { limit: 50 });
-    expect(t).not.toBeNull();
-    expect(t!.ancestors).toEqual([]);
-    expect(t!.ancestorCount).toBe(0);
-    expect(t!.descendants).toEqual([]);
-    expect(t!.descendantCount).toBe(0);
-    expect(t!.post).toEqual({
-      kind: 'stump',
-      id: prunedRootId,
-      author: Buffer.from(authorId).toString('hex'),
-      ...stumpScalars,
-    });
   });
 
   it('getThread on a withdrawn subject carries its live ancestor and descendant, as a live subject would', () => {
@@ -299,6 +247,92 @@ describe('feed-service', () => {
 
     countingService.queryPosts({ limit: 50 });
     expect(vouchCalls).toBe(4);
+  });
+
+  it('authorVouchCount is read once per distinct author across a withdrawn row and a live row by the same author', () => {
+    const withdrawnId = insertTestPost('A post about to be withdrawn', authorId, []);
+    confirmPost(withdrawnId, 40, 0);
+    withdrawPost(withdrawnId, 41);
+
+    let vouchCalls = 0;
+    const countingService = new FeedService({
+      getPost: storeGetPost,
+      queryPostsPage,
+      getLikeRecordCount,
+      getDescendantCount,
+      getVouchCountForTarget: (targetId: Uint8Array) => {
+        vouchCalls++;
+        return getVouchCountForTarget(targetId);
+      },
+      hasLikeRecord,
+      getAncestorsNearest,
+      getSubtreePage,
+      getBlockCreatedAt,
+    });
+
+    // One confirmed row (the withdrawn post) plus liveRootId/liveReplyId still
+    // pending — three rows, one distinct author, in one response.
+    const feed = countingService.queryPosts({ limit: 50 });
+    expect(feed.posts.some((p) => p.id === withdrawnId)).toBe(true);
+    expect(feed.pending.length).toBe(2);
+    expect(vouchCalls).toBe(1);
+  });
+
+  // -----------------------------------------------------------------------
+  // WithdrawnJson carries the same two counts — NODE_INTERFACE →
+  // "The JSON projection has two arms where the store has one shape"
+  // -----------------------------------------------------------------------
+
+  it('descendantCount and authorVouchCount ride every WithdrawnJson arm too', () => {
+    // A withdrawn root with one live child — getPost, listing and thread-head arms.
+    const withdrawnRootId = insertTestPost('A root about to be withdrawn', authorId, []);
+    confirmPost(withdrawnRootId, 30, 0);
+    const rootChildId = insertTestPost('Its live child', authorId, [withdrawnRootId]);
+    confirmPost(rootChildId, 31, 0);
+    withdrawPost(withdrawnRootId, 32);
+
+    // A live root with a withdrawn child — the thread-descendant arm.
+    const liveParentId = insertTestPost('A live parent whose reply withdraws', authorId, []);
+    confirmPost(liveParentId, 33, 0);
+    const withdrawnChildId = insertTestPost('A reply about to be withdrawn', authorId, [liveParentId]);
+    confirmPost(withdrawnChildId, 34, 0);
+    withdrawPost(withdrawnChildId, 35);
+
+    const vouch = seedProvenance<VouchBox>({
+      boxType: 'vouch' as const,
+      value: 1n,
+      createdAtBlock: 0,
+      voucherId: uid('withdrawn-counts-voucher'),
+      targetId: authorId,
+    }, 1);
+    insertBox(vouch);
+
+    // getPost
+    const head = feedService.getPost(withdrawnRootId) as WithdrawnJson;
+    expect(head.kind).toBe('withdrawn');
+    expect(head.descendantCount).toBe(1);
+    expect(head.authorVouchCount).toBe(1);
+
+    // listing
+    const feed = feedService.queryPosts({ limit: 50 });
+    const feedRow = feed.posts.find((p) => p.id === withdrawnRootId) as WithdrawnJson;
+    expect(feedRow.descendantCount).toBe(1);
+    expect(feedRow.authorVouchCount).toBe(1);
+
+    // thread head
+    const thread = feedService.getThread(withdrawnRootId, { limit: 50 })!;
+    const threadHead = thread.post as WithdrawnJson;
+    expect(threadHead.kind).toBe('withdrawn');
+    expect(threadHead.descendantCount).toBe(1);
+    expect(threadHead.authorVouchCount).toBe(1);
+
+    // thread descendant
+    const parentThread = feedService.getThread(liveParentId, { limit: 50 })!;
+    const descendant = parentThread.descendants[0] as WithdrawnJson;
+    expect(descendant.id).toBe(withdrawnChildId);
+    expect(descendant.kind).toBe('withdrawn');
+    expect(descendant.descendantCount).toBe(0);
+    expect(descendant.authorVouchCount).toBe(1);
   });
 
   it('getThread reads the head\'s descendantCount once, and the head and the thread agree', () => {

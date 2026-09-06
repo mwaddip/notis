@@ -115,13 +115,8 @@ header .spacer { flex: 1 1 auto; }
    not a tally of objects (there is no like object), and there is no unlike. */
 .meta .like { color: var(--inkMute); }
 
-/* the three absence states */
+/* the withdrawn state */
 .withdrawn { font-style: italic; color: var(--inkMute); font-size: 14px; }
-/* A stump keeps the dashed texture reserved for it; pending is hollow and
-   pruned is solid, so the three never converge. */
-.stump { border-style: dashed; }
-.stump-body, .pruned-body { font-size: 14px; color: var(--inkMute); }
-.stump-body .n, .pruned-body .n { font-family: var(--mono); color: var(--ink); }
 
 /* the strip — a control, never the container. Its left edge is the control's
    sole boundary, so it takes borderStrong (HOUSE_STYLE → Accessibility contract). */
@@ -140,14 +135,13 @@ header .spacer { flex: 1 1 auto; }
 }
 .card.open .strip:hover { background: color-mix(in srgb, var(--greenText) 22%, transparent); }
 .strip:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: -2px; }
-/* The band with no control in it — a stump has nothing beneath it to open, a
-   pending post is not on the network yet. Keeps borderStrong so the line runs
-   unbroken down the column. */
+/* The band with no control in it — a pending post is not on the network yet.
+   Keeps borderStrong so the line runs unbroken down the column. */
 .strip.inert { cursor: default; pointer-events: none; }
 
 /* Pending — hollow. Every landed post is a raised surface; a pending one sits
-   at ground and reads as an outline waiting to be filled. Not dashed (the
-   stump's), not gold (credits), not clay (warning). */
+   at ground and reads as an outline waiting to be filled. Not gold (credits),
+   not clay (warning). */
 .card.pending { background: var(--ground); }
 
 /* ---------- write surface: stage line, composer, controls ---------- */

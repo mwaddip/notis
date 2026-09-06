@@ -1,5 +1,5 @@
 import { readStore, writeStore } from '../prefs';
-import { isTombstone } from '../api/dto';
+import { isWithdrawn } from '../api/dto';
 import type { PostResult, KarmaResult } from '../api/dto';
 import type { SpendableBox, ChangeRef, PendingEntry, EntryOutcome } from './types';
 
@@ -99,13 +99,13 @@ export class PendingLedger {
 
 export function reconcilePost(entry: PendingEntry, fetched: PostResult | null, tip: number): EntryOutcome {
   if (fetched === null) return 'expired'; // 404 — the mempool purged it, or it was never admitted
-  if (isTombstone(fetched)) return 'landed'; // on-chain, then withdrawn or pruned
+  if (isWithdrawn(fetched)) return 'landed'; // on-chain, then withdrawn
   if (fetched.status === 'confirmed') return 'landed';
   return tip > entry.expiresAtHeight ? 'expired' : 'pending';
 }
 
 export function reconcileLike(entry: PendingEntry, fetched: PostResult | null, tip: number): EntryOutcome {
-  if (fetched !== null && !isTombstone(fetched) && fetched.likedByViewer === true) return 'landed';
+  if (fetched !== null && !isWithdrawn(fetched) && fetched.likedByViewer === true) return 'landed';
   return tip > entry.expiresAtHeight ? 'expired' : 'pending';
 }
 
@@ -178,16 +178,15 @@ export function reconcileInvite(
   return tip > entry.expiresAtHeight ? 'expired' : 'pending';
 }
 
-/** A pending withdrawal is landed when `GET /posts/:id` answers a tombstone — the
- *  withdrawn marker, or a stump or pruned tombstone when the thread went first
- *  (NODE_INTERFACE → The prune and withdrawal phase): any tombstone is the post
- *  gone, and the entry is done. A 404 is expired — the post is unknown to this
- *  node, so nothing can land — as is the tip passing `expiresAtHeight`. A live
- *  post is still pending, unlike a post entry: a confirmed live post is not a
- *  landing for a withdrawal (WEB_INTERFACE → The withdraw control). */
+/** A pending withdrawal is landed when `GET /posts/:id` answers the withdrawn
+ *  marker (NODE_INTERFACE → The withdrawal phase): the post is gone, and the
+ *  entry is done. A 404 is expired — the post is unknown to this node, so
+ *  nothing can land — as is the tip passing `expiresAtHeight`. A live post is
+ *  still pending, unlike a post entry: a confirmed live post is not a landing
+ *  for a withdrawal (WEB_INTERFACE → The withdraw control). */
 export function reconcileWithdraw(entry: PendingEntry, fetched: PostResult | null, tip: number): EntryOutcome {
   if (fetched === null) return 'expired';
-  if (isTombstone(fetched)) return 'landed';
+  if (isWithdrawn(fetched)) return 'landed';
   return tip > entry.expiresAtHeight ? 'expired' : 'pending';
 }
 

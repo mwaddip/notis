@@ -831,8 +831,8 @@ export async function seedKarmaPoolBox(): Promise<void> {
   const { ensureKarmaPoolBox, KARMA_SUPPLY_TOTAL } = await import('../src/store/system.js');
   // ⛔ **HALF THE SUPPLY, DELIBERATELY, AND IT IS NOT THE GENESIS CONSTANT.**
   // A fixture pool needs headroom in BOTH directions: it is drawn from by an
-  // invite grant and paid into by a like remainder, a bond forfeit, decay and a
-  // pruner's own lock. Seeded full — `granted = 0` — the first inflow pushes it
+  // invite grant and paid into by a like remainder, a bond forfeit and decay.
+  // Seeded full — `granted = 0` — the first inflow pushes it
   // past `KARMA_SUPPLY_TOTAL` and the output shape refuses the value as
   // out-of-domain; seeded empty, the first grant has nothing to spend.
   //

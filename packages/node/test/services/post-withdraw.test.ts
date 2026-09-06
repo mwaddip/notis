@@ -9,7 +9,6 @@ import {
 import {
   PROTOCOL_VERSION,
   MAX_BLOCK_BODY_BYTES,
-  MEMPOOL_EXPIRY_BLOCKS,
 } from '@dagsocial/types';
 import type {
   KarmaBox,
@@ -211,11 +210,8 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
 
     const stored = posts.getPost(postId);
     expect(stored).not.toBeNull();
-    expect(posts.isStoredPost(stored!)).toBe(true);
-    if (posts.isStoredPost(stored!)) {
-      expect(stored!.content).toBeNull();
-      expect(stored!.withdrawnAtHeight).toBe(2);
-    }
+    expect(stored!.content).toBeNull();
+    expect(stored!.withdrawnAtHeight).toBe(2);
     expect(posts.isLivePost(stored!)).toBe(false);
 
     // Topology survives
@@ -224,9 +220,10 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
   });
 
   // -----------------------------------------------------------------------
-  // 2. withdraw(R) + prune(root) in one block — R's lock is claimed once
+  // 2. withdraw(reply) + withdraw(root) in one block — independent authors,
+  //    no box removed twice
   // -----------------------------------------------------------------------
-  it('withdraw(R) + prune(root) in one block: R forfeits, no double-claim', async () => {
+  it('withdraw(reply) + withdraw(root) in one block: no box removed twice', async () => {
     const rootAuthor = makeTestIdentity();
     const replyAuthor = makeTestIdentity();
 
@@ -244,31 +241,24 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
     });
     expect(apply.applyOrderingBlock(block2)).toBe(true);
 
-    // Block 3: withdraw(reply) + prune(root)
-    const withdrawKarma = makeKarmaBox(10n, replyAuthor.userId, 2, 77);
-    utxo.insertBox(withdrawKarma);
-    const withdrawTx = makePostWithdrawTx(replyAuthor, replyId, withdrawKarma);
+    // Block 3: withdraw(reply) + withdraw(root)
+    const replyWithdrawKarma = makeKarmaBox(10n, replyAuthor.userId, 2, 77);
+    utxo.insertBox(replyWithdrawKarma);
+    const replyWithdrawTx = makePostWithdrawTx(replyAuthor, replyId, replyWithdrawKarma);
 
-    const pruneKarma = makeKarmaBox(10n, rootAuthor.userId, 2, 88);
-    utxo.insertBox(pruneKarma);
-    const pruneTx: UtxoTransaction = {
-      inputs: [pruneKarma.id!],
-      outputs: [
-        { boxType: 'karma', value: pruneKarma.value, createdAtBlock: pruneKarma.createdAtBlock, owner: rootAuthor.userId } as never,
-      ],
-      signatures: {},
-      protocolVersion: PROTOCOL_VERSION,
-      prune: { rootPostHash: rootId },
-    };
-    signTransaction(pruneTx, rootAuthor.privateKey, toHex(rootAuthor.userId));
+    const rootWithdrawKarma = makeKarmaBox(10n, rootAuthor.userId, 2, 88);
+    utxo.insertBox(rootWithdrawKarma);
+    const rootWithdrawTx = makePostWithdrawTx(rootAuthor, rootId, rootWithdrawKarma);
 
     const block3 = await makeApplicableBlock({
       miner,
-      utxoTxs: [withdrawTx, pruneTx],
+      utxoTxs: [replyWithdrawTx, rootWithdrawTx],
       height: 3,
     });
     const applied = apply.applyOrderingBlock(block3);
     expect(applied).toBe(true);
+    expect(posts.isLivePost(posts.getPost(replyId))).toBe(false);
+    expect(posts.isLivePost(posts.getPost(rootId))).toBe(false);
 
     // The settlement's input list must not contain any box id twice
     const journal = journalStore.getBlockJournal(3);
@@ -278,42 +268,6 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
       .map((m) => (m as BoxMutation).boxId);
     const uniqueRemoved = new Set(removedBoxIds);
     expect(uniqueRemoved.size).toBe(removedBoxIds.length);
-  });
-
-  // -----------------------------------------------------------------------
-  // 2b. A withdrawn root prunes in a later block — withdrawal keeps the row,
-  //     so the root is still a post (NODE_INTERFACE → Prune transactions,
-  //     "A root prunes once")
-  // -----------------------------------------------------------------------
-  it('a withdrawn root prunes in a later block', async () => {
-    const author = makeTestIdentity();
-    const { postId } = await postAndConfirm(author, 'withdraw then prune');
-
-    const withdrawKarma = makeKarmaBox(10n, author.userId, 1, 66);
-    utxo.insertBox(withdrawKarma);
-    const block2 = await makeApplicableBlock({
-      miner,
-      utxoTxs: [makePostWithdrawTx(author, postId, withdrawKarma)],
-      height: 2,
-    });
-    expect(apply.applyOrderingBlock(block2)).toBe(true);
-    expect(posts.isLivePost(posts.getPost(postId))).toBe(false);
-
-    const pruneKarma = makeKarmaBox(10n, author.userId, 2, 55);
-    utxo.insertBox(pruneKarma);
-    const pruneTx: UtxoTransaction = {
-      inputs: [pruneKarma.id!],
-      outputs: [
-        { boxType: 'karma', value: pruneKarma.value, createdAtBlock: pruneKarma.createdAtBlock, owner: author.userId } as never,
-      ],
-      signatures: {},
-      protocolVersion: PROTOCOL_VERSION,
-      prune: { rootPostHash: postId },
-    };
-    signTransaction(pruneTx, author.privateKey, toHex(author.userId));
-    const block3 = await makeApplicableBlock({ miner, utxoTxs: [pruneTx], height: 3 });
-    expect(apply.applyOrderingBlock(block3)).toBe(true);
-    expect(posts.isStump(posts.getPost(postId))).toBe(true);
   });
 
   // -----------------------------------------------------------------------
@@ -367,11 +321,9 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
 
     // Verify content before withdrawal
     const before = posts.getPost(postId);
-    expect(posts.isStoredPost(before!)).toBe(true);
-    if (posts.isStoredPost(before!)) {
-      expect(before!.content).toBe('journal-test');
-      expect(before!.withdrawnAtHeight).toBeNull();
-    }
+    expect(before).not.toBeNull();
+    expect(before!.content).toBe('journal-test');
+    expect(before!.withdrawnAtHeight).toBeNull();
 
     const withdrawKarma = makeKarmaBox(10n, author.userId, 1, 60);
     utxo.insertBox(withdrawKarma);
@@ -386,11 +338,9 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
 
     // After withdrawal: content is null, marker set
     const after = posts.getPost(postId);
-    expect(posts.isStoredPost(after!)).toBe(true);
-    if (posts.isStoredPost(after!)) {
-      expect(after!.content).toBeNull();
-      expect(after!.withdrawnAtHeight).toBe(2);
-    }
+    expect(after).not.toBeNull();
+    expect(after!.content).toBeNull();
+    expect(after!.withdrawnAtHeight).toBe(2);
 
     // Check the journal recorded the withdrawal
     const journal = journalStore.getBlockJournal(2);
@@ -405,11 +355,9 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
 
     // After revert: content and marker restored
     const restored = posts.getPost(postId);
-    expect(posts.isStoredPost(restored!)).toBe(true);
-    if (posts.isStoredPost(restored!)) {
-      expect(restored!.content).toBe('journal-test');
-      expect(restored!.withdrawnAtHeight).toBeNull();
-    }
+    expect(restored).not.toBeNull();
+    expect(restored!.content).toBe('journal-test');
+    expect(restored!.withdrawnAtHeight).toBeNull();
   });
 
   // -----------------------------------------------------------------------
@@ -429,11 +377,9 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
       .run(postId);
 
     const beforeW = posts.getPost(postId);
-    expect(posts.isStoredPost(beforeW!)).toBe(true);
-    if (posts.isStoredPost(beforeW!)) {
-      expect(beforeW!.content).toBeNull();
-      expect(beforeW!.withdrawnAtHeight).toBeNull();
-    }
+    expect(beforeW).not.toBeNull();
+    expect(beforeW!.content).toBeNull();
+    expect(beforeW!.withdrawnAtHeight).toBeNull();
 
     // Withdraw the placeholder
     const withdrawKarma = makeKarmaBox(10n, author.userId, 1, 61);
@@ -458,11 +404,9 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
     forkRes.revertBlock(2);
 
     const restored = posts.getPost(postId);
-    expect(posts.isStoredPost(restored!)).toBe(true);
-    if (posts.isStoredPost(restored!)) {
-      expect(restored!.content).toBeNull();
-      expect(restored!.withdrawnAtHeight).toBeNull();
-    }
+    expect(restored).not.toBeNull();
+    expect(restored!.content).toBeNull();
+    expect(restored!.withdrawnAtHeight).toBeNull();
   });
 
   // -----------------------------------------------------------------------
@@ -508,13 +452,11 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
   });
 
   // -----------------------------------------------------------------------
-  // 6b. Like-records survive withdrawal, counted on prune, restored on revert
+  // 6b. Like-records survive withdrawal
   // -----------------------------------------------------------------------
   // ARCHITECTURE → Like-records
-  it('a like-record outlives its post\'s withdrawal; a later prune counts it into the stump and deletes it; revert restores it', async () => {
+  it('a like-record outlives its post\'s withdrawal', async () => {
     const { hasLikeRecord, getLikeRecordCount } = await import('../../src/store/likes.js');
-    const { getStump } = await import('../../src/store/stumps.js');
-    const forkRes = await importForkResolution();
 
     const A = makeTestIdentity();
     const B = makeTestIdentity();
@@ -570,130 +512,10 @@ describe('post withdrawal mechanism (D1 node-4b)', () => {
     expect(apply.applyOrderingBlock(block4)).toBe(true);
     expect(hasLikeRecord(replyId, C.userId)).toBe(true);
     expect(getLikeRecordCount(replyId)).toBe(1);
-
-    // Block 5: A prunes R
-    const pruneKarma = makeKarmaBox(10n, A.userId, 2, 92);
-    utxo.insertBox(pruneKarma);
-    const pruneTx: UtxoTransaction = {
-      inputs: [pruneKarma.id!],
-      outputs: [
-        { boxType: 'karma', value: pruneKarma.value, createdAtBlock: pruneKarma.createdAtBlock, owner: A.userId } as never,
-      ],
-      signatures: {},
-      protocolVersion: PROTOCOL_VERSION,
-      prune: { rootPostHash: rootId },
-    };
-    signTransaction(pruneTx, A.privateKey, toHex(A.userId));
-    const block5 = await makeApplicableBlock({
-      miner,
-      utxoTxs: [pruneTx],
-      height: 5,
-    });
-    expect(apply.applyOrderingBlock(block5)).toBe(true);
-    expect(getStump(rootId)!.upvoteCount).toBe(1);
-    expect(hasLikeRecord(replyId, C.userId)).toBe(false);
-
-    // Revert block 5: the exact inverse
-    forkRes.revertBlock(5);
-    expect(hasLikeRecord(replyId, C.userId)).toBe(true);
-    expect(getStump(rootId)).toBeNull();
   });
 
   // -----------------------------------------------------------------------
-  // 7. The route: submits, broadcasts, returns 201
-  // -----------------------------------------------------------------------
-  it('POST /posts/:id/withdraw submits, broadcasts and returns 201', async () => {
-    const http = await import('http');
-    const express = (await import('express')).default;
-    const { pruneWithdrawRoutes } = await import('../../src/routes/prune-withdraw.js');
-    const { setNet } = await import('../../src/services/net-instance.js');
-
-    let broadcastCalled = false;
-    setNet({
-      broadcastTx: async () => { broadcastCalled = true; },
-    } as any);
-
-    const deps = {
-      getBox: () => null,
-      insertBox: () => {},
-      consumeBox: () => {},
-      getKarmaBox: () => null,
-      getKarmaValue: () => 0n,
-      getIdentityRecord: () => null,
-      hasActiveVouchEscrow: () => false,
-      vouchCooldownBlocks: 0,
-      inviteBondMin: 0n,
-      inviteBondMax: 0n,
-      decayCfg: { staleThresholdBlocks: 0, decayIntervalBlocks: 0, decayAmount: 0n, karmaMinimum: 0n },
-      storageRentPeriodBlocks: 0,
-      getBoxProvenance: () => null,
-      getTopologyAuthor: () => null,
-      getPendingPostAuthor: () => null,
-      runInTransaction: (fn: () => void) => fn(),
-      getVouchBox: () => null,
-      getNetworkRecord: () => ({ memberCount: 1 }),
-      membershipBarMultiplier: 1,
-      putIdentityRecord: () => {},
-      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
-      executePrune: (_d: any, _t: any, h: number) => ({ txId: 'b'.repeat(64), expiresAtHeight: h + MEMPOOL_EXPIRY_BLOCKS }),
-      executePostWithdraw: (_d: any, _t: any, h: number) => ({ txId: 'c'.repeat(64), expiresAtHeight: h + MEMPOOL_EXPIRY_BLOCKS }),
-      getCurrentHeight: () => 10,
-    };
-
-    const app = express();
-    app.use(express.json());
-    app.use(pruneWithdrawRoutes(deps));
-
-    const postId = 'aa'.repeat(32);
-    const txBody = {
-      inputs: ['ff'.repeat(32)],
-      outputs: [{ boxType: 'karma', value: '10', createdAtBlock: 0, owner: 'dd'.repeat(32) }],
-      signatures: { ['dd'.repeat(32)]: Buffer.alloc(64).toString('base64') },
-      protocolVersion: PROTOCOL_VERSION,
-      postWithdraw: { postId },
-    };
-
-    const result = await new Promise<{ status: number; data: any }>((resolve) => {
-      const server = app.listen(0, () => {
-        const addr = server.address() as { port: number };
-        const req = http.request(
-          {
-            hostname: 'localhost',
-            port: addr.port,
-            path: `/posts/${postId}/withdraw`,
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-          },
-          (res) => {
-            let d = '';
-            res.on('data', (c: string) => (d += c));
-            res.on('end', () => {
-              server.close();
-              try {
-                resolve({ status: res.statusCode ?? 0, data: JSON.parse(d) });
-              } catch {
-                resolve({ status: res.statusCode ?? 0, data: d });
-              }
-            });
-          },
-        );
-        req.write(JSON.stringify({ tx: txBody }));
-        req.end();
-      });
-    });
-
-    expect(result.status).toBe(201);
-    expect(result.data.status).toBe('submitted');
-    expect(result.data.txId).toBe('c'.repeat(64));
-    expect(result.data.postId).toBe(postId);
-    expect(result.data.expiresAtHeight).toBe(11 + MEMPOOL_EXPIRY_BLOCKS);
-    expect(broadcastCalled).toBe(true);
-
-    setNet(null as any);
-  });
-
-  // -----------------------------------------------------------------------
-  // 8. The creator and the applier derive the same settlement
+  // 7. The creator and the applier derive the same settlement
   // -----------------------------------------------------------------------
   it('creator and applier derive the same settlement for a body carrying a withdrawal', async () => {
     const author = makeTestIdentity();

@@ -74,21 +74,18 @@ architecture:
 
 | Layer | Purpose | Mutability |
 |-------|---------|------------|
-| **Posts DAG** | Content, social graph | Author-sovereign (prunable) |
+| **Posts DAG** | Content, social graph | Author-sovereign (a post is its author's to withdraw) |
 | **UTXO Ledger** | Karma & credits state | Owner-controlled (spendable) |
-| **Stumps** | The record that a subtree existed and was pruned | Written by block application alone |
 
 These layers are interdependent but cryptographically independent: the DAG's
-integrity doesn't depend on the UTXO state, and vice versa. A stump moves no
-karma — every post paid its price at posting (§The post price) — it keeps a
-pruned root resolvable, so a reply to it stays valid, and carries the subtree's
-counts.
+integrity doesn't depend on the UTXO state, and vice versa. A withdrawal moves no
+karma — every post paid its price at posting (§The post price) — it empties the
+post and keeps its identity, so a reply to it stays valid.
 
 ### Why dual-ledger
 
-- **Content ledger (DAG):** Posts are sovereign to their author. The author can
-  delete their entire reply subtree for privacy. Content is additive by default
-  but prunable by the root owner.
+- **Content ledger (DAG):** Posts are sovereign to their author. Content is additive by
+  default; an author can withdraw their own post's content, and nothing else removes a post.
 - **Value ledger (UTXO):** Karma and credits track account state with
   cryptographic lineage. Boxes are consumed and created; history is immutable
   even though current balances change.
@@ -100,7 +97,7 @@ The hybrid preserves the strengths of both.
 ### Block architecture: ordering blocks
 
 One block type. Validators produce **ordering blocks**: full PoW, one committed body
-(`utxoTxIds` + `utxoTxs`), a configurable interval. Every post, like and prune is an
+(`utxoTxIds` + `utxoTxs`), a configurable interval. Every post, like and withdrawal is an
 ordinary UTXO transaction riding `utxoTxIds` with everything else, and each block
 carries the settlement transaction stated below.
 
@@ -170,9 +167,8 @@ being re-settled** (user, 2026-08-17). It is now written down.
 comment says "burned", it means *returned to the pool* — and where the **code** actually destroys
 value, that code is a defect against this section, not a definition of the word.
 
-⚠ **Read every "burn" in this directory under this definition.** The like deficit, decay, bond
-forfeiture, a pruner's own locks and a withdrawing author's own lock are all named as burns
-elsewhere; **all five are transfers to the
+⚠ **Read every "burn" in this directory under this definition.** The like deficit, decay and bond
+forfeiture are all named as burns elsewhere; **all three are transfers to the
 pool.** The naming survives because it is what a holder experiences — the karma leaves them and does
 not come back.
 
@@ -264,7 +260,7 @@ This means:
 
 ---
 
-## The Three Layers
+## The Two Layers
 
 ### 1. Posts DAG (Content Layer)
 
@@ -314,7 +310,7 @@ structure, no body — until backfill fills it (NODE_INTERFACE → Store Interfa
 > inside the warning against restating the format, left behind when Phase 3b made the count
 > `vlqU`. A prohibition does not exempt the text that carries it.
 
-A post's `parentRefs` may reference either live posts or stumps. The hash is
+A post's `parentRefs` name confirmed posts, live or withdrawn. The hash is
 the same either way — the DAG's cryptographic integrity doesn't depend on
 content availability.
 
@@ -340,54 +336,38 @@ Post PoW, its challenge handshake, and the sub-block mechanism are retired. A po
 created by a transaction: admission is priced by the post price, authenticated by
 the transaction's signature, and ordered by the block that includes it.
 
-#### Subtree pruning (deletion)
+#### Withdrawal — the author's only act
 
-The root author may prune their entire subtree at any time. Pruning:
+An author's power over a post they wrote is **withdrawal**: the content is dropped, and the post's
+identity, its place in the thread and every reply beneath it stay (NODE_INTERFACE → Withdrawal
+transactions). It is free — the post paid its price at posting (§The post price) — it is authorized
+by the author's own signature over the withdrawal transaction, and it is the whole of what an author
+may do to a post after posting it. Who "the author" is, is itself consensus data: every confirmed
+post's `author` is the signer of its creating transaction, recorded at confirmation in
+`block_topology`, and a withdrawal is valid only if the karma input's owner equals that recorded
+author (audit H-3) — so a signature from anyone else, however valid for its own key, authorizes
+nothing, and any node reaches the verdict with or without the DAG content.
 
-1. **Deletes** the root post and all descendant posts from the DAG — rows and bodies, by the
-   subtree `block_topology` derives for the root at apply; not a status flip, not a read filter
-2. Cascades to all replies — a reply exists only in the context of its root
-3. Replaces the entire subtree with a **stump** (see §3): the root's id lives on as the stump;
-   a descendant's id answers only a tombstone derived from `block_topology` and that stump
-   (NODE_INTERFACE → Resolution order for a post id)
-4. Is authorized by a signed prune transaction from the root author's key
+**No act reaches another author's post.** A reply belongs to the one who wrote it; the author of the
+post it answers has no act over it, and no subtree is anyone's to remove. Four facts argue the rule:
 
-The prune is authorized **solely** by the root author, and the authorization is the prune
-transaction's own signature over its `txId` — which covers the `PruneCommit` payload. Who "the
-author" is, is itself consensus data: every confirmed post's `author` is the signer of its
-creating transaction, recorded at confirmation in `block_topology`, and a prune is valid only
-if the karma input's owner equals that recorded author (audit H-3) — so a signature from
-anyone else, however valid for its own key, authorizes nothing. No validator
-attestation is required — the prune's effect is deterministically computable from
-the like-records it deletes and the topology rows it marks. Any node can verify the
-prune independently, with or without the DAG content.
+1. A cascade over the replies protects no privacy. Anyone can archive a live post, and anyone can
+   repost its content and make it permanent, so removing the replies beneath a post hides nothing
+   the post itself has not already given away.
+2. A subtree's removal is a batch bounded only by the thread's size — one transaction deleting
+   thousands of rows on every node — an operational hazard with no ceiling a rule could state.
+3. An act over other people's replies is a griefing tool: the owner of a thread could delete a
+   valuable discussion other people wrote.
+4. Every reply paid the post price, and nothing returns it (§The post price): removing a subtree
+   would take its authors' standing in the conversation with it, with no refund.
 
-Pruning is irreversible. Once content is pruned, it cannot be recovered.
-What propagates is the prune transaction — by gossip like any other, and again inside the
-ordering block that settles it — never the original content, and not the stump either: each
-node derives its own stump from the verified payload at settlement (§3). Within
-the reorg horizon (`maxReorgDepth`, TYPES_INTERFACE → Chain reorganisation) the deleted rows exist only as undo records in the prune
-block's journal — never served, never relayed — so a reverted prune restores
-them exactly; once that journal is dropped, **a node holds no byte of the
-subtree's content anywhere**: no DAG row, no journal row, and the blocks
-carry only content commitments (§Invariants → Content sovereignty).
-
-Future stump triggers beyond author deletion (storage pruning for lean nodes)
-will use their own authorization paths but produce the same stump data structure.
-
-**Privacy rationale:** Even if only the root post is deleted, replies in the
-subtree contain signals (tone, specificity, timing) that can leak what the
-root said. Cascade deletion is the only privacy-preserving default.
-
-#### Subtree ownership
-
-- The author of post `P` owns the subtree rooted at `P`
-- Ownership means the exclusive right to prune
-- Replying to a post grants the root author sovereignty over your reply
-- This is a social contract encoded in the protocol: replying is consent
-
-A reply author may delete their own reply individually (it's their subtree
-root), but cannot prevent the parent author from pruning the whole tree.
+What withdrawal guarantees, and what it cannot: honest nodes drop the content and stop propagating
+it, and the author's decision is attributable and permanent; anyone who archived the content can
+republish it. Within the reorg horizon (`maxReorgDepth`, TYPES_INTERFACE → Chain reorganisation)
+the dropped body exists only as an undo record in the withdrawal block's journal — never served,
+never relayed — so a reverted withdrawal restores it exactly; once that journal is dropped, a node
+holds no byte of the content anywhere (§Invariants → Content sovereignty). User-facing wording is
+"withdrawn", never "deleted" (NODE_INTERFACE → Withdrawal transactions).
 
 ### 2. UTXO Ledger (Value Layer)
 
@@ -787,78 +767,6 @@ to verify box existence or absence without storing the full UTXO set.
   but cannot reach the prover's in-memory state — the reorg restores it
   explicitly)
 
-### 3. Stumps
-
-A stump is what remains after a post subtree is pruned: a compact record
-that the subtree existed and was settled. The stump itself carries no
-signature — authorization lives in the prune transaction (author-signed, verified at
-admission and again at block application), and a stump is a **local projection of that
-verified transaction**, derived independently by every node when the prune settles. No
-stump is ever accepted from the network: a gossiped stump would be
-unverifiable by construction (no signature, no set to check against topology),
-so the table stumps live in is written by block application alone.
-
-```
-Stump {
-  rootPostHash: PostId
-  authorId: UserId
-  replyCount: number
-  upvoteCount: number
-  protocolVersion: number
-  compactedAtBlockHeight: number
-}
-```
-
-#### Prune lifecycle
-
-1. Author's client names the root — the payload is `{ rootPostHash }` and nothing else
-   (TYPES_INTERFACE → Layout — PruneCommit)
-2. Author signs the **transaction**, whose `TxId` preimage carries the prune payload — there
-   is no payload signature of its own
-3. Client submits a signed prune **transaction** to a node via `POST /posts/:id/prune`
-4. Node verifies the maturity bind and that the root is still a post row — a root prunes
-   once — then `validateTx`
-5. Node pools it and **broadcasts it to peers like any other transaction**, so any miner may
-   include it — a prune submitted to a node that never mines still reaches consensus
-6. At block application, every node independently verifies the authorship
-   binding (the karma input's owner equals the `block_topology`-recorded author
-   of the root; a root confirmed in the applying block is not prunable, and neither is a
-   root already pruned — a stump or a tombstone — since a root prunes once) and
-   **derives the subtree from `block_topology`** — same-block replies included —
-   then vests this block's own likes on it, deletes its like-records
-   (journalled), **absorbs every stump inside the set** — an earlier prune's
-   stump is deleted (journalled) and its count folded into the new one, so a
-   thread carries one stump, the outermost — and **marks its topology rows
-   pruned**, an earlier mark's values journalled
-7. The simplified Stump is inserted, derived from that set —
-   unconditionally, so a node holding no DAG content records the same
-   stump — then the subtree's DAG rows, bodies included, are deleted by the
-   set, each captured into the block's journal first so a reverted prune
-   restores them exactly (NODE_INTERFACE → Prune transactions)
-
-No validator attestation is needed — the author's signature authorizes the
-prune, and the settlement is deterministically computable from UTXO state.
-
-**A prune refunds nothing and burns nothing further.** Every post in the subtree paid its
-price when it was posted (§The post price), so post → prune → repost pays the price every time
-and recycles nothing, and a withdrawal costs nothing beyond what posting already cost.
-
-⚠ **The descendant-count price is NOT part of this rule.** Charging the pruner
-for the replies they destroy is a separate consensus transition and is not
-specified here.
-
-#### Cryptographic guarantees
-
-- The prune's whole effect is derived from `block_topology` — the set, the stump, the
-  marks — so any node reaches it without DAG content
-- The author's signature over the transaction's `txId`, whose preimage carries the
-  `rootPostHash`, is the single point of authorization, and "the author" is pinned by
-  consensus: the prune transaction's karma input owner must equal the author recorded for the
-  root in `block_topology` (the signer of the root's creating transaction,
-  verified against real content by every node that holds it at confirmation time)
-- Parent hashes remain valid — a reply referencing a pruned post still has a
-  valid `parentRefs` entry; the parent is just a stump now
-
 ---
 
 ## Identity
@@ -898,19 +806,6 @@ on the ledger.
 >   would indeed be a *self post*"). Only usernames leave the post model. **`Post.type`
 >   exists and profiles key on it:** see §Profiles below.
 
-Usernames are DAG-native objects using a **first-claim-wins** model:
-
-1. An account posts a claim: `{ claim: "username", name: "@alice" }`, signed
-   by the account's key
-2. The first valid claim for a name string wins — the name is permanently
-   associated with that account
-3. Changing username: account prunes the old claim post (now a stump), posts
-   a new claim. The resolver takes the most recent unpruned claim.
-4. A claim is only valid if the account has nonzero karma at claim time
-
-No expiry. No renewal. The name claim is a post like any other — it can be
-pruned by its author, and pruning it releases the name.
-
 ### Profiles
 
 A profile is a **single post bound to its author**: `type: 'profile'` (TYPES_INTERFACE →
@@ -919,8 +814,8 @@ that clients interpret. Consensus records it and never parses it.
 
 The profile of identity X is the **latest confirmed `profile` post authored by X** — latest
 in committed order (block height, then position in block). Editing a profile is posting a
-new one; latest-wins supersedes the old, and pruning it is optional hygiene. Profile posts
-are ordinary DAG posts: carried by ordinary post transactions, prunable by their author,
+new one; latest-wins supersedes the old, and withdrawing it is optional hygiene. Profile posts
+are ordinary DAG posts: carried by ordinary post transactions, withdrawable by their author,
 recorded like any post.
 
 There is no profile-root anchor, no typed child posts and no DAG walk. `display_name` is a
@@ -972,13 +867,12 @@ sidecars and no standalone like pool.
 **Apply-time rules** (consensus, not gateway courtesy):
 
 - The target post must be **confirmed and live** at apply height — meaning **at the point in the
-  block's phase order where likes apply**, which is the transaction loop, before the prune and
-  withdrawal phase. Likes on posts already stumped, tombstoned or withdrawn **in an earlier
-  block** are **rejected by stated rule**, not as an emergent property — without this rule,
-  dropping like-records at prune (below) would reopen duplicate likes on stumps.
-  ⚠ **A like and a settlement of the same post in ONE block is legal**, and the phase order is
-  why: the like applies first and counts, then the phase stumps or empties the post
-  (NODE_INTERFACE → The prune and withdrawal phase).
+  block's phase order where likes apply**, which is the transaction loop, before the withdrawal
+  phase. Likes on posts withdrawn **in an earlier block** are **rejected by stated rule**, not as
+  an emergent property.
+  ⚠ **A like and a withdrawal of the same post in ONE block is legal**, and the phase order is
+  why: the like applies first and counts, then the phase empties the post
+  (NODE_INTERFACE → The withdrawal phase).
 - The target's author is resolved from **`block_topology`**, never `dag_posts.author`
   (placeholder rows carry a zeroed author).
 - `(liker, target)` must not already exist in the like-records — one like per account per
@@ -1053,20 +947,13 @@ of arrival pattern — the floor runs over a running total, never over a per-win
 consensus state (the `block_topology` tier): deterministic by replay, journalled with exact
 inverses, **not** in the `stateRoot`.
 
-- **They die with the post on prune.** Prune settlement deletes the pruned subtree's
-  like-records, and the deletions are journalled so a reverted prune restores them exactly.
-  History needs no live record — the burn transaction is block history and names the post,
-  and the post's identity stays committed via the stump. Dedup needs none either: a pruned
-  post cannot be liked (the rejection rule above).
-- **They survive withdraw.** A withdrawal empties the post and keeps its row, its topology
-  and its identity (NODE_INTERFACE → Withdrawal transactions); nothing in the withdrawal
-  phase touches `like_records` (NODE_INTERFACE → The prune and withdrawal phase). A withdrawn post
-  cannot be liked, so from that block its records are a closed set: the withdrawn view
-  serves no `likeCount` and no `likedByViewer`, and the rows do one more job — a later prune of the
-  thread counts them into the stump's `upvoteCount` and deletes them with the subtree's.
-  Records follow the post.
-- Growth is bounded by likes on posts **not yet pruned**, never by every like ever given: a
-  prune removes its subtree's records, and a withdrawn post accepts no new ones.
+- **They survive withdraw, and nothing deletes them.** A withdrawal empties the post and keeps its
+  row, its topology and its identity (NODE_INTERFACE → Withdrawal transactions); nothing in the
+  withdrawal phase touches `like_records` (NODE_INTERFACE → The withdrawal phase). A withdrawn post
+  cannot be liked, so from that block its records are a closed set: the withdrawn view serves no
+  `likeCount` and no `likedByViewer`. Records follow the post.
+- The table holds one row per like ever applied, bounded by one like per `(liker, post)`; a
+  withdrawn post accepts no new ones.
 
 ### The post price
 
@@ -1085,20 +972,19 @@ settlement   KarmaPriceBox(p) → pool(+p)         consumed in the block that cr
 - **The price is a resource price, never a judgement** (user, 2026-08-14, restated as the rule): it
   prices occupying the DAG and the churn a free release would enable. A post people liked has paid
   it; a post nobody saw has paid the same.
-- **Nothing returns.** A prune or a withdrawal refunds nothing and burns nothing further, so
-  post → prune → repost pays the price every time (§Subtree pruning).
+- **Nothing returns.** A withdrawal refunds nothing and burns nothing further, so
+  post → withdraw → repost pays the price every time (§Withdrawal).
 - **The reply's share rides the accrual.** `REPLY_AUTHOR_SHARE` lands in the parent author's
   accrual and pays out with their likes at `x−1` per `x` (§Per-block accrual and settlement), so
   the author nets `(x−1)/x` of it and the rest of the price leaves circulation. It is attention,
   not endorsement: **it moves no like counter** — not `IdentityRecord.lifetimeLikesReceived`, which
   the bond settles against, nor any count a rule reads as likes. A reply pays the parent's author
-  whether the parent is live, withdrawn or a stump — every confirmed id has a topology author.
+  whether the parent is live or withdrawn — every confirmed id has a topology author.
 - **Self-replies get no special case.** The author pays the price and their own accrual receives
   the share — a net loss, as a self-like is.
 - **A `KarmaPriceBox` is the karma-side twin of `FeeBox`**: what a karma action pays, named as an
   output so the transaction conserves, with no owner, consumed only by the settlement
-  (TYPES_INTERFACE → KarmaPriceBox). It is the transition any later karma price takes — the
-  prune's descendant charge, when it lands.
+  (TYPES_INTERFACE → KarmaPriceBox). It is the transition any later karma price takes.
 
 ### Like parameters
 
@@ -1375,10 +1261,9 @@ blocks of likes — a bounded delay, never a skipped settlement.
 **Which count settles the bond is the whole of the rule**, so the contract names
 the field rather than saying "likes received". It is the identity record's
 monotonic counter: incremented by per-block like settlement, **decremented by
-nothing, prune included**. A count derived from live posts instead would let a
-third party burn Alice's stake — Bob replies in Carol's thread, Carol prunes it,
-Alice forfeits — which *"you may destroy your own stake, never someone else's"*
-forbids.
+nothing**. A count derived from live posts instead would let a third party burn
+Alice's stake — Bob withdraws the reply that earned the likes, Alice forfeits — which
+*"you may destroy your own stake, never someone else's"* forbids.
 
 Nothing else is consulted: not Bob's balance, not whether he is still active, not
 when the likes arrived. **A single evaluation at the deadline is arithmetically
@@ -1439,9 +1324,8 @@ is byte-identical from creation to the block that consumes it.
 >
 > ✅ **The remainder of this section is verified against the code, 2026-08-20.** Responsibilities,
 > Validator selection, Rewards and Separation match `block-creator.ts`, `settlement.ts` and
-> `MINING_INTERFACE → Emission Schedule`: the body is UTXO transactions and prune entries, the
-> reward is the settlement transaction's output from the emission box, selection is PoW alone, and
-> prune authorisation is the root author's signature.
+> `MINING_INTERFACE → Emission Schedule`: the body is UTXO transactions, the reward is the
+> settlement transaction's output from the emission box, and selection is PoW alone.
 
 A validator is a node producing ordering blocks by solving their Proof of Work.
 It is a role a node plays, not a separate class of participant — the same key
@@ -1449,12 +1333,12 @@ material may also hold karma and author posts.
 
 ### Responsibilities
 
-1. Produce ordering blocks — order UTXO transactions and prune entries into one
+1. Produce ordering blocks — order UTXO transactions into one
    committed body (per-block like settlement runs inside block application, not here)
 2. Earn credit rewards as outputs of the block's settlement transaction, spent
    from the emission box
 
-Validators do **not** attest to stumps. The prune authorization is the root
+Validators attest to nothing an author does: a withdrawal is authorized by the
 author's signature alone.
 
 ### Validator selection
@@ -1584,12 +1468,12 @@ before multi-node operation rather than after it.
      │   DAG   │ │ Ledger  │ │ (pending)│
      └────┬────┘ └────┬────┘ └────┬─────┘
           │           │           │
-          └─────┬─────┘           │
-                ▼                 ▼
-          ┌──────────┐     ┌──────────┐
-          │  Stumps  │     │ Ordering │
-          └──────────┘     │  Blocks  │
-                           └──────────┘
+          └───────────┴─────┬─────┘
+                            ▼
+                      ┌──────────┐
+                      │ Ordering │
+                      │  Blocks  │
+                      └──────────┘
 ```
 
 1. **Genesis:** The genesis state seeds the system boxes (karma pool, emission,
@@ -1605,14 +1489,13 @@ before multi-node operation rather than after it.
    admitted together or refused together
 5. **Liking:** User spends karma → like transaction → mempool (standalone)
 6. **Ordering:** Block creator pulls from mempool (FIFO), assembles the body
-   (UTXO txs + prune entries), appends the settlement transaction, mines PoW,
+   (UTXO txs), appends the settlement transaction, mines PoW,
    finalizes → state applied atomically
 7. **Like settlement:** Every block, at the end of the mutation phase — the
    settlement transaction consumes the block's markers and each credited
    author's carry box, pays authors and the pool, and emits carry successors (§Likes)
-8. **Pruning:** Author signs prune intent → stump constructed with deterministic
-   karma deltas → committed in ordering block → the subtree's DAG rows deleted
-   (journalled), the stump written
+8. **Withdrawal:** Author signs a withdrawal transaction naming the post → committed in an
+   ordering block → the row emptied (journalled), its identity and its replies kept
 9. **Vouch escrow:** An unvouched stake waits in a `VouchEscrowBox`; the first
    block at or past `releaseAtBlock` returns it to the voucher through its
    settlement transaction — no client action claims it
@@ -1634,9 +1517,7 @@ before multi-node operation rather than after it.
 Stream messages are framed: `[magic:4][version:1][code:VLQ][length:VLQ][checksum:4][body]`. Gossip
 bodies are positional — ordering blocks through `decodeOrderingBlock`, transaction packets through
 `decodeTxPacket` (`net/src/gossip.ts`): the transaction's own bytes, then the post body as an `opt`
-that is present ⟺ the transaction carries a `PostCommit` (NET_INTERFACE → Gossip Topics). A stump
-never travels: it is a local projection with no wire
-form (`NODE_INTERFACE` → "Stumps are derived state"; `TYPES_INTERFACE` → Layout — Stump).
+that is present ⟺ the transaction carries a `PostCommit` (NET_INTERFACE → Gossip Topics).
 The normative per-struct layouts live in `TYPES_INTERFACE.md` → Serialization,
 not here. Wire-codec types (ByteReader, ByteWriter, VLQ) live in `@dagsocial/wire`.
 
@@ -1952,7 +1833,7 @@ a committed byte, and none of them need to wait for a break bundle.
 
 ## Protocol Versioning
 
-Every post commit, ordering block, UTXO transaction and stump carries a `protocolVersion` field. **The
+Every post commit, ordering block and UTXO transaction carries a `protocolVersion` field. **The
 version in force is scheduled by height, per network:** `NetworkProfile.protocolVersionSchedule` is a list
 of eras `{ version, fromHeight }`, and `protocolVersionAt(schedule, height)` is the version of the last era
 whose `fromHeight` is at or below the height (`TYPES_INTERFACE → Network profiles`). Every profile's
@@ -1960,7 +1841,7 @@ schedule is `[{ version: 1, fromHeight: 0 }]`.
 
 **A declared version must equal the era at the object's height, and is compared to nothing else** — an
 ordering block's own `height`; a transaction's, and its post commit's, the height of the block that carries
-it, which at admission is `tip + 1`; a stump's its `compactedAtBlockHeight`; a settlement's the block's
+it, which at admission is `tip + 1`; a settlement's the block's
 (`VALIDATION_INTERFACE → Protocol Version`). An old object validates under its era's rules because its
 height fixes them, so history resyncs across a bump; a new object cannot pose as old. The declared field
 keeps two jobs: it is hashed into the object's identity, and it is the value a decoder reads first
@@ -1980,7 +1861,7 @@ chain with nodes that have neither. Nothing branches at version 1. `PROTOCOL_VER
 version a build implements: the handshake declares it and the profile check bounds every schedule by it;
 no object check compares against it and no producer stamps it.
 
-- **Version 1:** dual-ledger architecture, sovereign subtrees, stumps, UTXO karma/credits, likes, the
+- **Version 1:** dual-ledger architecture, author-owned posts and withdrawal, UTXO karma/credits, likes, the
   invite system, ordering blocks, PoW validators, libp2p networking, two-stage validation
   (`@dagsocial/validation` + `@dagsocial/net`), unified mempool. What later versions may carry is listed
   under → Deferred to future protocol versions.
@@ -2033,7 +1914,7 @@ no object check compares against it and no producer stamps it.
   > from a route. *Historical:* it mutated the UTXO set **outside block application** — no
   > block, no journal entry, no AVL feed — so a transfer lived on one node's disk, invisible
   > to consensus and lost on any rebuild from committed state.
-- A post's cryptographic identity (hash) survives pruning — parent refs remain valid
+- A post's cryptographic identity (hash) survives withdrawal — parent refs remain valid
 - The DAG's merkle integrity is independent of content availability
 - The UTXO ledger's correctness is independent of the DAG's index state
   > **Holds since P2-D** (was FALSE AS DESIGNED: the epoch tally's author reward read a
@@ -2041,11 +1922,11 @@ no object check compares against it and no producer stamps it.
   > reads the block's own `LikeAccrualBox` markers, the carry boxes and `like_records` —
   > consensus state written only at block application (`block_topology` tier), never by a
   > route.
-- A prune moves no karma: every post in the set paid its price at posting (§The post price)
+- A withdrawal moves no karma: the post paid its price at posting (§The post price)
 - A like is a burn transaction plus a `(liker, post)` like-record — no box, no held
   value. Like-records are content-layer consensus state (`block_topology` tier):
-  deterministic by replay, journalled with exact inverses, deleted with the post at
-  prune, not in the `stateRoot`. (`LikeBox` and the free-like tier are retired — P2-D.)
+  deterministic by replay, journalled with exact inverses, deleted by nothing, not in the
+  `stateRoot`. (`LikeBox` and the free-like tier are retired — P2-D.)
 
 ### Cryptographic
 
@@ -2072,17 +1953,14 @@ no object check compares against it and no producer stamps it.
 
 ### Content sovereignty
 
-- Post author owns the entire reply subtree under their post
-- Pruning cascades to all descendants — replying is consent to this
-- Pruning requires root author's signature (sole authorization)
-- Pruning is irreversible
-- The author's signature is the only prune authorization there is — a prune
-  has no `trigger` field and no other cause (ruled 2026-08-19)
+- A post is its author's: withdrawal is the author's only act, and no act reaches another
+  author's post (§Withdrawal)
+- Withdrawal requires the author's signature (sole authorization) and is irreversible
 - A block commits a post's structure (`PostCommit`) and its content commitment, never its
   content; the body lives only in the DAG
-- Pruning deletes: once the prune block's journal is dropped below the reorg horizon (`maxReorgDepth`), a node
-  holds no byte of the subtree's content — no DAG row, no journal row; within that depth the
-  rows exist only as undo records, never served
+- Withdrawal drops the content: once the withdrawal block's journal is dropped below the reorg
+  horizon (`maxReorgDepth`), a node holds no byte of the post's content — no DAG row holds it, no
+  journal row; within that depth the body exists only as an undo record, never served
 
 ### Identity invariants
 
@@ -2193,7 +2071,7 @@ no object check compares against it and no producer stamps it.
   exact inverse. Apply-then-revert restores the identical UTXO set and AVL
   digest for every mutation class.
 - **Sole replay basis.** UTXO boxes + the journal are a complete replay
-  source. No mutation or rollback may read pruned DAG content.
+  source. No mutation or rollback may read a withdrawn post's content.
 - **AVL feed derives from the journal.** The prover's per-block mutation set
   is computed from the journal — never from hand-maintained consumed/created
   lists (the drift source behind audit C-5/H-5/H-7).
@@ -2374,9 +2252,6 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   >   inside one synchronous SQLite transaction — every rejection path rolls the
   >   whole phase back, so a post stored by a rejected block is never readable.
   >
-  > (A third path — `onStump` storing unauthenticated gossip stumps — is closed: no network
-  > path writes `dag_stumps`; see §3.)
-  >
   > ⚠ **`verifyPoW` has three call sites and a re-export, and one site is outside the
   > verifier** — `net/src/gossip.ts` (gossip relay validation), and `verifier.ts` inside both
   > `verifyPost` and `verifyPostForRelay`. The re-export at `node/src/services/pow.ts` is a
@@ -2405,8 +2280,7 @@ These invariants are adopted from production-grade Ergo Rust node practices:
 - **Chain growth is bounded by consensus, at ~1.05 TB/yr.** `MAX_BLOCK_BODY_BYTES`
   of 2,000,000 across 525,960 blocks a year (60 s target) is the ceiling an
   archival node plans against. ⚠ **It is a worst case, not a steady state**: it
-  assumes every block full and nothing pruned, while prunable content and stumps
-  mean a pruning node grows more slowly. It is not the figure a light client
+  assumes every block full. It is not the figure a light client
   stores.
 - **Single-transaction atomic writes** — every post insertion that touches
   multiple tables (posts, dag_edges, indexes, scores) MUST happen in a
@@ -2436,8 +2310,7 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   > kept because the reasoning
   > generalises, and because "replace, do not specify" is the decision that produced the whole
   > positional-format bundle.** Every leaf hashes the committed struct's own wire bytes, stated
-  > once in `@dagsocial/types`. ⚠ **Three leaf types remain** — `prune`, `utxotx`, `stump` — and
-  > they speak one dialect. `subblock` and `coinbase` are retired with their encoders
+  > once in `@dagsocial/types`. ⚠ **One leaf type remains** — `utxotx` — and it speaks one dialect. `subblock` and `coinbase` are retired with their encoders
   > (`subBlockEntryBytes`, `coinbaseOutputBytes`), which this sentence named as live and which
   > have no definition anywhere; **TYPES_INTERFACE → Merkle primitives holds the one live/retired
   > list** and this line must not restate it.
@@ -2612,7 +2485,8 @@ table names from this section.** Single SQLite database, single WAL, single conn
 Post topology lives in `block_topology`; there are no sub-block tables and no sub-block
 mempool rows. `peers` backs `@dagsocial/net`'s PeerDb across restarts. `dag_posts` is the
 DAG: structure from the transaction, `content` nullable — `NULL` is a placeholder awaiting
-backfill — and a pruned post has no row (NODE_INTERFACE → Store Interface → Posts DAG).
+backfill — and a withdrawn post keeps its row with `content` `NULL` and its marker set
+(NODE_INTERFACE → Store Interface → Posts DAG).
 
 ---
 
@@ -2623,7 +2497,7 @@ backfill — and a pruned post has no row (NODE_INTERFACE → Store Interface �
 > heading can make, so a wrong entry here is more misleading than the same error anywhere
 > else in the document.
 
-- Sovereign subtrees with author-controlled pruning
+- Author-owned posts, with withdrawal as the author's only act
 - UTXO ledger: karma (non-tradeable) + credits (tradeable)
   > Both halves hold: the karma-transfer routes closed across P2-B (vouch/co-sign) and
   > P2-D (unlike, by feature removal), and `sendCredits` rides block application since
@@ -2644,12 +2518,12 @@ backfill — and a pruned post has no row (NODE_INTERFACE → Store Interface �
   author through the like accrual (§The post price)
 - Ordering blocks with validator PoW; posts and likes ride them as ordinary
   transactions
-- Verifiable prune: a karma transaction carrying a `PruneCommit`, Ed25519-signed, its effect
-  deterministic from committed topology (like-records deleted, rows marked; nothing refunded)
+- Verifiable withdrawal: a karma transaction carrying a `PostWithdrawCommit`, Ed25519-signed, its
+  effect deterministic from committed topology (the row emptied; nothing refunded)
 - AVL+ state root: authenticated dictionary over UTXO set, stateRoot in block
   headers, `GET /api/v1/proof/:boxId` for light-client proofs
 - block_topology table (post_id, parent_refs, author, block_height — all
-  consensus-sourced) for subtree topology and prune-authorship lookups
+  consensus-sourced) for subtree topology and withdrawal-authorship lookups
 - libp2p networking with two-stage validation (stateless + stateful)
 - Credit emission: Ergo-style linear decay, treasury split, miner reward delay
 - ASERT difficulty schedule for ordering block PoW — anchored at block 1, read from the chain's own

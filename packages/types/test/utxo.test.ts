@@ -33,7 +33,7 @@ import {
   decodeUtxoTxTree,
   postWithdrawFieldBytes,
 } from '../src/index.js';
-import { readPostWithdrawCommitFields } from '../src/stump.js';
+import { readPostWithdrawCommitFields } from '../src/post-withdraw.js';
 import { ByteReader } from '@dagsocial/wire';
 import type { AnyBoxCandidate, BoxBase, BoxCandidate, CandidateOf, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, GenesisProofBox, EmissionBox, TreasuryBox, FeeBox, KarmaPoolBox, UtxoTransaction, PostWithdrawCommit, MintReason } from '../src/index.js';
 
@@ -302,11 +302,11 @@ const GOLDEN_TX: UtxoTransaction = {
 };
 
 const GOLDEN_KARMA_BOX_ID =
-  '9f0777a506547b897a5b27b40a120bf06a8ba5077bc43176a1d060d5f2bd97ca';
+  'ab1d30192ff65a58f20c4cac226bf8c5ee58309829b277fa85e2a85ca8326da8';
 const GOLDEN_CREDIT_BOX_ID =
-  '37354b53d9e1b9c71474158a4befa9d7d8f1f373c8f8a375e1878557ffba307a';
+  'eaa89e587d34bfaea6cf617ad3bcc7b4140ffe667cf36e4f88fa73608f14defd';
 const GOLDEN_TX_ID =
-  '54cf097e49db50c1adbba0212990cb62d43fa3b773f22ee27a70c3f3239f715b';
+  'b907fc923be1041b652434c8d277e350394e6889716e23327073b09c022ad623';
 
 /** The two candidates as block application materializes them out of GOLDEN_TX. */
 const GOLDEN_KARMA_BOX: KarmaBox = { ...GOLDEN_KARMA_CANDIDATE, txId: GOLDEN_TX_ID, index: 0 };
@@ -525,9 +525,9 @@ const ALL_MINT_REASONS = Object.keys(MINT_REASON_GOLDENS) as MintReason[];
  * protocol-breaking and unversioned.
  */
 const GOLDEN_CANDIDATE_KARMA_ID =
-  '9f0777a506547b897a5b27b40a120bf06a8ba5077bc43176a1d060d5f2bd97ca';
+  'ab1d30192ff65a58f20c4cac226bf8c5ee58309829b277fa85e2a85ca8326da8';
 const GOLDEN_CANDIDATE_CREDIT_ID =
-  '37354b53d9e1b9c71474158a4befa9d7d8f1f373c8f8a375e1878557ffba307a';
+  'eaa89e587d34bfaea6cf617ad3bcc7b4140ffe667cf36e4f88fa73608f14defd';
 const GOLDEN_MINT_GENESIS_ID =
   '9010dd1d6fe6029eb8e856fe38467836781ce43ddad1ce01c0af7afc0bc7b7b2';
 
@@ -1424,7 +1424,7 @@ describe('boxRecordBytes', () => {
     // them here — where the encoder lives — rather than only at the consumer.
     const frozen =
       GOLDEN_KARMA_BOX_BYTES +                                             // boxContentBytes
-      '54cf097e49db50c1adbba0212990cb62d43fa3b773f22ee27a70c3f3239f715b' + // b32 txId
+      'b907fc923be1041b652434c8d277e350394e6889716e23327073b09c022ad623' + // b32 txId
       '00';                                                                // vlqU(0)
     expect(Buffer.from(boxRecordBytes(GOLDEN_KARMA_CANDIDATE, GOLDEN_TX_ID, 0)).toString('hex'))
       .toBe(frozen);
@@ -1793,14 +1793,14 @@ describe('transactions', () => {
       //   TxId = blake2b512( TX_ID_DOMAIN ‖ txIdBytes )[0:32],  where
       //   txIdBytes = arr(inputs, b32) ‖ arr(outputs, boxContentBytes)
       //             ‖ vlqU(protocolVersion) ‖ opt(likeTarget) ‖ opt(post)
-      //             ‖ opt(prune) ‖ opt(postWithdraw)
+      //             ‖ opt(postWithdraw)
       //
       // ⛔ **`TX_ID_DOMAIN` IS NOT IN `txIdBytes`** — it belongs to the hash, not
       // to the serialized bytes, which is why `encodeTx` does not ship it
       // (TYPES_INTERFACE → Layout — UtxoTransaction). Writing the two as one
       // sequence is the conflation that contract corrects by name.
       //
-      // ⛔ **SEVEN fields.** This mirror is also the tool for re-pinning: when a
+      // ⛔ **SIX fields.** This mirror is also the tool for re-pinning: when a
       // field enters or leaves the preimage, hand-derive the new id here rather
       // than regenerating it from the encoder (TYPES_INTERFACE → "Re-pinning a
       // frozen vector when a preimage changes"). The test below is the validation
@@ -1814,7 +1814,6 @@ describe('transactions', () => {
       h.update(Buffer.from([GOLDEN_TX.protocolVersion]));         // vlqU(1)
       h.update(Buffer.from([0]));                                 // opt likeTarget: absent
       h.update(Buffer.from([0]));                                 // opt post: absent
-      h.update(Buffer.from([0]));                                 // opt prune: absent
       h.update(Buffer.from([0]));                                 // opt postWithdraw: absent
       expect(h.digest().subarray(0, 32).toString('hex')).toBe(computeTxId(GOLDEN_TX));
     });
@@ -1847,7 +1846,7 @@ describe('transactions', () => {
       h.update(Buffer.from([GOLDEN_TX.protocolVersion]));
       h.update(Buffer.from([0]));                                 // opt likeTarget: absent
       h.update(Buffer.from([0]));                                 // opt post: absent
-      h.update(Buffer.from([0]));                                 // opt prune: absent
+      h.update(Buffer.from([0]));                                 // opt postWithdraw: absent
       expect(h.digest().subarray(0, 32).toString('hex')).toBe(SEVEN_FIELD_TX_ID);
       expect(computeTxId(GOLDEN_TX)).not.toBe(SEVEN_FIELD_TX_ID);
     });
@@ -2053,7 +2052,6 @@ describe('transactions', () => {
       h.update(Buffer.from([1]));                       // opt likeTarget: present
       h.update(Buffer.from(TARGET_A, 'hex'));           // b32 — raw, not hex text
       h.update(Buffer.from([0]));                       // opt post: absent
-      h.update(Buffer.from([0]));                       // opt prune: absent
       h.update(Buffer.from([0]));                       // opt postWithdraw: absent
       expect(computeTxId(tx)).toBe(h.digest().subarray(0, 32).toString('hex'));
     });
@@ -2408,7 +2406,7 @@ describe('computeTxId with postWithdraw', () => {
     expect(decoded.postWithdraw).toBeUndefined();
   });
 
-  it('all four payload fields combine unambiguously', () => {
+  it('all three payload fields combine unambiguously', () => {
     const full: UtxoTransaction = {
       ...baseTx,
       likeTarget: 'cc'.repeat(32),
@@ -2419,15 +2417,11 @@ describe('computeTxId with postWithdraw', () => {
         protocolVersion: 1,
         type: 'regular' as const,
       },
-      prune: {
-        rootPostHash: 'ff'.repeat(32),
-      },
       postWithdraw: { postId: WITHDRAW_POST_A },
     };
     const decoded = decodeTx(encodeTx(full));
     expect(decoded.likeTarget).toBe('cc'.repeat(32));
     expect(decoded.post?.contentHash).toEqual(new Uint8Array(32).fill(0xdd));
-    expect(decoded.prune?.rootPostHash).toBe('ff'.repeat(32));
     expect(decoded.postWithdraw?.postId).toBe(WITHDRAW_POST_A);
     expect(computeTxId(decoded)).toBe(computeTxId(full));
   });

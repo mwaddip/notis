@@ -421,8 +421,7 @@ Computes the preimage the PoW nonce hashes against: takes the header with
 `blake2b512(encoded).subarray(0, 32)`. The preimage is over the **header**, not a
 separate "block body" — it covers `protocolVersion`, `height`, `prevBlockHash`,
 `utxoTxRoot`, `stateRoot`, `validatorId`, `powTargetBits`, `createdAt` and
-`interlinkRoot`, with `powNonce` zeroed. The block *body* (UTXO txs and prune
-entries) is committed **transitively**: `utxoTxRoot` is the
+`interlinkRoot`, with `powNonce` zeroed. The block *body* (the UTXO transactions) is committed **transitively**: `utxoTxRoot` is the
 Merkle root over it and `stateRoot` is the AVL+ digest, so any body change alters
 a root and therefore the preimage. `validatorSignature` is not a header field, so
 it never enters the preimage. Exposed to external miners (hex) at
@@ -931,9 +930,9 @@ delegated to the one statement of those domains, re-labelled with this
 function's messages.
 
 ⛔ **The body's transactions are opaque here.** `utxoTxs` is `arr(…, lp)` — length-prefixed
-bytes this function never decodes — so a **prune payload is out of its reach by
-construction**. `verifyPruneCommitDomains` states that payload's domain instead, and node's
-transition arm calls it (→ `verifyPruneCommitDomains`).
+bytes this function never decodes — so a **withdrawal payload is out of its reach by
+construction**. `verifyPostWithdrawCommitDomains` states that payload's domain instead, and node's
+transition arm calls it (→ `verifyPostWithdrawCommitDomains`).
 `validatorSignature` is 64
 bytes (`isBytes`, same rule). Then the two semantic floors a domain check
 cannot know: `height ≥ 1`, and `powTargetBits ≥
@@ -1002,18 +1001,6 @@ aligns 1:1 with `utxoTxIds`, each element a byte view of at most
 > least one transaction now, because the settlement is one. A structural check that admitted an
 > empty `utxoTxIds` is admitting a block that cannot have paid its own coinbase.
 
-### `verifyPruneCommitDomains`
-
-**The single statement of a `PruneCommit`'s structural domain**, and the sibling of
-`verifyPostCommitDomains` and `verifyPostWithdrawCommitDomains`. An object whose `rootPostHash` is
-a 64-char lowercase-hex string, and nothing else: the subtree is derived at apply, so the payload
-carries no set to check for repeats and no root to check for type.
-
-⛔ **One statement, two callers.** Node's envelope check and its prune transition arm both call
-this function rather than restating it (`NODE_INTERFACE` → Prune transactions); two
-implementations of one domain drift, which is the class the positional wire format exists to
-close.
-
 #### Each embedded transaction is bounded too
 
 `utxoTxs[i].length > MAX_TX_BYTES` rejects for every element but the last, and
@@ -1056,7 +1043,7 @@ above net's serve limit makes a block legal here and impossible to serve, which 
 no bound: the block propagates by gossip and no syncing peer can ever fetch it.
 
 Structure-only: `author` is checked for shape here, not truth — binding it to
-the real post (when content is locally present) and to prune authorization is
+the real post (when content is locally present) and to withdrawal authorization is
 stateful and lives in `@dagsocial/node` (see `NODE_INTERFACE.md`).
 
 Every check is total: adversarial input yields `{ valid: false }`, never a
@@ -1112,7 +1099,7 @@ verifyPostWithdrawCommitDomains(commit: unknown): { valid: boolean; error?: stri
 ```
 
 **The single statement of the withdrawal payload's structural domain**, beside
-`verifyPruneCommitDomains` and for the same reason: two implementations of one domain drift, and
+`verifyPostCommitDomains` and for the same reason: two implementations of one domain drift, and
 both the node's envelope check and its transition arm call this one.
 
 `postId` must be 64 lowercase hex characters. **It takes `unknown`** — that parameter type is what

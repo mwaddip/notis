@@ -865,11 +865,11 @@ describe('the invite at block application', () => {
   });
 
   it('destroying the like-records does not lower the count a bond settles on', async () => {
-    // ⚠ The defect the counter exists to close. Deleting every row of
-    // `like_records` is exactly what prune settlement does to that table, and it
-    // is a THIRD PARTY's action: the thread's author prunes, and under a count
-    // derived from those rows the inviter — who did nothing — loses karma.
-    // Design track §1.4.1 forbids destroying someone else's stake.
+    // ⚠ The defect the counter exists to close: a count DERIVED from
+    // `like_records` rows would let anyone who could delete those rows — a
+    // THIRD PARTY's action — lower a count the inviter's bond settles on,
+    // though the inviter did nothing. You may destroy your own stake, never
+    // someone else's (ARCHITECTURE → Bond outcomes).
     const { utxo, inviter, invitee, bond, likeBatches } = await seedPair(
       FIXTURE_BOND_KARMA,
       [{ count: INVITE_BOND_VEST_PER_LIKES, nonceBase: 100 }],
@@ -885,7 +885,7 @@ describe('the invite at block application', () => {
     const earned = records.getIdentityRecord(invitee.userId)!.lifetimeLikesReceived;
     expect(earned).toBe(BigInt(INVITE_BOND_VEST_PER_LIKES));
 
-    // Every like-record gone — the state prune leaves behind.
+    // Every like-record gone, by any means — simulating total row loss.
     db.getDb().prepare('DELETE FROM like_records').run();
     const likeStore = await importLikes();
     for (const postId of postIds) expect(likeStore.getLikeRecordCount(postId)).toBe(0);

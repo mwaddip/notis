@@ -25,19 +25,6 @@ const MIGRATIONS = [
     PRIMARY KEY (post_id, parent_id)
   )`,
 
-  // Stumps — the columns `Stump` declares and no others. A stump's subtree
-  // Merkle root, its prune signature and its karma deltas live in the prune
-  // transaction the block carries, never in the row the settlement writes.
-  `CREATE TABLE IF NOT EXISTS dag_stumps (
-    id TEXT PRIMARY KEY,
-    root_post_hash TEXT NOT NULL,
-    author_id BLOB NOT NULL,          -- 32-byte Ed25519 public key
-    reply_count INTEGER NOT NULL,
-    upvote_count INTEGER NOT NULL,
-    protocol_version INTEGER NOT NULL,
-    compacted_at_block_height INTEGER NOT NULL
-  )`,
-
   // UTXO boxes
   //
   // created_at_block carries the box's own `createdAtBlock` field — what the
@@ -89,10 +76,8 @@ const MIGRATIONS = [
   // always-present field of the record's AVL value encoding.
   //
   // lifetime_likes_received: likes this identity has received, ever. Incremented
-  // by per-block like settlement and decremented by nothing — prune deletes
-  // like_records and must not reach this column, because a bond settling on a
-  // count that a THIRD PARTY can lower would let a pruning author destroy an
-  // inviter's stake.
+  // by per-block like settlement and decremented by nothing: a bond settles on
+  // this count, and no other identity's act may lower it.
   `CREATE TABLE IF NOT EXISTS identity_records (
     identity_id BLOB PRIMARY KEY,
     last_activity_block INTEGER NOT NULL,
@@ -114,9 +99,9 @@ const MIGRATIONS = [
   // Like-records (NODE_INTERFACE → "Like-records"): (liker, targetPostId) pairs,
   // written ONLY at block application, never by an HTTP route. Content-layer
   // consensus state (the block_topology tier): deterministic by replay,
-  // journalled with exact inverses, not in the stateRoot. Records die with
-  // the post on prune and survive withdraw; applied_at_block is the height
-  // the like's block settled at.
+  // journalled with exact inverses, not in the stateRoot. Records survive a
+  // withdrawal of their target; applied_at_block is the height the like's
+  // block settled at.
   `CREATE TABLE IF NOT EXISTS like_records (
     target_post_id TEXT NOT NULL,
     liker_id BLOB NOT NULL,            -- 32-byte Ed25519 public key
@@ -303,14 +288,7 @@ function migrateBlockTopology(database: Database.Database): void {
       post_id TEXT PRIMARY KEY,
       parent_refs TEXT NOT NULL,
       author TEXT NOT NULL,
-      block_height INTEGER NOT NULL,
-      pruned_at_height INTEGER,
-      pruned_root TEXT
-    );
-    CREATE TABLE IF NOT EXISTS block_topology_parents (
-      parent_id TEXT NOT NULL,
-      post_id TEXT NOT NULL,
-      PRIMARY KEY (parent_id, post_id)
+      block_height INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_block_topology_height
       ON block_topology(block_height);
@@ -418,14 +396,6 @@ function migrateDagPostsColumns(database: Database.Database): void {
   if (!has('withdrawn_at_height')) database.exec(`ALTER TABLE dag_posts ADD COLUMN withdrawn_at_height INTEGER`);
 }
 
-function migrateBlockTopologyColumns(database: Database.Database): void {
-  const cols = database.prepare("PRAGMA table_info('block_topology')").all() as Array<{ name: string }>;
-  const has = (name: string): boolean => cols.some(c => c.name === name);
-
-  if (!has('pruned_at_height')) database.exec(`ALTER TABLE block_topology ADD COLUMN pruned_at_height INTEGER`);
-  if (!has('pruned_root')) database.exec(`ALTER TABLE block_topology ADD COLUMN pruned_root TEXT`);
-}
-
 function createMempoolGateIndexes(database: Database.Database): void {
   database.exec(`
     CREATE INDEX IF NOT EXISTS idx_mempool_like
@@ -489,7 +459,6 @@ export function initDb(path: string): void {
   }
   migrateAvlTree(db);
   migrateBlockTopology(db);
-  migrateBlockTopologyColumns(db);
   migrateMempoolTxColumns(db);
   migrateDagPostsColumns(db);
   createMempoolGateIndexes(db);

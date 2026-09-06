@@ -45,6 +45,7 @@ import {
   getVouchBox,
   getNetworkRecord,
   getKarmaValue,
+  getVouchCountForTarget,
 } from '../../src/store/index.js';
 import { getBoxWithPending } from '../../src/store/mempool.js';
 import { createRouter as utxoRoutes } from '../../src/routes/utxo.js';
@@ -379,6 +380,7 @@ describe('POST /vouches — the four membership 400s', () => {
         castVouch,
         initiateUnvouch,
         getCurrentHeight: () => HEIGHT,
+        getVouchCountForTarget,
       };
       const app = express();
       app.use(express.json());

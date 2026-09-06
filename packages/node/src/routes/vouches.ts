@@ -30,6 +30,9 @@ export interface VouchesDeps extends UtxoEngineDeps {
     tx: UtxoTransaction;
   };
   getCurrentHeight(): number;
+  // NODE_INTERFACE → Store Interface, getVouchCountForTarget — the `?target=`
+  // row's voucherVouchCount (below).
+  getVouchCountForTarget(targetId: Uint8Array): number;
 }
 
 export function createRouter(deps: VouchesDeps): Router {
@@ -141,11 +144,25 @@ export function createRouter(deps: VouchesDeps): Router {
       const result = getVouchesForTargetPage(targetBytes, {
         limit, after: after as string | undefined,
       });
+      // NODE_INTERFACE → Vouches: voucherVouchCount is read once per distinct
+      // voucher on the page (the authorVouchCount pattern — Store Interface →
+      // "A page read touches `limit + 1` entries of one index that serves
+      // both its predicate and its order").
+      const voucherVouchCounts = new Map<string, number>();
       res.status(200).json({
-        vouches: result.rows.map((v) => ({
-          voucherId: Buffer.from(v.voucherId).toString('hex'),
-          targetId: Buffer.from(v.targetId).toString('hex'),
-        })),
+        vouches: result.rows.map((v) => {
+          const voucherId = Buffer.from(v.voucherId).toString('hex');
+          let voucherVouchCount = voucherVouchCounts.get(voucherId);
+          if (voucherVouchCount === undefined) {
+            voucherVouchCount = deps.getVouchCountForTarget(v.voucherId);
+            voucherVouchCounts.set(voucherId, voucherVouchCount);
+          }
+          return {
+            voucherId,
+            targetId: Buffer.from(v.targetId).toString('hex'),
+            voucherVouchCount,
+          };
+        }),
         count: result.count,
         next: result.next,
       });

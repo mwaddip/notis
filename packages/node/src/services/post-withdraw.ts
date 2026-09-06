@@ -42,7 +42,7 @@ export function executePostWithdraw(
 
   const post = getPost(pw.postId);
   if (!isLivePost(post)) {
-    throw new ClientError('Post is already withdrawn, pruned or unknown');
+    throw new ClientError('Post is already withdrawn or unknown');
   }
 
   const result = validateTx(deps, tx, currentBlockHeight);

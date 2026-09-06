@@ -795,7 +795,7 @@ describe('block-creator', () => {
       expect(full!.utxoTxTree.utxoTxIds).toHaveLength(POOL + 1);
 
       // What the finished body carries besides the user transactions — the
-      // prune section, the count prefixes, and the settlement itself.
+      // count prefixes and the settlement itself.
       const reserved = utxoTxTreeByteLength({
         ...full!.utxoTxTree,
         utxoTxIds: full!.utxoTxTree.utxoTxIds.slice(POOL),

@@ -115,42 +115,19 @@ export interface PostResponse {
   confirmedAuthor: string | null;
 }
 
-export interface StumpResponse {
-  kind: 'stump';
-  id: string;
-  author: string;
-  replyCount: number;
-  upvoteCount: number;
-  compactedAtBlockHeight: number;
-}
-
-export interface PrunedResponse {
-  kind: 'pruned';
-  id: string;
-  author: string;
-  rootPostHash: string;
-  compactedAtBlockHeight: number;
-}
-
 export interface WithdrawnResponse {
   kind: 'withdrawn';
   id: string;
   author: string;
   withdrawnAtHeight: number;
+  descendantCount: number;
+  authorVouchCount: number;
 }
 
-export type GetPostResponse = PostResponse | StumpResponse | PrunedResponse | WithdrawnResponse;
+export type GetPostResponse = PostResponse | WithdrawnResponse;
 
 export function isPost(p: GetPostResponse): p is PostResponse {
   return !('kind' in p);
-}
-
-export function isStump(p: GetPostResponse): p is StumpResponse {
-  return 'kind' in p && p.kind === 'stump';
-}
-
-export function isPruned(p: GetPostResponse): p is PrunedResponse {
-  return 'kind' in p && p.kind === 'pruned';
 }
 
 export function isWithdrawn(p: GetPostResponse): p is WithdrawnResponse {
@@ -201,15 +178,6 @@ export async function deleteVouch(
   return data as { status: string; txId: string; karmaReturnsAtBlock: number };
 }
 
-export async function postPrune(
-  node: NodeProcess,
-  postId: string,
-  txJson: Record<string, unknown>,
-): Promise<{ status: string; txId: string; postId: string }> {
-  const data = await jsonPost(node, `/posts/${postId}/prune`, { tx: txJson });
-  return data as { status: string; txId: string; postId: string };
-}
-
 export async function postPostWithdraw(
   node: NodeProcess,
   postId: string,
@@ -255,7 +223,7 @@ export async function getStatus(
 }
 
 export interface VouchTargetPage {
-  vouches: { voucherId: string; targetId: string }[];
+  vouches: { voucherId: string; targetId: string; voucherVouchCount: number }[];
   count: number;
   next: string | null;
 }

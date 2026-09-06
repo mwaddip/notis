@@ -75,7 +75,7 @@ in their Kind cell and appear again under → Per-network values with all three 
 |---|---|---|---|---|---|---|
 | `PROTOCOL_VERSION` | `1` | — | consensus | the highest version this build implements: the handshake declares it and every schedule's last version is bounded by it; no check compares an object against it | DOMAIN | `TYPES_INTERFACE → Version` |
 | `MAX_CONTENT_BYTES` | `300` | 300 UTF-8 bytes | consensus | none stated | CHOSEN | `TYPES_INTERFACE → Content limits` |
-| `MAX_PARENT_REFS` | `1` | one parent | consensus | user ruling, 2026-08-09 — subtrees stay disjoint, so pruning is well-defined | RULED | `TYPES_INTERFACE → Content limits` |
+| `MAX_PARENT_REFS` | `1` | one parent | consensus | user ruling, 2026-08-09 — one parent keeps every thread a tree, so a post belongs to one thread and a subtree's page and count are well-defined | RULED | `TYPES_INTERFACE → Content limits` |
 | `MAX_GENESIS_PROOF_PAYLOAD_BYTES` | `512` | 512 bytes | format | roughly Ergo's five-register no-premine payload plus headroom, derived from no measurement; the three profile payloads are ~35 bytes | PROVISIONAL | `TYPES_INTERFACE → Content limits` |
 | `BOX_VALUE_BOUND` | `9_223_372_036_854_775_808n` | 2⁶³ | consensus | SQLite `INTEGER` is a signed 64-bit integer, so the accepted value domain stops where storage does | DERIVED | `TYPES_INTERFACE → Box value domain` |
 | `AVL_KEY_LENGTH` | `32` | 32 bytes | consensus | the width of every 32-byte digest in the format | DOMAIN | `TYPES_INTERFACE → State format` |

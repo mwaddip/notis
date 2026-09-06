@@ -28,7 +28,7 @@ import {
   contributeToBody,
   emptyBody,
 } from './settlement.js';
-import { postsOf, postIdsOf, prunesOf, withdrawalsOf } from './block-posts.js';
+import { postsOf, postIdsOf, withdrawalsOf } from './block-posts.js';
 import { scheduledTargetBits, nowMs } from './difficulty.js';
 import {
   applyTx,
@@ -43,29 +43,21 @@ import {
   getKarmaBox,
   getKarmaValue,
   getPost,
-  insertStump,
-  getStump,
-  deleteStump,
   insertBox,
   getBox,
   consumeBox,
   confirmPost,
   insertPost,
-  deletePostRows,
   withdrawPost,
   isLivePost,
-  isStoredPost,
   getCurrentHeight,
   createOrderingBlock as storeCreateOrderingBlock,
   getOrderingBlock,
   removeUtxoTxEntry,
   insertBlockTopology,
-  getSubtreeTopology,
-  deleteLikeRecordsForPosts,
   getTopologyAuthor,
   getTopologyAuthorBytes,
   getTopologyHeight,
-  markPrunedTopology,
   getIdentityRecord,
   putIdentityRecord,
   recordKarmaActivity,
@@ -86,9 +78,6 @@ import {
   abortBlockJournal,
   recordConfirmedPosts,
   recordAppliedUtxoTx,
-  recordDeletedPosts,
-  recordInsertedStump,
-  recordAbsorbedStump,
   recordWithdrawnPost,
   insertBlockJournal,
   purgeOldJournals,
@@ -135,7 +124,7 @@ class BlockRejected extends Error {}
  * Apply an ordering block — all of it, or none of it.
  *
  * A block is a single unit of state transition, so every mutation it makes
- * (post confirmation, prune settlement, UTXO transactions,
+ * (post confirmation, UTXO transactions,
  * per-block like settlement, decay) lives in one SQLite transaction. Any rejection — at any
  * step — rolls the whole thing back, leaving the node on the state it had
  * before the block arrived. Returns false for a rejected block; `reorg()`
@@ -370,9 +359,9 @@ function applyBlockBody(block: OrderingBlock): boolean {
     return false;
   }
 
-  // 4. Merkle root verification — one root over one body (transactions, prune
-  //    entries), each kept apart by its `leafHash` domain. The settlement is the
-  //    last transaction leaf, so its position is committed here.
+  // 4. Merkle root verification — one root over one body of transactions, each
+  //    kept apart by its `leafHash` domain. The settlement is the last
+  //    transaction leaf, so its position is committed here.
 
   const computedUtxoRoot = computeUtxoTxRoot(block.utxoTxTree);
   if (computedUtxoRoot !== block.header.utxoTxRoot) {
@@ -668,7 +657,7 @@ export function computePostBlockStateRoot(
  * creator runs this phase before its header exists, to compute the post-block
  * `stateRoot` it must commit to (H-6). The split is structural: there is no
  * "skip the checks" mode on the apply path, and the body-level rejections here
- * (prune verification, embedded-tx re-validation) reject on both paths
+ * (embedded-tx re-validation) reject on both paths
  * identically.
  *
  * Journal-lifecycle-free by contract: a journal is already open when this runs
@@ -725,8 +714,8 @@ function applyMutationPhase(
   }
 
   // 8. Populate block_topology from this block's post transactions.
-  // Consensus data only — this, not dag_posts.author, is the authority for prune
-  // authorization, and it is derivable by any node holding the block body.
+  // Consensus data only — this, not dag_posts.author, is the authority for
+  // withdrawal authorization, and it is derivable by any node holding the block body.
   for (const { postId, post } of blockPosts) {
     insertBlockTopology(
       postId,
@@ -850,7 +839,7 @@ function applyMutationPhase(
     // ⚠ **The settlement gets the schema that admits the three protocol
     // boxes.** It creates the emission, treasury and pool successors, which a
     // user transaction may not — the same closed key set (the four required
-    // fields plus `likeTarget`, `post`, `prune` and `postWithdraw`) and the
+    // fields plus `likeTarget`, `post` and `postWithdraw`) and the
     // same field types, over a wider set of box types.
     const envelopeCheck = checkTxEnvelope(tx, height, config.protocolVersionSchedule);
     if (!envelopeCheck.valid) {
@@ -964,8 +953,7 @@ function applyMutationPhase(
   });
   // Escrows and release candidates: captured before the apply loop so the
   // body's own mutations do not appear in the settlement's input list on one
-  // side only. A prune in this block's body marks rows during §8c, after the
-  // capture, so its locks are candidates from h + 1.
+  // side only.
   const escrows = getVouchEscrowsReleasableAt(height, MAX_ESCROW_RETURNS_PER_BLOCK);
   const lapsedVouches = getLapsedVouches(MAX_LAPSE_WITHDRAWALS_PER_BLOCK);
 
@@ -1032,13 +1020,13 @@ function applyMutationPhase(
           return false;
         }
         // NODE_INTERFACE → Karma transition rules: a like targets a live post
-        // only — a placeholder is live (credits the topology author). A stump,
-        // tombstone, or null rejects.
+        // only — a placeholder is live (credits the topology author). A
+        // withdrawn post, or an unknown one, rejects.
         const target = getPost(targetPostId);
         if (!isLivePost(target)) {
           console.warn(
             `Rejected block height=${height}: like tx ${item.txId} targets ` +
-            `pruned, withdrawn or unknown post ${targetPostId}`,
+            `withdrawn or unknown post ${targetPostId}`,
           );
           return false;
         }
@@ -1204,7 +1192,7 @@ function applyMutationPhase(
     }
 
     const existing = getPost(postId);
-    if (!isStoredPost(existing) || existing.withdrawnAtHeight !== null) {
+    if (existing === null || existing.withdrawnAtHeight !== null) {
       console.error(
         `Block ${height}: postWithdraw ${postId} targets an already-withdrawn or unknown post`,
       );
@@ -1221,77 +1209,6 @@ function applyMutationPhase(
     const priorContent = existing.content;
     recordWithdrawnPost(postId, priorContent);
     withdrawPost(postId, height);
-  }
-
-  // 8c. Prune transactions — derived set (NODE_INTERFACE → Prune transactions).
-  //
-  // The set is derived from `getSubtreeTopology(rootPostHash)` as topology
-  // stands after §8 populated it from this block, so a same-block reply is
-  // in the set.
-  const blockPrunes = prunesOf(block, getTopologyAuthorBytes);
-  for (const bp of blockPrunes) {
-    const { prune } = bp;
-
-    // Maturity bind (NODE_INTERFACE → Prune transactions).
-    const rootHeight = getTopologyHeight(prune.rootPostHash);
-    if (rootHeight === null || rootHeight >= height) {
-      console.error(
-        `Block ${height}: prune root ${prune.rootPostHash} is not confirmed ` +
-        `in an earlier block (topology height ${rootHeight})`,
-      );
-      return false;
-    }
-
-    // A root prunes once (NODE_INTERFACE → Prune transactions). Judged as
-    // `dag_posts` stands when this prune applies — after §8b and after every
-    // prune earlier in committed order — so of two nested prunes in one block,
-    // outer first, the inner is refused here.
-    if (!isStoredPost(getPost(prune.rootPostHash))) {
-      console.error(
-        `Block ${height}: prune root ${prune.rootPostHash} is already pruned or unknown`,
-      );
-      return false;
-    }
-
-    // The set is derived, not from the payload.
-    const subtreePostIds = [...getSubtreeTopology(prune.rootPostHash)];
-
-    const likeTally = deleteLikeRecordsForPosts(subtreePostIds);
-
-    // Absorb every stump inside the set — an earlier prune's, never the
-    // root's own: the root-prunes-once check above has already refused a
-    // root that resolves to a stump, so `getStump` never finds one for the
-    // root id in this loop. Point reads per id, not `WHERE id IN (…)` — a
-    // prune set can be thousands of rows, past SQLite's bound-variable limit
-    // (NODE_INTERFACE → "The prune's block deletes and marks, and settles
-    // nothing").
-    let absorbedUpvotes = 0;
-    for (const id of subtreePostIds) {
-      const inner = getStump(id);
-      if (inner === null) continue;
-      absorbedUpvotes += inner.upvoteCount;
-      deleteStump(id);
-      recordAbsorbedStump(inner);
-    }
-
-    const stump = {
-      rootPostHash: prune.rootPostHash,
-      authorId: bp.author,
-      replyCount: subtreePostIds.length - 1,
-      upvoteCount: likeTally + absorbedUpvotes,
-      // The stump carries the block's era — its compaction height is the block's,
-      // whose header version step 2 verified equals the scheduled era
-      // (NODE_INTERFACE → The settlement transaction; ARCHITECTURE → Protocol Versioning).
-      protocolVersion: block.header.protocolVersion,
-      compactedAtBlockHeight: height,
-    };
-    insertStump(stump);
-    recordInsertedStump(stump);
-
-    const deleted = deletePostRows(subtreePostIds);
-    recordDeletedPosts(deleted);
-
-    markPrunedTopology(subtreePostIds, height, prune.rootPostHash);
   }
 
   // 11a. The settlement transaction — the block's every protocol effect, in one
@@ -1400,9 +1317,9 @@ function applyMutationPhase(
   // 11b. The bookkeeping the settlement's boxes do not carry.
   //
   // ⛔ **EVERY VALUE MOVEMENT IS ABOVE THIS LINE.** The like payout, the carry,
-  // the escrow releases, the vested bonds, the decay charges and the prune
-  // refunds are all outputs of the settlement transaction, because each one
-  // either draws from or returns to the karma pool and the settlement is the
+  // the escrow releases, the vested bonds and the decay charges are all
+  // outputs of the settlement transaction, because each one either draws from
+  // or returns to the karma pool and the settlement is the
   // pool's only spender (NODE_INTERFACE → The settlement transaction). What is
   // left here is committed state that is not a box: the like counter and the
   // decay clock.
@@ -1413,9 +1330,9 @@ function applyMutationPhase(
   // The lifetime like counter, ascending author-hex order.
   //
   // ⛔ **This settlement is the counter's ONLY writer, and it only ever adds.**
-  // Nothing subtracts — prune deletes the like-records behind these likes and
-  // must not reach this field, or a pruning author could lower a count somebody
-  // else's bond settles against (ARCHITECTURE → Bond outcomes).
+  // Nothing decrements it: a withdrawal empties a post's content but leaves
+  // its like-records untouched, so no author act can ever lower a count
+  // somebody else's bond settles against (ARCHITECTURE → Bond outcomes).
   //
   // ⚠ **The outstanding accrual is NOT written back**, because there is nothing
   // to write: the carry is a `LikeAccrualBox` the settlement just emitted, and

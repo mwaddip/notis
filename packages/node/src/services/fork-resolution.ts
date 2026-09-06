@@ -18,13 +18,8 @@ import {
   unconsumeBox,
   deleteBox,
   unconfirmPost,
-  restorePostRows,
   clearWithdrawal,
-  restorePrunedTopology,
-  insertStump,
-  deleteStump,
   deleteLikeRecord,
-  restoreLikeRecord,
   insertUtxoTx,
   rollbackBlockTopology,
   MempoolFullError,
@@ -107,7 +102,7 @@ export function revertBlock(height: number): void {
   // box/remove → unconsumeBox, record → restore `replaced` or delete. This
   // restores the exact pre-block committed state for every mutation class —
   // including the pre-existing boxes merge-consumed inside settlement outputs,
-  // tallied like boxes, prune settlement, and identity records.
+  // tallied like boxes, and identity records.
   //
   // Reverse order is what makes a record written **more than once in one block**
   // (activity bump then decay, at the same height) revert correctly: each
@@ -116,7 +111,7 @@ export function revertBlock(height: number): void {
   // last `replaced` would restore an intra-block intermediate instead.
   //
   // `putIdentityRecord` is itself a recording primitive, exactly like the
-  // like-record restores two loops below. That is safe only because this
+  // like-record restore loop below. That is safe only because this
   // function refuses to run while a journal is open (the guard at the top); the
   // guard is the mechanism, not a non-recording variant.
   for (let i = journal.mutations.length - 1; i >= 0; i--) {
@@ -140,37 +135,15 @@ export function revertBlock(height: number): void {
   for (const postId of journal.confirmedPostIds) {
     unconfirmPost(postId);
   }
-  // Like-record inverses. Order between the two arrays is immaterial:
-  // a record cannot be both inserted and prune-deleted in one block — the
-  // same-block exclusion (prune settles before embedded txs, so a like on a
-  // post the block also prunes finds a stump and the block is rejected) —
-  // so the two sets are disjoint by construction.
+  // A like-record is only ever inserted, so a block's record inserts have no
+  // same-block inverse.
   for (const ins of journal.likeRecordInsertions) {
     deleteLikeRecord(ins.targetPostId, ins.likerId);
-  }
-  for (const del of journal.likeRecordDeletions) {
-    restoreLikeRecord(del.targetPostId, del.likerId, del.appliedAtBlock);
-  }
-  // Prune inverses: restore deleted post rows, remove the stump.
-  if (journal.deletedPosts.length > 0) {
-    restorePostRows(journal.deletedPosts);
-  }
-  for (const stump of journal.insertedStumps) {
-    deleteStump(stump.rootPostHash);
-  }
-  // The stumps this block's outer prune(s) absorbed come back exactly as
-  // they stood. Order against the loop above is immaterial: insertedStumps
-  // names this block's own new stump and absorbedStumps names a different,
-  // earlier one this block deleted, so the two loops never touch the same id.
-  for (const stump of journal.absorbedStumps) {
-    insertStump(stump);
   }
   // Withdrawal inverses: restore content and clear the marker.
   for (const wp of journal.withdrawnPosts) {
     clearWithdrawal(wp.id, wp.content);
   }
-  // Prune topology inverses: restore the pre-block marks.
-  restorePrunedTopology(journal.prunedTopologyRows);
   // ⛔ **The vouch escrow needs no side-record and no inverse of its own.** It
   // is a box, so `insertBox`/`consumeBox` journal its creation and its spend as
   // `{kind:'box'}` with the exact inverses loop 1 above already replays — and

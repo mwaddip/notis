@@ -15,7 +15,7 @@ the problem into two layers, each doing what it's good at:
 |---|---|---|
 | **What it tracks** | Content, replies, who said what | Karma, credits, who has how much |
 | **Who controls it** | Each author controls their own subtree | Box owners control their boxes via signatures |
-| **Can it be deleted?** | Yes — authors can prune their content | No — box history is immutable |
+| **Can it be taken back?** | Yes — an author can withdraw a post's content; its place and its replies stay | No — box history is immutable |
 | **What it's good at** | Threaded conversation, author sovereignty | Value accounting with cryptographic lineage |
 
 The insight: content and value have different requirements. A threaded reply
@@ -68,23 +68,16 @@ The three parameters:
 
 ### The Posts DAG (Content Layer)
 
-Every post is the root of its own subtree. When someone replies to your post,
-that reply lives under your subtree. You control everything under your root:
+Every post is its author's. When someone replies to your post, the reply is
+theirs — you decide what you say and whether it stays said, and nothing else:
 
-- **You can delete (prune) your entire subtree** — the root post and every reply under it, regardless of who wrote the replies. This is the privacy model: you own the conversation space you started.
-- **Replying is consent** — when you reply to someone's post, you're accepting that they can prune the whole tree later. This is a social contract baked into the protocol.
+- **You can withdraw your own post** — its content is dropped; its place in the thread and every reply beneath it stay. It is free, and it is the only act an author has over a post once it is published.
+- **No act reaches another author's post** — not even the replies under your own. A cascade over the replies would protect nothing (a public post is archivable the moment it is public), it would be a batch bounded only by the thread's size, it would hand whoever started a thread a way to delete a discussion other people wrote, and every reply paid to be posted with nothing returning.
 
 Posts link to each other via `parentRefs` — a post names **one** parent, or none
-if it starts a thread. The result is a forest of threads, which is still a DAG
-(directed acyclic graph) rather than a strict tree, because pruning removes
-whole branches from it.
-
-A post used to be able to name several parents and so belong to several
-conversations at once. That is gone, and the consent rule above is why: if a
-reply named parents in two different threads, then one of those authors pruning
-their own thread would delete a reply that also hung off someone else's — one
-person's signature deleting content another person had accepted responsibility
-for. Consent only means something if each reply belongs to exactly one thread.
+if it starts a thread. The result is a forest of threads: one parent keeps every
+thread a tree, so a post belongs to one conversation and a thread's replies can
+be counted and paged without ambiguity.
 
 ### The UTXO Ledger (Value Layer)
 
@@ -99,20 +92,13 @@ The UTXO model means:
 - The set of unspent boxes IS the current state — no separate "balance" table
 - Conservation: total value in = total value out (except mint and burn)
 
-### How They Connect: Stumps
+### How They Connect: Every Act Is a Transaction
 
-When you prune your content, the DAG subtree vanishes — but the karma people
-earned from likes in that subtree still needs to be tracked. Enter **stumps**:
-compact cryptographic proofs that a subtree existed and contributed specific
-karma deltas.
-
-A stump contains:
-- The hash of the pruned root post (so parent refs still work)
-- A merkle root over the pruned content (for nodes that held the full data)
-- The net karma earned by each participant in that subtree
-- The author's signature authorizing the prune
-
-Stumps are the bridge. They let the DAG be prunable while the UTXO ledger stays
+A post, a like, a withdrawal, an invite and a vouch are each a transaction on the
+UTXO ledger — signed by the actor, paid in karma where the act has a price, and
+applied by every node at the same block. That is the bridge: the DAG holds what
+was said, the ledger holds who was allowed to say it and what it cost, and a
+withdrawal drops the content while the ledger's record of every act stays
 complete.
 
 ---
@@ -283,10 +269,10 @@ code. They generate a keypair, claim the invite, and post their first message.
 Your bond sits in escrow — if they turn out to be a valuable community member,
 you get it back. If they spam and get downvoted, you lose it.
 
-**A week later:** You decide to prune an old thread. The content vanishes from the
-DAG, replaced by a stump. The karma people earned from likes in that thread
-survives — the stump's karma deltas are committed to the UTXO ledger. Nothing is
-lost but the content itself.
+**A week later:** You decide to withdraw an old post of yours. Its content leaves
+the DAG; the post's place in the thread and every reply beneath it stay, and the
+karma people earned from likes in that thread is untouched. Nothing is lost but
+your words.
 
 ---
 
@@ -298,7 +284,7 @@ lost but the content itself.
 | **Liking** | Lock 2 karma → epoch tally → refund or lock continues | Skin in the game; refunds reward good judgment |
 | **Earning** | Author gets 1 karma per 5 likes, max 10 per post | Incentivizes quality content |
 | **Inviting** | Split karma + post bond → invitee claims → bond resolves | Bond puts inviter's karma at stake |
-| **Pruning** | Author deletes subtree → stump with karma deltas | Karma earned in pruned content is preserved |
+| **Withdrawing** | Author drops a post's content → its place and its replies stay | Free; karma earned in the thread is untouched |
 | **Decay** | Dormant boxes lose karma over time, down to a floor | Incentivizes ongoing participation |
 | **Burning** | Bad invite bonds destroyed permanently | Deflationary counterbalance to author rewards |
 

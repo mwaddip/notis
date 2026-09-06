@@ -15,7 +15,7 @@ import {
   KARMA_DECAY_AMOUNT,
   KARMA_MINIMUM,
 } from '@dagsocial/types';
-import type { KarmaBox, LikeAccrualBox, Stump, UtxoTransaction, AnyBox } from '@dagsocial/types';
+import type { KarmaBox, LikeAccrualBox, UtxoTransaction, AnyBox } from '@dagsocial/types';
 
 /**
  * The author every post in this suite belongs to — the key the like's marker
@@ -33,7 +33,7 @@ import {
   insertBox,
   insertLikeRecord,
   insertPost,
-  insertStump,
+  withdrawPost,
   getBox as storeGetBox,
   getIdentityRecord as storeGetIdentityRecord,
   hasPendingLike, insertUtxoTx,
@@ -271,21 +271,13 @@ describe('likes service (P2-D: the like is a burn transaction)', () => {
     expect(() => castLike(deps, tx, 5)).toThrow('Post not found');
   });
 
-  it('castLike rejects a like on a pruned post (stump)', () => {
+  it('castLike rejects a like on a withdrawn post', () => {
     const karma = createKarmaBox(likerPubKey, 100n, 1);
-    const stumpId = 'cd'.repeat(32);
-    const stump: Stump = {
-      rootPostHash: stumpId,
-      authorId: likerId,
-      replyCount: 3,
-      upvoteCount: 0,
-      protocolVersion: PROTOCOL_VERSION,
-      compactedAtBlockHeight: 4,
-    };
-    insertStump(stump);
+    const postId = createTestPost(POST_AUTHOR);
+    withdrawPost(postId, 4);
 
-    const tx = buildBurnLikeTx(karma, stumpId);
-    expect(() => castLike(deps, tx, 5)).toThrow('Cannot like a pruned or withdrawn post');
+    const tx = buildBurnLikeTx(karma, postId);
+    expect(() => castLike(deps, tx, 5)).toThrow('Cannot like a withdrawn post');
   });
 
   // -----------------------------------------------------------------------

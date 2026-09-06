@@ -3,10 +3,10 @@
 A decentralized social network where your words stay yours and your reputation
 can't be bought.
 
-No corporate servers, no ads, no token sale. Content lives in a prunable DAG
-that each author controls. Karma and credits live in a Bitcoin-style UTXO
+No corporate servers, no ads, no token sale. Content lives in a DAG where
+every post is its author's. Karma and credits live in a Bitcoin-style UTXO
 ledger secured by Ed25519 signatures. Proof-of-Work orders it all — no stake,
-no committee. Deleting your thread is a first-class, cryptographically
+no committee. Withdrawing your words is a first-class, cryptographically
 verifiable operation, not a favor from a moderation team.
 
 *Notis is the network; the code ships under the working scope `@dagsocial/*`.*
@@ -30,21 +30,20 @@ at, bound by verifiable settlement:
 |---|---|---|
 | **What it tracks** | Content, replies, who said what | Karma, credits, who has how much |
 | **Who controls it** | Each author controls their own subtree | Box owners control their boxes via signatures |
-| **Can it be deleted?** | Yes — authors can prune their content | No — box history is immutable |
+| **Can it be taken back?** | Yes — an author can withdraw a post's content; its place and its replies stay | No — box history is immutable |
 | **What it's good at** | Threaded conversation, author sovereignty | Value accounting with cryptographic lineage |
 
 Three properties fall out of this split:
 
-- **Author sovereignty.** Every post is the root of its own subtree. Replying
-  to someone is consent: they can prune the whole tree later, replies included.
-  That cascade is the privacy model — replies leak what the root said, so
-  deletion that leaves them behind isn't deletion.
+- **Author sovereignty.** Every post is its author's: you decide what you say
+  and whether it stays said. A reply belongs to whoever wrote it, and no act —
+  not the answered author's — reaches it.
 - **Reputation you can't buy.** Karma only moves through protocol actions —
   likes, invites, rewards, decay, burns. There is no transfer. A rich account
   cannot buy social weight.
-- **Deletion that settles.** Pruning a subtree is consensus-verified: every
+- **Withdrawal that settles.** Withdrawing a post is consensus-verified: every
   node — including nodes that never stored the content — independently checks
-  who authorized it and settles the karma locked inside it.
+  who authorized it, from the chain's own record of who wrote the post.
 
 ---
 
@@ -55,8 +54,8 @@ Three properties fall out of this split:
 **A post is a transaction.** It rides an ordering block's transaction list like
 every other one, locking a little karma as skin in the game and paying a fee at
 the network's rate. There is one kind of block: a miner solves an ordering block
-roughly every 60 seconds, carrying that block's transactions, its prune entries,
-and the settlement that pays every party the block owes.
+roughly every 60 seconds, carrying that block's transactions and the settlement
+that pays every party the block owes.
 
 Posts link via `parentRefs` (one parent — a forest of threads, still a DAG).
 Content is 1–300 UTF-8 bytes. The lock releases back to the author as the post
@@ -113,29 +112,18 @@ So a careless invite costs real reputation and a good one costs only time. The
 bond is the network's only sybil price, and because the grant equals it, naming
 32 bytes nobody holds costs exactly what it strands.
 
-### Deletion that settles (stumps)
+### Withdrawal that settles
 
-Pruning is where the two ledgers meet, and it's consensus-critical: the karma
-locked in a subtree (post locks, pending likes) must be settled identically on
-every node, even nodes that never had the content.
+A **withdrawal** is a transaction the author signs, naming the post. At block
+application every node verifies that the signer is the consensus-recorded author
+of that post — read from the chain's own `block_topology`, never from the post —
+so a miner cannot withdraw someone else's words, and a node that never held the
+content reaches the same verdict. The content is dropped; the post's identity,
+its place in the thread and every reply beneath it stay, and nothing is refunded:
+withdrawal is free because the post paid its price when it was posted.
 
-A **PruneEntry** in the ordering block carries the pruned post-id set, a Merkle
-root over it, and the root author's Ed25519 signature. At block application
-every node verifies:
-
-1. **Authorship** — the entry's author *is* the consensus-recorded author of
-   the root, read from the chain's own `block_topology` rather than from the
-   post. "Who owns this subtree" is therefore chain data, not content data — a
-   miner cannot prune someone else's thread
-2. **Signature** — the root author signed this exact prune
-3. **Topology** — the post-id set matches the confirmed reply tree
-4. **Merkle root** — the set is exactly what was signed
-5. **Settlement** — locked boxes are consumed and refunds minted,
-   deterministically from UTXO state
-
-What remains is a **stump**: a compact record that the subtree existed and
-what it earned. The content itself is gone network-wide — nodes propagate
-stumps, not archives.
+That is the whole of an author's power over a post. No act reaches other
+people's replies.
 
 ### Consensus and networking
 
@@ -147,7 +135,7 @@ ordering blocks only — block entries carry enough topology and authorship to
 verify all settlement without any post content.
 
 Every value movement a block owes — like payouts, invite grants, vested bonds,
-decay, prune refunds — is paid by a single **settlement transaction** the block
+decay — is paid by a single **settlement transaction** the block
 carries, derived from the block's own contents. No signer authorizes it; every
 node recomputes the same verdict from the same body.
 
@@ -164,8 +152,8 @@ reorg):
 - **Validator signatures** — PoW proves work was spent, the Ed25519 validator
   signature proves who spent it; blocks forging another validator's identity
   are rejected
-- **Prune authorship** — binding a prune to the consensus-recorded root author
-  (see above); censorship-by-miner is rejected structurally
+- **Withdrawal authorship** — binding a withdrawal to the consensus-recorded
+  author (see above); censorship-by-miner is rejected structurally
 - **Invite eligibility** — an invite may only name a key that is not already an
   account, tested against consensus state rather than a local ledger; and the
   bond must cover the grant it creates, so a grant cannot be stranded for free
@@ -370,7 +358,7 @@ for every interface, and contracts are updated **before** implementation code.
 ## Roadmap
 
 Built: the dual ledger, ordering-block consensus with a derived per-block
-settlement, verifiable pruning, likes as per-block karma spends, invites with
+settlement, verifiable withdrawal, likes as per-block karma spends, invites with
 bonds, vouches, karma decay against a fixed supply pool, credit emission,
 transaction fees, AVL+ state root with light-client proofs, libp2p networking
 with whole-block sync and header-scored fork choice, split mining, demo UI.

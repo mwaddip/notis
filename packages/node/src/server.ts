@@ -2,7 +2,7 @@ import express from 'express';
 import { createRouter as postRoutes } from './routes/posts.js';
 import { createRouter as likeRoutes } from './routes/likes.js';
 import { createRouter as inviteRoutes } from './routes/invites.js';
-import { pruneWithdrawRoutes } from './routes/prune-withdraw.js';
+import { withdrawRoutes } from './routes/withdraw.js';
 import { createRouter as utxoRoutes } from './routes/utxo.js';
 import { createRouter as vouchRoutes } from './routes/vouches.js';
 import { createRouter as blockRoutes, KARMA_SUPPLY_TYPES } from './routes/blocks.js';
@@ -17,7 +17,6 @@ import { isPeerReady } from './services/peer-readiness.js';
 import { castLike } from './services/likes.js';
 import { castVouch, initiateUnvouch } from './services/vouch.js';
 import { createInvite } from './services/invites.js';
-import { executePrune } from './services/stump-engine.js';
 import { executePostWithdraw } from './services/post-withdraw.js';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -286,6 +285,7 @@ export function createApp(config: Config): express.Express {
       initiateUnvouch,
       ...utxoEngineDeps,
       getCurrentHeight: store.getCurrentHeight,
+      getVouchCountForTarget: store.getVouchCountForTarget,
     }),
   );
 
@@ -299,11 +299,10 @@ export function createApp(config: Config): express.Express {
     }),
   );
 
-  // Prune and withdraw routes
+  // Withdraw route
   app.use(
     '/',
-    pruneWithdrawRoutes({
-      executePrune,
+    withdrawRoutes({
       executePostWithdraw,
       ...utxoEngineDeps,
       getCurrentHeight: store.getCurrentHeight,

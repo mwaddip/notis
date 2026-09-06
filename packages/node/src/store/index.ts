@@ -14,23 +14,17 @@ export {
   confirmPost,
   unconfirmPost,
   deletePendingPost,
-  deletePostRows,
-  restorePostRows,
   withdrawPost,
   clearWithdrawal,
-  getPrunedTombstone,
   getParentRefs,
   getAncestorsNearest,
   getSubtreePage,
   getDescendantCount,
-  isStoredPost,
   isLivePost,
-  isStump,
-  isPrunedTombstone,
   getPlaceholdersAt,
   getPendingPostAuthor,
 } from './posts.js';
-export type { PostStatus, StoredPost, PrunedTombstone, DeletedPostRow } from './posts.js';
+export type { PostStatus, StoredPost } from './posts.js';
 
 export {
   getBox,
@@ -72,9 +66,7 @@ export {
   insertLikeRecord,
   hasLikeRecord,
   getLikeRecordCount,
-  deleteLikeRecordsForPosts,
   deleteLikeRecord,
-  restoreLikeRecord,
 } from './likes.js';
 
 export {
@@ -105,20 +97,11 @@ export {
 } from './journal.js';
 
 export {
-  insertStump,
-  getStump,
-  deleteStump,
-} from './stumps.js';
-
-export {
   insertBlockTopology,
-  getSubtreeTopology,
   getTopologyAuthor,
   getTopologyAuthorBytes,
   getTopologyHeight,
   rollbackBlockTopology,
-  markPrunedTopology,
-  restorePrunedTopology,
 } from './topology.js';
 
 export {

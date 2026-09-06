@@ -166,8 +166,8 @@ export class TxTooLargeError extends ClientError {
 
 /**
  * In-memory representation of a pending pool entry (MEMPOOL_INTERFACE →
- * PoolEntry). Carries the `utxo_tx` payload only; a `prune` row's blob is
- * Carries the `utxo_tx` payload.
+ * PoolEntry). `entryType` is the single value `'utxo_tx'` — nothing else
+ * rides the pool.
  */
 export interface PoolEntry {
   rowid: number;
@@ -265,9 +265,8 @@ function classCount(db: ReturnType<typeof getDb>, poolClass: PoolClass): number 
  * `rowid` breaks a tie, so equal bids are displaced in arrival order.
  *
  * ⚠ **`entry_type` is filtered here and deliberately not in `classCount`.** This
- * query names a row to delete, so it must reach only transactions — a prune
- * entry is a mandatory block section and is never an eviction candidate. The
- * count above bounds the table and must reach every row. Same column, two
+ * query names a row to delete, so it must reach only transactions. The count
+ * above bounds the table and must reach every row. Same column, two
  * questions.
  */
 function cheapestCreditEntry(
@@ -513,8 +512,8 @@ export function hasPendingVouch(voucherId: string, targetId: string): boolean {
  * collided instead of only reporting that one did.
  *
  * `tx_inputs IS NOT NULL` is what the partial index covers, and it is the whole
- * filter needed: prune rows carry no inputs, and a row written
- * before the column existed reads as zero `json_each` rows.
+ * filter needed: a row written before the column existed reads as zero
+ * `json_each` rows.
  */
 export function hasPendingSpend(boxIds: string[]): string | null {
   if (boxIds.length === 0) return null;
@@ -619,8 +618,8 @@ const ENTRY_COLUMNS = `rowid, entry_type, utxo_tx_bytes,
  * The karma-side class in FIFO order, paged by the keyset cursor above.
  *
  * Nothing here bids, so arrival is the only basis for prioritisation there is
- * (MEMPOOL_INTERFACE → Ordering). Prune entries are in this class and are
- * Prune transactions ride this class as ordinary karma-side entries.
+ * (MEMPOOL_INTERFACE → Ordering). Every pool entry is a `utxo_tx`; this class
+ * holds the ones with no fee.
  */
 function* iterateKarmaFifo(): Generator<PoolEntry> {
   const db = getDb();

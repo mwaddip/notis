@@ -32,7 +32,6 @@ import type {
   KarmaBox,
   LikeAccrualBox,
   PostWithdrawCommit,
-  PruneCommit,
   BondBox,
   PostCommit,
   KarmaPriceBox,
@@ -108,13 +107,9 @@ function computeTxHash(tx: UtxoTransaction): Uint8Array {
 const LIKE_TARGET_POST = 'ab'.repeat(32);
 const LIKE_TARGET_AUTHOR = new Uint8Array(32).fill(0xab);
 
-/** Posts the topology resolves — tests add entries here for prune tests. */
+/** Posts the topology resolves — tests add entries here for withdrawal tests. */
 const topologyAuthors = new Map<string, Uint8Array>();
 topologyAuthors.set(LIKE_TARGET_POST, LIKE_TARGET_AUTHOR);
-
-function makePruneCommit(rootPostHash: string): PruneCommit {
-  return { rootPostHash };
-}
 
 describe('validateAndApplyTx', () => {
   let db: Database.Database;
@@ -261,7 +256,6 @@ describe('validateAndApplyTx', () => {
     protocolVersion = 1,
     likeTarget?: string,
     post?: PostCommit,
-    prune?: PruneCommit,
     postWithdraw?: PostWithdrawCommit,
   ): UtxoTransaction {
     const hexKey = Buffer.from(pubKey).toString('hex');
@@ -272,7 +266,6 @@ describe('validateAndApplyTx', () => {
       protocolVersion,
       ...(likeTarget !== undefined ? { likeTarget } : {}),
       ...(post !== undefined ? { post } : {}),
-      ...(prune !== undefined ? { prune } : {}),
       ...(postWithdraw !== undefined ? { postWithdraw } : {}),
     };
     const hash = computeTxHash(tx);
@@ -2490,142 +2483,6 @@ describe('validateAndApplyTx', () => {
   });
 
   // -------------------------------------------------------------------------
-  // The prune transition arm
-  // -------------------------------------------------------------------------
-  describe('prune transition arm', () => {
-    const PRUNE_ROOT = 'cc'.repeat(32);
-
-    beforeEach(() => {
-      topologyAuthors.set(PRUNE_ROOT, ownerPubKey);
-    });
-    afterEach(() => {
-      topologyAuthors.delete(PRUNE_ROOT);
-    });
-
-    it('accepts a well-formed prune transaction: K(v) → K(v) with PruneCommit', () => {
-      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
-      const newKarma: CandidateOf<KarmaBox> = {
-        boxType: 'karma', value: 100n, createdAtBlock: 0, owner: ownerPubKey,
-      };
-      const prune = makePruneCommit(PRUNE_ROOT);
-      const tx = buildSignedTx(
-        [karma.id!], [newKarma], ownerPrivKey, ownerPubKey, 1, undefined, undefined, prune,
-      );
-      const result = validateAndApplyTx(deps, tx, 10);
-      expect(result.valid).toBe(true);
-    });
-
-    it('rejects a prune with more than one output', () => {
-      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
-      const out1: CandidateOf<KarmaBox> = {
-        boxType: 'karma', value: 50n, createdAtBlock: 0, owner: ownerPubKey,
-      };
-      const out2: CandidateOf<KarmaBox> = {
-        boxType: 'karma', value: 50n, createdAtBlock: 0, owner: ownerPubKey,
-      };
-      const prune = makePruneCommit(PRUNE_ROOT);
-      const tx = buildSignedTx(
-        [karma.id!], [out1, out2], ownerPrivKey, ownerPubKey, 1, undefined, undefined, prune,
-      );
-      const result = validateTx(deps, tx, 10);
-      expect(result.valid).toBe(false);
-      expect(result.error).toMatch(/exactly one karma output/i);
-    });
-
-    it('rejects a prune whose rootPostHash has no topology author (unconfirmed root)', () => {
-      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
-      const unconfirmedRoot = 'dd'.repeat(32);
-      const newKarma: CandidateOf<KarmaBox> = {
-        boxType: 'karma', value: 100n, createdAtBlock: 0, owner: ownerPubKey,
-      };
-      const prune = makePruneCommit(unconfirmedRoot);
-      const tx = buildSignedTx(
-        [karma.id!], [newKarma], ownerPrivKey, ownerPubKey, 1, undefined, undefined, prune,
-      );
-      const result = validateTx(deps, tx, 10);
-      expect(result.valid).toBe(false);
-      expect(result.error).toMatch(/not authored by the karma input/);
-    });
-
-    it('a prune of a pending root is refused even with getPendingPostAuthor wired', () => {
-      const pendingRoot = 'dd'.repeat(32);
-      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
-      const pendingDeps: UtxoEngineDeps = {
-        ...deps,
-        getPendingPostAuthor: (postId: string) =>
-          postId === pendingRoot ? ownerPubKey : null,
-      };
-      const newKarma: CandidateOf<KarmaBox> = {
-        boxType: 'karma', value: 100n, createdAtBlock: 0, owner: ownerPubKey,
-      };
-      const prune = makePruneCommit(pendingRoot);
-      const tx = buildSignedTx(
-        [karma.id!], [newKarma], ownerPrivKey, ownerPubKey, 1, undefined, undefined, prune,
-      );
-      const result = validateTx(pendingDeps, tx, 10);
-      expect(result.valid).toBe(false);
-      expect(result.error).toMatch(/not authored by the karma input/);
-    });
-
-    it('rejects a prune whose rootPostHash is authored by a different key (stranger prune)', () => {
-      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
-      const strangerRoot = 'ee'.repeat(32);
-      const { publicKey: strangerPub } = generateKeyPairSync('ed25519');
-      const strangerPubRaw = new Uint8Array(
-        strangerPub.export({ type: 'spki', format: 'der' }).subarray(12),
-      );
-      topologyAuthors.set(strangerRoot, strangerPubRaw);
-      const newKarma: CandidateOf<KarmaBox> = {
-        boxType: 'karma', value: 100n, createdAtBlock: 0, owner: ownerPubKey,
-      };
-      const prune = makePruneCommit(strangerRoot);
-      const tx = buildSignedTx(
-        [karma.id!], [newKarma], ownerPrivKey, ownerPubKey, 1, undefined, undefined, prune,
-      );
-      const result = validateTx(deps, tx, 10);
-      expect(result.valid).toBe(false);
-      expect(result.error).toMatch(/not authored by the karma input/);
-      topologyAuthors.delete(strangerRoot);
-    });
-
-    it('rejects a prune whose payload verifyPruneCommitDomains refuses (bad rootPostHash)', () => {
-      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
-      const newKarma: CandidateOf<KarmaBox> = {
-        boxType: 'karma', value: 100n, createdAtBlock: 0, owner: ownerPubKey,
-      };
-      const badPrune = {
-        rootPostHash: 'not-hex-64',
-      } as unknown as PruneCommit;
-      // No signature: the envelope check catches the bad payload before
-      // authorization, so signing is unreachable — and computeTxId throws on
-      // a field outside the encoder's domain.
-      const tx: UtxoTransaction = {
-        inputs: [karma.id!],
-        outputs: [newKarma],
-        signatures: {},
-        protocolVersion: 1,
-        prune: badPrune,
-      };
-      const result = validateTx(deps, tx, 10);
-      expect(result.valid).toBe(false);
-      expect(result.error).toMatch(/Invalid tx envelope/);
-    });
-
-    it('a prune does not forbid plain karma self-consolidation (the implication is one-directional)', () => {
-      const k1 = createAndInsertKarma(ownerPubKey, 60n, 1);
-      const k2 = createAndInsertKarma(ownerPubKey, 40n, 2);
-      const merged: CandidateOf<KarmaBox> = {
-        boxType: 'karma', value: 100n, createdAtBlock: 0, owner: ownerPubKey,
-      };
-      const tx = buildSignedTx(
-        [k1.id!, k2.id!], [merged], ownerPrivKey, ownerPubKey,
-      );
-      const result = validateAndApplyTx(deps, tx, 10);
-      expect(result.valid).toBe(true);
-    });
-  });
-
-  // -------------------------------------------------------------------------
   // The postWithdraw transition arm
   // -------------------------------------------------------------------------
   describe('postWithdraw transition arm', () => {
@@ -2645,10 +2502,50 @@ describe('validateAndApplyTx', () => {
       };
       const pw: PostWithdrawCommit = { postId: WITHDRAW_POST };
       const tx = buildSignedTx(
-        [karma.id!], [newKarma], ownerPrivKey, ownerPubKey, 1, undefined, undefined, undefined, pw,
+        [karma.id!], [newKarma], ownerPrivKey, ownerPubKey, 1, undefined, undefined, pw,
       );
       const result = validateAndApplyTx(deps, tx, 10);
       expect(result.valid).toBe(true);
+    });
+
+    it('rejects a postWithdraw with more than one output', () => {
+      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
+      const out1: CandidateOf<KarmaBox> = {
+        boxType: 'karma', value: 50n, createdAtBlock: 0, owner: ownerPubKey,
+      };
+      const out2: CandidateOf<KarmaBox> = {
+        boxType: 'karma', value: 50n, createdAtBlock: 0, owner: ownerPubKey,
+      };
+      const pw: PostWithdrawCommit = { postId: WITHDRAW_POST };
+      const tx = buildSignedTx(
+        [karma.id!], [out1, out2], ownerPrivKey, ownerPubKey, 1, undefined, undefined, pw,
+      );
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toMatch(/exactly one karma output/i);
+    });
+
+    it('rejects a postWithdraw whose payload verifyPostWithdrawCommitDomains refuses (bad postId)', () => {
+      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
+      const newKarma: CandidateOf<KarmaBox> = {
+        boxType: 'karma', value: 100n, createdAtBlock: 0, owner: ownerPubKey,
+      };
+      const badWithdraw = {
+        postId: 'not-hex-64',
+      } as unknown as PostWithdrawCommit;
+      // No signature: the envelope check catches the bad payload before
+      // authorization, so signing is unreachable — and computeTxId throws on
+      // a field outside the encoder's domain.
+      const tx: UtxoTransaction = {
+        inputs: [karma.id!],
+        outputs: [newKarma],
+        signatures: {},
+        protocolVersion: 1,
+        postWithdraw: badWithdraw,
+      };
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toMatch(/Invalid tx envelope/);
     });
 
     it('rejects a postWithdraw whose postId is authored by a different key', () => {
@@ -2664,12 +2561,27 @@ describe('validateAndApplyTx', () => {
       };
       const pw: PostWithdrawCommit = { postId: strangerPost };
       const tx = buildSignedTx(
-        [karma.id!], [newKarma], ownerPrivKey, ownerPubKey, 1, undefined, undefined, undefined, pw,
+        [karma.id!], [newKarma], ownerPrivKey, ownerPubKey, 1, undefined, undefined, pw,
       );
       const result = validateTx(deps, tx, 10);
       expect(result.valid).toBe(false);
       expect(result.error).toMatch(/not authored by the karma input/);
       topologyAuthors.delete(strangerPost);
+    });
+
+    it('rejects a postWithdraw whose postId has no topology author (unconfirmed post)', () => {
+      const karma = createAndInsertKarma(ownerPubKey, 100n, 1);
+      const unconfirmedPost = 'dd'.repeat(32);
+      const newKarma: CandidateOf<KarmaBox> = {
+        boxType: 'karma', value: 100n, createdAtBlock: 0, owner: ownerPubKey,
+      };
+      const pw: PostWithdrawCommit = { postId: unconfirmedPost };
+      const tx = buildSignedTx(
+        [karma.id!], [newKarma], ownerPrivKey, ownerPubKey, 1, undefined, undefined, pw,
+      );
+      const result = validateTx(deps, tx, 10);
+      expect(result.valid).toBe(false);
+      expect(result.error).toMatch(/not authored by the karma input/);
     });
 
     it('a withdrawal of a pending post is refused even with getPendingPostAuthor wired', () => {
@@ -2685,7 +2597,7 @@ describe('validateAndApplyTx', () => {
       };
       const pw: PostWithdrawCommit = { postId: pendingPost };
       const tx = buildSignedTx(
-        [karma.id!], [newKarma], ownerPrivKey, ownerPubKey, 1, undefined, undefined, undefined, pw,
+        [karma.id!], [newKarma], ownerPrivKey, ownerPubKey, 1, undefined, undefined, pw,
       );
       const result = validateTx(pendingDeps, tx, 10);
       expect(result.valid).toBe(false);

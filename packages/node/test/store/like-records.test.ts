@@ -80,31 +80,6 @@ describe('like-records store (P2-D N2a)', () => {
     expect(() => s.insertLikeRecord('post-1', LIKER_B, 1)).not.toThrow();
   });
 
-  it('deleteLikeRecordsForPosts removes every record of the named posts and no others', async () => {
-    const s = await importAll();
-    s.initDb(':memory:');
-
-    s.insertLikeRecord('post-1', LIKER_A, 1);
-    s.insertLikeRecord('post-1', LIKER_B, 2);
-    s.insertLikeRecord('post-2', LIKER_C, 3);
-    s.insertLikeRecord('post-3', LIKER_A, 4);
-
-    s.deleteLikeRecordsForPosts(['post-1', 'post-2']);
-
-    expect(s.getLikeRecordCount('post-1')).toBe(0);
-    expect(s.getLikeRecordCount('post-2')).toBe(0);
-    expect(s.hasLikeRecord('post-3', LIKER_A)).toBe(true);
-  });
-
-  it('deleteLikeRecordsForPosts on an empty list is a no-op', async () => {
-    const s = await importAll();
-    s.initDb(':memory:');
-
-    s.insertLikeRecord('post-1', LIKER_A, 1);
-    expect(() => s.deleteLikeRecordsForPosts([])).not.toThrow();
-    expect(s.getLikeRecordCount('post-1')).toBe(1);
-  });
-
   // --- Inverses --------------------------------------------------------------
 
   it('deleteLikeRecord is the exact inverse of one insert', async () => {
@@ -118,33 +93,6 @@ describe('like-records store (P2-D N2a)', () => {
 
     expect(s.hasLikeRecord('post-1', LIKER_A)).toBe(false);
     expect(s.hasLikeRecord('post-1', LIKER_B)).toBe(true);
-  });
-
-  it('restoreLikeRecord restores all three columns exactly', async () => {
-    const s = await importAll();
-    s.initDb(':memory:');
-
-    s.insertLikeRecord('post-1', LIKER_A, 41);
-    s.deleteLikeRecordsForPosts(['post-1']);
-    expect(s.hasLikeRecord('post-1', LIKER_A)).toBe(false);
-
-    s.restoreLikeRecord('post-1', LIKER_A, 41);
-
-    expect(s.hasLikeRecord('post-1', LIKER_A)).toBe(true);
-    const row = s.getDb()
-      .prepare('SELECT target_post_id, liker_id, applied_at_block FROM like_records WHERE target_post_id = ?')
-      .get('post-1') as { target_post_id: string; liker_id: Buffer; applied_at_block: number };
-    expect(row.target_post_id).toBe('post-1');
-    expect(new Uint8Array(row.liker_id)).toEqual(LIKER_A);
-    expect(row.applied_at_block).toBe(41);
-  });
-
-  it('restoreLikeRecord onto an existing key throws — a rollback-ordering bug, not an upsert', async () => {
-    const s = await importAll();
-    s.initDb(':memory:');
-
-    s.insertLikeRecord('post-1', LIKER_A, 5);
-    expect(() => s.restoreLikeRecord('post-1', LIKER_A, 5)).toThrow();
   });
 
   // --- Journal capture (choke-point recording) -------------------------------
@@ -162,7 +110,6 @@ describe('like-records store (P2-D N2a)', () => {
       { targetPostId: 'post-1', likerId: LIKER_A },
       { targetPostId: 'post-2', likerId: LIKER_B },
     ]);
-    expect(j.likeRecordDeletions).toEqual([]);
     // A like-record is content-layer state — never a `mutations` (stateRoot) entry.
     expect(j.mutations).toEqual([]);
   });
@@ -180,54 +127,19 @@ describe('like-records store (P2-D N2a)', () => {
     expect(j.likeRecordInsertions).toEqual([]);
   });
 
-  it('deleteLikeRecordsForPosts captures every deleted row, all three columns, BEFORE deleting', async () => {
+  it('with no journal open, the choke point records nothing', async () => {
     const s = await importAll();
     s.initDb(':memory:');
 
     s.insertLikeRecord('post-1', LIKER_A, 1);
-    s.insertLikeRecord('post-1', LIKER_B, 2);
-    s.insertLikeRecord('post-2', LIKER_C, 3);
-    s.insertLikeRecord('post-3', LIKER_A, 4); // untouched
-
-    s.beginBlockJournal(10);
-    s.deleteLikeRecordsForPosts(['post-1', 'post-2']);
-    const j = s.finishBlockJournal();
-
-    // Capture order is pinned by the PK (target_post_id, liker_id) — a
-    // function of state, not of SQLite row order. uid('lr-liker-a') <
-    // uid('lr-liker-b') is not guaranteed byte-wise, so sort expectations the
-    // same way the capture does.
-    const expected = [
-      { targetPostId: 'post-1', likerId: LIKER_A, appliedAtBlock: 1 },
-      { targetPostId: 'post-1', likerId: LIKER_B, appliedAtBlock: 2 },
-    ].sort((a, b) => Buffer.from(a.likerId).compare(Buffer.from(b.likerId)));
-    expect(j.likeRecordDeletions).toEqual([
-      ...expected,
-      { targetPostId: 'post-2', likerId: LIKER_C, appliedAtBlock: 3 },
-    ]);
-    expect(j.likeRecordInsertions).toEqual([]);
-
-    // And the rows are actually gone.
-    expect(s.getLikeRecordCount('post-1')).toBe(0);
-    expect(s.getLikeRecordCount('post-2')).toBe(0);
-    expect(s.getLikeRecordCount('post-3')).toBe(1);
-  });
-
-  it('with no journal open, neither choke point records anything', async () => {
-    const s = await importAll();
-    s.initDb(':memory:');
-
-    s.insertLikeRecord('post-1', LIKER_A, 1);
-    s.deleteLikeRecordsForPosts(['post-1']);
 
     // A journal opened afterwards starts empty.
     s.beginBlockJournal(5);
     const j = s.finishBlockJournal();
     expect(j.likeRecordInsertions).toEqual([]);
-    expect(j.likeRecordDeletions).toEqual([]);
   });
 
-  it('the inverses never record, even while a journal is open', async () => {
+  it('the inverse never records, even while a journal is open', async () => {
     const s = await importAll();
     s.initDb(':memory:');
 
@@ -235,15 +147,13 @@ describe('like-records store (P2-D N2a)', () => {
 
     s.beginBlockJournal(6);
     s.deleteLikeRecord('post-1', LIKER_A);
-    s.restoreLikeRecord('post-1', LIKER_A, 1);
     const j = s.finishBlockJournal();
 
     expect(j.likeRecordInsertions).toEqual([]);
-    expect(j.likeRecordDeletions).toEqual([]);
     expect(j.mutations).toEqual([]);
   });
 
-  it('inverses applied from a journal restore the exact pre-block rows', async () => {
+  it('the insertion inverse applied from a journal restores the exact pre-block rows', async () => {
     const s = await importAll();
     s.initDb(':memory:');
 
@@ -255,18 +165,14 @@ describe('like-records store (P2-D N2a)', () => {
       .prepare('SELECT * FROM like_records ORDER BY target_post_id, liker_id')
       .all();
 
-    // A block inserts one record and prunes post-1.
+    // A block inserts one more record.
     s.beginBlockJournal(9);
     s.insertLikeRecord('post-2', LIKER_A, 9);
-    s.deleteLikeRecordsForPosts(['post-1']);
     const j = s.finishBlockJournal();
 
-    // Revert: side-record inverses, reverse order within each class.
+    // Revert: the insertion inverse, reverse order.
     for (const ins of [...j.likeRecordInsertions].reverse()) {
       s.deleteLikeRecord(ins.targetPostId, ins.likerId);
-    }
-    for (const del of [...j.likeRecordDeletions].reverse()) {
-      s.restoreLikeRecord(del.targetPostId, del.likerId, del.appliedAtBlock);
     }
 
     const postRows = s.getDb()
@@ -277,15 +183,12 @@ describe('like-records store (P2-D N2a)', () => {
 
   // --- Journal row round-trip ------------------------------------------------
 
-  it('the persisted journal row round-trips both new arrays', async () => {
+  it('the persisted journal row round-trips likeRecordInsertions', async () => {
     const s = await importAll();
     s.initDb(':memory:');
 
-    s.insertLikeRecord('post-old', LIKER_C, 2);
-
     s.beginBlockJournal(11);
     s.insertLikeRecord('post-1', LIKER_A, 11);
-    s.deleteLikeRecordsForPosts(['post-old']);
     const j = s.finishBlockJournal();
 
     s.insertBlockJournal(j);
@@ -296,14 +199,9 @@ describe('like-records store (P2-D N2a)', () => {
     expect(back!.likeRecordInsertions).toHaveLength(1);
     expect(back!.likeRecordInsertions[0]!.targetPostId).toBe('post-1');
     expect(new Uint8Array(back!.likeRecordInsertions[0]!.likerId)).toEqual(LIKER_A);
-
-    expect(back!.likeRecordDeletions).toHaveLength(1);
-    expect(back!.likeRecordDeletions[0]!.targetPostId).toBe('post-old');
-    expect(new Uint8Array(back!.likeRecordDeletions[0]!.likerId)).toEqual(LIKER_C);
-    expect(back!.likeRecordDeletions[0]!.appliedAtBlock).toBe(2);
   });
 
-  it('an empty journal round-trips the new arrays as empty, not absent', async () => {
+  it('an empty journal round-trips likeRecordInsertions as empty, not absent', async () => {
     const s = await importAll();
     s.initDb(':memory:');
 
@@ -313,6 +211,5 @@ describe('like-records store (P2-D N2a)', () => {
 
     const back = s.getBlockJournal(12)!;
     expect(back.likeRecordInsertions).toEqual([]);
-    expect(back.likeRecordDeletions).toEqual([]);
   });
 });

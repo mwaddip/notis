@@ -1,6 +1,5 @@
-import type { PostType, Stump } from '@dagsocial/types';
-import type { PostStatus, StoredPost, PrunedTombstone } from '../store/posts.js';
-import { isStoredPost, isStump, isPrunedTombstone } from '../store/posts.js';
+import type { PostType } from '@dagsocial/types';
+import type { PostStatus, StoredPost } from '../store/posts.js';
 import type { Page, PostKey } from '../store/index.js';
 
 // ---------------------------------------------------------------------------
@@ -8,7 +7,7 @@ import type { Page, PostKey } from '../store/index.js';
 // ---------------------------------------------------------------------------
 
 export interface FeedServiceDeps {
-  getPost: (id: string) => StoredPost | Stump | PrunedTombstone | null;
+  getPost: (id: string) => StoredPost | null;
   queryPostsPage: (opts: {
     author?: Uint8Array;
     roots?: boolean;
@@ -52,35 +51,19 @@ export interface PostJson {
   likedByViewer: boolean | null;
 }
 
-export interface StumpJson {
-  kind: 'stump';
-  id: string;
-  author: string;
-  replyCount: number;
-  upvoteCount: number;
-  protocolVersion: number;
-  compactedAtBlockHeight: number;
-}
-
-export interface PrunedJson {
-  kind: 'pruned';
-  id: string;
-  author: string;
-  rootPostHash: string;
-  compactedAtBlockHeight: number;
-}
-
-// NODE_INTERFACE → "The JSON projection has a fourth arm where the store has three"
+// NODE_INTERFACE → "The JSON projection has two arms where the store has one shape"
 export interface WithdrawnJson {
   kind: 'withdrawn';
   id: string;
   author: string;
   parentRefs: string[];
   withdrawnAtHeight: number;
+  descendantCount: number;
+  authorVouchCount: number;
 }
 
 export interface ThreadResult {
-  post: PostJson | StumpJson | PrunedJson | WithdrawnJson | null;
+  post: PostJson | WithdrawnJson | null;
   ancestors: Array<PostJson | WithdrawnJson>;
   ancestorCount: number;
   descendants: Array<PostJson | WithdrawnJson>;
@@ -128,35 +111,19 @@ function postToJson(
   };
 }
 
-function stumpToJson(stump: Stump): StumpJson {
-  return {
-    kind: 'stump',
-    id: stump.rootPostHash,
-    author: Buffer.from(stump.authorId).toString('hex'),
-    replyCount: stump.replyCount,
-    upvoteCount: stump.upvoteCount,
-    protocolVersion: stump.protocolVersion,
-    compactedAtBlockHeight: stump.compactedAtBlockHeight,
-  };
-}
-
-function prunedToJson(tombstone: PrunedTombstone): PrunedJson {
-  return {
-    kind: 'pruned',
-    id: tombstone.id,
-    author: tombstone.author,
-    rootPostHash: tombstone.rootPostHash,
-    compactedAtBlockHeight: tombstone.compactedAtBlockHeight,
-  };
-}
-
-function withdrawnToJson(post: StoredPost): WithdrawnJson {
+function withdrawnToJson(
+  post: StoredPost,
+  descendantCount: number,
+  authorVouchCount: number,
+): WithdrawnJson {
   return {
     kind: 'withdrawn',
     id: post.id,
     author: Buffer.from(post.author).toString('hex'),
     parentRefs: post.parentRefs,
     withdrawnAtHeight: post.withdrawnAtHeight!,
+    descendantCount,
+    authorVouchCount,
   };
 }
 
@@ -184,10 +151,16 @@ export class FeedService {
     vouchCountCache: Map<string, number>,
     precomputedDescendantCount?: number,
   ): PostJson | WithdrawnJson {
-    if (post.withdrawnAtHeight !== null) return withdrawnToJson(post);
-    const likeCount = this.deps.getLikeRecordCount(post.id);
+    // NODE_INTERFACE → "The JSON projection has two arms where the store has
+    // one shape": both arms carry descendantCount and authorVouchCount under
+    // PostJson's definitions, the author counted once per distinct author per
+    // response across withdrawn and live rows in the same dedup.
     const descendantCount = precomputedDescendantCount ?? this.deps.getDescendantCount(post.id);
     const authorVouchCount = this.authorVouchCountFor(post.author, vouchCountCache);
+    if (post.withdrawnAtHeight !== null) {
+      return withdrawnToJson(post, descendantCount, authorVouchCount);
+    }
+    const likeCount = this.deps.getLikeRecordCount(post.id);
     return postToJson(
       post,
       likeCount,
@@ -209,15 +182,10 @@ export class FeedService {
     return count;
   }
 
-  getPost(id: string, viewer: Uint8Array | null = null): PostJson | StumpJson | PrunedJson | WithdrawnJson | null {
+  getPost(id: string, viewer: Uint8Array | null = null): PostJson | WithdrawnJson | null {
     const result = this.deps.getPost(id);
-    if (!result) return null;
-    if (isStoredPost(result)) {
-      return this.storedPostToJson(result, viewer, new Map());
-    }
-    if (isStump(result)) return stumpToJson(result);
-    if (isPrunedTombstone(result)) return prunedToJson(result);
-    return null;
+    if (result === null) return null;
+    return this.storedPostToJson(result, viewer, new Map());
   }
 
   queryPosts(opts: {
@@ -249,24 +217,7 @@ export class FeedService {
     viewer: Uint8Array | null = null,
   ): ThreadResult | null {
     const result = this.deps.getPost(id);
-    if (!result) return null;
-
-    if (isStump(result)) {
-      return {
-        post: stumpToJson(result),
-        ancestors: [], ancestorCount: 0,
-        descendants: [], descendantCount: 0,
-        next: null, pending: [], pendingCount: 0,
-      };
-    }
-    if (isPrunedTombstone(result)) {
-      return {
-        post: prunedToJson(result),
-        ancestors: [], ancestorCount: 0,
-        descendants: [], descendantCount: 0,
-        next: null, pending: [], pendingCount: 0,
-      };
-    }
+    if (result === null) return null;
 
     // NODE_INTERFACE → Posts: a withdrawn subject answers ancestors, descendants
     // and pending as a live subject does — the row, its topology and every

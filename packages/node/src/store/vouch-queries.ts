@@ -31,8 +31,10 @@ const VOUCH_TARGET_WHERE =
   `box_type = 'vouch' AND spent_at_block IS NULL AND json_extract(extra_data, '$.targetId') = ?`;
 
 // NODE_INTERFACE → Store Interface, getVouchCountForTarget(targetId) — feeds
-// PostJson.authorVouchCount and getVouchesForTargetPage's own count, which
-// delegates here so VOUCH_TARGET_WHERE's count is computed in one place.
+// PostJson.authorVouchCount, WithdrawnJson.authorVouchCount, the `?target=`
+// row's voucherVouchCount (routes/vouches.ts) and getVouchesForTargetPage's
+// own count, which delegates here so VOUCH_TARGET_WHERE's count is computed
+// in one place.
 export function getVouchCountForTarget(targetId: Uint8Array): number {
   const row = getDb()
     .prepare(`SELECT COUNT(*) AS cnt FROM utxo_boxes WHERE ${VOUCH_TARGET_WHERE}`)

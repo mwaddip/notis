@@ -2,8 +2,8 @@ import {
   computePostId,
   MEMPOOL_EXPIRY_BLOCKS,
 } from '@dagsocial/types';
-import type { PostCommit, Stump, KarmaBox, UtxoTransaction, AnyBox, ProtocolEra } from '@dagsocial/types';
-import type { StoredPost, PrunedTombstone } from '../store/posts.js';
+import type { PostCommit, KarmaBox, UtxoTransaction, AnyBox, ProtocolEra } from '@dagsocial/types';
+import type { StoredPost } from '../store/posts.js';
 import type { VerifierDeps, VerificationResult } from './verifier.js';
 import type { DecayCfg } from './decay.js';
 import type { IdentityRecord } from '../store/identity-records.js';
@@ -31,7 +31,7 @@ export interface PostServiceDeps {
   getKarmaBoxes: (owner: Uint8Array) => { value: bigint; id?: string }[];
   getIdentityRecord: (owner: Uint8Array) => IdentityRecord | null;
   decayCfg: DecayCfg;
-  getPost: (id: string) => StoredPost | Stump | PrunedTombstone | null;
+  getPost: (id: string) => StoredPost | null;
 
   insertPost: (postId: string, commit: PostCommit, content: string | null) => void;
 

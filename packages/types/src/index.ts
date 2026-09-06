@@ -137,9 +137,9 @@ export type {
 // Membership — TYPES_INTERFACE → Membership; ARCHITECTURE → Membership
 export { icbrt, membershipBar, memberLikesBar } from './membership.js';
 
-// Stumps / prune / post-withdrawal
-export { postWithdrawFieldBytes, pruneFieldBytes } from './stump.js';
-export type { PostWithdrawCommit, PruneCommit, Stump } from './stump.js';
+// Post-withdrawal
+export { postWithdrawFieldBytes } from './post-withdraw.js';
+export type { PostWithdrawCommit } from './post-withdraw.js';
 
 // Interlinks — TYPES_INTERFACE → Interlink vector
 export {

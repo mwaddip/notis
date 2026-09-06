@@ -1,5 +1,4 @@
 import { getDb } from './db.js';
-import { recordPrunedTopologyRows } from './journal.js';
 
 /**
  * Record a post's parent references and author at the block height where it was
@@ -14,27 +13,18 @@ export function insertBlockTopology(
   author: string,
   blockHeight: number,
 ): void {
-  const db = getDb();
-  db.transaction(() => {
-    db.prepare(
-      `INSERT OR IGNORE INTO block_topology (post_id, parent_refs, author, block_height)
-       VALUES (?, ?, ?, ?)`,
-    ).run(postId, JSON.stringify(parentRefs), author, blockHeight);
-    const edgeStmt = db.prepare(
-      `INSERT OR IGNORE INTO block_topology_parents (parent_id, post_id)
-       VALUES (?, ?)`,
-    );
-    for (const parentId of parentRefs) {
-      edgeStmt.run(parentId, postId);
-    }
-  })();
+  getDb().prepare(
+    `INSERT OR IGNORE INTO block_topology (post_id, parent_refs, author, block_height)
+     VALUES (?, ?, ?, ?)`,
+  ).run(postId, JSON.stringify(parentRefs), author, blockHeight);
 }
 
 /**
  * The consensus-recorded author of a post, or null when no applied block has
- * confirmed it. This — never `dag_posts.author` — is the authority for prune
- * authorization: it is derived from block data alone, so every node reaches the
- * same verdict with or without the post's content.
+ * confirmed it. This — never `dag_posts.author` — is the authority for like
+ * crediting and withdrawal authorization: it is derived from block data
+ * alone, so every node reaches the same verdict with or without the post's
+ * content.
  */
 export function getTopologyAuthor(postId: string): string | null {
   const row = getDb()
@@ -58,8 +48,9 @@ export function getTopologyAuthorBytes(postId: string): Uint8Array | null {
 
 /**
  * The block height at which a post was confirmed, or null when unconfirmed.
- * The maturity bind reads this to reject a prune whose root was confirmed in
- * the applying block itself (NODE_INTERFACE → Prune transactions).
+ * The maturity bind reads this to reject a withdrawal whose target was
+ * confirmed in the applying block itself (NODE_INTERFACE → Withdrawal
+ * transactions).
  */
 export function getTopologyHeight(postId: string): number | null {
   const row = getDb()
@@ -69,99 +60,12 @@ export function getTopologyHeight(postId: string): number | null {
 }
 
 /**
- * Walk the DAG downward from rootPostId using the block_topology table.
- * Returns the set of all post IDs in the subtree rooted at rootPostId
- * (including rootPostId itself).
- */
-// NODE_INTERFACE → "The topology's parent edges are a table of their own"
-export function getSubtreeTopology(rootPostId: string): Set<string> {
-  const db = getDb();
-  const rows = db.prepare(
-    `WITH RECURSIVE subtree AS (
-       SELECT post_id FROM block_topology WHERE post_id = ?
-       UNION
-       SELECT e.post_id FROM block_topology_parents e
-       JOIN subtree s ON e.parent_id = s.post_id
-     )
-     SELECT post_id FROM subtree`,
-  ).all(rootPostId) as Array<{ post_id: string }>;
-  return new Set(rows.map(r => r.post_id));
-}
-
-/**
  * Delete all block_topology entries recorded at the given block height.
  * Called during fork resolution to roll back topology from reverted blocks.
  */
 export function rollbackBlockTopology(blockHeight: number): void {
-  const db = getDb();
-  db.transaction(() => {
-    db.prepare(
-      `DELETE FROM block_topology_parents
-       WHERE post_id IN (SELECT post_id FROM block_topology WHERE block_height = ?)`,
-    ).run(blockHeight);
-    db.prepare(
-      `DELETE FROM block_topology WHERE block_height = ?`,
-    ).run(blockHeight);
-  })();
-}
-
-/**
- * Mark the named topology rows as pruned at the given height by the given
- * root, journalling each row's pre-image before overwriting it — inverse:
- * `restorePrunedTopology`. Rows survive a prune — `deletePostRows` touches
- * `dag_posts` and `dag_parent_refs` only (NODE_INTERFACE → Prune transactions
- * → "The prune's block deletes and marks, and settles nothing"). The two
- * columns are the tombstone's source.
- *
- * Every id in `postIds` is derived from `block_topology` itself
- * (`getSubtreeTopology`), so a row missing here is local corruption, not
- * input — this throws rather than skipping it, so the apply funnel's
- * totality catch rejects the block.
- */
-export function markPrunedTopology(
-  postIds: string[],
-  height: number,
-  rootPostHash: string,
-): void {
-  if (postIds.length === 0) return;
-  const db = getDb();
-  const selectStmt = db.prepare(
-    `SELECT pruned_at_height, pruned_root FROM block_topology WHERE post_id = ?`,
-  );
-  const updateStmt = db.prepare(
-    `UPDATE block_topology SET pruned_at_height = ?, pruned_root = ?
-     WHERE post_id = ?`,
-  );
-  const preImage: Array<{ postId: string; prunedAtHeight: number | null; prunedRoot: string | null }> = [];
-  for (const id of postIds) {
-    const row = selectStmt.get(id) as
-      | { pruned_at_height: number | null; pruned_root: string | null }
-      | undefined;
-    if (!row) {
-      throw new Error(`markPrunedTopology: no block_topology row for post ${id}`);
-    }
-    preImage.push({ postId: id, prunedAtHeight: row.pruned_at_height, prunedRoot: row.pruned_root });
-    updateStmt.run(height, rootPostHash, id);
-  }
-  recordPrunedTopologyRows(preImage);
-}
-
-/**
- * Write the journalled pre-image back exactly — the inverse of
- * `markPrunedTopology`, called by `revertBlock` through the journal's
- * `prunedTopologyRows` side-record (NODE_INTERFACE → Block Journal).
- */
-export function restorePrunedTopology(
-  rows: Array<{ postId: string; prunedAtHeight: number | null; prunedRoot: string | null }>,
-): void {
-  if (rows.length === 0) return;
-  const db = getDb();
-  const stmt = db.prepare(
-    `UPDATE block_topology SET pruned_at_height = ?, pruned_root = ?
-     WHERE post_id = ?`,
-  );
-  for (const row of rows) {
-    stmt.run(row.prunedAtHeight, row.prunedRoot, row.postId);
-  }
+  getDb().prepare(
+    `DELETE FROM block_topology WHERE block_height = ?`,
+  ).run(blockHeight);
 }
 

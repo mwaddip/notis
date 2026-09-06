@@ -2333,10 +2333,10 @@ describe('block-apply consensus schedules', () => {
 });
 
 // ---------------------------------------------------------------------------
-// H-3: consensus-carried post authorship + prune authorship binding
+// H-3: consensus-carried post authorship
 // ---------------------------------------------------------------------------
 
-describe('block-apply H-3 post authorship and prune binding', () => {
+describe('block-apply H-3 post authorship', () => {
   beforeEach(async () => {
     vi.resetModules();
   });
@@ -2539,10 +2539,11 @@ describe('block-apply funnel totality', () => {
   });
 
   // -----------------------------------------------------------------------
-  // Maturity bind: a prune in the same block the post is confirmed is rejected
+  // Maturity bind: a postWithdraw in the same block the post is confirmed is
+  // rejected
   // -----------------------------------------------------------------------
 
-  it('rejects a block carrying a post and a prune of that post (maturity bind)', async () => {
+  it('rejects a block carrying a post and a postWithdraw of that post (maturity bind)', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
@@ -2551,26 +2552,26 @@ describe('block-apply funnel totality', () => {
     const blockApply = await importBlockApply();
 
     const author = makeTestIdentity();
-    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'same-block prune');
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'same-block withdraw');
     posts.insertPost(postId, commit, content);
 
-    const pruneKarma = makeKarmaBox(100n, author.userId, 0, 99);
-    utxo.insertBox(pruneKarma);
-    const pruneTx: UtxoTransaction = {
-      inputs: [pruneKarma.id!],
+    const withdrawKarma = makeKarmaBox(100n, author.userId, 0, 99);
+    utxo.insertBox(withdrawKarma);
+    const withdrawTx: UtxoTransaction = {
+      inputs: [withdrawKarma.id!],
       outputs: [{ boxType: 'karma' as const, value: 100n, createdAtBlock: 0, owner: author.userId }],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
-      prune: { rootPostHash: postId },
+      postWithdraw: { postId },
     };
-    signTransaction(pruneTx, author.privateKey, hex(author.userId));
+    signTransaction(withdrawTx, author.privateKey, hex(author.userId));
 
-    const block = await makeApplicableBlock({ utxoTxs: [postTx, pruneTx] });
+    const block = await makeApplicableBlock({ utxoTxs: [postTx, withdrawTx] });
     const applied = blockApply.applyOrderingBlock(block);
     expect(applied).toBe(false);
   });
 
-  it('accepts a prune in a block AFTER the post was confirmed (maturity bind satisfied)', async () => {
+  it('accepts a postWithdraw in a block AFTER the post was confirmed (maturity bind satisfied)', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
@@ -2579,32 +2580,32 @@ describe('block-apply funnel totality', () => {
     const blockApply = await importBlockApply();
 
     const author = makeTestIdentity();
-    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'earlier-block prune');
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'earlier-block withdraw');
     posts.insertPost(postId, commit, content);
 
     const block1 = await makeApplicableBlock({ utxoTxs: [postTx] });
     expect(blockApply.applyOrderingBlock(block1)).toBe(true);
 
-    const pruneKarma = makeKarmaBox(100n, author.userId, 0, 98);
-    utxo.insertBox(pruneKarma);
-    const pruneTx: UtxoTransaction = {
-      inputs: [pruneKarma.id!],
+    const withdrawKarma = makeKarmaBox(100n, author.userId, 0, 98);
+    utxo.insertBox(withdrawKarma);
+    const withdrawTx: UtxoTransaction = {
+      inputs: [withdrawKarma.id!],
       outputs: [{ boxType: 'karma' as const, value: 100n, createdAtBlock: 0, owner: author.userId }],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
-      prune: { rootPostHash: postId },
+      postWithdraw: { postId },
     };
-    signTransaction(pruneTx, author.privateKey, hex(author.userId));
+    signTransaction(withdrawTx, author.privateKey, hex(author.userId));
 
-    const block2 = await makeApplicableBlock({ height: 2, utxoTxs: [pruneTx] });
+    const block2 = await makeApplicableBlock({ height: 2, utxoTxs: [withdrawTx] });
     expect(blockApply.applyOrderingBlock(block2)).toBe(true);
   });
 
-  // A root prunes once (NODE_INTERFACE → Prune transactions). Both fixtures
-  // name the rejection they expect: a bare `toBe(false)` on this cluster can
-  // pass for the wrong reason, as the H-3 note above records.
+  // A post may be withdrawn once (NODE_INTERFACE → Withdrawal transactions).
+  // Both fixtures name the rejection they expect: a bare `toBe(false)` on this
+  // cluster can pass for the wrong reason, as the H-3 note above records.
 
-  function makePruneTx(author: TestIdentity, rootPostHash: string, nonce: number, utxo: { insertBox: (b: KarmaBox) => void }): UtxoTransaction {
+  function makePostWithdrawTx(author: TestIdentity, postId: string, nonce: number, utxo: { insertBox: (b: KarmaBox) => void }): UtxoTransaction {
     const karma = makeKarmaBox(100n, author.userId, 0, nonce);
     utxo.insertBox(karma);
     const tx: UtxoTransaction = {
@@ -2612,74 +2613,39 @@ describe('block-apply funnel totality', () => {
       outputs: [{ boxType: 'karma' as const, value: 100n, createdAtBlock: 0, owner: author.userId }],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
-      prune: { rootPostHash },
+      postWithdraw: { postId },
     };
     signTransaction(tx, author.privateKey, hex(author.userId));
     return tx;
   }
 
-  it('rejects a block carrying a second prune of a root that is already a stump, and leaves the stump as it was', async () => {
+  it('rejects a block carrying a second withdrawal of an already-withdrawn post, in a later block', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
     const posts = await importPosts();
     const blockApply = await importBlockApply();
-    const stumps = await import('../../src/store/stumps.js');
 
     const author = makeTestIdentity();
-    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'pruned twice');
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'withdrawn twice');
     posts.insertPost(postId, commit, content);
     expect(blockApply.applyOrderingBlock(await makeApplicableBlock({ utxoTxs: [postTx] }))).toBe(true);
 
     expect(blockApply.applyOrderingBlock(
-      await makeApplicableBlock({ height: 2, utxoTxs: [makePruneTx(author, postId, 95, utxo)] }),
+      await makeApplicableBlock({ height: 2, utxoTxs: [makePostWithdrawTx(author, postId, 95, utxo)] }),
     )).toBe(true);
-    const first = stumps.getStump(postId);
-    expect(first).not.toBeNull();
+    expect(posts.isLivePost(posts.getPost(postId))).toBe(false);
 
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(blockApply.applyOrderingBlock(
-      await makeApplicableBlock({ height: 3, utxoTxs: [makePruneTx(author, postId, 94, utxo)] }),
+      await makeApplicableBlock({ height: 3, utxoTxs: [makePostWithdrawTx(author, postId, 94, utxo)] }),
     )).toBe(false);
-    expect(error.mock.calls.some(([m]) => String(m).includes('already pruned or unknown'))).toBe(true);
-    error.mockRestore();
-
-    expect(stumps.getStump(postId)).toEqual(first);
-  });
-
-  it('rejects a block carrying a prune whose root is a pruned descendant', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-    const utxo = await importUtxo();
-    const posts = await importPosts();
-    const blockApply = await importBlockApply();
-
-    const rootAuthor = makeTestIdentity();
-    const replyAuthor = makeTestIdentity();
-    const root = await seedPostTx(rootAuthor, 'the root');
-    posts.insertPost(root.postId, root.commit, root.content);
-    expect(blockApply.applyOrderingBlock(await makeApplicableBlock({ utxoTxs: [root.tx] }))).toBe(true);
-
-    const reply = await seedPostTx(replyAuthor, 'the reply', { parentRefs: [root.postId] }, rootAuthor.userId);
-    posts.insertPost(reply.postId, reply.commit, reply.content);
-    expect(blockApply.applyOrderingBlock(await makeApplicableBlock({ height: 2, utxoTxs: [reply.tx] }))).toBe(true);
-
-    expect(blockApply.applyOrderingBlock(
-      await makeApplicableBlock({ height: 3, utxoTxs: [makePruneTx(rootAuthor, root.postId, 93, utxo)] }),
-    )).toBe(true);
-    expect(posts.isPrunedTombstone(posts.getPost(reply.postId))).toBe(true);
-
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    expect(blockApply.applyOrderingBlock(
-      await makeApplicableBlock({ height: 4, utxoTxs: [makePruneTx(replyAuthor, reply.postId, 92, utxo)] }),
-    )).toBe(false);
-    expect(error.mock.calls.some(([m]) => String(m).includes('already pruned or unknown'))).toBe(true);
+    expect(error.mock.calls.some(([m]) => String(m).includes('already-withdrawn or unknown'))).toBe(true);
     error.mockRestore();
   });
 
-  it('rejects a block whose prune input owner is not the root topology author', async () => {
+  it('rejects a block whose postWithdraw input owner is not the post topology author', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
@@ -2689,28 +2655,28 @@ describe('block-apply funnel totality', () => {
 
     const author = makeTestIdentity();
     const stranger = makeTestIdentity();
-    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'foreign-prune');
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'foreign-withdraw');
     posts.insertPost(postId, commit, content);
 
     expect(blockApply.applyOrderingBlock(await makeApplicableBlock({ utxoTxs: [postTx] }))).toBe(true);
 
-    // The stranger builds a prune for the author's post.
+    // The stranger builds a withdrawal for the author's post.
     const strangerKarma = makeKarmaBox(100n, stranger.userId, 0, 97);
     utxo.insertBox(strangerKarma);
-    const pruneTx: UtxoTransaction = {
+    const withdrawTx: UtxoTransaction = {
       inputs: [strangerKarma.id!],
       outputs: [{ boxType: 'karma' as const, value: 100n, createdAtBlock: 0, owner: stranger.userId }],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
-      prune: { rootPostHash: postId },
+      postWithdraw: { postId },
     };
-    signTransaction(pruneTx, stranger.privateKey, hex(stranger.userId));
+    signTransaction(withdrawTx, stranger.privateKey, hex(stranger.userId));
 
-    const block2 = await makeApplicableBlock({ height: 2, utxoTxs: [pruneTx] });
+    const block2 = await makeApplicableBlock({ height: 2, utxoTxs: [withdrawTx] });
     expect(blockApply.applyOrderingBlock(block2)).toBe(false);
   });
 
-  it('rejects a block whose prune root has no topology author (unconfirmed root)', async () => {
+  it('rejects a block whose postWithdraw target has no topology author (unconfirmed post)', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
@@ -2718,132 +2684,21 @@ describe('block-apply funnel totality', () => {
     const blockApply = await importBlockApply();
 
     const author = makeTestIdentity();
-    const unconfirmedRoot = 'dd'.repeat(32);
+    const unconfirmedPost = 'dd'.repeat(32);
 
     const karma = makeKarmaBox(100n, author.userId, 0, 96);
     utxo.insertBox(karma);
-    const pruneTx: UtxoTransaction = {
+    const withdrawTx: UtxoTransaction = {
       inputs: [karma.id!],
       outputs: [{ boxType: 'karma' as const, value: 100n, createdAtBlock: 0, owner: author.userId }],
       signatures: {},
       protocolVersion: PROTOCOL_VERSION,
-      prune: { rootPostHash: unconfirmedRoot },
+      postWithdraw: { postId: unconfirmedPost },
     };
-    signTransaction(pruneTx, author.privateKey, hex(author.userId));
+    signTransaction(withdrawTx, author.privateKey, hex(author.userId));
 
-    const block = await makeApplicableBlock({ utxoTxs: [pruneTx] });
+    const block = await makeApplicableBlock({ utxoTxs: [withdrawTx] });
     expect(blockApply.applyOrderingBlock(block)).toBe(false);
-  });
-
-  // -----------------------------------------------------------------------
-  // An outer prune absorbs the stumps inside its set (NODE_INTERFACE →
-  // "The prune's block deletes and marks, and settles nothing").
-  // -----------------------------------------------------------------------
-
-  // R0 (alice) ← R1 (bob) ← X (carol); dave likes R1 before it is pruned, so
-  // the inner stump carries a non-zero upvoteCount and the absorbed sum is
-  // pinned rather than 0 + 0. Blocks: 1 R0, 2 R1, 3 X + the like on R1
-  // (already confirmed, block 2), 4 bob prunes R1.
-  async function buildAbsorbScenario(
-    utxo: Awaited<ReturnType<typeof importUtxo>>,
-    posts: Awaited<ReturnType<typeof importPosts>>,
-    blockApply: Awaited<ReturnType<typeof importBlockApply>>,
-  ) {
-    const alice = makeTestIdentity();
-    const bob = makeTestIdentity();
-    const carol = makeTestIdentity();
-    const dave = makeTestIdentity();
-
-    const root = await seedPostTx(alice, 'absorb root R0');
-    posts.insertPost(root.postId, root.commit, root.content);
-    expect(blockApply.applyOrderingBlock(await makeApplicableBlock({ utxoTxs: [root.tx] }))).toBe(true);
-
-    const reply1 = await seedPostTx(bob, 'absorb reply R1', { parentRefs: [root.postId] }, alice.userId);
-    posts.insertPost(reply1.postId, reply1.commit, reply1.content);
-    expect(blockApply.applyOrderingBlock(
-      await makeApplicableBlock({ height: 2, utxoTxs: [reply1.tx] }),
-    )).toBe(true);
-
-    const reply2 = await seedPostTx(carol, 'absorb reply X', { parentRefs: [reply1.postId] }, bob.userId);
-    posts.insertPost(reply2.postId, reply2.commit, reply2.content);
-    const daveKarma = makeKarmaBox(100n, dave.userId, 0, 601);
-    utxo.insertBox(daveKarma);
-    const likeTx = makeLikeTx(dave, daveKarma, reply1.postId, bob.userId);
-    expect(blockApply.applyOrderingBlock(
-      await makeApplicableBlock({ height: 3, utxoTxs: [reply2.tx, likeTx] }),
-    )).toBe(true);
-
-    expect(blockApply.applyOrderingBlock(
-      await makeApplicableBlock({ height: 4, utxoTxs: [makePruneTx(bob, reply1.postId, 602, utxo)] }),
-    )).toBe(true);
-
-    return { alice, bob, carol, dave, root, reply1, reply2 };
-  }
-
-  it('an outer prune absorbs the inner stump', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-    const utxo = await importUtxo();
-    const posts = await importPosts();
-    const blockApply = await importBlockApply();
-    const stumps = await import('../../src/store/stumps.js');
-
-    const { alice, root, reply1, reply2 } = await buildAbsorbScenario(utxo, posts, blockApply);
-
-    const innerStump = stumps.getStump(reply1.postId);
-    expect(innerStump).not.toBeNull();
-    expect(innerStump!.upvoteCount).toBe(1);
-
-    // Block 5: alice prunes R0 — absorbs R1's stump.
-    expect(blockApply.applyOrderingBlock(
-      await makeApplicableBlock({ height: 5, utxoTxs: [makePruneTx(alice, root.postId, 603, utxo)] }),
-    )).toBe(true);
-
-    expect(stumps.getStump(reply1.postId)).toBeNull();
-    const outerStump = stumps.getStump(root.postId);
-    expect(outerStump).not.toBeNull();
-    expect(outerStump!.replyCount).toBe(2);
-    expect(outerStump!.upvoteCount).toBe(1);
-
-    const tombstone = posts.getPost(reply2.postId);
-    expect(posts.isPrunedTombstone(tombstone)).toBe(true);
-    expect((tombstone as { rootPostHash: string }).rootPostHash).toBe(root.postId);
-  });
-
-  it('revert restores the absorbed stump', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-    const utxo = await importUtxo();
-    const posts = await importPosts();
-    const blockApply = await importBlockApply();
-    const stumps = await import('../../src/store/stumps.js');
-
-    const { alice, root, reply1, reply2 } = await buildAbsorbScenario(utxo, posts, blockApply);
-    const innerStumpBefore = stumps.getStump(reply1.postId);
-    expect(innerStumpBefore).not.toBeNull();
-
-    expect(blockApply.applyOrderingBlock(
-      await makeApplicableBlock({ height: 5, utxoTxs: [makePruneTx(alice, root.postId, 603, utxo)] }),
-    )).toBe(true);
-    expect(stumps.getStump(root.postId)).not.toBeNull();
-
-    const forkResolution = await import('../../src/services/fork-resolution.js');
-    forkResolution.revertBlock(5);
-
-    expect(stumps.getStump(reply1.postId)).toEqual(innerStumpBefore);
-    expect(stumps.getStump(root.postId)).toBeNull();
-
-    const afterRevert = posts.getPost(reply2.postId);
-    expect(posts.isPrunedTombstone(afterRevert)).toBe(true);
-    expect((afterRevert as { rootPostHash: string }).rootPostHash).toBe(reply1.postId);
-
-    const topoRow = db.getDb()
-      .prepare('SELECT pruned_at_height, pruned_root FROM block_topology WHERE post_id = ?')
-      .get(reply2.postId) as { pruned_at_height: number | null; pruned_root: string | null };
-    expect(topoRow.pruned_at_height).toBe(4);
-    expect(topoRow.pruned_root).toBe(reply1.postId);
   });
 
   // -----------------------------------------------------------------------
@@ -3190,67 +3045,4 @@ describe('the step-2 header version check', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// A prune applied in a block leaves a stump carrying the block's era — its
-// compaction height is the block's (ARCHITECTURE → Protocol Versioning).
-// ---------------------------------------------------------------------------
-describe('a prune stamps its stump with the block era', () => {
-  const SCHEDULE = [{ version: 1, fromHeight: 0 }, { version: 2, fromHeight: 2 }];
-
-  beforeEach(() => {
-    vi.doMock('../../src/config.js', async () => {
-      const actual = await vi.importActual<typeof import('../../src/config.js')>(
-        '../../src/config.js',
-      );
-      return {
-        ...actual,
-        config: Object.freeze({ ...actual.config, protocolVersionSchedule: SCHEDULE }),
-      };
-    });
-    vi.resetModules();
-  });
-
-  afterEach(() => {
-    vi.doUnmock('../../src/config.js');
-  });
-
-  it('a prune applied in a block at era 2 leaves a stump declaring 2', async () => {
-    const db = await importDb();
-    db.initDb(':memory:');
-    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
-    const utxo = await importUtxo();
-    const blockApply = await importBlockApply();
-
-    const rootAuthor = makeTestIdentity();
-
-    // Block 1 (era 1) confirms the root post.
-    const { tx: postTx, postId } = await seedPostTx(rootAuthor, 'root');
-    expect(
-      blockApply.applyOrderingBlock(await makeApplicableBlock({ utxoTxs: [postTx], height: 1 })),
-    ).toBe(true);
-
-    // Block 2 (era 2) prunes it. The prune is by the root topology author, and
-    // its transaction rides the block's era.
-    const pruneKarma = makeKarmaBox(10n, rootAuthor.userId, 1, 88);
-    utxo.insertBox(pruneKarma);
-    const pruneTx: UtxoTransaction = {
-      inputs: [pruneKarma.id!],
-      outputs: [
-        { boxType: 'karma', value: pruneKarma.value, createdAtBlock: pruneKarma.createdAtBlock, owner: rootAuthor.userId } as never,
-      ],
-      signatures: {},
-      protocolVersion: 2,
-      prune: { rootPostHash: postId },
-    };
-    signTransaction(pruneTx, rootAuthor.privateKey, hex(rootAuthor.userId));
-    const block2 = await makeApplicableBlock({ utxoTxs: [pruneTx], height: 2, protocolVersion: 2 });
-    expect(blockApply.applyOrderingBlock(block2)).toBe(true);
-
-    // The stump carries the block's era.
-    const { getStump } = await import('../../src/store/stumps.js');
-    const stump = getStump(postId);
-    expect(stump).not.toBeNull();
-    expect(stump!.protocolVersion).toBe(2);
-  });
-});
 
