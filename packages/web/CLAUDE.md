@@ -19,8 +19,8 @@ infer weights from a neighbouring package's.
 
 ## What Notis is
 An invite-only decentralized social network on a **dual-ledger** design: a **Posts DAG** and a **UTXO
-ledger** (karma + credits); every post, like and prune is a transaction on the UTXO ledger, and a
-pruned subtree leaves a **stump**. TypeScript, pnpm workspaces, Node ≥ 22.
+ledger** (karma + credits); every post, like and withdrawal is a transaction on the UTXO ledger, and
+withdrawal is the author's only act over a post. TypeScript, pnpm workspaces, Node ≥ 22.
 
 ## This package (`@dagsocial/web`)
 The **browser client**. Built in slices: the **read surface** (the feed, threads, a tiling workspace of
@@ -79,9 +79,9 @@ old poll, and re-reads every open surface with the new `viewer`.
   you rendered** — rows get filtered out of a page and the count lies.
 - **Withdrawn is never "deleted."** It keeps its identity and its replies hang off it. Hiding it inside
   a thread orphans them.
-- **A stump and a tombstone reach the screen without ever being in the feed**, because an arrangement
-  is persisted as post ids and a thread open last session may have been pruned since. Render it; it is
-  not an error.
+- **A withdrawn post reaches the screen as a thread's root without ever being in the feed**, because an
+  arrangement is persisted as post ids and a thread open last session may have been withdrawn since.
+  Render it; it is not an error.
 
 **From `HOUSE_STYLE.md` — the ones this surface will collide with:**
 - **Nothing moves that the reader did not ask to move.** No polling, no live counts, no injected
@@ -142,7 +142,7 @@ that stack. On testnet the reader is a resident: the marks are absent and the au
 invites row say why.
 
 **A withdrawal is exercisable on testnet once the deployed node answers `expiresAtHeight` on
-`POST /posts/:id/withdraw`** and carries `parentRefs` on the withdrawn view (`NODE_INTERFACE → Pruning`).
+`POST /posts/:id/withdraw`** and carries `parentRefs` on the withdrawn view (`NODE_INTERFACE → Withdrawal`).
 Against an older node the client ends the flight in the client rejection *"the node answered without an
 expiry height"* and records no entry — it tracks nothing it cannot expire.
 
