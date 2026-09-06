@@ -19,15 +19,15 @@ context — read it and the linked docs before touching code.
 7. Your task's spec in `../../docs/specs/` (e.g. `2026-08-01-node-value-integrity.md`).
 
 ## What Notis is
-An invite-only decentralized social network on a **dual-ledger** design: a **Posts DAG** (author-sovereign,
-prunable content) and a **UTXO ledger** (non-tradeable **karma** + tradeable **credits**); every post,
-like and prune is a transaction on the UTXO ledger, and a pruned subtree leaves a **stump**.
+An invite-only decentralized social network on a **dual-ledger** design: a **Posts DAG** (author-sovereign
+content) and a **UTXO ledger** (non-tradeable **karma** + tradeable **credits**); every post,
+like and withdrawal is a transaction on the UTXO ledger, and withdrawal is the author's only act over a post.
 Consensus is single-phase PoW — validator-produced ordering blocks; posts and likes ride
 them as ordinary transactions. TypeScript, pnpm workspaces, Node.js ≥ 22.
 
 ## This package (`@dagsocial/node`)
 The full node: Express HTTP API, PoW verifier, SQLite store, UTXO engine, block creator + application,
-per-block like settlement, decay, invites/vouch, faucet, prune settlement, AVL+ state, and the demo UI
+per-block like settlement, decay, invites/vouch, faucet, withdrawal, AVL+ state, and the demo UI
 (`public/index.html`).
 
 - **Owns:** `src/server.ts`, `src/routes/*`, `src/services/*`, `src/store/*`, `src/state/*` (AVL+),
