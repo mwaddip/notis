@@ -18,6 +18,7 @@ import { contentHashHex } from '../src/integrity';
 
 const ME = 'aa'.repeat(32);
 const X = 'bb'.repeat(32); // another author, present in the feed
+const X_VOUCHES = 7; // X's count carried by every feed row — distinct from the target read (3), so the title's source is provable
 const SIG = 'cc'.repeat(64);
 
 let idState: { pubKeyHex: string; locked: boolean } | null;
@@ -36,7 +37,7 @@ function post(id: string, author: string): PostJson {
   return {
     id, content: 'hi', contentHash: contentHashHex('hi'), author, parentRefs: [],
     protocolVersion: 1, type: 'regular', status: 'confirmed', blockHeight: 10, blockIndex: 0,
-    blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorVouchCount: 0, likedByViewer: null,
+    blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorVouchCount: X_VOUCHES, likedByViewer: null,
   };
 }
 function statusResult(): StatusResult {
@@ -155,9 +156,19 @@ describe('the mark on a feed card', () => {
     expect(h.feed.querySelector('.vmark')).toBeNull();
     await h.drive.loadMembershipState();
     await flush();
-    // Now a member: the + mark on X's card, and the count read for the cache.
+    // Now a member: the + mark on X's card.
     expect(h.feed.querySelector('.vmark.plus')).not.toBeNull();
-    expect(targetReads).toContain(X);
+  });
+
+  it("the mark's title is the row's count, set on a page load with no GET /vouches?target=", async () => {
+    const h = harness();
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    await flush();
+    // The count arrived with the feed row (authorVouchCount = 7), so the title is
+    // set with no per-author read — never the 3 the target endpoint would answer.
+    expect(h.feed.querySelector('.vmark.plus')?.getAttribute('title')).toBe(`${X_VOUCHES} vouches`);
+    expect(targetReads).not.toContain(X);
   });
 });
 
@@ -204,6 +215,9 @@ describe('vouch from the mark', () => {
     expect(h.drive.vouched.has(X)).toBe(true);
     expect(h.drive.ledger.all().some((e) => e.kind === 'vouch')).toBe(false); // landed, entry gone
     expect(h.feed.querySelector('.vmark.check:not(.pending)')).not.toBeNull();
+    // The landing re-reads the node's count for the landed author — exactly one
+    // GET /vouches?target=, and only for X.
+    expect(targetReads).toEqual([X]);
   });
 });
 

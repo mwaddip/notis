@@ -396,7 +396,7 @@ export class App {
       renderFeedInto(this.feedEl, this.state.feed, this.handlers, this.ctx());
       this.feedEl.scrollTop = top;
     });
-    this.ensureCountsForRendered();
+    this.applyCountTitles();
   }
 
   private renderPanes(): void {
@@ -419,7 +419,7 @@ export class App {
       const top = uid ? scrolls.get(uid) : undefined;
       if (body && top != null) body.scrollTop = top;
     });
-    this.ensureCountsForRendered();
+    this.applyCountTitles();
   }
 
   private locateRegion(uid: number): { region: Region; ci: number } | null {
@@ -452,7 +452,7 @@ export class App {
     oldEl.replaceWith(newEl);
     const newBody = newEl.querySelector<HTMLElement>('.region-body');
     if (newBody) newBody.scrollTop = top;
-    this.ensureCountsForRendered();
+    this.applyCountTitles();
   }
 
   /** Re-render every region currently focused on a given window. */
@@ -471,12 +471,17 @@ export class App {
   }
 
   // -------------------------------------------------------------------------
-  // Post index — for a feed reply's one-line parent reference
+  // Row intake — the post index (author lookup for a pane's spine) and the
+  // vouch-count cache: every PostJson row carries its author's count, so the
+  // cache fills as pages land, no per-author read (WEB_INTERFACE → The identity display).
   // -------------------------------------------------------------------------
 
   private indexRows(rows: Array<PostJson | Tombstone | null>): void {
     for (const row of rows) {
-      if (row && !('kind' in row)) this.state.posts.set(row.id, row);
+      if (row && !('kind' in row)) {
+        this.state.posts.set(row.id, row);
+        this.vouchCounts.set(row.author, row.authorVouchCount);
+      }
     }
   }
 
@@ -528,15 +533,7 @@ export class App {
     } catch (e) {
       feed.error = msg(e);
     }
-    // A region's ↻ re-reads the vouch count for the authors it re-renders.
-    this.clearCountsFor(feed.posts.map((p) => p.author));
     this.renderFeed();
-  }
-
-  /** Drop the cached vouch count for these authors, so the next render re-reads
-   *  it (WEB_INTERFACE → The identity display: re-read on the region's ↻). */
-  private clearCountsFor(keys: Iterable<string>): void {
-    for (const k of keys) this.vouchCounts.delete(k);
   }
 
   private async loadOlder(): Promise<void> {
@@ -686,8 +683,6 @@ export class App {
     } catch (e) {
       t.error = msg(e);
     }
-    // The ↻ re-reads the vouch count for the authors in this thread.
-    if (t.root) this.clearCountsFor(flattenThread(t.root, t.descendants).map((n) => n.row).filter((r): r is PostJson => !('kind' in r)).map((r) => r.author));
     this.renderRegionsFor(id);
   }
 
@@ -1235,34 +1230,24 @@ export class App {
     return held;
   }
 
-  // ---- the count cache: read once per distinct author on a rendered page, kept
-  // for the session, the title set on the live node when the read lands so a mark
-  // is never withheld for want of a tooltip (WEB_INTERFACE → The identity display).
+  // ---- the count cache: every rendered row carries its author's count, so the
+  // cache fills as pages land (indexRows) and applyCountTitles sets the title on
+  // the live node — no per-author read on a render. One read survives, at the
+  // reader's own vouch or unvouch landing (readOneCount), so their own change
+  // stays the node's (WEB_INTERFACE → The identity display).
 
-  private ensureCountsForRendered(): void {
-    if (!this.isMember()) return;
-    const keys = new Set<string>();
-    for (const n of document.querySelectorAll<HTMLElement>('[data-mark-author]')) {
-      const k = n.dataset['markAuthor'];
-      if (k !== undefined) keys.add(k);
+  /** The one per-author count read that survives the row-borne cache: after the
+   *  reader's own vouch or unvouch lands, the node's count for that author changed,
+   *  so re-read it before the mark re-renders, never a client-side ±1. A failed
+   *  read clears the entry, so the title is empty rather than the stale count
+   *  (WEB_INTERFACE → The identity display). */
+  private async readOneCount(key: string): Promise<void> {
+    try {
+      const res = await this.client.vouchesByTarget(key, { limit: 1 });
+      this.vouchCounts.set(key, res.count);
+    } catch {
+      this.vouchCounts.delete(key);
     }
-    this.applyCountTitles();
-    const uncached = [...keys].filter((k) => !this.vouchCounts.has(k));
-    if (uncached.length > 0) void this.readCounts(uncached);
-  }
-
-  private async readCounts(keys: string[]): Promise<void> {
-    await Promise.all(
-      keys.map(async (k) => {
-        try {
-          const res = await this.client.vouchesByTarget(k, { limit: 1 });
-          this.vouchCounts.set(k, res.count);
-        } catch {
-          // A failed count read leaves the title empty rather than wrong.
-        }
-      }),
-    );
-    this.applyCountTitles();
   }
 
   /** Set the count title on every live mark — a tooltip, not motion, so it lands
@@ -1402,8 +1387,6 @@ export class App {
       d.endorsersNext = endorsers.next !== null;
       this.bumpTip(karma.height); // an author read carries the node's tip too
       this.vouchCounts.set(key, endorsers.count); // the subject's count, re-read on the window's ↻
-      this.clearCountsFor(endorsers.vouches.map((v) => v.voucherId)); // the endorsers' counts too
-
     } catch {
       return; // leave the window's last data; the ↻ retries
     }
@@ -1627,7 +1610,7 @@ export class App {
         this.ledger.remove(entry.txId);
         this.optimisticVouches.delete(entry.postId);
         if (outcome === 'expired') this.reportVouch(entry.postId, 'a vouch expired before any block took it');
-        this.vouchCounts.delete(entry.postId); // the count changed; re-read on the next render
+        await this.readOneCount(entry.postId); // the reader's own vouch landed — re-read the node's count for this author
         touchedAuthors.add(entry.postId);
         continue;
       }
@@ -1637,7 +1620,7 @@ export class App {
         this.ledger.remove(entry.txId);
         const d = this.authorData.get(entry.postId);
         if (d) d.flight = null; // the flight ended; the escrow gate now holds the mark
-        this.vouchCounts.delete(entry.postId);
+        await this.readOneCount(entry.postId); // the reader's own unvouch landed — re-read the node's count
         touchedAuthors.add(entry.postId);
         continue;
       }
