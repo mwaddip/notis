@@ -105,18 +105,6 @@ header .spacer { flex: 1 1 auto; }
    without implying the post is gone — it is not a withdrawal. */
 .card-absent { font-style: italic; color: var(--inkMute); font-size: 14px; }
 
-/* One-line reference to a reply's parent, so a reply is legible as an answer to
-   something without pulling its ancestor into the feed. */
-.parentref { display: flex; align-items: baseline; gap: 6px; margin-bottom: 8px;
-             font-size: 12px; color: var(--inkMute); }
-.parentref .g { flex: 0 0 auto; }
-/* The label never breaks or gives up width — the excerpt is the only item that
-   shrinks, so a long parent excerpt ellipses instead of pushing the row taller. */
-.parentref .lbl { flex: 0 0 auto; white-space: nowrap; }
-.parentref .hex { font-family: var(--mono); font-size: 11px; color: var(--inkMute); flex: 0 0 auto; }
-.parentref .excerpt { flex: 1 1 auto; min-width: 0; overflow: hidden;
-                      text-overflow: ellipsis; white-space: nowrap; }
-
 /* A fixed line box so what the row contains cannot change the card's height. */
 .meta { display: flex; align-items: baseline; gap: 12px; margin-top: 8px;
         height: 22px; font-size: 12.5px; color: var(--inkMute); }

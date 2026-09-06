@@ -62,7 +62,7 @@ function postResult(over: Partial<PostJson>): PostResult {
   return {
     id: 'p1', content: 'x', contentHash: '00'.repeat(32), author: 'aa'.repeat(32), parentRefs: [],
     protocolVersion: 1, type: 'regular', status: 'confirmed', blockHeight: 5050, blockIndex: 0,
-    blockCreatedAt: 0, likeCount: 0, likedByViewer: null, confirmedAuthor: 'aa'.repeat(32), ...over,
+    blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorVouchCount: 0, likedByViewer: null, confirmedAuthor: 'aa'.repeat(32), ...over,
   };
 }
 

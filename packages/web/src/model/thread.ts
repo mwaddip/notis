@@ -1,4 +1,5 @@
 import type { FeedRow, PostJson, Tombstone } from '../api/dto';
+import { isTombstone } from '../api/dto';
 
 // Build the render order of a thread from the flat descendants the API returns.
 // Subtrees are laminar (one parent per post), so this is a plain tree walk.
@@ -6,7 +7,7 @@ import type { FeedRow, PostJson, Tombstone } from '../api/dto';
 export interface ThreadNode {
   row: FeedRow;
   depth: number;
-  replyCount: number; // size of this node's own subtree, among loaded rows
+  replyCount: number; // a PostJson row's own descendantCount; a withdrawn row's loaded subtree
 }
 
 function parentOf(row: FeedRow): string | undefined {
@@ -17,9 +18,10 @@ function parentOf(row: FeedRow): string | undefined {
 }
 
 /** Pre-order flatten of the root and its loaded descendants, with depth (capped
- *  in the view) and each node's loaded-subtree size. A descendant whose parent
- *  is not among the loaded rows attaches under the root, so nothing is dropped
- *  while a thread is still paging. */
+ *  in the view) and each node's reply count — a PostJson row's own descendantCount,
+ *  a withdrawn row's loaded subtree. A descendant whose parent is not among the
+ *  loaded rows attaches under the root, so nothing is dropped while a thread is
+ *  still paging. */
 export function flattenThread(root: PostJson | Tombstone, descendants: FeedRow[]): ThreadNode[] {
   const rootId = root.id;
   const known = new Set<string>([rootId]);
@@ -45,7 +47,11 @@ export function flattenThread(root: PostJson | Tombstone, descendants: FeedRow[]
     return n;
   };
   const walk = (row: FeedRow | (PostJson | Tombstone), depth: number): void => {
-    out.push({ row: row as FeedRow, depth, replyCount: subtreeSize(row.id) });
+    // A PostJson row carries the node's own descendantCount (the whole subtree,
+    // pending included); a withdrawn row's shape has no count, so its loaded
+    // subtree stands (WEB_INTERFACE → What the feed reads).
+    const replyCount = isTombstone(row) ? subtreeSize(row.id) : row.descendantCount;
+    out.push({ row: row as FeedRow, depth, replyCount });
     for (const kid of children.get(row.id) ?? []) walk(kid, depth + 1);
   };
   walk(root, 0);

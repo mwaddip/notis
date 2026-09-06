@@ -13,7 +13,7 @@ function pending(content: string): PostJson {
   return {
     id: 'local1', content, contentHash: contentHashHex(content), author: PUB, parentRefs: [],
     protocolVersion: 0, type: 'regular', status: 'pending', blockHeight: null, blockIndex: null,
-    blockCreatedAt: null, likeCount: 0, likedByViewer: null,
+    blockCreatedAt: null, likeCount: 0, descendantCount: 0, authorVouchCount: 0, likedByViewer: null,
   };
 }
 const stageText = (flight: Flight): string => card(pending('x'), { flight }).querySelector('.stage')?.textContent ?? '';
@@ -22,7 +22,7 @@ function confirmed(author: string): PostJson {
   return {
     id: 'p1', content: 'hello', contentHash: contentHashHex('hello'), author, parentRefs: [],
     protocolVersion: 1, type: 'regular', status: 'confirmed', blockHeight: 6001, blockIndex: 0,
-    blockCreatedAt: 0, likeCount: 0, likedByViewer: null,
+    blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorVouchCount: 0, likedByViewer: null,
   };
 }
 
@@ -54,6 +54,25 @@ describe('card — · you', () => {
     expect(own.querySelector('.you')?.textContent).toBe('· you');
     expect(card(confirmed('bb'.repeat(32)), { you: false }).querySelector('.you')).toBeNull();
     expect(card(confirmed(PUB)).querySelector('.you')).toBeNull(); // no opt → no mark
+  });
+});
+
+describe('card — the reply count is the row\'s', () => {
+  it('the row\'s descendantCount reads "2 replies" / "1 reply"', () => {
+    const two = { ...confirmed(PUB), descendantCount: 2 };
+    expect(card(two, { replyCount: two.descendantCount }).querySelector('.replies')?.textContent).toBe('2 replies');
+    const one = { ...confirmed(PUB), descendantCount: 1 };
+    expect(card(one, { replyCount: one.descendantCount }).querySelector('.replies')?.textContent).toBe('1 reply');
+  });
+
+  it('a descendantCount of 0 renders no count line', () => {
+    const zero = { ...confirmed(PUB), descendantCount: 0 };
+    expect(card(zero, { replyCount: zero.descendantCount }).querySelector('.replies')).toBeNull();
+  });
+
+  it('a withdrawn card carries no count — ?', () => {
+    const tomb = { kind: 'withdrawn' as const, id: 'p1', author: PUB, withdrawnAtHeight: 10, parentRefs: [] };
+    expect(card(tomb, { replyCount: null }).querySelector('.replies .n')?.textContent).toBe('?');
   });
 });
 

@@ -18,13 +18,6 @@ export interface Mark {
   reason?: string;       // a disabled mark's title, in place of the count
 }
 
-export interface ParentRef {
-  id: string;
-  authorKey?: string | undefined; // resolved only when the parent is in view
-  excerpt?: string | undefined;
-  mark?: Mark | null;             // the parent author's mark; the prefix stays text
-}
-
 /** A client submission's flight, driving the stage line on its own pending card. */
 export interface Flight {
   stage: FlightStage;
@@ -37,8 +30,7 @@ export interface CardOpts {
   open?: boolean;                        // this thread is open in a pane
   root?: boolean;                        // the pane's own root
   depth?: number;                        // indentation inside a thread
-  replyCount?: number | null;            // null → '?' (a feed row does not know)
-  parentRef?: ParentRef | null;          // a feed reply's one-line reference
+  replyCount?: number | null;            // the row's descendantCount; null → '?' (a submission, a withdrawn row)
   onOpen?: ((id: string) => void) | null; // strip handler; null → no open control
   // Write surface (panes only) — absent on a read-only feed card.
   flight?: Flight | null;                // the stage line for the client's own submission
@@ -186,8 +178,9 @@ export function displayMark(mark: Mark | null): HTMLElement | null {
 
 function replyCountNode(count: number | null): HTMLElement | null {
   if (count === null) {
-    // Honest: the feed row carries no descendant count, so '?'. Finding out
-    // would cost a thread fetch per card.
+    // '?' remains on two rows without a count: the reader's own submission (no
+    // node row until it lands) and a withdrawn card (its shape carries no count)
+    // (WEB_INTERFACE → What the feed reads).
     const r = el('span', 'replies');
     r.appendChild(el('span', 'n', '?'));
     r.appendChild(document.createTextNode(' replies'));
@@ -209,22 +202,6 @@ function likeNode(likeCount: number): HTMLElement | null {
   l.appendChild(el('span', 'n', String(likeCount)));
   l.appendChild(document.createTextNode(' like'));
   return l;
-}
-
-function parentRefNode(ref: ParentRef, opts: CardOpts): HTMLElement {
-  const line = el('div', 'parentref');
-  line.appendChild(el('span', 'g', '↳'));
-  line.appendChild(el('span', 'lbl', 'in reply to'));
-  if (ref.authorKey) {
-    // The prefix stays text here — the tightest space after a title bar — so the
-    // mark's ✓ is the only way into the parent author's window, and its + still
-    // vouches (WEB_INTERFACE → The identity display).
-    line.appendChild(el('span', 'hex', shortHex(ref.authorKey, 10)));
-    if (ref.mark) line.appendChild(markNode(ref.authorKey, ref.mark, opts));
-  }
-  line.appendChild(el('span', 'hex', shortHex(ref.id, 10)));
-  if (ref.excerpt) line.appendChild(el('span', 'excerpt', ref.excerpt));
-  return line;
 }
 
 function strip(id: string, opts: CardOpts, card: HTMLElement): void {
@@ -446,6 +423,10 @@ export function submissionToPost(sub: Submission): PostJson {
     blockIndex: null,
     blockCreatedAt: null,
     likeCount: 0,
+    // A submission's card reads replyCount: null and never fills the count cache,
+    // so these are placeholders the render never reads (WEB_INTERFACE → What the feed reads).
+    descendantCount: 0,
+    authorVouchCount: 0,
     likedByViewer: null,
   };
 }
@@ -469,7 +450,6 @@ function livePostCard(post: PostJson, opts: CardOpts): HTMLElement {
   const card = el('div', shellClasses(pending ? ' pending' : '', opts));
   const body = el('div', 'card-body');
 
-  if (opts.parentRef) body.appendChild(parentRefNode(opts.parentRef, opts));
   body.appendChild(whoRow(post.author, post.blockCreatedAt, opts));
 
   if (post.content === null) {
@@ -524,7 +504,6 @@ function livePostCard(post: PostJson, opts: CardOpts): HTMLElement {
 function withdrawnCard(row: WithdrawnJson, opts: CardOpts): HTMLElement {
   const card = el('div', shellClasses('', opts));
   const body = el('div', 'card-body');
-  if (opts.parentRef) body.appendChild(parentRefNode(opts.parentRef, opts));
   body.appendChild(whoRow(row.author, null, opts));
   // Withdrawn is never "deleted": its replies survive and hang off it. Saying
   // so is the whole difference (WEB_INTERFACE → The three absence states).

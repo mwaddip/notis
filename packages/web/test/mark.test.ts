@@ -17,7 +17,7 @@ function confirmed(author: string): PostJson {
   return {
     id: 'p1', content: 'hello', contentHash: contentHashHex('hello'), author, parentRefs: [],
     protocolVersion: 1, type: 'regular', status: 'confirmed', blockHeight: 6001, blockIndex: 0,
-    blockCreatedAt: 0, likeCount: 0, likedByViewer: null,
+    blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorVouchCount: 0, likedByViewer: null,
   };
 }
 function markEl(mark: Mark | null): HTMLElement | null {

@@ -274,7 +274,7 @@ export function authorPostsBody(handlers: PostsHandlers, ctx: PostsCtx): HTMLEle
 function postCard(post: PostJson, handlers: PostsHandlers, ctx: PostsCtx): HTMLElement {
   const you = ctx.ownKey !== null && post.author === ctx.ownKey;
   return card(post, {
-    replyCount: null, // a list, like the feed — no descendant count
+    replyCount: post.descendantCount, // the row's own count, like the feed (WEB_INTERFACE → What the feed reads)
     onOpen: (id) => handlers.openThread(id, ctx.origin),
     onAuthor: (key) => handlers.openAuthor(key, ctx.origin),
     onVouch: (key) => handlers.vouch(key),

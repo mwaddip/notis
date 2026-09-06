@@ -7,7 +7,7 @@ function post(n: number): PostJson {
   return {
     id: id(n), content: `#${n}`, contentHash: '0'.repeat(64), author: 'a'.repeat(64),
     parentRefs: [], protocolVersion: 1, type: 'regular', status: 'confirmed',
-    blockHeight: 1, blockIndex: 0, blockCreatedAt: 0, likeCount: 0, likedByViewer: null,
+    blockHeight: 1, blockIndex: 0, blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorVouchCount: 0, likedByViewer: null,
   };
 }
 

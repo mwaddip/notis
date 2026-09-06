@@ -490,7 +490,7 @@ export class App {
     feed.error = null;
     this.renderFeed();
     try {
-      const res = await this.client.feed({ limit: FEED_LIMIT }, this.viewer());
+      const res = await this.client.feed({ limit: FEED_LIMIT }, this.viewer(), undefined, true);
       feed.posts = res.posts.filter(isLivePost);
       feed.pending = this.dedupeOwn(res.pending.filter(isLivePost));
       feed.next = res.next;
@@ -514,7 +514,7 @@ export class App {
       const r = await reconcileNewer(
         feed.posts,
         async (after) => {
-          const res = await this.client.feed(after === null ? { limit: FEED_LIMIT } : { limit: FEED_LIMIT, after }, this.viewer());
+          const res = await this.client.feed(after === null ? { limit: FEED_LIMIT } : { limit: FEED_LIMIT, after }, this.viewer(), undefined, true);
           this.indexRows([...res.posts, ...res.pending]);
           if (after === null) feed.pending = this.dedupeOwn(res.pending.filter(isLivePost));
           return { posts: res.posts, next: res.next };
@@ -545,7 +545,7 @@ export class App {
     feed.loading = true;
     this.renderFeed();
     try {
-      const res = await this.client.feed({ limit: FEED_LIMIT, after: feed.next }, this.viewer());
+      const res = await this.client.feed({ limit: FEED_LIMIT, after: feed.next }, this.viewer(), undefined, true);
       const older = res.posts.filter(isLivePost);
       const have = new Set(feed.posts.map((p) => p.id));
       const added = older.filter((p) => !have.has(p.id));

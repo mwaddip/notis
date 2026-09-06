@@ -182,7 +182,7 @@ function post(id: string, author: string): PostJson {
   return {
     id, content: 'hi', contentHash: contentHashHex('hi'), author, parentRefs: [],
     protocolVersion: 1, type: 'regular', status: 'confirmed', blockHeight: 5, blockIndex: 0,
-    blockCreatedAt: 0, likeCount: 0, likedByViewer: null,
+    blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorVouchCount: 0, likedByViewer: null,
   };
 }
 function feedState(over: Partial<FeedState> = {}): FeedState {

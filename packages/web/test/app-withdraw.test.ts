@@ -34,7 +34,7 @@ function postJson(id: string, author: string, parentRefs: string[] = []): PostJs
   return {
     id, content: 'x', contentHash: contentHashHex('x'), author, parentRefs, protocolVersion: 1,
     type: 'regular', status: 'confirmed', blockHeight: 6001, blockIndex: 0, blockCreatedAt: 0,
-    likeCount: 0, likedByViewer: null,
+    likeCount: 0, descendantCount: 0, authorVouchCount: 0, likedByViewer: null,
   };
 }
 const asResult = (p: PostJson): PostResult => ({ ...p, confirmedAuthor: p.author });
