@@ -1185,9 +1185,6 @@ PostWithdrawCommit {
 |--------|-----------|-------------|
 | `postWithdrawFieldBytes(commit)` | `(PostWithdrawCommit) => Uint8Array` | Positional canonical bytes — `txIdBytes` field 6 — see Layout — PostWithdrawCommit |
 
-> ⛔ **AHEAD OF CODE (2026-09-06)** — the file is `stump.ts` until the types commit of the prune-removal
-> unit renames it, and `postWithdrawFieldBytes` writes field 7 until that commit drops field 6 (`prune`).
-
 ---
 
 ## Block Types (`block.ts`)
@@ -1666,13 +1663,6 @@ The body's standalone wire form — a pull response's element, and the packet's 
 The encodings are positional and injective (audit M-1); the frozen golden vectors are the
 cross-implementation anchor, reproduced by the demo-UI mirror.
 
-### Layout — PruneCommit
-
-> ⛔ **AHEAD OF CODE (2026-09-06) — prune leaves the protocol; this heading stands only while code cites
-> it** (`types/src/stump.ts`, `validation/src/verify.ts`, the demo UI's mirror) and goes in this unit's
-> contract pass. The rule in force: `ARCHITECTURE → Withdrawal`; the layout that stays is → Layout —
-> PostWithdrawCommit.
-
 ### Layout — PostWithdrawCommit
 
 **The withdrawal payload carried by a karma transaction** (`UtxoTransaction.postWithdraw`),
@@ -1799,9 +1789,6 @@ from this table — a use that reads every cell as an instruction rather than as
 > | boxType `'like'` | the live illegal-transition rule (`utxo-engine`'s like clause) and its reject vectors |
 > | leaf domain `'coinbase'` | the live coinbase concept (`coinbase-split.ts`, `COINBASE_*` constants) — the string is permanently collision-prone while the concept lives |
 > | leaf domain `'prune'` | the AVL version pruning (`pruneVersionsBefore`, `checkpointProver`'s retention under `MAX_PROOF_HISTORY`) — a storage mechanism, not a Merkle leaf, and the string stays collision-prone while an identifier carries the word |
->
-> ⛔ **AHEAD OF CODE (2026-09-06)** — `'stump'` leaves this table with the prune-removal unit's code: until its
-> last commit lands, `Stump`, `dag_stumps` and the two clients' stump shapes still carry the word.
 
 > ## ⛔ TAG 2 IS A TRACKED HOLE
 >
@@ -2020,9 +2007,6 @@ payload sits.
 `preimages` did — see "Re-pinning a frozen vector when a preimage changes". A reader that keeps
 five offsets reads `postWithdraw`'s tag as the end of the struct; the count is load-bearing, and
 the demo UI's mirror (`public/index.html`) states it too.
-
-> ⛔ **AHEAD OF CODE (2026-09-06)** — six fields: `txIdBytes` writes seven, `prune` at field 6, until the
-> types commit of the prune-removal unit drops it; every frozen vector moves with it.
 
 Order preserves today's sequence. This satisfies **C1 structurally**: the prior preimage used
 `String(protocolVersion)` (the M-1 pattern) and concatenated inputs and variable-length outputs with

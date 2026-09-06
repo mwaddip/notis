@@ -1001,12 +1001,6 @@ aligns 1:1 with `utxoTxIds`, each element a byte view of at most
 > least one transaction now, because the settlement is one. A structural check that admitted an
 > empty `utxoTxIds` is admitting a block that cannot have paid its own coinbase.
 
-### `verifyPruneCommitDomains`
-
-> ⛔ **AHEAD OF CODE (2026-09-06) — prune leaves the protocol; this heading stands only while code cites
-> it** (`validation/src/verify.ts`) and goes in this unit's contract pass. The rule in force:
-> `ARCHITECTURE → Withdrawal`; the sibling that stays is → `verifyPostWithdrawCommitDomains`.
-
 #### Each embedded transaction is bounded too
 
 `utxoTxs[i].length > MAX_TX_BYTES` rejects for every element but the last, and

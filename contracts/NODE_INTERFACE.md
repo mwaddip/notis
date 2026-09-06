@@ -228,9 +228,6 @@ guards split accordingly:
 
 - **`isLivePost`** = `x !== null && x.withdrawnAtHeight === null` — the liveness question,
   and the one the like arm asks at block application.
-  > ⛔ **AHEAD OF CODE (2026-09-06)** — `isStoredPost` (the structural question: a `dag_posts` row rather
-  > than a stump or a tombstone) stands until the node store commit of the prune-removal unit deletes it
-  > with the two arms it told apart.
 
 ⚠ **`content: null` alone cannot tell a placeholder from a withdrawal**, and the difference is
 the whole of the guard: a placeholder is *waiting for* its body and a withdrawn post must never
@@ -242,14 +239,6 @@ authorVouchCount }` — carrying **no content field**, the row's `parentRefs`, w
 (→ Withdrawal transactions), and the two counts `PostJson` carries under the same definitions (the
 author counted once per distinct author per response, withdrawn rows and live rows in one dedup) — for
 the subject of a thread, for its ancestors and descendants, and in the listing.
-
-> ⛔ **AHEAD OF CODE (2026-09-06)** — `descendantCount` and `authorVouchCount` on `WithdrawnJson`: the arm
-> carries `id`, `author`, `parentRefs` and `withdrawnAtHeight` alone until the node views commit of the
-> prune-removal unit lands.
-
-- **The JSON projection has a fourth arm where the store has three.** A cited lead
-  (`services/feed-service.ts`, the web's `dto.ts` and `thread.ts`, their tests), kept until this unit's
-  commits re-cite the lead above; it goes in the contract pass.
 A withdrawn post that answered `404` would be indistinguishable from an id the node never heard
 of, and one projected as a live post with `content: null` would render as a body still loading.
 
@@ -374,9 +363,6 @@ creation, so nothing stays open. `expiresAtHeight` on the response is the
 | `GET` | `/vouches?voucher=X&limit=50&after=<boxId>` | `getVouchesForVoucherPage` | `{ vouches: [{ boxId, value, voucherId, targetId, createdAtBlock }], count, next }` — one page of the identity's live vouches, ascending box id strictly after `after`; `count` over the whole set, `next` the key to continue from. The one arm carrying `boxId`: the unvouch builder names the box it spends |
 | `GET` | `/vouches?voucher=X&cooldowns=1&limit=50&after=<boxId>` | `getVouchCooldownsPage` | `{ cooldowns: [{ boxId, value, releaseAtBlock }], count, next }` — one page of the identity's unspent escrows, ascending box id strictly after `after` |
 
-> ⛔ **AHEAD OF CODE (2026-09-06)** — `voucherVouchCount` on the `?target=` row: the row carries `voucherId`
-> and `targetId` alone until the node views commit of the prune-removal unit lands.
-
 **Members vouch, without a cap.** `castVouch` refuses with a named `400`, ahead of the engine and
 changing no verdict: a voucher who is not a member (`ARCHITECTURE → Membership`); a target that
 holds no `IdentityRecord`; a self-vouch; a live vouch for the same `(voucher, target)` pair — in
@@ -446,12 +432,6 @@ invites, vouches, credits, withdraw).
    the block's journal first (Block Journal → `withdrawnPosts`), so a reverted withdrawal restores it
    exactly; below the reorg horizon (`maxReorgDepth`, TYPES_INTERFACE → Chain reorganisation) the
    journal is dropped and the node holds no byte of the content anywhere (ARCHITECTURE → Withdrawal).
-
-### Pruning
-
-> ⛔ **AHEAD OF CODE (2026-09-06) — prune leaves the protocol; this heading stands only while a member
-> root file cites it** (`packages/web/CLAUDE.md`) and goes in this unit's contract pass. The rule in force:
-> `ARCHITECTURE → Withdrawal`; the route is → Withdrawal above.
 
 ### UTXO queries
 
@@ -1629,16 +1609,6 @@ There is **no other legal bond or invite shape**. In particular:
   a post is live ("Resolution order for a post id"); an unknown parent is `Parent post not found`;
   a reply to a withdrawn post stays valid (ARCHITECTURE → Post structure).
 
-### Prune transactions
-
-> ⛔ **AHEAD OF CODE (2026-09-06) — prune leaves the protocol; this heading stands only while code cites
-> it** (`services/utxo-engine.ts`, `services/block-apply.ts`, `services/stump-engine.ts`, `store/topology.ts`,
-> their tests, `tools/e2e/test/prune.test.ts`) and goes in this unit's contract pass. The rule in force:
-> `ARCHITECTURE → Withdrawal`; the transaction that stays is → Withdrawal transactions.
-
-- **The prune's block deletes and marks, and settles nothing.** A cited lead, kept under the marker
-  above for the same span and for no other reason.
-
 ### Withdrawal transactions
 
 - **A withdrawal empties one post and leaves its subtree intact.** It is a karma
@@ -1696,12 +1666,6 @@ There is **no other legal bond or invite shape**. In particular:
   legibility, not for the outcome — the pass refunds and burns nothing.
 - **What the pass does is stated where its transaction is**: Withdrawal transactions (the row
   emptied, `withdrawn_at_height` set).
-
-### The prune and withdrawal phase
-
-> ⛔ **AHEAD OF CODE (2026-09-06) — prune leaves the protocol; this heading stands only while code cites
-> it** (`packages/web/src/wallet/ledger.ts`) and goes in this unit's contract pass. The rule in force:
-> → The withdrawal phase.
 
 ### Bond transition rules
 
@@ -2991,12 +2955,6 @@ deterministic by replay, journalled with exact inverses, not in the `stateRoot`.
 **The topology row's `parent_refs` column is the record, and nothing indexes it**: no consensus path
 walks a subtree over topology (the thread's subtree is `dag_parent_refs`', Store Interface → Posts DAG).
 
-> ⛔ **AHEAD OF CODE (2026-09-06)** — `block_topology_parents` (the parent-edge index the subtree walk
-> read) stands until the node store commit of the prune-removal unit drops it with `getSubtreeTopology`.
-
-- **The topology's parent edges are a table of their own.** A cited lead (`store/topology.ts`), kept
-  under the marker above for the same span.
-
 | Function | Signature |
 |----------|-----------|
 | `insertLikeRecord(targetPostId, likerId, blockHeight)` | `(PostId, UserId, number) => void` — **block application only**; records a `likeRecordInsertions` journal side-record; throws on the primary key — the structural dedup |
@@ -3588,10 +3546,6 @@ BlockJournal {
 ```
 The field names are the `journal_cbor` keys: the journal is the node's local format, with no
 migration path — a store written under a different key set is a different store.
-
-> ⛔ **AHEAD OF CODE (2026-09-06)** — five keys leave with the prune-removal unit's node store commit:
-> `likeRecordDeletions`, `deletedPosts`, `insertedStumps`, `absorbedStumps` and `prunedTopologyRows`; the
-> store written without them is a different store, covered by the wipe that deploys the pass.
 
 
 **One log, not parallel arrays.** `mutations` is a

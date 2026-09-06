@@ -166,8 +166,6 @@ one.
   shows the thread's, which equals the head's. A withdrawn card shows its row's count too
   (`NODE_INTERFACE → Posts`); `?` remains on the reader's own submission card alone (no node row until
   it lands).
-  > ⛔ **AHEAD OF CODE (2026-09-06)** — the withdrawn card's count: the card keeps `?` until the node's
-  > withdrawn shape carries `descendantCount` and the web commit of the prune-removal unit reads it.
 - **The feed's rows are posts and withdrawn markers only.** The client filters the withdrawn ones out,
   which costs it rows from a page and is the second reason paging follows `next`.
 
@@ -187,12 +185,6 @@ whole difference between withdrawal and deletion.
 workspace arrangement is persisted as post ids, so a thread left open in one session may have been
 withdrawn before the next. A restored arrangement that resolves to one renders it; it does not drop
 the window and it is not an error.
-
-## The three absence states
-
-> ⛔ **AHEAD OF CODE (2026-09-06) — prune leaves the protocol; this heading stands only while code cites
-> it** (`src/model/arrangement.ts`, `src/view/card.ts`) and goes in this unit's contract pass. The rule in
-> force: → The withdrawn state.
 
 ## Client-side operations — the write surface
 
@@ -454,10 +446,6 @@ the reader's own vouch or unvouch lands for that identity, so the count stays th
 client-side guess; the author window's endorsers read fills the same cache, each vouch row carrying its voucher's
 `voucherVouchCount` (the node's `GET /vouches?target=` row), so an endorser row's mark is titled from
 the row it came with. A failed read leaves the `title` empty, never wrong.
-
-> ⛔ **AHEAD OF CODE (2026-09-06)** — the endorser row's title: until the node's vouch row carries
-> `voucherVouchCount` and the web commit of the prune-removal unit reads it, an endorser row's mark has no
-> count source of its own and its title is set only once a row by that voucher has landed in the session.
 
 A disabled mark's `title` is the reason instead, and the author window carries the same sentence in text,
 so hover is never the only route (`HOUSE_STYLE → Interaction`).
