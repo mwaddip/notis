@@ -447,12 +447,10 @@ describe('NETWORK_PROFILES', () => {
   });
 
   // TYPES_INTERFACE → "genesisId pins block 1, and is empty until a network
-  // has one": testnet is pinned to its mined block 1, mainnet stays unpinned.
-  it('testnet genesisId pins its block 1; mainnet is unpinned', () => {
-    // The literal value — 64 lowercase hex, the height-1 block's blockHash.
-    expect(NETWORK_PROFILES.testnet.genesisId)
-      .toBe('30865e48f876921a6b58db6bbf9f3ef82cde99058a421f4f6e34c287d1322fdc');
-    expect(NETWORK_PROFILES.testnet.genesisId).toMatch(/^[0-9a-f]{64}$/);
+  // has one": testnet is unpinned from the 2026-09-06 reset until its block 1
+  // is mined, mainnet until its block 1 exists.
+  it('testnet and mainnet genesisId are unpinned', () => {
+    expect(NETWORK_PROFILES.testnet.genesisId).toBe('');
     expect(NETWORK_PROFILES.mainnet.genesisId).toBe('');
   });
 });
