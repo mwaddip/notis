@@ -76,6 +76,44 @@ describe('card — the content grammar', () => {
     expect(c.querySelector('.card-title')?.textContent).toBe('Heading');
     expect(c.querySelector('.card-para')?.textContent).toBe('body');
   });
+
+  it('a link card: the words as text, the host <a> with the author href and the four attributes', () => {
+    const c = card(withContent('[the words](https://ok.com/a/b)'), {});
+    const cc = c.querySelector('.card-content.link-card')!;
+    expect(cc.querySelector('.lc-text')?.textContent).toBe('the words');
+    const a = cc.querySelector('a.lc-host') as HTMLAnchorElement;
+    expect(a.textContent).toBe('ok.com'); // the host, not the words — the only control that opens the target
+    expect(a.getAttribute('href')).toBe('https://ok.com/a/b'); // the author's string, not normalised
+    expect(a.getAttribute('target')).toBe('_blank');
+    expect(a.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(a.getAttribute('referrerpolicy')).toBe('no-referrer');
+    expect(a.getAttribute('title')).toBe('https://ok.com/a/b');
+  });
+
+  it('a bare-URL card shows the pathname (nothing when it is /)', () => {
+    const path = card(withContent('https://ok.com/a/b'), {}).querySelector('.card-content.link-card')!;
+    expect(path.querySelector('.lc-text')?.textContent).toBe('/a/b');
+    expect(path.querySelector('a.lc-host')?.textContent).toBe('ok.com');
+    const root = card(withContent('https://ok.com'), {}).querySelector('.card-content.link-card')!;
+    expect(root.querySelector('.lc-text')).toBeNull();
+    expect(root.querySelector('a.lc-host')?.getAttribute('href')).toBe('https://ok.com');
+  });
+
+  it('a link inside running text renders inline, not as a link card', () => {
+    const c = card(withContent('see [x](https://ok.com) here'), {});
+    expect(c.querySelector('.card-content.link-card')).toBeNull();
+    const a = c.querySelector('.card-content a') as HTMLAnchorElement;
+    expect(a.textContent).toBe('x');
+    expect(a.getAttribute('href')).toBe('https://ok.com');
+    expect(c.querySelector('.card-content')?.textContent).toBe('see x here');
+  });
+
+  it('bold renders <strong>, italic <em>, raw HTML as literal text', () => {
+    const c = card(withContent('a **b** *c* <d>'), {});
+    expect(c.querySelector('.card-content strong')?.textContent).toBe('b');
+    expect(c.querySelector('.card-content em')?.textContent).toBe('c');
+    expect(c.querySelector('.card-content')?.textContent).toBe('a b c <d>');
+  });
 });
 
 describe('card — the reply count is the row\'s', () => {

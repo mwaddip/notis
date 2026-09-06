@@ -106,6 +106,16 @@ header .spacer { flex: 1 1 auto; }
    so the .card.open fade reaches every block. */
 .card-content > * + * { margin-top: 8px; }
 .card-title { font-size: 17px; font-weight: 600; }
+/* Links keep their colour where text fades in an open card (the a rule sets it
+   directly, so inheritance does not reach it). A long URL wraps rather than
+   overflowing. bold at 600, italic in the italic face (WEB_INTERFACE → Content). */
+.card-content a { color: var(--greenText); overflow-wrap: anywhere; }
+.card-content strong { font-weight: 600; }
+.card-content em { font-style: italic; }
+/* The link card — the words or path as the card's text, the host in mono as the
+   only control beneath (WEB_INTERFACE → Content → "The link card"). The host is
+   inline-block so the 8px block gap above reaches it. */
+.card-content .lc-host { display: inline-block; font-family: var(--mono); font-size: 12.5px; }
 /* A body a node holds by commit but has not backfilled yet. Says what is,
    without implying the post is gone — it is not a withdrawal. */
 .card-absent { font-style: italic; color: var(--inkMute); font-size: 14px; }
