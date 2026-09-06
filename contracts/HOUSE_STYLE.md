@@ -238,7 +238,7 @@ in both**, which is why it is the default and a wash is opt-in.
 
 | Role | Face | Licence |
 |---|---|---|
-| Everything a human writes or reads | **Plus Jakarta Sans** | SIL OFL 1.1, variable 400–700 |
+| Everything a human writes or reads | **Plus Jakarta Sans** | SIL OFL 1.1, variable 400–700, roman and italic |
 | Machine-generated data only | **JetBrains Mono** | SIL OFL 1.1, variable 400–700 |
 
 **Self-hosted, always.** A platform whose pitch is that it does not sell its users out cannot
@@ -367,6 +367,11 @@ it for anything.
 - **The control is the click target, never the container.** Cards and rows are not buttons.
   Text stays selectable and the pointer can be parked on it. This also removes the
   accidental-click pattern that quietly inflates engagement figures.
+- **Nothing is fetched from a third party without the reader's act.** An image, a title, a
+  preview — nothing the page renders on its own reaches beyond the origin, because every such
+  request tells that party who is reading and when. What a reader chooses to load, they load
+  knowing where from: the host is shown before any press that leaves the page or fetches from
+  elsewhere.
 - **Hover may change appearance; it may never reveal page content or move layout.** No hover menus,
   no hover previews, no hover cards — nothing the page renders on hover alone. A control may carry
   the browser's own `title`: it renders outside the page, holds no links, moves nothing, and repeats

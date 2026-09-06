@@ -6,8 +6,9 @@ the composer for a root and a reply, and like — the **identity interface's fir
 `@profile` window, create / import / export / forget / lock / unlock, encryption at rest with unlock per
 tab, the reader's own posts marked, the faucet karma step — the **membership actions** — the
 identity display with the vouch mark, the author window and the author-posts window, vouch and
-unvouch, invite from the profile — and the **author's own controls' first unit** — withdraw from the
-reader's own card — are implemented
+unvouch, invite from the profile — the **author's own controls' first unit** — withdraw from the
+reader's own card — and **content rendering** — the grammar a card renders from content, and the composer's
+`link` and `image` types — are implemented
 **Protocol version:** read from the node, never held — see Invariants
 
 
@@ -185,6 +186,74 @@ whole difference between withdrawal and deletion.
 workspace arrangement is persisted as post ids, so a thread left open in one session may have been
 withdrawn before the next. A restored arrangement that resolves to one renders it; it does not drop
 the window and it is not an error.
+
+## Content — what a card renders, and what the composer writes
+
+> ⚠ **AHEAD OF CODE (2026-09-07)** — this section states the rule the content-rendering unit implements. Until
+> its commits land, a card renders content as one text node, the composer has no type control, and no italic
+> face is served.
+
+A post's content is text the node records and never reads (`TYPES_INTERFACE → Post typing and profiles`).
+What a card shows for it is this client's rule, stated here; another client may render the same convention,
+more of it, or none.
+
+**The client contacts no third party on its own.** Nothing in content is fetched on render — not an image,
+not a title, not a preview (`HOUSE_STYLE → Interaction → "Nothing is fetched from a third party without the
+reader's act"`). A post that is nothing but a URL renders from the URL itself; an image loads on the reader's
+press, and the host is shown before it.
+
+**The grammar** is markdown's, closed to the constructs below and recognised by the client's own scanner. No
+HTML string exists at any point: the renderer builds nodes, so an angle bracket is a character and raw HTML
+is text.
+
+| Construct | Form | Rendering |
+|---|---|---|
+| title line | one to six `#`, a space, text — any level the same; `#word` without the space is text | a block one step up the card's type — 17px, weight 600 |
+| paragraph | consecutive lines; a blank line ends one; blank lines at either end are dropped | a block; a newline inside it is a line break; 8px between paragraphs |
+| link | `[text](url)` — text non-empty, without `]`, plain: nothing nests inside it | `<a>` to the URL, the text as its words |
+| bare URL | `http://` or `https://` at the start of the text or after whitespace or `(`, to the next whitespace; trailing `. , ; : ! ? ' "` trimmed, a trailing `)` trimmed when the URL holds no `(` | `<a>` to the URL, the URL as its words |
+| image | `![description](url)`, and a bare URL whose path, lowercased, ends in `.png` `.jpg` `.jpeg` `.gif` `.webp` `.avif` | the description as text, then the control *show image from* + the host; the image on the press |
+| bold, italic | `**text**`, `*text*` — `**` first; text non-empty, no whitespace at either edge, no emphasis inside, links and bare URLs allowed inside; an opener without its closer on the line is text; `_` is never a marker | `<strong>` at 600, `<em>` in the italic face |
+| escape | `\` before one of `\ * [ ] ( ) ! #` | that character as text |
+
+The parenthesised span of a link or image runs to its matching `)` — parentheses inside it nest — and holds
+no whitespace; whitespace before the closer makes the whole construct text. A `[text](url)` link is a link
+whatever its URL ends in.
+
+**The URL gate.** One function serves the renderer and the composer: the string parses as a URL, its scheme
+is `http` or `https`, and it holds no whitespace. A construct whose URL fails the gate is text,
+`[text](javascript:…)` included. The `href` is the author's string, never a normalised form; the host shown
+is the parser's host — ASCII, so a lookalike domain shows as punycode — and it renders in mono
+(`HOUSE_STYLE → Typography`).
+
+**Every link opens a new tab with `rel="noopener noreferrer"` and `referrerpolicy="no-referrer"`, and carries
+the URL as its `title`.** A loaded image carries the same referrer policy.
+
+**The link card.** Content that parses to one paragraph holding exactly one link, one image or one bare URL,
+and nothing else but whitespace, renders as the link card. For a link: the words as the card's text, and
+beneath them the host as the `<a>` — the only control that opens the target. For a bare URL: the URL's path as
+the text (nothing when it is `/`), the host beneath. For an image: the description as the text (nothing when
+it is blank), the image control beneath; the press replaces the control with the image and the description
+stays, as its `alt` too. A link inside longer text renders inline.
+
+**An image loads on the reader's press.** Before it, no `img` element exists for the post; the control names
+the host. The press replaces the control with the image in place — nothing else on the page changes — capped
+at the card's width and 480px high. The expanded state is kept per post and image for the session, so a
+region re-render keeps it. A load that fails says so in place and offers the control again.
+
+**A newline is a line break, a blank line a paragraph.** A card reads as the textarea did.
+
+**The type control.** The composer's foot opens with a `<select>` at its left, ahead of the byte counter:
+`text`, `link` and `image`, `text` every time the composer opens. `link` and `image` swap the textarea for two
+one-line fields, `url` then `description`, focus on `url`; `text` restores the textarea. Each type keeps its
+draft while the composer lives, and cancel asks when any draft holds anything. The composed content is what
+the counter measures and what the submission carries: for `link`, the URL alone when the description is blank,
+else `[description](url)`; for `image`, `![description](url)`, empty brackets when it is blank; in both, `\`,
+`[` and `]` in the description are backslash-escaped. `post` is enabled for `link` and `image` when the URL
+passes the gate and the whole fits. The reply composer carries the same control.
+
+**The counter.** `N left` from the moment the composer opens, in UTF-8 bytes of the composed content, `N over`
+in clay past `MAX_CONTENT_BYTES`.
 
 ## Client-side operations — the write surface
 
@@ -610,7 +679,8 @@ client that expects to announce itself first is built against an endpoint that d
   unvouch's `VouchEscrowBox.releaseAtBlock` is pinned as `vouch.createdAtBlock + vouchCooldownBlocks`,
   so a client holding a constant builds a transaction the node rejects. *(write surface)*
 - **Content length is enforced in UTF-8 bytes before submission** — `MAX_CONTENT_BYTES` is 300 bytes,
-  and one emoji is four of them. *(write surface)*
+  and one emoji is four of them; the composer counts it down from the moment it opens (→ Content).
+  *(write surface)*
 - **All hashing is client-side; the node verifies, it does not assist.** *(write surface)*
 - **The read surface holds no key and signs nothing.** Its boundary is checkable: it issues `GET`
   requests and nothing else, and it constructs no transaction.
