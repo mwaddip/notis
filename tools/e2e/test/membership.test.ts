@@ -83,11 +83,15 @@ describe('membership', () => {
       expect(fK.memberBar).toBe(0);
     }
 
-    // ---- invite A ----
-    const A = fresh();
-    let fK = await getKarma(miner, DEVNET_FAUCET.publicKeyHex);
     const status0 = await getStatus(miner);
     const version = status0.protocolVersion;
+
+    // ---- 1. the faucet invites A (bond 50): A is a member at the grant ----
+    // NODE_INTERFACE → "A root's grant confers membership": the invitee's
+    // record is written with memberSinceBlock = the grant height and
+    // memberBar = 0 in the same block that creates it.
+    const A = fresh();
+    let fK = await getKarma(miner, DEVNET_FAUCET.publicKeyHex);
     const bondAmount = 50n;
     const invA = buildInviteTx(DEVNET_FAUCET, karmaBoxes(fK), A, bondAmount, fK.height, version);
     await postInvite(miner, invA.json);
@@ -96,30 +100,52 @@ describe('membership', () => {
       async () => await hasKarma(miner, A.publicKeyHex),
       miner, mesh.miningSecret,
     );
-    await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
+    const grantHeightA = (await getBlockCurrent(miner)).height;
+    await waitHeight(mesh.nodes, grantHeightA);
 
-    // ---- /karma/A: resident, member: false ----
-    // NODE_INTERFACE → UTXO queries: memberSinceBlock 0 for a resident
+    // A is not a resident: it is a member from this block, invitesAvailable a
+    // number rather than a root's null (NODE_INTERFACE → UTXO queries).
     for (const node of mesh.nodes) {
       const aK = await getKarma(node, A.publicKeyHex);
-      expect(aK.member).toBe(false);
-      expect(aK.memberSinceBlock).toBe(0);
+      expect(aK.member).toBe(true);
+      expect(aK.memberSinceBlock).toBe(grantHeightA);
+      expect(aK.invitedAtBlock).toBe(grantHeightA);
+      expect(aK.memberBar).toBe(0);
+      expect(aK.memberVouches).toBe(0);
       expect(aK.invitesAvailable).toBe(0);
     }
-
-    // ---- A's cast as a resident is refused ----
-    // NODE_INTERFACE → Vouches: "a voucher who is not a member"
-    const aKForVouch = await getKarma(miner, A.publicKeyHex);
-    const badVouch = buildVouchTx(A, karmaBoxes(aKForVouch), DEVNET_FAUCET, aKForVouch.height, version);
-    try {
-      await postVouch(miner, badVouch.json);
-      expect.fail('resident vouch should have been refused');
-    } catch (err) {
-      expect(err).toBeInstanceOf(NodeError);
-      expect((err as NodeError).status).toBe(400);
+    for (const node of mesh.nodes) {
+      const s = await getStatus(node);
+      expect(s.membership.memberCount).toBe(2);
+      expect(s.membership.memberBar).toBe(1); // ARCHITECTURE → The bar: D(2) = 1 at devnet's k = 1
     }
 
-    // ---- faucet vouches A ----
+    // ---- 2. A's cast as a member is accepted ----
+    // NODE_INTERFACE → Vouches: a member vouches without a cap; the faucet is
+    // older than A, so the cast counts toward nobody
+    // (ARCHITECTURE → Earned, standing, and well-founded by age →
+    // "Which vouches count — a vouch counts toward NEWER members"). Kept
+    // live for the rest of the chapter.
+    let aK = await getKarma(miner, A.publicKeyHex);
+    const aVouchFaucet = buildVouchTx(A, karmaBoxes(aK), DEVNET_FAUCET, aK.height, version);
+    const aVouchFaucetRes = await postVouch(miner, aVouchFaucet.json);
+    expect(aVouchFaucetRes.status).toBe('pending');
+
+    await confirm(
+      async () => (await getVouchesVoucher(miner, A.publicKeyHex)).count >= 1,
+      miner, mesh.miningSecret,
+    );
+    await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
+
+    for (const node of mesh.nodes) {
+      const v = await getVouchesVoucher(node, A.publicKeyHex);
+      expect(v.count).toBe(1);
+      expect(v.next).toBeNull();
+    }
+
+    // ---- 3. the faucet vouches A: budget builds, standing does not move ----
+    // ARCHITECTURE → Earned, standing, and well-founded by age → "Conferred":
+    // a vouch toward a conferred member builds its budget and nothing else.
     fK = await getKarma(miner, DEVNET_FAUCET.publicKeyHex);
     const faucetVouchA = buildVouchTx(DEVNET_FAUCET, karmaBoxes(fK), A, fK.height, version);
     await postVouch(miner, faucetVouchA.json);
@@ -130,60 +156,23 @@ describe('membership', () => {
     );
     await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
 
-    // ---- A posts two threads ----
-    let aK = await getKarma(miner, A.publicKeyHex);
-    const thread1 = buildThreadTx(A, karmaBoxes(aK), 'm thread 1', aK.height, version);
-    const t1Res = await postPost(miner, thread1.json, thread1.content);
-    const thread2 = buildThreadTx(A, [thread1.outputs[0]!], 'm thread 2', aK.height, version);
-    const t2Res = await postPost(miner, thread2.json, thread2.content);
-
-    await confirm(
-      async () => {
-        const p = await getPost(miner, t2Res.postId);
-        return p !== null && isPost(p) && p.status === 'confirmed';
-      },
-      miner, mesh.miningSecret,
-    );
-    await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
-
-    // ---- faucet likes each post once ----
-    // ARCHITECTURE → The like transaction: one like per (liker, post)
-    fK = await getKarma(miner, DEVNET_FAUCET.publicKeyHex);
-    const like1 = buildLikeTx(DEVNET_FAUCET, karmaBoxes(fK), t1Res.postId, A.publicKeyHex, fK.height, version);
-    await postLike(miner, like1.json);
-    const like2 = buildLikeTx(DEVNET_FAUCET, [like1.outputs[0]!], t2Res.postId, A.publicKeyHex, fK.height, version);
-    await postLike(miner, like2.json);
-
-    await confirm(
-      async () => (await getKarma(miner, A.publicKeyHex)).member,
-      miner, mesh.miningSecret,
-    );
-    const setHeight = (await getBlockCurrent(miner)).height;
-    await waitHeight(mesh.nodes, setHeight);
-
-    // ---- A is a member ----
-    // NODE_INTERFACE → Membership pass: memberSinceBlock = height of the setting block
     for (const node of mesh.nodes) {
       aK = await getKarma(node, A.publicKeyHex);
-      expect(aK.member).toBe(true);
-      expect(aK.memberSinceBlock).toBe(setHeight);
-      expect(aK.memberBar).toBe(1);
       expect(aK.memberVouches).toBe(1);
-      expect(aK.memberLikes).toBe('2');
       expect(aK.invitesAvailable).toBe(1);
-      expect(aK.lifetimeLikesReceived).toBe('2');
+      expect(aK.member).toBe(true);
+      expect(aK.memberBar).toBe(0);
     }
 
-    // ---- /status.membership.memberCount is 2 ----
-    for (const node of mesh.nodes) {
-      const s = await getStatus(node);
-      expect(s.membership.memberCount).toBe(2);
-    }
-
-    // ---- A invites B ----
+    // ---- 4. A invites B (bond 35): B is a resident ----
+    // A's grant (50) funds this bond and still clears the cast's
+    // VOUCH_MIN_BALANCE (11) for A's own later vouch (step 6); B's grant
+    // funds B's own two thread prices, a bond for C and still clears
+    // VOUCH_MIN_BALANCE for B's own cast on C (step 7) —
+    // ARCHITECTURE → Vouch boxes.
     const B = fresh();
     aK = await getKarma(miner, A.publicKeyHex);
-    const bBondAmount = 20n;
+    const bBondAmount = 35n;
     const invB = buildInviteTx(A, karmaBoxes(aK), B, bBondAmount, aK.height, version);
     await postInvite(miner, invB.json);
 
@@ -193,27 +182,50 @@ describe('membership', () => {
     );
     await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
 
-    // ---- A's invitesUsed: 1, invitesAvailable: 0 ----
+    // NODE_INTERFACE → UTXO queries: memberSinceBlock 0 for a resident
+    for (const node of mesh.nodes) {
+      const bK = await getKarma(node, B.publicKeyHex);
+      expect(bK.member).toBe(false);
+      expect(bK.memberSinceBlock).toBe(0);
+      expect(bK.invitesAvailable).toBe(0);
+    }
+    for (const node of mesh.nodes) {
+      const s = await getStatus(node);
+      expect(s.membership.memberCount).toBe(2);
+    }
     for (const node of mesh.nodes) {
       aK = await getKarma(node, A.publicKeyHex);
       expect(aK.invitesUsed).toBe(1);
       expect(aK.invitesAvailable).toBe(0);
     }
 
-    // ---- A's second invite is refused ----
-    // NODE_INTERFACE → Invites: "the inviter is neither a root nor a member with an invite available"
-    const C = fresh();
+    // ---- A's second invite is refused: the budget is spent, never revoked ----
+    // NODE_INTERFACE → Invites: a member's invite draws against its budget
+    const spuriousInvitee = fresh();
     aK = await getKarma(miner, A.publicKeyHex);
-    const invC = buildInviteTx(A, karmaBoxes(aK), C, bBondAmount, aK.height, version);
+    const invSpurious = buildInviteTx(A, karmaBoxes(aK), spuriousInvitee, 5n, aK.height, version);
     try {
-      await postInvite(miner, invC.json);
+      await postInvite(miner, invSpurious.json);
       expect.fail('second invite should have been refused');
     } catch (err) {
       expect(err).toBeInstanceOf(NodeError);
       expect((err as NodeError).status).toBe(400);
     }
 
-    // ---- A vouches B, B posts two threads, A likes each ----
+    // ---- 5. B's cast as a resident is refused ----
+    // NODE_INTERFACE → Vouches: castVouch refuses a voucher who is not a
+    // member (ARCHITECTURE → Membership).
+    const bKForVouch = await getKarma(miner, B.publicKeyHex);
+    const badVouch = buildVouchTx(B, karmaBoxes(bKForVouch), A, bKForVouch.height, version);
+    try {
+      await postVouch(miner, badVouch.json);
+      expect.fail('resident vouch should have been refused');
+    } catch (err) {
+      expect(err).toBeInstanceOf(NodeError);
+      expect((err as NodeError).status).toBe(400);
+    }
+
+    // ---- 6. A vouches B, B posts two threads, A likes each: B is set ----
     aK = await getKarma(miner, A.publicKeyHex);
     const aVouchB = buildVouchTx(A, karmaBoxes(aK), B, aK.height, version);
     await postVouch(miner, aVouchB.json);
@@ -239,44 +251,127 @@ describe('membership', () => {
     );
     await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
 
-    // A likes each of B's posts (A is a member, so these are member-likes)
     aK = await getKarma(miner, A.publicKeyHex);
-    const bLike1 = buildLikeTx(A, karmaBoxes(aK), bt1Res.postId, B.publicKeyHex, aK.height, version);
-    await postLike(miner, bLike1.json);
-    const bLike2 = buildLikeTx(A, [bLike1.outputs[0]!], bt2Res.postId, B.publicKeyHex, aK.height, version);
-    await postLike(miner, bLike2.json);
+    const aLikeBt1 = buildLikeTx(A, karmaBoxes(aK), bt1Res.postId, B.publicKeyHex, aK.height, version);
+    await postLike(miner, aLikeBt1.json);
+    const aLikeBt2 = buildLikeTx(A, [aLikeBt1.outputs[0]!], bt2Res.postId, B.publicKeyHex, aK.height, version);
+    await postLike(miner, aLikeBt2.json);
 
     await confirm(
       async () => (await getKarma(miner, B.publicKeyHex)).member,
       miner, mesh.miningSecret,
     );
-    await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
+    const setHeightB = (await getBlockCurrent(miner)).height;
+    await waitHeight(mesh.nodes, setHeightB);
 
-    // ---- B is a member, memberCount is 3 ----
+    // NODE_INTERFACE → Membership pass, case 1: memberBar = D(N) from the
+    // pre-body N (N = 2: the faucet and A).
     for (const node of mesh.nodes) {
       bK = await getKarma(node, B.publicKeyHex);
       expect(bK.member).toBe(true);
+      expect(bK.memberSinceBlock).toBe(setHeightB);
+      expect(bK.memberBar).toBe(1);
+      expect(bK.memberVouches).toBe(1);
+      expect(bK.memberLikes).toBe('2');
+      expect(bK.invitesAvailable).toBe(1);
+      expect(bK.lifetimeLikesReceived).toBe('2');
+    }
+    for (const node of mesh.nodes) {
       const s = await getStatus(node);
       expect(s.membership.memberCount).toBe(3);
     }
 
-    // ---- GET /vouches?voucher=A is a page ----
+    // ---- 7. B invites C (bond 12): C a resident, then set ----
+    // B's remaining karma after its own two thread prices still clears
+    // VOUCH_MIN_BALANCE after this bond, for B's own cast below
+    // (ARCHITECTURE → Vouch boxes); C's grant from it funds C's own two
+    // thread prices (ARCHITECTURE → Earned, standing, and well-founded by
+    // age — the earned tier is unchanged for a member's invitee).
+    const C = fresh();
+    bK = await getKarma(miner, B.publicKeyHex);
+    const cBondAmount = 12n;
+    const invC = buildInviteTx(B, karmaBoxes(bK), C, cBondAmount, bK.height, version);
+    await postInvite(miner, invC.json);
+
+    await confirm(
+      async () => await hasKarma(miner, C.publicKeyHex),
+      miner, mesh.miningSecret,
+    );
+    await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
+
+    bK = await getKarma(miner, B.publicKeyHex);
+    const bVouchC = buildVouchTx(B, karmaBoxes(bK), C, bK.height, version);
+    await postVouch(miner, bVouchC.json);
+
+    await confirm(
+      async () => (await getKarma(miner, C.publicKeyHex)).memberVouches >= 1,
+      miner, mesh.miningSecret,
+    );
+    await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
+
+    let cK = await getKarma(miner, C.publicKeyHex);
+    const ct1 = buildThreadTx(C, karmaBoxes(cK), 'c thread 1', cK.height, version);
+    const ct1Res = await postPost(miner, ct1.json, ct1.content);
+    const ct2 = buildThreadTx(C, [ct1.outputs[0]!], 'c thread 2', cK.height, version);
+    const ct2Res = await postPost(miner, ct2.json, ct2.content);
+
+    await confirm(
+      async () => {
+        const p = await getPost(miner, ct2Res.postId);
+        return p !== null && isPost(p) && p.status === 'confirmed';
+      },
+      miner, mesh.miningSecret,
+    );
+    await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
+
+    // two member likes from two different members
+    aK = await getKarma(miner, A.publicKeyHex);
+    const aLikeCt1 = buildLikeTx(A, karmaBoxes(aK), ct1Res.postId, C.publicKeyHex, aK.height, version);
+    await postLike(miner, aLikeCt1.json);
+    bK = await getKarma(miner, B.publicKeyHex);
+    const bLikeCt2 = buildLikeTx(B, karmaBoxes(bK), ct2Res.postId, C.publicKeyHex, bK.height, version);
+    await postLike(miner, bLikeCt2.json);
+
+    await confirm(
+      async () => (await getKarma(miner, C.publicKeyHex)).member,
+      miner, mesh.miningSecret,
+    );
+    await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
+
+    // NODE_INTERFACE → Membership pass, case 1: memberBar = D(3) from the
+    // pre-body N (N = 3: the faucet, A and B).
+    for (const node of mesh.nodes) {
+      cK = await getKarma(node, C.publicKeyHex);
+      expect(cK.member).toBe(true);
+      expect(cK.memberBar).toBe(1);
+    }
+    for (const node of mesh.nodes) {
+      const s = await getStatus(node);
+      expect(s.membership.memberCount).toBe(4);
+    }
+
+    // ---- 8. the vouch pages ----
     const aVouchPage = await getVouchesVoucher(miner, A.publicKeyHex);
-    expect(aVouchPage.count).toBe(1);
+    expect(aVouchPage.count).toBe(2); // the faucet and B
     expect(aVouchPage.next).toBeNull();
-    const aVouchCreatedAtBlock = aVouchPage.vouches[0]!.createdAtBlock;
+    const aVouchOnB = aVouchPage.vouches.find((v) => v.targetId === B.publicKeyHex)!;
     for (const node of mesh.nodes.slice(1)) {
       const v = await getVouchesVoucher(node, A.publicKeyHex);
-      expect(v.count).toBe(1);
+      expect(v.count).toBe(2);
       expect(v.next).toBeNull();
     }
 
-    // ---- GET /vouches?target=B lists A ----
+    // B's vouch on C, recorded now: the cascade below consumes it before its
+    // own createdAtBlock is readable again.
+    const bVouchPage = await getVouchesVoucher(miner, B.publicKeyHex);
+    const bVouchOnC = bVouchPage.vouches.find((v) => v.targetId === C.publicKeyHex)!;
+
+    // GET /vouches?target=B lists A, and every row's voucherVouchCount equals
+    // that voucher's own target count on every node.
     for (const node of mesh.nodes) {
       const v = await getVouchesTarget(node, B.publicKeyHex);
-      expect(v.vouches.some(vi => vi.voucherId === A.publicKeyHex)).toBe(true);
+      expect(v.vouches.some((vi) => vi.voucherId === A.publicKeyHex)).toBe(true);
 
-      // ---- every row's voucherVouchCount matches that voucher's own target count ----
       // NODE_INTERFACE → Vouches
       for (const row of v.vouches) {
         const voucherAsTarget = await getVouchesTarget(node, row.voucherId);
@@ -284,94 +379,149 @@ describe('membership', () => {
       }
     }
 
-    // ---- the cascade: faucet unvouches A ----
-    // NODE_INTERFACE → Vouch transition rules
-    const vouchesOnA = await getVouchesVoucher(miner, DEVNET_FAUCET.publicKeyHex);
-    const faucetVouchBox = vouchesOnA.vouches.find(v => v.targetId === A.publicKeyHex)!;
     const statusPre = await getStatus(miner);
-    const unvouchA = buildUnvouchTx(
-      DEVNET_FAUCET,
-      faucetVouchBox.boxId,
-      BigInt(faucetVouchBox.value),
-      faucetVouchBox.createdAtBlock,
+
+    // ---- 9. the cascade starts one generation down: A unvouches B ----
+    // A never lapses (ARCHITECTURE → Earned, standing, and well-founded by
+    // age → "Conferred": bar 0 cannot turn false).
+    const unvouchB = buildUnvouchTx(
+      A,
+      aVouchOnB.boxId,
+      BigInt(aVouchOnB.value),
+      aVouchOnB.createdAtBlock,
       statusPre.blockHeight,
       statusPre.vouchCooldownBlocks,
       version,
     );
-    await deleteVouch(miner, A.publicKeyHex, unvouchA.json);
+    await deleteVouch(miner, B.publicKeyHex, unvouchB.json);
 
-    // ---- confirm A lapses ----
     await confirm(
-      async () => !(await getKarma(miner, A.publicKeyHex)).member,
+      async () => !(await getKarma(miner, B.publicKeyHex)).member,
       miner, mesh.miningSecret,
     );
-    const lapseHeight = (await getBlockCurrent(miner)).height;
-    await waitHeight(mesh.nodes, lapseHeight);
-
-    // ---- A lapsed, memberCount 2 (B still a member) ----
-    for (const node of mesh.nodes) {
-      aK = await getKarma(node, A.publicKeyHex);
-      expect(aK.member).toBe(false);
-      expect(aK.memberVouches).toBe(0);
-      const s = await getStatus(node);
-      expect(s.membership.memberCount).toBe(2);
-    }
-
-    // ---- mine one more block: the settlement's lapse leg withdraws A's vouch on B ----
-    // NODE_INTERFACE → Membership pass: "the cascade is one generation per block"
-    await mine(miner, mesh.miningSecret, 1);
     await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
 
-    // ---- A's vouch on B is withdrawn ----
-    for (const node of mesh.nodes) {
-      const v = await getVouchesVoucher(node, A.publicKeyHex);
-      expect(v.count).toBe(0);
-    }
-
-    // ---- A's escrow for the lapse-withdrawn vouch on B ----
-    // NODE_INTERFACE → The settlement transaction: "the unvouch shape exactly"
-    for (const node of mesh.nodes) {
-      const cd = await getVouchCooldowns(node, A.publicKeyHex);
-      expect(cd.cooldowns.length).toBe(1);
-      expect(cd.cooldowns[0]!.releaseAtBlock).toBe(
-        aVouchCreatedAtBlock + statusPre.vouchCooldownBlocks,
-      );
-    }
-
-    // ---- B lapses in the same block's pass — one generation per block ----
     for (const node of mesh.nodes) {
       bK = await getKarma(node, B.publicKeyHex);
       expect(bK.member).toBe(false);
       expect(bK.memberVouches).toBe(0);
       const s = await getStatus(node);
-      expect(s.membership.memberCount).toBe(1);
+      expect(s.membership.memberCount).toBe(3);
     }
 
-    // ---- A as a resident cannot recast ----
-    // NODE_INTERFACE → Vouches: "a voucher who is not a member"
-    aK = await getKarma(miner, A.publicKeyHex);
-    const recastAttempt = buildVouchTx(A, karmaBoxes(aK), B, aK.height, version);
+    // mine one more block: the settlement's lapse leg withdraws B's vouch on C
+    // NODE_INTERFACE → "The cascade is one generation per block, and the pass
+    // is why"
+    await mine(miner, mesh.miningSecret, 1);
+    await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
+
+    for (const node of mesh.nodes) {
+      const v = await getVouchesVoucher(node, B.publicKeyHex);
+      expect(v.count).toBe(0);
+    }
+
+    // B's escrow for the lapse-withdrawn vouch on C: the lapse leg's
+    // withdrawal takes the unvouch shape, releaseAtBlock = the vouch's
+    // createdAtBlock + vouchCooldownBlocks
+    // (NODE_INTERFACE → "The lapse leg reads PRE-BODY state too, and its
+    // predicate is the record's").
+    for (const node of mesh.nodes) {
+      const cd = await getVouchCooldowns(node, B.publicKeyHex);
+      expect(cd.cooldowns.length).toBe(1);
+      expect(cd.cooldowns[0]!.releaseAtBlock).toBe(
+        bVouchOnC.createdAtBlock + statusPre.vouchCooldownBlocks,
+      );
+    }
+
+    // C lapses in the same block's pass — one generation per block
+    for (const node of mesh.nodes) {
+      cK = await getKarma(node, C.publicKeyHex);
+      expect(cK.member).toBe(false);
+      expect(cK.memberVouches).toBe(0);
+      const s = await getStatus(node);
+      expect(s.membership.memberCount).toBe(2);
+    }
+
+    // B as a resident cannot recast
+    // NODE_INTERFACE → Vouches
+    bK = await getKarma(miner, B.publicKeyHex);
+    const bRecastAttempt = buildVouchTx(B, karmaBoxes(bK), C, bK.height, version);
     try {
-      await postVouch(miner, recastAttempt.json);
+      await postVouch(miner, bRecastAttempt.json);
       expect.fail('resident recast should have been refused');
     } catch (err) {
       expect(err).toBeInstanceOf(NodeError);
       expect((err as NodeError).status).toBe(400);
     }
 
-    // ---- after vouchCooldownBlocks + 1 more blocks the escrow is returned ----
+    // A is untouched throughout
+    for (const node of mesh.nodes) {
+      aK = await getKarma(node, A.publicKeyHex);
+      expect(aK.member).toBe(true);
+      expect(aK.memberVouches).toBe(1);
+    }
+
+    // ---- 10. for life: the faucet unvouches A ----
+    const vouchesOnA = await getVouchesVoucher(miner, DEVNET_FAUCET.publicKeyHex);
+    const faucetVouchOnA = vouchesOnA.vouches.find((v) => v.targetId === A.publicKeyHex)!;
+    const unvouchA = buildUnvouchTx(
+      DEVNET_FAUCET,
+      faucetVouchOnA.boxId,
+      BigInt(faucetVouchOnA.value),
+      faucetVouchOnA.createdAtBlock,
+      (await getBlockCurrent(miner)).height,
+      statusPre.vouchCooldownBlocks,
+      version,
+    );
+    await deleteVouch(miner, A.publicKeyHex, unvouchA.json);
+
+    await confirm(
+      async () => (await getKarma(miner, A.publicKeyHex)).memberVouches === 0,
+      miner, mesh.miningSecret,
+    );
+    await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
+
+    // A is still a member: bar 0 cannot turn false
+    // (ARCHITECTURE → Roots; ARCHITECTURE → Earned, standing, and
+    // well-founded by age → "Conferred").
+    for (const node of mesh.nodes) {
+      aK = await getKarma(node, A.publicKeyHex);
+      expect(aK.member).toBe(true);
+      expect(aK.memberBar).toBe(0);
+      expect(aK.memberVouches).toBe(0);
+      expect(aK.invitesAvailable).toBe(0); // clamped: floor(0 / D) - 1
+      const s = await getStatus(node);
+      expect(s.membership.memberCount).toBe(2);
+    }
+
+    // mine one more block: no lapse leg reaches A
+    await mine(miner, mesh.miningSecret, 1);
+    await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
+
+    for (const node of mesh.nodes) {
+      const v = await getVouchesVoucher(node, A.publicKeyHex);
+      expect(v.count).toBe(1); // its vouch on the faucet
+      const s = await getStatus(node);
+      expect(s.membership.memberCount).toBe(2);
+    }
+
+    // ---- 11. after vouchCooldownBlocks + 1 more blocks every escrow returns ----
     await mine(miner, mesh.miningSecret, statusPre.vouchCooldownBlocks + 1);
     await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
 
     for (const node of mesh.nodes) {
-      const cd = await getVouchCooldowns(node, A.publicKeyHex);
-      expect(cd.cooldowns).toHaveLength(0);
+      const bCooldowns = await getVouchCooldowns(node, B.publicKeyHex);
+      expect(bCooldowns.cooldowns).toHaveLength(0);
+      const aCooldowns = await getVouchCooldowns(node, A.publicKeyHex);
+      expect(aCooldowns.cooldowns).toHaveLength(0);
+      const faucetCooldowns = await getVouchCooldowns(node, DEVNET_FAUCET.publicKeyHex);
+      expect(faucetCooldowns.cooldowns).toHaveLength(0);
     }
 
-    // ---- totalKarma delta: grants enter supply, prices exit it ----
-    // NODE_INTERFACE → Status: totalKarma
+    // ---- 12. totalKarma delta: grants enter supply, prices exit it ----
+    // NODE_INTERFACE → Status
     const statusFinal = await getStatus(miner);
-    const expectedDelta = bondAmount + bBondAmount - 4n * POST_PRICE_THREAD;
+    const expectedDelta = bondAmount + bBondAmount + cBondAmount - 4n * POST_PRICE_THREAD;
     expect(BigInt(statusFinal.totalKarma) - BigInt(status0.totalKarma)).toBe(expectedDelta);
   });
 });
