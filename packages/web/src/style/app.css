@@ -101,6 +101,11 @@ header .spacer { flex: 1 1 auto; }
 .who .hex { font-family: var(--mono); font-size: 11.5px; color: var(--inkMute); }
 .who .when { font-family: var(--mono); font-size: 11.5px; color: var(--inkMute); margin-left: auto; }
 .card-content { font-size: 15px; color: var(--ink); word-wrap: break-word; }
+/* The content grammar's blocks — WEB_INTERFACE → Content. 8px between paragraphs,
+   none at the edges; a title line one step up the card's type. Colour is inherited
+   so the .card.open fade reaches every block. */
+.card-content > * + * { margin-top: 8px; }
+.card-title { font-size: 17px; font-weight: 600; }
 /* A body a node holds by commit but has not backfilled yet. Says what is,
    without implying the post is gone — it is not a withdrawal. */
 .card-absent { font-style: italic; color: var(--inkMute); font-size: 14px; }

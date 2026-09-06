@@ -1,4 +1,5 @@
 import { el, shortHex } from '../dom';
+import { parseContent, renderContent } from './content';
 import { unlockForm } from './passphrase';
 import type { PostJson, WithdrawnJson } from '../api/dto';
 import { isWithdrawn } from '../api/dto';
@@ -460,7 +461,9 @@ function livePostCard(post: PostJson, opts: CardOpts): HTMLElement {
     // nothing.
     // WEB_INTERFACE → The browser reaches @dagsocial/types through a build-time shim
     assertContentHash(post.id, post.content, post.contentHash);
-    body.appendChild(el('div', 'card-content', post.content));
+    // The content grammar builds the body's nodes (WEB_INTERFACE → Content →
+    // "A newline is a line break, a blank line a paragraph").
+    body.appendChild(renderContent(parseContent(post.content), { postId: post.id }));
   }
 
   if (flight && flight.stage !== 'landed') {

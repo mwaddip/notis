@@ -57,6 +57,27 @@ describe('card — · you', () => {
   });
 });
 
+describe('card — the content grammar', () => {
+  const withContent = (content: string): PostJson => ({ ...confirmed(PUB), content, contentHash: contentHashHex(content) });
+
+  it('a\\nb\\n\\nc renders one .card-content with two paragraphs, the first with a br', () => {
+    const c = card(withContent('a\nb\n\nc'), {});
+    const cc = c.querySelectorAll('.card-content');
+    expect(cc).toHaveLength(1); // the wrapping element keeps the class
+    const paras = cc[0]!.querySelectorAll('.card-para');
+    expect(paras).toHaveLength(2);
+    expect(paras[0]!.querySelector('br')).not.toBeNull(); // the newline inside the first paragraph
+    expect(paras[1]!.querySelector('br')).toBeNull();
+    expect(cc[0]!.textContent).toBe('abc'); // a br carries no text
+  });
+
+  it('a title line renders as .card-title, text as text', () => {
+    const c = card(withContent('# Heading\nbody'), {});
+    expect(c.querySelector('.card-title')?.textContent).toBe('Heading');
+    expect(c.querySelector('.card-para')?.textContent).toBe('body');
+  });
+});
+
 describe('card — the reply count is the row\'s', () => {
   it('the row\'s descendantCount reads "2 replies" / "1 reply"', () => {
     const two = { ...confirmed(PUB), descendantCount: 2 };
