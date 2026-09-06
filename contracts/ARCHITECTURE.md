@@ -1009,12 +1009,6 @@ tracked reservations (`TYPES_INTERFACE` → Tracked reservations).
 
 ## Membership
 
-> ⚠ **AHEAD OF CODE (2026-09-06)** — a root's invitee is a member from the grant, for life: the
-> conferred membership in this section and §Tiers, the **Conferred** bullet of
-> §Earned, standing, and well-founded by age, the `invitedAtBlock = 0` clause of §Roots, the
-> `membershipBarMultiplier` row of §Membership parameters, §Identity invariants and
-> §What varies per network.
-
 Membership is standing: **earned** by other members' live vouches and by members' likes, or
 **conferred** by a root's invite — the bond a root stakes is the committee's endorsement; **held**
 while the vouches counted toward it stand, or for ever when conferred; **lost** only when counted
@@ -1467,8 +1461,6 @@ chain or owed one:
 | **positional wire format** (Phases 0–8, shipped 2026-08-11) | **every committed byte** |
 | **prune removal** (2026-09-06) | the prune field of `UtxoTransaction`, removed (TYPES_INTERFACE → Layout — UtxoTransaction) — every `TxId`, and every box id derived from one |
 | **the committee rule** (2026-09-06) | the identity record a root's grant writes — `memberSinceBlock`, `memberBar` — and the network record's `N` (§Earned, standing, and well-founded by age) |
-
-> ⚠ **AHEAD OF CODE (2026-09-06)** — the committee rule's row.
 
 **Outstanding against the live node: the prune removal and the committee rule.** Testnet's chain
 began at the 2026-08-30 reset whose block 1 the profile pins as `genesisId`

@@ -346,8 +346,6 @@ and the block's settlement grants the invitee the bond's value from the pool.
    only**
 4. `insertUtxoTx(tx, expiresAtHeight)`; return the one box id
 
-> ⚠ **AHEAD OF CODE (2026-09-06)** — the grant writes a root's invitee as a member.
-
 Block application writes `invitedAtBlock` at the grant, which starts the
 probation clock — and, when the inviter is a root, the invitee's membership
 (→ Bond transition rules); the key becomes an account in the same step, which is what bars
@@ -461,9 +459,6 @@ consensus valuation, which is the mirror class. The three plain numbers beside t
 exists), and `height`, the chain height at the time of the response — are that valuation's inputs,
 served so a client can show when the next period falls.
 
-> ⚠ **AHEAD OF CODE (2026-09-06)** — `invitesAvailable` is `null` for a root alone; a root's invitee
-> reads its budget.
-
 **`/karma/:userId` answers standing, and the client evaluates nothing.** `memberSinceBlock`,
 `memberBar`, `memberVouches` and `invitesUsed` are the record's plain numbers, `memberLikes` its
 second counter as a decimal string (`0` and `"0"` where no record exists); `member` is the derived
@@ -570,8 +565,6 @@ faucet is a client of the invite grant rather than a transition of its own.
 ⛔ **No privileged key is representable.** `getSystemKeypair`, `signWithSystemKey`,
 `initSystemKeypair`, the `system_keypair` row and `isSystemBox` are gone, along with the same-owner
 karma exemption `isSystemBox` gated. No consensus rule resolves against a configured key.
-
-> ⚠ **AHEAD OF CODE (2026-09-06)** — a faucet grant confers membership.
 
 **The faucet identity is a root** (`ARCHITECTURE → Roots`): its record is seeded with
 `memberBar = 0` and `invitedAtBlock = 0`, so it vouches and invites with no budget check and never
@@ -1682,9 +1675,6 @@ There is **no other legal bond or invite shape**. In particular:
 
 ### Bond transition rules
 
-> ⚠ **AHEAD OF CODE (2026-09-06)** — the root predicate's `invitedAtBlock = 0` clause, and
-> *"A root's grant confers membership"*.
-
 - **A bond is never spent, only settled.** Creation, the probation clock and
   forfeiture are all block application's, so no
   transition admits a bond into a user transaction and no signature reaches it.
@@ -1937,9 +1927,6 @@ inside the network's reported supply.
   what rate-limits re-vouching after any withdrawal.
 
 ### Membership pass
-
-> ⚠ **AHEAD OF CODE (2026-09-06)** — case 4 (a conferred membership), the block's invitees in the
-> touched set, and the pre-block state of a record the block first wrote.
 
 Membership is a predicate on the identity record — `member(m) ⟺ memberSinceBlock > 0 ∧
 memberVouches ≥ memberBar` (`ARCHITECTURE → Membership`) — and the pass is the bookkeeping that
@@ -3081,9 +3068,6 @@ and it is CREATOR-DECLARED"), which the `stateRoot` commits and this column only
 mirrors.
 
 ### Identity Records
-
-> ⚠ **AHEAD OF CODE (2026-09-06)** — the settlement's grant step as the second writer of
-> `memberSinceBlock` and `memberBar`, for a root's invitee; `root(m)`'s third clause.
 
 The second committed entity alongside boxes: the per-identity decay clock. It may
 read neither height that meets `insertBox` — a box's `createdAtBlock` is
