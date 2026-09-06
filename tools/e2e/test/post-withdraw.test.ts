@@ -3,18 +3,21 @@ import { createMesh, type Mesh } from '../src/mesh.js';
 import { mine, confirm, waitHeight } from '../src/miner.js';
 import { DEVNET_FAUCET, fresh } from '../src/identities.js';
 import { buildInviteTx } from '../src/tx/invite.js';
-import { buildThreadTx } from '../src/tx/post.js';
+import { buildThreadTx, buildReplyTx } from '../src/tx/post.js';
 import { buildLikeTx } from '../src/tx/like.js';
+import { buildVouchTx } from '../src/tx/vouch.js';
 import { buildPostWithdrawTx } from '../src/tx/post-withdraw.js';
 import {
   postInvite,
   postPost,
   postLike,
+  postVouch,
   postPostWithdraw,
   getKarma,
   getStatus,
   hasKarma,
   getPost,
+  getVouchesTarget,
   getBlockCurrent,
   NodeError,
   isPost,
@@ -105,6 +108,43 @@ describe('post-withdraw', () => {
         expect(p.kind).toBe('withdrawn');
         expect(p.withdrawnAtHeight).toBeGreaterThan(0);
       }
+    }
+
+    // ---- A withdrawn root's view carries descendantCount and authorVouchCount ----
+    // NODE_INTERFACE → "The JSON projection has two arms where the store has one shape"
+    const bobKForReply = (await getKarma(miner, bob.publicKeyHex))!;
+    const propReply = buildReplyTx(
+      bob, karmaBoxes(bobKForReply), 'reply to a withdrawn root',
+      propPostRes.postId, alice.publicKeyHex, bobKForReply.height, version,
+    );
+    const propReplyRes = await postPost(miner, propReply.json, propReply.content);
+
+    await confirm(
+      async () => {
+        const p = await getPost(miner, propReplyRes.postId);
+        return p !== null && isPost(p) && p.status === 'confirmed';
+      },
+      miner, mesh.miningSecret,
+    );
+    await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
+
+    const faucetKForVouch = (await getKarma(miner, DEVNET_FAUCET.publicKeyHex))!;
+    const aliceVouch = buildVouchTx(DEVNET_FAUCET, karmaBoxes(faucetKForVouch), alice, faucetKForVouch.height, version);
+    await postVouch(miner, aliceVouch.json);
+
+    await confirm(
+      async () => (await getVouchesTarget(miner, alice.publicKeyHex)).count > 0,
+      miner, mesh.miningSecret,
+    );
+    await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
+
+    const aliceVouchPage = await getVouchesTarget(miner, alice.publicKeyHex);
+    const withdrawnRoot = await getPost(miner, propPostRes.postId);
+    expect(withdrawnRoot).not.toBeNull();
+    expect(isWithdrawn(withdrawnRoot!)).toBe(true);
+    if (isWithdrawn(withdrawnRoot!)) {
+      expect(withdrawnRoot.descendantCount).toBe(1);
+      expect(withdrawnRoot.authorVouchCount).toBe(aliceVouchPage.count);
     }
 
     // ---- B: like(P) and withdraw(P) in one block ----
