@@ -117,27 +117,16 @@
     </section>
 
     <section>
-      <h2>Removing things: two different acts</h2>
-      <p>People want two different things and older designs kept confusing them. One is <em>I regret writing this.</em> The other is <em>I want this whole thread gone.</em> They deserve very different prices.</p>
+      <h2>Removing things</h2>
+      <p>There is one act an author has over a published post: <em>I regret writing this.</em> It is yours alone, and it costs nothing.</p>
 
       <h3>Withdrawing your own words</h3>
       <p>Withdrawing removes your post's content while every reply beneath it survives. What's left is a marker: the conversation still hangs together, your words are gone. It costs <strong>nothing</strong> — you're destroying nothing of anyone else's, and you already paid to post.</p>
       <p>It's worth being precise about what "withdrawn" means, because it's easy to overpromise. Posts are identified by a fingerprint of their content, so once the content is dropped, what remains reveals nothing, and honest nodes delete it. But anyone who already saved a copy can still republish it — that's true of anything ever sent over a public network, here and everywhere else. What the protocol guarantees is that it stops spreading and that your decision is permanent and attributable. It cannot un-publish.</p>
       <p>That's why the interface says <strong>withdrawn</strong> and never <em>deleted</em>.</p>
 
-      <h3>Pruning a whole subtree</h3>
-      <p>Pruning removes a post <em>and everything under it</em>, including other people's replies. Because it destroys words that aren't yours, it costs a <strong>price per post removed</strong>.</p>
-      <div class="tbl-wrap">
-        <table>
-          <thead><tr><th>What</th><th>Happens</th></tr></thead>
-          <tbody>
-            <tr><td>The subtree — your post and every reply beneath it</td><td class="n">removed</td></tr>
-            <tr><td>A price, per post destroyed</td><td class="n">1 each</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <p>Charging per descendant is the point, and it fixes a direction cost would otherwise run backwards. The damage of a prune is measured in other people's words, not your own — the post whose removal wipes out five hundred replies does five hundred times the harm of a lonely one. A flat fee would make the most destructive prune no dearer than the emptiest; a per-post charge prices the damage where it lands.</p>
-      <p>Removing your own words alone never needs this. Withdrawal — dropping the content of a post you wrote, leaving the replies intact — is free, because regret about your own writing harms no one else. Pruning is the heavier act, for when a whole branch has to go, and it's priced for what it takes down with it.</p>
+      <h3>Why there is no “remove the whole thread”</h3>
+      <p>Nothing you can do reaches other people's replies — not even the replies under your own post. A cascade would protect nothing: the post was archivable the moment it went public, and the replies leak nothing it didn't already give away. It would be a batch bounded only by the thread's size. It would hand whoever started a thread a way to delete a discussion other people wrote. And every one of those replies paid to be posted, with nothing returning. Withdrawal — your words, your call, free — is the whole of it.</p>
     </section>
 
     <section>
@@ -156,7 +145,6 @@
             <tr><td>Post price, reply</td><td class="n">3</td><td>A little of it goes to the author being answered.</td></tr>
             <tr><td>Decay</td><td class="n">2 / 5 days</td><td>Slow enough to ignore if you're around, real if you're not.</td></tr>
             <tr><td>Decay floor</td><td class="n">5</td><td>Nobody is decayed into being unable to act.</td></tr>
-            <tr><td>Prune, per post destroyed</td><td class="n">1</td><td>Scales with the harm — how much of others' writing the prune takes down.</td></tr>
             <tr><td>Withdraw your own post</td><td class="n">free</td><td>Regret shouldn't be expensive.</td></tr>
           </tbody>
         </table>
