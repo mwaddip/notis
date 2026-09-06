@@ -291,8 +291,8 @@ function anchor(url: string, text: string, cls?: string): HTMLAnchorElement {
 /** The image widget: before the press no `img` element exists — the control names
  *  the host; the press swaps the image in place and records it; a load that fails
  *  says so in place and drops the key (WEB_INTERFACE → Content → "An image loads
- *  on the reader's press"). The loaded image carries the referrer policy and the
- *  description as its alt. */
+ *  on the reader's press"). The loaded image always carries an alt — the
+ *  description, or `image from <host>` when it is blank — and the referrer policy. */
 function imageWidget(url: string, alt: string, key: string, opts: RenderContentOpts, block: boolean): HTMLElement {
   const host = gateUrl(url)!.host;
   const wrap = el(block ? 'div' : 'span', 'card-image' + (block ? ' block' : ''));
@@ -300,7 +300,7 @@ function imageWidget(url: string, alt: string, key: string, opts: RenderContentO
     wrap.textContent = '';
     const img = el('img', 'card-img') as HTMLImageElement;
     img.setAttribute('src', url);
-    if (alt) img.setAttribute('alt', alt);
+    img.setAttribute('alt', alt || 'image from ' + host);
     img.setAttribute('referrerpolicy', 'no-referrer');
     img.setAttribute('decoding', 'async');
     img.addEventListener('error', () => {

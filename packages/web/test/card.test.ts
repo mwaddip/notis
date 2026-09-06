@@ -159,6 +159,11 @@ describe('card — images', () => {
     expect(collapsed).toEqual([KEY0]);
   });
 
+  it('an expanded image with a blank description still carries an alt: image from the host', () => {
+    const c = card(withContent('https://img.example/pic.png'), { expanded: new Set([KEY0]) });
+    expect((c.querySelector('img') as HTMLImageElement).getAttribute('alt')).toBe('image from img.example');
+  });
+
   it('a bare image URL is an image control; .svg is a bare-URL link', () => {
     expect(card(withContent('https://img.example/pic.PNG'), {}).querySelector('.img-show')).not.toBeNull();
     const svg = card(withContent('https://img.example/pic.svg'), {});
