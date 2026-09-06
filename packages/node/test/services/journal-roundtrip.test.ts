@@ -616,7 +616,11 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
       lastDecayBlock: 0,
       invitedAtBlock: 2,
       lifetimeLikesReceived: 0n,
-      memberSinceBlock: 0,
+      // The inviter is a root (`memberSinceBlock 1, memberBar 0,
+      // invitedAtBlock 0`), so the grant confers membership: `memberSinceBlock`
+      // is this block's height (NODE_INTERFACE → "A root's grant confers
+      // membership").
+      memberSinceBlock: 2,
       memberBar: 0,
       memberVouches: 0,
       memberLikes: 0n,
@@ -633,7 +637,7 @@ describe('journal round-trip per mutation class (P1 acceptance)', () => {
       lastDecayBlock: 0,
       invitedAtBlock: 2,
       lifetimeLikesReceived: 0n,
-      memberSinceBlock: 0,
+      memberSinceBlock: 2,
       memberBar: 0,
       memberVouches: 0,
       memberLikes: 0n,

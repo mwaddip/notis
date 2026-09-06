@@ -2698,8 +2698,8 @@ asserts each profile's own value rather than the spread.
 
 **`membershipBarMultiplier` is field-only, and the case says so.** It scales the membership bar
 (`ARCHITECTURE → Membership`) — mainnet `10`, fixed by the two anchors; testnet and devnet `1`,
-so a chain whose only root is the faucet can flag its first member on one vouch. A cap, not a
-mechanic: `membershipBar` (→ Membership) is one function on every network. `network.test.ts`
+which keeps the vouch bar at one while `N` is small (`ARCHITECTURE → Membership parameters`). A cap,
+not a mechanic: `membershipBar` (→ Membership) is one function on every network. `network.test.ts`
 asserts each profile's own value rather than the spread.
 
 **Every constant not listed in `NetworkProfile` is universal across networks**, including

@@ -924,15 +924,15 @@ export function emptyBody(): SettlementBody {
 }
 
 /**
- * The invitee of a bond this transaction creates, or null.
+ * The bond output this transaction creates, or null.
  *
  * ⛔ **At most one bond per transaction** — the invite arm pins it
  * (NODE_INTERFACE → Legal box transitions), which is what lets block
  * application's duplicate-invitee rule key on one value per transaction.
  */
-export function bondInviteeOf(outputs: AnyBox[]): Uint8Array | null {
+export function bondOutputOf(outputs: AnyBox[]): BondBox | null {
   for (const out of outputs) {
-    if (out.boxType === 'bond') return (out as BondBox).inviteePublicKey;
+    if (out.boxType === 'bond') return out;
   }
   return null;
 }

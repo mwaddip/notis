@@ -57,7 +57,7 @@ import {
   type EmbeddedTx,
 } from './coinbase-split.js';
 import {
-  bondInviteeOf,
+  bondOutputOf,
   buildSettlement,
   contributeToBody,
   emptyBody,
@@ -467,11 +467,11 @@ export function createOrderingBlock(): OrderingBlock | null {
         // Integration).
         if (tx.protocolVersion !== era) continue;
         const txId = computeTxId(tx);
-        const invitee = bondInviteeOf(
+        const bondOut = bondOutputOf(
           tx.outputs.map((out, i) => materializeOutput(out, txId, i)),
         );
-        if (invitee !== null) {
-          const inviteeHex = Buffer.from(invitee).toString('hex');
+        if (bondOut !== null) {
+          const inviteeHex = Buffer.from(bondOut.inviteePublicKey).toString('hex');
           if (invitedThisBlock.has(inviteeHex)) continue;
           invitedThisBlock.add(inviteeHex);
         }

@@ -84,10 +84,12 @@ export function isMember(record: IdentityRecord): boolean {
 }
 
 /**
- * A root: memberSinceBlock > 0 ∧ memberBar = 0.
+ * `root(m) ⟺ memberSinceBlock > 0 ∧ memberBar = 0 ∧ invitedAtBlock = 0`
+ * (ARCHITECTURE → Roots). The invite-height clause is what separates a root
+ * from a root's invitee, whose bar is also 0.
  */
 export function isRoot(record: IdentityRecord): boolean {
-  return record.memberSinceBlock > 0 && record.memberBar === 0;
+  return record.memberSinceBlock > 0 && record.memberBar === 0 && record.invitedAtBlock === 0;
 }
 
 // ---------------------------------------------------------------------------

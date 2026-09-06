@@ -88,6 +88,17 @@ function residentRecord(height = 1): IdentityRecord {
   };
 }
 
+// A root's invitee: memberBar 0 (conferred at the grant), but invitedAtBlock
+// > 0 — not a root (ARCHITECTURE → Roots).
+function conferredRecord(height: number): IdentityRecord {
+  return {
+    lastActivityBlock: height, lastDecayBlock: 0, invitedAtBlock: height,
+    lifetimeLikesReceived: 0n,
+    memberSinceBlock: height, memberBar: 0, memberVouches: 0,
+    memberLikes: 0n, invitesUsed: 0,
+  };
+}
+
 function makeUnvouchTx(
   vouchBoxId: string,
   signer: ReturnType<typeof makeTestIdentity>,
@@ -195,6 +206,79 @@ describe('membership cascade across blocks', () => {
     const escrows = utxo.getVouchEscrowsFor(sock1.userId);
     expect(escrows).toHaveLength(1);
     expect(escrows[0]!.releaseAtBlock).toBe(vouchSock1ToSock2.createdAtBlock + cooldown);
+
+    db.closeDb();
+  });
+
+  // A root's invitee's own membership never depends on any vouch it holds —
+  // memberBar 0 keeps memberVouches >= memberBar true whatever happens to
+  // memberVouches — so a cascade through it goes no further
+  // (ARCHITECTURE → Earned, standing, and well-founded by age → "Conferred").
+  it('the cascade stops at a committee invitee', async () => {
+    vi.resetModules();
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 3)').run();
+    const utxo = await importUtxo();
+    const records = await importRecords();
+
+    const a = makeTestIdentity();
+    const b = makeTestIdentity();
+    const c = makeTestIdentity();
+
+    // A: a root's invitee, conferred at height 1 — never lapses.
+    records.putIdentityRecord(a.userId, conferredRecord(1));
+
+    // B: earned at height 2, bar=1, one counted vouch from A. A's
+    // memberSinceBlock(1) < B's(2) so it counts.
+    records.putIdentityRecord(b.userId, memberRecord(2, 1, 1));
+
+    // C: earned at height 3, bar=1, one counted vouch from B.
+    records.putIdentityRecord(c.userId, memberRecord(3, 1, 1));
+
+    const aKarma = makeKarmaBox(100n, a.userId, 0, 811);
+    utxo.insertBox(aKarma);
+
+    const vouchAToB = makeVouchBox(a.userId, b.userId, 1, 711);
+    utxo.insertBox(vouchAToB);
+    const vouchBToC = makeVouchBox(b.userId, c.userId, 2, 712);
+    utxo.insertBox(vouchBToC);
+
+    const recordPuts = [a, b, c].map((id) => ({
+      key: records.identityRecordKey(id.userId),
+      record: records.getIdentityRecord(id.userId)!,
+    }));
+    await activateProverOverStore(recordPuts);
+
+    const { applyOrderingBlock } = await importBlockApply();
+    const aBefore = records.getIdentityRecord(a.userId)!;
+
+    // Block 1: A unvouches B.
+    const { config } = await import('../../src/config.js');
+    const cooldown = config.vouchCooldownBlocks;
+    const unvouchTx = makeUnvouchTx(vouchAToB.id!, a, 1 + cooldown, 1);
+    const b1 = await makeApplicableBlock({ height: 1, utxoTxs: [unvouchTx] });
+    expect(applyOrderingBlock(b1), 'block 1 (unvouch) did not apply').toBe(true);
+
+    const bAfter1 = records.getIdentityRecord(b.userId)!;
+    expect(bAfter1.memberVouches).toBe(0);
+    expect(records.getNetworkRecord().memberCount).toBe(2);
+
+    // Block 2: empty body — the settlement's lapse leg withdraws B's vouch
+    // on C, and the pass records C's lapse.
+    const b2 = await makeApplicableBlock({ height: 2 });
+    expect(applyOrderingBlock(b2), 'block 2 (cascade) did not apply').toBe(true);
+
+    const cAfter2 = records.getIdentityRecord(c.userId)!;
+    expect(cAfter2.memberVouches).toBe(0);
+    expect(records.getNetworkRecord().memberCount).toBe(1);
+
+    // A is untouched: its record is byte-identical, and it is still a
+    // member — the cascade never reaches it.
+    const { isMember } = await import('../../src/services/utxo-engine.js');
+    const aAfter = records.getIdentityRecord(a.userId)!;
+    expect(aAfter).toEqual(aBefore);
+    expect(isMember(aAfter)).toBe(true);
 
     db.closeDb();
   });

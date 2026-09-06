@@ -23,7 +23,7 @@ import {
   type EmbeddedTx,
 } from './coinbase-split.js';
 import {
-  bondInviteeOf,
+  bondOutputOf,
   checkSettlement,
   contributeToBody,
   emptyBody,
@@ -38,6 +38,7 @@ import {
   materializeOutput,
   validateTx,
   isMember,
+  isRoot,
 } from './utxo-engine.js';
 import {
   getKarmaBox,
@@ -934,7 +935,11 @@ function applyMutationPhase(
   // record-existence test cannot see a sibling transaction in the same block.
   // Without this the second bond draws a second grant from the pool for one
   // key, sized by whatever bond the second inviter chose.
-  const invitedThisBlock = new Set<string>();
+  //
+  // Keyed on the invitee hex; the value is the bond's `inviterId`, which the
+  // grant step reads to decide the conferral
+  // (NODE_INTERFACE → "A root's grant confers membership").
+  const invitedThisBlock = new Map<string, Uint8Array>();
 
   // §9b. Pre-body captures: decay and escrows.
   //
@@ -1061,9 +1066,9 @@ function applyMutationPhase(
       // naming a key an earlier transaction in this block already named would
       // draw a second grant from the pool for one key. Refused before `applyTx`,
       // so a rejected block has mutated nothing on this transaction's account.
-      const invitee = bondInviteeOf(item.outputs);
-      if (invitee !== null) {
-        const inviteeHex = Buffer.from(invitee).toString('hex');
+      const bondOut = bondOutputOf(item.outputs);
+      if (bondOut !== null) {
+        const inviteeHex = Buffer.from(bondOut.inviteePublicKey).toString('hex');
         if (invitedThisBlock.has(inviteeHex)) {
           console.warn(
             `Rejected block height=${height}: invite tx ${item.txId} names ` +
@@ -1071,7 +1076,7 @@ function applyMutationPhase(
           );
           return false;
         }
-        invitedThisBlock.add(inviteeHex);
+        invitedThisBlock.set(inviteeHex, bondOut.inviterId);
       }
 
       // Before `applyTx` consumes them. Every input is present (tested at the
@@ -1294,9 +1299,36 @@ function applyMutationPhase(
   // consensus bar violation upstream, not something this write papers over.
   // Ascending invitee order, so two grants in one block write in an order the
   // block fixes rather than one a map's iteration happens to produce.
-  for (const inviteeHex of [...invitedThisBlock].sort()) {
+  //
+  // NODE_INTERFACE → "A root's grant confers membership": the inviter's
+  // standing is read from its record as it stands when the settlement
+  // grants — after every apply of this block, like the budget check beside
+  // it (NODE_INTERFACE → Bond transition rules) — and a root's invitee is
+  // written a member from this block; a member's invitee is written a
+  // resident, as today.
+  for (const inviteeHex of [...invitedThisBlock.keys()].sort()) {
     const invitee = new Uint8Array(Buffer.from(inviteeHex, 'hex'));
+    const inviterId = invitedThisBlock.get(inviteeHex)!;
+    const inviterRecord = getIdentityRecord(inviterId);
+    if (!inviterRecord) {
+      // The invite-create arm refuses a bond whose inviter holds no identity
+      // record (NODE_INTERFACE → "Only a root or a member creates a bond,
+      // and a member's invites are a budget"), so a bond that reached this
+      // grant always names one; a null read here is a bug in this node, not
+      // a shape a peer chose.
+      throw new Error(
+        `unreachable: bond inviter ${Buffer.from(inviterId).toString('hex')} ` +
+        `holds no identity record at the grant`,
+      );
+    }
+    const conferred = isRoot(inviterRecord);
     const after = getIdentityRecord(invitee);
+    // NODE_INTERFACE → Membership pass → "A record the block first wrote has
+    // no pre-block state, and the pass reads none": a legal invitee has no
+    // record before this block, so the pre-image captured here is the
+    // absence itself, never the record this write is about to create.
+    preBlockRecords.set(inviteeHex, null);
+    membershipTouched.add(inviteeHex);
     putIdentityRecord(invitee, {
       lastActivityBlock: after?.lastActivityBlock ?? height,
       lastDecayBlock: after?.lastDecayBlock ?? 0,
@@ -1306,8 +1338,8 @@ function applyMutationPhase(
       // and never been liked. The read is what keeps that a consequence of the
       // bar rather than an assumption this line makes.
       lifetimeLikesReceived: after?.lifetimeLikesReceived ?? 0n,
-      memberSinceBlock: after?.memberSinceBlock ?? 0,
-      memberBar: after?.memberBar ?? 0,
+      memberSinceBlock: conferred ? height : (after?.memberSinceBlock ?? 0),
+      memberBar: conferred ? 0 : (after?.memberBar ?? 0),
       memberVouches: after?.memberVouches ?? 0,
       memberLikes: after?.memberLikes ?? 0n,
       invitesUsed: after?.invitesUsed ?? 0,
@@ -1363,7 +1395,9 @@ function applyMutationPhase(
   //
   // Between the like counters and the decay clocks. Reads N, D(N), Y(N) once
   // from the network record of pre-body state. Over the identities the block
-  // touched, ascending hex. Set / lapse / re-qualify. N written once at the end.
+  // touched, ascending hex. Four cases: set / lapse / re-qualify / conferred
+  // (case 4 — the grant step above already wrote the age and the bar for a
+  // root's invitee; this pass only counts it). N written once at the end.
   // No value moves.
   // Add authors whose memberLikes rose to the membership pass's touched set.
   for (const authorHex of memberLikesPerAuthor.keys()) {
@@ -1378,7 +1412,13 @@ function applyMutationPhase(
     let newN = N;
     for (const idHex of [...membershipTouched].sort()) {
       const id = new Uint8Array(Buffer.from(idHex, 'hex'));
-      const pre = preBlockRecords.get(idHex) ?? getIdentityRecord(id);
+      // NODE_INTERFACE → "A record the block first wrote has no pre-block
+      // state, and the pass reads none": `??` would treat a captured `null`
+      // — the grant step's pre-image for a legal invitee — as absent and
+      // fall through to the post-grant record, reading a conferred member as
+      // one that was already there. The existing captures (vouch targets)
+      // are unaffected: a vouch target always holds a record.
+      const pre = preBlockRecords.has(idHex) ? preBlockRecords.get(idHex)! : getIdentityRecord(id);
       const current = getIdentityRecord(id);
       if (!current) continue;
 
@@ -1400,6 +1440,11 @@ function applyMutationPhase(
         } else if (!wasMember && isMemberNow) {
           newN++;
         }
+      } else if (current.memberSinceBlock > 0 && current.memberBar === 0 && !wasMember) {
+        // Case 4: conferred. The grant step already wrote the age and the
+        // bar; a root cannot reach here, since its record is seeded at
+        // genesis and `wasMember` is true for it on every block.
+        newN++;
       }
     }
 

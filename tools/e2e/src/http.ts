@@ -78,6 +78,8 @@ export interface KarmaPage {
   memberVouches: number;
   memberLikes: string;
   invitesUsed: number;
+  // 0 = never invited; else the grant height (NODE_INTERFACE → UTXO queries).
+  invitedAtBlock: number;
   member: boolean;
   invitesAvailable: number | null;
   height: number;

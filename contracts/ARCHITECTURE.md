@@ -1009,22 +1009,27 @@ tracked reservations (`TYPES_INTERFACE` → Tracked reservations).
 
 ## Membership
 
-Membership is standing: **earned** by other members' live vouches and by members' likes,
-**held** while the vouches counted toward it stand, and **lost** only when they are withdrawn. It
-is never granted — no accept, no ballot, no electorate — and it is derived from committed state,
-never stored as a flag. Membership is what the invite right rests on: only members and roots
-invite, and a member's invites are a budget backed by the endorsements they hold (§Invite System).
+Membership is standing: **earned** by other members' live vouches and by members' likes, or
+**conferred** by a root's invite — the bond a root stakes is the committee's endorsement; **held**
+while the vouches counted toward it stand, or for ever when conferred; **lost** only when counted
+vouches are withdrawn, which a conferred membership has none of. There is no accept, no ballot and
+no electorate: a membership is earned under the bar or conferred by one root's own act, and it is
+derived from committed state, never stored as a flag. Membership is what the invite right rests on:
+only members and roots invite, and a member's invites are a budget backed by the endorsements they
+hold (§Invite System).
 
 ### Tiers
 
 | | post | like / be liked | hold karma | vouch | invite |
 |---|---|---|---|---|---|
 | **resident** — invited, not yet endorsed | ✓ | ✓ | ✓ | ✗ | ✗ |
-| **member** — endorsed, below | ✓ | ✓ | ✓ | ✓ | ✓, within the budget |
+| **member** — endorsed, below, or a root's invitee | ✓ | ✓ | ✓ | ✓ | ✓, within the budget |
 | **root** — a genesis committee key, or the faucet identity where one is seeded | ✓ | ✓ | ✓ | ✓ | ✓, bounded by bond karma alone |
 
 A resident may stay a resident forever, and a lapsed member is a resident again. Two things a
-resident cannot do: invite, and vouch — the member's act of standing behind someone.
+resident cannot do: invite, and vouch — the member's act of standing behind someone. A root's
+invitee is never a resident: it is a member from its grant and cannot lapse
+(§Earned, standing, and well-founded by age).
 
 ### The bar — one formula, two numbers
 
@@ -1073,9 +1078,17 @@ people forever. `∛` grows the absolute bar without outrunning a real person's 
   the record takes `memberSinceBlock = height` — **the age, permanent** — and `memberBar = D(N)`,
   **fixed at set time.** ⛔ A rising `D` binds newcomers only; re-evaluating members against the
   current `D` would un-flag thousands at once.
+- **Conferred.** A root's invitee is written at the grant with `memberSinceBlock` = the grant
+  height and `memberBar = 0` (NODE_INTERFACE → Bond transition rules) — a member from its first
+  block, for life: with bar 0 the predicate cannot turn false, so no withdrawal reaches it and the
+  committee cannot revoke one (user, 2026-09-04). It is not a root: its invite height is nonzero
+  (§Roots), so its invites are a budget and its own invitees earn theirs. Vouches toward it build
+  its budget and nothing else; its own vouches count toward younger members by age, as any
+  member's do. A member's invitee is a resident, who earns it.
 - **Derived, never stored:** `member(m) ⟺ memberSinceBlock > 0 ∧ memberVouches ≥ memberBar`.
   The record holds the inputs and every reader evaluates the predicate; no flag can drift from
-  it. Roots have `memberBar = 0` and never lapse — the base every chain of endorsement rests on.
+  it. Roots and roots' invitees have `memberBar = 0` and never lapse — the base every chain of
+  endorsement rests on.
 - **Lapse ⟺ the predicate turns false**, and it can turn false in exactly one way: counted
   vouches are retracted — by their vouchers' own unvouch, or by the settlement withdrawing a
   lapsed voucher's vouches (§Vouch boxes). Likes are monotonic and nothing else moves the
@@ -1104,12 +1117,31 @@ any one of them can end it.
 A member whose older endorsers all actively withdraw lapses despite younger support, and can be
 restored only by older members — the roots among them, who never lapse. Rare, visible, recorded.
 
+**The honest cost of conferral:** a sock invited directly by a root is a member for as long as the
+chain runs — the root's bond and the root's judgment are its only price, and no withdrawal reaches
+it. A root's invitees are a second base layer under the earned tier, so the cell argument above
+holds from the third generation on, not the second. On a network whose root is an open faucet that
+is the point: every key it grants is a member, which is what lets the earned tier start at all
+(§Membership parameters). On a network seeded by a committee it is the committee's responsibility,
+and the committee is small and named.
+
 ### Roots
 
 Every `genesisCommitteeKeys` entry is a root, and so is the faucet identity on the networks that
 seed one (§Genesis): a record written at seeding with `memberSinceBlock` = the genesis mint
-height and `memberBar = 0`. A root vouches and invites with no budget check — its invites are
-bounded by its bond karma alone — which is what lets a committee, or the faucet, seed a chain.
+height, `memberBar = 0` and `invitedAtBlock = 0`. The invite height is the clause that separates a
+root from a root's invitee, whose bar is also 0 and whose invite height is its grant height
+(§Earned, standing, and well-founded by age):
+
+```
+root(m) ⟺ memberSinceBlock > 0 ∧ memberBar = 0 ∧ invitedAtBlock = 0
+```
+
+A root vouches and invites with no budget check — its invites are bounded by its bond karma alone
+— which is what lets a committee, or the faucet, seed a chain; every invitee it grants is a member
+from the grant. ⛔ Without the invite-height clause a root's invitee would satisfy the root
+predicate, invite with no budget, and make roots of its own invitees in turn — on a faucet-seeded
+network, of everyone.
 **An empty root set is a startup failure**: `N = 0`, no member can ever be set, and the node
 refuses to serve after seeding (NODE_INTERFACE → The genesis state root is checked fail-stop).
 
@@ -1117,7 +1149,7 @@ refuses to serve after seeding (NODE_INTERFACE → The genesis state root is che
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|
-| `membershipBarMultiplier` | mainnet `10` · testnet `1` · devnet `1` | `k` — a **cap** in §What varies per network's sense; `1` lets a chain whose only root is the faucet flag its first member on one vouch (`D(1) = 1`; at `10`, `D(1) = 2` and a lone root could never flag anyone) |
+| `membershipBarMultiplier` | mainnet `10` · testnet `1` · devnet `1` | `k` — a **cap** in §What varies per network's sense; `1` keeps the vouch bar at one while `N` is small (`D(1) = 1`, `Y(1) = 2`), so the first earned members need one counted vouch and two member likes. A chain whose only root is the faucet starts by conferral, not by the bar: the faucet neither vouches nor likes (NODE_INTERFACE → Faucet), so its invitees are members at the grant and the earned tier begins with theirs (§Earned, standing, and well-founded by age) |
 | `MEMBER_LIKES_MULTIPLIER` | `2` | `Y = 2 · D` — likes from members a newcomer needs beside the vouches |
 | `MAX_LAPSE_WITHDRAWALS_PER_BLOCK` | `64` | vouches of lapsed members the settlement withdraws per block (TYPES_INTERFACE → Settlement caps) |
 
@@ -1377,10 +1409,10 @@ separate keys if desired.
 Bootstrap uses a **genesis committee**: genesis seeding creates one karma box per genesis
 committee key, **drawn out of the pool** (`genesis-committee` mints, store seeding — there is no
 genesis ordering block), and writes each key's identity record as a **root** — `memberSinceBlock`
-the genesis mint height, `memberBar = 0` (§Membership). The faucet identity is seeded the same
-way on the networks whose profile names one (NODE_INTERFACE → Faucet). The roots are the members
-every chain of endorsement rests on: they vouch and invite with no budget, and the network record
-is seeded with their count.
+the genesis mint height, `memberBar = 0`, `invitedAtBlock = 0` (§Roots). The faucet identity is
+seeded the same way on the networks whose profile names one (NODE_INTERFACE → Faucet). The roots
+are the members every chain of endorsement rests on: they vouch and invite with no budget, each key
+they invite is a member from the grant (§Roots), and the network record is seeded with their count.
 
 **An empty root set is a startup failure.** A chain with no root has `N = 0` and no member can
 ever be set, so a node whose seeded network record holds `memberCount = 0` refuses to serve —
@@ -1412,8 +1444,8 @@ relied on. A mechanism that needs either brings its own parameter with its own r
 > being unreliable. An operational rule whose violation forks the network belongs in a contract.
 
 **A deployed node must start from a fresh chain with a wiped AVL store** whenever any committed byte
-has changed since it was deployed. Every one of the following moved committed bytes and is already
-outstanding against the live node, which still runs a pre-Spec-B chain:
+has changed since it was deployed. The register of committed-byte moves, each deployed with a fresh
+chain or owed one:
 
 | Change | What moved |
 |---|---|
@@ -1427,6 +1459,13 @@ outstanding against the live node, which still runs a pre-Spec-B chain:
 | **the post price** (2026-08-29) | the box-type tag table (`post_lock` retired, `karma_price` added); every settlement that carried a lock leg |
 | **earned invites** (2026-08-29) | `IdentityRecord` rows 6–10, the network record (a leaf on every network) and all three genesis roots; every settlement that carries a lapse leg; the mempool's `vouch_target` column |
 | **positional wire format** (Phases 0–8, shipped 2026-08-11) | **every committed byte** |
+| **prune removal** (2026-09-06) | the prune field of `UtxoTransaction`, removed (TYPES_INTERFACE → Layout — UtxoTransaction) — every `TxId`, and every box id derived from one |
+| **the committee rule** (2026-09-06) | the identity record a root's grant writes — `memberSinceBlock`, `memberBar` — and the network record's `N` (§Earned, standing, and well-founded by age) |
+
+**Outstanding against the live node: the prune removal and the committee rule.** Testnet's chain
+began at the 2026-08-30 reset whose block 1 the profile pins as `genesisId`
+(§What varies per network), and every earlier row is in it; the two outstanding rows ship in one
+reset, which re-pins `genesisId`.
 
 > ⚠ **Wiping the AVL store alone is a fork trigger. Wipe chain and AVL store together, always.**
 >
@@ -1678,8 +1717,8 @@ axis rather than opening a fourth.
 > ⚠ **`membershipBarMultiplier` is field-only and a cap.** `k` scales the membership bar
 > `D(N) = max(1, icbrt(k · N))` (§Membership); the formula is the mechanic and universal, the
 > multiplier is a number. Mainnet's **10** is fixed by the two anchors; testnet's and devnet's
-> **1** let a chain whose only root is the faucet flag its first member on one vouch — at `10`,
-> `D(1) = 2` and a lone root could never flag anyone. A relaxed cap, not a different mechanic: the
+> **1** keep the vouch bar at one while `N` is small, so the first earned members need one counted
+> vouch and two member likes (§Membership parameters) — a relaxed cap, not a different mechanic: the
 > bar grows as the cube root of the member count on every network.
 
 > ⚠ **The difficulty band is per-network; the schedule is not.** `RETARGET_HALFLIFE_BLOCKS` is
@@ -1976,8 +2015,9 @@ no object check compares against it and no producer stamps it.
 - Invite bonds vest against the invitee's lifetime likes and the unvested part is
   **burned** at the probation deadline
 - Membership is derived, never stored: `member(m) ⟺ memberSinceBlock > 0 ∧ memberVouches ≥
-  memberBar`; a vouch counts toward a member only from an older member; only members vouch, once
-  per `(voucher, target)`, never on themselves, and only on a key holding a record (§Membership)
+  memberBar`, earned under the bar or conferred at a root's grant; a vouch counts toward a member
+  only from an older member; only members vouch, once per `(voucher, target)`, never on themselves,
+  and only on a key holding a record (§Membership)
 - ~~Usernames: first-claim-wins, DAG-native, prunable by holder~~
   > ⚠ **SUPERSEDED (2026-08-06). Verified 2026-08-11 — no `username` code in any `src` tree.**
   > Usernames become a **UTXO asset**: tradeable for
