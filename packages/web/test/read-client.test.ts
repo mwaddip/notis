@@ -86,3 +86,19 @@ describe('read client — the author-posts filter', () => {
     expect(calls[1]).not.toContain('author');
   });
 });
+
+describe('read client — the feed roots filter', () => {
+  it('the feed carries roots=1; the author-posts read carries author and no roots', async () => {
+    const c = client();
+    await c.feed({ limit: 30 }, VIEWER, undefined, true);
+    expect(calls[0]).toBe(`/posts?limit=30&viewer=${VIEWER}&roots=1`);
+
+    await c.feed({ limit: 30 }, VIEWER, 'authorkey');
+    expect(calls[1]).toBe(`/posts?limit=30&author=authorkey&viewer=${VIEWER}`);
+    expect(calls[1]).not.toContain('roots');
+
+    // roots=0 is never sent — the node rejects it, so a falsy roots omits the query.
+    await c.feed({ limit: 30 }, VIEWER, undefined, false);
+    expect(calls[2]).not.toContain('roots');
+  });
+});

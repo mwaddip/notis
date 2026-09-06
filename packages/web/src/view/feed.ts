@@ -1,10 +1,10 @@
 import { el, reportNode } from '../dom';
-import { card, submissionToPost, flightFor, type ParentRef, type CardOpts } from './card';
-import type { PostJson } from '../api/dto';
+import { card, submissionToPost, flightFor, type CardOpts } from './card';
 import { FEED_COMPOSER_KEY, type FeedState, type RenderCtx, type Handlers } from '../model/state';
 
-// The feed: roots and replies in one column, newest first.
-// A reply shows its parent as a one-line reference, not a rendered card.
+// The feed: roots alone, newest first — it reads GET /posts?roots=1, so no reply
+// renders here; a reply is reached through its thread or its author's window
+// (WEB_INTERFACE → What the feed reads).
 
 function ctlBtn(glyph: string, label: string, fn: () => void): HTMLElement {
   const b = el('button', 'ctl', glyph);
@@ -16,21 +16,6 @@ function ctlBtn(glyph: string, label: string, fn: () => void): HTMLElement {
 /** The reader's own card, once an identity is loaded (WEB_INTERFACE → The profile window). */
 function isYou(author: string, ctx: RenderCtx): boolean {
   return ctx.ownKey !== null && author === ctx.ownKey;
-}
-
-function parentRefFor(post: PostJson, ctx: RenderCtx): ParentRef | null {
-  const parentId = post.parentRefs[0];
-  if (!parentId) return null;
-  const parent = ctx.post(parentId);
-  const excerpt = parent?.content ?? undefined;
-  return {
-    id: parentId,
-    authorKey: parent?.author,
-    excerpt: excerpt ? excerpt.slice(0, 80) : undefined,
-    // The parent author's mark — the prefix stays text on a reply-ref line, so
-    // the mark's ✓ is the way into their window (WEB_INTERFACE → The identity display).
-    mark: parent ? ctx.markFor(parent.author) : null,
-  };
 }
 
 /** The identity-display opts a feed card carries: the prefix opens the author
@@ -95,14 +80,13 @@ export function renderFeedInto(container: HTMLElement, feed: FeedState, handlers
   // Pending (mempool) posts are the newest — they sit above the confirmed ones,
   // hollow, before any composer exists to create one.
   for (const p of feed.pending) {
-    container.appendChild(card(p, { replyCount: null, parentRef: parentRefFor(p, ctx), onOpen: (id) => handlers.openThread(id, { from: 'feed' }), you: isYou(p.author, ctx), ...markOpts(p.author, ctx, handlers) }));
+    container.appendChild(card(p, { replyCount: p.descendantCount, onOpen: (id) => handlers.openThread(id, { from: 'feed' }), you: isYou(p.author, ctx), ...markOpts(p.author, ctx, handlers) }));
   }
   for (const p of feed.posts) {
     container.appendChild(
       card(p, {
         open: ctx.openSet.has(p.id),
-        replyCount: null,
-        parentRef: parentRefFor(p, ctx),
+        replyCount: p.descendantCount,
         onOpen: (id) => handlers.openThread(id, { from: 'feed' }),
         you: isYou(p.author, ctx),
         ...markOpts(p.author, ctx, handlers),

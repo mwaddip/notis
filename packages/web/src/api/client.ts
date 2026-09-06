@@ -26,7 +26,7 @@ export interface Page {
  *  carried once one exists so `likedByViewer` is the node's answer
  *  (WEB_INTERFACE → "Every read carries the viewer's key once an identity is loaded, and none does before"). */
 export interface Api {
-  feed(page?: Page, viewer?: string, author?: string): Promise<FeedResult>;
+  feed(page?: Page, viewer?: string, author?: string, roots?: boolean): Promise<FeedResult>;
   thread(id: string, page?: Page, viewer?: string): Promise<ThreadResult | null>;
   post(id: string, viewer?: string): Promise<PostResult | null>;
   status(): Promise<StatusResult>;
@@ -71,10 +71,12 @@ export class NodeClient implements Api {
     return (await res.json()) as T;
   }
 
-  feed(page: Page = {}, viewer?: string, author?: string): Promise<FeedResult> {
+  feed(page: Page = {}, viewer?: string, author?: string, roots?: boolean): Promise<FeedResult> {
     // `author` filters to one identity's committed posts — the author-posts window
-    // (WEB_INTERFACE → The author window); the feed passes it undefined.
-    return this.get<FeedResult>(this.url('/posts', { limit: page.limit, after: page.after ?? undefined, author, viewer }));
+    // (WEB_INTERFACE → The author window); `roots=1` restricts to posts with no
+    // parent, the feed's own read (WEB_INTERFACE → What the feed reads). The node
+    // rejects `roots=0`, so it is 1 or absent (NODE_INTERFACE → Posts).
+    return this.get<FeedResult>(this.url('/posts', { limit: page.limit, after: page.after ?? undefined, author, viewer, roots: roots ? 1 : undefined }));
   }
 
   thread(id: string, page: Page = {}, viewer?: string): Promise<ThreadResult | null> {

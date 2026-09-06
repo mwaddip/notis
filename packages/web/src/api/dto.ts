@@ -25,6 +25,12 @@ export interface PostJson {
   blockIndex: number | null;
   blockCreatedAt: number | null;
   likeCount: number;
+  /** The whole subtree's size, pending included — a `PostJson` row carries the same
+   *  number a thread on it answers (NODE_INTERFACE → Posts). */
+  descendantCount: number;
+  /** The author's unspent vouch count over the whole set, the mark's title
+   *  (NODE_INTERFACE → Posts). */
+  authorVouchCount: number;
   /** Always null on the read surface: it sends no viewer parameter. */
   likedByViewer: boolean | null;
 }
