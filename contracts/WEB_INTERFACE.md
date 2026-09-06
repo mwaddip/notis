@@ -140,7 +140,7 @@ elsewhere.
 
 | Client action | Endpoint | Query |
 |---|---|---|
-| Feed | `GET /posts` | `limit`, `after`, `author`, `viewer` |
+| Feed | `GET /posts` | `roots=1`, `limit`, `after`, `viewer`; the author window reads it with `author` and no `roots` (→ The author window) |
 | One post | `GET /posts/:id` | `viewer` |
 | A thread | `GET /posts/:id/thread` | `limit`, `after`, `viewer` |
 | Node status | `GET /status` | — |
@@ -157,18 +157,20 @@ place the client passes the filter; the feed never does.
 mempool is part of the read surface, so a pending post renders before any composer exists to create
 one.
 
-### What the client does not read from the feed, and what it does instead
+### What the feed reads, and what a card shows for it
 
-- **The feed shows roots and replies alike.** `GET /posts` takes `roots=1` (`NODE_INTERFACE → Posts`);
-  this client passes no `roots`, so the feed shows both. **A reply renders with its parent as a
-  one-line reference**, not with the parent's card pulled in beside it.
-- **A card's reply count reads `?`.** Every `PostJson` carries `descendantCount` and `authorVouchCount`
-  (`NODE_INTERFACE → Posts`); this client's DTO declares neither and its cards read neither, so a feed
-  card's count reads `?`, the count a title bar shows is the thread's own `descendantCount`, and the
-  mark's `title` comes from `GET /vouches?target=`'s `count` (→ The identity display).
+- **The feed shows roots alone.** It asks `GET /posts?roots=1` (`NODE_INTERFACE → Posts`), so no reply
+  renders in the feed; a reply is reached through its thread or its author's window, which reads the same
+  endpoint with `author` and no `roots`.
+- **A card's reply count is the row's `descendantCount`** — the node's number, the whole subtree, pending
+  included, on the feed's rows, the author window's rows and a pane's descendant rows; a pane's own root
+  shows the thread's, which equals the head's. `?` remains on the reader's own submission card (no node row
+  until it lands) and on a withdrawn card (its shape carries no count, `NODE_INTERFACE → Posts`).
 - **Stumps and pruned tombstones never appear.** The feed's rows are posts and withdrawn markers only.
   The client filters the withdrawn ones out, which costs it rows from a page and is the second reason
   paging follows `next`.
+
+> ⚠ **AHEAD OF CODE (2026-09-06)** — the feed's `roots=1`, the card's `descendantCount`, the mark's `authorVouchCount` from the row.
 
 ## The three absence states
 
@@ -445,13 +447,13 @@ is the meta row's button height with the ghost outline (`HOUSE_STYLE → Accessi
 control's sole boundary), reachable by keyboard and touch. A locked identity mounts the unlock form in a
 row under the meta, as a like does (→ The identity module).
 
-**The mark's `title` is the count and nothing else** — `3 vouches`, from `GET /vouches?target=<key>`'s
-`count`, read once per distinct author on a rendered page, cached for the session, re-read on the
-region's `↻` and on the reader's own vouch or unvouch landing for that identity. The mark renders before
-its count arrives, and a failed read leaves the `title` empty, never wrong. A disabled mark's `title` is
-the reason instead, and the author window carries the same sentence in text, so hover is never the only
-route (`HOUSE_STYLE → Interaction`). ⚠ **The per-author read is the price of the count on today's
-node**; a count on the post view retires it.
+**The mark's `title` is the count and nothing else** — `3 vouches`, from the row's `authorVouchCount`
+(`NODE_INTERFACE → Posts`): every rendered row carries its author's count, the session's cache fills as
+pages land, and the title is set on the live node. One read of `GET /vouches?target=<key>` remains, after
+the reader's own vouch or unvouch lands for that identity, so the count stays the node's and is never a
+client-side guess; the author window's endorsers read fills the same cache. A failed read leaves the
+`title` empty, never wrong. A disabled mark's `title` is the reason instead, and the author window
+carries the same sentence in text, so hover is never the only route (`HOUSE_STYLE → Interaction`).
 
 **The prefix on a card is the way into the author window, and it looks exactly like the text prefix
 it stands in for.** It is a `<button>` in the who row (`aria-label` *"open this author"*) rendered as the
