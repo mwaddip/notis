@@ -27,6 +27,16 @@ describe('app.css — the prefix control renders as the text prefix', () => {
   });
 });
 
+describe('app.css — the content grammar and the composer type control', () => {
+  it('the paragraph-spacing, title, link, image-control and type-select rules are present', () => {
+    expect(css).toMatch(/\.card-content > \* \+ \*\s*\{[^}]*\}/); // 8px between blocks
+    expect(css).toMatch(/\.card-title\s*\{[^}]*\}/); // the title one step up
+    expect(css).toMatch(/\.card-content a\s*\{[^}]*\}/); // a link keeps its colour
+    expect(css).toMatch(/\.card-content \.img-show\s*\{[^}]*\}/); // the collapsed image control
+    expect(css).toMatch(/\.composer-foot select\s*\{[^}]*\}/); // the type control's ghost look
+  });
+});
+
 describe('fonts.css — the self-hosted italic face', () => {
   it('a second Plus Jakarta Sans @font-face is italic, weight 400 700, its own src', () => {
     const faces = fontsCss.match(/@font-face\s*\{[^}]*\}/g) ?? [];

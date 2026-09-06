@@ -197,6 +197,25 @@ header .spacer { flex: 1 1 auto; }
                      color: var(--ink); background: var(--ground);
                      border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; }
 .composer textarea:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: -1px; }
+/* The body holds the textarea, or the two one-line fields a link or an image
+   swaps in; each type keeps its draft (WEB_INTERFACE → Content → "The type control"). */
+.composer-body { display: flex; flex-direction: column; gap: 8px; }
+.composer input { display: block; width: 100%;
+                  font-family: var(--sans); font-size: 15px; line-height: 1.5;
+                  color: var(--ink); background: var(--ground);
+                  border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; }
+/* A URL is machine data — mono, like the node and faucet fields (HOUSE_STYLE → Typography). */
+.composer input.composer-url { font-family: var(--mono); }
+.composer input:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: -1px; }
+.composer ::placeholder { color: var(--inkMute); opacity: 1; }
+/* The type control's closed state takes the ghost button's rule, with the
+   browser's own arrow and popup (WEB_INTERFACE → Content → "The type control"). */
+.composer-foot select {
+  font-family: var(--sans); font-size: 12.5px; line-height: 1.2; padding: 5px 12px;
+  border: 1px solid var(--borderStrong); border-radius: 4px; cursor: pointer;
+  background: transparent; color: var(--ink);
+}
+.composer-foot select:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: 2px; }
 .composer-foot { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .composer-foot .spacer { flex: 1 1 auto; }
 .composer-foot .ask { font-size: 12.5px; color: var(--ink); }

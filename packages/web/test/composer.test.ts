@@ -23,6 +23,18 @@ function type(ta: HTMLTextAreaElement, text: string): void {
   ta.dispatchEvent(new Event('input'));
 }
 const postBtn = (el: HTMLElement): HTMLButtonElement => [...el.querySelectorAll('button')].find((b) => b.textContent === 'post') as HTMLButtonElement;
+const select = (el: HTMLElement): HTMLSelectElement => el.querySelector('select.composer-type') as HTMLSelectElement;
+const urlIn = (el: HTMLElement): HTMLInputElement => el.querySelector('input.composer-url') as HTMLInputElement;
+const descIn = (el: HTMLElement): HTMLInputElement => el.querySelector('input.composer-desc') as HTMLInputElement;
+function setType(el: HTMLElement, t: string): void {
+  const s = select(el);
+  s.value = t;
+  s.dispatchEvent(new Event('change'));
+}
+function typeInput(inp: HTMLInputElement, v: string): void {
+  inp.value = v;
+  inp.dispatchEvent(new Event('input'));
+}
 
 describe('composer — the foot', () => {
   it('shows the price in mono and holds post disabled until affordability is read', () => {
@@ -59,14 +71,13 @@ describe('composer — the foot', () => {
     expect(postBtn(ctrl.el).disabled).toBe(false);
   });
 
-  it('the byte budget is silent under 240 bytes, then counts down, then over in clay', () => {
+  it('the byte counter reads N left from the moment it opens, then over in clay', () => {
     const { ctrl, ta } = open();
-    ctrl.setAffordable(true);
     const budget = ctrl.el.querySelector('.budget')!;
+    expect(budget.textContent).toBe('300 left'); // from the first frame, an empty composer
+    ctrl.setAffordable(true);
     type(ta, 'a'.repeat(100));
-    expect(budget.textContent).toBe('');
-    type(ta, 'a'.repeat(240));
-    expect(budget.textContent).toBe('60 left');
+    expect(budget.textContent).toBe('200 left');
     expect(budget.classList.contains('over')).toBe(false);
     type(ta, 'a'.repeat(301));
     expect(budget.textContent).toBe('1 over');
@@ -129,5 +140,114 @@ describe('composer — submit and discard', () => {
     type(ta, 'a reply');
     [...ctrl.el.querySelectorAll('button')].find((b) => b.textContent === 'cancel')!.click();
     expect(ctrl.el.querySelector('.ask')?.textContent).toBe('discard this reply?');
+  });
+});
+
+describe('composer — the type control', () => {
+  it('the select is first in the foot, with text, link, image', () => {
+    const { ctrl } = open();
+    expect(ctrl.el.querySelector('.composer-foot')!.firstElementChild).toBe(select(ctrl.el));
+    expect([...select(ctrl.el).options].map((o) => o.value)).toEqual(['text', 'link', 'image']);
+  });
+
+  it('link swaps the textarea for two inputs; image shows the same two; text restores the textarea', () => {
+    const { ctrl } = open();
+    expect(ctrl.el.querySelector('textarea')).not.toBeNull();
+    setType(ctrl.el, 'link');
+    expect(ctrl.el.querySelector('textarea')).toBeNull();
+    expect(urlIn(ctrl.el)).not.toBeNull();
+    expect(descIn(ctrl.el)).not.toBeNull();
+    setType(ctrl.el, 'image');
+    expect(urlIn(ctrl.el)).not.toBeNull();
+    expect(descIn(ctrl.el)).not.toBeNull();
+    setType(ctrl.el, 'text');
+    expect(ctrl.el.querySelector('textarea')).not.toBeNull();
+    expect(ctrl.el.querySelector('input.composer-url')).toBeNull();
+  });
+
+  it('compose(): [d](u), a bare url on a blank description, ![d](u), ![](u), with the escapes', () => {
+    const { ctrl } = open();
+    setType(ctrl.el, 'link');
+    typeInput(urlIn(ctrl.el), 'https://ok.com');
+    typeInput(descIn(ctrl.el), 'the docs');
+    expect(ctrl.text()).toBe('[the docs](https://ok.com)');
+    typeInput(descIn(ctrl.el), '');
+    expect(ctrl.text()).toBe('https://ok.com'); // a bare url on a blank description
+    setType(ctrl.el, 'image');
+    typeInput(descIn(ctrl.el), 'a cat');
+    expect(ctrl.text()).toBe('![a cat](https://ok.com)');
+    typeInput(descIn(ctrl.el), '');
+    expect(ctrl.text()).toBe('![](https://ok.com)');
+    // the escapes — \ [ ] in the description are backslash-escaped
+    setType(ctrl.el, 'link');
+    typeInput(descIn(ctrl.el), 'a [b] \\c');
+    expect(ctrl.text()).toBe('[a \\[b\\] \\\\c](https://ok.com)');
+  });
+
+  it('the counter counts the composed bytes', () => {
+    const { ctrl } = open();
+    setType(ctrl.el, 'link');
+    const budget = ctrl.el.querySelector('.budget')!;
+    typeInput(urlIn(ctrl.el), 'https://ok.com');
+    expect(budget.textContent).toBe(`${300 - 'https://ok.com'.length} left`);
+    typeInput(descIn(ctrl.el), 'x'); // composed [x](https://ok.com)
+    expect(budget.textContent).toBe(`${300 - '[x](https://ok.com)'.length} left`);
+  });
+
+  it('post is held while the URL fails the gate and enabled once it passes', () => {
+    const { ctrl } = open();
+    ctrl.setAffordable(true);
+    setType(ctrl.el, 'link');
+    typeInput(urlIn(ctrl.el), 'not a url');
+    expect(postBtn(ctrl.el).disabled).toBe(true);
+    typeInput(urlIn(ctrl.el), 'ftp://x.com'); // wrong scheme
+    expect(postBtn(ctrl.el).disabled).toBe(true);
+    typeInput(urlIn(ctrl.el), 'https://ok.com');
+    expect(postBtn(ctrl.el).disabled).toBe(false);
+  });
+
+  it('switching back to text restores the textarea draft, and the link draft survives too', () => {
+    const { ctrl, ta } = open();
+    type(ta, 'my draft');
+    setType(ctrl.el, 'link');
+    typeInput(urlIn(ctrl.el), 'https://ok.com');
+    setType(ctrl.el, 'text');
+    expect((ctrl.el.querySelector('textarea') as HTMLTextAreaElement).value).toBe('my draft');
+    setType(ctrl.el, 'link');
+    expect(urlIn(ctrl.el).value).toBe('https://ok.com');
+  });
+
+  it('text() returns the composed content, and post carries it', () => {
+    const { ctrl, onSubmit } = open();
+    ctrl.setAffordable(true);
+    setType(ctrl.el, 'link');
+    typeInput(urlIn(ctrl.el), 'https://ok.com');
+    typeInput(descIn(ctrl.el), 'docs');
+    expect(ctrl.text()).toBe('[docs](https://ok.com)');
+    postBtn(ctrl.el).click();
+    expect(onSubmit).toHaveBeenCalledWith('[docs](https://ok.com)');
+  });
+
+  it('cancel asks on a link draft', () => {
+    const { ctrl, onClose } = open();
+    setType(ctrl.el, 'link');
+    typeInput(urlIn(ctrl.el), 'https://ok.com');
+    [...ctrl.el.querySelectorAll('button')].find((b) => b.textContent === 'cancel')!.click();
+    expect(ctrl.el.querySelector('.ask')?.textContent).toBe('discard this post?');
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('Ctrl+Enter from the url input submits', () => {
+    const { ctrl, onSubmit } = open();
+    ctrl.setAffordable(true);
+    setType(ctrl.el, 'link');
+    typeInput(urlIn(ctrl.el), 'https://ok.com');
+    urlIn(ctrl.el).dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }));
+    expect(onSubmit).toHaveBeenCalledWith('https://ok.com');
+  });
+
+  it('the reply composer carries the select', () => {
+    const { ctrl } = open({ isReply: true, price: 3 });
+    expect(select(ctrl.el)).not.toBeNull();
   });
 });
