@@ -110,6 +110,7 @@ describe('/karma/:userId membership fields', () => {
   let member: { pub: Uint8Array; hex: string };
   let root: { pub: Uint8Array; hex: string };
   let lapsed: { pub: Uint8Array; hex: string };
+  let committeeInvitee: { pub: Uint8Array; hex: string };
 
   function karmaRequest(path: string): Promise<{ status: number; data: Record<string, unknown> }> {
     return new Promise((resolve) => {
@@ -209,6 +210,16 @@ describe('/karma/:userId membership fields', () => {
       lifetimeLikesReceived: 10n,
       memberSinceBlock: 3, memberBar: 2, memberVouches: 1, memberLikes: 4n, invitesUsed: 1,
     });
+
+    // Committee invitee: a root's invitee — memberBar 0 (conferred), but
+    // invitedAtBlock > 0, so isRoot is false (ARCHITECTURE → Roots).
+    committeeInvitee = makeKeys();
+    seedKarma(committeeInvitee.pub, 100n, 5);
+    putIdentityRecord(committeeInvitee.pub, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 1,
+      lifetimeLikesReceived: 0n,
+      memberSinceBlock: 1, memberBar: 0, memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
   });
 
   afterAll(() => closeDb());
@@ -252,6 +263,16 @@ describe('/karma/:userId membership fields', () => {
     expect(data.memberSinceBlock).toBe(3);
     expect(data.memberBar).toBe(2);
     expect(data.memberVouches).toBe(1);
+  });
+
+  it('a committee invitee: member=true, memberBar=0, invitesAvailable a number', async () => {
+    const { data } = await karmaRequest(`/karma/${committeeInvitee.hex}`);
+    expect(data.member).toBe(true);
+    expect(data.memberBar).toBe(0);
+    expect(data.memberSinceBlock).toBe(1);
+    // Not a root — invitesAvailable is its budget, not the root's null
+    // (NODE_INTERFACE → UTXO queries).
+    expect(typeof data.invitesAvailable).toBe('number');
   });
 });
 

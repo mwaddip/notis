@@ -30,6 +30,7 @@ import type {
   KarmaBox,
   UtxoTransaction,
 } from '@dagsocial/types';
+import type { RecordMutation } from '../../src/store/journal.js';
 import { config } from '../../src/config.js';
 import {
   makeKarmaBox,
@@ -83,6 +84,15 @@ async function importLikes() {
 }
 async function importBlockCreator() {
   return await import('../../src/services/block-creator.js');
+}
+async function importBlockApply() {
+  return await import('../../src/services/block-apply.js');
+}
+async function importJournal() {
+  return await import('../../src/store/journal.js');
+}
+async function importEngine() {
+  return await import('../../src/services/utxo-engine.js');
 }
 
 /**
@@ -301,6 +311,140 @@ describe('the invite at block application', () => {
     // and only the user loop advances the clock — the epoch is the record
     // write's.
     expect(record!.lastActivityBlock).toBe(height);
+  });
+
+  it('a root\'s invitee is a member at the grant', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const utxo = await importUtxo();
+    const records = await importRecords();
+    await seedKarmaPoolBox();
+
+    const inviter = makeTestIdentity();
+    const invitee = makeTestIdentity();
+    records.putIdentityRecord(inviter.userId, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
+    const karma = makeKarmaBox(FIXTURE_BOND_KARMA + 10n, inviter.userId, 0, 78);
+    utxo.insertBox(karma);
+    await activateProverOverStore();
+
+    const networkBefore = records.getNetworkRecord().memberCount;
+
+    const mempool = await importMempool();
+    mempool.insertUtxoTx(inviteTx(inviter, invitee, karma), 1000);
+    const block = await mineOne();
+    expect(block).not.toBeNull();
+    const height = block!.header.height;
+
+    const { isMember, isRoot } = await importEngine();
+    const record = records.getIdentityRecord(invitee.userId)!;
+    // NODE_INTERFACE → "A root's grant confers membership": a member from
+    // the grant, not a root — its own invite height is nonzero
+    // (ARCHITECTURE → Roots).
+    expect(isMember(record)).toBe(true);
+    expect(record.memberSinceBlock).toBe(height);
+    expect(record.memberBar).toBe(0);
+    expect(record.invitedAtBlock).toBe(height);
+    expect(isRoot(record)).toBe(false);
+    expect(records.getNetworkRecord().memberCount).toBe(networkBefore + 1);
+  });
+
+  it('a member\'s invitee is a resident', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const utxo = await importUtxo();
+    const records = await importRecords();
+    await seedKarmaPoolBox();
+
+    const inviter = makeTestIdentity();
+    const invitee = makeTestIdentity();
+    // A member, not a root: memberBar 1, one counted vouch — D(1) = 1, so
+    // its budget is floor(1/1) - 0 = 1.
+    records.putIdentityRecord(inviter.userId, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 1,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 1,
+      memberVouches: 1, memberLikes: 0n, invitesUsed: 0,
+    });
+    const karma = makeKarmaBox(FIXTURE_BOND_KARMA + 10n, inviter.userId, 0, 79);
+    utxo.insertBox(karma);
+    await activateProverOverStore();
+
+    const networkBefore = records.getNetworkRecord().memberCount;
+
+    const mempool = await importMempool();
+    mempool.insertUtxoTx(inviteTx(inviter, invitee, karma), 1000);
+    const block = await mineOne();
+    expect(block).not.toBeNull();
+
+    // The discriminating control: a mutation conferring membership on every
+    // invitee, not only a root's, reddens this.
+    const record = records.getIdentityRecord(invitee.userId)!;
+    expect(record.memberSinceBlock).toBe(0);
+    expect(records.getNetworkRecord().memberCount).toBe(networkBefore);
+  });
+
+  it('two invitees of one root in one block are both members with the same age', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const utxo = await importUtxo();
+    const records = await importRecords();
+    await seedKarmaPoolBox();
+
+    const root = makeTestIdentity();
+    const inviteeA = makeTestIdentity();
+    const inviteeB = makeTestIdentity();
+    records.putIdentityRecord(root.userId, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
+    const karmaA = makeKarmaBox(FIXTURE_BOND_KARMA + 10n, root.userId, 0, 91);
+    const karmaB = makeKarmaBox(FIXTURE_BOND_KARMA + 10n, root.userId, 0, 92);
+    utxo.insertBox(karmaA);
+    utxo.insertBox(karmaB);
+    const recordPuts = [{
+      key: records.identityRecordKey(root.userId),
+      record: records.getIdentityRecord(root.userId)!,
+    }];
+    await activateProverOverStore(recordPuts);
+
+    const networkBefore = records.getNetworkRecord().memberCount;
+
+    const txA = inviteTx(root, inviteeA, karmaA);
+    const txB = inviteTx(root, inviteeB, karmaB);
+
+    const { applyOrderingBlock } = await importBlockApply();
+    const block = await makeApplicableBlock({ height: 1, utxoTxs: [txA, txB] });
+    expect(applyOrderingBlock(block)).toBe(true);
+
+    const { isMember } = await importEngine();
+    const recA = records.getIdentityRecord(inviteeA.userId)!;
+    const recB = records.getIdentityRecord(inviteeB.userId)!;
+    expect(isMember(recA)).toBe(true);
+    expect(isMember(recB)).toBe(true);
+    expect(recA.memberSinceBlock).toBe(1);
+    expect(recB.memberSinceBlock).toBe(1);
+    expect(recA.memberBar).toBe(0);
+    expect(recB.memberBar).toBe(0);
+    expect(records.getNetworkRecord().memberCount).toBe(networkBefore + 2);
+
+    // Ascending invitee order pins the record writes deterministically
+    // (NODE_INTERFACE → "A root's grant confers membership").
+    const hexA = Buffer.from(inviteeA.userId).toString('hex');
+    const hexB = Buffer.from(inviteeB.userId).toString('hex');
+    const [first, second] = hexA < hexB ? [hexA, hexB] : [hexB, hexA];
+    const journalStore = await importJournal();
+    const mutations = journalStore.getBlockJournal(1)!.mutations.filter(
+      (m): m is RecordMutation => m.kind === 'record' &&
+        [hexA, hexB].includes(Buffer.from(m.identityId).toString('hex')),
+    );
+    expect(mutations.map((m) => Buffer.from(m.identityId).toString('hex'))).toEqual([first, second]);
   });
 
   it('an invitee acting within the staleness threshold is NOT squared', async () => {

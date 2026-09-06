@@ -49,7 +49,7 @@ import {
   insertBlockJournal,
 } from '../../src/store/journal.js';
 import { revertBlock } from '../../src/services/fork-resolution.js';
-import { validateTx, applyTx, isMember } from '../../src/services/utxo-engine.js';
+import { validateTx, applyTx, isMember, isRoot } from '../../src/services/utxo-engine.js';
 import type { UtxoEngineDeps, UtxoResult } from '../../src/services/utxo-engine.js';
 import { config } from '../../src/config.js';
 
@@ -169,6 +169,17 @@ describe('membership arms', () => {
       lastActivityBlock: height, lastDecayBlock: 0, invitedAtBlock: 0,
       lifetimeLikesReceived: 0n, memberSinceBlock: height, memberBar: bar,
       memberVouches: vouches, memberLikes: 0n, invitesUsed,
+    });
+  }
+
+  // A root's invitee: memberBar 0 (conferred at the grant), but
+  // invitedAtBlock > 0 — isRoot is false (ARCHITECTURE → Roots), so its own
+  // invites are a budget, not bond-karma-bounded like a root's.
+  function seedConferred(id: Uint8Array, height: number, vouches = 0): void {
+    storePutIdentityRecord(id, {
+      lastActivityBlock: height, lastDecayBlock: 0, invitedAtBlock: height,
+      lifetimeLikesReceived: 0n, memberSinceBlock: height, memberBar: 0,
+      memberVouches: vouches, memberLikes: 0n, invitesUsed: 0,
     });
   }
 
@@ -315,6 +326,60 @@ describe('membership arms', () => {
       expect(isMember(record)).toBe(true);
       expect(record.memberBar).toBe(0);
       expect(record.memberVouches).toBe(0);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // ARCHITECTURE → Roots: the invite-height clause excludes a root's invitee
+  // from the root predicate, so its own invites are a budget.
+  // -------------------------------------------------------------------------
+
+  describe('the transitive hazard — a root\'s invitee is a member, not a root', () => {
+    it('a root\'s invitee invites with a budget', () => {
+      // Network of 1: D(1, 1) = 1. At 0 vouches the conferred identity's
+      // budget is floor(0/1) - 0 = 0 — the arm refuses it exactly as it
+      // would refuse any other member with no budget, never granting it a
+      // root's unconditional pass.
+      seedConferred(ownerPubKey, 5, 0);
+      const karma = createAndInsertKarma(ownerPubKey, 500n, 1);
+      const invitee = new Uint8Array(32).fill(0xd1);
+      const tx = makeInviteTx(
+        karma.id!, ownerPubKey, ownerPrivKey, invitee, 500n, FIXTURE_BOND_KARMA,
+      );
+
+      const refused = validateTx(deps, tx, 10);
+      expect(refused.valid).toBe(false);
+      expect(refused.error).toContain('no invites available');
+
+      // One counted vouch gives it a budget of floor(1/1) - 0 = 1.
+      storePutIdentityRecord(ownerPubKey, {
+        ...storeGetIdentityRecord(ownerPubKey)!,
+        memberVouches: 1,
+      });
+      const passed = validateAndApplyTx(deps, tx, 10);
+      expect(passed.valid).toBe(true);
+      // Its own invitee earns membership rather than being conferred it:
+      // isRoot(ownerPubKey) is false, so the grant step's conferral does not
+      // apply to a bond it creates (NODE_INTERFACE → "A root's grant confers
+      // membership").
+      expect(isRoot(storeGetIdentityRecord(ownerPubKey)!)).toBe(false);
+    });
+  });
+
+  describe('isRoot', () => {
+    it('a bar-0 record with a nonzero invite height is not a root', () => {
+      const base = {
+        lastActivityBlock: 5, lastDecayBlock: 0, invitedAtBlock: 0,
+        lifetimeLikesReceived: 0n, memberSinceBlock: 5, memberBar: 0,
+        memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+      };
+      expect(isRoot(base)).toBe(true);
+
+      // Clause 2: memberBar 0 → 1.
+      expect(isRoot({ ...base, memberBar: 1 })).toBe(false);
+
+      // Clause 3, the invite-height clause: invitedAtBlock 0 → nonzero.
+      expect(isRoot({ ...base, invitedAtBlock: 5 })).toBe(false);
     });
   });
 

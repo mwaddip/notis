@@ -2460,8 +2460,10 @@ async function loadIdentityStatus() {
       karmaEl.textContent = face === eff ? eff.toString() : `${eff} (${face})`;
       karmaEl.style.color = eff > 0n ? 'var(--greenText)' : 'var(--inkMute)';
 
-      // Tier display
-      if (data.memberSinceBlock > 0 && data.memberBar === 0) {
+      // Tier display: `invitesAvailable === null` is the node's own root
+      // signal (NODE_INTERFACE → UTXO queries) — a root's invitee is a
+      // member with a budget, not a root, though its own memberBar is also 0.
+      if (data.invitesAvailable === null) {
         tierEl.textContent = 'root';
         tierEl.style.color = 'var(--gold)';
       } else if (data.member) {
