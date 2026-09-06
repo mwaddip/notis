@@ -7,7 +7,7 @@ the composer for a root and a reply, and like — the **identity interface's fir
 tab, the reader's own posts marked, the faucet karma step — the **membership actions** — the
 identity display with the vouch mark, the author window and the author-posts window, vouch and
 unvouch, invite from the profile — and the **author's own controls' first unit** — withdraw from the
-reader's own card — are implemented; prune is not built
+reader's own card — are implemented
 **Protocol version:** read from the node, never held — see Invariants
 
 
@@ -16,7 +16,7 @@ reader's own card — are implemented; prune is not built
 >
 > ⚠ **The demo UI outlives this client's first slices.** It withdraws through a builder of its own, the
 > second implementation the web's vector is frozen against; `@dagsocial/web` posts, likes, vouches,
-> unvouches, invites and withdraws, and neither surface prunes. Nothing about it is superseded by this
+> unvouches, invites and withdraws. Nothing about it is superseded by this
 > contract.
 >
 > **One thing about the demo UI IS binding:** it hand-rolls `computeBoxId`, `computeTxId`,
@@ -71,8 +71,7 @@ is the rest.
 
 **The slice is the identity machinery, the composer for a root and a reply, like, the membership
 actions — vouch, unvouch and invite — and withdraw, the author's own controls' first unit** — on
-transactions the browser builds and signs. Prune is **not built** and is named as such where it
-appears. The identity interface — the `@profile` window, its six operations and
+transactions the browser builds and signs. The identity interface — the `@profile` window, its six operations and
 the faucet karma step — is stated below (→ The identity module, → The profile window, → The faucet
 step).
 
@@ -164,32 +163,36 @@ one.
   endpoint with `author` and no `roots`.
 - **A card's reply count is the row's `descendantCount`** — the node's number, the whole subtree, pending
   included, on the feed's rows, the author window's rows and a pane's descendant rows; a pane's own root
-  shows the thread's, which equals the head's. `?` remains on the reader's own submission card (no node row
-  until it lands) and on a withdrawn card (its shape carries no count, `NODE_INTERFACE → Posts`).
-- **Stumps and pruned tombstones never appear.** The feed's rows are posts and withdrawn markers only.
-  The client filters the withdrawn ones out, which costs it rows from a page and is the second reason
-  paging follows `next`.
+  shows the thread's, which equals the head's. A withdrawn card shows its row's count too
+  (`NODE_INTERFACE → Posts`); `?` remains on the reader's own submission card alone (no node row until
+  it lands).
+  > ⛔ **AHEAD OF CODE (2026-09-06)** — the withdrawn card's count: the card keeps `?` until the node's
+  > withdrawn shape carries `descendantCount` and the web commit of the prune-removal unit reads it.
+- **The feed's rows are posts and withdrawn markers only.** The client filters the withdrawn ones out,
+  which costs it rows from a page and is the second reason paging follows `next`.
 
-## The three absence states
+## The withdrawn state
 
-Every one of these is on screen in ordinary use, and no other social interface has any of them.
+The one absence state, on screen in ordinary use, and no other social interface has it.
 
 | State | Where it appears | What it is |
 |---|---|---|
-| **withdrawn** | inside a thread; **never in the feed** | the content is gone and the replies survive |
-| **stump** | as a thread's root | a pruned subtree's remains, carrying `replyCount`, `upvoteCount` and `compactedAtBlockHeight` |
-| **pruned** | as a thread's root | a tombstone naming the `rootPostHash` it was pruned under |
+| **withdrawn** | inside a thread, or as a thread's root; **never in the feed or in an `@posts:` window** | the content is gone and the replies survive |
 
 **Withdrawn is never "deleted", and no rendering may imply that it is.** A withdrawn post keeps its
 identity, its replies still hang off it, and hiding it inside a thread would orphan them. That is the
 whole difference between withdrawal and deletion.
 
-**A stump has no strip and neither has a tombstone** — there is nothing beneath either to open.
+⚠ **A withdrawn post reaches the screen as a thread's root even though it is never in the feed.** A
+workspace arrangement is persisted as post ids, so a thread left open in one session may have been
+withdrawn before the next. A restored arrangement that resolves to one renders it; it does not drop
+the window and it is not an error.
 
-⚠ **A stump or a tombstone reaches the screen even though neither is ever in the feed.** A workspace
-arrangement is persisted as post ids, so a thread left open in one session may have been pruned before
-the next. A restored arrangement that resolves to one renders it; it does not drop the window and it
-is not an error.
+## The three absence states
+
+> ⛔ **AHEAD OF CODE (2026-09-06) — prune leaves the protocol; this heading stands only while code cites
+> it** (`src/model/arrangement.ts`, `src/view/card.ts`) and goes in this unit's contract pass. The rule in
+> force: → The withdrawn state.
 
 ## Client-side operations — the write surface
 
@@ -305,8 +308,7 @@ pair is absent — the escrow it creates is no signal, since one born past its r
 by the next block's settlement and its cooldown row can stand for a single block the poll never sees
 (`NODE_INTERFACE → Vouch transition rules`); a pending invite when `GET /invites/<key>` lists a bond
 naming the invitee; a pending withdrawal when `GET /posts/:id` answers a tombstone — the withdrawn
-marker, or a stump or pruned tombstone when the thread went first (`NODE_INTERFACE → The prune and
-withdrawal phase`), and expired at once on a 404 — each expired once the tip passes its `expiresAtHeight`.
+marker (`NODE_INTERFACE → The withdrawal phase`), and expired at once on a 404 — each expired once the tip passes its `expiresAtHeight`.
 
 **The reader's vouch set is client state read from the node, never stored:** `GET /vouches?voucher=<key>`
 to the end of `next` at identity load, again on every vouch or unvouch landing, and the cooldown arm
@@ -449,10 +451,15 @@ row under the meta, as a like does (→ The identity module).
 (`NODE_INTERFACE → Posts`): every rendered row carries its author's count, the session's cache fills as
 pages land, and the title is set on the live node. One read of `GET /vouches?target=<key>` remains, after
 the reader's own vouch or unvouch lands for that identity, so the count stays the node's and is never a
-client-side guess; the author window's endorsers read fills the same cache. An endorser row's mark has
-no count source of its own — the vouch row carries no voucher count — so its title is set only once a
-row by that voucher has landed in the session. A failed read leaves the `title` empty, never wrong. A
-disabled mark's `title` is the reason instead, and the author window carries the same sentence in text,
+client-side guess; the author window's endorsers read fills the same cache, each vouch row carrying its voucher's
+`voucherVouchCount` (the node's `GET /vouches?target=` row), so an endorser row's mark is titled from
+the row it came with. A failed read leaves the `title` empty, never wrong.
+
+> ⛔ **AHEAD OF CODE (2026-09-06)** — the endorser row's title: until the node's vouch row carries
+> `voucherVouchCount` and the web commit of the prune-removal unit reads it, an endorser row's mark has no
+> count source of its own and its title is set only once a row by that voucher has landed in the session.
+
+A disabled mark's `title` is the reason instead, and the author window carries the same sentence in text,
 so hover is never the only route (`HOUSE_STYLE → Interaction`).
 
 **The prefix on a card is the way into the author window, and it looks exactly like the text prefix
@@ -512,8 +519,7 @@ reader's own confirmed live post — the pane's root included — the meta row's
 sits on another's card, and the read-only like count on the reader's own — gains a `withdraw` button
 after that count, beside `↩ reply`; the count stays. `· you` in the who row stays text. The control
 appears nowhere else: not on a feed card (write controls live inside a pane), not on a pending card or the
-client's own submission, not on a withdrawn card, a stump or a tombstone (a post withdraws once, and a
-tombstone has nothing to withdraw), not in the `@posts:` window's read-only cards, never with no identity
+client's own submission, not on a withdrawn card (a post withdraws once), not in the `@posts:` window's read-only cards, never with no identity
 loaded.
 
 **Two presses, the second in a confirm row.** The first press mounts a confirm row after the meta row —
@@ -521,7 +527,7 @@ where the unlock row mounts, one row at a time — reading *"withdraw this post?
 replies stay."* with two actions, `withdraw` and `keep`, focus on `keep`; `keep` and Esc remove it. The
 second press, on the row's `withdraw`, signs: a locked identity gets the unlock form in that row's place
 first, and success continues the flight (→ The identity module). The copy never says "deleted" (→ The
-three absence states).
+withdrawn state).
 
 **The client withholds one gate: a key with no karma box cannot sign a withdrawal.** The transaction
 spends and returns one karma box, so with an empty spendable view the button renders disabled with the
@@ -532,13 +538,13 @@ Interaction`). The maturity bind, liveness and authorship are the node's to refu
 `submitting…`, then `submitted`, the like count staying beside it — and the ledger holds a `withdraw` entry:
 its subject the post, its one input the spent
 box, its `change` the returned box under its predicted id, its `expiresAtHeight` the body's. A reload
-renders `submitted` from the entry. **Landed:** the entry's `GET /posts/:id` answered a tombstone, and the
-client replaces the row in place with what it fetched — in every open thread the post becomes the
-withdrawn card at its depth (the tombstone's `parentRefs`, `NODE_INTERFACE → Pruning`), the feed and any
+renders `submitted` from the entry. **Landed:** the entry's `GET /posts/:id` answered the withdrawn marker,
+and the client replaces the row in place with what it fetched — in every open thread the post becomes the
+withdrawn card at its depth (the marker's `parentRefs`, `NODE_INTERFACE → Withdrawal`), the feed and any
 `@posts:` window drop the row, the live-post index forgets it — and re-renders only the regions holding
 it; no thread and no feed is refreshed. **The client's own submission of the post goes the same way:** a
 landed root submission leaves the feed as the row does, and a landed reply submission becomes the
-withdrawn card at its depth in every open thread that holds its parent — the tombstone joins that
+withdrawn card at its depth in every open thread that holds its parent — the marker joins that
 thread's descendants ahead of its ↻, so no rendering of the reply implies it was deleted; the count
 stays the node's until the ↻. A submission card is the composer's placeholder until the reader's ↻
 replaces it with the node's row, and a withdrawal landing is the one event that settles it sooner.
@@ -565,7 +571,6 @@ one is: the client records no entry it cannot track.
 | Invite | `POST /invites` — `{ tx }` → `{ status, txId, expiresAtHeight, bondBoxId }` | *(membership actions)* |
 | The reader's vouches, cooldowns and standing bonds; an identity's endorsers and count | `GET /vouches?voucher=`, `GET /vouches?voucher=&cooldowns=1`, `GET /invites/:userId`, `GET /vouches?target=` | *(membership actions)* — reads, in the read client |
 | Withdraw | `POST /posts/:id/withdraw` — `{ tx }` → `{ status, txId, postId, expiresAtHeight }` | *(author's own controls)* |
-| Prune a subtree | `POST /posts/:id/prune` | not built |
 
 **The write client is its own module beside the read client.** The read client issues `GET` requests
 and nothing else, and that stays literally checkable; the writes live next door, and a `viewer`

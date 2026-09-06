@@ -9,7 +9,7 @@
 HTTP server exposing the DAGsocial API. Owns: post
 verifier (Stage 2 stateful validation), UTXO engine,
 like processing, invite creation and bond resolution, ordering block creator,
-stump engine, mining subsystem, unified mempool, and persistent storage (SQLite).
+mining subsystem, unified mempool, and persistent storage (SQLite).
 
 Depends on:
 - `@dagsocial/types` — shared data structures and constants
@@ -93,7 +93,7 @@ included in an ordering block, and applied atomically when the block is
 finalized. See `MEMPOOL_INTERFACE.md` for the full contract.
 
 **Key properties:**
-- Single SQLite table `mempool` with type discriminator (`utxo_tx` | `prune`)
+- Single SQLite table `mempool`, one entry type (`utxo_tx`)
 - FIFO ordering by insertion (`ORDER BY rowid ASC`)
 - TTL: 720 blocks (~12h at 60s block time)
 - Expired entries purged at block assembly time
@@ -122,9 +122,9 @@ are hex-encoded.
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
 | `POST` | `/posts` | `{ tx: UtxoTransaction, content: string }` — client-built, client-signed post tx with `tx.post` (the `PostCommit`) set, and the body beside it ("Post transactions" below) | `{ postId, status: "pending", expiresAtHeight, txId }` (200) | 400 if `tx`, `tx.post` or `content` is missing or malformed, `content` fails `verifyPostBody` against `tx.post.contentHash` (reason named), the commit fails verification, the transaction fails `validateTx`, or the first input is not a karma box owned by `post.author` |
-| `GET` | `/posts/:id` | `?viewer=hex` — optional ("`viewer` names the identity a read is for" below) | `PostJson`, `StumpJson`, `PrunedJson` or `WithdrawnJson` (all below), **plus `confirmedAuthor`** | 404 only for an id the node has never heard of ("Resolution order for a post id"); 400 if a present `viewer` is not 64 hex chars |
-| `GET` | `/posts/:id/thread` | `?viewer=hex&limit=50&after=<blockHeight>:<blockIndex>` — `viewer` optional; `limit` and `after` page the descendants ("Every list a view returns is a page" below) | `{ post, ancestors, ancestorCount, descendants, descendantCount, next, pending, pendingCount }` — `post` is `PostJson`, `StumpJson`, `PrunedJson` or `WithdrawnJson`; `ancestors` the nearest `limit` ancestors, oldest first (`after` does not apply — the context above the topmost one is that post's own thread); `descendants` one page of the subtree's **committed** rows in committed order, `(blockHeight, blockIndex)` ascending, strictly after `after`, with `next` the key to continue from; `pending` the subtree's pending posts, newest arrival first, cut to `limit`, with `pendingCount` over all of them; `ancestorCount` and `descendantCount` are over the whole chain and the whole subtree, pending included — a `PostJson` `post` carries the same number as its own `descendantCount`. On a stump or a pruned tombstone every list is empty, every count 0 and `next` null; **a withdrawn subject answers its `ancestors`, `descendants`, `pending` and counts as a live subject does** — the row, its topology and every descendant's anchor survive the withdrawal (→ Withdrawal transactions), so its replies hang off it | 404 as above; 400 as `/posts` |
-| `GET` | `/posts` | `?author=hex&roots=1&viewer=hex&limit=50&after=<blockHeight>:<blockIndex>` — `author`, `roots` and `viewer` optional; `roots=1` restricts every list in the answer to posts with no parent (`parentRefs: []`), absent the listing is unfiltered, and the two filters compose (`author` with `roots` is the author's roots); `limit` and `after` page the committed rows ("Every list a view returns is a page" below) | `{ posts: PostJson[], next, pending: PostJson[], pendingCount }` — `posts` one page of the live committed rows, newest first in committed order (placeholders included, no stumps, no tombstones; ordering below), `next` the key to continue from; `pending` the live pending rows — the author's when `author` is present — newest arrival first, cut to `limit`, `pendingCount` over all of them; with `roots=1`, `posts`, `pending` and `pendingCount` are over the roots alone, the keyset walking the filtered set | 400 if a present `limit` or `after` does not parse ("Every list a view returns is a page"), a present `roots` is not the string `1` (`roots must be 1`), or a present `viewer` is not 64 hex chars |
+| `GET` | `/posts/:id` | `?viewer=hex` — optional ("`viewer` names the identity a read is for" below) | `PostJson` or `WithdrawnJson` (both below), **plus `confirmedAuthor`** | 404 only for an id the node has never heard of ("Resolution order for a post id"); 400 if a present `viewer` is not 64 hex chars |
+| `GET` | `/posts/:id/thread` | `?viewer=hex&limit=50&after=<blockHeight>:<blockIndex>` — `viewer` optional; `limit` and `after` page the descendants ("Every list a view returns is a page" below) | `{ post, ancestors, ancestorCount, descendants, descendantCount, next, pending, pendingCount }` — `post` is `PostJson` or `WithdrawnJson`; `ancestors` the nearest `limit` ancestors, oldest first (`after` does not apply — the context above the topmost one is that post's own thread); `descendants` one page of the subtree's **committed** rows in committed order, `(blockHeight, blockIndex)` ascending, strictly after `after`, with `next` the key to continue from; `pending` the subtree's pending posts, newest arrival first, cut to `limit`, with `pendingCount` over all of them; `ancestorCount` and `descendantCount` are over the whole chain and the whole subtree, pending included — a `PostJson` `post` carries the same number as its own `descendantCount`. **A withdrawn subject answers its `ancestors`, `descendants`, `pending` and counts as a live subject does** — the row, its topology and every descendant's anchor survive the withdrawal (→ Withdrawal transactions), so its replies hang off it | 404 as above; 400 as `/posts` |
+| `GET` | `/posts` | `?author=hex&roots=1&viewer=hex&limit=50&after=<blockHeight>:<blockIndex>` — `author`, `roots` and `viewer` optional; `roots=1` restricts every list in the answer to posts with no parent (`parentRefs: []`), absent the listing is unfiltered, and the two filters compose (`author` with `roots` is the author's roots); `limit` and `after` page the committed rows ("Every list a view returns is a page" below) | `{ posts: (PostJson \| WithdrawnJson)[], next, pending: PostJson[], pendingCount }` — `posts` one page of the committed rows, live and withdrawn, newest first in committed order (placeholders included; ordering below), `next` the key to continue from; `pending` the live pending rows — the author's when `author` is present — newest arrival first, cut to `limit`, `pendingCount` over all of them; with `roots=1`, `posts`, `pending` and `pendingCount` are over the roots alone, the keyset walking the filtered set | 400 if a present `limit` or `after` does not parse ("Every list a view returns is a page"), a present `roots` is not the string `1` (`roots must be 1`), or a present `viewer` is not 64 hex chars |
 
 **Every list a view returns is a page.** `limit` defaults to `PAGE_LIMIT_DEFAULT` (50) and clamps
 to `PAGE_LIMIT_MAX` (100); a present `limit` that does not parse as a positive safe integer is a
@@ -136,9 +136,9 @@ lower case, and a present `after` that does not parse is a 400. One parser, `rou
 serves every paged route in both directions — it reads `limit` and `after` and spells `next` — and
 the two numbers live there (`CONSTANTS → HTTP view bounds`). **A page is the first `limit` rows of
 a stated total order strictly after the key**, from the head when `after` is absent; the order is a
-function of state, never of row order, and **the key need not name a row** — a row spent, pruned
+function of state, never of row order, and **the key need not name a row** — a row spent
 or withdrawn since the client read it still bounds the page, which is what makes a page continue
-correctly across the inserts, spends and prunes between two requests
+correctly across the inserts, spends and withdrawals between two requests
 (`MEMPOOL_INTERFACE → "afterRowid is a keyset cursor, not an offset"` is the same rule on the
 pool). **Every paged response carries `next`**: the key of its last row when a row follows it,
 `null` when none does — the read peeks one row past `limit`, so a client tells a complete list
@@ -173,7 +173,7 @@ PostJson = {
   parentRefs: postId[],
   protocolVersion: number,
   type: PostType,              // TYPES_INTERFACE → Layout — PostCommit
-  status: PostStatus,          // 'pending' | 'confirmed' — Store Interface → Posts DAG; a pruned post has no row and no PostJson
+  status: PostStatus,          // 'pending' | 'confirmed' — Store Interface → Posts DAG
   blockHeight: number | null,  // the three node-local columns — "PostJson time and order" below
   blockIndex: number | null,
   blockCreatedAt: number | null,
@@ -187,9 +187,9 @@ PostJson = {
 **`GET /posts/:id` adds `confirmedAuthor`** to whichever shape it returns: the consensus-recorded
 author from `block_topology`, hex, or `null` until an applied block confirms the post. It is a
 distinct field from `author` on purpose — `author` is the DAG's, content a node may hold, may have
-pruned, or may never have received, while `confirmedAuthor` is derived from block data alone and
+dropped at a withdrawal, or may never have received, while `confirmedAuthor` is derived from block data alone and
 is identical on every node — and it is **the only key a like may earmark karma to** ("Karma
-transition rules"). A stump carries it too, and so does the tombstone: topology survives pruning.
+transition rules"). A withdrawn view carries it too: topology survives withdrawal.
 `GET /posts/:id/thread` and the listing do not carry it.
 
 **PostJson time and order.** Decided 2026-08-20. A post has no timestamp
@@ -202,48 +202,8 @@ state, not a time. Feed order: `posts` is confirmed posts by `(blockHeight, bloc
 committed order, newest first — and `pending` is the pending posts beside them, newest arrival
 first ("Every list a view returns is a page").
 
-**Stump JSON shape (decided 2026-08-08).** A pruned root stays a 200 on
-`GET /posts/:id` — a stump is real, renderable tombstone data, not an absence.
-The response is a distinct `StumpJson`, discriminated by an explicit `kind`
-field rather than by which keys happen to be missing:
-
-```
-StumpJson = {
-  kind: 'stump',
-  id: rootPostHash,          // the pruned root's post id (64-hex)
-  author: hex(authorId),     // 32-byte Ed25519 key as hex — PostJson.author's convention
-  replyCount: number,
-  upvoteCount: number,
-  protocolVersion: number,
-  compactedAtBlockHeight: number
-}
-```
-
-`PostJson` carries no `kind` field; clients discriminate on its presence.
-`GET /posts/:id/thread` on a stump returns
-`{ post: StumpJson, ancestors: [], ancestorCount: 0, descendants: [], descendantCount: 0 }`. The feed listing
-(`GET /posts`) remains live-posts-only — no stumps, unchanged.
-
-**PrunedJson shape — the tombstone (decided 2026-08-22).** A pruned **descendant** has no DAG
-row, but the node still knows it: `block_topology` keeps every confirmed post's id, parent
-refs and author (a reverted-and-reapplied prune re-verifies the entry's id set against it),
-and its prune marks name the stump and date the prune. So a descendant's id answers a positive
-statement an indexer can overwrite with, never an absence:
-
-```
-PrunedJson = {
-  kind: 'pruned',
-  id: postId,                       // the descendant's own id (64-hex)
-  author: hex(authorId),            // from block_topology — the consensus-recorded author
-  rootPostHash: postId,             // the one stump above this id — an outer prune absorbs
-                                    // the inner stumps, so exactly one stands
-  compactedAtBlockHeight: number    // that stump's
-}
-```
-
-`GET /posts/:id/thread` on a tombstone returns `{ post: PrunedJson, ancestors: [],
-ancestorCount: 0, descendants: [], descendantCount: 0 }`, the stump's form. Clients discriminate the three shapes on `kind`: absent →
-`PostJson`, `'stump'`, `'pruned'`.
+`PostJson` carries no `kind` field; clients discriminate the two shapes on `kind`: absent → `PostJson`,
+`'withdrawn'` → `WithdrawnJson` ("Resolution order for a post id" below).
 
 #### Resolution order for a post id
 
@@ -252,54 +212,50 @@ the rule:
 
 1. a `dag_posts` row → `StoredPost` — `content` a string (held) or `null` (**placeholder**:
    the transaction applied, the body has not arrived — Store Interface → Posts DAG, "Backfill
-   after sync")
-2. else a `dag_stumps` row by id → `Stump` (a pruned root)
-3. else a `block_topology` row carrying the prune marks — `pruned_root` names the stump,
-   `pruned_at_height` its compaction height — → the `PrunedTombstone` above (a pruned
-   descendant). One row read; the marks are the tombstone's source (Prune transactions), and
-   an outer prune re-marks the rows it absorbs, so the row always names the one stump standing
-4. else `null` → 404: an id the node has never heard of
+   after sync"; or withdrawn, the marker set — below)
+2. else `null` → 404: an id the node has never heard of
 
 **A placeholder is a live post.** It is confirmed structure: a like credits its topology author,
 a reply resolves it as a parent, the listing and threads show it with `content: null`. Clients
 render "not yet available", not an error. **Liveness is the typed guard `isLivePost` (a
 `dag_posts` row, body or not), never `'content' in x`** — a placeholder has the key and a
-`null`; every site that must distinguish a post from a stump or tombstone narrows through the
+`null`; every site that asks whether a post is live narrows through the
 guard (Post transactions → the placeholder rules).
 
 ⛔ **A WITHDRAWN POST IS ARM 1 AND IS NOT LIVE, AND THOSE ARE TWO QUESTIONS.** It keeps its
-`dag_posts` row — no fourth arm — with `content` `null` and `withdrawn_at_height` set. The
+`dag_posts` row — no second arm — with `content` `null` and `withdrawn_at_height` set. The
 guards split accordingly:
 
-- **`isStoredPost`** — structural: a `dag_posts` row rather than a stump or a tombstone.
-- **`isLivePost`** = `isStoredPost(x) && x.withdrawnAtHeight === null` — the liveness question,
+- **`isLivePost`** = `x !== null && x.withdrawnAtHeight === null` — the liveness question,
   and the one the like arm asks at block application.
+  > ⛔ **AHEAD OF CODE (2026-09-06)** — `isStoredPost` (the structural question: a `dag_posts` row rather
+  > than a stump or a tombstone) stands until the node store commit of the prune-removal unit deletes it
+  > with the two arms it told apart.
 
 ⚠ **`content: null` alone cannot tell a placeholder from a withdrawal**, and the difference is
 the whole of the guard: a placeholder is *waiting for* its body and a withdrawn post must never
 receive one. Every read that distinguishes them reads the **marker**, never the null.
 
-**The JSON projection has a fourth arm where the store has three.** `feedService` answers
-`WithdrawnJson { kind: 'withdrawn', id, author, parentRefs, withdrawnAtHeight }` — carrying **no content
-field** and the row's `parentRefs`, which the withdrawal keeps (→ Withdrawal transactions) — for the
-subject of a thread, for its ancestors and descendants, and in the feed.
+**The JSON projection has two arms where the store has one shape.** `feedService` answers
+`WithdrawnJson { kind: 'withdrawn', id, author, parentRefs, withdrawnAtHeight, descendantCount,
+authorVouchCount }` — carrying **no content field**, the row's `parentRefs`, which the withdrawal keeps
+(→ Withdrawal transactions), and the two counts `PostJson` carries under the same definitions (the
+author counted once per distinct author per response, withdrawn rows and live rows in one dedup) — for
+the subject of a thread, for its ancestors and descendants, and in the listing.
+
+> ⛔ **AHEAD OF CODE (2026-09-06)** — `descendantCount` and `authorVouchCount` on `WithdrawnJson`: the arm
+> carries `id`, `author`, `parentRefs` and `withdrawnAtHeight` alone until the node views commit of the
+> prune-removal unit lands.
+
+- **The JSON projection has a fourth arm where the store has three.** A cited lead
+  (`services/feed-service.ts`, the web's `dto.ts` and `thread.ts`, their tests), kept until this unit's
+  commits re-cite the lead above; it goes in the contract pass.
 A withdrawn post that answered `404` would be indistinguishable from an id the node never heard
 of, and one projected as a live post with `content: null` would render as a body still loading.
 
-**Implemented 2026-08-08** (`stumpToJson`, beside `postToJson`). What it
-replaced: the raw `Stump` went out as-is, so `res.json` serialized `authorId`
-— a `Uint8Array` — index-keyed as `{"0":…,"1":…}`, and `getThread` cast the raw
-stump through `as unknown as PostJson`.
-
-The enabler was the dependency typing, and it ran deeper than the unit expected.
-`FeedServiceDeps.getPost` was `unknown | null`, which **collapses to `unknown`**,
-so the stump arm was invisible to the compiler. Naming the store's real
-signature (`Post | Stump | null`) made the compiler force the same correction
-through `VerifierDeps` and `PostServiceDeps`, which carried the identical
-`unknown` and which nothing had thought to look at. All three now name the
-union, with zero casts — so re-widening any of them cannot silently typecheck
-the stump arm away, and a future variant in the store's return breaks at the
-boundary instead of in a response body.
+**`FeedServiceDeps.getPost`, `VerifierDeps.getPost` and `PostServiceDeps.getPost` name the store's
+return type** (`StoredPost | null`), never `unknown` — which collapses a union — and with zero casts,
+so a variant added to the store's return breaks at the boundary instead of in a response body.
 
 **Post submission flow (mempool-based):**
 
@@ -315,8 +271,7 @@ mid-solve would void every miner's in-flight work (`MINING_INTERFACE` → GET /m
 The post is stored and servable immediately; what waits for the next block is finalization, not
 visibility.
 
-Parent refs may point to live posts or stumps. Both are valid — the DAG
-traversal handles both transparently.
+Parent refs name confirmed posts, live or withdrawn — the DAG traversal handles both.
 
 State is NOT changed at submission. The post and its karma lock are applied when
 an ordering block includes the transaction.
@@ -325,7 +280,7 @@ an ordering block includes the transaction.
 
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
-| `POST` | `/likes` | `{ tx: UtxoTransaction }` — client-signed like tx (`likeTarget` set) | `{ status: "pending", txId, expiresAtHeight }` | 400 if `likeTarget` missing/malformed, post unknown or pruned, insufficient karma, already liked, or tx invalid |
+| `POST` | `/likes` | `{ tx: UtxoTransaction }` — client-signed like tx (`likeTarget` set) | `{ status: "pending", txId, expiresAtHeight }` | 400 if `likeTarget` missing/malformed, post unknown or withdrawn, insufficient karma, already liked, or tx invalid |
 
 **There is no `/likes/remove`** (unlike is not a feature), no free tier, and no refund
 schedule. One like per `(liker, post)`, forever, costing exactly `LIKE_KARMA_COST`.
@@ -333,7 +288,7 @@ schedule. One like per `(liker, post)`, forever, costing exactly `LIKE_KARMA_COS
 **Like flow:**
 
 1. Extract `likeTarget` from the tx; reject if absent or not 64-hex
-2. Verify the target post exists and is live (not pruned; a placeholder is live — `isLivePost`)
+2. Verify the target post exists and is live (not withdrawn; a placeholder is live — `isLivePost`)
 3. Verify not already liked: like-record `(liker, targetPostId)` absent AND
    `hasPendingLike` over the mempool gate metadata
 4. `validateTx` — the engine enforces the biconditional like shape **both ways** (§validateTx
@@ -415,9 +370,12 @@ creation, so nothing stays open. `expiresAtHeight` on the response is the
 |--------|------|---------|-------------|
 | `POST` | `/vouches` | `castVouch` | Signed UTXO tx (KarmaBox to KarmaBox + VouchBox) → `200 { status: 'pending', txId, expiresAtHeight }` |
 | `DELETE` | `/vouches/:targetId` | `initiateUnvouch` | Signed UTXO tx (VouchBox to none) → `200 { status: 'pending', txId, expiresAtHeight, karmaReturnsAtBlock }` — the escrow's `releaseAtBlock`, relayed |
-| `GET` | `/vouches?target=X&limit=50&after=<boxId>` | `getVouchesForTargetPage` | `{ vouches: [{ voucherId, targetId }], count, next }` — one page of the identity's vouchers, ascending box id, strictly after `after`; `count` over the whole set, `next` the key to continue from (HTTP API → "Every list a view returns is a page") |
+| `GET` | `/vouches?target=X&limit=50&after=<boxId>` | `getVouchesForTargetPage` | `{ vouches: [{ voucherId, targetId, voucherVouchCount }], count, next }` — one page of the identity's vouchers, ascending box id, strictly after `after`; `count` over the whole set, `next` the key to continue from (HTTP API → "Every list a view returns is a page"); `voucherVouchCount` the unspent vouch boxes targeting the voucher (`getVouchCountForTarget(voucherId)`), read once per distinct voucher per response, so the endorsers list carries its marks' counts in one read |
 | `GET` | `/vouches?voucher=X&limit=50&after=<boxId>` | `getVouchesForVoucherPage` | `{ vouches: [{ boxId, value, voucherId, targetId, createdAtBlock }], count, next }` — one page of the identity's live vouches, ascending box id strictly after `after`; `count` over the whole set, `next` the key to continue from. The one arm carrying `boxId`: the unvouch builder names the box it spends |
 | `GET` | `/vouches?voucher=X&cooldowns=1&limit=50&after=<boxId>` | `getVouchCooldownsPage` | `{ cooldowns: [{ boxId, value, releaseAtBlock }], count, next }` — one page of the identity's unspent escrows, ascending box id strictly after `after` |
+
+> ⛔ **AHEAD OF CODE (2026-09-06)** — `voucherVouchCount` on the `?target=` row: the row carries `voucherId`
+> and `targetId` alone until the node views commit of the prune-removal unit lands.
 
 **Members vouch, without a cap.** `castVouch` refuses with a named `400`, ahead of the engine and
 changing no verdict: a voucher who is not a member (`ARCHITECTURE → Membership`); a target that
@@ -459,69 +417,41 @@ with the mapped status (400/404/409). Any other thrown error returns a
 server-side with full detail — `err.message` from unexpected errors never
 reaches a response. `MempoolFullError` maps to 503 with a generic
 "mempool full" body. Applies to all tx-submitting routes (posts, likes,
-invites, vouches, credits, prune).
+invites, vouches, credits, withdraw).
 
-### Pruning
+### Withdrawal
 
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
-| `POST` | `/posts/:id/prune` | `{ tx }` — a prune transaction, JSON-encoded like every other route's (`jsonToTx`) | `{ status: "submitted", txId: hex, postId: hex, expiresAtHeight }` (201) — no `replyCount`: the count is a property of apply, read off the stump | 400 if the payload is absent, the root is unconfirmed or confirmed at or above the block the prune is judged for (`tip + 1` at admission, → validateTx), or `validateTx` refuses it; 404 if the post is unknown; 409 on a pending-spend conflict; 503 if the pool is full |
 | `POST` | `/posts/:id/withdraw` | `{ tx }` — a withdrawal transaction, JSON-encoded like every other route's (`jsonToTx`) | `{ status: "submitted", txId: hex, postId: hex, expiresAtHeight }` (201) | 400 if the payload is absent, the post is unconfirmed or confirmed at or above the block the withdrawal is judged for (`tip + 1` at admission, → validateTx), the signer is not its author, the post is already withdrawn, or `validateTx` refuses it; 404 if the post is unknown; 409 on a pending-spend conflict; 503 if the pool is full |
 
-**Prune flow:**
+**Withdraw flow:**
 
-1. The client builds a **prune transaction** — a karma self-transfer carrying a `PruneCommit`
-   (→ Prune transactions) — and signs its `txId`. There is no separate prune signature: the
-   transaction's own covers the payload.
-2. ⛔ **The route answers `submitted`, never `deleted`.** It reports that the transaction
-   entered the pool, which is what happened; the outcome it does **not** promise is that a
-   block carries it. karma-econ §1.4.2 rules the word out besides — a prune is not a deletion
-   for anyone who archived the content.
-3. The route runs the prune-specific check — the root confirmed in an **earlier** block, read
-   from `block_topology` — then `validateTx`, then `admitTx`, then `net.broadcastTx`. **The same
-   order every sibling route uses**, and the broadcast is what makes a prune submitted to a
-   non-mining node reach consensus. The response is `{ status: "submitted", txId, postId }` —
-   no `replyCount`, which is a property of apply and is read off the stump.
-   > ⚠ **The route checks topology, not the DAG.** A pending post has a `dag_posts` row and no
-   > topology row, so a DAG-based read would admit a prune that consensus must reject.
-4. At block application (§8c): the transaction's own validation has already bound authorship
-   (`inputKarma.owner` against the root's topology author) and covered the payload by
-   signature. What remains is the **maturity bind**, the derived set, the vest of this block's
-   own likes on the subtree, the deletion of the subtree's like-records (journalled, so a
-   reverted prune restores them), the insert of the Stump derived from that set
-   (**unconditional** — a node holding no DAG content records the same stump; the insert is
-   journalled, so a reverted prune removes it), the **deletion** of the subtree's `dag_posts`
-   and `dag_parent_refs` rows **by the derived set** — never by a local DAG walk; ids with no
-   local row are simply absent — and the **marking** of the set's `block_topology` rows, the
-   tombstone's source (→ Prune transactions). Every deleted row (skeleton, body,
-   status, height, index, parent refs) is captured into the block's journal as a side-record
-   **before** deletion (Block Journal → `deletedPosts`), so a reverted prune restores it exactly;
-   below the reorg horizon (`maxReorgDepth`, TYPES_INTERFACE → Chain reorganisation) the journal is
-   dropped and the node holds no byte of the subtree's
-   content anywhere (ARCHITECTURE → Subtree pruning).
+1. The client builds a **withdrawal transaction** — a karma self-transfer carrying a
+   `PostWithdrawCommit` (→ Withdrawal transactions) — and signs its `txId`. There is no separate
+   signature: the transaction's own covers the payload.
+2. ⛔ **The route answers `submitted`, never `withdrawn` and never `deleted`.** It reports that the
+   transaction entered the pool, which is what happened; the outcome it does **not** promise is that
+   a block carries it.
+3. The route runs the withdrawal-specific checks — the post confirmed in an **earlier** block, read
+   from `block_topology`; the signer its consensus-recorded author; the row not already withdrawn —
+   then `validateTx`, then `admitTx`, then `net.broadcastTx`. **The same order every sibling route
+   uses**, and the broadcast is what makes a withdrawal submitted to a non-mining node reach
+   consensus.
+   > ⚠ **The maturity bind reads topology, not the DAG.** A pending post has a `dag_posts` row and no
+   > topology row, so a DAG-based read would admit a withdrawal that consensus must reject.
+4. At block application (→ The withdrawal phase): the transaction's own validation has already bound
+   authorship (`inputKarma.owner` against the post's topology author) and covered the payload by
+   signature. What remains is the **maturity bind** and the row emptied — its content captured into
+   the block's journal first (Block Journal → `withdrawnPosts`), so a reverted withdrawal restores it
+   exactly; below the reorg horizon (`maxReorgDepth`, TYPES_INTERFACE → Chain reorganisation) the
+   journal is dropped and the node holds no byte of the content anywhere (ARCHITECTURE → Withdrawal).
 
-   **The stump's `upvoteCount` is the like tally of the pruned subtree**: the
-   count of like-records the deletion removed, the root's likes included
-   (`replyCount` counts replies, so it excludes the root). Like-records derive
-   from applied blocks, so the count is the same on every synced node, and a
-   reverted prune restores the exact rows — a re-apply recounts the identical
-   set
+### Pruning
 
-**Stumps are derived state.** A `dag_stumps` row is a local projection of an
-applied prune transaction — never information in its own
-right. `insertStump` has two callers, both block-application paths: the prune
-phase, and `revertBlock` restoring the stumps an outer prune absorbed. The stump's `protocolVersion` is the era at its `compactedAtBlockHeight`, stamped by that
-caller and checked by nothing — a stump is never on the wire (`ARCHITECTURE → Protocol Versioning`).
-No network input writes the table. Inbound stump gossip is not
-consumed, and no stump pull protocol exists: a gossiped stump is unverifiable
-by construction (it carries no signature and names no set, so a receiver has
-nothing to check it against), while the
-table it would write is trusted by both the read API (`getPost` resolves
-stumps) and the relay verifier (parent-existence, step 8) — which is why
-nothing unverified may reach it (audit F-api-20, and the sweep-response
-variant found alongside it: a peer answering a stump pull could return
-entries that were never requested, each stored and its prune replayed
-against live content).
+> ⛔ **AHEAD OF CODE (2026-09-06) — prune leaves the protocol; this heading stands only while a member
+> root file cites it** (`packages/web/CLAUDE.md`) and goes in this unit's contract pass. The rule in force:
+> `ARCHITECTURE → Withdrawal`; the route is → Withdrawal above.
 
 ### UTXO queries
 
@@ -851,7 +781,7 @@ Verification order (fail-fast):
    parentRefs) ≥ `POST_PRICE_THREAD`, replies ≥ `POST_PRICE_REPLY`.
    ⚠ An early, friendlier rejection, NOT the enforcement point — the engine's
    post biconditional is what a block re-validates
-4. **Parent refs existence** — every referenced id resolves to a post or stump
+4. **Parent refs existence** — every referenced id resolves to a stored post, live or withdrawn
 
 There is no challenge, no PoW and no signature check: authorship is the creating
 transaction's signature over its `TxId` ("Post transactions"), and a parent
@@ -1346,10 +1276,10 @@ tree collapse into clean rejections:
 3. **Read-time throws** — a stored lie poisons the row: `rowToBox` does
    `BigInt(e.originalValue)`, so `originalValue: "x"` crashes **every later
    read of that box**. Measured on the pre-pin tree: the poison block APPLIED
-   through the real funnel, and the first like-settlement or prune touching
+   through the real funnel, and the first like-settlement touching
    the target post then threw mid-apply — caught by the funnel (block
    rejected, node survives), but every node stored the same poison, so the
-   post becomes unlikeable and unprunable network-wide, a permanent per-post
+   post becomes unlikeable network-wide, a permanent per-post
    landmine. Restart recovers the process (the startup box scan died with
    P2-B phase 4) but never the row.
 4. **Committed-byte lies** — a mistyped field enters the id preimage and the
@@ -1404,9 +1334,9 @@ The checks:
    own key. The clause closes the class structurally rather than trusting
    either decoder's sanitizing to stay as it is.
 2. **Closed key set**: `inputs`, `outputs`, `signatures`, `protocolVersion`,
-   optionally `likeTarget`, `post`, `prune` and `postWithdraw`. Any other key
+   optionally `likeTarget`, `post` and `postWithdraw`. Any other key
    rejects.
-   ⛔ **AT MOST ONE PAYLOAD FIELD.** `likeTarget`, `post`, `prune` and `postWithdraw` are
+   ⛔ **AT MOST ONE PAYLOAD FIELD.** `likeTarget`, `post` and `postWithdraw` are
    mutually exclusive — a transaction carrying two of them rejects here, before any transition arm
    runs, and the rejection names both fields. The arms recognise a transaction's kind by payload
    presence and each pins its own shape and nothing else's, so a second payload would ride through
@@ -1421,9 +1351,9 @@ The checks:
    > The allowed set alone still rejects every transaction that is *not* of the
    > new kind — which is the whole embedded path — and the failure names the new
    > key, not the missing exemption.
-   > **`prune`'s domain is `verifyPruneCommitDomains`'s** (VALIDATION_INTERFACE →
-   > `verifyPruneCommitDomains`), the same obligation `post` carries: `txIdBytes` writes the
-   > payload through `pruneFieldBytes`, whose fixed-width writers throw outside their domain, so
+   > **`postWithdraw`'s domain is `verifyPostWithdrawCommitDomains`'s** (VALIDATION_INTERFACE →
+   > `verifyPostWithdrawCommitDomains`), the same obligation `post` carries: `txIdBytes` writes the
+   > payload through `postWithdrawFieldBytes`, whose fixed-width writers throw outside their domain, so
    > the envelope check is where a malformed payload is refused rather than hashed.
    > ⛔ **`preimages` LEFT THIS SET, AND THE GATE ACCEPTED IT AFTER `computeTxId` STOPPED HASHING
    > IT. Corrected 2026-08-18.** The field is deleted (TYPES_INTERFACE → Layout — UtxoTransaction).
@@ -1598,7 +1528,6 @@ the treasury.
 | KarmaBox | KarmaBox + LikeAccrualBox | **Like**: `likeTarget` present ⟺ exactly one `LikeAccrualBox` output of exactly `LIKE_KARMA_COST` whose `author` is the target's author from `block_topology` — **and the converse**, a `LikeAccrualBox` output ⟺ exactly one of `likeTarget` present or `post` present with a parent (the Reply row). At most one karma output, same owner as all inputs — omitted when the change would be zero; target live; `(liker, target)` not recorded. **Value conserved** |
 | KarmaBox | KarmaBox + KarmaPriceBox | **Thread**: `post` present with no `parentRefs` ⟺ exactly one `KarmaPriceBox` output of exactly `POST_PRICE_THREAD` and no `LikeAccrualBox`. At most one karma output, same owner as all inputs — omitted when the change would be zero; the signing key is the post's author. **Value conserved** — a post carries **no** deficit and **no** surplus |
 | KarmaBox | KarmaBox + KarmaPriceBox + LikeAccrualBox | **Reply**: `post` present with one parent ⟺ exactly one `KarmaPriceBox` output of exactly `POST_PRICE_REPLY − REPLY_AUTHOR_SHARE` **and** exactly one `LikeAccrualBox` output of exactly `REPLY_AUTHOR_SHARE` whose `author` is the parent's author from `block_topology`. The karma output as above; the signing key is the post's author. **Value conserved** |
-| KarmaBox | KarmaBox | **Prune** (→ Prune transactions): `prune` present ⟹ all-karma inputs sharing one owner, exactly one karma output, **total output equal to total input**, `inputKarma.owner` is the root's `block_topology` author, and `verifyPruneCommitDomains(tx.prune)` passes. ⛔ **An IMPLICATION, not a biconditional** — the converse would forbid the bare self-consolidation the row above admits, so recognition is by payload presence and never by shape |
 | KarmaBox | KarmaBox + BondBox | **Invite**: karma outputs same owner, value conserved; `inviteBondMin ≤ bond.value ≤ inviteBondMax` (per-network caps) and the settlement grants **exactly `bond.value`**; `bond.inviterId` = the karma input owner; `inviteePublicKey` holds **no `IdentityRecord`**, and **no other bond in this block names it**; `bond.inviterId` is a root, or a member with `⌊memberVouches / D(N)⌋ − invitesUsed ≥ 1` on its record at apply, `N` from pre-body state (→ Bond transition rules, → Membership pass) |
 | KarmaBox | KarmaBox + VouchBox | Vouch cast: karma outputs same owner; `vouch.value == VOUCH_KARMA_AMOUNT`; `vouch.voucherId` == the karma input's owner; the voucher is a member — `member(voucher)` on its record at apply (→ Membership pass); `vouch.targetId ≠ vouch.voucherId`; the target holds an `IdentityRecord`; no unspent `vouch` box carries the same `(voucherId, targetId)`; the voucher's **summed** karma balance ≥ `VOUCH_MIN_BALANCE`; no unspent escrow names the voucher; `vouch.createdAtBlock` within `[height − VOUCH_CAST_HEIGHT_WINDOW, height]` (the upper bound is step 6's; the window bounds backdating, which would shorten the cooldown the escrow derives from it) |
 | VouchBox | VouchEscrowBox | **Unvouch**: exactly one VouchBox input, voucher-signed; exactly one escrow output with `value ==` the consumed box's, `owner == voucherId`, and `releaseAtBlock == vouch.createdAtBlock + vouchCooldownBlocks` — an exact pin, derivable from the consumed box alone. The cooldown runs from the **cast**, so a long-held endorsement costs no extra lockup and no withdrawal pattern returns the stake early. Value conserved |
@@ -1636,8 +1565,8 @@ There is **no other legal bond or invite shape**. In particular:
 - **A post pays its price into a `KarmaPriceBox`**, and a reply pays `REPLY_AUTHOR_SHARE` of it
   to the parent's author through a `LikeAccrualBox` — the Thread and Reply rows under Legal box
   transitions state the shapes, `ARCHITECTURE → The post price` the rule. The parent's author is
-  resolved from `block_topology`, exactly as a like's target author is, and a reply to a stump or
-  a withdrawn post pays that row's author. ⛔ **The reply's marker moves no like counter**:
+  resolved from `block_topology`, exactly as a like's target author is, and a reply to a
+  withdrawn post pays that row's author. ⛔ **The reply's marker moves no like counter**:
   `lifetimeLikesReceived` is bumped from like transactions and from nothing else.
 - **A reply's parent may still be pending at admission.** The marker names the parent's author, and
   `validateTx` resolves it from `block_topology` — and, where the parent has no row yet because it
@@ -1646,7 +1575,7 @@ There is **no other legal bond or invite shape**. In particular:
   `block_topology` is read**: a parent confirmed in the applying block has its row before the loop
   (§8 populates topology from the block's own posts), an earlier one has it already, and a parent
   in neither refuses the reply (*"names no author"*). The fallback is the reply's alone — a like's
-  target, a prune's root and a withdrawal's post must be confirmed at admission exactly as before.
+  target and a withdrawal's post must be confirmed at admission exactly as before.
   This is what keeps a reply able to spend its own thread's change with no block between the two
   (`TYPES_INTERFACE → Monotonic creation height`, the chaining a block interval must allow).
 - ⛔ **The relay gate is a cached MEMBERSHIP check, not a balance read.** `net`
@@ -1695,84 +1624,20 @@ There is **no other legal bond or invite shape**. In particular:
 - **A post applied without its packet is a placeholder.** Block application inserts a row from
   the commit with `content = NULL` when none exists, confirms it, and the body is backfilled by
   id (Store Interface → Posts DAG, "Backfill after sync"). The placeholder rules: a like on it
-  is valid and credits the topology author; a reply to it is valid; `executePrune` on the root
-  of a subtree holding placeholders proceeds — prune needs topology, not bodies. `isLivePost`
-  is the guard at every site that distinguishes a post from a stump or tombstone ("Resolution
-  order for a post id"); a tombstone parent is `Parent post not found`, as the null is today;
-  a reply to a stump stays valid (ARCHITECTURE → Post structure: refs may name stumps).
+  is valid and credits the topology author; a reply to it is valid; a withdrawal of it proceeds —
+  withdrawal needs topology, not a body. `isLivePost` is the guard at every site that asks whether
+  a post is live ("Resolution order for a post id"); an unknown parent is `Parent post not found`;
+  a reply to a withdrawn post stays valid (ARCHITECTURE → Post structure).
 
 ### Prune transactions
 
-- **A prune is a transaction, and that is the whole of its carriage.** It is a
-  karma **self-transfer** — all-karma inputs sharing one owner, exactly one karma
-  output, total output equal to total input — carrying a `PruneCommit` payload
-  (`rootPostHash`; TYPES_INTERFACE → Layout — PruneCommit). It rides `utxoTxIds`
-  with every other transaction; the block body has no prune section.
-- ⛔ **The subtree is derived, never carried.** At §8c the set is
-  `getSubtreeTopology(rootPostHash)` — every `block_topology` row reachable from
-  the root through its parent edges, the root included, **as the table stands after
-  §8 populated it from this block's own posts** — so a reply confirmed in the
-  prune's block is in the set, and a reply confirmed between the prune's signing
-  and its inclusion invalidates nothing. Every node derives the same set from
-  committed state; a node holding no DAG content reaches the same verdict.
-- ⛔ **The prune's block deletes and marks, and settles nothing.** §8c, per prune
-  in committed order: the maturity bind; the root-prunes-once check; the like-records
-  are deleted and tallied; **every stump inside the set is absorbed** — an earlier
-  prune's, never the root's own — its `upvoteCount` added to the tally, its row deleted
-  and journalled (→ Block Journal, `absorbedStumps`), so a thread carries one stump, the
-  outermost, and a pruned descendant's tombstone names it; the stump is inserted
-  (`replyCount` = set size − 1, `upvoteCount` = the tally, absorbed counts included) —
-  a plain `INSERT`, because the check above refuses a second prune of the root before
-  it runs, so a conflict here is local corruption and the apply funnel's totality catch
-  rejects the block; `dag_posts` and `dag_parent_refs` rows are deleted
-  by the set; and **every `block_topology` row in the set is marked**
-  `pruned_at_height = h`, `pruned_root = rootPostHash`. The marks are the
-  tombstone's source and are journalled (→ Block Journal): a row an earlier prune already
-  marked is re-marked with this root, and the marks it held ride the journal, so a revert
-  hands them back exactly. Nothing is refunded and
-  nothing further is burned — every post in the set paid its price at posting
-  (ARCHITECTURE → The post price) — so a subtree of any size prunes in one block.
-- ⛔ **`prune` is an IMPLICATION, never a biconditional.** `prune` present ⟹ the
-  shape above **and** `inputKarma.owner` is the root's `block_topology` author
-  **and** `verifyPruneCommitDomains(tx.prune)` passes. **The reverse must never
-  be written**: a conserving karma self-transfer is legal on its own — it is
-  self-consolidation, the legitimate multi-input case — so a reverse implication
-  would forbid it. ✅ **Recognition is by payload presence, never by shape**, so
-  the missing reverse is safe: nothing else can be mistaken for a prune. This is
-  why `likeTarget`'s and `post`'s biconditional pattern deliberately does **not**
-  transfer — each of those pairs with an observable output, and a prune emits none.
-- **Authorship is the transaction's own.** The payload sits inside the
-  `computeTxId` preimage, so the signer's signature covers it and no separate
-  `authorId` or `authorSignature` exists. `block_topology` is the authority for
-  who may prune a root, so a node holding no DAG content reaches the same verdict.
-- ⛔ **The maturity bind: a root confirmed in the applying block is NOT prunable.**
-  `block_topology.block_height` must be **strictly less** than the applying
-  height. Producer-independent and decidable from committed state alone, and it
-  forbids nothing legitimate — an author who changes their mind waits one block
-  and prunes properly. Reachable through the ordinary API, so
-  the intent route enforces the same rule at submit. **The same bind governs
-  withdrawal.**
-- ⛔ **A root prunes once.** The root must resolve to a `dag_posts` row — `isStoredPost`,
-  live or withdrawn — never a stump and never a tombstone. `block_topology` keeps a pruned
-  root's row (the marks are set, the row survives), so the authorship binding and the
-  maturity bind both hold for a root already pruned, and this read is what refuses it.
-  Enforced at both ends the way withdrawal's liveness is: the intent route refuses the
-  submission (`Post is already pruned or unknown`), and §8c rejects the block. The root is
-  judged as `dag_posts` stands when its prune applies — after this block's withdrawals and
-  after every prune earlier in committed order — so a block carrying a prune of a root that
-  an earlier prune in the same block removed is rejected, and a producer's own speculation
-  refuses that body (→ "The speculation has three outcomes, not two"). A withdrawn root stays
-  prunable: withdrawal empties the row and keeps it.
-- **`verifyPruneCommitDomains` is the single statement of the payload's
-  structural domain** — `rootPostHash` hex-32, and nothing else. It lives in
-  `@dagsocial/validation` and both the envelope check and the transition arm
-  call it; two implementations of one domain drift. The precedent is
-  `verifyPostCommitDomains`.
-- **The route submits, validates and broadcasts like every sibling.** The intent
-  route runs the prune-specific checks, then `validateTx`, then `admitTx`, then
-  `net.broadcastTx` — so a prune gossips to every peer's pool and any miner may
-  include it. **A prune submitted to a node that never mines reaches consensus.**
+> ⛔ **AHEAD OF CODE (2026-09-06) — prune leaves the protocol; this heading stands only while code cites
+> it** (`services/utxo-engine.ts`, `services/block-apply.ts`, `services/stump-engine.ts`, `store/topology.ts`,
+> their tests, `tools/e2e/test/prune.test.ts`) and goes in this unit's contract pass. The rule in force:
+> `ARCHITECTURE → Withdrawal`; the transaction that stays is → Withdrawal transactions.
 
+- **The prune's block deletes and marks, and settles nothing.** A cited lead, kept under the marker
+  above for the same span and for no other reason.
 
 ### Withdrawal transactions
 
@@ -1787,17 +1652,22 @@ There is **no other legal bond or invite shape**. In particular:
   republish it; what the protocol guarantees is that honest nodes drop the bytes,
   that they stop propagating, and that the author's intent is attributable.
   **User-facing wording is "withdrawn by author", never "deleted".**
-- ⛔ **`postWithdraw` is an IMPLICATION, never a biconditional**, for prune's
-  reason: a withdrawal emits no observable output, so its right side is an
+- ⛔ **`postWithdraw` is an IMPLICATION, never a biconditional**: a withdrawal
+  emits no observable output, so its right side is an
   ordinary conserving self-transfer which must stay legal. `postWithdraw` present
   ⟹ the shape above **and** `inputKarma.owner` is the post's `block_topology`
   author **and** `verifyPostWithdrawCommitDomains(tx.postWithdraw)` passes.
 - **Authorship is the transaction's own** — the payload sits inside the
   `computeTxId` preimage, so no separate `authorId` or signature exists.
+- ⛔ **The maturity bind: a post confirmed in the applying block is NOT withdrawable.**
+  `block_topology.block_height` must be **strictly less** than the applying height.
+  Producer-independent and decidable from committed state alone, and it forbids nothing
+  legitimate — an author who changes their mind waits one block. Reachable through the
+  ordinary API, so the intent route enforces the same rule at submit.
 - ⛔ **A withdrawn post cannot be liked.** `isLivePost` is
-  `isStoredPost(x) && x.withdrawnAtHeight === null`, and every consumer narrows
+  `x !== null && x.withdrawnAtHeight === null`, and every consumer narrows
   through it — including the like arm at block application, which is a consensus
-  path. `isStoredPost` answers the separate, purely structural question.
+  path.
 - ⛔ **A post may be withdrawn once.** The marker already being set, or a second
   withdrawal of the same post earlier in the same block, rejects the block. The
   state that would refuse the second is written by the settlement, which runs
@@ -1812,24 +1682,26 @@ There is **no other legal bond or invite shape**. In particular:
   `POST /posts/:id/withdraw`, then `validateTx`, `admitTx`, `net.broadcastTx`.
   **A withdrawal submitted to a node that never mines reaches consensus.**
 
+### The withdrawal phase
+
+- **One phase applies every withdrawal's DAG effect a block carries**, after the transaction apply
+  loop and before the settlement transaction is built. It moves no value: a post's price was paid
+  by the post transaction (ARCHITECTURE → The post price), and there is no lock to settle.
+- ⛔ **It runs AFTER the loop, and that is load-bearing.** The like arm rejects a like on a
+  withdrawn post, so a phase running before the loop would make a block carrying like(P) and
+  withdraw(P) invalid — two unrelated users' individually valid transactions that no producer
+  could combine into one block. After the loop the like arm sees a live post and the pair is
+  valid, with no producer-side filter.
+- **Withdrawals apply in committed transaction order.** The order is kept for the phase's
+  legibility, not for the outcome — the pass refunds and burns nothing.
+- **What the pass does is stated where its transaction is**: Withdrawal transactions (the row
+  emptied, `withdrawn_at_height` set).
+
 ### The prune and withdrawal phase
 
-- **One phase applies every prune's and withdrawal's DAG effect a block carries**, after the
-  transaction apply loop and before the settlement transaction is built. It moves no value: a
-  post's price was paid by the post transaction (ARCHITECTURE → The post price), and there is
-  no lock to settle.
-- ⛔ **It runs AFTER the loop, and that is load-bearing.** The like arm rejects a
-  like on a stumped or withdrawn post, so a phase running before the loop would make a block
-  carrying like(P) and prune(P) invalid — two unrelated users' individually valid
-  transactions that no producer could combine into one block. After the loop the
-  like arm sees a live post and the pair is valid, with no producer-side filter.
-- **Withdrawals first, then prunes, each in committed transaction order.** A reply
-  withdrawn by its own author in the block its thread is pruned is emptied and then
-  deleted with the subtree; the order is kept for the phase's legibility, not for the
-  outcome — neither pass refunds or burns anything.
-- **What each pass does is stated where its transaction is**: Withdrawal transactions (the
-  row emptied, `withdrawn_at_height` set), Prune transactions (the set derived, like-records
-  deleted and tallied, the stump inserted, rows deleted, topology marked).
+> ⛔ **AHEAD OF CODE (2026-09-06) — prune leaves the protocol; this heading stands only while code cites
+> it** (`packages/web/src/wallet/ledger.ts`) and goes in this unit's contract pass. The rule in force:
+> → The withdrawal phase.
 
 ### Bond transition rules
 
@@ -1941,7 +1813,7 @@ inside the network's reported supply.
   output at all, and the like shape is then the marker alone. No pin needs a
   karma output to name the owner: `bond.inviterId`, `vouch.voucherId` and the
   lock's `owner` bind to the karma **input's** owner, and the signature is that
-  owner's. Prune and withdraw keep their single karma output — their inputs are
+  owner's. A withdrawal keeps its single karma output — its inputs are
   at least `1n`, so it is.
 
 > ## ⛔ THE LIKE ACCRUAL MARKER IS AN EXEMPTION FROM THE RULE ABOVE, AND IT MUST NOT BEHAVE LIKE ONE
@@ -2748,7 +2620,7 @@ unassigned config *is* a server-role node: it applies blocks and builds no templ
 
 1. Purge expired mempool entries (`purgeExpired(currentHeight)`)
 2. Read the pool — every entry through `iteratePendingEntries`, karma class first
-   (MEMPOOL_INTERFACE → Ordering); the read removes nothing. **A prune is one of those
+   (MEMPOOL_INTERFACE → Ordering); the read removes nothing. **A withdrawal is one of those
    entries**, selected like any other transaction and competing for the same body budget
 3.–5. *(Retired with sub-blocks: there is no batch linking and nothing to decode
     separately — every pending entry is a standalone `utxo_tx`.
@@ -2769,7 +2641,7 @@ unassigned config *is* a server-role node: it applies blocks and builds no templ
     body carrying no row is rejected (`MINING_INTERFACE → Template and submit`).
     Mining over a body the node itself will not apply wastes PoW on a block
     that cannot be accepted anywhere.
-13. Track the rowids the template carries — transaction and prune rows — for cleanup
+13. Track the rowids the template carries for cleanup
 14. Build coinbase outputs — the **miner's slice only**. The treasury's accrues to the
     `TreasuryBox` and the released emission comes out of the `EmissionBox`; both
     successors are derived here too, and neither rides in the block
@@ -2968,7 +2840,7 @@ had to be carried and compared).
 **During embedded-tx application**, each like transaction (the `likeTarget` biconditional
 shape, validated by the engine):
 
-1. Re-checks at apply: target confirmed and **live** at this height (likes on pruned
+1. Re-checks at apply: target confirmed and **live** at this height (likes on withdrawn
    posts rejected by stated rule; a placeholder — body not held — **is** live, `isLivePost`
    decides); author resolved from **`block_topology`**, never
    `dag_posts.author`; like-record `(liker, targetPostId)` absent — else the tx is
@@ -3005,16 +2877,15 @@ marker inputs follow committed transaction order — every order is one the bloc
 All arithmetic `bigint`/integer — a float intermediate is a consensus fork.
 
 **A like and a settlement of the same post SHARE a block.** A block may carry a like on post `P`
-together with a prune covering `P` or a withdrawal of `P`. The prune and withdrawal phase runs
+together with a withdrawal of `P`. The withdrawal phase runs
 **after** the transaction loop, so the like arm finds `P` live, the like applies and counts, and
-the phase then stumps or empties it. ⛔ **The two transactions come from two unrelated users and
+the phase then empties it. ⛔ **The two transactions come from two unrelated users and
 each is independently valid**, so any rule rejecting the pair would make a block a producer
 cannot assemble out of transactions it was handed. **The outcome does not depend on how the
 producer orders them in the body** — the DAG effect is a phase, not a per-transaction step.
 
-⚠ **A like on a post settled in an EARLIER block still rejects the block.** `isLivePost` is
-false for a stump, a tombstone and a withdrawn post alike, and that rule is unchanged: it is
-what stops a dropped like-record reopening duplicate likes (ARCHITECTURE → Likes).
+⚠ **A like on a post withdrawn in an EARLIER block still rejects the block.** `isLivePost` is
+false for a withdrawn post, and that rule is stated, not emergent (ARCHITECTURE → Likes).
 
 **Blocks with no likes** run neither loop — no record writes, no like leg in the
 settlement. An author's carry box sits unchanged (and in the `stateRoot`,
@@ -3041,22 +2912,19 @@ Fresh schema — no migration.
 |----------|-----------|
 | `insertPost(postId, commit, content)` | `(PostId, PostCommit, string \| null) => void` — status = pending when admitted with its packet, the body present; `null` when block application inserts a placeholder from the commit; the id comes from the creating transaction |
 | `setPostBody(postId, content)` | `(string, string) => boolean` — fills a placeholder's body after the caller verified it against the row's `content_hash` (`verifyPostBody`); `false` if no row or the body is already held (no-op) |
-| `getPost(id)` | `(string) => StoredPost \| Stump \| PrunedTombstone \| null` — "Resolution order for a post id" |
+| `getPost(id)` | `(string) => StoredPost \| null` — "Resolution order for a post id" |
 | `getMissingBodies(limit)` | `(number) => { id, contentHash }[]` — rows with `content IS NULL`, newest first (`block_height` desc, `block_index` desc); the backfill list |
-| `queryPostsPage({ author?, roots?, limit, after? })` | `({ author?: Uint8Array, roots?: boolean } & Page<PostKey>) => { rows: StoredPost[], next: PostKey \| null, pending: StoredPost[], pendingCount: number }` — `rows` one page of the live committed rows (placeholders included), newest first in committed order, strictly after `after`; `pending` the live pending rows, the author's when `author` is given, newest arrival first (`rowid` descending), cut to `limit`; `pendingCount` over all of them; with `roots`, `rows`, `pending` and `pendingCount` are over rows with no parent (`parentRefs: []`) alone, the keyset walking that set |
+| `queryPostsPage({ author?, roots?, limit, after? })` | `({ author?: Uint8Array, roots?: boolean } & Page<PostKey>) => { rows: StoredPost[], next: PostKey \| null, pending: StoredPost[], pendingCount: number }` — `rows` one page of the committed rows (placeholders and withdrawn rows included), newest first in committed order, strictly after `after`; `pending` the live pending rows, the author's when `author` is given, newest arrival first (`rowid` descending), cut to `limit`; `pendingCount` over all of them; with `roots`, `rows`, `pending` and `pendingCount` are over rows with no parent (`parentRefs: []`) alone, the keyset walking that set |
 | `confirmPost(postId, blockHeight, blockIndex)` | `(string, number, number) => void` — height and committed position |
 | `unconfirmPost(postId)` | `(string) => void` — for fork rollbacks; clears height and position, keeps the body |
 | `deletePendingPost(postId)` | `(string) => void` — the pending row of a post transaction that left the pool unconfirmed (Post transactions → the pending-row rule) |
-| `deletePostRows(ids)` | `(string[]) => DeletedPostRow[]` — prune settlement: deletes the `dag_posts` and `dag_parent_refs` rows for the given ids and returns every deleted row for the journal; ids with no row are skipped |
-| `restorePostRows(rows)` | `(DeletedPostRow[]) => void` — the inverse, from the journal |
-| `getPrunedTombstone(id)` | `(string) => PrunedTombstone \| null` — step 3 of the resolution order: the `block_topology` row's prune marks, one read; `null` for an unmarked row |
 | `getParentRefs(postId)` | `(string) => PostId[]` |
-| `getAncestorsNearest(postId, limit)` | `(string, number) => { rows: StoredPost[], count: number }` — the nearest `limit` ancestors, oldest first, walking the parent chain upward from the post; `count` is the chain's whole depth. **The chain ends at the first ancestor with no `dag_posts` row** — a stump — so `count` never exceeds what `rows` can carry; one recursive CTE over `dag_parent_refs`, one lookup per level |
+| `getAncestorsNearest(postId, limit)` | `(string, number) => { rows: StoredPost[], count: number }` — the nearest `limit` ancestors, oldest first, walking the parent chain upward from the post; `count` is the chain's whole depth. **The chain ends at the root** — every ancestor keeps its `dag_posts` row, withdrawn or not — so `count` never exceeds what `rows` can carry; one recursive CTE over `dag_parent_refs`, one lookup per level |
 | `getSubtreePage(postId, page)` | `(string, Page<PostKey>) => { rows: StoredPost[], next: PostKey \| null, count: number, pending: StoredPost[], pendingCount: number }` — `rows` one page of the subtree's committed rows (the recursive CTE, stated once) in committed order, `(block_height, block_index)` ascending, strictly after `after`; `count` over the whole subtree, pending included; `pending` the subtree's pending rows, newest arrival first, cut to `limit`; `pendingCount` over all of them. The CTE enumerates the subtree — O(subtree) on the `dag_parent_refs (parent_id)` index — and the page is `limit + 1` rows of that enumeration: the one page read whose cost is the set's, not the page's |
-| `getDescendantCount(postId)` | `(string) => number` — the whole subtree's row count, pending included, withdrawn rows included (a pruned subtree has no rows): the statement `getSubtreePage` reads its `count` through, stated once; feeds `PostJson.descendantCount` |
+| `getDescendantCount(postId)` | `(string) => number` — the whole subtree's row count, pending included, withdrawn rows included: the statement `getSubtreePage` reads its `count` through, stated once; feeds `PostJson.descendantCount` |
 
 > **`StoredPost` is the DAG `Post` with `content: string | null`, `contentHash`, and a required
-> `status: PostStatus`** (`'pending' | 'confirmed'` — a pruned post has no row), exported from
+> `status: PostStatus`** (`'pending' | 'confirmed'`), exported from
 > `store/posts.ts` and re-exported from `store/index.ts`. It exists because **`status` is
 > node-local state and must not enter `Post`** — `Post` is the DAG type, `PostCommit` the
 > consensus type that travels on the wire.
@@ -3083,7 +2951,8 @@ Fresh schema — no migration.
 > `utxo_boxes (owner, box_type, value DESC, id) WHERE spent_at_block IS NULL` — the equal-value
 > tail and the lesser values — concatenated in list order, **at most `2 · (limit + 1)` entries**;
 > the bond and vouch pages range by `id` on the partial expression indexes keyed by the bond's
-> `inviterId` and the vouch's `targetId` (`json_extract(extra_data, …)`); the pending window of
+> `inviterId` and the vouch's `targetId` (`json_extract(extra_data, …)`), the target's page adding one
+> indexed `COUNT(*)` per distinct voucher on it (`voucherVouchCount`, at most `limit` counts); the pending window of
 > `queryPostsPage` and its count read `dag_posts (status) WHERE status = 'pending'` — `limit` entries
 > of the pending index in `rowid` order, never a scan of the table. The `SUM` and `COUNT`
 > behind a view are scans of the owner's entries in the owner index. `getSubtreePage` and
@@ -3098,8 +2967,8 @@ Fresh schema — no migration.
 the placeholder), `author`, `parent_refs`, `protocol_version`, `type`, `status`, `block_height`,
 `block_index`. There is no `raw_cbor`: a body is stored only after `verifyPostBody` accepted it
 against `content_hash`, so the column is the authority and nothing re-verifies it. There is no
-`getPostRaw` and no `pruneSubtree`: a body is read through `getPost`, a prune deletes through
-`deletePostRows`.
+`getPostRaw`: a body is read through `getPost`, and no path deletes a row — a withdrawal empties one
+(→ Withdrawal transactions).
 
 **Backfill after sync.** A placeholder's body is pulled by id (NET_INTERFACE → Sync State
 Machine, `requestPostBodies`): in the `backfill` phase net drives it from `getMissingBodies`;
@@ -3119,21 +2988,21 @@ read inside consensus). Content-layer consensus state, the `block_topology` tier
 deterministic by replay, journalled with exact inverses, not in the `stateRoot`. The
 `dag_likes` table is **dropped**.
 
-**The topology's parent edges are a table of their own.** `block_topology_parents
-(parent_id, post_id, PRIMARY KEY (parent_id, post_id))` holds one row per entry of a
-topology row's `parent_refs`, written by `insertBlockTopology` with the row and deleted by
-`rollbackBlockTopology` with it — the column stays the record, the table is its index. The
-subtree walk (`getSubtreeTopology`, → Prune transactions) recurses on `parent_id = ?`, one
-index lookup per row of the set, so a prune's derived set costs the set and not the table.
+**The topology row's `parent_refs` column is the record, and nothing indexes it**: no consensus path
+walks a subtree over topology (the thread's subtree is `dag_parent_refs`', Store Interface → Posts DAG).
+
+> ⛔ **AHEAD OF CODE (2026-09-06)** — `block_topology_parents` (the parent-edge index the subtree walk
+> read) stands until the node store commit of the prune-removal unit drops it with `getSubtreeTopology`.
+
+- **The topology's parent edges are a table of their own.** A cited lead (`store/topology.ts`), kept
+  under the marker above for the same span.
 
 | Function | Signature |
 |----------|-----------|
 | `insertLikeRecord(targetPostId, likerId, blockHeight)` | `(PostId, UserId, number) => void` — **block application only**; records a `likeRecordInsertions` journal side-record; throws on the primary key — the structural dedup |
 | `hasLikeRecord(targetPostId, likerId)` | `(PostId, UserId) => boolean` |
 | `getLikeRecordCount(postId)` | `(PostId) => number` — lifetime likes on a live post; feeds API `likeCount` |
-| `deleteLikeRecordsForPosts(postIds)` | `(PostId[]) => void` — **prune settlement only**; captures every deleted row as a `likeRecordDeletions` journal side-record before deleting |
 | `deleteLikeRecord(targetPostId, likerId)` | `(PostId, UserId) => void` — fork-rollback inverse (never records) |
-| `restoreLikeRecord(targetPostId, likerId, appliedAtBlock)` | `(PostId, UserId, number) => void` — fork-rollback inverse (never records) |
 
 ### UTXO
 
@@ -3153,7 +3022,7 @@ index lookup per row of the set, so a prune's derived set costs the set and not 
 | `getBondsInvitedAt(maxInvitedAt, limit)` | `(number, number) => BondBox[]` — bonds whose invitee's record carries `invitedAtBlock` **at or before** `maxInvitedAt`, **ascending `(invitedAtBlock, box id)`**, capped at `limit` — the settlement's carry-forward bond leg. The caller subtracts `INVITE_PROBATION_BLOCKS` from the settle height, so the store stays free of network parameters. ⛔ **The query MUST require `invitedAtBlock > 0`**: `0` is every never-invited identity, so at the single height where `settleHeight == INVITE_PROBATION_BLOCKS` the argument is `0` and an unguarded match sweeps the whole table |
 | `getBondBoxesPage(inviterId, page)` | `(UserId, Page<string>) => { rows: BondBox[], next: string \| null, count: number }` — the inviter's **unspent** bonds (`spent_at_block IS NULL`), ascending `id` strictly after `after` (`id > ?`); `count` over the whole set |
 | `getVouchesForTargetPage(targetId, page)` | `(UserId, Page<string>) => { rows: VouchBox[], next: string \| null, count: number }` — the identity's unspent vouch boxes (`store/vouch-queries.ts`), ascending `id` strictly after `after`, the rows selected in the page statement; `count` over the whole set, read through `getVouchCountForTarget` |
-| `getVouchCountForTarget(targetId)` | `(UserId) => number` — the unspent vouch boxes whose target is the identity, `COUNT(*)` over `VOUCH_TARGET_WHERE` on `idx_utxo_boxes_vouch_target`; feeds `PostJson.authorVouchCount` and the page's `count` |
+| `getVouchCountForTarget(targetId)` | `(UserId) => number` — the unspent vouch boxes whose target is the identity, `COUNT(*)` over `VOUCH_TARGET_WHERE` on `idx_utxo_boxes_vouch_target`; feeds `PostJson.authorVouchCount`, `WithdrawnJson.authorVouchCount`, the vouch row's `voucherVouchCount` and the page's `count` |
 | `insertBox(box)` | `(AnyBox) => void` — writes the provenance columns; records `{kind:'box', op:'insert', boxId, box}` while a block journal is open |
 | `consumeBox(boxId, consumedAtBlock)` | `(string, number) => void` — mark a **live** box spent; records `{kind:'box', op:'remove', boxId}` while a block journal is open. ⛔ **Throws `BoxNotLiveError` when no live row matched.** The `UPDATE` carries `AND spent_at_block IS NULL` and checks the row count, so the journal entry follows a real spend instead of a caller's assumption. ⚠ **Not a `CorruptChainStateError`** — a caller naming a box the store does not hold live is a rejection, not a reason to stop the node |
 | `unconsumeBox(boxId)` | `(string) => void` — un-mark spent (fork-rollback inverse; never records) |
@@ -3254,12 +3123,11 @@ distinguishable by the value alone. **Any sweep keyed on this field must exclude
 an unguarded query matches every never-invited identity in the table.
 
 **`lifetimeLikesReceived` is monotonic, and that is the point.** Per-block like
-settlement increments it; **nothing decrements it, prune included.** Deriving the
+settlement increments it; **nothing decrements it.** Deriving the
 count by joining live posts instead would let a third party burn someone else's
-bond: Alice invites Bob, Bob replies in Carol's thread and earns likes, Carol
-prunes her thread, and Alice's stake forfeits. That is precisely what *"you may
-destroy your own stake, never someone else's"* forbids — the rule that also makes
-prune return other authors' post bonds. Likes carry economic weight now, so they
+bond: Alice invites Bob, Bob replies in Carol's thread and earns likes, Bob
+withdraws the reply, and Alice's stake forfeits. That is precisely what *"you may
+destroy your own stake, never someone else's"* forbids. Likes carry economic weight, so they
 fall under it.
 
 **Five fields hold standing** (`ARCHITECTURE → Membership`): `memberSinceBlock` is the age — `0`
@@ -3573,7 +3441,7 @@ block has confirmed. Idempotent insert (first block to confirm a postId wins);
 All insert functions throw a typed `MempoolFullError` at `MAX_MEMPOOL_ENTRIES`
 (default 10000). Three callers, three behaviors: routes map it to 503; gossip
 relay handlers drop the entry and log; **reorg re-insertion**
-(`services/fork-resolution.ts`, returning reverted txs and prunes to the
+(`services/fork-resolution.ts`, returning reverted txs to the
 pool) also drops-and-logs — it runs inside the chain-switch SQLite transaction,
 so an escaping error would roll back the reorg and strand the node on the
 lighter chain, turning mempool pressure into a consensus-liveness failure.
@@ -3709,34 +3577,21 @@ BlockJournal {
   appliedUtxoTxs: Array<{ txId: string, txBytes: Uint8Array }>  // mempool re-insertion only
   likeRecordInsertions: Array<{ targetPostId: string, likerId: UserId }>
                                    // inverse: deleteLikeRecord
-  likeRecordDeletions: Array<{ targetPostId: string, likerId: UserId,
-    appliedAtBlock: number }>      // inverse: restoreLikeRecord — a reverted prune
-                                   // restores the subtree's like-records exactly
-  deletedPosts: DeletedPostRow[]   // prune settlement's deleted dag_posts rows, bodies and
-                                   // parent refs included — inverse: restorePostRows; the
-                                   // only place a pruned body survives, and only until this
-                                   // journal is purged (ARCHITECTURE → Subtree pruning)
-  insertedStumps: Stump[]          // the prune phase's stump rows — inverse: deleteStump
-  absorbedStumps: Stump[]          // the stumps an outer prune absorbed, exactly as they stood —
-                                   // inverse: insertStump
   withdrawnPosts: Array<{ id: string, content: string | null }>
                                    // withdrawal's emptied dag_posts rows — inverse: restore the
                                    // content and clear withdrawn_at_height. ⛔ `content` is
                                    // `string | null` because a post may be withdrawn while it is
                                    // still a PLACEHOLDER, and the inverse of that is a row with
                                    // null content AND a clear marker. A withdrawal MUTATES a row
-                                   // rather than deleting it, so `deletedPosts` cannot carry it
-  prunedTopologyRows: Array<{ postId: string, prunedAtHeight: number | null,
-    prunedRoot: string | null }>   // one entry per block_topology row §8c marked, carrying the
-                                   // marks the row held BEFORE this block wrote it — null/null
-                                   // for a first prune; the inner prune's height and root for a
-                                   // row an outer prune re-marks. Inverse: restorePrunedTopology
-                                   // writes them back exactly. The rows themselves survive a
-                                   // prune; only the marks are this block's
+                                   // rather than deleting it
 }
 ```
 The field names are the `journal_cbor` keys: the journal is the node's local format, with no
 migration path — a store written under a different key set is a different store.
+
+> ⛔ **AHEAD OF CODE (2026-09-06)** — five keys leave with the prune-removal unit's node store commit:
+> `likeRecordDeletions`, `deletedPosts`, `insertedStumps`, `absorbedStumps` and `prunedTopologyRows`; the
+> store written without them is a different store, covered by the wipe that deploys the pass.
 
 
 **One log, not parallel arrays.** `mutations` is a
@@ -3801,9 +3656,9 @@ and trips its PRIMARY KEY, permanently rejecting the block.
 Apply-then-revert MUST restore the exact pre-block UTXO set and AVL digest
 for every mutation class: the settlement transaction's every leg (coinbase
 credits, protocol-box successors, invite grants, like markers and carry,
-decay replacements, fee-box consumption), like-record inserts and prune-time deletes (rows restored
-exactly), prune settlement, user txs, **identity records** and the network record. Reorg
-re-insertion reads `appliedUtxoTxs` (txBytes) alone — **a prune is one of those
+decay replacements, fee-box consumption), like-record inserts, withdrawals (rows restored
+exactly), user txs, **identity records** and the network record. Reorg
+re-insertion reads `appliedUtxoTxs` (txBytes) alone — **a withdrawal is one of those
 transactions**, so it needs no second channel; `confirmedPostIds` is not a mempool key.
 
 Reverse order is what makes a record written **more than once in one block**
@@ -3815,23 +3670,6 @@ that keeps the last `replaced`; that restores an intra-block intermediate.
 **Breaking:** this shape replaces the former dual representation
 (`consumedBoxIds`/`createdBoxIds` alongside typed arrays). Fresh DB required
 (already mandated by P0's box-value change).
-
-### Stumps
-
-| Function | Signature |
-|----------|-----------|
-| `insertStump(stump)` | `(Stump) => void` — simplified Stump (rootPostHash, authorId, replyCount, upvoteCount, protocolVersion, compactedAtBlockHeight) |
-| `getStump(stumpId)` | `(string) => Stump \| null` |
-
-`insertStump`'s only caller is prune settlement in block application — every
-row derives from a prune transaction the funnel verified (see "Pruning" → "Stumps
-are derived state"). Because the insert is unconditional at settlement and
-every apply path goes through the one funnel, a settled prune without its
-stump row cannot arise on a fresh chain; there is no repair or pull path.
-
-**The insert is journalled** (Block Journal → `insertedStumps`), so `revertBlock` removes the
-stump of a reorged-away prune with the rows it restores; the entry re-enters the mempool and
-writes the stump again when it re-settles.
 
 ### AVL+ State Root
 
@@ -4269,7 +4107,6 @@ the handler.
 | `block-creator.ts` | Block creation, mining, template assembly | Post validation |
 | `block-apply.ts` | Block application, UTXO settlement, per-block like settlement | Block creation |
 | `utxo-engine.ts` | UTXO transaction validation and application | Block structure |
-| `stump-engine.ts` | Verifiable prune execution | DAG content |
 | `fork-resolution.ts` | Chain fork detection and reorg | Block creation |
 | `genesis-state.ts` | Cold-start seeding of the height-0 state, and the root check over it | Which boxes exist (`store/system.ts`) |
 
@@ -4970,12 +4807,12 @@ mode flag: there is no "skip the checks" parameter on the apply path.
 | Phase | Contents | Runs in speculative computation? |
 |-------|----------|----------------------------------|
 | **Validation** | chain-link, protocol version, PoW target + PoW, interlink root, validator signature, Merkle roots, coinbase value + maturity, block storage, `clearTemplate` | No — the header does not exist yet |
-| **Mutation** | coinbase mint, post confirmation, DAG scores, topology, prune verification + settlement, embedded UTXO txs, per-block like settlement, decay, vouch cooldowns | Yes — verbatim, at an explicitly passed height |
+| **Mutation** | coinbase mint, post confirmation, DAG scores, topology, embedded UTXO txs, per-block like settlement, decay, vouch cooldowns | Yes — verbatim, at an explicitly passed height |
 | **Commit** | AVL feed + `stateRoot` verification + checkpoint, journal persistence | No — the speculative run reads the digest and rolls back |
 
 The mutation phase takes its height as an argument rather than reading
-`header.height`, and rejects a block for body-level reasons (prune
-verification, embedded-tx re-validation) on both paths identically. Any check
+`header.height`, and rejects a block for body-level reasons (embedded-tx
+re-validation, the withdrawal phase's binds) on both paths identically. Any check
 that depends on the finalized header belongs in the validation phase.
 
 **The funnel is total.** `applyOrderingBlock` MUST NOT propagate an exception
@@ -5025,7 +4862,7 @@ its block 1 exists — testnet's is pinned, `TYPES_INTERFACE → Network profile
 as the sentinel compare alone
 (`TYPES_INTERFACE` → Network profiles).
 
-**Post authorship + prune authorship (H-3).** A post transaction carries the
+**Post authorship + withdrawal authorship (H-3).** A post transaction carries the
 **whole post** in `utxoTxs` plus the author's signature over the `TxId`, so
 authorship is verified, not claimed (`TYPES_INTERFACE` → "The H-3 property");
 there is no separate authorship entry for a producer to fill or a node to
@@ -5036,14 +4873,13 @@ funnel:
    block's verified post transactions: `insertBlockTopology(postId, parentRefs,
    author, height)` with `author` the creating transaction's signer and
    `parentRefs` the signed transaction's own. `block_topology.author` is the
-   consensus authority for prune authorization, never `dag_posts.author`.
-2. **Prune authorship binding (transaction-time).** The prune transition arm REJECTS the
-   transaction unless `getTopologyAuthor(prune.rootPostHash)` returns a non-null author equal
+   consensus authority for withdrawal authorization, never `dag_posts.author`.
+2. **Withdrawal authorship binding (transaction-time).** The withdrawal transition arm REJECTS the
+   transaction unless `getTopologyAuthor(postWithdraw.postId)` returns a non-null author equal
    to `inputKarma.owner`, so a block carrying it is rejected with it. The lookup reads only consensus-recorded data, so the
    verdict is identical on every node — including one that synced from
-   ordering blocks alone and holds no DAG content. A root no applied block has
-   confirmed has no topology author and is therefore not prunable (this also
-   forecloses the empty-subtree/unconfirmed-root edge). ⛔ **The payload carries no `authorId`
+   ordering blocks alone and holds no DAG content. A post no applied block has
+   confirmed has no topology author and is therefore not withdrawable. ⛔ **The payload carries no `authorId`
    and no signature of its own** — the transaction's signature over `txId` covers it and the
    karma input's owner is the author, so there is one authority and nothing to reconcile.
 
@@ -5086,14 +4922,6 @@ A block carries its posts whole in `utxoTxs`, so there is no content-sweep and
 no per-post serve path. `onPeerActive` is wired to peer-readiness
 (`notePeerMet`), not to any sweep.
 
-The node registers no stump handlers in either direction: inbound
-`/dagsocial/stump/1` gossip is not consumed, `broadcastStump` is not called,
-and stumps are neither requested from peers nor served to them — every node
-derives its own rows at prune settlement (see "Pruning" → "Stumps are
-derived state"). The net-side stump surface this orphans (topic, codec,
-GetStumps/Stumps protocol, handler seams) is deleted in the same unit's net
-phase; NET_INTERFACE is authoritative for that side.
-
 ---
 
 ## Preconditions
@@ -5127,8 +4955,8 @@ phase; NET_INTERFACE is authoritative for that side.
 - Content rules (`verifyPostBody`) are enforced at every body entry — packet, pull response,
   `POST /posts` — and in no transaction check
 - A pending row exists iff its transaction is in the pool, or the post is confirmed
-- Once a prune block's journal is dropped below the reorg horizon (`maxReorgDepth`), no `dag_posts` row and no
-  journal row holds the subtree's content (ARCHITECTURE → Subtree pruning)
+- Once a withdrawal block's journal is dropped below the reorg horizon (`maxReorgDepth`), no `dag_posts` row and no
+  journal row holds the post's content (ARCHITECTURE → Withdrawal)
 - Protocol version checked at verification, against the era scheduled at the object's height
 - Consumers call the Store interface, never the backend directly
 - UTXO transactions are atomic — all boxes consumed/created in one commit

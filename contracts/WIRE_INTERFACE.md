@@ -52,7 +52,7 @@ mismatches.
 > what falsified that note's safety argument.
 >
 > **`@dagsocial/types` is a consumer** — it declares the workspace dependency and `codec.ts`,
-> `post.ts`, `stump.ts` and `utxo.ts` all import from here. That makes this the repo's **base codec
+> `post.ts`, `post-withdraw.ts` and `utxo.ts` all import from here. That makes this the repo's **base codec
 > layer**, not only the transport-framing package; `net` is no longer the sole dependant. No cycle is
 > introduced: this package still has zero dependencies, and that must stay true.
 >

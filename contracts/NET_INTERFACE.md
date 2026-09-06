@@ -178,9 +178,7 @@ message — its **body** crosses only as the trailing field of the transaction's
 `/dagsocial/tx/1` (→ Gossip Topics) and as a `MODIFIER_POST_BODY` modifier on codes 4/5
 (→ ModifierRequest), keyed by the post id and checkable against the commit the requester
 already holds; a post as an object in its own right (codes 10/11) is what cannot be verified
-(TYPES_INTERFACE → What "verify a post" means now). Stumps are derived state — every node
-projects its own `dag_stumps` rows from the PruneEntries in applied blocks (NODE_INTERFACE →
-"Stumps are derived state"). A new message takes the lowest free code.
+(TYPES_INTERFACE → What "verify a post" means now). A new message takes the lowest free code.
 
 **This table is the code allocator; `net/src/types.ts` mirrors it.**
 ⚠ **Not every allocation is findable by grepping `MSG_`** —
@@ -226,10 +224,8 @@ failing the commitment check at the next hop.
 topic string `/dagsocial/subblock/1`.** Held by its live guard — `gossip.test.ts` asserts
 the topic has no validator — and it leaves with that guard.
 
-`/dagsocial/stump/1` is retired (P2-F F1): a gossiped stump is unverifiable
-by construction (no signature, no set to check against topology) and stumps are
-derived locally from applied blocks, so the topic is neither subscribed nor
-published. Prunes propagate as transactions — on the `tx` topic and inside
+`/dagsocial/stump/1` is retired (P2-F F1) and never reused: the topic is neither subscribed nor
+published. An author's withdrawal propagates as a transaction — on the `tx` topic and inside
 ordering blocks.
 
 All gossip topics carry the object's own positional wire encoding directly — no framing.
@@ -477,7 +473,7 @@ for 103.
 that lacks a body omits the id from its response and the requester rotates peers. No modifier
 request is relayed in the tree (`handleModifierRequestMsg` serves blocks from the local store and
 omits what it lacks); the rule is stated for bodies because a relay, should one ever be added for
-blocks, must not extend to them — it would fan a request for a pruned or withheld body across the
+blocks, must not extend to them — it would fan a request for a withdrawn or withheld body across the
 network with nothing to stop it (→ Local-Serve-Before-Relay). Responses are byte-bounded by the same
 accumulate-and-stop rule as blocks (`MAX_SERVE_BODY_BYTES`). Each returned body is verified
 by the requester against the commitment of the transaction it already holds
@@ -1038,7 +1034,7 @@ never both.
 **One modifier type never relays: `MODIFIER_POST_BODY` (103) is served locally or omitted.**
 A body request names a post id; a peer that holds the body answers, a peer that does not
 leaves the id out, and the requester asks another peer. Relaying a body request would carry a
-query for a pruned or never-published body to every peer with nothing to terminate it, and
+query for a withdrawn or never-published body to every peer with nothing to terminate it, and
 the answer a relay could bring back is one the requester can just as well fetch itself from
 the peer that has it (→ ModifierRequest).
 
@@ -1199,7 +1195,7 @@ cost-bearing: no zero-work ordering block may be re-gossiped (audit M-9).
 
 Runs after Stage 1 passes, via registered `on*` callbacks:
 
-- Parent refs exist (live post or stump)
+- Parent refs exist (a stored post, live or withdrawn)
 - Author has sufficient karma
 - UTXO inputs unspent, each transition's authorization satisfied
 - A post packet that passes is admitted as one: the transaction into the mempool and the body

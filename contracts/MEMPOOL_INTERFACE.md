@@ -48,10 +48,10 @@ peer's block confirms it, and a scan that recomputes the id per candidate is the
 pool by `purgeExpired` at their expiry height, which is the same path an unconfirmed entry always
 took.
 
-⛔ **A PRUNE IS AN ORDINARY `utxo_tx` ROW.** It is a karma transaction carrying a
-`UtxoTransaction.prune` payload (`NODE_INTERFACE` → Prune transactions), so it is admitted,
+⛔ **A WITHDRAWAL IS AN ORDINARY `utxo_tx` ROW.** It is a karma transaction carrying a
+`UtxoTransaction.postWithdraw` payload (`NODE_INTERFACE` → Withdrawal transactions), so it is admitted,
 priced, evicted, confirmed-cleaned and expired by exactly the paths above. **Its dedup is its
-spent inputs** — a pooled prune cannot be duplicated because its boxes are gone — so it needs no
+spent inputs** — a pooled withdrawal cannot be duplicated because its boxes are gone — so it needs no
 id column of its own.
 
 ### PoolEntry (in-memory representation)
@@ -225,7 +225,7 @@ leaves the bound unchanged.
    │  API routes (POST /posts,  │   │  Gossip relay    │
    │  /likes, /invites,         │   │  (onTx)          │
    │  /vouches, /credits/…,     │   │                  │
-   │  /posts/:id/prune)         │   │                  │
+   │  /posts/:id/withdraw)      │   │                  │
    └─────────────┬──────────────┘   └────────┬─────────┘
                  │ insertUtxoTx              │ insertUtxoTx
                  ▼                           ▼
@@ -290,7 +290,7 @@ together.
 | `POST /vouches` · `DELETE /vouches/:targetId` | `utxo_tx` |
 | `POST /credits/transfer` | `utxo_tx` |
 | Relay: inbound UTXO tx (`onTx`) | `utxo_tx` |
-| `POST /posts/:id/prune` | `utxo_tx` |
+| `POST /posts/:id/withdraw` | `utxo_tx` |
 
 ---
 
@@ -308,8 +308,7 @@ pending entries:
    pre-boundary entry, the mutation phase would reject the body, and the rebuild would evict the
    era's valid entries with them
 3. Every entry is a `utxo_tx` → `utxoTxIds` / `utxoTxs`
-4. Tracks `confirmedRowids` — **every** row the template carries (a prune is a
-   transaction row)
+4. Tracks `confirmedRowids` — **every** row the template carries
 5. After block finalization: `removeEntry(rowid)` for each tracked rowid. **A
    body the mutation phase rejects is evicted the same way**, and the creator
    fills again from what remains (`MINING_INTERFACE → Template and submit`);
@@ -427,7 +426,7 @@ When an ordering block is received from gossip:
 2. For each `utxoTxId`: decode from mempool or reconstruct, **fully re-validate with
    `validateTx`**, then `applyTx`
 3. Confirm the block's posts (ids from its post transactions)
-4. Remove confirmed entries from mempool by `tx_id` (a prune is a transaction)
+4. Remove confirmed entries from mempool by `tx_id`
 
 ⛔ **Step 2 is full re-validation, never a liveness-only re-check.** A permissionless block
 producer can embed a transaction that never passed pool entry or relay validation, so
@@ -476,7 +475,7 @@ Three insert callers, three behaviors:
 | **Reorg re-insertion** (`services/fork-resolution.ts`) | drop, log, continue |
 
 The reorg caller is not optional politeness: re-insertion of reverted
-txs and prunes runs *inside* the chain-switch SQLite transaction, so an
+txs runs *inside* the chain-switch SQLite transaction, so an
 escaping `MempoolFullError` would roll back the switch and strand the node on
 the lighter chain — mempool pressure escalated into a consensus-liveness
 failure.
