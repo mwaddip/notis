@@ -387,8 +387,7 @@ describe('constants', () => {
   });
 
   it('MAX_PARENT_REFS is 1', () => {
-    // Was 8 (never designed — inherited from a model's suggestion). One parent
-    // keeps every thread a tree, so a post belongs to one thread and a
+    // One parent keeps every thread a tree, so a post belongs to one thread and a
     // subtree's page and count are well-defined.
     expect(MAX_PARENT_REFS).toBe(1);
   });
