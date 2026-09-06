@@ -346,8 +346,11 @@ and the block's settlement grants the invitee the bond's value from the pool.
    only**
 4. `insertUtxoTx(tx, expiresAtHeight)`; return the one box id
 
+> ⚠ **AHEAD OF CODE (2026-09-06)** — the grant writes a root's invitee as a member.
+
 Block application writes `invitedAtBlock` at the grant, which starts the
-probation clock; the key becomes an account in the same step, which is what bars
+probation clock — and, when the inviter is a root, the invitee's membership
+(→ Bond transition rules); the key becomes an account in the same step, which is what bars
 any further invite naming it; and the inviter's `invitesUsed` is incremented when the bond is
 created, never decremented. The bond settles `INVITE_PROBATION_BLOCKS` after
 creation, so nothing stays open. `expiresAtHeight` on the response is the
@@ -458,13 +461,18 @@ consensus valuation, which is the mirror class. The three plain numbers beside t
 exists), and `height`, the chain height at the time of the response — are that valuation's inputs,
 served so a client can show when the next period falls.
 
+> ⚠ **AHEAD OF CODE (2026-09-06)** — `invitesAvailable` is `null` for a root alone; a root's invitee
+> reads its budget.
+
 **`/karma/:userId` answers standing, and the client evaluates nothing.** `memberSinceBlock`,
 `memberBar`, `memberVouches` and `invitesUsed` are the record's plain numbers, `memberLikes` its
 second counter as a decimal string (`0` and `"0"` where no record exists); `member` is the derived
 predicate `memberSinceBlock > 0 ∧ memberVouches ≥ memberBar` evaluated by the node (`ARCHITECTURE
 → Membership`), and `invitesAvailable` is `⌊memberVouches / D(N)⌋ − invitesUsed` for a member, clamped at `0`
 (a bar that rose after invites were spent can put the difference below zero), `0` for a resident —
-a lapsed member included — and **`null` for a root** — unbounded, not zero. A client deriving either from the
+a lapsed member included — and **`null` for a root** — a genesis-seeded record, never an invitee
+(`ARCHITECTURE → Roots`) — unbounded, not zero; a root's invitee is a member with a budget and reads
+a number. A client deriving either from the
 five fields holds a second implementation of a consensus predicate, the mirror class.
 
 ### Credits
@@ -563,9 +571,14 @@ faucet is a client of the invite grant rather than a transition of its own.
 `initSystemKeypair`, the `system_keypair` row and `isSystemBox` are gone, along with the same-owner
 karma exemption `isSystemBox` gated. No consensus rule resolves against a configured key.
 
-**The faucet identity is a root** (`ARCHITECTURE → Membership`): its record is seeded with
-`memberBar = 0`, so it vouches and invites with no budget check and never lapses — which is how a
-chain whose committee is empty admits its first member.
+> ⚠ **AHEAD OF CODE (2026-09-06)** — a faucet grant confers membership.
+
+**The faucet identity is a root** (`ARCHITECTURE → Roots`): its record is seeded with
+`memberBar = 0` and `invitedAtBlock = 0`, so it vouches and invites with no budget check and never
+lapses — and every key it invites is a member at the grant, for life (→ Bond transition rules),
+which is how a chain whose committee is empty admits its first members. The faucet service neither
+vouches nor likes, so nothing else could set one: the earned tier begins with its invitees'
+invitees.
 
 **Idempotency is consensus state, not a ledger.** An invite may name only a key holding no identity
 record, checked in the invite transition — so an identity is granted once, ever, from state that is in
@@ -1669,6 +1682,9 @@ There is **no other legal bond or invite shape**. In particular:
 
 ### Bond transition rules
 
+> ⚠ **AHEAD OF CODE (2026-09-06)** — the root predicate's `invitedAtBlock = 0` clause, and
+> *"A root's grant confers membership"*.
+
 - **A bond is never spent, only settled.** Creation, the probation clock and
   forfeiture are all block application's, so no
   transition admits a bond into a user transaction and no signature reaches it.
@@ -1730,18 +1746,29 @@ There is **no other legal bond or invite shape**. In particular:
   the identity carries nothing.
 - ⛔ **Only a root or a member creates a bond, and a member's invites are a budget.** The
   invite-create arm reads the inviter's record at apply: a root (`memberSinceBlock > 0`,
-  `memberBar = 0`) passes unconditionally; a member passes iff
+  `memberBar = 0`, `invitedAtBlock = 0` — `ARCHITECTURE → Roots`) passes unconditionally; a member
+  passes iff
   `⌊memberVouches / D(N)⌋ − invitesUsed ≥ 1`, with `D(N)` from the network record of pre-body
   state (→ Membership pass); a resident is refused. Applying the transaction increments
   `invitesUsed` on the inviter's record, carrying every other field through, and nothing ever
   decrements it — a spent invite is never revoked (`ARCHITECTURE → The invite budget`). Two
   invites by one member in one block read the record as the first left it, so the second needs
   the second slot.
+- ⛔ **A root's grant confers membership.** In the settlement's grant step, when `bond.inviterId`
+  names a root — as the inviter's record stands when the settlement grants, like the budget check
+  above — the invitee's record is written with `memberSinceBlock` = the grant height and
+  `memberBar = 0`: a member for life (`ARCHITECTURE → Earned, standing, and well-founded by age`),
+  and not a root, because `invitedAtBlock` = the grant height as for every invitee. A member's
+  invitee is written as a resident, `memberSinceBlock = 0` and `memberBar = 0`. The grant step
+  records the invitee's absence as its pre-block state and adds it to the membership pass's touched
+  set before the write, and the pass counts the conferral (→ Membership pass, case 4). Two invitees
+  of one root in one block are granted in ascending invitee order and take the same age.
 - **Engine inputs these rules need:** the invite-create arm reads
   `getIdentityRecord` for the uniqueness check and for the inviter's standing, and the network
   record for `D`; block application
   gains a settlement sweep keyed on `invitedAtBlock` —
-  `getBondsSettlingAt`'s shape. `checkTransitions` needs no karma-sum read
+  `getBondsSettlingAt`'s shape — and its grant step reads the inviter's record for the conferral.
+  `checkTransitions` needs no karma-sum read
   and no settle height.
 
 ### Karma transition rules
@@ -1911,10 +1938,14 @@ inside the network's reported supply.
 
 ### Membership pass
 
+> ⚠ **AHEAD OF CODE (2026-09-06)** — case 4 (a conferred membership), the block's invitees in the
+> touched set, and the pre-block state of a record the block first wrote.
+
 Membership is a predicate on the identity record — `member(m) ⟺ memberSinceBlock > 0 ∧
 memberVouches ≥ memberBar` (`ARCHITECTURE → Membership`) — and the pass is the bookkeeping that
-sets the two immutable fields and keeps the network record's `N` equal to the number of
-identities the predicate holds for. **It moves no value.**
+sets the two immutable fields at an earned set, counts a conferred one where the settlement's grant
+step wrote them (→ Bond transition rules), and keeps the network record's `N` equal to the number
+of identities the predicate holds for. **It moves no value.**
 
 **Where it runs.** Block application's end-of-block order is pinned: the transaction loop → the
 settlement transaction → the like counters → **the membership pass** → the decay clocks (→
@@ -1930,17 +1961,24 @@ state"). `k` is the profile's `membershipBarMultiplier`; `icbrt` and `membership
 `D` calls.
 
 **Over whom.** The identities the block touched — every vouch target whose box was cast or
-consumed this block, every author whose `memberLikes` rose — in ascending identity hex. For each,
-`member(m)` is evaluated on the record as it stood before the block's writes and as it stands
-after them:
+consumed this block, every author whose `memberLikes` rose, every invitee the settlement granted —
+in ascending identity hex. For each, `member(m)` is evaluated on the record as it stood before the
+block's writes and as it stands after them. **A record the block first wrote has no pre-block
+state, and the pass reads none:** the grant step records the absence before its write, and
+`member` is false on an absence — never evaluated on the record the grant left, which would read a
+conferred member as one that was already there:
 
 1. `memberSinceBlock = 0`, and now `memberVouches ≥ D(N)` and `memberLikes ≥ Y(N)` → **set**:
    `memberSinceBlock = height`, `memberBar = D(N)`, every other field carried through; `N + 1`.
-2. `memberSinceBlock > 0`, a member before the block and not after → **lapse**: `N − 1`, and
-   nothing else is written — the predicate is the state, and it turned false at the consuming
-   transaction's apply.
-3. `memberSinceBlock > 0`, not a member before and a member after → **re-qualified**: `N + 1`.
-   The age and the bar are untouched.
+2. `memberSinceBlock > 0 ∧ memberBar > 0`, a member before the block and not after → **lapse**:
+   `N − 1`, and nothing else is written — the predicate is the state, and it turned false at the
+   consuming transaction's apply.
+3. `memberSinceBlock > 0 ∧ memberBar > 0`, not a member before and a member after →
+   **re-qualified**: `N + 1`. The age and the bar are untouched.
+4. `memberSinceBlock > 0 ∧ memberBar = 0`, and not a member before the block → **conferred**:
+   `N + 1`, and nothing is written — the settlement's grant step wrote the age and the bar, because
+   the bond's inviter is a root (→ Bond transition rules). A root cannot reach this case: its
+   record is seeded at genesis, and it is a member before every block; with bar 0 neither can lapse.
 
 `N` is written once, at the end, through `putNetworkRecord`; every record write goes through
 `putIdentityRecord`. Both are journalled, so a reverted block restores every record and the
@@ -1955,7 +1993,10 @@ the pass. Two sets in one block take the same age and do not count for each othe
 and neither has ever counted toward the other: a non-member cannot cast. A root's age is the
 genesis mint height; a non-root's record is first written by a settlement grant at that height
 or later and can be vouched only from the following block's body, so every set height is strictly
-above every root's age.
+above every root's age. A root's invitee is granted with the age `height` and is a member from the
+next block's body on: it can be vouched only from then, as any invitee, and its own cast needs
+`member(voucher)` at apply, which holds from that block; two invitees of one root granted in one
+block take the same age and never count for each other, as two sets in one block do not.
 
 **The cascade is one generation per block, and the pass is why.** A lapse in this block's pass
 makes the lapsed member's vouches eligible for the lapse leg of the **next** block's settlement
@@ -3041,6 +3082,9 @@ mirrors.
 
 ### Identity Records
 
+> ⚠ **AHEAD OF CODE (2026-09-06)** — the settlement's grant step as the second writer of
+> `memberSinceBlock` and `memberBar`, for a root's invitee; `root(m)`'s third clause.
+
 The second committed entity alongside boxes: the per-identity decay clock. It may
 read neither height that meets `insertBox` — a box's `createdAtBlock` is
 creator-declared, so a backdated box would backdate its owner's clock, and the
@@ -3052,13 +3096,14 @@ IdentityRecord {
   lastDecayBlock: number        // u32 — bumped when decay fires
   invitedAtBlock: number        // u32 — height the invite grant applied; 0 = never invited
   lifetimeLikesReceived: bigint // likes this identity has ever received; never decremented
-  memberSinceBlock: number      // u32 — 0 = never a member; else the height the bar was first met — the AGE, never reset; a root's is the genesis mint height
-  memberBar: number             // u32 — D(N) at first set, never reset; 0 on a root
+  memberSinceBlock: number      // u32 — 0 = never a member; else the height the bar was first met, or a root's grant conferred it — the AGE, never reset; a root's is the genesis mint height
+  memberBar: number             // u32 — D(N) at first set, never reset; 0 on a root and on a root's invitee
   memberVouches: number         // u32 — live counted vouches naming this identity
   memberLikes: bigint           // likes received from members; never decremented
   invitesUsed: number           // u32 — bonds this identity has created; never decremented
 }
 member(m) ⟺ memberSinceBlock > 0 ∧ memberVouches ≥ memberBar        — derived, stored nowhere
+root(m)   ⟺ memberSinceBlock > 0 ∧ memberBar = 0 ∧ invitedAtBlock = 0 — derived, stored nowhere (ARCHITECTURE → Roots)
 ```
 
 ⛔ **The outstanding like accrual is deliberately NOT a field here.** The carry sits in a
@@ -3073,8 +3118,9 @@ so the field decides one thing: the paired bond settles at
 fields of its own.
 
 ⚠ **`0` is a reachable value here, not a safe sentinel.** Every identity that
-received karma without being invited carries it — genesis committee members and
-faucet recipients — so *"never invited"* and *"invited at block 0"* are not
+received karma without being invited carries it — the genesis committee and the seeded faucet
+identity, the roots, which is what makes it the clause that separates a root from a root's invitee
+(ARCHITECTURE → Roots) — so *"never invited"* and *"invited at block 0"* are not
 distinguishable by the value alone. **Any sweep keyed on this field must exclude
 `0` explicitly**, and there is exactly one height where it matters: when
 `settleHeight == INVITE_PROBATION_BLOCKS`, the target `invitedAtBlock` is `0` and
@@ -3089,8 +3135,9 @@ destroy your own stake, never someone else's"* forbids. Likes carry economic wei
 fall under it.
 
 **Five fields hold standing** (`ARCHITECTURE → Membership`): `memberSinceBlock` is the age — `0`
-never a member, else the height the bar was first met, written once and never reset;
-`memberBar` is `D(N)` at that moment, `0` on a root; `memberVouches` counts the live counted
+never a member, else the height the bar was first met or a root's grant conferred it, written once
+and never reset; `memberBar` is `D(N)` at that moment, `0` on a root and on a root's invitee;
+`memberVouches` counts the live counted
 vouches naming the identity; `memberLikes` counts likes received from members; `invitesUsed`
 counts the bonds the identity has created. `member(m)` is evaluated from them and stored nowhere.
 
@@ -3102,7 +3149,8 @@ stored value through unchanged** — `invitedAtBlock` and `lastActivityBlock`'s
 **epoch** are owned by the grant path (the grant write initializes the activity
 clock to the grant height; advancement is block application's — §Populating the record),
 `lifetimeLikesReceived` by the lifetime-counter bookkeeping, `memberSinceBlock` and `memberBar`
-by the membership pass — once, at first set, never again — `memberVouches` by the vouch counter's
+by the membership pass at first set or by the settlement's grant step for a root's invitee
+(→ Bond transition rules) — each once, never again — `memberVouches` by the vouch counter's
 one function (cast `+1`, consumption `−1`, each iff counted — → Vouch transition rules),
 `memberLikes` by the like counters beside `lifetimeLikesReceived`, `invitesUsed` by the
 invite-create apply.
@@ -3221,8 +3269,9 @@ box keyspace, which is a distinct concern from how the bytes are typed.
 - **`lifetimeLikesReceived`** — bumped only by the lifetime-counter bookkeeping
   after the settlement, for every author who received likes in the block; only
   ever adds.
-- **`memberSinceBlock`, `memberBar`** — written by the membership pass at first set, once, and
-  never again (→ Membership pass); a root's at genesis seeding.
+- **`memberSinceBlock`, `memberBar`** — written once and never again: by the membership pass at
+  first set (→ Membership pass), or by the settlement's grant step for a root's invitee
+  (→ Bond transition rules); a root's at genesis seeding.
 - **`memberVouches`** — the vouch counter's one function: `+1` at a counted cast's apply, `−1` at
   a counted vouch box's consumption, by the unvouch or the settlement's lapse leg (→ Vouch
   transition rules).
