@@ -117,6 +117,10 @@ function writeCardOpts(row: PostJson | WithdrawnJson, ci: number, ctx: RenderCtx
   const base: Partial<CardOpts> = {
     onAuthor: (key) => handlers.openAuthor(key, { from: 'pane', ci }),
     mark: ctx.markFor(row.author),
+    // The content-image opts every card shares (WEB_INTERFACE → Content).
+    expanded: ctx.expandedImages,
+    onExpand: handlers.expandImage,
+    onCollapse: handlers.collapseImage,
   };
   if (!ctx.writeEnabled) return base; // the read surface: a prefix button and an absent mark
   const opts: Partial<CardOpts> = {
@@ -181,6 +185,7 @@ function postsCtxFrom(key: string, ci: number, ctx: RenderCtx): PostsCtx {
     ownKey: ctx.ownKey,
     locked: ctx.identity?.locked ?? false,
     markFor: (k) => ctx.markFor(k),
+    expandedImages: ctx.expandedImages,
   };
 }
 
@@ -239,6 +244,9 @@ function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handl
           replyCount: null,
           flight: flightFor(sub, handlers.tryAgain),
           you: ctx.ownKey !== null && sub.author === ctx.ownKey,
+          expanded: ctx.expandedImages,
+          onExpand: handlers.expandImage,
+          onCollapse: handlers.collapseImage,
           ...(landed
             ? { onOpen: (id) => handlers.openThread(id, { from: 'pane', ci }), onReply: (id) => handlers.openComposer(id), composerKey: sub.postId ?? undefined }
             : {}),

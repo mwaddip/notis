@@ -230,6 +230,7 @@ export interface PostsCtx {
   ownKey: string | null;
   locked: boolean;
   markFor: (key: string) => Mark | null;
+  expandedImages: ReadonlySet<string>;    // images shown this session (WEB_INTERFACE → Content)
 }
 
 export interface PostsHandlers {
@@ -238,6 +239,8 @@ export interface PostsHandlers {
   vouch: (key: string) => void;
   authorPostsMore: (key: string) => void;
   unlockIdentity: (passphrase: string) => Promise<void>;
+  expandImage: (key: string) => void;     // an image loads on the reader's press (WEB_INTERFACE → Content)
+  collapseImage: (key: string) => void;
 }
 
 export function authorPostsBody(handlers: PostsHandlers, ctx: PostsCtx): HTMLElement {
@@ -284,5 +287,9 @@ function postCard(post: PostJson, handlers: PostsHandlers, ctx: PostsCtx): HTMLE
     locked: ctx.locked,
     ownKey: ctx.ownKey ?? undefined,
     onUnlock: (p) => handlers.unlockIdentity(p),
+    // The content-image opts every card shares (WEB_INTERFACE → Content).
+    expanded: ctx.expandedImages,
+    onExpand: handlers.expandImage,
+    onCollapse: handlers.collapseImage,
   });
 }

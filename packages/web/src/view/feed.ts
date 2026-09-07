@@ -18,13 +18,18 @@ function isYou(author: string, ctx: RenderCtx): boolean {
   return ctx.ownKey !== null && author === ctx.ownKey;
 }
 
-/** The identity-display opts a feed card carries: the prefix opens the author
- *  window (a read, present even with no identity) and the vouch mark; the vouch
- *  and its unlock only with an identity loaded (WEB_INTERFACE → The identity display). */
+/** The opts a feed card carries: the identity display — the prefix opens the
+ *  author window (a read, present even with no identity) and the vouch mark, the
+ *  vouch and its unlock only with an identity loaded (WEB_INTERFACE → The identity
+ *  display) — and the content-image opts every card shares, so an image loads on
+ *  the reader's press (WEB_INTERFACE → Content). */
 function markOpts(author: string, ctx: RenderCtx, handlers: Handlers): Partial<CardOpts> {
   const opts: Partial<CardOpts> = {
     onAuthor: (key) => handlers.openAuthor(key, { from: 'feed' }),
     mark: ctx.markFor(author),
+    expanded: ctx.expandedImages,
+    onExpand: handlers.expandImage,
+    onCollapse: handlers.collapseImage,
   };
   if (ctx.writeEnabled) {
     opts.onVouch = (key) => handlers.vouch(key);

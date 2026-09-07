@@ -141,7 +141,8 @@ and reproduced by the UI mirror; it is the cross-implementation anchor.
 'profile'`, an `enum8` over the closed table `POST_TYPE = { regular: 0, profile: 1 }` (→ Layout
 — PostCommit). The closed set is the point — every future post kind is a deliberate protocol
 decision, never a client convention. Consensus checks membership (`verifyPostCommitDomains`)
-and reads nothing else from it; there is no content sniffing anywhere.
+and reads nothing else from it, and it reads nothing from `content`; what a client renders from
+content is that client's rule and no post kind (`WEB_INTERFACE → Content`).
 
 **A profile is one post, bound to its author.** A `type: 'profile'` post's `content`
 (≤ `MAX_CONTENT_BYTES`) is a structured document clients interpret — consensus records it

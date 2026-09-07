@@ -134,6 +134,9 @@ export class App {
   // Targets the reader pressed like on, shown liked at once and reverted on a
   // rejection or expiry (WEB_INTERFACE → The wallet).
   private optimisticLikes = new Set<string>();
+  // Images the reader expanded this session, keyed <postId>:<index in document
+  // order>. Not per identity — content viewing, not a write (WEB_INTERFACE → Content).
+  private expandedImages = new Set<string>();
   // The transient withdraw flight per post — submitting and expired; 'submitted'
   // is the ledger's durable state (WEB_INTERFACE → The withdraw control).
   private withdrawFlights = new Map<string, Flight>();
@@ -206,6 +209,10 @@ export class App {
       unlockIdentity: (p) => this.idm.unlock(p),
       askFaucet: () => void this.askFaucet(),
       openComposer: (parentId) => this.openComposer(parentId),
+      // The press records the key; the error drops it. Neither re-renders — the
+      // card already swapped the img or the failure line in place (WEB_INTERFACE → Content).
+      expandImage: (key) => { this.expandedImages.add(key); },
+      collapseImage: (key) => { this.expandedImages.delete(key); },
       likePost: (postId) => void this.likePost(postId),
       withdrawPost: (postId) => void this.withdrawPost(postId),
       tryAgain: (localKey) => void this.tryAgain(localKey),
@@ -303,6 +310,7 @@ export class App {
       composerFor: (parentId) => this.composers.get(composerKey(parentId))?.el ?? null,
       submissionsFor: (parentId) => this.state.submissions.filter((s) => s.parentId === parentId),
       likePending: (postId) => this.optimisticLikes.has(postId) || likeTargets.has(postId),
+      expandedImages: this.expandedImages,
       // Profile window (WEB_INTERFACE → The profile window). identity carries the
       // lock state the header prefix does not need.
       identity: this.idm.current(),

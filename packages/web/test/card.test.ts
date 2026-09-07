@@ -57,6 +57,130 @@ describe('card — · you', () => {
   });
 });
 
+describe('card — the content grammar', () => {
+  const withContent = (content: string): PostJson => ({ ...confirmed(PUB), content, contentHash: contentHashHex(content) });
+
+  it('a\\nb\\n\\nc renders one .card-content with two paragraphs, the first with a br', () => {
+    const c = card(withContent('a\nb\n\nc'), {});
+    const cc = c.querySelectorAll('.card-content');
+    expect(cc).toHaveLength(1); // the wrapping element keeps the class
+    const paras = cc[0]!.querySelectorAll('.card-para');
+    expect(paras).toHaveLength(2);
+    expect(paras[0]!.querySelector('br')).not.toBeNull(); // the newline inside the first paragraph
+    expect(paras[1]!.querySelector('br')).toBeNull();
+    expect(cc[0]!.textContent).toBe('abc'); // a br carries no text
+  });
+
+  it('a title line renders as .card-title, text as text', () => {
+    const c = card(withContent('# Heading\nbody'), {});
+    expect(c.querySelector('.card-title')?.textContent).toBe('Heading');
+    expect(c.querySelector('.card-para')?.textContent).toBe('body');
+  });
+
+  it('a link card: the words as text, the host <a> with the author href and the four attributes', () => {
+    const c = card(withContent('[the words](https://ok.com/a/b)'), {});
+    const cc = c.querySelector('.card-content.link-card')!;
+    expect(cc.querySelector('.lc-text')?.textContent).toBe('the words');
+    const a = cc.querySelector('a.lc-host') as HTMLAnchorElement;
+    expect(a.textContent).toBe('ok.com'); // the host, not the words — the only control that opens the target
+    expect(a.getAttribute('href')).toBe('https://ok.com/a/b'); // the author's string, not normalised
+    expect(a.getAttribute('target')).toBe('_blank');
+    expect(a.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(a.getAttribute('referrerpolicy')).toBe('no-referrer');
+    expect(a.getAttribute('title')).toBe('https://ok.com/a/b');
+  });
+
+  it('a bare-URL card shows the pathname (nothing when it is /)', () => {
+    const path = card(withContent('https://ok.com/a/b'), {}).querySelector('.card-content.link-card')!;
+    expect(path.querySelector('.lc-text')?.textContent).toBe('/a/b');
+    expect(path.querySelector('a.lc-host')?.textContent).toBe('ok.com');
+    const root = card(withContent('https://ok.com'), {}).querySelector('.card-content.link-card')!;
+    expect(root.querySelector('.lc-text')).toBeNull();
+    expect(root.querySelector('a.lc-host')?.getAttribute('href')).toBe('https://ok.com');
+  });
+
+  it('a link inside running text renders inline, not as a link card', () => {
+    const c = card(withContent('see [x](https://ok.com) here'), {});
+    expect(c.querySelector('.card-content.link-card')).toBeNull();
+    const a = c.querySelector('.card-content a') as HTMLAnchorElement;
+    expect(a.textContent).toBe('x');
+    expect(a.getAttribute('href')).toBe('https://ok.com');
+    expect(c.querySelector('.card-content')?.textContent).toBe('see x here');
+  });
+
+  it('bold renders <strong>, italic <em>, raw HTML as literal text', () => {
+    const c = card(withContent('a **b** *c* <d>'), {});
+    expect(c.querySelector('.card-content strong')?.textContent).toBe('b');
+    expect(c.querySelector('.card-content em')?.textContent).toBe('c');
+    expect(c.querySelector('.card-content')?.textContent).toBe('a b c <d>');
+  });
+});
+
+describe('card — images', () => {
+  const withContent = (content: string): PostJson => ({ ...confirmed(PUB), content, contentHash: contentHashHex(content) });
+  const KEY0 = 'p1:0'; // <postId>:<image index in document order>
+
+  it('an image card: the description as the card text, no img before the press, the control names the host', () => {
+    const c = card(withContent('![a red circle](https://img.example/pic.png)'), { onExpand: () => {} });
+    const cc = c.querySelector('.card-content.link-card')!;
+    expect(cc.querySelector('img')).toBeNull(); // no img element before the press
+    expect(cc.querySelector('.lc-text')?.textContent).toBe('a red circle');
+    const btn = cc.querySelector('.img-show') as HTMLButtonElement;
+    expect(btn.textContent).toContain('show image from');
+    expect(btn.querySelector('.host')?.textContent).toBe('img.example');
+  });
+
+  it('the press swaps in the img (referrerpolicy, the description as alt) and calls onExpand with the key', () => {
+    const expanded: string[] = [];
+    const c = card(withContent('![a red circle](https://img.example/pic.png)'), { onExpand: (k) => expanded.push(k) });
+    (c.querySelector('.img-show') as HTMLButtonElement).click();
+    const img = c.querySelector('img') as HTMLImageElement;
+    expect(img).not.toBeNull();
+    expect(img.getAttribute('src')).toBe('https://img.example/pic.png');
+    expect(img.getAttribute('referrerpolicy')).toBe('no-referrer');
+    expect(img.getAttribute('alt')).toBe('a red circle'); // the description stays, as the alt
+    expect(c.querySelector('.img-show')).toBeNull(); // the control is gone
+    expect(expanded).toEqual([KEY0]);
+  });
+
+  it('a render with the key in expanded produces the img directly, no control', () => {
+    const c = card(withContent('![x](https://img.example/pic.png)'), { expanded: new Set([KEY0]) });
+    expect(c.querySelector('img')).not.toBeNull();
+    expect(c.querySelector('.img-show')).toBeNull();
+  });
+
+  it('an image error says so in place and drops the key through onCollapse', () => {
+    const collapsed: string[] = [];
+    const c = card(withContent('![x](https://img.example/pic.png)'), { expanded: new Set([KEY0]), onCollapse: (k) => collapsed.push(k) });
+    (c.querySelector('img') as HTMLImageElement).dispatchEvent(new Event('error'));
+    expect(c.querySelector('img')).toBeNull();
+    expect(c.querySelector('.img-failed')?.textContent).toContain('the image did not load from');
+    expect(c.querySelector('.img-failed .host')?.textContent).toBe('img.example');
+    expect(collapsed).toEqual([KEY0]);
+  });
+
+  it('an expanded image with a blank description still carries an alt: image from the host', () => {
+    const c = card(withContent('https://img.example/pic.png'), { expanded: new Set([KEY0]) });
+    expect((c.querySelector('img') as HTMLImageElement).getAttribute('alt')).toBe('image from img.example');
+  });
+
+  it('a bare image URL is an image control; .svg is a bare-URL link', () => {
+    expect(card(withContent('https://img.example/pic.PNG'), {}).querySelector('.img-show')).not.toBeNull();
+    const svg = card(withContent('https://img.example/pic.svg'), {});
+    expect(svg.querySelector('.img-show')).toBeNull();
+    expect(svg.querySelector('a.lc-host')).not.toBeNull();
+  });
+
+  it('an inline image shows the alt as text then the control, no img before the press', () => {
+    const c = card(withContent('look ![cat](https://img.example/c.jpg) here'), { onExpand: () => {} });
+    expect(c.querySelector('.card-content.link-card')).toBeNull(); // inline, not a link card
+    expect(c.querySelector('img')).toBeNull();
+    const cc = c.querySelector('.card-content')!;
+    expect(cc.textContent).toContain('look cat show image from');
+    expect(cc.querySelector('.img-show .host')?.textContent).toBe('img.example');
+  });
+});
+
 describe('card — the reply count is the row\'s', () => {
   it('the row\'s descendantCount reads "2 replies" / "1 reply"', () => {
     const two = { ...confirmed(PUB), descendantCount: 2 };
