@@ -411,8 +411,9 @@ export class App {
     bar.appendChild(brand);
     bar.appendChild(el('span', 'spacer'));
 
-    // The profile and theme controls, both naming the theme they would switch TO
-    // (HOUSE_STYLE → Colour). At one column they are glyphs at the header's control
+    // The profile and theme controls. The theme control names and shows the theme
+    // it would switch TO (HOUSE_STYLE → Colour); the profile control shows a person
+    // or the key prefix. At one column both are glyphs at the header's control
     // size — a person, and the moon on Sand / the sun on Bistre — inline SVG in
     // currentColor drawn in the house technique, the same for every reader and for
     // none since the window says who (WEB_INTERFACE → The profile window,
