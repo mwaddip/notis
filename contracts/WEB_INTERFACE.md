@@ -220,11 +220,6 @@ none. A structural rebuild preserves both scrollers' horizontal position before 
 native one's duration is the browser's and not held under the 150ms ceiling, and a jump in direct response to
 the reader's own press is not motion (`HOUSE_STYLE → Motion`).
 
-> ⚠ **AHEAD OF CODE (2026-09-07, the phone header)** — the one-column sentences below (the arrows absent rather
-> than hidden, the strip's glyph, no shrinking, the profile and theme glyphs, the 8px gap) state what the
-> phone-header unit implements; until its commits land the one-column header is the tiling header at 16px gaps,
-> its arrows 13px in muted ink and shrinking under the prefix.
-
 **The header carries `‹` at its left edge and `›` at its right, at every width.** Each scrolls the view one
 column that way. At tiling each is hidden with its space reserved while no column lies that way, so the
 header's geometry never shifts and a session with everything in view shows neither; **at one column each is
@@ -474,8 +469,8 @@ withdrawn card, the shape they asked for (→ The withdraw control).
 **One header control, at the right of the app bar beside the theme toggle.** At one column both are glyphs
 (→ The workspace): the control is a person drawn in the house technique (`HOUSE_STYLE → Illustration`) as
 inline SVG in `currentColor`, the same for every reader and for no reader — the window says who — with the
-label the word carries elsewhere; no identity colour and no avatar, as below. With no identity it reads
-`profile`; with one, the key prefix in mono — `shortHex(pubKeyHex, 16)`, the card's own rule, so an
+label the word carries elsewhere; no identity colour and no avatar, as below. At tiling, with no identity it
+reads `profile`; with one, the key prefix in mono — `shortHex(pubKeyHex, 16)`, the card's own rule, so an
 identity reads the same way in the header and on a card. No avatar and no identity colour: nothing may
 invite a reader to check identity by colour (`HOUSE_STYLE → Identity colour`). It opens `@profile` in the
 workspace by the placement rule every window follows, and a second press raises the open window.

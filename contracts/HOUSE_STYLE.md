@@ -99,9 +99,6 @@ moon need no learning (user, 2026-09-07). With the phone's profile glyph, a pers
 (`WEB_INTERFACE → The profile window`), it is one of the two icons the interface carries; the ruling
 opens iconography nowhere else (→ Deliberately not decided).
 
-> ⚠ **AHEAD OF CODE (2026-09-07)** — `@dagsocial/web`'s phone-header unit draws it; until its
-> commits land the phone header carries the word.
-
 ### Light — Sand
 
 | Token | Value | vs ground | Role |
