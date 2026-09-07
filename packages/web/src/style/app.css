@@ -49,10 +49,11 @@ header {
   padding: max(16px, env(safe-area-inset-top, 0px)) var(--gutter) 16px;
   border-bottom: 1px solid var(--border);
 }
-/* The header arrows sit at its edges, hidden with their space reserved when no
-   column lies that way, so the header's geometry never shifts; visibility is set
-   from the scroller's position (WEB_INTERFACE → The workspace). */
-header .ctl { align-self: center; visibility: hidden; }
+/* The header arrows sit at its edges; updateHeaderArrows toggles `none` from the
+   active scroller's position, and at tiling `none` hides the arrow with its space
+   reserved so the header's geometry never shifts (WEB_INTERFACE → The workspace). */
+header .ctl { align-self: center; }
+header .ctl.none { visibility: hidden; }
 header h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: .01em; }
 header .spacer { flex: 1 1 auto; }
 /* The mark + wordmark lockup: a 24px micro-tier mark beside the 15px wordmark.
@@ -532,7 +533,23 @@ header .spacer { flex: 1 1 auto; }
    in app.ts, pinned equal by style.test.ts. */
 @media (max-width: 955px) {
   /* The header keeps its base padding — at one column --gutter is 16px (or the
-     safe-area inset), so its sides are 16 without an override. */
+     safe-area inset), so its sides are 16 without an override. The gap tightens to
+     8px; the arrows take the strip's glyph — 20px at weight 600 in ink — and never
+     shrink, the way back drawn as the way in; a `none` arrow is absent, not
+     space-reserved, since the header is per screen here (WEB_INTERFACE → The
+     workspace). */
+  header { gap: 8px; }
+  header .ctl { flex: 0 0 44px; font-size: 20px; font-weight: 600; color: var(--ink); }
+  header .ctl.none { display: none; }
+  /* The profile and theme controls are glyphs at the header's control size — a
+     person, and the moon on Sand / the sun on Bistre — inline SVG in currentColor
+     drawn in the house technique (WEB_INTERFACE → The profile window,
+     HOUSE_STYLE → Colour → "On a phone the theme control is a sun or a moon",
+     HOUSE_STYLE → Illustration). A ghost button: transparent, no border, 44 wide
+     and never shrinking, its outline the focus ring only. */
+  .hdr-glyph { flex: 0 0 44px; height: 36px; align-self: center; display: flex; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 3px; background: transparent; color: var(--ink); cursor: pointer; }
+  .hdr-glyph svg { width: 20px; height: 20px; display: block; }
+  .hdr-glyph:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: -2px; }
   .workspace { gap: 0; padding: 0; overflow-x: auto; scroll-snap-type: x mandatory; }
   .panes { display: contents; min-width: 0; }
   /* A member has no floor of its own — it is the screen's width; its gutter is the

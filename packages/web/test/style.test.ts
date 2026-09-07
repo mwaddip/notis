@@ -81,6 +81,23 @@ describe('app.css — touch by the pointer', () => {
   });
 });
 
+describe('app.css — the one-column header', () => {
+  it('the max-width block carries the header gap, the arrows-as-glyph rule, none:absent, and .hdr-glyph', () => {
+    const one = mediaBlock('@media (max-width: 955px) {');
+    expect(one).not.toBe('');
+    expect(one).toContain('header { gap: 8px');
+    expect(one).toMatch(/header \.ctl \{[^}]*flex: 0 0 44px/); // the strip's glyph, never shrinks
+    expect(one).toMatch(/header \.ctl \{[^}]*font-size: 20px/);
+    expect(one).toMatch(/header \.ctl \{[^}]*font-weight: 600/);
+    expect(one).toContain('header .ctl.none { display: none'); // absent, not space-reserved
+    expect(one).toMatch(/\.hdr-glyph \{[^}]*flex: 0 0 44px/); // the glyph button, 44 wide
+    expect(one).toMatch(/\.hdr-glyph svg \{[^}]*width: 20px/); // the svg at 20px
+  });
+  it('the base header .ctl.none reserves its space at tiling', () => {
+    expect(css).toMatch(/header \.ctl\.none \{[^}]*visibility: hidden/);
+  });
+});
+
 describe('fonts.css — the self-hosted italic face', () => {
   it('a second Plus Jakarta Sans @font-face is italic, weight 400 700, its own src', () => {
     const faces = fontsCss.match(/@font-face\s*\{[^}]*\}/g) ?? [];
