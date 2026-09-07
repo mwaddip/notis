@@ -14,15 +14,15 @@ const fontsCss = readFileSync(fileURLToPath(new URL('../public/fonts/fonts.css',
 const appTs = readFileSync(fileURLToPath(new URL('../src/app.ts', import.meta.url)), 'utf8');
 
 describe('app.css — the prefix control renders as the text prefix', () => {
-  it('one .authorbtn rule neutralises the UA button', () => {
+  it('the base .authorbtn rule neutralises the UA button', () => {
     // \s*\{ after .authorbtn skips the :hover / :focus-visible variants (their `:`
-    // separates the name from the brace), so this counts the base block alone.
-    const bases = css.match(/\.authorbtn\s*\{[^}]*\}/g) ?? [];
-    expect(bases).toHaveLength(1);
-    const block = bases[0];
-    expect(block).toContain('background: transparent');
-    expect(block).toContain('border: 0');
-    expect(block).toContain('padding: 0');
+    // separates the name from the brace). The base block and the coarse touch
+    // override both match; the base is the one that neutralises the button.
+    const blocks = css.match(/\.authorbtn\s*\{[^}]*\}/g) ?? [];
+    const base = blocks.find((b) => b.includes('background: transparent'));
+    expect(base).toBeDefined();
+    expect(base!).toContain('border: 0');
+    expect(base!).toContain('padding: 0');
   });
 
   it('.authorbtn:hover and .authorbtn:focus-visible blocks exist', () => {
@@ -46,6 +46,38 @@ describe('app.css — the one-column breakpoint agrees with the source constant'
     const m = appTs.match(/ONE_COLUMN_MAX_PX\s*=\s*(\d+)/);
     expect(m).not.toBeNull();
     expect(css).toContain(`@media (max-width: ${m![1]}px)`);
+  });
+});
+
+// The content of a top-level @media block: from just after its `{` to the line
+// that is a bare `}` (the block's rules are single-line, so their braces never
+// start a line). Lexical, like the rest here.
+function mediaBlock(header: string): string {
+  const start = css.indexOf(header);
+  if (start === -1) return '';
+  const from = start + header.length;
+  const end = css.indexOf('\n}', from);
+  return end === -1 ? '' : css.slice(from, end);
+}
+
+describe('app.css — touch by the pointer', () => {
+  it('every :hover rule sits inside one @media (hover: hover) block', () => {
+    const hover = mediaBlock('@media (hover: hover) {');
+    expect(hover).not.toBe('');
+    // With that block's rules removed, no :hover may remain anywhere else.
+    expect(css.replace(hover, '')).not.toContain(':hover');
+  });
+
+  it('the @media (pointer: coarse) block names each control of the touch table', () => {
+    const coarse = mediaBlock('@media (pointer: coarse) {');
+    expect(coarse).not.toBe('');
+    for (const sel of [
+      '.ctl', '.feed-head .ctl', '.bar', '.meta', '.stage', '.karma-field', '.likebtn',
+      '.vmark', '.mini', '.btn', '.theme-btn', '.img-show', '.seg button',
+      '.composer-foot select', '.authorbtn', '.composer textarea', '.composer input', '.winbody input',
+    ]) {
+      expect(coarse).toContain(sel);
+    }
   });
 });
 
