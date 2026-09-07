@@ -15,6 +15,11 @@
      (HOUSE_STYLE → The mark). */
   --notis-green: var(--green); --notis-keyline: #1B2A12;
   /* spacing scale: 4 8 12 16 24 32 48 64 96 */
+  /* The inert gutter: the full 48px where the feed at its cap and one 500px column
+     fit inside it (660 + 500 + 24 = 1184), relaxed to 16px below, continuous
+     between, so no width jumps the pane by a step (WEB_INTERFACE → The workspace,
+     HOUSE_STYLE → Spacing). The header's side padding is the same expression. */
+  --gutter: clamp(16px, calc((100vw - 1184px) / 2), 48px);
 }
 :root[data-t="dark"] {
   /* Dark — Bistre (HOUSE_STYLE → Colour) */
@@ -40,8 +45,12 @@ body {
 /* ---------- header ---------- */
 header {
   flex: 0 0 auto; display: flex; align-items: baseline; gap: 16px;
-  padding: 16px 48px; border-bottom: 1px solid var(--border);
+  padding: 16px var(--gutter); border-bottom: 1px solid var(--border);
 }
+/* The header arrows sit at its edges, hidden with their space reserved when no
+   column lies that way, so the header's geometry never shifts; visibility is set
+   from the scroller's position (WEB_INTERFACE → The workspace). */
+header .ctl { align-self: center; visibility: hidden; }
 header h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: .01em; }
 header .spacer { flex: 1 1 auto; }
 /* The mark + wordmark lockup: a 24px micro-tier mark beside the 15px wordmark.
@@ -63,11 +72,14 @@ header .spacer { flex: 1 1 auto; }
 /* ---------- workspace ---------- */
 .workspace {
   flex: 1 1 auto; min-height: 0; display: flex; gap: 24px;
-  padding: 24px 48px;             /* 48px inert gutter each side (HOUSE_STYLE → Spacing) */
+  padding: 24px var(--gutter);    /* the inert gutter each side (WEB_INTERFACE → The workspace) */
 }
 
 /* ---------- feed ---------- */
-.feed { flex: 0 0 660px; max-width: 660px; min-width: 0; overflow-y: auto; padding-right: 8px; }
+/* The feed grows to nothing and shrinks to the 450px floor — the least width at
+   which a 1024px landscape tablet holds the feed and one pane (WEB_INTERFACE → The
+   workspace). It snaps as a member of the one-column scroller. */
+.feed { flex: 0 1 660px; min-width: 450px; overflow-y: auto; padding-right: 8px; scroll-snap-align: start; }
 /* The feed's own bar sits at a title bar's height so the two surfaces agree. It
    carries the ranking note — the feed's honesty mechanism, not decoration. */
 .feed-head {
@@ -265,12 +277,29 @@ header .spacer { flex: 1 1 auto; }
 .meta .reply-ctl .g { color: var(--inkMute); }
 
 /* ---------- panes ---------- */
-.panes { flex: 1 1 auto; min-width: 0; display: flex; gap: 16px; overflow-x: auto; }
+/* The tiling scroller: the columns live in it, snapping to whole columns; its
+   inline size drives the --k ladder below (WEB_INTERFACE → The workspace). */
+.panes {
+  flex: 1 1 0; min-width: 450px; display: flex; gap: 16px; overflow-x: auto;
+  container-type: inline-size; scroll-snap-type: x mandatory;
+}
 .empty {
   flex: 1 1 auto; display: flex; align-items: center; justify-content: center;
   color: var(--inkMute); font-size: 13px; text-align: center; padding: 0 24px;
 }
-.col { flex: 1 1 0; min-width: 330px; display: flex; flex-direction: column; gap: 16px; }
+/* The columns share the panes' width in equal parts — as many of at least the
+   450px floor as fit, K from the container-query ladder that sets --k
+   (WEB_INTERFACE → The workspace). Each snaps to the scroller's start. */
+.col {
+  --k: 1;
+  flex: 0 0 calc((100% - (var(--k) - 1) * 16px) / var(--k));
+  min-width: 0; display: flex; flex-direction: column; gap: 16px;
+  scroll-snap-align: start;
+}
+@container (min-width: 916px) { .col { --k: 2; } }
+@container (min-width: 1382px) { .col { --k: 3; } }
+@container (min-width: 1848px) { .col { --k: 4; } }
+@container (min-width: 2314px) { .col { --k: 5; } }
 .region {
   flex: 1 1 0; min-height: 0; display: flex; flex-direction: column;
   background: var(--surface); border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
@@ -517,3 +546,19 @@ header .spacer { flex: 1 1 auto; }
 .scrolling { pointer-events: none; }
 
 .feed, .panes, .region-body, .bars { scrollbar-width: thin; scrollbar-color: var(--borderStrong) transparent; }
+
+/* One column: below the breakpoint the feed and every column are members of the
+   workspace scroller, each a screen wide, the feed first; .panes has no box so
+   nothing but the columns is a member. A member's content is capped at the feed's
+   width and centred, the leftover as symmetric gutters — the inert space a portrait
+   tablet gets back and a phone cannot have (WEB_INTERFACE → The workspace,
+   HOUSE_STYLE → Spacing). The empty panel is not rendered — nothing lies right of
+   the feed. The breakpoint is ONE_COLUMN_MAX_PX in app.ts, pinned equal by
+   style.test.ts. */
+@media (max-width: 955px) {
+  header { padding: 16px; }
+  .workspace { gap: 0; padding: 0; overflow-x: auto; scroll-snap-type: x mandatory; }
+  .panes { display: contents; }
+  .feed, .col { flex: 0 0 100%; padding: 0 max(0px, calc((100% - 660px) / 2)); }
+  .empty { display: none; }
+}

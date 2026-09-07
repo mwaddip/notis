@@ -8,6 +8,10 @@ import { fileURLToPath } from 'node:url';
 // (WEB_INTERFACE → The identity display). Lexical, and honest about it.
 const css = readFileSync(fileURLToPath(new URL('../src/style/app.css', import.meta.url)), 'utf8');
 const fontsCss = readFileSync(fileURLToPath(new URL('../public/fonts/fonts.css', import.meta.url)), 'utf8');
+// app.ts is read as text, not imported: this file runs in the node environment and
+// app.ts's import chain touches document at module scope. The breakpoint is one
+// number in two places (WEB_INTERFACE → The workspace) and the pin is lexical.
+const appTs = readFileSync(fileURLToPath(new URL('../src/app.ts', import.meta.url)), 'utf8');
 
 describe('app.css — the prefix control renders as the text prefix', () => {
   it('one .authorbtn rule neutralises the UA button', () => {
@@ -34,6 +38,14 @@ describe('app.css — the content grammar and the composer type control', () => 
     expect(css).toMatch(/\.card-content a\s*\{[^}]*\}/); // a link keeps its colour
     expect(css).toMatch(/\.card-content \.img-show\s*\{[^}]*\}/); // the collapsed image control
     expect(css).toMatch(/\.composer-foot select\s*\{[^}]*\}/); // the type control's ghost look
+  });
+});
+
+describe('app.css — the one-column breakpoint agrees with the source constant', () => {
+  it('the @media (max-width) equals the exported ONE_COLUMN_MAX_PX', () => {
+    const m = appTs.match(/ONE_COLUMN_MAX_PX\s*=\s*(\d+)/);
+    expect(m).not.toBeNull();
+    expect(css).toContain(`@media (max-width: ${m![1]}px)`);
   });
 });
 
