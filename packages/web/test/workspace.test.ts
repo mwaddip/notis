@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  newWorkspace, openWindow, closeWindow, moveLeft, moveRight, moveBelow, focusWindow, openSet, locate,
+  newWorkspace, openWindow, closeWindow, moveLeft, moveRight, focusWindow, openSet, locate,
 } from '../src/model/workspace';
 import { serialise } from '../src/model/arrangement';
 
@@ -55,22 +55,23 @@ describe('workspace move controls', () => {
     expect(serialise(ws)).toBe(A);
   });
 
-  it('↓ opens a new region below in the same column', () => {
+  it('→ is a no-op on a window alone in its column, keeping its column uid', () => {
     const ws = newWorkspace();
     openWindow(ws, A, { from: 'feed' });
-    openWindow(ws, B, { from: 'pane', ci: 0 });
-    openWindow(ws, C, { from: 'pane', ci: 0 }); // A | B,C
-    moveBelow(ws, C);
-    expect(serialise(ws)).toBe(`${A}|${B}/${C}`);
+    openWindow(ws, B, { from: 'pane', ci: 0 }); // A | B — B alone in column 1
+    const uidBefore = locate(ws, B)!.column.uid;
+    moveRight(ws, B);
+    expect(serialise(ws)).toBe(`${A}|${B}`);
+    // The move changes nothing, so the column is not rebuilt under a new uid.
+    expect(locate(ws, B)!.column.uid).toBe(uidBefore);
   });
 });
 
 describe('workspace close', () => {
-  it('removes a window and collapses the region and column it emptied', () => {
+  it('removes a window and collapses the column it emptied', () => {
     const ws = newWorkspace();
     openWindow(ws, A, { from: 'feed' });
-    openWindow(ws, B, { from: 'pane', ci: 0 });
-    moveBelow(ws, B); // A | (B alone in its own region below the first)
+    openWindow(ws, B, { from: 'pane', ci: 0 }); // A | B — B alone in column 1
     closeWindow(ws, B);
     expect(serialise(ws)).toBe(A);
     closeWindow(ws, A);
@@ -85,8 +86,8 @@ describe('workspace close', () => {
     openWindow(ws, C, { from: 'pane', ci: 0 }); // column 1 stacks B,C, focus on C
     const at = locate(ws, C)!;
     expect(at.ci).toBe(1);
-    expect(at.region.focus).toBe(at.idx);
+    expect(at.column.focus).toBe(at.idx);
     focusWindow(ws, B);
-    expect(locate(ws, B)!.region.focus).toBe(locate(ws, B)!.idx);
+    expect(locate(ws, B)!.column.focus).toBe(locate(ws, B)!.idx);
   });
 });

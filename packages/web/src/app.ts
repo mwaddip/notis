@@ -1,11 +1,11 @@
 import { NodeClient, type Api } from './api/client';
 import type { PostJson, WithdrawnJson, FeedRow, PostResult, ThreadResult, KarmaResult, BondsResult } from './api/dto';
 import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE } from '@dagsocial/types';
-import { el, shortHex } from './dom';
+import { el, shortHex, preservingScroll } from './dom';
 import { contentHashHex } from './integrity';
 import { prefs, setTheme, setIdTint, setNode, setFaucet, writeStore, KEY_LAYOUT, type Theme, type IdTint } from './prefs';
 import { renderFeedInto } from './view/feed';
-import { renderPanesInto, renderRegionElement } from './view/panes';
+import { renderPanesInto, renderRegionElement, renderBars } from './view/panes';
 import { makeComposer, type ComposerController } from './view/composer';
 import { serialise, parse, authorWindowId, postsWindowId, windowSubject } from './model/arrangement';
 import { reconcileNewer, isLivePost } from './model/feed-reconcile';
@@ -24,8 +24,8 @@ import { renderKarmaField, renderInvitesRow } from './view/profile';
 import type { Mark, Flight } from './view/card';
 import type { YourVouch } from './view/author';
 import {
-  newWorkspace, openWindow, closeWindow, moveLeft, moveRight, moveBelow, focusWindow, openSet,
-  type Origin, type Region,
+  newWorkspace, openWindow, closeWindow, moveLeft, moveRight, focusWindow, openSet, locate,
+  type Origin, type Column,
 } from './model/workspace';
 import {
   FEED_COMPOSER_KEY, type AppState, type ThreadState, type RenderCtx, type Handlers, type Submission,
@@ -37,6 +37,11 @@ const THREAD_LIMIT = 50;
 const REFRESH_PAGE_CAP = 40; // a refresh re-reads a whole thread; this bounds the loop
 const POLL_MS = 15000;       // the bounded landing poll, only while own submissions are pending
 const FEED_COMPOSER = FEED_COMPOSER_KEY;
+/** The one-column line: below it the feed and one column at the floor no longer
+ *  fit, so the feed joins the strip and the screen shows one member at a time.
+ *  The stylesheet's @media reads the same number, pinned equal by style.test.ts
+ *  (WEB_INTERFACE → The workspace). */
+export const ONE_COLUMN_MAX_PX = 955;
 
 const isWin = (k: string): boolean => k.charAt(0) === '@';
 const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
@@ -126,7 +131,18 @@ export class App {
   private appbar!: HTMLElement;
   private feedEl!: HTMLElement;
   private panesEl!: HTMLElement;
+  // The workspace is the one-column scroller; the panes the tiling scroller. Null
+  // when the App is mounted without the shell (a test without .workspace).
+  private workspaceEl: HTMLElement | null = null;
   private handlers: Handlers;
+
+  // The width class and the header arrows (WEB_INTERFACE → The workspace). oneColumn
+  // is one media query read into the ctx; the arrows scroll the active scroller and
+  // hide with their space reserved when no column lies that way.
+  private oneColumn = false;
+  private mql: MediaQueryList | null = null;
+  private headerLeftArrow: HTMLElement | null = null;
+  private headerRightArrow: HTMLElement | null = null;
 
   // Open composer widgets, held by key so the same element is re-parented across
   // a region rebuild rather than recreated (WEB_INTERFACE → The write surface).
@@ -190,9 +206,8 @@ export class App {
       focus: (id) => this.focus(id),
       refreshThread: (id) => void this.refreshThread(id),
       threadMore: (id) => void this.threadMore(id),
-      moveLeft: (id) => this.structural(() => moveLeft(this.state.workspace, id)),
-      moveRight: (id) => this.structural(() => moveRight(this.state.workspace, id)),
-      moveBelow: (id) => this.structural(() => moveBelow(this.state.workspace, id)),
+      moveLeft: (id) => this.moveWindow(id, () => moveLeft(this.state.workspace, id)),
+      moveRight: (id) => this.moveWindow(id, () => moveRight(this.state.workspace, id)),
       close: (id) => this.closeWindow(id),
       setTheme: (t) => this.changeTheme(t),
       setIdTint: (m) => this.changeIdTint(m),
@@ -245,6 +260,17 @@ export class App {
     this.appbar = appbar;
     this.feedEl = feedEl;
     this.panesEl = panesEl;
+    this.workspaceEl = panesEl.closest<HTMLElement>('.workspace');
+    // One media query is the width class the header prefix and the panes read; its
+    // change re-renders both (WEB_INTERFACE → The workspace). The header arrows
+    // follow the active scroller's position and the width class.
+    this.mql = window.matchMedia(`(max-width: ${ONE_COLUMN_MAX_PX}px)`);
+    this.oneColumn = this.mql.matches;
+    this.mql.addEventListener('change', (e) => this.onWidthClassChange(e.matches));
+    for (const s of [this.panesEl, this.workspaceEl]) {
+      s?.addEventListener('scroll', () => this.updateHeaderArrows(), { passive: true });
+    }
+    window.addEventListener('resize', () => this.updateHeaderArrows());
     // An identity change takes effect at once (WEB_INTERFACE → The identity module).
     this.idm.onChange(() => this.onIdentityChange());
     this.restoreLayout();
@@ -305,6 +331,7 @@ export class App {
       thread: (id) => this.state.threads.get(id),
       post: (id) => this.state.posts.get(id),
       arrangement: serialise(this.state.workspace),
+      oneColumn: this.oneColumn,
       writeEnabled: cur !== null,
       ownKey: cur?.pubKeyHex ?? null,
       composerFor: (parentId) => this.composers.get(composerKey(parentId))?.el ?? null,
@@ -362,6 +389,16 @@ export class App {
   private renderHeader(): void {
     const bar = this.appbar;
     bar.textContent = '';
+
+    // ‹ at the left edge scrolls the view one column that way; it hides with its
+    // space reserved when no column lies left, so the header's geometry never
+    // shifts (WEB_INTERFACE → The workspace). Its label is set by state.
+    const left = el('button', 'ctl', '‹') as HTMLButtonElement;
+    left.setAttribute('aria-label', 'show the column to the left');
+    left.addEventListener('click', () => this.scrollByOneColumn(-1));
+    this.headerLeftArrow = left;
+    bar.appendChild(left);
+
     // The mark + wordmark lockup. The mark is the micro tier — abstract at 24px
     // — so the wordmark stays to name it; together they are the standard mark.
     // <use> resolves against the sprite inlined in index.html.
@@ -372,8 +409,9 @@ export class App {
     bar.appendChild(el('span', 'spacer'));
 
     // The identity control — 'profile' with no identity, the key prefix in mono
-    // with one (shortHex(pubKeyHex, 16), the card's own rule), so an identity reads
-    // the same way in the header and on a card. No avatar, no identity colour
+    // with one, so an identity reads the same way in the header and on a card. At
+    // one column the prefix takes the title bar's length, shortHex(key, 10)
+    // (WEB_INTERFACE → The workspace). No avatar, no identity colour
     // (WEB_INTERFACE → The profile window; HOUSE_STYLE → Identity colour).
     const cur = this.idm.current();
     const profile = el('button', 'theme-btn');
@@ -384,7 +422,7 @@ export class App {
       profile.textContent = 'profile';
     } else {
       profile.style.fontFamily = 'var(--mono)';
-      profile.textContent = shortHex(cur.pubKeyHex, 16);
+      profile.textContent = shortHex(cur.pubKeyHex, this.oneColumn ? 10 : 16);
     }
     profile.setAttribute('aria-label', 'open profile');
     profile.addEventListener('click', () => this.openProfile());
@@ -397,6 +435,87 @@ export class App {
     theme.setAttribute('aria-label', `switch to ${target} theme`);
     theme.addEventListener('click', () => this.changeTheme(target));
     bar.appendChild(theme);
+
+    // › at the right edge, the converse of ‹.
+    const right = el('button', 'ctl', '›') as HTMLButtonElement;
+    right.setAttribute('aria-label', 'show the column to the right');
+    right.addEventListener('click', () => this.scrollByOneColumn(1));
+    this.headerRightArrow = right;
+    bar.appendChild(right);
+
+    this.updateHeaderArrows();
+  }
+
+  /** The active scroller: the workspace at one column (the feed and every column
+   *  are its members), the panes at tiling (the feed is pinned outside it)
+   *  (WEB_INTERFACE → The workspace). */
+  private activeScroller(): HTMLElement | null {
+    return this.oneColumn ? this.workspaceEl : this.panesEl;
+  }
+
+  /** The scroller's members in strip order — the feed and the columns at one
+   *  column, the columns alone at tiling (the feed is pinned outside)
+   *  (WEB_INTERFACE → The workspace). */
+  private orderedMembers(): HTMLElement[] {
+    const cols = [...this.panesEl.querySelectorAll<HTMLElement>('.col')];
+    return this.oneColumn ? [this.feedEl, ...cols] : cols;
+  }
+
+  /** ‹ / › move the view one column, by the one mechanism every view move uses:
+   *  scrollIntoView the member adjacent to the one at the view's left edge, exactly
+   *  as an open does (WEB_INTERFACE → The workspace). */
+  private scrollByOneColumn(dir: -1 | 1): void {
+    const scroller = this.activeScroller();
+    if (!scroller) return;
+    const members = this.orderedMembers();
+    if (members.length === 0) return;
+    const sLeft = scroller.getBoundingClientRect().left;
+    let cur = 0;
+    let best = Infinity;
+    members.forEach((m, i) => {
+      const d = Math.abs(m.getBoundingClientRect().left - sLeft);
+      if (d < best) { best = d; cur = i; }
+    });
+    members[cur + dir]?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+    this.updateHeaderArrows();
+  }
+
+  /** Bring the column holding a window into view — a no-op when it is already
+   *  there, a whole-column jump when it is not, in either scroller
+   *  (WEB_INTERFACE → The workspace → "The view moves to the column the reader
+   *  acted on, by an instant scroll"). */
+  private scrollColumnIntoView(uid: number): void {
+    const region = this.panesEl.querySelector<HTMLElement>(`.region[data-uid="${uid}"]`);
+    const col = region?.closest<HTMLElement>('.col');
+    col?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+    this.updateHeaderArrows();
+  }
+
+  /** The header arrows' visibility and the left arrow's label, from the active
+   *  scroller's position and the width class (WEB_INTERFACE → The workspace). */
+  private updateHeaderArrows(): void {
+    const left = this.headerLeftArrow;
+    const right = this.headerRightArrow;
+    if (!left || !right) return;
+    const scroller = this.activeScroller();
+    const sl = scroller?.scrollLeft ?? 0;
+    const max = scroller ? scroller.scrollWidth - scroller.clientWidth : 0;
+    const EPS = 2;
+    left.style.visibility = sl > EPS ? 'visible' : 'hidden';
+    right.style.visibility = sl < max - EPS ? 'visible' : 'hidden';
+    // At one column the feed is the first member, so the member left of column 0
+    // is the feed itself.
+    const prevIsFeed = this.oneColumn && scroller !== null && scroller.clientWidth > 0
+      && Math.round(sl / scroller.clientWidth) === 1;
+    left.setAttribute('aria-label', prevIsFeed ? 'show the feed' : 'show the column to the left');
+  }
+
+  /** The width class changed: the header prefix and arrows, and the panes' bars,
+   *  follow it (WEB_INTERFACE → The workspace). */
+  private onWidthClassChange(matches: boolean): void {
+    this.oneColumn = matches;
+    this.renderHeader();
+    this.renderPanes();
   }
 
   private renderFeed(): void {
@@ -413,30 +532,37 @@ export class App {
   }
 
   private renderPanesBody(): void {
-    // Preserve every region body's scroll across a structural rebuild, keyed by
-    // the region uid.
-    const scrolls = new Map<string, number>();
-    this.panesEl.querySelectorAll<HTMLElement>('.region').forEach((r) => {
-      const uid = r.dataset['uid'];
-      const body = r.querySelector<HTMLElement>('.region-body');
-      if (uid && body) scrolls.set(uid, body.scrollTop);
-    });
-    renderPanesInto(this.panesEl, this.state.workspace, this.handlers, this.ctx());
-    this.panesEl.querySelectorAll<HTMLElement>('.region').forEach((r) => {
-      const uid = r.dataset['uid'];
-      const body = r.querySelector<HTMLElement>('.region-body');
-      const top = uid ? scrolls.get(uid) : undefined;
-      if (body && top != null) body.scrollTop = top;
-    });
+    const rebuild = (): void => {
+      // Preserve every region body's scroll across a structural rebuild, keyed by
+      // the region uid.
+      const scrolls = new Map<string, number>();
+      this.panesEl.querySelectorAll<HTMLElement>('.region').forEach((r) => {
+        const uid = r.dataset['uid'];
+        const body = r.querySelector<HTMLElement>('.region-body');
+        if (uid && body) scrolls.set(uid, body.scrollTop);
+      });
+      renderPanesInto(this.panesEl, this.state.workspace, this.handlers, this.ctx());
+      this.panesEl.querySelectorAll<HTMLElement>('.region').forEach((r) => {
+        const uid = r.dataset['uid'];
+        const body = r.querySelector<HTMLElement>('.region-body');
+        const top = uid ? scrolls.get(uid) : undefined;
+        if (body && top != null) body.scrollTop = top;
+      });
+    };
+    // Both scrollers' horizontal position survives the rebuild — the panes at
+    // tiling, the workspace at one column — so a structural rebuild never snaps the
+    // strip to its left edge (WEB_INTERFACE → The workspace).
+    const ws = this.workspaceEl;
+    preservingScroll(this.panesEl, ws ? () => preservingScroll(ws, rebuild) : rebuild);
     this.applyCountTitles();
+    this.updateHeaderArrows();
   }
 
-  private locateRegion(uid: number): { region: Region; ci: number } | null {
+  private locateRegion(uid: number): { column: Column; ci: number } | null {
     const ws = this.state.workspace;
     for (let ci = 0; ci < ws.columns.length; ci++) {
-      for (const region of ws.columns[ci]!.regions) {
-        if (region.uid === uid) return { region, ci };
-      }
+      const column = ws.columns[ci]!;
+      if (column.uid === uid) return { column, ci };
     }
     return null;
   }
@@ -457,20 +583,38 @@ export class App {
       return;
     }
     const top = oldEl.querySelector<HTMLElement>('.region-body')?.scrollTop ?? 0;
-    const newEl = renderRegionElement(found.region, found.ci, this.handlers, this.ctx());
+    const newEl = renderRegionElement(found.column, found.ci, this.handlers, this.ctx());
     oldEl.replaceWith(newEl);
     const newBody = newEl.querySelector<HTMLElement>('.region-body');
     if (newBody) newBody.scrollTop = top;
     this.applyCountTitles();
   }
 
-  /** Re-render every region currently focused on a given window. */
+  /** Re-render every column currently focused on a given window. */
   private renderRegionsFor(windowId: string): void {
-    for (const col of this.state.workspace.columns) {
-      for (const region of col.regions) {
-        if (region.wins[region.focus] === windowId) this.renderRegion(region.uid);
-      }
+    for (const column of this.state.workspace.columns) {
+      if (column.wins[column.focus] === windowId) this.renderRegion(column.uid);
     }
+  }
+
+  /** A thread's load updates its bar in every column holding it — in place, the
+   *  body untouched — and re-renders the body only where the window is focused, so
+   *  a selection or a scroll in a body focused elsewhere survives and a restored
+   *  stack shows every excerpt as its thread lands (WEB_INTERFACE → The workspace). */
+  private renderThreadLoad(id: string): void {
+    this.state.workspace.columns.forEach((column, ci) => {
+      if (!column.wins.includes(id)) return;
+      if (column.wins[column.focus] === id) this.renderRegion(column.uid);
+      else this.replaceBars(column, ci);
+    });
+  }
+
+  /** Replace a column's bars in place from the current ctx, leaving its body. */
+  private replaceBars(column: Column, ci: number): void {
+    const region = this.panesEl.querySelector<HTMLElement>(`.region[data-uid="${column.uid}"]`);
+    const oldBars = region?.querySelector<HTMLElement>('.bars');
+    if (oldBars) oldBars.replaceWith(renderBars(column, ci, this.handlers, this.ctx()));
+    this.applyCountTitles();
   }
 
   private structural(mutate: () => void): void {
@@ -574,39 +718,63 @@ export class App {
     const res = openWindow(this.state.workspace, id, origin);
     this.saveLayout();
     if (res.raised) {
-      this.renderRegion(res.region.uid);
-      return;
+      this.renderRegion(res.column.uid);
+    } else {
+      // A new window changed the structure, and the feed card flips to open.
+      this.renderPanes();
+      this.renderFeed();
+      if (!isWin(id) && !this.threadLoaded(id)) void this.fetchThread(id);
     }
-    // A new window changed the structure, and the feed card flips to open.
-    this.renderPanes();
-    this.renderFeed();
-    if (!isWin(id) && !this.threadLoaded(id)) void this.fetchThread(id);
+    // The view moves to the column the open landed in (WEB_INTERFACE → The workspace).
+    this.scrollColumnIntoView(res.column.uid);
   }
 
   private openProfile(): void {
     const res = openWindow(this.state.workspace, '@profile', { from: 'feed' });
     this.saveLayout();
     if (res.raised) {
-      this.renderRegion(res.region.uid);
+      this.renderRegion(res.column.uid);
     } else {
       this.renderPanes();
       // Read /karma for the loaded key when the window opens (WEB_INTERFACE → The
       // profile window); a raise just brings the existing window forward.
       void this.refreshProfileKarma();
     }
+    this.scrollColumnIntoView(res.column.uid);
   }
 
   private focus(id: string): void {
-    const region = focusWindow(this.state.workspace, id);
-    if (region) this.renderRegion(region.uid);
+    const column = focusWindow(this.state.workspace, id);
+    if (column) {
+      this.renderRegion(column.uid);
+      this.scrollColumnIntoView(column.uid);
+    }
     if (!isWin(id) && !this.threadLoaded(id)) void this.fetchThread(id);
   }
 
+  /** A ← or → move rebuilds the strip and brings the window's new column into
+   *  view (WEB_INTERFACE → The workspace). */
+  private moveWindow(id: string, mutate: () => void): void {
+    this.structural(mutate);
+    const at = locate(this.state.workspace, id);
+    if (at) this.scrollColumnIntoView(at.column.uid);
+  }
+
   private closeWindow(id: string): void {
+    // A ✕ that empties its column shows the column on its left, the feed when it
+    // was column 0 (WEB_INTERFACE → The workspace). Capture the position first.
+    const at = locate(this.state.workspace, id);
+    const emptiedCi = at && at.column.wins.length === 1 ? at.ci : -1;
     closeWindow(this.state.workspace, id);
     this.saveLayout();
     this.renderPanes();
     this.renderFeed(); // a closed thread un-fades its feed card
+    if (emptiedCi > 0) {
+      this.scrollColumnIntoView(this.state.workspace.columns[emptiedCi - 1]!.uid);
+    } else if (emptiedCi === 0) {
+      this.feedEl.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+      this.updateHeaderArrows();
+    }
   }
 
   private threadLoaded(id: string): boolean {
@@ -637,7 +805,7 @@ export class App {
     const t = this.ensureThreadState(id);
     t.loading = true;
     t.error = null;
-    this.renderRegionsFor(id);
+    this.renderThreadLoad(id);
     try {
       const res = await this.client.thread(id, { limit: THREAD_LIMIT }, this.viewer());
       if (res === null) {
@@ -649,7 +817,7 @@ export class App {
       t.error = msg(e);
     }
     t.loading = false;
-    this.renderRegionsFor(id);
+    this.renderThreadLoad(id);
   }
 
   /** Refresh re-reads the whole thread — descendants load oldest-first, so new
@@ -714,9 +882,9 @@ export class App {
     this.renderRegionsFor(id);
   }
 
-  private regionFocusedOn(id: string): Region | null {
-    for (const col of this.state.workspace.columns) {
-      for (const region of col.regions) if (region.wins[region.focus] === id) return region;
+  private regionFocusedOn(id: string): Column | null {
+    for (const column of this.state.workspace.columns) {
+      if (column.wins[column.focus] === id) return column;
     }
     return null;
   }
@@ -1324,13 +1492,11 @@ export class App {
    *  panes-only, so this feed case is the vouch's own). */
   private reportVouch(key: string, text: string): void {
     if (this.feedHasAuthor(key)) this.state.feed.report = text;
-    for (const col of this.state.workspace.columns) {
-      for (const region of col.regions) {
-        const fk = region.wins[region.focus];
-        if (fk === undefined) continue;
-        const sub = windowSubject(fk);
-        if ((sub && sub.key === key) || (!isWin(fk) && this.threadHasAuthor(fk, key))) region.report = text;
-      }
+    for (const column of this.state.workspace.columns) {
+      const fk = column.wins[column.focus];
+      if (fk === undefined) continue;
+      const sub = windowSubject(fk);
+      if ((sub && sub.key === key) || (!isWin(fk) && this.threadHasAuthor(fk, key))) column.report = text;
     }
   }
 
@@ -1339,13 +1505,11 @@ export class App {
    *  fixed slot, so geometry holds (HOUSE_STYLE → Motion). */
   private renderRegionsForAuthor(key: string): void {
     if (this.feedHasAuthor(key)) this.renderFeed();
-    for (const col of this.state.workspace.columns) {
-      for (const region of col.regions) {
-        const fk = region.wins[region.focus];
-        if (fk === undefined) continue;
-        const sub = windowSubject(fk);
-        if ((sub && sub.key === key) || (!isWin(fk) && this.threadHasAuthor(fk, key))) this.renderRegion(region.uid);
-      }
+    for (const column of this.state.workspace.columns) {
+      const fk = column.wins[column.focus];
+      if (fk === undefined) continue;
+      const sub = windowSubject(fk);
+      if ((sub && sub.key === key) || (!isWin(fk) && this.threadHasAuthor(fk, key))) this.renderRegion(column.uid);
     }
   }
 
@@ -1375,8 +1539,9 @@ export class App {
     const res = openWindow(this.state.workspace, authorWindowId(key), origin);
     this.saveLayout();
     this.ensureAuthorData(key);
-    if (res.raised) this.renderRegion(res.region.uid);
+    if (res.raised) this.renderRegion(res.column.uid);
     else this.renderPanes();
+    this.scrollColumnIntoView(res.column.uid);
     void this.loadAuthorData(key);
   }
 
@@ -1421,8 +1586,9 @@ export class App {
     const res = openWindow(this.state.workspace, postsWindowId(key), origin);
     this.saveLayout();
     this.ensurePostsData(key);
-    if (res.raised) this.renderRegion(res.region.uid);
+    if (res.raised) this.renderRegion(res.column.uid);
     else this.renderPanes();
+    this.scrollColumnIntoView(res.column.uid);
     void this.loadAuthorPosts(key);
   }
 
@@ -1534,9 +1700,8 @@ export class App {
 
   private profileOrigin(): Origin {
     for (let ci = 0; ci < this.state.workspace.columns.length; ci++) {
-      for (const region of this.state.workspace.columns[ci]!.regions) {
-        if (region.wins[region.focus] === '@profile') return { from: 'pane', ci };
-      }
+      const column = this.state.workspace.columns[ci]!;
+      if (column.wins[column.focus] === '@profile') return { from: 'pane', ci };
     }
     return { from: 'feed' };
   }
@@ -1713,12 +1878,10 @@ export class App {
   private renderRegionsForPosts(postIds: Set<string>): void {
     if (postIds.size === 0) return;
     const wanted = [...postIds];
-    for (const col of this.state.workspace.columns) {
-      for (const region of col.regions) {
-        const fk = region.wins[region.focus];
-        if (fk !== undefined && !isWin(fk) && wanted.some((p) => this.threadContains(fk, p))) {
-          this.renderRegion(region.uid);
-        }
+    for (const column of this.state.workspace.columns) {
+      const fk = column.wins[column.focus];
+      if (fk !== undefined && !isWin(fk) && wanted.some((p) => this.threadContains(fk, p))) {
+        this.renderRegion(column.uid);
       }
     }
   }
@@ -1773,11 +1936,9 @@ export class App {
   }
 
   private setReportForPost(postId: string, text: string): void {
-    for (const col of this.state.workspace.columns) {
-      for (const region of col.regions) {
-        const fk = region.wins[region.focus];
-        if (fk !== undefined && !isWin(fk) && this.threadContains(fk, postId)) region.report = text;
-      }
+    for (const column of this.state.workspace.columns) {
+      const fk = column.wins[column.focus];
+      if (fk !== undefined && !isWin(fk) && this.threadContains(fk, postId)) column.report = text;
     }
   }
 

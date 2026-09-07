@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { serialise, parse, isWindowId, authorWindowId, postsWindowId, windowSubject } from '../src/model/arrangement';
-import { newWorkspace, newRegion } from '../src/model/workspace';
+import { newWorkspace, newColumn } from '../src/model/workspace';
 
 // 64-hex post ids and the one @-window kind.
 const A = 'a'.repeat(64);
@@ -16,11 +16,10 @@ describe('arrangement codec', () => {
   it('serialise and parse are inverses over valid ids', () => {
     const specs = [
       A,
-      `${A},${B}`, // a comma-stacked region
+      `${A},${B}`, // a comma-stacked column
       `${A}|${B}`, // two columns
-      `${A}/${B}`, // two regions in one column
       `${A},${B}|${C}`, // mixed: a stack, then a second column
-      `${A},${P}|${C}/${D},${B}`, // thread+window stack, multi-region column
+      `${A},${P},${B}|${C},${D}`, // a mixed stack, then a two-window column
       `${P}`, // a lone profile window
     ];
     for (const spec of specs) {
@@ -28,22 +27,30 @@ describe('arrangement codec', () => {
     }
   });
 
-  it('round-trips a workspace built by hand, mixed windows and multi-row columns', () => {
+  it('round-trips a workspace built by hand, mixed windows and stacked columns', () => {
     const ws = newWorkspace();
-    ws.columns.push({ regions: [newRegion([A, P]), newRegion([B])] }); // column 0: two regions
-    ws.columns.push({ regions: [newRegion([C, D])] }); // column 1: one comma-stacked region
+    ws.columns.push(newColumn([A, P, B])); // column 0: a three-window stack
+    ws.columns.push(newColumn([C, D])); // column 1: a two-window stack
     const text = serialise(ws);
-    expect(text).toBe(`${A},${P}/${B}|${C},${D}`);
+    expect(text).toBe(`${A},${P},${B}|${C},${D}`);
     // Parsing the text reproduces the same window layout.
     const back = parse(text);
-    expect(back.columns.map((c) => c.regions.map((r) => r.wins))).toEqual([[[A, P], [B]], [[C, D]]]);
+    expect(back.columns.map((c) => c.wins)).toEqual([[A, P, B], [C, D]]);
+  });
+
+  it('a stored / reads as a comma, so the stacks it separated join in order', () => {
+    // A / joins the stacks it separated, in order — the parser's courtesy.
+    expect(parse(`${A}/${B}`).columns.map((c) => c.wins)).toEqual([[A, B]]);
+    expect(serialise(parse(`${A}/${B}`))).toBe(`${A},${B}`);
+    // A multi-column arrangement: the / within a column joins, the | still splits.
+    expect(serialise(parse(`${A}/${B}|${C}/${D}`))).toBe(`${A},${B}|${C},${D}`);
   });
 
   it('a stored @settings maps to @profile, so a saved workspace survives the rename', () => {
     expect(serialise(parse(S))).toBe(P);
     expect(serialise(parse(`${A},${S}|${B}`))).toBe(`${A},${P}|${B}`);
-    // A workspace holding both maps @settings and keeps @profile, de-duped by the layout.
-    expect(serialise(parse(`${S}/${P}`))).toBe(`${P}/${P}`);
+    // A / joins the two into one column, @settings mapped to @profile.
+    expect(serialise(parse(`${S}/${P}`))).toBe(`${P},${P}`);
   });
 
   it('drops tokens that are not well-formed window ids', () => {
@@ -65,7 +72,7 @@ describe('arrangement codec', () => {
     expect(isWindowId(AUTHOR)).toBe(true);
     expect(isWindowId(POSTS)).toBe(true);
     // Round-trip through a full arrangement, mixed with a thread and a profile.
-    expect(serialise(parse(`${A},${AUTHOR}|${POSTS}/${P}`))).toBe(`${A},${AUTHOR}|${POSTS}/${P}`);
+    expect(serialise(parse(`${A},${AUTHOR}|${POSTS},${P}`))).toBe(`${A},${AUTHOR}|${POSTS},${P}`);
     // A bad suffix (not 64 hex, or the wrong kind) is dropped like any non-id token.
     expect(isWindowId('@author:' + 'e'.repeat(63))).toBe(false);
     expect(isWindowId('@author:' + 'g'.repeat(64))).toBe(false);

@@ -7,13 +7,13 @@ import { identityHue } from '../model/identity';
 import { isWithdrawn } from '../api/dto';
 import { windowSubject } from '../model/arrangement';
 import type { PostJson, WithdrawnJson } from '../api/dto';
-import type { Region, Workspace } from '../model/workspace';
+import type { Column, Workspace } from '../model/workspace';
 import type { Handlers, RenderCtx } from '../model/state';
 
-// The tiling workspace on screen: columns of regions, each region a stack of
-// title bars in a fixed block at the top, then the body of whichever is
-// focused. Nothing is an accordion; no bar moves when the focus
-// changes.
+// The tiling workspace on screen: one .col per column, framing one .region
+// stack — the .col is the strip member (its width and snap), the .region the
+// framed stack of title bars with the focused window's body below. Nothing is
+// an accordion; no bar moves when the focus changes (WEB_INTERFACE → The workspace).
 
 const EMPTY_TEXT =
   'No threads open. Use the › on the right edge of a post to open one here. ' +
@@ -55,7 +55,7 @@ function threadLabel(k: string, ctx: RenderCtx): BarLabel {
   return { authorKey: root.author, excerpt: root.content ?? 'content not on this node yet', replyCount: t.descendantCount, nested };
 }
 
-function bar(k: string, ci: number, focused: boolean, handlers: Handlers, ctx: RenderCtx): HTMLElement {
+function bar(k: string, ci: number, focused: boolean, lone: boolean, handlers: Handlers, ctx: RenderCtx): HTMLElement {
   const win = isWin(k);
   const b = el('div', 'bar' + (focused ? ' focused' : '') + (win ? ' win' : ''));
 
@@ -100,10 +100,17 @@ function bar(k: string, ci: number, focused: boolean, handlers: Handlers, ctx: R
   b.appendChild(label);
 
   const what = win ? 'window' : 'thread';
-  ctl.appendChild(ctlBtn('←', `move this ${what} back into the stack on the left`, () => handlers.moveLeft(k), ci === 0));
-  ctl.appendChild(ctlBtn('→', `move this ${what} to its own pane on the right`, () => handlers.moveRight(k)));
-  ctl.appendChild(ctlBtn('↓', `move this ${what} to its own pane below`, () => handlers.moveBelow(k)));
-  ctl.appendChild(ctlBtn('✕', `close this ${what}`, () => handlers.close(k)));
+  if (ctx.oneColumn) {
+    // ↻ ✕ at one column — ← and → arrange columns, and a phone reader has one
+    // screen at a time (WEB_INTERFACE → The workspace).
+    ctl.appendChild(ctlBtn('✕', `close this ${what}`, () => handlers.close(k)));
+  } else {
+    ctl.appendChild(ctlBtn('←', `move this ${what} back into the stack on the left`, () => handlers.moveLeft(k), ci === 0));
+    // → is disabled on a window alone in its column, where the move would change
+    // nothing, as ← is in the leftmost column (WEB_INTERFACE → The workspace).
+    ctl.appendChild(ctlBtn('→', `move this ${what} to its own pane on the right`, () => handlers.moveRight(k), lone));
+    ctl.appendChild(ctlBtn('✕', `close this ${what}`, () => handlers.close(k)));
+  }
   b.appendChild(ctl);
   return b;
 }
@@ -268,18 +275,26 @@ function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handl
   }
 }
 
-export function renderRegionElement(region: Region, ci: number, handlers: Handlers, ctx: RenderCtx): HTMLElement {
-  const regionEl = el('div', 'region');
-  regionEl.dataset['uid'] = String(region.uid);
-
+/** The bars block for a column — every window's title bar in one fixed geometry.
+ *  Exported so a thread's load can refresh the bars in place without touching the
+ *  body (WEB_INTERFACE → The workspace). */
+export function renderBars(column: Column, ci: number, handlers: Handlers, ctx: RenderCtx): HTMLElement {
   const bars = el('div', 'bars');
-  region.wins.forEach((k, i) => bars.appendChild(bar(k, ci, i === region.focus, handlers, ctx)));
-  regionEl.appendChild(bars);
+  const lone = column.wins.length === 1;
+  column.wins.forEach((k, i) => bars.appendChild(bar(k, ci, i === column.focus, lone, handlers, ctx)));
+  return bars;
+}
 
-  if (region.report) regionEl.appendChild(reportNode(region.report));
+export function renderRegionElement(column: Column, ci: number, handlers: Handlers, ctx: RenderCtx): HTMLElement {
+  const regionEl = el('div', 'region');
+  regionEl.dataset['uid'] = String(column.uid);
+
+  regionEl.appendChild(renderBars(column, ci, handlers, ctx));
+
+  if (column.report) regionEl.appendChild(reportNode(column.report));
 
   const body = el('div', 'region-body');
-  const focusedK = region.wins[region.focus];
+  const focusedK = column.wins[column.focus];
   if (focusedK != null) renderRegionBody(body, focusedK, ci, handlers, ctx);
   regionEl.appendChild(body);
   return regionEl;
@@ -293,7 +308,7 @@ export function renderPanesInto(container: HTMLElement, ws: Workspace, handlers:
   }
   ws.columns.forEach((col, ci) => {
     const colEl = el('div', 'col');
-    for (const region of col.regions) colEl.appendChild(renderRegionElement(region, ci, handlers, ctx));
+    colEl.appendChild(renderRegionElement(col, ci, handlers, ctx));
     container.appendChild(colEl);
   });
 }

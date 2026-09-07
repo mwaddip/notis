@@ -15,6 +15,12 @@
      (HOUSE_STYLE → The mark). */
   --notis-green: var(--green); --notis-keyline: #1B2A12;
   /* spacing scale: 4 8 12 16 24 32 48 64 96 */
+  /* The inert gutter: the full 48px where the feed at its cap and one 500px column
+     fit inside it (660 + 500 + 24 = 1184), relaxed to 16px below, continuous
+     between, and never under the safe-area inset so content clears a notch
+     (WEB_INTERFACE → The workspace, HOUSE_STYLE → Spacing). The header's side
+     padding is the same expression. */
+  --gutter: max(env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px), clamp(16px, calc((100vw - 1184px) / 2), 48px));
 }
 :root[data-t="dark"] {
   /* Dark — Bistre (HOUSE_STYLE → Colour) */
@@ -40,8 +46,13 @@ body {
 /* ---------- header ---------- */
 header {
   flex: 0 0 auto; display: flex; align-items: baseline; gap: 16px;
-  padding: 16px 48px; border-bottom: 1px solid var(--border);
+  padding: max(16px, env(safe-area-inset-top, 0px)) var(--gutter) 16px;
+  border-bottom: 1px solid var(--border);
 }
+/* The header arrows sit at its edges, hidden with their space reserved when no
+   column lies that way, so the header's geometry never shifts; visibility is set
+   from the scroller's position (WEB_INTERFACE → The workspace). */
+header .ctl { align-self: center; visibility: hidden; }
 header h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: .01em; }
 header .spacer { flex: 1 1 auto; }
 /* The mark + wordmark lockup: a 24px micro-tier mark beside the 15px wordmark.
@@ -57,17 +68,19 @@ header .spacer { flex: 1 1 auto; }
   background: var(--ink); color: var(--ground);
   transition: opacity .15s ease-out;
 }
-.theme-btn:hover { opacity: .85; }
 .theme-btn:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: 2px; }
 
 /* ---------- workspace ---------- */
 .workspace {
   flex: 1 1 auto; min-height: 0; display: flex; gap: 24px;
-  padding: 24px 48px;             /* 48px inert gutter each side (HOUSE_STYLE → Spacing) */
+  padding: 24px var(--gutter);    /* the inert gutter each side (WEB_INTERFACE → The workspace) */
 }
 
 /* ---------- feed ---------- */
-.feed { flex: 0 0 660px; max-width: 660px; min-width: 0; overflow-y: auto; padding-right: 8px; }
+/* The feed grows to nothing and shrinks to the 450px floor — the least width at
+   which a 1024px landscape tablet holds the feed and one pane (WEB_INTERFACE → The
+   workspace). It snaps as a member of the one-column scroller. */
+.feed { flex: 0 1 660px; min-width: 450px; overflow-y: auto; padding-right: 8px; scroll-snap-align: start; }
 /* The feed's own bar sits at a title bar's height so the two surfaces agree. It
    carries the ranking note — the feed's honesty mechanism, not decoration. */
 .feed-head {
@@ -128,8 +141,6 @@ header .spacer { flex: 1 1 auto; }
   border: 1px solid var(--borderStrong); border-radius: 4px;
   transition: background-color .15s ease-out;
 }
-.card-content .img-show:hover { background: rgba(0,0,0,.05); }
-:root[data-t="dark"] .card-content .img-show:hover { background: rgba(255,255,255,.06); }
 .card-content .img-show:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: 2px; }
 .card-content .host { font-family: var(--mono); font-size: 11.5px; }
 .card-content .card-img { display: block; max-width: 100%; max-height: 480px; object-fit: contain; border-radius: 4px; }
@@ -160,13 +171,10 @@ header .spacer { flex: 1 1 auto; }
   font-family: var(--sans); font-size: 20px; font-weight: 600; line-height: 1;
   transition: background-color .15s ease-out, color .15s ease-out;
 }
-.strip:hover { background: rgba(0,0,0,.05); color: var(--ink); }
-:root[data-t="dark"] .strip:hover { background: rgba(255,255,255,.06); }
 .card.open .strip {
   background: color-mix(in srgb, var(--greenText) 16%, transparent);
   color: var(--greenText); border-left-color: var(--greenText);
 }
-.card.open .strip:hover { background: color-mix(in srgb, var(--greenText) 22%, transparent); }
 .strip:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: -2px; }
 /* The band with no control in it — a pending post is not on the network yet.
    Keeps borderStrong so the line runs unbroken down the column. */
@@ -215,8 +223,6 @@ header .spacer { flex: 1 1 auto; }
   border: 1px solid var(--borderStrong); border-radius: 4px; cursor: pointer;
   background: transparent; color: var(--ink);
 }
-.composer-foot select:hover { background: rgba(0,0,0,.05); }
-:root[data-t="dark"] .composer-foot select:hover { background: rgba(255,255,255,.06); }
 .composer-foot select:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: 2px; }
 .composer-foot { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .composer-foot .spacer { flex: 1 1 auto; }
@@ -239,11 +245,8 @@ header .spacer { flex: 1 1 auto; }
        transition: background-color .15s ease-out, opacity .15s ease-out; }
 .btn:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: 2px; }
 .btn-primary { background: var(--greenText); color: var(--onGreen); border: 1px solid var(--greenText); }
-.btn-primary:hover { opacity: .88; }
 .btn-primary:disabled { opacity: .38; cursor: default; }
 .btn-ghost { background: transparent; color: var(--ink); border: 1px solid var(--borderStrong); }
-.btn-ghost:hover { background: rgba(0,0,0,.05); }
-:root[data-t="dark"] .btn-ghost:hover { background: rgba(255,255,255,.06); }
 
 /* like and ↩ reply, the same ghost weight in the meta row. `like` never takes an
    s — a present-tense verb, not a tally. Once liked it stops being a control (no
@@ -255,8 +258,6 @@ header .spacer { flex: 1 1 auto; }
   border: 1px solid var(--borderStrong); border-radius: 4px;
   transition: background-color .15s ease-out, color .15s ease-out;
 }
-.meta .likebtn:hover { color: var(--greenText); background: rgba(0,0,0,.05); }
-:root[data-t="dark"] .meta .likebtn:hover { background: rgba(255,255,255,.06); }
 .meta .likebtn:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: 2px; }
 .meta .likebtn .n { font-family: var(--mono); }
 .meta .liked { display: inline-flex; align-items: baseline; gap: 5px; color: var(--inkMute); }
@@ -265,12 +266,29 @@ header .spacer { flex: 1 1 auto; }
 .meta .reply-ctl .g { color: var(--inkMute); }
 
 /* ---------- panes ---------- */
-.panes { flex: 1 1 auto; min-width: 0; display: flex; gap: 16px; overflow-x: auto; }
+/* The tiling scroller: the columns live in it, snapping to whole columns; its
+   inline size drives the --k ladder below (WEB_INTERFACE → The workspace). */
+.panes {
+  flex: 1 1 0; min-width: 450px; display: flex; gap: 16px; overflow-x: auto;
+  container-type: inline-size; scroll-snap-type: x mandatory;
+}
 .empty {
   flex: 1 1 auto; display: flex; align-items: center; justify-content: center;
   color: var(--inkMute); font-size: 13px; text-align: center; padding: 0 24px;
 }
-.col { flex: 1 1 0; min-width: 330px; display: flex; flex-direction: column; gap: 16px; }
+/* The columns share the panes' width in equal parts — as many of at least the
+   450px floor as fit, K from the container-query ladder that sets --k
+   (WEB_INTERFACE → The workspace). Each snaps to the scroller's start. */
+.col {
+  --k: 1;
+  flex: 0 0 calc((100% - (var(--k) - 1) * 16px) / var(--k));
+  min-width: 0; display: flex; flex-direction: column; gap: 16px;
+  scroll-snap-align: start;
+}
+@container (min-width: 916px) { .col { --k: 2; } }
+@container (min-width: 1382px) { .col { --k: 3; } }
+@container (min-width: 1848px) { .col { --k: 4; } }
+@container (min-width: 2314px) { .col { --k: 5; } }
 .region {
   flex: 1 1 0; min-height: 0; display: flex; flex-direction: column;
   background: var(--surface); border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
@@ -288,8 +306,6 @@ header .spacer { flex: 1 1 auto; }
   transition: background-color .15s ease-out;
 }
 .bars .bar:last-child { border-bottom: 0; }
-.bar:hover { background: rgba(0,0,0,.04); }
-:root[data-t="dark"] .bar:hover { background: rgba(255,255,255,.05); }
 
 /* Identity tint. --idh is an OKLCH hue set per bar from the author's key.
    OKLCH because HSL degrees are perceptually uneven. The arc is 175–345°, which
@@ -345,11 +361,8 @@ header .spacer { flex: 1 1 auto; }
   cursor: pointer; font-family: var(--sans); font-size: 13px; line-height: 1;
   transition: background-color .15s ease-out, color .15s ease-out;
 }
-.ctl:hover { background: rgba(0,0,0,.08); color: var(--ink); }
-:root[data-t="dark"] .ctl:hover { background: rgba(255,255,255,.09); }
 .ctl:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: -2px; }
 .ctl:disabled { opacity: .28; cursor: default; }
-.ctl:disabled:hover { background: transparent; color: var(--inkMute); }
 
 .report {
   flex: 0 0 auto; padding: 6px 12px; font-size: 12.5px; color: var(--greenText);
@@ -375,11 +388,8 @@ header .spacer { flex: 1 1 auto; }
   border: 1px solid var(--borderStrong); border-radius: 4px;
   transition: background-color .15s ease-out;
 }
-.mini:hover { background: rgba(0,0,0,.05); }
-:root[data-t="dark"] .mini:hover { background: rgba(255,255,255,.06); }
 .mini:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: 2px; }
 .mini:disabled { opacity: .35; cursor: default; }
-.mini:disabled:hover { background: transparent; }
 
 /* ---------- window body — the profile window's rows ---------- */
 .winbody { max-width: 660px; }
@@ -409,7 +419,6 @@ header .spacer { flex: 1 1 auto; }
   transition: background-color .15s ease-out, color .15s ease-out;
 }
 .seg button:last-child { border-right: 0; }
-.seg button:hover { color: var(--ink); }
 .seg button[aria-pressed="true"] { background: var(--greenText); color: var(--onGreen); }
 .seg button:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: -2px; }
 
@@ -469,7 +478,6 @@ header .spacer { flex: 1 1 auto; }
    who row, an endorser row, a bond row — and nothing else. It follows every
    context's `.hex` colour rule so its `ink` wins the (0,2,0) tie
    (WEB_INTERFACE → The identity display). */
-.authorbtn:hover { color: var(--ink); }
 .authorbtn:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: 2px; }
 
 /* The vouch mark — WEB_INTERFACE → The identity display. A control after the
@@ -490,15 +498,11 @@ header .spacer { flex: 1 1 auto; }
 .vmark.check { color: var(--ink); }
 .vmark.check.pending { color: var(--inkMute); }
 .vmark .ck { width: 12px; height: 12px; display: block; }
-.vmark:hover { background: rgba(0,0,0,.05); }
-:root[data-t="dark"] .vmark:hover { background: rgba(255,255,255,.06); }
 .vmark:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: 2px; }
 .vmark.disabled { color: var(--inkMute); opacity: .4; cursor: default; }
-.vmark.disabled:hover { background: transparent; }
 /* The title bar's mark is display only — the ✓ glyph alone, no button and no
    border, because a control cannot nest inside the bar's focus label. */
 .vmark.display { border: none; min-width: 0; height: auto; padding: 0 0 0 2px; cursor: default; }
-.vmark.display:hover { background: transparent; }
 
 /* A locked like's or vouch's unlock form, in a row under the card's meta row
    (HOUSE_STYLE → Motion). */
@@ -517,3 +521,81 @@ header .spacer { flex: 1 1 auto; }
 .scrolling { pointer-events: none; }
 
 .feed, .panes, .region-body, .bars { scrollbar-width: thin; scrollbar-color: var(--borderStrong) transparent; }
+
+/* One column: below the breakpoint the feed and every column are members of the
+   workspace scroller, each a screen wide, the feed first; .panes has no box so
+   nothing but the columns is a member. A member's content is capped at the feed's
+   width and centred, the leftover its symmetric gutters, never under 16px so a
+   phone keeps a margin and a portrait tablet gets its inert space back
+   (WEB_INTERFACE → The workspace, HOUSE_STYLE → Spacing). The empty panel is not
+   rendered — nothing lies right of the feed. The breakpoint is ONE_COLUMN_MAX_PX
+   in app.ts, pinned equal by style.test.ts. */
+@media (max-width: 955px) {
+  /* The header keeps its base padding — at one column --gutter is 16px (or the
+     safe-area inset), so its sides are 16 without an override. */
+  .workspace { gap: 0; padding: 0; overflow-x: auto; scroll-snap-type: x mandatory; }
+  .panes { display: contents; min-width: 0; }
+  /* A member has no floor of its own — it is the screen's width; its gutter is the
+     leftover but never under the 16px floor, so a card never touches the edge and
+     sits on the header's inset (WEB_INTERFACE → The workspace). */
+  .feed, .col { flex: 0 0 100%; min-width: 0; padding: 0 max(var(--gutter), calc((100% - 660px) / 2)); }
+  .empty { display: none; }
+}
+
+/* Hover applies only where hover exists — every hover rule sits in this block, so
+   a tap never leaves a control stuck in its hover look on a device that cannot
+   hover (WEB_INTERFACE → The workspace, HOUSE_STYLE → Interaction). */
+@media (hover: hover) {
+  .theme-btn:hover { opacity: .85; }
+  .card-content .img-show:hover { background: rgba(0,0,0,.05); }
+  :root[data-t="dark"] .card-content .img-show:hover { background: rgba(255,255,255,.06); }
+  .strip:hover { background: rgba(0,0,0,.05); color: var(--ink); }
+  :root[data-t="dark"] .strip:hover { background: rgba(255,255,255,.06); }
+  .card.open .strip:hover { background: color-mix(in srgb, var(--greenText) 22%, transparent); }
+  .composer-foot select:hover { background: rgba(0,0,0,.05); }
+  :root[data-t="dark"] .composer-foot select:hover { background: rgba(255,255,255,.06); }
+  .btn-primary:hover { opacity: .88; }
+  .btn-ghost:hover { background: rgba(0,0,0,.05); }
+  :root[data-t="dark"] .btn-ghost:hover { background: rgba(255,255,255,.06); }
+  .meta .likebtn:hover { color: var(--greenText); background: rgba(0,0,0,.05); }
+  :root[data-t="dark"] .meta .likebtn:hover { background: rgba(255,255,255,.06); }
+  .bar:hover { background: rgba(0,0,0,.04); }
+  :root[data-t="dark"] .bar:hover { background: rgba(255,255,255,.05); }
+  .ctl:hover { background: rgba(0,0,0,.08); color: var(--ink); }
+  :root[data-t="dark"] .ctl:hover { background: rgba(255,255,255,.09); }
+  .ctl:disabled:hover { background: transparent; color: var(--inkMute); }
+  .mini:hover { background: rgba(0,0,0,.05); }
+  :root[data-t="dark"] .mini:hover { background: rgba(255,255,255,.06); }
+  .mini:disabled:hover { background: transparent; }
+  .seg button:hover { color: var(--ink); }
+  .authorbtn:hover { color: var(--ink); }
+  .vmark:hover { background: rgba(0,0,0,.05); }
+  :root[data-t="dark"] .vmark:hover { background: rgba(255,255,255,.06); }
+  .vmark.disabled:hover { background: transparent; }
+  .vmark.display:hover { background: transparent; }
+}
+
+/* Hit size follows the pointer: on a coarse pointer every control's hit box grows
+   to at least 36px tall (44px wide for a bar or header control), its glyph and
+   word unchanged (WEB_INTERFACE → The workspace, HOUSE_STYLE → Interaction). */
+@media (pointer: coarse) {
+  /* Bar, header and feed-head controls: 44 wide and 36 tall; the bar's vertical
+     padding drops to 4 so the bar is ~45 tall. */
+  .ctl { width: 44px; height: 36px; }
+  .feed-head .ctl { width: 44px; height: 36px; }
+  .bar { padding: 4px 8px 4px 12px; }
+  /* The meta row, the stage line and the karma field grow their fixed line box to
+     36px, the controls in them filling it — a card is 14px taller on touch,
+     uniformly, the geometry price the motion contract asks. */
+  .meta, .stage { height: 36px; }
+  .karma-field { min-height: 36px; }
+  .meta .likebtn { min-height: 36px; padding: 6px 12px; }
+  .vmark:not(.display) { min-height: 36px; }
+  /* The ghost, segmented and select controls to a 36px minimum. */
+  .mini, .btn, .theme-btn, .img-show, .seg button, .composer-foot select { min-height: 36px; }
+  /* The prefix control's hit box grows to the 36px minimum, the negative margin
+     absorbing the growth so the row's geometry does not change. */
+  .authorbtn { padding: 10px 0; margin: -10px 0; }
+  /* Text fields at 16px so WebKit does not zoom the page on focus. */
+  .composer textarea, .composer input, .winbody input { font-size: 16px; }
+}

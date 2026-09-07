@@ -7,8 +7,9 @@ the composer for a root and a reply, and like — the **identity interface's fir
 tab, the reader's own posts marked, the faucet karma step — the **membership actions** — the
 identity display with the vouch mark, the author window and the author-posts window, vouch and
 unvouch, invite from the profile — the **author's own controls' first unit** — withdraw from the
-reader's own card — and **content rendering** — the grammar a card renders from content, and the composer's
-`link` and `image` types — are implemented
+reader's own card — **content rendering** — the grammar a card renders from content, and the composer's
+`link` and `image` types — and the **responsive workspace** — K visible columns from the width, one column on
+a phone, touch sizes by the pointer — are implemented
 **Protocol version:** read from the node, never held — see Invariants
 
 
@@ -55,7 +56,7 @@ construction. It **does** hash — and it does so with `@dagsocial/types`, the s
 never a copy. That is what keeps it from being a further implementation of anything
 consensus-critical, and it is why no mirror test applies to it.
 
-Owns: the feed, threads, the tiling workspace of columns and regions, both themes, the identity
+Owns: the feed, threads, the tiling workspace of columns, both themes, the identity
 spine, and the client's preference rows — in the `@profile` window (→ The profile window). Reads posts,
 threads and node status. Sends nothing — every write is the write surface's, through its own module.
 
@@ -170,6 +171,80 @@ one.
 - **The feed's rows are posts and withdrawn markers only.** The client filters the withdrawn ones out,
   which costs it rows from a page and is the second reason paging follows `next`.
 
+## The workspace
+
+**The workspace is a strip of columns, and a column is a stack of windows.** `workspace := column+`,
+`column := window+`. A column shows every window's title bar in a fixed block at the top, then the body of the
+one focused; focusing another swaps the body and no bar moves. A thread is one kind of window; `@profile`,
+`@author:<key>` and `@posts:<key>` are the others (→ The profile window, → The author window). **The
+arrangement is text** — `#r1,r2|r5`: `,` stacks windows in a column, `|` starts the next column — persisted
+under `notis.layout`, shown in the profile's `arrangement` row, and `serialise` and `parse` are inverses over
+it. A stored `/` parses as a `,`, the stacks it separated joining in order — the courtesy the parser extends to
+the retired `@settings` — and is never written.
+
+**One placement rule.** Opening targets the column immediately right of the surface the press came from — the
+feed and the header sit left of column 0 — and creates it only if it is not already there, joining that
+column's stack otherwise. An open window is raised, never duplicated. Reuse is what keeps columns from
+multiplying as the reader drills; only `→` adds one.
+
+**The strip is a card's only thread-opening control, and it carries state.** An opened post stays in the feed:
+its content fades to `inkMute`, the last stop meeting the text floor, and its strip fills, so nothing below it
+reflows (`HOUSE_STYLE → Motion`). A press on an open card's strip raises the thread rather than opening a
+second copy, which makes the strip the way a reader finds where a thread went.
+
+**The bar carries `↻ ← → ✕`, and its geometry never shifts.** `↻` refreshes the window and reports what it
+did; `→` pops the window out of its stack into a new column immediately right; `←` folds it back into the
+stack on its left, the inverse, so a split and a merge return the reader to where they began; `✕` closes it. A
+control that does not apply renders disabled, never absent — `←` in the leftmost column, `→` on a window alone
+in its column, where the move would change nothing — so every bar in a width class shares one geometry.
+
+**The screen shows K columns of the strip, K from the width, and the markup does not change with K.** The
+strip is the feed, then column 0, then column 1. At two or more columns the feed is pinned beside a horizontal
+scroller holding the columns; at one column the feed and every column are members of one scroller, each the
+screen's width, the feed first. The one-column line is `max-width: 955px` — below it the feed and one column
+at the floor no longer fit — and the client reads the same number in one media query, so everything that
+differs by class (below) follows one value. Both scrollers snap to whole columns; a swipe is the browser's own
+scrolling and the page adds no gesture. The widths: the feed `flex: 0 1 660px` and the panes `flex: 1 1 0`,
+each with a 450px floor — the least width at which a 1024px landscape tablet holds the feed and one pane; the
+columns share the panes' width in equal parts, as many of at least the floor as fit; at one column a member is
+the screen's width with no floor of its own, its content capped at 660px and centred, the leftover its
+gutters and never less than the gutter floor — 16px on a phone, so a card never touches the screen's edge and
+sits on the header's own inset. The gutters are
+`clamp(16px, (100vw − 1184px) / 2, 48px)` — the full inert gutter where the feed at its cap and one 500px
+column fit inside it, relaxed below (`HOUSE_STYLE → Spacing`) — and the header's side padding is the same
+expression.
+
+**The view moves to the column the reader acted on, by an instant scroll.** An open, a raise, `←` or `→`
+brings the window's column into view; a `✕` that empties a column shows the column on its left, the feed when
+none. A structural rebuild preserves both scrollers' horizontal position before the move. No smooth scroll: a
+native one's duration is the browser's and not held under the 150ms ceiling, and a jump in direct response to
+the reader's own press is not motion (`HOUSE_STYLE → Motion`).
+
+**The header carries `‹` at its left edge and `›` at its right, at every width.** Each scrolls the view one
+column that way; each is hidden with its space reserved while no column lies that way, so the header's
+geometry never shifts and a session with everything in view shows neither. The label names what the control
+reaches — *show the feed* when the feed is the next member on the left, else *show the column to the left*;
+*show the column to the right* — and the glyph stands alone, typographic like the bar's
+(`HOUSE_STYLE → Deliberately not decided`). A gesture is never the only route, as hover is not
+(`HOUSE_STYLE → Accessibility contract`).
+
+**What differs at one column, and nothing else does:** the bar carries `↻ ✕` — `←` and `→` arrange columns,
+and a phone reader has one screen at a time; the header's prefix is the bar's length, `shortHex(key, 10)`; the
+empty panel is not rendered, since nothing lies right of the feed. Words stay words: `dark`, `light`, `profile`
+and the prefix fit a 390px header whole, and a 360px one at the bar's length.
+
+**A window's load updates its bar in every column holding it**, and its body only where it is focused, so a
+selection or a scroll in another window's body survives and a restored stack shows every excerpt as its thread
+lands.
+
+**Hit size follows the pointer and hover applies where hover exists** (`HOUSE_STYLE → Interaction`), with
+this surface's numbers: under `(pointer: coarse)` every control's hit box is at least 36px tall and a bar's or
+the header's control 44px wide; the meta row's, the stage line's and the karma field's fixed line box is 36px;
+the strip and the bar label keep their size; a text field is 16px, since WebKit zooms the page on focusing a
+smaller one; glyphs and words are unchanged. Every `:hover` rule sits under `(hover: hover)`. The viewport
+declares `viewport-fit=cover` and `interactive-widget=resizes-content`, and the header and the gutters respect
+the safe-area insets.
+
 ## The withdrawn state
 
 The one absence state, on screen in ordinary use, and no other social interface has it.
@@ -237,7 +312,7 @@ stays, as its `alt` too — *image from* the host when it is blank. A link insid
 the host. The press replaces the control with the image in place — nothing else on the page changes — capped
 at the card's width and 480px high, carrying the referrer policy and an `alt`: the description, or *image
 from* the host when it is blank. The expanded state is kept per post and image for the session, so a
-region re-render keeps it. A load that fails says so in place and offers the control again.
+column re-render keeps it. A load that fails says so in place and offers the control again.
 
 **A newline is a line break, a blank line a paragraph.** A card reads as the textarea did.
 
@@ -596,7 +671,7 @@ box, its `change` the returned box under its predicted id, its `expiresAtHeight`
 renders `submitted` from the entry. **Landed:** the entry's `GET /posts/:id` answered the withdrawn marker,
 and the client replaces the row in place with what it fetched — in every open thread the post becomes the
 withdrawn card at its depth (the marker's `parentRefs`, `NODE_INTERFACE → Withdrawal`), the feed and any
-`@posts:` window drop the row, the live-post index forgets it — and re-renders only the regions holding
+`@posts:` window drop the row, the live-post index forgets it — and re-renders only the columns holding
 it; no thread and no feed is refreshed. **The client's own submission of the post goes the same way:** a
 landed root submission leaves the feed as the row does, and a landed reply submission becomes the
 withdrawn card at its depth in every open thread that holds its parent — the marker joins that
@@ -606,7 +681,7 @@ replaces it with the node's row, and a withdrawal landing is the one event that 
 This is the one landing that changes a card's shape (→ The wallet, `HOUSE_STYLE → Motion`).
 **Expired:** the stage line reads *"no block took this by height N."* with `try
 again`, which rebuilds from the current view and submits anew; the entry is removed and the box returns to
-the spendable view. **Rejected:** the region's report line reads *"withdraw rejected: …"* with the node's
+the spendable view. **Rejected:** the column's report line reads *"withdraw rejected: …"* with the node's
 refusal in the voice register — its known refusals mapped to sentences, as the like's and the vouch's
 are (`HOUSE_STYLE → Voice`) — and the control returns; a transport failure reads *"withdraw rejected:
 can't reach the node right now."* and leaves nothing pending. A 2xx whose body carries no `expiresAtHeight` is a client

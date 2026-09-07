@@ -1,7 +1,8 @@
 # House Style Contract
 
 **Component:** cross-cutting — every human-facing surface
-**Status:** implemented in full on `docs/site/*`; partially on the demo UI — see below
+**Status:** implemented in full on `docs/site/*` but for the pointer rule (→ Interaction, marked there);
+partially on the demo UI — see below
 **Applies to:** `docs.notis.fun` (`docs/site/*`), `packages/node/public/index.html` (partial),
 `@dagsocial/web`, any future product surface
 
@@ -384,6 +385,16 @@ it for anything.
 The last two also mean hover can never be load-bearing, which earns touch and keyboard access
 as a consequence rather than a retrofit.
 
+**Hit size follows the pointer and hover applies where hover exists**, both as the browser reports its input
+— the `pointer` and `hover` media features — never as the user agent string says. A string names a product,
+not an input: an iPad sends a desktop one and cannot hover, a touchscreen laptop with a mouse hovers. On a
+coarse pointer a control's hit box grows and its glyph and word do not; where hover does not exist no hover
+rule applies, so a tap never leaves a control in its hover look. The sizes are each surface's
+(`WEB_INTERFACE → The workspace`).
+
+> ⚠ **VIOLATED on `docs/site/*`** — its five hover rules are unguarded and its controls are the browser's
+> size. The demo UI keeps its own shell, interaction being outside its inclusion above.
+
 ## Spacing
 
 4px base. Scale: **4 8 12 16 24 32 48 64 96** — enough steps to be useful, few enough that
@@ -396,7 +407,8 @@ is what makes the inert-space rule real rather than aspirational.
 Inert gutters are impossible on a phone — but the problems they solve, focusing a window and
 parking a pointer, do not exist on touch. The rule relaxes below the breakpoint, and that is a
 reasoned exemption rather than a compromise. Recorded here so nobody later "fixes" the missing
-gutters.
+gutters. The breakpoint is the surface's number (`WEB_INTERFACE → The workspace`: the full gutter
+where the feed at its cap and one good column fit inside it, relaxed below).
 
 ## Illustration
 
