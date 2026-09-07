@@ -35,7 +35,8 @@ unvouch from the author window, invite from the profile's `invites` row with the
 **author's own controls' first unit**: `withdraw` on the reader's own confirmed card inside a pane, after
 its like count, two presses with a confirm row in place, the landing turning the card into the withdrawn
 card at its depth and settling the post's own submission card — a root's leaves the feed, a reply's becomes
-the withdrawn card beneath its parent.
+the withdrawn card beneath its parent — and **content rendering**: the closed markdown grammar a card renders
+(`WEB_INTERFACE → Content`), the composer's `link` and `image` types and its byte counter, the italic face.
 
 - **Owns:** `packages/web/*` — its own source, tests, build config and static assets.
 - **Does NOT own:** any other package, `contracts/`, `prompts/`, or `packages/node/public/index.html`
@@ -82,6 +83,10 @@ old poll, and re-reads every open surface with the new `viewer`.
 - **A withdrawn post reaches the screen as a thread's root without ever being in the feed**, because an
   arrangement is persisted as post ids and a thread open last session may have been withdrawn since.
   Render it; it is not an error.
+- **The client contacts no third party on its own** (`WEB_INTERFACE → Content`). Nothing in content is fetched
+  on render; an image loads on the reader's press, the host shown first. The grammar is the client's own
+  scanner emitting DOM nodes — never an HTML string, never a markdown library — and one URL gate, `http` and
+  `https` only, serves the renderer and the composer.
 
 **From `HOUSE_STYLE.md` — the ones this surface will collide with:**
 - **Nothing moves that the reader did not ask to move.** No polling, no live counts, no injected
