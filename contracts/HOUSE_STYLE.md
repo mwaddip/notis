@@ -90,6 +90,15 @@ active, and it is styled as the inverse of the current ground — so on Sand the
 and reads `dark`. Appearance and label then agree, and the control explains itself without a
 tooltip or an icon that has to be learned.
 
+**On a phone the theme control is a sun or a moon** — the glyph of the theme it would switch to, a
+moon on Sand and a sun on Bistre, drawn in the house technique (→ Illustration: flat, faceted,
+straight-edged, a little wobble in the angles, no smooth curves) as inline SVG in `currentColor`, no
+fill, at the header's control size, carrying the label the word carries elsewhere. A once-used
+control styled as the inverse ground is the loudest thing on a phone screen, and the sun and the
+moon need no learning (user, 2026-09-07). With the phone's profile glyph, a person
+(`WEB_INTERFACE → The profile window`), it is one of the two icons the interface carries; the ruling
+opens iconography nowhere else (→ Deliberately not decided).
+
 ### Light — Sand
 
 | Token | Value | vs ground | Role |
@@ -454,7 +463,9 @@ Not preachy. The visual register avoids the manifesto; the copy has to as well.
 
 - **A grid or layout system.** Owned by each surface.
 - **Iconography.** Whether the illustration technique scales down to UI icons at 16–24px is
-  untested and may need a separate, plainer treatment.
+  untested and may need a separate, plainer treatment. Two icons exist — the phone's theme glyph
+  (→ Colour) and its profile glyph (`WEB_INTERFACE → The profile window`), drawn in the technique at
+  20px — and they are the test, not the decision.
 - **Data visualisation.** Nothing here covers charts. The only categorical palette this contract
   defines is the identity arc, and it is bounded by the hues that already carry meaning — see
   "Identity colour" — so it does not stretch to a chart's series either.

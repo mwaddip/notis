@@ -111,3 +111,32 @@ describe('the header carries the arrows at every width', () => {
     expect(arrows[1]!.getAttribute('aria-label')).toBe('show the column to the right');
   });
 });
+
+interface WidthDrive { onWidthClassChange(matches: boolean): void; }
+
+describe('the header at one column', () => {
+  it('the two controls are SVG glyph buttons with the labels, no .theme-btn, the arrows carry none', () => {
+    const { app, appbar } = mountApp();
+    (app as unknown as WidthDrive).onWidthClassChange(true); // cross the breakpoint
+
+    // No word buttons at one column — the two controls are glyphs
+    // (WEB_INTERFACE → The workspace → "What differs at one column, and nothing else does").
+    expect(appbar.querySelectorAll('.theme-btn').length).toBe(0);
+
+    // The profile control is a person glyph, the theme control the moon (Sand) or
+    // the sun (Bistre); each a .hdr-glyph button holding one svg, with the label the
+    // word carries. happy-dom keeps createElementNS svgs queryable (test/mark.test.ts).
+    const profile = appbar.querySelector<HTMLElement>('button[aria-label="open profile"]')!;
+    const theme = appbar.querySelector<HTMLElement>('button[aria-label^="switch to "]')!;
+    expect(profile.classList.contains('hdr-glyph')).toBe(true);
+    expect(theme.classList.contains('hdr-glyph')).toBe(true);
+    expect(profile.querySelectorAll('svg').length).toBe(1);
+    expect(theme.querySelectorAll('svg').length).toBe(1);
+
+    // An empty workspace has nothing either way, so both arrows carry `none`
+    // (the stylesheet makes it absent at one column, space-reserved at tiling).
+    const arrows = appbar.querySelectorAll<HTMLElement>('.ctl');
+    expect(arrows.length).toBe(2);
+    for (const a of arrows) expect(a.classList.contains('none')).toBe(true);
+  });
+});

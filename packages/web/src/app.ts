@@ -7,6 +7,7 @@ import { prefs, setTheme, setIdTint, setNode, setFaucet, writeStore, KEY_LAYOUT,
 import { renderFeedInto } from './view/feed';
 import { renderPanesInto, renderRegionElement, renderBars } from './view/panes';
 import { makeComposer, type ComposerController } from './view/composer';
+import { personGlyph, sunGlyph, moonGlyph } from './view/glyphs';
 import { serialise, parse, authorWindowId, postsWindowId, windowSubject } from './model/arrangement';
 import { reconcileNewer, isLivePost } from './model/feed-reconcile';
 import { flattenThread } from './model/thread';
@@ -138,7 +139,8 @@ export class App {
 
   // The width class and the header arrows (WEB_INTERFACE → The workspace). oneColumn
   // is one media query read into the ctx; the arrows scroll the active scroller and
-  // hide with their space reserved when no column lies that way.
+  // carry `none` when no column lies that way — space-reserved at tiling, absent at
+  // one column.
   private oneColumn = false;
   private mql: MediaQueryList | null = null;
   private headerLeftArrow: HTMLElement | null = null;
@@ -390,9 +392,10 @@ export class App {
     const bar = this.appbar;
     bar.textContent = '';
 
-    // ‹ at the left edge scrolls the view one column that way; it hides with its
-    // space reserved when no column lies left, so the header's geometry never
-    // shifts (WEB_INTERFACE → The workspace). Its label is set by state.
+    // ‹ at the left edge scrolls the view one column that way. When no column lies
+    // left it carries `none` — space-reserved at tiling, absent at one column
+    // (WEB_INTERFACE → The workspace); updateHeaderArrows toggles it and sets the
+    // label from the scroller's position.
     const left = el('button', 'ctl', '‹') as HTMLButtonElement;
     left.setAttribute('aria-label', 'show the column to the left');
     left.addEventListener('click', () => this.scrollByOneColumn(-1));
@@ -408,33 +411,50 @@ export class App {
     bar.appendChild(brand);
     bar.appendChild(el('span', 'spacer'));
 
-    // The identity control — 'profile' with no identity, the key prefix in mono
-    // with one, so an identity reads the same way in the header and on a card. At
-    // one column the prefix takes the title bar's length, shortHex(key, 10)
-    // (WEB_INTERFACE → The workspace). No avatar, no identity colour
+    // The profile and theme controls. The theme control names and shows the theme
+    // it would switch TO (HOUSE_STYLE → Colour); the profile control shows a person
+    // or the key prefix. At one column both are glyphs at the header's control
+    // size — a person, and the moon on Sand / the sun on Bistre — inline SVG in
+    // currentColor drawn in the house technique, the same for every reader and for
+    // none since the window says who (WEB_INTERFACE → The profile window,
+    // HOUSE_STYLE → Colour → "On a phone the theme control is a sun or a moon",
+    // HOUSE_STYLE → Illustration). At tiling they are words: 'profile' or the key
+    // prefix in mono, and the theme's word; no avatar, no identity colour
     // (WEB_INTERFACE → The profile window; HOUSE_STYLE → Identity colour).
-    const cur = this.idm.current();
-    const profile = el('button', 'theme-btn');
-    profile.style.background = 'transparent';
-    profile.style.color = 'var(--ink)';
-    profile.style.border = '1px solid var(--borderStrong)';
-    if (cur === null) {
-      profile.textContent = 'profile';
-    } else {
-      profile.style.fontFamily = 'var(--mono)';
-      profile.textContent = shortHex(cur.pubKeyHex, this.oneColumn ? 10 : 16);
-    }
-    profile.setAttribute('aria-label', 'open profile');
-    profile.addEventListener('click', () => this.openProfile());
-    bar.appendChild(profile);
-
-    // The theme control names and shows the theme it would switch TO
-    // (HOUSE_STYLE → Colour).
     const target: Theme = prefs.theme === 'dark' ? 'light' : 'dark';
-    const theme = el('button', 'theme-btn', target);
-    theme.setAttribute('aria-label', `switch to ${target} theme`);
-    theme.addEventListener('click', () => this.changeTheme(target));
-    bar.appendChild(theme);
+    if (this.oneColumn) {
+      const profile = el('button', 'hdr-glyph');
+      profile.setAttribute('aria-label', 'open profile');
+      profile.appendChild(personGlyph());
+      profile.addEventListener('click', () => this.openProfile());
+      bar.appendChild(profile);
+
+      const theme = el('button', 'hdr-glyph');
+      theme.setAttribute('aria-label', `switch to ${target} theme`);
+      theme.appendChild(target === 'dark' ? moonGlyph() : sunGlyph());
+      theme.addEventListener('click', () => this.changeTheme(target));
+      bar.appendChild(theme);
+    } else {
+      const cur = this.idm.current();
+      const profile = el('button', 'theme-btn');
+      profile.style.background = 'transparent';
+      profile.style.color = 'var(--ink)';
+      profile.style.border = '1px solid var(--borderStrong)';
+      if (cur === null) {
+        profile.textContent = 'profile';
+      } else {
+        profile.style.fontFamily = 'var(--mono)';
+        profile.textContent = shortHex(cur.pubKeyHex, 16);
+      }
+      profile.setAttribute('aria-label', 'open profile');
+      profile.addEventListener('click', () => this.openProfile());
+      bar.appendChild(profile);
+
+      const theme = el('button', 'theme-btn', target);
+      theme.setAttribute('aria-label', `switch to ${target} theme`);
+      theme.addEventListener('click', () => this.changeTheme(target));
+      bar.appendChild(theme);
+    }
 
     // › at the right edge, the converse of ‹.
     const right = el('button', 'ctl', '›') as HTMLButtonElement;
@@ -491,8 +511,10 @@ export class App {
     this.updateHeaderArrows();
   }
 
-  /** The header arrows' visibility and the left arrow's label, from the active
-   *  scroller's position and the width class (WEB_INTERFACE → The workspace). */
+  /** The header arrows' `none` class and the left arrow's label, from the active
+   *  scroller's position and the width class: an arrow with nothing that way carries
+   *  `none` — hidden with its space reserved at tiling, absent at one column — the
+   *  stylesheet drawing the difference (WEB_INTERFACE → The workspace). */
   private updateHeaderArrows(): void {
     const left = this.headerLeftArrow;
     const right = this.headerRightArrow;
@@ -501,8 +523,8 @@ export class App {
     const sl = scroller?.scrollLeft ?? 0;
     const max = scroller ? scroller.scrollWidth - scroller.clientWidth : 0;
     const EPS = 2;
-    left.style.visibility = sl > EPS ? 'visible' : 'hidden';
-    right.style.visibility = sl < max - EPS ? 'visible' : 'hidden';
+    left.classList.toggle('none', !(sl > EPS));
+    right.classList.toggle('none', !(sl < max - EPS));
     // At one column the feed is the first member, so the member left of column 0
     // is the feed itself.
     const prevIsFeed = this.oneColumn && scroller !== null && scroller.clientWidth > 0
