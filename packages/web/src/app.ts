@@ -25,7 +25,7 @@ import type { Mark, Flight } from './view/card';
 import type { YourVouch } from './view/author';
 import {
   newWorkspace, openWindow, closeWindow, moveLeft, moveRight, focusWindow, openSet,
-  type Origin, type Region,
+  type Origin, type Column,
 } from './model/workspace';
 import {
   FEED_COMPOSER_KEY, type AppState, type ThreadState, type RenderCtx, type Handlers, type Submission,
@@ -430,12 +430,11 @@ export class App {
     this.applyCountTitles();
   }
 
-  private locateRegion(uid: number): { region: Region; ci: number } | null {
+  private locateRegion(uid: number): { column: Column; ci: number } | null {
     const ws = this.state.workspace;
     for (let ci = 0; ci < ws.columns.length; ci++) {
-      for (const region of ws.columns[ci]!.regions) {
-        if (region.uid === uid) return { region, ci };
-      }
+      const column = ws.columns[ci]!;
+      if (column.uid === uid) return { column, ci };
     }
     return null;
   }
@@ -456,19 +455,17 @@ export class App {
       return;
     }
     const top = oldEl.querySelector<HTMLElement>('.region-body')?.scrollTop ?? 0;
-    const newEl = renderRegionElement(found.region, found.ci, this.handlers, this.ctx());
+    const newEl = renderRegionElement(found.column, found.ci, this.handlers, this.ctx());
     oldEl.replaceWith(newEl);
     const newBody = newEl.querySelector<HTMLElement>('.region-body');
     if (newBody) newBody.scrollTop = top;
     this.applyCountTitles();
   }
 
-  /** Re-render every region currently focused on a given window. */
+  /** Re-render every column currently focused on a given window. */
   private renderRegionsFor(windowId: string): void {
-    for (const col of this.state.workspace.columns) {
-      for (const region of col.regions) {
-        if (region.wins[region.focus] === windowId) this.renderRegion(region.uid);
-      }
+    for (const column of this.state.workspace.columns) {
+      if (column.wins[column.focus] === windowId) this.renderRegion(column.uid);
     }
   }
 
@@ -573,7 +570,7 @@ export class App {
     const res = openWindow(this.state.workspace, id, origin);
     this.saveLayout();
     if (res.raised) {
-      this.renderRegion(res.region.uid);
+      this.renderRegion(res.column.uid);
       return;
     }
     // A new window changed the structure, and the feed card flips to open.
@@ -586,7 +583,7 @@ export class App {
     const res = openWindow(this.state.workspace, '@profile', { from: 'feed' });
     this.saveLayout();
     if (res.raised) {
-      this.renderRegion(res.region.uid);
+      this.renderRegion(res.column.uid);
     } else {
       this.renderPanes();
       // Read /karma for the loaded key when the window opens (WEB_INTERFACE → The
@@ -596,8 +593,8 @@ export class App {
   }
 
   private focus(id: string): void {
-    const region = focusWindow(this.state.workspace, id);
-    if (region) this.renderRegion(region.uid);
+    const column = focusWindow(this.state.workspace, id);
+    if (column) this.renderRegion(column.uid);
     if (!isWin(id) && !this.threadLoaded(id)) void this.fetchThread(id);
   }
 
@@ -713,9 +710,9 @@ export class App {
     this.renderRegionsFor(id);
   }
 
-  private regionFocusedOn(id: string): Region | null {
-    for (const col of this.state.workspace.columns) {
-      for (const region of col.regions) if (region.wins[region.focus] === id) return region;
+  private regionFocusedOn(id: string): Column | null {
+    for (const column of this.state.workspace.columns) {
+      if (column.wins[column.focus] === id) return column;
     }
     return null;
   }
@@ -1323,13 +1320,11 @@ export class App {
    *  panes-only, so this feed case is the vouch's own). */
   private reportVouch(key: string, text: string): void {
     if (this.feedHasAuthor(key)) this.state.feed.report = text;
-    for (const col of this.state.workspace.columns) {
-      for (const region of col.regions) {
-        const fk = region.wins[region.focus];
-        if (fk === undefined) continue;
-        const sub = windowSubject(fk);
-        if ((sub && sub.key === key) || (!isWin(fk) && this.threadHasAuthor(fk, key))) region.report = text;
-      }
+    for (const column of this.state.workspace.columns) {
+      const fk = column.wins[column.focus];
+      if (fk === undefined) continue;
+      const sub = windowSubject(fk);
+      if ((sub && sub.key === key) || (!isWin(fk) && this.threadHasAuthor(fk, key))) column.report = text;
     }
   }
 
@@ -1338,13 +1333,11 @@ export class App {
    *  fixed slot, so geometry holds (HOUSE_STYLE → Motion). */
   private renderRegionsForAuthor(key: string): void {
     if (this.feedHasAuthor(key)) this.renderFeed();
-    for (const col of this.state.workspace.columns) {
-      for (const region of col.regions) {
-        const fk = region.wins[region.focus];
-        if (fk === undefined) continue;
-        const sub = windowSubject(fk);
-        if ((sub && sub.key === key) || (!isWin(fk) && this.threadHasAuthor(fk, key))) this.renderRegion(region.uid);
-      }
+    for (const column of this.state.workspace.columns) {
+      const fk = column.wins[column.focus];
+      if (fk === undefined) continue;
+      const sub = windowSubject(fk);
+      if ((sub && sub.key === key) || (!isWin(fk) && this.threadHasAuthor(fk, key))) this.renderRegion(column.uid);
     }
   }
 
@@ -1374,7 +1367,7 @@ export class App {
     const res = openWindow(this.state.workspace, authorWindowId(key), origin);
     this.saveLayout();
     this.ensureAuthorData(key);
-    if (res.raised) this.renderRegion(res.region.uid);
+    if (res.raised) this.renderRegion(res.column.uid);
     else this.renderPanes();
     void this.loadAuthorData(key);
   }
@@ -1420,7 +1413,7 @@ export class App {
     const res = openWindow(this.state.workspace, postsWindowId(key), origin);
     this.saveLayout();
     this.ensurePostsData(key);
-    if (res.raised) this.renderRegion(res.region.uid);
+    if (res.raised) this.renderRegion(res.column.uid);
     else this.renderPanes();
     void this.loadAuthorPosts(key);
   }
@@ -1533,9 +1526,8 @@ export class App {
 
   private profileOrigin(): Origin {
     for (let ci = 0; ci < this.state.workspace.columns.length; ci++) {
-      for (const region of this.state.workspace.columns[ci]!.regions) {
-        if (region.wins[region.focus] === '@profile') return { from: 'pane', ci };
-      }
+      const column = this.state.workspace.columns[ci]!;
+      if (column.wins[column.focus] === '@profile') return { from: 'pane', ci };
     }
     return { from: 'feed' };
   }
@@ -1712,12 +1704,10 @@ export class App {
   private renderRegionsForPosts(postIds: Set<string>): void {
     if (postIds.size === 0) return;
     const wanted = [...postIds];
-    for (const col of this.state.workspace.columns) {
-      for (const region of col.regions) {
-        const fk = region.wins[region.focus];
-        if (fk !== undefined && !isWin(fk) && wanted.some((p) => this.threadContains(fk, p))) {
-          this.renderRegion(region.uid);
-        }
+    for (const column of this.state.workspace.columns) {
+      const fk = column.wins[column.focus];
+      if (fk !== undefined && !isWin(fk) && wanted.some((p) => this.threadContains(fk, p))) {
+        this.renderRegion(column.uid);
       }
     }
   }
@@ -1772,11 +1762,9 @@ export class App {
   }
 
   private setReportForPost(postId: string, text: string): void {
-    for (const col of this.state.workspace.columns) {
-      for (const region of col.regions) {
-        const fk = region.wins[region.focus];
-        if (fk !== undefined && !isWin(fk) && this.threadContains(fk, postId)) region.report = text;
-      }
+    for (const column of this.state.workspace.columns) {
+      const fk = column.wins[column.focus];
+      if (fk !== undefined && !isWin(fk) && this.threadContains(fk, postId)) column.report = text;
     }
   }
 

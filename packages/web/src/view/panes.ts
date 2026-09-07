@@ -7,13 +7,13 @@ import { identityHue } from '../model/identity';
 import { isWithdrawn } from '../api/dto';
 import { windowSubject } from '../model/arrangement';
 import type { PostJson, WithdrawnJson } from '../api/dto';
-import type { Region, Workspace } from '../model/workspace';
+import type { Column, Workspace } from '../model/workspace';
 import type { Handlers, RenderCtx } from '../model/state';
 
-// The tiling workspace on screen: columns of regions, each region a stack of
-// title bars in a fixed block at the top, then the body of whichever is
-// focused. Nothing is an accordion; no bar moves when the focus
-// changes.
+// The tiling workspace on screen: one .col per column, framing one .region
+// stack — the .col is the strip member (its width and snap), the .region the
+// framed stack of title bars with the focused window's body below. Nothing is
+// an accordion; no bar moves when the focus changes (WEB_INTERFACE → The workspace).
 
 const EMPTY_TEXT =
   'No threads open. Use the › on the right edge of a post to open one here. ' +
@@ -267,18 +267,18 @@ function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handl
   }
 }
 
-export function renderRegionElement(region: Region, ci: number, handlers: Handlers, ctx: RenderCtx): HTMLElement {
+export function renderRegionElement(column: Column, ci: number, handlers: Handlers, ctx: RenderCtx): HTMLElement {
   const regionEl = el('div', 'region');
-  regionEl.dataset['uid'] = String(region.uid);
+  regionEl.dataset['uid'] = String(column.uid);
 
   const bars = el('div', 'bars');
-  region.wins.forEach((k, i) => bars.appendChild(bar(k, ci, i === region.focus, handlers, ctx)));
+  column.wins.forEach((k, i) => bars.appendChild(bar(k, ci, i === column.focus, handlers, ctx)));
   regionEl.appendChild(bars);
 
-  if (region.report) regionEl.appendChild(reportNode(region.report));
+  if (column.report) regionEl.appendChild(reportNode(column.report));
 
   const body = el('div', 'region-body');
-  const focusedK = region.wins[region.focus];
+  const focusedK = column.wins[column.focus];
   if (focusedK != null) renderRegionBody(body, focusedK, ci, handlers, ctx);
   regionEl.appendChild(body);
   return regionEl;
@@ -292,7 +292,7 @@ export function renderPanesInto(container: HTMLElement, ws: Workspace, handlers:
   }
   ws.columns.forEach((col, ci) => {
     const colEl = el('div', 'col');
-    for (const region of col.regions) colEl.appendChild(renderRegionElement(region, ci, handlers, ctx));
+    colEl.appendChild(renderRegionElement(col, ci, handlers, ctx));
     container.appendChild(colEl);
   });
 }

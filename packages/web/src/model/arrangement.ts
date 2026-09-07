@@ -1,9 +1,8 @@
-import { newWorkspace, newRegion, type Workspace, type Column } from './workspace';
+import { newWorkspace, newColumn, type Workspace } from './workspace';
 
-// The workspace as text: `#r1,r2|r5/r10` — comma stacks windows in a region,
-// `|` starts a new column, `/` a new region (row) in the current column.
-// Readable, diffable, and the persistence format —
-// `serialise` and `parse` are inverses.
+// The workspace as text: `#r1,r2|r5` — comma stacks windows in a column, `|`
+// starts the next column. Readable, diffable, and the persistence format —
+// `serialise` and `parse` are inverses (WEB_INTERFACE → The workspace).
 
 const HEX64 = /^[0-9a-f]{64}$/i;
 const WINDOW_IDS = new Set<string>(['@profile']);
@@ -40,27 +39,24 @@ function mapRetired(k: string): string {
 }
 
 export function serialise(ws: Workspace): string {
-  return ws.columns
-    .map((c) => c.regions.map((r) => r.wins.join(',')).join('/'))
-    .join('|');
+  return ws.columns.map((c) => c.wins.join(',')).join('|');
 }
 
 /** Rebuild a workspace from its text form. Unknown tokens are dropped — a
  *  restored arrangement may name a post that has since been withdrawn, and its
  *  window renders the withdrawn marker (WEB_INTERFACE → The withdrawn state); a
  *  token that is not even a well-formed id is discarded here. Focus is not
- *  encoded, so every region opens focused on its first window. */
+ *  encoded, so every column opens focused on its first window. */
 export function parse(spec: string): Workspace {
   const ws = newWorkspace();
   const s = spec.replace(/^#/, '').trim();
   if (!s) return ws;
   for (const colSpec of s.split('|')) {
-    const col: Column = { regions: [] };
-    for (const regionSpec of colSpec.split('/')) {
-      const wins = regionSpec.split(',').map((x) => x.trim()).map(mapRetired).filter(isWindowId);
-      if (wins.length) col.regions.push(newRegion(wins));
-    }
-    if (col.regions.length) ws.columns.push(col);
+    // A stored `/` reads as a `,`, so the stacks it separated join in order —
+    // the courtesy the parser extends to the retired @settings
+    // (WEB_INTERFACE → The workspace).
+    const wins = colSpec.replace(/\//g, ',').split(',').map((x) => x.trim()).map(mapRetired).filter(isWindowId);
+    if (wins.length) ws.columns.push(newColumn(wins));
   }
   return ws;
 }

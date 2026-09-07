@@ -57,7 +57,7 @@ describe('workspace move controls', () => {
 });
 
 describe('workspace close', () => {
-  it('removes a window and collapses the region and column it emptied', () => {
+  it('removes a window and collapses the column it emptied', () => {
     const ws = newWorkspace();
     openWindow(ws, A, { from: 'feed' });
     openWindow(ws, B, { from: 'pane', ci: 0 }); // A | B — B alone in column 1
@@ -75,8 +75,8 @@ describe('workspace close', () => {
     openWindow(ws, C, { from: 'pane', ci: 0 }); // column 1 stacks B,C, focus on C
     const at = locate(ws, C)!;
     expect(at.ci).toBe(1);
-    expect(at.region.focus).toBe(at.idx);
+    expect(at.column.focus).toBe(at.idx);
     focusWindow(ws, B);
-    expect(locate(ws, B)!.region.focus).toBe(locate(ws, B)!.idx);
+    expect(locate(ws, B)!.column.focus).toBe(locate(ws, B)!.idx);
   });
 });
