@@ -24,7 +24,7 @@ withdrawal is the author's only act over a post. TypeScript, pnpm workspaces, No
 
 ## This package (`@dagsocial/web`)
 The **browser client**. Built in slices: the **read surface** (the feed, threads, a tiling workspace of
-columns and regions, both themes, the identity spine), the **write surface's first slice** — the identity
+columns, both themes, the identity spine), the **write surface's first slice** — the identity
 machinery, the composer for a root and a reply, and like, on transactions the browser builds and signs —
 the **identity interface's first unit**: the `@profile` window (identity, standing, karma, the
 faucet step, the preferences), create / import / export / forget / lock / unlock as forms in place, the
@@ -35,8 +35,13 @@ unvouch from the author window, invite from the profile's `invites` row with the
 **author's own controls' first unit**: `withdraw` on the reader's own confirmed card inside a pane, after
 its like count, two presses with a confirm row in place, the landing turning the card into the withdrawn
 card at its depth and settling the post's own submission card — a root's leaves the feed, a reply's becomes
-the withdrawn card beneath its parent — and **content rendering**: the closed markdown grammar a card renders
-(`WEB_INTERFACE → Content`), the composer's `link` and `image` types and its byte counter, the italic face.
+the withdrawn card beneath its parent — **content rendering**: the closed markdown grammar a card renders
+(`WEB_INTERFACE → Content`), the composer's `link` and `image` types and its byte counter, the italic face —
+and the **responsive workspace** (`WEB_INTERFACE → The workspace`): a column is one stack of windows; the
+screen shows K columns of the strip, K from the width, the feed pinned at two or more and a member of the
+strip below 955px, where a phone shows one screen at a time; the view moves to the column acted on by an
+instant scroll; the header's `‹` `›`; the one-column bar `↻ ✕`; hit size follows `pointer: coarse` and every
+hover rule sits under `hover: hover`.
 
 - **Owns:** `packages/web/*` — its own source, tests, build config and static assets.
 - **Does NOT own:** any other package, `contracts/`, `prompts/`, or `packages/node/public/index.html`
@@ -99,8 +104,14 @@ old poll, and re-reads every open surface with the new `viewer`.
   selectable and the pointer can be parked on it.
 - **Hover may change appearance; it may never reveal content or move layout**, and it is suppressed
   while scrolling and for ~100ms after.
-- **Every page reserves inert space** — ≥48px gutters each side on desktop, relaxed below the
-  breakpoint. The empty space is a control surface, not waste.
+- **Every page reserves inert space** — the gutter is `clamp(16px, (100vw − 1184px) / 2, 48px)`, the full
+  48px where the feed at its cap and one 500px column fit inside it, 16px below; at one column a member's
+  content is capped at 660 and centred, its gutter the leftover and never under 16px. The empty space is a
+  control surface, not waste.
+- **Hit size follows the pointer and hover applies where hover exists** — `pointer: coarse` grows every
+  control's hit box (36px tall, 44 wide for a bar or header control), glyphs and words unchanged; every
+  `:hover` rule lives in the one `hover: hover` block, and `style.test.ts` pins that none sits outside it.
+  Never a user agent string: the media features are the browser's own report of its input.
 - **4.5:1 for text against whichever of `ground`/`surface` is worse** — `ground` on Sand, `surface` on
   Bistre. **3:1 for a border only when it is a control's sole boundary.**
 - **No red anywhere. Gold means credits and nothing else. Clay is warning and error.**
