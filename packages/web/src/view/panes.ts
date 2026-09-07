@@ -275,14 +275,21 @@ function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handl
   }
 }
 
+/** The bars block for a column — every window's title bar in one fixed geometry.
+ *  Exported so a thread's load can refresh the bars in place without touching the
+ *  body (WEB_INTERFACE → The workspace). */
+export function renderBars(column: Column, ci: number, handlers: Handlers, ctx: RenderCtx): HTMLElement {
+  const bars = el('div', 'bars');
+  const lone = column.wins.length === 1;
+  column.wins.forEach((k, i) => bars.appendChild(bar(k, ci, i === column.focus, lone, handlers, ctx)));
+  return bars;
+}
+
 export function renderRegionElement(column: Column, ci: number, handlers: Handlers, ctx: RenderCtx): HTMLElement {
   const regionEl = el('div', 'region');
   regionEl.dataset['uid'] = String(column.uid);
 
-  const bars = el('div', 'bars');
-  const lone = column.wins.length === 1;
-  column.wins.forEach((k, i) => bars.appendChild(bar(k, ci, i === column.focus, lone, handlers, ctx)));
-  regionEl.appendChild(bars);
+  regionEl.appendChild(renderBars(column, ci, handlers, ctx));
 
   if (column.report) regionEl.appendChild(reportNode(column.report));
 

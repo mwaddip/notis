@@ -5,7 +5,7 @@ import { el, shortHex, preservingScroll } from './dom';
 import { contentHashHex } from './integrity';
 import { prefs, setTheme, setIdTint, setNode, setFaucet, writeStore, KEY_LAYOUT, type Theme, type IdTint } from './prefs';
 import { renderFeedInto } from './view/feed';
-import { renderPanesInto, renderRegionElement } from './view/panes';
+import { renderPanesInto, renderRegionElement, renderBars } from './view/panes';
 import { makeComposer, type ComposerController } from './view/composer';
 import { serialise, parse, authorWindowId, postsWindowId, windowSubject } from './model/arrangement';
 import { reconcileNewer, isLivePost } from './model/feed-reconcile';
@@ -597,6 +597,26 @@ export class App {
     }
   }
 
+  /** A thread's load updates its bar in every column holding it — in place, the
+   *  body untouched — and re-renders the body only where the window is focused, so
+   *  a selection or a scroll in a body focused elsewhere survives and a restored
+   *  stack shows every excerpt as its thread lands (WEB_INTERFACE → The workspace). */
+  private renderThreadLoad(id: string): void {
+    this.state.workspace.columns.forEach((column, ci) => {
+      if (!column.wins.includes(id)) return;
+      if (column.wins[column.focus] === id) this.renderRegion(column.uid);
+      else this.replaceBars(column, ci);
+    });
+  }
+
+  /** Replace a column's bars in place from the current ctx, leaving its body. */
+  private replaceBars(column: Column, ci: number): void {
+    const region = this.panesEl.querySelector<HTMLElement>(`.region[data-uid="${column.uid}"]`);
+    const oldBars = region?.querySelector<HTMLElement>('.bars');
+    if (oldBars) oldBars.replaceWith(renderBars(column, ci, this.handlers, this.ctx()));
+    this.applyCountTitles();
+  }
+
   private structural(mutate: () => void): void {
     mutate();
     this.saveLayout();
@@ -785,7 +805,7 @@ export class App {
     const t = this.ensureThreadState(id);
     t.loading = true;
     t.error = null;
-    this.renderRegionsFor(id);
+    this.renderThreadLoad(id);
     try {
       const res = await this.client.thread(id, { limit: THREAD_LIMIT }, this.viewer());
       if (res === null) {
@@ -797,7 +817,7 @@ export class App {
       t.error = msg(e);
     }
     t.loading = false;
-    this.renderRegionsFor(id);
+    this.renderThreadLoad(id);
   }
 
   /** Refresh re-reads the whole thread — descendants load oldest-first, so new
