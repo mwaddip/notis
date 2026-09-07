@@ -102,7 +102,6 @@ function bar(k: string, ci: number, focused: boolean, handlers: Handlers, ctx: R
   const what = win ? 'window' : 'thread';
   ctl.appendChild(ctlBtn('←', `move this ${what} back into the stack on the left`, () => handlers.moveLeft(k), ci === 0));
   ctl.appendChild(ctlBtn('→', `move this ${what} to its own pane on the right`, () => handlers.moveRight(k)));
-  ctl.appendChild(ctlBtn('↓', `move this ${what} to its own pane below`, () => handlers.moveBelow(k)));
   ctl.appendChild(ctlBtn('✕', `close this ${what}`, () => handlers.close(k)));
   b.appendChild(ctl);
   return b;

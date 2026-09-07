@@ -134,20 +134,6 @@ export function moveRight(ws: Workspace, k: string): void {
   ws.columns.splice(Math.min(insertAt, ws.columns.length), 0, { regions: [newRegion([k])] });
 }
 
-export function moveBelow(ws: Workspace, k: string): void {
-  const at = locate(ws, k);
-  if (!at) return;
-  at.region.wins.splice(at.idx, 1);
-  if (at.region.focus >= at.region.wins.length) at.region.focus = at.region.wins.length - 1;
-  let regionRemoved = false;
-  if (!at.region.wins.length) {
-    at.col.regions.splice(at.ri, 1);
-    regionRemoved = true;
-  }
-  const insertAt = regionRemoved ? at.ri : at.ri + 1;
-  at.col.regions.splice(Math.min(insertAt, at.col.regions.length), 0, newRegion([k]));
-}
-
 export function focusWindow(ws: Workspace, k: string): Region | null {
   const at = locate(ws, k);
   if (!at) return null;

@@ -138,7 +138,6 @@ export interface Handlers {
   threadMore: (id: string) => void;
   moveLeft: (id: string) => void;
   moveRight: (id: string) => void;
-  moveBelow: (id: string) => void;
   close: (id: string) => void;
   // preferences
   setTheme: (t: Theme) => void;

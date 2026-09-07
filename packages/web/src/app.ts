@@ -24,7 +24,7 @@ import { renderKarmaField, renderInvitesRow } from './view/profile';
 import type { Mark, Flight } from './view/card';
 import type { YourVouch } from './view/author';
 import {
-  newWorkspace, openWindow, closeWindow, moveLeft, moveRight, moveBelow, focusWindow, openSet,
+  newWorkspace, openWindow, closeWindow, moveLeft, moveRight, focusWindow, openSet,
   type Origin, type Region,
 } from './model/workspace';
 import {
@@ -192,7 +192,6 @@ export class App {
       threadMore: (id) => void this.threadMore(id),
       moveLeft: (id) => this.structural(() => moveLeft(this.state.workspace, id)),
       moveRight: (id) => this.structural(() => moveRight(this.state.workspace, id)),
-      moveBelow: (id) => this.structural(() => moveBelow(this.state.workspace, id)),
       close: (id) => this.closeWindow(id),
       setTheme: (t) => this.changeTheme(t),
       setIdTint: (m) => this.changeIdTint(m),
