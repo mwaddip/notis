@@ -550,15 +550,18 @@ header .spacer { flex: 1 1 auto; }
 /* One column: below the breakpoint the feed and every column are members of the
    workspace scroller, each a screen wide, the feed first; .panes has no box so
    nothing but the columns is a member. A member's content is capped at the feed's
-   width and centred, the leftover as symmetric gutters — the inert space a portrait
-   tablet gets back and a phone cannot have (WEB_INTERFACE → The workspace,
-   HOUSE_STYLE → Spacing). The empty panel is not rendered — nothing lies right of
-   the feed. The breakpoint is ONE_COLUMN_MAX_PX in app.ts, pinned equal by
-   style.test.ts. */
+   width and centred, the leftover its symmetric gutters, never under 16px so a
+   phone keeps a margin and a portrait tablet gets its inert space back
+   (WEB_INTERFACE → The workspace, HOUSE_STYLE → Spacing). The empty panel is not
+   rendered — nothing lies right of the feed. The breakpoint is ONE_COLUMN_MAX_PX
+   in app.ts, pinned equal by style.test.ts. */
 @media (max-width: 955px) {
   header { padding: 16px; }
   .workspace { gap: 0; padding: 0; overflow-x: auto; scroll-snap-type: x mandatory; }
-  .panes { display: contents; }
-  .feed, .col { flex: 0 0 100%; padding: 0 max(0px, calc((100% - 660px) / 2)); }
+  .panes { display: contents; min-width: 0; }
+  /* A member has no floor of its own — it is the screen's width; its gutter is the
+     leftover but never under the 16px floor, so a card never touches the edge and
+     sits on the header's inset (WEB_INTERFACE → The workspace). */
+  .feed, .col { flex: 0 0 100%; min-width: 0; padding: 0 max(var(--gutter), calc((100% - 660px) / 2)); }
   .empty { display: none; }
 }
