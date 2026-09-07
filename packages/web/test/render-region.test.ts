@@ -94,3 +94,60 @@ describe('renderRegion isolation', () => {
     expect(region2After.querySelector('.region-body')).toBe(region2BodyBefore);
   });
 });
+
+interface BarDrive {
+  loadFeed(): Promise<void>;
+  openThread(id: string, origin: { from: 'feed' } | { from: 'pane'; ci: number }): void;
+  onWidthClassChange(matches: boolean): void;
+}
+
+async function mountBars(): Promise<{ panes: HTMLElement; drive: BarDrive }> {
+  // A prior test in this file saved a layout; mount() restores it, so clear it to
+  // start from an empty workspace.
+  try { localStorage.clear(); } catch { /* private mode */ }
+  const appbar = document.createElement('div');
+  const feed = document.createElement('section'); feed.id = 'feed';
+  const panes = document.createElement('section'); panes.id = 'panes';
+  document.body.append(appbar, feed, panes);
+  const app = new App(fakeApi());
+  app.mount(appbar, feed, panes);
+  const drive = app as unknown as BarDrive;
+  await drive.loadFeed();
+  await flush();
+  return { panes, drive };
+}
+const ctlGlyphs = (bar: Element): (string | null)[] => [...bar.querySelectorAll('.ctl')].map((c) => c.textContent);
+const right = (bar: Element): HTMLButtonElement => bar.querySelector('[aria-label*="its own pane on the right"]')!;
+const left = (bar: Element): HTMLButtonElement => bar.querySelector('[aria-label*="into the stack on the left"]')!;
+
+describe('the bar by class', () => {
+  it('carries ↻ ← → ✕ at tiling, ← disabled at ci 0 and → disabled on a window alone in its column', async () => {
+    const { panes, drive } = await mountBars();
+    drive.openThread(P1, { from: 'feed' }); // col0 = [P1]
+    await flush();
+    drive.openThread(P2, { from: 'feed' }); // col0 = [P1, P2] — a two-window stack
+    await flush();
+    drive.openThread(R1, { from: 'pane', ci: 0 }); // col1 = [R1] — alone
+    await flush();
+
+    const cols = panes.querySelectorAll('.col');
+    expect(cols.length).toBe(2);
+    // col0 (two windows): ← disabled at ci 0, → enabled.
+    const bar0 = cols[0]!.querySelector('.bar')!;
+    expect(ctlGlyphs(bar0)).toEqual(['↻', '←', '→', '✕']);
+    expect(left(bar0).disabled).toBe(true);
+    expect(right(bar0).disabled).toBe(false);
+    // col1 (one window): → disabled — the move would change nothing.
+    expect(right(cols[1]!.querySelector('.bar')!).disabled).toBe(true);
+  });
+
+  it('carries ↻ ✕ at one column', async () => {
+    const { panes, drive } = await mountBars();
+    drive.openThread(P1, { from: 'feed' });
+    await flush();
+    drive.openThread(P2, { from: 'feed' }); // col0 = [P1, P2]
+    await flush();
+    drive.onWidthClassChange(true); // the media query crosses the breakpoint
+    expect(ctlGlyphs(panes.querySelector('.col .bar')!)).toEqual(['↻', '✕']);
+  });
+});

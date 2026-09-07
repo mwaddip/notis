@@ -108,15 +108,14 @@ export function moveLeft(ws: Workspace, k: string): void {
 export function moveRight(ws: Workspace, k: string): void {
   const at = locate(ws, k);
   if (!at) return;
+  // A window alone in its column has nowhere to pop to: the move would remove the
+  // column and re-create it, the same shape under a new uid, so it changes nothing
+  // and does nothing — the bar renders → disabled in that case
+  // (WEB_INTERFACE → The workspace).
+  if (at.column.wins.length === 1) return;
   at.column.wins.splice(at.idx, 1);
   if (at.column.focus >= at.column.wins.length) at.column.focus = at.column.wins.length - 1;
-  let colRemoved = false;
-  if (!at.column.wins.length) {
-    ws.columns.splice(at.ci, 1);
-    colRemoved = true;
-  }
-  const insertAt = colRemoved ? at.ci : at.ci + 1;
-  ws.columns.splice(Math.min(insertAt, ws.columns.length), 0, newColumn([k]));
+  ws.columns.splice(at.ci + 1, 0, newColumn([k]));
 }
 
 export function focusWindow(ws: Workspace, k: string): Column | null {

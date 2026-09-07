@@ -54,6 +54,17 @@ describe('workspace move controls', () => {
     moveLeft(ws, A);
     expect(serialise(ws)).toBe(A);
   });
+
+  it('→ is a no-op on a window alone in its column, keeping its column uid', () => {
+    const ws = newWorkspace();
+    openWindow(ws, A, { from: 'feed' });
+    openWindow(ws, B, { from: 'pane', ci: 0 }); // A | B — B alone in column 1
+    const uidBefore = locate(ws, B)!.column.uid;
+    moveRight(ws, B);
+    expect(serialise(ws)).toBe(`${A}|${B}`);
+    // The move changes nothing, so the column is not rebuilt under a new uid.
+    expect(locate(ws, B)!.column.uid).toBe(uidBefore);
+  });
 });
 
 describe('workspace close', () => {

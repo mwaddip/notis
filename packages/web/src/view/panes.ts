@@ -55,7 +55,7 @@ function threadLabel(k: string, ctx: RenderCtx): BarLabel {
   return { authorKey: root.author, excerpt: root.content ?? 'content not on this node yet', replyCount: t.descendantCount, nested };
 }
 
-function bar(k: string, ci: number, focused: boolean, handlers: Handlers, ctx: RenderCtx): HTMLElement {
+function bar(k: string, ci: number, focused: boolean, lone: boolean, handlers: Handlers, ctx: RenderCtx): HTMLElement {
   const win = isWin(k);
   const b = el('div', 'bar' + (focused ? ' focused' : '') + (win ? ' win' : ''));
 
@@ -100,9 +100,17 @@ function bar(k: string, ci: number, focused: boolean, handlers: Handlers, ctx: R
   b.appendChild(label);
 
   const what = win ? 'window' : 'thread';
-  ctl.appendChild(ctlBtn('←', `move this ${what} back into the stack on the left`, () => handlers.moveLeft(k), ci === 0));
-  ctl.appendChild(ctlBtn('→', `move this ${what} to its own pane on the right`, () => handlers.moveRight(k)));
-  ctl.appendChild(ctlBtn('✕', `close this ${what}`, () => handlers.close(k)));
+  if (ctx.oneColumn) {
+    // ↻ ✕ at one column — ← and → arrange columns, and a phone reader has one
+    // screen at a time (WEB_INTERFACE → The workspace).
+    ctl.appendChild(ctlBtn('✕', `close this ${what}`, () => handlers.close(k)));
+  } else {
+    ctl.appendChild(ctlBtn('←', `move this ${what} back into the stack on the left`, () => handlers.moveLeft(k), ci === 0));
+    // → is disabled on a window alone in its column, where the move would change
+    // nothing, as ← is in the leftmost column (WEB_INTERFACE → The workspace).
+    ctl.appendChild(ctlBtn('→', `move this ${what} to its own pane on the right`, () => handlers.moveRight(k), lone));
+    ctl.appendChild(ctlBtn('✕', `close this ${what}`, () => handlers.close(k)));
+  }
   b.appendChild(ctl);
   return b;
 }
@@ -272,7 +280,8 @@ export function renderRegionElement(column: Column, ci: number, handlers: Handle
   regionEl.dataset['uid'] = String(column.uid);
 
   const bars = el('div', 'bars');
-  column.wins.forEach((k, i) => bars.appendChild(bar(k, ci, i === column.focus, handlers, ctx)));
+  const lone = column.wins.length === 1;
+  column.wins.forEach((k, i) => bars.appendChild(bar(k, ci, i === column.focus, lone, handlers, ctx)));
   regionEl.appendChild(bars);
 
   if (column.report) regionEl.appendChild(reportNode(column.report));
