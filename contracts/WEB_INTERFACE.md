@@ -210,8 +210,10 @@ at the floor no longer fit — and the client reads the same number in one media
 differs by class (below) follows one value. Both scrollers snap to whole columns; a swipe is the browser's own
 scrolling and the page adds no gesture. The widths: the feed `flex: 0 1 660px` and the panes `flex: 1 1 0`,
 each with a 450px floor — the least width at which a 1024px landscape tablet holds the feed and one pane; the
-columns share the panes' width in equal parts, as many of at least the floor as fit; at one column a member's
-content is capped at 660px and centred, the leftover its gutters. The gutters are
+columns share the panes' width in equal parts, as many of at least the floor as fit; at one column a member is
+the screen's width with no floor of its own, its content capped at 660px and centred, the leftover its
+gutters and never less than the gutter floor — 16px on a phone, so a card never touches the screen's edge and
+sits on the header's own inset. The gutters are
 `clamp(16px, (100vw − 1184px) / 2, 48px)` — the full inert gutter where the feed at its cap and one 500px
 column fit inside it, relaxed below (`HOUSE_STYLE → Spacing`) — and the header's side padding is the same
 expression.
