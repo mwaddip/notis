@@ -120,7 +120,7 @@ describe('the header at one column', () => {
     (app as unknown as WidthDrive).onWidthClassChange(true); // cross the breakpoint
 
     // No word buttons at one column — the two controls are glyphs
-    // (WEB_INTERFACE → The workspace → "What differs at one column").
+    // (WEB_INTERFACE → The workspace → "What differs at one column, and nothing else does").
     expect(appbar.querySelectorAll('.theme-btn').length).toBe(0);
 
     // The profile control is a person glyph, the theme control the moon (Sand) or
