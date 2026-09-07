@@ -41,7 +41,10 @@ and the **responsive workspace** (`WEB_INTERFACE → The workspace`): a column i
 screen shows K columns of the strip, K from the width, the feed pinned at two or more and a member of the
 strip below 955px, where a phone shows one screen at a time; the view moves to the column acted on by an
 instant scroll; the header's `‹` `›`; the one-column bar `↻ ✕`; hit size follows `pointer: coarse` and every
-hover rule sits under `hover: hover`.
+hover rule sits under `hover: hover`. **On a phone the header's arrows take the strip's glyph and never
+shrink, and its two controls are a person and a sun or moon** (`src/view/glyphs.ts`, faceted polygons in the
+house technique, `HOUSE_STYLE → Illustration`) — the two icons the interface carries; iconography opens
+nowhere else.
 
 - **Owns:** `packages/web/*` — its own source, tests, build config and static assets.
 - **Does NOT own:** any other package, `contracts/`, `prompts/`, or `packages/node/public/index.html`
