@@ -170,6 +170,83 @@ one.
 - **The feed's rows are posts and withdrawn markers only.** The client filters the withdrawn ones out,
   which costs it rows from a page and is the second reason paging follows `next`.
 
+## The workspace
+
+> ⚠ **AHEAD OF CODE (2026-09-07)** — this section states the rule the responsive-workspace unit implements.
+> Until its commits land, the client renders columns of regions with a `↓` control, reads no viewport width,
+> scrolls the view to no column, and sizes every control for a mouse; the word *region* elsewhere in this
+> contract reads *column* once they do.
+
+**The workspace is a strip of columns, and a column is a stack of windows.** `workspace := column+`,
+`column := window+`. A column shows every window's title bar in a fixed block at the top, then the body of the
+one focused; focusing another swaps the body and no bar moves. A thread is one kind of window; `@profile`,
+`@author:<key>` and `@posts:<key>` are the others (→ The profile window, → The author window). **The
+arrangement is text** — `#r1,r2|r5`: `,` stacks windows in a column, `|` starts the next column — persisted
+under `notis.layout`, shown in the profile's `arrangement` row, and `serialise` and `parse` are inverses over
+it. A stored `/` parses as a `,`, the stacks it separated joining in order — the courtesy the parser extends to
+the retired `@settings` — and is never written.
+
+**One placement rule.** Opening targets the column immediately right of the surface the press came from — the
+feed and the header sit left of column 0 — and creates it only if it is not already there, joining that
+column's stack otherwise. An open window is raised, never duplicated. Reuse is what keeps columns from
+multiplying as the reader drills; only `→` adds one.
+
+**The strip is a card's only thread-opening control, and it carries state.** An opened post stays in the feed:
+its content fades to `inkMute`, the last stop meeting the text floor, and its strip fills, so nothing below it
+reflows (`HOUSE_STYLE → Motion`). A press on an open card's strip raises the thread rather than opening a
+second copy, which makes the strip the way a reader finds where a thread went.
+
+**The bar carries `↻ ← → ✕`, and its geometry never shifts.** `↻` refreshes the window and reports what it
+did; `→` pops the window out of its stack into a new column immediately right; `←` folds it back into the
+stack on its left, the inverse, so a split and a merge return the reader to where they began; `✕` closes it. A
+control that does not apply renders disabled, never absent — `←` in the leftmost column, `→` on a window alone
+in its column, where the move would change nothing — so every bar in a width class shares one geometry.
+
+**The screen shows K columns of the strip, K from the width, and the markup does not change with K.** The
+strip is the feed, then column 0, then column 1. At two or more columns the feed is pinned beside a horizontal
+scroller holding the columns; at one column the feed and every column are members of one scroller, each the
+screen's width, the feed first. The one-column line is `max-width: 955px` — below it the feed and one column
+at the floor no longer fit — and the client reads the same number in one media query, so everything that
+differs by class (below) follows one value. Both scrollers snap to whole columns; a swipe is the browser's own
+scrolling and the page adds no gesture. The widths: the feed `flex: 0 1 660px` and the panes `flex: 1 1 0`,
+each with a 450px floor — the least width at which a 1024px landscape tablet holds the feed and one pane; the
+columns share the panes' width in equal parts, as many of at least the floor as fit; at one column a member's
+content is capped at 660px and centred, the leftover its gutters. The gutters are
+`clamp(16px, (100vw − 1184px) / 2, 48px)` — the full inert gutter where the feed at its cap and one 500px
+column fit inside it, relaxed below (`HOUSE_STYLE → Spacing`) — and the header's side padding is the same
+expression.
+
+**The view moves to the column the reader acted on, by an instant scroll.** An open, a raise, `←` or `→`
+brings the window's column into view; a `✕` that empties a column shows the column on its left, the feed when
+none. A structural rebuild preserves both scrollers' horizontal position before the move. No smooth scroll: a
+native one's duration is the browser's and not held under the 150ms ceiling, and a jump in direct response to
+the reader's own press is not motion (`HOUSE_STYLE → Motion`).
+
+**The header carries `‹` at its left edge and `›` at its right, at every width.** Each scrolls the view one
+column that way; each is hidden with its space reserved while no column lies that way, so the header's
+geometry never shifts and a session with everything in view shows neither. The label names what the control
+reaches — *show the feed* when the feed is the next member on the left, else *show the column to the left*;
+*show the column to the right* — and the glyph stands alone, typographic like the bar's
+(`HOUSE_STYLE → Deliberately not decided`). A gesture is never the only route, as hover is not
+(`HOUSE_STYLE → Accessibility contract`).
+
+**What differs at one column, and nothing else does:** the bar carries `↻ ✕` — `←` and `→` arrange columns,
+and a phone reader has one screen at a time; the header's prefix is the bar's length, `shortHex(key, 10)`; the
+empty panel is not rendered, since nothing lies right of the feed. Words stay words: `dark`, `light`, `profile`
+and the prefix fit a 390px header whole, and a 360px one at the bar's length.
+
+**A window's load updates its bar in every column holding it**, and its body only where it is focused, so a
+selection or a scroll in another window's body survives and a restored stack shows every excerpt as its thread
+lands.
+
+**Hit size follows the pointer and hover applies where hover exists** (`HOUSE_STYLE → Interaction`), with
+this surface's numbers: under `(pointer: coarse)` every control's hit box is at least 36px tall and a bar's or
+the header's control 44px wide; the meta row's, the stage line's and the karma field's fixed line box is 36px;
+the strip and the bar label keep their size; a text field is 16px, since WebKit zooms the page on focusing a
+smaller one; glyphs and words are unchanged. Every `:hover` rule sits under `(hover: hover)`. The viewport
+declares `viewport-fit=cover` and `interactive-widget=resizes-content`, and the header and the gutters respect
+the safe-area insets.
+
 ## The withdrawn state
 
 The one absence state, on screen in ordinary use, and no other social interface has it.
