@@ -189,10 +189,6 @@ the window and it is not an error.
 
 ## Content — what a card renders, and what the composer writes
 
-> ⚠ **AHEAD OF CODE (2026-09-07)** — this section states the rule the content-rendering unit implements. Until
-> its commits land, a card renders content as one text node, the composer has no type control, and no italic
-> face is served.
-
 A post's content is text the node records and never reads (`TYPES_INTERFACE → Post typing and profiles`).
 What a card shows for it is this client's rule, stated here; another client may render the same convention,
 more of it, or none.
@@ -217,12 +213,13 @@ is text.
 | escape | `\` before one of `\ * [ ] ( ) ! #` | that character as text |
 
 The parenthesised span of a link or image runs to its matching `)` — parentheses inside it nest — and holds
-no whitespace; whitespace before the closer makes the whole construct text. A `[text](url)` link is a link
-whatever its URL ends in.
+no whitespace; whitespace before the closer fails the construct. **A failed construct's characters are text and
+the scan continues past them**, so a bare URL among them still links — `[](https://x)` shows `[](` and `)` as
+text around a link. A `[text](url)` link is a link whatever its URL ends in.
 
 **The URL gate.** One function serves the renderer and the composer: the string parses as a URL, its scheme
 is `http` or `https`, and it holds no whitespace. A construct whose URL fails the gate is text,
-`[text](javascript:…)` included. The `href` is the author's string, never a normalised form; the host shown
+`[text](javascript:…)` included — its characters are, and the scan continues past them. The `href` is the author's string, never a normalised form; the host shown
 is the parser's host — ASCII, so a lookalike domain shows as punycode — and it renders in mono
 (`HOUSE_STYLE → Typography`).
 
@@ -234,11 +231,12 @@ and nothing else but whitespace, renders as the link card. For a link: the words
 beneath them the host as the `<a>` — the only control that opens the target. For a bare URL: the URL's path as
 the text (nothing when it is `/`), the host beneath. For an image: the description as the text (nothing when
 it is blank), the image control beneath; the press replaces the control with the image and the description
-stays, as its `alt` too. A link inside longer text renders inline.
+stays, as its `alt` too — *image from* the host when it is blank. A link inside longer text renders inline.
 
 **An image loads on the reader's press.** Before it, no `img` element exists for the post; the control names
 the host. The press replaces the control with the image in place — nothing else on the page changes — capped
-at the card's width and 480px high. The expanded state is kept per post and image for the session, so a
+at the card's width and 480px high, carrying the referrer policy and an `alt`: the description, or *image
+from* the host when it is blank. The expanded state is kept per post and image for the session, so a
 region re-render keeps it. A load that fails says so in place and offers the control again.
 
 **A newline is a line break, a blank line a paragraph.** A card reads as the textarea did.
