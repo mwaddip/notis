@@ -220,18 +220,29 @@ none. A structural rebuild preserves both scrollers' horizontal position before 
 native one's duration is the browser's and not held under the 150ms ceiling, and a jump in direct response to
 the reader's own press is not motion (`HOUSE_STYLE → Motion`).
 
+> ⚠ **AHEAD OF CODE (2026-09-07, the phone header)** — the one-column sentences below (the arrows absent rather
+> than hidden, the strip's glyph, no shrinking, the profile and theme glyphs, the 8px gap) state what the
+> phone-header unit implements; until its commits land the one-column header is the tiling header at 16px gaps,
+> its arrows 13px in muted ink and shrinking under the prefix.
+
 **The header carries `‹` at its left edge and `›` at its right, at every width.** Each scrolls the view one
-column that way; each is hidden with its space reserved while no column lies that way, so the header's
-geometry never shifts and a session with everything in view shows neither. The label names what the control
+column that way. At tiling each is hidden with its space reserved while no column lies that way, so the
+header's geometry never shifts and a session with everything in view shows neither; **at one column each is
+absent while no column lies that way** — the header is per screen there and changes only when the screen
+does, by the reader's own act — **takes the strip's glyph**, 20px at weight 600 in `ink`, the way back drawn as
+the way in, **and never shrinks** (`flex: 0 0 44px`). The label names what the control
 reaches — *show the feed* when the feed is the next member on the left, else *show the column to the left*;
 *show the column to the right* — and the glyph stands alone, typographic like the bar's
 (`HOUSE_STYLE → Deliberately not decided`). A gesture is never the only route, as hover is not
 (`HOUSE_STYLE → Accessibility contract`).
 
 **What differs at one column, and nothing else does:** the bar carries `↻ ✕` — `←` and `→` arrange columns,
-and a phone reader has one screen at a time; the header's prefix is the bar's length, `shortHex(key, 10)`; the
-empty panel is not rendered, since nothing lies right of the feed. Words stay words: `dark`, `light`, `profile`
-and the prefix fit a 390px header whole, and a 360px one at the bar's length.
+and a phone reader has one screen at a time; the profile control and the theme control are glyphs at the
+header's control size — a person (→ The profile window) and the sun or moon
+(`HOUSE_STYLE → Colour → "On a phone the theme control is a sun or a moon"`); the header's gap is 8px; the
+empty panel is not rendered, since nothing lies right of the feed. The phone header — `‹`, the mark and the
+wordmark, the person, the sun or moon, `›` — fits a 360px screen at 319px with every control 44px wide and none
+shrinking; `dark`, `light`, `profile` and the prefix stay words wherever the header is the tiling one.
 
 **A window's load updates its bar in every column holding it**, and its body only where it is focused, so a
 selection or a scroll in another window's body survives and a restored stack shows every excerpt as its thread
@@ -460,7 +471,10 @@ withdrawn card, the shape they asked for (→ The withdraw control).
 
 ### The profile window *(identity interface)*
 
-**One header control, at the right of the app bar beside the theme toggle.** With no identity it reads
+**One header control, at the right of the app bar beside the theme toggle.** At one column both are glyphs
+(→ The workspace): the control is a person drawn in the house technique (`HOUSE_STYLE → Illustration`) as
+inline SVG in `currentColor`, the same for every reader and for no reader — the window says who — with the
+label the word carries elsewhere; no identity colour and no avatar, as below. With no identity it reads
 `profile`; with one, the key prefix in mono — `shortHex(pubKeyHex, 16)`, the card's own rule, so an
 identity reads the same way in the header and on a card. No avatar and no identity colour: nothing may
 invite a reader to check identity by colour (`HOUSE_STYLE → Identity colour`). It opens `@profile` in the
