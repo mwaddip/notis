@@ -266,9 +266,7 @@ export class App {
     // follow the active scroller's position and the width class.
     this.mql = window.matchMedia(`(max-width: ${ONE_COLUMN_MAX_PX}px)`);
     this.oneColumn = this.mql.matches;
-    if (typeof this.mql.addEventListener === 'function') {
-      this.mql.addEventListener('change', (e) => this.onWidthClassChange(e.matches));
-    }
+    this.mql.addEventListener('change', (e) => this.onWidthClassChange(e.matches));
     for (const s of [this.panesEl, this.workspaceEl]) {
       s?.addEventListener('scroll', () => this.updateHeaderArrows(), { passive: true });
     }
@@ -455,15 +453,30 @@ export class App {
     return this.oneColumn ? this.workspaceEl : this.panesEl;
   }
 
-  /** ‹ / › move the view one column along the active scroller, by an instant
-   *  scroll (WEB_INTERFACE → The workspace). A member is one screen at one column,
-   *  a column plus its gap at tiling. */
+  /** The scroller's members in strip order — the feed and the columns at one
+   *  column, the columns alone at tiling (the feed is pinned outside)
+   *  (WEB_INTERFACE → The workspace). */
+  private orderedMembers(): HTMLElement[] {
+    const cols = [...this.panesEl.querySelectorAll<HTMLElement>('.col')];
+    return this.oneColumn ? [this.feedEl, ...cols] : cols;
+  }
+
+  /** ‹ / › move the view one column, by the one mechanism every view move uses:
+   *  scrollIntoView the member adjacent to the one at the view's left edge, exactly
+   *  as an open does (WEB_INTERFACE → The workspace). */
   private scrollByOneColumn(dir: -1 | 1): void {
     const scroller = this.activeScroller();
-    if (!scroller || typeof scroller.scrollBy !== 'function') return;
-    const firstCol = this.panesEl.querySelector<HTMLElement>('.col');
-    const step = this.oneColumn || !firstCol ? scroller.clientWidth : firstCol.offsetWidth + 16;
-    scroller.scrollBy({ left: dir * step });
+    if (!scroller) return;
+    const members = this.orderedMembers();
+    if (members.length === 0) return;
+    const sLeft = scroller.getBoundingClientRect().left;
+    let cur = 0;
+    let best = Infinity;
+    members.forEach((m, i) => {
+      const d = Math.abs(m.getBoundingClientRect().left - sLeft);
+      if (d < best) { best = d; cur = i; }
+    });
+    members[cur + dir]?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
     this.updateHeaderArrows();
   }
 
@@ -474,7 +487,7 @@ export class App {
   private scrollColumnIntoView(uid: number): void {
     const region = this.panesEl.querySelector<HTMLElement>(`.region[data-uid="${uid}"]`);
     const col = region?.closest<HTMLElement>('.col');
-    if (col && typeof col.scrollIntoView === 'function') col.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+    col?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
     this.updateHeaderArrows();
   }
 
@@ -739,7 +752,7 @@ export class App {
     if (emptiedCi > 0) {
       this.scrollColumnIntoView(this.state.workspace.columns[emptiedCi - 1]!.uid);
     } else if (emptiedCi === 0) {
-      if (typeof this.feedEl.scrollIntoView === 'function') this.feedEl.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+      this.feedEl.scrollIntoView({ inline: 'nearest', block: 'nearest' });
       this.updateHeaderArrows();
     }
   }

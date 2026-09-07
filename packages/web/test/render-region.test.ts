@@ -104,7 +104,7 @@ interface BarDrive {
 async function mountBars(): Promise<{ panes: HTMLElement; drive: BarDrive }> {
   // A prior test in this file saved a layout; mount() restores it, so clear it to
   // start from an empty workspace.
-  try { localStorage.clear(); } catch { /* private mode */ }
+  localStorage.clear();
   const appbar = document.createElement('div');
   const feed = document.createElement('section'); feed.id = 'feed';
   const panes = document.createElement('section'); panes.id = 'panes';
