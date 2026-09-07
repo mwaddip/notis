@@ -7,8 +7,9 @@ the composer for a root and a reply, and like — the **identity interface's fir
 tab, the reader's own posts marked, the faucet karma step — the **membership actions** — the
 identity display with the vouch mark, the author window and the author-posts window, vouch and
 unvouch, invite from the profile — the **author's own controls' first unit** — withdraw from the
-reader's own card — and **content rendering** — the grammar a card renders from content, and the composer's
-`link` and `image` types — are implemented
+reader's own card — **content rendering** — the grammar a card renders from content, and the composer's
+`link` and `image` types — and the **responsive workspace** — K visible columns from the width, one column on
+a phone, touch sizes by the pointer — are implemented
 **Protocol version:** read from the node, never held — see Invariants
 
 
@@ -55,7 +56,7 @@ construction. It **does** hash — and it does so with `@dagsocial/types`, the s
 never a copy. That is what keeps it from being a further implementation of anything
 consensus-critical, and it is why no mirror test applies to it.
 
-Owns: the feed, threads, the tiling workspace of columns and regions, both themes, the identity
+Owns: the feed, threads, the tiling workspace of columns, both themes, the identity
 spine, and the client's preference rows — in the `@profile` window (→ The profile window). Reads posts,
 threads and node status. Sends nothing — every write is the write surface's, through its own module.
 
@@ -171,11 +172,6 @@ one.
   which costs it rows from a page and is the second reason paging follows `next`.
 
 ## The workspace
-
-> ⚠ **AHEAD OF CODE (2026-09-07)** — this section states the rule the responsive-workspace unit implements.
-> Until its commits land, the client renders columns of regions with a `↓` control, reads no viewport width,
-> scrolls the view to no column, and sizes every control for a mouse; the word *region* elsewhere in this
-> contract reads *column* once they do.
 
 **The workspace is a strip of columns, and a column is a stack of windows.** `workspace := column+`,
 `column := window+`. A column shows every window's title bar in a fixed block at the top, then the body of the
@@ -316,7 +312,7 @@ stays, as its `alt` too — *image from* the host when it is blank. A link insid
 the host. The press replaces the control with the image in place — nothing else on the page changes — capped
 at the card's width and 480px high, carrying the referrer policy and an `alt`: the description, or *image
 from* the host when it is blank. The expanded state is kept per post and image for the session, so a
-region re-render keeps it. A load that fails says so in place and offers the control again.
+column re-render keeps it. A load that fails says so in place and offers the control again.
 
 **A newline is a line break, a blank line a paragraph.** A card reads as the textarea did.
 
@@ -675,7 +671,7 @@ box, its `change` the returned box under its predicted id, its `expiresAtHeight`
 renders `submitted` from the entry. **Landed:** the entry's `GET /posts/:id` answered the withdrawn marker,
 and the client replaces the row in place with what it fetched — in every open thread the post becomes the
 withdrawn card at its depth (the marker's `parentRefs`, `NODE_INTERFACE → Withdrawal`), the feed and any
-`@posts:` window drop the row, the live-post index forgets it — and re-renders only the regions holding
+`@posts:` window drop the row, the live-post index forgets it — and re-renders only the columns holding
 it; no thread and no feed is refreshed. **The client's own submission of the post goes the same way:** a
 landed root submission leaves the feed as the row does, and a landed reply submission becomes the
 withdrawn card at its depth in every open thread that holds its parent — the marker joins that
@@ -685,7 +681,7 @@ replaces it with the node's row, and a withdrawal landing is the one event that 
 This is the one landing that changes a card's shape (→ The wallet, `HOUSE_STYLE → Motion`).
 **Expired:** the stage line reads *"no block took this by height N."* with `try
 again`, which rebuilds from the current view and submits anew; the entry is removed and the box returns to
-the spendable view. **Rejected:** the region's report line reads *"withdraw rejected: …"* with the node's
+the spendable view. **Rejected:** the column's report line reads *"withdraw rejected: …"* with the node's
 refusal in the voice register — its known refusals mapped to sentences, as the like's and the vouch's
 are (`HOUSE_STYLE → Voice`) — and the control returns; a transport failure reads *"withdraw rejected:
 can't reach the node right now."* and leaves nothing pending. A 2xx whose body carries no `expiresAtHeight` is a client

@@ -392,9 +392,6 @@ coarse pointer a control's hit box grows and its glyph and word do not; where ho
 rule applies, so a tap never leaves a control in its hover look. The sizes are each surface's
 (`WEB_INTERFACE → The workspace`).
 
-> ⚠ **AHEAD OF CODE (2026-09-07) on `@dagsocial/web`** — the responsive-workspace unit implements it; until
-> its commits land the client's 27 hover rules are unguarded and its in-row controls are 19–24px tall.
->
 > ⚠ **VIOLATED on `docs/site/*`** — its five hover rules are unguarded and its controls are the browser's
 > size. The demo UI keeps its own shell, interaction being outside its inclusion above.
 
