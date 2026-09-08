@@ -56,6 +56,8 @@ export interface CardOpts {
   onWithdraw?: ((id: string) => void) | null; // the confirm row's withdraw signs
   withdraw?: 'pending' | Flight | null;  // 'pending' from the ledger, else the transient flight in the slot
   canWithdraw?: boolean;                 // false → disabled with the reason as the title
+  // WEB_INTERFACE → Links
+  linkUrl?: string;
 }
 
 /** Compact absolute local time; the on-chain marker is the block height, this
@@ -401,6 +403,38 @@ function replyButton(id: string, opts: CardOpts): HTMLElement | null {
   return rb;
 }
 
+// WEB_INTERFACE → Links — after ↩ reply, the row's last control.
+function linkButton(opts: CardOpts, meta: HTMLElement): HTMLElement | null {
+  if (!opts.linkUrl) return null;
+  const url = opts.linkUrl;
+  let copied = false;
+  const lb = el('button', 'mini linkbtn');
+  lb.setAttribute('aria-label', 'copy this post\'s link');
+  lb.appendChild(el('span', null, 'link'));
+  lb.addEventListener('click', () => {
+    if (copied) return;
+    if (typeof navigator.clipboard?.writeText !== 'function') {
+      mountLinkFallback(url, meta);
+      return;
+    }
+    navigator.clipboard.writeText(url).then(
+      () => { copied = true; lb.textContent = 'copied'; },
+      () => mountLinkFallback(url, meta),
+    );
+  });
+  return lb;
+}
+
+function mountLinkFallback(url: string, meta: HTMLElement): void {
+  if (meta.parentElement?.querySelector('.card-link')) return;
+  const row = el('div', 'card-link');
+  const span = el('span', 'hex');
+  span.textContent = url;
+  row.appendChild(span);
+  row.appendChild(el('span', null, ' — copy it by hand'));
+  meta.insertAdjacentElement('afterend', row);
+}
+
 function inBlockNode(height: number): HTMLElement {
   const b = el('span', null);
   b.appendChild(document.createTextNode('in block '));
@@ -502,6 +536,8 @@ function livePostCard(post: PostJson, opts: CardOpts): HTMLElement {
       if (landed && post.blockHeight !== null) meta.appendChild(inBlockNode(post.blockHeight));
       const rb = replyButton(post.id, opts);
       if (rb) meta.appendChild(rb);
+      const lnk = linkButton(opts, meta);
+      if (lnk) meta.appendChild(lnk);
     }
     body.appendChild(meta);
   }
@@ -527,6 +563,8 @@ function withdrawnCard(row: WithdrawnJson, opts: CardOpts): HTMLElement {
   // deletion (WEB_INTERFACE → The write surface).
   const rb = replyButton(row.id, opts);
   if (rb) meta.appendChild(rb);
+  const lnk = linkButton(opts, meta);
+  if (lnk) meta.appendChild(lnk);
   body.appendChild(meta);
   card.appendChild(body);
   strip(row.id, opts, card); // there is something beneath — keep the control

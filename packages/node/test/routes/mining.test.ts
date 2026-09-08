@@ -389,6 +389,7 @@ function makeConfig(overrides?: Partial<Config>): Config {
     nodeRole: 'miner',
     publicUrl: '/',
     faucetUrl: '',
+    webShellPath: '',
     miningSecret: '',
     orderingBlockPowTargetBits: 3072,
     bootstrapPeers: [],

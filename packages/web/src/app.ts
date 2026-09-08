@@ -1,6 +1,8 @@
 import { NodeClient, type Api } from './api/client';
 import type { PostJson, WithdrawnJson, FeedRow, PostResult, ThreadResult, KarmaResult, BondsResult } from './api/dto';
 import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE } from '@dagsocial/types';
+import type { Mode } from './mode';
+import type { Tabs } from './tabs';
 import { el, shortHex, preservingScroll } from './dom';
 import { contentHashHex } from './integrity';
 import { prefs, setTheme, setIdTint, setNode, setFaucet, writeStore, KEY_LAYOUT, type Theme, type IdTint } from './prefs';
@@ -25,7 +27,7 @@ import { renderKarmaField, renderInvitesRow } from './view/profile';
 import type { Mark, Flight } from './view/card';
 import type { YourVouch } from './view/author';
 import {
-  newWorkspace, openWindow, closeWindow, moveLeft, moveRight, focusWindow, openSet, locate,
+  newColumn, newWorkspace, openWindow, closeWindow, moveLeft, moveRight, focusWindow, openSet, locate,
   type Origin, type Column,
 } from './model/workspace';
 import {
@@ -142,6 +144,9 @@ export class App {
   // carry `none` when no column lies that way — space-reserved at tiling, absent at
   // one column.
   private oneColumn = false;
+  private standalone = false;
+  private base = '/';
+  private tabs: Tabs | null = null;
   private mql: MediaQueryList | null = null;
   private headerLeftArrow: HTMLElement | null = null;
   private headerRightArrow: HTMLElement | null = null;
@@ -182,7 +187,7 @@ export class App {
   private inviteFlight: Flight | null = null;
 
   // Every dependency is injectable so a test can drive the App over fakes.
-  constructor(client?: Api, writeClient?: WriteClient, identity?: AppIdentity, ledger?: PendingLedger) {
+  constructor(client?: Api, writeClient?: WriteClient, identity?: AppIdentity, ledger?: PendingLedger, tabs?: Tabs) {
     this.client = client ?? new NodeClient(() => prefs.node);
     this.writeClient = writeClient ?? new WriteClient(() => prefs.node);
     this.idm = identity ?? identitySingleton;
@@ -191,6 +196,7 @@ export class App {
     // rebuilds it at once through onChange (WEB_INTERFACE → "An identity change
     // takes effect at once").
     this.ledger = ledger ?? new PendingLedger(this.idm.current()?.pubKeyHex ?? null);
+    this.tabs = tabs ?? null;
     this.state = {
       feed: { posts: [], pending: [], next: null, report: null, olderReport: null, loaded: false, loading: false, error: null },
       threads: new Map(),
@@ -258,11 +264,26 @@ export class App {
 
   // Set the DOM refs and paint the initial shell. Split from `start` so a test
   // can mount and drive actions without the network boot.
-  mount(appbar: HTMLElement, feedEl: HTMLElement, panesEl: HTMLElement): void {
+  mount(appbar: HTMLElement, feedEl: HTMLElement, panesEl: HTMLElement, mode?: Mode): void {
     this.appbar = appbar;
     this.feedEl = feedEl;
     this.panesEl = panesEl;
     this.workspaceEl = panesEl.closest<HTMLElement>('.workspace');
+    if (mode) this.base = mode.base;
+    if (mode?.kind === 'standalone') {
+      this.standalone = true;
+      this.state.workspace = { columns: [newColumn([mode.id])] };
+      this.workspaceEl?.classList.add('standalone');
+      history.replaceState({ id: mode.id }, '', location.href);
+      // WEB_INTERFACE → The standalone thread — popstate re-roots without pushing.
+      window.addEventListener('popstate', (e) => {
+        if (!this.standalone) return;
+        const id = e.state?.id;
+        if (typeof id === 'string' && /^[0-9a-f]{64}$/i.test(id)) {
+          this.standaloneReroot(id);
+        }
+      });
+    }
     // One media query is the width class the header prefix and the panes read; its
     // change re-renders both (WEB_INTERFACE → The workspace). The header arrows
     // follow the active scroller's position and the width class.
@@ -275,7 +296,7 @@ export class App {
     window.addEventListener('resize', () => this.updateHeaderArrows());
     // An identity change takes effect at once (WEB_INTERFACE → The identity module).
     this.idm.onChange(() => this.onIdentityChange());
-    this.restoreLayout();
+    if (!this.standalone) this.restoreLayout();
     this.renderHeader();
     this.renderFeed();
     this.renderPanes();
@@ -285,9 +306,21 @@ export class App {
     this.startPoll();
   }
 
-  start(appbar: HTMLElement, feedEl: HTMLElement, panesEl: HTMLElement): void {
-    this.mount(appbar, feedEl, panesEl);
+  start(appbar: HTMLElement, feedEl: HTMLElement, panesEl: HTMLElement, mode?: Mode): void {
+    this.mount(appbar, feedEl, panesEl, mode);
     this.suppressHoverWhileScrolling();
+
+    // WEB_INTERFACE → The way into the workspace — the workspace tab claims the
+    // lock and listens for handovers.
+    if (!this.standalone && this.tabs) {
+      void this.tabs.claim().then(() => {
+        window.name = 'notis-workspace';
+      });
+      this.tabs.onOpen((id) => {
+        if (!this.tabs?.holds()) return;
+        this.openThread(id, { from: 'feed' });
+      });
+    }
 
     void this.loadFeed();
     // A restored arrangement names post ids that must be fetched, and one may
@@ -317,6 +350,9 @@ export class App {
   }
 
   private saveLayout(): void {
+    if (this.standalone) return;
+    // WEB_INTERFACE → The way into the workspace — only the lock holder writes.
+    if (this.tabs && !this.tabs.holds()) return;
     writeStore(KEY_LAYOUT, serialise(this.state.workspace));
   }
 
@@ -334,6 +370,7 @@ export class App {
       post: (id) => this.state.posts.get(id),
       arrangement: serialise(this.state.workspace),
       oneColumn: this.oneColumn,
+      standalone: this.standalone,
       writeEnabled: cur !== null,
       ownKey: cur?.pubKeyHex ?? null,
       composerFor: (parentId) => this.composers.get(composerKey(parentId))?.el ?? null,
@@ -360,6 +397,7 @@ export class App {
       inviteFlight: this.inviteFlight,
       withdrawState: (postId) => this.withdrawState(postId),
       canSignWithdraw: this.canSignWithdraw(),
+      linkUrl: (id) => new URL(this.base + 'p/' + id, location.href).href,
     };
   }
 
@@ -391,6 +429,11 @@ export class App {
   private renderHeader(): void {
     const bar = this.appbar;
     bar.textContent = '';
+
+    if (this.standalone) {
+      this.renderStandaloneHeader(bar);
+      return;
+    }
 
     // ‹ at the left edge scrolls the view one column that way. When no column lies
     // left it carries `none` — space-reserved at tiling, absent at one column
@@ -464,6 +507,50 @@ export class App {
     bar.appendChild(right);
 
     this.updateHeaderArrows();
+  }
+
+  // WEB_INTERFACE → The standalone thread — no arrows, no profile control.
+  private renderStandaloneHeader(bar: HTMLElement): void {
+    const brand = el('div', 'brand');
+    brand.innerHTML = '<svg class="mark" viewBox="0 0 1000 1000" aria-hidden="true"><use href="#mark-micro"></use></svg>';
+    brand.appendChild(el('h1', null, 'Notis'));
+    bar.appendChild(brand);
+    bar.appendChild(el('span', 'spacer'));
+
+    const wayIn = el('button', 'theme-btn', 'add to workspace');
+    wayIn.setAttribute('aria-label', 'add this thread to your workspace');
+    wayIn.addEventListener('click', () => this.wayIn());
+    bar.appendChild(wayIn);
+
+    const target: Theme = prefs.theme === 'dark' ? 'light' : 'dark';
+    if (this.oneColumn) {
+      const theme = el('button', 'hdr-glyph');
+      theme.setAttribute('aria-label', `switch to ${target} theme`);
+      theme.appendChild(target === 'dark' ? moonGlyph() : sunGlyph());
+      theme.addEventListener('click', () => this.changeTheme(target));
+      bar.appendChild(theme);
+    } else {
+      const cur = this.idm.current();
+      if (cur !== null) {
+        const prefix = el('span', 'hex hdr-prefix');
+        prefix.style.fontFamily = 'var(--mono)';
+        prefix.textContent = shortHex(cur.pubKeyHex, 16);
+        bar.appendChild(prefix);
+      }
+      const theme = el('button', 'theme-btn', target);
+      theme.setAttribute('aria-label', `switch to ${target} theme`);
+      theme.addEventListener('click', () => this.changeTheme(target));
+      bar.appendChild(theme);
+    }
+  }
+
+  // WEB_INTERFACE → The standalone thread — document.title is the author's prefix
+  // and Notis, set when the thread lands and on every re-root.
+  private updateStandaloneTitle(id: string): void {
+    const t = this.state.threads.get(id);
+    const root = t?.root;
+    if (!root) return;
+    document.title = shortHex(root.author, 16) + ' · Notis';
   }
 
   /** The active scroller: the workspace at one column (the feed and every column
@@ -541,6 +628,7 @@ export class App {
   }
 
   private renderFeed(): void {
+    if (this.standalone) return;
     this.withComposerFocus(() => {
       const top = this.feedEl.scrollTop;
       renderFeedInto(this.feedEl, this.state.feed, this.handlers, this.ctx());
@@ -624,6 +712,9 @@ export class App {
    *  a selection or a scroll in a body focused elsewhere survives and a restored
    *  stack shows every excerpt as its thread lands (WEB_INTERFACE → The workspace). */
   private renderThreadLoad(id: string): void {
+    if (this.standalone && this.state.workspace.columns[0]?.wins[0] === id) {
+      this.updateStandaloneTitle(id);
+    }
     this.state.workspace.columns.forEach((column, ci) => {
       if (!column.wins.includes(id)) return;
       if (column.wins[column.focus] === id) this.renderRegion(column.uid);
@@ -665,6 +756,7 @@ export class App {
   // -------------------------------------------------------------------------
 
   private async loadFeed(): Promise<void> {
+    if (this.standalone) return;
     const feed = this.state.feed;
     feed.loading = true;
     feed.error = null;
@@ -685,6 +777,7 @@ export class App {
   }
 
   private async refreshFeed(): Promise<void> {
+    if (this.standalone) return;
     const feed = this.state.feed;
     this.clearSettledFeed();
     await this.refreshTip(); // a ↻ re-reads the tip, so a held mark can re-enable
@@ -712,6 +805,7 @@ export class App {
   }
 
   private async loadOlder(): Promise<void> {
+    if (this.standalone) return;
     const feed = this.state.feed;
     if (feed.next === null) return;
     feed.loading = true;
@@ -732,11 +826,74 @@ export class App {
     this.renderFeed();
   }
 
+  // WEB_INTERFACE → The way into the workspace
+  private async wayIn(): Promise<void> {
+    const id = this.state.workspace.columns[0]?.wins[0];
+    if (!id || !this.tabs) {
+      this.toWorkspace(id ?? '');
+      return;
+    }
+    const elsewhere = await this.tabs.heldElsewhere();
+    if (elsewhere) {
+      this.tabs.announce(id);
+      const col = this.state.workspace.columns[0];
+      if (col) { col.report = 'added to your workspace'; this.renderPanes(); }
+      // WEB_INTERFACE → The way into the workspace — close only while the history
+      // holds one entry, so the page never tries and fails.
+      if (history.length === 1) window.close();
+    } else {
+      this.toWorkspace(id);
+    }
+  }
+
+  private toWorkspace(id: string): void {
+    this.standalone = false;
+    this.workspaceEl?.classList.remove('standalone');
+    this.restoreLayout();
+    if (id) openWindow(this.state.workspace, id, { from: 'feed' });
+    // WEB_INTERFACE → The way into the workspace — the lock is requested, never
+    // awaited; the arrangement persists once it is granted.
+    if (this.tabs) {
+      void this.tabs.claim().then(() => {
+        window.name = 'notis-workspace';
+        this.saveLayout();
+      });
+      this.tabs.onOpen((tid) => {
+        if (!this.tabs?.holds()) return;
+        this.openThread(tid, { from: 'feed' });
+      });
+    }
+    history.replaceState(null, '', this.base);
+    document.title = 'Notis';
+    this.renderHeader();
+    this.renderFeed();
+    this.renderPanes();
+    void this.loadFeed();
+    const at = id ? locate(this.state.workspace, id) : null;
+    if (at) this.scrollColumnIntoView(at.column.uid);
+    for (const wid of openSet(this.state.workspace)) {
+      if (!isWin(wid) && !this.threadLoaded(wid)) void this.fetchThread(wid);
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Window / workspace actions
   // -------------------------------------------------------------------------
 
+  private standaloneReroot(id: string): void {
+    this.state.workspace.columns[0]!.wins[0] = id;
+    if (!this.threadLoaded(id)) void this.fetchThread(id);
+    this.renderPanes();
+    this.updateStandaloneTitle(id);
+  }
+
   private openThread(id: string, origin: Origin): void {
+    if (this.standalone) {
+      if (this.state.workspace.columns[0]?.wins[0] === id) return;
+      this.standaloneReroot(id);
+      history.pushState({ id }, '', this.base + 'p/' + id);
+      return;
+    }
     const res = openWindow(this.state.workspace, id, origin);
     this.saveLayout();
     if (res.raised) {

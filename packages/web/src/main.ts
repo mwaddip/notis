@@ -1,5 +1,7 @@
 import { applyPrefs } from './prefs';
 import { App } from './app';
+import { decideMode } from './mode';
+import { createTabs } from './tabs';
 
 // Theme is already on <html> from the inline <head> script; this re-applies it
 // and sets the identity tint before the first render, while transitions are
@@ -11,7 +13,8 @@ const feed = document.getElementById('feed');
 const panes = document.getElementById('panes');
 if (!appbar || !feed || !panes) throw new Error('missing app shell elements');
 
-new App().start(appbar, feed, panes);
+const mode = decideMode(location.pathname, import.meta.env.BASE_URL);
+new App(undefined, undefined, undefined, undefined, createTabs()).start(appbar, feed, panes, mode);
 
 // Restoring a stored preference is painted, not transitioned: drop the
 // transition-suppressing class only after the first paint (HOUSE_STYLE → Motion).

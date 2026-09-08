@@ -100,7 +100,9 @@ function bar(k: string, ci: number, focused: boolean, lone: boolean, handlers: H
   b.appendChild(label);
 
   const what = win ? 'window' : 'thread';
-  if (ctx.oneColumn) {
+  if (ctx.standalone) {
+    // WEB_INTERFACE → The standalone thread — ↻ and nothing else.
+  } else if (ctx.oneColumn) {
     // ↻ ✕ at one column — ← and → arrange columns, and a phone reader has one
     // screen at a time (WEB_INTERFACE → The workspace).
     ctl.appendChild(ctlBtn('✕', `close this ${what}`, () => handlers.close(k)));
@@ -128,6 +130,8 @@ function writeCardOpts(row: PostJson | WithdrawnJson, ci: number, ctx: RenderCtx
     expanded: ctx.expandedImages,
     onExpand: handlers.expandImage,
     onCollapse: handlers.collapseImage,
+    // WEB_INTERFACE → Links — on every landed or confirmed card inside a pane.
+    linkUrl: ctx.linkUrl(row.id),
   };
   if (!ctx.writeEnabled) return base; // the read surface: a prefix button and an absent mark
   const opts: Partial<CardOpts> = {
@@ -255,7 +259,7 @@ function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handl
           onExpand: handlers.expandImage,
           onCollapse: handlers.collapseImage,
           ...(landed
-            ? { onOpen: (id) => handlers.openThread(id, { from: 'pane', ci }), onReply: (id) => handlers.openComposer(id), composerKey: sub.postId ?? undefined }
+            ? { onOpen: (id) => handlers.openThread(id, { from: 'pane', ci }), onReply: (id) => handlers.openComposer(id), composerKey: sub.postId ?? undefined, linkUrl: ctx.linkUrl(sub.postId ?? sub.localKey) }
             : {}),
         }),
       );

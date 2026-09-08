@@ -98,6 +98,21 @@ describe('app.css — the one-column header', () => {
   });
 });
 
+describe('app.css — the standalone rules', () => {
+  it('.workspace.standalone hides the feed, applies contents to panes, and caps the member', () => {
+    expect(css).toMatch(/\.workspace\.standalone\s*\{[^}]*gap: 0/);
+    expect(css).toMatch(/\.workspace\.standalone \.feed\s*\{[^}]*display: none/);
+    expect(css).toMatch(/\.workspace\.standalone \.panes\s*\{[^}]*display: contents/);
+    expect(css).toMatch(/\.workspace\.standalone \.col\s*\{[^}]*660px/);
+  });
+});
+
+describe('app.css — the link fallback', () => {
+  it('.card-link rule exists', () => {
+    expect(css).toMatch(/\.card-link\s*\{/);
+  });
+});
+
 describe('fonts.css — the self-hosted italic face', () => {
   it('a second Plus Jakarta Sans @font-face is italic, weight 400 700, its own src', () => {
     const faces = fontsCss.match(/@font-face\s*\{[^}]*\}/g) ?? [];

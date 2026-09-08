@@ -150,4 +150,16 @@ describe('the bar by class', () => {
     drive.onWidthClassChange(true); // the media query crosses the breakpoint
     expect(ctlGlyphs(panes.querySelector('.col .bar')!)).toEqual(['↻', '✕']);
   });
+
+  it('carries ↻ alone in standalone mode', async () => {
+    localStorage.clear();
+    const appbar = document.createElement('div');
+    const feed = document.createElement('section'); feed.id = 'feed';
+    const panes = document.createElement('section'); panes.id = 'panes';
+    document.body.append(appbar, feed, panes);
+    const app = new App(fakeApi());
+    app.mount(appbar, feed, panes, { kind: 'standalone', id: P1, base: '/' });
+    await flush();
+    expect(ctlGlyphs(panes.querySelector('.col .bar')!)).toEqual(['↻']);
+  });
 });

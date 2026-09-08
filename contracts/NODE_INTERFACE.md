@@ -742,6 +742,7 @@ defect. **It belongs to the supply set.**
 | Method | Path | Response |
 |--------|------|----------|
 | `GET` | `/preview/:id` | OG-tagged HTML page with JS redirect to the demo UI |
+| `GET` | `/shell/:id` | **The web client's shell with the post's preview tags injected** — the file at `WEB_SHELL_PATH` (→ Configuration), read on every request so a new bundle needs no restart, answered with `<title>`, `og:title`, `description`, `og:description`, `og:type` article, `og:site_name` Notis and `twitter:card` summary injected before `</head>`, every value HTML-escaped (`& < > "`); `og:url` is the proto and host as `/preview/:id` reads them plus the `X-Original-URI` header the host's proxy sets, omitted when the header is absent — the node never learns the client's public path. 404 plain when no shell is configured; 500 when the file cannot be read; 400 when `:id` is not 64 hex; **404 with the untagged shell** for an id the node has never heard of, so the client boots and says what it found and a crawler finds nothing to preview; 200 tagged for a live post with content, untagged for one whose content is not on this node yet, tagged as withdrawn (`withdrawn · Notis`, *withdrawn by its author*, no `og:url`) for a withdrawn post. The node reads no client convention: the description is the content's first 200 characters as they are, cut at a word with `...`, whitespace collapsed; the title the author's first 16 hex characters and `…`, then ` · Notis` (`WEB_INTERFACE → Links`) |
 
 ### Static
 
@@ -4517,6 +4518,7 @@ its actual reach.
 | `BOOTSTRAP_PEERS` | `operational` | the profile's `bootstrapPeers` — testnet `/dns4/notis.fun/tcp/9733`, mainnet and devnet none (`TYPES_INTERFACE → Network profiles`) | Comma-separated libp2p multiaddrs; a set variable **replaces** the profile's list, it does not add to it |
 | `LISTEN_ADDRS` | `operational` | `/ip4/0.0.0.0/tcp/0` | libp2p listen addresses |
 | `PUBLIC_URL` | `operational` | `/` | Base path where the demo UI is served |
+| `WEB_SHELL_PATH` | `operational` | `""` | Path of the web client's `index.html`; empty means `GET /shell/:id` answers 404 (→ Link previews) |
 
 > ⚠ **Every "at 60 seconds" duration annotation is nominal in the short run and exact in the long
 > run.** The block time is an *emergent* property of the target and hashrate — there is no producer

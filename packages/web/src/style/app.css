@@ -77,6 +77,14 @@ header .spacer { flex: 1 1 auto; }
   padding: 24px var(--gutter);    /* the inert gutter each side (WEB_INTERFACE → The workspace) */
 }
 
+/* Standalone: one thread, no feed, the member capped and centred at every width
+   — the one-column member rule applied to a page with one member, outside every
+   media query (WEB_INTERFACE → The standalone thread). */
+.workspace.standalone { gap: 0; padding: 0; }
+.workspace.standalone .feed { display: none; }
+.workspace.standalone .panes { display: contents; min-width: 0; }
+.workspace.standalone .col { flex: 0 0 100%; min-width: 0; padding: 0 max(var(--gutter), calc((100% - 660px) / 2)); }
+
 /* ---------- feed ---------- */
 /* The feed grows to nothing and shrinks to the 450px floor — the least width at
    which a 1024px landscape tablet holds the feed and one pane (WEB_INTERFACE → The
@@ -391,6 +399,11 @@ header .spacer { flex: 1 1 auto; }
 }
 .mini:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: 2px; }
 .mini:disabled { opacity: .35; cursor: default; }
+
+/* WEB_INTERFACE → Links — the fallback row when the clipboard is absent. */
+.card-link {
+  font-size: 12px; color: var(--inkMute); padding: 4px 0; word-break: break-all;
+}
 
 /* ---------- window body — the profile window's rows ---------- */
 .winbody { max-width: 660px; }
