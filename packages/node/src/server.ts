@@ -55,6 +55,64 @@ export function createAdminApp(config: Config, deps: AdminDeps): Server {
 }
 
 // ---------------------------------------------------------------------------
+// GET /shell/:id support — NODE_INTERFACE → Link previews
+// ---------------------------------------------------------------------------
+
+/**
+ * NODE_INTERFACE → Link previews: every value injected into the shell is
+ * HTML-escaped through this one function, since `<title>` is element text
+ * where `<` is live.
+ */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/**
+ * NODE_INTERFACE → Link previews: the content's first 200 characters as they
+ * are, cut at a word with "...", whitespace collapsed.
+ */
+function shellDescription(content: string): string {
+  const cut = content.length > 200
+    ? content.slice(0, 197).replace(/\s+\S*$/, '') + '...'
+    : content;
+  return cut.replace(/\s+/g, ' ').trim();
+}
+
+interface ShellTags {
+  title: string;
+  description: string;
+  ogUrl: string | null;
+}
+
+/**
+ * NODE_INTERFACE → Link previews: the shell's `<title>Notis</title>` becomes
+ * `<title>{title}</title>`, and `og:title`, `description`, `og:description`,
+ * `og:type` article, `og:site_name` Notis and `twitter:card` summary are
+ * injected before `</head>`; `og:url` only when `tags.ogUrl` is set.
+ */
+function taggedShell(shellHtml: string, tags: ShellTags): string {
+  const title = escapeHtml(tags.title);
+  const description = escapeHtml(tags.description);
+  const metaTags = [
+    `<meta property="og:title" content="${title}">`,
+    `<meta name="description" content="${description}">`,
+    `<meta property="og:description" content="${description}">`,
+    `<meta property="og:type" content="article">`,
+    tags.ogUrl !== null ? `<meta property="og:url" content="${escapeHtml(tags.ogUrl)}">` : null,
+    `<meta property="og:site_name" content="Notis">`,
+    `<meta name="twitter:card" content="summary">`,
+  ].filter((tag): tag is string => tag !== null).join('\n');
+
+  return shellHtml
+    .replace('<title>Notis</title>', `<title>${title}</title>`)
+    .replace('</head>', `${metaTags}\n</head>`);
+}
+
+// ---------------------------------------------------------------------------
 // createApp
 // ---------------------------------------------------------------------------
 
@@ -192,6 +250,63 @@ export function createApp(config: Config): express.Express {
 </body>
 </html>`;
     res.type('html').send(html);
+  });
+
+  // GET /shell/:id — NODE_INTERFACE → Link previews
+  app.get('/shell/:id', (req, res) => {
+    if (config.webShellPath === '') {
+      res.status(404).type('text').send('no web shell is configured');
+      return;
+    }
+
+    let shellHtml: string;
+    try {
+      shellHtml = readFileSync(config.webShellPath, 'utf-8');
+    } catch (err) {
+      console.error(
+        `GET /shell/:id: could not read WEB_SHELL_PATH "${config.webShellPath}": ` +
+        `${(err as Error).message}`,
+      );
+      res.status(500).type('text').send('could not read the web shell');
+      return;
+    }
+
+    const postId = req.params['id']!;
+    if (!/^[0-9a-fA-F]{64}$/.test(postId)) {
+      res.status(400).json({ error: 400, reason: 'id must be a 64-character hex string' });
+      return;
+    }
+
+    const result = store.getPost(postId);
+    if (result === null) {
+      res.status(404).type('html').send(shellHtml);
+      return;
+    }
+
+    if ('withdrawnAtHeight' in result && (result as StoredPost).withdrawnAtHeight !== null) {
+      res.status(200).type('html').send(taggedShell(shellHtml, {
+        title: 'withdrawn · Notis',
+        description: 'withdrawn by its author',
+        ogUrl: null,
+      }));
+      return;
+    }
+
+    if (!isLivePost(result) || result.content === null) {
+      res.status(200).type('html').send(shellHtml);
+      return;
+    }
+
+    const authorHex = Buffer.from(result.author).toString('hex');
+    const proto = (req.headers['x-forwarded-proto'] as string) ?? req.protocol;
+    const host = (req.headers['x-forwarded-host'] as string) ?? req.get('host') ?? 'localhost';
+    const originalUri = req.get('x-original-uri');
+
+    res.status(200).type('html').send(taggedShell(shellHtml, {
+      title: `${authorHex.slice(0, 16)}… · Notis`,
+      description: shellDescription(result.content),
+      ogUrl: originalUri ? `${proto}://${host}${originalUri}` : null,
+    }));
   });
 
   // ---- Shared UTXO engine deps (curried into validateTx for routes) ----

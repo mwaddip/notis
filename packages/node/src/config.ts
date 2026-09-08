@@ -32,6 +32,11 @@ export interface Config {
   publicUrl: string;
   faucetUrl: string;
   /**
+   * Path of the web client's `index.html`; empty means `GET /shell/:id`
+   * answers 404 (NODE_INTERFACE → Configuration, → Link previews).
+   */
+  webShellPath: string;
+  /**
    * Body bytes this node fills the blocks it **produces** to
    * (NODE_INTERFACE → Configuration). Local, because a
    * miner may legitimately publish smaller blocks — but never above
@@ -134,6 +139,7 @@ export function loadConfig(): Readonly<Config> {
     nodeRole: parseNodeRole(process.env['NODE_ROLE'] ?? 'server'),
     publicUrl: process.env['PUBLIC_URL'] ?? '/',
     faucetUrl: process.env['FAUCET_URL'] ?? '',
+    webShellPath: process.env['WEB_SHELL_PATH'] ?? '',
     blockBodyBudgetBytes: parseBlockBodyBudget(
       process.env['BLOCK_BODY_BUDGET_BYTES'],
     ),
