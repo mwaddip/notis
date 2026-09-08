@@ -1,6 +1,6 @@
 import { el, shortHex } from '../dom';
 import { unlockForm } from './passphrase';
-import { card, markNode, stageLine } from './card';
+import { card, markNode, stageLine, listCardOpts } from './card';
 import { standing } from './profile';
 import type { Mark, Flight } from './card';
 import type { KarmaResult, VouchesTargetResult, PostJson } from '../api/dto';
@@ -230,6 +230,8 @@ export interface PostsCtx {
   ownKey: string | null;
   locked: boolean;
   markFor: (key: string) => Mark | null;
+  likePending: (postId: string) => boolean;
+  linkUrl: (id: string) => string;
   expandedImages: ReadonlySet<string>;    // images shown this session (WEB_INTERFACE → Content)
 }
 
@@ -237,6 +239,7 @@ export interface PostsHandlers {
   openThread: (id: string, origin: Origin) => void;
   openAuthor: (key: string, origin: Origin) => void;
   vouch: (key: string) => void;
+  likePost: (postId: string) => void;
   authorPostsMore: (key: string) => void;
   unlockIdentity: (passphrase: string) => Promise<void>;
   expandImage: (key: string) => void;     // an image loads on the reader's press (WEB_INTERFACE → Content)
@@ -272,24 +275,24 @@ export function authorPostsBody(handlers: PostsHandlers, ctx: PostsCtx): HTMLEle
   return b;
 }
 
-/** One post by the author, a read-only feed card: the strip opens a thread one
- *  column right, the prefix and mark, · you — no like and no reply. */
+/** One post by the author — the feed card's controls: like, link, the strip
+ *  opening a thread one column right, the prefix and mark, · you; no reply, which
+ *  lives in the pane the strip opens (WEB_INTERFACE → The author window). */
 function postCard(post: PostJson, handlers: PostsHandlers, ctx: PostsCtx): HTMLElement {
   const you = ctx.ownKey !== null && post.author === ctx.ownKey;
   return card(post, {
-    replyCount: post.descendantCount, // the row's own count, like the feed (WEB_INTERFACE → What the feed reads)
+    replyCount: post.descendantCount,
     onOpen: (id) => handlers.openThread(id, ctx.origin),
     onAuthor: (key) => handlers.openAuthor(key, ctx.origin),
     onVouch: (key) => handlers.vouch(key),
     mark: ctx.markFor(post.author),
     you,
-    // A locked vouch here mounts under the card's own meta, as on the feed.
     locked: ctx.locked,
     ownKey: ctx.ownKey ?? undefined,
     onUnlock: (p) => handlers.unlockIdentity(p),
-    // The content-image opts every card shares (WEB_INTERFACE → Content).
     expanded: ctx.expandedImages,
     onExpand: handlers.expandImage,
     onCollapse: handlers.collapseImage,
+    ...listCardOpts(post, ctx, handlers),
   });
 }
