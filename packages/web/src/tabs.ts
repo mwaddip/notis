@@ -49,8 +49,8 @@ export function createTabs(): Tabs {
       if (!hasLocks) return false;
       return new Promise<boolean>((resolve) => {
         navigator.locks.request('notis.workspace', { ifAvailable: true }, (lock) => {
-          if (lock === null) { resolve(true); return; }
-          resolve(false);
+          resolve(lock === null);
+          return Promise.resolve();
         });
       });
     },
