@@ -126,6 +126,7 @@ function writeCardOpts(row: PostJson | WithdrawnJson, ci: number, ctx: RenderCtx
   const base: Partial<CardOpts> = {
     onAuthor: (key) => handlers.openAuthor(key, { from: 'pane', ci }),
     mark: ctx.markFor(row.author),
+    // The content-image opts every card shares (WEB_INTERFACE → Content).
     expanded: ctx.expandedImages,
     onExpand: handlers.expandImage,
     onCollapse: handlers.collapseImage,
@@ -138,6 +139,7 @@ function writeCardOpts(row: PostJson | WithdrawnJson, ci: number, ctx: RenderCtx
     composerKey: row.id,
     you: ctx.ownKey !== null && row.author === ctx.ownKey,
     onVouch: (key) => handlers.vouch(key),
+    // A locked identity unlocks in a row under the card (WEB_INTERFACE → The identity module).
     locked: ctx.identity?.locked ?? false,
     ownKey: ctx.ownKey ?? undefined,
     onUnlock: (p) => handlers.unlockIdentity(p),
