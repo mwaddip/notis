@@ -107,6 +107,12 @@ describe('app.css — the standalone rules', () => {
   });
 });
 
+describe('app.css — the link fallback', () => {
+  it('.card-link rule exists', () => {
+    expect(css).toMatch(/\.card-link\s*\{/);
+  });
+});
+
 describe('fonts.css — the self-hosted italic face', () => {
   it('a second Plus Jakarta Sans @font-face is italic, weight 400 700, its own src', () => {
     const faces = fontsCss.match(/@font-face\s*\{[^}]*\}/g) ?? [];

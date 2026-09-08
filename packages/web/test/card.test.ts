@@ -404,3 +404,66 @@ describe('card — the withdraw control', () => {
     c.remove();
   });
 });
+
+describe('card — link', () => {
+  const URL = 'http://localhost/p/' + 'ab'.repeat(32);
+
+  it('link appears after ↩ reply when onLink is set', () => {
+    const c = card(confirmed('bb'.repeat(32)), {
+      onReply: () => {}, onLink: () => {}, linkUrl: URL,
+    });
+    const btns = [...c.querySelectorAll('.meta button')].map((b) => b.textContent);
+    const replyIdx = btns.indexOf('↩reply');
+    const linkIdx = btns.findIndex((t) => t === 'link');
+    expect(linkIdx).toBeGreaterThan(-1);
+    expect(linkIdx).toBeGreaterThan(replyIdx);
+  });
+
+  it('absent on a feed card (no onLink)', () => {
+    const c = card(confirmed('bb'.repeat(32)));
+    expect(c.querySelector('.linkbtn')).toBeNull();
+  });
+
+  it('present on a withdrawn card', () => {
+    const c = card(
+      { kind: 'withdrawn', id: 'w1', author: 'cc'.repeat(32), withdrawnAtHeight: 5, parentRefs: [], descendantCount: 0, authorVouchCount: 0 },
+      { onReply: () => {}, onLink: () => {}, linkUrl: URL },
+    );
+    expect(c.querySelector('.linkbtn')).toBeTruthy();
+  });
+
+  it('copied after a press with the clipboard stubbed', async () => {
+    let copied = '';
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: (text: string) => { copied = text; return Promise.resolve(); } },
+      writable: true, configurable: true,
+    });
+    const c = card(confirmed('bb'.repeat(32)), {
+      onReply: () => {}, onLink: () => {}, linkUrl: URL,
+    });
+    document.body.appendChild(c);
+    c.querySelector<HTMLButtonElement>('.linkbtn')!.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(copied).toBe(URL);
+    expect(c.querySelector('.linkbtn')!.textContent).toBe('copied');
+    c.remove();
+  });
+
+  it('the fallback row appears when the clipboard is absent', () => {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: undefined, writable: true, configurable: true,
+    });
+    const c = card(confirmed('bb'.repeat(32)), {
+      onReply: () => {}, onLink: () => {}, linkUrl: URL,
+    });
+    document.body.appendChild(c);
+    c.querySelector<HTMLButtonElement>('.linkbtn')!.click();
+    expect(c.querySelector('.card-link')).toBeTruthy();
+    expect(c.querySelector('.linkbtn')!.textContent).toBe('link');
+    c.remove();
+  });
+
+  it('the URL is absolute', () => {
+    expect(URL).toMatch(/^https?:\/\//);
+  });
+});
