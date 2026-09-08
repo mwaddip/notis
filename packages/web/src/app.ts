@@ -277,6 +277,7 @@ export class App {
       history.replaceState({ id: mode.id }, '', location.href);
       // WEB_INTERFACE → The standalone thread — popstate re-roots without pushing.
       window.addEventListener('popstate', (e) => {
+        if (!this.standalone) return;
         const id = e.state?.id;
         if (typeof id === 'string' && /^[0-9a-f]{64}$/i.test(id)) {
           this.standaloneReroot(id);
@@ -842,17 +843,24 @@ export class App {
     }
   }
 
-  private async toWorkspace(id: string): Promise<void> {
+  private toWorkspace(id: string): void {
     this.standalone = false;
     this.workspaceEl?.classList.remove('standalone');
     this.restoreLayout();
     if (id) openWindow(this.state.workspace, id, { from: 'feed' });
-    if (this.tabs) await this.tabs.claim();
+    // WEB_INTERFACE → The way into the workspace — the lock is requested, never
+    // awaited; the arrangement persists once it is granted.
+    if (this.tabs) {
+      void this.tabs.claim().then(() => {
+        window.name = 'notis-workspace';
+        this.saveLayout();
+      });
+    }
     history.replaceState(null, '', this.base);
+    document.title = 'Notis';
     this.renderHeader();
     this.renderFeed();
     this.renderPanes();
-    this.saveLayout();
     void this.loadFeed();
     const at = id ? locate(this.state.workspace, id) : null;
     if (at) this.scrollColumnIntoView(at.column.uid);

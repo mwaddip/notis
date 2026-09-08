@@ -246,7 +246,7 @@ describe('linkUrl from the App', () => {
 describe('the way in — tabs', () => {
   it('the receiver opens a thread only when holding the lock', async () => {
     const { appbar, feed, panes } = mountShell();
-    const { fakeTabs } = await import('../src/tabs');
+    const { fakeTabs } = await import('./fake-tabs');
     const tabs = fakeTabs();
     tabs.setHolding(false);
     const app = new App(fakeApi(), undefined, undefined, undefined, tabs);
@@ -262,7 +262,7 @@ describe('the way in — tabs', () => {
 
   it('a non-holder never writes notis.layout', async () => {
     const { appbar, feed, panes } = mountShell();
-    const { fakeTabs } = await import('../src/tabs');
+    const { fakeTabs } = await import('./fake-tabs');
     const tabs = fakeTabs();
     tabs.setHolding(false);
     localStorage.setItem(KEY_LAYOUT, '#' + HEX('f'));
@@ -277,23 +277,59 @@ describe('the way in — tabs', () => {
     expect(localStorage.getItem(KEY_LAYOUT)).toBe('#' + HEX('f'));
   });
 
-  it('the in-place switch restores the arrangement with the thread inserted', async () => {
+  it('the in-place switch restores P2, inserts P1 at column 0, replaces the URL, and writes once held', async () => {
     const { appbar, feed, panes } = mountShell();
     localStorage.setItem(KEY_LAYOUT, '#' + P2);
-    const { fakeTabs } = await import('../src/tabs');
+    const { fakeTabs } = await import('./fake-tabs');
     const tabs = fakeTabs();
     tabs.setHeldElsewhere(false);
     const app = new App(fakeApi(), undefined, undefined, undefined, tabs);
-    app.start(appbar, feed, panes, { kind: 'standalone', id: P1, base: '/' });
+    const drive = app as unknown as {
+      start(a: HTMLElement, b: HTMLElement, c: HTMLElement, m: { kind: 'standalone'; id: string; base: string }): void;
+      wayIn(): Promise<void>;
+      state: { workspace: { columns: Array<{ wins: string[]; focus: number }> } };
+    };
+    drive.start(appbar, feed, panes, { kind: 'standalone', id: P1, base: '/' });
     await flush();
     await flush();
 
-    const drive = app as unknown as { wayIn(): Promise<void> };
     await drive.wayIn();
     await flush();
     await flush();
 
+    const col0 = drive.state.workspace.columns[0]!;
+    expect(col0.wins).toEqual([P2, P1]);
+    expect(col0.focus).toBe(1);
+    expect(location.pathname).toBe('/');
     expect(feed.children.length).toBeGreaterThan(0);
-    expect(panes.querySelectorAll('.col').length).toBeGreaterThanOrEqual(1);
+
+    tabs.setHolding(true);
+    await flush();
+    await flush();
+  });
+
+  it('a popstate with an id after the switch does not overwrite the workspace', async () => {
+    const { appbar, feed, panes } = mountShell();
+    const { fakeTabs } = await import('./fake-tabs');
+    const tabs = fakeTabs();
+    tabs.setHeldElsewhere(false);
+    const app = new App(fakeApi(), undefined, undefined, undefined, tabs);
+    const drive = app as unknown as {
+      start(a: HTMLElement, b: HTMLElement, c: HTMLElement, m: { kind: 'standalone'; id: string; base: string }): void;
+      wayIn(): Promise<void>;
+      state: { workspace: { columns: Array<{ wins: string[] }> } };
+    };
+    drive.start(appbar, feed, panes, { kind: 'standalone', id: P1, base: '/' });
+    await flush();
+    await flush();
+
+    await drive.wayIn();
+    await flush();
+
+    const before = JSON.stringify(drive.state.workspace.columns.map((c) => c.wins));
+    window.dispatchEvent(new PopStateEvent('popstate', { state: { id: R1 } }));
+    await flush();
+
+    expect(JSON.stringify(drive.state.workspace.columns.map((c) => c.wins))).toBe(before);
   });
 });

@@ -17,8 +17,8 @@ export function createTabs(): Tabs {
   const hasLocks = typeof navigator !== 'undefined' && 'locks' in navigator;
   const hasChannel = typeof BroadcastChannel !== 'undefined';
 
-  if (hasChannel) {
-    const ch = new BroadcastChannel('notis');
+  const ch = hasChannel ? new BroadcastChannel('notis') : null;
+  if (ch) {
     ch.addEventListener('message', (e) => {
       const id = e.data?.id;
       if (typeof id === 'string' && HEX64.test(id) && holding) {
@@ -30,11 +30,13 @@ export function createTabs(): Tabs {
   return {
     async claim(): Promise<boolean> {
       if (!hasLocks) { holding = true; return true; }
+      // WEB_INTERFACE → The way into the workspace — a queued request, never
+      // ifAvailable; the lock is granted when no other tab holds it.
       return new Promise<boolean>((resolve) => {
-        navigator.locks.request('notis.workspace', { ifAvailable: true }, (lock) => {
-          holding = lock !== null;
-          resolve(holding);
-          if (holding) return new Promise<void>(() => {});
+        navigator.locks.request('notis.workspace', () => {
+          holding = true;
+          resolve(true);
+          return new Promise<void>(() => {});
         });
       });
     },
@@ -54,30 +56,11 @@ export function createTabs(): Tabs {
     },
 
     announce(id: string): void {
-      if (!hasChannel) return;
-      new BroadcastChannel('notis').postMessage({ id });
+      ch?.postMessage({ id });
     },
 
     onOpen(cb: (id: string) => void): void {
       listeners.push(cb);
     },
-  };
-}
-
-export function fakeTabs(): Tabs & { fireOpen(id: string): void; setHolding(v: boolean): void; setHeldElsewhere(v: boolean): void; announced: string[] } {
-  let holding = false;
-  let elsewhere = false;
-  const listeners: Array<(id: string) => void> = [];
-  const announced: string[] = [];
-  return {
-    announced,
-    async claim() { return holding; },
-    holds() { return holding; },
-    async heldElsewhere() { return elsewhere; },
-    announce(id) { announced.push(id); },
-    onOpen(cb) { listeners.push(cb); },
-    fireOpen(id: string) { for (const cb of listeners) cb(id); },
-    setHolding(v: boolean) { holding = v; },
-    setHeldElsewhere(v: boolean) { elsewhere = v; },
   };
 }
