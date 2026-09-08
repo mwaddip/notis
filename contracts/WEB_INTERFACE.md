@@ -256,6 +256,21 @@ reaches — *show the feed* when the feed is the next member on the left, else *
 (`HOUSE_STYLE → Deliberately not decided`). A gesture is never the only route, as hover is not
 (`HOUSE_STYLE → Accessibility contract`).
 
+> ⚠ **AHEAD OF CODE (2026-09-08, the phone's back button)** — the paragraph below states the rule the
+> phone-back unit builds; the code holds no history at one column yet.
+
+**At one column the screens are history.** A tap that changes the screen — an open, a raise, `‹`, `›`, a `✕`
+that shows another member — pushes a history entry naming the screen by its column's focused window, the
+feed as `feed`; the URL does not change, since the arrangement is not in it. A move that lands on the screen
+the current entry was pushed from is a back, whether the arrow or a swipe made it: the client steps the
+history back and `popstate` brings that screen into view. A swipe that lands anywhere else is the browser's
+own scroll and no entry, and a member stops every swipe (`scroll-snap-stop: always`), so a gesture moves one
+screen. Two names are one screen when they resolve to one column, so focusing a window inside a stack
+changes nothing. A reload restores the arrangement and the view at the feed, and the current entry with it;
+an entry naming a closed window is stepped over. At tiling the view is not a screen and none of this
+applies; the standalone page keeps its own history (→ The standalone thread). The browser's back button is
+never the only route: `‹` stands beside it (`HOUSE_STYLE → Accessibility contract`).
+
 **What differs at one column, and nothing else does:** the bar carries `↻ ✕` — `←` and `→` arrange columns,
 and a phone reader has one screen at a time; the profile control and the theme control are glyphs at the
 header's control size — a person (→ The profile window) and the sun or moon
