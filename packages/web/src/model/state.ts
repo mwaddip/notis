@@ -120,6 +120,8 @@ export interface RenderCtx {
   // transient flight; canSignWithdraw is the spendable view non-empty.
   withdrawState: (postId: string) => 'pending' | Flight | null;
   canSignWithdraw: boolean;
+  // WEB_INTERFACE → Links
+  linkUrl: (id: string) => string;
 }
 
 /** One open author window's reads and flight (WEB_INTERFACE → The author window). */

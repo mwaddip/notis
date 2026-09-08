@@ -400,6 +400,11 @@ header .spacer { flex: 1 1 auto; }
 .mini:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: 2px; }
 .mini:disabled { opacity: .35; cursor: default; }
 
+/* WEB_INTERFACE → Links — the fallback row when the clipboard is absent. */
+.card-link {
+  font-size: 12px; color: var(--inkMute); padding: 4px 0; word-break: break-all;
+}
+
 /* ---------- window body — the profile window's rows ---------- */
 .winbody { max-width: 660px; }
 .winbody .row { display: flex; align-items: baseline; gap: 8px; margin-bottom: 14px; }

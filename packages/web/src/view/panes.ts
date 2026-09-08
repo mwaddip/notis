@@ -130,6 +130,9 @@ function writeCardOpts(row: PostJson | WithdrawnJson, ci: number, ctx: RenderCtx
     expanded: ctx.expandedImages,
     onExpand: handlers.expandImage,
     onCollapse: handlers.collapseImage,
+    // WEB_INTERFACE → Links — on every landed or confirmed card inside a pane.
+    onLink: () => {},
+    linkUrl: ctx.linkUrl(row.id),
   };
   if (!ctx.writeEnabled) return base; // the read surface: a prefix button and an absent mark
   const opts: Partial<CardOpts> = {
