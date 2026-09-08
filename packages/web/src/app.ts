@@ -298,6 +298,15 @@ export class App {
     }
     window.addEventListener('resize', () => this.updateHeaderArrows());
     // WEB_INTERFACE → The workspace → "At one column the screens are history"
+    this.workspaceEl?.addEventListener('scrollend', () => {
+      if (this.standalone || !this.oneColumn) return;
+      const name = this.memberNameAt(this.currentMemberIndex());
+      if (name === null) return;
+      const s = history.state;
+      const current: ScreenEntry | null = s && typeof s.member === 'string' ? s as ScreenEntry : null;
+      const result = decideMove(current, name, (a, b) => this.sameScreen(a, b), 'swipe');
+      if (result.kind === 'back') history.back();
+    });
     window.addEventListener('popstate', (e) => {
       if (this.standalone || !this.oneColumn) return;
       const s = (e as PopStateEvent).state;
