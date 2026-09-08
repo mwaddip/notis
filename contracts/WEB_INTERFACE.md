@@ -171,6 +171,16 @@ one.
 - **The feed shows roots alone.** It asks `GET /posts?roots=1` (`NODE_INTERFACE → Posts`), so no reply
   renders in the feed; a reply is reached through its thread or its author's window, which reads the same
   endpoint with `author` and no `roots`.
+
+- **A feed card carries `like` and `link` in its meta row**, by the same rules a pane's card follows: `like`
+  on another's landed or confirmed post, with the unlock row under the meta when the identity is locked, the
+  pending overlay and `liked` as → The wallet states; the read-only count alone on the reader's own post; no
+  control on a pending card; `link` after the like slot (→ Links); and with no identity loaded neither `like`
+  nor any other write control, the feed being the read surface exactly. A like from the feed re-renders that
+  card at the press and at its landing — the count moving by the reader's own act and nothing else moving —
+  and a rejection or an expiry reports in the feed's report line, where `↻` reports. Reply and withdraw are
+  not on a feed card: the composer and the confirm row live inside a pane. The author-posts window's cards
+  follow the feed card (→ The author window).
 - **A card's reply count is the row's `descendantCount`** — the node's number, the whole subtree, pending
   included, on the feed's rows, the author window's rows and a pane's descendant rows; a pane's own root
   shows the thread's, which equals the head's. A withdrawn card shows its row's count too
@@ -339,9 +349,9 @@ tab, and the way in always switches in place. **Nothing crosses the channel but 
 ## Links
 
 **A post's link is `<origin><base>p/<id>`** (→ The standalone thread), and the reader makes one from the
-card. The meta row carries `link` after `↩ reply`, the row's last control, on every landed or confirmed card
-inside a pane or on the standalone page — the withdrawn card included, its thread surviving its content —
-and never on a feed card, whose meta is read-only counts and whose one act is the strip. The press writes
+card. The meta row carries `link` as the row's last control on every landed or confirmed card — inside a
+pane after `↩ reply`, on the standalone page, on the feed after the like slot, and in the author-posts window
+— the withdrawn card included, its thread surviving its content; a pending card carries none. The press writes
 the URL to the clipboard and the word becomes `copied`, held until the card next renders — a swap in a fixed
 box, no timer, as `like` becomes `liked` (`HOUSE_STYLE → Motion`). The label reads *copy this post's link*.
 
@@ -547,7 +557,10 @@ and re-reads the spendable view, and the reader sees the rejection.
 
 **Reconcile runs on the reader's own refresh and on the bounded poll below.** A pending post is landed
 when `GET /posts/:postId` answers `confirmed`, expired on a 404 or once the tip passes
-`expiresAtHeight`; a pending like is landed when `likedByViewer` turns `true`. That field reflects
+`expiresAtHeight`; a pending like is landed when `likedByViewer` turns `true`, and the row the reconcile
+fetched then replaces the post's row wherever the client holds it — the feed, every thread containing it,
+the posts index, an open `@posts:` window — so every surface shows the node's count and `liked` with no
+refresh. That field reflects
 store records only, so **the client overlays its own pending likes** onto it until they land or expire.
 A pending vouch is landed when `GET /vouches?voucher=<key>` lists the pair; a pending unvouch when the
 pair is absent — the escrow it creates is no signal, since one born past its release height is returned
@@ -753,9 +766,9 @@ read surface exactly — key, standing, endorsers, no marks and no `your vouch` 
 **The author-posts window — `@posts:<64hex>`** — opened from `posts`, placed by the same rule (from the
 feed, the author window takes the first column and the posts the next), raised when open, persisted.
 Its body is `GET /posts?author=<key>` — the author's committed posts, newest first, following `next` —
-as feed cards: the strip, the prefix and the mark, `· you`, and no like and no reply, which live in the
-pane the strip opens. `↻` reports what it did — `4 new posts` / `no new posts`. The bar reads
-`posts · <prefix>`, no spine.
+as feed cards: the strip, the prefix and the mark, `· you`, `like` and `link` by the feed card's rules
+(→ What the feed reads, and what a card shows for it), and no reply, which lives in the pane the strip
+opens. `↻` reports what it did — `4 new posts` / `no new posts`. The bar reads `posts · <prefix>`, no spine.
 
 ### The withdraw control *(author's own controls)*
 
@@ -763,9 +776,9 @@ pane the strip opens. `↻` reports what it did — `4 new posts` / `no new post
 reader's own confirmed live post — the pane's root included — the meta row's first slot — where `like`
 sits on another's card, and the read-only like count on the reader's own — gains a `withdraw` button
 after that count, beside `↩ reply`; the count stays. `· you` in the who row stays text. The control
-appears nowhere else: not on a feed card (write controls live inside a pane), not on a pending card or the
-client's own submission, not on a withdrawn card (a post withdraws once), not in the `@posts:` window's read-only cards, never with no identity
-loaded.
+appears nowhere else: not on a feed card (the author's controls live inside a pane; a feed card's controls are
+`like` and `link`), not on a pending card or the client's own submission, not on a withdrawn card (a post
+withdraws once), not in the `@posts:` window's cards, never with no identity loaded.
 
 **Two presses, the second in a confirm row.** The first press mounts a confirm row after the meta row —
 where the unlock row mounts, one row at a time — reading *"withdraw this post? the content goes; the

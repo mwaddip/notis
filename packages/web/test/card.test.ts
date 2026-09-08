@@ -419,7 +419,7 @@ describe('card — link', () => {
     expect(linkIdx).toBeGreaterThan(replyIdx);
   });
 
-  it('absent on a feed card (no onLink)', () => {
+  it('absent when no linkUrl is set', () => {
     const c = card(confirmed('bb'.repeat(32)));
     expect(c.querySelector('.linkbtn')).toBeNull();
   });
@@ -461,5 +461,36 @@ describe('card — link', () => {
     expect(c.querySelector('.card-link')).toBeTruthy();
     expect(c.querySelector('.linkbtn')!.textContent).toBe('link');
     c.remove();
+  });
+});
+
+describe('card — feed-shaped: like and link without reply or withdraw', () => {
+  const OTHER = 'bb'.repeat(32);
+  const URL = 'http://localhost/p/' + OTHER;
+
+  it('link follows the like slot on a feed card', () => {
+    const c = card(confirmed(OTHER), { onLike: () => {}, linkUrl: URL });
+    const meta = c.querySelector('.meta')!;
+    const likebtn = meta.querySelector('.likebtn')!;
+    const linkbtn = meta.querySelector('.linkbtn')!;
+    expect(likebtn).not.toBeNull();
+    expect(linkbtn).not.toBeNull();
+    const children = [...meta.children];
+    expect(children.indexOf(linkbtn)).toBeGreaterThan(children.indexOf(likebtn));
+  });
+
+  it('the read-only count and link on the reader\'s own post, no like button', () => {
+    const own = { ...confirmed(PUB), likeCount: 5 };
+    const c = card(own, { you: true, linkUrl: URL });
+    expect(c.querySelector('.likebtn')).toBeNull();
+    expect(c.querySelector('.like')!.textContent).toContain('5');
+    expect(c.querySelector('.linkbtn')).not.toBeNull();
+  });
+
+  it('no controls on a pending card', () => {
+    const p: PostJson = { ...confirmed(OTHER), status: 'pending', blockHeight: null };
+    const c = card(p, {});
+    expect(c.querySelector('.likebtn')).toBeNull();
+    expect(c.querySelector('.linkbtn')).toBeNull();
   });
 });

@@ -37,10 +37,11 @@ export interface CardOpts {
   expanded?: ReadonlySet<string>;        // keys of images already shown: <postId>:<index in document order>
   onExpand?: (key: string) => void;      // the reader pressed to load one
   onCollapse?: (key: string) => void;    // a shown image failed to load — drop its key
-  // Write surface (panes only) — absent on a read-only feed card.
+  // Write surface — the like is on feed, author-posts and pane cards; reply and
+  // withdraw are in a pane alone (WEB_INTERFACE → What the feed reads, and what a card shows for it).
   flight?: Flight | null;                // the stage line for the client's own submission
   onReply?: ((id: string) => void) | null; // ↩ reply — present on a withdrawn card too
-  onLike?: ((id: string) => void) | null;   // like — absent by §7's exclusions
+  onLike?: ((id: string) => void) | null;   // like — on another's confirmed post
   liked?: boolean;                       // show 'liked' rather than a control
   likePending?: boolean;                 // the like has not settled — inkMute, count + 1
   composerKey?: string;                  // for the data-composer-open focus hook
@@ -478,6 +479,30 @@ export function flightFor(sub: Submission, tryAgain: (localKey: string) => void)
   };
 }
 
+/** The like and link opts a feed card and an author-posts card carry — the shared
+ *  half that a pane composes with reply and withdraw
+ *  (WEB_INTERFACE → What the feed reads, and what a card shows for it). */
+export function listCardOpts(
+  row: PostJson | WithdrawnJson,
+  ctx: { writeEnabled: boolean; ownKey: string | null; likePending: (id: string) => boolean; linkUrl: (id: string) => string },
+  handlers: { likePost: (id: string) => void },
+): Partial<CardOpts> {
+  const opts: Partial<CardOpts> = {};
+  if (isWithdrawn(row) || row.status === 'confirmed') opts.linkUrl = ctx.linkUrl(row.id);
+  if (isWithdrawn(row) || !ctx.writeEnabled || row.status !== 'confirmed') return opts;
+  const isOwn = ctx.ownKey !== null && row.author === ctx.ownKey;
+  if (isOwn) return opts;
+  const overlaid = ctx.likePending(row.id);
+  const liked = overlaid || row.likedByViewer === true;
+  if (liked) {
+    opts.liked = true;
+    opts.likePending = overlaid && row.likedByViewer !== true;
+  } else {
+    opts.onLike = (id) => handlers.likePost(id);
+  }
+  return opts;
+}
+
 function livePostCard(post: PostJson, opts: CardOpts): HTMLElement {
   const flight = opts.flight ?? null;
   const landed = flight?.stage === 'landed';
@@ -485,6 +510,7 @@ function livePostCard(post: PostJson, opts: CardOpts): HTMLElement {
   // until it lands, when it fills and gains its meta row.
   const pending = post.status === 'pending' && !landed;
   const card = el('div', shellClasses(pending ? ' pending' : '', opts));
+  card.dataset.postId = post.id;
   const body = el('div', 'card-body');
 
   body.appendChild(whoRow(post.author, post.blockCreatedAt, opts));
@@ -551,6 +577,7 @@ function livePostCard(post: PostJson, opts: CardOpts): HTMLElement {
 
 function withdrawnCard(row: WithdrawnJson, opts: CardOpts): HTMLElement {
   const card = el('div', shellClasses('', opts));
+  card.dataset.postId = row.id;
   const body = el('div', 'card-body');
   body.appendChild(whoRow(row.author, null, opts));
   // Withdrawn is never "deleted": its replies survive and hang off it. Saying

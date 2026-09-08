@@ -1,5 +1,5 @@
 import { el, reportNode, shortHex } from '../dom';
-import { card, submissionToPost, flightFor, displayMark, type CardOpts } from './card';
+import { card, submissionToPost, flightFor, displayMark, listCardOpts, type CardOpts } from './card';
 import { profileBody } from './profile';
 import { authorBody, authorPostsBody, type AuthorCtx, type PostsCtx } from './author';
 import { flattenThread } from '../model/thread';
@@ -120,8 +120,8 @@ function bar(k: string, ci: number, focused: boolean, lone: boolean, handlers: H
 /** The card opts for a pane card. The prefix always opens the author window — a
  *  read, so it is present even with no identity (WEB_INTERFACE → The identity
  *  display) — and carries the vouch mark, absent when markFor returns null. The
- *  write-surface controls — ↩ reply, the like control by §7's exclusions, the
- *  vouch's unlock — are added only with an identity loaded. */
+ *  like and link come from listCardOpts (the shared builder); the pane adds
+ *  ↩ reply and the withdraw control (WEB_INTERFACE → The withdraw control). */
 function writeCardOpts(row: PostJson | WithdrawnJson, ci: number, ctx: RenderCtx, handlers: Handlers): Partial<CardOpts> {
   const base: Partial<CardOpts> = {
     onAuthor: (key) => handlers.openAuthor(key, { from: 'pane', ci }),
@@ -130,36 +130,26 @@ function writeCardOpts(row: PostJson | WithdrawnJson, ci: number, ctx: RenderCtx
     expanded: ctx.expandedImages,
     onExpand: handlers.expandImage,
     onCollapse: handlers.collapseImage,
-    // WEB_INTERFACE → Links — on every landed or confirmed card inside a pane.
-    linkUrl: ctx.linkUrl(row.id),
+    ...listCardOpts(row, ctx, handlers),
   };
-  if (!ctx.writeEnabled) return base; // the read surface: a prefix button and an absent mark
+  if (!ctx.writeEnabled) return base;
   const opts: Partial<CardOpts> = {
     ...base,
     onReply: (id) => handlers.openComposer(id),
-    composerKey: row.id, // a reply composer keys on its parent id
-    you: ctx.ownKey !== null && row.author === ctx.ownKey, // · you on the reader's own card
+    composerKey: row.id,
+    you: ctx.ownKey !== null && row.author === ctx.ownKey,
     onVouch: (key) => handlers.vouch(key),
-    // A locked identity unlocks in a row under the card before a like or a vouch.
+    // A locked identity unlocks in a row under the card (WEB_INTERFACE → The identity module).
     locked: ctx.identity?.locked ?? false,
     ownKey: ctx.ownKey ?? undefined,
     onUnlock: (p) => handlers.unlockIdentity(p),
   };
   if (!isWithdrawn(row) && row.status === 'confirmed') {
-    const overlaid = ctx.likePending(row.id);
-    const liked = overlaid || row.likedByViewer === true;
     const isOwn = ctx.ownKey !== null && row.author === ctx.ownKey;
     if (isOwn) {
-      // The author's own control fills the slot after the read-only like count,
-      // where like sits on another's (WEB_INTERFACE → The withdraw control).
       opts.onWithdraw = (id) => handlers.withdrawPost(id);
       opts.withdraw = ctx.withdrawState(row.id);
       opts.canWithdraw = ctx.canSignWithdraw;
-    } else if (liked) {
-      opts.liked = true;
-      opts.likePending = overlaid && row.likedByViewer !== true;
-    } else {
-      opts.onLike = (id) => handlers.likePost(id);
     }
   }
   return opts;
@@ -196,6 +186,8 @@ function postsCtxFrom(key: string, ci: number, ctx: RenderCtx): PostsCtx {
     ownKey: ctx.ownKey,
     locked: ctx.identity?.locked ?? false,
     markFor: (k) => ctx.markFor(k),
+    likePending: (id) => ctx.likePending(id),
+    linkUrl: (id) => ctx.linkUrl(id),
     expandedImages: ctx.expandedImages,
   };
 }

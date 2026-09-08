@@ -6,7 +6,7 @@ import type { Tabs } from './tabs';
 import { el, shortHex, preservingScroll } from './dom';
 import { contentHashHex } from './integrity';
 import { prefs, setTheme, setIdTint, setNode, setFaucet, writeStore, KEY_LAYOUT, type Theme, type IdTint } from './prefs';
-import { renderFeedInto } from './view/feed';
+import { renderFeedInto, replaceFeedCard } from './view/feed';
 import { renderPanesInto, renderRegionElement, renderBars } from './view/panes';
 import { makeComposer, type ComposerController } from './view/composer';
 import { personGlyph, sunGlyph, moonGlyph } from './view/glyphs';
@@ -637,6 +637,15 @@ export class App {
     this.applyCountTitles();
   }
 
+  /** Replace one card in the feed by post id — the like's optimistic press and its
+   *  rejection re-render only the acted-on card so nothing else moves. */
+  private renderFeedPost(postId: string): void {
+    if (this.standalone) return;
+    const post = this.state.feed.posts.find((p) => p.id === postId);
+    if (!post) return;
+    replaceFeedCard(this.feedEl, post, this.ctx(), this.handlers);
+  }
+
   private renderPanes(): void {
     this.withComposerFocus(() => this.renderPanesBody());
   }
@@ -748,6 +757,28 @@ export class App {
       if (!row) continue;
       if (!('kind' in row)) this.state.posts.set(row.id, row); // the live-post index holds live rows only
       this.vouchCounts.set(row.author, row.authorVouchCount);
+    }
+  }
+
+  /** Replace a post's row wherever the client holds it — the feed, every thread
+   *  that contains it, the posts index, and any open @posts window — so the
+   *  surface that re-renders next draws the node's row, not the stale one. */
+  private applyFetchedRow(fetched: PostResult | null): void {
+    if (!fetched || 'kind' in fetched) return;
+    const id = fetched.id;
+    this.state.posts.set(id, fetched);
+    const fi = this.state.feed.posts.findIndex((p) => p.id === id);
+    if (fi !== -1) this.state.feed.posts[fi] = fetched;
+    for (const t of this.state.threads.values()) {
+      if (t.root && !('kind' in t.root) && t.root.id === id) t.root = fetched;
+      for (let i = 0; i < t.descendants.length; i++) {
+        const d = t.descendants[i]!;
+        if (!('kind' in d) && d.id === id) t.descendants[i] = fetched;
+      }
+    }
+    for (const [, f] of this.authorPostsData) {
+      const pi = f.posts.findIndex((p) => p.id === id);
+      if (pi !== -1) f.posts[pi] = fetched;
     }
   }
 
@@ -1354,24 +1385,25 @@ export class App {
     // click is not the ticking readout the motion contract bans.
     this.optimisticLikes.add(postId);
     this.renderRegionsForPost(postId);
+    this.renderFeedPost(postId);
     let result;
     try {
       result = await submitLikeFlow(this.submitDeps(), postId);
     } catch {
-      // A transport failure leaves no like optimistic — the reader is told and
-      // the control returns to `like`.
       this.optimisticLikes.delete(postId);
       this.setReportForPost(postId, "like rejected: can't reach the node right now.");
       this.renderRegionsForPost(postId);
+      if (this.feedHasPost(postId)) this.renderFeed();
       return;
     }
     if (result.ok) {
       this.startPoll();
-    } else {
-      this.optimisticLikes.delete(postId);
-      this.setReportForPost(postId, 'like rejected: ' + likeRejectionCopy(result.rejection));
+      return;
     }
+    this.optimisticLikes.delete(postId);
+    this.setReportForPost(postId, 'like rejected: ' + likeRejectionCopy(result.rejection));
     this.renderRegionsForPost(postId);
+    if (this.feedHasPost(postId)) this.renderFeed();
   }
 
   /** Withdraw the reader's own post: the flight in the slot, then submit. On a 2xx
@@ -1692,6 +1724,10 @@ export class App {
     }
   }
 
+  private feedHasPost(id: string): boolean {
+    return this.state.feed.posts.some((p) => p.id === id);
+  }
+
   private feedHasAuthor(key: string): boolean {
     return this.state.feed.posts.some((p) => p.author === key) || this.state.feed.pending.some((p) => p.author === key);
   }
@@ -2007,7 +2043,9 @@ export class App {
         this.optimisticLikes.delete(entry.postId);
         this.ledger.remove(entry.txId);
         if (outcome === 'expired') this.setReportForPost(entry.postId, 'a like expired before any block took it');
+        if (outcome === 'landed') this.applyFetchedRow(fetched);
         touchedPosts.add(entry.postId);
+        if (this.feedHasPost(entry.postId)) feedTouched = true;
       } else {
         // withdraw — landed on any tombstone, the row replaced in place; expired
         // renders the sentence and `try again` (WEB_INTERFACE → The withdraw control).
@@ -2115,6 +2153,7 @@ export class App {
   }
 
   private setReportForPost(postId: string, text: string): void {
+    if (this.feedHasPost(postId)) this.state.feed.report = text;
     for (const column of this.state.workspace.columns) {
       const fk = column.wins[column.focus];
       if (fk !== undefined && !isWin(fk) && this.threadContains(fk, postId)) column.report = text;

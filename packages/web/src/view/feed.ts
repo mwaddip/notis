@@ -1,5 +1,6 @@
 import { el, reportNode } from '../dom';
-import { card, submissionToPost, flightFor, type CardOpts } from './card';
+import { card, submissionToPost, flightFor, listCardOpts, type CardOpts } from './card';
+import type { PostJson } from '../api/dto';
 import { FEED_COMPOSER_KEY, type FeedState, type RenderCtx, type Handlers } from '../model/state';
 
 // The feed: roots alone, newest first — it reads GET /posts?roots=1, so no reply
@@ -38,6 +39,26 @@ function markOpts(author: string, ctx: RenderCtx, handlers: Handlers): Partial<C
     opts.onUnlock = (p) => handlers.unlockIdentity(p);
   }
   return opts;
+}
+
+function feedCardOpts(p: PostJson, ctx: RenderCtx, handlers: Handlers): CardOpts {
+  return {
+    open: ctx.openSet.has(p.id),
+    replyCount: p.descendantCount,
+    onOpen: (id) => handlers.openThread(id, { from: 'feed' }),
+    you: isYou(p.author, ctx),
+    ...markOpts(p.author, ctx, handlers),
+    ...listCardOpts(p, ctx, handlers),
+  };
+}
+
+/** Replace one card in the feed container by post id — the like's press changes
+ *  only that card and nothing else moves (WEB_INTERFACE → What the feed reads,
+ *  and what a card shows for it). */
+export function replaceFeedCard(container: HTMLElement, post: PostJson, ctx: RenderCtx, handlers: Handlers): void {
+  const old = container.querySelector<HTMLElement>(`[data-post-id="${post.id}"]`);
+  if (!old) return;
+  old.replaceWith(card(post, feedCardOpts(post, ctx, handlers)));
 }
 
 export function renderFeedInto(container: HTMLElement, feed: FeedState, handlers: Handlers, ctx: RenderCtx): void {
@@ -79,7 +100,8 @@ export function renderFeedInto(container: HTMLElement, feed: FeedState, handlers
 
   // The client's own root submissions, newest first, above the node's rows.
   for (const sub of [...ctx.submissionsFor(null)].reverse()) {
-    container.appendChild(card(submissionToPost(sub), { replyCount: null, flight: flightFor(sub, handlers.tryAgain), onOpen: (id) => handlers.openThread(id, { from: 'feed' }), you: isYou(sub.author, ctx), ...markOpts(sub.author, ctx, handlers) }));
+    const post = submissionToPost(sub);
+    container.appendChild(card(post, { replyCount: null, flight: flightFor(sub, handlers.tryAgain), onOpen: (id) => handlers.openThread(id, { from: 'feed' }), you: isYou(sub.author, ctx), ...markOpts(sub.author, ctx, handlers), ...listCardOpts(post, ctx, handlers) }));
   }
 
   // Pending (mempool) posts are the newest — they sit above the confirmed ones,
@@ -88,15 +110,7 @@ export function renderFeedInto(container: HTMLElement, feed: FeedState, handlers
     container.appendChild(card(p, { replyCount: p.descendantCount, onOpen: (id) => handlers.openThread(id, { from: 'feed' }), you: isYou(p.author, ctx), ...markOpts(p.author, ctx, handlers) }));
   }
   for (const p of feed.posts) {
-    container.appendChild(
-      card(p, {
-        open: ctx.openSet.has(p.id),
-        replyCount: p.descendantCount,
-        onOpen: (id) => handlers.openThread(id, { from: 'feed' }),
-        you: isYou(p.author, ctx),
-        ...markOpts(p.author, ctx, handlers),
-      }),
-    );
+    container.appendChild(card(p, feedCardOpts(p, ctx, handlers)));
   }
 
   if (feed.loaded && feed.posts.length === 0 && feed.pending.length === 0) {

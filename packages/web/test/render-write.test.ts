@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { App } from '../src/app';
 import { PendingLedger } from '../src/wallet/ledger';
 import type { Api } from '../src/api/client';
@@ -16,9 +16,12 @@ import { contentHashHex } from '../src/integrity';
 
 const PUB = 'aa'.repeat(32); // the reader
 const OTHER = 'ee'.repeat(32); // someone else
+const OTHER2 = 'dd'.repeat(32); // another author
 const ROOT = 'b'.repeat(64);
+const ROOT2 = 'd'.repeat(64);
 const OWN_POST = 'c'.repeat(64);
 const MY_POST = 'a'.repeat(64); // the reader's own post, listed in the @posts window
+const PENDING_ROOT = 'f'.repeat(64);
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
 function post(id: string, author: string, content: string, status: 'confirmed' | 'pending' = 'confirmed'): PostJson {
@@ -190,5 +193,228 @@ describe('the @posts window is read-only', () => {
     expect(ownCard.querySelector('.withdraw-ctl')).toBeNull(); // the write controls live in the pane, not here
     expect(ownCard.querySelector('.likebtn')).toBeNull();
     expect(ownCard.querySelector('.reply-ctl')).toBeNull();
+  });
+});
+
+describe('feed cards carry like and link', () => {
+  function feedHarness(): Harness {
+    const signed: string[] = [];
+    const identity: AppIdentity = {
+      current: () => ({ pubKeyHex: PUB, locked: false }),
+      sign: (txId) => { signed.push(txId); return 'ab'.repeat(64); },
+      draft: () => ({ pubKeyHex: PUB }),
+      create: async () => ({ pubKeyHex: PUB }),
+      discardDraft: () => {},
+      inspectFile: () => ({ kind: 'clear', pubKeyHex: PUB }),
+      importFile: async () => ({ pubKeyHex: PUB }),
+      exportFile: async () => '{}',
+      unlock: async () => {},
+      lock: () => {},
+      forget: () => {},
+      backedUp: () => false,
+      onChange: () => {},
+    };
+    const echoTxId = (): string => signed[signed.length - 1]!;
+    const feedResult: FeedResult = {
+      posts: [post(ROOT, OTHER, 'root by other'), post(ROOT2, OTHER2, 'root by other2')],
+      next: null, pending: [post(PENDING_ROOT, OTHER, 'a pending root', 'pending')], pendingCount: 1,
+    };
+    const fakeApi: Api = {
+      feed: async () => feedResult,
+      thread: async () => null,
+      post: async (id): Promise<PostResult> => ({ ...post(id, OTHER, 'x'), confirmedAuthor: OTHER }),
+      status: async () => statusResult(),
+      currentBlock: async () => ({ height: 6000, hash: null }),
+      karma: async () => karmaResult({ userId: PUB, total: '227', effective: '227', boxes: [{ boxId: '11'.repeat(32), value: '227' }], boxCount: 1, height: 6000 }),
+      vouchesByTarget: async () => ({ vouches: [], count: 0, next: null }),
+      vouchesByVoucher: async () => ({ vouches: [], count: 0, next: null }),
+      vouchCooldowns: async () => ({ cooldowns: [], count: 0, next: null }),
+      bonds: async () => ({ bonds: [], bondCount: 0, next: null }),
+    };
+    const writeClient = {
+      submitPost: async () => ({ postId: 'newpost', status: 'pending', expiresAtHeight: 6720, txId: echoTxId() }),
+      submitLike: async () => ({ status: 'pending', txId: echoTxId(), expiresAtHeight: 6720 }),
+    } as unknown as WriteClient;
+    const app = new App(fakeApi, writeClient, identity, new PendingLedger(PUB));
+    const appbar = document.createElement('div');
+    const feed = document.createElement('section'); feed.id = 'feed';
+    const panes = document.createElement('section'); panes.id = 'panes';
+    document.body.append(appbar, feed, panes);
+    app.mount(appbar, feed, panes);
+    return { drive: app as unknown as Harness['drive'], feed, panes };
+  }
+
+  it('committed cards carry like and link, pending cards carry neither', async () => {
+    const h = feedHarness();
+    await h.drive.loadFeed();
+    const confirmed = [...h.feed.querySelectorAll('.card:not(.pending)')];
+    expect(confirmed.length).toBe(2);
+    for (const c of confirmed) {
+      expect(c.querySelector('.likebtn')).toBeTruthy();
+      expect(c.querySelector('.linkbtn')).toBeTruthy();
+    }
+    const pending = h.feed.querySelector('.card.pending');
+    expect(pending).toBeTruthy();
+    expect(pending!.querySelector('.likebtn')).toBeNull();
+    expect(pending!.querySelector('.linkbtn')).toBeNull();
+  });
+
+  it('a like press marks that card liked and moves the count, other cards keep their node', async () => {
+    const h = feedHarness();
+    await h.drive.loadFeed();
+    const otherCard = h.feed.querySelector<HTMLElement>(`[data-post-id="${ROOT2}"]`)!;
+    expect(otherCard).toBeTruthy();
+    const likedCard = h.feed.querySelector<HTMLElement>(`[data-post-id="${ROOT}"]`)!;
+    expect(likedCard.querySelector('.likebtn')).toBeTruthy();
+    likedCard.querySelector<HTMLButtonElement>('.likebtn')!.click();
+    await flush();
+    const updated = h.feed.querySelector<HTMLElement>(`[data-post-id="${ROOT}"]`)!;
+    expect(updated.querySelector('.liked')).toBeTruthy();
+    expect(updated.querySelector('.liked')!.textContent).toContain('1');
+    expect(h.feed.querySelector<HTMLElement>(`[data-post-id="${ROOT2}"]`)).toBe(otherCard);
+  });
+
+  it('a like rejection lands in the feed report line', async () => {
+    const signed: string[] = [];
+    const identity: AppIdentity = {
+      current: () => ({ pubKeyHex: PUB, locked: false }),
+      sign: (txId) => { signed.push(txId); return 'ab'.repeat(64); },
+      draft: () => ({ pubKeyHex: PUB }),
+      create: async () => ({ pubKeyHex: PUB }),
+      discardDraft: () => {},
+      inspectFile: () => ({ kind: 'clear', pubKeyHex: PUB }),
+      importFile: async () => ({ pubKeyHex: PUB }),
+      exportFile: async () => '{}',
+      unlock: async () => {},
+      lock: () => {},
+      forget: () => {},
+      backedUp: () => false,
+      onChange: () => {},
+    };
+    const fakeApi: Api = {
+      feed: async () => ({ posts: [post(ROOT, OTHER, 'root by other')], next: null, pending: [], pendingCount: 0 }),
+      thread: async () => null,
+      post: async (id): Promise<PostResult> => ({ ...post(id, OTHER, 'x'), confirmedAuthor: OTHER }),
+      status: async () => statusResult(),
+      currentBlock: async () => ({ height: 6000, hash: null }),
+      karma: async () => karmaResult({ userId: PUB, total: '227', effective: '227', boxes: [{ boxId: '11'.repeat(32), value: '227' }], boxCount: 1, height: 6000 }),
+      vouchesByTarget: async () => ({ vouches: [], count: 0, next: null }),
+      vouchesByVoucher: async () => ({ vouches: [], count: 0, next: null }),
+      vouchCooldowns: async () => ({ cooldowns: [], count: 0, next: null }),
+      bonds: async () => ({ bonds: [], bondCount: 0, next: null }),
+    };
+    const writeClient = {
+      submitPost: async () => ({ postId: 'x', status: 'pending', expiresAtHeight: 6720, txId: 'x' }),
+      submitLike: async () => { throw new Error('offline'); },
+    } as unknown as WriteClient;
+    const app = new App(fakeApi, writeClient, identity, new PendingLedger(PUB));
+    const appbar = document.createElement('div');
+    const feed = document.createElement('section'); feed.id = 'feed';
+    const panes = document.createElement('section'); panes.id = 'panes';
+    document.body.append(appbar, feed, panes);
+    app.mount(appbar, feed, panes);
+    (app as unknown as Harness['drive']).loadFeed();
+    await flush();
+    feed.querySelector<HTMLButtonElement>('.likebtn')!.click();
+    await flush();
+    const report = feed.querySelector('.report');
+    expect(report).toBeTruthy();
+    expect(report!.textContent).toContain('like rejected');
+  });
+});
+
+describe('a like landing updates every surface holding the post', () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('the feed card and the pane card both show .liked.settled with the node\'s count', async () => {
+    vi.useFakeTimers();
+    const signed: string[] = [];
+    let liked = false;
+    const identity: AppIdentity = {
+      current: () => ({ pubKeyHex: PUB, locked: false }),
+      sign: (txId) => { signed.push(txId); return 'ab'.repeat(64); },
+      draft: () => ({ pubKeyHex: PUB }),
+      create: async () => ({ pubKeyHex: PUB }),
+      discardDraft: () => {},
+      inspectFile: () => ({ kind: 'clear', pubKeyHex: PUB }),
+      importFile: async () => ({ pubKeyHex: PUB }),
+      exportFile: async () => '{}',
+      unlock: async () => {},
+      lock: () => {},
+      forget: () => {},
+      backedUp: () => false,
+      onChange: () => {},
+    };
+    const echoTxId = (): string => signed[signed.length - 1]!;
+    const rootPost = post(ROOT, OTHER, 'a root by someone else');
+    const feedResult: FeedResult = { posts: [rootPost], next: null, pending: [], pendingCount: 0 };
+    const thread: ThreadResult = {
+      post: post(ROOT, OTHER, 'a root by someone else'),
+      ancestors: [], ancestorCount: 0, descendants: [], descendantCount: 0,
+      next: null, pending: [], pendingCount: 0,
+    };
+    const fakeApi: Api = {
+      feed: async () => feedResult,
+      thread: async (id) => (id === ROOT ? thread : null),
+      post: async (id): Promise<PostResult> => ({
+        ...post(id, OTHER, 'a root by someone else'),
+        likeCount: liked ? 1 : 0,
+        likedByViewer: liked,
+        confirmedAuthor: OTHER,
+      }),
+      status: async () => statusResult(),
+      currentBlock: async () => ({ height: 6001, hash: null }),
+      karma: async () => karmaResult({ userId: PUB, total: '227', effective: '227', boxes: [{ boxId: '11'.repeat(32), value: '227' }], boxCount: 1, height: 6000 }),
+      vouchesByTarget: async () => ({ vouches: [], count: 0, next: null }),
+      vouchesByVoucher: async () => ({ vouches: [], count: 0, next: null }),
+      vouchCooldowns: async () => ({ cooldowns: [], count: 0, next: null }),
+      bonds: async () => ({ bonds: [], bondCount: 0, next: null }),
+    };
+    const writeClient = {
+      submitPost: async () => ({ postId: 'x', status: 'pending', expiresAtHeight: 6720, txId: 'x' }),
+      submitLike: async () => ({ status: 'pending', txId: echoTxId(), expiresAtHeight: 6720 }),
+    } as unknown as WriteClient;
+
+    const app = new App(fakeApi, writeClient, identity, new PendingLedger(PUB));
+    const appbar = document.createElement('div');
+    const feed = document.createElement('section'); feed.id = 'feed';
+    const panes = document.createElement('section'); panes.id = 'panes';
+    document.body.append(appbar, feed, panes);
+    app.mount(appbar, feed, panes);
+    const drive = app as unknown as {
+      loadFeed(): Promise<void>;
+      openThread(id: string, origin: { from: 'feed' }): void;
+      likePost(postId: string): Promise<void>;
+      pollTick(): Promise<void>;
+    };
+
+    await drive.loadFeed();
+    await vi.advanceTimersByTimeAsync(0);
+    drive.openThread(ROOT, { from: 'feed' });
+    await vi.advanceTimersByTimeAsync(0);
+
+    // Like the post (ROOT is in both the feed and the open pane).
+    await drive.likePost(ROOT);
+    await vi.advanceTimersByTimeAsync(0);
+
+    // The optimistic state: the feed card shows .liked (no .settled).
+    expect(feed.querySelector('.liked')).toBeTruthy();
+    expect(feed.querySelector('.liked.settled')).toBeNull();
+
+    // The node confirms: likedByViewer true, likeCount 1.
+    liked = true;
+    await drive.pollTick();
+    await vi.advanceTimersByTimeAsync(0);
+
+    // Feed card: .liked.settled with count 1, no refresh.
+    const feedLiked = feed.querySelector('.liked.settled');
+    expect(feedLiked).toBeTruthy();
+    expect(feedLiked!.querySelector('.n')!.textContent).toBe('1');
+
+    // Pane card: .liked.settled with count 1 — the pane card holds the same
+    // post through its thread row; the landing reaches it too.
+    const paneLiked = panes.querySelector('.liked.settled');
+    expect(paneLiked).toBeTruthy();
+    expect(paneLiked!.querySelector('.n')!.textContent).toBe('1');
   });
 });
