@@ -219,10 +219,9 @@ describe('the author-posts window', () => {
     expect(cards.length).toBe(2);
     expect(b.querySelector('.strip')).not.toBeNull();
     // Another author's card carries a like button and link.
-    expect(cards[0]!.querySelector('.likebtn')).not.toBeNull();
+    expect([...cards[0]!.querySelectorAll('button')].some((b) => b.textContent === 'like')).toBe(true);
     expect(cards[0]!.querySelector('.linkbtn')).not.toBeNull();
-    // The reader's own card carries the read-only count (no like button) and link.
-    expect(cards[1]!.querySelector('.likebtn')).toBeNull();
+    expect([...cards[1]!.querySelectorAll('button')].some((b) => b.textContent === 'like')).toBe(false);
     expect(cards[1]!.querySelector('.linkbtn')).not.toBeNull();
     // No reply control — it lives in the pane the strip opens.
     expect(b.querySelector('.reply-ctl')).toBeNull();

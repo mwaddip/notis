@@ -200,14 +200,15 @@ function replyCountNode(count: number | null): HTMLElement | null {
   return r;
 }
 
-function likeNode(likeCount: number): HTMLElement | null {
+/** The like count — `N liked`; absent at 0. The reader's state is the count's
+ *  colour: inkMute at rest and while the reader's like is pending, greenText
+ *  once a block took it (WEB_INTERFACE → What the feed reads, and what a card
+ *  shows for it). */
+function likedCount(likeCount: number, settled?: boolean): HTMLElement | null {
   if (likeCount <= 0) return null;
-  // `like` NEVER takes an s — a present-tense verb ("7 like this"), not a count
-  // of objects; the protocol has no like object. Read-only here: no viewer is
-  // sent, so there is no "you liked this" and no unlike.
-  const l = el('span', 'like');
+  const l = el('span', 'liked' + (settled ? ' settled' : ''));
   l.appendChild(el('span', 'n', String(likeCount)));
-  l.appendChild(document.createTextNode(' like'));
+  l.appendChild(document.createTextNode(' liked'));
   return l;
 }
 
@@ -271,22 +272,26 @@ export function stageLine(flight: Flight): HTMLElement {
   return s;
 }
 
-/** The like area — 'liked' once done (no undoing it), a like button otherwise, or
- *  the read-only count on a feed card. `like` never takes an s. */
-function likeArea(post: PostJson, opts: CardOpts): HTMLElement | null {
+/** The like area — the count `N liked`, then the word `like` while it can act,
+ *  the reader's state as the count's colour (WEB_INTERFACE → What the feed reads,
+ *  and what a card shows for it). */
+function likeArea(post: PostJson, opts: CardOpts, meta: HTMLElement): void {
   if (opts.liked) {
-    // inkMute until a block takes it, greenText after — the karma colour.
-    const l = el('span', 'liked' + (opts.likePending ? '' : ' settled'));
     const count = post.likeCount + (opts.likePending ? 1 : 0);
-    if (count > 0) l.appendChild(el('span', 'n', String(count)));
-    l.appendChild(el('span', null, 'liked'));
-    return l;
+    const lk = likedCount(count, !opts.likePending);
+    if (lk) {
+      lk.title = 'you liked this';
+      lk.setAttribute('aria-label', 'you liked this');
+      meta.appendChild(lk);
+    }
+    return;
   }
+  const lk = likedCount(post.likeCount);
+  if (lk) meta.appendChild(lk);
   if (opts.onLike) {
-    const lb = el('button', 'likebtn');
+    const lb = el('button', 'word');
     lb.setAttribute('aria-label', 'like this post — permanent, and moves karma to its author');
-    if (post.likeCount > 0) lb.appendChild(el('span', 'n', String(post.likeCount)));
-    lb.appendChild(el('span', null, 'like'));
+    lb.textContent = 'like';
     lb.addEventListener('click', () => {
       // A locked identity unlocks first, in a row under the meta and in response to
       // the press; on success the like proceeds (WEB_INTERFACE → The identity module).
@@ -296,9 +301,8 @@ function likeArea(post: PostJson, opts: CardOpts): HTMLElement | null {
       }
       opts.onLike!(post.id);
     });
-    return lb;
+    meta.appendChild(lb);
   }
-  return likeNode(post.likeCount);
 }
 
 /** The unlock form in a row under the card's meta; a correct passphrase loads the
@@ -552,12 +556,11 @@ function livePostCard(post: PostJson, opts: CardOpts): HTMLElement {
       // control).
       const wa = withdrawArea(post, opts);
       if (wa) {
-        const count = likeNode(post.likeCount);
+        const count = likedCount(post.likeCount);
         if (count) meta.appendChild(count);
         meta.appendChild(wa);
       } else {
-        const lk = likeArea(post, opts);
-        if (lk) meta.appendChild(lk);
+        likeArea(post, opts, meta);
       }
       if (landed && post.blockHeight !== null) meta.appendChild(inBlockNode(post.blockHeight));
       const rb = replyButton(post.id, opts);

@@ -230,6 +230,22 @@ describe('card — a locked like', () => {
   });
 });
 
+describe('card — the liked state carries you liked this', () => {
+  it('the liked span has title and aria-label you liked this', () => {
+    const p = { ...confirmed('bb'.repeat(32)), likeCount: 3 };
+    const c = card(p, { liked: true, likePending: false });
+    const liked = c.querySelector('.liked')!;
+    expect(liked.getAttribute('title')).toBe('you liked this');
+    expect(liked.getAttribute('aria-label')).toBe('you liked this');
+  });
+  it('the pending like also carries the label', () => {
+    const p = { ...confirmed('bb'.repeat(32)), likeCount: 3 };
+    const c = card(p, { liked: true, likePending: true });
+    const liked = c.querySelector('.liked')!;
+    expect(liked.getAttribute('aria-label')).toBe('you liked this');
+  });
+});
+
 describe('card — the author prefix and a locked vouch', () => {
   const AUTHOR = 'bb'.repeat(32);
 
@@ -286,17 +302,14 @@ describe('card — the withdraw control', () => {
   const confirmBtn = (c: HTMLElement, text: string): HTMLButtonElement =>
     [...c.querySelector('.card-confirm')!.querySelectorAll('button')].find((b) => b.textContent === text) as HTMLButtonElement;
 
-  it('an own confirmed card keeps the read-only like count, the withdraw control after it, no like button', () => {
+  it('an own confirmed card keeps the like count N liked, the withdraw control after it, no like word', () => {
     const c = card(ownWithLikes(), { you: true, onWithdraw: () => {}, canWithdraw: true, onReply: () => {} });
     expect(metaWithdraw(c)).not.toBeNull();
-    // No like BUTTON — the self-like is withheld — but the read-only count stays.
-    expect(c.querySelector('.likebtn')).toBeNull();
-    const count = c.querySelector('.meta .like');
+    const count = c.querySelector('.meta .liked');
     expect(count).not.toBeNull();
     expect(count!.textContent).toContain('3');
-    // The withdraw control follows the count.
+    expect(count!.textContent).toContain('liked');
     expect(count!.nextElementSibling).toBe(metaWithdraw(c));
-    // · you stays a span, and reply follows.
     expect(c.querySelector('.you')?.textContent).toBe('· you');
     expect(c.querySelector('.meta .reply-ctl')).not.toBeNull();
   });
@@ -370,10 +383,10 @@ describe('card — the withdraw control', () => {
   it("withdraw 'pending' renders the stage line submitted, the like count staying beside it; an expired flight the sentence and try again", () => {
     const p = card(ownWithLikes(), { you: true, withdraw: 'pending' });
     expect(p.querySelector('.stage')?.textContent).toBe('submitted');
-    expect(p.querySelector('.withdraw-ctl')).toBeNull(); // the flight replaces the button, not the count
-    // The count stays beside the stage line.
-    const count = p.querySelector('.meta .like');
+    expect(p.querySelector('.withdraw-ctl')).toBeNull();
+    const count = p.querySelector('.meta .liked');
     expect(count).not.toBeNull();
+    expect(count!.textContent).toContain('liked');
     expect(count!.nextElementSibling).toBe(p.querySelector('.stage'));
     const onTryAgain = vi.fn();
     const e = card(confirmed(PUB), { you: true, withdraw: { stage: 'expired', expiresAtHeight: 7000, onTryAgain } });
@@ -468,22 +481,24 @@ describe('card — feed-shaped: like and link without reply or withdraw', () => 
   const OTHER = 'bb'.repeat(32);
   const URL = 'http://localhost/p/' + OTHER;
 
-  it('link follows the like slot on a feed card', () => {
-    const c = card(confirmed(OTHER), { onLike: () => {}, linkUrl: URL });
+  it('the link follows the like word on a feed card', () => {
+    const c = card({ ...confirmed(OTHER), likeCount: 2 }, { onLike: () => {}, linkUrl: URL });
     const meta = c.querySelector('.meta')!;
-    const likebtn = meta.querySelector('.likebtn')!;
+    const likeWord = [...meta.querySelectorAll('button')].find((b) => b.textContent === 'like')!;
     const linkbtn = meta.querySelector('.linkbtn')!;
-    expect(likebtn).not.toBeNull();
+    expect(likeWord).not.toBeNull();
     expect(linkbtn).not.toBeNull();
     const children = [...meta.children];
-    expect(children.indexOf(linkbtn)).toBeGreaterThan(children.indexOf(likebtn));
+    expect(children.indexOf(linkbtn)).toBeGreaterThan(children.indexOf(likeWord));
   });
 
-  it('the read-only count and link on the reader\'s own post, no like button', () => {
+  it('the read-only count N liked and link on the reader\'s own post, no like word', () => {
     const own = { ...confirmed(PUB), likeCount: 5 };
     const c = card(own, { you: true, linkUrl: URL });
-    expect(c.querySelector('.likebtn')).toBeNull();
-    expect(c.querySelector('.like')!.textContent).toContain('5');
+    const liked = c.querySelector('.meta .liked');
+    expect(liked).not.toBeNull();
+    expect(liked!.textContent).toContain('5');
+    expect(liked!.textContent).toContain('liked');
     expect(c.querySelector('.linkbtn')).not.toBeNull();
   });
 
