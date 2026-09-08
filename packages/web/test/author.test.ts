@@ -189,12 +189,13 @@ function feedState(over: Partial<FeedState> = {}): FeedState {
   return { posts: [post(P1, AUTHOR), post(P2, ME)], pending: [], next: null, report: null, olderReport: null, loaded: true, loading: false, error: null, ...over };
 }
 const postsHandlers = (): PostsHandlers & { calls: Record<string, unknown[]> } => {
-  const calls: Record<string, unknown[]> = { openThread: [], openAuthor: [], vouch: [], more: [] };
+  const calls: Record<string, unknown[]> = { openThread: [], openAuthor: [], vouch: [], more: [], like: [] };
   return {
     calls,
     openThread: (id, o) => calls.openThread!.push([id, o]),
     openAuthor: (k, o) => calls.openAuthor!.push([k, o]),
     vouch: (k) => calls.vouch!.push(k),
+    likePost: (id) => calls.like!.push(id),
     authorPostsMore: (k) => calls.more!.push(k),
     unlockIdentity: async () => {},
     expandImage: () => {},
@@ -204,21 +205,27 @@ const postsHandlers = (): PostsHandlers & { calls: Record<string, unknown[]> } =
 function postsCtx(over: Partial<PostsCtx> = {}): PostsCtx {
   return {
     authorKey: AUTHOR, origin: ORIGIN, feed: feedState(), writeEnabled: true, ownKey: ME, locked: false,
-    markFor: (k) => (k === ME ? null : ({ state: 'plus', count: 0 } as Mark)), expandedImages: new Set(), ...over,
+    markFor: (k) => (k === ME ? null : ({ state: 'plus', count: 0 } as Mark)),
+    likePending: () => false, linkUrl: (id) => `http://localhost/p/${id}`,
+    expandedImages: new Set(), ...over,
   };
 }
 
 describe('the author-posts window', () => {
-  it('renders feed cards: the strip, the mark, · you on own — no like and no reply', () => {
+  it('like and link on another author\'s card, the read-only count on own, no reply', () => {
     const h = postsHandlers();
     const b = authorPostsBody(h, postsCtx());
     const cards = b.querySelectorAll('.card');
     expect(cards.length).toBe(2);
-    // The strip opens a thread; no like control and no reply control live here.
     expect(b.querySelector('.strip')).not.toBeNull();
-    expect(b.querySelector('.likebtn')).toBeNull();
+    // Another author's card carries a like button and link.
+    expect(cards[0]!.querySelector('.likebtn')).not.toBeNull();
+    expect(cards[0]!.querySelector('.linkbtn')).not.toBeNull();
+    // The reader's own card carries the read-only count (no like button) and link.
+    expect(cards[1]!.querySelector('.likebtn')).toBeNull();
+    expect(cards[1]!.querySelector('.linkbtn')).not.toBeNull();
+    // No reply control — it lives in the pane the strip opens.
     expect(b.querySelector('.reply-ctl')).toBeNull();
-    // A card by another author carries the mark; the reader's own reads · you.
     expect(cards[0]!.querySelector('.vmark')).not.toBeNull();
     expect(cards[1]!.querySelector('.you')?.textContent).toBe('· you');
     expect(cards[1]!.querySelector('.vmark')).toBeNull();
