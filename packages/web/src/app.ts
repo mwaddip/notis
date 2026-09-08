@@ -1,6 +1,7 @@
 import { NodeClient, type Api } from './api/client';
 import type { PostJson, WithdrawnJson, FeedRow, PostResult, ThreadResult, KarmaResult, BondsResult } from './api/dto';
 import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE } from '@dagsocial/types';
+import type { Mode } from './mode';
 import { el, shortHex, preservingScroll } from './dom';
 import { contentHashHex } from './integrity';
 import { prefs, setTheme, setIdTint, setNode, setFaucet, writeStore, KEY_LAYOUT, type Theme, type IdTint } from './prefs';
@@ -25,7 +26,7 @@ import { renderKarmaField, renderInvitesRow } from './view/profile';
 import type { Mark, Flight } from './view/card';
 import type { YourVouch } from './view/author';
 import {
-  newWorkspace, openWindow, closeWindow, moveLeft, moveRight, focusWindow, openSet, locate,
+  newColumn, newWorkspace, openWindow, closeWindow, moveLeft, moveRight, focusWindow, openSet, locate,
   type Origin, type Column,
 } from './model/workspace';
 import {
@@ -142,6 +143,7 @@ export class App {
   // carry `none` when no column lies that way — space-reserved at tiling, absent at
   // one column.
   private oneColumn = false;
+  private standalone = false;
   private mql: MediaQueryList | null = null;
   private headerLeftArrow: HTMLElement | null = null;
   private headerRightArrow: HTMLElement | null = null;
@@ -258,11 +260,16 @@ export class App {
 
   // Set the DOM refs and paint the initial shell. Split from `start` so a test
   // can mount and drive actions without the network boot.
-  mount(appbar: HTMLElement, feedEl: HTMLElement, panesEl: HTMLElement): void {
+  mount(appbar: HTMLElement, feedEl: HTMLElement, panesEl: HTMLElement, mode?: Mode): void {
     this.appbar = appbar;
     this.feedEl = feedEl;
     this.panesEl = panesEl;
     this.workspaceEl = panesEl.closest<HTMLElement>('.workspace');
+    if (mode?.kind === 'standalone') {
+      this.standalone = true;
+      this.state.workspace = { columns: [newColumn([mode.id])] };
+      this.workspaceEl?.classList.add('standalone');
+    }
     // One media query is the width class the header prefix and the panes read; its
     // change re-renders both (WEB_INTERFACE → The workspace). The header arrows
     // follow the active scroller's position and the width class.
@@ -275,9 +282,9 @@ export class App {
     window.addEventListener('resize', () => this.updateHeaderArrows());
     // An identity change takes effect at once (WEB_INTERFACE → The identity module).
     this.idm.onChange(() => this.onIdentityChange());
-    this.restoreLayout();
+    if (!this.standalone) this.restoreLayout();
     this.renderHeader();
-    this.renderFeed();
+    if (!this.standalone) this.renderFeed();
     this.renderPanes();
     // A restored ledger may already hold pending entries from a prior session; the
     // poll runs while it holds one (WEB_INTERFACE → The wallet). startPoll guards on
@@ -285,11 +292,11 @@ export class App {
     this.startPoll();
   }
 
-  start(appbar: HTMLElement, feedEl: HTMLElement, panesEl: HTMLElement): void {
-    this.mount(appbar, feedEl, panesEl);
+  start(appbar: HTMLElement, feedEl: HTMLElement, panesEl: HTMLElement, mode?: Mode): void {
+    this.mount(appbar, feedEl, panesEl, mode);
     this.suppressHoverWhileScrolling();
 
-    void this.loadFeed();
+    if (!this.standalone) void this.loadFeed();
     // A restored arrangement names post ids that must be fetched, and one may
     // have been withdrawn since — its window renders the withdrawn marker, not
     // an error.
@@ -317,6 +324,7 @@ export class App {
   }
 
   private saveLayout(): void {
+    if (this.standalone) return;
     writeStore(KEY_LAYOUT, serialise(this.state.workspace));
   }
 
@@ -334,6 +342,7 @@ export class App {
       post: (id) => this.state.posts.get(id),
       arrangement: serialise(this.state.workspace),
       oneColumn: this.oneColumn,
+      standalone: this.standalone,
       writeEnabled: cur !== null,
       ownKey: cur?.pubKeyHex ?? null,
       composerFor: (parentId) => this.composers.get(composerKey(parentId))?.el ?? null,
