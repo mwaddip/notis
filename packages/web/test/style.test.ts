@@ -98,6 +98,15 @@ describe('app.css — the one-column header', () => {
   });
 });
 
+describe('app.css — scroll-snap-stop inside the one-column block', () => {
+  it('scroll-snap-stop: always is inside @media (max-width: 955px) and nowhere outside', () => {
+    const one = mediaBlock('@media (max-width: 955px) {');
+    expect(one).not.toBe('');
+    expect(one).toContain('scroll-snap-stop: always');
+    expect(css.replace(one, '')).not.toContain('scroll-snap-stop');
+  });
+});
+
 describe('app.css — the standalone rules', () => {
   it('.workspace.standalone hides the feed, applies contents to panes, and caps the member', () => {
     expect(css).toMatch(/\.workspace\.standalone\s*\{[^}]*gap: 0/);
