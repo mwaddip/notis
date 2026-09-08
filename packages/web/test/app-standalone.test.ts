@@ -303,9 +303,15 @@ describe('the way in — tabs', () => {
     expect(location.pathname).toBe('/');
     expect(feed.children.length).toBeGreaterThan(0);
 
+    expect(localStorage.getItem(KEY_LAYOUT)).toBe('#' + P2);
+
     tabs.setHolding(true);
     await flush();
     await flush();
+
+    const stored = localStorage.getItem(KEY_LAYOUT);
+    expect(stored).toContain(P2);
+    expect(stored).toContain(P1);
   });
 
   it('a popstate with an id after the switch does not overwrite the workspace', async () => {
