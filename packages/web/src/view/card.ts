@@ -57,7 +57,6 @@ export interface CardOpts {
   withdraw?: 'pending' | Flight | null;  // 'pending' from the ledger, else the transient flight in the slot
   canWithdraw?: boolean;                 // false → disabled with the reason as the title
   // WEB_INTERFACE → Links
-  onLink?: ((id: string) => void) | null;
   linkUrl?: string;
 }
 
@@ -405,8 +404,8 @@ function replyButton(id: string, opts: CardOpts): HTMLElement | null {
 }
 
 // WEB_INTERFACE → Links — after ↩ reply, the row's last control.
-function linkButton(_id: string, opts: CardOpts, meta: HTMLElement): HTMLElement | null {
-  if (!opts.onLink || !opts.linkUrl) return null;
+function linkButton(opts: CardOpts, meta: HTMLElement): HTMLElement | null {
+  if (!opts.linkUrl) return null;
   const url = opts.linkUrl;
   let copied = false;
   const lb = el('button', 'mini linkbtn');
@@ -537,7 +536,7 @@ function livePostCard(post: PostJson, opts: CardOpts): HTMLElement {
       if (landed && post.blockHeight !== null) meta.appendChild(inBlockNode(post.blockHeight));
       const rb = replyButton(post.id, opts);
       if (rb) meta.appendChild(rb);
-      const lnk = linkButton(post.id, opts, meta);
+      const lnk = linkButton(opts, meta);
       if (lnk) meta.appendChild(lnk);
     }
     body.appendChild(meta);
@@ -564,7 +563,7 @@ function withdrawnCard(row: WithdrawnJson, opts: CardOpts): HTMLElement {
   // deletion (WEB_INTERFACE → The write surface).
   const rb = replyButton(row.id, opts);
   if (rb) meta.appendChild(rb);
-  const lnk = linkButton(row.id, opts, meta);
+  const lnk = linkButton(opts, meta);
   if (lnk) meta.appendChild(lnk);
   body.appendChild(meta);
   card.appendChild(body);

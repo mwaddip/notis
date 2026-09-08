@@ -131,7 +131,6 @@ function writeCardOpts(row: PostJson | WithdrawnJson, ci: number, ctx: RenderCtx
     onExpand: handlers.expandImage,
     onCollapse: handlers.collapseImage,
     // WEB_INTERFACE → Links — on every landed or confirmed card inside a pane.
-    onLink: () => {},
     linkUrl: ctx.linkUrl(row.id),
   };
   if (!ctx.writeEnabled) return base; // the read surface: a prefix button and an absent mark
@@ -260,7 +259,7 @@ function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handl
           onExpand: handlers.expandImage,
           onCollapse: handlers.collapseImage,
           ...(landed
-            ? { onOpen: (id) => handlers.openThread(id, { from: 'pane', ci }), onReply: (id) => handlers.openComposer(id), composerKey: sub.postId ?? undefined }
+            ? { onOpen: (id) => handlers.openThread(id, { from: 'pane', ci }), onReply: (id) => handlers.openComposer(id), composerKey: sub.postId ?? undefined, linkUrl: ctx.linkUrl(sub.postId ?? sub.localKey) }
             : {}),
         }),
       );

@@ -210,6 +210,7 @@ describe('standalone title and re-root', () => {
     const drive = app as unknown as {
       start(a: HTMLElement, b: HTMLElement, c: HTMLElement, m: { kind: 'standalone'; id: string; base: string }): void;
       openThread(id: string, origin: { from: 'pane'; ci: number }): void;
+      state: { workspace: { columns: Array<{ wins: string[] }> } };
     };
     drive.start(appbar, feed, panes, { kind: 'standalone', id: P1, base: '/' });
     await flush();
@@ -218,12 +219,81 @@ describe('standalone title and re-root', () => {
     drive.openThread(R1, { from: 'pane', ci: 0 });
     await flush();
 
-    // happy-dom may not dispatch popstate on back — drive it directly.
+    // happy-dom may not dispatch popstate on back — drive the listener directly.
     window.dispatchEvent(new PopStateEvent('popstate', { state: { id: P1 } }));
     await flush();
 
-    const current = panes.querySelector('.region')?.getAttribute('data-uid');
-    expect(current).toBeTruthy();
-    expect(location.pathname).toContain(R1); // URL not changed by popstate handler
+    expect(drive.state.workspace.columns[0]!.wins[0]).toBe(P1);
+  });
+});
+
+describe('linkUrl from the App', () => {
+  it('builds an absolute URL from base / and base /web/', () => {
+    const { appbar, feed, panes } = mountShell();
+    const app = new App(fakeApi());
+    app.mount(appbar, feed, panes, { kind: 'standalone', id: P1, base: '/' });
+    const drive = app as unknown as { ctx(): { linkUrl: (id: string) => string } };
+    expect(drive.ctx().linkUrl(P1)).toBe(location.origin + '/p/' + P1);
+
+    const { appbar: ab2, feed: f2, panes: p2 } = mountShell();
+    const app2 = new App(fakeApi());
+    app2.mount(ab2, f2, p2, { kind: 'standalone', id: P1, base: '/web/' });
+    const drive2 = app2 as unknown as { ctx(): { linkUrl: (id: string) => string } };
+    expect(drive2.ctx().linkUrl(P1)).toBe(location.origin + '/web/p/' + P1);
+  });
+});
+
+describe('the way in — tabs', () => {
+  it('the receiver opens a thread only when holding the lock', async () => {
+    const { appbar, feed, panes } = mountShell();
+    const { fakeTabs } = await import('../src/tabs');
+    const tabs = fakeTabs();
+    tabs.setHolding(false);
+    const app = new App(fakeApi(), undefined, undefined, undefined, tabs);
+    app.start(appbar, feed, panes, { kind: 'workspace', base: '/' });
+    await flush();
+    await flush();
+
+    const before = panes.querySelectorAll('.col').length;
+    tabs.fireOpen(P1);
+    await flush();
+    expect(panes.querySelectorAll('.col').length).toBe(before);
+  });
+
+  it('a non-holder never writes notis.layout', async () => {
+    const { appbar, feed, panes } = mountShell();
+    const { fakeTabs } = await import('../src/tabs');
+    const tabs = fakeTabs();
+    tabs.setHolding(false);
+    localStorage.setItem(KEY_LAYOUT, '#' + HEX('f'));
+    const app = new App(fakeApi(), undefined, undefined, undefined, tabs);
+    app.start(appbar, feed, panes, { kind: 'workspace', base: '/' });
+    await flush();
+    const drive = app as unknown as {
+      openThread(id: string, origin: { from: 'feed' }): void;
+    };
+    drive.openThread(P1, { from: 'feed' });
+    await flush();
+    expect(localStorage.getItem(KEY_LAYOUT)).toBe('#' + HEX('f'));
+  });
+
+  it('the in-place switch restores the arrangement with the thread inserted', async () => {
+    const { appbar, feed, panes } = mountShell();
+    localStorage.setItem(KEY_LAYOUT, '#' + P2);
+    const { fakeTabs } = await import('../src/tabs');
+    const tabs = fakeTabs();
+    tabs.setHeldElsewhere(false);
+    const app = new App(fakeApi(), undefined, undefined, undefined, tabs);
+    app.start(appbar, feed, panes, { kind: 'standalone', id: P1, base: '/' });
+    await flush();
+    await flush();
+
+    const drive = app as unknown as { wayIn(): Promise<void> };
+    await drive.wayIn();
+    await flush();
+    await flush();
+
+    expect(feed.children.length).toBeGreaterThan(0);
+    expect(panes.querySelectorAll('.col').length).toBeGreaterThanOrEqual(1);
   });
 });

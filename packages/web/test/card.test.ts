@@ -410,7 +410,7 @@ describe('card — link', () => {
 
   it('link appears after ↩ reply when onLink is set', () => {
     const c = card(confirmed('bb'.repeat(32)), {
-      onReply: () => {}, onLink: () => {}, linkUrl: URL,
+      onReply: () => {},  linkUrl: URL,
     });
     const btns = [...c.querySelectorAll('.meta button')].map((b) => b.textContent);
     const replyIdx = btns.indexOf('↩reply');
@@ -427,7 +427,7 @@ describe('card — link', () => {
   it('present on a withdrawn card', () => {
     const c = card(
       { kind: 'withdrawn', id: 'w1', author: 'cc'.repeat(32), withdrawnAtHeight: 5, parentRefs: [], descendantCount: 0, authorVouchCount: 0 },
-      { onReply: () => {}, onLink: () => {}, linkUrl: URL },
+      { onReply: () => {},  linkUrl: URL },
     );
     expect(c.querySelector('.linkbtn')).toBeTruthy();
   });
@@ -439,7 +439,7 @@ describe('card — link', () => {
       writable: true, configurable: true,
     });
     const c = card(confirmed('bb'.repeat(32)), {
-      onReply: () => {}, onLink: () => {}, linkUrl: URL,
+      onReply: () => {},  linkUrl: URL,
     });
     document.body.appendChild(c);
     c.querySelector<HTMLButtonElement>('.linkbtn')!.click();
@@ -454,16 +454,12 @@ describe('card — link', () => {
       value: undefined, writable: true, configurable: true,
     });
     const c = card(confirmed('bb'.repeat(32)), {
-      onReply: () => {}, onLink: () => {}, linkUrl: URL,
+      onReply: () => {},  linkUrl: URL,
     });
     document.body.appendChild(c);
     c.querySelector<HTMLButtonElement>('.linkbtn')!.click();
     expect(c.querySelector('.card-link')).toBeTruthy();
     expect(c.querySelector('.linkbtn')!.textContent).toBe('link');
     c.remove();
-  });
-
-  it('the URL is absolute', () => {
-    expect(URL).toMatch(/^https?:\/\//);
   });
 });
