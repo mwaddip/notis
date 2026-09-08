@@ -838,6 +838,9 @@ export class App {
       this.tabs.announce(id);
       const col = this.state.workspace.columns[0];
       if (col) { col.report = 'added to your workspace'; this.renderPanes(); }
+      // WEB_INTERFACE → The way into the workspace — close only while the history
+      // holds one entry, so the page never tries and fails.
+      if (history.length === 1) window.close();
     } else {
       this.toWorkspace(id);
     }
