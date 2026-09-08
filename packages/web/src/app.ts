@@ -855,6 +855,10 @@ export class App {
         window.name = 'notis-workspace';
         this.saveLayout();
       });
+      this.tabs.onOpen((tid) => {
+        if (!this.tabs?.holds()) return;
+        this.openThread(tid, { from: 'feed' });
+      });
     }
     history.replaceState(null, '', this.base);
     document.title = 'Notis';
