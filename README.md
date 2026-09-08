@@ -291,6 +291,38 @@ shareable link with OG metadata for rich previews in chat apps.
 A fresh identity needs an invite from an existing member; on testnet and devnet
 that is what the faucet service is for, and it runs outside the node.
 
+### Web client
+
+`packages/web` is the browser client — the feed, threads, a tiling workspace, and the write
+surface on transactions the browser builds and signs. It is a static bundle that must be served
+**from the same origin as the node's API**: the node sends no CORS headers, so a client on any other
+origin cannot read it. On notis.fun nginx fronts both, the API under `/testnet/api/` and the client
+under `/web/`.
+
+Build it for those paths with both bases — where the client's own files live, and where the API
+and the faucet live relative to the same origin:
+
+```bash
+cd packages/web && VITE_API_BASE=/testnet/api VITE_FAUCET_BASE=/testnet/faucet npx vite build --base=/web/
+# dist/ is the bundle; every href and src in dist/index.html begins with /web/
+```
+
+Serve `dist/` as static files with no SPA fallback — a path that is not a file is a 404. The one path
+the client owns beyond its files is a post's standalone page, `/web/p/<post id>`, which opens that
+thread alone. Two ways to serve it:
+
+- **With a link preview.** Set `WEB_SHELL_PATH` in the node's environment to the bundle's
+  `index.html`, and have nginx proxy `/web/p/<id>` to the node's `GET /shell/<id>`, sending
+  `X-Original-URI`. The node answers the client's own shell with that post's Open Graph tags
+  injected, so a chat app previews the link and the client boots from the same response.
+- **Without one.** Serve the shell plain for the same path (`try_files /web/index.html`). The thread
+  opens; the link carries no preview.
+
+`packages/web/deploy/nginx.example.conf` is a complete vhost excerpt with both variants, the API and
+faucet proxies included. In development none of this is needed: `pnpm --filter @dagsocial/web dev`
+proxies the API and serves the shell for `/p/<id>` on its own (`NOTIS_NODE` and `NOTIS_FAUCET` point
+the proxy at a node and a faucet).
+
 ---
 
 ## API

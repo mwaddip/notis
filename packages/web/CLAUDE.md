@@ -44,7 +44,15 @@ instant scroll; the header's `‹` `›`; the one-column bar `↻ ✕`; hit size
 hover rule sits under `hover: hover`. **On a phone the header's arrows take the strip's glyph and never
 shrink, and its two controls are a person and a sun or moon** (`src/view/glyphs.ts`, faceted polygons in the
 house technique, `HOUSE_STYLE → Illustration`) — the two icons the interface carries; iconography opens
-nowhere else.
+nowhere else — and **the standalone thread** (`WEB_INTERFACE → The standalone thread`): `/p/<id>` boots the
+same App on one never-persisted window with no feed, every card control an identity brings, the strip
+re-rooting the page with a history entry; `add to workspace` hands the thread to the workspace tab that
+holds the Web Lock `notis.workspace` — the one writer of the arrangement and the one receiver on the
+BroadcastChannel `notis` — or switches this tab in place without a navigation, the identity staying
+unlocked (`WEB_INTERFACE → The way into the workspace`); `link` in a card's meta row copies the post's
+absolute URL (`WEB_INTERFACE → Links`). Behind nginx `/web/p/<id>` is answered by the node's
+`GET /shell/:id` with the preview tags — the README's `### Web client` and `deploy/nginx.example.conf`
+say how to serve it.
 
 - **Owns:** `packages/web/*` — its own source, tests, build config and static assets.
 - **Does NOT own:** any other package, `contracts/`, `prompts/`, or `packages/node/public/index.html`
