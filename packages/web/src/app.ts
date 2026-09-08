@@ -144,6 +144,7 @@ export class App {
   // one column.
   private oneColumn = false;
   private standalone = false;
+  private base = '/';
   private mql: MediaQueryList | null = null;
   private headerLeftArrow: HTMLElement | null = null;
   private headerRightArrow: HTMLElement | null = null;
@@ -265,18 +266,17 @@ export class App {
     this.feedEl = feedEl;
     this.panesEl = panesEl;
     this.workspaceEl = panesEl.closest<HTMLElement>('.workspace');
+    if (mode) this.base = mode.base;
     if (mode?.kind === 'standalone') {
       this.standalone = true;
       this.state.workspace = { columns: [newColumn([mode.id])] };
       this.workspaceEl?.classList.add('standalone');
+      history.replaceState({ id: mode.id }, '', location.href);
       // WEB_INTERFACE → The standalone thread — popstate re-roots without pushing.
       window.addEventListener('popstate', (e) => {
         const id = e.state?.id;
         if (typeof id === 'string' && /^[0-9a-f]{64}$/i.test(id)) {
-          this.state.workspace.columns[0]!.wins[0] = id;
-          if (!this.threadLoaded(id)) void this.fetchThread(id);
-          this.renderPanes();
-          this.updateStandaloneTitle(id);
+          this.standaloneReroot(id);
         }
       });
     }
@@ -379,6 +379,7 @@ export class App {
       inviteFlight: this.inviteFlight,
       withdrawState: (postId) => this.withdrawState(postId),
       canSignWithdraw: this.canSignWithdraw(),
+      linkUrl: (id) => new URL(this.base + 'p/' + id, location.href).href,
     };
   }
 
@@ -810,15 +811,18 @@ export class App {
   // Window / workspace actions
   // -------------------------------------------------------------------------
 
+  private standaloneReroot(id: string): void {
+    this.state.workspace.columns[0]!.wins[0] = id;
+    if (!this.threadLoaded(id)) void this.fetchThread(id);
+    this.renderPanes();
+    this.updateStandaloneTitle(id);
+  }
+
   private openThread(id: string, origin: Origin): void {
     if (this.standalone) {
-      // WEB_INTERFACE → The standalone thread — the strip re-roots the page.
-      this.state.workspace.columns[0]!.wins[0] = id;
-      if (!this.threadLoaded(id)) void this.fetchThread(id);
-      this.renderPanes();
-      this.updateStandaloneTitle(id);
-      const base = (typeof import.meta !== 'undefined' && import.meta.env?.BASE_URL) || '/';
-      history.pushState({ id }, '', base + 'p/' + id);
+      if (this.state.workspace.columns[0]?.wins[0] === id) return;
+      this.standaloneReroot(id);
+      history.pushState({ id }, '', this.base + 'p/' + id);
       return;
     }
     const res = openWindow(this.state.workspace, id, origin);

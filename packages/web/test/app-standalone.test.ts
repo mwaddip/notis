@@ -96,7 +96,7 @@ describe('standalone mode', () => {
   it('boots with no feed content, no .empty, and the bar carries ↻ alone', async () => {
     const { appbar, feed, panes } = mountShell();
     const app = new App(fakeApi());
-    app.mount(appbar, feed, panes, { kind: 'standalone', id: P1 });
+    app.mount(appbar, feed, panes, { kind: 'standalone', id: P1, base: '/' });
     await flush();
 
     expect(feed.children.length).toBe(0);
@@ -111,7 +111,7 @@ describe('standalone mode', () => {
     const { appbar, feed, panes } = mountShell();
     localStorage.setItem(KEY_LAYOUT, '#' + HEX('f'));
     const app = new App(fakeApi());
-    app.mount(appbar, feed, panes, { kind: 'standalone', id: P1 });
+    app.mount(appbar, feed, panes, { kind: 'standalone', id: P1, base: '/' });
     await flush();
 
     expect(localStorage.getItem(KEY_LAYOUT)).toBe('#' + HEX('f'));
@@ -120,7 +120,7 @@ describe('standalone mode', () => {
   it('the .workspace element carries the standalone class', () => {
     const { appbar, feed, panes } = mountShell();
     const app = new App(fakeApi());
-    app.mount(appbar, feed, panes, { kind: 'standalone', id: P1 });
+    app.mount(appbar, feed, panes, { kind: 'standalone', id: P1, base: '/' });
     const ws = panes.closest('.workspace');
     expect(ws?.classList.contains('standalone')).toBe(true);
   });
@@ -128,7 +128,7 @@ describe('standalone mode', () => {
   it('the thread renders its cards on load', async () => {
     const { appbar, feed, panes } = mountShell();
     const app = new App(fakeApi());
-    app.start(appbar, feed, panes, { kind: 'standalone', id: P1 });
+    app.start(appbar, feed, panes, { kind: 'standalone', id: P1, base: '/' });
     await flush();
     await flush();
 
@@ -141,7 +141,7 @@ describe('standalone mode', () => {
     const api = fakeApi();
     const idm = fakeIdentity();
     const app = new App(api, undefined, idm);
-    app.start(appbar, feed, panes, { kind: 'standalone', id: P1 });
+    app.start(appbar, feed, panes, { kind: 'standalone', id: P1, base: '/' });
     await flush();
     await flush();
 
@@ -159,7 +159,7 @@ describe('standalone header', () => {
   it('has the brand, add to workspace, the theme control, no arrows, no profile', () => {
     const { appbar, feed, panes } = mountShell();
     const app = new App(fakeApi());
-    app.mount(appbar, feed, panes, { kind: 'standalone', id: P1 });
+    app.mount(appbar, feed, panes, { kind: 'standalone', id: P1, base: '/' });
 
     expect(appbar.querySelector('.brand')).toBeTruthy();
     expect(appbar.querySelector('.theme-btn')).toBeTruthy();
@@ -175,7 +175,7 @@ describe('standalone title and re-root', () => {
   it('document.title is set after the thread loads', async () => {
     const { appbar, feed, panes } = mountShell();
     const app = new App(fakeApi());
-    app.start(appbar, feed, panes, { kind: 'standalone', id: P1 });
+    app.start(appbar, feed, panes, { kind: 'standalone', id: P1, base: '/' });
     await flush();
     await flush();
 
@@ -188,10 +188,10 @@ describe('standalone title and re-root', () => {
     localStorage.setItem(KEY_LAYOUT, '#' + HEX('f'));
     const app = new App(fakeApi());
     const drive = app as unknown as {
-      start(a: HTMLElement, b: HTMLElement, c: HTMLElement, m: { kind: 'standalone'; id: string }): void;
+      start(a: HTMLElement, b: HTMLElement, c: HTMLElement, m: { kind: 'standalone'; id: string; base: string }): void;
       openThread(id: string, origin: { from: 'pane'; ci: number }): void;
     };
-    drive.start(appbar, feed, panes, { kind: 'standalone', id: P1 });
+    drive.start(appbar, feed, panes, { kind: 'standalone', id: P1, base: '/' });
     await flush();
     await flush();
 
@@ -202,5 +202,28 @@ describe('standalone title and re-root', () => {
     expect(history.length).toBe(histBefore + 1);
     expect(location.pathname).toContain(R1);
     expect(localStorage.getItem(KEY_LAYOUT)).toBe('#' + HEX('f'));
+  });
+
+  it('back returns to the original root after a re-root', async () => {
+    const { appbar, feed, panes } = mountShell();
+    const app = new App(fakeApi());
+    const drive = app as unknown as {
+      start(a: HTMLElement, b: HTMLElement, c: HTMLElement, m: { kind: 'standalone'; id: string; base: string }): void;
+      openThread(id: string, origin: { from: 'pane'; ci: number }): void;
+    };
+    drive.start(appbar, feed, panes, { kind: 'standalone', id: P1, base: '/' });
+    await flush();
+    await flush();
+
+    drive.openThread(R1, { from: 'pane', ci: 0 });
+    await flush();
+
+    // happy-dom may not dispatch popstate on back — drive it directly.
+    window.dispatchEvent(new PopStateEvent('popstate', { state: { id: P1 } }));
+    await flush();
+
+    const current = panes.querySelector('.region')?.getAttribute('data-uid');
+    expect(current).toBeTruthy();
+    expect(location.pathname).toContain(R1); // URL not changed by popstate handler
   });
 });

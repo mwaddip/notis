@@ -158,7 +158,7 @@ describe('the bar by class', () => {
     const panes = document.createElement('section'); panes.id = 'panes';
     document.body.append(appbar, feed, panes);
     const app = new App(fakeApi());
-    app.mount(appbar, feed, panes, { kind: 'standalone', id: P1 });
+    app.mount(appbar, feed, panes, { kind: 'standalone', id: P1, base: '/' });
     await flush();
     expect(ctlGlyphs(panes.querySelector('.col .bar')!)).toEqual(['↻']);
   });
