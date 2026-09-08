@@ -31,9 +31,9 @@ function passwordField(autocomplete: 'current-password' | 'new-password', placeh
 
 function actionRow(submitLabel: string, onCancel: () => void): { row: HTMLElement; submit: HTMLButtonElement } {
   const row = el('div', 'pf-actions');
-  const submit = el('button', 'mini', submitLabel) as HTMLButtonElement;
+  const submit = el('button', 'word', submitLabel) as HTMLButtonElement;
   submit.type = 'submit';
-  const cancel = el('button', 'mini', 'cancel') as HTMLButtonElement;
+  const cancel = el('button', 'word', 'cancel') as HTMLButtonElement;
   cancel.type = 'button';
   cancel.addEventListener('click', onCancel);
   row.append(submit, cancel);

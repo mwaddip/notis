@@ -91,7 +91,7 @@ function emptyState(b: HTMLElement, handlers: ProfileHandlers): void {
   b.appendChild(el('div', 'pf-lead', 'no identity in this browser. create one, or import a file.'));
   const field = el('div', 'field pf-inline');
 
-  const create = el('button', 'mini', 'create') as HTMLButtonElement;
+  const create = el('button', 'word', 'create') as HTMLButtonElement;
   create.addEventListener('click', () => {
     // Draft the key first so the form shows its prefix as the username — the key
     // exists before the passphrase, so the manager's saved entry names it
@@ -105,7 +105,7 @@ function emptyState(b: HTMLElement, handlers: ProfileHandlers): void {
     );
   });
 
-  const importBtn = el('button', 'mini', 'import') as HTMLButtonElement;
+  const importBtn = el('button', 'word', 'import') as HTMLButtonElement;
   importBtn.addEventListener('click', () => pickFile((text) => revealImport(field, handlers, text, restoreInline)));
 
   const restoreInline = (): void => {
@@ -137,7 +137,7 @@ function revealImport(field: HTMLElement, handlers: ProfileHandlers, text: strin
     inspected = handlers.inspectFile(text);
   } catch (e) {
     const line = el('div', 'pf-refusal', e instanceof Error ? e.message : String(e));
-    const back = el('button', 'mini', 'back') as HTMLButtonElement;
+    const back = el('button', 'word', 'back') as HTMLButtonElement;
     back.addEventListener('click', restore);
     field.replaceChildren(line, back);
     return;
@@ -200,7 +200,7 @@ function loadedState(b: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx,
   // export — a fresh sealed file; a locked identity unlocks first.
   {
     const { row: r, field } = row('export');
-    const trigger = el('button', 'mini', 'export') as HTMLButtonElement;
+    const trigger = el('button', 'word', 'export') as HTMLButtonElement;
     const restore = (): void => {
       field.replaceChildren(trigger);
       trigger.focus();
@@ -213,7 +213,7 @@ function loadedState(b: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx,
   // forget — the one path off a key, confirmed in place.
   {
     const { row: r, field } = row('forget');
-    const trigger = el('button', 'mini', 'forget') as HTMLButtonElement;
+    const trigger = el('button', 'word', 'forget') as HTMLButtonElement;
     const restore = (): void => {
       field.replaceChildren(trigger);
       trigger.focus();
@@ -339,7 +339,7 @@ function inviteForm(
   bondInput.value = params.bondMin; // default the minimum
   bondInput.setAttribute('aria-label', 'the bond, in karma');
 
-  const submit = el('button', 'mini', 'invite') as HTMLButtonElement;
+  const submit = el('button', 'word', 'invite') as HTMLButtonElement;
   submit.type = 'submit';
 
   const copy = el('div', 'hint');
@@ -442,7 +442,7 @@ function standingBonds(field: HTMLElement, handlers: ProfileHandlers, ctx: Profi
     field.appendChild(bondRow);
   }
   if (b.next !== null) {
-    const more = el('button', 'mini', 'more');
+    const more = el('button', 'word', 'more');
     more.setAttribute('aria-label', 'load more standing bonds');
     more.addEventListener('click', () => handlers.moreBonds());
     field.appendChild(more);
@@ -472,14 +472,14 @@ export function renderKarmaField(field: HTMLElement, handlers: ProfileHandlers, 
     field.appendChild(el('span', 'inkmute', 'no block took the faucet’s invite by height '));
     field.appendChild(mono(String(ctx.grant.atHeight)));
     field.appendChild(document.createTextNode('. '));
-    const again = el('button', 'mini', 'ask again') as HTMLButtonElement;
+    const again = el('button', 'word', 'ask again') as HTMLButtonElement;
     again.addEventListener('click', () => handlers.askFaucet());
     field.appendChild(again);
     return;
   }
   const faucetBase = prefs.faucet;
   if (faucetBase !== '') {
-    const ask = el('button', 'mini', 'ask the faucet for karma') as HTMLButtonElement;
+    const ask = el('button', 'word', 'ask the faucet for karma') as HTMLButtonElement;
     ask.addEventListener('click', () => handlers.askFaucet());
     field.appendChild(ask);
     return;
@@ -504,7 +504,7 @@ function passphraseRow(field: HTMLElement, handlers: ProfileHandlers, pubKeyHex:
   field.replaceChildren();
   if (locked) {
     field.append(el('span', 'inkmute', 'locked'), ' ');
-    const unlock = el('button', 'mini', 'unlock') as HTMLButtonElement;
+    const unlock = el('button', 'word', 'unlock') as HTMLButtonElement;
     unlock.addEventListener('click', () => {
       const restore = (): void => {
         passphraseRow(field, handlers, pubKeyHex, true);
@@ -524,7 +524,7 @@ function passphraseRow(field: HTMLElement, handlers: ProfileHandlers, pubKeyHex:
     field.appendChild(unlock);
   } else {
     field.append(el('span', 'inkmute', 'unlocked'), ' ');
-    const lock = el('button', 'mini', 'lock') as HTMLButtonElement;
+    const lock = el('button', 'word', 'lock') as HTMLButtonElement;
     lock.addEventListener('click', () => {
       handlers.lockIdentity();
       passphraseRow(field, handlers, pubKeyHex, true); // now locked
@@ -569,9 +569,9 @@ function forgetConfirm(field: HTMLElement, handlers: ProfileHandlers, backedUp: 
   const wrap = el('div', 'pf-confirm');
   wrap.appendChild(el('div', 'pf-refusal', line));
   const actions = el('div', 'pf-actions');
-  const forget = el('button', 'mini', 'forget') as HTMLButtonElement;
+  const forget = el('button', 'word', 'forget') as HTMLButtonElement;
   forget.addEventListener('click', () => handlers.forgetIdentity());
-  const keep = el('button', 'mini', 'keep') as HTMLButtonElement;
+  const keep = el('button', 'word', 'keep') as HTMLButtonElement;
   keep.addEventListener('click', restore);
   actions.append(forget, keep);
   wrap.appendChild(actions);
@@ -603,7 +603,7 @@ export function preferenceRows(handlers: ProfileHandlers, ctx: ProfileCtx): HTML
     const { row: r, field } = row('identity tint');
     const seg = el('div', 'seg');
     for (const v of ID_TINTS) {
-      const btn = el('button', null, v);
+      const btn = el('button', 'word', v);
       btn.setAttribute('aria-pressed', prefs.idtint === v ? 'true' : 'false');
       btn.addEventListener('click', () => handlers.setIdTint(v));
       seg.appendChild(btn);

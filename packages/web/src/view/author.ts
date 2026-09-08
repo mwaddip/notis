@@ -119,7 +119,7 @@ export function authorBody(handlers: AuthorHandlers, ctx: AuthorCtx): HTMLElemen
   // posts — a word that opens the author-posts window beside this one.
   {
     const { row: r, field } = row('posts');
-    const btn = el('button', 'mini', 'posts');
+    const btn = el('button', 'word', 'posts');
     btn.setAttribute('aria-label', "open this author's posts");
     btn.addEventListener('click', () => handlers.openAuthorPosts(ctx.authorKey, ctx.origin));
     field.appendChild(btn);
@@ -154,7 +154,7 @@ function endorsers(field: HTMLElement, handlers: AuthorHandlers, ctx: AuthorCtx,
     field.appendChild(line);
   }
   if (ctx.endorsersNext) {
-    const more = el('button', 'mini', 'more');
+    const more = el('button', 'word', 'more');
     more.setAttribute('aria-label', 'load more endorsers');
     more.addEventListener('click', () => handlers.moreEndorsers(ctx.authorKey));
     field.appendChild(more);
@@ -182,7 +182,7 @@ function yourVouch(field: HTMLElement, handlers: AuthorHandlers, ctx: AuthorCtx,
       since.append(' since block ', mono(String(yv.sinceBlock)));
       field.appendChild(since);
     }
-    const unvouch = el('button', 'mini', 'unvouch');
+    const unvouch = el('button', 'word', 'unvouch');
     unvouch.setAttribute('aria-label', 'withdraw your vouch');
     unvouch.addEventListener('click', () => unvouchAction(ctx.authorKey));
     field.appendChild(unvouch);
@@ -266,7 +266,7 @@ export function authorPostsBody(handlers: PostsHandlers, ctx: PostsCtx): HTMLEle
   }
   if (feed.next !== null) {
     const foot = el('div', 'feed-foot');
-    const more = el('button', 'mini', 'more posts');
+    const more = el('button', 'word', 'more posts');
     more.setAttribute('aria-label', 'load more posts by this author');
     more.addEventListener('click', () => handlers.authorPostsMore(ctx.authorKey));
     foot.appendChild(more);

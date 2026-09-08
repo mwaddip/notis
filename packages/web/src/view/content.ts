@@ -315,7 +315,7 @@ function imageWidget(url: string, alt: string, key: string, opts: RenderContentO
   };
   const showControl = (): void => {
     wrap.textContent = '';
-    const btn = el('button', 'img-show');
+    const btn = el('button', 'word img-show');
     btn.setAttribute('aria-label', 'show the image from ' + host);
     btn.appendChild(document.createTextNode('show image from '));
     btn.appendChild(el('span', 'host', host));
