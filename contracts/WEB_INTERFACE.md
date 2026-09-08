@@ -199,8 +199,9 @@ multiplying as the reader drills; only `→` adds one.
 > ⚠ **AHEAD OF CODE (2026-09-08)** — this paragraph states the rule the deeplinks unit implements.
 
 **One tab writes the arrangement.** The workspace tab holding the Web Lock `notis.workspace` is the writer
-of `notis.layout`; a second workspace tab in the same browser reads the arrangement at boot and never
-persists its own, so two tabs cannot overwrite each other's (→ The way into the workspace). A thread handed
+of `notis.layout`; a second workspace tab in the same browser reads the arrangement at boot and persists
+nothing until the lock passes to it when the holder closes, so two tabs never overwrite each other's
+(→ The way into the workspace). A thread handed
 over from a standalone page opens in the holder by the placement rule from the feed, as a press on the
 strip would.
 
@@ -313,14 +314,17 @@ prefix and `Notis` once the thread lands, and on every re-root; the workspace's 
 `add to workspace`, whose mechanism depends on whether a workspace tab is open in this browser.
 
 **The workspace tab declares itself.** At boot in workspace mode the client requests the Web Lock
-`notis.workspace` and holds it for the tab's life — the browser releases it on unload — and names its
-window `notis-workspace`. The holder is the one writer of the arrangement (→ The workspace) and the one
-receiver of a handover: it listens on the BroadcastChannel `notis` for a post id and opens that thread by
-the placement rule from the feed — column 0, raised if already open, fetched, the view moved, persisted. A
-workspace tab refused the lock reads the arrangement and ignores the channel, so a moved thread lands in
-exactly one place.
+`notis.workspace` — a queued request, never `ifAvailable` — and, once granted, holds it for the tab's life
+(the browser releases it on unload) and names its window `notis-workspace`. The holder is the one writer
+of the arrangement (→ The workspace) and the one receiver of a handover: it listens on the BroadcastChannel
+`notis` for a post id and opens that thread by the placement rule from the feed — column 0, raised if
+already open, fetched, the view moved, persisted. A second workspace tab waits in the lock's queue: until
+granted it reads the arrangement, persists nothing and ignores the channel, and when the holder closes it
+becomes the holder — so a moved thread lands in exactly one place, and the workspace has a writer for as
+long as one tab is open.
 
-**The standalone page asks whether the lock is held**, by a request with `ifAvailable` released at once.
+**The standalone page asks whether the lock is held**, by a request with `ifAvailable` released at once;
+a lock held or waited for answers held.
 
 - **Held — the handover.** The page posts the id on the channel and its bar's report reads `added to your
   workspace`. Two steps beyond that are best effort, each kept only where measured to behave: raising the
@@ -331,8 +335,9 @@ exactly one place.
   tries and fails. With both dropped, the report stands and the reader switches tabs.
 - **Not held — the switch in place.** Without a navigation, so the identity stays unlocked and the poll
   runs on: the stored arrangement is restored, the thread inserted by the placement rule from the feed, the
-  lock claimed, the URL replaced with the base, the feed rendered and loaded, the view moved to the thread's
-  column. The tab is a workspace tab from then on. A link pasted into the workspace tab's own address bar
+  lock requested — never awaited, since another tab may hold it, the arrangement persisting once it is
+  granted — the URL replaced with the base, the feed rendered and loaded, the view moved to the thread's
+  column, the title the workspace's. The tab is a workspace tab from then on. A link pasted into the workspace tab's own address bar
   ends here too, that tab having released the lock when it navigated.
 
 **Without Web Locks** every workspace tab writes, as a browser without the API cannot know about another
