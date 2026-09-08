@@ -73,10 +73,10 @@ export function renderFeedInto(container: HTMLElement, feed: FeedState, handlers
   // two controls with different words a few pixels apart is a trap. Only with an
   // identity loaded (WEB_INTERFACE → The write surface).
   if (ctx.writeEnabled) {
-    const nb = el('button', 'mini');
+    const nb = el('button', 'word');
     nb.setAttribute('data-composer-open', FEED_COMPOSER_KEY);
     nb.setAttribute('aria-label', 'write a new post');
-    nb.appendChild(el('span', null, 'new post'));
+    nb.textContent = 'new post';
     nb.addEventListener('click', () => handlers.openComposer(null));
     head.appendChild(nb);
   }
@@ -121,9 +121,9 @@ export function renderFeedInto(container: HTMLElement, feed: FeedState, handlers
   // the variable-ratio lever the motion contract names.
   const foot = el('div', 'feed-foot');
   if (feed.next !== null) {
-    const b = el('button', 'mini');
+    const b = el('button', 'word');
     b.setAttribute('aria-label', 'load older posts');
-    b.appendChild(el('span', null, 'load older'));
+    b.textContent = 'load older';
     if (feed.loading) (b as HTMLButtonElement).disabled = true;
     else b.addEventListener('click', handlers.loadOlder);
     foot.appendChild(b);

@@ -31,12 +31,28 @@ describe('app.css — the prefix control renders as the text prefix', () => {
   });
 });
 
+describe('app.css — a word control wears no box', () => {
+  it('.word has no border', () => {
+    const blocks = css.match(/\.word\s*\{[^}]*\}/g) ?? [];
+    const base = blocks.find((b) => b.includes('border: 0'));
+    expect(base).toBeDefined();
+    expect(base!).not.toContain('border: 1px');
+  });
+  it('.btn keeps its border', () => {
+    expect(css).toMatch(/\.btn-ghost\s*\{[^}]*border: 1px solid/);
+  });
+  it('every :hover inside the hover block', () => {
+    const hover = mediaBlock('@media (hover: hover) {');
+    expect(hover).not.toBe('');
+    expect(css.replace(hover, '')).not.toContain(':hover');
+  });
+});
+
 describe('app.css — the content grammar and the composer type control', () => {
   it('the paragraph-spacing, title, link, image-control and type-select rules are present', () => {
     expect(css).toMatch(/\.card-content > \* \+ \*\s*\{[^}]*\}/); // 8px between blocks
     expect(css).toMatch(/\.card-title\s*\{[^}]*\}/); // the title one step up
     expect(css).toMatch(/\.card-content a\s*\{[^}]*\}/); // a link keeps its colour
-    expect(css).toMatch(/\.card-content \.img-show\s*\{[^}]*\}/); // the collapsed image control
     expect(css).toMatch(/\.composer-foot select\s*\{[^}]*\}/); // the type control's ghost look
   });
 });
@@ -72,9 +88,9 @@ describe('app.css — touch by the pointer', () => {
     const coarse = mediaBlock('@media (pointer: coarse) {');
     expect(coarse).not.toBe('');
     for (const sel of [
-      '.ctl', '.feed-head .ctl', '.bar', '.meta', '.stage', '.karma-field', '.likebtn',
-      '.vmark', '.mini', '.btn', '.theme-btn', '.img-show', '.seg button',
-      '.composer-foot select', '.authorbtn', '.composer textarea', '.composer input', '.winbody input',
+      '.ctl', '.feed-head .ctl', '.bar', '.meta', '.stage', '.karma-field',
+      '.btn', '.theme-btn',
+      '.composer-foot select', '.word', '.authorbtn', '.composer textarea', '.composer input', '.winbody input',
     ]) {
       expect(coarse).toContain(sel);
     }

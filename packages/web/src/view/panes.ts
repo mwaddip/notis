@@ -262,9 +262,9 @@ function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handl
   // — a conversation read top to bottom. The button reports what it did.
   if (t.next !== null) {
     const foot = el('div', 'feed-foot');
-    const b = el('button', 'mini');
+    const b = el('button', 'word');
     b.setAttribute('aria-label', 'load more replies');
-    b.appendChild(el('span', null, 'load more replies'));
+    b.textContent = 'load more replies';
     b.addEventListener('click', () => handlers.threadMore(focusedK));
     foot.appendChild(b);
     body.appendChild(foot);

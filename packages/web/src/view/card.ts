@@ -259,9 +259,9 @@ export function stageLine(flight: Flight): HTMLElement {
     said.appendChild(document.createTextNode('.'));
     s.appendChild(said);
     if (flight.onTryAgain) {
-      const again = el('button', 'mini');
+      const again = el('button', 'word');
       again.setAttribute('aria-label', 'build this again from your current balance and post it');
-      again.appendChild(el('span', null, 'try again'));
+      again.textContent = 'try again';
       again.addEventListener('click', flight.onTryAgain);
       s.appendChild(again);
     }
@@ -336,8 +336,8 @@ function withdrawArea(post: PostJson, opts: CardOpts): HTMLElement | null {
   if (w !== null) return stageLine(w); // the transient flight — submitting or expired
   if (!opts.onWithdraw) return null;
 
-  const wb = el('button', 'mini withdraw-ctl');
-  wb.appendChild(el('span', null, 'withdraw'));
+  const wb = el('button', 'word withdraw-ctl');
+  wb.textContent = 'withdraw';
   if (opts.canWithdraw === false) {
     (wb as HTMLButtonElement).disabled = true;
     const reason = 'needs one karma box to sign with; this key has none';
@@ -366,9 +366,9 @@ function mountCardConfirm(anchor: HTMLElement, postId: string, opts: CardOpts): 
   const row = el('div', 'card-confirm');
   row.appendChild(el('div', 'q', 'withdraw this post? the content goes; the replies stay.'));
   const actions = el('div', 'actions');
-  const yes = el('button', 'mini', 'withdraw') as HTMLButtonElement;
+  const yes = el('button', 'word', 'withdraw') as HTMLButtonElement;
   yes.setAttribute('aria-label', 'withdraw this post now');
-  const keep = el('button', 'mini', 'keep') as HTMLButtonElement;
+  const keep = el('button', 'word', 'keep') as HTMLButtonElement;
   keep.setAttribute('aria-label', 'keep this post');
   const dismiss = (): void => {
     row.remove();
@@ -395,11 +395,11 @@ function mountCardConfirm(anchor: HTMLElement, postId: string, opts: CardOpts): 
 /** ↩ reply — a ghost button in the meta row (WEB_INTERFACE → The write surface). */
 function replyButton(id: string, opts: CardOpts): HTMLElement | null {
   if (!opts.onReply) return null;
-  const rb = el('button', 'mini reply-ctl');
+  const rb = el('button', 'word reply-ctl');
   if (opts.composerKey) rb.setAttribute('data-composer-open', opts.composerKey);
   rb.setAttribute('aria-label', 'reply to this post');
   rb.appendChild(el('span', 'g', '↩'));
-  rb.appendChild(el('span', null, 'reply'));
+  rb.appendChild(document.createTextNode(' reply'));
   rb.addEventListener('click', () => opts.onReply!(id));
   return rb;
 }
@@ -409,9 +409,9 @@ function linkButton(opts: CardOpts, meta: HTMLElement): HTMLElement | null {
   if (!opts.linkUrl) return null;
   const url = opts.linkUrl;
   let copied = false;
-  const lb = el('button', 'mini linkbtn');
+  const lb = el('button', 'word linkbtn');
   lb.setAttribute('aria-label', 'copy this post\'s link');
-  lb.appendChild(el('span', null, 'link'));
+  lb.textContent = 'link';
   lb.addEventListener('click', () => {
     if (copied) return;
     if (typeof navigator.clipboard?.writeText !== 'function') {
