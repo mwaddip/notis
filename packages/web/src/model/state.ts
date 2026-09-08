@@ -74,6 +74,8 @@ export interface RenderCtx {
   // The width class — the client shows one column at a time below the breakpoint,
   // the same value as the stylesheet's media query (WEB_INTERFACE → The workspace).
   oneColumn: boolean;
+  // WEB_INTERFACE → The standalone thread
+  standalone: boolean;
   // Write surface — all inert with no identity loaded, so the client renders
   // exactly as the read surface does (WEB_INTERFACE → The write surface).
   writeEnabled: boolean;                                  // an identity is loaded

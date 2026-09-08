@@ -4,6 +4,7 @@
 // the vite proxy. VITE_FAUCET_BASE is the same knob for the faucet — empty means
 // no faucet and no button (WEB_INTERFACE → The faucet step).
 interface ImportMetaEnv {
+  readonly BASE_URL: string;
   readonly VITE_API_BASE?: string;
   readonly VITE_FAUCET_BASE?: string;
 }

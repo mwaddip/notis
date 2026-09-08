@@ -100,7 +100,9 @@ function bar(k: string, ci: number, focused: boolean, lone: boolean, handlers: H
   b.appendChild(label);
 
   const what = win ? 'window' : 'thread';
-  if (ctx.oneColumn) {
+  if (ctx.standalone) {
+    // WEB_INTERFACE → The standalone thread — ↻ and nothing else.
+  } else if (ctx.oneColumn) {
     // ↻ ✕ at one column — ← and → arrange columns, and a phone reader has one
     // screen at a time (WEB_INTERFACE → The workspace).
     ctl.appendChild(ctlBtn('✕', `close this ${what}`, () => handlers.close(k)));
