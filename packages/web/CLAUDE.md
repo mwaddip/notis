@@ -29,9 +29,8 @@ machinery, the composer for a root and a reply, and like, on transactions the br
 the **identity interface's first unit**: the `@profile` window (identity, standing, karma, the
 faucet step, the preferences), create / import / export / forget / lock / unlock as forms in place, the
 identity encrypted at rest, the reader's own cards marked `· you` — and the **membership actions**: the
-identity display standard (the prefix, the `✓`/`+` vouch mark with the count as its `title`, `· you`)
-wherever an identity renders, the `@author:<key>` and `@posts:<key>` windows, vouch from the mark,
-unvouch from the author window, invite from the profile's `invites` row with the standing bonds — and the
+identity display standard (the prefix, `· you`) wherever an identity renders, the `@author:<key>` and
+`@posts:<key>` windows, vouch and unvouch from the author window's `your vouch` row, invite from the profile's `invites` row with the standing bonds — and the
 **author's own controls' first unit**: `withdraw` on the reader's own confirmed card inside a pane, after
 its like count, two presses with a confirm row in place, the landing turning the card into the withdrawn
 card at its depth and settling the post's own submission card — a root's leaves the feed, a reply's becomes
@@ -52,7 +51,11 @@ BroadcastChannel `notis` — or switches this tab in place without a navigation,
 unlocked (`WEB_INTERFACE → The way into the workspace`); `link` in a card's meta row copies the post's
 absolute URL (`WEB_INTERFACE → Links`). Behind nginx `/web/p/<id>` is answered by the node's
 `GET /shell/:id` with the preview tags — the README's `### Web client` and `deploy/nginx.example.conf`
-say how to serve it.
+say how to serve it. **At one column the screens are history** (`WEB_INTERFACE → The workspace`): a tap that
+changes the screen pushes an entry, a move back onto the previous screen consumes it by the arrow or by a swipe,
+a swipe elsewhere is no entry. **A word control wears no box** (`HOUSE_STYLE → Interaction`): the word alone,
+as the identity prefix renders; the composer's `post` and `cancel` are the one boxed pair; the copy glyph is
+the interface's third icon.
 
 - **Owns:** `packages/web/*` — its own source, tests, build config and static assets.
 - **Does NOT own:** any other package, `contracts/`, `prompts/`, or `packages/node/public/index.html`

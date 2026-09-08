@@ -96,8 +96,8 @@ straight-edged, a little wobble in the angles, no smooth curves) as inline SVG i
 fill, at the header's control size, carrying the label the word carries elsewhere. A once-used
 control styled as the inverse ground is the loudest thing on a phone screen, and the sun and the
 moon need no learning (user, 2026-09-07). With the phone's profile glyph, a person
-(`WEB_INTERFACE → The profile window`), it is one of the two icons the interface carries; the ruling
-opens iconography nowhere else (→ Deliberately not decided).
+(`WEB_INTERFACE → The profile window`) and the card's copy glyph (`WEB_INTERFACE → Links`), it is one of the
+three icons the interface carries; the ruling opens iconography nowhere else (→ Deliberately not decided).
 
 ### Light — Sand
 
@@ -377,6 +377,16 @@ it for anything.
 - **The control is the click target, never the container.** Cards and rows are not buttons.
   Text stays selectable and the pointer can be parked on it. This also removes the
   accidental-click pattern that quietly inflates engagement figures.
+
+> ⚠ **AHEAD OF CODE (2026-09-08, words not boxes)** — the bullet below states the word control the words-not-boxes unit
+> builds; the code still draws its word controls as ghost boxes.
+
+- **A word is a control, and it wears no box.** Every action that is a word renders as the word alone — no
+  border, no fill, no padding beyond its hit box, the row's own face; `ink` at rest, `inkMute` when it cannot
+  act; the pointer cursor and the focus ring; under `hover: hover` an underline and nothing else. The identity
+  prefix set the pattern (`WEB_INTERFACE → The identity display`) and every word follows it. The one boxed
+  pair is the composer's `post` and `cancel` (user, 2026-09-08); the inverse-filled header words are fills, not
+  boxes, and stay.
 - **Nothing is fetched from a third party without the reader's act.** An image, a title, a
   preview — nothing the page renders on its own reaches beyond the origin, because every such
   request tells that party who is reading and when. What a reader chooses to load, they load
@@ -463,9 +473,10 @@ Not preachy. The visual register avoids the manifesto; the copy has to as well.
 
 - **A grid or layout system.** Owned by each surface.
 - **Iconography.** Whether the illustration technique scales down to UI icons at 16–24px is
-  untested and may need a separate, plainer treatment. Two icons exist — the phone's theme glyph
-  (→ Colour) and its profile glyph (`WEB_INTERFACE → The profile window`), drawn in the technique at
-  20px — and they are the test, not the decision.
+  untested and may need a separate, plainer treatment. Three icons exist — the phone's theme glyph
+  (→ Colour), its profile glyph (`WEB_INTERFACE → The profile window`) and the card's copy glyph
+  (`WEB_INTERFACE → Links`), drawn in the technique at 20px and 16px — and they are the test, not the
+  decision.
 - **Data visualisation.** Nothing here covers charts. The only categorical palette this contract
   defines is the identity arc, and it is bounded by the hues that already carry meaning — see
   "Identity colour" — so it does not stretch to a chart's series either.
