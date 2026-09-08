@@ -760,6 +760,28 @@ export class App {
     }
   }
 
+  /** Replace a post's row wherever the client holds it — the feed, every thread
+   *  that contains it, the posts index, and any open @posts window — so the
+   *  surface that re-renders next draws the node's row, not the stale one. */
+  private applyFetchedRow(fetched: PostResult | null): void {
+    if (!fetched || 'kind' in fetched) return;
+    const id = fetched.id;
+    this.state.posts.set(id, fetched);
+    const fi = this.state.feed.posts.findIndex((p) => p.id === id);
+    if (fi !== -1) this.state.feed.posts[fi] = fetched;
+    for (const t of this.state.threads.values()) {
+      if (t.root && !('kind' in t.root) && t.root.id === id) t.root = fetched;
+      for (let i = 0; i < t.descendants.length; i++) {
+        const d = t.descendants[i]!;
+        if (!('kind' in d) && d.id === id) t.descendants[i] = fetched;
+      }
+    }
+    for (const [, f] of this.authorPostsData) {
+      const pi = f.posts.findIndex((p) => p.id === id);
+      if (pi !== -1) f.posts[pi] = fetched;
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Feed actions
   // -------------------------------------------------------------------------
@@ -2021,10 +2043,7 @@ export class App {
         this.optimisticLikes.delete(entry.postId);
         this.ledger.remove(entry.txId);
         if (outcome === 'expired') this.setReportForPost(entry.postId, 'a like expired before any block took it');
-        if (outcome === 'landed') {
-          const fp = this.state.feed.posts.find((p) => p.id === entry.postId);
-          if (fp) fp.likedByViewer = true;
-        }
+        if (outcome === 'landed') this.applyFetchedRow(fetched);
         touchedPosts.add(entry.postId);
         if (this.feedHasPost(entry.postId)) feedTouched = true;
       } else {
