@@ -275,6 +275,7 @@ environment is not merely discouraged, it has no effect.
 | `MINING_SECRET` | — | Bearer token for the mining API. Required non-empty when `NODE_ROLE=miner` — startup fails without it. Unused on a server node. |
 | `ADMIN_PORT` / `ADMIN_BIND_ADDRESS` | — | Separate bind for admin endpoints |
 | `PUBLIC_URL` | `/` | Base path for the demo UI (e.g. `/testnet/` behind nginx) |
+| `WEB_SHELL_PATH` | — | Path of the web client's `index.html`; empty means `GET /shell/:id` answers 404 |
 
 > An environment variable the table above does not name is ignored — the table
 > is the whole read surface (`NODE_INTERFACE` → Configuration).
