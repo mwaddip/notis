@@ -669,15 +669,11 @@ export class App {
   private scrollToMember(name: string): void {
     if (name === 'feed') {
       this.feedEl.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+      this.updateHeaderArrows();
     } else {
       const at = locate(this.state.workspace, name);
-      if (at) {
-        const region = this.panesEl.querySelector<HTMLElement>(`.region[data-uid="${at.column.uid}"]`);
-        const col = region?.closest<HTMLElement>('.col');
-        col?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
-      }
+      if (at) this.scrollColumnIntoView(at.column.uid);
     }
-    this.updateHeaderArrows();
   }
 
   /** Every tap that moves the view goes through moveView — at one column in
@@ -1091,12 +1087,14 @@ export class App {
   }
 
   private closeWindow(id: string): void {
+    // A ✕ that empties its column shows the column on its left, the feed when it
+    // was column 0 (WEB_INTERFACE → The workspace). Capture the position first.
     const at = locate(this.state.workspace, id);
     const emptiedCi = at && at.column.wins.length === 1 ? at.ci : -1;
     closeWindow(this.state.workspace, id);
     this.saveLayout();
     this.renderPanes();
-    this.renderFeed();
+    this.renderFeed(); // a closed thread un-fades its feed card
     if (emptiedCi >= 0) {
       const ws = this.state.workspace;
       const target = emptiedCi > 0

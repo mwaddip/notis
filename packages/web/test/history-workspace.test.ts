@@ -52,6 +52,12 @@ interface Drive {
   state: { workspace: { columns: Array<{ wins: string[]; focus: number; uid: number }> } };
 }
 
+/** Simulate a browser traversal: set the entry and fire popstate. */
+function simulatePop(entry: { member: string; prev: string | null; depth: number }): void {
+  history.replaceState(entry, '', location.href);
+  window.dispatchEvent(new PopStateEvent('popstate', { state: entry }));
+}
+
 function oneColumnMatchMedia(): typeof window.matchMedia {
   const orig = window.matchMedia;
   window.matchMedia = (q: string) => {
@@ -89,6 +95,8 @@ describe('screens as history at one column', () => {
     origScrollIntoView = Element.prototype.scrollIntoView;
     Element.prototype.scrollIntoView = function () { scrolled.push(this); };
     origMatchMedia = oneColumnMatchMedia();
+    history.replaceState({ member: 'feed', prev: null, depth: 0 }, '', location.href);
+    localStorage.clear();
   });
   afterEach(() => {
     Element.prototype.scrollIntoView = origScrollIntoView;
@@ -177,7 +185,7 @@ describe('screens as history at one column', () => {
     expect(scrolled).toContain(col0);
   });
 
-  it('a popstate naming a closed window steps over it', async () => {
+  it('back onto a closed window steps back toward the feed', async () => {
     const { appbar, feed, panes } = mountShell();
     const app = new App(fakeApi());
     const drive = app as unknown as Drive;
@@ -187,15 +195,50 @@ describe('screens as history at one column', () => {
 
     drive.openThread(P1, { from: 'feed' });
     await flush();
+    drive.openThread(P2, { from: 'pane', ci: 0 });
+    await flush();
     drive.closeWindow(P1);
     await flush();
 
-    const backSpy = vi.spyOn(history, 'back');
-    window.dispatchEvent(new PopStateEvent('popstate', { state: { member: P1, prev: 'feed', depth: 1 } }));
-    await flush();
+    const backSpy = vi.spyOn(history, 'back').mockImplementation(() => {});
+    const fwdSpy = vi.spyOn(history, 'forward').mockImplementation(() => {});
+    simulatePop({ member: P1, prev: 'feed', depth: 1 });
 
     expect(backSpy).toHaveBeenCalled();
+    expect(fwdSpy).not.toHaveBeenCalled();
     backSpy.mockRestore();
+    fwdSpy.mockRestore();
+  });
+
+  it('forward onto a closed window steps forward toward the next live entry', async () => {
+    const { appbar, feed, panes } = mountShell();
+    const app = new App(fakeApi());
+    const drive = app as unknown as Drive;
+    app.mount(appbar, feed, panes);
+    await drive.loadFeed();
+    await flush();
+
+    drive.openThread(P1, { from: 'feed' });
+    await flush();
+    drive.openThread(P2, { from: 'pane', ci: 0 });
+    await flush();
+    drive.closeWindow(P1);
+    await flush();
+
+    const backSpy = vi.spyOn(history, 'back').mockImplementation(() => {});
+    const fwdSpy = vi.spyOn(history, 'forward').mockImplementation(() => {});
+    simulatePop({ member: P1, prev: 'feed', depth: 1 });
+    backSpy.mockClear(); fwdSpy.mockClear();
+
+    // Reset lastDepth to 0 to simulate forward traversal from the feed
+    simulatePop({ member: 'feed', prev: null, depth: 0 });
+    backSpy.mockClear(); fwdSpy.mockClear();
+    simulatePop({ member: P1, prev: 'feed', depth: 1 });
+
+    expect(fwdSpy).toHaveBeenCalled();
+    expect(backSpy).not.toHaveBeenCalled();
+    backSpy.mockRestore();
+    fwdSpy.mockRestore();
   });
 
   it('at tiling an open pushes nothing', async () => {
@@ -225,6 +268,8 @@ describe('the swipe — scrollend on the one-column scroller', () => {
     origScrollIntoView = Element.prototype.scrollIntoView;
     Element.prototype.scrollIntoView = function () { scrolled.push(this); };
     origMatchMedia = oneColumnMatchMedia();
+    history.replaceState({ member: 'feed', prev: null, depth: 0 }, '', location.href);
+    localStorage.clear();
   });
   afterEach(() => {
     Element.prototype.scrollIntoView = origScrollIntoView;
@@ -255,7 +300,7 @@ describe('the swipe — scrollend on the one-column scroller', () => {
     backSpy.mockRestore();
   });
 
-  it('a scrollend landing on a different screen does nothing', async () => {
+  it('a scrollend landing on neither current nor prev does nothing', async () => {
     const { appbar, feed, panes, workspace } = mountShell();
     const app = new App(fakeApi());
     const drive = app as unknown as Drive;
@@ -267,15 +312,12 @@ describe('the swipe — scrollend on the one-column scroller', () => {
     await flush();
     drive.openThread(P2, { from: 'pane', ci: 0 });
     await flush();
-    // State: feed → P1 → P2, currently on P2
 
-    // Simulate a swipe landing on P1 (not prev — prev is P1 for P2, so this IS prev)
-    // Instead, simulate landing on P2 itself (same screen → none)
+    // Simulate a swipe landing on the feed (neither current P2 nor prev P1)
     const cols = panes.querySelectorAll('.col');
-    const col1 = cols[1]!;
-    feed.getBoundingClientRect = () => ({ left: -780, top: 0, right: -390, bottom: 0, width: 390, height: 0, x: -780, y: 0, toJSON: () => {} }) as DOMRect;
-    cols[0]!.getBoundingClientRect = () => ({ left: -390, top: 0, right: 0, bottom: 0, width: 390, height: 0, x: -390, y: 0, toJSON: () => {} }) as DOMRect;
-    col1.getBoundingClientRect = () => ({ left: 0, top: 0, right: 390, bottom: 0, width: 390, height: 0, x: 0, y: 0, toJSON: () => {} }) as DOMRect;
+    feed.getBoundingClientRect = () => ({ left: 0, top: 0, right: 390, bottom: 0, width: 390, height: 0, x: 0, y: 0, toJSON: () => {} }) as DOMRect;
+    cols[0]!.getBoundingClientRect = () => ({ left: 390, top: 0, right: 780, bottom: 0, width: 390, height: 0, x: 390, y: 0, toJSON: () => {} }) as DOMRect;
+    cols[1]!.getBoundingClientRect = () => ({ left: 780, top: 0, right: 1170, bottom: 0, width: 390, height: 0, x: 780, y: 0, toJSON: () => {} }) as DOMRect;
     workspace.getBoundingClientRect = () => ({ left: 0, top: 0, right: 390, bottom: 0, width: 390, height: 0, x: 0, y: 0, toJSON: () => {} }) as DOMRect;
 
     const backSpy = vi.spyOn(history, 'back');
