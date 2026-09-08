@@ -411,8 +411,8 @@ describe('a like landing updates every surface holding the post', () => {
     expect(feedLiked).toBeTruthy();
     expect(feedLiked!.querySelector('.n')!.textContent).toBe('1');
 
-    // Pane card: .liked.settled with count 1 — the pane had the same gap before
-    // applyFetchedRow, because the thread row was stale.
+    // Pane card: .liked.settled with count 1 — the pane card holds the same
+    // post through its thread row; the landing reaches it too.
     const paneLiked = panes.querySelector('.liked.settled');
     expect(paneLiked).toBeTruthy();
     expect(paneLiked!.querySelector('.n')!.textContent).toBe('1');
