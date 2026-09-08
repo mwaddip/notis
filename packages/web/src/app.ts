@@ -833,12 +833,7 @@ export class App {
       this.toWorkspace(id ?? '');
       return;
     }
-    let elsewhere: boolean;
-    try {
-      elsewhere = await this.tabs.heldElsewhere();
-    } catch {
-      elsewhere = false;
-    }
+    const elsewhere = await this.tabs.heldElsewhere();
     if (elsewhere) {
       this.tabs.announce(id);
       const col = this.state.workspace.columns[0];
