@@ -2021,6 +2021,10 @@ export class App {
         this.optimisticLikes.delete(entry.postId);
         this.ledger.remove(entry.txId);
         if (outcome === 'expired') this.setReportForPost(entry.postId, 'a like expired before any block took it');
+        if (outcome === 'landed') {
+          const fp = this.state.feed.posts.find((p) => p.id === entry.postId);
+          if (fp) fp.likedByViewer = true;
+        }
         touchedPosts.add(entry.postId);
         if (this.feedHasPost(entry.postId)) feedTouched = true;
       } else {
