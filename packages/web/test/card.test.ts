@@ -421,15 +421,15 @@ describe('card — the withdraw control', () => {
 describe('card — link', () => {
   const URL = 'http://localhost/p/' + 'ab'.repeat(32);
 
-  it('link appears after ↩ reply when onLink is set', () => {
+  it('the copy glyph appears after ↩ reply as the meta row\'s last child', () => {
     const c = card(confirmed('bb'.repeat(32)), {
       onReply: () => {},  linkUrl: URL,
     });
-    const btns = [...c.querySelectorAll('.meta button')].map((b) => b.textContent);
-    const replyIdx = btns.indexOf('↩reply');
-    const linkIdx = btns.findIndex((t) => t === 'link');
-    expect(linkIdx).toBeGreaterThan(-1);
-    expect(linkIdx).toBeGreaterThan(replyIdx);
+    const meta = c.querySelector('.meta')!;
+    const linkbtn = meta.querySelector('.linkbtn')!;
+    expect(linkbtn).not.toBeNull();
+    expect(linkbtn.querySelector('svg')).not.toBeNull();
+    expect(meta.lastElementChild).toBe(linkbtn);
   });
 
   it('absent when no linkUrl is set', () => {
@@ -472,7 +472,7 @@ describe('card — link', () => {
     document.body.appendChild(c);
     c.querySelector<HTMLButtonElement>('.linkbtn')!.click();
     expect(c.querySelector('.card-link')).toBeTruthy();
-    expect(c.querySelector('.linkbtn')!.textContent).toBe('link');
+    expect(c.querySelector('.linkbtn svg')).not.toBeNull();
     c.remove();
   });
 });

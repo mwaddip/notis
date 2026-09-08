@@ -46,6 +46,10 @@ describe('app.css — a word control wears no box', () => {
     expect(hover).not.toBe('');
     expect(css.replace(hover, '')).not.toContain(':hover');
   });
+  it('.meta .linkbtn svg is inline-block with vertical-align', () => {
+    expect(css).toMatch(/\.meta \.linkbtn svg\s*\{[^}]*display: inline-block/);
+    expect(css).toMatch(/\.meta \.linkbtn svg\s*\{[^}]*vertical-align: -4px/);
+  });
   it('.seg .word is inkMute at rest, ink when pressed', () => {
     expect(css).toMatch(/\.seg \.word\s*\{[^}]*color: var\(--inkMute\)/);
     expect(css).toMatch(/\.seg \.word\[aria-pressed="true"\]\s*\{[^}]*color: var\(--ink\)/);

@@ -154,6 +154,11 @@ header .spacer { flex: 1 1 auto; }
 .meta { display: flex; align-items: baseline; gap: 12px; margin-top: 8px;
         height: 22px; font-size: 12.5px; color: var(--inkMute); }
 .meta .n { font-family: var(--mono); }
+/* The copy glyph — the meta row's last child, margin-left: auto lands its right
+   edge on the date's. The glyph at 16px, block so the button sizes to it
+   (WEB_INTERFACE → Links). */
+.meta .linkbtn { margin-left: auto; }
+.meta .linkbtn svg { width: 16px; height: 16px; display: inline-block; vertical-align: -4px; }
 
 /* the withdrawn state */
 .withdrawn { font-style: italic; color: var(--inkMute); font-size: 14px; }
@@ -566,6 +571,10 @@ header .spacer { flex: 1 1 auto; }
      row's geometry is unchanged (HOUSE_STYLE → Interaction → "A word is a
      control, and it wears no box", WEB_INTERFACE → The workspace). */
   .word, .authorbtn { padding: 10px 0; margin: -10px 0; }
+  /* The copy glyph's hit box is a 36px square by horizontal padding the negative
+     margin absorbs, so the glyph's right edge stays on the date's
+     (WEB_INTERFACE → Links). */
+  .meta .linkbtn { padding: 10px; margin: -10px -10px -10px 0; }
   /* Text fields at 16px so WebKit does not zoom the page on focus. */
   .composer textarea, .composer input, .winbody input { font-size: 16px; }
 }

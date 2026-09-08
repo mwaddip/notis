@@ -1,6 +1,7 @@
 import { el, shortHex } from '../dom';
 import { parseContent, renderContent } from './content';
 import { unlockForm } from './passphrase';
+import { copyGlyph } from './glyphs';
 import type { PostJson, WithdrawnJson } from '../api/dto';
 import { isWithdrawn } from '../api/dto';
 import { assertContentHash } from '../integrity';
@@ -408,14 +409,14 @@ function replyButton(id: string, opts: CardOpts): HTMLElement | null {
   return rb;
 }
 
-// WEB_INTERFACE → Links — after ↩ reply, the row's last control.
+// WEB_INTERFACE → Links — the copy glyph at the meta row's right edge.
 function linkButton(opts: CardOpts, meta: HTMLElement): HTMLElement | null {
   if (!opts.linkUrl) return null;
   const url = opts.linkUrl;
   let copied = false;
   const lb = el('button', 'word linkbtn');
   lb.setAttribute('aria-label', 'copy this post\'s link');
-  lb.textContent = 'link';
+  lb.appendChild(copyGlyph());
   lb.addEventListener('click', () => {
     if (copied) return;
     if (typeof navigator.clipboard?.writeText !== 'function') {
