@@ -172,9 +172,6 @@ one.
   renders in the feed; a reply is reached through its thread or its author's window, which reads the same
   endpoint with `author` and no `roots`.
 
-> ⚠ **AHEAD OF CODE (2026-09-08, the feed's controls)** — the bullet below states the rule the feed-controls
-> unit implements.
-
 - **A feed card carries `like` and `link` in its meta row**, by the same rules a pane's card follows: `like`
   on another's landed or confirmed post, with the unlock row under the meta when the identity is locked, the
   pending overlay and `liked` as → The wallet states; the read-only count alone on the reader's own post; no
@@ -350,9 +347,6 @@ tab, and the way in always switches in place. **Nothing crosses the channel but 
 64-hex one is acted on.
 
 ## Links
-
-> ⚠ **AHEAD OF CODE (2026-09-08, the feed's controls)** — `link` on the feed card and the author-posts
-> window's cards, in the paragraph below, is the rule the feed-controls unit implements.
 
 **A post's link is `<origin><base>p/<id>`** (→ The standalone thread), and the reader makes one from the
 card. The meta row carries `link` as the row's last control on every landed or confirmed card — inside a
@@ -563,7 +557,10 @@ and re-reads the spendable view, and the reader sees the rejection.
 
 **Reconcile runs on the reader's own refresh and on the bounded poll below.** A pending post is landed
 when `GET /posts/:postId` answers `confirmed`, expired on a 404 or once the tip passes
-`expiresAtHeight`; a pending like is landed when `likedByViewer` turns `true`. That field reflects
+`expiresAtHeight`; a pending like is landed when `likedByViewer` turns `true`, and the row the reconcile
+fetched then replaces the post's row wherever the client holds it — the feed, every thread containing it,
+the posts index, an open `@posts:` window — so every surface shows the node's count and `liked` with no
+refresh. That field reflects
 store records only, so **the client overlays its own pending likes** onto it until they land or expire.
 A pending vouch is landed when `GET /vouches?voucher=<key>` lists the pair; a pending unvouch when the
 pair is absent — the escrow it creates is no signal, since one born past its release height is returned
@@ -772,9 +769,6 @@ Its body is `GET /posts?author=<key>` — the author's committed posts, newest f
 as feed cards: the strip, the prefix and the mark, `· you`, `like` and `link` by the feed card's rules
 (→ What the feed reads, and what a card shows for it), and no reply, which lives in the pane the strip
 opens. `↻` reports what it did — `4 new posts` / `no new posts`. The bar reads `posts · <prefix>`, no spine.
-
-> ⚠ **AHEAD OF CODE (2026-09-08, the feed's controls)** — `like` and `link` on the author-posts window's
-> cards, above, is the rule the feed-controls unit implements.
 
 ### The withdraw control *(author's own controls)*
 
