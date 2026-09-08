@@ -256,9 +256,6 @@ reaches — *show the feed* when the feed is the next member on the left, else *
 (`HOUSE_STYLE → Deliberately not decided`). A gesture is never the only route, as hover is not
 (`HOUSE_STYLE → Accessibility contract`).
 
-> ⚠ **AHEAD OF CODE (2026-09-08, the phone's back button)** — the paragraph below states the rule the
-> phone-back unit builds; the code holds no history at one column yet.
-
 **At one column the screens are history.** A tap that changes the screen — an open, a raise, `‹`, `›`, a `✕`
 that shows another member — pushes a history entry naming the screen by its column's focused window, the
 feed as `feed`; the URL does not change, since the arrangement is not in it. A move that lands on the screen
