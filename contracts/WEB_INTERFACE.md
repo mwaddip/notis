@@ -8,8 +8,9 @@ tab, the reader's own posts marked, the faucet karma step — the **membership a
 identity display with the vouch mark, the author window and the author-posts window, vouch and
 unvouch, invite from the profile — the **author's own controls' first unit** — withdraw from the
 reader's own card — **content rendering** — the grammar a card renders from content, and the composer's
-`link` and `image` types — and the **responsive workspace** — K visible columns from the width, one column on
-a phone, touch sizes by the pointer — are implemented
+`link` and `image` types — the **responsive workspace** — K visible columns from the width, one column on
+a phone, touch sizes by the pointer — and the **standalone thread** — a post's URL opening the thread alone,
+the way into the workspace, `link` on a card — are implemented
 **Protocol version:** read from the node, never held — see Invariants
 
 
@@ -83,8 +84,6 @@ profile window); nothing else in the interface creates an identity, and a produc
 other door.
 
 ### The standalone mode — the same client on one thread
-
-> ⚠ **AHEAD OF CODE (2026-09-08)** — this passage states the rule the deeplinks unit implements.
 
 **A post's URL boots the client on that thread alone** — no feed, no workspace of the reader's own — with
 every control the card carries in a pane, a way from it into the workspace, and `link` on a card to make
@@ -196,8 +195,6 @@ feed and the header sit left of column 0 — and creates it only if it is not al
 column's stack otherwise. An open window is raised, never duplicated. Reuse is what keeps columns from
 multiplying as the reader drills; only `→` adds one.
 
-> ⚠ **AHEAD OF CODE (2026-09-08)** — this paragraph states the rule the deeplinks unit implements.
-
 **One tab writes the arrangement.** The workspace tab holding the Web Lock `notis.workspace` is the writer
 of `notis.layout`; a second workspace tab in the same browser reads the arrangement at boot and persists
 nothing until the lock passes to it when the holder closes, so two tabs never overwrite each other's
@@ -271,8 +268,6 @@ the safe-area insets.
 
 ## The standalone thread
 
-> ⚠ **AHEAD OF CODE (2026-09-08)** — this section states the rule the deeplinks unit implements.
-
 **A post has a URL, and the URL opens the thread alone.** `<origin><base>p/<64hex>` — `https://notis.fun/web/p/<id>`
 on notis.fun, `/p/<id>` on the dev server — boots the client in its **standalone** mode on that post: no
 feed, no workspace of the reader's own, one member holding the thread. Any other path under the base boots
@@ -308,8 +303,6 @@ prefix and `Notis` once the thread lands, and on every re-root; the workspace's 
 
 ## The way into the workspace
 
-> ⚠ **AHEAD OF CODE (2026-09-08)** — this section states the rule the deeplinks unit implements.
-
 **The reader can move the thread to their workspace whether or not an identity is loaded**, by one control,
 `add to workspace`, whose mechanism depends on whether a workspace tab is open in this browser.
 
@@ -326,13 +319,12 @@ long as one tab is open.
 **The standalone page asks whether the lock is held**, by a request with `ifAvailable` released at once;
 a lock held or waited for answers held.
 
-- **Held — the handover.** The page posts the id on the channel and its bar's report reads `added to your
-  workspace`. Two steps beyond that are best effort, each kept only where measured to behave: raising the
-  workspace tab by its name — kept only if the lookup finds an unrelated tab in every browser measured,
-  since where it does not it opens a blank tab, and the client cannot tell browsers apart without a user
-  agent string and never reads one (`HOUSE_STYLE → Interaction`); and closing this tab — attempted only
-  while its history holds one entry, which `history.length` says before any attempt, so the page never
-  tries and fails. With both dropped, the report stands and the reader switches tabs.
+- **Held — the handover.** The page posts the id on the channel, its bar's report reads `added to your
+  workspace`, and it closes itself while its history holds one entry — `history.length` says so before the
+  attempt, so the page never tries and fails; after a re-root the report stands and the reader switches
+  tabs. **The workspace tab is not raised**: a named-window lookup does not find an unrelated tab — in
+  Chromium `window.open` with the name opens a blank tab instead — and the client cannot tell browsers apart
+  without a user agent string and never reads one (`HOUSE_STYLE → Interaction`).
 - **Not held — the switch in place.** Without a navigation, so the identity stays unlocked and the poll
   runs on: the stored arrangement is restored, the thread inserted by the placement rule from the feed, the
   lock requested — never awaited, since another tab may hold it, the arrangement persisting once it is
@@ -345,8 +337,6 @@ tab, and the way in always switches in place. **Nothing crosses the channel but 
 64-hex one is acted on.
 
 ## Links
-
-> ⚠ **AHEAD OF CODE (2026-09-08)** — this section states the rule the deeplinks unit implements.
 
 **A post's link is `<origin><base>p/<id>`** (→ The standalone thread), and the reader makes one from the
 card. The meta row carries `link` after `↩ reply`, the row's last control, on every landed or confirmed card

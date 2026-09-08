@@ -739,9 +739,6 @@ defect. **It belongs to the supply set.**
 
 ### Link previews
 
-> ⚠ **AHEAD OF CODE (2026-09-08)** — the `/shell/:id` row and `WEB_SHELL_PATH` (→ Configuration) state the
-> rule the deeplinks unit implements.
-
 | Method | Path | Response |
 |--------|------|----------|
 | `GET` | `/preview/:id` | OG-tagged HTML page with JS redirect to the demo UI |
