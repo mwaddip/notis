@@ -82,6 +82,15 @@ step).
 profile window); nothing else in the interface creates an identity, and a production build exposes no
 other door.
 
+### The standalone mode — the same client on one thread
+
+> ⚠ **AHEAD OF CODE (2026-09-08)** — this passage states the rule the deeplinks unit implements.
+
+**A post's URL boots the client on that thread alone** — no feed, no workspace of the reader's own — with
+every control the card carries in a pane, a way from it into the workspace, and `link` on a card to make
+such a URL (→ The standalone thread, → The way into the workspace, → Links). It is the App in a mode, not a
+second renderer, and with no identity loaded it is the read surface exactly.
+
 ## The browser reaches `@dagsocial/types` through a build-time shim
 
 `@dagsocial/types` and `@dagsocial/validation` are written against Node: `createHash('blake2b512')`
@@ -187,6 +196,14 @@ feed and the header sit left of column 0 — and creates it only if it is not al
 column's stack otherwise. An open window is raised, never duplicated. Reuse is what keeps columns from
 multiplying as the reader drills; only `→` adds one.
 
+> ⚠ **AHEAD OF CODE (2026-09-08)** — this paragraph states the rule the deeplinks unit implements.
+
+**One tab writes the arrangement.** The workspace tab holding the Web Lock `notis.workspace` is the writer
+of `notis.layout`; a second workspace tab in the same browser reads the arrangement at boot and never
+persists its own, so two tabs cannot overwrite each other's (→ The way into the workspace). A thread handed
+over from a standalone page opens in the holder by the placement rule from the feed, as a press on the
+strip would.
+
 **The strip is a card's only thread-opening control, and it carries state.** An opened post stays in the feed:
 its content fades to `inkMute`, the last stop meeting the text floor, and its strip fills, so nothing below it
 reflows (`HOUSE_STYLE → Motion`). A press on an open card's strip raises the thread rather than opening a
@@ -250,6 +267,100 @@ the strip and the bar label keep their size; a text field is 16px, since WebKit 
 smaller one; glyphs and words are unchanged. Every `:hover` rule sits under `(hover: hover)`. The viewport
 declares `viewport-fit=cover` and `interactive-widget=resizes-content`, and the header and the gutters respect
 the safe-area insets.
+
+## The standalone thread
+
+> ⚠ **AHEAD OF CODE (2026-09-08)** — this section states the rule the deeplinks unit implements.
+
+**A post has a URL, and the URL opens the thread alone.** `<origin><base>p/<64hex>` — `https://notis.fun/web/p/<id>`
+on notis.fun, `/p/<id>` on the dev server — boots the client in its **standalone** mode on that post: no
+feed, no workspace of the reader's own, one member holding the thread. Any other path under the base boots
+the **workspace**, the mode everything above describes. The mode is decided once, at boot, from the path
+and the client's base (`import.meta.env.BASE_URL`), by a pure function; the id is 64 hex characters,
+lower-cased on read; a link is always absolute, since a chat app needs the origin.
+
+**Standalone is the App in a mode, not a second renderer.** The thread renders as a pane renders it — the
+root and its descendants at their depth, the reply composer and the reader's own submissions under their
+parent, `load more replies` following `next`, the absence states as they are — on the same card with the
+same controls: the strip, like, `↩ reply`, withdraw on the reader's own post, the unlock rows, images on the
+reader's press, `link` (→ Links). The identity module, the wallet, the pending ledger and the landing poll
+run as in the workspace; with no identity loaded the page is the read surface exactly. The member is capped
+at 660 and centred at every width — the one-column member rule (→ The workspace) applied to a page with one
+member, by a `standalone` class on the workspace element outside every media query.
+
+**The standalone workspace is never persisted.** It is exactly one column holding one window, built at
+boot and never written to `notis.layout`; the stored arrangement is neither read nor touched until the
+reader asks for the workspace (→ The way into the workspace).
+
+**The header** carries the brand and wordmark — not a link, as nowhere else — the way in, a word control
+reading `add to workspace` (→ The way into the workspace), the identity prefix at tiling as display and the
+theme control as the width class renders it. No arrows: there is one member. No profile control: creating,
+importing, exporting and forgetting an identity are the workspace's, and the unlock a like or a reply needs
+mounts in the card; a visitor who wants a profile presses the way in and finds it there. **The bar** carries
+`↻` and its report and nothing else — nothing to move, nothing to close — and its label is the pane's.
+
+**The strip re-roots the page.** A press on a reply's strip inside the thread makes that reply the page's
+root — the one window becomes that id, fetched if it is not loaded, the body rendered — and pushes a history
+entry naming it, so the URL always names the thread on screen, back returns to the previous root, and back
+from the first root leaves the page to wherever the link was followed from. `document.title` is the author's
+prefix and `Notis` once the thread lands, and on every re-root; the workspace's stays `Notis`.
+
+## The way into the workspace
+
+> ⚠ **AHEAD OF CODE (2026-09-08)** — this section states the rule the deeplinks unit implements.
+
+**The reader can move the thread to their workspace whether or not an identity is loaded**, by one control,
+`add to workspace`, whose mechanism depends on whether a workspace tab is open in this browser.
+
+**The workspace tab declares itself.** At boot in workspace mode the client requests the Web Lock
+`notis.workspace` and holds it for the tab's life — the browser releases it on unload — and names its
+window `notis-workspace`. The holder is the one writer of the arrangement (→ The workspace) and the one
+receiver of a handover: it listens on the BroadcastChannel `notis` for a post id and opens that thread by
+the placement rule from the feed — column 0, raised if already open, fetched, the view moved, persisted. A
+workspace tab refused the lock reads the arrangement and ignores the channel, so a moved thread lands in
+exactly one place.
+
+**The standalone page asks whether the lock is held**, by a request with `ifAvailable` released at once.
+
+- **Held — the handover.** The page posts the id on the channel and its bar's report reads `added to your
+  workspace`. Two steps beyond that are best effort, each kept only where measured to behave: raising the
+  workspace tab by its name — kept only if the lookup finds an unrelated tab in every browser measured,
+  since where it does not it opens a blank tab, and the client cannot tell browsers apart without a user
+  agent string and never reads one (`HOUSE_STYLE → Interaction`); and closing this tab — attempted only
+  while its history holds one entry, which `history.length` says before any attempt, so the page never
+  tries and fails. With both dropped, the report stands and the reader switches tabs.
+- **Not held — the switch in place.** Without a navigation, so the identity stays unlocked and the poll
+  runs on: the stored arrangement is restored, the thread inserted by the placement rule from the feed, the
+  lock claimed, the URL replaced with the base, the feed rendered and loaded, the view moved to the thread's
+  column. The tab is a workspace tab from then on. A link pasted into the workspace tab's own address bar
+  ends here too, that tab having released the lock when it navigated.
+
+**Without Web Locks** every workspace tab writes, as a browser without the API cannot know about another
+tab, and the way in always switches in place. **Nothing crosses the channel but a post id**, and only a
+64-hex one is acted on.
+
+## Links
+
+> ⚠ **AHEAD OF CODE (2026-09-08)** — this section states the rule the deeplinks unit implements.
+
+**A post's link is `<origin><base>p/<id>`** (→ The standalone thread), and the reader makes one from the
+card. The meta row carries `link` after `↩ reply`, the row's last control, on every landed or confirmed card
+inside a pane or on the standalone page — the withdrawn card included, its thread surviving its content —
+and never on a feed card, whose meta is read-only counts and whose one act is the strip. The press writes
+the URL to the clipboard and the word becomes `copied`, held until the card next renders — a swap in a fixed
+box, no timer, as `like` becomes `liked` (`HOUSE_STYLE → Motion`). The label reads *copy this post's link*.
+
+**Where the clipboard API is absent** — an insecure context, such as a phone reaching the dev server over a
+LAN address on `http` — or a write is refused, the press mounts a row under the meta, where the unlock row
+mounts, holding the URL as selectable text for the reader to copy by hand, and the word stays `link`. The
+address bar of a standalone page already holds the page's link; each card's `link` gives that card's own.
+
+**A link previews in a chat app because the server answers for it.** The host proxies `<base>p/<id>` to
+the node's `GET /shell/:id` (`NODE_INTERFACE → Link previews`), which answers the client's own shell with
+the post's Open Graph tags injected — one response, no redirect — and the client boots from it and reads
+the path. A host without that piece serves the shell plain and the thread opens without a preview. The
+client itself fetches nothing for a preview: what a chat app shows is the server's answer to the chat app's
+own request, never a request the page made (`HOUSE_STYLE → Interaction`).
 
 ## The withdrawn state
 
@@ -733,6 +844,8 @@ client that expects to announce itself first is built against an endpoint that d
 
 - `@dagsocial/node` HTTP API reachable **on the origin serving the client**
 - Static assets served, fonts among them — self-hosted, never fetched from a third party
+- The standalone path `<base>p/<id>` answered with the client's shell — by the node's `GET /shell/:id`
+  behind the host's proxy for a preview, or the shell plain without one (→ Links)
 
 ## Invariants
 
@@ -766,3 +879,6 @@ client that expects to announce itself first is built against an endpoint that d
 - **All hashing is client-side; the node verifies, it does not assist.** *(write surface)*
 - **The read surface holds no key and signs nothing.** Its boundary is checkable: it issues `GET`
   requests and nothing else, and it constructs no transaction.
+- **The standalone workspace is never persisted, and only the lock holder writes the arrangement.** A page
+  opened on a post's URL never touches `notis.layout`; a workspace tab writes it only while holding
+  `notis.workspace` (→ The standalone thread, → The way into the workspace).
