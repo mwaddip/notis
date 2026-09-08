@@ -153,6 +153,9 @@ export class App {
   private headerRightArrow: HTMLElement | null = null;
   // WEB_INTERFACE → The workspace → "At one column the screens are history"
   private lastDepth = 0;
+  // A back the App issued is in flight until its popstate settles; a scroll
+  // settle in between is the rebuild clamp, not a swipe.
+  private backInFlight = false;
 
   // Open composer widgets, held by key so the same element is re-parented across
   // a region rebuild rather than recreated (WEB_INTERFACE → The write surface).
@@ -300,6 +303,8 @@ export class App {
     // WEB_INTERFACE → The workspace → "At one column the screens are history"
     this.workspaceEl?.addEventListener('scrollend', () => {
       if (this.standalone || !this.oneColumn) return;
+      // WEB_INTERFACE → The workspace → "At one column the screens are history"
+      if (this.backInFlight) return;
       const name = this.memberNameAt(this.currentMemberIndex());
       if (name === null) return;
       const s = history.state;
@@ -308,6 +313,7 @@ export class App {
       if (result.kind === 'back') history.back();
     });
     window.addEventListener('popstate', (e) => {
+      this.backInFlight = false;
       if (this.standalone || !this.oneColumn) return;
       const s = (e as PopStateEvent).state;
       if (!s || typeof s.member !== 'string') return;
@@ -690,6 +696,7 @@ export class App {
         this.lastDepth = result.entry.depth;
         this.scrollToMember(name);
       } else if (result.kind === 'back') {
+        this.backInFlight = true;
         history.back();
       } else {
         this.scrollToMember(name);

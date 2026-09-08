@@ -300,6 +300,42 @@ describe('the swipe — scrollend on the one-column scroller', () => {
     backSpy.mockRestore();
   });
 
+  it('backInFlight suppresses scrollend between closeWindow and popstate settle', async () => {
+    const { appbar, feed, panes, workspace } = mountShell();
+    const app = new App(fakeApi());
+    const drive = app as unknown as Drive;
+    app.mount(appbar, feed, panes);
+    await drive.loadFeed();
+    await flush();
+
+    drive.openThread(P1, { from: 'feed' });
+    await flush();
+    drive.openThread(R1, { from: 'pane', ci: 0 });
+    await flush();
+
+    // State is { member: R1, prev: P1, depth: 2 }. Mock history.back() to
+    // prevent happy-dom's synchronous popstate cascade; closeWindow →
+    // moveView(P1) → decideMove → back → sets backInFlight, calls back().
+    const backSpy = vi.spyOn(history, 'back').mockImplementation(() => {});
+    drive.closeWindow(R1);
+    await flush();
+    expect(backSpy).toHaveBeenCalledTimes(1);
+
+    // Simulate the DOM-change scrollend landing on the feed.
+    // backInFlight is true — the listener skips it.
+    feed.getBoundingClientRect = () => ({ left: 0, top: 0, right: 390, bottom: 0, width: 390, height: 0, x: 0, y: 0, toJSON: () => {} }) as DOMRect;
+    workspace.getBoundingClientRect = () => ({ left: 0, top: 0, right: 390, bottom: 0, width: 390, height: 0, x: 0, y: 0, toJSON: () => {} }) as DOMRect;
+    backSpy.mockClear();
+    workspace.dispatchEvent(new Event('scrollend'));
+    expect(backSpy).not.toHaveBeenCalled();
+
+    // No popstate arrives (back is mocked), so backInFlight stays true
+    // and a second scrollend is still suppressed.
+    workspace.dispatchEvent(new Event('scrollend'));
+    expect(backSpy).not.toHaveBeenCalled();
+    backSpy.mockRestore();
+  });
+
   it('a scrollend landing on neither current nor prev does nothing', async () => {
     const { appbar, feed, panes, workspace } = mountShell();
     const app = new App(fakeApi());
