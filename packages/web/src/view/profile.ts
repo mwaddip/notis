@@ -1,7 +1,7 @@
 import { el, shortHex } from '../dom';
 import { prefs, BUILD_BASE, BUILD_FAUCET_BASE, type Theme, type IdTint } from '../prefs';
 import { unlockForm, setPassphraseForm } from './passphrase';
-import { markNode, stageLine, type Mark, type Flight } from './card';
+import { stageLine, type Flight } from './card';
 import { INVITE_BOND_VEST_PER_LIKES } from '@dagsocial/types';
 import type { KarmaResult, BondsResult } from '../api/dto';
 import type { Origin } from '../model/workspace';
@@ -57,7 +57,6 @@ export interface ProfileCtx {
   canAffordMinBond: boolean;   // the spendable covers the minimum bond
   bonds: BondsResult | null;   // the reader's standing bonds
   inviteFlight: Flight | null; // the invite in the row
-  markFor: (key: string) => Mark | null; // a standing bond's invitee mark
 }
 
 const ID_TINTS: IdTint[] = ['spine', 'wash', 'both', 'off'];
@@ -404,38 +403,6 @@ function standingBonds(field: HTMLElement, handlers: ProfileHandlers, ctx: Profi
     btn.setAttribute('aria-label', 'open this author');
     btn.addEventListener('click', () => handlers.openAuthor(bond.inviteePublicKey, origin));
     bondRow.appendChild(btn);
-    const mark = ctx.markFor(bond.inviteePublicKey);
-    if (mark) {
-      // A vouch is a write, so a locked identity unlocks under the bond row first,
-      // then the vouch flies (WEB_INTERFACE → The identity module: every write
-      // checks locked before its flight), as the author window's your-vouch row does.
-      const vouchAction = (key: string): void => {
-        const id = ctx.identity;
-        if (id?.locked) {
-          if (bondRow.parentElement?.querySelector('.card-unlock')) return; // already open
-          const urow = el('div', 'card-unlock');
-          urow.appendChild(
-            unlockForm(
-              id.pubKeyHex,
-              async (p) => {
-                await handlers.unlockIdentity(p);
-                handlers.vouch(key);
-              },
-              () => urow.remove(),
-            ),
-          );
-          bondRow.insertAdjacentElement('afterend', urow);
-          return;
-        }
-        handlers.vouch(key);
-      };
-      bondRow.appendChild(
-        markNode(bond.inviteePublicKey, mark, {
-          onVouch: vouchAction,
-          onAuthor: (key) => handlers.openAuthor(key, origin),
-        }),
-      );
-    }
     const value = el('span', 'hint');
     value.append(mono(bond.value), ' karma');
     bondRow.appendChild(value);

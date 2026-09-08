@@ -11,14 +11,6 @@ import type { Submission, FlightStage } from '../model/state';
 // control; the card is not a button, so its text stays
 // selectable and a pointer can be parked on it.
 
-/** The vouch mark's state, its count for the `title`, and the reason a disabled
- *  one carries instead of the count (WEB_INTERFACE → The identity display). Its
- *  state is glyph and ink weight — never a word and never a colour. */
-export interface Mark {
-  state: 'plus' | 'check' | 'pending' | 'disabled';
-  count: number | null; // null until the per-author read lands; then the title
-  reason?: string;       // a disabled mark's title, in place of the count
-}
 
 /** A client submission's flight, driving the stage line on its own pending card. */
 export interface Flight {
@@ -51,9 +43,7 @@ export interface CardOpts {
   ownKey?: string;                       // the reader's key, the unlock form's username
   onUnlock?: (passphrase: string) => Promise<void>; // load the seed, then the like or vouch proceeds
   // The identity display (WEB_INTERFACE → The identity display).
-  onAuthor?: ((key: string) => void) | null; // the prefix button — and a ✓ mark — open the author window
-  onVouch?: ((key: string) => void) | null;  // a + mark vouches at once, no confirmation
-  mark?: Mark | null;                    // the vouch mark after the prefix; null → none (· you, or no identity)
+  onAuthor?: ((key: string) => void) | null; // the prefix button opens the author window
   // The author's own controls (WEB_INTERFACE → The withdraw control).
   onWithdraw?: ((id: string) => void) | null; // the confirm row's withdraw signs
   withdraw?: 'pending' | Flight | null;  // 'pending' from the ledger, else the transient flight in the slot
@@ -90,100 +80,12 @@ function whoRow(authorKey: string, whenMs: number | null, opts: CardOpts): HTMLE
   } else {
     who.appendChild(el('span', 'hex', shortHex(authorKey, 16)));
   }
-  // · you on the reader's own card, else the vouch mark — the two are exclusive
-  // (WEB_INTERFACE → The identity display). Muted ink, text only, no colour on
-  // · you (HOUSE_STYLE → Identity colour).
+  // · you on the reader's own card (WEB_INTERFACE → The identity display).
   if (opts.you) who.appendChild(el('span', 'you', '· you'));
-  else if (opts.mark) who.appendChild(markNode(authorKey, opts.mark, opts));
   if (whenMs != null) who.appendChild(el('span', 'when', whenText(whenMs)));
   return who;
 }
 
-/** The `title` for a mark — the count and nothing else (WEB_INTERFACE → The
- *  identity display). Empty until the per-author read lands, so a mark is never
- *  withheld for want of a tooltip. */
-function countTitle(count: number | null): string {
-  if (count === null) return '';
-  if (count <= 0) return 'no vouches';
-  return count === 1 ? '1 vouch' : `${count} vouches`;
-}
-
-/** The check, a two-stroke SVG in currentColor at x-height — the self-hosted
- *  faces do not carry U+2713 (WEB_INTERFACE → The identity display). */
-function checkSvg(): SVGSVGElement {
-  const NS = 'http://www.w3.org/2000/svg';
-  const svg = document.createElementNS(NS, 'svg');
-  svg.setAttribute('viewBox', '0 0 12 12');
-  svg.setAttribute('class', 'ck');
-  svg.setAttribute('aria-hidden', 'true');
-  const path = document.createElementNS(NS, 'path');
-  path.setAttribute('d', 'M2.5 6.4 L4.9 9 L9.4 3.4'); // two strokes: the short leg, the long leg
-  path.setAttribute('fill', 'none');
-  path.setAttribute('stroke', 'currentColor');
-  path.setAttribute('stroke-width', '1.6');
-  path.setAttribute('stroke-linecap', 'round');
-  path.setAttribute('stroke-linejoin', 'round');
-  svg.appendChild(path);
-  return svg;
-}
-
-/** The vouch mark — one control, never a word and never a colour, its state glyph
- *  and ink weight (WEB_INTERFACE → The identity display). `+` (U+002B, in the
- *  faces) vouches at once; `✓` (the SVG) opens the author window; a disabled mark
- *  carries its reason as the `title`. A locked identity unlocks in a row under the
- *  meta before the vouch flies, as a like does (WEB_INTERFACE → The identity
- *  module); the author window passes a wrapped `onVouch` and no `locked`, so its
- *  own unlock mounts under the your-vouch row instead. Exported for that window. */
-export function markNode(key: string, mark: Mark, opts: CardOpts): HTMLElement {
-  if (mark.state === 'disabled') {
-    const b = el('button', 'vmark plus disabled');
-    b.dataset['markAuthor'] = key; // the App finds it to set the count title (skipping disabled)
-    (b as HTMLButtonElement).disabled = true;
-    b.appendChild(el('span', 'g', '+'));
-    if (mark.reason) {
-      b.title = mark.reason;
-      b.setAttribute('aria-label', mark.reason);
-    }
-    return b;
-  }
-  if (mark.state === 'plus') {
-    const b = el('button', 'vmark plus');
-    b.dataset['markAuthor'] = key;
-    b.appendChild(el('span', 'g', '+'));
-    b.setAttribute('aria-label', 'vouch for this author — stakes 1 karma');
-    const t = countTitle(mark.count);
-    if (t) b.title = t;
-    b.addEventListener('click', () => {
-      if (opts.locked && opts.ownKey && opts.onUnlock && opts.onVouch) {
-        mountCardUnlock(b, opts.ownKey, opts.onUnlock, () => opts.onVouch!(key));
-        return;
-      }
-      opts.onVouch?.(key);
-    });
-    return b;
-  }
-  // check or pending — the ✓ opens the author window, where unvouch lives.
-  const b = el('button', 'vmark check' + (mark.state === 'pending' ? ' pending' : ''));
-  b.dataset['markAuthor'] = key;
-  b.appendChild(checkSvg());
-  b.setAttribute('aria-label', 'you vouched for this author — open their window');
-  const t = countTitle(mark.count);
-  if (t) b.title = t;
-  b.addEventListener('click', () => opts.onAuthor?.(key));
-  return b;
-}
-
-/** The display-only mark for a title bar (WEB_INTERFACE → The identity display):
- *  ✓ in ink when the reader has vouched, muted while pending, absent otherwise —
- *  never `+`, never a control, because the bar's label is the focus control and a
- *  control cannot nest inside one. */
-export function displayMark(mark: Mark | null): HTMLElement | null {
-  if (!mark || (mark.state !== 'check' && mark.state !== 'pending')) return null;
-  const span = el('span', 'vmark check display' + (mark.state === 'pending' ? ' pending' : ''));
-  span.appendChild(checkSvg());
-  span.setAttribute('aria-label', 'you vouched for this author');
-  return span;
-}
 
 function replyCountNode(count: number | null): HTMLElement | null {
   if (count === null) {
@@ -307,10 +209,8 @@ function likeArea(post: PostJson, opts: CardOpts, meta: HTMLElement): void {
 }
 
 /** The unlock form in a row under the card's meta; a correct passphrase loads the
- *  seed and the pressed action — a like or a vouch — proceeds, Esc drops the row.
- *  The anchor may be the like control in the meta or the mark up in the who row;
- *  either way the row mounts under this card's one meta (WEB_INTERFACE → The
- *  identity module). */
+ *  seed and the like proceeds, Esc drops the row (WEB_INTERFACE → The identity
+ *  module). */
 function mountCardUnlock(anchor: HTMLElement, ownKey: string, onUnlock: (p: string) => Promise<void>, onProceed: () => void): void {
   const cardBody = anchor.closest('.card-body');
   const meta = cardBody?.querySelector('.meta');

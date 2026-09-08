@@ -1,8 +1,8 @@
 import { el, shortHex } from '../dom';
 import { unlockForm } from './passphrase';
-import { card, markNode, stageLine, listCardOpts } from './card';
+import { card, stageLine, listCardOpts } from './card';
 import { standing } from './profile';
-import type { Mark, Flight } from './card';
+import type { Flight } from './card';
 import type { KarmaResult, VouchesTargetResult, PostJson } from '../api/dto';
 import type { FeedState } from '../model/state';
 import type { Origin } from '../model/workspace';
@@ -12,7 +12,7 @@ import type { Origin } from '../model/workspace';
 // they read (AuthorCtx / PostsCtx) and call (AuthorHandlers / PostsHandlers), and
 // the App's RenderCtx and Handlers satisfy them structurally, so there is one
 // contract, not two. With no identity loaded the window is the read surface
-// exactly — no marks, no your-vouch row.
+// exactly — no your-vouch row.
 
 function row(label: string): { row: HTMLElement; field: HTMLElement } {
   const r = el('div', 'row');
@@ -42,8 +42,6 @@ export interface AuthorCtx {
   writeEnabled: boolean;                // an identity is loaded
   ownKey: string | null;
   locked: boolean;
-  subjectMark: Mark | null;             // the reader's mark for the subject
-  markFor: (key: string) => Mark | null; // an endorser's mark
   yourVouch: YourVouch | null;
   flight: Flight | null;                // the your-vouch stage line while a flight runs
 }
@@ -61,8 +59,7 @@ export function authorBody(handlers: AuthorHandlers, ctx: AuthorCtx): HTMLElemen
   const b = el('div', 'winbody');
 
   // A locked vouch mounts its unlock under the your-vouch row — the one unlock
-  // spot in this window (WEB_INTERFACE → The identity module). Kept in a closure
-  // so the mark's + press can reach it.
+  // spot in this window (WEB_INTERFACE → The identity module).
   let yourVouchRow: HTMLElement | null = null;
   const vouchAction = (key: string): void => {
     if (ctx.locked && ctx.ownKey && yourVouchRow) {
@@ -71,9 +68,6 @@ export function authorBody(handlers: AuthorHandlers, ctx: AuthorCtx): HTMLElemen
     }
     handlers.vouch(key);
   };
-  // Unvouch is a write too, so a locked identity unlocks under the your-vouch row
-  // first, exactly as the vouch does (WEB_INTERFACE → The identity module: every
-  // write checks locked before its flight).
   const unvouchAction = (key: string): void => {
     if (ctx.locked && ctx.ownKey && yourVouchRow) {
       mountRowUnlock(yourVouchRow, ctx.ownKey, handlers.unlockIdentity, () => handlers.unvouch(key));
@@ -81,15 +75,11 @@ export function authorBody(handlers: AuthorHandlers, ctx: AuthorCtx): HTMLElemen
     }
     handlers.unvouch(key);
   };
-  // The mark's handlers: no `locked`, so markNode calls onVouch directly and the
-  // unlock is this window's, not a card's.
-  const markHandlers = { onVouch: vouchAction, onAuthor: (k: string) => handlers.openAuthor(k, ctx.origin) };
 
-  // key — the whole key, mono, and the subject's mark after it.
+  // key — the whole key, mono (WEB_INTERFACE → The author window).
   {
     const { row: r, field } = row('key');
     field.appendChild(mono(ctx.authorKey));
-    if (ctx.subjectMark) field.appendChild(markNode(ctx.authorKey, ctx.subjectMark, markHandlers));
     b.appendChild(r);
   }
 
@@ -101,10 +91,10 @@ export function authorBody(handlers: AuthorHandlers, ctx: AuthorCtx): HTMLElemen
   }
 
   // endorsers — N vouches, then one row per voucher: their prefix (a ghost button
-  // into their window) and their mark. One page; `more` follows `next`.
+  // into their window). One page; `more` follows `next`.
   {
     const { row: r, field } = row('endorsers');
-    endorsers(field, handlers, ctx, markHandlers);
+    endorsers(field, handlers, ctx);
     b.appendChild(r);
   }
 
@@ -112,7 +102,7 @@ export function authorBody(handlers: AuthorHandlers, ctx: AuthorCtx): HTMLElemen
   if (ctx.yourVouch) {
     const { row: r, field } = row('your vouch');
     yourVouchRow = r;
-    yourVouch(field, handlers, ctx, vouchAction, unvouchAction);
+    yourVouch(field, ctx, vouchAction, unvouchAction);
     b.appendChild(r);
   }
 
@@ -129,7 +119,7 @@ export function authorBody(handlers: AuthorHandlers, ctx: AuthorCtx): HTMLElemen
   return b;
 }
 
-function endorsers(field: HTMLElement, handlers: AuthorHandlers, ctx: AuthorCtx, markHandlers: { onVouch: (k: string) => void; onAuthor: (k: string) => void }): void {
+function endorsers(field: HTMLElement, handlers: AuthorHandlers, ctx: AuthorCtx): void {
   const e = ctx.endorsers;
   if (e === null) {
     field.appendChild(el('span', 'inkmute', 'loading…'));
@@ -149,8 +139,6 @@ function endorsers(field: HTMLElement, handlers: AuthorHandlers, ctx: AuthorCtx,
     btn.setAttribute('aria-label', 'open this author');
     btn.addEventListener('click', () => handlers.openAuthor(v.voucherId, ctx.origin));
     line.appendChild(btn);
-    const mark = ctx.markFor(v.voucherId);
-    if (mark) line.appendChild(markNode(v.voucherId, mark, markHandlers));
     field.appendChild(line);
   }
   if (ctx.endorsersNext) {
@@ -161,7 +149,7 @@ function endorsers(field: HTMLElement, handlers: AuthorHandlers, ctx: AuthorCtx,
   }
 }
 
-function yourVouch(field: HTMLElement, handlers: AuthorHandlers, ctx: AuthorCtx, vouchAction: (k: string) => void, unvouchAction: (k: string) => void): void {
+function yourVouch(field: HTMLElement, ctx: AuthorCtx, vouchAction: (k: string) => void, unvouchAction: (k: string) => void): void {
   const yv = ctx.yourVouch!;
   if (yv.kind === 'reason') {
     // A one-line reason the reader cannot vouch (WEB_INTERFACE → The author
@@ -170,8 +158,13 @@ function yourVouch(field: HTMLElement, handlers: AuthorHandlers, ctx: AuthorCtx,
     return;
   }
   if (yv.kind === 'plus') {
-    // The mark as on a card, with the sentence stating what a vouch stakes.
-    field.appendChild(markNode(ctx.authorKey, { state: 'plus', count: null }, { onVouch: vouchAction, onAuthor: (k) => handlers.openAuthor(k, ctx.origin) }));
+    // vouch is a word, and this row is the one place a vouch is cast
+    // (HOUSE_STYLE → Interaction → "A word is a control, and it wears no box").
+    const btn = el('button', 'word');
+    btn.textContent = 'vouch';
+    btn.setAttribute('aria-label', 'vouch for this author — stakes 1 karma');
+    btn.addEventListener('click', () => vouchAction(ctx.authorKey));
+    field.appendChild(btn);
     const line = el('span', 'hint');
     line.append('stakes 1 karma, returned when you unvouch after a cooldown of ', mono(String(yv.cooldownBlocks)), ' blocks.');
     field.appendChild(line);
@@ -229,7 +222,6 @@ export interface PostsCtx {
   writeEnabled: boolean;
   ownKey: string | null;
   locked: boolean;
-  markFor: (key: string) => Mark | null;
   likePending: (postId: string) => boolean;
   linkUrl: (id: string) => string;
   expandedImages: ReadonlySet<string>;    // images shown this session (WEB_INTERFACE → Content)
@@ -238,7 +230,6 @@ export interface PostsCtx {
 export interface PostsHandlers {
   openThread: (id: string, origin: Origin) => void;
   openAuthor: (key: string, origin: Origin) => void;
-  vouch: (key: string) => void;
   likePost: (postId: string) => void;
   authorPostsMore: (key: string) => void;
   unlockIdentity: (passphrase: string) => Promise<void>;
@@ -276,16 +267,14 @@ export function authorPostsBody(handlers: PostsHandlers, ctx: PostsCtx): HTMLEle
 }
 
 /** One post by the author — the feed card's controls: like, link, the strip
- *  opening a thread one column right, the prefix and mark, · you; no reply, which
- *  lives in the pane the strip opens (WEB_INTERFACE → The author window). */
+ *  opening a thread one column right, the prefix, · you; no reply, which lives
+ *  in the pane the strip opens (WEB_INTERFACE → The author window). */
 function postCard(post: PostJson, handlers: PostsHandlers, ctx: PostsCtx): HTMLElement {
   const you = ctx.ownKey !== null && post.author === ctx.ownKey;
   return card(post, {
     replyCount: post.descendantCount,
     onOpen: (id) => handlers.openThread(id, ctx.origin),
     onAuthor: (key) => handlers.openAuthor(key, ctx.origin),
-    onVouch: (key) => handlers.vouch(key),
-    mark: ctx.markFor(post.author),
     you,
     locked: ctx.locked,
     ownKey: ctx.ownKey ?? undefined,

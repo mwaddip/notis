@@ -42,7 +42,7 @@ function handlers(over: Partial<ProfileHandlers> = {}): ProfileHandlers {
 function ctx(over: Partial<ProfileCtx> = {}): ProfileCtx {
   return {
     arrangement: '', identity: null, backedUp: false, karma: null, grant: null, membershipBars: null,
-    invite: null, canAffordMinBond: false, bonds: null, inviteFlight: null, markFor: () => null, ...over,
+    invite: null, canAffordMinBond: false, bonds: null, inviteFlight: null, ...over,
   };
 }
 
@@ -128,38 +128,14 @@ describe('profile window — the invites row', () => {
     const h = handlers({ openAuthor: (k) => opened.push(k) });
     const c = memberCtx({
       bonds: { bonds: [{ id: 'b1', value: '100', inviterId: KEY, inviteePublicKey: INVITEE }], bondCount: 1, next: 'cursor' },
-      markFor: () => ({ state: 'plus', count: 0 }),
     });
     const field = rowField(render(h, c), 'invites')!;
     const bondRow = field.querySelector('.bond')!;
     expect(bondRow.textContent).toContain('100 karma');
-    expect(bondRow.querySelector('.vmark')).not.toBeNull(); // the reader can vouch their invitee here
+    expect(bondRow.querySelector('.vmark')).toBeNull();
     (bondRow.querySelector('.authorbtn') as HTMLElement).click();
     expect(opened).toEqual([INVITEE]);
-    // `more` follows next.
     expect(button(field, 'more')).not.toBeNull();
-  });
-
-  it('a locked vouch from a standing bond mounts the unlock under the bond row, then vouches', async () => {
-    const vouched: string[] = [];
-    const unlocked: string[] = [];
-    const h = handlers({ vouch: (k) => vouched.push(k), unlockIdentity: async (p) => { unlocked.push(p); } });
-    const c = memberCtx({
-      identity: { pubKeyHex: KEY, locked: true },
-      bonds: { bonds: [{ id: 'b1', value: '100', inviterId: KEY, inviteePublicKey: INVITEE }], bondCount: 1, next: null },
-      markFor: () => ({ state: 'plus', count: 0 }),
-    });
-    const field = rowField(render(h, c), 'invites')!;
-    const bondRow = field.querySelector('.bond')!;
-    (bondRow.querySelector('.vmark.plus') as HTMLElement).click();
-    const form = field.querySelector('.card-unlock form.pf') as HTMLFormElement;
-    expect(form).not.toBeNull(); // the unlock mounted under the bond row, not a transport failure
-    expect(vouched).toHaveLength(0);
-    (form.querySelector('input[type="password"]') as HTMLInputElement).value = 'pw';
-    form.dispatchEvent(new Event('submit', { cancelable: true }));
-    await new Promise((r) => setTimeout(r, 0));
-    expect(unlocked).toEqual(['pw']);
-    expect(vouched).toEqual([INVITEE]);
   });
 
   it('the invite flight shows its stage line in the row', () => {
@@ -176,7 +152,6 @@ describe('profile window — the invites row', () => {
     const landed = memberCtx({
       karma: karmaResult({ userId: KEY, member: true, invitesAvailable: 1 }),
       bonds: { bonds: [{ id: 'b1', value: '100', inviterId: KEY, inviteePublicKey: INVITEE }], bondCount: 1, next: null },
-      markFor: () => ({ state: 'plus', count: 0 }),
     });
     renderInvitesRow(field, handlers(), landed, ORIGIN);
     // The same form element, its value intact — an unsolicited landing moves no form.

@@ -1,7 +1,7 @@
 import type { PostJson, WithdrawnJson, FeedRow, StatusResult, KarmaResult, VouchesTargetResult, BondsResult } from '../api/dto';
 import type { Workspace, Origin } from './workspace';
 import type { Theme, IdTint } from '../prefs';
-import type { Mark, Flight } from '../view/card';
+import type { Flight } from '../view/card';
 import type { YourVouch } from '../view/author';
 
 // The read surface's runtime state, and the handler contract the pure view
@@ -95,11 +95,8 @@ export interface RenderCtx {
   karma: KarmaResult | null;
   grant: { state: 'pending' } | { state: 'expired'; atHeight: number } | null;
   membershipBars: { memberBar: number; memberLikesBar: number } | null;
-  // Membership actions (WEB_INTERFACE → The identity display). The reader is a
-  // member (may vouch); the mark for any identity, its state and count computed
-  // from the vouch set, the pending overlay, the escrow gate and the count cache.
+  // Membership actions (WEB_INTERFACE → The identity display).
   member: boolean;
-  markFor: (key: string) => Mark | null;
   // The your-vouch row's state for an identity — the App derives it from the
   // vouch set, member, the escrow and /status's cooldown (WEB_INTERFACE → The
   // author window). null with no identity loaded — no row.
