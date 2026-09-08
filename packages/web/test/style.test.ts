@@ -46,6 +46,10 @@ describe('app.css — a word control wears no box', () => {
     expect(hover).not.toBe('');
     expect(css.replace(hover, '')).not.toContain(':hover');
   });
+  it('.seg .word is inkMute at rest, ink when pressed', () => {
+    expect(css).toMatch(/\.seg \.word\s*\{[^}]*color: var\(--inkMute\)/);
+    expect(css).toMatch(/\.seg \.word\[aria-pressed="true"\]\s*\{[^}]*color: var\(--ink\)/);
+  });
 });
 
 describe('app.css — the content grammar and the composer type control', () => {

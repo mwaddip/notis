@@ -413,7 +413,8 @@ header .spacer { flex: 1 1 auto; }
    ink, the rest inkMute, aria-pressed as today — no fill, no group border
    (HOUSE_STYLE → Interaction → "A word is a control, and it wears no box"). */
 .seg { display: flex; gap: 8px; }
-.seg button[aria-pressed="true"] { color: var(--ink); }
+.seg .word { color: var(--inkMute); }
+.seg .word[aria-pressed="true"] { color: var(--ink); }
 
 /* ---------- profile window — identity, standing, karma, the forms ---------- */
 .winrule { border: 0; border-top: 1px solid var(--border); margin: 6px 0 18px; }
