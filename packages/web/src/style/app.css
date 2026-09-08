@@ -568,7 +568,7 @@ header .spacer { flex: 1 1 auto; }
   /* A member has no floor of its own — it is the screen's width; its gutter is the
      leftover but never under the 16px floor, so a card never touches the edge and
      sits on the header's inset (WEB_INTERFACE → The workspace). */
-  .feed, .col { flex: 0 0 100%; min-width: 0; padding: 0 max(var(--gutter), calc((100% - 660px) / 2)); }
+  .feed, .col { flex: 0 0 100%; min-width: 0; padding: 0 max(var(--gutter), calc((100% - 660px) / 2)); scroll-snap-stop: always; }
   .empty { display: none; }
 }
 

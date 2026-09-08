@@ -34,6 +34,7 @@ import {
   FEED_COMPOSER_KEY, type AppState, type ThreadState, type RenderCtx, type Handlers, type Submission,
   type FlightStage, type AppIdentity, type AuthorWindowData, type FeedState,
 } from './model/state';
+import { decideMove, type ScreenEntry } from './history';
 
 const FEED_LIMIT = 30;
 const THREAD_LIMIT = 50;
@@ -150,6 +151,11 @@ export class App {
   private mql: MediaQueryList | null = null;
   private headerLeftArrow: HTMLElement | null = null;
   private headerRightArrow: HTMLElement | null = null;
+  // WEB_INTERFACE → The workspace → "At one column the screens are history"
+  private lastDepth = 0;
+  // A back the App issued is in flight until its popstate settles; a scroll
+  // settle in between is the rebuild clamp, not a swipe.
+  private backInFlight = false;
 
   // Open composer widgets, held by key so the same element is re-parented across
   // a region rebuild rather than recreated (WEB_INTERFACE → The write surface).
@@ -294,9 +300,51 @@ export class App {
       s?.addEventListener('scroll', () => this.updateHeaderArrows(), { passive: true });
     }
     window.addEventListener('resize', () => this.updateHeaderArrows());
+    // WEB_INTERFACE → The workspace → "At one column the screens are history"
+    this.workspaceEl?.addEventListener('scrollend', () => {
+      if (this.standalone || !this.oneColumn) return;
+      // WEB_INTERFACE → The workspace → "At one column the screens are history"
+      if (this.backInFlight) return;
+      const name = this.memberNameAt(this.currentMemberIndex());
+      if (name === null) return;
+      const s = history.state;
+      const current: ScreenEntry | null = s && typeof s.member === 'string' ? s as ScreenEntry : null;
+      const result = decideMove(current, name, (a, b) => this.sameScreen(a, b), 'swipe');
+      if (result.kind === 'back') history.back();
+    });
+    window.addEventListener('popstate', (e) => {
+      this.backInFlight = false;
+      if (this.standalone || !this.oneColumn) return;
+      const s = (e as PopStateEvent).state;
+      if (!s || typeof s.member !== 'string') return;
+      const entry = s as ScreenEntry;
+      const goingBack = entry.depth < this.lastDepth;
+      this.lastDepth = entry.depth;
+      if (entry.member === 'feed') {
+        this.scrollToMember('feed');
+        return;
+      }
+      const at = locate(this.state.workspace, entry.member);
+      if (at) {
+        this.scrollColumnIntoView(at.column.uid);
+      } else {
+        if (goingBack) history.back();
+        else history.forward();
+      }
+    });
     // An identity change takes effect at once (WEB_INTERFACE → The identity module).
     this.idm.onChange(() => this.onIdentityChange());
     if (!this.standalone) this.restoreLayout();
+    // WEB_INTERFACE → The workspace → "At one column the screens are history"
+    if (!this.standalone && this.oneColumn) {
+      const kept = history.state;
+      const ours = kept && typeof kept.member === 'string';
+      history.replaceState(
+        { member: 'feed', prev: ours ? kept.prev : null, depth: ours ? kept.depth : 0 },
+        '', location.href,
+      );
+      this.lastDepth = ours ? (kept.depth as number) : 0;
+    }
     this.renderHeader();
     this.renderFeed();
     this.renderPanes();
@@ -568,14 +616,13 @@ export class App {
     return this.oneColumn ? [this.feedEl, ...cols] : cols;
   }
 
-  /** ‹ / › move the view one column, by the one mechanism every view move uses:
-   *  scrollIntoView the member adjacent to the one at the view's left edge, exactly
-   *  as an open does (WEB_INTERFACE → The workspace). */
-  private scrollByOneColumn(dir: -1 | 1): void {
+  /** The member index nearest the active scroller's left edge — 0 is the feed at
+   *  one column, the first column at tiling. Used by the arrows and the swipe. */
+  currentMemberIndex(): number {
     const scroller = this.activeScroller();
-    if (!scroller) return;
+    if (!scroller) return 0;
     const members = this.orderedMembers();
-    if (members.length === 0) return;
+    if (members.length === 0) return 0;
     const sLeft = scroller.getBoundingClientRect().left;
     let cur = 0;
     let best = Infinity;
@@ -583,8 +630,16 @@ export class App {
       const d = Math.abs(m.getBoundingClientRect().left - sLeft);
       if (d < best) { best = d; cur = i; }
     });
-    members[cur + dir]?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
-    this.updateHeaderArrows();
+    return cur;
+  }
+
+  /** ‹ / › move the view one column — the neighbour's name goes through moveView
+   *  so the tap pushes or pops at one column (WEB_INTERFACE → The workspace). */
+  private scrollByOneColumn(dir: -1 | 1): void {
+    const cur = this.currentMemberIndex();
+    const name = this.memberNameAt(cur + dir);
+    if (name === null) return;
+    this.moveView(name);
   }
 
   /** Bring the column holding a window into view — a no-op when it is already
@@ -596,6 +651,59 @@ export class App {
     const col = region?.closest<HTMLElement>('.col');
     col?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
     this.updateHeaderArrows();
+  }
+
+  // WEB_INTERFACE → The workspace → "At one column the screens are history"
+
+  private sameScreen(a: string, b: string): boolean {
+    if (a === 'feed' && b === 'feed') return true;
+    const la = locate(this.state.workspace, a);
+    const lb = locate(this.state.workspace, b);
+    return la !== null && lb !== null && la.ci === lb.ci;
+  }
+
+  private memberNameAt(idx: number): string | null {
+    if (this.oneColumn) {
+      if (idx === 0) return 'feed';
+      const col = this.state.workspace.columns[idx - 1];
+      return col ? col.wins[col.focus] ?? null : null;
+    }
+    const col = this.state.workspace.columns[idx];
+    return col ? col.wins[col.focus] ?? null : null;
+  }
+
+  private scrollToMember(name: string): void {
+    if (name === 'feed') {
+      this.feedEl.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+      this.updateHeaderArrows();
+    } else {
+      const at = locate(this.state.workspace, name);
+      if (at) this.scrollColumnIntoView(at.column.uid);
+    }
+  }
+
+  /** Every tap that moves the view goes through moveView — at one column in
+   *  workspace mode it decides whether to push, pop or scroll, at tiling it
+   *  scrolls (WEB_INTERFACE → The workspace → "At one column the screens are
+   *  history"). */
+  private moveView(name: string): void {
+    if (this.oneColumn && !this.standalone) {
+      const s = history.state;
+      const current: ScreenEntry | null = s && typeof s.member === 'string' ? s as ScreenEntry : null;
+      const result = decideMove(current, name, (a, b) => this.sameScreen(a, b), 'tap');
+      if (result.kind === 'push') {
+        history.pushState(result.entry, '', location.href);
+        this.lastDepth = result.entry.depth;
+        this.scrollToMember(name);
+      } else if (result.kind === 'back') {
+        this.backInFlight = true;
+        history.back();
+      } else {
+        this.scrollToMember(name);
+      }
+    } else {
+      this.scrollToMember(name);
+    }
   }
 
   /** The header arrows' `none` class and the left arrow's label, from the active
@@ -623,6 +731,17 @@ export class App {
    *  follow it (WEB_INTERFACE → The workspace). */
   private onWidthClassChange(matches: boolean): void {
     this.oneColumn = matches;
+    // WEB_INTERFACE → The workspace → "At one column the screens are history"
+    if (matches && !this.standalone) {
+      const name = this.memberNameAt(this.currentMemberIndex()) ?? 'feed';
+      const s = history.state;
+      const ours = s && typeof s.member === 'string';
+      history.replaceState(
+        { member: name, prev: ours ? s.prev : null, depth: ours ? s.depth : 0 },
+        '', location.href,
+      );
+      this.lastDepth = ours ? (s.depth as number) : 0;
+    }
     this.renderHeader();
     this.renderPanes();
   }
@@ -894,14 +1013,20 @@ export class App {
         this.openThread(tid, { from: 'feed' });
       });
     }
-    history.replaceState(null, '', this.base);
+    // WEB_INTERFACE → The workspace → "At one column the screens are history"
+    const kept = history.state;
+    const ours = kept && typeof kept.member === 'string';
+    history.replaceState(
+      { member: 'feed', prev: ours ? kept.prev : null, depth: ours ? kept.depth : 0 },
+      '', this.base,
+    );
+    this.lastDepth = ours ? (kept.depth as number) : 0;
     document.title = 'Notis';
     this.renderHeader();
     this.renderFeed();
     this.renderPanes();
     void this.loadFeed();
-    const at = id ? locate(this.state.workspace, id) : null;
-    if (at) this.scrollColumnIntoView(at.column.uid);
+    if (id) this.moveView(id);
     for (const wid of openSet(this.state.workspace)) {
       if (!isWin(wid) && !this.threadLoaded(wid)) void this.fetchThread(wid);
     }
@@ -935,8 +1060,7 @@ export class App {
       this.renderFeed();
       if (!isWin(id) && !this.threadLoaded(id)) void this.fetchThread(id);
     }
-    // The view moves to the column the open landed in (WEB_INTERFACE → The workspace).
-    this.scrollColumnIntoView(res.column.uid);
+    this.moveView(id);
   }
 
   private openProfile(): void {
@@ -950,14 +1074,14 @@ export class App {
       // profile window); a raise just brings the existing window forward.
       void this.refreshProfileKarma();
     }
-    this.scrollColumnIntoView(res.column.uid);
+    this.moveView('@profile');
   }
 
   private focus(id: string): void {
     const column = focusWindow(this.state.workspace, id);
     if (column) {
       this.renderRegion(column.uid);
-      this.scrollColumnIntoView(column.uid);
+      this.moveView(id);
     }
     if (!isWin(id) && !this.threadLoaded(id)) void this.fetchThread(id);
   }
@@ -966,8 +1090,7 @@ export class App {
    *  view (WEB_INTERFACE → The workspace). */
   private moveWindow(id: string, mutate: () => void): void {
     this.structural(mutate);
-    const at = locate(this.state.workspace, id);
-    if (at) this.scrollColumnIntoView(at.column.uid);
+    this.moveView(id);
   }
 
   private closeWindow(id: string): void {
@@ -979,11 +1102,12 @@ export class App {
     this.saveLayout();
     this.renderPanes();
     this.renderFeed(); // a closed thread un-fades its feed card
-    if (emptiedCi > 0) {
-      this.scrollColumnIntoView(this.state.workspace.columns[emptiedCi - 1]!.uid);
-    } else if (emptiedCi === 0) {
-      this.feedEl.scrollIntoView({ inline: 'nearest', block: 'nearest' });
-      this.updateHeaderArrows();
+    if (emptiedCi >= 0) {
+      const ws = this.state.workspace;
+      const target = emptiedCi > 0
+        ? ws.columns[emptiedCi - 1]!.wins[ws.columns[emptiedCi - 1]!.focus] ?? 'feed'
+        : 'feed';
+      this.moveView(target);
     }
   }
 
@@ -1751,12 +1875,13 @@ export class App {
   }
 
   private openAuthor(key: string, origin: Origin): void {
-    const res = openWindow(this.state.workspace, authorWindowId(key), origin);
+    const wid = authorWindowId(key);
+    const res = openWindow(this.state.workspace, wid, origin);
     this.saveLayout();
     this.ensureAuthorData(key);
     if (res.raised) this.renderRegion(res.column.uid);
     else this.renderPanes();
-    this.scrollColumnIntoView(res.column.uid);
+    this.moveView(wid);
     void this.loadAuthorData(key);
   }
 
@@ -1798,12 +1923,13 @@ export class App {
   }
 
   private openAuthorPosts(key: string, origin: Origin): void {
-    const res = openWindow(this.state.workspace, postsWindowId(key), origin);
+    const wid = postsWindowId(key);
+    const res = openWindow(this.state.workspace, wid, origin);
     this.saveLayout();
     this.ensurePostsData(key);
     if (res.raised) this.renderRegion(res.column.uid);
     else this.renderPanes();
-    this.scrollColumnIntoView(res.column.uid);
+    this.moveView(wid);
     void this.loadAuthorPosts(key);
   }
 
