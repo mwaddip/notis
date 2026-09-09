@@ -87,8 +87,8 @@ export function owedPeriods(
 
 // ---------------------------------------------------------------------------
 // The valuation function — one implementation (VALIDATION_INTERFACE → "One
-// implementation per rule"). The engine, the verifier and the demo UI all
-// call this; an inline copy anywhere is the mirror defect class.
+// implementation per rule"). The engine and the verifier call this; an inline
+// copy anywhere is the mirror defect class.
 // ---------------------------------------------------------------------------
 
 export interface DecayCfg {

@@ -16,10 +16,6 @@
 > instance of a known failure: a marker asserting a fact about the tree decays when the tree
 > moves, and a disclaimer creates a region nobody re-reads.
 
-> **The demo UI (`packages/node/public/index.html`) is retired and out of scope.** The node serves it to
-> nobody (`NODE_INTERFACE → The node serves no client`); the file stays in the node package with the
-> tests that read it, and no rule here applies to it.
-
 ## Scope
 
 Colour, typography, the mark, motion, interaction, spacing, illustration and voice. It does

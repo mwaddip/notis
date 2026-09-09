@@ -45,8 +45,8 @@ const encoder = new TextEncoder();
  * keyspace, and the AVL tree holds more than one entity kind, so the
  * separation has to be in the preimage rather than in the caller's head.
  * `computePostId` already works this way via its module-local `POST_ID_DOMAIN`;
- * these are exported because node and the demo UI must mirror them byte for
- * byte.
+ * these are exported because the node's AVL key derivation and identity-record
+ * store import them.
  */
 export const BOX_ID_DOMAIN = encoder.encode('dagsocial/box-id/1');
 export const TX_ID_DOMAIN = encoder.encode('dagsocial/tx-id/1');
@@ -74,9 +74,7 @@ export const NETWORK_KEY_DOMAIN = encoder.encode('dagsocial/network-key/1');
  * not free"); §InviteBox governs the retired **string**. Two rules, two sections.
  *
  * Exported because a second numbering of one thing is exactly what the
- * never-renumber rule cannot survive. **The demo UI's `BOX_TYPE_TAGS` is the one
- * copy that cannot import this** — it is browser JS served to a page with no
- * module graph, and stays a mirror by construction.
+ * never-renumber rule cannot survive.
  *
  * The golden corpus's reverse table (`test/golden/structs.ts`) restates the
  * numbering deliberately and is **not** a copy to collapse into this one: it
@@ -105,9 +103,10 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', BOX_TYPE_TAGS);
  * The single canonical identity encoding for a box — `boxContentBytes` in
  * TYPES_INTERFACE → Layout — Boxes.
  *
- * This is the encoder that actually computes ids — exported so tests and mirror
- * implementations (demo UI, light client) assert against it instead of a
- * lookalike. Node's `state/serialize-box.ts` is a *separate* encoding for AVL
+ * This is the encoder that actually computes ids — exported so tests and its
+ * importers (the node's UTXO engine and block-application paths) compute
+ * against it rather than a lookalike. Node's `state/serialize-box.ts` is a
+ * *separate* encoding for AVL
  * values and is not interchangeable with it.
  *
  * Shared prefix, then the per-type fields in their normative order:

@@ -11,7 +11,7 @@ context — read it and the linked docs before touching code.
 4. `../../contracts/ARCHITECTURE.md` — system architecture + invariants.
 5. `../../contracts/SPECIAL.md` — S.P.E.C.I.A.L. attention weights. Internalize on session start.
    ⚠ **This package is the one with per-subsystem profiles** — `services/utxo-engine.ts`,
-   `services/block-apply.ts`, `store/`, `state/`, `routes/` and `public/index.html` each override the
+   `services/block-apply.ts`, `store/`, `state/` and `routes/` each override the
    package default. Apply the profile of the component you are editing, not the package line.
 6. The interface contract(s) for your task — `../../contracts/NODE_INTERFACE.md` always, plus
    `VALIDATION_INTERFACE.md`, `MEMPOOL_INTERFACE.md`, `MINING_INTERFACE.md`, `JOURNAL_EVENTS.md`
@@ -27,11 +27,10 @@ them as ordinary transactions. TypeScript, pnpm workspaces, Node.js ≥ 22.
 
 ## This package (`@dagsocial/node`)
 The full node: Express HTTP API, PoW verifier, SQLite store, UTXO engine, block creator + application,
-per-block like settlement, decay, invites/vouch, withdrawal, AVL+ state. `public/index.html` is the
-retired demo UI — unserved, read by its mirror tests only (NODE_INTERFACE → The node serves no client).
+per-block like settlement, decay, invites/vouch, withdrawal, AVL+ state. The node serves no client
+(NODE_INTERFACE → The node serves no client).
 
-- **Owns:** `src/server.ts`, `src/routes/*`, `src/services/*`, `src/store/*`, `src/state/*` (AVL+),
-  `public/index.html`.
+- **Owns:** `src/server.ts`, `src/routes/*`, `src/services/*`, `src/store/*`, `src/state/*` (AVL+).
 - **Does NOT own:** shared structures/hashing (`@dagsocial/types`), stateless validation
   (`@dagsocial/validation`), networking (`@dagsocial/net`), wire codec (`@dagsocial/wire`). Need a change
   there? Describe it back to the main session — do not edit sibling packages.

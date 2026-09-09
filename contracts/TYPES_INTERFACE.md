@@ -130,10 +130,9 @@ tx id derived from the same provenance — the domain tag is the whole of that s
 it is the same discipline `computeBoxId` and `computeMintTxId` already follow.
 
 **This encoding is protocol-breaking and unversioned.** It changes every post
-hash and must be byte-identical in `@dagsocial/types` **and** the demo-UI JS
-(`packages/node/public/index.html`). `PROTOCOL_VERSION` stays `1`; both devnet
-DBs are wiped on deploy — no legacy-post path. A **golden test vector** is frozen in the types tests
-and reproduced by the UI mirror; it is the cross-implementation anchor.
+hash. `PROTOCOL_VERSION` stays `1`; both devnet DBs are wiped on deploy — no legacy-post path. A
+**golden test vector** is frozen in the types tests; it is the anchor a second implementation is
+checked against.
 
 ### Post typing and profiles
 
@@ -255,8 +254,7 @@ could be presented as `nodeHash(left,right)` for a forged inclusion proof
 > as a comment in `merkle.ts`.
 
 This is **protocol-breaking** — it changes every Merkle root
-(`utxoTxRoot` included), unversioned, devnet DBs wiped on deploy. No demo-UI
-mirror (the UI computes no roots). Node re-derives all roots through `types`, so
+(`utxoTxRoot` included), unversioned, devnet DBs wiped on deploy. Node re-derives all roots through `types`, so
 producer and verifier stay consistent automatically.
 
 ---
@@ -461,16 +459,14 @@ tx and box derivation cannot drift.
 
 ⚠ **`canonicalBoxBytes` is a positional layout, not a self-describing format.** There are no
 keys, no map framing, and nothing to sort — a mirror reproduces the field table byte-for-byte.
-The retired demo UI's mirror encodes this way; full bytes are pinned as golden vectors in
-`test/utxo.test.ts`.
+Full bytes are pinned as golden vectors in `test/utxo.test.ts`.
 
 #### Key ordering is canonical
 
 The positional layout is what enforces this now: **field order is fixed by the writer**
 (`canonicalBoxBytes`' shared prefix, then `writeBoxTypeFields`' per-type table), a producer's
 object never chooses it, and an extra key is unrepresentable because the encoder reads only the
-fields it declares. Node's `serializeBox` and the demo UI's mirror reproduce the identical
-layout.
+fields it declares. Node's `serializeBox` reproduces the identical layout.
 
 This retires contract hazards **1b and 1c** in `NODE_INTERFACE.md` **by construction**: under
 cbor-x a producer's field order was consensus-visible (the same box built two ways hashed to two
@@ -558,12 +554,6 @@ constraint and must not be described as one.
   (measured: number `5` → `05`; bigint `5n` → `1b0000000000000005`). Hard,
   unversioned format break ⇒ **fresh chain / DB reset, coordinated all-node
   cutover.** No in-place migration.
-- **The demo UI encodes a box positionally**, mirroring `canonicalBoxBytes` field
-  for field — shared prefix `enum8(boxType) ‖ vlqU64(value) ‖ vlqU(createdAtBlock)`
-  and then the per-type tail. ⛔ **The mirror must produce bytes identical to the
-  node's**: it feeds `computeTxId`, so a prefix field missing or differently
-  encoded breaks the signature on **every box type at once**, and no gate in this
-  repo reaches that file.
 
 ### KarmaBox
 
@@ -1662,7 +1652,7 @@ The body's standalone wire form — a pull response's element, and the packet's 
   commit has its codec, the body has its own.
 
 The encodings are positional and injective (audit M-1); the frozen golden vectors are the
-cross-implementation anchor, reproduced by the demo-UI mirror.
+anchor a second implementation is checked against.
 
 ### Layout — PostWithdrawCommit
 
@@ -1696,9 +1686,7 @@ runtime strip somebody must remember:
 **`BOX_TYPE_TAGS` is the single source of the box-type numbering.** It is exported from
 `@dagsocial/types` and consumed inside the package by `enum8`; node's AVL tag tests import it to
 **derive** the first unassigned tag rather than writing a number down. No other package may declare
-it. **The retired demo UI's copy is the one permitted** — browser JS with no module graph, a mirror by
-construction, pinned by `ui-crypto-mirror.test.ts` while the file is in the tree; the golden corpus's
-reverse tag table is a deliberate independent restatement rather than a copy. **Independent in its numbers, not in its coverage**: the corpus restates every tag by
+it; the golden corpus's reverse tag table is a deliberate independent restatement rather than a copy. **Independent in its numbers, not in its coverage**: the corpus restates every tag by
 hand and imports neither `BOX_TYPE_TAGS` nor the codec, but its type-to-tag table is
 `satisfies Record<BoxContent['boxType'], number>`, its own `BoxContent['boxType']` union is asserted
 equal to `BoxCandidate['boxType']` at the type level, and `golden.test.ts` asserts that `boxes.json`
@@ -1849,16 +1837,15 @@ from this table — a use that reads every cell as an instruction rather than as
 > | `node/src/services/utxo-engine.ts` | the output shape schema, `SPEND_TIMING`, `AUTHORIZATION`, the transition set, the protocol-output set | the first three are `Record<…['boxType'], …>`; the two sets are verdict tables (NODE_INTERFACE → Three karma sets, and none derives from another) |
 > | `node/src/store/utxo.ts` | the row mapping | the write `switch` is exhaustive by a `never` default; the read `switch` is over a string column and is covered by the provenance round-trip's total table instead |
 > | `node/src/karma-supply.ts` | the supply set | a verdict table (NODE_INTERFACE → Three karma sets, and none derives from another) |
-> | `node/public/index.html` (the retired demo UI) | `BOX_TYPE_TAGS` **and** the `boxTypeFields` arm — ⛔ **no gate reaches this file directly** | `ui-crypto-mirror.test.ts` pins both against the package, keyed on the union |
 >
 > ⛔ **THE RULE, FOR EVERY PACKAGE: AN ENUMERATION OVER BOX TYPES IS KEYED ON THE UNION, NEVER
 > WRITTEN AS AN ARRAY.** `Record<AnyBox['boxType'], …>` for a total table; an `Exclude<…>`-typed key
 > set where an exclusion is deliberate, so the exclusion is in the type rather than an omitted row;
 > the array a reader needs derived from the table's keys. **A test whose title or comment claims to
 > cover every box type enumerates the same way** — an array of the union is satisfied by any subset
-> of it, so such a test stays green while its title is false. The two enumerations that cannot be
-> typed — the demo UI's browser JS and the store's read `switch` over a string column — are each
-> covered by a keyed test instead, as the table says.
+> of it, so such a test stays green while its title is false. The one enumeration that cannot be
+> typed — the store's read `switch` over a string column — is covered by a keyed test instead, as
+> the table says.
 >
 > ⛔ **AND ONE MORE THAT A SEARCH FOR THE TYPE CANNOT FIND.** `node/src/routes/json-to-tx.ts`'s
 > `BINARY_BOX_FIELDS` is keyed on the **field name**, not the box type — so `grep like_accrual`
@@ -2006,8 +1993,7 @@ payload sits.
 ⛔ **SIX FIELDS, and an absent `opt` still spends its tag byte.** Removing a field moves every
 `TxId` in existence and every box id derived from one, exactly as appending one and removing
 `preimages` did — see "Re-pinning a frozen vector when a preimage changes". A reader that keeps
-five offsets reads `postWithdraw`'s tag as the end of the struct; the count is load-bearing, and
-the demo UI's mirror (`public/index.html`) states it too.
+five offsets reads `postWithdraw`'s tag as the end of the struct; the count is load-bearing.
 
 Order preserves today's sequence. This satisfies **C1 structurally**: the prior preimage used
 `String(protocolVersion)` (the M-1 pattern) and concatenated inputs and variable-length outputs with

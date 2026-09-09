@@ -1,5 +1,4 @@
 import {
-  labelNonce,
   seedProvenance,
   signTransaction,
   txToJson,
@@ -8,9 +7,7 @@ import {
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import express from 'express';
 import http from 'http';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { createPrivateKey, sign as cryptoSign, type KeyObject } from 'crypto';
+import { createPrivateKey } from 'crypto';
 import { initDb, closeDb, getDb } from '../../src/store/db.js';
 import {
   getKarmaBox, getKarmaBoxes, getBox as storeGetBox, insertBox as storeInsertBox } from '../../src/store/utxo.js';
@@ -21,7 +18,6 @@ import {
 } from '../../src/services/invites.js';
 import {
   generateKeyPair,
-  computeTxId,
   PROTOCOL_VERSION,
   KARMA_STALE_THRESHOLD_BLOCKS,
   KARMA_DECAY_INTERVAL_BLOCKS,
@@ -37,54 +33,12 @@ import type {
 } from '@dagsocial/types';
 import { createRouter } from '../../src/routes/invites.js';
 import type { InvitesDeps } from '../../src/routes/invites.js';
-import { jsonToTx } from '../../src/routes/json-to-tx.js';
 import { ClientError } from '../../src/services/client-error.js';
 import { config } from '../../src/config.js';
 import { MempoolFullError } from '../../src/store/mempool.js';
 import { unlinkSync } from 'fs';
-import { extractDeclaration } from '../unit/extract-declaration.js';
 
 const TEST_DB = '/tmp/dagsocial-test-routes-invites.sqlite';
-
-const INDEX_HTML = fileURLToPath(new URL('../../public/index.html', import.meta.url));
-
-interface UiBuilders {
-  jsonBigint: (key: string, value: unknown) => unknown;
-  buildCreateInviteTx: (
-    karmaBox: { total: bigint; boxes: Array<{ boxId: string; value: bigint }> },
-    pubKeyHex: string,
-    inviteePubKeyHex: string,
-  ) => Record<string, unknown>;
-}
-
-/**
- * The page's one invite builder and its bigint replacer, lifted by name from
- * `public/index.html` — the same extraction the crypto mirrors use.
- *
- * Lifted rather than restated: a builder copied into a test asserts agreement
- * between the test and itself, and the page is served statically with no
- * bundler, so nothing else ties the two together. The page is the only producer
- * of these three shapes.
- */
-function loadUiBuilders(): UiBuilders {
-  const html = readFileSync(INDEX_HTML, 'utf8');
-  const lift = (header: string): string => extractDeclaration(html, header, 'index.html');
-  return new Function(
-    [
-      'let currentBlockHeight = 0;',
-      // The UI's protocolVersion and INVITE_BOND_DEFAULT start null (set by
-      // /status); seed the era and the devnet floor so the builder runs.
-      'let protocolVersion = 1;',
-      'let INVITE_BOND_DEFAULT = 5n;',
-      lift('function jsonBigint('),
-      lift('function selectBoxes('),
-      lift('function buildCreateInviteTx('),
-      'return { jsonBigint, buildCreateInviteTx };',
-    ].join('\n\n'),
-  )() as UiBuilders;
-}
-
-const ui = loadUiBuilders();
 
 async function request(
   path: string,
@@ -262,78 +216,6 @@ describe('invites routes', () => {
       const res = await request(path, 'POST', { tx: {} });
       expect(res.status, path).toBe(404);
     }
-  });
-
-  // ---------------------------------------------------------------------------
-  // The bodies the demo UI's three invite buttons actually send.
-  //
-  // ⚠ A builder that emits a shape these routes reject is invisible to every
-  // test above: each of them constructs its own transaction, so it asserts the
-  // route against itself. Only a lifted builder makes the page the subject.
-  // ---------------------------------------------------------------------------
-
-  describe('the page builders, lifted from index.html', () => {
-    /** `fetchKarmaBox()`'s return shape, over boxes that are really in the store. */
-    const karmaState = (...boxes: KarmaBox[]) => ({
-      total: boxes.reduce((sum, b) => sum + b.value, 0n),
-      boxes: boxes.map((b) => ({ boxId: b.id!, value: b.value })),
-    });
-
-    /**
-     * Serialize as the page does — through its own bigint replacer — then sign
-     * the txId the node derives from the decoded result. That the page's own
-     * `computeTxId` agrees on that hash is pinned in `ui-crypto-mirror`; here
-     * the subject is the body, so the signature is taken as given.
-     */
-    function signedBody(
-      uiTx: Record<string, unknown>,
-      priv: ReturnType<typeof createPrivateKey>,
-      pubHex: string,
-    ): Record<string, unknown> {
-      const wire = JSON.parse(JSON.stringify(uiTx, ui.jsonBigint)) as Record<string, unknown>;
-      const sig = cryptoSign(null, Buffer.from(computeTxId(jsonToTx(wire, 1)), 'hex'), priv);
-      return { ...wire, signatures: { [pubHex]: Buffer.from(sig).toString('hex') } };
-    }
-
-    function inviteeKeys(): { pub: Uint8Array; hex: string; priv: KeyObject } {
-      const kp = generateKeyPair();
-      return {
-        pub: kp.publicKey,
-        hex: Buffer.from(kp.publicKey).toString('hex'),
-        priv: createPrivateKey({
-          key: Buffer.from(kp.secretKey), format: 'der', type: 'pkcs8',
-        }),
-      };
-    }
-
-    it('POST /invites accepts what the Create Invite button sends', async () => {
-      // The UI reads its bond from /status's inviteBondMin (5n on devnet).
-      const uiBond = 5n;
-      const funded = uiBond * 2n;
-      const karma = seedKarma(funded, labelNonce('ui-create'));
-      const invitee = inviteeKeys();
-
-      const body = signedBody(
-        ui.buildCreateInviteTx(karmaState(karma), inviterPubKeyHex, invitee.hex),
-        inviterPrivKeyObj,
-        inviterPubKeyHex,
-      );
-
-      const res = await request('/', 'POST', { tx: body });
-      expect(res.status, JSON.stringify(res.data)).toBe(201);
-      const data = res.data as Record<string, unknown>;
-      expect(data.status).toBe('pending');
-      expect(typeof data.bondBoxId).toBe('string');
-      expect(data.inviteBoxId).toBeUndefined();
-
-      const outputs = jsonToTx(body, 1).outputs as [KarmaBox, BondBox];
-      expect(outputs).toHaveLength(2);
-      const [change, bond] = outputs;
-      expect(change.value).toBe(funded - uiBond);
-      expect(bond.boxType).toBe('bond');
-      expect(bond.value).toBe(uiBond);
-    });
-
   });
 
   // ---------------------------------------------------------------------------

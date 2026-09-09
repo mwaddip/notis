@@ -79,7 +79,7 @@ export class IdentityModule {
     this.draftKp = null;
   }
 
-  /** Say whether a file's text is the demo UI's clear shape or an encrypted
+  /** Say whether a file's text is the clear file shape or an encrypted
    *  envelope, and whose key it is. The seed parseFile derives for a clear file
    *  stays inside this module (WEB_INTERFACE → "sign is the only path to the
    *  seed"). */

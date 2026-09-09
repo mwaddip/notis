@@ -26,9 +26,9 @@ import type { SpendableBox, ChangeRef } from './types';
 // The pure builders — WEB_INTERFACE → The wallet. Each takes the spendable view,
 // the `/status` height and era, and parameters, and returns an unsigned
 // UtxoTransaction whose shape is what `validateTx` demands. The encoding under it
-// is @dagsocial/types, the shared implementation, so no mirror test is owed —
-// but the builders are pinned to the demo UI's frozen vectors, a second
-// implementation, in builders.test.ts.
+// is @dagsocial/types, the shared implementation; the builders are pinned to
+// frozen vectors in builders.test.ts — fixed inputs, fixed txIds — so a change
+// that moves one is a wire change.
 //
 // Builders exist for a post, a like, a vouch, an unvouch, an invite and a
 // withdrawal, and nothing else (WEB_INTERFACE → The wallet). A root post: change
@@ -123,8 +123,8 @@ export function buildLike(ctx: BuildContext, targetId: string, targetAuthorHex: 
 
   const outputs: AnyBoxCandidate[] = [accrualBox(LIKE_KARMA_COST, targetAuthorHex, ctx.height)];
   const changeBox = changeBoxOf(change, ctx);
-  // Change leads at index 0, as it does on a post — the demo UI's buildLikeTx
-  // unshifts it, and the ledger predicts index 0.
+  // Change leads at index 0 because the ledger predicts index 0
+  // (WEB_INTERFACE → The wallet).
   if (changeBox) outputs.unshift(changeBox);
 
   const tx: UtxoTransaction = {
@@ -152,8 +152,8 @@ export function buildVouch(ctx: BuildContext, targetHex: string): BuiltTx {
   };
   const outputs: AnyBoxCandidate[] = [vouch];
   const changeBox = changeBoxOf(change, ctx);
-  // Change leads at index 0, as it does on a like — the demo UI's buildVouchTx
-  // unshifts it, and the ledger predicts index 0.
+  // Change leads at index 0 because the ledger predicts index 0
+  // (WEB_INTERFACE → The wallet).
   if (changeBox) outputs.unshift(changeBox);
 
   const tx: UtxoTransaction = {
@@ -206,8 +206,8 @@ export function buildInvite(ctx: BuildContext, inviteeHex: string, bond: bigint)
   };
   const outputs: AnyBoxCandidate[] = [bondBox];
   const changeBox = changeBoxOf(change, ctx);
-  // Change leads at index 0, as it does on a like — the demo UI's
-  // buildCreateInviteTx unshifts it, and the ledger predicts index 0.
+  // Change leads at index 0 because the ledger predicts index 0
+  // (WEB_INTERFACE → The wallet).
   if (changeBox) outputs.unshift(changeBox);
 
   const tx: UtxoTransaction = {

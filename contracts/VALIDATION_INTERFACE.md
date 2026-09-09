@@ -136,8 +136,7 @@ off a mining template and is standalone by decision — `node:crypto` and nothin
 that mines needs no build step (`MINING_INTERFACE` → Miner Script). It cannot import this package, so
 `node/test/unit/miner-mirror.test.ts` holds the copy to it by extracting both declarations **by name**
 and comparing them against this package's — the expansion on every admitted input; a mirror that
-stops finding its declaration fails, which is the property the test exists for. `public/index.html` performs no PoW and
-mirrors nothing from this section.
+stops finding its declaration fails, which is the property the test exists for.
 
 ### blockWork / cumulativeWork
 
