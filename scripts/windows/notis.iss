@@ -29,7 +29,5 @@ Source: "{#StageDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdir
 [Icons]
 Name: "{group}\Notis Node";         Filename: "{app}\launch-node.cmd";  WorkingDir: "{app}"
 Name: "{group}\Notis Node (Miner)"; Filename: "{app}\launch-miner.cmd"; WorkingDir: "{app}"
-Name: "{group}\Notis Demo UI";      Filename: "{app}\open-ui.cmd";      WorkingDir: "{app}"
 Name: "{userdesktop}\Notis Node";         Filename: "{app}\launch-node.cmd";  WorkingDir: "{app}"
 Name: "{userdesktop}\Notis Node (Miner)"; Filename: "{app}\launch-miner.cmd"; WorkingDir: "{app}"
-Name: "{userdesktop}\Notis Demo UI";      Filename: "{app}\open-ui.cmd";      WorkingDir: "{app}"

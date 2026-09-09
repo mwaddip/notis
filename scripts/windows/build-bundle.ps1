@@ -48,7 +48,7 @@ Copy-Item (Join-Path $Temp "nodert\node-$NodeVer-win-x64\node.exe") "$Stage\node
 
 # --- 4. Launchers ------------------------------------------------------------
 Write-Host "==> Copying launchers"
-Copy-Item "$PSScriptRoot\launch-node.cmd", "$PSScriptRoot\launch-miner.cmd", "$PSScriptRoot\open-ui.cmd" $Stage
+Copy-Item "$PSScriptRoot\launch-node.cmd", "$PSScriptRoot\launch-miner.cmd" $Stage
 
 # --- 5. Inno Setup installer -------------------------------------------------
 Write-Host "==> Running Inno Setup"
