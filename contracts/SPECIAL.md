@@ -153,14 +153,6 @@ src/state/                         S9  P7  E9  C5  I8  A7  L9
 src/routes/                        S8  P9  E6  C7  I7  A5  L6
   HTTP ingress. Untrusted bodies, and the surface where a secret key most plausibly leaks
   into a response. Not consensus-critical on its own, but it feeds things that are.
-
-public/index.html                  S7  P8  E4  C8  I6  A5  L9
-  ⚠ **A second implementation of consensus rules, in a different language, served from a
-  different host than the node.** It hashes, signs, and solves PoW in browser JS against
-  `blakejs`, and it must produce bytes identical to Node's. It has drifted before, and the
-  gap was found by a rendered browser check rather than by any test. C is high because it
-  is the only surface a human looks at; L is high because the mirror test only covers the
-  functions its list happens to name.
 ```
 
 ### @dagsocial/faucet

@@ -1696,9 +1696,9 @@ runtime strip somebody must remember:
 **`BOX_TYPE_TAGS` is the single source of the box-type numbering.** It is exported from
 `@dagsocial/types` and consumed inside the package by `enum8`; node's AVL tag tests import it to
 **derive** the first unassigned tag rather than writing a number down. No other package may declare
-it. **The demo UI is the one permitted copy**, being browser JS with no module graph and a mirror by
-construction; the golden corpus's reverse tag table is a deliberate independent restatement rather
-than a copy. **Independent in its numbers, not in its coverage**: the corpus restates every tag by
+it. **The retired demo UI's copy is the one permitted** — browser JS with no module graph, a mirror by
+construction, pinned by `ui-crypto-mirror.test.ts` while the file is in the tree; the golden corpus's
+reverse tag table is a deliberate independent restatement rather than a copy. **Independent in its numbers, not in its coverage**: the corpus restates every tag by
 hand and imports neither `BOX_TYPE_TAGS` nor the codec, but its type-to-tag table is
 `satisfies Record<BoxContent['boxType'], number>`, its own `BoxContent['boxType']` union is asserted
 equal to `BoxCandidate['boxType']` at the type level, and `golden.test.ts` asserts that `boxes.json`
@@ -1849,7 +1849,7 @@ from this table — a use that reads every cell as an instruction rather than as
 > | `node/src/services/utxo-engine.ts` | the output shape schema, `SPEND_TIMING`, `AUTHORIZATION`, the transition set, the protocol-output set | the first three are `Record<…['boxType'], …>`; the two sets are verdict tables (NODE_INTERFACE → Three karma sets, and none derives from another) |
 > | `node/src/store/utxo.ts` | the row mapping | the write `switch` is exhaustive by a `never` default; the read `switch` is over a string column and is covered by the provenance round-trip's total table instead |
 > | `node/src/karma-supply.ts` | the supply set | a verdict table (NODE_INTERFACE → Three karma sets, and none derives from another) |
-> | `node/public/index.html` | `BOX_TYPE_TAGS` **and** the `boxTypeFields` arm — ⛔ **no gate reaches this file directly** | `ui-crypto-mirror.test.ts` pins both against the package, keyed on the union |
+> | `node/public/index.html` (the retired demo UI) | `BOX_TYPE_TAGS` **and** the `boxTypeFields` arm — ⛔ **no gate reaches this file directly** | `ui-crypto-mirror.test.ts` pins both against the package, keyed on the union |
 >
 > ⛔ **THE RULE, FOR EVERY PACKAGE: AN ENUMERATION OVER BOX TYPES IS KEYED ON THE UNION, NEVER
 > WRITTEN AS AN ARRAY.** `Record<AnyBox['boxType'], …>` for a total table; an `Exclude<…>`-typed key
