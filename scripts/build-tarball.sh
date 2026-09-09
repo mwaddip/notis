@@ -65,7 +65,7 @@ cat > "$APP/run.sh" <<'RUNEOF'
 #!/usr/bin/env bash
 # Notis testnet node (server). No system Node needed.
 cd "$(dirname "$0")"
-export NETWORK_TYPE=testnet PORT=3000 FAUCET_URL=https://notis.fun/testnet/faucet
+export NETWORK_TYPE=testnet PORT=3000
 export DB_PATH="./data/notis.db"; mkdir -p ./data
 exec ./bin/node ./app/packages/node/dist/index.js
 RUNEOF
@@ -74,7 +74,7 @@ cat > "$APP/run-miner.sh" <<'MINEREOF'
 #!/usr/bin/env bash
 # Notis testnet node + miner loop. Ctrl-C / close to stop mining.
 cd "$(dirname "$0")"
-export NETWORK_TYPE=testnet PORT=3000 FAUCET_URL=https://notis.fun/testnet/faucet
+export NETWORK_TYPE=testnet PORT=3000
 export DB_PATH="./data/notis.db"; mkdir -p ./data
 export MINER_PUBKEY="$(./bin/node ./app/packages/node/scripts/gen-miner-key.mjs ./data/miner-key.json)"
 export MINING_SECRET="$(./bin/node -e "console.log(require('crypto').randomUUID())")"
