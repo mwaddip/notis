@@ -27,8 +27,8 @@ them as ordinary transactions. TypeScript, pnpm workspaces, Node.js ≥ 22.
 
 ## This package (`@dagsocial/node`)
 The full node: Express HTTP API, PoW verifier, SQLite store, UTXO engine, block creator + application,
-per-block like settlement, decay, invites/vouch, faucet, withdrawal, AVL+ state, and the demo UI
-(`public/index.html`).
+per-block like settlement, decay, invites/vouch, withdrawal, AVL+ state. `public/index.html` is the
+retired demo UI — unserved, read by its mirror tests only (NODE_INTERFACE → The node serves no client).
 
 - **Owns:** `src/server.ts`, `src/routes/*`, `src/services/*`, `src/store/*`, `src/state/*` (AVL+),
   `public/index.html`.
@@ -53,8 +53,8 @@ per-block like settlement, decay, invites/vouch, faucet, withdrawal, AVL+ state,
   karma/credit mints and burns happen only in block-application paths, never inside a user tx.
   `validateTx` checks the equality as one total per side, block application re-validates every
   embedded tx, and every user-value mutation rides mempool → block.
-- **Hashing** — `blake2b512` truncated via `.subarray(0, 32)` for every 32-byte output; must match the demo
-  UI's `blakejs`.
+- **Hashing** — `blake2b512` truncated via `.subarray(0, 32)` for every 32-byte output; a browser mirror's
+  `blakejs` must match it.
 - **Signatures** — raw Ed25519 (64 bytes), verified with `crypto.verify(null, …)` and a KeyObject.
 - **On-chain time = block height**, never wall-clock.
 - **Single-transaction atomic writes** for any multi-table mutation.

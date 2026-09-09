@@ -12,7 +12,7 @@ verifiable operation, not a favor from a moderation team.
 *Notis is the network; the code ships under the working scope `@dagsocial/*`.*
 
 **Status:** a single-binary node with HTTP API, libp2p networking, PoW
-consensus, and a demo UI, running a public testnet. Pre-network: consensus
+consensus, and a separate browser client, running a public testnet. Pre-network: consensus
 formats still change freely between versions, and a change to any committed
 byte starts the chain again from genesis. Node.js ≥ 22, TypeScript, pnpm.
 MIT licensed.
@@ -207,8 +207,9 @@ node packages/node/dist/index.js
 
 That is the whole of it: the defaults are testnet, a `server` role, port 3000 and `dagsocial.db` in the
 current directory, and the testnet profile names the network's bootstrap node (`notis.fun`), so the
-node dials it, syncs the chain and follows new blocks. The demo UI is at `http://localhost:3000/`.
-Karma for a fresh identity comes from the public faucet at `https://notis.fun/testnet/` — use the same
+node dials it, syncs the chain and follows new blocks. The node serves no UI: it is an HTTP API, and
+the browser client is a separate product served beside it (→ Web client below). Karma for a fresh
+identity comes from the public faucet through that client at `https://notis.fun/web/` — use the same
 key there; the grant is on-chain, so your node sees it once the block that carries it syncs.
 
 To mine as well:
@@ -274,30 +275,24 @@ environment is not merely discouraged, it has no effect.
 | `VERIFY_STATE_ROOT` | on | Verify each block's committed `stateRoot` at apply |
 | `MINING_SECRET` | — | Bearer token for the mining API. Required non-empty when `NODE_ROLE=miner` — startup fails without it. Unused on a server node. |
 | `ADMIN_PORT` / `ADMIN_BIND_ADDRESS` | — | Separate bind for admin endpoints |
-| `PUBLIC_URL` | `/` | Base path for the demo UI (e.g. `/testnet/` behind nginx) |
 | `WEB_SHELL_PATH` | — | Path of the web client's `index.html`; empty means `GET /shell/:id` answers 404 |
 
 > An environment variable the table above does not name is ignored — the table
 > is the whole read surface (`NODE_INTERFACE` → Configuration).
 
-### Demo UI
-
-Open `http://localhost:3000` (behind nginx with path isolation: UI at
-`/testnet/`, API at `/testnet/api/`). Single HTML page, vanilla JS, no build
-step. Create an identity, post, like, invite, transfer credits. Click a post's
-timestamp for thread view — full ancestor chain and reply tree — and copy a
-shareable link with OG metadata for rich previews in chat apps.
-
-A fresh identity needs an invite from an existing member; on testnet and devnet
-that is what the faucet service is for, and it runs outside the node.
-
 ### Web client
 
 `packages/web` is the browser client — the feed, threads, a tiling workspace, and the write
-surface on transactions the browser builds and signs. It is a static bundle that must be served
-**from the same origin as the node's API**: the node sends no CORS headers, so a client on any other
-origin cannot read it. On notis.fun nginx fronts both, the API under `/testnet/api/` and the client
-under `/web/`.
+surface on transactions the browser builds and signs. It is a product of its own: the node serves
+no client, and this one is an implementation of the API's client side that another may be written
+against. It is a static bundle that must be served **from the same origin as the node's API**: the
+node sends no CORS headers, so a client on any other origin cannot read it. On notis.fun nginx fronts
+both, the API under `/testnet/api/` and the client under `/web/`; a node run on its own has no UI
+until something serves the client beside it.
+
+A fresh identity needs an invite from an existing member; on testnet and devnet
+that is what the faucet service is for, and it runs outside the node — the client's profile window
+asks it.
 
 Build it for those paths with both bases — where the client's own files live, and where the API
 and the faucet live relative to the same origin:
@@ -329,8 +324,7 @@ the proxy at a node and a faucet).
 
 Everything is JSON over HTTP: identities, posts, threads, likes, invites,
 vouches, credits, block queries, AVL+ UTXO proofs (`/api/v1/proof/:boxId`), OG
-link previews, and the authenticated mining endpoints. The demo UI exercises the
-whole surface.
+link previews, and the authenticated mining endpoints.
 
 **The node serves no faucet.** It holds no key it could sign one with, and no
 consensus rule names a privileged signer — a faucet is an ordinary account whose
@@ -364,7 +358,7 @@ pnpm typecheck      # Type-check all packages, src and test trees
 - **`@dagsocial/net`** — libp2p + Gossipsub relay with two-stage validation,
   whole-block sync, peer discovery and scoring.
 - **`@dagsocial/node`** — Express server, UTXO engine, SQLite store, AVL+ state
-  root, block creator, the per-block settlement transaction, decay, demo UI.
+  root, block creator, the per-block settlement transaction, decay.
 
 ### Contracts
 
@@ -394,7 +388,7 @@ Built: the dual ledger, ordering-block consensus with a derived per-block
 settlement, verifiable withdrawal, likes as per-block karma spends, invites with
 bonds, vouches, karma decay against a fixed supply pool, credit emission,
 transaction fees, AVL+ state root with light-client proofs, libp2p networking
-with whole-block sync and header-scored fork choice, split mining, demo UI.
+with whole-block sync and header-scored fork choice, split mining, a browser client.
 
 Deferred to future protocol versions: credit sinks (ads, boosts, tips), reply
 earning, karma-proportional PoW, storage pruning for lean nodes, view keys,
