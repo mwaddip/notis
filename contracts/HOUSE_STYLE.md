@@ -378,9 +378,6 @@ it for anything.
   Text stays selectable and the pointer can be parked on it. This also removes the
   accidental-click pattern that quietly inflates engagement figures.
 
-> ⚠ **AHEAD OF CODE (2026-09-08, words not boxes)** — the bullet below states the word control the words-not-boxes unit
-> builds; the code still draws its word controls as ghost boxes.
-
 - **A word is a control, and it wears no box.** Every action that is a word renders as the word alone — no
   border, no fill, no padding beyond its hit box, the row's own face; `ink` at rest, `inkMute` when it cannot
   act; the pointer cursor and the focus ring; under `hover: hover` an underline and nothing else. The identity

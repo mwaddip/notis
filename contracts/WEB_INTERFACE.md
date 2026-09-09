@@ -172,9 +172,6 @@ one.
   renders in the feed; a reply is reached through its thread or its author's window, which reads the same
   endpoint with `author` and no `roots`.
 
-> ⚠ **AHEAD OF CODE (2026-09-08, words not boxes)** — the bullet below states the like's three renderings and the copy glyph
-> the words-not-boxes unit builds; the code still renders `N like`, a `liked` word and a `link` word.
-
 - **A feed card carries the like and the copy glyph in its meta row**, by the same rules a pane's card follows:
   the count `N liked` on every card with likes, the reader's own included; the word `like` after it on
   another's landed or confirmed post the reader has not liked, with the unlock row under the meta when the
@@ -285,9 +282,6 @@ shrinking; `dark`, `light`, `profile` and the prefix stay words wherever the hea
 selection or a scroll in another window's body survives and a restored stack shows every excerpt as its thread
 lands.
 
-> ⚠ **AHEAD OF CODE (2026-09-08, words not boxes)** — the word control's hit box in the paragraph below is the words-not-boxes
-> unit's; the code still grows its ghost boxes by `min-height`.
-
 **Hit size follows the pointer and hover applies where hover exists** (`HOUSE_STYLE → Interaction`), with
 this surface's numbers: under `(pointer: coarse)` every control's hit box is at least 36px tall and a bar's or
 the header's control 44px wide; the meta row's, the stage line's and the karma field's fixed line box is 36px;
@@ -368,9 +362,6 @@ tab, and the way in always switches in place. **Nothing crosses the channel but 
 64-hex one is acted on.
 
 ## Links
-
-> ⚠ **AHEAD OF CODE (2026-09-08, words not boxes)** — the paragraph below states the copy glyph the words-not-boxes unit
-> builds; the code still renders the word `link` after the like slot.
 
 **A post's link is `<origin><base>p/<id>`** (→ The standalone thread), and the reader makes one from the
 card. The meta row carries the copy glyph as its last child at the row's right edge — the edge the date holds
@@ -455,9 +446,6 @@ beneath them the host as the `<a>` — the only control that opens the target. F
 the text (nothing when it is `/`), the host beneath. For an image: the description as the text (nothing when
 it is blank), the image control beneath; the press replaces the control with the image and the description
 stays, as its `alt` too — *image from* the host when it is blank. A link inside longer text renders inline.
-
-> ⚠ **AHEAD OF CODE (2026-09-08, words not boxes)** — the image control as a word is the words-not-boxes unit's; the code
-> still draws it as a ghost box.
 
 **An image loads on the reader's press.** Before it, no `img` element exists for the post; the control names
 the host — a word control, the host in mono after it (`HOUSE_STYLE → Interaction`). The press replaces the control with the image in place — nothing else on the page changes — capped
@@ -584,9 +572,6 @@ Every builder is frozen against the demo UI's own, the second implementation (`b
 shapes the node uses — `{ error: <status>, reason }` and `{ error: <message> }`; a 409 drops the entry
 and re-reads the spendable view, and the reader sees the rejection.
 
-> ⚠ **AHEAD OF CODE (2026-09-08, words not boxes)** — the like's landing and overlay in the paragraph below read as the
-> words-not-boxes unit renders them; the code still shows a `liked` word.
-
 **Reconcile runs on the reader's own refresh and on the bounded poll below.** A pending post is landed
 when `GET /posts/:postId` answers `confirmed`, expired on a 404 or once the tip passes
 `expiresAtHeight`; a pending like is landed when `likedByViewer` turns `true`, and the row the reconcile
@@ -693,8 +678,6 @@ no credits. **A card by the loaded key reads `· you`** after the prefix, muted 
 
 ### The faucet step *(identity interface)*
 
-> ⚠ **AHEAD OF CODE (2026-09-08, words not boxes)** — one word, not a ghost button — the words-not-boxes unit's.
-
 **In the karma row, one word — `ask the faucet for karma` — while three things hold:** an
 identity is loaded, its `/karma` `boxCount` is 0, and a faucet base is configured. Not a header control:
 a grant is once per key for ever (`NODE_INTERFACE → Faucet`), so a standing control would sit dead before
@@ -723,9 +706,6 @@ contract forbids. The faucet relays the field (`NODE_INTERFACE → Faucet`).
 
 ### The identity display *(membership actions)*
 
-> ⚠ **AHEAD OF CODE (2026-09-08, words not boxes)** — this section states the identity display without the vouch mark; the
-> code still renders the mark beside every prefix and reads the count into its `title`.
-
 **Wherever an identity is shown it is the key prefix in mono, then `· you` on the reader's own** — cards
 in the feed and in panes, a title bar, an endorser row and a bond row, the author window's subject line. The
 prefix is `shortHex(key, 16)` on a card and the whole key in a window. **No mark rides beside it**: a vouch
@@ -752,9 +732,6 @@ at rest and `inkMute` when it cannot act, the focus ring, the underline on hover
 coarse pointer a 36px hit box by padding a negative margin absorbs.
 
 ### The author window *(membership actions)*
-
-> ⚠ **AHEAD OF CODE (2026-09-08, words not boxes)** — the rows and the `vouch` word below are the words-not-boxes unit's; the
-> code still casts a vouch from the `+` mark.
 
 **`@author:<64hex>`** — an `@`-window like `@profile`, opened from an identity's prefix by the placement
 rule every window follows, raised rather than duplicated, persisted in the arrangement (`isWindowId`
@@ -791,9 +768,6 @@ as feed cards: the strip, the prefix, `· you`, the like count and word and the 
 opens. `↻` reports what it did — `4 new posts` / `no new posts`. The bar reads `posts · <prefix>`, no spine.
 
 ### The withdraw control *(author's own controls)*
-
-> ⚠ **AHEAD OF CODE (2026-09-08, words not boxes)** — `withdraw`, `keep` and `↩ reply` as words are the words-not-boxes unit's;
-> the code still draws them as ghost boxes.
 
 **Withdraw is the author's first own control, and it lives in the card's meta row inside a pane.** On the
 reader's own confirmed live post — the pane's root included — the meta row's first slot — where `like`
