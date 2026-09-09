@@ -26,9 +26,9 @@ import type { SpendableBox, ChangeRef } from './types';
 // The pure builders — WEB_INTERFACE → The wallet. Each takes the spendable view,
 // the `/status` height and era, and parameters, and returns an unsigned
 // UtxoTransaction whose shape is what `validateTx` demands. The encoding under it
-// is @dagsocial/types, the shared implementation, so no mirror test is owed —
-// but the builders are pinned to frozen vectors in builders.test.ts — fixed
-// inputs, fixed txIds — so a change that moves one is a wire change.
+// is @dagsocial/types, the shared implementation; the builders are pinned to
+// frozen vectors in builders.test.ts — fixed inputs, fixed txIds — so a change
+// that moves one is a wire change.
 //
 // Builders exist for a post, a like, a vouch, an unvouch, an invite and a
 // withdrawal, and nothing else (WEB_INTERFACE → The wallet). A root post: change
