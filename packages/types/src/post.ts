@@ -71,9 +71,9 @@ export interface Post {
 // (TYPES_INTERFACE → Pinned byte forms). Both are live; which one applies is a
 // property of the preimage, not of the value.
 //
-// Encoding is protocol-breaking and unversioned. It MUST stay byte-identical
-// here and in the demo-UI JS (packages/node/public/index.html); the frozen
-// golden vectors in the tests are the cross-implementation anchor.
+// Encoding is protocol-breaking and unversioned; the frozen golden vectors
+// in the tests are what a second implementation is checked against
+// (TYPES_INTERFACE → Canonical field encoding).
 
 const encoder = new TextEncoder();
 

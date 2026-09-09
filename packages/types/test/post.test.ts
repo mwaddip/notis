@@ -176,11 +176,9 @@ function payload(c: PostCommit): string {
 /**
  * Frozen golden vector — the cross-implementation anchor.
  *
- * These hex strings are reproduced by the demo-UI JS mirror
- * (packages/node/public/index.html, asserted in the node package's
- * ui-crypto-mirror test). A change to either implementation that is not
- * mirrored in the other breaks this vector. Do not "fix" a failure by editing
- * the constants — the encoding is protocol-breaking and unversioned.
+ * A change to this implementation that moves the vector is a wire change.
+ * Do not "fix" a failure by editing the constants — the encoding is
+ * protocol-breaking and unversioned.
  *
  * The fixture carries exactly **one** parent ref, because `MAX_PARENT_REFS` is
  * 1, and the ref is raw bytes rather than hex text, because `parentRefs` is
