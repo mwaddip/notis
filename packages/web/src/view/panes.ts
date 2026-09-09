@@ -119,12 +119,13 @@ function bar(k: string, ci: number, focused: boolean, lone: boolean, handlers: H
  *  and link come from listCardOpts; the pane adds ↩ reply and the withdraw
  *  control (WEB_INTERFACE → The withdraw control). */
 function writeCardOpts(row: PostJson | WithdrawnJson, ci: number, ctx: RenderCtx, handlers: Handlers): Partial<CardOpts> {
+  const locked = ctx.identity?.locked ?? false;
   const base: Partial<CardOpts> = {
     onAuthor: (key) => handlers.openAuthor(key, { from: 'pane', ci }),
     expanded: ctx.expandedImages,
     onExpand: handlers.expandImage,
     onCollapse: handlers.collapseImage,
-    ...listCardOpts(row, ctx, handlers),
+    ...listCardOpts(row, { ...ctx, locked }, handlers),
   };
   if (!ctx.writeEnabled) return base;
   const opts: Partial<CardOpts> = {

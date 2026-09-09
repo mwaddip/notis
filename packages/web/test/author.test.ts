@@ -238,6 +238,32 @@ describe('the author-posts window', () => {
     expect(h.calls.openThread).toEqual([[P1, ORIGIN]]);
   });
 
+  it('a locked like mounts .card-unlock under the meta, calls no likePost; the form unlocks then likes', async () => {
+    const calls: Record<string, unknown[]> = { like: [], unlock: [] };
+    const h: PostsHandlers = {
+      openThread: () => {},
+      openAuthor: () => {},
+      likePost: (id) => calls.like!.push(id),
+      authorPostsMore: () => {},
+      unlockIdentity: async (p) => { calls.unlock!.push(p); },
+      expandImage: () => {},
+      collapseImage: () => {},
+    };
+    const b = authorPostsBody(h, postsCtx({ locked: true }));
+    const otherCard = b.querySelectorAll('.card')[0]!;
+    const likeBtn = [...otherCard.querySelectorAll('button')].find((x) => x.textContent === 'like')!;
+    expect(likeBtn).toBeTruthy();
+    likeBtn.click();
+    const form = otherCard.querySelector('.card-unlock form.pf') as HTMLFormElement;
+    expect(form).not.toBeNull();
+    expect(calls.like).toHaveLength(0);
+    (form.querySelector('input[type="password"]') as HTMLInputElement).value = 'pw';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls.unlock).toEqual(['pw']);
+    expect(calls.like).toEqual([P1]);
+  });
+
   it('`more posts` follows next; an empty page reads "no posts yet"', () => {
     const withMore = postsHandlers();
     const b = authorPostsBody(withMore, postsCtx({ feed: feedState({ next: 'cursor' }) }));

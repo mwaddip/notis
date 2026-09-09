@@ -32,13 +32,14 @@ function identityOpts(ctx: RenderCtx, handlers: Handlers): Partial<CardOpts> {
 }
 
 function feedCardOpts(p: PostJson, ctx: RenderCtx, handlers: Handlers): CardOpts {
+  const locked = ctx.identity?.locked ?? false;
   return {
     open: ctx.openSet.has(p.id),
     replyCount: p.descendantCount,
     onOpen: (id) => handlers.openThread(id, { from: 'feed' }),
     you: isYou(p.author, ctx),
     ...identityOpts(ctx, handlers),
-    ...listCardOpts(p, ctx, handlers),
+    ...listCardOpts(p, { ...ctx, locked }, handlers),
   };
 }
 
@@ -89,9 +90,10 @@ export function renderFeedInto(container: HTMLElement, feed: FeedState, handlers
   if (feedComposer) container.appendChild(feedComposer);
 
   // The client's own root submissions, newest first, above the node's rows.
+  const locked = ctx.identity?.locked ?? false;
   for (const sub of [...ctx.submissionsFor(null)].reverse()) {
     const post = submissionToPost(sub);
-    container.appendChild(card(post, { replyCount: null, flight: flightFor(sub, handlers.tryAgain), onOpen: (id) => handlers.openThread(id, { from: 'feed' }), you: isYou(sub.author, ctx), ...identityOpts(ctx, handlers), ...listCardOpts(post, ctx, handlers) }));
+    container.appendChild(card(post, { replyCount: null, flight: flightFor(sub, handlers.tryAgain), onOpen: (id) => handlers.openThread(id, { from: 'feed' }), you: isYou(sub.author, ctx), ...identityOpts(ctx, handlers), ...listCardOpts(post, { ...ctx, locked }, handlers) }));
   }
 
   // Pending (mempool) posts are the newest — they sit above the confirmed ones,

@@ -324,6 +324,70 @@ describe('feed cards carry like and link', () => {
   });
 });
 
+describe('a locked like from the feed mounts the unlock row', () => {
+  it('the like press mounts .card-unlock, calls no likePost; the form submits, unlocks, then likes', async () => {
+    let lockState = true;
+    const unlocked: string[] = [];
+    const liked: { likeTarget: string }[] = [];
+    const identity: AppIdentity = {
+      current: () => ({ pubKeyHex: PUB, locked: lockState }),
+      sign: () => 'ab'.repeat(64),
+      draft: () => ({ pubKeyHex: PUB }),
+      create: async () => ({ pubKeyHex: PUB }),
+      discardDraft: () => {},
+      inspectFile: () => ({ kind: 'clear', pubKeyHex: PUB }),
+      importFile: async () => ({ pubKeyHex: PUB }),
+      exportFile: async () => '{}',
+      unlock: async (p) => { unlocked.push(p); lockState = false; },
+      lock: () => { lockState = true; },
+      forget: () => {},
+      backedUp: () => false,
+      onChange: () => {},
+    };
+    const fakeApi: Api = {
+      feed: async () => ({ posts: [post(ROOT, OTHER, 'root by other')], next: null, pending: [], pendingCount: 0 }),
+      thread: async () => null,
+      post: async (id): Promise<PostResult> => ({ ...post(id, OTHER, 'x'), confirmedAuthor: OTHER }),
+      status: async () => statusResult(),
+      currentBlock: async () => ({ height: 6000, hash: null }),
+      karma: async () => karmaResult({ userId: PUB, total: '227', effective: '227', boxes: [{ boxId: '11'.repeat(32), value: '227' }], boxCount: 1, height: 6000 }),
+      vouchesByTarget: async () => ({ vouches: [], count: 0, next: null }),
+      vouchesByVoucher: async () => ({ vouches: [], count: 0, next: null }),
+      vouchCooldowns: async () => ({ cooldowns: [], count: 0, next: null }),
+      bonds: async () => ({ bonds: [], bondCount: 0, next: null }),
+    };
+    const writeClient = {
+      submitPost: async () => ({ postId: 'x', status: 'pending', expiresAtHeight: 6720, txId: 'x' }),
+      submitLike: async (tx: { likeTarget: string }) => { liked.push(tx); return { status: 'pending' as const, txId: 'x', expiresAtHeight: 6720 }; },
+    } as unknown as WriteClient;
+    const app = new App(fakeApi, writeClient, identity, new PendingLedger(PUB));
+    const appbar = document.createElement('div');
+    const feed = document.createElement('section'); feed.id = 'feed';
+    const panes = document.createElement('section'); panes.id = 'panes';
+    document.body.append(appbar, feed, panes);
+    app.mount(appbar, feed, panes);
+    const drive = app as unknown as Harness['drive'];
+    await drive.loadFeed();
+
+    const likeBtn = [...feed.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === 'like')!;
+    expect(likeBtn).toBeTruthy();
+    likeBtn.click();
+    await flush();
+
+    const cardEl = feed.querySelector(`[data-post-id="${ROOT}"]`)!;
+    const form = cardEl.querySelector('.card-unlock form.pf') as HTMLFormElement;
+    expect(form).not.toBeNull();
+    expect(liked).toHaveLength(0);
+
+    (form.querySelector('input[type="password"]') as HTMLInputElement).value = 'pw';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    expect(unlocked).toEqual(['pw']);
+    expect(liked).toHaveLength(1);
+    expect(liked[0]?.likeTarget).toBe(ROOT);
+  });
+});
+
 describe('a like landing updates every surface holding the post', () => {
   afterEach(() => { vi.useRealTimers(); });
 
