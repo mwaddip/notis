@@ -87,9 +87,9 @@ The creating transaction is signed over its `TxId`, and the signing key is the
 author — so a post's authorship is the transaction's authorship. **There is no
 separate post signature to verify**, and no path should reintroduce one.
 
-⚠ **The demo UI must build the transaction before it can name the post.** It
-already computes `TxId` locally, so optimistic display still works — but the
-ordering inverts, and `public/index.html`'s mirror has to change with it.
+⚠ **A client must build the transaction before it can name the post.** A client
+that computes `TxId` locally still displays optimistically; the ordering is what
+inverts.
 
 ### Canonical field encoding (M-1 — injective, protocol-breaking)
 
@@ -394,7 +394,7 @@ for the AVL feed. Full reason/subject table in `NODE_INTERFACE.md`.
 
 #### Pinned byte forms
 
-Protocol-visible: a mirror implementation (demo UI, light client) that chooses differently
+Protocol-visible: a mirror implementation (a browser mirror, a light client) that chooses differently
 computes different ids.
 
 - **A hex-typed id has TWO encodings in this repo, and which one applies is decided by
@@ -461,7 +461,7 @@ tx and box derivation cannot drift.
 
 ⚠ **`canonicalBoxBytes` is a positional layout, not a self-describing format.** There are no
 keys, no map framing, and nothing to sort — a mirror reproduces the field table byte-for-byte.
-The demo UI already encodes this way; full bytes are pinned as golden vectors in
+The retired demo UI's mirror encodes this way; full bytes are pinned as golden vectors in
 `test/utxo.test.ts`.
 
 #### Key ordering is canonical
@@ -1169,7 +1169,7 @@ recompute the hash and check the signature.
 | `computeCandidateBoxId(candidate, txId, index)` | `(BoxCandidate, TxId, number) => BoxId` | Same derivation, for a candidate not yet materialized. Used by creators and by clients predicting an id at signing time |
 | `computeTxId(tx)` | `(UtxoTransaction) => TxId` | Transaction id over candidates |
 | `computeMintTxId(height, reason, subject)` | `(number, MintReason, Uint8Array) => TxId` | Synthetic transaction id for boxes with no creating transaction — genesis seeding; everything else is a settlement output with an ordinary id. `subject` encoding is defined per reason — see `NODE_INTERFACE.md` |
-| `canonicalBoxBytes(candidate)` | `(BoxCandidate) => Uint8Array` | The single canonical identity encoding. Exported so tests and mirror implementations (demo UI, light client) assert against the encoder that computes ids, not a lookalike |
+| `canonicalBoxBytes(candidate)` | `(BoxCandidate) => Uint8Array` | The single canonical identity encoding. Exported so tests and mirror implementations (a browser mirror, a light client) assert against the encoder that computes ids, not a lookalike |
 | `selectBoxes(boxes, requiredAmount)` | `(T[], bigint) => T[]` where `T extends { value: bigint }` | Largest-first UTXO selection — a greedy prefix of the **given** order until `requiredAmount` is covered; throws when the boxes' total falls short. **Precondition: the caller supplies boxes sorted by value descending** — the function imposes no order of its own, so its determinism is exactly its caller's. A transaction-builder helper (the faucet's invite and transfer builders are the consumers); no block-application path calls it |
 
 ---
@@ -3025,7 +3025,7 @@ export function memberLikesBar(memberCount: number, multiplier: number): number;
 `D` and `Y` are consensus inputs — the vouch arm, the invite arm and the membership pass read
 them (`NODE_INTERFACE` → Membership pass) — so they are **one implementation**, here, that every
 reader calls rather than restates (`VALIDATION_INTERFACE` → "One implementation per rule"); the
-demo UI reads the node's `member` and `invitesAvailable` and computes neither. `icbrt` is exact:
+client reads the node's `member` and `invitesAvailable` and computes neither. `icbrt` is exact:
 `Math.cbrt` is not, and a float that lands one below a perfect cube moves the bar by one on some
 platforms and not others. The pins are the table in `ARCHITECTURE → Membership` — `icbrt(10) =
 2`, `icbrt(40) = 3`, `icbrt(1000) = 10`, `icbrt(10⁶) = 100`, `icbrt(10⁷) = 215` — plus the cube

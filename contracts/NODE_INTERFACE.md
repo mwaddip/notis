@@ -117,11 +117,6 @@ render and merge functions, and the page-builder blocks of `invites.test.ts` and
 its builders against the routes. The web client's builder vectors are constants and read none of it
 (`WEB_INTERFACE → The wallet`).
 
-> ⚠ **AHEAD OF CODE — 2026-09-09.** `server.ts` still reads `public/index.html` at start, serves it at
-> `GET /` with `window.__NOTIS_CONFIG__` and a `?post=` tag injection, serves `public/` statically and
-> answers `GET /preview/:id`; `config.ts` still reads `PUBLIC_URL` and `FAUCET_URL`. The unit removes
-> all of it; `GET /` answers 404 and `server.test.ts` pins that.
-
 > ⚠ **AHEAD OF CODE — 2026-09-09.** The demo UI's file and the tests that read it leave the tree in
 > a unit of their own.
 
@@ -2193,10 +2188,14 @@ A box gets provenance **where it is stored**, not where it is first constructed.
 `mint-provenance.ts` imports it; it previously kept a local mirror, and a silent
 divergence between the two would have moved mint txIds — and therefore box ids —
 with nothing to catch it, while this contract's own subject table mandates the
-encoding. One implementation feeds both derivations. The demo UI cannot import
-it and so must still reproduce the sentinel behaviour, and must not throw.
+encoding. One implementation feeds both derivations. The retired demo UI's mirror
+cannot import it and reproduces the sentinel behaviour itself; it must not throw.
 
 ### The demo UI mirror carries the same strip defect
+
+> ✅ **RESOLVED — verified 2026-09-09.** No `{ id, ...rest }` strip remains in `public/index.html`; both
+> of its derivations go through its own `canonicalBoxBytes`. The section is the record of that defect in
+> the retired demo UI's mirror (→ The node serves no client), and reads as it did when the fix landed.
 
 `public/index.html`'s client-side `computeBoxId` does `const { id, ...rest } = box`
 — the **id-only strip** that phase C0 removed from `@dagsocial/types`. Both of
