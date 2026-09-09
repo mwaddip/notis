@@ -79,7 +79,7 @@ the faucet karma step — is stated below (→ The identity module, → The prof
 step).
 
 **With no identity loaded, the client is the read surface exactly.** No `new post`, no `↩ reply`, no
-`like`, no mark beside any identity (→ The identity display), no `viewer` parameter. The way in is `create` or `import` in the `@profile` window (→ The
+`like`, no `viewer` parameter. The way in is `create` or `import` in the `@profile` window (→ The
 profile window); nothing else in the interface creates an identity, and a production build exposes no
 other door.
 
@@ -172,11 +172,13 @@ one.
   renders in the feed; a reply is reached through its thread or its author's window, which reads the same
   endpoint with `author` and no `roots`.
 
-- **A feed card carries `like` and `link` in its meta row**, by the same rules a pane's card follows: `like`
-  on another's landed or confirmed post, with the unlock row under the meta when the identity is locked, the
-  pending overlay and `liked` as → The wallet states; the read-only count alone on the reader's own post; no
-  control on a pending card; `link` after the like slot (→ Links); and with no identity loaded neither `like`
-  nor any other write control, the feed being the read surface exactly. A like from the feed re-renders that
+- **A feed card carries the like and the copy glyph in its meta row**, by the same rules a pane's card follows:
+  the count `N liked` on every card with likes, the reader's own included; the word `like` after it on
+  another's landed or confirmed post the reader has not liked, with the unlock row under the meta when the
+  identity is locked; the press removes the word and moves the count by one at once, muted while the like is
+  pending and green once a block takes it (→ The wallet); no control on a pending card; the copy glyph at the
+  row's right edge (→ Links); and with no identity loaded neither `like` nor any other write control, the feed
+  being the read surface exactly. A like from the feed re-renders that
   card at the press and at its landing — the count moving by the reader's own act and nothing else moving —
   and a rejection or an expiry reports in the feed's report line, where `↻` reports. Reply and withdraw are
   not on a feed card: the composer and the confirm row live inside a pane. The author-posts window's cards
@@ -283,8 +285,9 @@ lands.
 **Hit size follows the pointer and hover applies where hover exists** (`HOUSE_STYLE → Interaction`), with
 this surface's numbers: under `(pointer: coarse)` every control's hit box is at least 36px tall and a bar's or
 the header's control 44px wide; the meta row's, the stage line's and the karma field's fixed line box is 36px;
-the strip and the bar label keep their size; a text field is 16px, since WebKit zooms the page on focusing a
-smaller one; glyphs and words are unchanged. Every `:hover` rule sits under `(hover: hover)`. The viewport
+the strip and the bar label keep their size; a word control's hit box grows by padding a negative margin
+absorbs, so its row's geometry is unchanged (`HOUSE_STYLE → Interaction`); a text field is 16px, since WebKit
+zooms the page on focusing a smaller one; glyphs and words are unchanged. Every `:hover` rule sits under `(hover: hover)`. The viewport
 declares `viewport-fit=cover` and `interactive-widget=resizes-content`, and the header and the gutters respect
 the safe-area insets.
 
@@ -361,16 +364,18 @@ tab, and the way in always switches in place. **Nothing crosses the channel but 
 ## Links
 
 **A post's link is `<origin><base>p/<id>`** (→ The standalone thread), and the reader makes one from the
-card. The meta row carries `link` as the row's last control on every landed or confirmed card — inside a
-pane after `↩ reply`, on the standalone page, on the feed after the like slot, and in the author-posts window
-— the withdrawn card included, its thread surviving its content; a pending card carries none. The press writes
-the URL to the clipboard and the word becomes `copied`, held until the card next renders — a swap in a fixed
-box, no timer, as `like` becomes `liked` (`HOUSE_STYLE → Motion`). The label reads *copy this post's link*.
+card. The meta row carries the copy glyph as its last child at the row's right edge — the edge the date holds
+in the who row, so it sits bottom right of the card, right-aligned with the date — on every landed or confirmed
+card: inside a pane, on the standalone page, on the feed, in the author-posts window, the withdrawn card
+included, its thread surviving its content; a pending card carries none. The glyph is two offset sheets drawn
+in the house technique (`HOUSE_STYLE → Illustration`), the interface's third icon, 16px in `currentColor`,
+labelled *copy this post's link*. The press writes the URL to the clipboard and the glyph's slot holds the
+word `copied` until the card next renders — a swap in a fixed slot, no timer (`HOUSE_STYLE → Motion`).
 
 **Where the clipboard API is absent** — an insecure context, such as a phone reaching the dev server over a
 LAN address on `http` — or a write is refused, the press mounts a row under the meta, where the unlock row
-mounts, holding the URL as selectable text for the reader to copy by hand, and the word stays `link`. The
-address bar of a standalone page already holds the page's link; each card's `link` gives that card's own.
+mounts, holding the URL as selectable text for the reader to copy by hand, and the glyph stays. The
+address bar of a standalone page already holds the page's link; each card's glyph gives that card's own.
 
 **A link previews in a chat app because the server answers for it.** The host proxies `<base>p/<id>` to
 the node's `GET /shell/:id` (`NODE_INTERFACE → Link previews`), which answers the client's own shell with
@@ -443,7 +448,7 @@ it is blank), the image control beneath; the press replaces the control with the
 stays, as its `alt` too — *image from* the host when it is blank. A link inside longer text renders inline.
 
 **An image loads on the reader's press.** Before it, no `img` element exists for the post; the control names
-the host. The press replaces the control with the image in place — nothing else on the page changes — capped
+the host — a word control, the host in mono after it (`HOUSE_STYLE → Interaction`). The press replaces the control with the image in place — nothing else on the page changes — capped
 at the card's width and 480px high, carrying the referrer policy and an `alt`: the description, or *image
 from* the host when it is blank. The expanded state is kept per post and image for the session, so a
 column re-render keeps it. A load that fails says so in place and offers the control again.
@@ -571,9 +576,10 @@ and re-reads the spendable view, and the reader sees the rejection.
 when `GET /posts/:postId` answers `confirmed`, expired on a 404 or once the tip passes
 `expiresAtHeight`; a pending like is landed when `likedByViewer` turns `true`, and the row the reconcile
 fetched then replaces the post's row wherever the client holds it — the feed, every thread containing it,
-the posts index, an open `@posts:` window — so every surface shows the node's count and `liked` with no
+the posts index, an open `@posts:` window — so every surface shows the node's count, green, with no
 refresh. That field reflects
-store records only, so **the client overlays its own pending likes** onto it until they land or expire.
+store records only, so **the client overlays its own pending like onto the count** — the +1 in muted ink, the
+word `like` gone — until it lands or expires.
 A pending vouch is landed when `GET /vouches?voucher=<key>` lists the pair; a pending unvouch when the
 pair is absent — the escrow it creates is no signal, since one born past its release height is returned
 by the next block's settlement and its cooldown row can stand for a single block the poll never sees
@@ -583,8 +589,8 @@ marker (`NODE_INTERFACE → The withdrawal phase`), and expired at once on a 404
 
 **The reader's vouch set is client state read from the node, never stored:** `GET /vouches?voucher=<key>`
 to the end of `next` at identity load, again on every vouch or unvouch landing, and the cooldown arm
-beside it. The set, with the ledger's pending vouches overlaid, is what the mark reads (→ The identity
-display). The cooldown arm is the escrow gate — after any unvouch, no cast until `releaseAtBlock`
+beside it. The set, with the ledger's pending vouches overlaid, is what the author window's `your vouch` row reads (→ The author
+window). The cooldown arm is the escrow gate — after any unvouch, no cast until `releaseAtBlock`
 (`NODE_INTERFACE → Vouch transition rules`) — which the client withholds as a courtesy, like the vouch
 floor `VOUCH_MIN_BALANCE`; the node's refusal stays the truth for every other rule.
 
@@ -672,9 +678,9 @@ no credits. **A card by the loaded key reads `· you`** after the prefix, muted 
 
 ### The faucet step *(identity interface)*
 
-**In the karma row, one ghost button — `ask the faucet for karma` — while three things hold:** an
+**In the karma row, one word — `ask the faucet for karma` — while three things hold:** an
 identity is loaded, its `/karma` `boxCount` is 0, and a faucet base is configured. Not a header control:
-a grant is once per key for ever (`NODE_INTERFACE → Faucet`), so a standing button would sit dead before
+a grant is once per key for ever (`NODE_INTERFACE → Faucet`), so a standing control would sit dead before
 its one press and after it. The request carries only the public key, so a **locked** identity can ask.
 
 **A faucet is a fact of the deployment, not of the network**, so the client reaches it as it reaches the
@@ -700,37 +706,13 @@ contract forbids. The faucet relays the field (`NODE_INTERFACE → Faucet`).
 
 ### The identity display *(membership actions)*
 
-**Wherever an identity is shown it is the key prefix in mono, then the mark, then `· you` on the
-reader's own** — cards in the feed and in panes, a title bar, an endorser row and a bond row, the
-author window's subject line. The prefix is `shortHex(key, 16)` on a card and
-the whole key in a window.
-
-**The mark is one character, a control wherever it renders but on a title bar (below), and never a
-word:** `✓` in ink when the reader's live vouch names this identity; `+` in muted ink when the reader may vouch and has not; `✓` in muted ink while the
-reader's vouch is pending; **absent** with no identity loaded, for a reader who is not a member, and on
-the reader's own identity; **present but disabled** while the reader's stake from an unvouch is held or
-the spendable view is below `VOUCH_MIN_BALANCE`. Its state is glyph and ink weight and nothing else — no
-hue (`HOUSE_STYLE → Identity colour`: nothing may invite a reader to read identity by colour) and no
-word. `✓` U+2713 and `+` are typographic, like the workspace's arrows, not iconography
-(`HOUSE_STYLE → Deliberately not decided`); if the self-hosted faces lack U+2713 the check is a
-two-stroke SVG in `currentColor` at x-height, never a fallback font.
-
-**A press on `+` vouches at once — no confirmation, the feed included.** A press on `✓` opens the author
-window, where unvouch lives one step further on purpose. The visible glyph is small; the click target
-is the meta row's button height with the ghost outline (`HOUSE_STYLE → Accessibility contract`: a
-control's sole boundary), reachable by keyboard and touch. A locked identity mounts the unlock form in a
-row under the meta, as a like does (→ The identity module).
-
-**The mark's `title` is the count and nothing else** — `3 vouches`, from the row's `authorVouchCount`
-(`NODE_INTERFACE → Posts`): every rendered row carries its author's count, the session's cache fills as
-pages land, and the title is set on the live node. One read of `GET /vouches?target=<key>` remains, after
-the reader's own vouch or unvouch lands for that identity, so the count stays the node's and is never a
-client-side guess; the author window's endorsers read fills the same cache, each vouch row carrying its voucher's
-`voucherVouchCount` (the node's `GET /vouches?target=` row), so an endorser row's mark is titled from
-the row it came with. A failed read leaves the `title` empty, never wrong.
-
-A disabled mark's `title` is the reason instead, and the author window carries the same sentence in text,
-so hover is never the only route (`HOUSE_STYLE → Interaction`).
+**Wherever an identity is shown it is the key prefix in mono, then `· you` on the reader's own** — cards
+in the feed and in panes, a title bar, an endorser row and a bond row, the author window's subject line. The
+prefix is `shortHex(key, 16)` on a card and the whole key in a window. **No mark rides beside it**: a vouch
+is cast and read in the author window alone (→ The author window), so a card reads the same with or without
+an identity loaded — the prefix, `· you` on the reader's own, the date. `authorVouchCount` rides every row
+(`NODE_INTERFACE → Posts`) and the client reads it nowhere; the count a reader sees is the author window's
+endorsers line, from `GET /vouches?target=`.
 
 **The prefix on a card is the way into the author window, and it looks exactly like the text prefix
 it stands in for.** It is a `<button>` in the who row (`aria-label` *"open this author"*) rendered as the
@@ -744,12 +726,10 @@ does. **The same rendering holds wherever a prefix is a control** — an endorse
 window, a standing-bond row in the profile — at that row's prefix size. The strip stays the card's only
 control for opening a thread and the card body stays selectable text (`HOUSE_STYLE → Interaction`). On
 a title bar the prefix is text and opens nothing: the bar is the tightest space in the design. Opening
-a window spends nothing, so the panes-only rule that governs like and reply does not bind it.
-
-**On a title bar the mark is display only** — `✓` in ink when the reader's live vouch names the
-author, muted while it is pending, absent otherwise, and never `+`: the bar's label is itself the focus
-control, a control cannot nest inside a control, and the bar carries no action but focus. The cards
-inside the pane carry the control.
+a window spends nothing, so the panes-only rule that governs like and reply does not bind it. **It is the
+pattern every word control follows** (`HOUSE_STYLE → Interaction`): the word alone in its row's face, `ink`
+at rest and `inkMute` when it cannot act, the focus ring, the underline on hover where hover exists, and at a
+coarse pointer a 36px hit box by padding a negative margin absorbs.
 
 ### The author window *(membership actions)*
 
@@ -759,26 +739,31 @@ accepts the prefix with 64 hex). The bar reads `author · <prefix>` and carries 
 re-reads `/karma/:key` and the endorsers page. Rows:
 
 ```
-key          the whole key, mono, and the mark
+key          the whole key, mono
 standing     root · member since block N · resident, with the progress line the profile shows
 endorsers    N vouches, then one row per voucher — their identity, following next
-your vouch   + vouch · ✓ vouched since block N · unvouch — or the one-line reason the reader cannot
+your vouch   vouch · vouched since block N · unvouch — or the one-line reason the reader cannot
 posts        a word that opens the author-posts window beside this one
 ```
 
 **Standing is the node's word**, as in the profile (`member`; `invitesAvailable: null` for root); a
 resident's line reads the counts against the bars from `/status` — the only place a bar is read for
-another identity. **`unvouch`** resolves the vouch box at the press (→ The wallet); a pair already gone
-re-renders the row to `+ vouch` and says so — *"that vouch was already withdrawn."* Its copy states what
+another identity. **`vouch` is a word, and this row is the one place a vouch is cast**
+(`HOUSE_STYLE → Interaction`): a press on it vouches at once — no confirmation — with the stakes sentence
+beside it; a locked identity mounts the unlock form in the row's place first (→ The identity module). While
+the vouch flies the row carries the flight's stage line in the word's place — `submitting…`, `submitted` —
+as an unvouch does, and the landing renders `vouched since block N`; a rejection's line reads there too.
+**`unvouch`**, a word too, resolves the vouch box at the press (→ The wallet); a pair already gone
+re-renders the row to `vouch` and says so — *"that vouch was already withdrawn."* Its copy states what
 happens: the stake is held until block N and no new vouch until then. The reasons the reader cannot
 vouch, one line each: *"vouching comes with membership"*, *"your stake from an unvouch is held until
 block N"*, *"this is you"*. With no identity loaded the window is the
-read surface exactly — key, standing, endorsers, no marks and no `your vouch` row.
+read surface exactly — key, standing, endorsers, and no `your vouch` row.
 
 **The author-posts window — `@posts:<64hex>`** — opened from `posts`, placed by the same rule (from the
 feed, the author window takes the first column and the posts the next), raised when open, persisted.
 Its body is `GET /posts?author=<key>` — the author's committed posts, newest first, following `next` —
-as feed cards: the strip, the prefix and the mark, `· you`, `like` and `link` by the feed card's rules
+as feed cards: the strip, the prefix, `· you`, the like count and word and the copy glyph by the feed card's rules
 (→ What the feed reads, and what a card shows for it), and no reply, which lives in the pane the strip
 opens. `↻` reports what it did — `4 new posts` / `no new posts`. The bar reads `posts · <prefix>`, no spine.
 
@@ -786,8 +771,8 @@ opens. `↻` reports what it did — `4 new posts` / `no new posts`. The bar rea
 
 **Withdraw is the author's first own control, and it lives in the card's meta row inside a pane.** On the
 reader's own confirmed live post — the pane's root included — the meta row's first slot — where `like`
-sits on another's card, and the read-only like count on the reader's own — gains a `withdraw` button
-after that count, beside `↩ reply`; the count stays. `· you` in the who row stays text. The control
+sits on another's card, and the read-only like count on the reader's own — gains the word `withdraw`
+after that count, beside `↩ reply` — both words (`HOUSE_STYLE → Interaction`); the count stays. `· you` in the who row stays text. The control
 appears nowhere else: not on a feed card (the author's controls live inside a pane; a feed card's controls are
 `like` and `link`), not on a pending card or the client's own submission, not on a withdrawn card (a post
 withdraws once), not in the `@posts:` window's cards, never with no identity loaded.

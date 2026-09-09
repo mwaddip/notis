@@ -44,7 +44,7 @@ async function jpost(path, body) {
   if (!res.ok) throw new Error(`POST ${path} → ${res.status} ${JSON.stringify(data)}`);
   return data;
 }
-const boxesOf = (k) => k.boxes.map((b) => ({ boxId: b.boxId, value: BigInt(b.value) }));
+const karmaBoxes = (k) => k.boxes.map((b) => ({ boxId: b.boxId, value: BigInt(b.value) }));
 async function waitFor(what, pred, timeoutMs = 90_000) {
   const t0 = Date.now();
   for (;;) {
@@ -107,11 +107,18 @@ async function main() {
   let rK = await jget(`/karma/${R.publicKeyHex}`);
   console.log(`R is a resident: member=${rK.member}, karma boxes=${rK.boxCount}`);
 
-  // 2. R posts two threads.
+  // 2. R posts two threads. Each step re-reads the confirmed karma view: the
+  // builder outputs array maps every output, the karma_price box included, and
+  // only block application may spend that one.
   console.log('R posts two threads…');
-  const t1 = buildThreadTx(R, boxesOf(rK), 'promote thread 1', rK.height, version);
+  const t1 = buildThreadTx(R, karmaBoxes(rK), 'promote thread 1', rK.height, version);
   const t1Res = await jpost('/posts', { tx: t1.json, content: t1.content });
-  const t2 = buildThreadTx(R, [t1.outputs[0]], 'promote thread 2', rK.height, version);
+  await waitFor('R\'s first thread to confirm', async () => {
+    const p = await jget(`/posts/${t1Res.postId}`).catch(() => null);
+    return p && p.status === 'confirmed';
+  });
+  rK = await jget(`/karma/${R.publicKeyHex}`);
+  const t2 = buildThreadTx(R, karmaBoxes(rK), 'promote thread 2', rK.height, version);
   const t2Res = await jpost('/posts', { tx: t2.json, content: t2.content });
   await waitFor('R\'s posts to confirm', async () => {
     const p = await jget(`/posts/${t2Res.postId}`).catch(() => null);
@@ -121,16 +128,23 @@ async function main() {
   // 3. The faucet vouches R (memberBar = 1 on devnet).
   console.log('the faucet vouches R…');
   let fK = await jget(`/karma/${DEVNET_FAUCET.publicKeyHex}`);
-  const vouch = buildVouchTx(DEVNET_FAUCET, boxesOf(fK), R, fK.height, version);
+  const vouch = buildVouchTx(DEVNET_FAUCET, karmaBoxes(fK), R, fK.height, version);
   await jpost('/vouches', { tx: vouch.json });
   await waitFor('the vouch to count', async () => (await jget(`/karma/${R.publicKeyHex}`)).memberVouches >= 1);
 
   // 4. The faucet likes each of R's posts once (memberLikesBar = 2 on devnet).
+  // Wait for like1 to land before re-reading — the box like1 spent is still
+  // listed until a block settles it.
   console.log('the faucet likes both of R\'s posts…');
   fK = await jget(`/karma/${DEVNET_FAUCET.publicKeyHex}`);
-  const like1 = buildLikeTx(DEVNET_FAUCET, boxesOf(fK), t1Res.postId, R.publicKeyHex, fK.height, version);
+  const like1 = buildLikeTx(DEVNET_FAUCET, karmaBoxes(fK), t1Res.postId, R.publicKeyHex, fK.height, version);
   await jpost('/likes', { tx: like1.json });
-  const like2 = buildLikeTx(DEVNET_FAUCET, [like1.outputs[0]], t2Res.postId, R.publicKeyHex, fK.height, version);
+  await waitFor('like1 to land', async () => {
+    const p = await jget(`/posts/${t1Res.postId}`).catch(() => null);
+    return p && p.likeCount >= 1;
+  });
+  fK = await jget(`/karma/${DEVNET_FAUCET.publicKeyHex}`);
+  const like2 = buildLikeTx(DEVNET_FAUCET, karmaBoxes(fK), t2Res.postId, R.publicKeyHex, fK.height, version);
   await jpost('/likes', { tx: like2.json });
 
   // 5. The membership pass sets R.

@@ -20,25 +20,15 @@ function isYou(author: string, ctx: RenderCtx): boolean {
 }
 
 /** The opts a feed card carries: the identity display — the prefix opens the
- *  author window (a read, present even with no identity) and the vouch mark, the
- *  vouch and its unlock only with an identity loaded (WEB_INTERFACE → The identity
- *  display) — and the content-image opts every card shares, so an image loads on
- *  the reader's press (WEB_INTERFACE → Content). */
-function markOpts(author: string, ctx: RenderCtx, handlers: Handlers): Partial<CardOpts> {
-  const opts: Partial<CardOpts> = {
+ *  author window (WEB_INTERFACE → The identity display) — and the content-image
+ *  opts every card shares (WEB_INTERFACE → Content). */
+function identityOpts(ctx: RenderCtx, handlers: Handlers): Partial<CardOpts> {
+  return {
     onAuthor: (key) => handlers.openAuthor(key, { from: 'feed' }),
-    mark: ctx.markFor(author),
     expanded: ctx.expandedImages,
     onExpand: handlers.expandImage,
     onCollapse: handlers.collapseImage,
   };
-  if (ctx.writeEnabled) {
-    opts.onVouch = (key) => handlers.vouch(key);
-    opts.locked = ctx.identity?.locked ?? false;
-    opts.ownKey = ctx.ownKey ?? undefined;
-    opts.onUnlock = (p) => handlers.unlockIdentity(p);
-  }
-  return opts;
 }
 
 function feedCardOpts(p: PostJson, ctx: RenderCtx, handlers: Handlers): CardOpts {
@@ -47,7 +37,7 @@ function feedCardOpts(p: PostJson, ctx: RenderCtx, handlers: Handlers): CardOpts
     replyCount: p.descendantCount,
     onOpen: (id) => handlers.openThread(id, { from: 'feed' }),
     you: isYou(p.author, ctx),
-    ...markOpts(p.author, ctx, handlers),
+    ...identityOpts(ctx, handlers),
     ...listCardOpts(p, ctx, handlers),
   };
 }
@@ -73,10 +63,10 @@ export function renderFeedInto(container: HTMLElement, feed: FeedState, handlers
   // two controls with different words a few pixels apart is a trap. Only with an
   // identity loaded (WEB_INTERFACE → The write surface).
   if (ctx.writeEnabled) {
-    const nb = el('button', 'mini');
+    const nb = el('button', 'word');
     nb.setAttribute('data-composer-open', FEED_COMPOSER_KEY);
     nb.setAttribute('aria-label', 'write a new post');
-    nb.appendChild(el('span', null, 'new post'));
+    nb.textContent = 'new post';
     nb.addEventListener('click', () => handlers.openComposer(null));
     head.appendChild(nb);
   }
@@ -101,13 +91,13 @@ export function renderFeedInto(container: HTMLElement, feed: FeedState, handlers
   // The client's own root submissions, newest first, above the node's rows.
   for (const sub of [...ctx.submissionsFor(null)].reverse()) {
     const post = submissionToPost(sub);
-    container.appendChild(card(post, { replyCount: null, flight: flightFor(sub, handlers.tryAgain), onOpen: (id) => handlers.openThread(id, { from: 'feed' }), you: isYou(sub.author, ctx), ...markOpts(sub.author, ctx, handlers), ...listCardOpts(post, ctx, handlers) }));
+    container.appendChild(card(post, { replyCount: null, flight: flightFor(sub, handlers.tryAgain), onOpen: (id) => handlers.openThread(id, { from: 'feed' }), you: isYou(sub.author, ctx), ...identityOpts(ctx, handlers), ...listCardOpts(post, ctx, handlers) }));
   }
 
   // Pending (mempool) posts are the newest — they sit above the confirmed ones,
   // hollow, before any composer exists to create one.
   for (const p of feed.pending) {
-    container.appendChild(card(p, { replyCount: p.descendantCount, onOpen: (id) => handlers.openThread(id, { from: 'feed' }), you: isYou(p.author, ctx), ...markOpts(p.author, ctx, handlers) }));
+    container.appendChild(card(p, { replyCount: p.descendantCount, onOpen: (id) => handlers.openThread(id, { from: 'feed' }), you: isYou(p.author, ctx), ...identityOpts(ctx, handlers) }));
   }
   for (const p of feed.posts) {
     container.appendChild(card(p, feedCardOpts(p, ctx, handlers)));
@@ -121,9 +111,9 @@ export function renderFeedInto(container: HTMLElement, feed: FeedState, handlers
   // the variable-ratio lever the motion contract names.
   const foot = el('div', 'feed-foot');
   if (feed.next !== null) {
-    const b = el('button', 'mini');
+    const b = el('button', 'word');
     b.setAttribute('aria-label', 'load older posts');
-    b.appendChild(el('span', null, 'load older'));
+    b.textContent = 'load older';
     if (feed.loading) (b as HTMLButtonElement).disabled = true;
     else b.addEventListener('click', handlers.loadOlder);
     foot.appendChild(b);

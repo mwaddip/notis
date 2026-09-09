@@ -1,5 +1,5 @@
 import { el, reportNode, shortHex } from '../dom';
-import { card, submissionToPost, flightFor, displayMark, listCardOpts, type CardOpts } from './card';
+import { card, submissionToPost, flightFor, listCardOpts, type CardOpts } from './card';
 import { profileBody } from './profile';
 import { authorBody, authorPostsBody, type AuthorCtx, type PostsCtx } from './author';
 import { flattenThread } from '../model/thread';
@@ -65,14 +65,11 @@ function bar(k: string, ci: number, focused: boolean, lone: boolean, handlers: H
 
   const sub = windowSubject(k);
   if (sub) {
-    // An author or posts window — the kind, the prefix in mono (text), and the
-    // display-only mark; a control cannot nest in the bar's focus label, so the
-    // mark is a span (WEB_INTERFACE → The identity display). ↻ refreshes it.
+    // An author or posts window — the kind, the prefix in mono
+    // (WEB_INTERFACE → The identity display). ↻ refreshes it.
     label.setAttribute('aria-label', 'show this window');
     label.appendChild(el('span', 'name', sub.kind === 'author' ? 'author' : 'posts'));
     label.appendChild(el('span', 'hex', shortHex(sub.key, 10)));
-    const dm = displayMark(ctx.markFor(sub.key));
-    if (dm) label.appendChild(dm);
     ctl.appendChild(
       ctlBtn('↻', sub.kind === 'author' ? 'refresh this author' : 'refresh these posts', () =>
         sub.kind === 'author' ? handlers.refreshAuthor(sub.key) : handlers.refreshAuthorPosts(sub.key),
@@ -117,16 +114,13 @@ function bar(k: string, ci: number, focused: boolean, lone: boolean, handlers: H
   return b;
 }
 
-/** The card opts for a pane card. The prefix always opens the author window — a
- *  read, so it is present even with no identity (WEB_INTERFACE → The identity
- *  display) — and carries the vouch mark, absent when markFor returns null. The
- *  like and link come from listCardOpts (the shared builder); the pane adds
- *  ↩ reply and the withdraw control (WEB_INTERFACE → The withdraw control). */
+/** The card opts for a pane card. The prefix opens the author window — a read,
+ *  present even with no identity (WEB_INTERFACE → The identity display). The like
+ *  and link come from listCardOpts; the pane adds ↩ reply and the withdraw
+ *  control (WEB_INTERFACE → The withdraw control). */
 function writeCardOpts(row: PostJson | WithdrawnJson, ci: number, ctx: RenderCtx, handlers: Handlers): Partial<CardOpts> {
   const base: Partial<CardOpts> = {
     onAuthor: (key) => handlers.openAuthor(key, { from: 'pane', ci }),
-    mark: ctx.markFor(row.author),
-    // The content-image opts every card shares (WEB_INTERFACE → Content).
     expanded: ctx.expandedImages,
     onExpand: handlers.expandImage,
     onCollapse: handlers.collapseImage,
@@ -138,8 +132,6 @@ function writeCardOpts(row: PostJson | WithdrawnJson, ci: number, ctx: RenderCtx
     onReply: (id) => handlers.openComposer(id),
     composerKey: row.id,
     you: ctx.ownKey !== null && row.author === ctx.ownKey,
-    onVouch: (key) => handlers.vouch(key),
-    // A locked identity unlocks in a row under the card (WEB_INTERFACE → The identity module).
     locked: ctx.identity?.locked ?? false,
     ownKey: ctx.ownKey ?? undefined,
     onUnlock: (p) => handlers.unlockIdentity(p),
@@ -169,8 +161,6 @@ function authorCtxFrom(key: string, ci: number, ctx: RenderCtx): AuthorCtx {
     writeEnabled: ctx.writeEnabled,
     ownKey: ctx.ownKey,
     locked: ctx.identity?.locked ?? false,
-    subjectMark: ctx.markFor(key),
-    markFor: (k) => ctx.markFor(k),
     yourVouch: ctx.yourVouch(key),
     flight: d?.flight ?? null,
   };
@@ -185,7 +175,6 @@ function postsCtxFrom(key: string, ci: number, ctx: RenderCtx): PostsCtx {
     writeEnabled: ctx.writeEnabled,
     ownKey: ctx.ownKey,
     locked: ctx.identity?.locked ?? false,
-    markFor: (k) => ctx.markFor(k),
     likePending: (id) => ctx.likePending(id),
     linkUrl: (id) => ctx.linkUrl(id),
     expandedImages: ctx.expandedImages,
@@ -262,9 +251,9 @@ function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handl
   // — a conversation read top to bottom. The button reports what it did.
   if (t.next !== null) {
     const foot = el('div', 'feed-foot');
-    const b = el('button', 'mini');
+    const b = el('button', 'word');
     b.setAttribute('aria-label', 'load more replies');
-    b.appendChild(el('span', null, 'load more replies'));
+    b.textContent = 'load more replies';
     b.addEventListener('click', () => handlers.threadMore(focusedK));
     foot.appendChild(b);
     body.appendChild(foot);

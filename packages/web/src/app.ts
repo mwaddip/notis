@@ -24,7 +24,7 @@ import { readBuildContext } from './wallet/reads';
 import { submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, type SubmitDeps } from './wallet/submit';
 import { identity as identitySingleton } from './identity/identity';
 import { renderKarmaField, renderInvitesRow } from './view/profile';
-import type { Mark, Flight } from './view/card';
+import type { Flight } from './view/card';
 import type { YourVouch } from './view/author';
 import {
   newColumn, newWorkspace, openWindow, closeWindow, moveLeft, moveRight, focusWindow, openSet, locate,
@@ -183,7 +183,6 @@ export class App {
   private vouched = new Map<string, { boxId: string; createdAtBlock: number }>();
   private escrowHeldUntil: number | null = null;
   private optimisticVouches = new Set<string>();
-  private vouchCounts = new Map<string, number>();
   private viewerTip = 0;
   private authorData = new Map<string, AuthorWindowData>();
   private authorPostsData = new Map<string, FeedState>();
@@ -433,7 +432,6 @@ export class App {
       grant: this.grantView,
       membershipBars: this.state.status?.membership ?? null,
       member: this.isMember(),
-      markFor: (key) => this.markFor(key),
       yourVouch: (key) => this.yourVouchFor(key),
       author: this.authorData,
       authorPosts: this.authorPostsData,
@@ -753,7 +751,6 @@ export class App {
       renderFeedInto(this.feedEl, this.state.feed, this.handlers, this.ctx());
       this.feedEl.scrollTop = top;
     });
-    this.applyCountTitles();
   }
 
   /** Replace one card in the feed by post id — the like's optimistic press and its
@@ -792,7 +789,6 @@ export class App {
     // strip to its left edge (WEB_INTERFACE → The workspace).
     const ws = this.workspaceEl;
     preservingScroll(this.panesEl, ws ? () => preservingScroll(ws, rebuild) : rebuild);
-    this.applyCountTitles();
     this.updateHeaderArrows();
   }
 
@@ -825,7 +821,6 @@ export class App {
     oldEl.replaceWith(newEl);
     const newBody = newEl.querySelector<HTMLElement>('.region-body');
     if (newBody) newBody.scrollTop = top;
-    this.applyCountTitles();
   }
 
   /** Re-render every column currently focused on a given window. */
@@ -855,7 +850,6 @@ export class App {
     const region = this.panesEl.querySelector<HTMLElement>(`.region[data-uid="${column.uid}"]`);
     const oldBars = region?.querySelector<HTMLElement>('.bars');
     if (oldBars) oldBars.replaceWith(renderBars(column, ci, this.handlers, this.ctx()));
-    this.applyCountTitles();
   }
 
   private structural(mutate: () => void): void {
@@ -874,8 +868,7 @@ export class App {
   private indexRows(rows: Array<PostJson | WithdrawnJson | null>): void {
     for (const row of rows) {
       if (!row) continue;
-      if (!('kind' in row)) this.state.posts.set(row.id, row); // the live-post index holds live rows only
-      this.vouchCounts.set(row.author, row.authorVouchCount);
+      if (!('kind' in row)) this.state.posts.set(row.id, row);
     }
   }
 
@@ -1276,7 +1269,6 @@ export class App {
     this.vouched.clear();
     this.escrowHeldUntil = null;
     this.optimisticVouches.clear();
-    this.vouchCounts.clear();
     this.viewerTip = 0;
     this.authorData.clear();
     this.authorPostsData.clear();
@@ -1626,27 +1618,6 @@ export class App {
     return k !== null && (k.member || k.invitesAvailable === null);
   }
 
-  /** The mark for any identity — its state and count from the vouch set, the
-   *  optimistic overlay, the escrow gate and the count cache. Absent with no
-   *  identity, for a non-member, and on the reader's own key; disabled while an
-   *  escrow stands or the balance is below the floor (WEB_INTERFACE → The identity
-   *  display). The floor and the escrow are courtesies; the node's refusal is the
-   *  truth. */
-  private markFor(key: string): Mark | null {
-    const cur = this.idm.current();
-    if (cur === null || key === cur.pubKeyHex || !this.isMember()) return null;
-    const count = this.vouchCounts.get(key) ?? null;
-    if (this.escrowHeldUntil !== null && this.escrowHeldUntil > this.viewerTip) {
-      return { state: 'disabled', count, reason: `your stake from an unvouch is held until block ${this.escrowHeldUntil}` };
-    }
-    if (this.profileKarma !== null && BigInt(this.profileKarma.effective) < VOUCH_MIN_BALANCE) {
-      return { state: 'disabled', count, reason: `vouching needs ${VOUCH_MIN_BALANCE} karma held` };
-    }
-    if (this.vouched.has(key)) return { state: 'check', count };
-    if (this.optimisticVouches.has(key) || pendingVouchTargets(this.ledger.all()).has(key)) return { state: 'pending', count };
-    return { state: 'plus', count };
-  }
-
   /** The author window's your-vouch row state — the reader's relation to the
    *  subject and the action, or the one-line reason they cannot (WEB_INTERFACE →
    *  The author window). null with no identity loaded, so the row is absent. */
@@ -1664,6 +1635,7 @@ export class App {
     }
     const v = this.vouched.get(key);
     if (v) return { kind: 'vouched', sinceBlock: v.createdAtBlock, cooldownBlocks };
+    if (this.optimisticVouches.has(key) || pendingVouchTargets(this.ledger.all()).has(key)) return { kind: 'pending' };
     return { kind: 'plus', cooldownBlocks };
   }
 
@@ -1736,65 +1708,33 @@ export class App {
     return held;
   }
 
-  // ---- the count cache: every rendered row carries its author's count, so the
-  // cache fills as pages land (indexRows) and applyCountTitles sets the title on
-  // the live node — no per-author read on a render. One read survives, at the
-  // reader's own vouch or unvouch landing (readOneCount), so their own change
-  // stays the node's (WEB_INTERFACE → The identity display).
-
-  /** The one per-author count read that survives the row-borne cache: after the
-   *  reader's own vouch or unvouch lands, the node's count for that author changed,
-   *  so re-read it before the mark re-renders, never a client-side ±1. A failed
-   *  read clears the entry, so the title is empty rather than the stale count
-   *  (WEB_INTERFACE → The identity display). */
-  private async readOneCount(key: string): Promise<void> {
-    try {
-      const res = await this.client.vouchesByTarget(key, { limit: 1 });
-      this.vouchCounts.set(key, res.count);
-    } catch {
-      this.vouchCounts.delete(key);
-    }
-  }
-
-  /** Set the count title on every live mark — a tooltip, not motion, so it lands
-   *  on the existing node rather than re-rendering. A disabled mark keeps its
-   *  reason. */
-  private applyCountTitles(): void {
-    for (const n of document.querySelectorAll<HTMLElement>('[data-mark-author]:not(.disabled)')) {
-      const k = n.dataset['markAuthor'];
-      if (k === undefined) continue;
-      const c = this.vouchCounts.get(k);
-      if (c === undefined) continue;
-      (n as HTMLElement).title = c <= 0 ? 'no vouches' : c === 1 ? '1 vouch' : `${c} vouches`;
-    }
-  }
-
-  // ---- vouch, from the mark (WEB_INTERFACE → The identity display) ----
+  // ---- vouch, from the author window (WEB_INTERFACE → The author window) ----
 
   private async vouch(key: string): Promise<void> {
     const cur = this.idm.current();
     if (cur === null || this.optimisticVouches.has(key) || this.vouched.has(key)) return;
-    // Muted ✓ at once — the reader did it, the same optimistic rule as a like.
     this.optimisticVouches.add(key);
-    this.renderRegionsForAuthor(key);
+    const d = this.authorData.get(key);
+    if (d) d.flight = { stage: 'submitting' };
+    this.renderRegionsFor(authorWindowId(key));
     let result;
     try {
       result = await submitVouchFlow(this.submitDeps(), key);
     } catch {
       this.optimisticVouches.delete(key);
-      this.reportVouch(key, "vouch rejected: can't reach the node right now.");
-      this.renderRegionsForAuthor(key);
+      if (d) d.flight = { stage: 'rejected', reason: "vouch rejected: can't reach the node right now." };
+      this.renderRegionsFor(authorWindowId(key));
       return;
     }
     if (result.ok) {
-      // The ledger now holds the pending vouch; the mark reads pending from it.
       this.optimisticVouches.delete(key);
+      if (d) d.flight = { stage: 'submitted' };
       this.startPoll();
     } else {
       this.optimisticVouches.delete(key);
-      this.reportVouch(key, 'vouch rejected: ' + vouchRejectionCopy(result.rejection));
+      if (d) d.flight = { stage: 'rejected', reason: 'vouch rejected: ' + vouchRejectionCopy(result.rejection) };
     }
-    this.renderRegionsForAuthor(key);
+    this.renderRegionsFor(authorWindowId(key));
   }
 
   // ---- unvouch, from the author window (WEB_INTERFACE → The author window) ----
@@ -1822,18 +1762,6 @@ export class App {
     this.renderRegionsFor(authorWindowId(key));
   }
 
-  /** Report a vouch rejection where the author's mark is visible — the region
-   *  report in a pane, the feed's line where the feed shows the author (likes are
-   *  panes-only, so this feed case is the vouch's own). */
-  private reportVouch(key: string, text: string): void {
-    if (this.feedHasAuthor(key)) this.state.feed.report = text;
-    for (const column of this.state.workspace.columns) {
-      const fk = column.wins[column.focus];
-      if (fk === undefined) continue;
-      const sub = windowSubject(fk);
-      if ((sub && sub.key === key) || (!isWin(fk) && this.threadHasAuthor(fk, key))) column.report = text;
-    }
-  }
 
   /** Re-render the feed and the panes whose focused surface shows this author —
    *  a card by them, or their author/posts window. The mark changes glyph in a
@@ -1893,11 +1821,7 @@ export class App {
       d.karma = karma;
       d.endorsers = endorsers;
       d.endorsersNext = endorsers.next !== null;
-      this.bumpTip(karma.height); // an author read carries the node's tip too
-      this.vouchCounts.set(key, endorsers.count); // the subject's count, re-read on the window's ↻
-      // Each endorser's own count rides its row (NODE_INTERFACE → Vouches), so
-      // the cache fills for them too — no per-endorser read.
-      for (const v of endorsers.vouches) this.vouchCounts.set(v.voucherId, v.voucherVouchCount);
+      this.bumpTip(karma.height);
     } catch {
       return; // leave the window's last data; the ↻ retries
     }
@@ -1915,7 +1839,6 @@ export class App {
       const page = await this.client.vouchesByTarget(key, { after: d.endorsers.next });
       d.endorsers = { vouches: [...d.endorsers.vouches, ...page.vouches], count: page.count, next: page.next };
       d.endorsersNext = page.next !== null;
-      for (const v of page.vouches) this.vouchCounts.set(v.voucherId, v.voucherVouchCount);
     } catch {
       return;
     }
@@ -2122,8 +2045,8 @@ export class App {
         if (outcome === 'pending') continue;
         this.ledger.remove(entry.txId);
         this.optimisticVouches.delete(entry.postId);
-        if (outcome === 'expired') this.reportVouch(entry.postId, 'a vouch expired before any block took it');
-        await this.readOneCount(entry.postId); // the reader's own vouch landed — re-read the node's count for this author
+        const vd = this.authorData.get(entry.postId);
+        if (vd) vd.flight = outcome === 'expired' ? { stage: 'expired', expiresAtHeight: entry.expiresAtHeight } : null;
         touchedAuthors.add(entry.postId);
         continue;
       }
@@ -2132,8 +2055,7 @@ export class App {
         if (outcome === 'pending') continue;
         this.ledger.remove(entry.txId);
         const d = this.authorData.get(entry.postId);
-        if (d) d.flight = null; // the flight ended; the escrow gate now holds the mark
-        await this.readOneCount(entry.postId); // the reader's own unvouch landed — re-read the node's count
+        if (d) d.flight = null;
         touchedAuthors.add(entry.postId);
         continue;
       }

@@ -1,12 +1,11 @@
-// The phone header's two icons — a person for the profile control, and the moon
-// on Sand / the sun on Bistre for the theme control. Drawn in the house
-// technique: flat, faceted, straight-edged, a little wobble in the angles, no
-// smooth curves — every shape a polygon, never a circle or an arc
-// (HOUSE_STYLE → Illustration). They render as inline SVG in currentColor at the
-// header's control size, and they are the two icons the interface carries;
-// iconography opens nowhere else (HOUSE_STYLE → Deliberately not decided,
-// HOUSE_STYLE → Colour → "On a phone the theme control is a sun or a moon",
-// WEB_INTERFACE → The profile window).
+// The interface's three icons — a person for the profile control, the moon on
+// Sand / the sun on Bistre for the theme control, and the copy glyph for the
+// link control on a card. Drawn in the house technique: flat, faceted,
+// straight-edged, a little wobble in the angles, no smooth curves — every shape
+// a polygon, never a circle or an arc (HOUSE_STYLE → Illustration,
+// HOUSE_STYLE → Deliberately not decided, HOUSE_STYLE → Colour → "On a phone
+// the theme control is a sun or a moon", WEB_INTERFACE → The profile window,
+// WEB_INTERFACE → Links).
 
 const NS = 'http://www.w3.org/2000/svg';
 
@@ -51,5 +50,15 @@ export function sunGlyph(): SVGSVGElement {
 export function moonGlyph(): SVGSVGElement {
   const svg = glyph();
   svg.appendChild(polygon('13,2.8 8,3.4 4.6,6 3.1,10 4.6,14.1 8,16.6 13,17.2 10.2,15.2 8.1,12.2 7.6,10 8.1,7.8 10.2,4.8'));
+  return svg;
+}
+
+/** Two offset sheets as polygons — the back sheet up-left, the front sheet
+ *  down-right covering its corner. The standard copy icon, drawn in the house
+ *  technique (HOUSE_STYLE → Illustration, WEB_INTERFACE → Links). */
+export function copyGlyph(): SVGSVGElement {
+  const svg = glyph();
+  svg.appendChild(polygon('3,2.2 12.6,2 12.8,4.2 6.8,4.4 6.6,13.6 3.2,13.8'));   // back sheet
+  svg.appendChild(polygon('7.2,6.2 17,6 17.2,17.6 7,17.8'));                       // front sheet
   return svg;
 }

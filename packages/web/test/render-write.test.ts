@@ -172,9 +172,9 @@ describe('the like control obeys the exclusions', () => {
     // withdraw control fills the slot, no like button.
     const rootCard = cards.find((c) => c.textContent?.includes('a root by someone else'))!;
     const ownCard = cards.find((c) => c.textContent?.includes('my own reply'))!;
-    expect(rootCard.querySelector('.likebtn')).toBeTruthy();
+    expect([...rootCard.querySelectorAll('button')].some((b) => b.textContent === 'like')).toBe(true);
     expect(rootCard.querySelector('.withdraw-ctl')).toBeNull();
-    expect(ownCard.querySelector('.likebtn')).toBeNull();
+    expect([...ownCard.querySelectorAll('button')].some((b) => b.textContent === 'like')).toBe(false);
     expect(ownCard.querySelector('.withdraw-ctl')).toBeTruthy();
     // Both carry a ↩ reply control.
     expect(rootCard.querySelector('.reply-ctl')).toBeTruthy();
@@ -191,7 +191,7 @@ describe('the @posts window is read-only', () => {
     expect(ownCard).toBeTruthy();
     expect(ownCard.querySelector('.you')?.textContent).toBe('· you'); // recognised as own
     expect(ownCard.querySelector('.withdraw-ctl')).toBeNull(); // the write controls live in the pane, not here
-    expect(ownCard.querySelector('.likebtn')).toBeNull();
+    expect([...ownCard.querySelectorAll('button')].some((b) => b.textContent === 'like')).toBe(false);
     expect(ownCard.querySelector('.reply-ctl')).toBeNull();
   });
 });
@@ -250,12 +250,12 @@ describe('feed cards carry like and link', () => {
     const confirmed = [...h.feed.querySelectorAll('.card:not(.pending)')];
     expect(confirmed.length).toBe(2);
     for (const c of confirmed) {
-      expect(c.querySelector('.likebtn')).toBeTruthy();
+      expect([...c.querySelectorAll('button')].some((b) => b.textContent === 'like')).toBe(true);
       expect(c.querySelector('.linkbtn')).toBeTruthy();
     }
     const pending = h.feed.querySelector('.card.pending');
     expect(pending).toBeTruthy();
-    expect(pending!.querySelector('.likebtn')).toBeNull();
+    expect([...pending!.querySelectorAll('button')].some((b) => b.textContent === 'like')).toBe(false);
     expect(pending!.querySelector('.linkbtn')).toBeNull();
   });
 
@@ -265,8 +265,9 @@ describe('feed cards carry like and link', () => {
     const otherCard = h.feed.querySelector<HTMLElement>(`[data-post-id="${ROOT2}"]`)!;
     expect(otherCard).toBeTruthy();
     const likedCard = h.feed.querySelector<HTMLElement>(`[data-post-id="${ROOT}"]`)!;
-    expect(likedCard.querySelector('.likebtn')).toBeTruthy();
-    likedCard.querySelector<HTMLButtonElement>('.likebtn')!.click();
+    const likeBtn = [...likedCard.querySelectorAll('button')].find((b) => b.textContent === 'like')!;
+    expect(likeBtn).toBeTruthy();
+    likeBtn.click();
     await flush();
     const updated = h.feed.querySelector<HTMLElement>(`[data-post-id="${ROOT}"]`)!;
     expect(updated.querySelector('.liked')).toBeTruthy();
@@ -315,7 +316,7 @@ describe('feed cards carry like and link', () => {
     app.mount(appbar, feed, panes);
     (app as unknown as Harness['drive']).loadFeed();
     await flush();
-    feed.querySelector<HTMLButtonElement>('.likebtn')!.click();
+    [...feed.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === 'like')!.click();
     await flush();
     const report = feed.querySelector('.report');
     expect(report).toBeTruthy();

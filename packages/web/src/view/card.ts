@@ -1,6 +1,7 @@
 import { el, shortHex } from '../dom';
 import { parseContent, renderContent } from './content';
 import { unlockForm } from './passphrase';
+import { copyGlyph } from './glyphs';
 import type { PostJson, WithdrawnJson } from '../api/dto';
 import { isWithdrawn } from '../api/dto';
 import { assertContentHash } from '../integrity';
@@ -10,14 +11,6 @@ import type { Submission, FlightStage } from '../model/state';
 // control; the card is not a button, so its text stays
 // selectable and a pointer can be parked on it.
 
-/** The vouch mark's state, its count for the `title`, and the reason a disabled
- *  one carries instead of the count (WEB_INTERFACE → The identity display). Its
- *  state is glyph and ink weight — never a word and never a colour. */
-export interface Mark {
-  state: 'plus' | 'check' | 'pending' | 'disabled';
-  count: number | null; // null until the per-author read lands; then the title
-  reason?: string;       // a disabled mark's title, in place of the count
-}
 
 /** A client submission's flight, driving the stage line on its own pending card. */
 export interface Flight {
@@ -50,9 +43,7 @@ export interface CardOpts {
   ownKey?: string;                       // the reader's key, the unlock form's username
   onUnlock?: (passphrase: string) => Promise<void>; // load the seed, then the like or vouch proceeds
   // The identity display (WEB_INTERFACE → The identity display).
-  onAuthor?: ((key: string) => void) | null; // the prefix button — and a ✓ mark — open the author window
-  onVouch?: ((key: string) => void) | null;  // a + mark vouches at once, no confirmation
-  mark?: Mark | null;                    // the vouch mark after the prefix; null → none (· you, or no identity)
+  onAuthor?: ((key: string) => void) | null; // the prefix button opens the author window
   // The author's own controls (WEB_INTERFACE → The withdraw control).
   onWithdraw?: ((id: string) => void) | null; // the confirm row's withdraw signs
   withdraw?: 'pending' | Flight | null;  // 'pending' from the ledger, else the transient flight in the slot
@@ -89,100 +80,12 @@ function whoRow(authorKey: string, whenMs: number | null, opts: CardOpts): HTMLE
   } else {
     who.appendChild(el('span', 'hex', shortHex(authorKey, 16)));
   }
-  // · you on the reader's own card, else the vouch mark — the two are exclusive
-  // (WEB_INTERFACE → The identity display). Muted ink, text only, no colour on
-  // · you (HOUSE_STYLE → Identity colour).
+  // · you on the reader's own card (WEB_INTERFACE → The identity display).
   if (opts.you) who.appendChild(el('span', 'you', '· you'));
-  else if (opts.mark) who.appendChild(markNode(authorKey, opts.mark, opts));
   if (whenMs != null) who.appendChild(el('span', 'when', whenText(whenMs)));
   return who;
 }
 
-/** The `title` for a mark — the count and nothing else (WEB_INTERFACE → The
- *  identity display). Empty until the per-author read lands, so a mark is never
- *  withheld for want of a tooltip. */
-function countTitle(count: number | null): string {
-  if (count === null) return '';
-  if (count <= 0) return 'no vouches';
-  return count === 1 ? '1 vouch' : `${count} vouches`;
-}
-
-/** The check, a two-stroke SVG in currentColor at x-height — the self-hosted
- *  faces do not carry U+2713 (WEB_INTERFACE → The identity display). */
-function checkSvg(): SVGSVGElement {
-  const NS = 'http://www.w3.org/2000/svg';
-  const svg = document.createElementNS(NS, 'svg');
-  svg.setAttribute('viewBox', '0 0 12 12');
-  svg.setAttribute('class', 'ck');
-  svg.setAttribute('aria-hidden', 'true');
-  const path = document.createElementNS(NS, 'path');
-  path.setAttribute('d', 'M2.5 6.4 L4.9 9 L9.4 3.4'); // two strokes: the short leg, the long leg
-  path.setAttribute('fill', 'none');
-  path.setAttribute('stroke', 'currentColor');
-  path.setAttribute('stroke-width', '1.6');
-  path.setAttribute('stroke-linecap', 'round');
-  path.setAttribute('stroke-linejoin', 'round');
-  svg.appendChild(path);
-  return svg;
-}
-
-/** The vouch mark — one control, never a word and never a colour, its state glyph
- *  and ink weight (WEB_INTERFACE → The identity display). `+` (U+002B, in the
- *  faces) vouches at once; `✓` (the SVG) opens the author window; a disabled mark
- *  carries its reason as the `title`. A locked identity unlocks in a row under the
- *  meta before the vouch flies, as a like does (WEB_INTERFACE → The identity
- *  module); the author window passes a wrapped `onVouch` and no `locked`, so its
- *  own unlock mounts under the your-vouch row instead. Exported for that window. */
-export function markNode(key: string, mark: Mark, opts: CardOpts): HTMLElement {
-  if (mark.state === 'disabled') {
-    const b = el('button', 'vmark plus disabled');
-    b.dataset['markAuthor'] = key; // the App finds it to set the count title (skipping disabled)
-    (b as HTMLButtonElement).disabled = true;
-    b.appendChild(el('span', 'g', '+'));
-    if (mark.reason) {
-      b.title = mark.reason;
-      b.setAttribute('aria-label', mark.reason);
-    }
-    return b;
-  }
-  if (mark.state === 'plus') {
-    const b = el('button', 'vmark plus');
-    b.dataset['markAuthor'] = key;
-    b.appendChild(el('span', 'g', '+'));
-    b.setAttribute('aria-label', 'vouch for this author — stakes 1 karma');
-    const t = countTitle(mark.count);
-    if (t) b.title = t;
-    b.addEventListener('click', () => {
-      if (opts.locked && opts.ownKey && opts.onUnlock && opts.onVouch) {
-        mountCardUnlock(b, opts.ownKey, opts.onUnlock, () => opts.onVouch!(key));
-        return;
-      }
-      opts.onVouch?.(key);
-    });
-    return b;
-  }
-  // check or pending — the ✓ opens the author window, where unvouch lives.
-  const b = el('button', 'vmark check' + (mark.state === 'pending' ? ' pending' : ''));
-  b.dataset['markAuthor'] = key;
-  b.appendChild(checkSvg());
-  b.setAttribute('aria-label', 'you vouched for this author — open their window');
-  const t = countTitle(mark.count);
-  if (t) b.title = t;
-  b.addEventListener('click', () => opts.onAuthor?.(key));
-  return b;
-}
-
-/** The display-only mark for a title bar (WEB_INTERFACE → The identity display):
- *  ✓ in ink when the reader has vouched, muted while pending, absent otherwise —
- *  never `+`, never a control, because the bar's label is the focus control and a
- *  control cannot nest inside one. */
-export function displayMark(mark: Mark | null): HTMLElement | null {
-  if (!mark || (mark.state !== 'check' && mark.state !== 'pending')) return null;
-  const span = el('span', 'vmark check display' + (mark.state === 'pending' ? ' pending' : ''));
-  span.appendChild(checkSvg());
-  span.setAttribute('aria-label', 'you vouched for this author');
-  return span;
-}
 
 function replyCountNode(count: number | null): HTMLElement | null {
   if (count === null) {
@@ -200,14 +103,15 @@ function replyCountNode(count: number | null): HTMLElement | null {
   return r;
 }
 
-function likeNode(likeCount: number): HTMLElement | null {
+/** The like count — `N liked`; absent at 0. The reader's state is the count's
+ *  colour: inkMute at rest and while the reader's like is pending, greenText
+ *  once a block took it (WEB_INTERFACE → What the feed reads, and what a card
+ *  shows for it). */
+function likedCount(likeCount: number, settled?: boolean): HTMLElement | null {
   if (likeCount <= 0) return null;
-  // `like` NEVER takes an s — a present-tense verb ("7 like this"), not a count
-  // of objects; the protocol has no like object. Read-only here: no viewer is
-  // sent, so there is no "you liked this" and no unlike.
-  const l = el('span', 'like');
+  const l = el('span', 'liked' + (settled ? ' settled' : ''));
   l.appendChild(el('span', 'n', String(likeCount)));
-  l.appendChild(document.createTextNode(' like'));
+  l.appendChild(document.createTextNode(' liked'));
   return l;
 }
 
@@ -259,9 +163,9 @@ export function stageLine(flight: Flight): HTMLElement {
     said.appendChild(document.createTextNode('.'));
     s.appendChild(said);
     if (flight.onTryAgain) {
-      const again = el('button', 'mini');
+      const again = el('button', 'word');
       again.setAttribute('aria-label', 'build this again from your current balance and post it');
-      again.appendChild(el('span', null, 'try again'));
+      again.textContent = 'try again';
       again.addEventListener('click', flight.onTryAgain);
       s.appendChild(again);
     }
@@ -271,22 +175,26 @@ export function stageLine(flight: Flight): HTMLElement {
   return s;
 }
 
-/** The like area — 'liked' once done (no undoing it), a like button otherwise, or
- *  the read-only count on a feed card. `like` never takes an s. */
-function likeArea(post: PostJson, opts: CardOpts): HTMLElement | null {
+/** The like area — the count `N liked`, then the word `like` while it can act,
+ *  the reader's state as the count's colour (WEB_INTERFACE → What the feed reads,
+ *  and what a card shows for it). */
+function likeArea(post: PostJson, opts: CardOpts, meta: HTMLElement): void {
   if (opts.liked) {
-    // inkMute until a block takes it, greenText after — the karma colour.
-    const l = el('span', 'liked' + (opts.likePending ? '' : ' settled'));
     const count = post.likeCount + (opts.likePending ? 1 : 0);
-    if (count > 0) l.appendChild(el('span', 'n', String(count)));
-    l.appendChild(el('span', null, 'liked'));
-    return l;
+    const lk = likedCount(count, !opts.likePending);
+    if (lk) {
+      lk.title = 'you liked this';
+      lk.setAttribute('aria-label', 'you liked this');
+      meta.appendChild(lk);
+    }
+    return;
   }
+  const lk = likedCount(post.likeCount);
+  if (lk) meta.appendChild(lk);
   if (opts.onLike) {
-    const lb = el('button', 'likebtn');
+    const lb = el('button', 'word');
     lb.setAttribute('aria-label', 'like this post — permanent, and moves karma to its author');
-    if (post.likeCount > 0) lb.appendChild(el('span', 'n', String(post.likeCount)));
-    lb.appendChild(el('span', null, 'like'));
+    lb.textContent = 'like';
     lb.addEventListener('click', () => {
       // A locked identity unlocks first, in a row under the meta and in response to
       // the press; on success the like proceeds (WEB_INTERFACE → The identity module).
@@ -296,16 +204,13 @@ function likeArea(post: PostJson, opts: CardOpts): HTMLElement | null {
       }
       opts.onLike!(post.id);
     });
-    return lb;
+    meta.appendChild(lb);
   }
-  return likeNode(post.likeCount);
 }
 
 /** The unlock form in a row under the card's meta; a correct passphrase loads the
- *  seed and the pressed action — a like or a vouch — proceeds, Esc drops the row.
- *  The anchor may be the like control in the meta or the mark up in the who row;
- *  either way the row mounts under this card's one meta (WEB_INTERFACE → The
- *  identity module). */
+ *  seed and the like proceeds, Esc drops the row (WEB_INTERFACE → The identity
+ *  module). */
 function mountCardUnlock(anchor: HTMLElement, ownKey: string, onUnlock: (p: string) => Promise<void>, onProceed: () => void): void {
   const cardBody = anchor.closest('.card-body');
   const meta = cardBody?.querySelector('.meta');
@@ -336,8 +241,8 @@ function withdrawArea(post: PostJson, opts: CardOpts): HTMLElement | null {
   if (w !== null) return stageLine(w); // the transient flight — submitting or expired
   if (!opts.onWithdraw) return null;
 
-  const wb = el('button', 'mini withdraw-ctl');
-  wb.appendChild(el('span', null, 'withdraw'));
+  const wb = el('button', 'word withdraw-ctl');
+  wb.textContent = 'withdraw';
   if (opts.canWithdraw === false) {
     (wb as HTMLButtonElement).disabled = true;
     const reason = 'needs one karma box to sign with; this key has none';
@@ -366,9 +271,9 @@ function mountCardConfirm(anchor: HTMLElement, postId: string, opts: CardOpts): 
   const row = el('div', 'card-confirm');
   row.appendChild(el('div', 'q', 'withdraw this post? the content goes; the replies stay.'));
   const actions = el('div', 'actions');
-  const yes = el('button', 'mini', 'withdraw') as HTMLButtonElement;
+  const yes = el('button', 'word', 'withdraw') as HTMLButtonElement;
   yes.setAttribute('aria-label', 'withdraw this post now');
-  const keep = el('button', 'mini', 'keep') as HTMLButtonElement;
+  const keep = el('button', 'word', 'keep') as HTMLButtonElement;
   keep.setAttribute('aria-label', 'keep this post');
   const dismiss = (): void => {
     row.remove();
@@ -395,23 +300,23 @@ function mountCardConfirm(anchor: HTMLElement, postId: string, opts: CardOpts): 
 /** ↩ reply — a ghost button in the meta row (WEB_INTERFACE → The write surface). */
 function replyButton(id: string, opts: CardOpts): HTMLElement | null {
   if (!opts.onReply) return null;
-  const rb = el('button', 'mini reply-ctl');
+  const rb = el('button', 'word reply-ctl');
   if (opts.composerKey) rb.setAttribute('data-composer-open', opts.composerKey);
   rb.setAttribute('aria-label', 'reply to this post');
   rb.appendChild(el('span', 'g', '↩'));
-  rb.appendChild(el('span', null, 'reply'));
+  rb.appendChild(document.createTextNode(' reply'));
   rb.addEventListener('click', () => opts.onReply!(id));
   return rb;
 }
 
-// WEB_INTERFACE → Links — after ↩ reply, the row's last control.
+// WEB_INTERFACE → Links — the copy glyph at the meta row's right edge.
 function linkButton(opts: CardOpts, meta: HTMLElement): HTMLElement | null {
   if (!opts.linkUrl) return null;
   const url = opts.linkUrl;
   let copied = false;
-  const lb = el('button', 'mini linkbtn');
+  const lb = el('button', 'word linkbtn');
   lb.setAttribute('aria-label', 'copy this post\'s link');
-  lb.appendChild(el('span', null, 'link'));
+  lb.appendChild(copyGlyph());
   lb.addEventListener('click', () => {
     if (copied) return;
     if (typeof navigator.clipboard?.writeText !== 'function') {
@@ -552,12 +457,11 @@ function livePostCard(post: PostJson, opts: CardOpts): HTMLElement {
       // control).
       const wa = withdrawArea(post, opts);
       if (wa) {
-        const count = likeNode(post.likeCount);
+        const count = likedCount(post.likeCount);
         if (count) meta.appendChild(count);
         meta.appendChild(wa);
       } else {
-        const lk = likeArea(post, opts);
-        if (lk) meta.appendChild(lk);
+        likeArea(post, opts, meta);
       }
       if (landed && post.blockHeight !== null) meta.appendChild(inBlockNode(post.blockHeight));
       const rb = replyButton(post.id, opts);

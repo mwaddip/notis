@@ -143,14 +143,6 @@ header .spacer { flex: 1 1 auto; }
    says so in place (WEB_INTERFACE → Content → "An image loads on the reader's
    press"). The host in a control or a failure line is mono, as the link card's is. */
 .card-content .card-image.block { display: block; }
-.card-content .img-show {
-  font-family: var(--sans); font-size: 12.5px; line-height: 1.35; padding: 4px 10px;
-  display: inline-flex; align-items: baseline; gap: 4px; cursor: pointer;
-  background: transparent; color: var(--ink);
-  border: 1px solid var(--borderStrong); border-radius: 4px;
-  transition: background-color .15s ease-out;
-}
-.card-content .img-show:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: 2px; }
 .card-content .host { font-family: var(--mono); font-size: 11.5px; }
 .card-content .card-img { display: block; max-width: 100%; max-height: 480px; object-fit: contain; border-radius: 4px; }
 .card-content .img-failed { color: var(--inkMute); font-style: italic; }
@@ -162,11 +154,11 @@ header .spacer { flex: 1 1 auto; }
 .meta { display: flex; align-items: baseline; gap: 12px; margin-top: 8px;
         height: 22px; font-size: 12.5px; color: var(--inkMute); }
 .meta .n { font-family: var(--mono); }
-/* On a feed card `like` is a read-only count — the feed carries no controls.
-   Inside a pane it is a control or the liked state (see .likebtn / .liked below).
-   A plain count of people, never pluralised — "7 like" is a present-tense verb,
-   not a tally of objects (there is no like object), and there is no unlike. */
-.meta .like { color: var(--inkMute); }
+/* The copy glyph — the meta row's last child, margin-left: auto lands its right
+   edge on the date's. The glyph at 16px, block so the button sizes to it
+   (WEB_INTERFACE → Links). */
+.meta .linkbtn { margin-left: auto; }
+.meta .linkbtn svg { width: 16px; height: 16px; display: inline-block; vertical-align: -4px; }
 
 /* the withdrawn state */
 .withdrawn { font-style: italic; color: var(--inkMute); font-size: 14px; }
@@ -257,18 +249,9 @@ header .spacer { flex: 1 1 auto; }
 .btn-primary:disabled { opacity: .38; cursor: default; }
 .btn-ghost { background: transparent; color: var(--ink); border: 1px solid var(--borderStrong); }
 
-/* like and ↩ reply, the same ghost weight in the meta row. `like` never takes an
-   s — a present-tense verb, not a tally. Once liked it stops being a control (no
-   undoing it): inkMute until a block takes it, greenText after, the karma colour. */
-.meta .likebtn {
-  font-family: var(--sans); font-size: 11.5px; line-height: 1.35; padding: 2px 8px;
-  display: inline-flex; align-items: baseline; gap: 5px; cursor: pointer;
-  background: transparent; color: var(--inkMute);
-  border: 1px solid var(--borderStrong); border-radius: 4px;
-  transition: background-color .15s ease-out, color .15s ease-out;
-}
-.meta .likebtn:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: 2px; }
-.meta .likebtn .n { font-family: var(--mono); }
+/* The like count reads N liked; the word `like` after it acts; the reader's
+   like is the count's colour — inkMute while pending, greenText once settled
+   (WEB_INTERFACE → What the feed reads, and what a card shows for it). */
 .meta .liked { display: inline-flex; align-items: baseline; gap: 5px; color: var(--inkMute); }
 .meta .liked.settled { color: var(--greenText); }
 .meta .liked .n { font-family: var(--mono); }
@@ -387,18 +370,20 @@ header .spacer { flex: 1 1 auto; }
 .depth-3 { margin-left: 48px; }
 .thread-root { border-color: var(--borderStrong); }
 
-/* A small ghost control (load older, try again). Its outline is its sole
-   boundary — the 3:1 case the accessibility contract licenses, so borderStrong,
-   the same token as the strip's edge. */
-.mini {
-  font-family: var(--sans); font-size: 11.5px; line-height: 1.35; padding: 2px 8px;
-  display: inline-flex; align-items: baseline; gap: 5px; cursor: pointer;
-  background: transparent; color: var(--ink);
-  border: 1px solid var(--borderStrong); border-radius: 4px;
-  transition: background-color .15s ease-out;
+/* A word is a control, and it wears no box — the word alone in the row's own
+   face, ink at rest, inkMute when it cannot act, the focus ring, the underline on
+   hover where hover exists, and at a coarse pointer a 36px hit box by padding a
+   negative margin absorbs. The identity prefix set the pattern and every word
+   follows it (HOUSE_STYLE → Interaction → "A word is a control, and it wears no box"). */
+.word {
+  -webkit-appearance: none; appearance: none;
+  background: transparent; border: 0; border-radius: 0;
+  padding: 0; margin: 0;
+  font: inherit; line-height: inherit;
+  color: var(--ink); cursor: pointer;
 }
-.mini:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: 2px; }
-.mini:disabled { opacity: .35; cursor: default; }
+.word:disabled, .word.muted { color: var(--inkMute); cursor: default; }
+.word:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: 2px; }
 
 /* WEB_INTERFACE → Links — the fallback row when the clipboard is absent. */
 .card-link {
@@ -424,17 +409,12 @@ header .spacer { flex: 1 1 auto; }
                 border: 1px solid var(--border); border-radius: 4px; background: var(--surface); }
 .winbody .arr.empty { color: var(--inkMute); }
 
-/* A segmented control (theme, identity tint). Selected reads as a filled chip. */
-.seg { display: flex; border: 1px solid var(--borderStrong); border-radius: 4px; overflow: hidden; }
-.seg button {
-  font-family: var(--sans); font-size: 12px; padding: 4px 10px; cursor: pointer;
-  border: 0; border-right: 1px solid var(--border);
-  background: transparent; color: var(--inkMute);
-  transition: background-color .15s ease-out, color .15s ease-out;
-}
-.seg button:last-child { border-right: 0; }
-.seg button[aria-pressed="true"] { background: var(--greenText); color: var(--onGreen); }
-.seg button:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: -2px; }
+/* A segmented control (identity tint). Each value is a word; the chosen one in
+   ink, the rest inkMute, aria-pressed as today — no fill, no group border
+   (HOUSE_STYLE → Interaction → "A word is a control, and it wears no box"). */
+.seg { display: flex; gap: 8px; }
+.seg .word { color: var(--inkMute); }
+.seg .word[aria-pressed="true"] { color: var(--ink); }
 
 /* ---------- profile window — identity, standing, karma, the forms ---------- */
 .winrule { border: 0; border-top: 1px solid var(--border); margin: 6px 0 18px; }
@@ -494,29 +474,6 @@ header .spacer { flex: 1 1 auto; }
    (WEB_INTERFACE → The identity display). */
 .authorbtn:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: 2px; }
 
-/* The vouch mark — WEB_INTERFACE → The identity display. A control after the
-   prefix: + to vouch (muted ink), ✓ once vouched (ink), a muted ✓ while pending.
-   State is glyph and ink weight, never a colour (HOUSE_STYLE → Identity colour)
-   and never a word. The glyph is small; the click target is a ghost button whose
-   outline is its sole boundary — the 3:1 case, so borderStrong (HOUSE_STYLE →
-   Accessibility contract). */
-.vmark {
-  font-family: var(--sans); /* a control glyph, like ↻ ← ✕ › and like — mono is machine data only (HOUSE_STYLE → Typography) */
-  display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box;
-  min-width: 20px; height: 19px; padding: 0 5px; cursor: pointer; line-height: 1;
-  background: transparent; border: 1px solid var(--borderStrong); border-radius: 4px;
-  transition: background-color .15s ease-out, color .15s ease-out;
-}
-.vmark.plus { color: var(--inkMute); }
-.vmark.plus .g { font-size: 14px; font-weight: 600; }
-.vmark.check { color: var(--ink); }
-.vmark.check.pending { color: var(--inkMute); }
-.vmark .ck { width: 12px; height: 12px; display: block; }
-.vmark:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: 2px; }
-.vmark.disabled { color: var(--inkMute); opacity: .4; cursor: default; }
-/* The title bar's mark is display only — the ✓ glyph alone, no button and no
-   border, because a control cannot nest inside the bar's focus label. */
-.vmark.display { border: none; min-width: 0; height: auto; padding: 0 0 0 2px; cursor: default; }
 
 /* A locked like's or vouch's unlock form, in a row under the card's meta row
    (HOUSE_STYLE → Motion). */
@@ -577,8 +534,6 @@ header .spacer { flex: 1 1 auto; }
    hover (WEB_INTERFACE → The workspace, HOUSE_STYLE → Interaction). */
 @media (hover: hover) {
   .theme-btn:hover { opacity: .85; }
-  .card-content .img-show:hover { background: rgba(0,0,0,.05); }
-  :root[data-t="dark"] .card-content .img-show:hover { background: rgba(255,255,255,.06); }
   .strip:hover { background: rgba(0,0,0,.05); color: var(--ink); }
   :root[data-t="dark"] .strip:hover { background: rgba(255,255,255,.06); }
   .card.open .strip:hover { background: color-mix(in srgb, var(--greenText) 22%, transparent); }
@@ -587,22 +542,13 @@ header .spacer { flex: 1 1 auto; }
   .btn-primary:hover { opacity: .88; }
   .btn-ghost:hover { background: rgba(0,0,0,.05); }
   :root[data-t="dark"] .btn-ghost:hover { background: rgba(255,255,255,.06); }
-  .meta .likebtn:hover { color: var(--greenText); background: rgba(0,0,0,.05); }
-  :root[data-t="dark"] .meta .likebtn:hover { background: rgba(255,255,255,.06); }
   .bar:hover { background: rgba(0,0,0,.04); }
   :root[data-t="dark"] .bar:hover { background: rgba(255,255,255,.05); }
   .ctl:hover { background: rgba(0,0,0,.08); color: var(--ink); }
   :root[data-t="dark"] .ctl:hover { background: rgba(255,255,255,.09); }
   .ctl:disabled:hover { background: transparent; color: var(--inkMute); }
-  .mini:hover { background: rgba(0,0,0,.05); }
-  :root[data-t="dark"] .mini:hover { background: rgba(255,255,255,.06); }
-  .mini:disabled:hover { background: transparent; }
-  .seg button:hover { color: var(--ink); }
+  .word:not(:disabled):hover { text-decoration: underline; text-underline-offset: 2px; }
   .authorbtn:hover { color: var(--ink); }
-  .vmark:hover { background: rgba(0,0,0,.05); }
-  :root[data-t="dark"] .vmark:hover { background: rgba(255,255,255,.06); }
-  .vmark.disabled:hover { background: transparent; }
-  .vmark.display:hover { background: transparent; }
 }
 
 /* Hit size follows the pointer: on a coarse pointer every control's hit box grows
@@ -615,17 +561,20 @@ header .spacer { flex: 1 1 auto; }
   .feed-head .ctl { width: 44px; height: 36px; }
   .bar { padding: 4px 8px 4px 12px; }
   /* The meta row, the stage line and the karma field grow their fixed line box to
-     36px, the controls in them filling it — a card is 14px taller on touch,
-     uniformly, the geometry price the motion contract asks. */
+     36px — a card is 14px taller on touch, uniformly, the geometry price the
+     motion contract asks. */
   .meta, .stage { height: 36px; }
   .karma-field { min-height: 36px; }
-  .meta .likebtn { min-height: 36px; padding: 6px 12px; }
-  .vmark:not(.display) { min-height: 36px; }
-  /* The ghost, segmented and select controls to a 36px minimum. */
-  .mini, .btn, .theme-btn, .img-show, .seg button, .composer-foot select { min-height: 36px; }
-  /* The prefix control's hit box grows to the 36px minimum, the negative margin
-     absorbing the growth so the row's geometry does not change. */
-  .authorbtn { padding: 10px 0; margin: -10px 0; }
+  /* The boxed controls and the select to a 36px minimum. */
+  .btn, .theme-btn, .composer-foot select { min-height: 36px; }
+  /* A word control's hit box grows by padding a negative margin absorbs, so the
+     row's geometry is unchanged (HOUSE_STYLE → Interaction → "A word is a
+     control, and it wears no box", WEB_INTERFACE → The workspace). */
+  .word, .authorbtn { padding: 10px 0; margin: -10px 0; }
+  /* The copy glyph's hit box is a 36px square by horizontal padding the negative
+     margin absorbs, so the glyph's right edge stays on the date's
+     (WEB_INTERFACE → Links). */
+  .meta .linkbtn { padding: 10px 0 10px 20px; margin: -10px 0 -10px auto; }
   /* Text fields at 16px so WebKit does not zoom the page on focus. */
   .composer textarea, .composer input, .winbody input { font-size: 16px; }
 }

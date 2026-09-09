@@ -11,35 +11,33 @@ import type {
 import { karmaResult } from './karma-fixture';
 import { contentHashHex } from '../src/integrity';
 
-// The App's membership surface driven over fakes: the mark on a feed card, a
-// vouch's optimistic pending state and its landing, a rejection reverting the
-// mark, an identity change rebuilding the vouch set, and the author window
-// opening and loading.
+// The App's membership surface driven over fakes: a vouch's optimistic pending
+// state and its landing through the author window, a rejection, an identity
+// change rebuilding the vouch set, and the author window opening and loading.
 
 const ME = 'aa'.repeat(32);
-const X = 'bb'.repeat(32); // another author, present in the feed
-const X_VOUCHES = 7; // X's count carried by every feed row — distinct from the target read (3), so the title's source is provable
-const V1 = 'dd'.repeat(32); // an endorser of X, distinct from the reader and the subject
-const V1_VOUCHES = 9; // V1's own count, carried by the endorser row it comes with — distinct from every other count here
+const X = 'bb'.repeat(32);
+const V1 = 'dd'.repeat(32);
+const V1_VOUCHES = 9;
 const SIG = 'cc'.repeat(64);
 
 let idState: { pubKeyHex: string; locked: boolean } | null;
 let onChangeCb: () => void;
 let feedViewers: Array<string | undefined>;
-let vouchSet: VouchesVoucherResult['vouches']; // the reader's live vouches, mutable
+let vouchSet: VouchesVoucherResult['vouches'];
 let cooldowns: VouchCooldownsResult['cooldowns'];
-let targetReads: string[]; // vouchesByTarget calls — the count cache
+let targetReads: string[];
 let blockHeight: number;
 let writeCalls: Array<{ kind: string; targetHex?: string }>;
 let vouchResp: { ok: boolean };
-let lastSigned: string; // the txId the App signed — the node echoes it back
-let effective: string; // the reader's effective karma — the vouch floor courtesy
+let lastSigned: string;
+let effective: string;
 
 function post(id: string, author: string): PostJson {
   return {
     id, content: 'hi', contentHash: contentHashHex('hi'), author, parentRefs: [],
     protocolVersion: 1, type: 'regular', status: 'confirmed', blockHeight: 10, blockIndex: 0,
-    blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorVouchCount: X_VOUCHES, likedByViewer: null,
+    blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorVouchCount: 7, likedByViewer: null,
   };
 }
 function statusResult(): StatusResult {
@@ -50,9 +48,8 @@ function statusResult(): StatusResult {
     membership: { memberCount: 2, memberBar: 3, memberLikesBar: 6 },
   };
 }
-const KBOX = '11'.repeat(32); // a valid 64-hex box id — computeTxId encodes inputs as b32
+const KBOX = '11'.repeat(32);
 function memberKarma(key: string): KarmaResult {
-  // A member; `effective` drives the vouch-floor courtesy.
   return karmaResult({ userId: key, member: true, invitesAvailable: 2, memberSinceBlock: 5, boxCount: 1, total: effective, effective, boxes: [{ boxId: KBOX, value: effective }], height: blockHeight });
 }
 
@@ -81,7 +78,6 @@ function fakeWrite(): WriteClient {
   return {
     submitVouch: async () => {
       writeCalls.push({ kind: 'vouch' });
-      // The node echoes the client's own signed txId (as a matching node does).
       return vouchResp.ok ? { status: 'pending', txId: lastSigned, expiresAtHeight: blockHeight + 720 } : { status: 400, message: 'already vouched for this pair' };
     },
     submitUnvouch: async (targetHex: string) => {
@@ -149,77 +145,76 @@ beforeEach(() => {
 });
 afterEach(() => { vi.useRealTimers(); });
 
-describe('the mark on a feed card', () => {
-  it('a member sees the + mark on another author, absent before membership loads', async () => {
+describe('no mark on a feed card', () => {
+  it('a member sees no mark on another author in the feed', async () => {
     const h = harness();
     await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
     await flush();
-    // Before membership state is read, no mark (member unknown).
     expect(h.feed.querySelector('.vmark')).toBeNull();
-    await h.drive.loadMembershipState();
-    await flush();
-    // Now a member: the + mark on X's card.
-    expect(h.feed.querySelector('.vmark.plus')).not.toBeNull();
-  });
-
-  it("the mark's title is the row's count, set on a page load with no GET /vouches?target=", async () => {
-    const h = harness();
-    await h.drive.loadFeed();
-    await h.drive.loadMembershipState();
-    await flush();
-    // The count arrived with the feed row (authorVouchCount = 7), so the title is
-    // set with no per-author read — never the 3 the target endpoint would answer.
-    expect(h.feed.querySelector('.vmark.plus')?.getAttribute('title')).toBe(`${X_VOUCHES} vouches`);
-    expect(targetReads).not.toContain(X);
   });
 });
 
-describe('vouch from the mark', () => {
-  it('marks pending at once and lands a vouch ledger entry', async () => {
+describe('vouch through the author window', () => {
+  it('a vouch lands a ledger entry and the your-vouch row changes', async () => {
     const h = harness();
     await h.drive.loadFeed();
     await h.drive.loadMembershipState();
     await flush();
     await h.drive.vouch(X);
     await flush();
-    // A vouch ledger entry, and the mark reads pending (muted ✓).
     expect(h.drive.ledger.all().some((e) => e.kind === 'vouch' && e.postId === X)).toBe(true);
-    expect(h.feed.querySelector('.vmark.check.pending')).not.toBeNull();
     expect(writeCalls.some((c) => c.kind === 'vouch')).toBe(true);
   });
 
-  it('a rejection reverts the mark to + and reports the reason', async () => {
+  it('a rejection removes the entry and shows the reason in the author window', async () => {
     const h = harness();
     vouchResp.ok = false;
     await h.drive.loadFeed();
     await h.drive.loadMembershipState();
     await flush();
+    h.drive.openAuthor(X, { from: 'feed' });
+    await flush();
     await h.drive.vouch(X);
     await flush();
-    // No entry, the mark back to +, and the reason on the feed.
     expect(h.drive.ledger.all().some((e) => e.kind === 'vouch')).toBe(false);
-    expect(h.feed.querySelector('.vmark.plus')).not.toBeNull();
-    expect(h.feed.textContent).toContain('vouch rejected');
+    const authorWin = h.panes.querySelector('.winbody');
+    expect(authorWin?.textContent).toContain('vouch rejected');
   });
 
-  it('the poll lands a pending vouch — the mark turns to ✓ in ink', async () => {
+  it('the vouch press sets the flight and the row carries the stage line', async () => {
     const h = harness();
     await h.drive.loadFeed();
     await h.drive.loadMembershipState();
     await flush();
+    h.drive.openAuthor(X, { from: 'feed' });
+    await flush();
     await h.drive.vouch(X);
     await flush();
-    // The node now lists the pair; the tip moves and the poll reconciles.
+    const authorWin = h.panes.querySelector('.winbody');
+    expect(authorWin?.querySelector('.stage')?.textContent).toContain('submitted');
+    const vouchWord = [...(authorWin?.querySelectorAll('button') ?? [])].find((b) => b.textContent?.trim() === 'vouch');
+    expect(vouchWord).toBeUndefined();
+  });
+
+  it('the poll lands a pending vouch — the vouched set gains the target and the flight clears', async () => {
+    const h = harness();
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    await flush();
+    h.drive.openAuthor(X, { from: 'feed' });
+    await flush();
+    await h.drive.vouch(X);
+    await flush();
     vouchSet = [{ boxId: '22'.repeat(32), value: '1', createdAtBlock: 100, voucherId: ME, targetId: X }];
     blockHeight = 101;
     await h.drive.pollTick();
     await flush();
     expect(h.drive.vouched.has(X)).toBe(true);
-    expect(h.drive.ledger.all().some((e) => e.kind === 'vouch')).toBe(false); // landed, entry gone
-    expect(h.feed.querySelector('.vmark.check:not(.pending)')).not.toBeNull();
-    // The landing re-reads the node's count for the landed author — exactly one
-    // GET /vouches?target=, and only for X.
-    expect(targetReads).toEqual([X]);
+    expect(h.drive.ledger.all().some((e) => e.kind === 'vouch')).toBe(false);
+    const authorWin = h.panes.querySelector('.winbody');
+    expect(authorWin?.textContent).toContain('vouched');
+    expect(authorWin?.querySelector('.stage')).toBeNull();
   });
 });
 
@@ -231,57 +226,26 @@ describe('the author window', () => {
     await flush();
     h.drive.openAuthor(X, { from: 'feed' });
     await flush();
-    // The window renders in a pane — the key row shows X's whole key.
     const labels = [...h.panes.querySelectorAll('.row > label')].map((l) => l.textContent);
     expect(labels).toContain('key');
     expect(labels).toContain('endorsers');
     expect(h.panes.textContent).toContain(X);
-    // The endorsers were read (vouchesByTarget for the subject).
     expect(targetReads).toContain(X);
   });
 
-  it("an endorser row's mark is titled from the row's voucherVouchCount, with no read for it", async () => {
+  it('an endorser row carries the prefix alone — no mark', async () => {
     const h = harness();
     await h.drive.loadFeed();
     await h.drive.loadMembershipState();
     await flush();
     h.drive.openAuthor(X, { from: 'feed' });
     await flush();
-    const mark = h.panes.querySelector('.endorser .vmark') as HTMLElement;
-    expect(mark).not.toBeNull();
-    expect(mark.getAttribute('title')).toBe(`${V1_VOUCHES} vouches`);
-    // Only the subject was read — the endorser's own count came with its row.
-    expect(targetReads).toEqual([X]);
-  });
-});
-
-describe('the mark disabled gates', () => {
-  it('an escrow held past the tip disables the mark with the held reason (plain digits)', async () => {
-    const h = harness();
-    cooldowns = [{ boxId: 'e1', value: '1', releaseAtBlock: 200 }]; // > tip (100)
-    await h.drive.loadFeed();
-    await h.drive.loadMembershipState();
-    await flush();
-    const mark = h.feed.querySelector('.vmark') as HTMLButtonElement;
-    expect(mark.classList.contains('disabled')).toBe(true);
-    expect(mark.disabled).toBe(true);
-    expect(mark.title).toBe('your stake from an unvouch is held until block 200');
+    const endorser = h.panes.querySelector('.endorser')!;
+    expect(endorser.querySelector('.authorbtn')).not.toBeNull();
+    expect(endorser.querySelector('.vmark')).toBeNull();
   });
 
-  it('a balance below the floor disables the mark with the floor reason', async () => {
-    const h = harness();
-    effective = '5'; // below VOUCH_MIN_BALANCE (11)
-    await h.drive.loadFeed();
-    await h.drive.loadMembershipState();
-    await flush();
-    const mark = h.feed.querySelector('.vmark') as HTMLButtonElement;
-    expect(mark.classList.contains('disabled')).toBe(true);
-    expect(mark.title).toContain('11 karma');
-  });
-});
-
-describe('the author window through the App', () => {
-  it("a vouched author's window carries the display ✓ on its bar", async () => {
+  it('no display mark on the bar', async () => {
     const h = harness();
     vouchSet = [{ boxId: '22'.repeat(32), value: '1', createdAtBlock: 50, voucherId: ME, targetId: X }];
     await h.drive.loadFeed();
@@ -289,7 +253,7 @@ describe('the author window through the App', () => {
     await flush();
     h.drive.openAuthor(X, { from: 'feed' });
     await flush();
-    expect(h.panes.querySelector('.bar .vmark.display.check')).not.toBeNull();
+    expect(h.panes.querySelector('.bar .vmark')).toBeNull();
   });
 
   it('an unvouch flight lands with an escrow — the your-vouch row reads the held reason', async () => {
@@ -302,7 +266,6 @@ describe('the author window through the App', () => {
     await flush();
     await h.drive.unvouch(X);
     await flush();
-    // The node drops the pair and posts a cooldown; the poll lands the unvouch.
     vouchSet = [];
     cooldowns = [{ boxId: 'e1', value: '1', releaseAtBlock: 200 }];
     blockHeight = 101;
@@ -323,7 +286,6 @@ describe('an identity change', () => {
     await h.drive.loadMembershipState();
     await flush();
     expect(h.drive.vouched.has(X)).toBe(true);
-    // Switch identity: the vouch set is cleared, then rebuilt for the new key.
     idState = { pubKeyHex: 'dd'.repeat(32), locked: false };
     vouchSet = [];
     onChangeCb();

@@ -1,7 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, it, expect } from 'vitest';
 import { authorBody, authorPostsBody, type AuthorCtx, type AuthorHandlers, type PostsCtx, type PostsHandlers } from '../src/view/author';
-import type { Mark } from '../src/view/card';
 import type { PostJson, KarmaResult } from '../src/api/dto';
 import type { FeedState } from '../src/model/state';
 import type { Origin } from '../src/model/workspace';
@@ -45,8 +44,6 @@ function baseCtx(over: Partial<AuthorCtx> = {}): AuthorCtx {
     writeEnabled: true,
     ownKey: ME,
     locked: false,
-    subjectMark: { state: 'plus', count: 3 },
-    markFor: () => ({ state: 'plus', count: 0 }) as Mark,
     yourVouch: { kind: 'plus', cooldownBlocks: 60 },
     flight: null,
     ...over,
@@ -54,41 +51,42 @@ function baseCtx(over: Partial<AuthorCtx> = {}): AuthorCtx {
 }
 
 describe('the author window', () => {
-  it('with no identity is the read surface: key, standing, endorsers, no marks, no your-vouch row', () => {
+  it('with no identity is the read surface: key, standing, endorsers, no your-vouch row', () => {
     const h = noHandlers();
-    const b = authorBody(h, baseCtx({ writeEnabled: false, ownKey: null, subjectMark: null, markFor: () => null, yourVouch: null }));
+    const b = authorBody(h, baseCtx({ writeEnabled: false, ownKey: null, yourVouch: null }));
     const labels = [...b.querySelectorAll('.row > label')].map((l) => l.textContent);
-    expect(labels).toEqual(['key', 'standing', 'endorsers', 'posts']); // no your-vouch row
-    expect(b.querySelector('.vmark')).toBeNull(); // no marks
-    // The whole key is shown, mono.
+    expect(labels).toEqual(['key', 'standing', 'endorsers', 'posts']);
+    expect(b.querySelector('.vmark')).toBeNull();
     expect(b.querySelector('.row .mono')?.textContent).toBe(AUTHOR);
   });
 
-  it('the subject mark renders in the key row, and its ✓ opens no window until pressed', () => {
+  it('the key row shows the whole key in mono, no mark', () => {
     const h = noHandlers();
-    const b = authorBody(h, baseCtx({ subjectMark: { state: 'check', count: 2 } }));
+    const b = authorBody(h, baseCtx());
     const keyField = b.querySelector('.row .field')!;
-    expect(keyField.querySelector('.vmark.check')).not.toBeNull();
+    expect(keyField.querySelector('.mono')?.textContent).toBe(AUTHOR);
+    expect(keyField.querySelector('.vmark')).toBeNull();
   });
 
-  it('the your-vouch row: + vouch with the stakes sentence and the cooldown from /status', () => {
+  it('the your-vouch row: the word vouch with the stakes sentence and the cooldown from /status', () => {
     const h = noHandlers();
     const b = authorBody(h, baseCtx({ yourVouch: { kind: 'plus', cooldownBlocks: 60 } }));
     const yv = [...b.querySelectorAll('.row')].find((r) => r.querySelector('label')?.textContent === 'your vouch')!;
-    expect(yv.querySelector('.vmark.plus')).not.toBeNull();
+    const vouchBtn = [...yv.querySelectorAll('button')].find((x) => x.textContent === 'vouch')!;
+    expect(vouchBtn).not.toBeNull();
+    expect(vouchBtn.classList.contains('word')).toBe(true);
     expect(yv.textContent).toContain('stakes 1 karma');
     expect(yv.textContent).toContain('60');
-    (yv.querySelector('.vmark.plus') as HTMLElement).click();
+    vouchBtn.click();
     expect(h.calls.vouch).toEqual([AUTHOR]);
   });
 
-  it('the your-vouch row: ✓ vouched since block N · unvouch, a visible held hint, and unvouch fires', () => {
+  it('the your-vouch row: vouched since block N · unvouch, a visible held hint, and unvouch fires', () => {
     const h = noHandlers();
     const b = authorBody(h, baseCtx({ yourVouch: { kind: 'vouched', sinceBlock: 5000, cooldownBlocks: 60 } }));
     const yv = [...b.querySelectorAll('.row')].find((r) => r.querySelector('label')?.textContent === 'your vouch')!;
     expect(yv.textContent).toContain('vouched');
     expect(yv.textContent).toContain('5000');
-    // The voice rule: what happens stated in visible text, not only an aria-label.
     expect(yv.textContent).toContain('held for');
     expect(yv.textContent).toContain('60');
     const unvouch = [...yv.querySelectorAll('button')].find((x) => x.textContent === 'unvouch')!;
@@ -96,13 +94,19 @@ describe('the author window', () => {
     expect(h.calls.unvouch).toEqual([AUTHOR]);
   });
 
+  it('a pending vouch carries the flight stage line in the word\'s place — no vouch word', () => {
+    const h = noHandlers();
+    const b = authorBody(h, baseCtx({ yourVouch: { kind: 'pending' }, flight: { stage: 'submitting' } }));
+    const yv = [...b.querySelectorAll('.row')].find((r) => r.querySelector('label')?.textContent === 'your vouch')!;
+    expect(yv.querySelector('.stage')?.textContent).toContain('submitting');
+    expect([...yv.querySelectorAll('button')].find((x) => x.textContent === 'vouch')).toBeUndefined();
+  });
+
   it('a flight ending shows in the your-vouch row whatever its ending — plus and vouched alike', () => {
     const h = noHandlers();
-    // A rejected vouch from this window shows its reason in the row's stage line.
     const plus = authorBody(h, baseCtx({ yourVouch: { kind: 'plus', cooldownBlocks: 60 }, flight: { stage: 'rejected', reason: 'vouch rejected: already vouched' } }));
     const plusRow = [...plus.querySelectorAll('.row')].find((r) => r.querySelector('label')?.textContent === 'your vouch')!;
     expect(plusRow.querySelector('.stage')?.textContent).toContain('already vouched');
-    // An unvouch's stage line shows on the vouched state too.
     const vouched = authorBody(h, baseCtx({ yourVouch: { kind: 'vouched', sinceBlock: 5000, cooldownBlocks: 60 }, flight: { stage: 'submitting' } }));
     const vRow = [...vouched.querySelectorAll('.row')].find((r) => r.querySelector('label')?.textContent === 'your vouch')!;
     expect(vRow.querySelector('.stage')?.textContent).toContain('submitting');
@@ -113,17 +117,17 @@ describe('the author window', () => {
     const b = authorBody(h, baseCtx({ yourVouch: { kind: 'reason', text: 'vouching comes with membership' } }));
     const yv = [...b.querySelectorAll('.row')].find((r) => r.querySelector('label')?.textContent === 'your vouch')!;
     expect(yv.textContent).toContain('vouching comes with membership');
-    expect(yv.querySelector('button')).toBeNull(); // no action
+    expect(yv.querySelector('button')).toBeNull();
   });
 
-  it('an endorser row: the prefix opens THAT author\'s window, and their mark is present', () => {
+  it('an endorser row: the prefix opens THAT author\'s window', () => {
     const h = noHandlers();
     const b = authorBody(h, baseCtx());
     const endorser = b.querySelector('.endorser')!;
     const btn = endorser.querySelector('.authorbtn') as HTMLElement;
     btn.click();
     expect(h.calls.openAuthor).toEqual([[E1, ORIGIN]]);
-    expect(endorser.querySelector('.vmark')).not.toBeNull(); // the reader can vouch an endorser
+    expect(endorser.querySelector('.vmark')).toBeNull();
   });
 
   it('`more` follows next and posts opens the posts window with the placement origin', () => {
@@ -147,7 +151,9 @@ describe('the author window', () => {
   it('a locked vouch mounts the unlock under the your-vouch row, then vouches', async () => {
     const h = noHandlers();
     const b = authorBody(h, baseCtx({ locked: true }));
-    (b.querySelector('.field .vmark.plus') as HTMLElement).click();
+    const yv = [...b.querySelectorAll('.row')].find((r) => r.querySelector('label')?.textContent === 'your vouch')!;
+    const vouchBtn = [...yv.querySelectorAll('button')].find((x) => x.textContent === 'vouch')!;
+    vouchBtn.click();
     const form = b.querySelector('.card-unlock form.pf') as HTMLFormElement;
     expect(form).not.toBeNull();
     expect(h.calls.vouch).toHaveLength(0);
@@ -165,7 +171,7 @@ describe('the author window', () => {
     [...yv.querySelectorAll('button')].find((x) => x.textContent === 'unvouch')!.click();
     const form = b.querySelector('.card-unlock form.pf') as HTMLFormElement;
     expect(form).not.toBeNull();
-    expect(h.calls.unvouch).toHaveLength(0); // the unvouch waits on the unlock
+    expect(h.calls.unvouch).toHaveLength(0);
     (form.querySelector('input[type="password"]') as HTMLInputElement).value = 'pw';
     form.dispatchEvent(new Event('submit', { cancelable: true }));
     await new Promise((r) => setTimeout(r, 0));
@@ -189,12 +195,11 @@ function feedState(over: Partial<FeedState> = {}): FeedState {
   return { posts: [post(P1, AUTHOR), post(P2, ME)], pending: [], next: null, report: null, olderReport: null, loaded: true, loading: false, error: null, ...over };
 }
 const postsHandlers = (): PostsHandlers & { calls: Record<string, unknown[]> } => {
-  const calls: Record<string, unknown[]> = { openThread: [], openAuthor: [], vouch: [], more: [], like: [] };
+  const calls: Record<string, unknown[]> = { openThread: [], openAuthor: [], more: [], like: [] };
   return {
     calls,
     openThread: (id, o) => calls.openThread!.push([id, o]),
     openAuthor: (k, o) => calls.openAuthor!.push([k, o]),
-    vouch: (k) => calls.vouch!.push(k),
     likePost: (id) => calls.like!.push(id),
     authorPostsMore: (k) => calls.more!.push(k),
     unlockIdentity: async () => {},
@@ -205,7 +210,6 @@ const postsHandlers = (): PostsHandlers & { calls: Record<string, unknown[]> } =
 function postsCtx(over: Partial<PostsCtx> = {}): PostsCtx {
   return {
     authorKey: AUTHOR, origin: ORIGIN, feed: feedState(), writeEnabled: true, ownKey: ME, locked: false,
-    markFor: (k) => (k === ME ? null : ({ state: 'plus', count: 0 } as Mark)),
     likePending: () => false, linkUrl: (id) => `http://localhost/p/${id}`,
     expandedImages: new Set(), ...over,
   };
@@ -218,17 +222,13 @@ describe('the author-posts window', () => {
     const cards = b.querySelectorAll('.card');
     expect(cards.length).toBe(2);
     expect(b.querySelector('.strip')).not.toBeNull();
-    // Another author's card carries a like button and link.
-    expect(cards[0]!.querySelector('.likebtn')).not.toBeNull();
+    expect([...cards[0]!.querySelectorAll('button')].some((b) => b.textContent === 'like')).toBe(true);
     expect(cards[0]!.querySelector('.linkbtn')).not.toBeNull();
-    // The reader's own card carries the read-only count (no like button) and link.
-    expect(cards[1]!.querySelector('.likebtn')).toBeNull();
+    expect([...cards[1]!.querySelectorAll('button')].some((b) => b.textContent === 'like')).toBe(false);
     expect(cards[1]!.querySelector('.linkbtn')).not.toBeNull();
-    // No reply control — it lives in the pane the strip opens.
     expect(b.querySelector('.reply-ctl')).toBeNull();
-    expect(cards[0]!.querySelector('.vmark')).not.toBeNull();
+    expect(cards[0]!.querySelector('.vmark')).toBeNull();
     expect(cards[1]!.querySelector('.you')?.textContent).toBe('· you');
-    expect(cards[1]!.querySelector('.vmark')).toBeNull();
   });
 
   it('the strip opens a thread with the window\'s placement origin', () => {
