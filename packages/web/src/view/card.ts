@@ -387,10 +387,12 @@ export function flightFor(sub: Submission, tryAgain: (localKey: string) => void)
 /** The like and link opts a feed card and an author-posts card carry — the shared
  *  half that a pane composes with reply and withdraw
  *  (WEB_INTERFACE → What the feed reads, and what a card shows for it). */
+// WEB_INTERFACE → What the feed reads, and what a card shows for it — the
+// unlock row under the meta when the identity is locked.
 export function listCardOpts(
   row: PostJson | WithdrawnJson,
-  ctx: { writeEnabled: boolean; ownKey: string | null; likePending: (id: string) => boolean; linkUrl: (id: string) => string },
-  handlers: { likePost: (id: string) => void },
+  ctx: { writeEnabled: boolean; ownKey: string | null; locked: boolean; likePending: (id: string) => boolean; linkUrl: (id: string) => string },
+  handlers: { likePost: (id: string) => void; unlockIdentity: (passphrase: string) => Promise<void> },
 ): Partial<CardOpts> {
   const opts: Partial<CardOpts> = {};
   if (isWithdrawn(row) || row.status === 'confirmed') opts.linkUrl = ctx.linkUrl(row.id);
@@ -404,6 +406,9 @@ export function listCardOpts(
     opts.likePending = overlaid && row.likedByViewer !== true;
   } else {
     opts.onLike = (id) => handlers.likePost(id);
+    opts.locked = ctx.locked;
+    opts.ownKey = ctx.ownKey ?? undefined;
+    opts.onUnlock = (p) => handlers.unlockIdentity(p);
   }
   return opts;
 }
