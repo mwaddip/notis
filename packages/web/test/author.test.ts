@@ -94,6 +94,14 @@ describe('the author window', () => {
     expect(h.calls.unvouch).toEqual([AUTHOR]);
   });
 
+  it('a pending vouch carries the flight stage line in the word\'s place — no vouch word', () => {
+    const h = noHandlers();
+    const b = authorBody(h, baseCtx({ yourVouch: { kind: 'pending' }, flight: { stage: 'submitting' } }));
+    const yv = [...b.querySelectorAll('.row')].find((r) => r.querySelector('label')?.textContent === 'your vouch')!;
+    expect(yv.querySelector('.stage')?.textContent).toContain('submitting');
+    expect([...yv.querySelectorAll('button')].find((x) => x.textContent === 'vouch')).toBeUndefined();
+  });
+
   it('a flight ending shows in the your-vouch row whatever its ending — plus and vouched alike', () => {
     const h = noHandlers();
     const plus = authorBody(h, baseCtx({ yourVouch: { kind: 'plus', cooldownBlocks: 60 }, flight: { stage: 'rejected', reason: 'vouch rejected: already vouched' } }));

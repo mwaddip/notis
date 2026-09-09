@@ -17,7 +17,7 @@ import { WriteClient, type Rejection } from './api/write';
 import { FaucetClient, faucetLine } from './api/faucet';
 import {
   PendingLedger, reconcilePost, reconcileLike, reconcileGrant, reconcileVouch, reconcileUnvouch, reconcileInvite, reconcileWithdraw,
-  pendingLikeTargets, pendingWithdrawTargets,
+  pendingLikeTargets, pendingVouchTargets, pendingWithdrawTargets,
 } from './wallet/ledger';
 import type { PendingEntry } from './wallet/types';
 import { readBuildContext } from './wallet/reads';
@@ -1635,6 +1635,7 @@ export class App {
     }
     const v = this.vouched.get(key);
     if (v) return { kind: 'vouched', sinceBlock: v.createdAtBlock, cooldownBlocks };
+    if (this.optimisticVouches.has(key) || pendingVouchTargets(this.ledger.all()).has(key)) return { kind: 'pending' };
     return { kind: 'plus', cooldownBlocks };
   }
 
@@ -1712,27 +1713,28 @@ export class App {
   private async vouch(key: string): Promise<void> {
     const cur = this.idm.current();
     if (cur === null || this.optimisticVouches.has(key) || this.vouched.has(key)) return;
-    // Muted ✓ at once — the reader did it, the same optimistic rule as a like.
     this.optimisticVouches.add(key);
-    this.renderRegionsForAuthor(key);
+    const d = this.authorData.get(key);
+    if (d) d.flight = { stage: 'submitting' };
+    this.renderRegionsFor(authorWindowId(key));
     let result;
     try {
       result = await submitVouchFlow(this.submitDeps(), key);
     } catch {
       this.optimisticVouches.delete(key);
-      this.reportVouch(key, "vouch rejected: can't reach the node right now.");
-      this.renderRegionsForAuthor(key);
+      if (d) d.flight = { stage: 'rejected', reason: "vouch rejected: can't reach the node right now." };
+      this.renderRegionsFor(authorWindowId(key));
       return;
     }
     if (result.ok) {
-      // The ledger now holds the pending vouch; the mark reads pending from it.
       this.optimisticVouches.delete(key);
+      if (d) d.flight = { stage: 'submitted' };
       this.startPoll();
     } else {
       this.optimisticVouches.delete(key);
-      this.reportVouch(key, 'vouch rejected: ' + vouchRejectionCopy(result.rejection));
+      if (d) d.flight = { stage: 'rejected', reason: 'vouch rejected: ' + vouchRejectionCopy(result.rejection) };
     }
-    this.renderRegionsForAuthor(key);
+    this.renderRegionsFor(authorWindowId(key));
   }
 
   // ---- unvouch, from the author window (WEB_INTERFACE → The author window) ----
@@ -1760,18 +1762,6 @@ export class App {
     this.renderRegionsFor(authorWindowId(key));
   }
 
-  /** Report a vouch rejection where the author's mark is visible — the region
-   *  report in a pane, the feed's line where the feed shows the author (likes are
-   *  panes-only, so this feed case is the vouch's own). */
-  private reportVouch(key: string, text: string): void {
-    if (this.feedHasAuthor(key)) this.state.feed.report = text;
-    for (const column of this.state.workspace.columns) {
-      const fk = column.wins[column.focus];
-      if (fk === undefined) continue;
-      const sub = windowSubject(fk);
-      if ((sub && sub.key === key) || (!isWin(fk) && this.threadHasAuthor(fk, key))) column.report = text;
-    }
-  }
 
   /** Re-render the feed and the panes whose focused surface shows this author —
    *  a card by them, or their author/posts window. The mark changes glyph in a
@@ -2055,7 +2045,8 @@ export class App {
         if (outcome === 'pending') continue;
         this.ledger.remove(entry.txId);
         this.optimisticVouches.delete(entry.postId);
-        if (outcome === 'expired') this.reportVouch(entry.postId, 'a vouch expired before any block took it');
+        const vd = this.authorData.get(entry.postId);
+        if (vd) vd.flight = outcome === 'expired' ? { stage: 'expired', expiresAtHeight: entry.expiresAtHeight } : null;
         touchedAuthors.add(entry.postId);
         continue;
       }

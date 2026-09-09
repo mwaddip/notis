@@ -28,8 +28,9 @@ function mono(text: string): HTMLElement {
 /** The your-vouch row's state, computed by the App (WEB_INTERFACE → The author
  *  window). `null` with no identity loaded — the row is absent. */
 export type YourVouch =
-  | { kind: 'plus'; cooldownBlocks: number }                          // + vouch, the stakes sentence
-  | { kind: 'vouched'; sinceBlock: number | null; cooldownBlocks: number } // ✓ vouched since N · unvouch, the held sentence
+  | { kind: 'plus'; cooldownBlocks: number }                          // vouch, the stakes sentence
+  | { kind: 'pending' }                                               // the flight's stage line in the word's place
+  | { kind: 'vouched'; sinceBlock: number | null; cooldownBlocks: number } // vouched since N · unvouch, the held sentence
   | { kind: 'reason'; text: string };                                 // the one line the reader cannot vouch
 
 export interface AuthorCtx {
@@ -155,6 +156,12 @@ function yourVouch(field: HTMLElement, ctx: AuthorCtx, vouchAction: (k: string) 
     // A one-line reason the reader cannot vouch (WEB_INTERFACE → The author
     // window); no flight applies — there is nothing in flight.
     field.appendChild(el('span', 'hint', yv.text));
+    return;
+  }
+  if (yv.kind === 'pending') {
+    // WEB_INTERFACE → The author window: while the vouch flies the row carries
+    // the flight's stage line in the word's place.
+    if (ctx.flight) field.appendChild(stageLine(ctx.flight));
     return;
   }
   if (yv.kind === 'plus') {

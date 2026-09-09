@@ -167,22 +167,42 @@ describe('vouch through the author window', () => {
     expect(writeCalls.some((c) => c.kind === 'vouch')).toBe(true);
   });
 
-  it('a rejection removes the entry and reports the reason', async () => {
+  it('a rejection removes the entry and shows the reason in the author window', async () => {
     const h = harness();
     vouchResp.ok = false;
     await h.drive.loadFeed();
     await h.drive.loadMembershipState();
     await flush();
+    h.drive.openAuthor(X, { from: 'feed' });
+    await flush();
     await h.drive.vouch(X);
     await flush();
     expect(h.drive.ledger.all().some((e) => e.kind === 'vouch')).toBe(false);
-    expect(h.feed.textContent).toContain('vouch rejected');
+    const authorWin = h.panes.querySelector('.winbody');
+    expect(authorWin?.textContent).toContain('vouch rejected');
   });
 
-  it('the poll lands a pending vouch — the vouched set gains the target', async () => {
+  it('the vouch press sets the flight and the row carries the stage line', async () => {
     const h = harness();
     await h.drive.loadFeed();
     await h.drive.loadMembershipState();
+    await flush();
+    h.drive.openAuthor(X, { from: 'feed' });
+    await flush();
+    await h.drive.vouch(X);
+    await flush();
+    const authorWin = h.panes.querySelector('.winbody');
+    expect(authorWin?.querySelector('.stage')?.textContent).toContain('submitted');
+    const vouchWord = [...(authorWin?.querySelectorAll('button') ?? [])].find((b) => b.textContent?.trim() === 'vouch');
+    expect(vouchWord).toBeUndefined();
+  });
+
+  it('the poll lands a pending vouch — the vouched set gains the target and the flight clears', async () => {
+    const h = harness();
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    await flush();
+    h.drive.openAuthor(X, { from: 'feed' });
     await flush();
     await h.drive.vouch(X);
     await flush();
@@ -192,6 +212,9 @@ describe('vouch through the author window', () => {
     await flush();
     expect(h.drive.vouched.has(X)).toBe(true);
     expect(h.drive.ledger.all().some((e) => e.kind === 'vouch')).toBe(false);
+    const authorWin = h.panes.querySelector('.winbody');
+    expect(authorWin?.textContent).toContain('vouched');
+    expect(authorWin?.querySelector('.stage')).toBeNull();
   });
 });
 
