@@ -130,9 +130,6 @@ DB_PATH=/var/lib/dagsocial/dagsocial.db
 # also testnet, so any other value was silently ignored.
 NETWORK_TYPE=testnet
 LISTEN_ADDRS=/ip4/0.0.0.0/tcp/9733
-# Set when serving behind an nginx path prefix, e.g. /testnet — the UI's API
-# base and canonical post URLs are derived from it.
-#PUBLIC_URL=/
 # The web client's index.html; set, GET /shell/:id answers that shell with a
 # post's preview tags.
 #WEB_SHELL_PATH=/var/www/notis.fun/web/index.html

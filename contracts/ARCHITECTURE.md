@@ -253,10 +253,12 @@ clients decide what to surface and how to weight it.
 This means:
 - On-chain primitives (likes, vouches) exist to be queried and aggregated, not
   to drive built-in ranking logic
-- The built-in feed endpoint (`GET /feed`) is for testing convenience only —
-  production feeds come from indexers
+- There is no feed endpoint and no ranker: `GET /posts` and `GET /posts/:id/thread` serve pages
+  in committed order, and a feed is a client's or an indexer's
 - New primitives are designed for what they record, not for how a client might
   interpret them
+- The node serves no client either — no page, no bundle. A client is a separate product against
+  the HTTP API, and `@dagsocial/web` is one implementation of it (`NODE_INTERFACE → The node serves no client`)
 
 ---
 
@@ -421,7 +423,7 @@ values in boxes move only when a transaction touches the identity.
 - **Effective value:** `faceTotal − owedPeriods · KARMA_DECAY_AMOUNT`, clamped
   so it never drops below `min(faceTotal, KARMA_MINIMUM)`, where
   `owedPeriods = floor((height − max(lastActivityBlock, lastDecayBlock)) / KARMA_DECAY_INTERVAL_BLOCKS)`.
-  **One implementation** — the engine, the verifier and the demo UI call the
+  **One implementation** — the engine and the verifier call the
   same exported valuation function (`VALIDATION_INTERFACE` → "One
   implementation per rule").
 - **Sufficiency reads effective; conservation stays face.** A transaction's
@@ -721,7 +723,7 @@ to verify box existence or absence without storing the full UTXO set.
   *content*.** Every node that applies the same blocks in the same order —
   and holds the same `AVL_KEY_LENGTH` — produces the identical stateRoot. Box
   `value` serializes through `vlqU64` in `boxRecordBytes`, so the AVL leaf bytes are
-  stable across implementations (the demo UI mirrors the encoding).
+  stable across implementations.
 
   > ⚠ **This bullet used to read "every node computing the AVL+ over the same
   > UTXO set … produces the identical stateRoot", and that is false.** An AVL+
@@ -1970,7 +1972,7 @@ no object check compares against it and no producer stamps it.
 - Hashing: `blake2b512` truncated to 32 bytes for all 32-byte outputs
 - Signatures: raw Ed25519 (64 bytes). **Two encodings carry a signature, and base64 is not one of
   them:** raw bytes in the positional encodings (all consensus structures), and **lowercase hex**
-  at the HTTP boundary (`json-to-tx.ts`) and in the demo UI. base64 carries no signature anywhere —
+  at the HTTP boundary (`json-to-tx.ts`) and in every client. base64 carries no signature anywhere —
   it encodes the AVL proof blob (`state/avl-endpoint.ts`), and `base64url` the JWK key material the
   node builds to verify with. Verification is `crypto.verify(null, …)` with a KeyObject in
   every case

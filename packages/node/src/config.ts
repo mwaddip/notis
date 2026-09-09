@@ -28,9 +28,6 @@ export interface Config {
    */
   profile: NetworkProfile;
   nodeRole: 'server' | 'miner';
-  /** Base path where the demo UI is served (e.g., "/testnet/" or "/"). */
-  publicUrl: string;
-  faucetUrl: string;
   /**
    * Path of the web client's `index.html`; empty means `GET /shell/:id`
    * answers 404 (NODE_INTERFACE → Configuration, → Link previews).
@@ -137,8 +134,6 @@ export function loadConfig(): Readonly<Config> {
     networkType: profile.networkType,
     profile,
     nodeRole: parseNodeRole(process.env['NODE_ROLE'] ?? 'server'),
-    publicUrl: process.env['PUBLIC_URL'] ?? '/',
-    faucetUrl: process.env['FAUCET_URL'] ?? '',
     webShellPath: process.env['WEB_SHELL_PATH'] ?? '',
     blockBodyBudgetBytes: parseBlockBodyBudget(
       process.env['BLOCK_BODY_BUDGET_BYTES'],

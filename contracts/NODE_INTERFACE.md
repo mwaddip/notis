@@ -42,8 +42,8 @@ value path. Node-side obligations:
   floor).
 - **JSON boundaries emit strings (client-visible).** JSON cannot carry a bigint
   (`JSON.stringify(5n)` throws). Every HTTP response field carrying a box `value` or a
-  `total` is serialized as a **decimal string**; the demo UI parses them with `BigInt()`
-  (its phase). Same for the SQLite `extra_data` `originalValue` (coerce before
+  `total` is serialized as a **decimal string**; a client parses them with `BigInt()`.
+  Same for the SQLite `extra_data` `originalValue` (coerce before
   `JSON.stringify`) and any stdout log field carrying an amount.
 - **`block-creator.computeUtxoTxRoot` coinbase leaf** — ⚠ **SUPERSEDED 2026-08-17: the leaf
   class and its encoder are both gone.** `coinbaseOutputBytes` has no definition anywhere;
@@ -62,26 +62,9 @@ value path. Node-side obligations:
   `number` and loses precision above 2⁵³.
 - **DB reset.** Box ids and the AVL `stateRoot` changed in the types phase — fresh
   chain / coordinated cutover, no in-place migration.
-- **Demo UI (`public/index.html`).** Its hand-rolled box encoder is **positional**,
-  mirroring `canonicalBoxBytes` field for field — `enum8(boxType) ‖ vlqU64(value) ‖
-  vlqU(createdAtBlock)` then the per-type tail — and must be **byte-identical to
-  `@dagsocial/types`** so client-built box ids match the node. It parses API
-  `value`/`total` with `BigInt()`. A box-value mirror test pins the byte-identity.
-  ⛔ **A prefix field missing there breaks `computeTxId` for every box type at
-  once**, and the failure surfaces as a signature rejection that names no encoding.
-
-> ## ⛔ THE DEMO UI IS A SECOND IMPLEMENTATION OF CONSENSUS RULES, AND NO GATE REACHES IT
->
-> `vitest` never loads this file and nginx serves it statically, so **every mirror in it is checked
-> by reading and by running the browser, and by nothing else.** Its own doc block states the failure
-> mode: *a missing entry does not throw, it derives a **wrong id that looks well-formed**.*
->
-> The mirrors this binds: `BOX_TYPE_TAGS` and the per-type `boxTypeFields` arms (which must track
-> `TYPES_INTERFACE`'s tag table and layouts), the full `computeTxId` mirror whose output `signTx`
-> signs, and the like transaction's `LikeAccrualBox` construction (§Likes). A divergence in the
-> `computeTxId` mirror is the one that breaks users outright: the browser signs one id, the node
-> computes another, and **every browser-built transaction is rejected** — with no typecheck or test
-> in this repo able to see it.
+- **The retired demo UI (`public/index.html`).** Unserved (→ The node serves no client); while the
+  file is in the tree, `ui-crypto-mirror.test.ts` pins its positional box encoder and its `computeTxId`
+  byte-for-byte against `@dagsocial/types`, and nothing a user runs depends on either.
 
 ---
 
@@ -116,6 +99,26 @@ are hex-encoded.
 
 `userId` on the wire is hex-encoded (64 hex chars). Internally `UserId` is
 `Uint8Array` (32 raw bytes).
+
+### The node serves no client
+
+**The node is an HTTP API and nothing else.** It serves no page at `/`, no static file and no bundle;
+`GET /` answers 404 like any unmounted path. A client is a separate product against this contract:
+`@dagsocial/web` is one implementation of the client side (`WEB_INTERFACE`), served by whatever fronts
+the node, and another may be written against the same API. A client on an origin other than the node's
+needs CORS (`WEB_INTERFACE → The client is served from the node's own origin`). The one client file the
+node reads is the shell `WEB_SHELL_PATH` names, which `GET /shell/:id` answers with a post's preview tags
+for the host's proxy to place (→ Link previews) — a link-preview service, not a served client.
+
+**The demo UI is retired.** `packages/node/public/index.html` stays in the node package unserved, with
+the tests that read it: `ui-crypto-mirror.test.ts` pins its `computeTxId`, `canonicalBoxBytes` and
+box-type mirrors against `@dagsocial/types`, `ui-render-ids.test.ts` and `ui-feed-merge.test.ts` its
+render and merge functions, and the page-builder blocks of `invites.test.ts` and `vouches.test.ts` drive
+its builders against the routes. The web client's builder vectors are constants and read none of it
+(`WEB_INTERFACE → The wallet`).
+
+> ⚠ **AHEAD OF CODE — 2026-09-09.** The demo UI's file and the tests that read it leave the tree in
+> a unit of their own.
 
 ### Posts
 
@@ -373,12 +376,11 @@ escrow gate — no cast while an unspent escrow names the voucher — is also th
 here the same way. There is no one-vouch-at-a-time rule and no voucher-scoped pending check: a
 member holds as many live vouches as they have karma to stake.
 
-> ✅ **The demo UI builds and signs both transactions.** `buildVouchTx` and `buildUnvouchTx` in
-> `node/public/index.html` construct them, `signTxId` signs, and both handlers POST `{ tx }`.
-> Unvouch resolves the VouchBox id from `GET /vouches?voucher=` — the only arm carrying `boxId` —
-> **at click time**, since a box can be spent between opening a profile and pressing the button.
-> The profile shows the identity's standing — resident, member or root — and a member's invites
-> available, read from `GET /karma/:userId`; the vouch button does not refuse a second target.
+> ✅ **A client builds and signs both transactions.** `@dagsocial/web`'s `buildVouch` and
+> `buildUnvouch` construct them, its wallet signs, and both handlers POST `{ tx }`. Unvouch resolves
+> the VouchBox id from `GET /vouches?voucher=` — the only arm carrying `boxId` — **at the press**,
+> since a box can be spent between opening a window and pressing the word (`WEB_INTERFACE → The wallet`).
+> The retired demo UI's `buildVouchTx` and `buildUnvouchTx` do the same (→ The node serves no client).
 >
 > ⚠ **The page's builders are pinned to the consensus rule, not merely present.**
 > `test/unit/ui-crypto-mirror.test.ts` lifts both out of the page **by name** and pins
@@ -530,10 +532,10 @@ lie this whole bundle exists to remove. A client seeing `null` learns something 
 **The node serves no faucet, and holds no key it could sign one with.** `POST /faucet` and
 `POST /credits/faucet` do not exist; both answer 404 on every network.
 
-⚠ **The demo UI's faucet buttons therefore depend on a proxy, not on the node.** They post to
-`/testnet/faucet/karma` and `/testnet/faucet/credits`, which the deployment maps to the faucet
-service's own port; the node's own origin has nothing to answer them with. A node served without
-that mapping renders the buttons and 404s them.
+⚠ **A client's faucet call therefore goes to a proxy, not to the node.** The web client posts to
+`<faucet>/karma` under its configured faucet base — on notis.fun `/testnet/faucet/`, which the
+deployment maps to the faucet service's own port (`WEB_INTERFACE → The faucet step`); the node's own
+origin has nothing to answer it with.
 
 **The service's edge, for any client that calls it.** `POST <faucet>/karma { pubkey }` answers
 `202 { txId, status: "pending", expiresAtHeight }` once the invite is in the node's pool —
@@ -741,14 +743,7 @@ defect. **It belongs to the supply set.**
 
 | Method | Path | Response |
 |--------|------|----------|
-| `GET` | `/preview/:id` | OG-tagged HTML page with JS redirect to the demo UI |
-| `GET` | `/shell/:id` | **The web client's shell with the post's preview tags injected** — the file at `WEB_SHELL_PATH` (→ Configuration), read on every request so a new bundle needs no restart, answered with `<title>`, `og:title`, `description`, `og:description`, `og:type` article, `og:site_name` Notis and `twitter:card` summary injected before `</head>`, every value HTML-escaped (`& < > "`); `og:url` is the proto and host as `/preview/:id` reads them plus the `X-Original-URI` header the host's proxy sets, omitted when the header is absent — the node never learns the client's public path. 404 plain when no shell is configured; 500 when the file cannot be read; 400 when `:id` is not 64 hex; **404 with the untagged shell** for an id the node has never heard of, so the client boots and says what it found and a crawler finds nothing to preview; 200 tagged for a live post with content, untagged for one whose content is not on this node yet, tagged as withdrawn (`withdrawn · Notis`, *withdrawn by its author*, no `og:url`) for a withdrawn post. The node reads no client convention: the description is the content's first 200 characters as they are, cut at a word with `...`, whitespace collapsed; the title the author's first 16 hex characters and `…`, then ` · Notis` (`WEB_INTERFACE → Links`) |
-
-### Static
-
-| Method | Path | Response |
-|--------|------|----------|
-| `GET` | `/` | Demo UI (`public/index.html`) |
+| `GET` | `/shell/:id` | **The web client's shell with the post's preview tags injected** — the file at `WEB_SHELL_PATH` (→ Configuration), read on every request so a new bundle needs no restart, answered with `<title>`, `og:title`, `description`, `og:description`, `og:type` article, `og:site_name` Notis and `twitter:card` summary injected before `</head>`, every value HTML-escaped (`& < > "`); `og:url` is `<proto>://<host><path>` — the proto from `X-Forwarded-Proto`, else the request's own; the host from `X-Forwarded-Host`, else `Host`; the path the `X-Original-URI` header the host's proxy sets — omitted when that header is absent — the node never learns the client's public path. 404 plain when no shell is configured; 500 when the file cannot be read; 400 when `:id` is not 64 hex; **404 with the untagged shell** for an id the node has never heard of, so the client boots and says what it found and a crawler finds nothing to preview; 200 tagged for a live post with content, untagged for one whose content is not on this node yet, tagged as withdrawn (`withdrawn · Notis`, *withdrawn by its author*, no `og:url`) for a withdrawn post. The node reads no client convention: the description is the content's first 200 characters as they are, cut at a word with `...`, whitespace collapsed; the title the author's first 16 hex characters and `…`, then ` · Notis` (`WEB_INTERFACE → Links`) |
 
 ---
 
@@ -2184,7 +2179,7 @@ A box gets provenance **where it is stored**, not where it is first constructed.
   `bondBoxId` — materialise through the same helper, because the predicted id is
   acted on by clients and must match what block application later derives.
 - **Builders that only hand a transaction to the mempool** — `routes/utxo.ts`,
-  and every external client (the demo UI, the faucet package) — attach
+  and every external client (the web client, the faucet) — attach
   **nothing**. They insert no box; `UtxoTransaction.outputs` is
   `BoxCandidate[]`, which has no provenance keys to carry. Their boxes get
   provenance when block application materialises them.
@@ -2193,10 +2188,14 @@ A box gets provenance **where it is stored**, not where it is first constructed.
 `mint-provenance.ts` imports it; it previously kept a local mirror, and a silent
 divergence between the two would have moved mint txIds — and therefore box ids —
 with nothing to catch it, while this contract's own subject table mandates the
-encoding. One implementation feeds both derivations. The demo UI cannot import
-it and so must still reproduce the sentinel behaviour, and must not throw.
+encoding. One implementation feeds both derivations. The retired demo UI's mirror
+cannot import it and reproduces the sentinel behaviour itself; it must not throw.
 
 ### The demo UI mirror carries the same strip defect
+
+> ✅ **RESOLVED — verified 2026-09-09.** No `{ id, ...rest }` strip remains in `public/index.html`; both
+> of its derivations go through its own `canonicalBoxBytes`. The section is the record of that defect in
+> the retired demo UI's mirror (→ The node serves no client), and reads as it did when the fix landed.
 
 `public/index.html`'s client-side `computeBoxId` does `const { id, ...rest } = box`
 — the **id-only strip** that phase C0 removed from `@dagsocial/types`. Both of
@@ -4517,7 +4516,6 @@ its actual reach.
 | `MINING_SECRET` | `operational` | `""` | Mining auth secret — **required when `NODE_ROLE=miner`**; startup asserts it is set |
 | `BOOTSTRAP_PEERS` | `operational` | the profile's `bootstrapPeers` — testnet `/dns4/notis.fun/tcp/9733`, mainnet and devnet none (`TYPES_INTERFACE → Network profiles`) | Comma-separated libp2p multiaddrs; a set variable **replaces** the profile's list, it does not add to it |
 | `LISTEN_ADDRS` | `operational` | `/ip4/0.0.0.0/tcp/0` | libp2p listen addresses |
-| `PUBLIC_URL` | `operational` | `/` | Base path where the demo UI is served |
 | `WEB_SHELL_PATH` | `operational` | `""` | Path of the web client's `index.html`; empty means `GET /shell/:id` answers 404 (→ Link previews) |
 
 > ⚠ **Every "at 60 seconds" duration annotation is nominal in the short run and exact in the long
@@ -4933,7 +4931,6 @@ no per-post serve path. `onPeerActive` is wired to peer-readiness
 - Ordering blocks and UTXO transactions broadcast to peers
   after local creation
 - UTXO engine initialized with split validate/revalidate/apply API
-- Demo UI served at `/`
 
 ## Invariants
 - Secret keys never in API responses

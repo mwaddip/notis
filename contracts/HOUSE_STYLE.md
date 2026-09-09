@@ -1,10 +1,8 @@
 # House Style Contract
 
 **Component:** cross-cutting — every human-facing surface
-**Status:** implemented in full on `docs/site/*` but for the pointer rule (→ Interaction, marked there);
-partially on the demo UI — see below
-**Applies to:** `docs.notis.fun` (`docs/site/*`), `packages/node/public/index.html` (partial),
-`@dagsocial/web`, any future product surface
+**Status:** implemented in full on `docs/site/*` but for the pointer rule (→ Interaction, marked there)
+**Applies to:** `docs.notis.fun` (`docs/site/*`), `@dagsocial/web`, any future product surface
 
 > **`docs/site/*` implements this contract in full**, measured 2026-08-10: both token sets under
 > the names used here, the inverse-styled theme control, the paint-don't-transition restore, all
@@ -18,20 +16,9 @@ partially on the demo UI — see below
 > instance of a known failure: a marker asserting a fact about the tree decays when the tree
 > moves, and a disclaimer creates a region nobody re-reads.
 
-> **The demo UI (`packages/node/public/index.html`) is IN scope for colour, typography and
-> motion** — changed 2026-08-10, having previously been excluded outright.
->
-> The exclusion's ground was that the demo UI is scaffolding about to die when `@dagsocial/web`
-> lands. It is the only browser surface that **writes** withdraw, invite, vouch and unvouch
-> transactions — `@dagsocial/web` posts and likes, and does none of the rest — so it is what a
-> human uses for those for an open-ended period. **A surface nobody will replace soon is not
-> scaffolding.**
->
-> **The inclusion is deliberately partial.** Layout, information architecture, interaction and
-> illustration stay out — the demo UI keeps its own shell. `WEB_INTERFACE.md` also still holds:
-> it gets no interface contract, no documented flows and no UX commitments. The claim here is
-> narrow — that a surface humans look at should not be built out of the exact register "Why there
-> is a house style at all" was written to avoid.
+> **The demo UI (`packages/node/public/index.html`) is retired and out of scope.** The node serves it to
+> nobody (`NODE_INTERFACE → The node serves no client`); the file stays in the node package with the
+> tests that read it, and no rule here applies to it.
 
 ## Scope
 
@@ -409,7 +396,7 @@ rule applies, so a tap never leaves a control in its hover look. The sizes are e
 (`WEB_INTERFACE → The workspace`).
 
 > ⚠ **VIOLATED on `docs/site/*`** — its five hover rules are unguarded and its controls are the browser's
-> size. The demo UI keeps its own shell, interaction being outside its inclusion above.
+> size.
 
 ## Spacing
 

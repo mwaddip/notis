@@ -3,7 +3,6 @@ rem Notis testnet node + miner loop. Close this window to stop mining.
 cd /d "%~dp0"
 set "NETWORK_TYPE=testnet"
 set "PORT=3000"
-set "FAUCET_URL=https://notis.fun/testnet/faucet"
 if not exist "%APPDATA%\Notis" mkdir "%APPDATA%\Notis"
 set "DB_PATH=%APPDATA%\Notis\notis.db"
 

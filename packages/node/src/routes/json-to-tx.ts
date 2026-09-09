@@ -9,8 +9,8 @@ import { ClientError } from '../services/client-error.js';
  * ⛔ **EXPORTED SO THE DEMO UI's MIRROR CAN BE CHECKED AGAINST IT.** The page
  * writes these same fields through `b32Either`, and a field it names that this
  * set does not — or the reverse — produces bytes the node disagrees with rather
- * than an error either side reports (NODE_INTERFACE → the demo UI is a second
- * implementation of consensus rules). `ui-crypto-mirror.test.ts` is the only
+ * than an error either side reports (NODE_INTERFACE → The node serves no
+ * client). `ui-crypto-mirror.test.ts` is the only
  * gate that reaches that file.
  */
 export const BINARY_BOX_FIELDS = new Set([

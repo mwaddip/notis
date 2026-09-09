@@ -59,7 +59,7 @@ the interface's third icon.
 
 - **Owns:** `packages/web/*` — its own source, tests, build config and static assets.
 - **Does NOT own:** any other package, `contracts/`, `prompts/`, or `packages/node/public/index.html`
-  (the demo UI, which is a separate surface and stays exactly as it is).
+  (the retired demo UI — unserved, and it stays exactly as it is).
 
 ## The boundary that defines this slice
 
@@ -161,7 +161,8 @@ empty means no faucet and no button. **The faucet must relay `expiresAtHeight`**
 **Every transaction spends real testnet karma:** a thread 5, a reply 3, a like 1, a vouch 1 staked, an
 invite its bond; a withdrawal costs nothing but spends and returns one karma box, so a key with none
 cannot sign one. There is no automated test that posts — an automated writer would drain the key and
-litter testnet; the wallet builders are pinned offline against the demo UI's frozen vectors instead.
+litter testnet; the wallet builders are pinned offline against frozen vectors an independent
+implementation computed instead.
 Iterate deliberately.
 
 **A vouch cannot be exercised on testnet.** Only a member casts, and testnet's one member is the
@@ -182,9 +183,9 @@ so the bounded poll runs while it stands.
 
 ⛔ **The reader's identity file — kept outside the repo — never enters the repo, a test, a commit, a
 log or a report:** not the file, not its path in code, not its passphrase, not any value from it. It is
-imported through the `@profile` window's file picker and nowhere else. The demo UI's clear
-`{ pubKeyHex, privKeyBase64 }` shape imports here and is sealed under a passphrase the reader sets; this
-client exports the encrypted envelope, which the demo UI cannot read — interop is one-way. A proof run
+imported through the `@profile` window's file picker and nowhere else. A clear
+`{ pubKeyHex, privKeyBase64 }` key file imports here and is sealed under a passphrase the reader sets; this
+client exports the encrypted envelope only. A proof run
 uses a fresh throwaway key; its public key may appear in a report, nothing else may.
 
 ## Component-session rules (Design by Contract)

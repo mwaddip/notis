@@ -14,25 +14,12 @@ the way into the workspace, `link` on a card — are implemented
 **Protocol version:** read from the node, never held — see Invariants
 
 
-> **The demo UI (`packages/node/public/index.html`) is not this contract's subject.** It is a debug
-> interface. Do not write an interface contract for it, and do not treat it as a product surface.
->
-> ⚠ **The demo UI outlives this client's first slices.** It withdraws through a builder of its own, the
-> second implementation the web's vector is frozen against; `@dagsocial/web` posts, likes, vouches,
-> unvouches, invites and withdraws. Nothing about it is superseded by this
-> contract.
->
-> **One thing about the demo UI IS binding:** it hand-rolls `computeBoxId`, `computeTxId`,
-> `postFieldBytes` and the positional writers under them, so it is a third implementation of
-> consensus-critical encodings and **must stay byte-identical to `@dagsocial/types`**. That is pinned
-> by `ui-crypto-mirror.test.ts`.
->
-> ⚠ **The mirror is sound for what it extracts, and that is not everything.** It names its
-> declarations by exact source string, so a consensus-critical function it does not name is unpinned
-> and nothing signals the omission. Measured 2026-08-10: `solvePoW` was not extracted, and the
-> browser's PoW nonce encoding had diverged from the verifier's with the full suite green. **Adding a
-> hashing or encoding function to the demo UI means adding it to the loader list**, and a mirror's
-> coverage is a claim about a list, never about a file.
+> **This client is a standalone product.** The node serves no client (`NODE_INTERFACE → The node serves no client`):
+> this is one implementation of the client side of the node's contract, a static bundle any host serves
+> beside the API, and another implementation may be written against the same API. The demo UI
+> (`packages/node/public/index.html`) is retired and unserved, is not this contract's subject, and stays
+> in the node package with the tests that read it; the builders' frozen vectors (→ The wallet) are
+> constants that independent implementation computed, and read no file.
 
 > **RESOLVED 2026-09-02 — this file carried a banner asserting it was "100% original text … one of the
 > few that was never wrong".** By 2026-09-02 it was wrong in two places: an invariant read *"PoW is
@@ -110,7 +97,7 @@ convenience — which is the whole argument against a hand-rolled copy, applied 
 ⛔ **The shim's hashing must be byte-identical to `createHash('blake2b512')`, and that must be
 pinned.** Every id in the protocol is a blake2b-512 digest truncated to 32 bytes; a shim that
 differs by one byte produces ids the node rejects, and neither package's own tests would notice
-because neither exercises the other's code. This is the same failure class the demo UI's mirror
+because neither exercises the other's code. This is the failure class a mirror test
 exists for.
 
 ⛔ **A substituted module is pinned by absolute path, never by a bare specifier.** A bare specifier
@@ -144,6 +131,13 @@ the node gains CORS. The setting says so rather than failing silently.
 ⚠ **This is a constraint on deployment, not a property of the protocol.** A third-party client on its
 own origin is impossible today, and that bears on the anti-lock-in property the project claims
 elsewhere.
+
+**The client ships as its own product.** `vite build` makes it a static bundle, served by whatever fronts
+the node; the node's own distributables carry no client (`NODE_INTERFACE → The node serves no client`).
+
+> ⚠ **AHEAD OF CODE — 2026-09-09.** The bundle becomes its own downloadable on the GitHub release beside
+> the node's three — a tar.gz, zip or deb of `packages/web/dist`, never an installer. No script builds it
+> and `release.yml` has no job for it; the bundle reaches the host by hand. Its own unit.
 
 ## Reading the feed and threads
 
@@ -486,7 +480,7 @@ the exported file is the same envelope — one codec, and importing an encrypted
 | Key generation | `generateKeyPair()` from `@dagsocial/types`, through the shim | the seed is the DER's last 32 bytes; the RFC 8410 wrapper `302e020100300506032b657004220420` is a constant the codec re-adds |
 | Seal | scrypt (`@noble/hashes`) → a 32-byte key; ChaCha20-Poly1305 (`@noble/ciphers`) over the seed with `pubKeyHex` and `version` as associated data | a fresh salt and nonce per seal; a derived key is used once, which is what makes a random 12-byte nonce safe. The parameters travel in the envelope, so `N` can rise with no version bump |
 | Open | scrypt with the envelope's own parameters; the tag verified; the public key recomputed from the seed **must equal** `pubKeyHex` | a wrong passphrase, an edited header and a flipped byte are each refused with a reason |
-| Import | an envelope, stored verbatim after one successful open; **or** the demo UI's clear `{ pubKeyHex, privKeyBase64 }`, validated as before (48 bytes, the prefix, the recomputed key) and sealed under a passphrase the reader sets | the clear shape is a **file shape only** — a clear value found in storage reads as no identity and is left in place. Interop with the demo UI is one-way: its files import here; it cannot read this client's |
+| Import | an envelope, stored verbatim after one successful open; **or** a clear key file `{ pubKeyHex, privKeyBase64 }` — the shape the retired demo UI exports — validated as before (48 bytes, the prefix, the recomputed key) and sealed under a passphrase the reader sets | the clear shape is a **file shape only** — a clear value found in storage reads as no identity and is left in place; this client writes no clear file |
 | Export | a **fresh** seal under a password the reader types, downloaded as `notis-identity-<prefix>.json` | needs the seed, so a locked identity unlocks first |
 | Signing | `ed25519.sign` from `@noble/curves` over the 32 transaction-id bytes | 64 raw bytes, hex in JSON, keyed by the hex public key; **throws while locked** |
 | Post ID | the node's `postId` from the `POST /posts` response | never derived client-side — the node is authoritative and the value is in the reply |
@@ -566,7 +560,8 @@ key, `inviteePublicKey` the pasted key. A withdrawal: one karma input — the sm
 pending withdrawal ties up the least — and one karma output of its value to the reader's key,
 `postWithdraw` naming the post; the returned box is the entry's `change` (→ The withdraw control). Zero
 change is no box (`TYPES_INTERFACE → Box value domain`).
-Every builder is frozen against the demo UI's own, the second implementation (`builders.test.ts`).
+Every builder is frozen against vectors an independent implementation computed — the retired demo UI's
+builders — held as constants in `builders.test.ts`.
 
 **Nothing retries.** A rejection is one `Rejection { status, message }`, normalised from both body
 shapes the node uses — `{ error: <status>, reason }` and `{ error: <message> }`; a 409 drops the entry

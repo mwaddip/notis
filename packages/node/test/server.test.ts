@@ -64,19 +64,9 @@ describe('server', () => {
   });
 
   describe('GET /', () => {
-    it('returns HTML (Content-Type includes text/html)', async () => {
+    it('answers 404', async () => {
       const res = await fetch(`${baseUrl}/`);
-      // The demo UI HTML may or may not exist in the test environment,
-      // but express.static will either serve it or fall through.
-      // If express.static serves the file, status is 200 and content-type is text/html.
-      // If it falls through, it hits the 404 from one of the routers or
-      // the default Express 404 handler.
-      // We accept both: presence of index.html is a build artifact concern.
-      const contentType = res.headers.get('content-type') ?? '';
-      if (res.status === 200) {
-        expect(contentType).toContain('text/html');
-      }
-      // If 404, the file just isn't there — not a server bug.
+      expect(res.status).toBe(404);
     });
   });
 

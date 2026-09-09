@@ -42,7 +42,7 @@ counts, protocol version, and block structure. No DB, no network, no chain state
 - **Never add checks the reference lacks** — an extra rule beyond the protocol spec is a fork surface. Every
   rule is protocol-spec or explicitly local-policy-only.
 - **Deterministic** — the same input yields the same verdict on every node and Node.js version.
-- **Pure/stateless** — no I/O, no chain state; hashing must match `@dagsocial/types` and the demo UI.
+- **Pure/stateless** — no I/O, no chain state; hashing must match `@dagsocial/types`.
 
 ## Quick commands
 ```bash

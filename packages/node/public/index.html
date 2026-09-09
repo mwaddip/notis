@@ -811,8 +811,8 @@ const TX_ID_DOMAIN = encoder.encode('dagsocial/tx-id/1');
  * ⛔ **SIX FIELDS, AND THE COUNT IS LOAD-BEARING.** `signTx` signs whatever this
  * returns, so a field here that the node does not write makes the browser sign
  * an id the node never computes — and **every transaction this page builds is
- * rejected**, with nothing in the repo able to see it (NODE_INTERFACE → the
- * demo UI is a second implementation of consensus rules).
+ * rejected**, with nothing in the repo able to see it (NODE_INTERFACE → The
+ * node serves no client).
  */
 function computeTxId(tx) {
   const combined = concatUint8Arrays([
@@ -1254,8 +1254,7 @@ function buildVouchTx(karmaBox, targetIdHex, pubKeyHex) {
  * box id, the stake and the release height, so this function is a pure
  * `tx → bytes` mirror the crypto suite can lift and check — a builder closing
  * over `currentBlockHeight` would be unreachable from the only gate this file
- * has (NODE_INTERFACE → the demo UI is a second implementation of consensus
- * rules).
+ * has (NODE_INTERFACE → The node serves no client).
  *
  * The box id and its value are not derivable client-side — both come from
  * `GET /vouches?voucher=<hex>`, the one read surface that names them.

@@ -40,7 +40,7 @@ merkle, positional serialization, protocol constants, and the hash/id helpers (`
 ## Types-relevant invariants (full set in ARCHITECTURE.md)
 - **Pure functions only** — no filesystem, network, DB, or global state.
 - **Hashing** — `blake2b512` truncated via `.subarray(0, 32)` for every 32-byte output; must produce output
-  identical to `@dagsocial/validation` and the demo UI's `blakejs`.
+  identical to `@dagsocial/validation` and any browser mirror's `blakejs`.
 - **Positional wire format** — TYPES_INTERFACE's layout tables are normative; field order is the
   specification, and box/tx/post ids must be reproducible byte-for-byte.
 - **Canonical encoding** — a post/box/tx has exactly one id; distinct objects never collide.
