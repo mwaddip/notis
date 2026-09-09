@@ -387,8 +387,6 @@ function makeConfig(overrides?: Partial<Config>): Config {
     networkType: 'testnet',
     profile: profileFor('testnet'),
     nodeRole: 'miner',
-    publicUrl: '/',
-    faucetUrl: '',
     webShellPath: '',
     miningSecret: '',
     orderingBlockPowTargetBits: 3072,

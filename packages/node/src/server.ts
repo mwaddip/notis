@@ -19,7 +19,6 @@ import { castVouch, initiateUnvouch } from './services/vouch.js';
 import { createInvite } from './services/invites.js';
 import { executePostWithdraw } from './services/post-withdraw.js';
 import { readFileSync } from 'fs';
-import { fileURLToPath } from 'url';
 import { isLivePost, type StoredPost } from './store/posts.js';
 import { getDb } from './store/db.js';
 import { validateTx } from './services/utxo-engine.js';
@@ -128,129 +127,6 @@ export function createApp(config: Config): express.Express {
   });
 
   app.use(express.json({ limit: '1mb' }));
-
-  // Demo UI
-  const publicDir = fileURLToPath(new URL('../public', import.meta.url));
-  const indexPath = fileURLToPath(new URL('../public/index.html', import.meta.url));
-  const indexHtml = readFileSync(indexPath, 'utf-8');
-
-  // NODE_INTERFACE → "The node serves no faucet, and holds no key it could sign
-  // one with": the demo UI reaches the faucet on its own host through this
-  // injected base (from FAUCET_URL), never a node-side proxy. Empty when unset,
-  // so the UI keeps its window.location fallback.
-  const configScript =
-    config.faucetUrl.length > 0
-      ? `<script>window.__NOTIS_CONFIG__ = ${JSON.stringify({ faucetBase: config.faucetUrl })};</script>\n`
-      : '';
-
-  // Inject window.__NOTIS_CONFIG__ (always) and OG meta tags (when ?post=<id> is
-  // present, for URL-bar sharing) into the served index.html.
-  app.get('/', (req, res) => {
-    const postId = req.query['post'] as string | undefined;
-    if (!postId) {
-      res.type('html').send(indexHtml.replace('</head>', `${configScript}</head>`));
-      return;
-    }
-
-    const result = store.getPost(postId);
-    if (result && 'withdrawnAtHeight' in result && (result as StoredPost).withdrawnAtHeight !== null) {
-      const ogTags = `
-<meta property="og:title" content="Withdrawn by author — Notis">
-<meta property="og:description" content="This post was withdrawn by its author.">
-<meta property="og:type" content="article">
-<meta property="og:site_name" content="Notis">`;
-      res.type('html').send(indexHtml.replace('</head>', `${configScript}${ogTags}\n</head>`));
-      return;
-    }
-    if (!isLivePost(result) || result.content === null) {
-      res.type('html').send(indexHtml.replace('</head>', `${configScript}</head>`));
-      return;
-    }
-
-    const authorHex = Buffer.from(result.author).toString('hex');
-    const shortAuthor = authorHex.slice(0, 12);
-    const descRaw = result.content.length > 200
-      ? result.content.slice(0, 197).replace(/\s+\S*$/, '') + '...'
-      : result.content;
-    const desc = descRaw.replace(/\s+/g, ' ').replace(/"/g, '&quot;').trim();
-
-    const publicBase = config.publicUrl.replace(/\/$/, '');
-    const proto = (req.headers['x-forwarded-proto'] as string) ?? req.protocol;
-    const host = (req.headers['x-forwarded-host'] as string) ?? req.get('host') ?? 'localhost';
-    const canonicalUrl = `${proto}://${host}${publicBase}/?post=${encodeURIComponent(postId)}`;
-
-    const ogTags = `
-<meta property="og:title" content="Post by ${shortAuthor}... — Notis">
-<meta name="description" content="${desc}">
-<meta property="og:description" content="${desc}">
-<meta property="og:type" content="article">
-<meta property="og:url" content="${canonicalUrl}">
-<meta property="og:site_name" content="Notis">
-<meta name="twitter:card" content="summary">`;
-
-    const html = indexHtml.replace('</head>', `${configScript}${ogTags}\n</head>`);
-    res.type('html').send(html);
-  });
-
-  app.use(express.static(publicDir));
-
-  // GET /preview/:id — Open Graph preview page for link sharing (Telegram, etc.)
-  app.get('/preview/:id', (req, res) => {
-    const postId = req.params['id']!;
-    const result = store.getPost(postId);
-    if (result && 'withdrawnAtHeight' in result && (result as StoredPost).withdrawnAtHeight !== null) {
-      const withdrawn = result as StoredPost;
-      res.status(200).type('html').send(
-        `<!DOCTYPE html><html><head>` +
-        `<meta property="og:title" content="Withdrawn by author — Notis">` +
-        `<meta property="og:description" content="This post was withdrawn by its author.">` +
-        `<meta property="og:site_name" content="Notis">` +
-        `</head><body><p>Withdrawn by author at height ${withdrawn.withdrawnAtHeight}.</p></body></html>`,
-      );
-      return;
-    }
-    if (!isLivePost(result) || result.content === null) {
-      res.status(404).type('html').send('<!DOCTYPE html><html><body><p>Post not found.</p></body></html>');
-      return;
-    }
-
-    const authorHex = Buffer.from(result.author).toString('hex');
-    const shortAuthor = authorHex.slice(0, 12);
-    const descRaw = result.content.length > 200
-      ? result.content.slice(0, 197).replace(/\s+\S*$/, '') + '...'
-      : result.content;
-    const desc = descRaw.replace(/\s+/g, ' ').replace(/"/g, '&quot;').trim();
-
-    // Build absolute URL for og:url (Telegram requires absolute URLs).
-    // The Express app may be behind nginx with a path prefix (e.g. /testnet/api).
-    const proto = (req.headers['x-forwarded-proto'] as string) ?? req.protocol;
-    const host = (req.headers['x-forwarded-host'] as string) ?? req.get('host') ?? 'localhost';
-    const publicBase = config.publicUrl.replace(/\/$/, ''); // e.g. "" or "/testnet"
-    const apiBase = publicBase ? `${publicBase}/api` : '';
-    const previewUrl = `${proto}://${host}${apiBase}/preview/${encodeURIComponent(postId)}`;
-    const uiUrl = `${publicBase}/?post=${encodeURIComponent(postId)}`;
-
-    const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Post by ${shortAuthor}... — Notis</title>
-<meta property="og:title" content="Post by ${shortAuthor}... — Notis">
-<meta name="description" content="${desc}">
-<meta property="og:description" content="${desc}">
-<meta property="og:type" content="article">
-<meta property="og:url" content="${previewUrl.replace(/"/g, '&quot;')}">
-<meta property="og:site_name" content="Notis">
-<meta name="twitter:card" content="summary">
-<script>window.location.href = '${uiUrl.replace(/'/g, "\\'")}';</script>
-</head>
-<body>
-<p><a href="${uiUrl.replace(/"/g, '&quot;')}">View post</a></p>
-</body>
-</html>`;
-    res.type('html').send(html);
-  });
 
   // GET /shell/:id — NODE_INTERFACE → Link previews
   app.get('/shell/:id', (req, res) => {
