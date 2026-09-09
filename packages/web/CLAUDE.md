@@ -58,8 +58,7 @@ as the identity prefix renders; the composer's `post` and `cancel` are the one b
 the interface's third icon.
 
 - **Owns:** `packages/web/*` — its own source, tests, build config and static assets.
-- **Does NOT own:** any other package, `contracts/`, `prompts/`, or `packages/node/public/index.html`
-  (the retired demo UI — unserved, and it stays exactly as it is).
+- **Does NOT own:** any other package, `contracts/` or `prompts/`.
 
 ## The boundary that defines this slice
 

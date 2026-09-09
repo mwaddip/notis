@@ -16,10 +16,8 @@ the way into the workspace, `link` on a card — are implemented
 
 > **This client is a standalone product.** The node serves no client (`NODE_INTERFACE → The node serves no client`):
 > this is one implementation of the client side of the node's contract, a static bundle any host serves
-> beside the API, and another implementation may be written against the same API. The demo UI
-> (`packages/node/public/index.html`) is retired and unserved, is not this contract's subject, and stays
-> in the node package with the tests that read it; the builders' frozen vectors (→ The wallet) are
-> constants that independent implementation computed, and read no file.
+> beside the API, and another implementation may be written against the same API. The builders'
+> frozen vectors (→ The wallet) are constants and read no file.
 
 > **RESOLVED 2026-09-02 — this file carried a banner asserting it was "100% original text … one of the
 > few that was never wrong".** By 2026-09-02 it was wrong in two places: an invariant read *"PoW is
@@ -480,7 +478,7 @@ the exported file is the same envelope — one codec, and importing an encrypted
 | Key generation | `generateKeyPair()` from `@dagsocial/types`, through the shim | the seed is the DER's last 32 bytes; the RFC 8410 wrapper `302e020100300506032b657004220420` is a constant the codec re-adds |
 | Seal | scrypt (`@noble/hashes`) → a 32-byte key; ChaCha20-Poly1305 (`@noble/ciphers`) over the seed with `pubKeyHex` and `version` as associated data | a fresh salt and nonce per seal; a derived key is used once, which is what makes a random 12-byte nonce safe. The parameters travel in the envelope, so `N` can rise with no version bump |
 | Open | scrypt with the envelope's own parameters; the tag verified; the public key recomputed from the seed **must equal** `pubKeyHex` | a wrong passphrase, an edited header and a flipped byte are each refused with a reason |
-| Import | an envelope, stored verbatim after one successful open; **or** a clear key file `{ pubKeyHex, privKeyBase64 }` — the shape the retired demo UI exports — validated as before (48 bytes, the prefix, the recomputed key) and sealed under a passphrase the reader sets | the clear shape is a **file shape only** — a clear value found in storage reads as no identity and is left in place; this client writes no clear file |
+| Import | an envelope, stored verbatim after one successful open; **or** a clear key file `{ pubKeyHex, privKeyBase64 }` — validated as before (48 bytes, the prefix, the recomputed key) and sealed under a passphrase the reader sets | the clear shape is a **file shape only** — a clear value found in storage reads as no identity and is left in place; this client writes no clear file |
 | Export | a **fresh** seal under a password the reader types, downloaded as `notis-identity-<prefix>.json` | needs the seed, so a locked identity unlocks first |
 | Signing | `ed25519.sign` from `@noble/curves` over the 32 transaction-id bytes | 64 raw bytes, hex in JSON, keyed by the hex public key; **throws while locked** |
 | Post ID | the node's `postId` from the `POST /posts` response | never derived client-side — the node is authoritative and the value is in the reply |
@@ -560,8 +558,8 @@ key, `inviteePublicKey` the pasted key. A withdrawal: one karma input — the sm
 pending withdrawal ties up the least — and one karma output of its value to the reader's key,
 `postWithdraw` naming the post; the returned box is the entry's `change` (→ The withdraw control). Zero
 change is no box (`TYPES_INTERFACE → Box value domain`).
-Every builder is frozen against vectors an independent implementation computed — the retired demo UI's
-builders — held as constants in `builders.test.ts`.
+Every builder is frozen against vectors held as constants in `builders.test.ts`; a change that moves
+one is a wire change.
 
 **Nothing retries.** A rejection is one `Rejection { status, message }`, normalised from both body
 shapes the node uses — `{ error: <status>, reason }` and `{ error: <message> }`; a 409 drops the entry

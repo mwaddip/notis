@@ -62,9 +62,8 @@ value path. Node-side obligations:
   `number` and loses precision above 2⁵³.
 - **DB reset.** Box ids and the AVL `stateRoot` changed in the types phase — fresh
   chain / coordinated cutover, no in-place migration.
-- **The retired demo UI (`public/index.html`).** Unserved (→ The node serves no client); while the
-  file is in the tree, `ui-crypto-mirror.test.ts` pins its positional box encoder and its `computeTxId`
-  byte-for-byte against `@dagsocial/types`, and nothing a user runs depends on either.
+- **No demo UI.** The node package carries no page, no static directory and no mirror test
+  (→ The node serves no client); the web client is its own package.
 
 ---
 
@@ -110,15 +109,8 @@ needs CORS (`WEB_INTERFACE → The client is served from the node's own origin`)
 node reads is the shell `WEB_SHELL_PATH` names, which `GET /shell/:id` answers with a post's preview tags
 for the host's proxy to place (→ Link previews) — a link-preview service, not a served client.
 
-**The demo UI is retired.** `packages/node/public/index.html` stays in the node package unserved, with
-the tests that read it: `ui-crypto-mirror.test.ts` pins its `computeTxId`, `canonicalBoxBytes` and
-box-type mirrors against `@dagsocial/types`, `ui-render-ids.test.ts` and `ui-feed-merge.test.ts` its
-render and merge functions, and the page-builder blocks of `invites.test.ts` and `vouches.test.ts` drive
-its builders against the routes. The web client's builder vectors are constants and read none of it
-(`WEB_INTERFACE → The wallet`).
-
-> ⚠ **AHEAD OF CODE — 2026-09-09.** The demo UI's file and the tests that read it leave the tree in
-> a unit of their own.
+**No demo UI exists.** The node package carries no page, no static directory and no mirror test; the
+web client's builder vectors are constants that read no file (`WEB_INTERFACE → The wallet`).
 
 ### Posts
 
@@ -380,24 +372,12 @@ member holds as many live vouches as they have karma to stake.
 > `buildUnvouch` construct them, its wallet signs, and both handlers POST `{ tx }`. Unvouch resolves
 > the VouchBox id from `GET /vouches?voucher=` — the only arm carrying `boxId` — **at the press**,
 > since a box can be spent between opening a window and pressing the word (`WEB_INTERFACE → The wallet`).
-> The retired demo UI's `buildVouchTx` and `buildUnvouchTx` do the same (→ The node serves no client).
->
-> ⚠ **The page's builders are pinned to the consensus rule, not merely present.**
-> `test/unit/ui-crypto-mirror.test.ts` lifts both out of the page **by name** and pins
-> `ui.computeTxId(pageTx)` against `computeTxId(jsonToTx(wireForm))` — the digest a vouch
-> signature is actually over — and `test/routes/vouches.test.ts` drives the same lifted builders
-> through the live routes. A re-implementation of the page's arithmetic in a test would pin
-> nothing; lifting by name is what makes the page the subject.
 
-**The JSON edge (rides the tx-envelope bundle):** `jsonToTx`'s
-`BINARY_BOX_FIELDS` lacks `voucherId`/`targetId`, so even a correctly built
-vouch-cast tx arrives with those two fields as hex *strings* and dies at the
-step-4 schema (`bytes32`) — the cast is inexpressible over HTTP JSON. The
-bundle adds both entries (sender+receiver: the UI's `canonicalBoxBytes`
-mirror already lists them) plus route tests through the JSON edge for cast
-and unvouch. `GET /vouches?voucher=X` gains a `boxId` per entry — the future
-unvouch builder must name the VouchBox it spends, and no read surface exposes
-box ids today.
+**The JSON edge:** `jsonToTx`'s `BINARY_BOX_FIELDS` names `voucherId` and `targetId`, so a vouch
+transaction crosses HTTP JSON with both as bytes (a field missing from that set makes its box
+inexpressible over JSON — it arrives as a hex string and dies at the step-4 schema). Route tests drive
+cast and unvouch through the JSON edge. `GET /vouches?voucher=X` carries a `boxId` per entry, which the
+unvouch builder names as the VouchBox it spends.
 
 **Route error policy (L-12):** services signal intentional, client-safe
 rejections with a typed client-error class; route handlers return its message
@@ -2188,74 +2168,7 @@ A box gets provenance **where it is stored**, not where it is first constructed.
 `mint-provenance.ts` imports it; it previously kept a local mirror, and a silent
 divergence between the two would have moved mint txIds — and therefore box ids —
 with nothing to catch it, while this contract's own subject table mandates the
-encoding. One implementation feeds both derivations. The retired demo UI's mirror
-cannot import it and reproduces the sentinel behaviour itself; it must not throw.
-
-### The demo UI mirror carries the same strip defect
-
-> ✅ **RESOLVED — verified 2026-09-09.** No `{ id, ...rest }` strip remains in `public/index.html`; both
-> of its derivations go through its own `canonicalBoxBytes`. The section is the record of that defect in
-> the retired demo UI's mirror (→ The node serves no client), and reads as it did when the fix landed.
-
-`public/index.html`'s client-side `computeBoxId` does `const { id, ...rest } = box`
-— the **id-only strip** that phase C0 removed from `@dagsocial/types`. Both of
-its call sites hash **client-built** boxes carrying no provenance (the predicted
-`inviteBoxId`, and the cached LikeBox id for unlike), so server and client agree
-today and phase C does not change that. (P2-D deletes unlike and `LikeBox`
-entirely — its UI phase removes that call site, and with it the last flow that
-predicts a box id at all.)
-
-It is a latent trap rather than a live defect: the first time the UI hashes a
-**server-returned** box — which carries `txId`/`index` from phase C on — it
-would hash provenance into a legacy id and silently disagree with the node.
-Since both flows depend on the client *predicting* an id the node will later
-agree with, that disagreement would surface as a dangling `bond.inviteBoxId` or
-an unspendable LikeBox, not as a visible error.
-
-**Phase E obligation**, alongside teaching the mirror the domain tag,
-`utf8(txId)` and `u32BE(index)`: fix the strip rule in the same pass. *(Found by
-the phase C0 session, which correctly did not touch it — `public/index.html` is
-the node package's file.)*
-
-⚠ **The UI had the id-only strip in TWO places, not one — `computeTxId` as well
-as `computeBoxId`.** This contract named only the latter. Found and fixed in
-phase E1 by extracting a single `canonicalBoxBytes()` helper in the UI and
-routing both through it, mirroring how types is structured.
-
-That makes **four** instances of the same defect: `computeTxId` in types (phase
-A), `computeBoxId` in types (phase C0), and both UI sites (phase E1). The rule
-was always "exactly one strip rule, so tx and box derivation cannot drift", and
-it was violated everywhere it could be, in both implementations, because a local
-`const { id, ...rest } = box` is the obvious thing to write and is wrong in a way
-nothing detects until provenance exists. **When auditing a mirror, assume the
-defect is in every site that strips, not the one that was reported.**
-
-#### The mirror test MUST cover every box type
-
-Not a representative one. The cbor-era UI converted hex-string fields to bytes
-before encoding using a hardcoded `binaryFields` name list — a hand-maintained
-copy of "which box fields are `Uint8Array` in types" — and it **omitted
-`VouchBox`'s `voucherId` and `targetId`**: a client-built vouch box encoded
-them as CBOR *text* (`7840` + 64 ASCII) where the node wrote a *byte string*
-(`5820` + 32 raw), giving a different box id. Latent only because the vouch flow
-POSTs to `/vouches` and never builds the box client-side.
-
-That gap survived because the mirror covered **karma and credit only** — the other
-box types were never encoded through both implementations and compared. So
-the enforceable rule is coverage, not documentation: with every box type in the
-mirror, a missing `binaryFields` entry fails mechanically instead of waiting for
-someone to notice the list is a manual copy of a type definition.
-
-⚠ **This is the second instance of the shape** — a round-trip test that used only a karma box, so
-an in-range record tag at `0x03` could not collide with karma at `0x01` and the
-mutation died against the literal assertion instead of the behaviour. **A
-"representative" fixture in a test whose whole job is cross-implementation or
-cross-kind agreement is not representative of anything.** Enumerate.
-
-*(Having UI builders carry `Uint8Array` directly would remove the list entirely
-and is the cleaner end state. It is deliberately **not** done here: it is
-consensus-visible surgery across every box-building site, and it stops being
-urgent once drift is caught by test.)*
+encoding. One implementation feeds both derivations.
 
 ### Phase G checklist — LANDED (phases G1–G3b)
 
