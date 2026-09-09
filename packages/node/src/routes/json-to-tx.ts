@@ -5,13 +5,8 @@ import { ClientError } from '../services/client-error.js';
 /**
  * Fields in box types whose runtime value is Uint8Array but arrive as hex
  * strings over the JSON HTTP API.  We convert them back during deserialisation.
- *
- * ⛔ **EXPORTED SO THE DEMO UI's MIRROR CAN BE CHECKED AGAINST IT.** The page
- * writes these same fields through `b32Either`, and a field it names that this
- * set does not — or the reverse — produces bytes the node disagrees with rather
- * than an error either side reports (NODE_INTERFACE → The node serves no
- * client). `ui-crypto-mirror.test.ts` is the only
- * gate that reaches that file.
+ * A Uint8Array field missing from this set makes its box inexpressible over
+ * HTTP JSON (TYPES_INTERFACE → Layout — Boxes).
  */
 export const BINARY_BOX_FIELDS = new Set([
   'owner',            // KarmaBox, CreditBox, VouchEscrowBox
@@ -24,8 +19,7 @@ export const BINARY_BOX_FIELDS = new Set([
   // VouchBox. A field missing from this list makes its box INEXPRESSIBLE over
   // HTTP JSON — the value arrives as a hex string and dies at `validateTx`'s
   // step-4 schema, which wants `bytes32`. Service-level tests cannot see it:
-  // they pass raw `Uint8Array` objects and never cross this edge. This list and
-  // the demo UI's `canonicalBoxBytes` mirror must name the same fields.
+  // they pass raw `Uint8Array` objects and never cross this edge.
   'voucherId',        // VouchBox
   'targetId',         // VouchBox
   // ⛔ **`LikeAccrualBox`, and it is the field the warning above predicted.**

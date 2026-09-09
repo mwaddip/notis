@@ -4,10 +4,8 @@ import { MempoolFullError } from '../store/mempool.js';
 
 /**
  * Shape of the body carrying an intentional rejection's message. Two shapes
- * exist across the API and clients read them directly (the demo UI reads
- * `data.error` on the invite routes, `data.reason || data.error` elsewhere), so
- * each route keeps the one it already returned. Unifying them is a separate,
- * client-visible change.
+ * exist across the API and clients read them directly, so each route keeps the
+ * one it already returned. Unifying them is a separate, client-visible change.
  */
 export type ClientErrorBody = 'status+reason' | 'message';
 
