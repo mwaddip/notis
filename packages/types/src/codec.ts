@@ -16,9 +16,11 @@
  *  3. **The four-part boundary check** (TYPES_INTERFACE → The boundary check)
  *     as one entry point, so no struct codec can skip a step.
  *
- * No node builtins and no `Buffer`: the demo UI is a second implementation of
- * these preimages in browser JS, so this codec has to stay runnable there, and
- * `@dagsocial/wire` is browser-clean for the same reason. Hex conversion below
+ * No node builtins and no `Buffer`: the web client runs this codec in the
+ * browser through a build-time shim (WEB_INTERFACE → The browser reaches
+ * `@dagsocial/types` through a build-time shim), so it has to stay runnable
+ * there, and `@dagsocial/wire` is browser-clean for the same reason. Hex
+ * conversion below
  * is hand-rolled rather than `Buffer.from(hex, 'hex')` both for that and
  * because `Buffer` silently drops invalid nibbles.
  *

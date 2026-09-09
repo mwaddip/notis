@@ -89,8 +89,8 @@ export type { PostCommit, Post, PostId, PostType } from './post.js';
 //
 // `BOX_TYPE_TAGS` is the box-type mapping, exported for the reason
 // `postFieldBytes` above is: other packages need it and a second statement of it
-// is free to drift. It is the numbering inside every box's id preimage, which
-// the demo UI mirrors and cannot import. See TYPES_INTERFACE → Layout — Boxes.
+// is free to drift. It is the numbering inside every box's id preimage.
+// See TYPES_INTERFACE → Layout — Boxes.
 export {
   computeBoxId,
   computeCandidateBoxId,

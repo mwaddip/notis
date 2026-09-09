@@ -315,8 +315,7 @@ const GOLDEN_CREDIT_BOX: CreditBox = { ...GOLDEN_CREDIT_CANDIDATE, txId: GOLDEN_
 /**
  * Full canonical identity bytes, frozen — the whole encoding, not a sample of
  * it. A mirror implementation that gets any byte wrong computes different ids
- * for every box, so this is what the demo UI's hand-written mirror is checked
- * against.
+ * for every box, so this is what a second implementation is checked against.
  *
  *   karma  = 00 | 64 | ac02 | b32(owner)
  *            ^tag ^vlqU64(100)
@@ -518,8 +517,9 @@ const MINT_GOLDEN_SUBJECT = new Uint8Array(4).fill(0x5a);
 const ALL_MINT_REASONS = Object.keys(MINT_REASON_GOLDENS) as MintReason[];
 
 /**
- * Frozen golden vectors for the provenance derivation — the cross-implementation
- * anchor for node and the demo UI. `GOLDEN_TX` creates these two boxes, so the
+ * Frozen golden vectors for the provenance derivation — the anchor the node's
+ * derivation and any second implementation are checked against. `GOLDEN_TX`
+ * creates these two boxes, so the
  * karma box sits at index 0 and the credit box at index 1 of that transaction.
  * Do not "fix" a failure by editing the hashes: the derivation is
  * protocol-breaking and unversioned.
@@ -1755,9 +1755,9 @@ describe('domain separation', () => {
 
 describe('transactions', () => {
   describe('domain separation (found by G3b mutation testing)', () => {
-    // Dropping `TX_ID_DOMAIN` from `computeTxId` was killed ONLY by frozen
-    // goldens and the UI mirror — three assertions, all of the form "this id
-    // equals this constant". Nothing pinned what the tag is *for*: that box ids,
+    // Dropping `TX_ID_DOMAIN` from `computeTxId` is caught only by the frozen
+    // goldens — assertions of the form "this id equals this constant". Nothing
+    // pins what the tag is *for*: that box ids,
     // transaction ids, mint txIds, identity-record keys and the network key
     // share one 32-byte keyspace and must be provably disjoint
     // (TYPES_INTERFACE → Domain tags).
