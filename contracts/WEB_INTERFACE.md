@@ -773,7 +773,9 @@ posts        a word that opens the author-posts window beside this one
 resident's line reads the counts against the bars from `/status` — the only place a bar is read for
 another identity. **`vouch` is a word, and this row is the one place a vouch is cast**
 (`HOUSE_STYLE → Interaction`): a press on it vouches at once — no confirmation — with the stakes sentence
-beside it; a locked identity mounts the unlock form in the row's place first (→ The identity module).
+beside it; a locked identity mounts the unlock form in the row's place first (→ The identity module). While
+the vouch flies the row carries the flight's stage line in the word's place — `submitting…`, `submitted` —
+as an unvouch does, and the landing renders `vouched since block N`; a rejection's line reads there too.
 **`unvouch`**, a word too, resolves the vouch box at the press (→ The wallet); a pair already gone
 re-renders the row to `vouch` and says so — *"that vouch was already withdrawn."* Its copy states what
 happens: the stake is held until block N and no new vouch until then. The reasons the reader cannot
