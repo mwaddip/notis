@@ -107,10 +107,9 @@ async function main() {
   let rK = await jget(`/karma/${R.publicKeyHex}`);
   console.log(`R is a resident: member=${rK.member}, karma boxes=${rK.boxCount}`);
 
-  // 2. R posts two threads. Each re-reads the confirmed karma view from the node
-  // — the e2e builder's `outputs` array maps every output including the
-  // karma_price box the node consumes at settlement, and blindly spending
-  // outputs[0] when there is no change spends a karma_price box instead.
+  // 2. R posts two threads. Each step re-reads the confirmed karma view: the
+  // builder outputs array maps every output, the karma_price box included, and
+  // only block application may spend that one.
   console.log('R posts two threads…');
   const t1 = buildThreadTx(R, karmaBoxes(rK), 'promote thread 1', rK.height, version);
   const t1Res = await jpost('/posts', { tx: t1.json, content: t1.content });
