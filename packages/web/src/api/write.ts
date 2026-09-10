@@ -46,6 +46,15 @@ export interface WithdrawSubmitResult {
   expiresAtHeight: number;
 }
 
+/** `POST /usernames` 2xx — a claim's bounded fields and the name the node
+ *  accepted (WEB_INTERFACE → Writes). */
+export interface UsernameSubmitResult {
+  status: string; // 'pending'
+  txId: string;
+  expiresAtHeight: number;
+  name: string;
+}
+
 /** One shape for both of the node's rejection bodies: the HTTP status and the
  *  message, normalised from `{ error: <status>, reason }` and `{ error: <message> }`
  *  both (WEB_INTERFACE → Writes). */
@@ -56,7 +65,7 @@ export interface Rejection {
 
 /** A success body carries no `message`; a rejection always does. */
 export function isRejection(
-  r: PostSubmitResult | LikeSubmitResult | VouchSubmitResult | InviteSubmitResult | WithdrawSubmitResult | Rejection,
+  r: PostSubmitResult | LikeSubmitResult | VouchSubmitResult | InviteSubmitResult | WithdrawSubmitResult | UsernameSubmitResult | Rejection,
 ): r is Rejection {
   return 'message' in r;
 }
@@ -93,6 +102,14 @@ export class WriteClient {
    *  (WEB_INTERFACE → Writes). */
   submitWithdraw(postId: string, tx: Record<string, unknown>): Promise<WithdrawSubmitResult | Rejection> {
     return this.send<WithdrawSubmitResult>('POST', `/posts/${encodeURIComponent(postId)}/withdraw`, { tx });
+  }
+
+  submitClaim(tx: Record<string, unknown>): Promise<UsernameSubmitResult | Rejection> {
+    return this.send<UsernameSubmitResult>('POST', '/usernames', { tx });
+  }
+
+  submitBurn(name: string, tx: Record<string, unknown>): Promise<UsernameSubmitResult | Rejection> {
+    return this.send<UsernameSubmitResult>('POST', `/usernames/${encodeURIComponent(name)}/burn`, { tx });
   }
 
   private async send<T>(method: string, path: string, body: unknown): Promise<T | Rejection> {

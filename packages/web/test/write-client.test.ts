@@ -90,6 +90,26 @@ describe('write client — request envelopes', () => {
     expect(res).toEqual({ status: 'pending', txId: 'ti', expiresAtHeight: 5720, bondBoxId: 'bond1' });
   });
 
+  it('submitClaim POSTs { tx } to /usernames and returns the 2xx body', async () => {
+    mockResponse({ ok: true, status: 200, body: { status: 'pending', txId: 'tc', expiresAtHeight: 5720, name: 'Alice_01' } });
+    const tx = { inputs: ['cc'.repeat(32)], outputs: [], signatures: {}, protocolVersion: 1 };
+    const res = await write().submitClaim(tx);
+    expect(last.url).toBe('/usernames');
+    expect(last.method).toBe('POST');
+    expect(last.body).toEqual({ tx });
+    expect(res).toEqual({ status: 'pending', txId: 'tc', expiresAtHeight: 5720, name: 'Alice_01' });
+  });
+
+  it('submitBurn POSTs { tx } to /usernames/:name/burn and encodes the name', async () => {
+    mockResponse({ ok: true, status: 200, body: { status: 'pending', txId: 'tb', expiresAtHeight: 5720 } });
+    const tx = { inputs: ['cc'.repeat(32)], outputs: [], signatures: {}, protocolVersion: 1 };
+    const res = await write().submitBurn('Alice_01', tx);
+    expect(last.url).toBe('/usernames/Alice_01/burn');
+    expect(last.method).toBe('POST');
+    expect(last.body).toEqual({ tx });
+    expect(res).toMatchObject({ status: 'pending', txId: 'tb', expiresAtHeight: 5720 });
+  });
+
   it('submitWithdraw POSTs { tx } to /posts/:id/withdraw and returns the 2xx body', async () => {
     mockResponse({ ok: true, status: 201, body: { status: 'submitted', txId: 'tw', postId: 'p7', expiresAtHeight: 5720 } });
     const tx = { inputs: ['cc'.repeat(32)], outputs: [], signatures: {}, protocolVersion: 1, postWithdraw: { postId: 'p7' } };

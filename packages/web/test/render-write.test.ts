@@ -97,6 +97,7 @@ function harness(): Harness {
     vouchesByVoucher: async () => ({ vouches: [], count: 0, next: null }),
     vouchCooldowns: async () => ({ cooldowns: [], count: 0, next: null }),
     bonds: async () => ({ bonds: [], bondCount: 0, next: null }),
+    usernameByOwner: async () => null,
   };
   const writeClient = {
     submitPost: async () => ({ postId: 'newpost', status: 'pending', expiresAtHeight: 6720, txId: echoTxId() }),
@@ -230,6 +231,7 @@ describe('feed cards carry like and link', () => {
       vouchesByVoucher: async () => ({ vouches: [], count: 0, next: null }),
       vouchCooldowns: async () => ({ cooldowns: [], count: 0, next: null }),
       bonds: async () => ({ bonds: [], bondCount: 0, next: null }),
+      usernameByOwner: async () => null,
     };
     const writeClient = {
       submitPost: async () => ({ postId: 'newpost', status: 'pending', expiresAtHeight: 6720, txId: echoTxId() }),
@@ -303,6 +305,7 @@ describe('feed cards carry like and link', () => {
       vouchesByVoucher: async () => ({ vouches: [], count: 0, next: null }),
       vouchCooldowns: async () => ({ cooldowns: [], count: 0, next: null }),
       bonds: async () => ({ bonds: [], bondCount: 0, next: null }),
+      usernameByOwner: async () => null,
     };
     const writeClient = {
       submitPost: async () => ({ postId: 'x', status: 'pending', expiresAtHeight: 6720, txId: 'x' }),
@@ -355,6 +358,7 @@ describe('a locked like from the feed mounts the unlock row', () => {
       vouchesByVoucher: async () => ({ vouches: [], count: 0, next: null }),
       vouchCooldowns: async () => ({ cooldowns: [], count: 0, next: null }),
       bonds: async () => ({ bonds: [], bondCount: 0, next: null }),
+      usernameByOwner: async () => null,
     };
     const writeClient = {
       submitPost: async () => ({ postId: 'x', status: 'pending', expiresAtHeight: 6720, txId: 'x' }),
@@ -434,6 +438,7 @@ describe('a like landing updates every surface holding the post', () => {
       vouchesByVoucher: async () => ({ vouches: [], count: 0, next: null }),
       vouchCooldowns: async () => ({ cooldowns: [], count: 0, next: null }),
       bonds: async () => ({ bonds: [], bondCount: 0, next: null }),
+      usernameByOwner: async () => null,
     };
     const writeClient = {
       submitPost: async () => ({ postId: 'x', status: 'pending', expiresAtHeight: 6720, txId: 'x' }),

@@ -70,6 +70,7 @@ function fakeApi(): Api {
     vouchesByVoucher: async (): Promise<VouchesVoucherResult> => ({ vouches: vouchSet, count: vouchSet.length, next: null }),
     vouchCooldowns: async (): Promise<VouchCooldownsResult> => ({ cooldowns, count: cooldowns.length, next: null }),
     bonds: async () => ({ bonds: [], bondCount: 0, next: null }),
+    usernameByOwner: async () => null,
   };
 }
 

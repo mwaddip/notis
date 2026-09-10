@@ -46,6 +46,7 @@ function fakeApi(): Api & { feedCalls: number } {
     vouchesByVoucher: async () => ({ vouches: [], count: 0, next: null }),
     vouchCooldowns: async () => ({ cooldowns: [], count: 0, next: null }),
     bonds: async () => ({ bonds: [], bondCount: 0, next: null }),
+    usernameByOwner: async () => null,
   };
 }
 

@@ -1,6 +1,7 @@
 import type {
   FeedResult, ThreadResult, PostResult, StatusResult, BlockCurrent, KarmaResult,
   VouchesTargetResult, VouchesVoucherResult, VouchCooldownsResult, BondsResult,
+  UsernameResult,
 } from './dto';
 
 // This module issues GET requests and nothing else — no POST, no body. A `viewer`
@@ -38,6 +39,7 @@ export interface Api {
   vouchesByVoucher(key: string, page?: Page): Promise<VouchesVoucherResult>;
   vouchCooldowns(key: string, page?: Page): Promise<VouchCooldownsResult>;
   bonds(key: string, page?: Page): Promise<BondsResult>;
+  usernameByOwner(key: string): Promise<UsernameResult | null>;
 }
 
 export class NodeClient implements Api {
@@ -117,5 +119,9 @@ export class NodeClient implements Api {
 
   bonds(key: string, page: Page = {}): Promise<BondsResult> {
     return this.get<BondsResult>(this.url(`/invites/${encodeURIComponent(key)}`, { limit: page.limit, after: page.after ?? undefined }));
+  }
+
+  usernameByOwner(key: string): Promise<UsernameResult | null> {
+    return this.getOrNull<UsernameResult>(this.url('/usernames', { owner: key }));
   }
 }

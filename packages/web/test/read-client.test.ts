@@ -87,6 +87,24 @@ describe('read client — the author-posts filter', () => {
   });
 });
 
+describe('read client — usernameByOwner', () => {
+  it('reads /usernames?owner=<key> and returns null on 404', async () => {
+    const c = client();
+    await c.usernameByOwner('key1');
+    expect(calls[0]).toBe('/usernames?owner=key1');
+    expect(calls[0]).not.toContain('viewer');
+  });
+
+  it('returns null on a 404', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: false, status: 404, statusText: 'Not Found', json: async () => ({}) } as Response)),
+    );
+    const result = await client().usernameByOwner('key1');
+    expect(result).toBeNull();
+  });
+});
+
 describe('read client — the feed roots filter', () => {
   it('the feed carries roots=1; the author-posts read carries author and no roots', async () => {
     const c = client();
