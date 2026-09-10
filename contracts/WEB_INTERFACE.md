@@ -167,11 +167,6 @@ document on every page but the base itself. So the client carries none: the mark
 header that renders it (`HOUSE_STYLE → Where the artwork lives`), and every URL the client composes from its
 base is path-absolute.
 
-> ⚠ **AHEAD OF CODE — 2026-09-10.** The bundle bakes `--base`, `VITE_API_BASE` and `VITE_FAUCET_BASE` into
-> its bytes; the shell carries no `<base>` and no meta; the mark is a sprite in the shell referenced by
-> `<use>`; `public/fonts/fonts.css` references `/fonts/…` root-absolute; no script builds the zip and
-> `release.yml` has no step for it. One unit builds all of it.
-
 ## Reading the feed and threads
 
 | Client action | Endpoint | Query |
