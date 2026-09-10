@@ -6,6 +6,27 @@ import { fileURLToPath } from 'node:url';
 const html = readFileSync(fileURLToPath(new URL('../index.html', import.meta.url)), 'utf8');
 const svg = readFileSync(fileURLToPath(new URL('../public/favicon.svg', import.meta.url)), 'utf8');
 
+describe('shell deploy tags', () => {
+  it('carries <base> with the VITE_WEB_BASE placeholder', () => {
+    expect(html).toContain('<base href="%VITE_WEB_BASE%">');
+  });
+  it('carries the notis-api meta with the VITE_API_BASE placeholder', () => {
+    expect(html).toContain('<meta name="notis-api" content="%VITE_API_BASE%">');
+  });
+  it('carries the notis-faucet meta with the VITE_FAUCET_BASE placeholder', () => {
+    expect(html).toContain('<meta name="notis-faucet" content="%VITE_FAUCET_BASE%">');
+  });
+  it('<base> precedes every URL-bearing element', () => {
+    const basePos = html.indexOf('<base ');
+    expect(basePos).toBeGreaterThan(-1);
+    for (const tag of ['<link ', '<script', '<meta name="viewport"']) {
+      const pos = html.indexOf(tag);
+      if (pos === -1) continue;
+      expect(basePos).toBeLessThan(pos);
+    }
+  });
+});
+
 describe('shell icon links', () => {
   it('links the SVG favicon with type', () => {
     expect(html).toContain('<link rel="icon" href="/favicon.svg" type="image/svg+xml">');

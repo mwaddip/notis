@@ -13,16 +13,28 @@ const KEY_NODE = 'notis.node';
 const KEY_FAUCET = 'notis.faucet';
 export const KEY_LAYOUT = 'notis.layout';
 
-// The client's default API base, baked at build time — empty for `pnpm dev`
-// (the vite proxy makes the node same-origin), a path like /testnet/api for a
-// deploy served under one. A stored node value overrides it; the source never
-// hardcodes an origin.
-export const BUILD_BASE = import.meta.env.VITE_API_BASE ?? '';
+// The deployment reads — three tags in the shell's head, read once at load
+// (WEB_INTERFACE → The client is served from the node's own origin).
 
-// The faucet's default base, baked at build time — empty means no faucet and no
-// button (WEB_INTERFACE → The faucet step), a path like /testnet/faucet on a
-// deploy. A stored faucet value overrides it; the source hardcodes no origin.
-export const BUILD_FAUCET_BASE = import.meta.env.VITE_FAUCET_BASE ?? '';
+export function readBase(): string {
+  const el = document.querySelector('base');
+  if (!el) return '/';
+  const href = el.getAttribute('href');
+  if (!href) return '/';
+  const path = new URL(href, location.href).pathname;
+  return path.endsWith('/') ? path : path + '/';
+}
+
+export function readMeta(name: string): string {
+  const el = document.querySelector<HTMLMetaElement>(`meta[name="${name}"]`);
+  if (!el) return '';
+  const v = el.content.trim();
+  return v.endsWith('/') ? v.slice(0, -1) : v;
+}
+
+export const WEB_BASE = readBase();
+export const BUILD_BASE = readMeta('notis-api');
+export const BUILD_FAUCET_BASE = readMeta('notis-faucet');
 
 // The wash percentages are large because the wash colour sits at the ground's
 // own lightness — the mix controls how much hue comes through and nothing else,

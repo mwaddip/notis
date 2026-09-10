@@ -32,6 +32,12 @@ if (FAUCET_ORIGIN && !process.env['VITE_FAUCET_BASE']) {
   process.env['VITE_FAUCET_BASE'] = '/faucet';
 }
 
+// Defaults so no %VITE_…% literal survives in the built shell
+// (WEB_INTERFACE → The client is served from the node's own origin).
+if (!process.env['VITE_WEB_BASE']) process.env['VITE_WEB_BASE'] = '/';
+if (!process.env['VITE_API_BASE']) process.env['VITE_API_BASE'] = '';
+if (!process.env['VITE_FAUCET_BASE']) process.env['VITE_FAUCET_BASE'] = '';
+
 // The API paths mounted bare on the node, proxied so the browser sees them
 // same-origin — the node and nginx send no CORS
 // (WEB_INTERFACE → The client is served from the node's own origin). The read
@@ -56,7 +62,8 @@ const CRYPTO_SHIM = fileURLToPath(new URL('./src/shim/crypto.ts', import.meta.ur
 // the Node builtin's own name, not the buffer package's absolute path.
 const BUFFER_MODULE = createRequire(import.meta.url).resolve('buffer/');
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
+  base: command === 'build' ? './' : '/',
   resolve: {
     // Only the bare specifier: `node:crypto` (the equivalence test's escape hatch
     // to real Node crypto) and any `crypto-*` package are left untouched.
@@ -79,4 +86,4 @@ export default defineConfig({
       ],
     },
   },
-});
+}));

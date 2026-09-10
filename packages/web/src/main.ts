@@ -1,4 +1,4 @@
-import { applyPrefs } from './prefs';
+import { applyPrefs, WEB_BASE } from './prefs';
 import { App } from './app';
 import { decideMode } from './mode';
 import { createTabs } from './tabs';
@@ -13,7 +13,7 @@ const feed = document.getElementById('feed');
 const panes = document.getElementById('panes');
 if (!appbar || !feed || !panes) throw new Error('missing app shell elements');
 
-const mode = decideMode(location.pathname, import.meta.env.BASE_URL);
+const mode = decideMode(location.pathname, WEB_BASE);
 new App(undefined, undefined, undefined, undefined, createTabs()).start(appbar, feed, panes, mode);
 
 // Restoring a stored preference is painted, not transitioned: drop the
