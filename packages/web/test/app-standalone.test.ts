@@ -184,6 +184,26 @@ describe('standalone title and re-root', () => {
     expect(document.title).toContain('…');
   });
 
+  it('document.title reads @Name · Notis when the root row carries a name', async () => {
+    const named = post(P1, 'named root');
+    named.authorName = 'Alice';
+    const namedApi: Api & { feedCalls: number } = {
+      ...fakeApi(),
+      thread: async () => ({
+        post: named, ancestors: [], ancestorCount: 0,
+        descendants: [], descendantCount: 0,
+        next: null, pending: [], pendingCount: 0,
+      }),
+    };
+    const { appbar, feed, panes } = mountShell();
+    const app = new App(namedApi);
+    app.start(appbar, feed, panes, { kind: 'standalone', id: P1, base: '/' });
+    await flush();
+    await flush();
+
+    expect(document.title).toBe('@Alice · Notis');
+  });
+
   it('the strip re-roots, pushes a history entry, and leaves notis.layout untouched', async () => {
     const { appbar, feed, panes } = mountShell();
     localStorage.setItem(KEY_LAYOUT, '#' + HEX('f'));

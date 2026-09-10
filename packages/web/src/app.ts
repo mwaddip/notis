@@ -534,6 +534,9 @@ export class App {
       profile.style.border = '1px solid var(--borderStrong)';
       if (cur === null) {
         profile.textContent = 'profile';
+      } else if (this.ownName) {
+        profile.style.fontWeight = '600';
+        profile.textContent = '@' + this.ownName.name;
       } else {
         profile.style.fontFamily = 'var(--mono)';
         profile.textContent = shortHex(cur.pubKeyHex, 16);
@@ -581,10 +584,16 @@ export class App {
     } else {
       const cur = this.idm.current();
       if (cur !== null) {
-        const prefix = el('span', 'hex hdr-prefix');
-        prefix.style.fontFamily = 'var(--mono)';
-        prefix.textContent = shortHex(cur.pubKeyHex, 16);
-        bar.appendChild(prefix);
+        if (this.ownName) {
+          const handle = el('span', 'handle hdr-prefix');
+          handle.textContent = '@' + this.ownName.name;
+          bar.appendChild(handle);
+        } else {
+          const prefix = el('span', 'hex hdr-prefix');
+          prefix.style.fontFamily = 'var(--mono)';
+          prefix.textContent = shortHex(cur.pubKeyHex, 16);
+          bar.appendChild(prefix);
+        }
       }
       const theme = el('button', 'theme-btn', target);
       theme.setAttribute('aria-label', `switch to ${target} theme`);
@@ -593,13 +602,14 @@ export class App {
     }
   }
 
-  // WEB_INTERFACE → The standalone thread — document.title is the author's prefix
-  // and Notis, set when the thread lands and on every re-root.
+  // WEB_INTERFACE → The standalone thread — document.title is the author's handle
+  // when the root row carries a name, else the prefix, and Notis.
   private updateStandaloneTitle(id: string): void {
     const t = this.state.threads.get(id);
     const root = t?.root;
     if (!root) return;
-    document.title = shortHex(root.author, 16) + ' · Notis';
+    const display = root.authorName !== null ? '@' + root.authorName : shortHex(root.author, 16);
+    document.title = display + ' · Notis';
   }
 
   /** The active scroller: the workspace at one column (the feed and every column
@@ -1277,6 +1287,7 @@ export class App {
     this.authorPostsData.clear();
     this.bondsView = null;
     this.inviteFlight = null;
+    this.ownName = null;
     this.ledger = new PendingLedger(this.idm.current()?.pubKeyHex ?? null);
     this.startPoll(); // the new key's restored ledger may hold entries; guarded on empty
     this.renderHeader();
@@ -1649,12 +1660,13 @@ export class App {
     const cur = this.idm.current();
     if (cur === null) return;
     try {
-      const [karma, status, vouched, escrow, bonds] = await Promise.all([
+      const [karma, status, vouched, escrow, bonds, ownName] = await Promise.all([
         this.client.karma(cur.pubKeyHex),
         this.client.status(),
         this.readVouchSet(cur.pubKeyHex),
         this.readEscrow(cur.pubKeyHex),
         this.client.bonds(cur.pubKeyHex),
+        this.client.usernameByOwner(cur.pubKeyHex),
       ]);
       this.profileKarma = karma;
       this.state.status = status; // vouchCooldownBlocks + the bond range for the invites row
@@ -1663,6 +1675,7 @@ export class App {
       this.vouched = vouched;
       this.escrowHeldUntil = escrow;
       this.bondsView = bonds;
+      this.ownName = ownName;
     } catch {
       return; // a failed read leaves the last-known state; the ↻ retries
     }
@@ -1820,10 +1833,12 @@ export class App {
     const d = this.authorData.get(key);
     if (!d) return;
     try {
-      const [karma, endorsers] = await Promise.all([this.client.karma(key), this.client.vouchesByTarget(key)]);
+      const [karma, endorsers, username] = await Promise.all([this.client.karma(key), this.client.vouchesByTarget(key), this.client.usernameByOwner(key)]);
       d.karma = karma;
       d.endorsers = endorsers;
       d.endorsersNext = endorsers.next !== null;
+      d.username = username;
+      d.usernameLoaded = true;
       this.bumpTip(karma.height);
     } catch {
       return; // leave the window's last data; the ↻ retries

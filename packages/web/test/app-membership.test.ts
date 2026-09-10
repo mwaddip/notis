@@ -52,6 +52,9 @@ function memberKarma(key: string): KarmaResult {
   return karmaResult({ userId: key, member: true, invitesAvailable: 2, memberSinceBlock: 5, boxCount: 1, total: effective, effective, boxes: [{ boxId: KBOX, value: effective }], height: blockHeight });
 }
 
+let ownNameResult: { name: string; owner: string; boxId: string; claimedAtBlock: number } | null;
+let authorNameResults: Map<string, { name: string; owner: string; boxId: string; claimedAtBlock: number } | null>;
+
 function fakeApi(): Api {
   return {
     feed: async (_p, viewer) => {
@@ -70,7 +73,7 @@ function fakeApi(): Api {
     vouchesByVoucher: async (): Promise<VouchesVoucherResult> => ({ vouches: vouchSet, count: vouchSet.length, next: null }),
     vouchCooldowns: async (): Promise<VouchCooldownsResult> => ({ cooldowns, count: cooldowns.length, next: null }),
     bonds: async () => ({ bonds: [], bondCount: 0, next: null }),
-    usernameByOwner: async () => null,
+    usernameByOwner: async (key) => authorNameResults?.get(key) ?? (key === ME ? ownNameResult : null),
   };
 }
 
@@ -128,6 +131,8 @@ function harness() {
   vouchResp = { ok: true };
   lastSigned = '';
   effective = '250';
+  ownNameResult = null;
+  authorNameResults = new Map();
 
   const app = new App(fakeApi(), fakeWrite(), fakeIdentity());
   const appbar = document.createElement('div');
@@ -135,7 +140,7 @@ function harness() {
   const panes = document.createElement('section'); panes.id = 'panes';
   document.body.append(appbar, feed, panes);
   app.mount(appbar, feed, panes);
-  return { app, feed, panes, drive: app as unknown as Drive };
+  return { app, appbar, feed, panes, drive: app as unknown as Drive };
 }
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
@@ -291,5 +296,56 @@ describe('an identity change', () => {
     onChangeCb();
     await flush();
     expect(h.drive.vouched.has(X)).toBe(false);
+  });
+});
+
+describe('the reader\'s own name read', () => {
+  it('the header shows the handle @Name at tiling when the reader holds a name', async () => {
+    const h = harness();
+    ownNameResult = { name: 'TestUser', owner: ME, boxId: '55'.repeat(32), claimedAtBlock: 50 };
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    await flush();
+    const profileBtn = h.appbar.querySelector('[aria-label="open profile"]') as HTMLElement;
+    expect(profileBtn).not.toBeNull();
+    expect(profileBtn.textContent).toBe('@TestUser');
+    expect(profileBtn.style.fontFamily).not.toContain('mono');
+  });
+
+  it('the header shows the hex prefix when no name is held', async () => {
+    const h = harness();
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    await flush();
+    const profileBtn = h.appbar.querySelector('[aria-label="open profile"]') as HTMLElement;
+    expect(profileBtn.style.fontFamily).toContain('mono');
+  });
+});
+
+describe('the author window reads the subject\'s name', () => {
+  it('the author window bar shows the handle when the subject holds a name', async () => {
+    const h = harness();
+    authorNameResults.set(X, { name: 'OtherUser', owner: X, boxId: '66'.repeat(32), claimedAtBlock: 60 });
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    await flush();
+    h.drive.openAuthor(X, { from: 'feed' });
+    await flush();
+    const bar = h.panes.querySelector('.bar .bar-label .handle');
+    expect(bar).not.toBeNull();
+    expect(bar!.textContent).toBe('@OtherUser');
+  });
+
+  it('the author window name row reads @Name', async () => {
+    const h = harness();
+    authorNameResults.set(X, { name: 'OtherUser', owner: X, boxId: '66'.repeat(32), claimedAtBlock: 60 });
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    await flush();
+    h.drive.openAuthor(X, { from: 'feed' });
+    await flush();
+    const nameRow = [...h.panes.querySelectorAll('.row')].find((r) => r.querySelector('label')?.textContent === 'name');
+    expect(nameRow).not.toBeNull();
+    expect(nameRow!.querySelector('.handle')?.textContent).toBe('@OtherUser');
   });
 });
