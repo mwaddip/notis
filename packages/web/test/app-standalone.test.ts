@@ -170,6 +170,36 @@ describe('standalone header', () => {
     expect(appbar.querySelectorAll('.ctl').length).toBe(0);
     expect(appbar.querySelector('[aria-label="open profile"]')).toBeNull();
   });
+
+  it('the way-in is theme-btn at wide width and btn-ghost at one column', () => {
+    // Wide (default happy-dom 1024px): inverse fill (theme-btn).
+    const wide = mountShell();
+    const appWide = new App(fakeApi());
+    appWide.mount(wide.appbar, wide.feed, wide.panes, { kind: 'standalone', id: P1, base: '/' });
+    const wayInWide = wide.appbar.querySelector('[aria-label="add this thread to your workspace"]')!;
+    expect(wayInWide.classList.contains('theme-btn')).toBe(true);
+    expect(wayInWide.classList.contains('btn-ghost')).toBe(false);
+
+    // Narrow: mock matchMedia so oneColumn is true.
+    const orig = window.matchMedia.bind(window);
+    window.matchMedia = ((q: string) => {
+      const mql = orig(q);
+      if (q.includes('max-width')) {
+        Object.defineProperty(mql, 'matches', { value: true, configurable: true });
+      }
+      return mql;
+    }) as typeof window.matchMedia;
+    try {
+      const narrow = mountShell();
+      const appNarrow = new App(fakeApi());
+      appNarrow.mount(narrow.appbar, narrow.feed, narrow.panes, { kind: 'standalone', id: P1, base: '/' });
+      const wayInNarrow = narrow.appbar.querySelector('[aria-label="add this thread to your workspace"]')!;
+      expect(wayInNarrow.classList.contains('btn-ghost')).toBe(true);
+      expect(wayInNarrow.classList.contains('theme-btn')).toBe(false);
+    } finally {
+      window.matchMedia = orig as typeof window.matchMedia;
+    }
+  });
 });
 
 describe('standalone title and re-root', () => {
