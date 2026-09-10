@@ -526,3 +526,55 @@ describe('mining routes — mount policy', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Alias resolution — NODE_INTERFACE → Identity parameters
+// ---------------------------------------------------------------------------
+
+describe('mining routes — alias resolution', () => {
+  const HOLDER_HEX = 'aa'.repeat(32);
+  const lookup = (lower: string) => lower === 'alice' ? { owner: HOLDER_HEX } : null;
+
+  it('miner accepts an @handle: resolves, wrong case resolves, unknown 404s, malformed 400s, a key passes', async () => {
+    const setMinerPubkey = vi.fn();
+    const deps = makeDeps({ setMinerPubkey, getUsername: lookup });
+    const app = makeApp(deps);
+
+    const ok = await request(app)
+      .get('/template')
+      .query({ miner: '@Alice' })
+      .set('Authorization', `Bearer ${SECRET}`);
+    expect(ok.status).toBe(200);
+    expect(setMinerPubkey).toHaveBeenCalled();
+    expect(Buffer.from(setMinerPubkey.mock.calls[0]![0] as Uint8Array).toString('hex')).toBe(HOLDER_HEX);
+
+    setMinerPubkey.mockClear();
+    const wrongCase = await request(app)
+      .get('/template')
+      .query({ miner: '@ALICE' })
+      .set('Authorization', `Bearer ${SECRET}`);
+    expect(wrongCase.status).toBe(200);
+    expect(setMinerPubkey).toHaveBeenCalled();
+
+    const unknown = await request(app)
+      .get('/template')
+      .query({ miner: '@Nobody' })
+      .set('Authorization', `Bearer ${SECRET}`);
+    expect(unknown.status).toBe(404);
+    expect(unknown.body.error).toContain('unknown handle');
+
+    const malformed = await request(app)
+      .get('/template')
+      .query({ miner: '!!!' })
+      .set('Authorization', `Bearer ${SECRET}`);
+    expect(malformed.status).toBe(400);
+
+    setMinerPubkey.mockClear();
+    const key = await request(app)
+      .get('/template')
+      .query({ miner: HOLDER_HEX })
+      .set('Authorization', `Bearer ${SECRET}`);
+    expect(key.status).toBe(200);
+    expect(setMinerPubkey).toHaveBeenCalled();
+  });
+});

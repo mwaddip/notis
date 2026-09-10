@@ -821,3 +821,153 @@ describe('posts routes', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Alias resolution — NODE_INTERFACE → Identity parameters
+// ---------------------------------------------------------------------------
+
+describe('posts routes — alias resolution', () => {
+  const HOLDER_HEX = 'aa'.repeat(32);
+  const lookup = (lower: string) => lower === 'alice' ? { owner: HOLDER_HEX } : null;
+
+  function aliasGet(path: string): Promise<{ status: number; data: unknown }> {
+    return new Promise((resolve) => {
+      const deps = {
+        insertPost: () => {},
+        getPost: () => null,
+        queryPostsPage: () => ({ rows: [], next: null, pending: [], pendingCount: 0 }),
+        verifyPost,
+        getKarmaBoxes: () => [],
+        getIdentityRecord: () => null,
+        decayCfg: {
+          staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
+          decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS,
+          decayAmount: KARMA_DECAY_AMOUNT,
+          karmaMinimum: KARMA_MINIMUM,
+        },
+        storageRentPeriodBlocks: 40,
+        getBoxProvenance: () => null,
+        getKarmaBox: () => null,
+        getLikeRecordCount: () => 0,
+        getDescendantCount: () => 0,
+        hasLikeRecord: () => false,
+        getUsernameByOwner: () => null,
+        getAncestorsNearest: () => ({ rows: [], count: 0 }),
+        getSubtreePage: () => ({ rows: [], next: null, count: 0, pending: [], pendingCount: 0 }),
+        getBlockCreatedAt: () => null,
+        inviteBondMin: config.inviteBondMin,
+        inviteBondMax: config.inviteBondMax,
+        getTopologyAuthor: () => null,
+        getPendingPostAuthor,
+        getCurrentHeight,
+        protocolVersionSchedule: [{ version: 1, fromHeight: 0 }] as const,
+        getUsername: lookup,
+        admitTx: () => 0,
+        runInTransaction: (fn: () => void) => fn(),
+        validateTx: () => ({ valid: true } as const),
+        getBox: () => null,
+      };
+      const app = express();
+      app.use(express.json());
+      app.use('/posts', createRouter(deps as any));
+      const server = app.listen(0, () => {
+        const addr = server.address() as { port: number };
+        http.get({ hostname: 'localhost', port: addr.port, path: '/posts' + path }, (res) => {
+          let d = '';
+          res.on('data', (c) => (d += c));
+          res.on('end', () => { server.close(); resolve({ status: res.statusCode!, data: JSON.parse(d) }); });
+        });
+      });
+    });
+  }
+
+  beforeAll(() => {
+    try { unlinkSync(TEST_DB); } catch { /* ignore */ }
+    initDb(TEST_DB);
+  });
+
+  afterAll(() => {
+    closeDb();
+    try { unlinkSync(TEST_DB); } catch { /* ignore */ }
+  });
+
+  // viewer on GET /posts
+  it('viewer accepts an @handle: resolves, wrong case resolves, unknown 404s, malformed 400s, a key passes', async () => {
+    const ok = await aliasGet(`?viewer=@Alice`);
+    expect(ok.status).toBe(200);
+
+    const wrongCase = await aliasGet(`?viewer=@ALICE`);
+    expect(wrongCase.status).toBe(200);
+
+    const unknown = await aliasGet(`?viewer=@Nobody`);
+    expect(unknown.status).toBe(404);
+    expect((unknown.data as any).error).toContain('unknown handle');
+
+    const malformed = await aliasGet(`?viewer=!!!`);
+    expect(malformed.status).toBe(400);
+
+    const key = await aliasGet(`?viewer=${HOLDER_HEX}`);
+    expect(key.status).toBe(200);
+  });
+
+  // viewer on GET /posts/:id
+  it('viewer on GET /posts/:id accepts an @handle: resolves, wrong case resolves, unknown 404s, malformed 400s, a key passes', async () => {
+    const fakeId = 'cc'.repeat(32);
+
+    const ok = await aliasGet(`/${fakeId}?viewer=@Alice`);
+    expect([200, 404]).toContain(ok.status);
+
+    const wrongCase = await aliasGet(`/${fakeId}?viewer=@ALICE`);
+    expect([200, 404]).toContain(wrongCase.status);
+
+    const unknown = await aliasGet(`/${fakeId}?viewer=@Nobody`);
+    expect(unknown.status).toBe(404);
+    expect((unknown.data as any).error).toContain('unknown handle');
+
+    const malformed = await aliasGet(`/${fakeId}?viewer=!!!`);
+    expect(malformed.status).toBe(400);
+
+    const key = await aliasGet(`/${fakeId}?viewer=${HOLDER_HEX}`);
+    expect([200, 404]).toContain(key.status);
+  });
+
+  // viewer on GET /posts/:id/thread
+  it('viewer on GET /posts/:id/thread accepts an @handle: resolves, wrong case resolves, unknown 404s, malformed 400s, a key passes', async () => {
+    const fakeId = 'cc'.repeat(32);
+
+    const ok = await aliasGet(`/${fakeId}/thread?viewer=@Alice`);
+    expect([200, 404]).toContain(ok.status);
+
+    const wrongCase = await aliasGet(`/${fakeId}/thread?viewer=@ALICE`);
+    expect([200, 404]).toContain(wrongCase.status);
+
+    const unknown = await aliasGet(`/${fakeId}/thread?viewer=@Nobody`);
+    expect(unknown.status).toBe(404);
+    expect((unknown.data as any).error).toContain('unknown handle');
+
+    const malformed = await aliasGet(`/${fakeId}/thread?viewer=!!!`);
+    expect(malformed.status).toBe(400);
+
+    const key = await aliasGet(`/${fakeId}/thread?viewer=${HOLDER_HEX}`);
+    expect([200, 404]).toContain(key.status);
+  });
+
+  // author on GET /posts
+  it('author accepts an @handle: resolves, wrong case resolves, unknown 404s, malformed 400s, a key passes', async () => {
+    const ok = await aliasGet(`?author=@Alice`);
+    expect(ok.status).toBe(200);
+
+    const wrongCase = await aliasGet(`?author=@ALICE`);
+    expect(wrongCase.status).toBe(200);
+
+    const unknown = await aliasGet(`?author=@Nobody`);
+    expect(unknown.status).toBe(404);
+    expect((unknown.data as any).error).toContain('unknown handle');
+
+    const malformed = await aliasGet(`?author=!!!`);
+    expect(malformed.status).toBe(400);
+
+    const key = await aliasGet(`?author=${HOLDER_HEX}`);
+    expect(key.status).toBe(200);
+  });
+});

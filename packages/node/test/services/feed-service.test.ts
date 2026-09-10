@@ -16,6 +16,9 @@ import {
   withdrawPost,
   getBlockCreatedAt,
   getUsernameByOwner,
+  putUsername,
+  beginBlockJournal,
+  finishBlockJournal,
 } from '../../src/store/index.js';
 import { FeedService } from '../../src/services/feed-service.js';
 import type { PostJson, WithdrawnJson } from '../../src/services/feed-service.js';
@@ -342,5 +345,52 @@ describe('feed-service', () => {
     const t = countingService.getThread(liveReplyId, { limit: 50 })!;
     expect(descendantCalls[liveReplyId]).toBe(1);
     expect((t.post as PostJson).descendantCount).toBe(t.descendantCount);
+  });
+
+  // -----------------------------------------------------------------------
+  // authorName with a live name — NODE_INTERFACE → Usernames
+  // -----------------------------------------------------------------------
+
+  it('authorName rides a live row as typed when the author holds a name', () => {
+    beginBlockJournal(50);
+    putUsername({
+      nameLower: Buffer.from(authorId).toString('hex').slice(0, 10),
+      name: 'AuthorAlias',
+      owner: Buffer.from(authorId).toString('hex'),
+      boxId: 'bb'.repeat(32),
+      claimedAtBlock: 50,
+    });
+    finishBlockJournal();
+
+    const head = feedService.getPost(liveRootId) as PostJson;
+    expect(head.authorName).toBe('AuthorAlias');
+  });
+
+  it('authorName rides a withdrawn row as typed when the author holds a name', () => {
+    beginBlockJournal(50);
+    putUsername({
+      nameLower: Buffer.from(authorId).toString('hex').slice(0, 10),
+      name: 'AuthorAlias',
+      owner: Buffer.from(authorId).toString('hex'),
+      boxId: 'bb'.repeat(32),
+      claimedAtBlock: 50,
+    });
+    finishBlockJournal();
+
+    const withdrawnId = insertTestPost('To be withdrawn for name test', authorId, []);
+    confirmPost(withdrawnId, 51, 0);
+    withdrawPost(withdrawnId, 52);
+
+    const head = feedService.getPost(withdrawnId) as WithdrawnJson;
+    expect(head.authorName).toBe('AuthorAlias');
+  });
+
+  it('authorName is null for an author with no name', () => {
+    const noNameKeys = generateKeyPairSync('ed25519');
+    const noNameAuthor = rawPublicKey(noNameKeys.publicKey);
+    const postId = insertTestPost('No name author', noNameAuthor, []);
+
+    const head = feedService.getPost(postId) as PostJson;
+    expect(head.authorName).toBeNull();
   });
 });

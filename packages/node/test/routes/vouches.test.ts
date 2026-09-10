@@ -11,7 +11,7 @@
 //
 // ---------------------------------------------------------------------------
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import http from 'http';
 import { generateKeyPairSync, type KeyObject } from 'crypto';
@@ -436,5 +436,118 @@ describe('vouch routes — the JSON edge', () => {
   it('malformed after → 400 on /vouches?target=', async () => {
     const res = await request(`/?target=${'aa'.repeat(32)}&after=zz`, 'GET');
     expect(res.status).toBe(400);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Alias resolution — NODE_INTERFACE → Identity parameters
+// ---------------------------------------------------------------------------
+
+describe('vouch routes — alias resolution', () => {
+  const HOLDER_HEX = 'aa'.repeat(32);
+  const lookup = (lower: string) => lower === 'alice' ? { nameLower: 'alice', name: 'Alice', owner: HOLDER_HEX, boxId: 'bb'.repeat(32), claimedAtBlock: 1 } : null;
+  const ALIAS_DB = '/tmp/dagsocial-test-routes-vouches-alias.sqlite';
+
+  beforeAll(() => {
+    try { require('fs').unlinkSync(ALIAS_DB); } catch {}
+    initDb(ALIAS_DB);
+    getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+  });
+  afterAll(() => {
+    closeDb();
+    try { require('fs').unlinkSync(ALIAS_DB); } catch {}
+  });
+
+  function aliasGet(path: string): Promise<{ status: number; data: unknown }> {
+    return new Promise((resolve) => {
+      const deps = {
+        ...(() => {
+          return {
+            getBox: () => null,
+            insertBox: () => {},
+            consumeBox: () => {},
+            getKarmaBox: () => null,
+            getKarmaValue: () => 0n,
+            getIdentityRecord: () => null,
+            hasActiveVouchEscrow: () => false,
+            vouchCooldownBlocks: 2,
+            inviteBondMin: 100n,
+            inviteBondMax: 10000n,
+            decayCfg: {
+              staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
+              decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS,
+              decayAmount: KARMA_DECAY_AMOUNT,
+              karmaMinimum: KARMA_MINIMUM,
+            },
+            storageRentPeriodBlocks: 40,
+            getBoxProvenance: () => null,
+            getTopologyAuthor: () => null,
+            getPendingPostAuthor: () => null,
+            runInTransaction: (fn: () => void) => fn(),
+            getVouchBox: () => null,
+            getNetworkRecord: () => ({ memberCount: 1 }),
+            membershipBarMultiplier: 1,
+            putIdentityRecord: () => {},
+            protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
+            getUsername: lookup,
+            getUsernameByOwner: () => null,
+          };
+        })(),
+        castVouch,
+        initiateUnvouch,
+        getCurrentHeight: () => 100,
+      };
+      const app = express();
+      app.use(express.json());
+      app.use(createRouter(deps));
+      const server = app.listen(0, () => {
+        const addr = server.address() as { port: number };
+        http.get({ hostname: 'localhost', port: addr.port, path }, (res) => {
+          let d = '';
+          res.on('data', (c) => (d += c));
+          res.on('end', () => {
+            server.close();
+            try { resolve({ status: res.statusCode!, data: JSON.parse(d) }); }
+            catch { resolve({ status: res.statusCode!, data: d }); }
+          });
+        });
+      });
+    });
+  }
+
+  it('target accepts an @handle: resolves, wrong case resolves, unknown 404s, malformed 400s, a key passes', async () => {
+    const ok = await aliasGet(`/?target=@Alice`);
+    expect(ok.status).toBe(200);
+
+    const wrongCase = await aliasGet(`/?target=@ALICE`);
+    expect(wrongCase.status).toBe(200);
+
+    const unknown = await aliasGet(`/?target=@Nobody`);
+    expect(unknown.status).toBe(404);
+    expect((unknown.data as any).error).toContain('unknown handle');
+
+    const malformed = await aliasGet(`/?target=!!!`);
+    expect(malformed.status).toBe(400);
+
+    const key = await aliasGet(`/?target=${HOLDER_HEX}`);
+    expect(key.status).toBe(200);
+  });
+
+  it('voucher accepts an @handle: resolves, wrong case resolves, unknown 404s, malformed 400s, a key passes', async () => {
+    const ok = await aliasGet(`/?voucher=@Alice`);
+    expect(ok.status).toBe(200);
+
+    const wrongCase = await aliasGet(`/?voucher=@ALICE`);
+    expect(wrongCase.status).toBe(200);
+
+    const unknown = await aliasGet(`/?voucher=@Nobody`);
+    expect(unknown.status).toBe(404);
+    expect((unknown.data as any).error).toContain('unknown handle');
+
+    const malformed = await aliasGet(`/?voucher=!!!`);
+    expect(malformed.status).toBe(400);
+
+    const key = await aliasGet(`/?voucher=${HOLDER_HEX}`);
+    expect(key.status).toBe(200);
   });
 });

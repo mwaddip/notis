@@ -357,3 +357,44 @@ describe('/status reports the era at blockHeight + 1', () => {
     expect((await statusAt(H - 1)).protocolVersion).toBe(2);
   });
 });
+
+describe('/status carries usernameCount', () => {
+  function statusWithCount(count: number): Promise<Record<string, unknown>> {
+    const deps: BlocksDeps = {
+      getOrderingBlock: () => null,
+      getOrderingBlockHash: () => null,
+      getCurrentHeight: () => 1,
+      getPostCount: () => 0,
+      getPendingPostCount: () => 0,
+      getTotalKarma: () => 0n,
+      getLiquidKarma: () => 0n,
+      getTotalCredits: () => 0n,
+      networkType: 'testnet',
+      inviteProbationBlocks: 43200,
+      vouchCooldownBlocks: 60,
+      inviteBondMin: 100n,
+      inviteBondMax: 10000n,
+      getNetworkRecord: () => ({ memberCount: 1 }),
+      membershipBarMultiplier: 1,
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
+      countUsernames: () => count,
+    };
+    const app = express();
+    app.use(createRouter(deps));
+    return new Promise((resolve) => {
+      const server = app.listen(0, () => {
+        const addr = server.address() as { port: number };
+        http.get(`http://127.0.0.1:${addr.port}/status`, (res) => {
+          let b = '';
+          res.on('data', (c) => (b += c));
+          res.on('end', () => { server.close(); resolve(JSON.parse(b)); });
+        });
+      });
+    });
+  }
+
+  it('/status carries usernameCount — 0, then 1 after a claim is applied', async () => {
+    expect((await statusWithCount(0)).usernameCount).toBe(0);
+    expect((await statusWithCount(1)).usernameCount).toBe(1);
+  });
+});
