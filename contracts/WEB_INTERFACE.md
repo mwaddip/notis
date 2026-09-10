@@ -164,8 +164,7 @@ one in the preference does, until the node gains CORS.
 **The shell carries the site's preview card, and the picture's URL is the fourth configured value.** After the
 three tags the head carries `description`, `og:type` website, `og:site_name` Notis, `og:title` Notis,
 `og:description`, `og:image` with `og:image:type` image/png, `og:image:width` 1200, `og:image:height` 630 and
-`og:image:alt`, and `twitter:card` summary_large_image — the words *Reputation not for sale*, a placeholder until
-the landing page's line is revised; the picture `og.png` beside the client's files, 1200×630: the full-tier mark
+`og:image:alt`, and `twitter:card` summary_large_image — the words *Reputation not for sale*; the picture `og.png` beside the client's files, 1200×630: the full-tier mark
 (`HOUSE_STYLE → Tiers`) with its colours baked in as literals, Fern `#5E8C3A` on keyline `#1B2A12`, centred on Sand
 `ground` `#E7DCC6` (`HOUSE_STYLE → Light`), no words, rendered from the docs site's tracked sprite
 (`HOUSE_STYLE → Where the artwork lives`). A scraper runs no script and most refuse a relative image, and the base
@@ -173,10 +172,6 @@ is a path, so the build composes `og:image` as `<origin><base>og.png` from `VITE
 dev server, `https://notis.fun` in the release — and a host under another origin or base edits that value with the
 other three; `build-release.sh` checks it. No `og:url` on the root: a scraper takes the page's own. A post's page
 carries none of this block — the node removes it before injecting the post's tags (`NODE_INTERFACE → Link previews`).
-
-> ⚠ **AHEAD OF CODE — 2026-09-10:** the preview block, `og.png`, `VITE_PUBLIC_ORIGIN`, the fourth value in the
-> release script, `README.md`, `deploy/README.txt` and the package guidance. The shell carries `<title>Notis</title>`
-> and no preview tag.
 
 ⚠ **A `<base>` element resolves every relative URL in the document, fragments included.** A same-document
 fragment reference — `<use href="#id">`, `<a href="#id">` — becomes a reference to `<base>#id`, another
@@ -361,8 +356,6 @@ theme control as the width class renders it. No arrows: there is one member. No 
 importing, exporting and forgetting an identity are the workspace's, and the unlock a like or a reply needs
 mounts in the card; a visitor who wants a profile presses the way in and finds it there. **The bar** carries
 `↻` and its report and nothing else — nothing to move, nothing to close — and its label is the pane's.
-
-> ⚠ **AHEAD OF CODE — 2026-09-10:** the ghost on one column. The control is the inverse fill at every width.
 
 **The strip re-roots the page.** A press on a reply's strip inside the thread makes that reply the page's
 root — the one window becomes that id, fetched if it is not loaded, the body rendered — and pushes a history
@@ -841,9 +834,6 @@ a window spends nothing, so the panes-only rule that governs like and reply does
 pattern every word control follows** (`HOUSE_STYLE → Interaction`): the word alone in its row's face, `ink`
 at rest and `inkMute` when it cannot act, the focus ring, the underline on hover where hover exists, and at a
 coarse pointer a 36px hit box by padding a negative margin absorbs.
-
-> ⚠ **AHEAD OF CODE — 2026-09-10:** the handle on the endorser and bond rows. Both render the prefix, and the
-> client's DTOs carry no name on those rows.
 
 ### The author window *(membership actions)*
 
