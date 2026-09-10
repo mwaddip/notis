@@ -55,7 +55,10 @@ say how to serve it. **At one column the screens are history** (`WEB_INTERFACE �
 changes the screen pushes an entry, a move back onto the previous screen consumes it by the arrow or by a swipe,
 a swipe elsewhere is no entry. **A word control wears no box** (`HOUSE_STYLE → Interaction`): the word alone,
 as the identity prefix renders; the composer's `post` and `cancel` are the one boxed pair; the copy glyph is
-the interface's third icon.
+the interface's third icon. **The username surface** (`WEB_INTERFACE → The username row`): the `@profile`
+window's `username` row claims a name and burns it, in place, with the flight in the row; **the handle `@Name`
+stands where a row carries a name** — the who row, the bars, the header, the standalone title — in the page face
+at 600, the same control the prefix is (`WEB_INTERFACE → The identity display`).
 
 - **Owns:** `packages/web/*` — its own source, tests, build config and static assets.
 - **Does NOT own:** any other package, `contracts/` or `prompts/`.
@@ -65,8 +68,9 @@ the interface's third icon.
 ⛔ **The read client (`src/api/client.ts`) issues `GET` requests and nothing else.** No `POST`, no
 `DELETE` for a read. The writes live next door in `src/api/write.ts` — `POST /posts`, `POST /likes`,
 `POST /vouches`, `DELETE /vouches/:targetId` (the one non-`POST` write), `POST /invites` and
-`POST /posts/:id/withdraw`, and no more. A `viewer` parameter is a query on a `GET`, so it stays in the read client; the four membership
-reads (`GET /vouches` by target, by voucher, the cooldown arm; `GET /invites/:userId`) are `GET`s in it.
+`POST /posts/:id/withdraw`, `POST /usernames` and `POST /usernames/:name/burn`, and no more. A `viewer` parameter is a query on a `GET`, so it stays in the read client; the four membership
+reads (`GET /vouches` by target, by voucher, the cooldown arm; `GET /invites/:userId`) and the name read
+(`GET /usernames?owner=`) are `GET`s in it.
 
 **It hashes only through `@dagsocial/types`**, reached by the build-time shim — the wallet builders type
 their box candidates and compute every id through the shared implementation, never a copy, which is why
@@ -150,7 +154,7 @@ NOTIS_NODE=https://notis.fun/testnet/api NOTIS_FAUCET=https://notis.fun/testnet/
 ```
 
 The node and nginx send no CORS, so the proxy is the only route. `API_PATHS` in `vite.config.ts` proxies
-`/posts`, `/status`, `/blocks`, `/karma`, `/credits`, `/likes`, `/vouches`, `/invites` — a path the
+`/posts`, `/status`, `/blocks`, `/karma`, `/credits`, `/likes`, `/vouches`, `/invites`, `/usernames` — a path the
 client calls that is not in the table returns the HTML shell, not the API. `/faucet` is proxied to
 `NOTIS_FAUCET` only when it is set, with the `/faucet` prefix stripped (http-proxy prepends the target's
 own path). The client's faucet base is `/faucet` in development and `VITE_FAUCET_BASE` on a deploy;
@@ -158,8 +162,8 @@ empty means no faucet and no button. **The faucet must relay `expiresAtHeight`**
 202 without it — so a faucet that does not relay it answers the honest refusal, not a grant.
 
 **Every transaction spends real testnet karma:** a thread 5, a reply 3, a like 1, a vouch 1 staked, an
-invite its bond; a withdrawal costs nothing but spends and returns one karma box, so a key with none
-cannot sign one. There is no automated test that posts — an automated writer would drain the key and
+invite its bond; a withdrawal and a claim cost nothing but spend and return one karma box, so a key with none
+can sign neither; a burn `USERNAME_BURN_PRICE` (10). There is no automated test that posts — an automated writer would drain the key and
 litter testnet; the wallet builders are pinned offline against frozen vectors an independent
 implementation computed instead.
 Iterate deliberately.

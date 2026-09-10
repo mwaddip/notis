@@ -10,7 +10,8 @@ unvouch, invite from the profile — the **author's own controls' first unit** �
 reader's own card — **content rendering** — the grammar a card renders from content, and the composer's
 `link` and `image` types — the **responsive workspace** — K visible columns from the width, one column on
 a phone, touch sizes by the pointer — and the **standalone thread** — a post's URL opening the thread alone,
-the way into the workspace, `link` on a card — are implemented
+the way into the workspace, `link` on a card — and the **username surface** — the claim and the burn from the
+`@profile` window, the handle `@Name` where a row carries a name — are implemented
 **Protocol version:** read from the node, never held — see Invariants
 
 
@@ -56,12 +57,6 @@ and one rule is cleaner than a local record of likes kept beside the node's.
 
 Every section and invariant below marked *(write surface)* belongs to this slice; the read surface
 is the rest.
-
-> ⚠ **AHEAD OF CODE — 2026-09-10, the username surface (213-1).** The username surface — a name's claim and burn from the profile, the
-> handle where a row carries a name — leads the code on branch `web-usernames`: this sentence, → The wallet's claim,
-> burn and reconcile sentences, → The profile window's `username` row, → The username row, → The identity display's
-> handle rule, → The author window's `name` row and bars, → The standalone thread's title, → Writes' three rows and
-> the constants invariant's `USERNAME_BURN_PRICE`. The pass before the branch's PR retires this marker.
 
 **The slice is the identity machinery, the composer for a root and a reply, like, the membership
 actions — vouch, unvouch and invite — withdraw, the author's own controls' first unit, and the username
@@ -318,8 +313,6 @@ importing, exporting and forgetting an identity are the workspace's, and the unl
 mounts in the card; a visitor who wants a profile presses the way in and finds it there. **The bar** carries
 `↻` and its report and nothing else — nothing to move, nothing to close — and its label is the pane's.
 
-> ⚠ **AHEAD OF CODE — 2026-09-10, the username surface (213-1).** The title's handle, in the last sentence below.
-
 **The strip re-roots the page.** A press on a reply's strip inside the thread makes that reply the page's
 root — the one window becomes that id, fetched if it is not loaded, the body rendered — and pushes a history
 entry naming it, so the URL always names the thread on screen, back returns to the previous root, and back
@@ -550,9 +543,6 @@ key's entries and cannot try to spend its predicted change; a reload that forgot
 re-spend a box the node holds pending and receive a 409 for a failure the reader never saw. **An
 identity change rebuilds the ledger for the new key at once** (→ The identity module, `onChange`).
 
-> ⚠ **AHEAD OF CODE — 2026-09-10, the username surface (213-1).** The claim and the burn in the paragraph below, and the reconcile
-> sentence that follows the vouch, invite and withdrawal ones.
-
 **Builders exist for a post, a like, a vouch, an unvouch, an invite, a withdrawal, a claim and a burn, and nothing
 else.** A root
 post: change and a `karma_price` of `POST_PRICE_THREAD`. A reply: change, a `karma_price` of
@@ -628,8 +618,6 @@ invite a reader to check identity by colour (`HOUSE_STYLE → Identity colour`).
 workspace by the placement rule every window follows, and a second press raises the open window.
 `@settings` is retired: a stored arrangement naming it parses to `@profile`, so a saved workspace
 survives the rename.
-
-> ⚠ **AHEAD OF CODE — 2026-09-10, the username surface (213-1).** The `username` row in the block below.
 
 **The window is rows, label and field, in two states.** With no identity: one line — *"no identity in
 this browser. create one, or import a file."* — then `create` and `import`. With one:
@@ -724,8 +712,6 @@ contract forbids. The faucet relays the field (`NODE_INTERFACE → Faucet`).
 
 ### The username row *(username surface)*
 
-> ⚠ **AHEAD OF CODE — 2026-09-10, the username surface (213-1).** The whole section.
-
 **A name is claimed and burned from the profile window, in one row between `invites` and `passphrase`** — three
 slots, line, form and flight, updated in place as the invites row is, so a landing moves text and colour in a
 fixed row and never the window (`HOUSE_STYLE → Motion`). What the row shows follows the reader's own name, read
@@ -765,8 +751,6 @@ to the view.
 
 ### The identity display *(membership actions)*
 
-> ⚠ **AHEAD OF CODE — 2026-09-10, the username surface (213-1).** The handle's rule — the first paragraph below.
-
 **Wherever an identity is shown it is the handle `@Name` where the row carries the name, else the key prefix in
 mono, then `· you` on the reader's own** — cards in the feed and in panes, a title bar, an endorser row and a bond
 row, the author window's subject line. **The handle** is `@` and the name as the node carries it — as typed at
@@ -780,8 +764,10 @@ a thread's bar from its root row, the standalone page's title (→ The standalon
 submission cards from the reader's own name, the header's profile control and the standalone header's display
 from the reader's own name, and the author window's bars and `name` row from its subject's (→ The author
 window). **An endorser row and a bond row keep the prefix**: their rows carry no name. **A row fetched before a
-landing keeps what it fetched** until the reader's own ↻ — the reader's own claim landing re-renders the header
-and the profile row and nothing else (`HOUSE_STYLE → Motion`). The
+landing keeps what it fetched** — the reader's own claim or burn landing re-renders the header and the profile
+row and nothing else (`HOUSE_STYLE → Motion`); the feed's ↻ brings newer posts and leaves the rows on screen as
+they are, a thread's ↻ re-reads its rows, and a reload re-reads everything (→ What the feed reads, and what a
+card shows for it). The
 prefix is `shortHex(key, 16)` on a card and the whole key in a window. **No mark rides beside it**: a vouch
 is cast and read in the author window alone (→ The author window), so a card reads the same with or without
 an identity loaded — the prefix, `· you` on the reader's own, the date. The count a reader sees is the
@@ -805,8 +791,6 @@ at rest and `inkMute` when it cannot act, the focus ring, the underline on hover
 coarse pointer a 36px hit box by padding a negative margin absorbs.
 
 ### The author window *(membership actions)*
-
-> ⚠ **AHEAD OF CODE — 2026-09-10, the username surface (213-1).** The `name` row, the bars' handle and the `↻`'s third read.
 
 **`@author:<64hex>`** — an `@`-window like `@profile`, opened from an identity's prefix by the placement
 rule every window follows, raised rather than duplicated, persisted in the arrangement (`isWindowId`
@@ -892,8 +876,6 @@ one is: the client records no entry it cannot track.
 
 ## Writes
 
-> ⚠ **AHEAD OF CODE — 2026-09-10, the username surface (213-1).** The three *(username surface)* rows.
-
 | Client action | Endpoint | Standing |
 |---------------|----------|----------|
 | Ask the faucet for karma | `POST <faucet>/karma` — `{ pubkey }` → `{ txId, status, expiresAtHeight }` | *(identity interface)* — the faucet's edge, not the node's (`NODE_INTERFACE → Faucet`) |
@@ -943,8 +925,6 @@ client that expects to announce itself first is built against an endpoint that d
   identity (→ The identity module). *(identity interface)*
 - **Every read carries the viewer's key once an identity is loaded, and none does before.** *(write
   surface)*
-- **The mark is never a word and never carries a colour** — its state is glyph and ink weight, and its
-  `title` is a count or a reason (→ The identity display). *(membership actions)*
 - **A consensus constant is imported; a per-network number is read.** `POST_PRICE_THREAD`,
   `POST_PRICE_REPLY`, `REPLY_AUTHOR_SHARE`, `LIKE_KARMA_COST` and `USERNAME_BURN_PRICE` are consensus and ruled
   (`CONSTANTS → Post price and likes`, `CONSTANTS → Usernames`) and come from `@dagsocial/types`; what `/status` serves

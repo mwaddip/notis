@@ -756,8 +756,6 @@ defect. **It belongs to the supply set.**
 |--------|------|----------|
 | `GET` | `/shell/:id` | **The web client's shell with the post's preview tags injected** — the file at `WEB_SHELL_PATH` (→ Configuration), read on every request so a new bundle needs no restart, answered with `<title>`, `og:title`, `description`, `og:description`, `og:type` article, `og:site_name` Notis and `twitter:card` summary injected before `</head>`, every value HTML-escaped (`& < > "`); `og:url` is `<proto>://<host><path>` — the proto from `X-Forwarded-Proto`, else the request's own; the host from `X-Forwarded-Host`, else `Host`; the path the `X-Original-URI` header the host's proxy sets — omitted when that header is absent — the node never learns the client's public path. 404 plain when no shell is configured; 500 when the file cannot be read; 400 when `:id` is not 64 hex; **404 with the untagged shell** for an id the node has never heard of, so the client boots and says what it found and a crawler finds nothing to preview; 200 tagged for a live post with content, untagged for one whose content is not on this node yet, tagged as withdrawn (`withdrawn · Notis`, *withdrawn by its author*, no `og:url`) for a withdrawn post. The node reads no client convention: the description is the content's first 200 characters as they are, cut at a word with `...`, whitespace collapsed; the title `@name · Notis` when the author holds a name (→ Usernames), else the author's first 16 hex characters and `…`, then ` · Notis` (`WEB_INTERFACE → Links`) |
 
-> ⚠ **AHEAD OF CODE — 2026-09-10, the username surface (213-1).** The `@name · Notis` title; the code follows on branch `web-usernames`.
-
 ---
 
 ## Verifier Contract
