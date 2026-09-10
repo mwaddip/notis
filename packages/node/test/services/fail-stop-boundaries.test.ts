@@ -169,6 +169,7 @@ describe('route boundary (real wiring)', () => {
       getNetworkRecord: () => ({ memberCount: 1 }),
       membershipBarMultiplier: 1,
       protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
+      countUsernames: () => 0,
     }));
 
     await new Promise<void>((resolve) => {

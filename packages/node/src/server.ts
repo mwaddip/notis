@@ -8,6 +8,7 @@ import { createRouter as vouchRoutes } from './routes/vouches.js';
 import { createRouter as blockRoutes, KARMA_SUPPLY_TYPES } from './routes/blocks.js';
 import { createRouter as miningRoutes } from './routes/mining.js';
 import { createRouter as nipopowRoutes } from './routes/nipopow.js';
+import { createRouter as usernameRoutes } from './routes/usernames.js';
 import { createPopowHeaderReader } from './services/nipopow.js';
 import * as store from './store/index.js';
 import { guardStoreRead } from './services/corrupt-state.js';
@@ -246,11 +247,11 @@ export function createApp(config: Config): express.Express {
       protocolVersionSchedule: config.protocolVersionSchedule,
       getLikeRecordCount: store.getLikeRecordCount,
       getDescendantCount: store.getDescendantCount,
-      getVouchCountForTarget: store.getVouchCountForTarget,
       hasLikeRecord: store.hasLikeRecord,
       getAncestorsNearest: store.getAncestorsNearest,
       getSubtreePage: store.getSubtreePage,
       getBlockCreatedAt: store.getBlockCreatedAt,
+      getUsernameByOwner: store.getUsernameByOwner,
       getTopologyAuthor: store.getTopologyAuthor,
       admitTx,
       validateTx: (tx, currentBlockHeight) =>
@@ -278,7 +279,6 @@ export function createApp(config: Config): express.Express {
       initiateUnvouch,
       ...utxoEngineDeps,
       getCurrentHeight: store.getCurrentHeight,
-      getVouchCountForTarget: store.getVouchCountForTarget,
     }),
   );
 
@@ -299,6 +299,19 @@ export function createApp(config: Config): express.Express {
       executePostWithdraw,
       ...utxoEngineDeps,
       getCurrentHeight: store.getCurrentHeight,
+    }),
+  );
+
+  // Usernames — /usernames
+  app.use(
+    '/usernames',
+    usernameRoutes({
+      ...utxoEngineDeps,
+      getCurrentHeight: store.getCurrentHeight,
+      validateTx: (tx, currentBlockHeight) =>
+        validateTx(utxoEngineDeps, tx, currentBlockHeight),
+      getUsername: store.getUsername,
+      getUsernameByOwner: store.getUsernameByOwner,
     }),
   );
 
@@ -420,6 +433,7 @@ export function createApp(config: Config): express.Express {
       getNetworkRecord: store.getNetworkRecord,
       membershipBarMultiplier: config.membershipBarMultiplier,
       protocolVersionSchedule: config.protocolVersionSchedule,
+      countUsernames: store.countUsernames,
     }),
   );
 

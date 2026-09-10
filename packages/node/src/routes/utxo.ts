@@ -11,7 +11,7 @@ import { effectiveKarma } from '../services/decay.js';
 import { getNet } from '../services/net-instance.js';
 import { jsonToTx } from './json-to-tx.js';
 import { respondError } from './respond-error.js';
-import { parseLimit, isLimitError, parseAfter, isAfterError, formatKey } from './page.js';
+import { parseLimit, isLimitError, parseAfter, isAfterError, formatKey, resolveIdentityParam, isResolveError } from './page.js';
 
 // ---------------------------------------------------------------------------
 // Dependency types
@@ -39,16 +39,12 @@ export function createRouter(deps: UtxoDeps): Router {
   const router = Router();
 
   function parseUserId(param: string, res: Response): Uint8Array | null {
-    if (!param || typeof param !== 'string' || param.length !== 64) {
-      res.status(400).json({ error: 'userId must be a 64-character hex string' });
+    const resolved = resolveIdentityParam(param);
+    if (isResolveError(resolved)) {
+      res.status(resolved.status).json({ error: resolved.error });
       return null;
     }
-    try {
-      return new Uint8Array(Buffer.from(param, 'hex'));
-    } catch {
-      res.status(400).json({ error: 'userId must be a hex string' });
-      return null;
-    }
+    return new Uint8Array(Buffer.from(resolved.hex, 'hex'));
   }
 
   // GET /karma/:userId

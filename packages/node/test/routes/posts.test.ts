@@ -10,7 +10,7 @@ import http from 'http';
 import { generateKeyPairSync, createPrivateKey } from 'crypto';
 import { initDb, closeDb, getDb } from '../../src/store/db.js';
 import { insertPost, getPost, queryPostsPage, getAncestorsNearest, getSubtreePage, getDescendantCount, confirmPost, withdrawPost, getPendingPostAuthor } from '../../src/store/posts.js';
-import { getVouchCountForTarget } from '../../src/store/vouch-queries.js';
+import { getUsernameByOwner } from '../../src/store/usernames.js';
 import { getCurrentHeight, getBlockCreatedAt } from '../../src/store/ordering.js';
 import {
   getKarmaBox,
@@ -84,8 +84,8 @@ async function request(
       getKarmaBox,
       getLikeRecordCount,
       getDescendantCount,
-      getVouchCountForTarget,
       hasLikeRecord,
+      getUsernameByOwner,
       getAncestorsNearest,
       getSubtreePage,
       getBlockCreatedAt,
@@ -96,7 +96,6 @@ async function request(
       getCurrentHeight,
       protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
       getUsername: () => null,
-      getUsernameByOwner: () => null,
       admitTx: insertUtxoTx,
       runInTransaction: (fn: () => void) => db.transaction(fn)(),
       validateTx: (tx: UtxoTransaction, height: number) => {
@@ -501,11 +500,11 @@ describe('posts routes', () => {
     expect((res.data as { error: string }).error).toBe('roots must be 1');
   });
 
-  it('a GET /posts listing row carries descendantCount and authorVouchCount', async () => {
+  it('a GET /posts listing row carries descendantCount and authorName', async () => {
     const kp = generateKeyPair();
-    const rootCommit = makePostCommit(kp.publicKey, 'a root carrying both counts');
+    const rootCommit = makePostCommit(kp.publicKey, 'a root carrying both fields');
     const rootId = fixturePostId(rootCommit);
-    insertPost(rootId, rootCommit, 'a root carrying both counts');
+    insertPost(rootId, rootCommit, 'a root carrying both fields');
     confirmPost(rootId, 902, 0);
 
     const replyCommit = makePostCommit(kp.publicKey, 'its reply', { parentRefs: [rootId] });
@@ -517,7 +516,7 @@ describe('posts routes', () => {
     expect(res.status).toBe(200);
     const row = (res.data as { posts: Array<Record<string, unknown>> }).posts.find((p) => p['id'] === rootId)!;
     expect(row['descendantCount']).toBe(1);
-    expect(typeof row['authorVouchCount']).toBe('number');
+    expect(row['authorName']).toBeNull();
   });
 
   // -----------------------------------------------------------------------
@@ -593,7 +592,7 @@ describe('posts routes', () => {
       const res = await request('/?viewer=tooshort', 'GET');
       expect(res.status).toBe(400);
       const body = res.data as Record<string, unknown>;
-      expect(body['error']).toContain('viewer must be a 64-character hex string');
+      expect(body['error']).toContain('malformed identity parameter');
     });
   });
 
@@ -674,7 +673,7 @@ describe('posts routes', () => {
       // NODE_INTERFACE → "The JSON projection has two arms where the store
       // has one shape": the thread head's WithdrawnJson carries both counts.
       expect(post['descendantCount']).toBe(1);
-      expect(post['authorVouchCount']).toBe(0);
+      expect(post['authorName']).toBeNull();
       const ancestors = body['ancestors'] as Array<Record<string, unknown>>;
       expect(ancestors.map((a) => a['id'])).toEqual([withdrawnSubjectParentId]);
       expect(body['ancestorCount']).toBe(1);
@@ -698,7 +697,7 @@ describe('posts routes', () => {
         id: withdrawnSubjectId,
         withdrawnAtHeight: 24,
         descendantCount: 1,
-        authorVouchCount: 0,
+        authorName: null,
       });
       expect(body['ancestorCount']).toBe(2);
     });
@@ -717,7 +716,7 @@ describe('posts routes', () => {
         id: withdrawnSubjectId,
         parentRefs: [withdrawnSubjectParentId],
         descendantCount: 1,
-        authorVouchCount: 0,
+        authorName: null,
       });
       expect(body['descendantCount']).toBe(2);
     });
@@ -767,7 +766,7 @@ describe('posts routes', () => {
         parentRefs: [liveRootId],
         withdrawnAtHeight: 52,
         descendantCount: 0,
-        authorVouchCount: 0,
+        authorName: null,
         confirmedAuthor: null,
       });
     });
@@ -782,7 +781,7 @@ describe('posts routes', () => {
         parentRefs: [],
         withdrawnAtHeight: 54,
         descendantCount: 0,
-        authorVouchCount: 0,
+        authorName: null,
         confirmedAuthor: null,
       });
     });
@@ -800,7 +799,7 @@ describe('posts routes', () => {
         parentRefs: [liveRootId],
         withdrawnAtHeight: 52,
         descendantCount: 0,
-        authorVouchCount: 0,
+        authorName: null,
       });
     });
 
@@ -817,7 +816,7 @@ describe('posts routes', () => {
         parentRefs: [liveRootId],
         withdrawnAtHeight: 52,
         descendantCount: 0,
-        authorVouchCount: 0,
+        authorName: null,
       });
     });
   });

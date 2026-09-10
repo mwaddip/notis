@@ -121,6 +121,7 @@ async function request(
       getNetworkRecord: () => ({ memberCount: 1 }),
       membershipBarMultiplier: 1,
       protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
+      countUsernames: () => 0,
     };
 
     const app = express();
@@ -335,6 +336,7 @@ describe('/status reports the era at blockHeight + 1', () => {
       getNetworkRecord: () => ({ memberCount: 1 }),
       membershipBarMultiplier: 1,
       protocolVersionSchedule: SCHEDULE,
+      countUsernames: () => 0,
     };
     const app = express();
     app.use(createRouter(deps));

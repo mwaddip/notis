@@ -13,6 +13,7 @@ import {
   parseAfter, isAfterError,
   parseRoots, isRootsError,
   parseViewer, isViewerError,
+  resolveIdentityParam, isResolveError,
   formatKey,
 } from './page.js';
 
@@ -89,7 +90,7 @@ export function createRouter(deps: PostsDeps): Router {
     if (isAfterError(after)) { res.status(400).json({ error: after.error }); return; }
     const viewer = parseViewer(req.query as Record<string, unknown>);
     if (isViewerError(viewer)) {
-      res.status(400).json({ error: viewer.error });
+      res.status(viewer.status ?? 400).json({ error: viewer.error });
       return;
     }
     const thread = feedService.getThread(
@@ -112,7 +113,7 @@ export function createRouter(deps: PostsDeps): Router {
     const id = req.params['id']!;
     const viewer = parseViewer(req.query as Record<string, unknown>);
     if (isViewerError(viewer)) {
-      res.status(400).json({ error: viewer.error });
+      res.status(viewer.status ?? 400).json({ error: viewer.error });
       return;
     }
     const result = feedService.getPost(id, viewer);
@@ -133,11 +134,16 @@ export function createRouter(deps: PostsDeps): Router {
     if (isRootsError(roots)) { res.status(400).json({ error: roots.error }); return; }
     const viewer = parseViewer(req.query as Record<string, unknown>);
     if (isViewerError(viewer)) {
-      res.status(400).json({ error: viewer.error });
+      res.status(viewer.status ?? 400).json({ error: viewer.error });
       return;
     }
-    const authorHex = req.query['author'] as string | undefined;
-    const author = authorHex ? new Uint8Array(Buffer.from(authorHex, 'hex')) : undefined;
+    let author: Uint8Array | undefined;
+    const authorRaw = req.query['author'] as string | undefined;
+    if (authorRaw) {
+      const resolved = resolveIdentityParam(authorRaw);
+      if (isResolveError(resolved)) { res.status(resolved.status).json({ error: resolved.error }); return; }
+      author = new Uint8Array(Buffer.from(resolved.hex, 'hex'));
+    }
 
     const result = feedService.queryPosts({
       author,

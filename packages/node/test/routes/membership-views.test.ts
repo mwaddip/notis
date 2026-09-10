@@ -45,7 +45,6 @@ import {
   getVouchBox,
   getNetworkRecord,
   getKarmaValue,
-  getVouchCountForTarget,
 } from '../../src/store/index.js';
 import { getBoxWithPending } from '../../src/store/mempool.js';
 import { createRouter as utxoRoutes } from '../../src/routes/utxo.js';
@@ -304,8 +303,7 @@ describe('/status membership fields', () => {
         getNetworkRecord: () => ({ memberCount: 4 }),
         membershipBarMultiplier: 1,
         protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
-      getUsername: () => null,
-      getUsernameByOwner: () => null,
+        countUsernames: () => 0,
       };
       const app = express();
       app.use(express.json());
@@ -407,7 +405,6 @@ describe('POST /vouches — the four membership 400s', () => {
         castVouch,
         initiateUnvouch,
         getCurrentHeight: () => HEIGHT,
-        getVouchCountForTarget,
       };
       const app = express();
       app.use(express.json());

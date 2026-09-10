@@ -29,7 +29,7 @@ describe('parseViewer', () => {
     const result = parseViewer({ viewer: 'ab'.repeat(16) });
     expect(isViewerError(result)).toBe(true);
     if (!isViewerError(result)) return;
-    expect(result.error).toContain('viewer must be a 64-character hex string');
+    expect(result.error).toContain('malformed identity parameter');
   });
 
   it('returns an error for a non-hex viewer of correct length', () => {

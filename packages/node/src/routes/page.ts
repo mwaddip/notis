@@ -1,4 +1,6 @@
 import type { PostKey, BoxKey } from '../store/index.js';
+import { isValidUsernameBytes, canonicalUsernameBytes } from '@dagsocial/types';
+import { getUsername } from '../store/usernames.js';
 
 // CONSTANTS → HTTP view bounds
 export const PAGE_LIMIT_DEFAULT = 50;
@@ -91,16 +93,39 @@ export function isAfterError(
   return v !== null && typeof v === 'object' && 'error' in v && !('blockHeight' in v) && !('value' in v);
 }
 
-export function parseViewer(query: Record<string, unknown>): Uint8Array | null | { error: string } {
-  const raw = query['viewer'] as string | undefined;
-  if (raw === undefined) return null;
-  if (typeof raw !== 'string' || raw.length !== 64 || !/^[0-9a-f]{64}$/i.test(raw)) {
-    return { error: 'viewer must be a 64-character hex string' };
+// NODE_INTERFACE → Identity parameters
+export function resolveIdentityParam(value: string): { hex: string } | { error: string; status: number } {
+  if (/^[0-9a-f]{64}$/i.test(value)) {
+    return { hex: value.toLowerCase() };
   }
-  return new Uint8Array(Buffer.from(raw, 'hex'));
+  if (value.startsWith('@')) {
+    const rest = value.slice(1);
+    const bytes = Buffer.from(rest, 'utf8');
+    if (!isValidUsernameBytes(bytes)) {
+      return { error: 'malformed identity parameter', status: 400 };
+    }
+    const canonical = Buffer.from(canonicalUsernameBytes(bytes)).toString('utf8');
+    const row = getUsername(canonical);
+    if (!row) return { error: 'unknown handle', status: 404 };
+    return { hex: row.owner };
+  }
+  return { error: 'malformed identity parameter', status: 400 };
 }
 
-export function isViewerError(v: Uint8Array | null | { error: string }): v is { error: string } {
+export function isResolveError(v: { hex: string } | { error: string; status: number }): v is { error: string; status: number } {
+  return 'error' in v;
+}
+
+export function parseViewer(query: Record<string, unknown>): Uint8Array | null | { error: string; status?: number } {
+  const raw = query['viewer'] as string | undefined;
+  if (raw === undefined) return null;
+  if (typeof raw !== 'string') return { error: 'viewer must be a string' };
+  const resolved = resolveIdentityParam(raw);
+  if (isResolveError(resolved)) return resolved;
+  return new Uint8Array(Buffer.from(resolved.hex, 'hex'));
+}
+
+export function isViewerError(v: Uint8Array | null | { error: string; status?: number }): v is { error: string; status?: number } {
   return v !== null && typeof v === 'object' && 'error' in v && !(v instanceof Uint8Array);
 }
 

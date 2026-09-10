@@ -3,6 +3,7 @@ import { timingSafeEqual } from 'crypto';
 import { computePowHash } from '@dagsocial/validation';
 import type { OrderingBlock } from '@dagsocial/types';
 import { postIdsOf } from '../services/block-posts.js';
+import { resolveIdentityParam, isResolveError } from './page.js';
 
 // ---------------------------------------------------------------------------
 // Dependency types
@@ -72,10 +73,15 @@ export function createRouter(deps: MiningDeps): Router {
     // here and applied below the gate: the 400 is a verdict on the request,
     // which readiness has no bearing on, while the assignment is a mutation this
     // node commits to and a refused request must not make one.
-    const minerHex = typeof req.query.miner === 'string' ? req.query.miner : null;
-    if (minerHex !== null && (minerHex.length !== 64 || !/^[0-9a-fA-F]+$/.test(minerHex))) {
-      res.status(400).json({ error: 'Invalid miner pubkey — must be 64 hex chars' });
-      return;
+    let minerHex: string | null = null;
+    const minerRaw = typeof req.query.miner === 'string' ? req.query.miner : null;
+    if (minerRaw !== null) {
+      const resolved = resolveIdentityParam(minerRaw);
+      if (isResolveError(resolved)) {
+        res.status(resolved.status).json({ error: resolved.error });
+        return;
+      }
+      minerHex = resolved.hex;
     }
 
     // The peer-readiness gate (MINING_INTERFACE → "The peer-readiness gate").
