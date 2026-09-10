@@ -6,17 +6,21 @@ import { buildInviteTx } from '../src/tx/invite.js';
 import { buildVouchTx, buildUnvouchTx } from '../src/tx/vouch.js';
 import { buildThreadTx } from '../src/tx/post.js';
 import { buildLikeTx } from '../src/tx/like.js';
+import { buildClaimTx } from '../src/tx/claim.js';
 import {
   postInvite,
   postPost,
   postLike,
   postVouch,
+  postClaim,
   deleteVouch,
   getVouchesTarget,
   getVouchesVoucher,
   getVouchCooldowns,
+  getBonds,
   getKarma,
   hasKarma,
+  getUsername,
   getStatus,
   getBlockCurrent,
   getPost,
@@ -164,6 +168,16 @@ describe('membership', () => {
       expect(aK.memberBar).toBe(0);
     }
 
+    // ---- A claims MemberA: the vouch and bond pages carry it as typed ----
+    aK = await getKarma(miner, A.publicKeyHex);
+    const aClaim = buildClaimTx(A, karmaBoxes(aK), 'MemberA', aK.height, version);
+    await postClaim(miner, aClaim.json);
+    await confirm(
+      async () => (await getUsername(miner, 'membera')) !== null,
+      miner, mesh.miningSecret,
+    );
+    await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
+
     // ---- 4. A invites B (bond 35): B is a resident ----
     // A's grant (50) funds this bond and still clears the cast's
     // VOUCH_MIN_BALANCE (11) for A's own later vouch (step 6); B's grant
@@ -197,6 +211,15 @@ describe('membership', () => {
       aK = await getKarma(node, A.publicKeyHex);
       expect(aK.invitesUsed).toBe(1);
       expect(aK.invitesAvailable).toBe(0);
+    }
+
+    // ---- NODE_INTERFACE → Usernames, "A list row carries its names" ----
+    // A's bond page: inviterName as typed, inviteeName null (B is fresh)
+    for (const node of mesh.nodes) {
+      const bp = await getBonds(node, A.publicKeyHex);
+      expect(bp.bondCount).toBe(1);
+      expect(bp.bonds[0]!.inviterName).toBe('MemberA');
+      expect(bp.bonds[0]!.inviteeName).toBeNull();
     }
 
     // ---- A's second invite is refused: the budget is spent, never revoked ----
@@ -367,9 +390,12 @@ describe('membership', () => {
     const bVouchOnC = bVouchPage.vouches.find((v) => v.targetId === C.publicKeyHex)!;
 
     // GET /vouches?target=B lists A on every node.
+    // NODE_INTERFACE → Usernames, "A list row carries its names"
     for (const node of mesh.nodes) {
       const v = await getVouchesTarget(node, B.publicKeyHex);
-      expect(v.vouches.some((vi) => vi.voucherId === A.publicKeyHex)).toBe(true);
+      const aRow = v.vouches.find((vi) => vi.voucherId === A.publicKeyHex)!;
+      expect(aRow.voucherName).toBe('MemberA');
+      expect(aRow.targetName).toBeNull();
     }
 
     const statusPre = await getStatus(miner);
