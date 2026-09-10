@@ -1,7 +1,6 @@
-import { fixturePostId, makePostCommit, seedProvenance, uid } from '../helpers.js';
+import { fixturePostId, makePostCommit } from '../helpers.js';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { generateKeyPairSync, type KeyObject } from 'crypto';
-import type { VouchBox } from '@dagsocial/types';
 import {
   initDb,
   closeDb,
@@ -10,14 +9,16 @@ import {
   queryPostsPage,
   getLikeRecordCount,
   getDescendantCount,
-  getVouchCountForTarget,
   hasLikeRecord,
   getAncestorsNearest,
   getSubtreePage,
-  insertBox,
   confirmPost,
   withdrawPost,
   getBlockCreatedAt,
+  getUsernameByOwner,
+  putUsername,
+  beginBlockJournal,
+  finishBlockJournal,
 } from '../../src/store/index.js';
 import { FeedService } from '../../src/services/feed-service.js';
 import type { PostJson, WithdrawnJson } from '../../src/services/feed-service.js';
@@ -66,11 +67,11 @@ describe('feed-service', () => {
       queryPostsPage,
       getLikeRecordCount,
       getDescendantCount,
-      getVouchCountForTarget,
       hasLikeRecord,
       getAncestorsNearest,
       getSubtreePage,
       getBlockCreatedAt,
+      getUsernameByOwner,
     });
   });
 
@@ -171,103 +172,94 @@ describe('feed-service', () => {
   });
 
   // -----------------------------------------------------------------------
-  // descendantCount and authorVouchCount — NODE_INTERFACE → Posts
+  // descendantCount and authorName — NODE_INTERFACE → Posts, Usernames
   // -----------------------------------------------------------------------
 
-  it('descendantCount and authorVouchCount ride every PostJson arm', () => {
+  it('descendantCount and authorName ride every PostJson arm', () => {
     const grandchildId = insertTestPost('A pending grandchild', authorId, [liveReplyId]);
     confirmPost(liveRootId, 10, 0);
     confirmPost(liveReplyId, 11, 0);
-
-    const vouch = seedProvenance<VouchBox>({
-      boxType: 'vouch' as const,
-      value: 1n,
-      createdAtBlock: 0,
-      voucherId: uid('counts-voucher'),
-      targetId: authorId,
-    }, 1);
-    insertBox(vouch);
 
     // Feed row: the confirmed root, 2 descendants (reply + grandchild), pending included
     const feed = feedService.queryPosts({ limit: 50 });
     const feedRow = feed.posts.find((p) => p.id === liveRootId) as PostJson;
     expect(feedRow.descendantCount).toBe(2);
-    expect(feedRow.authorVouchCount).toBe(1);
+    expect(feedRow.authorName).toBeNull();
 
     // Pending row: the grandchild, still pending, a leaf
     const pendingRow = feed.pending.find((p) => p.id === grandchildId) as PostJson;
     expect(pendingRow.descendantCount).toBe(0);
-    expect(pendingRow.authorVouchCount).toBe(1);
+    expect(pendingRow.authorName).toBeNull();
 
     // Head
     const head = feedService.getPost(liveReplyId) as PostJson;
     expect(head.descendantCount).toBe(1);
-    expect(head.authorVouchCount).toBe(1);
+    expect(head.authorName).toBeNull();
 
     // Ancestor
     const replyThread = feedService.getThread(liveReplyId, { limit: 50 })!;
     const ancestor = replyThread.ancestors[0] as PostJson;
     expect(ancestor.id).toBe(liveRootId);
     expect(ancestor.descendantCount).toBe(2);
-    expect(ancestor.authorVouchCount).toBe(1);
+    expect(ancestor.authorName).toBeNull();
 
     // Descendant
     const rootThread2 = feedService.getThread(liveRootId, { limit: 50 })!;
     const descendant = rootThread2.descendants[0] as PostJson;
     expect(descendant.id).toBe(liveReplyId);
     expect(descendant.descendantCount).toBe(1);
-    expect(descendant.authorVouchCount).toBe(1);
+    expect(descendant.authorName).toBeNull();
   });
 
-  it('authorVouchCount is read once per distinct author per response, and again on the next call', () => {
+  it('authorName is read once per distinct author per response, and again on the next call', () => {
     const keysB = generateKeyPairSync('ed25519');
     const authorB = rawPublicKey(keysB.publicKey);
     insertTestPost('A second post by A', authorId, []);
     insertTestPost('A post by B', authorB, []);
 
-    let vouchCalls = 0;
+    let nameCalls = 0;
     const countingService = new FeedService({
       getPost: storeGetPost,
       queryPostsPage,
       getLikeRecordCount,
       getDescendantCount,
-      getVouchCountForTarget: (targetId: Uint8Array) => {
-        vouchCalls++;
-        return getVouchCountForTarget(targetId);
-      },
       hasLikeRecord,
       getAncestorsNearest,
       getSubtreePage,
       getBlockCreatedAt,
+      getUsernameByOwner: (owner) => {
+        nameCalls++;
+        return getUsernameByOwner(owner);
+      },
     });
 
     // The pending window holds 4 posts (liveRootId, liveReplyId, +2 new) across 2 distinct authors.
     countingService.queryPosts({ limit: 50 });
-    expect(vouchCalls).toBe(2);
+    expect(nameCalls).toBe(2);
 
     countingService.queryPosts({ limit: 50 });
-    expect(vouchCalls).toBe(4);
+    expect(nameCalls).toBe(4);
   });
 
-  it('authorVouchCount is read once per distinct author across a withdrawn row and a live row by the same author', () => {
+  it('authorName is read once per distinct author across a withdrawn row and a live row by the same author', () => {
     const withdrawnId = insertTestPost('A post about to be withdrawn', authorId, []);
     confirmPost(withdrawnId, 40, 0);
     withdrawPost(withdrawnId, 41);
 
-    let vouchCalls = 0;
+    let nameCalls = 0;
     const countingService = new FeedService({
       getPost: storeGetPost,
       queryPostsPage,
       getLikeRecordCount,
       getDescendantCount,
-      getVouchCountForTarget: (targetId: Uint8Array) => {
-        vouchCalls++;
-        return getVouchCountForTarget(targetId);
-      },
       hasLikeRecord,
       getAncestorsNearest,
       getSubtreePage,
       getBlockCreatedAt,
+      getUsernameByOwner: (owner) => {
+        nameCalls++;
+        return getUsernameByOwner(owner);
+      },
     });
 
     // One confirmed row (the withdrawn post) plus liveRootId/liveReplyId still
@@ -275,56 +267,44 @@ describe('feed-service', () => {
     const feed = countingService.queryPosts({ limit: 50 });
     expect(feed.posts.some((p) => p.id === withdrawnId)).toBe(true);
     expect(feed.pending.length).toBe(2);
-    expect(vouchCalls).toBe(1);
+    expect(nameCalls).toBe(1);
   });
 
   // -----------------------------------------------------------------------
-  // WithdrawnJson carries the same two counts — NODE_INTERFACE →
-  // "The JSON projection has two arms where the store has one shape"
+  // WithdrawnJson carries descendantCount and authorName
   // -----------------------------------------------------------------------
 
-  it('descendantCount and authorVouchCount ride every WithdrawnJson arm too', () => {
-    // A withdrawn root with one live child — getPost, listing and thread-head arms.
+  it('descendantCount and authorName ride every WithdrawnJson arm too', () => {
     const withdrawnRootId = insertTestPost('A root about to be withdrawn', authorId, []);
     confirmPost(withdrawnRootId, 30, 0);
     const rootChildId = insertTestPost('Its live child', authorId, [withdrawnRootId]);
     confirmPost(rootChildId, 31, 0);
     withdrawPost(withdrawnRootId, 32);
 
-    // A live root with a withdrawn child — the thread-descendant arm.
     const liveParentId = insertTestPost('A live parent whose reply withdraws', authorId, []);
     confirmPost(liveParentId, 33, 0);
     const withdrawnChildId = insertTestPost('A reply about to be withdrawn', authorId, [liveParentId]);
     confirmPost(withdrawnChildId, 34, 0);
     withdrawPost(withdrawnChildId, 35);
 
-    const vouch = seedProvenance<VouchBox>({
-      boxType: 'vouch' as const,
-      value: 1n,
-      createdAtBlock: 0,
-      voucherId: uid('withdrawn-counts-voucher'),
-      targetId: authorId,
-    }, 1);
-    insertBox(vouch);
-
     // getPost
     const head = feedService.getPost(withdrawnRootId) as WithdrawnJson;
     expect(head.kind).toBe('withdrawn');
     expect(head.descendantCount).toBe(1);
-    expect(head.authorVouchCount).toBe(1);
+    expect(head.authorName).toBeNull();
 
     // listing
     const feed = feedService.queryPosts({ limit: 50 });
     const feedRow = feed.posts.find((p) => p.id === withdrawnRootId) as WithdrawnJson;
     expect(feedRow.descendantCount).toBe(1);
-    expect(feedRow.authorVouchCount).toBe(1);
+    expect(feedRow.authorName).toBeNull();
 
     // thread head
     const thread = feedService.getThread(withdrawnRootId, { limit: 50 })!;
     const threadHead = thread.post as WithdrawnJson;
     expect(threadHead.kind).toBe('withdrawn');
     expect(threadHead.descendantCount).toBe(1);
-    expect(threadHead.authorVouchCount).toBe(1);
+    expect(threadHead.authorName).toBeNull();
 
     // thread descendant
     const parentThread = feedService.getThread(liveParentId, { limit: 50 })!;
@@ -332,7 +312,7 @@ describe('feed-service', () => {
     expect(descendant.id).toBe(withdrawnChildId);
     expect(descendant.kind).toBe('withdrawn');
     expect(descendant.descendantCount).toBe(0);
-    expect(descendant.authorVouchCount).toBe(1);
+    expect(descendant.authorName).toBeNull();
   });
 
   it('getThread reads the head\'s descendantCount once, and the head and the thread agree', () => {
@@ -355,15 +335,62 @@ describe('feed-service', () => {
       queryPostsPage,
       getLikeRecordCount,
       getDescendantCount: countingGetDescendantCount,
-      getVouchCountForTarget,
       hasLikeRecord,
       getAncestorsNearest,
       getSubtreePage: countingGetSubtreePage,
       getBlockCreatedAt,
+      getUsernameByOwner,
     });
 
     const t = countingService.getThread(liveReplyId, { limit: 50 })!;
     expect(descendantCalls[liveReplyId]).toBe(1);
     expect((t.post as PostJson).descendantCount).toBe(t.descendantCount);
+  });
+
+  // -----------------------------------------------------------------------
+  // authorName with a live name — NODE_INTERFACE → Usernames
+  // -----------------------------------------------------------------------
+
+  it('authorName rides a live row as typed when the author holds a name', () => {
+    beginBlockJournal(50);
+    putUsername({
+      nameLower: Buffer.from(authorId).toString('hex').slice(0, 10),
+      name: 'AuthorAlias',
+      owner: Buffer.from(authorId).toString('hex'),
+      boxId: 'bb'.repeat(32),
+      claimedAtBlock: 50,
+    });
+    finishBlockJournal();
+
+    const head = feedService.getPost(liveRootId) as PostJson;
+    expect(head.authorName).toBe('AuthorAlias');
+  });
+
+  it('authorName rides a withdrawn row as typed when the author holds a name', () => {
+    beginBlockJournal(50);
+    putUsername({
+      nameLower: Buffer.from(authorId).toString('hex').slice(0, 10),
+      name: 'AuthorAlias',
+      owner: Buffer.from(authorId).toString('hex'),
+      boxId: 'bb'.repeat(32),
+      claimedAtBlock: 50,
+    });
+    finishBlockJournal();
+
+    const withdrawnId = insertTestPost('To be withdrawn for name test', authorId, []);
+    confirmPost(withdrawnId, 51, 0);
+    withdrawPost(withdrawnId, 52);
+
+    const head = feedService.getPost(withdrawnId) as WithdrawnJson;
+    expect(head.authorName).toBe('AuthorAlias');
+  });
+
+  it('authorName is null for an author with no name', () => {
+    const noNameKeys = generateKeyPairSync('ed25519');
+    const noNameAuthor = rawPublicKey(noNameKeys.publicKey);
+    const postId = insertTestPost('No name author', noNameAuthor, []);
+
+    const head = feedService.getPost(postId) as PostJson;
+    expect(head.authorName).toBeNull();
   });
 });

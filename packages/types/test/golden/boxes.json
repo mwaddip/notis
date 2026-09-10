@@ -225,6 +225,45 @@
       },
       "bytes": "0c03ac025656565656565656565656565656565656565656565656565656565656565656a408",
       "note": "Where an unvouched stake waits out its cooldown. The only arm that puts a bare vlqU after a b32, so a408 is the release height at two bytes and its width follows the value rather than the shape. value is the CONSUMED VouchBox's and never VOUCH_KARMA_AMOUNT - 3 here, so a reader substituting the cast's pin of 1 produces different bytes rather than agreeing by coincidence. releaseAtBlock is inside the id preimage, which is the whole point of the type: a node holding the stateRoot holds the obligation instead of a root it cannot interpret without replaying every block. Built at createdAtBlock 300, the prefix's third field, 2 VLQ byte(s)."
+    },
+    {
+      "name": "box/username-1byte",
+      "codec": "boxContent",
+      "value": {
+        "boxType": "username",
+        "value": "0",
+        "createdAtBlock": 300,
+        "owner": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "name": "61"
+      },
+      "bytes": "0e00ac02000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f0161",
+      "note": "38 bytes: enum8(14) 1 + vlqU64(0) 1 + vlqU(300) 2 + b32(owner) 32 + lp(name) 1+1. A 1-byte name ('a'), the shortest a username can be. value is 0n by type, the structural zero the value-domain rule names (TYPES_INTERFACE → Box value domain). Built at createdAtBlock 300, the prefix's third field, 2 VLQ byte(s)."
+    },
+    {
+      "name": "box/username-24byte",
+      "codec": "boxContent",
+      "value": {
+        "boxType": "username",
+        "value": "0",
+        "createdAtBlock": 300,
+        "owner": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "name": "414141414141414141414141414141414141414141414141"
+      },
+      "bytes": "0e00ac02000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f18414141414141414141414141414141414141414141414141",
+      "note": "61 bytes: the longest legal name, 24 bytes of 'A'. The name is stored as typed at the claim, so mixed case is preserved in the box; the canonical form the state keys on is derived by canonicalUsernameBytes, never stored. Built at createdAtBlock 300, the prefix's third field, 2 VLQ byte(s)."
+    },
+    {
+      "name": "box/username-mixed-case",
+      "codec": "boxContent",
+      "value": {
+        "boxType": "username",
+        "value": "0",
+        "createdAtBlock": 300,
+        "owner": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "name": "416c6963655f3939"
+      },
+      "bytes": "0e00ac02000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f08416c6963655f3939",
+      "note": "45 bytes: 'Alice_99' stored as typed. The codec preserves case; the alphabet is not the codec's concern — a byte outside [A-Za-z0-9_] still encodes and decodes because verifyTxStructure refuses it, not this package. Built at createdAtBlock 300, the prefix's third field, 2 VLQ byte(s)."
     }
   ],
   "rejects": [
@@ -234,6 +273,13 @@
       "bytes": "03000081045a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
       "code": "out-of-domain",
       "note": "A 513-byte payload, one past MAX_GENESIS_PROOF_PAYLOAD_BYTES. Every byte of it is present and the lp field is well formed, so nothing here is truncated and nothing re-encodes differently - the bound is the only rule that can refuse these bytes, and 8104 is the count that makes them 513 rather than 512. The bound is per-type and lives in the genesis_proof arm of the reader, never in readLp, which every lp field shares; box/genesis-proof-typical is the same layout inside the bound. An over-bound payload still ENCODES, exactly as an unknown boxType does - the writers are total and the refusal is one-way. The prefix carries createdAtBlock 0 as its third field, so the shape this vector targets sits where the layout puts it rather than three bytes early."
+    },
+    {
+      "name": "box/username-name-over-bound",
+      "codec": "boxContent",
+      "bytes": "0e00ac02aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1962626262626262626262626262626262626262626262626262",
+      "code": "out-of-domain",
+      "note": "A 25-byte name, one past USERNAME_MAX_BYTES. The lp field is well formed and every byte is present, so the bound is the only rule that refuses these bytes, and 19 is the count that makes them 25 rather than 24. The bound is checked before a byte of content is read, so the reader never allocates the oversized payload. An over-bound name still ENCODES, the same one-way shape genesis_proof's payload bound has. Built at createdAtBlock 300, the prefix's third field, 2 VLQ byte(s)."
     },
     {
       "name": "box/reserved-tag-2",

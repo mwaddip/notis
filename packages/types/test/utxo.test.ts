@@ -16,8 +16,11 @@ import {
   MINT_ID_DOMAIN,
   IDENTITY_KEY_DOMAIN,
   NETWORK_KEY_DOMAIN,
+  USERNAME_KEY_DOMAIN,
+  USERNAME_HOLDER_KEY_DOMAIN,
   POST_ID_DOMAIN,
   POST_CONTENT_DOMAIN,
+  INTERLINK_DOMAIN,
   BOX_TYPE_TAGS,
   INVITE_BOND_MIN,
   INVITE_BOND_MAX,
@@ -203,6 +206,7 @@ describe('boxes', () => {
       fee: { boxType: 'fee', value: 100n, createdAtBlock: FIXTURE_HEIGHT, txId: FIXTURE_TX_ID, index: 13 },
       karma_pool: { boxType: 'karma_pool', value: 100n, createdAtBlock: FIXTURE_HEIGHT, txId: FIXTURE_TX_ID, index: 14 },
       karma_price: { boxType: 'karma_price', value: 5n, createdAtBlock: FIXTURE_HEIGHT, txId: FIXTURE_TX_ID, index: 15 },
+      username: { boxType: 'username', value: 0n, createdAtBlock: FIXTURE_HEIGHT, owner, name: new Uint8Array([0x61]), txId: FIXTURE_TX_ID, index: 16 },
     } satisfies Record<BoxCandidate['boxType'], unknown>;
 
     for (const [boxType, box] of Object.entries(BOX_FOR_ID)) {
@@ -1516,6 +1520,7 @@ describe('boxRecordFromBytes', () => {
     // row that round-trips is the one carrying the nine-byte value.
     karma_pool: [['karma_pool', { boxType: 'karma_pool' as const, value: BOX_VALUE_BOUND - 1n, createdAtBlock: FIXTURE_HEIGHT }]],
     karma_price: [['karma_price', { boxType: 'karma_price' as const, value: 5n, createdAtBlock: FIXTURE_HEIGHT }]],
+    username: [['username', { boxType: 'username' as const, value: 0n, createdAtBlock: FIXTURE_HEIGHT, owner, name: new Uint8Array([0x41, 0x6c, 0x69, 0x63, 0x65, 0x5f, 0x39, 0x39]) }]],
   } satisfies Record<BoxCandidate['boxType'], readonly (readonly [string, AnyBoxCandidate])[]>;
 
   const ALL_BOX_TYPE_PAIRS: [string, AnyBoxCandidate][] =
@@ -1718,17 +1723,18 @@ describe('computeMintTxId', () => {
   });
 });
 
-// TYPES_INTERFACE → Domain tags are network-agnostic: all seven derivation
-// domain tags, imported from the barrel.
+// TYPES_INTERFACE → Domain tags: all ten derivation domain tags, imported
+// from the barrel.
 const ALL_DERIVATION_TAGS = [
   BOX_ID_DOMAIN, TX_ID_DOMAIN, MINT_ID_DOMAIN, IDENTITY_KEY_DOMAIN,
-  NETWORK_KEY_DOMAIN, POST_ID_DOMAIN, POST_CONTENT_DOMAIN,
+  NETWORK_KEY_DOMAIN, USERNAME_KEY_DOMAIN, USERNAME_HOLDER_KEY_DOMAIN,
+  POST_ID_DOMAIN, POST_CONTENT_DOMAIN, INTERLINK_DOMAIN,
 ];
 
 describe('domain separation', () => {
-  it('the seven derivation domain tags are pairwise distinct', () => {
+  it('the ten derivation domain tags are pairwise distinct', () => {
     const tags = ALL_DERIVATION_TAGS.map((t) => Buffer.from(t).toString('hex'));
-    expect(new Set(tags).size).toBe(7);
+    expect(new Set(tags).size).toBe(ALL_DERIVATION_TAGS.length);
   });
 
   it('a mint id never equals a box id built from the same material', () => {
@@ -2291,6 +2297,7 @@ describe('the box-type tables', () => {
     fee: { boxType: 'fee', value: 100n, createdAtBlock: FIXTURE_HEIGHT },
     karma_pool: { boxType: 'karma_pool', value: 100n, createdAtBlock: FIXTURE_HEIGHT },
     karma_price: { boxType: 'karma_price', value: 5n, createdAtBlock: FIXTURE_HEIGHT },
+    username: { boxType: 'username', value: 0n, createdAtBlock: FIXTURE_HEIGHT, owner, name: new Uint8Array([0x61]) },
   };
 
   // The table IS the numbering the encoder writes rather than a restatement of
@@ -2330,7 +2337,7 @@ describe('the box-type tables', () => {
     expect({ ...BOX_TYPE_TAGS }).toEqual({
       karma: 0, credit: 1, genesis_proof: 3, bond: 4, vouch: 6,
       emission: 7, treasury: 8, fee: 9, karma_pool: 10,
-      like_accrual: 11, vouch_escrow: 12, karma_price: 13,
+      like_accrual: 11, vouch_escrow: 12, karma_price: 13, username: 14,
     });
   });
 

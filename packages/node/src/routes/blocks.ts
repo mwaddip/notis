@@ -46,6 +46,7 @@ export interface BlocksDeps {
   membershipBarMultiplier: number;
   /** The profile's era schedule — /status serves the era at blockHeight + 1. */
   protocolVersionSchedule: readonly ProtocolEra[];
+  countUsernames(): number;
 }
 
 // ---------------------------------------------------------------------------
@@ -138,6 +139,7 @@ export function createRouter(deps: BlocksDeps): Router {
       protocolVersion: protocolVersionAt(deps.protocolVersionSchedule, blockHeight + 1),
       postCount: deps.getPostCount(),
       pendingPosts: deps.getPendingPostCount(),
+      usernameCount: deps.countUsernames(),
       totalKarma: deps.getTotalKarma().toString(),
       liquidKarma: deps.getLiquidKarma().toString(),
       totalCredits: deps.getTotalCredits().toString(),

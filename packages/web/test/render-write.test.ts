@@ -28,7 +28,7 @@ function post(id: string, author: string, content: string, status: 'confirmed' |
   return {
     id, content, contentHash: contentHashHex(content), author, parentRefs: [], protocolVersion: 1,
     type: 'regular', status, blockHeight: status === 'confirmed' ? 100 : null, blockIndex: 0,
-    blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorVouchCount: 0, likedByViewer: null,
+    blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null,
   };
 }
 function statusResult(): StatusResult {

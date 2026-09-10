@@ -74,6 +74,8 @@ const engineDeps: UtxoEngineDeps = {
       membershipBarMultiplier: 1,
       putIdentityRecord: () => {},
       protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
+      getUsername: () => null,
+      getUsernameByOwner: () => null,
 };
 
 describe('sendCredits (validate + pool — P2-B phase 3)', () => {

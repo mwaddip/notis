@@ -128,9 +128,9 @@ export interface SettlementBody {
    */
   markers: Array<{ id: string; author: Uint8Array; value: bigint }>;
   /**
-   * Every `KarmaPriceBox` the body's post transactions created, in committed
-   * transaction order. The settlement consumes them and returns their sum to
-   * the pool (NODE_INTERFACE → The settlement transaction).
+   * Every `KarmaPriceBox` the body's transactions created — a post's price or
+   * a burn's — in committed transaction order. The settlement consumes them
+   * and returns their sum to the pool (NODE_INTERFACE → The settlement transaction).
    */
   priceBoxes: Array<{ id: string; value: bigint }>;
 }
@@ -324,11 +324,9 @@ function derive(
     if (entry) entry.total += marker.value;
     else byAuthor.set(key, { author: marker.author, total: marker.value });
   }
-  // 3b′. The price leg — every KarmaPriceBox the body's post transactions
-  // created, in committed transaction order. Their sum returns to the pool
-  // (NODE_INTERFACE → The settlement transaction). Value is carried in the
-  // body, not read from the store: on the creator side the box is in the
-  // pool, not yet applied.
+  // 3b′. The price leg — every KarmaPriceBox the body's transactions created
+  // — a post's price or a burn's — in committed transaction order. Their sum
+  // returns to the pool (NODE_INTERFACE → The settlement transaction).
   for (const price of body.priceBoxes) {
     inputs.push(price.id);
     poolSink += price.value;

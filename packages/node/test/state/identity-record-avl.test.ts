@@ -23,7 +23,7 @@ import { fixtureProvenance, openAvlDb } from '../helpers.js';
 
 /**
  * Identity records as the AVL tree's second entity kind — NODE_INTERFACE →
- * Three entity kinds and Layout — IdentityRecord.
+ * Entity kinds and Layout — IdentityRecord.
  */
 
 function makeKarmaBox(id: string, value = 10n): KarmaBox {

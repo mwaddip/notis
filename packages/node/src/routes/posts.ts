@@ -13,8 +13,10 @@ import {
   parseAfter, isAfterError,
   parseRoots, isRootsError,
   parseViewer, isViewerError,
+  resolveIdentityParam, isResolveError,
   formatKey,
 } from './page.js';
+import type { UsernameLookup } from './page.js';
 
 // ---------------------------------------------------------------------------
 // Dependency types
@@ -22,6 +24,7 @@ import {
 
 export interface PostsDeps extends PostServiceDeps, FeedServiceDeps {
   getTopologyAuthor(postId: string): string | null;
+  getUsername: UsernameLookup;
 }
 
 // ---------------------------------------------------------------------------
@@ -87,9 +90,9 @@ export function createRouter(deps: PostsDeps): Router {
     if (isLimitError(limit)) { res.status(400).json({ error: limit.error }); return; }
     const after = parseAfter(req.query as Record<string, unknown>, 'post');
     if (isAfterError(after)) { res.status(400).json({ error: after.error }); return; }
-    const viewer = parseViewer(req.query as Record<string, unknown>);
+    const viewer = parseViewer(req.query as Record<string, unknown>, deps.getUsername);
     if (isViewerError(viewer)) {
-      res.status(400).json({ error: viewer.error });
+      res.status(viewer.status ?? 400).json({ error: viewer.error });
       return;
     }
     const thread = feedService.getThread(
@@ -110,9 +113,9 @@ export function createRouter(deps: PostsDeps): Router {
   // GET /posts/:id
   router.get('/:id', (req, res) => {
     const id = req.params['id']!;
-    const viewer = parseViewer(req.query as Record<string, unknown>);
+    const viewer = parseViewer(req.query as Record<string, unknown>, deps.getUsername);
     if (isViewerError(viewer)) {
-      res.status(400).json({ error: viewer.error });
+      res.status(viewer.status ?? 400).json({ error: viewer.error });
       return;
     }
     const result = feedService.getPost(id, viewer);
@@ -131,13 +134,18 @@ export function createRouter(deps: PostsDeps): Router {
     if (isAfterError(after)) { res.status(400).json({ error: after.error }); return; }
     const roots = parseRoots(req.query as Record<string, unknown>);
     if (isRootsError(roots)) { res.status(400).json({ error: roots.error }); return; }
-    const viewer = parseViewer(req.query as Record<string, unknown>);
+    const viewer = parseViewer(req.query as Record<string, unknown>, deps.getUsername);
     if (isViewerError(viewer)) {
-      res.status(400).json({ error: viewer.error });
+      res.status(viewer.status ?? 400).json({ error: viewer.error });
       return;
     }
-    const authorHex = req.query['author'] as string | undefined;
-    const author = authorHex ? new Uint8Array(Buffer.from(authorHex, 'hex')) : undefined;
+    let author: Uint8Array | undefined;
+    const authorRaw = req.query['author'] as string | undefined;
+    if (authorRaw) {
+      const resolved = resolveIdentityParam(authorRaw, deps.getUsername);
+      if (isResolveError(resolved)) { res.status(resolved.status).json({ error: resolved.error }); return; }
+      author = new Uint8Array(Buffer.from(resolved.hex, 'hex'));
+    }
 
     const result = feedService.queryPosts({
       author,

@@ -11,7 +11,8 @@ import { effectiveKarma } from '../services/decay.js';
 import { getNet } from '../services/net-instance.js';
 import { jsonToTx } from './json-to-tx.js';
 import { respondError } from './respond-error.js';
-import { parseLimit, isLimitError, parseAfter, isAfterError, formatKey } from './page.js';
+import { parseLimit, isLimitError, parseAfter, isAfterError, formatKey, resolveIdentityParam, isResolveError } from './page.js';
+import type { UsernameLookup } from './page.js';
 
 // ---------------------------------------------------------------------------
 // Dependency types
@@ -29,6 +30,7 @@ export interface UtxoDeps {
   decayCfg: DecayCfg;
   getNetworkRecord(): NetworkRecord;
   membershipBarMultiplier: number;
+  getUsername: UsernameLookup;
 }
 
 // ---------------------------------------------------------------------------
@@ -39,16 +41,12 @@ export function createRouter(deps: UtxoDeps): Router {
   const router = Router();
 
   function parseUserId(param: string, res: Response): Uint8Array | null {
-    if (!param || typeof param !== 'string' || param.length !== 64) {
-      res.status(400).json({ error: 'userId must be a 64-character hex string' });
+    const resolved = resolveIdentityParam(param, deps.getUsername);
+    if (isResolveError(resolved)) {
+      res.status(resolved.status).json({ error: resolved.error });
       return null;
     }
-    try {
-      return new Uint8Array(Buffer.from(param, 'hex'));
-    } catch {
-      res.status(400).json({ error: 'userId must be a hex string' });
-      return null;
-    }
+    return new Uint8Array(Buffer.from(resolved.hex, 'hex'));
   }
 
   // GET /karma/:userId
@@ -83,7 +81,7 @@ export function createRouter(deps: UtxoDeps): Router {
     }
 
     res.json({
-      userId: req.params['userId'],
+      userId: Buffer.from(userIdBytes).toString('hex'),
       total: total.toString(),
       effective: eff.toString(),
       boxes: pageResult.rows.map(b => ({
@@ -123,7 +121,7 @@ export function createRouter(deps: UtxoDeps): Router {
     });
 
     res.json({
-      userId: req.params['userId'],
+      userId: Buffer.from(userIdBytes).toString('hex'),
       total: total.toString(),
       boxes: pageResult.rows.map(b => ({
         boxId: b.id!,

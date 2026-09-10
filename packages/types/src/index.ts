@@ -55,6 +55,8 @@ export {
   MAX_FUTURE_DRIFT_MS,
   GENESIS_PREV_BLOCK_HASH,
   ED25519_SPKI_PREFIX,
+  USERNAME_MAX_BYTES,
+  USERNAME_BURN_PRICE,
   LEVEL_CAP,
   MAX_INTERLINKS,
 } from './constants.js';
@@ -106,6 +108,8 @@ export {
   MINT_ID_DOMAIN,
   IDENTITY_KEY_DOMAIN,
   NETWORK_KEY_DOMAIN,
+  USERNAME_KEY_DOMAIN,
+  USERNAME_HOLDER_KEY_DOMAIN,
   BOX_TYPE_TAGS,
 } from './utxo.js';
 export type {
@@ -128,11 +132,15 @@ export type {
   TreasuryBox,
   FeeBox,
   KarmaPriceBox,
+  UsernameBox,
   KarmaPoolBox,
   AnyBox,
   UtxoTransaction,
   TxId,
 } from './utxo.js';
+
+// Usernames — TYPES_INTERFACE → Content limits
+export { isValidUsernameBytes, canonicalUsernameBytes } from './username.js';
 
 // Membership — TYPES_INTERFACE → Membership; ARCHITECTURE → Membership
 export { icbrt, membershipBar, memberLikesBar } from './membership.js';
@@ -168,7 +176,7 @@ export type {
 // holds the AVL values, and an AVL box value **IS `boxRecordBytes` exactly** —
 // no wrapper, no second tag. Its first byte is already the `boxType` `enum8`
 // from the layout above, so a node-side box-type numbering would be a second
-// numbering of one thing. See `NODE_INTERFACE` → Three entity kinds.
+// numbering of one thing. See `NODE_INTERFACE` → Entity kinds.
 //
 // `ByteReader` / `ByteWriter` / `ReaderError` come with it, re-exported from
 // `@dagsocial/wire`, which `@dagsocial/node` does not depend on. Two reasons,

@@ -50,7 +50,7 @@ interface AvlProofResponse {
   value: unknown;
 }
 
-// NODE_INTERFACE → Three entity kinds — the AVL value carries provenance
+// NODE_INTERFACE → Entity kinds — the AVL value carries provenance
 export async function proveBoxes(
   nodeUrl: string,
   user: string,
@@ -141,7 +141,7 @@ async function proveOneBox(
     };
   }
 
-  // NODE_INTERFACE → Three entity kinds
+  // NODE_INTERFACE → Entity kinds
   if (resp.kind != null && resp.kind !== 'box') {
     return {
       boxId, boxClass, value: 0n, status: 'unproven',
@@ -175,7 +175,7 @@ async function proveOneBox(
     };
   }
 
-  // NODE_INTERFACE → Three entity kinds — the value carries the full record
+  // NODE_INTERFACE → Entity kinds — the value carries the full record
   let record;
   try {
     record = boxRecordFromBytes(avlResult.value);

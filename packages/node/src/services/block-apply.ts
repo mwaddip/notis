@@ -71,6 +71,10 @@ import {
   getVouchBox,
   getNetworkRecord,
   getLapsedVouches,
+  putUsername,
+  deleteUsername,
+  getUsername,
+  getUsernameByOwner,
 } from '../store/index.js';
 import { getDb } from '../store/db.js';
 import {
@@ -88,7 +92,9 @@ import { tryGetAvlProver, applyBlockMutations, checkpointProver } from '../state
 import { emitPostIndexed } from '../journal.js';
 import { countedVerifyOrderingBlockPoW, noteTip } from '../metrics.js';
 import { getNet } from './net-instance.js';
-import type { RecordPut, NetworkPut } from '../state/avl-prover.js';
+import type { RecordPut, NetworkPut, UsernamePut, HolderPut } from '../state/avl-prover.js';
+import { usernameRecordKey, holderRecordKey } from '../state/avl-prover.js';
+import { canonicalUsernameBytes } from '@dagsocial/types';
 import { networkRecordKey } from '../store/identity-records.js';
 import {
   encodeTx,
@@ -108,6 +114,7 @@ import type {
   AnyBox,
   KarmaBox,
   VouchBox,
+  UsernameBox,
   OrderingBlock,
   UtxoTransaction,
 } from '@dagsocial/types';
@@ -401,9 +408,11 @@ function applyBlockBody(block: OrderingBlock): boolean {
   const journal = finishBlockJournal();
   const handle = tryGetAvlProver();
   if (handle) {
-    const { consumed, created, recordPuts, networkPuts } = proverFeedFromJournal(journal);
+    const feed = proverFeedFromJournal(journal);
     const computedDigest = applyBlockMutations(
-      handle.prover, block.header.height, consumed, created, recordPuts, networkPuts,
+      handle.prover, block.header.height,
+      feed.consumed, feed.created, feed.recordPuts, feed.networkPuts,
+      feed.usernamePuts, feed.holderPuts, feed.removedRecordKeys,
     );
 
     // Verify against block header (gated). The prover is restored by the
@@ -456,11 +465,17 @@ function applyBlockBody(block: OrderingBlock): boolean {
  * payload, never a store re-fetch: `getBox` returns null for a created-then-
  * consumed box, so a re-fetch would silently drop it.
  */
-function proverFeedFromJournal(
-  journal: BlockJournal,
-): { consumed: string[]; created: AnyBox[]; recordPuts: RecordPut[]; networkPuts: NetworkPut[] } {
-  // Netting is per-kind and the two rules do NOT share a code path: boxes
-  // cancel insert+remove pairs; records collapse to the last write per key.
+interface ProverFeed {
+  consumed: string[];
+  created: AnyBox[];
+  recordPuts: RecordPut[];
+  networkPuts: NetworkPut[];
+  usernamePuts: UsernamePut[];
+  holderPuts: HolderPut[];
+  removedRecordKeys: string[];
+}
+
+function proverFeedFromJournal(journal: BlockJournal): ProverFeed {
   const cancelled = new Set<number>();
   const pendingInsertIndex = new Map<string, number>();
   for (let i = 0; i < journal.mutations.length; i++) {
@@ -479,15 +494,12 @@ function proverFeedFromJournal(
   }
   const consumed: string[] = [];
   const created: AnyBox[] = [];
-  // Insertion-ordered by key, so the last write to a key wins while the map
-  // itself stays deterministic. Collapsing must happen here, where journal
-  // application order is still authoritative: record puts are not commutative,
-  // so `applyBlockMutations`' sort-by-key could not recover which write is
-  // last. The journal keeps both entries regardless — rollback needs the
-  // first's `replaced`.
   const recordByKey = new Map<string, RecordPut>();
   let latestNetwork: NetworkPut | null = null;
   const nrKey = networkRecordKey();
+  // Username/holder: last write per key wins; null = removal.
+  const usernameByKey = new Map<string, UsernamePut | null>();
+  const holderByKey = new Map<string, HolderPut | null>();
   for (let i = 0; i < journal.mutations.length; i++) {
     if (cancelled.has(i)) continue;
     const m = journal.mutations[i]!;
@@ -502,21 +514,49 @@ function proverFeedFromJournal(
       case 'network':
         latestNetwork = { key: nrKey, network: { memberCount: m.memberCount } };
         break;
+      case 'username': {
+        const key = usernameRecordKey(
+          canonicalUsernameBytes(Buffer.from(m.nameLower, 'utf8')),
+        );
+        usernameByKey.set(key, m.row ? { key, username: { boxId: m.row.boxId } } : null);
+        break;
+      }
+      case 'holder': {
+        const ownerBytes = typeof m.owner === 'string'
+          ? Buffer.from(m.owner, 'hex')
+          : m.owner;
+        const key = holderRecordKey(ownerBytes);
+        holderByKey.set(key, m.record ? { key, holder: m.record } : null);
+        break;
+      }
       default: {
-        // Compile-time exhaustiveness: a new committed entity kind that nobody
-        // feeds to the prover is silently absent from the stateRoot, and no
-        // test can catch that — this assignment is the only enforcement.
         const _exhaustive: never = m;
         void _exhaustive;
         break;
       }
     }
   }
+
+  const usernamePuts: UsernamePut[] = [];
+  const holderPuts: HolderPut[] = [];
+  const removedRecordKeys: string[] = [];
+  for (const [key, val] of usernameByKey) {
+    if (val) usernamePuts.push(val);
+    else removedRecordKeys.push(key);
+  }
+  for (const [key, val] of holderByKey) {
+    if (val) holderPuts.push(val);
+    else removedRecordKeys.push(key);
+  }
+
   return {
     consumed,
     created,
     recordPuts: [...recordByKey.values()],
     networkPuts: latestNetwork ? [latestNetwork] : [],
+    usernamePuts,
+    holderPuts,
+    removedRecordKeys,
   };
 }
 
@@ -600,11 +640,14 @@ export function computePostBlockStateRoot(
     getDb().transaction((): void => {
       beginBlockJournal(height);
       if (!applyMutationPhase(block, height)) throw new BlockRejected();
-      const { consumed, created, recordPuts, networkPuts } = proverFeedFromJournal(finishBlockJournal());
-      // The digest rides out on the throw: nothing this run did may survive.
+      const feed = proverFeedFromJournal(finishBlockJournal());
       throw new SpeculativeRollback(
         Buffer.from(
-          applyBlockMutations(handle.prover, height, consumed, created, recordPuts, networkPuts),
+          applyBlockMutations(
+            handle.prover, height,
+            feed.consumed, feed.created, feed.recordPuts, feed.networkPuts,
+            feed.usernamePuts, feed.holderPuts, feed.removedRecordKeys,
+          ),
         ).toString('hex'),
       );
     })();
@@ -785,6 +828,8 @@ function applyMutationPhase(
     membershipBarMultiplier: config.membershipBarMultiplier,
     putIdentityRecord,
     protocolVersionSchedule: config.protocolVersionSchedule,
+    getUsername,
+    getUsernameByOwner,
   };
 
   // The proof obligation (NODE_INTERFACE → "Embedded transactions: a mismatch
@@ -1084,6 +1129,14 @@ function applyMutationPhase(
       // `validateTx` has just passed (NODE_INTERFACE → `validateTx` step 3).
       const firstInput = item.tx.inputs[0];
       const firstInputBox = firstInput !== undefined ? getBox(firstInput)! : null;
+
+      // Capture a username input before applyTx consumes it — the burn's
+      // deleteUsername needs the name from the box.
+      let capturedUsernameInput: AnyBox | null = null;
+      for (const inputId of item.tx.inputs) {
+        const b = getBox(inputId);
+        if (b && b.boxType === 'username') { capturedUsernameInput = b; break; }
+      }
       if (firstInputBox !== null) {
         appliedTxs.push({ tx: item.tx, inputBoxes: [firstInputBox] });
       }
@@ -1148,6 +1201,28 @@ function applyMutationPhase(
             (memberLikesPerAuthor.get(likeToRecord.authorHex) ?? 0) + 1,
           );
         }
+      }
+
+      // NODE_INTERFACE → Username transition rules.
+      // Claim: a username output → putUsername.
+      const usernameOut = item.outputs.find(o => o.boxType === 'username');
+      if (usernameOut) {
+        const u = usernameOut as UsernameBox;
+        const canonical = Buffer.from(canonicalUsernameBytes(u.name)).toString('utf8');
+        putUsername({
+          nameLower: canonical,
+          name: Buffer.from(u.name).toString('utf8'),
+          owner: Buffer.from(u.owner).toString('hex'),
+          boxId: usernameOut.id!,
+          claimedAtBlock: height,
+        });
+      }
+      // Burn: a username input → deleteUsername. The box is read before applyTx
+      // consumed it (capturedUsernameInput, captured above).
+      if (capturedUsernameInput) {
+        const u = capturedUsernameInput as UsernameBox;
+        const canonical = Buffer.from(canonicalUsernameBytes(u.name)).toString('utf8');
+        deleteUsername(canonical);
       }
 
       // Remove from the local mempool if present. This is the whole of the

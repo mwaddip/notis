@@ -27,9 +27,8 @@ export interface PostJson {
   /** The whole subtree's size, pending included — a `PostJson` row carries the same
    *  number a thread on it answers (NODE_INTERFACE → Posts). */
   descendantCount: number;
-  /** The author's unspent vouch count over the whole set, the mark's title
-   *  (NODE_INTERFACE → Posts). */
-  authorVouchCount: number;
+  /** The author's username as typed, or null (NODE_INTERFACE → Posts). */
+  authorName: string | null;
   /** Always null on the read surface: it sends no viewer parameter. */
   likedByViewer: boolean | null;
 }
@@ -43,9 +42,8 @@ export interface WithdrawnJson {
   /** The whole subtree's size, pending included — the same definition
    *  `PostJson.descendantCount` carries (NODE_INTERFACE → Posts). */
   descendantCount: number;
-  /** The author's unspent vouch count over the whole set, the mark's title
-   *  (NODE_INTERFACE → Posts). */
-  authorVouchCount: number;
+  /** The author's username as typed, or null (NODE_INTERFACE → Posts). */
+  authorName: string | null;
 }
 
 /** A feed or descendant row: a live post or a withdrawn marker. */
@@ -130,11 +128,9 @@ export interface KarmaResult {
 // ---------------------------------------------------------------------------
 
 /** `GET /vouches?target=<key>` — who vouches for this identity, and the count over
- *  the whole set whatever the page size (NODE_INTERFACE → Vouches). Each voucher's
- *  own unspent vouch count rides its row, so an endorser's mark is titled from the
- *  page it comes with. */
+ *  the whole set whatever the page size (NODE_INTERFACE → Vouches). */
 export interface VouchesTargetResult {
-  vouches: { voucherId: string; targetId: string; voucherVouchCount: number }[];
+  vouches: { voucherId: string; targetId: string }[];
   count: number;
   next: string | null;
 }

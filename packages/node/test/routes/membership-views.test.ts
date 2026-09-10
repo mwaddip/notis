@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // Membership views through the live routes — NODE_INTERFACE → UTXO queries,
 // NODE_INTERFACE → Status, NODE_INTERFACE → Vouches, NODE_INTERFACE →
-// Invites, NODE_INTERFACE → Three entity kinds.
+// Invites, NODE_INTERFACE → Entity kinds.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -45,7 +45,6 @@ import {
   getVouchBox,
   getNetworkRecord,
   getKarmaValue,
-  getVouchCountForTarget,
 } from '../../src/store/index.js';
 import { getBoxWithPending } from '../../src/store/mempool.js';
 import { createRouter as utxoRoutes } from '../../src/routes/utxo.js';
@@ -125,6 +124,7 @@ describe('/karma/:userId membership fields', () => {
         decayCfg: DECAY_CFG,
         getNetworkRecord,
         membershipBarMultiplier: config.membershipBarMultiplier,
+        getUsername: () => null,
         getUtxoEngineDeps: () => ({
           getBox: getBoxWithPending,
           insertBox,
@@ -148,6 +148,8 @@ describe('/karma/:userId membership fields', () => {
           membershipBarMultiplier: config.membershipBarMultiplier,
           putIdentityRecord: () => {},
           protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
+          getUsername: () => null,
+          getUsernameByOwner: () => null,
         }),
       };
       const app = express();
@@ -302,6 +304,7 @@ describe('/status membership fields', () => {
         getNetworkRecord: () => ({ memberCount: 4 }),
         membershipBarMultiplier: 1,
         protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
+        countUsernames: () => 0,
       };
       const app = express();
       app.use(express.json());
@@ -389,6 +392,8 @@ describe('POST /vouches — the four membership 400s', () => {
       membershipBarMultiplier: config.membershipBarMultiplier,
       putIdentityRecord: (id: Uint8Array, rec: any) => putIdentityRecord(id, rec),
       protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
+      getUsername: () => null,
+      getUsernameByOwner: () => null,
     };
   }
 
@@ -401,7 +406,6 @@ describe('POST /vouches — the four membership 400s', () => {
         castVouch,
         initiateUnvouch,
         getCurrentHeight: () => HEIGHT,
-        getVouchCountForTarget,
       };
       const app = express();
       app.use(express.json());
@@ -589,6 +593,8 @@ describe('POST /invites — membership 400', () => {
         membershipBarMultiplier: config.membershipBarMultiplier,
         putIdentityRecord: (id: Uint8Array, rec: any) => putIdentityRecord(id, rec),
         protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
+      getUsername: () => null,
+      getUsernameByOwner: () => null,
         createInvite,
         getCurrentHeight: () => HEIGHT,
       };

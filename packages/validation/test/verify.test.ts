@@ -22,7 +22,7 @@ import {
   ed25519PublicKeyToKeyObject,
 } from '../src/verify.js';
 import { isDisallowedContentCodepoint, PINNED_UNICODE_VERSION } from '../src/content-charset.js';
-import { generateKeyPair, computePostId, computeTxId, computeContentHash, postFieldBytes, EMPTY_STATE_ROOT, MAX_PARENT_REFS, MAX_TX_BYTES, MAX_SETTLEMENT_BYTES, MAX_BLOCK_BODY_BYTES, ORDERING_BLOCK_POW_TARGET_FLOOR, NETWORK_PROFILES, encodeTx, encodeUtxoTxTree, utxoTxTreeByteLength, ByteWriter, writeHexNOrThrow, writeBytesNOrThrow, writeVlqU, writeLp } from '@dagsocial/types';
+import { generateKeyPair, computePostId, computeTxId, computeContentHash, postFieldBytes, EMPTY_STATE_ROOT, MAX_PARENT_REFS, MAX_TX_BYTES, MAX_SETTLEMENT_BYTES, MAX_BLOCK_BODY_BYTES, ORDERING_BLOCK_POW_TARGET_FLOOR, NETWORK_PROFILES, encodeTx, encodeUtxoTxTree, utxoTxTreeByteLength, ByteWriter, writeHexNOrThrow, writeBytesNOrThrow, writeVlqU, writeLp, USERNAME_MAX_BYTES } from '@dagsocial/types';
 import type { PostCommit, BlockHeader, OrderingBlock, ProtocolEra, UtxoTransaction, AnyBoxCandidate } from '@dagsocial/types';
 
 // The devnet profile's real schedule — one era, [1@0] — is the schedule every
@@ -593,6 +593,7 @@ describe('verifyTxStructure — genesis_proof outputs', () => {
     vouch: { boxType: 'vouch', value: 1n, createdAtBlock: 0, voucherId: new Uint8Array(32), targetId: new Uint8Array(32) },
     like_accrual: { boxType: 'like_accrual', value: 1n, createdAtBlock: 0, author: new Uint8Array(32) },
     vouch_escrow: { boxType: 'vouch_escrow', value: 1n, createdAtBlock: 0, owner: new Uint8Array(32), releaseAtBlock: 42 },
+    username: { boxType: 'username', value: 0n, createdAtBlock: 0, owner: new Uint8Array(32), name: new Uint8Array([0x41]) },
     emission: { boxType: 'emission', value: 100n, createdAtBlock: 0 },
     treasury: { boxType: 'treasury', value: 100n, createdAtBlock: 0 },
     fee: { boxType: 'fee', value: 100n, createdAtBlock: 0 },
@@ -674,6 +675,92 @@ describe('verifyTxStructure — genesis_proof outputs', () => {
     // The control: a well-formed karma output in the same position is accepted,
     // so the rejections above are about the outputs being unencodable and not
     // about the scan having grown a rule.
+    expect(verifyTxStructure(txWith([karmaOut]))).toEqual({ valid: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// verifyTxStructure — a username output's name is typed here
+// ---------------------------------------------------------------------------
+//
+// VALIDATION_INTERFACE → "A `username` output's name is typed here". The rule
+// is the function's — `isValidUsernameBytes` from `@dagsocial/types` — so
+// these tests pin it through this package's call rather than re-implementing
+// the alphabet.
+
+describe('verifyTxStructure — username outputs', () => {
+  const REASON = 'username name invalid';
+
+  const txWith = (outputs: AnyBoxCandidate[]): UtxoTransaction => ({
+    inputs: ['aa'.repeat(32)],
+    outputs,
+    signatures: {},
+    protocolVersion: 1,
+  });
+
+  const usernameOut = (name: unknown): AnyBoxCandidate => ({
+    boxType: 'username',
+    value: 0n,
+    createdAtBlock: 0,
+    owner: new Uint8Array(32),
+    name: name as Uint8Array,
+  });
+
+  it('accepts a valid 1-byte name', () => {
+    expect(verifyTxStructure(txWith([usernameOut(new Uint8Array([0x41]))]))).toEqual({ valid: true });
+  });
+
+  it('accepts a valid 24-byte name', () => {
+    const name = new Uint8Array(USERNAME_MAX_BYTES);
+    for (let i = 0; i < name.length; i++) name[i] = 0x61 + (i % 26);
+    expect(verifyTxStructure(txWith([usernameOut(name)]))).toEqual({ valid: true });
+  });
+
+  it('accepts mixed case and underscores', () => {
+    const name = new TextEncoder().encode('Alice_Bob_99');
+    expect(verifyTxStructure(txWith([usernameOut(name)]))).toEqual({ valid: true });
+  });
+
+  it('rejects an empty name', () => {
+    expect(verifyTxStructure(txWith([usernameOut(new Uint8Array(0))]))).toEqual({
+      valid: false, error: REASON,
+    });
+  });
+
+  it('rejects a name longer than USERNAME_MAX_BYTES', () => {
+    const name = new Uint8Array(USERNAME_MAX_BYTES + 1);
+    for (let i = 0; i < name.length; i++) name[i] = 0x61;
+    expect(verifyTxStructure(txWith([usernameOut(name)]))).toEqual({
+      valid: false, error: REASON,
+    });
+  });
+
+  it('rejects a name containing a space', () => {
+    expect(verifyTxStructure(txWith([usernameOut(new Uint8Array([0x41, 0x20]))]))).toEqual({
+      valid: false, error: REASON,
+    });
+  });
+
+  it('rejects a name containing a hyphen', () => {
+    expect(verifyTxStructure(txWith([usernameOut(new Uint8Array([0x41, 0x2d]))]))).toEqual({
+      valid: false, error: REASON,
+    });
+  });
+
+  it('rejects a name containing a non-ASCII byte', () => {
+    expect(verifyTxStructure(txWith([usernameOut(new Uint8Array([0xc3, 0xa9]))]))).toEqual({
+      valid: false, error: REASON,
+    });
+  });
+
+  it('rejects a name that is not a Uint8Array', () => {
+    expect(verifyTxStructure(txWith([usernameOut('Alice')]))).toEqual({
+      valid: false, error: REASON,
+    });
+  });
+
+  it('a transaction with no username output is untouched by the rule', () => {
+    const karmaOut: AnyBoxCandidate = { boxType: 'karma', value: 5n, createdAtBlock: 0, owner: new Uint8Array(32) };
     expect(verifyTxStructure(txWith([karmaOut]))).toEqual({ valid: true });
   });
 });

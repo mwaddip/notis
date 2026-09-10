@@ -10,7 +10,7 @@ import {
   getVouchesForVoucherPage,
   getVouchEscrowsForPage,
 } from '../store/index.js';
-import { parseLimit, isLimitError, parseAfter, isAfterError } from './page.js';
+import { parseLimit, isLimitError, parseAfter, isAfterError, resolveIdentityParam, isResolveError } from './page.js';
 
 export interface VouchesDeps extends UtxoEngineDeps {
   castVouch(
@@ -30,9 +30,6 @@ export interface VouchesDeps extends UtxoEngineDeps {
     tx: UtxoTransaction;
   };
   getCurrentHeight(): number;
-  // NODE_INTERFACE → Store Interface, getVouchCountForTarget — the `?target=`
-  // row's voucherVouchCount (below).
-  getVouchCountForTarget(targetId: Uint8Array): number;
 }
 
 export function createRouter(deps: VouchesDeps): Router {
@@ -106,9 +103,22 @@ export function createRouter(deps: VouchesDeps): Router {
   });
 
   router.get('/', (req, res) => {
-    const target = req.query.target as string | undefined;
-    const voucher = req.query.voucher as string | undefined;
+    const targetRaw = req.query.target as string | undefined;
+    const voucherRaw = req.query.voucher as string | undefined;
     const cooldownsParam = req.query.cooldowns as string | undefined;
+
+    let target: string | undefined;
+    if (targetRaw) {
+      const resolved = resolveIdentityParam(targetRaw, deps.getUsername);
+      if (isResolveError(resolved)) { res.status(resolved.status).json({ error: resolved.error }); return; }
+      target = resolved.hex;
+    }
+    let voucher: string | undefined;
+    if (voucherRaw) {
+      const resolved = resolveIdentityParam(voucherRaw, deps.getUsername);
+      if (isResolveError(resolved)) { res.status(resolved.status).json({ error: resolved.error }); return; }
+      voucher = resolved.hex;
+    }
 
     if (cooldownsParam !== undefined && voucher) {
       const limit = parseLimit(req.query as Record<string, unknown>);
@@ -144,25 +154,11 @@ export function createRouter(deps: VouchesDeps): Router {
       const result = getVouchesForTargetPage(targetBytes, {
         limit, after: after as string | undefined,
       });
-      // NODE_INTERFACE → Vouches: voucherVouchCount is read once per distinct
-      // voucher on the page (the authorVouchCount pattern — Store Interface →
-      // "A page read touches `limit + 1` entries of one index that serves
-      // both its predicate and its order").
-      const voucherVouchCounts = new Map<string, number>();
       res.status(200).json({
-        vouches: result.rows.map((v) => {
-          const voucherId = Buffer.from(v.voucherId).toString('hex');
-          let voucherVouchCount = voucherVouchCounts.get(voucherId);
-          if (voucherVouchCount === undefined) {
-            voucherVouchCount = deps.getVouchCountForTarget(v.voucherId);
-            voucherVouchCounts.set(voucherId, voucherVouchCount);
-          }
-          return {
-            voucherId,
-            targetId: Buffer.from(v.targetId).toString('hex'),
-            voucherVouchCount,
-          };
-        }),
+        vouches: result.rows.map((v) => ({
+          voucherId: Buffer.from(v.voucherId).toString('hex'),
+          targetId: Buffer.from(v.targetId).toString('hex'),
+        })),
         count: result.count,
         next: result.next,
       });

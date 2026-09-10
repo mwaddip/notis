@@ -703,9 +703,8 @@ contract forbids. The faucet relays the field (`NODE_INTERFACE → Faucet`).
 in the feed and in panes, a title bar, an endorser row and a bond row, the author window's subject line. The
 prefix is `shortHex(key, 16)` on a card and the whole key in a window. **No mark rides beside it**: a vouch
 is cast and read in the author window alone (→ The author window), so a card reads the same with or without
-an identity loaded — the prefix, `· you` on the reader's own, the date. `authorVouchCount` rides every row
-(`NODE_INTERFACE → Posts`) and the client reads it nowhere; the count a reader sees is the author window's
-endorsers line, from `GET /vouches?target=`.
+an identity loaded — the prefix, `· you` on the reader's own, the date. The count a reader sees is the
+author window's endorsers line, from `GET /vouches?target=`.
 
 **The prefix on a card is the way into the author window, and it looks exactly like the text prefix
 it stands in for.** It is a `<button>` in the who row (`aria-label` *"open this author"*) rendered as the

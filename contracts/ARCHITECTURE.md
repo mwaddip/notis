@@ -784,29 +784,38 @@ box (via invite claim, genesis committee allocation, or credit receipt). There
 is no "account table" — identity is derived from key material and visibility
 on the ledger.
 
-### Username claims
+### Usernames
 
-> ⚠ **SUPERSEDED (user decision, 2026-08-06) — usernames are NOT claim posts. Verified
-> 2026-08-11: no `username` code exists in any `src` tree, so nothing was built against the
-> superseded model.**
-> The first-claim-wins, post-based, prune-to-release model described below is replaced by a
-> **UTXO asset**: a username is **tradeable for credits**, **free to claim while unused**,
-> and **burnable by its owner**. Nothing in this section survives that change — the claim
-> post, the DAG walk, and prune-to-release are all artefacts of the post-based model.
->
-> **Deferred — "way down the line."** Do not build, and do not design it further here; it
-> lands in the economics track when it is picked up, since a credit-denominated asset class
-> is an economic mechanism rather than a DAG one.
->
-> Two consequences worth recording now:
-> - **The `Post.type` dependency is void.** A previous version of this marker said username
->   claims required a post discriminator that does not exist. Under a UTXO asset they are
->   not posts at all, so no post-typing change is implied and no post ids move.
-> - **`docs/site/architecture` publishes this model** — usernames as a planned ledger asset, not
->   built; profiles as single typed posts (§Profiles).
-> - **Profiles are NOT superseded — they stay DAG-native** (user, 2026-08-06: "a profile
->   would indeed be a *self post*"). Only usernames leave the post model. **`Post.type`
->   exists and profiles key on it:** see §Profiles below.
+A username is a **box on the UTXO ledger** — `UsernameBox` (`TYPES_INTERFACE → UsernameBox`) — never a
+post. It is **soulbound**: no user transaction moves it to another owner. It leaves its holder in exactly
+two ways: a **burn**, the holder's own transaction paid in karma, or a **sale on the marketplace**, paid
+in credits, which is a later protocol unit (→ Deferred to future protocol versions).
+
+- **One per identity.** An identity holds at most one username box at a time.
+- **One free claim, restored by a burn.** An identity that holds karma and has never claimed — or whose
+  last name was burned — claims a name for nothing but the transaction: the claim spends a karma box and
+  returns it as change beside the new name box. Claiming uses the entitlement; burning restores it. Roots,
+  the faucet and every invitee qualify the same way, from the grant that gave them karma.
+- **A name is 1–24 bytes of `[A-Za-z0-9_]`**, stored and shown exactly as typed at the claim. **Uniqueness
+  is case-insensitive:** two names are one name when their byte-wise ASCII-lowercased forms are equal
+  (`TYPES_INTERFACE → Content limits`). No other normalisation exists.
+- **`@` is the written form**, never stored: `@Alice`. Wherever the API takes an identity, an `@handle` is
+  accepted as an alias and resolved to the key at request time; a signed transaction carries the key
+  (`NODE_INTERFACE → Identity parameters`). A name that changes holder between a client's resolution and
+  its transaction's confirmation pays the old holder — the acceptance every name system makes.
+- **A burn costs `USERNAME_BURN_PRICE`** karma, paid into a `KarmaPriceBox` the settlement returns to the
+  pool as a post's price is (§The post price). The name is open to anyone again, its former holder
+  included.
+- **Nothing but a burn destroys a name, and no name expires.** A name whose holder's karma is gone stays
+  held (→ Deferred to future protocol versions).
+
+**What the state holds** (`NODE_INTERFACE → Username records`): a name record keyed by the lowercased
+name, holding the live box id, and a holder record keyed by the identity, holding whether the free claim
+is available and which box is its name. An absent holder record means *available, holding none*. The
+identity record is untouched by all of it.
+
+**Squatting is priced by the sybil design, not by a rule here**: every identity holds one name, every
+identity costs its inviter a bond, and there are exactly as many names as members have claimed.
 
 ### Profiles
 
@@ -1464,8 +1473,19 @@ chain or owed one:
 | **prune removal** (2026-09-06) | the prune field of `UtxoTransaction`, removed (TYPES_INTERFACE → Layout — UtxoTransaction) — every `TxId`, and every box id derived from one |
 | **the committee rule** (2026-09-06) | the identity record a root's grant writes — `memberSinceBlock`, `memberBar` — and the network record's `N` (§Earned, standing, and well-founded by age) |
 
+| **usernames** (2026-09-10) | **nothing that exists** — box tag 14, two AVL leaf domains, a store table and two nullable mempool columns are *added*; no existing byte, layout or verdict moves. **Owes no reset** (→ "When a reset is not owed") — the first change of its class |
+
 **Outstanding against the live node: nothing.** Testnet's chain began at the 2026-09-06 reset, whose
-block 1 the profile pins as `genesisId` (§What varies per network); every row is in it.
+block 1 the profile pins as `genesisId` (§What varies per network); every reset row is in it, and the
+usernames row owes none.
+
+**When a reset is not owed.** A change that **adds** a box-type tag, an AVL leaf domain, a store table
+or a nullable column, and leaves every existing committed byte and every existing rule's verdict
+unchanged, deploys onto the running chain: the chain holds no object of the new kind, so the new build
+validates every existing block as the old one did and a resync recomputes the same roots. The register
+row for such a change says so, and **the proof is a run, not an argument** — the new build started
+against a copy of the live store, opening it, holding the tip and applying the next block — before any
+package reaches the box.
 
 > ⚠ **Wiping the AVL store alone is a fork trigger. Wipe chain and AVL store together, always.**
 >
@@ -2018,12 +2038,9 @@ no object check compares against it and no producer stamps it.
   memberBar`, earned under the bar or conferred at a root's grant; a vouch counts toward a member
   only from an older member; only members vouch, once per `(voucher, target)`, never on themselves,
   and only on a key holding a record (§Membership)
-- ~~Usernames: first-claim-wins, DAG-native, prunable by holder~~
-  > ⚠ **SUPERSEDED (2026-08-06). Verified 2026-08-11 — no `username` code in any `src` tree.**
-  > Usernames become a **UTXO asset**: tradeable for
-  > credits, free to claim while unused, burnable by the owner. Not a claim post, so
-  > "DAG-native" and "prunable by holder" no longer apply. Deferred — see §Username claims.
-  > **Profiles are unaffected and stay DAG-native as self-posts.**
+- Usernames: a soulbound box, one per identity; one free claim per identity, used by a claim and
+  restored by a burn; uniqueness over the lowercased name; no user transaction changes a name box's
+  owner (§Usernames). Profiles stay DAG-native as self-posts
 
 ### UTXO conservation
 
@@ -2593,3 +2610,10 @@ backfill — and a withdrawn post keeps its row with `content` `NULL` and its ma
   one. Priority fees and fee-based eviction **ship** (MEMPOOL_INTERFACE → Eviction,
   inside the credit class only); replacement does not — a pooled entry is still
   never replaced or updated
+- **The username marketplace:** a co-signed sale of a `UsernameBox` for credits — the seller's name and
+  the buyer's credits in one transaction both sign; buying while holding burns the buyer's old name with
+  the buyer paying `USERNAME_BURN_PRICE`; the holder record's `{ available, holding }` and `{ used, none }`
+  states (§Usernames)
+- **Username proofs in the light client:** the name record, then the box it names
+- **A name whose holder's karma is gone:** held forever today; release on decay is a rule for a later
+  version

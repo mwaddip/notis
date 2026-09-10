@@ -38,7 +38,7 @@ function baseCtx(over: Partial<AuthorCtx> = {}): AuthorCtx {
     authorKey: AUTHOR,
     origin: ORIGIN,
     karma: memberKarma(),
-    endorsers: { vouches: [{ voucherId: E1, targetId: AUTHOR, voucherVouchCount: 2 }], count: 1, next: null },
+    endorsers: { vouches: [{ voucherId: E1, targetId: AUTHOR }], count: 1, next: null },
     endorsersNext: false,
     membershipBars: { memberBar: 3, memberLikesBar: 6 },
     writeEnabled: true,
@@ -188,7 +188,7 @@ function post(id: string, author: string): PostJson {
   return {
     id, content: 'hi', contentHash: contentHashHex('hi'), author, parentRefs: [],
     protocolVersion: 1, type: 'regular', status: 'confirmed', blockHeight: 5, blockIndex: 0,
-    blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorVouchCount: 0, likedByViewer: null,
+    blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null,
   };
 }
 function feedState(over: Partial<FeedState> = {}): FeedState {

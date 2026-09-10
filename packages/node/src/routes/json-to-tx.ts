@@ -31,6 +31,7 @@ export const BINARY_BOX_FIELDS = new Set([
   // `jsonToPost` below, which validates its length; this entry governs box
   // outputs only, and the two never see each other's objects.
   'author',           // LikeAccrualBox
+  'name',             // UsernameBox — the claim's name bytes, hex at the JSON edge
 ]);
 
 /**

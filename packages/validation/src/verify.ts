@@ -13,6 +13,7 @@ import {
   interlinkRoot,
   updateInterlinks,
   protocolVersionAt,
+  isValidUsernameBytes,
 } from '@dagsocial/types';
 import { encodeHeader, encodeTx, utxoTxTreeByteLength, computeContentHash } from '@dagsocial/types';
 import type { BlockHeader, OrderingBlock, ProtocolEra, UtxoTransaction } from '@dagsocial/types';
@@ -712,6 +713,14 @@ export function verifyTxStructure(tx: UtxoTransaction): { valid: boolean; error?
   for (const out of tx.outputs) {
     if (isObject(out) && out.boxType === 'genesis_proof') {
       return { valid: false, error: 'Transaction may not output a genesis_proof box' };
+    }
+  }
+  // VALIDATION_INTERFACE → "A `username` output's name is typed here"
+  for (const out of tx.outputs) {
+    if (isObject(out) && out.boxType === 'username') {
+      if (!isBytes(out.name) || !isValidUsernameBytes(out.name as Uint8Array)) {
+        return { valid: false, error: 'username name invalid' };
+      }
     }
   }
   // Check for duplicate inputs

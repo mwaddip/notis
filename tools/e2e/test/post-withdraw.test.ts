@@ -5,19 +5,16 @@ import { DEVNET_FAUCET, fresh } from '../src/identities.js';
 import { buildInviteTx } from '../src/tx/invite.js';
 import { buildThreadTx, buildReplyTx } from '../src/tx/post.js';
 import { buildLikeTx } from '../src/tx/like.js';
-import { buildVouchTx } from '../src/tx/vouch.js';
 import { buildPostWithdrawTx } from '../src/tx/post-withdraw.js';
 import {
   postInvite,
   postPost,
   postLike,
-  postVouch,
   postPostWithdraw,
   getKarma,
   getStatus,
   hasKarma,
   getPost,
-  getVouchesTarget,
   getBlockCurrent,
   NodeError,
   isPost,
@@ -110,7 +107,7 @@ describe('post-withdraw', () => {
       }
     }
 
-    // ---- A withdrawn root's view carries descendantCount and authorVouchCount ----
+    // ---- A withdrawn root's view carries descendantCount ----
     // NODE_INTERFACE → "The JSON projection has two arms where the store has one shape"
     const bobKForReply = (await getKarma(miner, bob.publicKeyHex))!;
     const propReply = buildReplyTx(
@@ -128,23 +125,11 @@ describe('post-withdraw', () => {
     );
     await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
 
-    const faucetKForVouch = (await getKarma(miner, DEVNET_FAUCET.publicKeyHex))!;
-    const aliceVouch = buildVouchTx(DEVNET_FAUCET, karmaBoxes(faucetKForVouch), alice, faucetKForVouch.height, version);
-    await postVouch(miner, aliceVouch.json);
-
-    await confirm(
-      async () => (await getVouchesTarget(miner, alice.publicKeyHex)).count > 0,
-      miner, mesh.miningSecret,
-    );
-    await waitHeight(mesh.nodes, (await getBlockCurrent(miner)).height);
-
-    const aliceVouchPage = await getVouchesTarget(miner, alice.publicKeyHex);
     const withdrawnRoot = await getPost(miner, propPostRes.postId);
     expect(withdrawnRoot).not.toBeNull();
     expect(isWithdrawn(withdrawnRoot!)).toBe(true);
     if (isWithdrawn(withdrawnRoot!)) {
       expect(withdrawnRoot.descendantCount).toBe(1);
-      expect(withdrawnRoot.authorVouchCount).toBe(aliceVouchPage.count);
     }
 
     // ---- B: like(P) and withdraw(P) in one block ----

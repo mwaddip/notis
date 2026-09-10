@@ -18,7 +18,6 @@ import { contentHashHex } from '../src/integrity';
 const ME = 'aa'.repeat(32);
 const X = 'bb'.repeat(32);
 const V1 = 'dd'.repeat(32);
-const V1_VOUCHES = 9;
 const SIG = 'cc'.repeat(64);
 
 let idState: { pubKeyHex: string; locked: boolean } | null;
@@ -37,7 +36,7 @@ function post(id: string, author: string): PostJson {
   return {
     id, content: 'hi', contentHash: contentHashHex('hi'), author, parentRefs: [],
     protocolVersion: 1, type: 'regular', status: 'confirmed', blockHeight: 10, blockIndex: 0,
-    blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorVouchCount: 7, likedByViewer: null,
+    blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null,
   };
 }
 function statusResult(): StatusResult {
@@ -66,7 +65,7 @@ function fakeApi(): Api {
     karma: async (key) => memberKarma(key),
     vouchesByTarget: async (key): Promise<VouchesTargetResult> => {
       targetReads.push(key);
-      return { vouches: [{ voucherId: V1, targetId: key, voucherVouchCount: V1_VOUCHES }], count: 3, next: null };
+      return { vouches: [{ voucherId: V1, targetId: key }], count: 3, next: null };
     },
     vouchesByVoucher: async (): Promise<VouchesVoucherResult> => ({ vouches: vouchSet, count: vouchSet.length, next: null }),
     vouchCooldowns: async (): Promise<VouchCooldownsResult> => ({ cooldowns, count: cooldowns.length, next: null }),

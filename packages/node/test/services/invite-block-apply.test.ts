@@ -647,6 +647,8 @@ describe('the invite at block application', () => {
       membershipBarMultiplier: 1,
       putIdentityRecord: records.putIdentityRecord,
       protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
+      getUsername: () => null,
+      getUsernameByOwner: () => null,
     }, second, 2);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('may not name an existing account');

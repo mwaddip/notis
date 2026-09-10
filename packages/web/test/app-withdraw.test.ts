@@ -34,12 +34,12 @@ function postJson(id: string, author: string, parentRefs: string[] = []): PostJs
   return {
     id, content: 'x', contentHash: contentHashHex('x'), author, parentRefs, protocolVersion: 1,
     type: 'regular', status: 'confirmed', blockHeight: 6001, blockIndex: 0, blockCreatedAt: 0,
-    likeCount: 0, descendantCount: 0, authorVouchCount: 0, likedByViewer: null,
+    likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null,
   };
 }
 const asResult = (p: PostJson): PostResult => ({ ...p, confirmedAuthor: p.author });
 const tombRow = (id: string, parentRefs: string[], descendantCount = 0): WithdrawnJson =>
-  ({ kind: 'withdrawn', id, author: PUB, withdrawnAtHeight: 6002, parentRefs, descendantCount, authorVouchCount: 0 });
+  ({ kind: 'withdrawn', id, author: PUB, withdrawnAtHeight: 6002, parentRefs, descendantCount, authorName: null });
 const tomb = (id: string, parentRefs: string[], descendantCount = 0): PostResult => ({ ...tombRow(id, parentRefs, descendantCount), confirmedAuthor: PUB });
 
 type WithdrawResp = { kind: 'ok' } | { kind: 'throw' } | { kind: 'reject'; rejection?: Rejection };

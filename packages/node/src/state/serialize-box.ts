@@ -7,37 +7,23 @@ import {
   readU8,
   readVlqU,
   readVlqU64,
+  readBytesN,
   writeU8OrThrow,
   writeVlqU,
   writeVlqU64OrThrow,
+  writeBytesNOrThrow,
 } from '@dagsocial/types';
 import type { AnyBox, StructCodec } from '@dagsocial/types';
 // Type-only: erased at compile time, so state/ does not gain a runtime edge
 // into the store module graph.
 import type { IdentityRecord, NetworkRecord } from '../store/identity-records.js';
+import type { HolderRecord } from '../store/usernames.js';
 
-/**
- * Identity-record discriminator (`NODE_INTERFACE` → "Three entity kinds").
- *
- * Deliberately **outside** the box discriminator's range, with the high bit
- * set: "box" versus "not a box" is a single bit test, and the box-type space
- * stays open for future box kinds without ever colliding with an entity
- * discriminator.
- *
- * `enum8(boxType)` is the box numbering, and this package must never carry a
- * second one. Composing a local tag with the record's own writes the box type
- * twice in adjacent bytes under two schemes nothing forces to agree; the rule
- * the numbering protects — a tag is never *renumbered*, because `boxType` is
- * the first byte of every box's identity preimage (`TYPES_INTERFACE` →
- * Primitives) — is exactly what a second table would silently break.
- */
+// NODE_INTERFACE → Entity kinds
 export const IDENTITY_RECORD_TAG = 0x80;
-
-/**
- * Network-record discriminator (`NODE_INTERFACE` → "Three entity kinds").
- * Sits beside `0x80` — high bit set, not a box.
- */
 export const NETWORK_RECORD_TAG = 0x81;
+export const NAME_RECORD_TAG = 0x82;
+export const HOLDER_RECORD_TAG = 0x83;
 
 /**
  * Serialize an AnyBox to its AVL value bytes.
@@ -185,29 +171,87 @@ export function deserializeNetworkRecord(bytes: Uint8Array): NetworkRecord {
   return decodeStruct(NETWORK_RECORD, bytes);
 }
 
+/** Name-record AVL value — NODE_INTERFACE → Username records. `u8(0x82) ‖ b32(boxId)`. */
+export interface UsernameAvlRecord { boxId: string }
+
+const USERNAME_RECORD: StructCodec<UsernameAvlRecord> = {
+  name: 'usernameRecord',
+  write(w, record) {
+    writeU8OrThrow(w, NAME_RECORD_TAG);
+    writeBytesNOrThrow(w, Buffer.from(record.boxId, 'hex'), 32);
+  },
+  read(r) {
+    const tag = readU8(r);
+    if (tag !== NAME_RECORD_TAG) {
+      throw new ReaderError(
+        `usernameRecord: not a name record: tag 0x${tag.toString(16)}`,
+        'invalid-tag',
+      );
+    }
+    return { boxId: Buffer.from(readBytesN(r, 32)).toString('hex') };
+  },
+};
+
+export function serializeUsernameRecord(record: UsernameAvlRecord): Uint8Array {
+  return encodeStruct(USERNAME_RECORD, record);
+}
+
+export function deserializeUsernameRecord(bytes: Uint8Array): UsernameAvlRecord {
+  return decodeStruct(USERNAME_RECORD, bytes);
+}
+
 /**
- * Deserialize an AVL box value back into a box (without `id`).
- *
- * The box `id` is NOT restored — callers must supply it separately (it is the
- * AVL key, and `deserializeBoxWithId` is the helper that reattaches it).
- *
- * Rejects the record tag rather than mis-decoding it. The tree holds three entity
- * kinds and their keys are indistinguishable from outside — all three are 32 bytes
- * of hash output — so a caller that can see any value MUST dispatch on the tag
- * via `deserializeAvlValue`, not assume "box". `0x80` is outside `enum8`'s tag
- * set, so the layer below would reject it anyway; the explicit check is here to
- * say *which* kind arrived rather than "unknown tag 128".
- *
- * The candidate is the box less its provenance: `boxRecordFromBytes` returns
- * every field the layout carries, and `txId`/`index` are reattached from the
- * record's own provenance tail (`TYPES_INTERFACE` → Layout — Boxes).
+ * Holder-record AVL value — NODE_INTERFACE → Username records.
+ * `u8(0x83) ‖ u8(claimAvailable) ‖ opt(b32(boxId))`.
  */
+const HOLDER_RECORD: StructCodec<HolderRecord> = {
+  name: 'holderRecord',
+  write(w, record) {
+    writeU8OrThrow(w, HOLDER_RECORD_TAG);
+    writeU8OrThrow(w, record.claimAvailable ? 1 : 0);
+    if (record.boxId !== null) {
+      writeU8OrThrow(w, 1);
+      writeBytesNOrThrow(w, Buffer.from(record.boxId, 'hex'), 32);
+    } else {
+      writeU8OrThrow(w, 0);
+    }
+  },
+  read(r) {
+    const tag = readU8(r);
+    if (tag !== HOLDER_RECORD_TAG) {
+      throw new ReaderError(
+        `holderRecord: not a holder record: tag 0x${tag.toString(16)}`,
+        'invalid-tag',
+      );
+    }
+    const claimAvailable = readU8(r) !== 0;
+    const hasBox = readU8(r);
+    const boxId = hasBox ? Buffer.from(readBytesN(r, 32)).toString('hex') : null;
+    return { claimAvailable, boxId };
+  },
+};
+
+export function serializeHolderRecord(record: HolderRecord): Uint8Array {
+  return encodeStruct(HOLDER_RECORD, record);
+}
+
+export function deserializeHolderRecord(bytes: Uint8Array): HolderRecord {
+  return decodeStruct(HOLDER_RECORD, bytes);
+}
+
+// NODE_INTERFACE → Entity kinds
 export function deserializeBox(bytes: Uint8Array): Omit<AnyBox, 'id'> {
   if (bytes.length > 0 && bytes[0] === IDENTITY_RECORD_TAG) {
     throw new Error('Value is an identity record, not a box');
   }
   if (bytes.length > 0 && bytes[0] === NETWORK_RECORD_TAG) {
     throw new Error('Value is a network record, not a box');
+  }
+  if (bytes.length > 0 && bytes[0] === NAME_RECORD_TAG) {
+    throw new Error('Value is a name record, not a box');
+  }
+  if (bytes.length > 0 && bytes[0] === HOLDER_RECORD_TAG) {
+    throw new Error('Value is a holder record, not a box');
   }
 
   const { candidate, txId, index } = boxRecordFromBytes(bytes);
@@ -218,22 +262,15 @@ export function deserializeBox(bytes: Uint8Array): Omit<AnyBox, 'id'> {
   } as Omit<AnyBox, 'id'>;
 }
 
-/** A decoded AVL value, discriminated by its tag byte. */
+/** A decoded AVL value, discriminated by its tag byte — NODE_INTERFACE → Entity kinds. */
 export type AvlValue =
   | { kind: 'box'; box: Omit<AnyBox, 'id'> }
   | { kind: 'record'; record: IdentityRecord }
-  | { kind: 'network'; network: NetworkRecord };
+  | { kind: 'network'; network: NetworkRecord }
+  | { kind: 'username'; username: UsernameAvlRecord }
+  | { kind: 'holder'; holder: HolderRecord };
 
-/**
- * Kind-dispatching decoder — what any caller that can see either entity uses.
- *
- * Phase D owes the proof endpoint this: `GET /api/v1/proof/:boxId` decodes
- * whatever value a key resolves to, and a client can ask for a record key
- * because keys are indistinguishable from outside.
- *
- * The dispatch is on byte 0 and survives the codec migration unchanged, which
- * is the point — it is an entity-kind question, not a codec concern.
- */
+/** Kind-dispatching decoder — NODE_INTERFACE → Entity kinds. */
 export function deserializeAvlValue(bytes: Uint8Array): AvlValue {
   if (bytes.length === 0) throw new Error('Truncated AVL value');
   if (bytes[0] === IDENTITY_RECORD_TAG) {
@@ -241,6 +278,12 @@ export function deserializeAvlValue(bytes: Uint8Array): AvlValue {
   }
   if (bytes[0] === NETWORK_RECORD_TAG) {
     return { kind: 'network', network: deserializeNetworkRecord(bytes) };
+  }
+  if (bytes[0] === NAME_RECORD_TAG) {
+    return { kind: 'username', username: deserializeUsernameRecord(bytes) };
+  }
+  if (bytes[0] === HOLDER_RECORD_TAG) {
+    return { kind: 'holder', holder: deserializeHolderRecord(bytes) };
   }
   return { kind: 'box', box: deserializeBox(bytes) };
 }

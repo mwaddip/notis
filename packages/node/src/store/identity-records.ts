@@ -98,9 +98,9 @@ export interface IdentityRecord {
  *
  * Records and boxes share one 32-byte AVL keyspace, and an `identityId` is 32
  * *attacker-chosen* bytes (a public key): used raw, someone could grind a
- * keypair whose pubkey equals a live box id and collide the three entity kinds in
+ * keypair whose pubkey equals a live box id and collide the five entity kinds in
  * the tree. Hashing under a domain tag makes that infeasible, and is what makes
- * the two kinds provably disjoint — by domain separation, not by luck.
+ * the kinds provably disjoint — by domain separation, not by luck.
  */
 export function identityRecordKey(identityId: UserId): string {
   return createHash('blake2b512')
@@ -258,7 +258,7 @@ export interface NetworkRecord {
 /**
  * The network record's AVL key: `blake2b512(NETWORK_KEY_DOMAIN)[0:32]`, hex.
  * The tag alone is the preimage — the identity key's hashing rule with nothing
- * after the tag. Three entity kinds, three disjoint domain tags.
+ * after the tag. Five entity kinds, five disjoint domain tags.
  */
 export function networkRecordKey(): string {
   return createHash('blake2b512')

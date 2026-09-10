@@ -10,16 +10,19 @@ import {
   STORAGE_RENT_PER_BYTE,
   POST_PRICE_REPLY,
   REPLY_AUTHOR_SHARE,
+  USERNAME_BURN_PRICE,
   protocolVersionAt,
   VOUCH_CAST_HEIGHT_WINDOW,
   VOUCH_KARMA_AMOUNT,
   VOUCH_MIN_BALANCE,
   membershipBar,
+  isValidUsernameBytes,
+  canonicalUsernameBytes,
 } from '@dagsocial/types';
 import { isCreditSideTx } from './coinbase-split.js';
 import { effectiveKarma } from './decay.js';
 import type { DecayCfg } from './decay.js';
-import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, PostCommit, PostWithdrawCommit, ProtocolEra } from '@dagsocial/types';
+import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, UsernameBox, PostCommit, PostWithdrawCommit, ProtocolEra } from '@dagsocial/types';
 
 // `computeTxId` has exactly one implementation and it is types'. This engine
 // must never grow a local copy: the id it returns is both the hash
@@ -57,6 +60,7 @@ const KARMA_TRANSITION_VERDICT: Record<AnyBox['boxType'], boolean> = {
   karma_price: true,
   vouch: true,
   like_accrual: true,
+  username: true,
   credit: false,
   emission: false,
   treasury: false,
@@ -198,6 +202,8 @@ export interface UtxoEngineDeps {
    * version to the era at the judged-for height (NODE_INTERFACE → validateTx).
    */
   protocolVersionSchedule: readonly ProtocolEra[];
+  getUsername: (nameLower: string) => import('../store/usernames.js').UsernameRow | null;
+  getUsernameByOwner: (owner: Uint8Array | string) => import('../store/usernames.js').UsernameRow | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -287,13 +293,16 @@ function checkTransitions(
     };
   }
 
-  const inputType = inputs[0]!.boxType;
+  // When step 4 admits mixed karma+username inputs (the burn), treat as karma.
+  const usernameInput = inputs.find(b => b.boxType === 'username') ?? null;
+  const inputType = usernameInput ? 'karma' as const : inputs[0]!.boxType;
 
   switch (inputType) {
     // ------------------------------------------------------------------
     // KarmaBox → KarmaBox (same owner, balance change; the like burn
     //                      when `likeTarget` is present)
     // KarmaBox → KarmaBox + BondBox (the invite)
+    // KarmaBox + UsernameBox → KarmaBox + KarmaPriceBox (the username burn)
     // ------------------------------------------------------------------
     case 'karma': {
       const karmaOutputs = outputs.filter((o) => o.boxType === 'karma');
@@ -357,6 +366,74 @@ function checkTransitions(
             error: `Karma cannot be transferred (owner change on karma box)`,
           };
         }
+      }
+
+      // NODE_INTERFACE → Username transition rules: a username input in any
+      // shape but the burn's is refused, and a username output in any shape but
+      // the claim's is refused. Guard before the like/post/withdraw chain so
+      // neither can ride another branch's price.
+      const hasUsernameIO = usernameInput !== null || outputs.some(o => o.boxType === 'username');
+      if (hasUsernameIO && (likeTarget !== undefined || post !== undefined || postWithdraw !== undefined)) {
+        return {
+          valid: false,
+          error: 'A username input or output is not legal on a like, post or withdrawal transaction',
+        };
+      }
+
+      // The burn and claim dispatch ahead of every other karma branch — a
+      // burn's KarmaPriceBox would be caught by the price-without-post guard
+      // otherwise, and a claim's username output would fall through unchecked.
+      if (usernameInput !== null) {
+        // NODE_INTERFACE → Username transition rules, Burn row.
+        const uBox = usernameInput as UsernameBox;
+        if (Buffer.from(uBox.owner).toString('hex') !== inputOwnerHex) {
+          return { valid: false, error: 'Burn: username box owner must match the karma inputs\' owner' };
+        }
+        if (priceOutputs.length !== 1) {
+          return { valid: false, error: 'Burn: exactly one KarmaPriceBox required' };
+        }
+        if (priceOutputs[0]!.value !== USERNAME_BURN_PRICE) {
+          return { valid: false, error: `Burn: price must be exactly ${USERNAME_BURN_PRICE}, got ${priceOutputs[0]!.value}` };
+        }
+        const usernameOutputs = outputs.filter(o => o.boxType === 'username');
+        if (usernameOutputs.length !== 0) {
+          return { valid: false, error: 'Burn: no username output allowed' };
+        }
+        if (karmaOutputs.length > 1 || outputs.length !== karmaOutputs.length + 1) {
+          return { valid: false, error: 'Burn: at most one karma output beside the price box' };
+        }
+        return { valid: true };
+      }
+
+      if (outputs.some(o => o.boxType === 'username')) {
+        // NODE_INTERFACE → Username transition rules, Claim row.
+        const usernameOutputs = outputs.filter(o => o.boxType === 'username') as UsernameBox[];
+        if (usernameOutputs.length !== 1) {
+          return { valid: false, error: 'Claim: exactly one username output required' };
+        }
+        const uOut = usernameOutputs[0]!;
+        if (uOut.value !== 0n) {
+          return { valid: false, error: 'Claim: username box value must be 0' };
+        }
+        if (!isValidUsernameBytes(uOut.name)) {
+          return { valid: false, error: 'name invalid' };
+        }
+        if (Buffer.from(uOut.owner).toString('hex') !== inputOwnerHex) {
+          return { valid: false, error: 'Claim: username owner must match the karma inputs\' owner' };
+        }
+        const canonical = Buffer.from(canonicalUsernameBytes(uOut.name)).toString('utf8');
+        const existing = deps.getUsername(canonical);
+        if (existing !== null) {
+          return { valid: false, error: 'name taken' };
+        }
+        const holderName = deps.getUsernameByOwner(inputKarma.owner);
+        if (holderName !== null) {
+          return { valid: false, error: 'identity holds a name' };
+        }
+        if (karmaOutputs.length > 1 || outputs.length !== karmaOutputs.length + 1) {
+          return { valid: false, error: 'Claim: at most one karma output beside the username box' };
+        }
+        return { valid: true };
       }
 
       if (likeTarget !== undefined) {
@@ -974,6 +1051,7 @@ export function ceilingOf(tx: UtxoTransaction): number | null {
 type FieldType =
   | 'u64'
   | 'bytes32'
+  | 'bytes'
   | 'uint'
   | 'u32'
   | 'string';
@@ -1010,6 +1088,10 @@ const FIELD_TYPE_CHECK: Record<FieldType, { ok: (v: unknown) => boolean; expecte
       !Object.is(v, -0) &&
       v <= 0xffffffff,
     expected: 'a non-negative safe integer <= 0xFFFFFFFF',
+  },
+  bytes: {
+    ok: (v) => v instanceof Uint8Array,
+    expected: 'a Uint8Array',
   },
   string: { ok: (v) => typeof v === 'string', expected: 'a string' },
 };
@@ -1460,6 +1542,7 @@ const OUTPUT_SHAPE: Record<OutputBoxType, OutputShapeEntry> = (() => {
     emission: shape('settlement', { boxType: null, value: 'u64', createdAtBlock: 'uint' }),
     treasury: shape('settlement', { boxType: null, value: 'u64', createdAtBlock: 'uint' }),
     karma_pool: shape('settlement', { boxType: null, value: 'u64', createdAtBlock: 'uint' }),
+    username: shape('user', { boxType: null, value: 'u64', createdAtBlock: 'uint', owner: 'bytes32', name: 'bytes' }),
   };
 })();
 
@@ -1722,6 +1805,7 @@ const SPEND_TIMING: Readonly<Record<AnyBox['boxType'], SpendTiming>> = {
   fee: ALWAYS_SPENDABLE,
   karma_pool: ALWAYS_SPENDABLE,
   like_accrual: ALWAYS_SPENDABLE,
+  username: ALWAYS_SPENDABLE,
 };
 
 /**
@@ -1893,6 +1977,8 @@ function authorizationTable(
       `No transition consumes box ${box.id}: ` +
       `a ${box.boxType} box can never be consumed`,
   },
+
+  username: OWNER_SIGNATURE,
   };
 }
 
@@ -2016,20 +2102,31 @@ export function validateTx(
   const timingCheck = checkSpendTiming(inputBoxes, currentBlockHeight);
   if (!timingCheck.valid) return timingCheck;
 
-  // ---- 4. All inputs must be the same box_type ----
-  // No exceptions: every legal shape is single-type. The claim needs no bond
-  // alongside its invite, because the karma it produces is minted rather than
-  // moved, and the cancel names no bond at all (NODE_INTERFACE → Legal box
-  // transitions). `checkTransitions` relies on this — it reads `inputs[0]`'s type as
-  // the type of all of them.
+  // ---- 4. All inputs the same boxType, except the burn's mixed shape ----
+  // NODE_INTERFACE → validateTx step 4. A `username` input beside karma inputs
+  // is the burn's shape and the only mixed-input transition; nothing else mixes.
   const inputType = inputBoxes[0]!.boxType;
-  for (const box of inputBoxes) {
-    if (box.boxType !== inputType) {
+  const types = new Set(inputBoxes.map(b => b.boxType));
+  if (types.size > 1) {
+    const isUsernameBurn = types.size === 2 && types.has('karma') && types.has('username');
+    if (!isUsernameBurn) {
       return {
         valid: false,
-        error: `Mixed input types not allowed: ${inputType} vs ${box.boxType}`,
+        error: `Mixed input types not allowed: ${[...types].join(', ')}`,
       };
     }
+    const usernameInputs = inputBoxes.filter(b => b.boxType === 'username');
+    if (usernameInputs.length !== 1) {
+      return {
+        valid: false,
+        error: `At most one username input in a burn, got ${usernameInputs.length}`,
+      };
+    }
+  } else if (inputType === 'username') {
+    return {
+      valid: false,
+      error: `A username input alone is not a valid transaction shape`,
+    };
   }
 
   // ---- 5. Output shape: the closed per-boxType schema (field-type pin) ----

@@ -369,7 +369,7 @@ export function submissionToPost(sub: Submission): PostJson {
     // A submission's card reads replyCount: null and never fills the count cache,
     // so these are placeholders the render never reads (WEB_INTERFACE → What the feed reads).
     descendantCount: 0,
-    authorVouchCount: 0,
+    authorName: null,
     likedByViewer: null,
   };
 }

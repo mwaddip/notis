@@ -114,6 +114,8 @@ export {
   hasPendingLike,
   countPendingInvites,
   hasPendingVouch,
+  hasPendingClaim,
+  hasPendingClaimBy,
   hasPendingSpend,
   findPendingOutput,
   getBoxWithPending,
@@ -154,3 +156,12 @@ export {
   anyRefusedHeader,
   purgeRefusedHeaders,
 } from './refused-headers.js';
+
+export {
+  getUsername,
+  getUsernameByOwner,
+  putUsername,
+  deleteUsername,
+  countUsernames,
+} from './usernames.js';
+export type { UsernameRow, HolderRecord } from './usernames.js';

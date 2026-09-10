@@ -108,6 +108,8 @@ describe('output-shape pin: id integrity of accepted outputs', () => {
       membershipBarMultiplier: 1,
       putIdentityRecord: storePutIdentityRecord,
       protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
+      getUsername: () => null,
+      getUsernameByOwner: () => null,
     };
   });
 

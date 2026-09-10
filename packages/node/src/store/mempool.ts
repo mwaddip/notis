@@ -7,6 +7,7 @@ import type {
   UtxoTransaction,
   BondBox,
   VouchBox,
+  UsernameBox,
   AnyBox,
 } from '@dagsocial/types';
 import {
@@ -17,6 +18,7 @@ import {
   computeTxId,
   computePostId,
   utxoTxTreeByteLength,
+  canonicalUsernameBytes,
 } from '@dagsocial/types';
 import { isCreditSideTx } from '../services/coinbase-split.js';
 import { settlementMarginalBytes } from '../services/settlement.js';
@@ -330,6 +332,8 @@ interface GateMetadata {
   inviteInviter: string | null;
   vouchVoucher: string | null;
   vouchTarget: string | null;
+  usernameLower: string | null;
+  usernameClaimant: string | null;
 }
 
 /**
@@ -354,6 +358,8 @@ function gateMetadata(tx: UtxoTransaction): GateMetadata {
     inviteInviter: null,
     vouchVoucher: null,
     vouchTarget: null,
+    usernameLower: null,
+    usernameClaimant: null,
   };
 
   if (tx.likeTarget !== undefined) {
@@ -371,6 +377,11 @@ function gateMetadata(tx: UtxoTransaction): GateMetadata {
     } else if (output.boxType === 'vouch' && meta.vouchVoucher === null) {
       meta.vouchVoucher = Buffer.from((output as VouchBox).voucherId).toString('hex');
       meta.vouchTarget = Buffer.from((output as VouchBox).targetId).toString('hex');
+    } else if (output.boxType === 'username' && meta.usernameLower === null) {
+      const nameBytes = (output as UsernameBox).name;
+      const canonical = canonicalUsernameBytes(nameBytes);
+      meta.usernameLower = Buffer.from(canonical).toString('utf8');
+      meta.usernameClaimant = Buffer.from((output as UsernameBox).owner).toString('hex');
     }
   }
 
@@ -450,8 +461,9 @@ export function insertUtxoTx(
                           like_target, like_liker, invite_inviter, vouch_voucher,
                           vouch_target,
                           tx_inputs, tx_output_ids, tx_id, tx_fee, tx_bytes,
-                          max_valid_height)
-     VALUES ('utxo_tx', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                          max_valid_height,
+                          username_lower, username_claimant)
+     VALUES ('utxo_tx', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     Buffer.from(encoded),
     expiresAtHeight,
@@ -463,12 +475,11 @@ export function insertUtxoTx(
     JSON.stringify(inputs),
     JSON.stringify(outputBoxIds(tx, txId)),
     txId,
-    // `tx_fee` NULL is the karma class; a number is the credit class. One
-    // column carries the class and the price because they are one fact — an
-    // entry that can bid is an entry on the credit ledger.
     fee === null ? null : fee,
     bytes,
     ceiling,
+    meta.usernameLower,
+    meta.usernameClaimant,
   );
   return Number(result.lastInsertRowid);
 }
@@ -503,6 +514,23 @@ export function hasPendingVouch(voucherId: string, targetId: string): boolean {
   const row = db.prepare(
     `SELECT 1 FROM mempool WHERE vouch_voucher = ? AND vouch_target = ? LIMIT 1`,
   ).get(voucherId, targetId);
+  return row !== undefined;
+}
+
+// MEMPOOL_INTERFACE → Correctness gates
+export function hasPendingClaim(nameLower: string): boolean {
+  const db = getDb();
+  const row = db.prepare(
+    `SELECT 1 FROM mempool WHERE username_lower = ? LIMIT 1`,
+  ).get(nameLower);
+  return row !== undefined;
+}
+
+export function hasPendingClaimBy(claimantId: string): boolean {
+  const db = getDb();
+  const row = db.prepare(
+    `SELECT 1 FROM mempool WHERE username_claimant = ? LIMIT 1`,
+  ).get(claimantId);
   return row !== undefined;
 }
 

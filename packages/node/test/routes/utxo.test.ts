@@ -71,6 +71,7 @@ async function request(
       decayCfg: DECAY_CFG,
       getNetworkRecord: () => ({ memberCount: 1 }),
       membershipBarMultiplier: 1,
+      getUsername: () => null,
       getUtxoEngineDeps: () => ({
         // The pending view, as server.ts wires the submission routes: a grant
         // spending the change box of one still pooled resolves its input here.
@@ -96,6 +97,8 @@ async function request(
         membershipBarMultiplier: 1,
         putIdentityRecord: () => {},
         protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
+      getUsername: () => null,
+      getUsernameByOwner: () => null,
       }),
     };
     const app = express();
@@ -661,4 +664,100 @@ describe('UTXO routes', () => {
     });
   });
 
+});
+
+// ---------------------------------------------------------------------------
+// Alias resolution — NODE_INTERFACE → Identity parameters
+// ---------------------------------------------------------------------------
+
+describe('utxo routes — alias resolution', () => {
+  const HOLDER_HEX = 'aa'.repeat(32);
+  const lookup = (lower: string) => lower === 'alice' ? { nameLower: 'alice', name: 'Alice', owner: HOLDER_HEX, boxId: 'bb'.repeat(32), claimedAtBlock: 1 } : null;
+
+  function aliasGet(path: string): Promise<{ status: number; data: unknown }> {
+    return new Promise((resolve) => {
+      const deps = {
+        getKarmaTotal: () => 0n,
+        getKarmaBoxesPage: () => ({ rows: [], next: null, count: 0 }),
+        getIdentityRecord: () => null,
+        getCreditValue: () => 0n,
+        getCreditBoxesPage: () => ({ rows: [], next: null, count: 0 }),
+        getBondBoxesPage: () => ({ rows: [], next: null, count: 0 }),
+        getCurrentHeight: () => 100,
+        decayCfg: DECAY_CFG,
+        getNetworkRecord: () => ({ memberCount: 1 }),
+        membershipBarMultiplier: 1,
+        getUsername: lookup,
+        getUtxoEngineDeps: () => ({
+          getBox: () => null,
+          insertBox: () => {},
+          consumeBox: () => {},
+          getKarmaBox: () => null,
+          getKarmaValue: () => 0n,
+          hasActiveVouchEscrow: () => false,
+          vouchCooldownBlocks: 2,
+          inviteBondMin: config.inviteBondMin,
+          inviteBondMax: config.inviteBondMax,
+          decayCfg: DECAY_CFG,
+          storageRentPeriodBlocks: 40,
+          getBoxProvenance: () => null,
+          getTopologyAuthor: () => null,
+          getPendingPostAuthor: () => null,
+          getIdentityRecord: () => null,
+          getKarmaBoxes: () => [],
+          runInTransaction: (fn: () => void) => fn(),
+          getVouchBox: () => null,
+          getNetworkRecord: () => ({ memberCount: 1 }),
+          membershipBarMultiplier: 1,
+          putIdentityRecord: () => {},
+          protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
+          getUsername: lookup,
+          getUsernameByOwner: () => null,
+        }),
+      };
+      const app = express();
+      app.use(express.json());
+      app.use(createRouter(deps));
+      const server = app.listen(0, () => {
+        const addr = server.address() as { port: number };
+        http.get({ hostname: 'localhost', port: addr.port, path }, (res) => {
+          let d = '';
+          res.on('data', (c) => (d += c));
+          res.on('end', () => { server.close(); resolve({ status: res.statusCode!, data: JSON.parse(d) }); });
+        });
+      });
+    });
+  }
+
+  it(':userId accepts an @handle: resolves, wrong case resolves, unknown 404s, malformed 400s, a key passes', async () => {
+    const ok = await aliasGet(`/karma/@Alice`);
+    expect(ok.status).toBe(200);
+
+    const wrongCase = await aliasGet(`/karma/@ALICE`);
+    expect(wrongCase.status).toBe(200);
+
+    const unknown = await aliasGet(`/karma/@Nobody`);
+    expect(unknown.status).toBe(404);
+    expect((unknown.data as any).error).toContain('unknown handle');
+
+    const malformed = await aliasGet(`/karma/!!!`);
+    expect(malformed.status).toBe(400);
+
+    const key = await aliasGet(`/karma/${HOLDER_HEX}`);
+    expect(key.status).toBe(200);
+  });
+
+  it('karma :userId handle resolves userId to the holder key', async () => {
+    const byHandle = await aliasGet(`/karma/@Alice`);
+    const byKey = await aliasGet(`/karma/${HOLDER_HEX}`);
+    expect((byHandle.data as any).userId).toBe((byKey.data as any).userId);
+    expect((byHandle.data as any).userId).toBe(HOLDER_HEX);
+  });
+
+  it('credits :userId handle resolves userId to the holder key', async () => {
+    const byHandle = await aliasGet(`/credits/@Alice`);
+    const byKey = await aliasGet(`/credits/${HOLDER_HEX}`);
+    expect((byHandle.data as any).userId).toBe((byKey.data as any).userId);
+    expect((byHandle.data as any).userId).toBe(HOLDER_HEX);
+  });
 });

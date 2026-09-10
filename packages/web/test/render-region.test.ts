@@ -15,7 +15,7 @@ function post(id: string, content: string, parents: string[] = []): PostJson {
   return {
     id, content, contentHash: contentHashHex(content), author: HEX('7'), parentRefs: parents,
     protocolVersion: 1, type: 'regular', status: 'confirmed',
-    blockHeight: 1, blockIndex: 0, blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorVouchCount: 0, likedByViewer: null,
+    blockHeight: 1, blockIndex: 0, blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null,
   };
 }
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));

@@ -1,11 +1,21 @@
 import { BatchAVLProver, PersistentBatchAVLProver } from '@ergots/avltree';
 import { SqliteAvlStorage } from './avl-storage.js';
-import { serializeBox, serializeIdentityRecord, serializeNetworkRecord } from './serialize-box.js';
+import {
+  serializeBox,
+  serializeIdentityRecord,
+  serializeNetworkRecord,
+  serializeUsernameRecord,
+  serializeHolderRecord,
+} from './serialize-box.js';
+import type { UsernameAvlRecord } from './serialize-box.js';
 import { getDb } from '../store/db.js';
 import { config } from '../config.js';
 import { DivergedStateTreeError } from '../services/corrupt-state.js';
 import type { AnyBox } from '@dagsocial/types';
+import { USERNAME_KEY_DOMAIN, USERNAME_HOLDER_KEY_DOMAIN } from '@dagsocial/types';
 import type { IdentityRecord, NetworkRecord } from '../store/identity-records.js';
+import type { HolderRecord } from '../store/usernames.js';
+import crypto from 'node:crypto';
 
 /** Sentinel key for block height metadata in additionalData. */
 export const HEIGHT_SENTINEL = new Uint8Array(32); // all zeros
@@ -70,6 +80,38 @@ export interface NetworkPut {
   /** hex — H(NETWORK_KEY_DOMAIN). */
   key: string;
   network: NetworkRecord;
+}
+
+/** One name-record write destined for the tree. */
+export interface UsernamePut {
+  key: string;
+  username: UsernameAvlRecord;
+}
+
+/** One holder-record write destined for the tree. */
+export interface HolderPut {
+  key: string;
+  holder: HolderRecord;
+}
+
+/** NODE_INTERFACE → Username records — H(USERNAME_KEY_DOMAIN ‖ canonical(name)). */
+export function usernameRecordKey(canonicalNameBytes: Uint8Array): string {
+  return crypto.createHash('blake2b512')
+    .update(USERNAME_KEY_DOMAIN)
+    .update(canonicalNameBytes)
+    .digest()
+    .subarray(0, 32)
+    .toString('hex');
+}
+
+/** NODE_INTERFACE → Username records — H(USERNAME_HOLDER_KEY_DOMAIN ‖ identityId). */
+export function holderRecordKey(identityId: Uint8Array): string {
+  return crypto.createHash('blake2b512')
+    .update(USERNAME_HOLDER_KEY_DOMAIN)
+    .update(identityId)
+    .digest()
+    .subarray(0, 32)
+    .toString('hex');
 }
 
 /**
@@ -187,6 +229,9 @@ export function applyBlockMutations(
   created: AnyBox[],
   recordPuts: RecordPut[] = [],
   networkPuts: NetworkPut[] = [],
+  usernamePuts: UsernamePut[] = [],
+  holderPuts: HolderPut[] = [],
+  removedRecordKeys: string[] = [],
 ): Uint8Array {
   // Canonical order (M-12): all removes, then all inserts, then all record
   // puts, each lexicographically by hex key.
@@ -252,6 +297,29 @@ export function applyBlockMutations(
       key: hexToBytes(np.key),
       value: serializeNetworkRecord(np.network),
     });
+  }
+
+  for (const up of [...usernamePuts].sort((a, b) => byHexBoxId(a.key, b.key))) {
+    prover.performOneOperation({
+      tag: 'InsertOrUpdate',
+      key: hexToBytes(up.key),
+      value: serializeUsernameRecord(up.username),
+    });
+  }
+
+  for (const hp of [...holderPuts].sort((a, b) => byHexBoxId(a.key, b.key))) {
+    prover.performOneOperation({
+      tag: 'InsertOrUpdate',
+      key: hexToBytes(hp.key),
+      value: serializeHolderRecord(hp.holder),
+    });
+  }
+
+  for (const rk of [...removedRecordKeys].sort(byHexBoxId)) {
+    const result = prover.performOneOperation({ tag: 'Remove', key: hexToBytes(rk) });
+    if (!result.success) {
+      throw new DivergedStateTreeError('applyBlockMutations', height, 'Remove', rk);
+    }
   }
 
   const digest = prover.digest();
