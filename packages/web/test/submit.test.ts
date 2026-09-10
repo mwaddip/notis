@@ -1,14 +1,15 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, type SubmitDeps,
+  submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, submitClaimFlow, submitBurnFlow, type SubmitDeps,
 } from '../src/wallet/submit';
 import { PendingLedger } from '../src/wallet/ledger';
 import type { Api } from '../src/api/client';
 import type { KarmaBoxRow, KarmaResult, PostResult, StatusResult, VouchesVoucherResult } from '../src/api/dto';
 import { karmaResult as karmaFixture } from './karma-fixture';
 import { isRejection } from '../src/api/write';
-import type { PostSubmitResult, LikeSubmitResult, VouchSubmitResult, InviteSubmitResult, WithdrawSubmitResult, Rejection } from '../src/api/write';
+import type { PostSubmitResult, LikeSubmitResult, VouchSubmitResult, InviteSubmitResult, WithdrawSubmitResult, ClaimSubmitResult, BurnSubmitResult, Rejection } from '../src/api/write';
+import type { UsernameResult } from '../src/api/dto';
 
 // submit ties the reads, the builders, the ledger, the identity and the write
 // client into one path. These drive it over fakes and watch what it does: the
@@ -29,7 +30,7 @@ const VOUCH_BOX = '44'.repeat(32);
 
 let signCalls: string[];
 let postReads: Array<{ id: string; viewer?: string }>;
-let writeCalls: Array<{ kind: 'post' | 'like' | 'vouch' | 'unvouch' | 'invite' | 'withdraw'; tx: Record<string, unknown>; content?: string; targetHex?: string; postId?: string }>;
+let writeCalls: Array<{ kind: 'post' | 'like' | 'vouch' | 'unvouch' | 'invite' | 'withdraw' | 'claim' | 'burn'; tx: Record<string, unknown>; content?: string; targetHex?: string; postId?: string; name?: string }>;
 
 function statusResult(): StatusResult {
   return {
@@ -50,11 +51,13 @@ function postResult(id: string, confirmedAuthor: string | null): PostResult {
   };
 }
 
+let heldName: UsernameResult | null = null;
+
 function reads(
   confirmedAuthor: string | null = PARENT_AUTHOR,
   boxes: KarmaBoxRow[] = FULL_BOXES,
   vouches: VouchesVoucherResult['vouches'] = [],
-): Pick<Api, 'karma' | 'status' | 'post' | 'vouchesByVoucher'> {
+): Pick<Api, 'karma' | 'status' | 'post' | 'vouchesByVoucher' | 'usernameByOwner'> {
   return {
     karma: async () => karmaResult(boxes),
     status: async () => statusResult(),
@@ -63,6 +66,7 @@ function reads(
       return postResult(id, confirmedAuthor);
     },
     vouchesByVoucher: async () => ({ vouches, count: vouches.length, next: null }),
+    usernameByOwner: async () => heldName,
   };
 }
 const vouchRow = (over: Partial<VouchesVoucherResult['vouches'][number]> = {}): VouchesVoucherResult['vouches'][number] => ({
@@ -84,6 +88,8 @@ const okLike: LikeSubmitResult = { status: 'pending', txId: 'ignored', expiresAt
 const okVouch: VouchSubmitResult = { status: 'pending', txId: 'ignored', expiresAtHeight: 6720 };
 const okInvite: InviteSubmitResult = { status: 'pending', txId: 'ignored', expiresAtHeight: 6720, bondBoxId: 'bond1' };
 const okWithdraw: WithdrawSubmitResult = { status: 'submitted', txId: 'ignored', postId: 'ignored', expiresAtHeight: 6720 };
+const okClaim: ClaimSubmitResult = { status: 'pending', txId: 'ignored', expiresAtHeight: 6720, name: 'Alice_01' };
+const okBurn: BurnSubmitResult = { status: 'pending', txId: 'ignored', expiresAtHeight: 6720 };
 
 function write(
   postResp: PostSubmitResult | Rejection = okPost,
@@ -118,6 +124,14 @@ function write(
       writeCalls.push({ kind: 'withdraw', tx, postId });
       return isRejection(withdrawResp) ? withdrawResp : { ...withdrawResp, txId: lastSignedTxId() };
     },
+    submitClaim: async (tx) => {
+      writeCalls.push({ kind: 'claim', tx });
+      return { ...okClaim, txId: lastSignedTxId() };
+    },
+    submitBurn: async (name, tx) => {
+      writeCalls.push({ kind: 'burn', tx, name });
+      return { ...okBurn, txId: lastSignedTxId() };
+    },
   };
 }
 
@@ -125,6 +139,7 @@ beforeEach(() => {
   signCalls = [];
   postReads = [];
   writeCalls = [];
+  heldName = null;
   localStorage.clear();
 });
 
@@ -255,6 +270,14 @@ describe('the node txId is compared to the client id', () => {
       submitWithdraw: async (postId, tx) => {
         writeCalls.push({ kind: 'withdraw', tx, postId });
         return { ...okWithdraw, txId: wrong };
+      },
+      submitClaim: async (tx) => {
+        writeCalls.push({ kind: 'claim', tx });
+        return { ...okClaim, txId: wrong };
+      },
+      submitBurn: async (name, tx) => {
+        writeCalls.push({ kind: 'burn', tx, name });
+        return { ...okBurn, txId: wrong };
       },
     };
   }
@@ -445,6 +468,79 @@ describe('submitWithdrawFlow', () => {
     const deps: SubmitDeps = { reads: reads(), write: w, ledger, identity };
     const res = await submitWithdrawFlow(deps, TARGET_ID);
     expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'the node answered without an expiry height' } });
+    expect(ledger.size).toBe(0);
+  });
+});
+
+describe('submitClaimFlow', () => {
+  it('builds, signs the id, POSTs { tx } and lands a claim entry', async () => {
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity };
+    const res = await submitClaimFlow(deps, 'Alice_01');
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(signCalls).toEqual([res.entry.txId]);
+    expect(writeCalls[0]).toMatchObject({ kind: 'claim' });
+    expect((writeCalls[0]!.tx.signatures as Record<string, string>)[PUB]).toBe(SIG);
+    expect(res.entry).toMatchObject({ kind: 'claim', postId: 'Alice_01', expiresAtHeight: 6720, submittedAtHeight: 6000 });
+    expect(ledger.all().map((e) => e.kind)).toEqual(['claim']);
+  });
+
+  it('an empty spendable view refuses — no karma box to sign with', async () => {
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, []), write: write(), ledger, identity };
+    const res = await submitClaimFlow(deps, 'Alice_01');
+    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'no karma box to sign a claim with.' } });
+    expect(writeCalls).toEqual([]);
+    expect(ledger.size).toBe(0);
+  });
+
+  it('a rejection short-circuits: no ledger entry', async () => {
+    const ledger = new PendingLedger(PUB);
+    const w = write();
+    w.submitClaim = async (tx) => {
+      writeCalls.push({ kind: 'claim', tx });
+      return { status: 409, message: 'name taken' };
+    };
+    const deps: SubmitDeps = { reads: reads(), write: w, ledger, identity };
+    const res = await submitClaimFlow(deps, 'Alice_01');
+    expect(res).toEqual({ ok: false, rejection: { status: 409, message: 'name taken' } });
+    expect(ledger.size).toBe(0);
+  });
+});
+
+describe('submitBurnFlow', () => {
+  it('resolves the name at the press, builds, POSTs to /usernames/:name/burn, and lands a burn entry', async () => {
+    heldName = { name: 'Alice_01', owner: PUB, boxId: '44'.repeat(32), claimedAtBlock: 5050 };
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity };
+    const res = await submitBurnFlow(deps);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(writeCalls[0]).toMatchObject({ kind: 'burn', name: 'Alice_01' });
+    expect(res.entry).toMatchObject({ kind: 'burn', postId: 'Alice_01' });
+    expect(ledger.all().map((e) => e.kind)).toEqual(['burn']);
+  });
+
+  it('no name held refuses before any POST', async () => {
+    heldName = null;
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity };
+    const res = await submitBurnFlow(deps);
+    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'this key holds no name.' } });
+    expect(writeCalls).toEqual([]);
+    expect(ledger.size).toBe(0);
+  });
+
+  it('a spendable view below the price refuses in the voice register', async () => {
+    heldName = { name: 'Alice_01', owner: PUB, boxId: '44'.repeat(32), claimedAtBlock: 5050 };
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, [{ boxId: BOX_ID, value: '5' }]), write: write(), ledger, identity };
+    const res = await submitBurnFlow(deps);
+    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough karma to burn right now.' } });
+    expect(writeCalls).toEqual([]);
     expect(ledger.size).toBe(0);
   });
 });

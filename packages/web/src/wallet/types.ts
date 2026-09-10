@@ -18,7 +18,7 @@ export interface ChangeRef {
   createdAtBlock: number;
 }
 
-export type EntryKind = 'post' | 'like' | 'grant' | 'vouch' | 'unvouch' | 'invite' | 'withdraw';
+export type EntryKind = 'post' | 'like' | 'grant' | 'vouch' | 'unvouch' | 'invite' | 'withdraw' | 'claim' | 'burn';
 
 /** One of the client's own pending transactions (WEB_INTERFACE → The wallet).
  *  `postId` is the entry's subject: for a post the node's own id from the 200

@@ -65,22 +65,24 @@ function whenText(ms: number): string {
   return d.toLocaleString(undefined, opts);
 }
 
-function whoRow(authorKey: string, whenMs: number | null, opts: CardOpts): HTMLElement {
+function whoRow(authorKey: string, authorName: string | null, whenMs: number | null, opts: CardOpts): HTMLElement {
   const who = el('div', 'who');
-  // No naming layer exists — the public key is the identity, machine data, so
-  // mono. On a card the prefix is a ghost button into the author window; opening
-  // a window spends nothing, so it is a button even with no identity loaded
-  // (WEB_INTERFACE → The identity display).
+  // WEB_INTERFACE → The identity display — the handle @Name where the row
+  // carries a name, else the key prefix in mono. Where the prefix is a control
+  // the handle is the same control.
   if (opts.onAuthor) {
-    const b = el('button', 'hex authorbtn');
-    b.textContent = shortHex(authorKey, 16);
+    const b = el('button', authorName !== null ? 'handle authorbtn' : 'hex authorbtn');
+    b.textContent = authorName !== null ? '@' + authorName : shortHex(authorKey, 16);
     b.setAttribute('aria-label', 'open this author');
     b.addEventListener('click', () => opts.onAuthor!(authorKey));
     who.appendChild(b);
   } else {
-    who.appendChild(el('span', 'hex', shortHex(authorKey, 16)));
+    if (authorName !== null) {
+      who.appendChild(el('span', 'handle', '@' + authorName));
+    } else {
+      who.appendChild(el('span', 'hex', shortHex(authorKey, 16)));
+    }
   }
-  // · you on the reader's own card (WEB_INTERFACE → The identity display).
   if (opts.you) who.appendChild(el('span', 'you', '· you'));
   if (whenMs != null) who.appendChild(el('span', 'when', whenText(whenMs)));
   return who;
@@ -351,7 +353,7 @@ function inBlockNode(height: number): HTMLElement {
 /** A submission as a PostJson: status 'pending' until it lands, the identity's
  *  key as author, a locally-computed contentHash — so the render-path check is
  *  silent on it (WEB_INTERFACE → The wallet). */
-export function submissionToPost(sub: Submission): PostJson {
+export function submissionToPost(sub: Submission, ownName: string | null = null): PostJson {
   return {
     id: sub.postId ?? sub.txId ?? sub.localKey, // the node's id once it lands, so the strip opens the thread
 
@@ -369,7 +371,7 @@ export function submissionToPost(sub: Submission): PostJson {
     // A submission's card reads replyCount: null and never fills the count cache,
     // so these are placeholders the render never reads (WEB_INTERFACE → What the feed reads).
     descendantCount: 0,
-    authorName: null,
+    authorName: ownName,
     likedByViewer: null,
   };
 }
@@ -423,7 +425,7 @@ function livePostCard(post: PostJson, opts: CardOpts): HTMLElement {
   card.dataset.postId = post.id;
   const body = el('div', 'card-body');
 
-  body.appendChild(whoRow(post.author, post.blockCreatedAt, opts));
+  body.appendChild(whoRow(post.author, post.authorName, post.blockCreatedAt, opts));
 
   if (post.content === null) {
     // Held by commit, body not yet backfilled on this node. Says what is,
@@ -488,7 +490,7 @@ function withdrawnCard(row: WithdrawnJson, opts: CardOpts): HTMLElement {
   const card = el('div', shellClasses('', opts));
   card.dataset.postId = row.id;
   const body = el('div', 'card-body');
-  body.appendChild(whoRow(row.author, null, opts));
+  body.appendChild(whoRow(row.author, row.authorName, null, opts));
   // Withdrawn is never "deleted": its replies survive and hang off it. Saying
   // so is the whole difference (WEB_INTERFACE → The withdrawn state).
   body.appendChild(el('div', 'withdrawn', 'withdrawn by its author — the replies below are untouched'));

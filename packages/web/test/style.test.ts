@@ -146,6 +146,40 @@ describe('app.css — the link fallback', () => {
   });
 });
 
+describe('app.css — the handle', () => {
+  it('.handle has font-weight 600 and ink, never names the mono family', () => {
+    const blocks = css.match(/\.handle\s*\{[^}]*\}/g) ?? [];
+    const base = blocks.find((b) => !b.includes('.who') && !b.includes('.bar') && !b.includes('.card'));
+    expect(base).toBeDefined();
+    expect(base!).toContain('font-weight: 600');
+    expect(base!).toContain('color: var(--ink)');
+    for (const b of blocks) {
+      expect(b).not.toContain('var(--mono)');
+    }
+  });
+
+  it('.who .handle at 0,2,0 carries font-weight 600 and ink to win over .authorbtn 0,1,0', () => {
+    const block = css.match(/\.who \.handle\s*\{[^}]*\}/)?.[0];
+    expect(block).toBeDefined();
+    expect(block!).toContain('font-size: 13px');
+    expect(block!).toContain('font-weight: 600');
+    expect(block!).toContain('color: var(--ink)');
+  });
+
+  it('.bar .handle at 13px flex: 0 0 auto', () => {
+    expect(css).toMatch(/\.bar \.handle\s*\{[^}]*font-size: 13px/);
+    expect(css).toMatch(/\.bar \.handle\s*\{[^}]*flex: 0 0 auto/);
+  });
+
+  it('.card.open .who .handle fades as the prefix does', () => {
+    expect(css).toMatch(/\.card\.open \.who \.handle\s*\{[^}]*opacity: \.75/);
+  });
+
+  it('the unused .who .name rule is gone', () => {
+    expect(css).not.toMatch(/\.who \.name\s*\{/);
+  });
+});
+
 describe('fonts.css — the self-hosted italic face', () => {
   it('a second Plus Jakarta Sans @font-face is italic, weight 400 700, its own src', () => {
     const faces = fontsCss.match(/@font-face\s*\{[^}]*\}/g) ?? [];

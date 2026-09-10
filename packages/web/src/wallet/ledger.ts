@@ -1,6 +1,6 @@
 import { readStore, writeStore } from '../prefs';
 import { isWithdrawn } from '../api/dto';
-import type { PostResult, KarmaResult } from '../api/dto';
+import type { PostResult, KarmaResult, UsernameResult } from '../api/dto';
 import type { SpendableBox, ChangeRef, PendingEntry, EntryOutcome } from './types';
 
 // The persisted pending ledger and the spendable view over it
@@ -190,6 +190,31 @@ export function reconcileWithdraw(entry: PendingEntry, fetched: PostResult | nul
   return tip > entry.expiresAtHeight ? 'expired' : 'pending';
 }
 
+/** A pending claim is landed when `GET /usernames?owner=<key>` answers the name;
+ *  expired once the tip passes `expiresAtHeight`; else pending
+ *  (WEB_INTERFACE → The wallet). */
+export function reconcileClaim(entry: PendingEntry, held: UsernameResult | null, tip: number): EntryOutcome {
+  if (held !== null && held.name === entry.postId) return 'landed';
+  return tip > entry.expiresAtHeight ? 'expired' : 'pending';
+}
+
+/** A pending burn is landed when the owner holds no name (or a different one);
+ *  expired past the height; else pending (WEB_INTERFACE → The wallet). */
+export function reconcileBurn(entry: PendingEntry, held: UsernameResult | null, tip: number): EntryOutcome {
+  if (held === null || held.name !== entry.postId) return 'landed';
+  return tip > entry.expiresAtHeight ? 'expired' : 'pending';
+}
+
+/** At most one pending claim or burn — the node refuses a second claim while one
+ *  is pending, and a burn's box does not exist until the claim lands
+ *  (WEB_INTERFACE → The username row). */
+export function pendingUsernameEntry(entries: PendingEntry[]): { kind: 'claim' | 'burn'; name: string } | null {
+  for (const e of entries) {
+    if (e.kind === 'claim' || e.kind === 'burn') return { kind: e.kind, name: e.postId };
+  }
+  return null;
+}
+
 /** The posts the client has a pending withdrawal for — the flight renders
  *  `submitted` from the ledger after a reload, the way a pending like overlays
  *  `likedByViewer` (WEB_INTERFACE → The withdraw control). */
@@ -234,7 +259,7 @@ function parseStoredEntry(v: unknown): PendingEntry {
   if (typeof v !== 'object' || v === null) throw new Error('entry is not an object');
   const o = v as Record<string, unknown>;
   if (typeof o.txId !== 'string' || typeof o.postId !== 'string') throw new Error('entry has non-string ids');
-  if (o.kind !== 'post' && o.kind !== 'like' && o.kind !== 'grant' && o.kind !== 'vouch' && o.kind !== 'unvouch' && o.kind !== 'invite' && o.kind !== 'withdraw') {
+  if (o.kind !== 'post' && o.kind !== 'like' && o.kind !== 'grant' && o.kind !== 'vouch' && o.kind !== 'unvouch' && o.kind !== 'invite' && o.kind !== 'withdraw' && o.kind !== 'claim' && o.kind !== 'burn') {
     throw new Error('entry has an unknown kind');
   }
   if (!Array.isArray(o.inputs) || !o.inputs.every((x) => typeof x === 'string')) throw new Error('entry inputs are not strings');

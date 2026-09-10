@@ -6,11 +6,13 @@ import {
   buildUnvouch,
   buildInvite,
   buildWithdraw,
+  buildClaim,
+  buildBurn,
   txToJson,
   InsufficientKarma,
   type BuildContext,
 } from '../src/wallet/builders';
-import { VOUCH_KARMA_AMOUNT, type UtxoTransaction } from '@dagsocial/types';
+import { VOUCH_KARMA_AMOUNT, USERNAME_BURN_PRICE, type UtxoTransaction } from '@dagsocial/types';
 
 // The builders produce the box shapes validateTx demands, encoded through
 // @dagsocial/types. The txIds below are frozen — computed by an independent
@@ -58,6 +60,18 @@ const UNVOUCH_TXID = '5988584f619b498ca161e9d7739c975370bb75ea0c6ce6d3c87ac7efcf
 const WITHDRAW_POST_ID = 'ff'.repeat(32);
 const WITHDRAW_TXID = '1ee0e7e76e1d2c03414a37135b7d08930bfe7d477b4504379978f2cbf6bacf89';
 const WITHDRAW_OUTPUT = '0aa7e4a5c67536ccee34946d3276bd2631752a5df5eddca32115e9ab44cd4658';
+
+// The claim vector: a claim of 'Alice_01' from the same fixed ctx.
+const CLAIM_TXID = '68b2b843d3c55d78aec782222f44ffdda2b8dd2943fa431a6895a5d6602d13b4';
+const CLAIM_CHANGE = 'e41e61413908a4ecb8623cea5cc9adab847304754039a877ea46c25057cfa0d0';
+
+// The burn vectors: a burn over a name box '44'*32 beside the 227 box, and a
+// burn over a box of exactly 10 with no change.
+const NAME_BOX_ID = '44'.repeat(32);
+const BURN_TXID = '5007669b660cc3d10a98c21b458bb659f1269cb7aa34f3b37f99b39f3de8b1e6';
+const BURN_CHANGE = '4b865e3ed2874e1d2ed4a55dfb581fb1a093c360af050990e9f249bedd59fdee';
+const EXACT_BOX = '55'.repeat(32);
+const BURN_EXACT_TXID = 'ec3fde946eb20fe3d1eb26917b049720acbd5ed41f336b0f7fd62b56bfe9a8bc';
 
 function hexToBytes(hex: string): Uint8Array {
   const out = new Uint8Array(hex.length / 2);
@@ -335,5 +349,105 @@ describe('txToJson — the node JSON edge', () => {
     expect(body.postWithdraw).toEqual({ postId: WITHDRAW_POST_ID });
     expect(body.post).toBeUndefined();
     expect(body.likeTarget).toBeUndefined();
+  });
+
+  it('renders a claim: hex owner/name, decimal value, no post/likeTarget', () => {
+    const built = buildClaim(ctx(), 'Alice_01');
+    const body = txToJson(sign(built.tx));
+    expect(body.outputs).toEqual([
+      { boxType: 'karma', value: '227', createdAtBlock: 5000, owner: PUB },
+      { boxType: 'username', value: '0', createdAtBlock: 5000, owner: PUB, name: toHex(new TextEncoder().encode('Alice_01')) },
+    ]);
+    expect(body.post).toBeUndefined();
+    expect(body.likeTarget).toBeUndefined();
+  });
+
+  it('renders a burn: karma change and karma_price, no post/likeTarget', () => {
+    const built = buildBurn(ctx(), { boxId: NAME_BOX_ID });
+    const body = txToJson(sign(built.tx));
+    expect(body.inputs).toEqual([BOX_ID, NAME_BOX_ID]);
+    expect(body.outputs).toEqual([
+      { boxType: 'karma', value: '217', createdAtBlock: 5000, owner: PUB },
+      { boxType: 'karma_price', value: '10', createdAtBlock: 5000 },
+    ]);
+    expect(body.post).toBeUndefined();
+    expect(body.likeTarget).toBeUndefined();
+  });
+});
+
+describe('claim builder — frozen against the independent vector', () => {
+  it('a claim matches the frozen txId and change box, spends and returns the smallest box', () => {
+    const built = buildClaim(ctx(), 'Alice_01');
+    expect(built.txId).toBe(CLAIM_TXID);
+    expect(built.change).toEqual({ boxId: CLAIM_CHANGE, value: 227n, createdAtBlock: 5000 });
+    expect(built.tx.inputs).toEqual([BOX_ID]);
+    expect(built.tx.outputs).toEqual([
+      { boxType: 'karma', value: 227n, createdAtBlock: 5000, owner: hexToBytes(PUB) },
+      { boxType: 'username', value: 0n, createdAtBlock: 5000, owner: hexToBytes(PUB), name: new TextEncoder().encode('Alice_01') },
+    ]);
+    expect(built.tx.post).toBeUndefined();
+    expect(built.tx.likeTarget).toBeUndefined();
+    expect(built.change!.value).toBe(227n);
+  });
+});
+
+describe('claim builder — structural rules', () => {
+  it('InsufficientKarma when the spendable view is empty', () => {
+    expect(() => buildClaim({ ...ctx(), spendable: [] }, 'Alice_01')).toThrow(InsufficientKarma);
+    try {
+      buildClaim({ ...ctx(), spendable: [] }, 'Alice_01');
+    } catch (e) {
+      expect(e).toBeInstanceOf(InsufficientKarma);
+      expect((e as InsufficientKarma).required).toBe(1n);
+      expect((e as InsufficientKarma).available).toBe(0n);
+    }
+  });
+
+  it('spends the smallest box when the view holds several', () => {
+    const spendable = [
+      { boxId: 'a'.repeat(64), value: 10n },
+      { boxId: 'b'.repeat(64), value: 3n },
+      { boxId: 'c'.repeat(64), value: 7n },
+    ];
+    const built = buildClaim({ ...ctx(), spendable }, 'Test');
+    expect(built.tx.inputs).toEqual(['b'.repeat(64)]);
+    expect(built.change!.value).toBe(3n);
+  });
+});
+
+describe('burn builder — frozen against the independent vector', () => {
+  it('a burn matches the frozen txId: karma ids then name box id, change at 0, price at 1', () => {
+    const built = buildBurn(ctx(), { boxId: NAME_BOX_ID });
+    expect(built.txId).toBe(BURN_TXID);
+    expect(built.change).toEqual({ boxId: BURN_CHANGE, value: 217n, createdAtBlock: 5000 });
+    expect(built.tx.inputs).toEqual([BOX_ID, NAME_BOX_ID]);
+    expect(built.tx.outputs).toEqual([
+      { boxType: 'karma', value: 217n, createdAtBlock: 5000, owner: hexToBytes(PUB) },
+      { boxType: 'karma_price', value: USERNAME_BURN_PRICE, createdAtBlock: 5000 },
+    ]);
+    expect(built.change!.value + USERNAME_BURN_PRICE).toBe(227n);
+  });
+
+  it('a burn over exactly USERNAME_BURN_PRICE emits no change box', () => {
+    const built = buildBurn({ ...ctx(), spendable: [{ boxId: EXACT_BOX, value: 10n }] }, { boxId: NAME_BOX_ID });
+    expect(built.txId).toBe(BURN_EXACT_TXID);
+    expect(built.change).toBeNull();
+    expect(built.tx.inputs).toEqual([EXACT_BOX, NAME_BOX_ID]);
+    expect(built.tx.outputs).toEqual([
+      { boxType: 'karma_price', value: USERNAME_BURN_PRICE, createdAtBlock: 5000 },
+    ]);
+  });
+});
+
+describe('burn builder — structural rules', () => {
+  it('InsufficientKarma when the spendable view cannot cover USERNAME_BURN_PRICE', () => {
+    expect(() => buildBurn({ ...ctx(), spendable: [{ boxId: BOX_ID, value: 5n }] }, { boxId: NAME_BOX_ID })).toThrow(InsufficientKarma);
+    try {
+      buildBurn({ ...ctx(), spendable: [{ boxId: BOX_ID, value: 5n }] }, { boxId: NAME_BOX_ID });
+    } catch (e) {
+      expect(e).toBeInstanceOf(InsufficientKarma);
+      expect((e as InsufficientKarma).required).toBe(USERNAME_BURN_PRICE);
+      expect((e as InsufficientKarma).available).toBe(5n);
+    }
   });
 });

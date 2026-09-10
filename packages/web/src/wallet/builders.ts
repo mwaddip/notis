@@ -8,6 +8,7 @@ import {
   REPLY_AUTHOR_SHARE,
   LIKE_KARMA_COST,
   VOUCH_KARMA_AMOUNT,
+  USERNAME_BURN_PRICE,
 } from '@dagsocial/types';
 import type {
   AnyBoxCandidate,
@@ -17,6 +18,7 @@ import type {
   KarmaPriceBox,
   LikeAccrualBox,
   PostCommit,
+  UsernameBox,
   UtxoTransaction,
   VouchBox,
   VouchEscrowBox,
@@ -244,6 +246,55 @@ export function buildWithdraw(ctx: BuildContext, postId: string): BuiltTx {
   };
   // The output is the returned box and the entry's change, at index 0.
   return finish(tx, output, spent.value, ctx.height);
+}
+
+/** Build a claim: the smallest spendable box in, one karma output of its value at
+ *  index 0 — the entry's change — and one `username` box of `value: 0n` (WEB_INTERFACE →
+ *  The wallet). An empty view throws InsufficientKarma. */
+export function buildClaim(ctx: BuildContext, name: string): BuiltTx {
+  const spent = smallestBox(ctx.spendable);
+  if (spent === null) throw new InsufficientKarma(1n, 0n);
+
+  const karmaOut: CandidateOf<KarmaBox> = {
+    boxType: 'karma',
+    value: spent.value,
+    createdAtBlock: ctx.height,
+    owner: hexToBytes(ctx.author),
+  };
+  const usernameOut: CandidateOf<UsernameBox> = {
+    boxType: 'username',
+    value: 0n,
+    createdAtBlock: ctx.height,
+    owner: hexToBytes(ctx.author),
+    name: new TextEncoder().encode(name),
+  };
+  const tx: UtxoTransaction = {
+    inputs: [spent.boxId],
+    outputs: [karmaOut, usernameOut],
+    signatures: {},
+    protocolVersion: ctx.era,
+  };
+  return finish(tx, karmaOut, spent.value, ctx.height);
+}
+
+/** Build a burn: karma for USERNAME_BURN_PRICE and the reader's name box in,
+ *  karma change at index 0 when any, one `karma_price` of USERNAME_BURN_PRICE
+ *  (WEB_INTERFACE → The wallet, NODE_INTERFACE → Username transition rules). */
+export function buildBurn(ctx: BuildContext, held: { boxId: string }): BuiltTx {
+  const { selected, change } = selectForPrice(ctx.spendable, USERNAME_BURN_PRICE);
+
+  const outputs: AnyBoxCandidate[] = [];
+  const changeBox = changeBoxOf(change, ctx);
+  if (changeBox) outputs.push(changeBox);
+  outputs.push(priceBox(USERNAME_BURN_PRICE, ctx.height));
+
+  const tx: UtxoTransaction = {
+    inputs: [...selected.map((b) => b.boxId), held.boxId],
+    outputs,
+    signatures: {},
+    protocolVersion: ctx.era,
+  };
+  return finish(tx, changeBox, change, ctx.height);
 }
 
 /**

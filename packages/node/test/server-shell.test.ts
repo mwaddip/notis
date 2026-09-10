@@ -7,6 +7,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { initDb, getDb, closeDb } from '../src/store/db.js';
 import { createApp } from '../src/server.js';
 import { insertPost, confirmPost, withdrawPost } from '../src/store/posts.js';
+import { putUsername } from '../src/store/usernames.js';
 import { makeTestConfig, makePostCommit, fixturePostId, uid, toHex } from './helpers.js';
 
 // NODE_INTERFACE → Link previews: GET /shell/:id answers the web client's
@@ -140,6 +141,36 @@ describe('GET /shell/:id', () => {
       expect(html).toContain('<meta property="og:type" content="article">');
       expect(html).toContain('<meta property="og:site_name" content="Notis">');
       expect(html).toContain('<meta name="twitter:card" content="summary">');
+    } finally {
+      close();
+    }
+  });
+
+  it('titles a live post @Name when the author holds a username', async () => {
+    const author = uid('shell-named-author');
+    const content = 'a post by an author with a username';
+    const commit = makePostCommit(author, content);
+    const id = fixturePostId(commit);
+    insertPost(id, commit, content);
+    confirmPost(id, 16, 0);
+
+    const authorHex = toHex(author);
+    putUsername({
+      nameLower: 'alice_01',
+      name: 'Alice_01',
+      owner: authorHex,
+      boxId: 'a'.repeat(64),
+      claimedAtBlock: 5,
+    });
+
+    const { port, close } = startApp(shellPath);
+    try {
+      const res = await fetch(`http://localhost:${port}/shell/${id}`);
+      expect(res.status).toBe(200);
+      const html = await res.text();
+
+      expect(html).toContain('<title>@Alice_01 · Notis</title>');
+      expect(html).toContain('<meta property="og:title" content="@Alice_01 · Notis">');
     } finally {
       close();
     }

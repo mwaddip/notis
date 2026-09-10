@@ -119,8 +119,12 @@ header .spacer { flex: 1 1 auto; }
 .card.open .who .hex { opacity: .75; }
 
 .who { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
-.who .name { font-size: 13px; font-weight: 600; color: var(--ink); }
 .who .hex { font-family: var(--mono); font-size: 11.5px; color: var(--inkMute); }
+.handle { font-weight: 600; color: var(--ink); }
+/* 0,2,0 so the handle on a .who .authorbtn wins over .authorbtn's 0,1,0
+   font: inherit and color: inherit (WEB_INTERFACE → The identity display). */
+.who .handle { font-size: 13px; font-weight: 600; color: var(--ink); }
+.card.open .who .handle { opacity: .75; }
 .who .when { font-family: var(--mono); font-size: 11.5px; color: var(--inkMute); margin-left: auto; }
 .card-content { font-size: 15px; color: var(--ink); word-wrap: break-word; }
 /* The content grammar's blocks — WEB_INTERFACE → Content. 8px between paragraphs,
@@ -339,6 +343,7 @@ header .spacer { flex: 1 1 auto; }
 }
 .bar-label:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: 2px; }
 .bar .name { font-weight: 600; color: var(--ink); font-size: 13px; flex: 0 0 auto; }
+.bar .handle { font-size: 13px; flex: 0 0 auto; }
 .bar .hex { font-family: var(--mono); font-size: 11px; flex: 0 0 auto; }
 .bar .excerpt {
   flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -430,6 +435,7 @@ header .spacer { flex: 1 1 auto; }
    height, the geometry price the motion contract asks (HOUSE_STYLE → Motion). */
 .karma-field { display: block; min-height: 22px; }
 .pp-field { display: block; }
+.username-field { display: block; }
 
 /* The empty state's line and its create / import buttons. */
 .pf-lead { font-size: 12.5px; color: var(--ink); margin-bottom: 12px; }

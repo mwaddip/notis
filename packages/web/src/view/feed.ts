@@ -92,7 +92,7 @@ export function renderFeedInto(container: HTMLElement, feed: FeedState, handlers
   // The client's own root submissions, newest first, above the node's rows.
   const locked = ctx.identity?.locked ?? false;
   for (const sub of [...ctx.submissionsFor(null)].reverse()) {
-    const post = submissionToPost(sub);
+    const post = submissionToPost(sub, ctx.ownName?.name ?? null);
     container.appendChild(card(post, { replyCount: null, flight: flightFor(sub, handlers.tryAgain), onOpen: (id) => handlers.openThread(id, { from: 'feed' }), you: isYou(sub.author, ctx), ...identityOpts(ctx, handlers), ...listCardOpts(post, { ...ctx, locked }, handlers) }));
   }
 

@@ -9,3 +9,6 @@ declare module 'node:fs' {
 declare module 'node:url' {
   export function fileURLToPath(url: URL | string): string;
 }
+declare module 'node:path' {
+  export function resolve(...paths: string[]): string;
+}

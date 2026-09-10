@@ -36,9 +36,9 @@ if (FAUCET_ORIGIN && !process.env['VITE_FAUCET_BASE']) {
 // same-origin — the node and nginx send no CORS
 // (WEB_INTERFACE → The client is served from the node's own origin). The read
 // routes (/posts, /status, /blocks) and the write surface's: /karma the spendable
-// view and /likes, plus /credits, /vouches and /invites whose builders arrive
-// with their interface.
-const API_PATHS = ['/posts', '/status', '/blocks', '/karma', '/credits', '/likes', '/vouches', '/invites'];
+// view and /likes, plus /credits, /vouches, /invites and /usernames whose builders
+// arrive with their interface.
+const API_PATHS = ['/posts', '/status', '/blocks', '/karma', '/credits', '/likes', '/vouches', '/invites', '/usernames'];
 
 // @dagsocial/types is written against Node — createHash and generateKeyPairSync
 // from `crypto`, and `Buffer` as a global it never imports. The browser has

@@ -179,8 +179,14 @@ export function createApp(config: Config): express.Express {
     const host = (req.headers['x-forwarded-host'] as string) ?? req.get('host') ?? 'localhost';
     const originalUri = req.get('x-original-uri');
 
+    // NODE_INTERFACE → Link previews
+    const held = store.getUsernameByOwner(result.author);
+    const title = held
+      ? `@${held.name} · Notis`
+      : `${authorHex.slice(0, 16)}… · Notis`;
+
     res.status(200).type('html').send(taggedShell(shellHtml, {
-      title: `${authorHex.slice(0, 16)}… · Notis`,
+      title,
       description: shellDescription(result.content),
       ogUrl: originalUri ? `${proto}://${host}${originalUri}` : null,
     }));

@@ -1,4 +1,4 @@
-import type { PostJson, WithdrawnJson, FeedRow, StatusResult, KarmaResult, VouchesTargetResult, BondsResult } from '../api/dto';
+import type { PostJson, WithdrawnJson, FeedRow, StatusResult, KarmaResult, VouchesTargetResult, BondsResult, UsernameResult } from '../api/dto';
 import type { Workspace, Origin } from './workspace';
 import type { Theme, IdTint } from '../prefs';
 import type { Flight } from '../view/card';
@@ -117,6 +117,14 @@ export interface RenderCtx {
   // transient flight; canSignWithdraw is the spendable view non-empty.
   withdrawState: (postId: string) => 'pending' | Flight | null;
   canSignWithdraw: boolean;
+  // The reader's own name (WEB_INTERFACE → The identity display).
+  ownName: UsernameResult | null;
+  ownNameLoaded: boolean;
+  // The username row (WEB_INTERFACE → The username row).
+  usernameFlight: Flight | null;
+  pendingUsername: { kind: 'claim' | 'burn'; name: string } | null;
+  canSignClaim: boolean;
+  canAffordBurn: boolean;
   // WEB_INTERFACE → Links
   linkUrl: (id: string) => string;
 }
@@ -127,6 +135,8 @@ export interface AuthorWindowData {
   endorsers: VouchesTargetResult | null;
   endorsersNext: boolean;
   flight: Flight | null;
+  username: UsernameResult | null;
+  usernameLoaded: boolean;
 }
 
 export interface Handlers {
@@ -178,6 +188,9 @@ export interface Handlers {
   moreEndorsers: (key: string) => void;            // the endorsers page's `more`, following next
   invite: (inviteeKey: string, bond: bigint) => void; // from the profile's invites row
   moreBonds: () => void;                           // the standing-bonds `more`, following next
+  // The username row (WEB_INTERFACE → The username row).
+  claimUsername: (name: string) => void;
+  burnUsername: () => void;
 }
 
 /** What the App calls on the identity module — the single reference it holds

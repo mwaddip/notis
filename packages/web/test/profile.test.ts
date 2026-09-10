@@ -1,9 +1,10 @@
 // @vitest-environment happy-dom
-import { describe, it, expect, beforeEach } from 'vitest';
-import { profileBody, renderInvitesRow, type ProfileHandlers, type ProfileCtx } from '../src/view/profile';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { profileBody, renderInvitesRow, renderUsernameRow, type ProfileHandlers, type ProfileCtx } from '../src/view/profile';
 import { karmaResult } from './karma-fixture';
 import { prefs } from '../src/prefs';
 import type { Origin } from '../src/model/workspace';
+import type { UsernameResult } from '../src/api/dto';
 
 const ORIGIN: Origin = { from: 'pane', ci: 0 };
 
@@ -35,6 +36,8 @@ function handlers(over: Partial<ProfileHandlers> = {}): ProfileHandlers {
     openAuthor: () => {},
     vouch: () => {},
     moreBonds: () => {},
+    claimUsername: () => {},
+    burnUsername: () => {},
     ...over,
   };
 }
@@ -42,7 +45,9 @@ function handlers(over: Partial<ProfileHandlers> = {}): ProfileHandlers {
 function ctx(over: Partial<ProfileCtx> = {}): ProfileCtx {
   return {
     arrangement: '', identity: null, backedUp: false, karma: null, grant: null, membershipBars: null,
-    invite: null, canAffordMinBond: false, bonds: null, inviteFlight: null, ...over,
+    invite: null, canAffordMinBond: false, bonds: null, inviteFlight: null,
+    ownName: null, ownNameLoaded: true, usernameFlight: null, pendingUsername: null, canSignClaim: false, canAffordBurn: false,
+    ...over,
   };
 }
 
@@ -369,5 +374,181 @@ describe('profile window — the karma field and the faucet step', () => {
     )!;
     expect(expired.textContent).toContain('5999');
     expect(button(expired, 'ask again')).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The username row (WEB_INTERFACE → The username row)
+// ---------------------------------------------------------------------------
+
+const HELD: UsernameResult = { name: 'Alice_01', owner: KEY, boxId: 'dd'.repeat(32), claimedAtBlock: 100 };
+
+describe('profile — the username row', () => {
+  it('the row sits between invites and passphrase', () => {
+    const b = render(handlers(), memberCtx());
+    const labels = [...b.querySelectorAll('.row label')].map((l) => l.textContent);
+    const inv = labels.indexOf('invites');
+    const un = labels.indexOf('username');
+    const pp = labels.indexOf('passphrase');
+    expect(un).toBeGreaterThan(inv);
+    expect(un).toBeLessThan(pp);
+  });
+
+  it('not read yet — muted dash', () => {
+    const f = rowField(render(handlers(), memberCtx({ ownNameLoaded: false })), 'username')!;
+    expect(f.textContent).toBe('—');
+  });
+
+  it('holding none, no karma box — the hint, no form', () => {
+    const f = rowField(render(handlers(), memberCtx({ canSignClaim: false })), 'username')!;
+    expect(f.textContent).toContain('a claim spends and returns one karma box');
+    expect(f.querySelector('form')).toBeNull();
+  });
+
+  it('holding none, can sign — the claim form with field, claim, hint', () => {
+    const f = rowField(render(handlers(), memberCtx({ canSignClaim: true })), 'username')!;
+    const form = f.querySelector('form') as HTMLFormElement;
+    expect(form).not.toBeNull();
+    const input = form.querySelector('input') as HTMLInputElement;
+    expect(input.getAttribute('aria-label')).toBe('the name to claim');
+    expect(input.maxLength).toBe(24);
+    expect(button(form, 'claim')).not.toBeNull();
+    expect(form.textContent).toContain('free, once per key');
+    expect(form.textContent).toContain('10 karma');
+  });
+
+  it('the claim form validates through isValidUsernameBytes and drops a leading @', () => {
+    const claimed: string[] = [];
+    const h = handlers({ claimUsername: (n) => claimed.push(n) });
+    const f = rowField(render(h, memberCtx({ canSignClaim: true })), 'username')!;
+    const form = f.querySelector('form') as HTMLFormElement;
+    const input = form.querySelector('input') as HTMLInputElement;
+
+    input.value = '  @ValidName  ';
+    form.dispatchEvent(new Event('submit'));
+    expect(claimed).toEqual(['ValidName']);
+
+    input.value = 'bad name!';
+    form.dispatchEvent(new Event('submit'));
+    const refusal = form.querySelector('.pf-refusal') as HTMLElement;
+    expect(refusal.hidden).toBe(false);
+    expect(refusal.textContent).toContain('1 to 24 letters, digits or _');
+  });
+
+  it('the claim form shows the unlock form when the identity is locked', () => {
+    const locked = { pubKeyHex: KEY, locked: true };
+    const f = rowField(render(handlers(), ctx({
+      identity: locked, karma: karmaResult({ userId: KEY, member: true }), canSignClaim: true,
+      ownNameLoaded: true,
+    })), 'username')!;
+    const form = f.querySelector('form') as HTMLFormElement;
+    const input = form.querySelector('input') as HTMLInputElement;
+    input.value = 'Test';
+    form.dispatchEvent(new Event('submit'));
+    expect(f.querySelector('.card-unlock')).not.toBeNull();
+  });
+
+  it('holding @Name — the handle, the burn word, the hint', () => {
+    const f = rowField(render(handlers(), memberCtx({ ownName: HELD, canAffordBurn: true })), 'username')!;
+    expect(f.querySelector('.handle')?.textContent).toBe('@Alice_01');
+    expect(button(f, 'burn')).not.toBeNull();
+    expect(f.textContent).toContain('held since block');
+    expect(f.textContent).toContain('100');
+  });
+
+  it('burn disabled when the price is not covered', () => {
+    const f = rowField(render(handlers(), memberCtx({ ownName: HELD, canAffordBurn: false })), 'username')!;
+    const b = button(f, 'burn') as HTMLButtonElement;
+    expect(b.disabled).toBe(true);
+    expect(b.title).toContain('less');
+  });
+
+  it('burn asks in place with burn · keep, focus on keep', () => {
+    const body = render(handlers(), memberCtx({ ownName: HELD, canAffordBurn: true }));
+    document.body.appendChild(body);
+    const f = rowField(body, 'username')!;
+    button(f, 'burn')!.click();
+    const confirm = f.querySelector('.pf-confirm') as HTMLElement;
+    expect(confirm).not.toBeNull();
+    expect(confirm.textContent).toContain('burn @Alice_01 for 10 karma');
+    expect(button(confirm, 'keep')).not.toBeNull();
+    expect(document.activeElement?.textContent).toBe('keep');
+    document.body.removeChild(body);
+  });
+
+  it('keep and Esc restore the line', () => {
+    const f = rowField(render(handlers(), memberCtx({ ownName: HELD, canAffordBurn: true })), 'username')!;
+    button(f, 'burn')!.click();
+    expect(f.querySelector('.pf-confirm')).not.toBeNull();
+    button(f, 'keep')!.click();
+    expect(f.querySelector('.pf-confirm')).toBeNull();
+    expect(f.querySelector('.handle')?.textContent).toBe('@Alice_01');
+  });
+
+  it('burn confirm shows unlock form when locked', () => {
+    const locked = { pubKeyHex: KEY, locked: true };
+    const f = rowField(render(handlers(), ctx({
+      identity: locked, karma: karmaResult({ userId: KEY, member: true }), ownName: HELD, canAffordBurn: true,
+      ownNameLoaded: true,
+    })), 'username')!;
+    button(f, 'burn')!.click();
+    const confirm = f.querySelector('.pf-confirm') as HTMLElement;
+    button(confirm, 'burn')!.click();
+    expect(f.querySelector('form')).not.toBeNull();
+  });
+
+  it('a pending claim — the muted handle and submitted', () => {
+    const f = rowField(render(handlers(), memberCtx({ pendingUsername: { kind: 'claim', name: 'Bob' } })), 'username')!;
+    const muted = f.querySelector('.handle.inkmute') as HTMLElement;
+    expect(muted?.textContent).toBe('@Bob');
+    expect(f.textContent).toContain('submitted');
+  });
+
+  it('a pending burn — the muted handle and submitted', () => {
+    const f = rowField(render(handlers(), memberCtx({
+      ownName: HELD, pendingUsername: { kind: 'burn', name: 'Alice_01' },
+    })), 'username')!;
+    expect(f.querySelector('.handle.inkmute')).not.toBeNull();
+    expect(f.textContent).toContain('submitted');
+  });
+
+  it('submitting — the muted handle and submitting…', () => {
+    const f = rowField(render(handlers(), memberCtx({
+      pendingUsername: { kind: 'claim', name: 'Test' },
+      usernameFlight: { stage: 'submitting' },
+    })), 'username')!;
+    expect(f.textContent).toContain('submitting');
+  });
+
+  it('a rejected flight shows the reason in the flight slot', () => {
+    const f = rowField(render(handlers(), memberCtx({
+      canSignClaim: true, usernameFlight: { stage: 'rejected', reason: 'claim rejected: that name is taken.' },
+    })), 'username')!;
+    expect(f.textContent).toContain('that name is taken.');
+    expect(f.querySelector('form')).not.toBeNull();
+  });
+
+  it('an expired flight shows try again', () => {
+    const onTry = vi.fn();
+    const f = rowField(render(handlers(), memberCtx({
+      canSignClaim: true, usernameFlight: { stage: 'expired', expiresAtHeight: 9000, onTryAgain: onTry },
+    })), 'username')!;
+    expect(f.textContent).toContain('9,000');
+    const tryBtn = button(f, 'try again');
+    expect(tryBtn).not.toBeNull();
+    tryBtn!.click();
+    expect(onTry).toHaveBeenCalledTimes(1);
+  });
+
+  it('renderUsernameRow updates the row in place', () => {
+    const h = handlers();
+    const c = memberCtx({ canSignClaim: true });
+    const b = render(h, c);
+    const f = rowField(b, 'username')!;
+    expect(f.querySelector('form')).not.toBeNull();
+    const c2 = memberCtx({ ownName: HELD, canAffordBurn: true });
+    renderUsernameRow(f, h, c2);
+    expect(f.querySelector('.handle')?.textContent).toBe('@Alice_01');
+    expect(f.querySelector('form')).toBeNull();
   });
 });

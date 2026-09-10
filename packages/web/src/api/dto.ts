@@ -159,6 +159,15 @@ export interface BondsResult {
   next: string | null;
 }
 
+/** `GET /usernames?owner=<key>` — the owner's held name, or 404 when none
+ *  (NODE_INTERFACE → Usernames). */
+export interface UsernameResult {
+  name: string;
+  owner: string;
+  boxId: string;
+  claimedAtBlock: number;
+}
+
 // ---------------------------------------------------------------------------
 // Discriminator — PostJson carries no `kind`; the withdrawn marker does.
 // ---------------------------------------------------------------------------

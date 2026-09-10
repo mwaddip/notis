@@ -10,7 +10,8 @@ unvouch, invite from the profile — the **author's own controls' first unit** �
 reader's own card — **content rendering** — the grammar a card renders from content, and the composer's
 `link` and `image` types — the **responsive workspace** — K visible columns from the width, one column on
 a phone, touch sizes by the pointer — and the **standalone thread** — a post's URL opening the thread alone,
-the way into the workspace, `link` on a card — are implemented
+the way into the workspace, `link` on a card — and the **username surface** — the claim and the burn from the
+`@profile` window, the handle `@Name` where a row carries a name — are implemented
 **Protocol version:** read from the node, never held — see Invariants
 
 
@@ -58,10 +59,10 @@ Every section and invariant below marked *(write surface)* belongs to this slice
 is the rest.
 
 **The slice is the identity machinery, the composer for a root and a reply, like, the membership
-actions — vouch, unvouch and invite — and withdraw, the author's own controls' first unit** — on
-transactions the browser builds and signs. The identity interface — the `@profile` window, its six operations and
-the faucet karma step — is stated below (→ The identity module, → The profile window, → The faucet
-step).
+actions — vouch, unvouch and invite — withdraw, the author's own controls' first unit, and the username
+surface — a name's claim and burn** — on transactions the browser builds and signs. The identity interface — the
+`@profile` window, its six operations and the faucet karma step — is stated below (→ The identity module, → The
+profile window, → The faucet step); the name's row is its own section (→ The username row).
 
 **With no identity loaded, the client is the read surface exactly.** No `new post`, no `↩ reply`, no
 `like`, no `viewer` parameter. The way in is `create` or `import` in the `@profile` window (→ The
@@ -316,7 +317,8 @@ mounts in the card; a visitor who wants a profile presses the way in and finds i
 root — the one window becomes that id, fetched if it is not loaded, the body rendered — and pushes a history
 entry naming it, so the URL always names the thread on screen, back returns to the previous root, and back
 from the first root leaves the page to wherever the link was followed from. `document.title` is the author's
-prefix and `Notis` once the thread lands, and on every re-root; the workspace's stays `Notis`.
+handle when the root row carries a name, else the prefix, and `Notis` once the thread lands, and on every re-root;
+the workspace's stays `Notis`.
 
 ## The way into the workspace
 
@@ -541,7 +543,8 @@ key's entries and cannot try to spend its predicted change; a reload that forgot
 re-spend a box the node holds pending and receive a 409 for a failure the reader never saw. **An
 identity change rebuilds the ledger for the new key at once** (→ The identity module, `onChange`).
 
-**Builders exist for a post, a like, a vouch, an unvouch, an invite and a withdrawal, and nothing else.** A root
+**Builders exist for a post, a like, a vouch, an unvouch, an invite, a withdrawal, a claim and a burn, and nothing
+else.** A root
 post: change and a `karma_price` of `POST_PRICE_THREAD`. A reply: change, a `karma_price` of
 `POST_PRICE_REPLY − REPLY_AUTHOR_SHARE`, and a `like_accrual` of `REPLY_AUTHOR_SHARE` to the parent's
 **`confirmedAuthor`** from `GET /posts/:id` — never the row's `author`, which is a claim rather than the
@@ -556,8 +559,14 @@ the cooldown runs from the cast); no karma input and no change. An invite: chang
 the amount the reader chose inside `/status`'s `inviteBondMin`–`inviteBondMax`, `inviterId` the reader's
 key, `inviteePublicKey` the pasted key. A withdrawal: one karma input — the smallest spendable box, so a
 pending withdrawal ties up the least — and one karma output of its value to the reader's key,
-`postWithdraw` naming the post; the returned box is the entry's `change` (→ The withdraw control). Zero
-change is no box (`TYPES_INTERFACE → Box value domain`).
+`postWithdraw` naming the post; the returned box is the entry's `change` (→ The withdraw control). A claim: the
+smallest spendable box in — it spends and returns one box, so the smallest ties up the least — one karma output
+of its value to the reader's key at index 0, the entry's `change`, and one `username` box of `value: 0n`, `owner`
+the reader's key, `name` the bytes as typed (`TYPES_INTERFACE → UsernameBox`); an empty view is a client refusal,
+since the transaction needs one box to spend. A burn: karma covering `USERNAME_BURN_PRICE` and the reader's
+`username` box in — the box resolved **at the press** from `GET /usernames?owner=`, never from a render — the karma
+change at index 0 when any, and one `karma_price` of exactly `USERNAME_BURN_PRICE`
+(`NODE_INTERFACE → Username transition rules`). Zero change is no box (`TYPES_INTERFACE → Box value domain`).
 Every builder is frozen against vectors held as constants in `builders.test.ts`; a change that moves
 one is a wire change.
 
@@ -579,6 +588,9 @@ by the next block's settlement and its cooldown row can stand for a single block
 (`NODE_INTERFACE → Vouch transition rules`); a pending invite when `GET /invites/<key>` lists a bond
 naming the invitee; a pending withdrawal when `GET /posts/:id` answers a tombstone — the withdrawn
 marker (`NODE_INTERFACE → The withdrawal phase`), and expired at once on a 404 — each expired once the tip passes its `expiresAtHeight`.
+A pending claim is landed when `GET /usernames?owner=<key>` answers the name, a pending burn when it no longer
+does — one read per reconcile while either stands, as the bonds are read once for an invite — each expired once
+the tip passes its `expiresAtHeight`; the answer is the reader's own name (→ The username row).
 
 **The reader's vouch set is client state read from the node, never stored:** `GET /vouches?voucher=<key>`
 to the end of `next` at identity load, again on every vouch or unvouch landing, and the cooldown arm
@@ -615,6 +627,7 @@ key          the whole 64 hex, mono, selectable
 standing     resident · member · root — the node's word
 karma        the balance that spends, or the faucet step
 invites      K available · the invite form · the reader's standing bonds
+username     @Name · burn  /  the claim form  /  the flight — → The username row
 passphrase   locked · unlock  /  unlocked · lock
 export · forget — each a form in place (import is offered only with no identity loaded)
 ────
@@ -697,10 +710,64 @@ motion contract asks of pending state (`HOUSE_STYLE → Motion`).
 — never bounded by a guess: a grant with no expiry would run the poll for ever, which the motion
 contract forbids. The faucet relays the field (`NODE_INTERFACE → Faucet`).
 
+### The username row *(username surface)*
+
+**A name is claimed and burned from the profile window, in one row between `invites` and `passphrase`** — three
+slots, line, form and flight, updated in place as the invites row is, so a landing moves text and colour in a
+fixed row and never the window (`HOUSE_STYLE → Motion`). What the row shows follows the reader's own name, read
+from `GET /usernames?owner=<key>` at identity load, on the profile's `↻`, and on every reconcile while a claim
+or burn stands (→ The wallet); a 404 is *holding none*, and a read not yet answered is `—`.
+
+- **Holding none, nothing pending, a karma box to spend:** the claim form — a real `<form>`: one text field
+  (*the name to claim*, `maxlength` 24, no autocomplete, no autocapitalise, no spellcheck), the word `claim`,
+  one refusal line, and under it *free, once per key. 1 to 24 letters, digits or _, shown as typed; one name is
+  one name whatever its case. a later burn costs N karma and restores the claim.* — `N` is
+  `USERNAME_BURN_PRICE` from `@dagsocial/types`. The value is trimmed and one leading `@` dropped, since `@` is the
+  written form and never the name (`ARCHITECTURE → Usernames`), and refused with *a name is 1 to 24 letters,
+  digits or _.* unless `isValidUsernameBytes` accepts its UTF-8 bytes — the one implementation of the rule,
+  never a copy and never an HTML `pattern` (`TYPES_INTERFACE → Content limits`). A locked identity mounts the
+  unlock form in a row under the form, and success continues (→ The identity module). The client looks no
+  name up before the attempt: a claim costs nothing but the transaction, and its refusal is one sentence.
+- **Holding none and no karma box:** one line — *a claim spends and returns one karma box; this key has none.*
+  — the gate the withdraw control reads (→ The withdraw control); no form.
+- **A claim or a burn pending** — the ledger's entry, durable across a reload: the pending handle in `inkMute`
+  and the stage line `submitted` in the flight slot, `submitting…` while the press is in flight; no control.
+- **Holding `@Name`:** the handle, the word `burn`, and *held since block N. a burn costs N karma and restores
+  your free claim.* `burn` is disabled with the reason as its `title` — *a burn costs N karma; this key has
+  less* — while `effective` is under `USERNAME_BURN_PRICE`, the invite gate's shape; the node's refusal is the
+  truth for everything else. The press asks in place, as `forget` does — *burn @Name for N karma? the name is
+  open to anyone again, and your free claim returns.* with `burn` and `keep`, focus on `keep`, Esc and `keep`
+  restoring the word — and the question's `burn` signs, the unlock form in the question's place first when the
+  identity is locked. The name and its box are resolved at the press (→ The wallet).
+
+**The flight ends in the row.** A rejection reads *claim rejected:* or *burn rejected:* and the node's refusal
+as a sentence — *that name is taken.*, *this key already holds a name.*, *that name is not 1 to 24 letters,
+digits or _.*, *a claim for that name is already pending.*, *this key already has a claim pending.*, *that name
+is not held any more.*, *the node's pool is full right now.*, *can't reach the node right now.*, else the node's
+message lowercased — and the form or the word returns (`HOUSE_STYLE → Voice`). A landing re-renders the row and
+the header (→ The identity display) and nothing else. An expiry reads *no block took this by height N.* with
+`try again`, which rebuilds from the current view with the same name; the entry is removed and the box returns
+to the view.
+
 ### The identity display *(membership actions)*
 
-**Wherever an identity is shown it is the key prefix in mono, then `· you` on the reader's own** — cards
-in the feed and in panes, a title bar, an endorser row and a bond row, the author window's subject line. The
+**Wherever an identity is shown it is the handle `@Name` where the row carries the name, else the key prefix in
+mono, then `· you` on the reader's own** — cards in the feed and in panes, a title bar, an endorser row and a bond
+row, the author window's subject line. **The handle** is `@` and the name as the node carries it — as typed at
+the claim, never lowercased, never shortened: a shortened name is a different name, so on a bar the excerpt
+yields — in the page's proportional face at weight 600 in `ink`, class `handle`, never mono
+(`HOUSE_STYLE → Typography`: a name is what a person reads aloud); on an open card it fades as the prefix does. A hex-looking
+name is legal and reads as a handle by its `@`, its face and its ink, where a prefix is mono and muted. **Where
+the prefix is a control the handle is the same control** — the who row's button, its label and its handler,
+only its text and its face changed. The rows that carry a name: a card's who row from its row's `authorName`,
+a thread's bar from its root row, the standalone page's title (→ The standalone thread), the reader's own
+submission cards from the reader's own name, the header's profile control and the standalone header's display
+from the reader's own name, and the author window's bars and `name` row from its subject's (→ The author
+window). **An endorser row and a bond row keep the prefix**: their rows carry no name. **A row fetched before a
+landing keeps what it fetched** — the reader's own claim or burn landing re-renders the header and the profile
+row and nothing else (`HOUSE_STYLE → Motion`); the feed's ↻ brings newer posts and leaves the rows on screen as
+they are, a thread's ↻ re-reads its rows, and a reload re-reads everything (→ What the feed reads, and what a
+card shows for it). The
 prefix is `shortHex(key, 16)` on a card and the whole key in a window. **No mark rides beside it**: a vouch
 is cast and read in the author window alone (→ The author window), so a card reads the same with or without
 an identity loaded — the prefix, `· you` on the reader's own, the date. The count a reader sees is the
@@ -727,11 +794,13 @@ coarse pointer a 36px hit box by padding a negative margin absorbs.
 
 **`@author:<64hex>`** — an `@`-window like `@profile`, opened from an identity's prefix by the placement
 rule every window follows, raised rather than duplicated, persisted in the arrangement (`isWindowId`
-accepts the prefix with 64 hex). The bar reads `author · <prefix>` and carries no spine. `↻` is live and
-re-reads `/karma/:key` and the endorsers page. Rows:
+accepts the prefix with 64 hex). The bar reads `author · <prefix>` — `author · @Name` when the subject holds a
+name (→ The identity display) — and carries no spine. `↻` is live and re-reads `/karma/:key`, the endorsers page
+and the subject's name (`GET /usernames?owner=`). Rows:
 
 ```
 key          the whole key, mono
+name         @Name · no name — loading… before the read
 standing     root · member since block N · resident, with the progress line the profile shows
 endorsers    N vouches, then one row per voucher — their identity, following next
 your vouch   vouch · vouched since block N · unvouch — or the one-line reason the reader cannot
@@ -757,7 +826,7 @@ feed, the author window takes the first column and the posts the next), raised w
 Its body is `GET /posts?author=<key>` — the author's committed posts, newest first, following `next` —
 as feed cards: the strip, the prefix, `· you`, the like count and word and the copy glyph by the feed card's rules
 (→ What the feed reads, and what a card shows for it), and no reply, which lives in the pane the strip
-opens. `↻` reports what it did — `4 new posts` / `no new posts`. The bar reads `posts · <prefix>`, no spine.
+opens. `↻` reports what it did — `4 new posts` / `no new posts`. The bar reads `posts · <prefix>` — `posts · @Name` when the author holds a name — no spine.
 
 ### The withdraw control *(author's own controls)*
 
@@ -818,6 +887,9 @@ one is: the client records no entry it cannot track.
 | Invite | `POST /invites` — `{ tx }` → `{ status, txId, expiresAtHeight, bondBoxId }` | *(membership actions)* |
 | The reader's vouches, cooldowns and standing bonds; an identity's endorsers and count | `GET /vouches?voucher=`, `GET /vouches?voucher=&cooldowns=1`, `GET /invites/:userId`, `GET /vouches?target=` | *(membership actions)* — reads, in the read client |
 | Withdraw | `POST /posts/:id/withdraw` — `{ tx }` → `{ status, txId, postId, expiresAtHeight }` | *(author's own controls)* |
+| Claim a name | `POST /usernames` — `{ tx }` → `{ status, txId, expiresAtHeight, name }` | *(username surface)* |
+| Burn a name | `POST /usernames/:name/burn` — `{ tx }` → `{ status, txId, expiresAtHeight }` | *(username surface)* |
+| The reader's own name; an author's name | `GET /usernames?owner=` — 404 is *no name* | *(username surface)* — a read, in the read client |
 
 **The write client is its own module beside the read client.** The read client issues `GET` requests
 and nothing else, and that stays literally checkable; the writes live next door, and a `viewer`
@@ -853,11 +925,9 @@ client that expects to announce itself first is built against an endpoint that d
   identity (→ The identity module). *(identity interface)*
 - **Every read carries the viewer's key once an identity is loaded, and none does before.** *(write
   surface)*
-- **The mark is never a word and never carries a colour** — its state is glyph and ink weight, and its
-  `title` is a count or a reason (→ The identity display). *(membership actions)*
 - **A consensus constant is imported; a per-network number is read.** `POST_PRICE_THREAD`,
-  `POST_PRICE_REPLY`, `REPLY_AUTHOR_SHARE` and `LIKE_KARMA_COST` are consensus and ruled
-  (`CONSTANTS → Post price and likes`) and come from `@dagsocial/types`; what `/status` serves
+  `POST_PRICE_REPLY`, `REPLY_AUTHOR_SHARE`, `LIKE_KARMA_COST` and `USERNAME_BURN_PRICE` are consensus and ruled
+  (`CONSTANTS → Post price and likes`, `CONSTANTS → Usernames`) and come from `@dagsocial/types`; what `/status` serves
   differs per network and is never held. *(write surface)*
 - **Affordability is known before the attempt.** Opening a composer reads the spendable view once; a
   price it cannot cover disables `post` and says so, so the reader never spends a rejection to learn
