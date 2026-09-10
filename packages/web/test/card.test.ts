@@ -1,9 +1,13 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { card, submissionToPost } from '../src/view/card';
 import type { PostJson } from '../src/api/dto';
 import type { Flight } from '../src/view/card';
 import { contentHashHex } from '../src/integrity';
+
+const appCss = readFileSync(resolve(process.cwd(), 'src/style/app.css'), 'utf8');
 
 // The stage line's copy — two stages then one of three endings. The endings say
 // what happened, never a status code (HOUSE_STYLE → Voice).
@@ -302,6 +306,20 @@ describe('card — the handle where a row carries a name', () => {
     expect(p.authorName).toBe('MyName');
     const pNone = submissionToPost(sub);
     expect(pNone.authorName).toBeNull();
+  });
+
+  it('the .who .handle button computes font-weight 600 and ink under the stylesheet', () => {
+    const style = document.createElement('style');
+    style.textContent = appCss;
+    document.head.appendChild(style);
+    const c = card({ ...confirmed('bb'.repeat(32)), authorName: 'Test' }, { onAuthor: () => {} });
+    document.body.appendChild(c);
+    const btn = c.querySelector('.who .handle.authorbtn') as HTMLElement;
+    const s = window.getComputedStyle(btn);
+    expect(s.fontWeight).toBe('600');
+    expect(s.color).toBe('#2A2419');
+    document.body.removeChild(c);
+    document.head.removeChild(style);
   });
 });
 
