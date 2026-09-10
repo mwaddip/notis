@@ -130,7 +130,7 @@ export interface KarmaResult {
 /** `GET /vouches?target=<key>` — who vouches for this identity, and the count over
  *  the whole set whatever the page size (NODE_INTERFACE → Vouches). */
 export interface VouchesTargetResult {
-  vouches: { voucherId: string; targetId: string }[];
+  vouches: { voucherId: string; targetId: string; voucherName: string | null; targetName: string | null }[];
   count: number;
   next: string | null;
 }
@@ -138,7 +138,7 @@ export interface VouchesTargetResult {
 /** `GET /vouches?voucher=<key>` — the reader's own vouches, the one arm carrying
  *  `boxId` and `value`, so an unvouch can name the box it spends. */
 export interface VouchesVoucherResult {
-  vouches: { boxId: string; value: string; createdAtBlock: number; voucherId: string; targetId: string }[];
+  vouches: { boxId: string; value: string; createdAtBlock: number; voucherId: string; targetId: string; voucherName: string | null; targetName: string | null }[];
   count: number;
   next: string | null;
 }
@@ -154,7 +154,7 @@ export interface VouchCooldownsResult {
 /** `GET /invites/<key>` — the inviter's standing bonds (NODE_INTERFACE → UTXO
  *  queries). No settle height: no view serves one. */
 export interface BondsResult {
-  bonds: { id: string; value: string; inviterId: string; inviteePublicKey: string }[];
+  bonds: { id: string; value: string; inviterId: string; inviteePublicKey: string; inviterName: string | null; inviteeName: string | null }[];
   bondCount: number;
   next: string | null;
 }

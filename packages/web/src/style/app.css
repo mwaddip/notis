@@ -466,11 +466,12 @@ header .spacer { flex: 1 1 auto; }
   text-align: inherit; color: inherit; cursor: pointer;
 }
 /* An endorser row (author window) and a standing-bond row (profile) carry no
-   `.who`, so they give the prefix the card who row's face directly — mono,
-   11.5px, inkMute (WEB_INTERFACE → The identity display). This precedes the hover
-   so the hover's `ink` wins the equal-specificity (0,2,0) tie in the two rows,
-   exactly as `.who .hex` above lets it on a card. */
+   `.who`, so they give the prefix or the handle its face directly — mono 11.5px
+   inkMute for the prefix, proportional 13px 600 ink for the handle
+   (WEB_INTERFACE → The identity display). Both at (0,2,0), preceding the hover
+   so the hover's `ink` wins on the prefix by the source-order tie. */
 .endorser .hex, .bond .hex { font-family: var(--mono); font-size: 11.5px; color: var(--inkMute); }
+.endorser .handle, .bond .handle { font-size: 13px; font-weight: 600; color: var(--ink); }
 /* The hover darkens the ink to `ink` wherever the prefix is a control — the card
    who row, an endorser row, a bond row — and nothing else. It follows every
    context's `.hex` colour rule so its `ink` wins the (0,2,0) tie

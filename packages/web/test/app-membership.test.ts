@@ -68,7 +68,7 @@ function fakeApi(): Api {
     karma: async (key) => memberKarma(key),
     vouchesByTarget: async (key): Promise<VouchesTargetResult> => {
       targetReads.push(key);
-      return { vouches: [{ voucherId: V1, targetId: key }], count: 3, next: null };
+      return { vouches: [{ voucherId: V1, targetId: key, voucherName: null, targetName: null }], count: 3, next: null };
     },
     vouchesByVoucher: async (): Promise<VouchesVoucherResult> => ({ vouches: vouchSet, count: vouchSet.length, next: null }),
     vouchCooldowns: async (): Promise<VouchCooldownsResult> => ({ cooldowns, count: cooldowns.length, next: null }),
@@ -211,7 +211,7 @@ describe('vouch through the author window', () => {
     await flush();
     await h.drive.vouch(X);
     await flush();
-    vouchSet = [{ boxId: '22'.repeat(32), value: '1', createdAtBlock: 100, voucherId: ME, targetId: X }];
+    vouchSet = [{ boxId: '22'.repeat(32), value: '1', createdAtBlock: 100, voucherId: ME, targetId: X, voucherName: null, targetName: null }];
     blockHeight = 101;
     await h.drive.pollTick();
     await flush();
@@ -252,7 +252,7 @@ describe('the author window', () => {
 
   it('no display mark on the bar', async () => {
     const h = harness();
-    vouchSet = [{ boxId: '22'.repeat(32), value: '1', createdAtBlock: 50, voucherId: ME, targetId: X }];
+    vouchSet = [{ boxId: '22'.repeat(32), value: '1', createdAtBlock: 50, voucherId: ME, targetId: X, voucherName: null, targetName: null }];
     await h.drive.loadFeed();
     await h.drive.loadMembershipState();
     await flush();
@@ -263,7 +263,7 @@ describe('the author window', () => {
 
   it('an unvouch flight lands with an escrow — the your-vouch row reads the held reason', async () => {
     const h = harness();
-    vouchSet = [{ boxId: '22'.repeat(32), value: '1', createdAtBlock: 50, voucherId: ME, targetId: X }];
+    vouchSet = [{ boxId: '22'.repeat(32), value: '1', createdAtBlock: 50, voucherId: ME, targetId: X, voucherName: null, targetName: null }];
     await h.drive.loadFeed();
     await h.drive.loadMembershipState();
     await flush();
@@ -287,7 +287,7 @@ describe('an identity change', () => {
     await h.drive.loadFeed();
     await h.drive.loadMembershipState();
     await flush();
-    vouchSet = [{ boxId: '22'.repeat(32), value: '1', createdAtBlock: 100, voucherId: ME, targetId: X }];
+    vouchSet = [{ boxId: '22'.repeat(32), value: '1', createdAtBlock: 100, voucherId: ME, targetId: X, voucherName: null, targetName: null }];
     await h.drive.loadMembershipState();
     await flush();
     expect(h.drive.vouched.has(X)).toBe(true);

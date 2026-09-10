@@ -132,15 +132,34 @@ describe('profile window — the invites row', () => {
     const opened: string[] = [];
     const h = handlers({ openAuthor: (k) => opened.push(k) });
     const c = memberCtx({
-      bonds: { bonds: [{ id: 'b1', value: '100', inviterId: KEY, inviteePublicKey: INVITEE }], bondCount: 1, next: 'cursor' },
+      bonds: { bonds: [{ id: 'b1', value: '100', inviterId: KEY, inviteePublicKey: INVITEE, inviterName: null, inviteeName: null }], bondCount: 1, next: 'cursor' },
     });
     const field = rowField(render(h, c), 'invites')!;
     const bondRow = field.querySelector('.bond')!;
     expect(bondRow.textContent).toContain('100 karma');
     expect(bondRow.querySelector('.vmark')).toBeNull();
-    (bondRow.querySelector('.authorbtn') as HTMLElement).click();
+    const btn = bondRow.querySelector('.authorbtn') as HTMLElement;
+    expect(btn.classList.contains('hex')).toBe(true);
+    btn.click();
     expect(opened).toEqual([INVITEE]);
     expect(button(field, 'more')).not.toBeNull();
+  });
+
+  it('the standing bond shows the handle @Name when inviteeName is set, the same control', () => {
+    const opened: string[] = [];
+    const h = handlers({ openAuthor: (k) => opened.push(k) });
+    const c = memberCtx({
+      bonds: { bonds: [{ id: 'b1', value: '100', inviterId: KEY, inviteePublicKey: INVITEE, inviterName: null, inviteeName: 'Bob' }], bondCount: 1, next: null },
+    });
+    const field = rowField(render(h, c), 'invites')!;
+    const bondRow = field.querySelector('.bond')!;
+    const btn = bondRow.querySelector('.authorbtn') as HTMLElement;
+    expect(btn.textContent).toBe('@Bob');
+    expect(btn.classList.contains('handle')).toBe(true);
+    expect(btn.classList.contains('hex')).toBe(false);
+    expect(btn.getAttribute('aria-label')).toBe('open this author');
+    btn.click();
+    expect(opened).toEqual([INVITEE]);
   });
 
   it('the invite flight shows its stage line in the row', () => {
@@ -156,7 +175,7 @@ describe('profile window — the invites row', () => {
     // An invite lands: fewer available, a new bond — updated in place.
     const landed = memberCtx({
       karma: karmaResult({ userId: KEY, member: true, invitesAvailable: 1 }),
-      bonds: { bonds: [{ id: 'b1', value: '100', inviterId: KEY, inviteePublicKey: INVITEE }], bondCount: 1, next: null },
+      bonds: { bonds: [{ id: 'b1', value: '100', inviterId: KEY, inviteePublicKey: INVITEE, inviterName: null, inviteeName: null }], bondCount: 1, next: null },
     });
     renderInvitesRow(field, handlers(), landed, ORIGIN);
     // The same form element, its value intact — an unsolicited landing moves no form.
