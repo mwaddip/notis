@@ -21,6 +21,8 @@ let effective: string;
 let heldName: UsernameResult | null;
 let claimResp: (() => ClaimSubmitResult | Rejection) | null;
 let burnResp: (() => BurnSubmitResult | Rejection) | null;
+let claimDefer: { resolve: (v: ClaimSubmitResult | Rejection) => void } | null;
+let burnDefer: { resolve: (v: BurnSubmitResult | Rejection) => void } | null;
 const signCalls: string[] = [];
 const last = (): string => signCalls[signCalls.length - 1]!;
 
@@ -63,8 +65,14 @@ function fakeApi(): Api {
 
 function fakeWrite(): WriteClient {
   return {
-    submitClaim: async () => claimResp ? claimResp() : ({ status: 'pending', txId: last(), expiresAtHeight: blockHeight + 720, name: 'Test' }),
-    submitBurn: async () => burnResp ? burnResp() : ({ status: 'pending', txId: last(), expiresAtHeight: blockHeight + 720 }),
+    submitClaim: async () => {
+      if (claimDefer) return new Promise<ClaimSubmitResult | Rejection>((r) => { claimDefer = { resolve: r }; });
+      return claimResp ? claimResp() : ({ status: 'pending', txId: last(), expiresAtHeight: blockHeight + 720, name: 'Test' });
+    },
+    submitBurn: async () => {
+      if (burnDefer) return new Promise<BurnSubmitResult | Rejection>((r) => { burnDefer = { resolve: r }; });
+      return burnResp ? burnResp() : ({ status: 'pending', txId: last(), expiresAtHeight: blockHeight + 720 });
+    },
   } as unknown as WriteClient;
 }
 
@@ -107,6 +115,8 @@ function harness() {
   heldName = null;
   claimResp = null;
   burnResp = null;
+  claimDefer = null;
+  burnDefer = null;
 
   const app = new App(fakeApi(), fakeWrite(), fakeIdentity());
   const appbar = document.createElement('div');
@@ -206,5 +216,41 @@ describe('identity change', () => {
     await flush();
     expect(h.drive.ownName).toBeNull();
     expect(h.drive.ownNameLoaded).toBe(false);
+  });
+});
+
+describe('in-flight state — no double submit', () => {
+  it('a claim in flight carries the subject so pendingUsername is not null', async () => {
+    const h = harness();
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    claimDefer = { resolve: () => {} };
+    const p = h.drive.claimUsername('Test');
+    await flush();
+    expect((h.drive as unknown as { usernameInFlight: unknown }).usernameInFlight).toEqual({ kind: 'claim', name: 'Test' });
+    expect(h.drive.usernameFlight?.stage).toBe('submitting');
+    // Release the write
+    claimDefer!.resolve({ status: 'pending', txId: last(), expiresAtHeight: blockHeight + 720, name: 'Test' } as ClaimSubmitResult);
+    await p;
+    await flush();
+    expect((h.drive as unknown as { usernameInFlight: unknown }).usernameInFlight).toBeNull();
+  });
+
+  it('a burn in flight carries the subject so pendingUsername is not null', async () => {
+    const h = harness();
+    heldName = { name: 'Alice', owner: ME, boxId: '55'.repeat(32), claimedAtBlock: 50 };
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    await flush();
+    burnDefer = { resolve: () => {} };
+    const p = h.drive.burnUsername();
+    await flush();
+    expect((h.drive as unknown as { usernameInFlight: unknown }).usernameInFlight).toEqual({ kind: 'burn', name: 'Alice' });
+    expect(h.drive.usernameFlight?.stage).toBe('submitting');
+    // Release the write
+    burnDefer!.resolve({ status: 'pending', txId: last(), expiresAtHeight: blockHeight + 720 } as BurnSubmitResult);
+    await p;
+    await flush();
+    expect((h.drive as unknown as { usernameInFlight: unknown }).usernameInFlight).toBeNull();
   });
 });

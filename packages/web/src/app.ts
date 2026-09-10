@@ -211,6 +211,7 @@ export class App {
   private ownName: UsernameResult | null = null;
   private ownNameLoaded = false;
   private usernameFlight: Flight | null = null;
+  private usernameInFlight: { kind: 'claim' | 'burn'; name: string } | null = null;
 
   // Every dependency is injectable so a test can drive the App over fakes.
   constructor(client?: Api, writeClient?: WriteClient, identity?: AppIdentity, ledger?: PendingLedger, tabs?: Tabs) {
@@ -469,7 +470,7 @@ export class App {
       ownName: this.ownName,
       ownNameLoaded: this.ownNameLoaded,
       usernameFlight: this.usernameFlight,
-      pendingUsername: pendingUsernameEntry(this.ledger.all()),
+      pendingUsername: this.usernameInFlight ?? pendingUsernameEntry(this.ledger.all()),
       canSignClaim: this.canSignWithdraw(), // same predicate — a spendable box
       canAffordBurn: this.canAffordBurn(),
       linkUrl: (id) => new URL(this.base + 'p/' + id, location.href).href,
@@ -1321,6 +1322,7 @@ export class App {
     this.ownName = null;
     this.ownNameLoaded = false;
     this.usernameFlight = null;
+    this.usernameInFlight = null;
     this.ledger = new PendingLedger(this.idm.current()?.pubKeyHex ?? null);
     this.startPoll(); // the new key's restored ledger may hold entries; guarded on empty
     this.renderHeader();
@@ -2027,16 +2029,19 @@ export class App {
   private async claimUsername(name: string): Promise<void> {
     const cur = this.idm.current();
     if (cur === null) return;
+    this.usernameInFlight = { kind: 'claim', name };
     this.usernameFlight = { stage: 'submitting' };
     this.renderUsernameRowInPlace();
     let result;
     try {
       result = await submitClaimFlow(this.submitDeps(), name);
     } catch {
+      this.usernameInFlight = null;
       this.usernameFlight = { stage: 'rejected', reason: "claim rejected: can't reach the node right now." };
       this.renderUsernameRowInPlace();
       return;
     }
+    this.usernameInFlight = null;
     if (result.ok) {
       this.usernameFlight = null;
       this.startPoll();
@@ -2049,16 +2054,21 @@ export class App {
   private async burnUsername(): Promise<void> {
     const cur = this.idm.current();
     if (cur === null) return;
+    const name = this.ownName?.name;
+    if (!name) return;
+    this.usernameInFlight = { kind: 'burn', name };
     this.usernameFlight = { stage: 'submitting' };
     this.renderUsernameRowInPlace();
     let result;
     try {
       result = await submitBurnFlow(this.submitDeps());
     } catch {
+      this.usernameInFlight = null;
       this.usernameFlight = { stage: 'rejected', reason: "burn rejected: can't reach the node right now." };
       this.renderUsernameRowInPlace();
       return;
     }
+    this.usernameInFlight = null;
     if (result.ok) {
       this.usernameFlight = null;
       this.startPoll();

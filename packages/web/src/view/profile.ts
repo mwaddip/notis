@@ -735,7 +735,9 @@ function burnConfirm(line: HTMLElement, handlers: ProfileHandlers, ctx: ProfileC
     handlers.burnUsername();
   });
   const keep = el('button', 'word', 'keep') as HTMLButtonElement;
+  const onEscape = (e: KeyboardEvent): void => { if (e.key === 'Escape') restore(); };
   const restore = (): void => {
+    line.removeEventListener('keydown', onEscape);
     line.replaceChildren(...saved);
     burnBtn.focus();
   };
@@ -745,9 +747,7 @@ function burnConfirm(line: HTMLElement, handlers: ProfileHandlers, ctx: ProfileC
   line.replaceChildren(wrap);
   keep.focus();
 
-  line.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') restore();
-  });
+  line.addEventListener('keydown', onEscape);
 }
 
 // ---------------------------------------------------------------------------
