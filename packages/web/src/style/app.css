@@ -533,6 +533,15 @@ header .spacer { flex: 1 1 auto; }
   .empty { display: none; }
 }
 
+/* At a phone's narrowest (360 CSS px with the strip) the prefix, · you and the
+   date overflow to two lines. Tightening the gap and stepping the date face down
+   one size holds all three on one row — the prefix length and date text unchanged
+   (WEB_INTERFACE → The identity display). */
+@media (max-width: 389px) {
+  .who { gap: 4px; }
+  .who .when { font-size: 10px; }
+}
+
 /* Hover applies only where hover exists — every hover rule sits in this block, so
    a tap never leaves a control stuck in its hover look on a device that cannot
    hover (WEB_INTERFACE → The workspace, HOUSE_STYLE → Interaction). */
