@@ -464,7 +464,7 @@ Not preachy. The visual register avoids the manifesto; the copy has to as well.
 ## Where the artwork lives
 
 **Output is tracked; the pipeline that makes it is not.** A surface commits the artwork it
-serves — the inlined mark sprite, `favicon.svg`, the font files — and the build script, the
+serves — the inlined mark, `favicon.svg`, the font files — and the build script, the
 traced letterform and the parametric source stay outside version control with whoever holds
 them. This was a decision (2026-08-10), taken after the docs site landed; it was listed as
 undecided in earlier drafts of this contract.
