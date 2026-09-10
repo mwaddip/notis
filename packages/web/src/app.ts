@@ -1,5 +1,5 @@
 import { NodeClient, type Api } from './api/client';
-import type { PostJson, WithdrawnJson, FeedRow, PostResult, ThreadResult, KarmaResult, BondsResult } from './api/dto';
+import type { PostJson, WithdrawnJson, FeedRow, PostResult, ThreadResult, KarmaResult, BondsResult, UsernameResult } from './api/dto';
 import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE } from '@dagsocial/types';
 import type { Mode } from './mode';
 import type { Tabs } from './tabs';
@@ -190,6 +190,8 @@ export class App {
   // standing bonds and the invite flight.
   private bondsView: BondsResult | null = null;
   private inviteFlight: Flight | null = null;
+  // The reader's own name (WEB_INTERFACE → The identity display).
+  private ownName: UsernameResult | null = null;
 
   // Every dependency is injectable so a test can drive the App over fakes.
   constructor(client?: Api, writeClient?: WriteClient, identity?: AppIdentity, ledger?: PendingLedger, tabs?: Tabs) {
@@ -443,6 +445,7 @@ export class App {
       inviteFlight: this.inviteFlight,
       withdrawState: (postId) => this.withdrawState(postId),
       canSignWithdraw: this.canSignWithdraw(),
+      ownName: this.ownName,
       linkUrl: (id) => new URL(this.base + 'p/' + id, location.href).href,
     };
   }
@@ -1793,7 +1796,7 @@ export class App {
   // ---- the author window and the author-posts window ----
 
   private ensureAuthorData(key: string): string {
-    if (!this.authorData.has(key)) this.authorData.set(key, { karma: null, endorsers: null, endorsersNext: false, flight: null });
+    if (!this.authorData.has(key)) this.authorData.set(key, { karma: null, endorsers: null, endorsersNext: false, flight: null, username: null, usernameLoaded: false });
     return key;
   }
 

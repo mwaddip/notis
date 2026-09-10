@@ -3,7 +3,7 @@ import { unlockForm } from './passphrase';
 import { card, stageLine, listCardOpts } from './card';
 import { standing } from './profile';
 import type { Flight } from './card';
-import type { KarmaResult, VouchesTargetResult, PostJson } from '../api/dto';
+import type { KarmaResult, VouchesTargetResult, UsernameResult, PostJson } from '../api/dto';
 import type { FeedState } from '../model/state';
 import type { Origin } from '../model/workspace';
 
@@ -45,6 +45,8 @@ export interface AuthorCtx {
   locked: boolean;
   yourVouch: YourVouch | null;
   flight: Flight | null;                // the your-vouch stage line while a flight runs
+  username: UsernameResult | null;
+  usernameLoaded: boolean;
 }
 
 export interface AuthorHandlers {
@@ -81,6 +83,20 @@ export function authorBody(handlers: AuthorHandlers, ctx: AuthorCtx): HTMLElemen
   {
     const { row: r, field } = row('key');
     field.appendChild(mono(ctx.authorKey));
+    b.appendChild(r);
+  }
+
+  // name — @Name when held, `no name` muted when not, loading… before the read
+  // (WEB_INTERFACE → The author window).
+  {
+    const { row: r, field } = row('name');
+    if (!ctx.usernameLoaded) {
+      field.appendChild(el('span', 'inkmute', 'loading…'));
+    } else if (ctx.username) {
+      field.appendChild(el('span', 'handle', '@' + ctx.username.name));
+    } else {
+      field.appendChild(el('span', 'inkmute', 'no name'));
+    }
     b.appendChild(r);
   }
 

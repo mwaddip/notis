@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi } from 'vitest';
-import { card } from '../src/view/card';
+import { card, submissionToPost } from '../src/view/card';
 import type { PostJson } from '../src/api/dto';
 import type { Flight } from '../src/view/card';
 import { contentHashHex } from '../src/integrity';
@@ -264,6 +264,45 @@ describe('card — the author prefix and a locked vouch', () => {
     expect(btn.tagName).toBe('SPAN');
   });
 
+});
+
+describe('card — the handle where a row carries a name', () => {
+  const AUTHOR = 'bb'.repeat(32);
+  const named = (name: string): PostJson => ({ ...confirmed(AUTHOR), authorName: name });
+
+  it('the who row shows the handle @Name as a .handle button when onAuthor is present', () => {
+    const opened: string[] = [];
+    const c = card(named('Alice'), { onAuthor: (k) => opened.push(k) });
+    const btn = c.querySelector('.who .handle') as HTMLElement;
+    expect(btn.tagName).toBe('BUTTON');
+    expect(btn.textContent).toBe('@Alice');
+    expect(btn.classList.contains('authorbtn')).toBe(true);
+    expect(btn.getAttribute('aria-label')).toBe('open this author');
+    btn.click();
+    expect(opened).toEqual([AUTHOR]);
+  });
+
+  it('the who row shows the handle as a .handle span when no onAuthor', () => {
+    const c = card(named('Bob'));
+    const span = c.querySelector('.who .handle') as HTMLElement;
+    expect(span.tagName).toBe('SPAN');
+    expect(span.textContent).toBe('@Bob');
+    expect(c.querySelector('.who .hex')).toBeNull();
+  });
+
+  it('no authorName falls back to the hex prefix', () => {
+    const c = card(confirmed(AUTHOR), { onAuthor: () => {} });
+    expect(c.querySelector('.who .hex')).not.toBeNull();
+    expect(c.querySelector('.who .handle')).toBeNull();
+  });
+
+  it('the submission card carries the reader\'s own name when passed', () => {
+    const sub = { localKey: 'lk', content: 'hi', parentId: null, author: PUB, contentHash: contentHashHex('hi'), stage: 'submitting' as const, txId: null, postId: null, blockHeight: null, expiresAtHeight: null, reason: null };
+    const p = submissionToPost(sub, 'MyName');
+    expect(p.authorName).toBe('MyName');
+    const pNone = submissionToPost(sub);
+    expect(pNone.authorName).toBeNull();
+  });
 });
 
 describe('card — the withdraw control', () => {

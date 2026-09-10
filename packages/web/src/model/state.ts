@@ -1,4 +1,4 @@
-import type { PostJson, WithdrawnJson, FeedRow, StatusResult, KarmaResult, VouchesTargetResult, BondsResult } from '../api/dto';
+import type { PostJson, WithdrawnJson, FeedRow, StatusResult, KarmaResult, VouchesTargetResult, BondsResult, UsernameResult } from '../api/dto';
 import type { Workspace, Origin } from './workspace';
 import type { Theme, IdTint } from '../prefs';
 import type { Flight } from '../view/card';
@@ -117,6 +117,8 @@ export interface RenderCtx {
   // transient flight; canSignWithdraw is the spendable view non-empty.
   withdrawState: (postId: string) => 'pending' | Flight | null;
   canSignWithdraw: boolean;
+  // The reader's own name (WEB_INTERFACE → The identity display).
+  ownName: UsernameResult | null;
   // WEB_INTERFACE → Links
   linkUrl: (id: string) => string;
 }
@@ -127,6 +129,8 @@ export interface AuthorWindowData {
   endorsers: VouchesTargetResult | null;
   endorsersNext: boolean;
   flight: Flight | null;
+  username: UsernameResult | null;
+  usernameLoaded: boolean;
 }
 
 export interface Handlers {

@@ -12,11 +12,11 @@ import { contentHashHex } from '../src/integrity';
 const HEX = (c: string): string => c.repeat(64);
 const P1 = HEX('a'), P2 = HEX('b'), R1 = HEX('1'), R2 = HEX('2');
 
-function post(id: string, content: string, parents: string[] = []): PostJson {
+function post(id: string, content: string, parents: string[] = [], name: string | null = null): PostJson {
   return {
     id, content, contentHash: contentHashHex(content), author: HEX('7'), parentRefs: parents,
     protocolVersion: 1, type: 'regular', status: 'confirmed',
-    blockHeight: 1, blockIndex: 0, blockCreatedAt: 0, likeCount: 0, descendantCount: 1, authorName: null, likedByViewer: null,
+    blockHeight: 1, blockIndex: 0, blockCreatedAt: 0, likeCount: 0, descendantCount: 1, authorName: name, likedByViewer: null,
   };
 }
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
@@ -110,6 +110,53 @@ describe('the header carries the arrows at every width', () => {
     expect(arrows[0]!.getAttribute('aria-label')).toMatch(/show the (feed|column to the left)/);
     expect(arrows[1]!.textContent).toBe('›');
     expect(arrows[1]!.getAttribute('aria-label')).toBe('show the column to the right');
+  });
+});
+
+describe('the bar carries the handle where the root row carries a name', () => {
+  it('the thread bar shows @Name when the root has authorName, else the hex prefix', async () => {
+    const namedPost = post(P1, 'named root', [], 'Alice');
+    const unnamedPost = post(P2, 'unnamed root');
+    const namedFeed: FeedResult = { posts: [namedPost, unnamedPost], next: null, pending: [], pendingCount: 0 };
+    const namedThread: ThreadResult = {
+      post: namedPost, ancestors: [], ancestorCount: 0,
+      descendants: [], descendantCount: 0,
+      next: null, pending: [], pendingCount: 0,
+    };
+    const unnamedThread: ThreadResult = {
+      post: unnamedPost, ancestors: [], ancestorCount: 0,
+      descendants: [], descendantCount: 0,
+      next: null, pending: [], pendingCount: 0,
+    };
+    const api: Api = {
+      ...fakeApi(),
+      feed: async () => namedFeed,
+      thread: async (id) => (id === P1 ? namedThread : id === P2 ? unnamedThread : null),
+    };
+    document.body.innerHTML = '';
+    const appbar = document.createElement('header');
+    const workspace = document.createElement('div'); workspace.className = 'workspace';
+    const feed = document.createElement('section'); feed.id = 'feed';
+    const panes = document.createElement('section'); panes.id = 'panes';
+    workspace.append(feed, panes);
+    document.body.append(appbar, workspace);
+    const app = new App(api);
+    app.mount(appbar, feed, panes);
+    const drive = app as unknown as { loadFeed(): Promise<void>; openThread(id: string, origin: { from: 'feed' }): void };
+    await drive.loadFeed();
+    await flush();
+    drive.openThread(P1, { from: 'feed' });
+    await flush();
+    const bar1 = panes.querySelector('.bar .bar-label .handle');
+    expect(bar1).not.toBeNull();
+    expect(bar1!.textContent).toBe('@Alice');
+
+    drive.openThread(P2, { from: 'pane', ci: 0 } as any);
+    await flush();
+    const bars = panes.querySelectorAll('.bar');
+    const bar2Label = bars[bars.length - 1]!.querySelector('.bar-label');
+    expect(bar2Label!.querySelector('.handle')).toBeNull();
+    expect(bar2Label!.querySelector('.hex')).not.toBeNull();
   });
 });
 

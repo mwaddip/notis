@@ -46,6 +46,8 @@ function baseCtx(over: Partial<AuthorCtx> = {}): AuthorCtx {
     locked: false,
     yourVouch: { kind: 'plus', cooldownBlocks: 60 },
     flight: null,
+    username: null,
+    usernameLoaded: true,
     ...over,
   };
 }
@@ -55,7 +57,7 @@ describe('the author window', () => {
     const h = noHandlers();
     const b = authorBody(h, baseCtx({ writeEnabled: false, ownKey: null, yourVouch: null }));
     const labels = [...b.querySelectorAll('.row > label')].map((l) => l.textContent);
-    expect(labels).toEqual(['key', 'standing', 'endorsers', 'posts']);
+    expect(labels).toEqual(['key', 'name', 'standing', 'endorsers', 'posts']);
     expect(b.querySelector('.vmark')).toBeNull();
     expect(b.querySelector('.row .mono')?.textContent).toBe(AUTHOR);
   });
@@ -146,6 +148,28 @@ describe('the author window', () => {
     const b = authorBody(h, baseCtx({ endorsers: { vouches: [], count: 0, next: null } }));
     const endorsersField = [...b.querySelectorAll('.row')].find((r) => r.querySelector('label')?.textContent === 'endorsers')!;
     expect(endorsersField.textContent).toContain('no vouches yet');
+  });
+
+  it('the name row: loading… before the read, @Name when held, no name when not', () => {
+    const h = noHandlers();
+    const loading = authorBody(h, baseCtx({ usernameLoaded: false }));
+    const nameRow = (b: HTMLElement): Element => [...b.querySelectorAll('.row')].find((r) => r.querySelector('label')?.textContent === 'name')!;
+    expect(nameRow(loading).textContent).toContain('loading…');
+
+    const held = authorBody(h, baseCtx({ username: { name: 'Alice', owner: AUTHOR, boxId: 'x', claimedAtBlock: 100 } }));
+    expect(nameRow(held).querySelector('.handle')?.textContent).toBe('@Alice');
+
+    const none = authorBody(h, baseCtx({ username: null }));
+    expect(nameRow(none).textContent).toContain('no name');
+  });
+
+  it('the name row sits between key and standing', () => {
+    const h = noHandlers();
+    const b = authorBody(h, baseCtx());
+    const labels = [...b.querySelectorAll('.row > label')].map((l) => l.textContent);
+    expect(labels[0]).toBe('key');
+    expect(labels[1]).toBe('name');
+    expect(labels[2]).toBe('standing');
   });
 
   it('a locked vouch mounts the unlock under the your-vouch row, then vouches', async () => {

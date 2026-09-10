@@ -37,6 +37,7 @@ function ctlBtn(glyph: string, label: string, fn: (() => void) | null, disabled?
 
 interface BarLabel {
   authorKey: string | undefined;
+  authorName: string | null;
   excerpt: string;
   replyCount: number;
   nested: boolean;
@@ -46,13 +47,14 @@ function threadLabel(k: string, ctx: RenderCtx): BarLabel {
   const t = ctx.thread(k);
   const root = t?.root;
   if (!t || t.loading || !root) {
-    return { authorKey: ctx.post(k)?.author, excerpt: t?.error ? 'unavailable' : 'loading…', replyCount: 0, nested: false };
+    const p = ctx.post(k);
+    return { authorKey: p?.author, authorName: p?.authorName ?? null, excerpt: t?.error ? 'unavailable' : 'loading…', replyCount: 0, nested: false };
   }
   const nested = [...t.ancestorIds].some((a) => a !== k && ctx.openSet.has(a));
   if (isWithdrawn(root)) {
-    return { authorKey: root.author, excerpt: 'withdrawn', replyCount: 0, nested };
+    return { authorKey: root.author, authorName: root.authorName, excerpt: 'withdrawn', replyCount: 0, nested };
   }
-  return { authorKey: root.author, excerpt: root.content ?? 'content not on this node yet', replyCount: t.descendantCount, nested };
+  return { authorKey: root.author, authorName: root.authorName, excerpt: root.content ?? 'content not on this node yet', replyCount: t.descendantCount, nested };
 }
 
 function bar(k: string, ci: number, focused: boolean, lone: boolean, handlers: Handlers, ctx: RenderCtx): HTMLElement {
@@ -65,11 +67,16 @@ function bar(k: string, ci: number, focused: boolean, lone: boolean, handlers: H
 
   const sub = windowSubject(k);
   if (sub) {
-    // An author or posts window — the kind, the prefix in mono
-    // (WEB_INTERFACE → The identity display). ↻ refreshes it.
+    // An author or posts window — the kind, then the handle when the subject
+    // holds a name, else the prefix in mono (WEB_INTERFACE → The identity display).
     label.setAttribute('aria-label', 'show this window');
     label.appendChild(el('span', 'name', sub.kind === 'author' ? 'author' : 'posts'));
-    label.appendChild(el('span', 'hex', shortHex(sub.key, 10)));
+    const subName = ctx.author.get(sub.key)?.username;
+    if (subName) {
+      label.appendChild(el('span', 'handle', '@' + subName.name));
+    } else {
+      label.appendChild(el('span', 'hex', shortHex(sub.key, 10)));
+    }
     ctl.appendChild(
       ctlBtn('↻', sub.kind === 'author' ? 'refresh this author' : 'refresh these posts', () =>
         sub.kind === 'author' ? handlers.refreshAuthor(sub.key) : handlers.refreshAuthorPosts(sub.key),
@@ -87,7 +94,11 @@ function bar(k: string, ci: number, focused: boolean, lone: boolean, handlers: H
     // is still loading if the feed already knows the author.
     if (m.authorKey) b.style.setProperty('--idh', String(identityHue(m.authorKey)));
     label.setAttribute('aria-label', 'show this thread');
-    label.appendChild(el('span', 'hex', shortHex(m.authorKey ?? k, 10)));
+    if (m.authorName !== null) {
+      label.appendChild(el('span', 'handle', '@' + m.authorName));
+    } else {
+      label.appendChild(el('span', 'hex', shortHex(m.authorKey ?? k, 10)));
+    }
     label.appendChild(el('span', 'excerpt', m.excerpt));
     if (m.nested) label.appendChild(el('span', 'nested', '↳ nested'));
     if (m.replyCount > 0) label.appendChild(el('span', 'n', String(m.replyCount)));
@@ -164,6 +175,8 @@ function authorCtxFrom(key: string, ci: number, ctx: RenderCtx): AuthorCtx {
     locked: ctx.identity?.locked ?? false,
     yourVouch: ctx.yourVouch(key),
     flight: d?.flight ?? null,
+    username: d?.username ?? null,
+    usernameLoaded: d?.usernameLoaded ?? false,
   };
 }
 
@@ -232,7 +245,7 @@ function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handl
     for (const sub of ctx.submissionsFor(row.id)) {
       const landed = sub.stage === 'landed' && sub.postId !== null;
       body.appendChild(
-        card(submissionToPost(sub), {
+        card(submissionToPost(sub, ctx.ownName?.name ?? null), {
           depth: Math.min(node.depth + 1, 3),
           replyCount: null,
           flight: flightFor(sub, handlers.tryAgain),
