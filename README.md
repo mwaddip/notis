@@ -380,20 +380,21 @@ until something serves the client beside it.
 `bash packages/web/scripts/build-release.sh`. Inside, `web/` is the bundle, `nginx.example.conf` a
 complete vhost excerpt, and `README.txt` the serving note.
 
-**The deployment is three tags in the head of `web/index.html`**, and the release ships them set
+**The deployment is four values in the head of `web/index.html`**, and the release ships them set
 for notis.fun's layout:
 
 ```html
 <base href="/web/">
 <meta name="notis-api" content="/testnet/api">
 <meta name="notis-faucet" content="/testnet/faucet">
+<meta property="og:image" content="https://notis.fun/web/og.png">
 ```
 
 They name the path the client is served under (opening and closing with `/`), the API's path on the
-same origin, and the faucet's — empty for no faucet and no faucet button. A host with another
-layout edits those three values and nothing else: every reference in the bundle is relative to the
-base. A reader can still point their own browser at another node or faucet from the profile window's
-preferences.
+same origin, the faucet's — empty for no faucet and no faucet button — and the preview picture's
+absolute URL (`<origin><base>og.png`). A host with another layout edits those four values and nothing
+else: every reference in the bundle is relative to the base. A reader can still point their own
+browser at another node or faucet from the profile window's preferences.
 
 Serve `web/` as static files with no SPA fallback — a path that is not a file is a 404. The one path
 the client owns beyond its files is a post's standalone page, `<base>p/<post id>`, which opens that
@@ -407,8 +408,8 @@ thread alone. Two ways to serve it:
   opens; the link carries no preview.
 
 `packages/web/deploy/nginx.example.conf` is the vhost excerpt with both variants, the API and
-faucet proxies included. Building by hand, the same three values are written by `VITE_WEB_BASE`,
-`VITE_API_BASE` and `VITE_FAUCET_BASE` at `npx vite build` in `packages/web`. In development none
+faucet proxies included. Building by hand, the same four values are written by `VITE_PUBLIC_ORIGIN`,
+`VITE_WEB_BASE`, `VITE_API_BASE` and `VITE_FAUCET_BASE` at `npx vite build` in `packages/web`. In development none
 of this is needed: `pnpm --filter @dagsocial/web dev` proxies the API and serves the shell for
 `/p/<id>` on its own (`NOTIS_NODE` and `NOTIS_FAUCET` point the proxy at a node and a faucet).
 

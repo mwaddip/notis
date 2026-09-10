@@ -37,6 +37,7 @@ if (FAUCET_ORIGIN && !process.env['VITE_FAUCET_BASE']) {
 if (!process.env['VITE_WEB_BASE']) process.env['VITE_WEB_BASE'] = '/';
 if (!process.env['VITE_API_BASE']) process.env['VITE_API_BASE'] = '';
 if (!process.env['VITE_FAUCET_BASE']) process.env['VITE_FAUCET_BASE'] = '';
+if (!process.env['VITE_PUBLIC_ORIGIN']) process.env['VITE_PUBLIC_ORIGIN'] = '';
 
 // The API paths mounted bare on the node, proxied so the browser sees them
 // same-origin — the node and nginx send no CORS

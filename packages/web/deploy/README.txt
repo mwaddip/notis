@@ -11,7 +11,7 @@ share one origin; nginx.example.conf shows one way to front both.
 Configuring for your layout
 ---------------------------
 
-Three values in web/index.html control where the client looks:
+Four values in web/index.html control where the client looks:
 
   <base href="/web/">
     The path the client's own files are served under,
@@ -23,7 +23,10 @@ Three values in web/index.html control where the client looks:
   <meta name="notis-faucet" content="/testnet/faucet">
     The faucet's path, or empty for no faucet button.
 
-The defaults match notis.fun's layout. Edit all three for another.
+  <meta property="og:image" content="https://notis.fun/web/og.png">
+    The picture's absolute URL, <origin><base>og.png.
+
+The defaults match notis.fun's layout. Edit all four for another.
 
 
 The standalone page

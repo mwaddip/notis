@@ -28,6 +28,37 @@ describe('shell deploy tags', () => {
   });
 });
 
+describe('shell preview tags', () => {
+  const PREVIEW_TAGS = [
+    '<meta name="description"',
+    '<meta property="og:type" content="website">',
+    '<meta property="og:site_name" content="Notis">',
+    '<meta property="og:title" content="Notis">',
+    '<meta property="og:description"',
+    '<meta property="og:image" content="%VITE_PUBLIC_ORIGIN%%VITE_WEB_BASE%og.png">',
+    '<meta property="og:image:type" content="image/png">',
+    '<meta property="og:image:width" content="1200">',
+    '<meta property="og:image:height" content="630">',
+    '<meta property="og:image:alt" content="The Notis mark">',
+    '<meta name="twitter:card" content="summary_large_image">',
+  ];
+  for (const tag of PREVIEW_TAGS) {
+    it(`carries ${tag.slice(0, 40)}…`, () => {
+      expect(html).toContain(tag);
+    });
+  }
+  it('the og:image content composes from origin and base placeholders', () => {
+    expect(html).toContain('content="%VITE_PUBLIC_ORIGIN%%VITE_WEB_BASE%og.png"');
+  });
+  it('each preview tag appears exactly once', () => {
+    for (const tag of PREVIEW_TAGS) {
+      const first = html.indexOf(tag);
+      expect(first).toBeGreaterThan(-1);
+      expect(html.indexOf(tag, first + 1)).toBe(-1);
+    }
+  });
+});
+
 describe('shell sprite removed', () => {
   it('notis-sprite is absent from the shell', () => {
     expect(html).not.toContain('notis-sprite');
