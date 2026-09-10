@@ -88,16 +88,22 @@ interface ShellTags {
   ogUrl: string | null;
 }
 
-// NODE_INTERFACE → Link previews, "A tagged answer replaces the shell's own
+// NODE_INTERFACE → Link previews → "A tagged answer replaces the shell's own
 // preview tags": before the post's tags go in, every og:, twitter: and
 // description the shell carries are removed.
 function stripShellPreviewTags(html: string): string {
   return html
-    .replace(/<meta\s+property="og:[^"]*"[^>]*>\s*/gi, '')
-    .replace(/<meta\s+name="twitter:[^"]*"[^>]*>\s*/gi, '')
-    .replace(/<meta\s+name="description"[^>]*>\s*/gi, '');
+    .replace(/<meta\b[^>]*\bproperty="og:[^"]*"[^>]*>\s*/gi, '')
+    .replace(/<meta\b[^>]*\bname="twitter:[^"]*"[^>]*>\s*/gi, '')
+    .replace(/<meta\b[^>]*\bname="description"[^>]*>\s*/gi, '');
 }
 
+/**
+ * NODE_INTERFACE → Link previews: strips the shell's own preview tags,
+ * replaces `<title>Notis</title>`, and injects `og:title`, `description`,
+ * `og:description`, `og:type` article, `og:site_name` Notis and
+ * `twitter:card` summary before `</head>`; `og:url` only when set.
+ */
 function taggedShell(shellHtml: string, tags: ShellTags): string {
   const title = escapeHtml(tags.title);
   const description = escapeHtml(tags.description);

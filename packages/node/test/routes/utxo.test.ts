@@ -75,6 +75,8 @@ async function request(
       getUsername: () => null,
       getUsernameByOwner,
       getUtxoEngineDeps: () => ({
+        // The pending view, as server.ts wires the submission routes: a grant
+        // spending the change box of one still pooled resolves its input here.
         getBox: getBoxWithPending,
         insertBox,
         consumeBox,
@@ -373,6 +375,18 @@ describe('UTXO routes', () => {
     const bond = (body.bonds as Record<string, unknown>[])[0]!;
     expect(bond.inviterName).toBe('Inviter');
     expect(bond.inviteeName).toBeNull();
+
+    putUsername({
+      nameLower: 'invitee',
+      name: 'Invitee',
+      owner: 'bb'.repeat(32),
+      boxId: 'ee'.repeat(32),
+      claimedAtBlock: 2,
+    });
+    const res2 = await request(`/invites/${inviteUserIdHex}`);
+    const bond2 = ((res2.data as Record<string, unknown>).bonds as Record<string, unknown>[])[0]!;
+    expect(bond2.inviterName).toBe('Inviter');
+    expect(bond2.inviteeName).toBe('Invitee');
   });
 
   it('GET /invites/:userId answers { bonds: [], bondCount: 0, next: null } for an inviter with no live bond', async () => {

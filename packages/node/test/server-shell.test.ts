@@ -26,6 +26,7 @@ describe('GET /shell/:id', () => {
     '<meta property="og:image:height" content="630">',
     '<meta property="og:image:alt" content="The Notis mark">',
     '<meta name="twitter:card" content="summary_large_image">',
+    '<meta content="Notis social" property="og:title:alt">',
   ].join('\n');
   const SHELL_HTML = `<!doctype html><html><head><title>Notis</title>\n${SITE_BLOCK}\n</head><body></body></html>`;
 
@@ -157,11 +158,12 @@ describe('GET /shell/:id', () => {
       expect(html).toContain('<meta property="og:type" content="article">');
       expect(html).toContain('<meta property="og:site_name" content="Notis">');
       expect(html).toContain('<meta name="twitter:card" content="summary">');
-      // NODE_INTERFACE → Link previews, "A tagged answer replaces the shell's
+      // NODE_INTERFACE → Link previews → "A tagged answer replaces the shell's
       // own preview tags": no og:image, no site values, one of each tag.
       expect(html).not.toContain('og:image');
       expect(html).not.toContain('Reputation not for sale');
       expect(html).not.toContain('summary_large_image');
+      expect(html).not.toContain('og:title:alt');
       expect(html.match(/og:title/g)).toHaveLength(1);
       expect(html.match(/og:description/g)).toHaveLength(1);
       expect(html.match(/name="description"/g)).toHaveLength(1);

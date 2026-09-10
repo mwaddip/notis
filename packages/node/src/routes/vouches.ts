@@ -155,7 +155,7 @@ export function createRouter(deps: VouchesDeps): Router {
       const result = getVouchesForTargetPage(targetBytes, {
         limit, after: after as string | undefined,
       });
-      // NODE_INTERFACE → Usernames, "A list row carries its names"
+      // NODE_INTERFACE → Usernames → "A list row carries its names"
       const names = new Map<string, string | null>();
       res.status(200).json({
         vouches: result.rows.map((v) => {
@@ -183,14 +183,19 @@ export function createRouter(deps: VouchesDeps): Router {
       const result = getVouchesForVoucherPage(voucherBytes, {
         limit, after: after as string | undefined,
       });
-      // NODE_INTERFACE → Usernames, "A list row carries its names"
+      // NODE_INTERFACE → Usernames → "A list row carries its names"
       const names = new Map<string, string | null>();
       res.status(200).json({
         vouches: result.rows.map((v) => {
           const voucherHex = Buffer.from(v.voucherId).toString('hex');
           const targetHex = Buffer.from(v.targetId).toString('hex');
           return {
+            // The VouchBox's id; an unvouch spends a named box and this arm
+            // is the read surface that names it (NODE_INTERFACE → Vouches).
             boxId: v.id!,
+            // ⛔ **The stake, because the escrow must carry the CONSUMED BOX's
+            // value and never `VOUCH_KARMA_AMOUNT`** (TYPES_INTERFACE →
+            // VouchEscrowBox).
             value: v.value.toString(),
             createdAtBlock: v.createdAtBlock,
             voucherId: voucherHex,

@@ -1,12 +1,12 @@
-// NODE_INTERFACE → Usernames, "A list row carries its names": one keyed read
+// NODE_INTERFACE → Usernames → "A list row carries its names": one keyed read
 // per distinct identity per response.
 
-type UsernameLookup = (owner: string) => { name: string } | null;
+type NameByOwner = (owner: string) => { name: string } | null;
 
 export function nameFor(
   hex: string,
   cache: Map<string, string | null>,
-  getUsernameByOwner: UsernameLookup,
+  getUsernameByOwner: NameByOwner,
 ): string | null {
   const cached = cache.get(hex);
   if (cached !== undefined) return cached;

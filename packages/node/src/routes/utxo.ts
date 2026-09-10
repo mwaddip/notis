@@ -191,7 +191,7 @@ export function createRouter(deps: UtxoDeps): Router {
       limit, after: after as string | undefined,
     });
 
-    // NODE_INTERFACE → Usernames, "A list row carries its names"
+    // NODE_INTERFACE → Usernames → "A list row carries its names"
     const names = new Map<string, string | null>();
     res.json({
       bonds: pageResult.rows.map((b) => {

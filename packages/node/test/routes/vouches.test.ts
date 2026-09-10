@@ -401,6 +401,10 @@ describe('vouch routes — the JSON edge', () => {
     expect(body.count).toBe(1);
     expect(body.vouches[0]).toEqual({
       boxId: vouchBox.id,
+      // ⛔ **The stake, because an unvouch's escrow must carry the CONSUMED
+      // BOX'S value and never `VOUCH_KARMA_AMOUNT`** (TYPES_INTERFACE →
+      // VouchEscrowBox). Without it the client has to reach for the constant,
+      // which is right only by coincidence of the cast pin.
       value: vouchBox.value.toString(),
       createdAtBlock: vouchBox.createdAtBlock,
       voucherId: voucher.hex,
@@ -436,7 +440,7 @@ describe('vouch routes — the JSON edge', () => {
   });
 
   // -------------------------------------------------------------------------
-  // NODE_INTERFACE → Usernames, "A list row carries its names"
+  // NODE_INTERFACE → Usernames → "A list row carries its names"
   // -------------------------------------------------------------------------
 
   it('target arm: a named voucher and a nameless voucher', async () => {
