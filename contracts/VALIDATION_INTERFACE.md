@@ -818,7 +818,9 @@ verifyTxStructure(tx: UtxoTransaction): { valid: boolean; error?: string }
 ```
 
 Checks: `tx` is an object, `inputs` is a non-empty array, `outputs` is a
-non-empty array, **no output is a `genesis_proof` box**, no duplicate inputs,
+non-empty array, **no output is a `genesis_proof` box**, **every `username` output's `name` is
+1–`USERNAME_MAX_BYTES` bytes of `[A-Za-z0-9_]`** (→ "A `username` output's name is typed here"), no
+duplicate inputs,
 `protocolVersion` is a number, **when `post` is present, `verifyPostCommitDomains(tx.post)`**
 — the commit's domain established before `postFieldBytes` can run inside `computeTxId`, and
 **no content check, because the transaction carries no content** — and **the encoded
@@ -895,6 +897,22 @@ a PoW rejection; enforced in node alone, such a transaction relays mesh-wide for
 free and dies at mempool with nobody scored. Neither placement is a consensus
 difference — the difference is amplification. The search is keyed on the name and
 would miss a caller reaching this function under another one.
+
+#### A `username` output's name is typed here
+
+A `username` box (`TYPES_INTERFACE` → UsernameBox) carries `name` as bytes. This check refuses an
+output whose `name` is empty, longer than `USERNAME_MAX_BYTES`, or holds any byte outside
+`[A-Za-z0-9_]`, with `username name invalid`. It reads the candidate output and nothing else, which is
+what makes it this package's — the argument that placed the `genesis_proof` rule above, and the same
+peer-scoring reason: a malformed name refused in the gossip validator costs its sender the structural
+penalty and relays nowhere. Uniqueness, the free claim and the holder's state are `@dagsocial/node`'s
+(`NODE_INTERFACE` → Username transition rules); this package holds no state and cannot judge them.
+
+**The length is refused twice, and the two are not redundant.** The codec's `lp` reader stops at
+`USERNAME_MAX_BYTES` before it reads a byte of content (`TYPES_INTERFACE` → Layout — Boxes), so an
+over-long name in wire bytes never becomes a candidate; this check is the one an already-built
+candidate meets — a JSON-edge transaction, a test's object — and the alphabet has no codec twin at all.
+The constant is imported from `@dagsocial/types` as every constant this package enforces is.
 
 #### This package states no `genesis_proof` payload bound
 

@@ -31,7 +31,8 @@ CREATE TABLE mempool (
     tx_fee INTEGER, tx_bytes INTEGER,           -- fee-class metadata (§Eviction)
     max_valid_height INTEGER,                   -- utxo_tx only: validity ceiling, NULL = none (§Validity ceiling)
     tx_inputs TEXT, tx_output_ids TEXT,         -- conflict-gate metadata
-    tx_id TEXT                                  -- the entry's own TxId (confirmed-entry cleanup)
+    tx_id TEXT,                                 -- the entry's own TxId (confirmed-entry cleanup)
+    username_lower TEXT, username_claimant TEXT -- claim-gate metadata (below)
 );
 
 CREATE INDEX IF NOT EXISTS idx_mempool_tx_id ON mempool(tx_id) WHERE tx_id IS NOT NULL;
@@ -87,6 +88,8 @@ Nullable, populated by `insertUtxoTx` from the transaction outputs, indexed
 | `like_liker` | `likeTarget` set AND `tx.signatures` has exactly one key | that key (hex). **Any other key count → NULL** — an unpaired row matches no `hasPendingLike` query. First-key-wins was rejected: a spare signature could pin a victim's `(liker, target)` pair and DoS their like at the gateway |
 | `invite_inviter` | a `bond` output | `inviterId` (hex) — **the bond is what names an inviter**, one transaction per invite |
 | `vouch_voucher` | a `vouch` output | `voucherId` (hex) |
+| `username_lower` | a `username` output — a claim | the name's canonical form, the byte-wise ASCII lowercase (`TYPES_INTERFACE` → Content limits) |
+| `username_claimant` | a `username` output — a claim | its `owner` (hex) |
 
 ---
 
@@ -128,13 +131,18 @@ refuses those — so the path should never trip it, and it is defended anyway.
 hasPendingLike(targetPostId: string, likerId: string): boolean
 countPendingInvites(inviterId: string): number
 hasPendingVouch(voucherId: string, targetId: string): boolean
+hasPendingClaim(nameLower: string): boolean
+hasPendingClaimBy(claimantId: string): boolean
 ```
 
 SQL `EXISTS`/`COUNT` over the gate-metadata columns — never a bounded scan.
 These gates see every row regardless of pool size. Hex parameters compare
 against the columns exactly as stored. `hasPendingVouch` is keyed on the pair: it mirrors one
 live vouch per `(voucher, target)` (`NODE_INTERFACE` → Vouch transition rules), and a voucher's
-other pending casts are no reason to refuse one.
+other pending casts are no reason to refuse one. `hasPendingClaim` mirrors one live name per canonical
+form and `hasPendingClaimBy` one name per identity (`NODE_INTERFACE` → Username transition rules). **A
+burn needs no gate of its own**: it spends the name box, and a second spend of that box is the
+pending-spend conflict every transaction meets.
 
 ### getPendingEntries
 

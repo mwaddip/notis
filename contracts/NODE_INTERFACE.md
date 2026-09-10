@@ -117,9 +117,9 @@ web client's builder vectors are constants that read no file (`WEB_INTERFACE →
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
 | `POST` | `/posts` | `{ tx: UtxoTransaction, content: string }` — client-built, client-signed post tx with `tx.post` (the `PostCommit`) set, and the body beside it ("Post transactions" below) | `{ postId, status: "pending", expiresAtHeight, txId }` (200) | 400 if `tx`, `tx.post` or `content` is missing or malformed, `content` fails `verifyPostBody` against `tx.post.contentHash` (reason named), the commit fails verification, the transaction fails `validateTx`, or the first input is not a karma box owned by `post.author` |
-| `GET` | `/posts/:id` | `?viewer=hex` — optional ("`viewer` names the identity a read is for" below) | `PostJson` or `WithdrawnJson` (both below), **plus `confirmedAuthor`** | 404 only for an id the node has never heard of ("Resolution order for a post id"); 400 if a present `viewer` is not 64 hex chars |
+| `GET` | `/posts/:id` | `?viewer=hex` — optional ("`viewer` names the identity a read is for" below) | `PostJson` or `WithdrawnJson` (both below), **plus `confirmedAuthor`** | 404 only for an id the node has never heard of ("Resolution order for a post id"); 400 if a present `viewer` is neither 64 hex chars nor an `@handle`, 404 `unknown handle` (→ Identity parameters) |
 | `GET` | `/posts/:id/thread` | `?viewer=hex&limit=50&after=<blockHeight>:<blockIndex>` — `viewer` optional; `limit` and `after` page the descendants ("Every list a view returns is a page" below) | `{ post, ancestors, ancestorCount, descendants, descendantCount, next, pending, pendingCount }` — `post` is `PostJson` or `WithdrawnJson`; `ancestors` the nearest `limit` ancestors, oldest first (`after` does not apply — the context above the topmost one is that post's own thread); `descendants` one page of the subtree's **committed** rows in committed order, `(blockHeight, blockIndex)` ascending, strictly after `after`, with `next` the key to continue from; `pending` the subtree's pending posts, newest arrival first, cut to `limit`, with `pendingCount` over all of them; `ancestorCount` and `descendantCount` are over the whole chain and the whole subtree, pending included — a `PostJson` `post` carries the same number as its own `descendantCount`. **A withdrawn subject answers its `ancestors`, `descendants`, `pending` and counts as a live subject does** — the row, its topology and every descendant's anchor survive the withdrawal (→ Withdrawal transactions), so its replies hang off it | 404 as above; 400 as `/posts` |
-| `GET` | `/posts` | `?author=hex&roots=1&viewer=hex&limit=50&after=<blockHeight>:<blockIndex>` — `author`, `roots` and `viewer` optional; `roots=1` restricts every list in the answer to posts with no parent (`parentRefs: []`), absent the listing is unfiltered, and the two filters compose (`author` with `roots` is the author's roots); `limit` and `after` page the committed rows ("Every list a view returns is a page" below) | `{ posts: (PostJson \| WithdrawnJson)[], next, pending: PostJson[], pendingCount }` — `posts` one page of the committed rows, live and withdrawn, newest first in committed order (placeholders included; ordering below), `next` the key to continue from; `pending` the live pending rows — the author's when `author` is present — newest arrival first, cut to `limit`, `pendingCount` over all of them; with `roots=1`, `posts`, `pending` and `pendingCount` are over the roots alone, the keyset walking the filtered set | 400 if a present `limit` or `after` does not parse ("Every list a view returns is a page"), a present `roots` is not the string `1` (`roots must be 1`), or a present `viewer` is not 64 hex chars |
+| `GET` | `/posts` | `?author=hex&roots=1&viewer=hex&limit=50&after=<blockHeight>:<blockIndex>` — `author`, `roots` and `viewer` optional; `roots=1` restricts every list in the answer to posts with no parent (`parentRefs: []`), absent the listing is unfiltered, and the two filters compose (`author` with `roots` is the author's roots); `limit` and `after` page the committed rows ("Every list a view returns is a page" below) | `{ posts: (PostJson \| WithdrawnJson)[], next, pending: PostJson[], pendingCount }` — `posts` one page of the committed rows, live and withdrawn, newest first in committed order (placeholders included; ordering below), `next` the key to continue from; `pending` the live pending rows — the author's when `author` is present — newest arrival first, cut to `limit`, `pendingCount` over all of them; with `roots=1`, `posts`, `pending` and `pendingCount` are over the roots alone, the keyset walking the filtered set | 400 if a present `limit` or `after` does not parse ("Every list a view returns is a page"), a present `roots` is not the string `1` (`roots must be 1`), or a present `viewer` is neither 64 hex chars nor an `@handle`; 404 `unknown handle` (→ Identity parameters) |
 
 **Every list a view returns is a page.** `limit` defaults to `PAGE_LIMIT_DEFAULT` (50) and clamps
 to `PAGE_LIMIT_MAX` (100); a present `limit` that does not parse as a positive safe integer is a
@@ -149,7 +149,7 @@ them. The paged lists: `GET /posts`, the thread's `descendants`, `/vouches?targe
 body by its caps.
 
 **`viewer` names the identity a read is for.** Optional on `GET /posts`, `GET /posts/:id` and
-`GET /posts/:id/thread`, 64 hex chars (400 otherwise). When it is present, every `PostJson` in the
+`GET /posts/:id/thread`, 64 hex chars or an `@handle` (→ Identity parameters; 400 otherwise). When it is present, every `PostJson` in the
 response answers `likedByViewer` — whether that identity holds a like-record on the post
 (`hasLikeRecord`, one keyed read per post) — and when it is absent the field is `null`. **The node
 serves no list of who liked a post.** `likeCount` is the count, `likedByViewer` is the one
@@ -174,7 +174,7 @@ PostJson = {
   blockCreatedAt: number | null,
   likeCount: number,
   descendantCount: number,     // the thread's number: the whole subtree, pending included — one walk per row (Store Interface → Posts DAG)
-  authorVouchCount: number,    // the unspent vouch boxes targeting `author` — `GET /vouches?target=`'s `count`, read once per distinct author per response
+  authorName: string | null,   // the author's username as typed, or null — one keyed read per distinct author per response (→ Usernames)
   likedByViewer: boolean | null // with ?viewer=: does that identity hold a like-record on this post; without: null
 }
 ```
@@ -230,7 +230,7 @@ receive one. Every read that distinguishes them reads the **marker**, never the 
 
 **The JSON projection has two arms where the store has one shape.** `feedService` answers
 `WithdrawnJson { kind: 'withdrawn', id, author, parentRefs, withdrawnAtHeight, descendantCount,
-authorVouchCount }` — carrying **no content field**, the row's `parentRefs`, which the withdrawal keeps
+authorName }` — carrying **no content field**, the row's `parentRefs`, which the withdrawal keeps
 (→ Withdrawal transactions), and the two counts `PostJson` carries under the same definitions (the
 author counted once per distinct author per response, withdrawn rows and live rows in one dedup) — for
 the subject of a thread, for its ancestors and descendants, and in the listing.
@@ -355,7 +355,7 @@ creation, so nothing stays open. `expiresAtHeight` on the response is the
 |--------|------|---------|-------------|
 | `POST` | `/vouches` | `castVouch` | Signed UTXO tx (KarmaBox to KarmaBox + VouchBox) → `200 { status: 'pending', txId, expiresAtHeight }` |
 | `DELETE` | `/vouches/:targetId` | `initiateUnvouch` | Signed UTXO tx (VouchBox to none) → `200 { status: 'pending', txId, expiresAtHeight, karmaReturnsAtBlock }` — the escrow's `releaseAtBlock`, relayed |
-| `GET` | `/vouches?target=X&limit=50&after=<boxId>` | `getVouchesForTargetPage` | `{ vouches: [{ voucherId, targetId, voucherVouchCount }], count, next }` — one page of the identity's vouchers, ascending box id, strictly after `after`; `count` over the whole set, `next` the key to continue from (HTTP API → "Every list a view returns is a page"); `voucherVouchCount` the unspent vouch boxes targeting the voucher (`getVouchCountForTarget(voucherId)`), read once per distinct voucher per response, so the endorsers list carries its marks' counts in one read |
+| `GET` | `/vouches?target=X&limit=50&after=<boxId>` | `getVouchesForTargetPage` | `{ vouches: [{ voucherId, targetId }], count, next }` — one page of the identity's vouchers, ascending box id, strictly after `after`; `count` over the whole set, `next` the key to continue from (HTTP API → "Every list a view returns is a page") |
 | `GET` | `/vouches?voucher=X&limit=50&after=<boxId>` | `getVouchesForVoucherPage` | `{ vouches: [{ boxId, value, voucherId, targetId, createdAtBlock }], count, next }` — one page of the identity's live vouches, ascending box id strictly after `after`; `count` over the whole set, `next` the key to continue from. The one arm carrying `boxId`: the unvouch builder names the box it spends |
 | `GET` | `/vouches?voucher=X&cooldowns=1&limit=50&after=<boxId>` | `getVouchCooldownsPage` | `{ cooldowns: [{ boxId, value, releaseAtBlock }], count, next }` — one page of the identity's unspent escrows, ascending box id strictly after `after` |
 
@@ -486,6 +486,37 @@ This replaced a handler that took `{ from, to, amount, signature }` and
 transaction and its id are height-independent and the parameter pinned
 nothing.
 
+### Usernames
+
+A username is a soulbound `UsernameBox` with one free claim per identity (`ARCHITECTURE → Usernames`;
+the arms → Username transition rules). The two writes take a client-built, client-signed transaction
+like every other route's.
+
+| Method | Path | Request | Response | Errors |
+|--------|------|---------|----------|--------|
+| `POST` | `/usernames` | `{ tx: UtxoTransaction }` — a claim: karma in, karma change and one `username` box out | `{ status: "pending", txId, expiresAtHeight, name }` — `name` as typed (200) | 400 with the refusal named — `name invalid`, `name taken`, `identity holds a name`, or `validateTx`'s reason; 409 while a pending claim carries the same canonical name or the same claimant (`hasPendingClaim`, `hasPendingClaimBy`), or on a pending-spend conflict; 503 pool full |
+| `POST` | `/usernames/:name/burn` | `{ tx: UtxoTransaction }` — a burn of `:name` | `{ status: "pending", txId, expiresAtHeight }` (200) | 400 if the transaction does not consume `:name`'s box, the signer is not its holder, the price box is absent or wrong, or `validateTx` refuses; 404 if `:name` is not held; 409 pending-spend conflict; 503 |
+| `GET` | `/usernames/:name` | `:name` with or without a leading `@`, matched on its canonical form | `{ name, owner, boxId, claimedAtBlock }` — `name` as typed | 400 if `:name` is not a well-formed name; 404 if not held |
+| `GET` | `/usernames?owner=<identity>` | `owner` a key or an `@handle` (→ Identity parameters) | the same shape | 400; 404 if the identity holds no name |
+
+The refusals a claim can meet are consensus rules of the claim arm, mirrored here for a legible 400 as
+the invite and vouch routes mirror theirs; the 409s are the pool's gates. **`authorName`** on every
+`PostJson` and `WithdrawnJson` (→ Posts) is the author's name as typed, or null — one keyed read per
+distinct author per response — and `/status` carries `usernameCount` (→ Status).
+
+#### Identity parameters
+
+**A parameter typed *identity* is a 64-hex public key or an `@handle`.** A handle — `@` followed by a
+well-formed name — resolves through the name record at request time, on its canonical form, to the
+holder's key; an unknown handle answers **404 `unknown handle`**, and a value that is neither answers
+400 as a malformed key does. The identity-typed parameters are `author` and `viewer` on `GET /posts`,
+`GET /posts/:id` and `GET /posts/:id/thread`; `target` and `voucher` on `GET /vouches`; `:userId` on
+`GET /karma/:userId`, `GET /credits/:userId` and `GET /invites/:userId`; `miner` on
+`GET /mining/template`; and `owner` on `GET /usernames`. **A signed transaction carries keys, never
+handles**: a client resolves a handle here before it builds, and shows the key it resolved to. A name
+that changes holder between that resolution and the transaction's confirmation pays the old holder,
+which every name system accepts (`ARCHITECTURE → Usernames`).
+
 ### Blocks
 
 | Method | Path | Response | Errors |
@@ -565,7 +596,7 @@ grant ledger unusable as a consensus input.
 
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
-| `GET` | `/mining/template` | `?miner=hex(32)` optional payout override | Template (nested header + body sections + `powPreimage`) — see `MINING_INTERFACE.md` | 400, 401, 404 |
+| `GET` | `/mining/template` | `?miner=<identity>` optional payout override — a key or an `@handle` (→ Identity parameters) | Template (nested header + body sections + `powPreimage`) — see `MINING_INTERFACE.md` | 400, 401, 404 |
 | `POST` | `/mining/submit` | `{ powNonce: number, height: number }` | `{ blockHash, height }` (201) | 400, 401, 422 |
 
 Mounted **only** when `NODE_ROLE=miner`. A miner node is by definition one
@@ -589,7 +620,7 @@ the chain) is not served. The prover behind it is `Nipopow prover` below.
 
 | Method | Path | Response |
 |--------|------|----------|
-| `GET` | `/status` | `{ networkType, blockHeight, protocolVersion, postCount, pendingPosts, totalKarma, liquidKarma, totalCredits, inviteProbationBlocks, vouchCooldownBlocks, inviteBondMin, inviteBondMax, membership: { memberCount, memberBar, memberLikesBar } }` |
+| `GET` | `/status` | `{ networkType, blockHeight, protocolVersion, postCount, pendingPosts, usernameCount, totalKarma, liquidKarma, totalCredits, inviteProbationBlocks, vouchCooldownBlocks, inviteBondMin, inviteBondMax, membership: { memberCount, memberBar, memberLikesBar } }` |
 
 > ⚠ **`totalKarma` is karma in existence; `liquidKarma` is karma its owner can spend now.**
 > `totalKarma` sums the karma-bearing types; `liquidKarma` sums `karma` alone. `credit` is the
@@ -783,7 +814,8 @@ citation of a `validateTx` step in this repo:
    (see "Spend timing" below). Runs ahead of authorization — timing is
    cheaper than signature verification and refuses a transaction that cannot
    succeed either way.
-4. All inputs have the same boxType
+4. All inputs have the same boxType — **except a `username` input riding beside karma inputs, the
+   burn's shape and the only mixed-input transition** (→ Username transition rules)
 5. Output shape: every output is a non-null object matching the closed
    per-boxType schema — exact key set and every field's runtime type (see
    "Output shape" below). This is the **first step that reads `tx.outputs`**:
@@ -819,7 +851,8 @@ citation of a `validateTx` step in this repo:
    > changes **form** inside the karma family: an invite is
    > `karma(K) → karma(K−B) + bond(B)`, which conserves as one
    > total and fails per type. Posting and vouch casting have the same shape.
-   > Step 4 constrains the **inputs** to a single box type; the outputs
+   > Step 4 constrains the **inputs** to a single value-bearing box type (a `username` input beside
+   > them holds `0n`); the outputs
    > deliberately span several, and `checkValueConservation` reduces each side
    > to one `bigint` with no type predicate anywhere in it.
 
@@ -1492,6 +1525,8 @@ the treasury.
 | KarmaBox | KarmaBox + KarmaPriceBox + LikeAccrualBox | **Reply**: `post` present with one parent ⟺ exactly one `KarmaPriceBox` output of exactly `POST_PRICE_REPLY − REPLY_AUTHOR_SHARE` **and** exactly one `LikeAccrualBox` output of exactly `REPLY_AUTHOR_SHARE` whose `author` is the parent's author from `block_topology`. The karma output as above; the signing key is the post's author. **Value conserved** |
 | KarmaBox | KarmaBox + BondBox | **Invite**: karma outputs same owner, value conserved; `inviteBondMin ≤ bond.value ≤ inviteBondMax` (per-network caps) and the settlement grants **exactly `bond.value`**; `bond.inviterId` = the karma input owner; `inviteePublicKey` holds **no `IdentityRecord`**, and **no other bond in this block names it**; `bond.inviterId` is a root, or a member with `⌊memberVouches / D(N)⌋ − invitesUsed ≥ 1` on its record at apply, `N` from pre-body state (→ Bond transition rules, → Membership pass) |
 | KarmaBox | KarmaBox + VouchBox | Vouch cast: karma outputs same owner; `vouch.value == VOUCH_KARMA_AMOUNT`; `vouch.voucherId` == the karma input's owner; the voucher is a member — `member(voucher)` on its record at apply (→ Membership pass); `vouch.targetId ≠ vouch.voucherId`; the target holds an `IdentityRecord`; no unspent `vouch` box carries the same `(voucherId, targetId)`; the voucher's **summed** karma balance ≥ `VOUCH_MIN_BALANCE`; no unspent escrow names the voucher; `vouch.createdAtBlock` within `[height − VOUCH_CAST_HEIGHT_WINDOW, height]` (the upper bound is step 6's; the window bounds backdating, which would shorten the cooldown the escrow derives from it) |
+| KarmaBox | KarmaBox + UsernameBox | **Claim**: exactly one `username` output — `owner` = the karma inputs' owner, `value == 0n`, its `name` valid (`VALIDATION_INTERFACE → verifyTxStructure`); no name record for the name's canonical form; **no holder record for the owner** (available, holding none); the karma output same owner, value conserved; the signing key is the owner's (→ Username transition rules) |
+| KarmaBox + UsernameBox | KarmaBox + KarmaPriceBox | **Burn**: exactly one `username` input, its `owner` the karma inputs' owner, holder-signed; exactly one `KarmaPriceBox` output of exactly `USERNAME_BURN_PRICE`; no `username` output; the karma output same owner, value conserved (→ Username transition rules) |
 | VouchBox | VouchEscrowBox | **Unvouch**: exactly one VouchBox input, voucher-signed; exactly one escrow output with `value ==` the consumed box's, `owner == voucherId`, and `releaseAtBlock == vouch.createdAtBlock + vouchCooldownBlocks` — an exact pin, derivable from the consumed box alone. The cooldown runs from the **cast**, so a long-held endorsement costs no extra lockup and no withdrawal pattern returns the stake early. Value conserved |
 | VouchEscrowBox | KarmaBox | **Block application only**: the settlement of the first block at or past `releaseAtBlock` consumes the escrow and returns its value to `owner` as karma (§The settlement transaction) — **no user transaction can spend a `VouchEscrowBox`**. Withdrawal itself is never gated — only the stake's return waits, and it waits in the escrow |
 | LikeAccrualBox | — | **Settlement only.** No user transition admits one as an input |
@@ -1901,6 +1936,37 @@ inside the network's reported supply.
   than handled, the same reasoning as the bond settlement's single-input
   bound. There is no cap on a voucher's live vouches; the escrow gate above is
   what rate-limits re-vouching after any withdrawal.
+
+### Username transition rules
+
+The name is a box (`TYPES_INTERFACE → UsernameBox`); these are the rules the two arms above enforce and
+the state they read and write (→ Username records):
+
+- **The claim** reads two records and writes two. Valid iff the name record for `canonical(name)` is
+  absent and the holder record for the output's `owner` is absent — the absent holder record *is*
+  "available, holding none". Apply writes the name record (the box id) and the holder record
+  `{ claimAvailable: 0, boxId }`, and inserts the store row. **Having karma is proven by the input**: the
+  claim spends karma the owner holds and returns it as change, so no balance read exists and a fresh
+  invitee qualifies from the grant.
+- **The burn** consumes the name box and pays. Valid iff the `username` input's `owner` is the karma
+  inputs' owner — the box is soulbound, no other key spends it — exactly one `KarmaPriceBox` of exactly
+  `USERNAME_BURN_PRICE` is output, and no `username` box is. Apply removes the name record and the
+  holder record — the absent meaning: claim restored, holding none — and deletes the store row. The
+  price box leaves with the block's settlement as a post's does (→ The settlement transaction).
+- **Nothing else consumes or outputs a `username` box.** No transfer: a `username` output whose
+  `owner` is not the karma inputs' owner is refused by the claim arm, and a `username` input in any
+  shape but the burn's is refused by step 9. A sale is a later unit (`ARCHITECTURE → Deferred to future
+  protocol versions`).
+- **Within a block, the first claim of a canonical name wins.** A block applies its transactions in
+  body order against the evolving state, so a second claim of the same name — or a second claim by
+  the same identity — fails its absence check and **the block is invalid**, as a double spend is. The
+  creator never builds one: admission refuses the second claim (`MEMPOOL_INTERFACE → Correctness
+  gates`, `hasPendingClaim` and `hasPendingClaimBy`).
+- **The holder record carries a bit this unit never sets.** Its value is `claimAvailable ‖ opt(boxId)`;
+  this unit writes only `{ 0, boxId }` and removes the record at a burn. The bit is laid out now so the
+  marketplace unit, which writes `{ 1, boxId }` (bought while the claim stood) and `{ 0, none }` (sold,
+  no free claim), moves no leaf layout — a leaf layout change after leaves exist is a committed-byte
+  move (`ARCHITECTURE → Deploy gate`).
 
 ### Membership pass
 
@@ -2856,8 +2922,7 @@ Fresh schema — no migration.
 > `utxo_boxes (owner, box_type, value DESC, id) WHERE spent_at_block IS NULL` — the equal-value
 > tail and the lesser values — concatenated in list order, **at most `2 · (limit + 1)` entries**;
 > the bond and vouch pages range by `id` on the partial expression indexes keyed by the bond's
-> `inviterId` and the vouch's `targetId` (`json_extract(extra_data, …)`), the target's page adding one
-> indexed `COUNT(*)` per distinct voucher on it (`voucherVouchCount`, at most `limit` counts); the pending window of
+> `inviterId` and the vouch's `targetId` (`json_extract(extra_data, …)`); the pending window of
 > `queryPostsPage` and its count read `dag_posts (status) WHERE status = 'pending'` — `limit` entries
 > of the pending index in `rowid` order, never a scan of the table. The `SUM` and `COUNT`
 > behind a view are scans of the owner's entries in the owner index. `getSubtreePage` and
@@ -2921,7 +2986,7 @@ walks a subtree over topology (the thread's subtree is `dag_parent_refs`', Store
 | `getBondsInvitedAt(maxInvitedAt, limit)` | `(number, number) => BondBox[]` — bonds whose invitee's record carries `invitedAtBlock` **at or before** `maxInvitedAt`, **ascending `(invitedAtBlock, box id)`**, capped at `limit` — the settlement's carry-forward bond leg. The caller subtracts `INVITE_PROBATION_BLOCKS` from the settle height, so the store stays free of network parameters. ⛔ **The query MUST require `invitedAtBlock > 0`**: `0` is every never-invited identity, so at the single height where `settleHeight == INVITE_PROBATION_BLOCKS` the argument is `0` and an unguarded match sweeps the whole table |
 | `getBondBoxesPage(inviterId, page)` | `(UserId, Page<string>) => { rows: BondBox[], next: string \| null, count: number }` — the inviter's **unspent** bonds (`spent_at_block IS NULL`), ascending `id` strictly after `after` (`id > ?`); `count` over the whole set |
 | `getVouchesForTargetPage(targetId, page)` | `(UserId, Page<string>) => { rows: VouchBox[], next: string \| null, count: number }` — the identity's unspent vouch boxes (`store/vouch-queries.ts`), ascending `id` strictly after `after`, the rows selected in the page statement; `count` over the whole set, read through `getVouchCountForTarget` |
-| `getVouchCountForTarget(targetId)` | `(UserId) => number` — the unspent vouch boxes whose target is the identity, `COUNT(*)` over `VOUCH_TARGET_WHERE` on `idx_utxo_boxes_vouch_target`; feeds `PostJson.authorVouchCount`, `WithdrawnJson.authorVouchCount`, the vouch row's `voucherVouchCount` and the page's `count` |
+| `getVouchCountForTarget(targetId)` | `(UserId) => number` — the unspent vouch boxes whose target is the identity, `COUNT(*)` over `VOUCH_TARGET_WHERE` on `idx_utxo_boxes_vouch_target`; feeds the page's `count` |
 | `insertBox(box)` | `(AnyBox) => void` — writes the provenance columns; records `{kind:'box', op:'insert', boxId, box}` while a block journal is open |
 | `consumeBox(boxId, consumedAtBlock)` | `(string, number) => void` — mark a **live** box spent; records `{kind:'box', op:'remove', boxId}` while a block journal is open. ⛔ **Throws `BoxNotLiveError` when no live row matched.** The `UPDATE` carries `AND spent_at_block IS NULL` and checks the row count, so the journal entry follows a real spend instead of a caller's assumption. ⚠ **Not a `CorruptChainStateError`** — a caller naming a box the store does not hold live is a rejection, not a reason to stop the node |
 | `unconsumeBox(boxId)` | `(string) => void` — un-mark spent (fork-rollback inverse; never records) |
@@ -3076,7 +3141,7 @@ functions of the identity, so the two representations cannot drift.
 
 | # | Field | Encoding |
 |---|---|---|
-| 1 | tag | `u8` — **`0x80`**, the record discriminator (see "Three entity kinds") |
+| 1 | tag | `u8` — **`0x80`**, the record discriminator (see "Entity kinds") |
 | 2 | `lastActivityBlock` | `vlqU` |
 | 3 | `lastDecayBlock` | `vlqU` |
 | 4 | `invitedAtBlock` | `vlqU` |
@@ -3270,7 +3335,7 @@ NetworkRecord {
 **AVL key** — `blake2b512( NETWORK_KEY_DOMAIN )[0:32]`: the domain tag alone is the preimage, the
 identity key's hashing rule with nothing after the tag, so the three kinds are disjoint by domain
 separation (TYPES_INTERFACE → Domain tags). **Value** — `u8` **`0x81`** ‖ `vlqU(memberCount)`:
-the high bit says "not a box", as `0x80` does (→ Three entity kinds), and the layout is positional
+the high bit says "not a box", as `0x80` does (→ Entity kinds), and the layout is positional
 like the record's (→ Layout — IdentityRecord). `deserializeBox` refuses the tag as it refuses
 `0x80`; the kind-dispatching decoder gains an arm; the proof endpoint serves it as
 `kind: 'network'`.
@@ -3291,6 +3356,57 @@ NULL)` — one row, present from seeding on.
 
 *Alternative considered:* a `memberCount` field on the karma pool box. Rejected — the pool box
 is "no owner, no trailing fields" by contract and a population count is not a value.
+
+### Username records
+
+The fourth and fifth committed entities: one record per held name and one per holding identity
+(`ARCHITECTURE → Usernames`; the arms → Username transition rules).
+
+```
+UsernameRecord {                 // keyed by the name's canonical form
+  boxId: string                  // hex — the live username box
+}
+
+HolderRecord {                   // keyed by the identity
+  claimAvailable: boolean        // the free claim stands
+  boxId: string | null           // hex — the identity's name box, or none
+}
+```
+
+**AVL keys** — `blake2b512( USERNAME_KEY_DOMAIN ‖ canonical(name) )[0:32]` and
+`blake2b512( USERNAME_HOLDER_KEY_DOMAIN ‖ identityId )[0:32]` (`TYPES_INTERFACE → Domain tags`);
+`canonical(name)` is the byte-wise ASCII lowercase (`TYPES_INTERFACE → Content limits`). **Values** —
+`u8` **`0x82`** ‖ `b32(boxId)` for the name record, and `u8` **`0x83`** ‖ `u8(claimAvailable)` ‖
+`opt(b32(boxId))` for the holder record: the high bit says "not a box" as `0x80` and `0x81` do (→ Entity
+kinds); `deserializeBox` refuses both tags; the kind-dispatching decoder gains two arms; the proof
+endpoint serves them as `kind: 'username'` and `kind: 'holder'`.
+
+**An absent holder record means `{ claimAvailable: true, boxId: null }`, and a record equal to that
+meaning is never written** — a burn removes the record rather than writing the absent state, so absence
+has one encoding.
+
+**Written** by block application alone — the claim and the burn arms — through `putUsername` and
+`deleteUsername`, each of which records **two** mutations, one per record (→ Block Journal), on
+`putIdentityRecord`'s pattern: the value each replaces is captured, rollback exact. Nothing seeds them;
+the genesis state holds none, and every existing `stateRoot` is what it was.
+
+**Table:** `usernames (name_lower TEXT PRIMARY KEY, name TEXT NOT NULL, owner TEXT NOT NULL UNIQUE,
+box_id TEXT NOT NULL, claimed_at_block INTEGER NOT NULL)`, created `IF NOT EXISTS` as every table is, so
+a store written before it existed gains it at the next start. The holder record's two facts are the
+row: `boxId` is the row's, and `claimAvailable` is **derived at read time** — `false` iff a row's `owner`
+is the identity. The marketplace unit's `{ 1, boxId }` state will need a column of its own then, not
+now.
+
+| Function | Signature |
+|----------|-----------|
+| `getUsername(nameLower)` | `(string) => UsernameRow \| null` — the row for a canonical name |
+| `getUsernameByOwner(owner)` | `(UserId) => UsernameRow \| null` — the identity's name, at most one |
+| `putUsername(row)` | `(UsernameRow) => void` — the claim's write; while a block journal is open, records `{kind:'username', …}` and `{kind:'holder', …}` |
+| `deleteUsername(nameLower)` | `(string) => void` — the burn's write; records both removals with the rows they replace |
+| `countUsernames()` | `() => number` — `/status`'s `usernameCount` |
+
+`UsernameRow { nameLower, name, owner, boxId, claimedAtBlock }` — `name` as typed, `nameLower` its
+canonical form.
 
 ### Vouch escrows
 
@@ -3339,6 +3455,8 @@ block has confirmed. Idempotent insert (first block to confirm a postId wins);
 | `hasPendingLike(targetPostId, likerId)` | `(string, string) => boolean` | SQL EXISTS over gate metadata — unbounded (M-8) |
 | `countPendingInvites(inviterId)` | `(string) => number` | SQL COUNT over gate metadata — unbounded (M-8) |
 | `hasPendingVouch(voucherId, targetId)` | `(string, string) => boolean` | SQL EXISTS over gate metadata — the pending mirror of one live vouch per `(voucher, target)` pair (§Vouches) |
+| `hasPendingClaim(nameLower)` | `(string) => boolean` | SQL EXISTS over `username_lower` — the pending mirror of one live name per canonical form (→ Username transition rules) |
+| `hasPendingClaimBy(claimantId)` | `(string) => boolean` | SQL EXISTS over `username_claimant` — the pending mirror of one name per identity |
 | `removeEntry(rowid)` | `(number) => void` | Remove confirmed entry by rowid |
 | `setMempoolCap(n)` | `(number) => void` | Set the pool bound; `index.ts` calls it once at startup with `config.maxMempoolEntries` (`MEMPOOL_INTERFACE → setMempoolCap`) |
 
@@ -3472,7 +3590,21 @@ NetworkMutation {                  // the network record — the member count
   replaced: NetworkRecord          // the prior value — always present: the record exists from seeding on
 }
 
-JournalMutation = BoxMutation | RecordMutation | NetworkMutation
+UsernameMutation {                 // the name record — key H(USERNAME_KEY_DOMAIN ‖ nameLower)
+  kind: 'username'
+  nameLower: string
+  row: UsernameRow | null          // the row written; null on a burn — the record is removed
+  replaced?: UsernameRow           // prior row — absent iff the key did not exist
+}
+
+HolderMutation {                   // the holder record — key H(USERNAME_HOLDER_KEY_DOMAIN ‖ owner)
+  kind: 'holder'
+  owner: UserId
+  record: HolderRecord | null      // the value written; null on a burn — the record is removed
+  replaced?: HolderRecord          // prior value — absent iff the key did not exist
+}
+
+JournalMutation = BoxMutation | RecordMutation | NetworkMutation | UsernameMutation | HolderMutation
 
 BlockJournal {
   blockHeight: number
@@ -3575,7 +3707,7 @@ that keeps the last `replaced`; that restores an intra-block intermediate.
 
 The `packages/node/src/state/` module provides an authenticated dictionary over
 **committed state** using AVL+ trees — the UTXO set, identity records and
-the network record (see "Three entity kinds" below).
+the network record and the username records (see "Entity kinds" below).
 
 - **avl-storage:** Persistent AVL+ tree, stateRoot computed at each block
   application and included in block headers
@@ -3698,12 +3830,15 @@ the network record (see "Three entity kinds" below).
   comparison stands in for it, so a retarget changes the schedule the verifier is handed and nothing
   about this rule.
 
-#### Three entity kinds
+#### Entity kinds
 
 The tree holds **boxes** (key = `boxId`), **identity records**
 (key = `H(IDENTITY_KEY_DOMAIN ‖ identityId)`; see Store Interface → Identity
-Records) and **the network record** (key = `H(NETWORK_KEY_DOMAIN)`; see Store Interface →
-Network record). Three things follow, and all three are consensus-critical.
+Records), **the network record** (key = `H(NETWORK_KEY_DOMAIN)`; see Store Interface →
+Network record), and the two username records — **the name record** (key =
+`H(USERNAME_KEY_DOMAIN ‖ canonical(name))`) and **the holder record** (key =
+`H(USERNAME_HOLDER_KEY_DOMAIN ‖ identityId)`; both Store Interface → Username records). Three things
+follow, and all three are consensus-critical.
 
 **1. The value bytes must be self-describing.** The first byte is the
 discriminator; `deserializeBox` MUST reject a non-box tag rather than mis-decode
@@ -3719,6 +3854,8 @@ Layout — Boxes — NOT a second numbering owned by this package. Decided
 | Box | `enum8(boxType)` — the numbering `BOX_TYPE_TAGS` exports (`TYPES_INTERFACE` → Layout — Boxes) |
 | Identity record | `0x80` |
 | Network record | `0x81` |
+| Name record | `0x82` |
+| Holder record | `0x83` |
 
 **This replaces a second, disagreeing numbering that this package used to
 carry** (`0x01` karma … `0x07` vouch, with `0x03` reserved). The two were
@@ -3875,7 +4012,7 @@ a record-shaped value would throw under a box-only decoder. Keys are
 indistinguishable from outside — both kinds are 32 bytes of hash output — so a
 client *can* ask for one. Landed in phase D, alongside populating the record.
 
-The response carries **`kind: 'box' | 'record' | 'network' | null`**. This is required, not
+The response carries **`kind: 'box' | 'record' | 'network' | 'username' | 'holder' | null`**. This is required, not
 cosmetic: the proof verifies the value bytes whichever kind they are, so without
 an explicit discriminant a light client would verify a valid proof and then read
 a record as a box with every field `undefined` — treating committed state as a

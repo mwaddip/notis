@@ -77,6 +77,7 @@ in their Kind cell and appear again under → Per-network values with all three 
 | `MAX_CONTENT_BYTES` | `300` | 300 UTF-8 bytes | consensus | none stated | CHOSEN | `TYPES_INTERFACE → Content limits` |
 | `MAX_PARENT_REFS` | `1` | one parent | consensus | user ruling, 2026-08-09 — one parent keeps every thread a tree, so a post belongs to one thread and a subtree's page and count are well-defined | RULED | `TYPES_INTERFACE → Content limits` |
 | `MAX_GENESIS_PROOF_PAYLOAD_BYTES` | `512` | 512 bytes | format | roughly Ergo's five-register no-premine payload plus headroom, derived from no measurement; the three profile payloads are ~35 bytes | PROVISIONAL | `TYPES_INTERFACE → Content limits` |
+| `USERNAME_MAX_BYTES` | `24` | 24 bytes of `[A-Za-z0-9_]` | consensus | user ruling, 2026-09-09; the alphabet and the lowercase canonical form are ruled with it | RULED | `TYPES_INTERFACE → Content limits` |
 | `BOX_VALUE_BOUND` | `9_223_372_036_854_775_808n` | 2⁶³ | consensus | SQLite `INTEGER` is a signed 64-bit integer, so the accepted value domain stops where storage does | DERIVED | `TYPES_INTERFACE → Box value domain` |
 | `AVL_KEY_LENGTH` | `32` | 32 bytes | consensus | the width of every 32-byte digest in the format | DOMAIN | `TYPES_INTERFACE → State format` |
 
@@ -119,6 +120,12 @@ Three limits stand in a fixed order — `MAX_BLOCK_BODY_BYTES < MAX_SERVE_BODY_B
 | `REPLY_AUTHOR_SHARE` | `1n` | the part of a reply's price the parent's author accrues | consensus | user ruling, 2026-08-29 — a 33 % channel to the parent, below the like's 80 %, so no arbitrage | RULED | `ARCHITECTURE → The post price` |
 | `LIKE_KARMA_COST` | `1n` | 1 karma per like | consensus | the indivisible unit — no smaller like is expressible; the `B · (1 − V/L)` supply arithmetic holds under exactly this value | PROVISIONAL | `ARCHITECTURE → Like parameters` |
 | `LIKES_PER_KARMA_PAYOUT` | `5` | `x`: an author accrues `x − 1` per `x` likes, 1 burns | consensus | `1/x` = 20 % burn is the deflation dial; placeholder | PROVISIONAL | `ARCHITECTURE → Like parameters` |
+
+### Usernames
+
+| Name | Value | Reads as | Kind | Argument | Status | Rule |
+|---|---|---|---|---|---|---|
+| `USERNAME_BURN_PRICE` | `10n` | karma a burn pays to the pool | consensus | user, 2026-09-09 — a placeholder, marked so where it is defined | PROVISIONAL | `ARCHITECTURE → Usernames` |
 
 ### Vouch
 

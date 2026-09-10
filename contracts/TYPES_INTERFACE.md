@@ -151,7 +151,7 @@ withdrawing the old is optional hygiene. The type field is what keeps structured
 unambiguous: a `regular` post whose text looks like a profile document is just text.
 
 Usernames are not a post type — they leave the post model for the UTXO ledger
-(ARCHITECTURE → Username claims) — and `display_name` is a profile-document field or the
+(ARCHITECTURE → Usernames) — and `display_name` is a profile-document field or the
 username's concern; avatars and polls are not post types.
 
 ### Hashing functions
@@ -435,14 +435,16 @@ computes different ids.
 | `MINT_ID_DOMAIN` | synthetic mint transaction id |
 | `IDENTITY_KEY_DOMAIN` | per-identity record key in the AVL tree |
 | `NETWORK_KEY_DOMAIN` | the network record's key in the AVL tree — the tag alone is the preimage (`NODE_INTERFACE` → Network record) |
+| `USERNAME_KEY_DOMAIN` | the name record's key in the AVL tree — the tag ‖ the name's canonical form (`NODE_INTERFACE` → Username records) |
+| `USERNAME_HOLDER_KEY_DOMAIN` | the holder record's key in the AVL tree — the tag ‖ the identity (`NODE_INTERFACE` → Username records) |
 | `POST_ID_DOMAIN` | post id (→ Post identity) |
 | `POST_CONTENT_DOMAIN` | a post's content hash (→ Post) |
 | `INTERLINK_DOMAIN` | the interlink vector's commitment in a block header (→ Interlink vector) |
 
-Box ids, tx ids, identity-record keys and the network key share one 32-byte keyspace and the AVL
-tree holds three entity kinds, so the separation must be in the preimage; post ids and content
-hashes are 32 bytes of the same digest and carry their tags for the same reason. All eight are
-exported, so a test over their distinctness reads the code's tags and not a copy. (`computePostId` already works
+Box ids, tx ids, identity-record keys, the network key and the two username keys share one 32-byte
+keyspace and the AVL tree holds five entity kinds, so the separation must be in the preimage; post ids
+and content hashes are 32 bytes of the same digest and carry their tags for the same reason. All ten
+are exported, so a test over their distinctness reads the code's tags and not a copy. (`computePostId` already works
 this way via `POST_ID_DOMAIN`; box ids previously had no tag.)
 
 #### Canonical encoding
@@ -509,8 +511,9 @@ every credit output: value >= MIN_BOX_VALUE_PER_BYTE * byteLength(boxRecordBytes
 ```
 
 **Why `credit` alone.** `GenesisProofBox`'s value is structurally `0n` — it holds neither karma nor
-credits and never enters supply accounting — and the karma pool's zero-value successor is created
-deliberately, the one place the no-zero-box rule inverts. A blanket floor makes both unencodable.
+credits and never enters supply accounting — `UsernameBox`'s is `0n` by type (→ UsernameBox), and the
+karma pool's zero-value successor is created deliberately, the one place the no-zero-box rule inverts.
+A blanket floor makes all three unencodable.
 **Karma is excluded from the per-byte floor by ruling** — non-tradeable, and it decays — and gets
 the zero rule below instead.
 
@@ -518,8 +521,9 @@ the zero rule below instead.
 output is omitted when it would be zero, exactly as every settlement karma leg emits nothing for a
 value of zero and a zero fee means no `FeeBox`: a karma spend whose inputs total its cost leaves no
 karma output, and every pin the shape needs binds through the input (`NODE_INTERFACE` → Karma
-transition rules). The two structural zeros above are block-application outputs — no user
-transaction emits either type.
+transition rules). The genesis proof and the pool successor are block-application outputs — no user
+transaction emits either; the one zero a user transaction emits is the `username` box, `0n` by type
+and outside every sum (→ UsernameBox).
 
 **What it closes.** `credit(X) → credit(0) + fee(X)` conserves and is legal without it, leaving a box
 storage rent can never charge and never clear — rent takes value from a box, and that one has none to
@@ -1058,6 +1062,29 @@ choose, and either choice is wrong.**
 > boxes agree rather than invert. What still differs is *why* each never terminates: the pool because
 > karma circulates forever, the emission box because a forfeit can arrive after the schedule has
 > stopped paying.
+
+### UsernameBox
+
+```
+UsernameBox extends BoxBase {
+  boxType: "username"
+  value: 0n                    // structurally 0n — the type has one legal value, as genesis_proof has
+  owner: UserId                // 32 raw bytes — the holder
+  name: Uint8Array             // 1–USERNAME_MAX_BYTES bytes of [A-Za-z0-9_], exactly as typed at the claim
+}
+```
+
+A username is soulbound and unique by its lowercased name (`ARCHITECTURE → Usernames`). Its two user
+transitions are the claim, which creates it beside a karma change, and the burn, which consumes it for
+`USERNAME_BURN_PRICE` — both `NODE_INTERFACE → Username transition rules`. **No user transaction outputs
+a `username` box whose `owner` is not the karma inputs' owner, and none consumes one except the burn.**
+The name's byte domain is refused by the codec past its length and by `VALIDATION_INTERFACE →
+verifyTxStructure` outside its alphabet; the box carries the name as typed, and the canonical form the
+state keys on is derived from it, never stored in it (→ Content limits).
+
+`value` is `0n` for the reason `GenesisProofBox.value` is: the type has exactly one legal value, and it
+takes part in no sum — a claim conserves karma alone, and the box's zero is a structural zero the
+value-domain rule names (→ Box value domain).
 
 ### UtxoTransaction
 
@@ -1707,7 +1734,7 @@ construction throw, not a type error.
 > in *different positions* (`enum8` held `3` between `invite` and `bond` — since reassigned to
 > `genesis_proof`; the AVL tag reserved `0x03` between `credit` and `invite`), so they did not even
 > differ by a constant. **`enum8`'s
-> numbering wins**; see `NODE_INTERFACE` → "Three entity kinds" for the full record and why renumbering
+> numbering wins**; see `NODE_INTERFACE` → "Entity kinds" for the full record and why renumbering
 > is safe exactly once.
 >
 > **This makes an existing contractual claim exact rather than approximate.** `NODE_INTERFACE` §1a
@@ -1765,6 +1792,7 @@ from this table — a use that reads every cell as an instruction rather than as
 | 11 | `like_accrual` |
 | 12 | `vouch_escrow` |
 | 13 | `karma_price` |
+| 14 | `username` |
 | **255** | ⛔ **PERMANENTLY UNASSIGNED — the probe value. Never give it a type.** |
 
 > ## Tracked reservations (remnant-bounded — tag rules, condition 3)
@@ -1823,6 +1851,7 @@ from this table — a use that reads every cell as an instruction rather than as
 | `like_accrual` | `b32(author)` |
 | `vouch_escrow` | `b32(owner)` ‖ `vlqU(releaseAtBlock)` |
 | `karma_price` | *(none)* |
+| `username` | `b32(owner)` ‖ `lp(name)` — the count refused past `USERNAME_MAX_BYTES` inside `read`, before a byte of content (→ Content limits) |
 
 > ## ⛔ WHAT A NEW BOX TYPE COSTS, AND WHY A GREP FOR THE TYPE MISSES THE WORST SITE
 >
@@ -2790,7 +2819,18 @@ build defect, not a runtime condition.
 export const MAX_CONTENT_BYTES = 300;
 export const MAX_PARENT_REFS = 1;
 export const MAX_GENESIS_PROOF_PAYLOAD_BYTES = 512;
+export const USERNAME_MAX_BYTES = 24;
 ```
+
+**`USERNAME_MAX_BYTES` bounds a `username` box's `name`** (→ UsernameBox): 1 to 24 bytes, every byte in
+`[A-Za-z0-9_]` — so a name is ASCII by construction and its display form is its wire form — and **the
+canonical form the state keys on is the byte-wise ASCII lowercase** (`A`–`Z` → `a`–`z`, nothing else
+touched): two names are one name when their canonical bytes are equal. The codec refuses the length
+inside `read`; `VALIDATION_INTERFACE → verifyTxStructure` refuses the alphabet; nothing normalises
+anything else. Ruled 2026-09-09 (`CONSTANTS → Format and domain`). **Two pure functions carry the
+rule and are its only implementations**, exported from this package: `isValidUsernameBytes(name)`
+answers the length and the alphabet, and `canonicalUsernameBytes(name)` is the lowercase form — the
+validation package refuses through the first, and the node keys its records through the second.
 
 The third bounds a **box** field rather than a post one, and it sits here because this section groups
 bounds by what kind of rule they are — a maximum byte length enforced at a codec boundary — not by
@@ -2956,6 +2996,16 @@ export const REPLY_AUTHOR_SHARE = 1n;            // consensus — the part of a 
 
 `REPLY_AUTHOR_SHARE < POST_PRICE_REPLY`, so a reply always returns something to the pool — the
 relation is the rule, the numbers are `CONSTANTS → Post price and likes`.
+
+### Usernames
+
+```typescript
+export const USERNAME_BURN_PRICE = 10n;          // consensus — karma a burn pays to the pool; a PLACEHOLDER (CONSTANTS → Usernames)
+```
+
+A burn's price rides the `KarmaPriceBox` a post's price rides, and the settlement returns it to the pool
+the same way (`ARCHITECTURE → The post price`). The number is a placeholder, marked so at its definition;
+the relation — a burn pays, a claim does not — is the rule (`ARCHITECTURE → Usernames`).
 
 ### Likes
 
