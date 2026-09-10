@@ -599,7 +599,9 @@ export class App {
     bar.appendChild(brand);
     bar.appendChild(el('span', 'spacer'));
 
-    const wayIn = el('button', 'theme-btn', 'add to workspace');
+    // WEB_INTERFACE → The standalone thread — on one column a ghost (outline,
+    // no fill); at two columns and more the inverse fill stays.
+    const wayIn = el('button', this.oneColumn ? 'btn btn-ghost' : 'theme-btn', 'add to workspace');
     wayIn.setAttribute('aria-label', 'add this thread to your workspace');
     wayIn.addEventListener('click', () => this.wayIn());
     bar.appendChild(wayIn);
