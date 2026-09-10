@@ -158,8 +158,15 @@ describe('app.css — the handle', () => {
     }
   });
 
-  it('.who .handle at 13px, .bar .handle at 13px flex: 0 0 auto', () => {
-    expect(css).toMatch(/\.who \.handle\s*\{[^}]*font-size: 13px/);
+  it('.who .handle at 0,2,0 carries font-weight 600 and ink to win over .authorbtn 0,1,0', () => {
+    const block = css.match(/\.who \.handle\s*\{[^}]*\}/)?.[0];
+    expect(block).toBeDefined();
+    expect(block!).toContain('font-size: 13px');
+    expect(block!).toContain('font-weight: 600');
+    expect(block!).toContain('color: var(--ink)');
+  });
+
+  it('.bar .handle at 13px flex: 0 0 auto', () => {
     expect(css).toMatch(/\.bar \.handle\s*\{[^}]*font-size: 13px/);
     expect(css).toMatch(/\.bar \.handle\s*\{[^}]*flex: 0 0 auto/);
   });
