@@ -1473,7 +1473,7 @@ chain or owed one:
 | **prune removal** (2026-09-06) | the prune field of `UtxoTransaction`, removed (TYPES_INTERFACE → Layout — UtxoTransaction) — every `TxId`, and every box id derived from one |
 | **the committee rule** (2026-09-06) | the identity record a root's grant writes — `memberSinceBlock`, `memberBar` — and the network record's `N` (§Earned, standing, and well-founded by age) |
 
-| **usernames** (2026-09-10) | **nothing that exists** — box tag 14, two AVL leaf domains, a store table and a nullable mempool column are *added*; no existing byte, layout or verdict moves. The first change deployed **without a reset** (→ "When a reset is not owed") |
+| **usernames** (2026-09-10) | **nothing that exists** — box tag 14, two AVL leaf domains, a store table and two nullable mempool columns are *added*; no existing byte, layout or verdict moves. **Owes no reset** (→ "When a reset is not owed") — the first change of its class |
 
 **Outstanding against the live node: nothing.** Testnet's chain began at the 2026-09-06 reset, whose
 block 1 the profile pins as `genesisId` (§What varies per network); every reset row is in it, and the
