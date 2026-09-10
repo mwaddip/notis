@@ -38,7 +38,7 @@ function baseCtx(over: Partial<AuthorCtx> = {}): AuthorCtx {
     authorKey: AUTHOR,
     origin: ORIGIN,
     karma: memberKarma(),
-    endorsers: { vouches: [{ voucherId: E1, targetId: AUTHOR }], count: 1, next: null },
+    endorsers: { vouches: [{ voucherId: E1, targetId: AUTHOR, voucherName: null, targetName: null }], count: 1, next: null },
     endorsersNext: false,
     membershipBars: { memberBar: 3, memberLikesBar: 6 },
     writeEnabled: true,
@@ -127,9 +127,25 @@ describe('the author window', () => {
     const b = authorBody(h, baseCtx());
     const endorser = b.querySelector('.endorser')!;
     const btn = endorser.querySelector('.authorbtn') as HTMLElement;
+    expect(btn.classList.contains('hex')).toBe(true);
     btn.click();
     expect(h.calls.openAuthor).toEqual([[E1, ORIGIN]]);
     expect(endorser.querySelector('.vmark')).toBeNull();
+  });
+
+  it('an endorser row: the handle @Name when the row carries a name, the same control', () => {
+    const h = noHandlers();
+    const b = authorBody(h, baseCtx({
+      endorsers: { vouches: [{ voucherId: E1, targetId: AUTHOR, voucherName: 'Alice', targetName: null }], count: 1, next: null },
+    }));
+    const endorser = b.querySelector('.endorser')!;
+    const btn = endorser.querySelector('.authorbtn') as HTMLElement;
+    expect(btn.textContent).toBe('@Alice');
+    expect(btn.classList.contains('handle')).toBe(true);
+    expect(btn.classList.contains('hex')).toBe(false);
+    expect(btn.getAttribute('aria-label')).toBe('open this author');
+    btn.click();
+    expect(h.calls.openAuthor).toEqual([[E1, ORIGIN]]);
   });
 
   it('`more` follows next and posts opens the posts window with the placement origin', () => {

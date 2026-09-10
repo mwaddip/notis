@@ -234,27 +234,28 @@ page), and asserts each live post's recomputed `computeContentHash` equals the
 (`CHROME=…`, else Playwright's cached one). Not in `pnpm test` by design — it
 needs a browser and a node.
 
-## Building for a deployment — three values, written by the build and editable after
+## Building for a deployment — four values, written by the build and editable after
 
-**The deployment is three tags in the shell's head** (`WEB_INTERFACE → The client is served from the
+**The deployment is four values in the shell's head** (`WEB_INTERFACE → The client is served from the
 node's own origin`): `<base href>` — the path the client's own files are served under, opening and
 closing with `/`; `notis-api` — the API's path on the same origin, no trailing slash; `notis-faucet` —
-the faucet's path, empty for no faucet and no `ask the faucet for karma` button. The build writes them
-from `VITE_WEB_BASE`, `VITE_API_BASE` and `VITE_FAUCET_BASE` — `/`, empty and empty under `pnpm dev`,
-where the dev server proxies the bare API paths — and the client reads them from the DOM at load
-(`readBase` and `readMeta` in `src/prefs.ts`). Vite's `base` is `./` for a build, so every reference in
-the built shell is relative and the `<base>` alone decides where the files resolve; `public/fonts/fonts.css`
-names its files beside itself for the same reason. A host with another layout edits the three values in
-`web/index.html` after unzipping.
+the faucet's path, empty for no faucet and no `ask the faucet for karma` button; the `og:image` content —
+the picture's absolute URL, `<origin><base>og.png`. The build writes them
+from `VITE_WEB_BASE`, `VITE_API_BASE`, `VITE_FAUCET_BASE` and `VITE_PUBLIC_ORIGIN` — `/`, empty, empty
+and empty under `pnpm dev`, where the dev server proxies the bare API paths — and the client reads them
+from the DOM at load (`readBase` and `readMeta` in `src/prefs.ts`). Vite's `base` is `./` for a build,
+so every reference in the built shell is relative and the `<base>` alone decides where the files resolve;
+`public/fonts/fonts.css` names its files beside itself for the same reason. A host with another layout
+edits the four values in `web/index.html` after unzipping.
 
 ```bash
 bash packages/web/scripts/build-release.sh   # notis.fun's values → notis-web-<ver>.zip in the repo root
-cd packages/web && VITE_WEB_BASE=<client path>/ VITE_API_BASE=<api path> VITE_FAUCET_BASE=<faucet path> npx vite build
+cd packages/web && VITE_PUBLIC_ORIGIN=<origin> VITE_WEB_BASE=<client path>/ VITE_API_BASE=<api path> VITE_FAUCET_BASE=<faucet path> npx vite build
 ```
 
 Run vite directly rather than through `pnpm --filter`, so no variable has to survive pnpm's argument
 passing. ⚠ **Getting `<base href>` wrong yields a blank page, not an error.** The HTML loads, every asset
-404s, and nothing in the console names the cause. Check the built `index.html`: the three tags carry the
+404s, and nothing in the console names the cause. Check the built `index.html`: the four values carry the
 intended values and every `href` and `src` is relative — `build-release.sh` checks exactly that.
 
 ⚠ **A `<base>` element resolves fragment references against itself**, so the client carries none: the mark

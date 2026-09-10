@@ -70,7 +70,7 @@ function reads(
   };
 }
 const vouchRow = (over: Partial<VouchesVoucherResult['vouches'][number]> = {}): VouchesVoucherResult['vouches'][number] => ({
-  boxId: VOUCH_BOX, value: '1', createdAtBlock: 5900, voucherId: PUB, targetId: VOUCH_TARGET, ...over,
+  boxId: VOUCH_BOX, value: '1', createdAtBlock: 5900, voucherId: PUB, targetId: VOUCH_TARGET, voucherName: null, targetName: null, ...over,
 });
 const identity = {
   current: () => ({ pubKeyHex: PUB }),

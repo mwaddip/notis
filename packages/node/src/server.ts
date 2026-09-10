@@ -88,11 +88,21 @@ interface ShellTags {
   ogUrl: string | null;
 }
 
+// NODE_INTERFACE → Link previews → "A tagged answer replaces the shell's own
+// preview tags": before the post's tags go in, every og:, twitter: and
+// description the shell carries are removed.
+function stripShellPreviewTags(html: string): string {
+  return html
+    .replace(/<meta\b[^>]*\bproperty="og:[^"]*"[^>]*>\s*/gi, '')
+    .replace(/<meta\b[^>]*\bname="twitter:[^"]*"[^>]*>\s*/gi, '')
+    .replace(/<meta\b[^>]*\bname="description"[^>]*>\s*/gi, '');
+}
+
 /**
- * NODE_INTERFACE → Link previews: the shell's `<title>Notis</title>` becomes
- * `<title>{title}</title>`, and `og:title`, `description`, `og:description`,
- * `og:type` article, `og:site_name` Notis and `twitter:card` summary are
- * injected before `</head>`; `og:url` only when `tags.ogUrl` is set.
+ * NODE_INTERFACE → Link previews: strips the shell's own preview tags,
+ * replaces `<title>Notis</title>`, and injects `og:title`, `description`,
+ * `og:description`, `og:type` article, `og:site_name` Notis and
+ * `twitter:card` summary before `</head>`; `og:url` only when set.
  */
 function taggedShell(shellHtml: string, tags: ShellTags): string {
   const title = escapeHtml(tags.title);
@@ -107,7 +117,7 @@ function taggedShell(shellHtml: string, tags: ShellTags): string {
     `<meta name="twitter:card" content="summary">`,
   ].filter((tag): tag is string => tag !== null).join('\n');
 
-  return shellHtml
+  return stripShellPreviewTags(shellHtml)
     .replace('<title>Notis</title>', `<title>${title}</title>`)
     .replace('</head>', `${metaTags}\n</head>`);
 }
@@ -338,6 +348,7 @@ export function createApp(config: Config): express.Express {
       getNetworkRecord: store.getNetworkRecord,
       membershipBarMultiplier: config.membershipBarMultiplier,
       getUsername: store.getUsername,
+      getUsernameByOwner: store.getUsernameByOwner,
     }),
   );
 

@@ -4,7 +4,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # build-release.sh — build the web client and zip it as notis-web-<ver>.zip.
 # The bundle is built for notis.fun's layout; a host with another layout edits
-# three values in web/index.html after unzipping.
+# four values in web/index.html after unzipping.
 #
 # Requires: node (>=22), pnpm, zip.
 # Output: notis-web-<version>.zip in the repo root.
@@ -23,7 +23,7 @@ echo "==> Building $PKG.zip"
 pnpm --filter '@dagsocial/web^...' build
 
 cd packages/web
-VITE_WEB_BASE=/web/ VITE_API_BASE=/testnet/api VITE_FAUCET_BASE=/testnet/faucet npx vite build
+VITE_PUBLIC_ORIGIN=https://notis.fun VITE_WEB_BASE=/web/ VITE_API_BASE=/testnet/api VITE_FAUCET_BASE=/testnet/faucet npx vite build
 
 # ---------------------------------------------------------------------------
 # Check the build
@@ -36,6 +36,9 @@ grep -q 'name="notis-api" content="/testnet/api"' "$SHELL_FILE" \
   || { echo "FAIL: notis-api meta missing or wrong"; exit 1; }
 grep -q 'name="notis-faucet" content="/testnet/faucet"' "$SHELL_FILE" \
   || { echo "FAIL: notis-faucet meta missing or wrong"; exit 1; }
+grep -q 'property="og:image" content="https://notis.fun/web/og.png"' "$SHELL_FILE" \
+  || { echo "FAIL: og:image meta missing or wrong"; exit 1; }
+[ -f dist/og.png ] || { echo "FAIL: dist/og.png missing"; exit 1; }
 
 if grep -En 'href="/[^"]*"|src="/[^"]*"' "$SHELL_FILE" | grep -v '<base '; then
   echo "FAIL: root-absolute href or src in the built shell (above)"

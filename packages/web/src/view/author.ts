@@ -151,8 +151,10 @@ function endorsers(field: HTMLElement, handlers: AuthorHandlers, ctx: AuthorCtx)
   field.appendChild(n);
   for (const v of e.vouches) {
     const line = el('div', 'endorser');
-    const btn = el('button', 'hex authorbtn');
-    btn.textContent = shortHex(v.voucherId, 10);
+    // WEB_INTERFACE → The identity display — the handle where the row carries a
+    // name, else the prefix; the same control.
+    const btn = el('button', v.voucherName !== null ? 'handle authorbtn' : 'hex authorbtn');
+    btn.textContent = v.voucherName !== null ? '@' + v.voucherName : shortHex(v.voucherId, 10);
     btn.setAttribute('aria-label', 'open this author');
     btn.addEventListener('click', () => handlers.openAuthor(v.voucherId, ctx.origin));
     line.appendChild(btn);

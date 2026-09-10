@@ -17,6 +17,7 @@ import {
   consumeBox,
 } from '../../src/store/utxo.js';
 import { getIdentityRecord, putIdentityRecord } from '../../src/store/identity-records.js';
+import { putUsername, getUsernameByOwner } from '../../src/store/usernames.js';
 import { getBoxWithPending } from '../../src/store/mempool.js';
 import { setNet } from '../../src/services/net-instance.js';
 import {
@@ -72,6 +73,7 @@ async function request(
       getNetworkRecord: () => ({ memberCount: 1 }),
       membershipBarMultiplier: 1,
       getUsername: () => null,
+      getUsernameByOwner,
       getUtxoEngineDeps: () => ({
         // The pending view, as server.ts wires the submission routes: a grant
         // spending the change box of one still pooled resolves its input here.
@@ -353,8 +355,38 @@ describe('UTXO routes', () => {
     expect(body.bondCount).toBe(1);
     const bond = (body.bonds as Record<string, unknown>[])[0]!;
     expect(bond.inviterId).toBe(inviteUserIdHex);
+    expect(bond.inviterName).toBeNull();
     expect(bond.inviteePublicKey).toBe('bb'.repeat(32));
+    expect(bond.inviteeName).toBeNull();
     expect(bond.createdAtBlock).toBe(7);
+  });
+
+  it('GET /invites/:userId carries inviterName and inviteeName from the name record', async () => {
+    putUsername({
+      nameLower: 'inviter',
+      name: 'Inviter',
+      owner: inviteUserIdHex,
+      boxId: 'dd'.repeat(32),
+      claimedAtBlock: 1,
+    });
+    const res = await request(`/invites/${inviteUserIdHex}`);
+    expect(res.status).toBe(200);
+    const body = res.data as Record<string, unknown>;
+    const bond = (body.bonds as Record<string, unknown>[])[0]!;
+    expect(bond.inviterName).toBe('Inviter');
+    expect(bond.inviteeName).toBeNull();
+
+    putUsername({
+      nameLower: 'invitee',
+      name: 'Invitee',
+      owner: 'bb'.repeat(32),
+      boxId: 'ee'.repeat(32),
+      claimedAtBlock: 2,
+    });
+    const res2 = await request(`/invites/${inviteUserIdHex}`);
+    const bond2 = ((res2.data as Record<string, unknown>).bonds as Record<string, unknown>[])[0]!;
+    expect(bond2.inviterName).toBe('Inviter');
+    expect(bond2.inviteeName).toBe('Invitee');
   });
 
   it('GET /invites/:userId answers { bonds: [], bondCount: 0, next: null } for an inviter with no live bond', async () => {
@@ -688,6 +720,7 @@ describe('utxo routes — alias resolution', () => {
         getNetworkRecord: () => ({ memberCount: 1 }),
         membershipBarMultiplier: 1,
         getUsername: lookup,
+        getUsernameByOwner: () => null,
         getUtxoEngineDeps: () => ({
           getBox: () => null,
           insertBox: () => {},

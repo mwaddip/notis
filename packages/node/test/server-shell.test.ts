@@ -14,7 +14,21 @@ import { makeTestConfig, makePostCommit, fixturePostId, uid, toHex } from './hel
 // shell with a post's preview tags injected, gated by WEB_SHELL_PATH
 // (NODE_INTERFACE → Configuration).
 describe('GET /shell/:id', () => {
-  const SHELL_HTML = '<!doctype html><html><head><title>Notis</title></head><body></body></html>';
+  const SITE_BLOCK = [
+    '<meta name="description" content="Reputation not for sale">',
+    '<meta property="og:type" content="website">',
+    '<meta property="og:site_name" content="Notis">',
+    '<meta property="og:title" content="Notis">',
+    '<meta property="og:description" content="Reputation not for sale">',
+    '<meta property="og:image" content="https://example.test/web/og.png">',
+    '<meta property="og:image:type" content="image/png">',
+    '<meta property="og:image:width" content="1200">',
+    '<meta property="og:image:height" content="630">',
+    '<meta property="og:image:alt" content="The Notis mark">',
+    '<meta name="twitter:card" content="summary_large_image">',
+    '<meta content="Notis social" property="og:title:alt">',
+  ].join('\n');
+  const SHELL_HTML = `<!doctype html><html><head><title>Notis</title>\n${SITE_BLOCK}\n</head><body></body></html>`;
 
   let tmpDir: string;
   let shellPath: string;
@@ -99,14 +113,17 @@ describe('GET /shell/:id', () => {
     }
   });
 
-  it('answers 404 with the untagged shell for an id the node has never heard of', async () => {
+  it('answers 404 with the untagged shell for an id the node has never heard of — site block intact', async () => {
     const { port, close } = startApp(shellPath);
     try {
       const res = await fetch(`http://localhost:${port}/shell/${'b'.repeat(64)}`);
       expect(res.status).toBe(404);
       const html = await res.text();
       expect(html).toContain('<title>Notis</title>');
-      expect(html).not.toContain('og:');
+      expect(html).toContain('og:title');
+      expect(html).toContain('Reputation not for sale');
+      expect(html).toContain('og:image');
+      expect(html).toContain('twitter:card');
     } finally {
       close();
     }
@@ -141,6 +158,16 @@ describe('GET /shell/:id', () => {
       expect(html).toContain('<meta property="og:type" content="article">');
       expect(html).toContain('<meta property="og:site_name" content="Notis">');
       expect(html).toContain('<meta name="twitter:card" content="summary">');
+      // NODE_INTERFACE → Link previews → "A tagged answer replaces the shell's
+      // own preview tags": no og:image, no site values, one of each tag.
+      expect(html).not.toContain('og:image');
+      expect(html).not.toContain('Reputation not for sale');
+      expect(html).not.toContain('summary_large_image');
+      expect(html).not.toContain('og:title:alt');
+      expect(html.match(/og:title/g)).toHaveLength(1);
+      expect(html.match(/og:description/g)).toHaveLength(1);
+      expect(html.match(/name="description"/g)).toHaveLength(1);
+      expect(html.match(/twitter:card/g)).toHaveLength(1);
     } finally {
       close();
     }
@@ -171,6 +198,9 @@ describe('GET /shell/:id', () => {
 
       expect(html).toContain('<title>@Alice_01 · Notis</title>');
       expect(html).toContain('<meta property="og:title" content="@Alice_01 · Notis">');
+      expect(html).not.toContain('og:image');
+      expect(html).not.toContain('Reputation not for sale');
+      expect(html.match(/og:title/g)).toHaveLength(1);
     } finally {
       close();
     }
@@ -201,6 +231,8 @@ describe('GET /shell/:id', () => {
       const titleStart = html.indexOf('<title>') + '<title>'.length;
       const titleEnd = html.indexOf('</title>');
       expect(html.slice(titleStart, titleEnd)).not.toContain('<');
+      expect(html).not.toContain('og:image');
+      expect(html.match(/name="description"/g)).toHaveLength(1);
     } finally {
       close();
     }
@@ -254,6 +286,10 @@ describe('GET /shell/:id', () => {
         '<meta property="og:description" content="withdrawn by its author">',
       );
       expect(res.body).not.toContain('og:url');
+      expect(res.body).not.toContain('og:image');
+      expect(res.body).not.toContain('Reputation not for sale');
+      expect(res.body.match(/og:description/g)).toHaveLength(1);
+      expect(res.body.match(/twitter:card/g)).toHaveLength(1);
     } finally {
       close();
     }
@@ -281,7 +317,7 @@ describe('GET /shell/:id', () => {
     }
   });
 
-  it('answers 200 untagged for a live post whose content has not arrived yet', async () => {
+  it('answers 200 untagged for a live post whose content has not arrived yet — site block intact', async () => {
     const author = uid('shell-placeholder-author');
     const commit = makePostCommit(author, 'placeholder body, not stored on this node');
     const id = fixturePostId(commit);
@@ -294,7 +330,9 @@ describe('GET /shell/:id', () => {
       expect(res.status).toBe(200);
       const html = await res.text();
       expect(html).toContain('<title>Notis</title>');
-      expect(html).not.toContain('og:');
+      expect(html).toContain('Reputation not for sale');
+      expect(html).toContain('og:image');
+      expect(html).toContain('twitter:card');
     } finally {
       close();
     }

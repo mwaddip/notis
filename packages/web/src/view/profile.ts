@@ -416,8 +416,10 @@ function standingBonds(field: HTMLElement, handlers: ProfileHandlers, ctx: Profi
   if (b === null || b.bonds.length === 0) return;
   for (const bond of b.bonds) {
     const bondRow = el('div', 'bond');
-    const btn = el('button', 'hex authorbtn');
-    btn.textContent = shortHex(bond.inviteePublicKey, 10);
+    // WEB_INTERFACE → The identity display — the handle where the row carries a
+    // name, else the prefix; the same control.
+    const btn = el('button', bond.inviteeName !== null ? 'handle authorbtn' : 'hex authorbtn');
+    btn.textContent = bond.inviteeName !== null ? '@' + bond.inviteeName : shortHex(bond.inviteePublicKey, 10);
     btn.setAttribute('aria-label', 'open this author');
     btn.addEventListener('click', () => handlers.openAuthor(bond.inviteePublicKey, origin));
     bondRow.appendChild(btn);

@@ -154,12 +154,24 @@ built shell makes is relative, and so is every reference inside `public/` — th
 files beside itself — so the `<base>` alone decides where the client's files resolve, on the workspace page
 and on a standalone page alike. The build writes the three from `VITE_WEB_BASE`, `VITE_API_BASE` and
 `VITE_FAUCET_BASE` — `/`, empty and empty under the dev server; notis.fun's layout in the release — and a
-host with another layout edits three values in one file. The client reads them once, at load: the
+host with another layout edits those three values, and the picture's URL below, in one file. The client reads them once, at load: the
 `<base>`'s `href` resolved against the page, its path with a trailing `/` (`/` when the element is absent),
 is the base `decideMode` takes (→ The standalone thread); each meta's content, trimmed, one trailing `/`
 stripped, is the default a stored preference overrides (→ The profile window). The read takes the element's
 attribute through the URL constructor, never `document.baseURI`. A foreign origin in a tag fails exactly as
 one in the preference does, until the node gains CORS.
+
+**The shell carries the site's preview card, and the picture's URL is the fourth configured value.** After the
+three tags the head carries `description`, `og:type` website, `og:site_name` Notis, `og:title` Notis,
+`og:description`, `og:image` with `og:image:type` image/png, `og:image:width` 1200, `og:image:height` 630 and
+`og:image:alt`, and `twitter:card` summary_large_image — the words *Reputation not for sale*; the picture `og.png` beside the client's files, 1200×630: the full-tier mark
+(`HOUSE_STYLE → Tiers`) with its colours baked in as literals, Fern `#5E8C3A` on keyline `#1B2A12`, centred on Sand
+`ground` `#E7DCC6` (`HOUSE_STYLE → Light`), no words, rendered from the docs site's tracked sprite
+(`HOUSE_STYLE → Where the artwork lives`). A scraper runs no script and most refuse a relative image, and the base
+is a path, so the build composes `og:image` as `<origin><base>og.png` from `VITE_PUBLIC_ORIGIN` — empty under the
+dev server, `https://notis.fun` in the release — and a host under another origin or base edits that value with the
+other three; `build-release.sh` checks it. No `og:url` on the root: a scraper takes the page's own. A post's page
+carries none of this block — the node removes it before injecting the post's tags (`NODE_INTERFACE → Link previews`).
 
 ⚠ **A `<base>` element resolves every relative URL in the document, fragments included.** A same-document
 fragment reference — `<use href="#id">`, `<a href="#id">` — becomes a reference to `<base>#id`, another
@@ -336,8 +348,10 @@ member, by a `standalone` class on the workspace element outside every media que
 boot and never written to `notis.layout`; the stored arrangement is neither read nor touched until the
 reader asks for the workspace (→ The way into the workspace).
 
-**The header** carries the brand and wordmark — not a link, as nowhere else — the way in, a word control
-reading `add to workspace` (→ The way into the workspace), the identity prefix at tiling as display and the
+**The header** carries the brand and wordmark — not a link, as nowhere else — the way in, `add to workspace`
+(→ The way into the workspace) — an inverse-filled header word at two columns and more, and on one column a
+ghost: its outline in `borderStrong`, no fill, the word in `ink` (`HOUSE_STYLE → Accessibility contract`), since a
+fill beside the bare theme glyph dominates the bar — the identity prefix at tiling as display and the
 theme control as the width class renders it. No arrows: there is one member. No profile control: creating,
 importing, exporting and forgetting an identity are the workspace's, and the unlock a like or a reply needs
 mounts in the card; a visitor who wants a profile presses the way in and finds it there. **The bar** carries
@@ -793,8 +807,8 @@ the prefix is a control the handle is the same control** — the who row's butto
 only its text and its face changed. The rows that carry a name: a card's who row from its row's `authorName`,
 a thread's bar from its root row, the standalone page's title (→ The standalone thread), the reader's own
 submission cards from the reader's own name, the header's profile control and the standalone header's display
-from the reader's own name, and the author window's bars and `name` row from its subject's (→ The author
-window). **An endorser row and a bond row keep the prefix**: their rows carry no name. **A row fetched before a
+from the reader's own name, the author window's bars and `name` row from its subject's (→ The author
+window), an endorser row from its row's `voucherName` and a standing-bond row from its row's `inviteeName`. **An endorser row and a bond row carry the handle**: the endorser row from its row's `voucherName`, the bond row from its row's `inviteeName` (`NODE_INTERFACE → Usernames`), the prefix where the name is `null`. **A row fetched before a
 landing keeps what it fetched** — the reader's own claim or burn landing re-renders the header and the profile
 row and nothing else (`HOUSE_STYLE → Motion`); the feed's ↻ brings newer posts and leaves the rows on screen as
 they are, a thread's ↻ re-reads its rows, and a reload re-reads everything (→ What the feed reads, and what a

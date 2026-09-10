@@ -11,7 +11,7 @@
 //
 // ---------------------------------------------------------------------------
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import express from 'express';
 import http from 'http';
 import { generateKeyPairSync, type KeyObject } from 'crypto';
@@ -53,6 +53,8 @@ import {
   getIdentityRecord,
   putIdentityRecord,
   hasActiveVouchEscrow,
+  getUsernameByOwner,
+  putUsername,
 } from '../../src/store/index.js';
 import { castVouch, initiateUnvouch } from '../../src/services/vouch.js';
 
@@ -136,7 +138,7 @@ describe('vouch routes — the JSON edge', () => {
       putIdentityRecord: () => {},
       protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
       getUsername: () => null,
-      getUsernameByOwner: () => null,
+      getUsernameByOwner,
     };
   }
 
@@ -380,7 +382,9 @@ describe('vouch routes — the JSON edge', () => {
     expect(body.count).toBe(1);
     expect(body.vouches[0]).toEqual({
       voucherId: voucher.hex,
+      voucherName: null,
       targetId: target.hex,
+      targetName: null,
     });
   });
 
@@ -404,7 +408,9 @@ describe('vouch routes — the JSON edge', () => {
       value: vouchBox.value.toString(),
       createdAtBlock: vouchBox.createdAtBlock,
       voucherId: voucher.hex,
+      voucherName: null,
       targetId: target.hex,
+      targetName: null,
     });
     // Without a `boxId` in the listing an unvouch is unbuildable from the API
     // alone: the transaction spends a NAMED box, and this is the only read
@@ -431,6 +437,111 @@ describe('vouch routes — the JSON edge', () => {
 
     const res = await request(`/${target.hex}`, 'DELETE', { tx: txToJson(tx) });
     expect(res.status).toBe(200);
+  });
+
+  // -------------------------------------------------------------------------
+  // NODE_INTERFACE → Usernames → "A list row carries its names"
+  // -------------------------------------------------------------------------
+
+  it('target arm: a named voucher and a nameless voucher', async () => {
+    const named = { pub: voucher.pub, hex: voucher.hex };
+    putUsername({
+      nameLower: 'vname',
+      name: 'VName',
+      owner: named.hex,
+      boxId: 'a'.repeat(64),
+      claimedAtBlock: 1,
+    });
+    const nameless = (() => {
+      const { publicKey } = generateKeyPairSync('ed25519');
+      const pub = rawPublicKey(publicKey);
+      return { pub, hex: Buffer.from(pub).toString('hex') };
+    })();
+    putIdentityRecord(nameless.pub, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 1,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
+    seedVouchBox(named.pub, target.pub);
+    seedVouchBox(nameless.pub, target.pub, 1);
+
+    const res = await request(`/?target=${target.hex}`, 'GET');
+    expect(res.status).toBe(200);
+    const body = res.data as { vouches: Array<Record<string, unknown>> };
+    const byVoucher = Object.fromEntries(
+      body.vouches.map((v) => [v['voucherId'], v]),
+    );
+    expect(byVoucher[named.hex]!['voucherName']).toBe('VName');
+    expect(byVoucher[nameless.hex]!['voucherName']).toBeNull();
+    for (const v of body.vouches) {
+      expect(v['targetName']).toBeNull();
+    }
+  });
+
+  it('target arm: N rows from M identities → M getUsernameByOwner calls', async () => {
+    seedVouchBox(voucher.pub, target.pub);
+    seedVouchBox(voucher.pub, target.pub, 2);
+
+    const spy = vi.fn(getUsernameByOwner);
+    const deps = {
+      ...engineDeps(),
+      getUsernameByOwner: spy as typeof getUsernameByOwner,
+      castVouch,
+      initiateUnvouch,
+      getCurrentHeight: () => HEIGHT,
+    };
+    const app = express();
+    app.use(express.json());
+    app.use(createRouter(deps));
+    const server = app.listen(0);
+    const addr = server.address() as { port: number };
+    const res = await new Promise<{ status: number; data: unknown }>((resolve) => {
+      http.get({ hostname: 'localhost', port: addr.port, path: `/?target=${target.hex}` }, (r) => {
+        let d = '';
+        r.on('data', (c) => (d += c));
+        r.on('end', () => { server.close(); resolve({ status: r.statusCode!, data: JSON.parse(d) }); });
+      });
+    });
+    expect(res.status).toBe(200);
+    const body = res.data as { vouches: Array<Record<string, unknown>> };
+    expect(body.vouches).toHaveLength(2);
+    // 2 rows from 2 distinct identities (voucher + target) → 2 lookups
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it('voucher arm: a named target and a nameless target', async () => {
+    const named = target;
+    putUsername({
+      nameLower: 'tname',
+      name: 'TName',
+      owner: named.hex,
+      boxId: 'b'.repeat(64),
+      claimedAtBlock: 1,
+    });
+    const nameless = (() => {
+      const { publicKey } = generateKeyPairSync('ed25519');
+      const pub = rawPublicKey(publicKey);
+      return { pub, hex: Buffer.from(pub).toString('hex') };
+    })();
+    putIdentityRecord(nameless.pub, {
+      lastActivityBlock: 1, lastDecayBlock: 0, invitedAtBlock: 1,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
+    seedVouchBox(voucher.pub, named.pub);
+    seedVouchBox(voucher.pub, nameless.pub, 1);
+
+    const res = await request(`/?voucher=${voucher.hex}`, 'GET');
+    expect(res.status).toBe(200);
+    const body = res.data as { vouches: Array<Record<string, unknown>> };
+    const byTarget = Object.fromEntries(
+      body.vouches.map((v) => [v['targetId'], v]),
+    );
+    expect(byTarget[named.hex]!['targetName']).toBe('TName');
+    expect(byTarget[nameless.hex]!['targetName']).toBeNull();
+    for (const v of body.vouches) {
+      expect(v['voucherName']).toBeNull();
+    }
   });
 
   it('malformed after → 400 on /vouches?target=', async () => {

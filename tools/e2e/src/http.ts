@@ -226,13 +226,13 @@ export async function getStatus(
 }
 
 export interface VouchTargetPage {
-  vouches: { voucherId: string; targetId: string }[];
+  vouches: { voucherId: string; voucherName: string | null; targetId: string; targetName: string | null }[];
   count: number;
   next: string | null;
 }
 
 export interface VouchVoucherPage {
-  vouches: { boxId: string; value: string; createdAtBlock: number; voucherId: string; targetId: string }[];
+  vouches: { boxId: string; value: string; createdAtBlock: number; voucherId: string; voucherName: string | null; targetId: string; targetName: string | null }[];
   count: number;
   next: string | null;
 }
@@ -352,4 +352,21 @@ export async function getUsernameByOwner(
   owner: string,
 ): Promise<UsernameResponse | null> {
   return jsonGet(node, `/usernames?owner=${owner}`) as Promise<UsernameResponse | null>;
+}
+
+// NODE_INTERFACE → UTXO queries
+export interface BondPage {
+  bonds: { id: string; value: string; inviterId: string; inviterName: string | null; inviteePublicKey: string; inviteeName: string | null; createdAtBlock: number }[];
+  bondCount: number;
+  next: string | null;
+}
+
+export async function getBonds(
+  node: NodeProcess,
+  userId: string,
+): Promise<BondPage> {
+  const res = await fetch(`${node.url}/invites/${userId}`);
+  const data = await res.json();
+  if (!res.ok) throw new NodeError(res.status, data as Record<string, unknown>);
+  return data as BondPage;
 }
