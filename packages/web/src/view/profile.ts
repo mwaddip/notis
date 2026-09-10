@@ -2,8 +2,8 @@ import { el, shortHex } from '../dom';
 import { prefs, BUILD_BASE, BUILD_FAUCET_BASE, type Theme, type IdTint } from '../prefs';
 import { unlockForm, setPassphraseForm } from './passphrase';
 import { stageLine, type Flight } from './card';
-import { INVITE_BOND_VEST_PER_LIKES } from '@dagsocial/types';
-import type { KarmaResult, BondsResult } from '../api/dto';
+import { INVITE_BOND_VEST_PER_LIKES, USERNAME_BURN_PRICE, isValidUsernameBytes } from '@dagsocial/types';
+import type { KarmaResult, BondsResult, UsernameResult } from '../api/dto';
 import type { Origin } from '../model/workspace';
 
 // The @profile window — WEB_INTERFACE → The profile window. Identity, standing,
@@ -43,6 +43,9 @@ export interface ProfileHandlers {
   openAuthor: (key: string, origin: Origin) => void; // a standing bond's invitee window
   vouch: (key: string) => void;                       // vouch a standing bond's invitee
   moreBonds: () => void;
+  // The username row (WEB_INTERFACE → The username row).
+  claimUsername: (name: string) => void;
+  burnUsername: () => void;
 }
 
 export interface ProfileCtx {
@@ -57,6 +60,13 @@ export interface ProfileCtx {
   canAffordMinBond: boolean;   // the spendable covers the minimum bond
   bonds: BondsResult | null;   // the reader's standing bonds
   inviteFlight: Flight | null; // the invite in the row
+  // The username row (WEB_INTERFACE → The username row).
+  ownName: UsernameResult | null;
+  ownNameLoaded: boolean;
+  usernameFlight: Flight | null;
+  pendingUsername: { kind: 'claim' | 'burn'; name: string } | null;
+  canSignClaim: boolean;
+  canAffordBurn: boolean;
 }
 
 const ID_TINTS: IdTint[] = ['spine', 'wash', 'both', 'off'];
@@ -185,6 +195,14 @@ function loadedState(b: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx,
   {
     const { row: r, field } = row('invites');
     invitesRow(field, handlers, ctx, origin);
+    b.appendChild(r);
+  }
+
+  // username — the claim form or the held name and burn (WEB_INTERFACE → The username row).
+  {
+    const { row: r, field } = row('username');
+    field.classList.add('username-field');
+    usernameRow(field, handlers, ctx);
     b.appendChild(r);
   }
 
@@ -544,6 +562,192 @@ function forgetConfirm(field: HTMLElement, handlers: ProfileHandlers, backedUp: 
   wrap.appendChild(actions);
   field.replaceChildren(wrap);
   keep.focus(); // focus on keep — the non-destructive choice
+}
+
+// ---------------------------------------------------------------------------
+// The username row — WEB_INTERFACE → The username row.
+// Three slots (.username-line, .username-form, .username-flight) built once and
+// updated in place, the invites row's model.
+// ---------------------------------------------------------------------------
+
+function usernameRow(field: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx): void {
+  field.replaceChildren(el('div', 'username-line'), el('div', 'username-form'), el('div', 'username-flight'));
+  updateUsername(field, handlers, ctx);
+}
+
+/** Update the username row's three slots in place from the current ctx — the
+ *  invites row's model (HOUSE_STYLE → Motion). */
+export function renderUsernameRow(field: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx): void {
+  updateUsername(field, handlers, ctx);
+}
+
+function updateUsername(field: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx): void {
+  const line = field.querySelector<HTMLElement>('.username-line');
+  const formSlot = field.querySelector<HTMLElement>('.username-form');
+  const flight = field.querySelector<HTMLElement>('.username-flight');
+  if (!line || !formSlot || !flight) return;
+  line.replaceChildren();
+  formSlot.replaceChildren();
+  flight.replaceChildren();
+
+  // The transient flight's ending renders in the flight slot alongside whatever
+  // state the line/form are in.
+  if (ctx.usernameFlight && (ctx.usernameFlight.stage === 'rejected' || ctx.usernameFlight.stage === 'expired')) {
+    flight.appendChild(stageLine(ctx.usernameFlight));
+  }
+
+  if (!ctx.ownNameLoaded) {
+    line.appendChild(el('span', 'inkmute', '—'));
+    return;
+  }
+
+  const pending = ctx.pendingUsername;
+
+  // A pending claim or burn — the ledger's entry, durable across a reload.
+  if (pending) {
+    const muted = el('span', 'handle inkmute');
+    muted.textContent = '@' + pending.name;
+    line.appendChild(muted);
+    if (ctx.usernameFlight?.stage === 'submitting') {
+      flight.replaceChildren(stageLine(ctx.usernameFlight));
+    } else if (!ctx.usernameFlight || ctx.usernameFlight.stage === 'submitted') {
+      flight.replaceChildren(stageLine({ stage: 'submitted' }));
+    }
+    return;
+  }
+
+  // Holding a name — the handle, burn, and the hint.
+  if (ctx.ownName) {
+    const handle = el('span', 'handle');
+    handle.textContent = '@' + ctx.ownName.name;
+    line.appendChild(handle);
+    line.appendChild(document.createTextNode(' '));
+
+    const burn = el('button', 'word', 'burn') as HTMLButtonElement;
+    if (!ctx.canAffordBurn) {
+      burn.disabled = true;
+      burn.title = `a burn costs ${USERNAME_BURN_PRICE} karma; this key has less`;
+    }
+    burn.addEventListener('click', () => {
+      burnConfirm(line, handlers, ctx, burn);
+    });
+    line.appendChild(burn);
+
+    const hint = el('div', 'hint');
+    hint.append(
+      `held since block `,
+      mono(String(ctx.ownName.claimedAtBlock)),
+      `. a burn costs ${USERNAME_BURN_PRICE} karma and restores your free claim.`,
+    );
+    line.appendChild(hint);
+    return;
+  }
+
+  // Holding none — the claim form or the "no karma box" hint.
+  if (!ctx.canSignClaim) {
+    line.appendChild(el('div', 'hint', 'a claim spends and returns one karma box; this key has none.'));
+    return;
+  }
+  claimForm(formSlot as HTMLElement, handlers, ctx);
+}
+
+function claimForm(slot: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx): void {
+  const form = el('form', 'pf username-form') as HTMLFormElement;
+
+  const input = el('input') as HTMLInputElement;
+  input.setAttribute('aria-label', 'the name to claim');
+  input.placeholder = 'a name';
+  input.maxLength = 24;
+  input.autocomplete = 'off';
+  (input as HTMLInputElement).autocapitalize = 'off';
+  input.spellcheck = false;
+
+  const submit = el('button', 'word', 'claim') as HTMLButtonElement;
+  submit.type = 'submit';
+
+  const refusal = el('div', 'pf-refusal');
+  refusal.hidden = true;
+
+  const hint = el('div', 'hint');
+  hint.append(
+    `free, once per key. 1 to 24 letters, digits or _, shown as typed; one name is one name whatever its case. a later burn costs ${USERNAME_BURN_PRICE} karma and restores the claim.`,
+  );
+
+  form.append(input, submit, refusal, hint);
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    let v = input.value.trim();
+    if (v.startsWith('@')) v = v.slice(1);
+    const bytes = new TextEncoder().encode(v);
+    if (!isValidUsernameBytes(bytes)) {
+      refusal.textContent = 'a name is 1 to 24 letters, digits or _.';
+      refusal.hidden = false;
+      return;
+    }
+    refusal.hidden = true;
+    const id = ctx.identity;
+    if (id?.locked) {
+      if (form.parentElement?.querySelector('.card-unlock')) return;
+      const urow = el('div', 'card-unlock');
+      urow.appendChild(
+        unlockForm(
+          id.pubKeyHex,
+          async (p) => {
+            await handlers.unlockIdentity(p);
+            handlers.claimUsername(v);
+          },
+          () => urow.remove(),
+        ),
+      );
+      form.insertAdjacentElement('afterend', urow);
+      return;
+    }
+    handlers.claimUsername(v);
+  });
+  slot.appendChild(form);
+}
+
+function burnConfirm(line: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx, burnBtn: HTMLElement): void {
+  const name = ctx.ownName?.name;
+  if (!name) return;
+  const saved = [...line.childNodes];
+  const wrap = el('div', 'pf-confirm');
+  const q = el('div', 'pf-refusal');
+  q.textContent = `burn @${name} for ${USERNAME_BURN_PRICE} karma? the name is open to anyone again, and your free claim returns.`;
+  wrap.appendChild(q);
+  const actions = el('div', 'pf-actions');
+  const confirm = el('button', 'word', 'burn') as HTMLButtonElement;
+  confirm.addEventListener('click', () => {
+    const id = ctx.identity;
+    if (id?.locked) {
+      wrap.replaceChildren(
+        unlockForm(
+          id.pubKeyHex,
+          async (p) => {
+            await handlers.unlockIdentity(p);
+            handlers.burnUsername();
+          },
+          restore,
+        ),
+      );
+      return;
+    }
+    handlers.burnUsername();
+  });
+  const keep = el('button', 'word', 'keep') as HTMLButtonElement;
+  const restore = (): void => {
+    line.replaceChildren(...saved);
+    burnBtn.focus();
+  };
+  keep.addEventListener('click', restore);
+  actions.append(confirm, keep);
+  wrap.appendChild(actions);
+  line.replaceChildren(wrap);
+  keep.focus();
+
+  line.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') restore();
+  });
 }
 
 // ---------------------------------------------------------------------------

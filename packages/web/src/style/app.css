@@ -435,6 +435,7 @@ header .spacer { flex: 1 1 auto; }
    height, the geometry price the motion contract asks (HOUSE_STYLE → Motion). */
 .karma-field { display: block; min-height: 22px; }
 .pp-field { display: block; }
+.username-field { display: block; }
 
 /* The empty state's line and its create / import buttons. */
 .pf-lead { font-size: 12.5px; color: var(--ink); margin-bottom: 12px; }

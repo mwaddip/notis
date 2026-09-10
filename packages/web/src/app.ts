@@ -1,6 +1,6 @@
 import { NodeClient, type Api } from './api/client';
 import type { PostJson, WithdrawnJson, FeedRow, PostResult, ThreadResult, KarmaResult, BondsResult, UsernameResult } from './api/dto';
-import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE } from '@dagsocial/types';
+import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE, USERNAME_BURN_PRICE } from '@dagsocial/types';
 import type { Mode } from './mode';
 import type { Tabs } from './tabs';
 import { el, shortHex, preservingScroll } from './dom';
@@ -17,13 +17,14 @@ import { WriteClient, type Rejection } from './api/write';
 import { FaucetClient, faucetLine } from './api/faucet';
 import {
   PendingLedger, reconcilePost, reconcileLike, reconcileGrant, reconcileVouch, reconcileUnvouch, reconcileInvite, reconcileWithdraw,
+  reconcileClaim, reconcileBurn, pendingUsernameEntry,
   pendingLikeTargets, pendingVouchTargets, pendingWithdrawTargets,
 } from './wallet/ledger';
 import type { PendingEntry } from './wallet/types';
 import { readBuildContext } from './wallet/reads';
-import { submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, type SubmitDeps } from './wallet/submit';
+import { submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, submitClaimFlow, submitBurnFlow, type SubmitDeps } from './wallet/submit';
 import { identity as identitySingleton } from './identity/identity';
-import { renderKarmaField, renderInvitesRow } from './view/profile';
+import { renderKarmaField, renderInvitesRow, renderUsernameRow } from './view/profile';
 import type { Flight } from './view/card';
 import type { YourVouch } from './view/author';
 import {
@@ -118,6 +119,22 @@ function withdrawRejectionCopy(r: Rejection): string {
   return 'the node said: ' + m;
 }
 
+/** A username rejection in the voice register (WEB_INTERFACE → The username row,
+ *  HOUSE_STYLE → Voice). A client-side refusal (status 0) already reads that way. */
+function usernameRejectionCopy(r: Rejection): string {
+  if (r.status === 0) return r.message;
+  if (r.status === 503) return "the node's pool is full right now.";
+  const m = r.message.toLowerCase();
+  if (/name invalid|invalid name/.test(m)) return 'that name is not 1 to 24 letters, digits or _.';
+  if (/name taken/.test(m)) return 'that name is taken.';
+  if (/identity holds a name/.test(m)) return 'this key already holds a name.';
+  if (/pending claim.*name|name.*pending claim/.test(m)) return 'a claim for that name is already pending.';
+  if (/pending claim|already.*pending/.test(m)) return 'this key already has a claim pending.';
+  if (/not held/.test(m)) return 'that name is not held any more.';
+  if (/price/.test(m)) return 'the burn\'s price did not match; refresh and try again.';
+  return m;
+}
+
 /** A fresh empty feed state — the author-posts window's body shape, the feed's own. */
 function emptyFeedState(): FeedState {
   return { posts: [], pending: [], next: null, report: null, olderReport: null, loaded: false, loading: false, error: null };
@@ -192,6 +209,8 @@ export class App {
   private inviteFlight: Flight | null = null;
   // The reader's own name (WEB_INTERFACE → The identity display).
   private ownName: UsernameResult | null = null;
+  private ownNameLoaded = false;
+  private usernameFlight: Flight | null = null;
 
   // Every dependency is injectable so a test can drive the App over fakes.
   constructor(client?: Api, writeClient?: WriteClient, identity?: AppIdentity, ledger?: PendingLedger, tabs?: Tabs) {
@@ -256,6 +275,8 @@ export class App {
       moreEndorsers: (key) => void this.moreEndorsers(key),
       invite: (inviteeKey, bond) => void this.invite(inviteeKey, bond),
       moreBonds: () => void this.moreBonds(),
+      claimUsername: (name) => void this.claimUsername(name),
+      burnUsername: () => void this.burnUsername(),
     };
   }
 
@@ -446,6 +467,11 @@ export class App {
       withdrawState: (postId) => this.withdrawState(postId),
       canSignWithdraw: this.canSignWithdraw(),
       ownName: this.ownName,
+      ownNameLoaded: this.ownNameLoaded,
+      usernameFlight: this.usernameFlight,
+      pendingUsername: pendingUsernameEntry(this.ledger.all()),
+      canSignClaim: this.canSignWithdraw(), // same predicate — a spendable box
+      canAffordBurn: this.canAffordBurn(),
       linkUrl: (id) => new URL(this.base + 'p/' + id, location.href).href,
     };
   }
@@ -473,6 +499,11 @@ export class App {
   private canAffordMinBond(): boolean {
     if (this.profileKarma === null || this.state.status === null) return false;
     return BigInt(this.profileKarma.effective) >= BigInt(this.state.status.inviteBondMin);
+  }
+
+  private canAffordBurn(): boolean {
+    if (this.profileKarma === null) return false;
+    return BigInt(this.profileKarma.effective) >= USERNAME_BURN_PRICE;
   }
 
   private renderHeader(): void {
@@ -1288,6 +1319,8 @@ export class App {
     this.bondsView = null;
     this.inviteFlight = null;
     this.ownName = null;
+    this.ownNameLoaded = false;
+    this.usernameFlight = null;
     this.ledger = new PendingLedger(this.idm.current()?.pubKeyHex ?? null);
     this.startPoll(); // the new key's restored ledger may hold entries; guarded on empty
     this.renderHeader();
@@ -1676,6 +1709,7 @@ export class App {
       this.escrowHeldUntil = escrow;
       this.bondsView = bonds;
       this.ownName = ownName;
+      this.ownNameLoaded = true;
     } catch {
       return; // a failed read leaves the last-known state; the ↻ retries
     }
@@ -1988,6 +2022,57 @@ export class App {
     return { from: 'feed' };
   }
 
+  // ---- username, from the profile's username row (WEB_INTERFACE → The username row) ----
+
+  private async claimUsername(name: string): Promise<void> {
+    const cur = this.idm.current();
+    if (cur === null) return;
+    this.usernameFlight = { stage: 'submitting' };
+    this.renderUsernameRowInPlace();
+    let result;
+    try {
+      result = await submitClaimFlow(this.submitDeps(), name);
+    } catch {
+      this.usernameFlight = { stage: 'rejected', reason: "claim rejected: can't reach the node right now." };
+      this.renderUsernameRowInPlace();
+      return;
+    }
+    if (result.ok) {
+      this.usernameFlight = null;
+      this.startPoll();
+    } else {
+      this.usernameFlight = { stage: 'rejected', reason: 'claim rejected: ' + usernameRejectionCopy(result.rejection) };
+    }
+    this.renderUsernameRowInPlace();
+  }
+
+  private async burnUsername(): Promise<void> {
+    const cur = this.idm.current();
+    if (cur === null) return;
+    this.usernameFlight = { stage: 'submitting' };
+    this.renderUsernameRowInPlace();
+    let result;
+    try {
+      result = await submitBurnFlow(this.submitDeps());
+    } catch {
+      this.usernameFlight = { stage: 'rejected', reason: "burn rejected: can't reach the node right now." };
+      this.renderUsernameRowInPlace();
+      return;
+    }
+    if (result.ok) {
+      this.usernameFlight = null;
+      this.startPoll();
+    } else {
+      this.usernameFlight = { stage: 'rejected', reason: 'burn rejected: ' + usernameRejectionCopy(result.rejection) };
+    }
+    this.renderUsernameRowInPlace();
+  }
+
+  private renderUsernameRowInPlace(): void {
+    const field = document.querySelector<HTMLElement>('.username-field');
+    if (field) renderUsernameRow(field, this.handlers, this.ctx());
+  }
+
   // ---- the bounded landing poll (WEB_INTERFACE → The wallet) ----
 
   private startPoll(): void {
@@ -2089,6 +2174,30 @@ export class App {
           this.inviteFlight = { stage: 'expired', expiresAtHeight: entry.expiresAtHeight };
         }
         inviteChanged = true;
+        continue;
+      }
+      if (entry.kind === 'claim' || entry.kind === 'burn') {
+        if (cur === null) continue;
+        const held = await this.client.usernameByOwner(cur.pubKeyHex);
+        const outcome = entry.kind === 'claim' ? reconcileClaim(entry, held, tip) : reconcileBurn(entry, held, tip);
+        if (outcome === 'pending') continue;
+        this.ledger.remove(entry.txId);
+        if (outcome === 'landed') {
+          this.ownName = held;
+          this.ownNameLoaded = true;
+          this.usernameFlight = null;
+          if (cur !== null) this.profileKarma = await this.client.karma(cur.pubKeyHex);
+        } else {
+          this.usernameFlight = {
+            stage: 'expired',
+            expiresAtHeight: entry.expiresAtHeight,
+            onTryAgain: entry.kind === 'claim'
+              ? () => { this.usernameFlight = null; void this.claimUsername(entry.postId); }
+              : () => { this.usernameFlight = null; void this.burnUsername(); },
+          };
+        }
+        this.renderUsernameRowInPlace();
+        this.renderHeader();
         continue;
       }
       const fetched = await this.client.post(entry.postId, this.viewer());

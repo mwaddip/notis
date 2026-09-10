@@ -119,6 +119,12 @@ export interface RenderCtx {
   canSignWithdraw: boolean;
   // The reader's own name (WEB_INTERFACE → The identity display).
   ownName: UsernameResult | null;
+  ownNameLoaded: boolean;
+  // The username row (WEB_INTERFACE → The username row).
+  usernameFlight: Flight | null;
+  pendingUsername: { kind: 'claim' | 'burn'; name: string } | null;
+  canSignClaim: boolean;
+  canAffordBurn: boolean;
   // WEB_INTERFACE → Links
   linkUrl: (id: string) => string;
 }
@@ -182,6 +188,9 @@ export interface Handlers {
   moreEndorsers: (key: string) => void;            // the endorsers page's `more`, following next
   invite: (inviteeKey: string, bond: bigint) => void; // from the profile's invites row
   moreBonds: () => void;                           // the standing-bonds `more`, following next
+  // The username row (WEB_INTERFACE → The username row).
+  claimUsername: (name: string) => void;
+  burnUsername: () => void;
 }
 
 /** What the App calls on the identity module — the single reference it holds
