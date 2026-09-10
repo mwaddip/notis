@@ -13,6 +13,7 @@ import { jsonToTx } from './json-to-tx.js';
 import { respondError } from './respond-error.js';
 import { parseLimit, isLimitError, parseAfter, isAfterError, formatKey, resolveIdentityParam, isResolveError } from './page.js';
 import type { UsernameLookup } from './page.js';
+import { nameFor } from '../services/name-cache.js';
 
 // ---------------------------------------------------------------------------
 // Dependency types
@@ -31,6 +32,7 @@ export interface UtxoDeps {
   getNetworkRecord(): NetworkRecord;
   membershipBarMultiplier: number;
   getUsername: UsernameLookup;
+  getUsernameByOwner: (owner: Uint8Array | string) => { name: string } | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -189,14 +191,22 @@ export function createRouter(deps: UtxoDeps): Router {
       limit, after: after as string | undefined,
     });
 
+    // NODE_INTERFACE → Usernames, "A list row carries its names"
+    const names = new Map<string, string | null>();
     res.json({
-      bonds: pageResult.rows.map((b) => ({
-        id: b.id,
-        value: b.value.toString(),
-        inviterId: Buffer.from(b.inviterId).toString('hex'),
-        inviteePublicKey: Buffer.from(b.inviteePublicKey).toString('hex'),
-        createdAtBlock: b.createdAtBlock,
-      })),
+      bonds: pageResult.rows.map((b) => {
+        const inviterHex = Buffer.from(b.inviterId).toString('hex');
+        const inviteeHex = Buffer.from(b.inviteePublicKey).toString('hex');
+        return {
+          id: b.id,
+          value: b.value.toString(),
+          inviterId: inviterHex,
+          inviterName: nameFor(inviterHex, names, deps.getUsernameByOwner),
+          inviteePublicKey: inviteeHex,
+          inviteeName: nameFor(inviteeHex, names, deps.getUsernameByOwner),
+          createdAtBlock: b.createdAtBlock,
+        };
+      }),
       bondCount: pageResult.count,
       next: pageResult.next,
     });

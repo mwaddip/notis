@@ -125,6 +125,7 @@ describe('/karma/:userId membership fields', () => {
         getNetworkRecord,
         membershipBarMultiplier: config.membershipBarMultiplier,
         getUsername: () => null,
+        getUsernameByOwner: () => null,
         getUtxoEngineDeps: () => ({
           getBox: getBoxWithPending,
           insertBox,

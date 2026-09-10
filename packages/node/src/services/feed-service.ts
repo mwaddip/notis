@@ -1,6 +1,7 @@
 import type { PostType } from '@dagsocial/types';
 import type { PostStatus, StoredPost } from '../store/posts.js';
 import type { Page, PostKey } from '../store/index.js';
+import { nameFor } from './name-cache.js';
 
 // ---------------------------------------------------------------------------
 // Dependencies
@@ -167,15 +168,8 @@ export class FeedService {
     );
   }
 
-  // NODE_INTERFACE → Usernames: one keyed read per distinct author per response.
   private authorNameFor(author: Uint8Array, nameCache: Map<string, string | null>): string | null {
-    const key = Buffer.from(author).toString('hex');
-    const cached = nameCache.get(key);
-    if (cached !== undefined) return cached;
-    const row = this.deps.getUsernameByOwner(key);
-    const name = row ? row.name : null;
-    nameCache.set(key, name);
-    return name;
+    return nameFor(Buffer.from(author).toString('hex'), nameCache, this.deps.getUsernameByOwner);
   }
 
   getPost(id: string, viewer: Uint8Array | null = null): PostJson | WithdrawnJson | null {

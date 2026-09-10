@@ -88,12 +88,6 @@ interface ShellTags {
   ogUrl: string | null;
 }
 
-/**
- * NODE_INTERFACE → Link previews: the shell's `<title>Notis</title>` becomes
- * `<title>{title}</title>`, and `og:title`, `description`, `og:description`,
- * `og:type` article, `og:site_name` Notis and `twitter:card` summary are
- * injected before `</head>`; `og:url` only when `tags.ogUrl` is set.
- */
 function taggedShell(shellHtml: string, tags: ShellTags): string {
   const title = escapeHtml(tags.title);
   const description = escapeHtml(tags.description);
@@ -338,6 +332,7 @@ export function createApp(config: Config): express.Express {
       getNetworkRecord: store.getNetworkRecord,
       membershipBarMultiplier: config.membershipBarMultiplier,
       getUsername: store.getUsername,
+      getUsernameByOwner: store.getUsernameByOwner,
     }),
   );
 
