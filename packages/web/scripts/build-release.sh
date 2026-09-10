@@ -37,7 +37,7 @@ grep -q 'name="notis-api" content="/testnet/api"' "$SHELL_FILE" \
 grep -q 'name="notis-faucet" content="/testnet/faucet"' "$SHELL_FILE" \
   || { echo "FAIL: notis-faucet meta missing or wrong"; exit 1; }
 
-if grep -Pn 'href="/[^"]*"|src="/[^"]*"' "$SHELL_FILE" | grep -v '<base '; then
+if grep -En 'href="/[^"]*"|src="/[^"]*"' "$SHELL_FILE" | grep -v '<base '; then
   echo "FAIL: root-absolute href or src in the built shell (above)"
   exit 1
 fi
