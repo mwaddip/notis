@@ -10,6 +10,7 @@ import { renderFeedInto, replaceFeedCard } from './view/feed';
 import { renderPanesInto, renderRegionElement, renderBars } from './view/panes';
 import { makeComposer, type ComposerController } from './view/composer';
 import { personGlyph, sunGlyph, moonGlyph } from './view/glyphs';
+import { MARK } from './view/mark';
 import { serialise, parse, authorWindowId, postsWindowId, windowSubject } from './model/arrangement';
 import { reconcileNewer, isLivePost } from './model/feed-reconcile';
 import { flattenThread } from './model/thread';
@@ -526,11 +527,8 @@ export class App {
     this.headerLeftArrow = left;
     bar.appendChild(left);
 
-    // The mark + wordmark lockup. The mark is the micro tier — abstract at 24px
-    // — so the wordmark stays to name it; together they are the standard mark.
-    // <use> resolves against the sprite inlined in index.html.
     const brand = el('div', 'brand');
-    brand.innerHTML = '<svg class="mark" viewBox="0 0 1000 1000" aria-hidden="true"><use href="#mark-micro"></use></svg>';
+    brand.innerHTML = MARK;
     brand.appendChild(el('h1', null, 'Notis'));
     bar.appendChild(brand);
     bar.appendChild(el('span', 'spacer'));
@@ -596,7 +594,7 @@ export class App {
   // WEB_INTERFACE → The standalone thread — no arrows, no profile control.
   private renderStandaloneHeader(bar: HTMLElement): void {
     const brand = el('div', 'brand');
-    brand.innerHTML = '<svg class="mark" viewBox="0 0 1000 1000" aria-hidden="true"><use href="#mark-micro"></use></svg>';
+    brand.innerHTML = MARK;
     brand.appendChild(el('h1', null, 'Notis'));
     bar.appendChild(brand);
     bar.appendChild(el('span', 'spacer'));

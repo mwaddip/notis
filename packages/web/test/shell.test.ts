@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 const html = readFileSync(fileURLToPath(new URL('../index.html', import.meta.url)), 'utf8');
 const svg = readFileSync(fileURLToPath(new URL('../public/favicon.svg', import.meta.url)), 'utf8');
+const fontsCss = readFileSync(fileURLToPath(new URL('../public/fonts/fonts.css', import.meta.url)), 'utf8');
 
 describe('shell deploy tags', () => {
   it('carries <base> with the VITE_WEB_BASE placeholder', () => {
@@ -27,6 +28,12 @@ describe('shell deploy tags', () => {
   });
 });
 
+describe('shell sprite removed', () => {
+  it('notis-sprite is absent from the shell', () => {
+    expect(html).not.toContain('notis-sprite');
+  });
+});
+
 describe('shell icon links', () => {
   it('links the SVG favicon with type', () => {
     expect(html).toContain('<link rel="icon" href="/favicon.svg" type="image/svg+xml">');
@@ -36,6 +43,16 @@ describe('shell icon links', () => {
   });
   it('links the apple-touch-icon', () => {
     expect(html).toContain('<link rel="apple-touch-icon" href="/apple-touch-icon.png">');
+  });
+});
+
+describe('fonts.css references', () => {
+  it('no url( opens with /', () => {
+    const urls = [...fontsCss.matchAll(/url\(\s*'([^']*)'/g)];
+    expect(urls.length).toBeGreaterThan(0);
+    for (const m of urls) {
+      expect(m[1]).not.toMatch(/^\//);
+    }
   });
 });
 

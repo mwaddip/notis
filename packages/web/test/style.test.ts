@@ -186,6 +186,6 @@ describe('fonts.css — the self-hosted italic face', () => {
     const italic = faces.find((f) => f.includes("font-family: 'Plus Jakarta Sans'") && f.includes('font-style: italic'));
     expect(italic).toBeDefined();
     expect(italic!).toContain('font-weight: 400 700');
-    expect(italic!).toContain("url('/fonts/Plus-Jakarta-Sans-Italic.woff2')");
+    expect(italic!).toContain("url('Plus-Jakarta-Sans-Italic.woff2')");
   });
 });
