@@ -30,7 +30,7 @@ function confirmedPost(id: string, likedByViewer: boolean | null = null): PostRe
   return {
     id, content: 'x', contentHash: '00'.repeat(32), author: AUTHOR, parentRefs: [], protocolVersion: 1,
     type: 'regular', status: 'confirmed', blockHeight: 6001, blockIndex: 0, blockCreatedAt: 0,
-    likeCount: 0, descendantCount: 0, authorVouchCount: 0, likedByViewer, confirmedAuthor: AUTHOR,
+    likeCount: 0, descendantCount: 0, authorName: null, likedByViewer, confirmedAuthor: AUTHOR,
   };
 }
 

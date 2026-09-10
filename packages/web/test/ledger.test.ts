@@ -62,7 +62,7 @@ function postResult(over: Partial<PostJson>): PostResult {
   return {
     id: 'p1', content: 'x', contentHash: '00'.repeat(32), author: 'aa'.repeat(32), parentRefs: [],
     protocolVersion: 1, type: 'regular', status: 'confirmed', blockHeight: 5050, blockIndex: 0,
-    blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorVouchCount: 0, likedByViewer: null, confirmedAuthor: 'aa'.repeat(32), ...over,
+    blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null, confirmedAuthor: 'aa'.repeat(32), ...over,
   };
 }
 
@@ -179,7 +179,7 @@ describe('reconcile', () => {
   it('a post that landed then became a tombstone still counts as landed', () => {
     const tomb: WithdrawnJson & { confirmedAuthor: string | null } = {
       kind: 'withdrawn', id: 'p1', author: 'aa'.repeat(32), withdrawnAtHeight: 5050, parentRefs: [],
-      descendantCount: 0, authorVouchCount: 0, confirmedAuthor: null,
+      descendantCount: 0, authorName: null, confirmedAuthor: null,
     };
     expect(reconcilePost(postEntry, tomb, 5100)).toBe('landed');
   });
@@ -260,7 +260,7 @@ describe('the membership reconciles', () => {
 describe('the withdraw reconcile', () => {
   const withdrawnTomb: PostResult = {
     kind: 'withdrawn', id: WITHDRAW_TARGET, author: KEY, withdrawnAtHeight: 5050, parentRefs: [],
-    descendantCount: 0, authorVouchCount: 0, confirmedAuthor: null,
+    descendantCount: 0, authorName: null, confirmedAuthor: null,
   } as WithdrawnJson & { confirmedAuthor: string | null };
 
   it('lands on the withdrawn marker', () => {
