@@ -225,6 +225,8 @@ export function createApp(config: Config): express.Express {
     membershipBarMultiplier: config.membershipBarMultiplier,
     putIdentityRecord: store.putIdentityRecord,
     protocolVersionSchedule: config.protocolVersionSchedule,
+    getUsername: store.getUsername,
+    getUsernameByOwner: store.getUsernameByOwner,
   };
 
   // ---- Routes ----

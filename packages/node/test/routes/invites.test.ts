@@ -83,6 +83,8 @@ async function request(
       membershipBarMultiplier: 1,
       putIdentityRecord: () => {},
       protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
+      getUsername: () => null,
+      getUsernameByOwner: () => null,
       createInvite,
       getCurrentHeight,
     };

@@ -71,6 +71,10 @@ import {
   getVouchBox,
   getNetworkRecord,
   getLapsedVouches,
+  putUsername,
+  deleteUsername,
+  getUsername,
+  getUsernameByOwner,
 } from '../store/index.js';
 import { getDb } from '../store/db.js';
 import {
@@ -110,6 +114,7 @@ import type {
   AnyBox,
   KarmaBox,
   VouchBox,
+  UsernameBox,
   OrderingBlock,
   UtxoTransaction,
 } from '@dagsocial/types';
@@ -823,6 +828,8 @@ function applyMutationPhase(
     membershipBarMultiplier: config.membershipBarMultiplier,
     putIdentityRecord,
     protocolVersionSchedule: config.protocolVersionSchedule,
+    getUsername,
+    getUsernameByOwner,
   };
 
   // The proof obligation (NODE_INTERFACE → "Embedded transactions: a mismatch
@@ -1122,6 +1129,14 @@ function applyMutationPhase(
       // `validateTx` has just passed (NODE_INTERFACE → `validateTx` step 3).
       const firstInput = item.tx.inputs[0];
       const firstInputBox = firstInput !== undefined ? getBox(firstInput)! : null;
+
+      // Capture a username input before applyTx consumes it — the burn's
+      // deleteUsername needs the name from the box.
+      let capturedUsernameInput: AnyBox | null = null;
+      for (const inputId of item.tx.inputs) {
+        const b = getBox(inputId);
+        if (b && b.boxType === 'username') { capturedUsernameInput = b; break; }
+      }
       if (firstInputBox !== null) {
         appliedTxs.push({ tx: item.tx, inputBoxes: [firstInputBox] });
       }
@@ -1186,6 +1201,28 @@ function applyMutationPhase(
             (memberLikesPerAuthor.get(likeToRecord.authorHex) ?? 0) + 1,
           );
         }
+      }
+
+      // NODE_INTERFACE → Username transition rules.
+      // Claim: a username output → putUsername.
+      const usernameOut = item.outputs.find(o => o.boxType === 'username');
+      if (usernameOut) {
+        const u = usernameOut as UsernameBox;
+        const canonical = Buffer.from(canonicalUsernameBytes(u.name)).toString('utf8');
+        putUsername({
+          nameLower: canonical,
+          name: Buffer.from(u.name).toString('utf8'),
+          owner: Buffer.from(u.owner).toString('hex'),
+          boxId: usernameOut.id!,
+          claimedAtBlock: height,
+        });
+      }
+      // Burn: a username input → deleteUsername. The box is read before applyTx
+      // consumed it (capturedUsernameInput, captured above).
+      if (capturedUsernameInput) {
+        const u = capturedUsernameInput as UsernameBox;
+        const canonical = Buffer.from(canonicalUsernameBytes(u.name)).toString('utf8');
+        deleteUsername(canonical);
       }
 
       // Remove from the local mempool if present. This is the whole of the

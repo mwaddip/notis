@@ -368,6 +368,8 @@ describe('validateTx output shape (integration)', () => {
       membershipBarMultiplier: 1,
       putIdentityRecord: storePutIdentityRecord,
       protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
+      getUsername: () => null,
+      getUsernameByOwner: () => null,
     };
   });
 

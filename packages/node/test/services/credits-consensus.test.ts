@@ -231,6 +231,8 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
       membershipBarMultiplier: 1,
       putIdentityRecord: () => {},
       protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
+      getUsername: () => null,
+      getUsernameByOwner: () => null,
     };
 
     // Pool the transfer — nothing settles yet.
@@ -355,6 +357,8 @@ describe('credit transfers ride consensus (P2-B phase 3)', () => {
       membershipBarMultiplier: 1,
       putIdentityRecord: () => {},
       protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
+      getUsername: () => null,
+      getUsernameByOwner: () => null,
     };
     const tx = buildSignedTransfer(
       utxo.getCreditBoxes(alicePub),

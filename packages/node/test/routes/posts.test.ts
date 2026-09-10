@@ -95,6 +95,8 @@ async function request(
       getPendingPostAuthor,
       getCurrentHeight,
       protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
+      getUsername: () => null,
+      getUsernameByOwner: () => null,
       admitTx: insertUtxoTx,
       runInTransaction: (fn: () => void) => db.transaction(fn)(),
       validateTx: (tx: UtxoTransaction, height: number) => {
@@ -140,6 +142,8 @@ async function request(
       membershipBarMultiplier: 1,
       putIdentityRecord: () => {},
       protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
+      getUsername: () => null,
+      getUsernameByOwner: () => null,
           },
           tx,
           height,

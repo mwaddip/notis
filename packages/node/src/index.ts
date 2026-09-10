@@ -56,6 +56,8 @@ import {
   registerKarmaMembershipHook,
   getVouchBox,
   putIdentityRecord,
+  getUsername,
+  getUsernameByOwner,
 } from './store/index.js';
 import { MEMPOOL_EXPIRY_BLOCKS, computePostId } from '@dagsocial/types';
 import { initBackfill } from './services/backfill.js';
@@ -218,6 +220,8 @@ net.onTx((tx, content, fromPeerId) => {
     membershipBarMultiplier: config.membershipBarMultiplier,
     putIdentityRecord,
     protocolVersionSchedule: config.protocolVersionSchedule,
+    getUsername,
+    getUsernameByOwner,
   };
   // Admission judges a transaction at the height of the block that would carry
   // it — tip + 1 (NODE_INTERFACE → validateTx).

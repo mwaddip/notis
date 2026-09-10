@@ -45,6 +45,8 @@ const STUB_DEPS: UtxoEngineDeps = {
       membershipBarMultiplier: 1,
       putIdentityRecord: () => {},
       protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
+      getUsername: () => null,
+      getUsernameByOwner: () => null,
 };
 
 async function request(
