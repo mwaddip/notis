@@ -115,6 +115,7 @@ export interface PostResponse {
   likeCount: number;
   likedByViewer: boolean | null;
   confirmedAuthor: string | null;
+  authorName: string | null;
 }
 
 export interface WithdrawnResponse {
@@ -123,7 +124,7 @@ export interface WithdrawnResponse {
   author: string;
   withdrawnAtHeight: number;
   descendantCount: number;
-  authorVouchCount: number;
+  authorName: string | null;
 }
 
 export type GetPostResponse = PostResponse | WithdrawnResponse;
@@ -202,10 +203,10 @@ export async function adminGet(
 export interface StatusResponse {
   vouchCooldownBlocks: number;
   blockHeight: number;
-  // The era a client must sign at — the era at blockHeight + 1
-  // (NODE_INTERFACE → Status).
+  // NODE_INTERFACE → Status
   protocolVersion: number;
   totalKarma: string;
+  usernameCount: number;
   inviteBondMin: string;
   inviteBondMax: string;
   membership: {
@@ -225,7 +226,7 @@ export async function getStatus(
 }
 
 export interface VouchTargetPage {
-  vouches: { voucherId: string; targetId: string; voucherVouchCount: number }[];
+  vouches: { voucherId: string; targetId: string }[];
   count: number;
   next: string | null;
 }
@@ -312,4 +313,43 @@ export async function getThread(
   const data = await res.json();
   if (!res.ok) throw new NodeError(res.status, data as Record<string, unknown>);
   return data as ThreadPage;
+}
+
+// NODE_INTERFACE → Usernames
+export interface UsernameResponse {
+  name: string;
+  owner: string;
+  boxId: string;
+  claimedAtBlock: number;
+}
+
+export async function postClaim(
+  node: NodeProcess,
+  txJson: Record<string, unknown>,
+): Promise<{ status: string; txId: string; expiresAtHeight: number; name: string }> {
+  const data = await jsonPost(node, '/usernames', { tx: txJson });
+  return data as { status: string; txId: string; expiresAtHeight: number; name: string };
+}
+
+export async function postBurn(
+  node: NodeProcess,
+  name: string,
+  txJson: Record<string, unknown>,
+): Promise<{ status: string; txId: string; expiresAtHeight: number }> {
+  const data = await jsonPost(node, `/usernames/${encodeURIComponent(name)}/burn`, { tx: txJson });
+  return data as { status: string; txId: string; expiresAtHeight: number };
+}
+
+export async function getUsername(
+  node: NodeProcess,
+  name: string,
+): Promise<UsernameResponse | null> {
+  return jsonGet(node, `/usernames/${encodeURIComponent(name)}`) as Promise<UsernameResponse | null>;
+}
+
+export async function getUsernameByOwner(
+  node: NodeProcess,
+  owner: string,
+): Promise<UsernameResponse | null> {
+  return jsonGet(node, `/usernames?owner=${owner}`) as Promise<UsernameResponse | null>;
 }

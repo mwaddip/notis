@@ -366,17 +366,10 @@ describe('membership', () => {
     const bVouchPage = await getVouchesVoucher(miner, B.publicKeyHex);
     const bVouchOnC = bVouchPage.vouches.find((v) => v.targetId === C.publicKeyHex)!;
 
-    // GET /vouches?target=B lists A, and every row's voucherVouchCount equals
-    // that voucher's own target count on every node.
+    // GET /vouches?target=B lists A on every node.
     for (const node of mesh.nodes) {
       const v = await getVouchesTarget(node, B.publicKeyHex);
       expect(v.vouches.some((vi) => vi.voucherId === A.publicKeyHex)).toBe(true);
-
-      // NODE_INTERFACE → Vouches
-      for (const row of v.vouches) {
-        const voucherAsTarget = await getVouchesTarget(node, row.voucherId);
-        expect(row.voucherVouchCount).toBe(voucherAsTarget.count);
-      }
     }
 
     const statusPre = await getStatus(miner);
