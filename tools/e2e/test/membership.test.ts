@@ -213,7 +213,7 @@ describe('membership', () => {
       expect(aK.invitesAvailable).toBe(0);
     }
 
-    // ---- NODE_INTERFACE → Usernames, "A list row carries its names" ----
+    // ---- NODE_INTERFACE → Usernames → "A list row carries its names" ----
     // A's bond page: inviterName as typed, inviteeName null (B is fresh)
     for (const node of mesh.nodes) {
       const bp = await getBonds(node, A.publicKeyHex);
@@ -390,12 +390,13 @@ describe('membership', () => {
     const bVouchOnC = bVouchPage.vouches.find((v) => v.targetId === C.publicKeyHex)!;
 
     // GET /vouches?target=B lists A on every node.
-    // NODE_INTERFACE → Usernames, "A list row carries its names"
+    // NODE_INTERFACE → Usernames → "A list row carries its names"
     for (const node of mesh.nodes) {
       const v = await getVouchesTarget(node, B.publicKeyHex);
-      const aRow = v.vouches.find((vi) => vi.voucherId === A.publicKeyHex)!;
-      expect(aRow.voucherName).toBe('MemberA');
-      expect(aRow.targetName).toBeNull();
+      const aRow = v.vouches.find((vi) => vi.voucherId === A.publicKeyHex);
+      expect(aRow).toBeDefined();
+      expect(aRow!.voucherName).toBe('MemberA');
+      expect(aRow!.targetName).toBeNull();
     }
 
     const statusPre = await getStatus(miner);
