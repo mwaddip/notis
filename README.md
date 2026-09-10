@@ -11,11 +11,11 @@ verifiable operation, not a favor from a moderation team.
 
 *Notis is the network; the code ships under the working scope `@dagsocial/*`.*
 
-**Status:** a single-binary node with HTTP API, libp2p networking, PoW
-consensus, and a separate browser client, running a public testnet. Pre-network: consensus
-formats still change freely between versions, and a change to any committed
-byte starts the chain again from genesis. Node.js ≥ 22, TypeScript, pnpm.
-MIT licensed.
+**Status:** a node with an HTTP API, libp2p networking and PoW consensus; a browser client that is
+a product of its own; a light client; and a public testnet at [notis.fun](https://notis.fun).
+Pre-mainnet: consensus formats change freely, and a change to any committed byte starts the
+testnet chain again from genesis — an additive change deploys onto the running chain. Node.js ≥ 22,
+TypeScript, pnpm. MIT licensed.
 
 ---
 
@@ -28,8 +28,8 @@ at, bound by verifiable settlement:
 
 | | Posts DAG | UTXO ledger |
 |---|---|---|
-| **What it tracks** | Content, replies, who said what | Karma, credits, who has how much |
-| **Who controls it** | Each author controls their own subtree | Box owners control their boxes via signatures |
+| **What it tracks** | Content, replies, who said what | Karma, credits, usernames, who has how much |
+| **Who controls it** | Each author controls their own posts | Box owners control their boxes via signatures |
 | **Can it be taken back?** | Yes — an author can withdraw a post's content; its place and its replies stay | No — box history is immutable |
 | **What it's good at** | Threaded conversation, author sovereignty | Value accounting with cryptographic lineage |
 
@@ -39,8 +39,8 @@ Three properties fall out of this split:
   and whether it stays said. A reply belongs to whoever wrote it, and no act —
   not the answered author's — reaches it.
 - **Reputation you can't buy.** Karma only moves through protocol actions —
-  likes, invites, rewards, decay, burns. There is no transfer. A rich account
-  cannot buy social weight.
+  posts, likes, invites, vouches, burns, decay, rewards. There is no transfer. A
+  rich account cannot buy social weight.
 - **Withdrawal that settles.** Withdrawing a post is consensus-verified: every
   node — including nodes that never stored the content — independently checks
   who authorized it, from the chain's own record of who wrote the post.
@@ -51,15 +51,18 @@ Three properties fall out of this split:
 
 ### Posting
 
-**A post is a transaction.** It rides an ordering block's transaction list like
-every other one, locking a little karma as skin in the game and paying a fee at
-the network's rate. There is one kind of block: a miner solves an ordering block
-roughly every 60 seconds, carrying that block's transactions and the settlement
-that pays every party the block owes.
+**A post is a transaction, and it pays.** It rides an ordering block's transaction list like every
+other one. A thread pays `POST_PRICE_THREAD` karma and a reply `POST_PRICE_REPLY`, of which
+`REPLY_AUTHOR_SHARE` goes to the author of the post it answers; the rest returns to the supply pool
+in the block's settlement. The price is a resource price, never a judgement: a post people liked has
+paid it, and a post nobody saw has paid the same. Nothing returns — withdrawing refunds nothing, and
+post → withdraw → repost pays every time.
 
-Posts link via `parentRefs` (one parent — a forest of threads, still a DAG).
-Content is 1–300 UTF-8 bytes. The lock releases back to the author as the post
-accumulates likes.
+There is one kind of block: a miner solves an ordering block roughly every 60 seconds, carrying that
+block's transactions and the settlement that pays every party the block owes.
+
+Posts link via `parentRefs` (one parent — a forest of threads, still a DAG). Content is 1–300 UTF-8
+bytes; what the bytes mean — a link, an image, a quote — is a client's convention, never the node's.
 
 ### Likes and karma
 
@@ -86,11 +89,35 @@ You cannot buy, sell, or transfer karma. That's the point.
 
 ### Credits
 
-Credits are the tradeable counterpart, earned by miners through coinbase
-emission with an Ergo-style linear decay schedule (fixed rate, then stepwise
-reduction, then a flat tail — ~31 years of emission). A treasury split is
-optional. Credits transfer freely between identities; future protocol versions
-spend them (ads, boosts, tips).
+Credits are the tradeable counterpart, minted to miners by each block's coinbase on an Ergo-style
+schedule: a fixed reward for the first two years of blocks, then a stepwise reduction every ~326-day
+epoch over 41 epochs. The emission box holds less than the curve's own sum, so it empties while the
+curve is still paying — after roughly thirty years at the earliest — and blocks stay producible
+beyond that on fees and storage rent alone.
+
+Every coinbase splits by rule: a treasury slice (`COINBASE_TREASURY_PCT` of emission and of fees,
+never of rent), the miner's floor, and an inclusion bonus that grows with the number of distinct
+actors whose transactions the block carries. The treasury is a box no key can spend and no protocol
+rule releases; a future protocol version puts its spending to a karma vote.
+
+Credits transfer freely between identities, pay transaction fees (the relay floor is zero today) and
+storage rent; future protocol versions spend them on more — ads, boosts, tips, a username market.
+
+### Membership
+
+Every identity is a **resident**, a **member** or a **root**. A resident — invited, not yet
+endorsed — posts, likes and holds karma. A member does everything a resident does and also
+**vouches**, staking one karma to stand behind another identity, and **invites**. A root is a
+genesis committee key, or the faucet identity on a network that seeds one.
+
+Membership is earned. An identity becomes a member the first time it holds `D` standing vouches
+from older members and `Y = 2·D` likes from members, where `D` grows as the cube root of the member
+count (`D = max(1, ⌊∛(k·N)⌋)`, with `k` per network — 10 on mainnet, 1 on testnet). A vouch counts
+toward newer members only, so every chain of endorsement rests on the roots, and a cell of fake
+accounts cannot outlive the real people who backed it. Membership is derived from committed vouches
+and likes at every read, never stored as a flag; it lapses only when the vouches counted toward it are
+withdrawn, and a lapsed member is a resident again. A root's invitee is a member from its grant, for
+life — which is how a chain whose only root is a faucet starts at all.
 
 ### Invites
 
@@ -103,14 +130,26 @@ nothing for Bob to do: his account exists the moment his first box does.
 Because a newcomer holds nothing and a transaction needs an input, **the invite
 is the only way a fresh identity gets its first karma** — on every network.
 
+Only members and roots invite. A member's invites are a budget backed by the endorsements they
+hold: the `k`-th invite needs `k·D` standing vouches from older members at the moment it is made,
+and a spent invite is never revoked. A root's invites are bounded by its karma alone.
+
 The bond then sits through a probation window and vests against what Bob earns:
 every `INVITE_BOND_VEST_PER_LIKES` likes he receives returns one karma of it,
 capped at the bond. At the deadline the vested part goes back to Alice and the
 remainder returns to the supply pool.
 
-So a careless invite costs real reputation and a good one costs only time. The
-bond is the network's only sybil price, and because the grant equals it, naming
-32 bytes nobody holds costs exactly what it strands.
+So a careless invite costs real reputation and a good one costs only time, and
+because the grant equals the bond, naming 32 bytes nobody holds costs exactly
+what it strands.
+
+### Usernames
+
+A username is a soulbound box on the UTXO ledger: 1–24 characters of `[A-Za-z0-9_]`, unique
+case-insensitively, shown as typed. Every identity that holds karma has one free claim; a burn
+costs `USERNAME_BURN_PRICE` karma and restores the claim. No user transaction moves a name to another
+owner — a marketplace paid in credits is a later protocol version. Wherever the API takes an
+identity, `@handle` is accepted as an alias for the key.
 
 ### Withdrawal that settles
 
@@ -127,20 +166,30 @@ people's replies.
 
 ### Consensus and networking
 
-Ordering blocks are mined with PoW at a height-scheduled difficulty (on-chain
-time is block height, never wall clock). Fork choice is cumulative work. The
-`@dagsocial/net` package runs libp2p with Gossipsub for ordering blocks and
-UTXO transactions, plus a sync protocol that moves whole ordering blocks: a fresh node downloads
-ordering blocks only — block entries carry enough topology and authorship to
-verify all settlement without any post content.
+Ordering blocks are mined with PoW at a difficulty the chain retargets itself — an ASERT schedule
+read from the chain's own header stamps, no node clock — and on-chain time is block height, never
+wall clock. Fork choice scores a competing branch by verified headers up to the network's reorg
+horizon; past the horizon a chain does not reorganise. Every block, transaction and post commit
+carries a protocol version scheduled by height, so an old object validates under its era's rules and
+a new one cannot pose as old.
 
-Every value movement a block owes — like payouts, invite grants, vested bonds,
-decay — is paid by a single **settlement transaction** the block
-carries, derived from the block's own contents. No signer authorizes it; every
-node recomputes the same verdict from the same body.
+`@dagsocial/net` runs libp2p with Gossipsub for ordering blocks and UTXO transactions, plus a sync
+protocol that moves whole ordering blocks: a fresh node downloads the blocks — which carry every
+post's commit and content hash, and enough topology and authorship to verify every settlement — and
+fetches post bodies by id afterwards. Peers accrue penalties for misbehaviour and are banned for a
+while past a threshold.
 
-Exact parameters (lock amounts, thresholds, emission, decay) are protocol
-constants documented in [contracts/ARCHITECTURE.md](contracts/ARCHITECTURE.md).
+Every value movement a block owes — like payouts, the post price's return, invite grants, vested
+bonds, decay, a lapsed member's withdrawn vouches — is paid by a single **settlement transaction**
+the block carries, derived from the block's own contents. No signer authorizes it; every node
+recomputes the same verdict from the same body.
+
+Every block header commits an AVL+ **state root** over the whole UTXO set, so a light client can
+verify any box against a chain of headers — and a NiPoPoW proof lets it verify the headers without
+downloading them all.
+
+Every protocol number — prices, thresholds, emission, decay, caps — is in one place,
+[contracts/CONSTANTS.md](contracts/CONSTANTS.md), with what argues it and its standing.
 
 ---
 
@@ -152,32 +201,48 @@ reorg):
 - **Validator signatures** — PoW proves work was spent, the Ed25519 validator
   signature proves who spent it; blocks forging another validator's identity
   are rejected
+- **The state root** — every header's committed `stateRoot` is recomputed at
+  apply; a body that does not produce it is rejected
 - **Withdrawal authorship** — binding a withdrawal to the consensus-recorded
   author (see above); censorship-by-miner is rejected structurally
-- **Invite eligibility** — an invite may only name a key that is not already an
-  account, tested against consensus state rather than a local ledger; and the
-  bond must cover the grant it creates, so a grant cannot be stranded for free
-- **Coinbase discipline** — reward value, treasury split, and maturity locks
-  are pure functions of height; deviation rejects the block
+- **Invite eligibility** — an invite may only name a key that holds no identity
+  record, and only a root or a member within its budget may create one; the
+  grant equals the bond, so a grant cannot be stranded for free
+- **Membership** — derived from committed vouches and likes at every read; the
+  settlement withdraws a lapsed member's vouches
+- **Coinbase discipline** — reward value, the split and maturity locks are pure
+  functions of height and of the block's own contents; deviation rejects the block
 - **Embedded transactions** — fully re-validated at apply (signatures, guards,
   conservation); a block producer is untrusted by construction
-- **Atomicity** — a rejected block rolls back to a no-op via journaling
+- **Atomicity** — a rejected block rolls back to a no-op via journaling, and a
+  stored row that will not decode stops the node rather than being blamed on a peer
 
 Validation posture: no panics on untrusted input (adversarial bytes get a
 `false`, not a crash), and every self-reported claim — hashes, PoW, signatures
 — is independently recomputed. Nodes that hold content additionally verify the
-chain's claims against it, keeping dishonest blocks out of the canonical chain
-for everyone else.
+chain's committed content hashes against it.
 
-The consensus model, including the trust story for nodes that sync without
-content, is documented in [docs/CONSENSUS.md](docs/CONSENSUS.md). The commit
-history carries an ongoing, audit-driven hardening pass over the consensus
-surface — this is devnet software under active adversarial review, not a
-finished protocol. Don't run it with anything at stake yet.
+The consensus model — the block architecture, the settlement, validators, the
+invariants — is [contracts/ARCHITECTURE.md](contracts/ARCHITECTURE.md). This is
+testnet software: don't run it with anything at stake.
 
 ---
 
 ## Running a node
+
+### From a release
+
+Each [GitHub release](https://github.com/mwaddip/notis/releases) carries four artifacts, every one
+preconfigured for testnet:
+
+| Artifact | What it is |
+|---|---|
+| `notis-node-<ver>-linux-x64.tar.gz` | the node with a bundled Node runtime — unpack, then `./run.sh` for a server node or `./run-miner.sh` for a node that mines; no system Node needed |
+| `dagsocial-node_<ver>_amd64.deb` | the node and the faucet service as systemd units for a Debian host with Node ≥ 22; configuration in `/etc/dagsocial/node.env` and `faucet.env` |
+| `notis-node-<ver>-win-x64-setup.exe` | a per-user Windows installer with **Notis Node** and **Notis Node (Miner)** shortcuts |
+| `notis-web-<ver>.zip` | the browser client, a static bundle configured after download (→ Web client) |
+
+The Windows installer is unsigned, so SmartScreen warns on first run.
 
 ### Build
 
@@ -190,9 +255,9 @@ pnpm typecheck
 ### Local dev loop
 
 ```bash
-pnpm dev                          # one devnet node + one miner
-pnpm dev -- --nodes 3             # three meshed nodes, a miner each
-pnpm dev -- --miners 3            # three miners racing on one node
+pnpm dev                       # one devnet node + one miner
+pnpm dev --nodes 3             # three meshed nodes, a miner each
+pnpm dev --miners 3            # three miners racing on one node
 ```
 
 Generates a throwaway mining secret, spawns everything, and tears it all down
@@ -246,9 +311,10 @@ NODE_URL=https://your-node.example.com/testnet/api MINER_PCT=25 MINING_SECRET=<s
 
 `MINER_PCT` throttles CPU within a solve (0–100, default 25); it does not
 pace the interval between blocks, since a solve that finishes inside one work
-window never reaches the sleep. The miner is a single zero-dependency script —
-no repo checkout needed, just Node.js ≥ 22. A reference systemd unit is at
-`packages/node/scripts/dagsocial-miner.service`.
+window never reaches the sleep. `MINER_PUBKEY` names the key the coinbase pays;
+unset, the reward goes to the node's own validator key. The miner is a single zero-dependency
+script — no repo checkout needed, just Node.js ≥ 22. A reference systemd unit
+is at `packages/node/scripts/dagsocial-miner.service`.
 
 It re-reads the template as it works and abandons a solve once the tip moves,
 so a lost race costs one work window rather than a whole block.
@@ -264,101 +330,145 @@ environment is not merely discouraged, it has no effect.
 | Variable | Default | Description |
 |---|---|---|
 | `NETWORK_TYPE` | `testnet` | `mainnet`, `testnet` or `devnet`. Selects the consensus profile. **An unrecognised value throws at startup** rather than defaulting. |
-| `PORT` | 3000 | HTTP API port |
+| `PORT` | `3000` | HTTP API port |
+| `ADMIN_PORT` | `3001` | The admin listener (`/health`, `/stats`). **Unauthenticated** — keep it on loopback |
+| `ADMIN_BIND_ADDRESS` | `127.0.0.1` | Admin listener bind address |
 | `DB_PATH` | `dagsocial.db` | SQLite database path |
-| `NODE_ROLE` | `server` | `server` or `miner` |
+| `NODE_ROLE` | `server` | `server` (applies peer blocks) or `miner` (produces blocks) |
+| `MINING_SECRET` | — | Bearer token for the mining API. Required non-empty when `NODE_ROLE=miner` — startup fails without it. Unused on a server node |
 | `BOOTSTRAP_PEERS` | the profile's (testnet: `/dns4/notis.fun/tcp/9733`) | Comma-separated libp2p multiaddrs; when set, replaces the profile's list |
-| `LISTEN_ADDRS` | `/ip4/0.0.0.0/tcp/0` | libp2p listen address |
-| `MAX_PEERS` | — | Peer connection ceiling |
-| `MAX_MEMPOOL_ENTRIES` | — | Mempool capacity; submissions beyond it are refused |
-| `MAX_PROOF_HISTORY` | — | Retained AVL+ proof history depth |
-| `VERIFY_STATE_ROOT` | on | Verify each block's committed `stateRoot` at apply |
-| `MINING_SECRET` | — | Bearer token for the mining API. Required non-empty when `NODE_ROLE=miner` — startup fails without it. Unused on a server node. |
-| `ADMIN_PORT` / `ADMIN_BIND_ADDRESS` | — | Separate bind for admin endpoints |
+| `LISTEN_ADDRS` | `/ip4/0.0.0.0/tcp/0` | libp2p listen addresses |
 | `WEB_SHELL_PATH` | — | Path of the web client's `index.html`; empty means `GET /shell/:id` answers 404 |
+| `VERIFY_STATE_ROOT` | `true` | Verify each block's committed `stateRoot` at apply. `false` removes the sole backstop against a body that differs from its header's |
+| `BLOCK_BODY_BUDGET_BYTES` | the protocol cap | Body bytes this node fills the blocks **it produces** to; clamped to the cap |
+| `MAX_MEMPOOL_ENTRIES` | `10000` | Mempool capacity; submissions beyond it are refused |
+| `MIN_FEE_RATE_PER_BYTE` | `0` | Relay fee floor per in-block byte — admission policy, not consensus |
+| `MAX_PEERS` | `50` | Connected peer ceiling |
+| `MIN_PEERS` | `3` | Outbound fill floor |
+| `PEER_DB_CAP` | `1000` | Soft cap on remembered peers |
+| `OUTBOUND_REDIAL_COOLDOWN_MS` | `60000` | Redial cooldown per failed outbound target |
+| `PENALTY_SCORE_THRESHOLD` | `500` | Accrued penalty that trips a temporal ban |
+| `TEMPORAL_BAN_DURATION_MS` | `3600000` | Temporal ban length |
+| `PENALTY_SAFE_INTERVAL_MS` | `120000` | Quiet interval after which accrued penalty decays |
+| `SYNC_REQUEST_TIMEOUT_MS` | `10000` | Abort timeout on one sync request |
+| `MAX_PROOF_HISTORY` | `1440` | AVL+ versions retained for proof serving; never below the profile's reorg horizon |
 
 > An environment variable the table above does not name is ignored — the table
 > is the whole read surface (`NODE_INTERFACE` → Configuration).
 
+### The faucet
+
+`tools/faucet` is the service that invites on testnet and devnet. It holds an ordinary Ed25519 key
+and does what any member can do: `POST /faucet/karma` invites a key with a bond, `POST /faucet/credits`
+sends credits, both rate-limited per IP. No consensus rule names it, and the node serves no faucet
+route of its own. It reads `NODE_URL`, `NETWORK_TYPE`, `FAUCET_KEY_PATH`, `FAUCET_PUBLIC_KEY`,
+`FAUCET_BOND_AMOUNT`, `FAUCET_CREDIT_AMOUNT`, `PORT` and `RATE_LIMIT_PER_HOUR`; the `.deb` installs it
+as `dagsocial-faucet`, stopped until its key is in place.
+
 ### Web client
 
 `packages/web` is the browser client — the feed, threads, a tiling workspace, and the write
-surface on transactions the browser builds and signs. It is a product of its own: the node serves
-no client, and this one is an implementation of the API's client side that another may be written
-against. It is a static bundle that must be served **from the same origin as the node's API**: the
-node sends no CORS headers, so a client on any other origin cannot read it. On notis.fun nginx fronts
+surface on transactions the browser builds and signs: posts and replies, likes, vouches, invites,
+withdrawals, a username claimed or burned. It is a product of its own: the node serves no client,
+and this one is an implementation of the API's client side that another may be written against.
+It is a static bundle that must be served **from the same origin as the node's API**: the node
+sends no CORS headers, so a client on any other origin cannot read it. On notis.fun nginx fronts
 both, the API under `/testnet/api/` and the client under `/web/`; a node run on its own has no UI
 until something serves the client beside it.
 
-A fresh identity needs an invite from an existing member; on testnet and devnet
-that is what the faucet service is for, and it runs outside the node — the client's profile window
-asks it.
+**Get it from a release** — `notis-web-<ver>.zip` — or build the same zip yourself with
+`bash packages/web/scripts/build-release.sh`. Inside, `web/` is the bundle, `nginx.example.conf` a
+complete vhost excerpt, and `README.txt` the serving note.
 
-Build it for those paths with both bases — where the client's own files live, and where the API
-and the faucet live relative to the same origin:
+**The deployment is three tags in the head of `web/index.html`**, and the release ships them set
+for notis.fun's layout:
 
-```bash
-cd packages/web && VITE_API_BASE=/testnet/api VITE_FAUCET_BASE=/testnet/faucet npx vite build --base=/web/
-# dist/ is the bundle; every href and src in dist/index.html begins with /web/
+```html
+<base href="/web/">
+<meta name="notis-api" content="/testnet/api">
+<meta name="notis-faucet" content="/testnet/faucet">
 ```
 
-Serve `dist/` as static files with no SPA fallback — a path that is not a file is a 404. The one path
-the client owns beyond its files is a post's standalone page, `/web/p/<post id>`, which opens that
+They name the path the client is served under (opening and closing with `/`), the API's path on the
+same origin, and the faucet's — empty for no faucet and no faucet button. A host with another
+layout edits those three values and nothing else: every reference in the bundle is relative to the
+base. A reader can still point their own browser at another node or faucet from the profile window's
+preferences.
+
+Serve `web/` as static files with no SPA fallback — a path that is not a file is a 404. The one path
+the client owns beyond its files is a post's standalone page, `<base>p/<post id>`, which opens that
 thread alone. Two ways to serve it:
 
 - **With a link preview.** Set `WEB_SHELL_PATH` in the node's environment to the bundle's
-  `index.html`, and have nginx proxy `/web/p/<id>` to the node's `GET /shell/<id>`, sending
+  `index.html`, and have nginx proxy `<base>p/<id>` to the node's `GET /shell/<id>`, sending
   `X-Original-URI`. The node answers the client's own shell with that post's Open Graph tags
   injected, so a chat app previews the link and the client boots from the same response.
 - **Without one.** Serve the shell plain for the same path (`try_files /web/index.html`). The thread
   opens; the link carries no preview.
 
-`packages/web/deploy/nginx.example.conf` is a complete vhost excerpt with both variants, the API and
-faucet proxies included. In development none of this is needed: `pnpm --filter @dagsocial/web dev`
-proxies the API and serves the shell for `/p/<id>` on its own (`NOTIS_NODE` and `NOTIS_FAUCET` point
-the proxy at a node and a faucet).
+`packages/web/deploy/nginx.example.conf` is the vhost excerpt with both variants, the API and
+faucet proxies included. Building by hand, the same three values are written by `VITE_WEB_BASE`,
+`VITE_API_BASE` and `VITE_FAUCET_BASE` at `npx vite build` in `packages/web`. In development none
+of this is needed: `pnpm --filter @dagsocial/web dev` proxies the API and serves the shell for
+`/p/<id>` on its own (`NOTIS_NODE` and `NOTIS_FAUCET` point the proxy at a node and a faucet).
+
+A fresh identity needs an invite from an existing member; on testnet the faucet grants one through
+the client's profile window.
+
+### Light client
+
+`tools/nipopow-client` trusts a chain without holding it: it fetches NiPoPoW proofs from two or more
+nodes (`NODE_URLS`), verifies and compares them, and proves a key's boxes against the winning
+proof's `stateRoot`. The trust model it embodies is `contracts/NIPOPOW_INTERFACE.md`.
 
 ---
 
 ## API
 
-Everything is JSON over HTTP: identities, posts, threads, likes, invites,
-vouches, credits, block queries, AVL+ UTXO proofs (`/api/v1/proof/:boxId`), OG
-link previews, and the authenticated mining endpoints.
+Everything is JSON over HTTP, hex for byte-valued fields: posts and threads, withdrawal, likes,
+vouches, invites, usernames, the karma, credit and invite views of an identity, credit transfer,
+blocks and status, AVL+ box proofs (`GET /api/v1/proof/:boxId`), NiPoPoW proofs
+(`GET /nipopow/proof/:m/:k`), link previews (`GET /shell/:id`), the authenticated mining endpoints
+of a miner node, and `/health` and `/stats` on the admin port. Wherever a route takes an identity,
+`@handle` is accepted for the key.
 
-**The node serves no faucet.** It holds no key it could sign one with, and no
-consensus rule names a privileged signer — a faucet is an ordinary account whose
-key lives in a service outside the node.
+**The node serves no faucet and no client.** It holds no key it could sign a grant with, no
+consensus rule names a privileged signer, and `GET /` answers 404 — the faucet is an ordinary
+account in a service outside the node, and the client is a static bundle served beside it.
 
-The authoritative route reference lives in
-[contracts/NODE_INTERFACE.md](contracts/NODE_INTERFACE.md) — request/response
-shapes, error codes, and preconditions for every endpoint. (This README used
-to duplicate it; the duplicate drifted, the contract doesn't.)
+The authoritative route reference is [contracts/NODE_INTERFACE.md](contracts/NODE_INTERFACE.md) —
+request and response shapes, error codes, and preconditions for every endpoint.
 
 ---
 
 ## Development
 
 ```bash
-pnpm build          # Build all 5 packages
-pnpm test           # Every package's suite
-pnpm typecheck      # Type-check all packages, src and test trees
+pnpm build          # Build every workspace member
+pnpm test           # Every member's suite — includes the e2e mesh, which spawns BUILT nodes: build first
+pnpm typecheck      # Type-check every member, src and test trees
 ```
 
-**Six packages:**
+The gate before a commit is `pnpm -r build && pnpm -r typecheck && pnpm -r test`: tests resolve
+`@dagsocial/*` to `src`, so a green suite does not prove a package builds.
 
-- **`@dagsocial/types`** — data structures, hashing, base58, CBOR, protocol
-  constants, UTXO selection. Pure functions only.
-- **`@dagsocial/validation`** — pure stateless checks: PoW, signatures, block
-  structure, Merkle roots. No panics on untrusted input.
-- **`@dagsocial/nipopow`** — NiPoPoW proofs over the header chain: the proof
-  codecs, the verifier, the comparator, the prover a node serves.
-- **`@dagsocial/wire`** — stream framing (VLQ, blake2b checksums, magic
-  bytes), shared by net and node.
-- **`@dagsocial/net`** — libp2p + Gossipsub relay with two-stage validation,
-  whole-block sync, peer discovery and scoring.
-- **`@dagsocial/node`** — Express server, UTXO engine, SQLite store, AVL+ state
-  root, block creator, the per-block settlement transaction, decay.
+**Ten workspace members** (`packages/*` and `tools/*`), in dependency order:
+
+- **`@dagsocial/wire`** — stream framing: VLQ, blake2b checksums, magic bytes.
+- **`@dagsocial/types`** — data structures, base58, the positional codecs, hashing, protocol
+  constants, box selection. Pure functions only.
+- **`@dagsocial/validation`** — pure stateless checks: PoW, signatures, block structure, Merkle
+  roots. No panics on untrusted input.
+- **`@dagsocial/nipopow`** — NiPoPoW proofs over the header chain: the proof codecs, the verifier,
+  the comparator, the prover a node serves.
+- **`@dagsocial/net`** — libp2p + Gossipsub relay, whole-block sync, peer discovery and penalties.
+- **`@dagsocial/node`** — Express server, UTXO engine, SQLite store, AVL+ state root, block creator,
+  the per-block settlement transaction, decay.
+- **`@dagsocial/web`** — the browser client, built with vite.
+- **`@dagsocial/faucet`** (`tools/faucet`) — the invite service.
+- **`@dagsocial/e2e`** (`tools/e2e`) — the mesh suite: spawns built nodes and asserts the protocol
+  across them over HTTP.
+- **`@dagsocial/nipopow-client`** (`tools/nipopow-client`) — the light client.
 
 ### Contracts
 
@@ -367,29 +477,35 @@ for every interface, and contracts are updated **before** implementation code.
 
 | Document | Covers |
 |---|---|
-| `contracts/ARCHITECTURE.md` | System architecture, invariants, protocol parameters |
-| `contracts/TYPES_INTERFACE.md` | Data structures, hashing, serialization |
+| `contracts/ARCHITECTURE.md` | System architecture, invariants, protocol versioning, the deploy gate |
+| `contracts/CONSTANTS.md` | Every protocol number, with what argues it and its standing |
+| `contracts/TYPES_INTERFACE.md` | Data structures, hashing, serialization, network profiles |
 | `contracts/VALIDATION_INTERFACE.md` | Stateless validation functions |
 | `contracts/NODE_INTERFACE.md` | HTTP API, verifier, store, block application |
 | `contracts/MEMPOOL_INTERFACE.md` | Mempool semantics |
-| `contracts/MINING_INTERFACE.md` | Emission, PoW, difficulty, mining API |
+| `contracts/MINING_INTERFACE.md` | Emission, PoW, the difficulty schedule, the mining API |
+| `contracts/NIPOPOW_INTERFACE.md` | NiPoPoW proofs: codecs, verifier, comparator, prover, the trust model |
 | `contracts/NET_INTERFACE.md` | Gossip, sync, peer management |
 | `contracts/WIRE_INTERFACE.md` | Frame and message codec |
 | `contracts/JOURNAL_EVENTS.md` | Block journal events |
+| `contracts/WEB_INTERFACE.md` | The browser client |
 | `contracts/HOUSE_STYLE.md` | Colour, type, the mark, motion, spacing, voice |
 | `contracts/SPECIAL.md` | Per-subsystem attention weights for review |
-| `contracts/WEB_INTERFACE.md` | Web client, ahead of the code |
 
 ---
 
 ## Roadmap
 
-Built: the dual ledger, ordering-block consensus with a derived per-block
-settlement, verifiable withdrawal, likes as per-block karma spends, invites with
-bonds, vouches, karma decay against a fixed supply pool, credit emission,
-transaction fees, AVL+ state root with light-client proofs, libp2p networking
-with whole-block sync and header-scored fork choice, split mining, a browser client.
+Built: the dual ledger; ordering-block consensus with a derived per-block settlement; the post
+price; likes as one-way karma spends with per-block accrual; invites with bonds and a budget;
+membership earned by vouches and likes; usernames; verifiable withdrawal; karma decay against a
+fixed supply pool; credit emission with the coinbase split, fees and storage rent; an AVL+ state
+root with box proofs, NiPoPoW proofs and a light client; the ASERT difficulty schedule; the reorg
+horizon; the protocol version schedule; libp2p networking with whole-block sync and header-scored
+fork choice; split mining; a browser client with its write surface; release packaging.
 
-Deferred to future protocol versions: credit sinks (ads, boosts, tips), reply
-earning, karma-proportional PoW, storage pruning for lean nodes, view keys,
-parameter governance, a live fee market (the mechanism ships; the rate is 0).
+Deferred to future protocol versions: credit sinks (ads, boosts, tips); reply earning;
+karma-proportional PoW; storage pruning for lean nodes; view keys; parameter governance and treasury
+spending by karma vote; replacement of a pooled transaction by a higher-paying one; the username
+marketplace; username proofs in the light client; release of a name whose holder's karma is gone; a
+live fee market (the mechanism ships; the rate is 0).

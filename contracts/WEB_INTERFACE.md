@@ -133,10 +133,39 @@ elsewhere.
 
 **The client ships as its own product.** `vite build` makes it a static bundle, served by whatever fronts
 the node; the node's own distributables carry no client (`NODE_INTERFACE → The node serves no client`).
+Each GitHub release carries it as **`notis-web-<ver>.zip`** beside the node's three: a directory
+`notis-web-<ver>/` holding `web/`, the built bundle; `nginx.example.conf`, the vhost excerpt; and
+`README.txt`, the serving note — built by `packages/web/scripts/build-release.sh`, which the release
+workflow's linux job runs. Never an installer. `<ver>` is the repository's version, the one the node's
+artifacts carry.
 
-> ⚠ **AHEAD OF CODE — 2026-09-09.** The bundle becomes its own downloadable on the GitHub release beside
-> the node's three — a tar.gz, zip or deb of `packages/web/dist`, never an installer. No script builds it
-> and `release.yml` has no job for it; the bundle reaches the host by hand. Its own unit.
+**The deployment is three tags in the shell's head, and nothing in the bundle's bytes.** `web/index.html`
+opens its head with
+
+```html
+<base href="/web/">
+<meta name="notis-api" content="/testnet/api">
+<meta name="notis-faucet" content="/testnet/faucet">
+```
+
+— the path the client's own files are served under, opening and closing with `/`; the API's path on the
+same origin, no trailing slash; the faucet's, empty for no faucet (→ The faucet step). Every reference the
+built shell makes is relative, and so is every reference inside `public/` — the fonts stylesheet names its
+files beside itself — so the `<base>` alone decides where the client's files resolve, on the workspace page
+and on a standalone page alike. The build writes the three from `VITE_WEB_BASE`, `VITE_API_BASE` and
+`VITE_FAUCET_BASE` — `/`, empty and empty under the dev server; notis.fun's layout in the release — and a
+host with another layout edits three values in one file. The client reads them once, at load: the
+`<base>`'s `href` resolved against the page, its path with a trailing `/` (`/` when the element is absent),
+is the base `decideMode` takes (→ The standalone thread); each meta's content, trimmed, one trailing `/`
+stripped, is the default a stored preference overrides (→ The profile window). The read takes the element's
+attribute through the URL constructor, never `document.baseURI`. A foreign origin in a tag fails exactly as
+one in the preference does, until the node gains CORS.
+
+⚠ **A `<base>` element resolves every relative URL in the document, fragments included.** A same-document
+fragment reference — `<use href="#id">`, `<a href="#id">` — becomes a reference to `<base>#id`, another
+document on every page but the base itself. So the client carries none: the mark is inline markup in each
+header that renders it (`HOUSE_STYLE → Where the artwork lives`), and every URL the client composes from its
+base is path-absolute.
 
 ## Reading the feed and threads
 
@@ -290,7 +319,8 @@ the safe-area insets.
 on notis.fun, `/p/<id>` on the dev server — boots the client in its **standalone** mode on that post: no
 feed, no workspace of the reader's own, one member holding the thread. Any other path under the base boots
 the **workspace**, the mode everything above describes. The mode is decided once, at boot, from the path
-and the client's base (`import.meta.env.BASE_URL`), by a pure function; the id is 64 hex characters,
+and the client's base — the shell's `<base>` element (→ The client is served from the node's own origin) — by
+a pure function; the id is 64 hex characters,
 lower-cased on read; a link is always absolute, since a chat app needs the origin.
 
 **Standalone is the App in a mode, not a second renderer.** The thread renders as a pane renders it — the
@@ -690,7 +720,8 @@ a grant is once per key for ever (`NODE_INTERFACE → Faucet`), so a standing co
 its one press and after it. The request carries only the public key, so a **locked** identity can ask.
 
 **A faucet is a fact of the deployment, not of the network**, so the client reaches it as it reaches the
-node: `VITE_FAUCET_BASE` baked at build time — empty means no faucet and no button — and a `faucet`
+node: the shell's `notis-faucet` meta, written by the build from `VITE_FAUCET_BASE` and editable after
+(→ The client is served from the node's own origin) — empty means no faucet and no button — and a `faucet`
 preference row that overrides it. In development the proxy takes a second target from `NOTIS_FAUCET`,
 and the base is `/faucet` while it does, so the one knob carries both.
 The call, `POST <faucet>/karma { pubkey }`, lives in its own module beside the write client — the read

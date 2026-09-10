@@ -28,6 +28,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: bash scripts/build-tarball.sh
       - run: bash scripts/build-deb.sh
+      - run: bash packages/web/scripts/build-release.sh
       - uses: actions/upload-artifact@v4
         with:
           name: linux
@@ -35,6 +36,7 @@ jobs:
           path: |
             notis-node-*-linux-x64.tar.gz
             dagsocial-node_*_amd64.deb
+            notis-web-*.zip
 
   windows:
     runs-on: windows-latest

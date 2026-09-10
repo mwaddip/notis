@@ -5,6 +5,34 @@ import { fileURLToPath } from 'node:url';
 
 const html = readFileSync(fileURLToPath(new URL('../index.html', import.meta.url)), 'utf8');
 const svg = readFileSync(fileURLToPath(new URL('../public/favicon.svg', import.meta.url)), 'utf8');
+const fontsCss = readFileSync(fileURLToPath(new URL('../public/fonts/fonts.css', import.meta.url)), 'utf8');
+
+describe('shell deploy tags', () => {
+  it('carries <base> with the VITE_WEB_BASE placeholder', () => {
+    expect(html).toContain('<base href="%VITE_WEB_BASE%">');
+  });
+  it('carries the notis-api meta with the VITE_API_BASE placeholder', () => {
+    expect(html).toContain('<meta name="notis-api" content="%VITE_API_BASE%">');
+  });
+  it('carries the notis-faucet meta with the VITE_FAUCET_BASE placeholder', () => {
+    expect(html).toContain('<meta name="notis-faucet" content="%VITE_FAUCET_BASE%">');
+  });
+  it('<base> precedes every URL-bearing element', () => {
+    const basePos = html.indexOf('<base ');
+    expect(basePos).toBeGreaterThan(-1);
+    for (const tag of ['<link ', '<script', '<meta name="viewport"']) {
+      const pos = html.indexOf(tag);
+      if (pos === -1) continue;
+      expect(basePos).toBeLessThan(pos);
+    }
+  });
+});
+
+describe('shell sprite removed', () => {
+  it('notis-sprite is absent from the shell', () => {
+    expect(html).not.toContain('notis-sprite');
+  });
+});
 
 describe('shell icon links', () => {
   it('links the SVG favicon with type', () => {
@@ -15,6 +43,16 @@ describe('shell icon links', () => {
   });
   it('links the apple-touch-icon', () => {
     expect(html).toContain('<link rel="apple-touch-icon" href="/apple-touch-icon.png">');
+  });
+});
+
+describe('fonts.css references', () => {
+  it('no url( opens with /', () => {
+    const urls = [...fontsCss.matchAll(/url\(\s*'([^']*)'/g)];
+    expect(urls.length).toBeGreaterThan(0);
+    for (const m of urls) {
+      expect(m[1]).not.toMatch(/^\//);
+    }
   });
 });
 
