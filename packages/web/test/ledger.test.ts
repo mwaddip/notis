@@ -10,6 +10,9 @@ import {
   reconcileUnvouch,
   reconcileInvite,
   reconcileWithdraw,
+  reconcileClaim,
+  reconcileBurn,
+  pendingUsernameEntry,
   dedupePending,
   pendingLikeTargets,
   pendingVouchTargets,
@@ -56,6 +59,15 @@ const WITHDRAW_TARGET = 'ee'.repeat(32); // the post a withdrawal empties
 const withdrawEntry: PendingEntry = {
   txId: 'w1', kind: 'withdraw', postId: WITHDRAW_TARGET, inputs: ['in8'],
   change: { boxId: 'chg8', value: 227n, createdAtBlock: 5000 }, expiresAtHeight: 5720, submittedAtHeight: 5000,
+};
+
+const claimEntry: PendingEntry = {
+  txId: 'c1', kind: 'claim', postId: 'Alice_01', inputs: ['in9'],
+  change: { boxId: 'chg9', value: 227n, createdAtBlock: 5000 }, expiresAtHeight: 5720, submittedAtHeight: 5000,
+};
+const burnEntry: PendingEntry = {
+  txId: 'b1', kind: 'burn', postId: 'Alice_01', inputs: ['in10', 'name_box'],
+  change: { boxId: 'chg10', value: 217n, createdAtBlock: 5000 }, expiresAtHeight: 5720, submittedAtHeight: 5000,
 };
 
 function postResult(over: Partial<PostJson>): PostResult {
@@ -319,5 +331,37 @@ describe('the faucet grant entry', () => {
   it('is neither a dedupe target nor a like-overlay target', () => {
     expect(dedupePending([{ id: KEY }], [grantEntry]).map((r) => r.id)).toEqual([KEY]);
     expect(pendingLikeTargets([grantEntry]).size).toBe(0);
+  });
+});
+
+describe('the username reconciles', () => {
+  it('a claim lands when the owner holds the name, expires past the tip, else pending', () => {
+    expect(reconcileClaim(claimEntry, { name: 'Alice_01', owner: KEY, boxId: 'x', claimedAtBlock: 5050 }, 5100)).toBe('landed');
+    expect(reconcileClaim(claimEntry, null, 5100)).toBe('pending');
+    expect(reconcileClaim(claimEntry, null, 5721)).toBe('expired');
+    expect(reconcileClaim(claimEntry, { name: 'other', owner: KEY, boxId: 'x', claimedAtBlock: 5050 }, 5100)).toBe('pending');
+  });
+
+  it('a burn lands when the owner holds no name or a different one, expires past the tip, else pending', () => {
+    expect(reconcileBurn(burnEntry, null, 5100)).toBe('landed');
+    expect(reconcileBurn(burnEntry, { name: 'other', owner: KEY, boxId: 'x', claimedAtBlock: 5050 }, 5100)).toBe('landed');
+    expect(reconcileBurn(burnEntry, { name: 'Alice_01', owner: KEY, boxId: 'x', claimedAtBlock: 5050 }, 5100)).toBe('pending');
+    expect(reconcileBurn(burnEntry, { name: 'Alice_01', owner: KEY, boxId: 'x', claimedAtBlock: 5050 }, 5721)).toBe('expired');
+  });
+
+  it('pendingUsernameEntry finds the first claim or burn, null otherwise', () => {
+    expect(pendingUsernameEntry([postEntry, likeEntry])).toBeNull();
+    expect(pendingUsernameEntry([postEntry, claimEntry])).toEqual({ kind: 'claim', name: 'Alice_01' });
+    expect(pendingUsernameEntry([burnEntry, postEntry])).toEqual({ kind: 'burn', name: 'Alice_01' });
+  });
+
+  it('round-trips claim and burn entries through localStorage', () => {
+    const a = new PendingLedger(KEY);
+    a.add(claimEntry);
+    expect(new PendingLedger(KEY).all()).toEqual([claimEntry]);
+    localStorage.clear();
+    const b = new PendingLedger(KEY);
+    b.add(burnEntry);
+    expect(new PendingLedger(KEY).all()).toEqual([burnEntry]);
   });
 });

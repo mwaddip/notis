@@ -48,11 +48,19 @@ export interface WithdrawSubmitResult {
 
 /** `POST /usernames` 2xx — a claim's bounded fields and the name the node
  *  accepted (WEB_INTERFACE → Writes). */
-export interface UsernameSubmitResult {
+export interface ClaimSubmitResult {
   status: string; // 'pending'
   txId: string;
   expiresAtHeight: number;
   name: string;
+}
+
+/** `POST /usernames/:name/burn` 2xx — bounded fields only, no name in the body
+ *  (WEB_INTERFACE → Writes). */
+export interface BurnSubmitResult {
+  status: string; // 'pending'
+  txId: string;
+  expiresAtHeight: number;
 }
 
 /** One shape for both of the node's rejection bodies: the HTTP status and the
@@ -65,7 +73,7 @@ export interface Rejection {
 
 /** A success body carries no `message`; a rejection always does. */
 export function isRejection(
-  r: PostSubmitResult | LikeSubmitResult | VouchSubmitResult | InviteSubmitResult | WithdrawSubmitResult | UsernameSubmitResult | Rejection,
+  r: PostSubmitResult | LikeSubmitResult | VouchSubmitResult | InviteSubmitResult | WithdrawSubmitResult | ClaimSubmitResult | BurnSubmitResult | Rejection,
 ): r is Rejection {
   return 'message' in r;
 }
@@ -104,12 +112,12 @@ export class WriteClient {
     return this.send<WithdrawSubmitResult>('POST', `/posts/${encodeURIComponent(postId)}/withdraw`, { tx });
   }
 
-  submitClaim(tx: Record<string, unknown>): Promise<UsernameSubmitResult | Rejection> {
-    return this.send<UsernameSubmitResult>('POST', '/usernames', { tx });
+  submitClaim(tx: Record<string, unknown>): Promise<ClaimSubmitResult | Rejection> {
+    return this.send<ClaimSubmitResult>('POST', '/usernames', { tx });
   }
 
-  submitBurn(name: string, tx: Record<string, unknown>): Promise<UsernameSubmitResult | Rejection> {
-    return this.send<UsernameSubmitResult>('POST', `/usernames/${encodeURIComponent(name)}/burn`, { tx });
+  submitBurn(name: string, tx: Record<string, unknown>): Promise<BurnSubmitResult | Rejection> {
+    return this.send<BurnSubmitResult>('POST', `/usernames/${encodeURIComponent(name)}/burn`, { tx });
   }
 
   private async send<T>(method: string, path: string, body: unknown): Promise<T | Rejection> {
