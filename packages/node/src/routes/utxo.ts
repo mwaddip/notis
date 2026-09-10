@@ -81,7 +81,7 @@ export function createRouter(deps: UtxoDeps): Router {
     }
 
     res.json({
-      userId: req.params['userId'],
+      userId: Buffer.from(userIdBytes).toString('hex'),
       total: total.toString(),
       effective: eff.toString(),
       boxes: pageResult.rows.map(b => ({
@@ -121,7 +121,7 @@ export function createRouter(deps: UtxoDeps): Router {
     });
 
     res.json({
-      userId: req.params['userId'],
+      userId: Buffer.from(userIdBytes).toString('hex'),
       total: total.toString(),
       boxes: pageResult.rows.map(b => ({
         boxId: b.id!,

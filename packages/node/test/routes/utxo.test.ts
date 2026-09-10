@@ -746,4 +746,18 @@ describe('utxo routes — alias resolution', () => {
     const key = await aliasGet(`/karma/${HOLDER_HEX}`);
     expect(key.status).toBe(200);
   });
+
+  it('karma :userId handle resolves userId to the holder key', async () => {
+    const byHandle = await aliasGet(`/karma/@Alice`);
+    const byKey = await aliasGet(`/karma/${HOLDER_HEX}`);
+    expect((byHandle.data as any).userId).toBe((byKey.data as any).userId);
+    expect((byHandle.data as any).userId).toBe(HOLDER_HEX);
+  });
+
+  it('credits :userId handle resolves userId to the holder key', async () => {
+    const byHandle = await aliasGet(`/credits/@Alice`);
+    const byKey = await aliasGet(`/credits/${HOLDER_HEX}`);
+    expect((byHandle.data as any).userId).toBe((byKey.data as any).userId);
+    expect((byHandle.data as any).userId).toBe(HOLDER_HEX);
+  });
 });
