@@ -87,6 +87,10 @@ function boxOfType(boxType: AnyBox['boxType'], value: bigint, tag = ''): AnyBox 
       base['owner'] = OWNER;
       base['releaseAtBlock'] = 100;
       break;
+    case 'username':
+      base['owner'] = OWNER;
+      base['name'] = new Uint8Array([65]);
+      break;
     // `emission`, `treasury`, `fee` and `karma_pool` have no owner and no
     // per-type fields — the shared prefix is the whole box.
     default:
@@ -124,6 +128,7 @@ const COUNTS_AS_CIRCULATING: Record<AnyBox['boxType'], boolean> = {
   like_accrual: true,
   vouch_escrow: true,
   karma_price: false,
+  username: false,
 };
 
 describe('the karma supply is accounted at the box mutation choke point', () => {

@@ -57,6 +57,7 @@ const KARMA_TRANSITION_VERDICT: Record<AnyBox['boxType'], boolean> = {
   karma_price: true,
   vouch: true,
   like_accrual: true,
+  username: true,
   credit: false,
   emission: false,
   treasury: false,
@@ -1460,6 +1461,7 @@ const OUTPUT_SHAPE: Record<OutputBoxType, OutputShapeEntry> = (() => {
     emission: shape('settlement', { boxType: null, value: 'u64', createdAtBlock: 'uint' }),
     treasury: shape('settlement', { boxType: null, value: 'u64', createdAtBlock: 'uint' }),
     karma_pool: shape('settlement', { boxType: null, value: 'u64', createdAtBlock: 'uint' }),
+    username: shape('user', { boxType: null, value: 'u64', createdAtBlock: 'uint', owner: 'bytes32', name: null }),
   };
 })();
 
@@ -1722,6 +1724,7 @@ const SPEND_TIMING: Readonly<Record<AnyBox['boxType'], SpendTiming>> = {
   fee: ALWAYS_SPENDABLE,
   karma_pool: ALWAYS_SPENDABLE,
   like_accrual: ALWAYS_SPENDABLE,
+  username: ALWAYS_SPENDABLE,
 };
 
 /**
@@ -1893,6 +1896,11 @@ function authorizationTable(
       `No transition consumes box ${box.id}: ` +
       `a ${box.boxType} box can never be consumed`,
   },
+
+  // NODE_INTERFACE → Legal box transitions, Burn row. The burn is a mixed-input
+  // transition (karma + username) gated by step 4's exception (Phase 2). Until
+  // the exception and the burn arm exist, no solo user transition reaches here.
+  username: BLOCK_APPLICATION_ONLY,
   };
 }
 

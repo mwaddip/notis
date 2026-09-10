@@ -15,38 +15,26 @@ function jsonSafeFields(fields: Record<string, unknown>): Record<string, unknown
   return out;
 }
 
-/** What a key resolved to, in a form the JSON response can carry. */
+/** What a key resolved to — NODE_INTERFACE → Entity kinds. */
 interface DecodedValue {
-  kind: 'box' | 'record' | 'network' | null;
+  kind: 'box' | 'record' | 'network' | 'username' | 'holder' | null;
   value: Record<string, unknown> | null;
 }
 
-/**
- * Decode whatever the key resolved to (Spec G phase D).
- *
- * The tree holds **three** entity kinds and their keys are indistinguishable
- * from outside — a box id, an identity-record key, and the network record's
- * key are all 32 bytes of hash output (NODE_INTERFACE → Three entity kinds)
- * — so a client can ask for any of the three. Until
- * phase D nothing populated records, so the tree provably contained none and
- * decoding every value as a box could not fail; records exist now, and
- * `deserializeBox` throws on the record tag by design. Dispatching on the tag
- * is what turns "ask for the wrong kind of key" from a 500 into an answer.
- *
- * `kind` is reported alongside the value because the caller cannot infer it:
- * they asked with an opaque 32-byte key and the proof verifies the *bytes*
- * either way. An absent key is `kind: null` with a valid exclusion proof, which
- * is a different statement from "present, and not a box".
- */
 function decodeValue(id: string, bytes: Uint8Array): DecodedValue {
   const decoded = deserializeAvlValue(bytes);
-  if (decoded.kind === 'record') {
-    return { kind: 'record', value: jsonSafeFields({ ...decoded.record }) };
+  switch (decoded.kind) {
+    case 'record':
+      return { kind: 'record', value: jsonSafeFields({ ...decoded.record }) };
+    case 'network':
+      return { kind: 'network', value: jsonSafeFields({ ...decoded.network }) };
+    case 'username':
+      return { kind: 'username', value: jsonSafeFields({ ...decoded.username }) };
+    case 'holder':
+      return { kind: 'holder', value: jsonSafeFields({ ...decoded.holder }) };
+    case 'box':
+      return { kind: 'box', value: jsonSafeFields({ id, ...decoded.box }) };
   }
-  if (decoded.kind === 'network') {
-    return { kind: 'network', value: jsonSafeFields({ ...decoded.network }) };
-  }
-  return { kind: 'box', value: jsonSafeFields({ id, ...decoded.box }) };
 }
 
 export function registerProofEndpoint(app: Express, handle: AvlProverHandle): void {

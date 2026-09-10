@@ -21,6 +21,8 @@ const ALTER_COLUMNS = [
   'tx_id',
   'tx_fee',
   'tx_bytes',
+  'username_lower',
+  'username_claimant',
 ];
 
 // Every index createMempoolGateIndexes declares, derived from db.ts.
@@ -33,6 +35,8 @@ const GATE_INDEX_NAMES = [
   'idx_mempool_tx_output_ids',
   'idx_mempool_tx_id',
   'idx_mempool_fee_rate',
+  'idx_mempool_username_lower',
+  'idx_mempool_username_claimant',
 ];
 
 // Pre-column mempool schema: literal SQL without the six ALTER columns and
@@ -168,13 +172,75 @@ describe('migrateMempoolTxColumns', () => {
     const db = getDb();
 
     const row = db.prepare(
-      `SELECT tx_inputs, tx_output_ids, tx_id, tx_fee, tx_bytes
+      `SELECT tx_inputs, tx_output_ids, tx_id, tx_fee, tx_bytes,
+              username_lower, username_claimant
        FROM mempool WHERE rowid = ?`,
     ).get(inserted.rowid) as Record<string, unknown>;
     expect(row).toBeDefined();
     for (const col of ALTER_COLUMNS) {
       expect(row[col]).toBeNull();
     }
+
+    closeDb();
+  });
+});
+
+describe('usernames table on old database', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    vi.resetModules();
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'notis-uname-migration-'));
+  });
+
+  afterEach(() => {
+    vi.resetModules();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('a database without the usernames table gains it at initDb', async () => {
+    const dbPath = path.join(tmpDir, 'old.db');
+
+    // Build a minimal old-shape database with no usernames table
+    const raw = new Database(dbPath);
+    raw.exec(PRE_COLUMN_MEMPOOL);
+    raw.close();
+
+    const { initDb, getDb, closeDb } = await importFresh();
+    initDb(dbPath);
+    const db = getDb();
+
+    const tables = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='usernames'",
+    ).all() as Array<{ name: string }>;
+    expect(tables).toHaveLength(1);
+
+    const cols = (db.pragma('table_info(usernames)') as Array<{ name: string }>)
+      .map(c => c.name);
+    expect(cols).toContain('name_lower');
+    expect(cols).toContain('name');
+    expect(cols).toContain('owner');
+    expect(cols).toContain('box_id');
+    expect(cols).toContain('claimed_at_block');
+
+    closeDb();
+  });
+
+  it('a database without username_lower and username_claimant mempool columns gains them', async () => {
+    const dbPath = path.join(tmpDir, 'old-mempool.db');
+
+    const raw = new Database(dbPath);
+    raw.exec(PRE_COLUMN_MEMPOOL);
+    raw.close();
+
+    const { initDb, getDb, closeDb } = await importFresh();
+    initDb(dbPath);
+    const db = getDb();
+
+    const cols = (db.pragma('table_info(mempool)') as Array<{ name: string }>)
+      .map(c => c.name);
+    expect(cols).toContain('username_lower');
+    expect(cols).toContain('username_claimant');
 
     closeDb();
   });

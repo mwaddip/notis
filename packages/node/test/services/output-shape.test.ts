@@ -137,6 +137,14 @@ function honestCandidate(
         owner,
         releaseAtBlock: 40,
       };
+    case 'username':
+      return {
+        boxType: 'username',
+        value: 0n,
+        createdAtBlock: 1,
+        owner,
+        name: new Uint8Array([65]),
+      };
     default:
       throw new Error(`no honest candidate for ${boxType}`);
   }
@@ -176,6 +184,7 @@ const CREATABLE: Record<OutputBoxType, true> = {
   fee: true,
   like_accrual: true,
   vouch_escrow: true,
+  username: true,
 };
 
 const BOX_TYPES = Object.keys(CREATABLE) as readonly OutputBoxType[];
@@ -245,6 +254,7 @@ describe('checkOutputShape (direct)', () => {
       fee: 'value',
       like_accrual: 'author',
       vouch_escrow: 'releaseAtBlock',
+      username: 'owner',
     };
     for (const t of BOX_TYPES) {
       const c = honestCandidate(t, owner);

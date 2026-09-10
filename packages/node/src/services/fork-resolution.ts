@@ -33,6 +33,7 @@ import { ceilingOf } from './utxo-engine.js';
 import { getDb } from '../store/db.js';
 import { isBlockJournalOpen, type BlockJournal } from '../store/journal.js';
 import { putIdentityRecord, deleteIdentityRecord, putNetworkRecord } from '../store/identity-records.js';
+import { putUsername, deleteUsername } from '../store/usernames.js';
 import { tryGetAvlProver } from '../state/avl-prover.js';
 import { GENESIS_HEIGHT } from './genesis-state.js';
 import { applyOrderingBlock } from './block-apply.js';
@@ -124,10 +125,21 @@ export function revertBlock(height: number): void {
       }
     } else if (m.kind === 'network') {
       putNetworkRecord(m.replaced);
-    } else if (m.op === 'insert') {
-      deleteBox(m.boxId);
-    } else {
-      unconsumeBox(m.boxId);
+    } else if (m.kind === 'username') {
+      if (m.replaced !== undefined) {
+        putUsername(m.replaced);
+      } else {
+        deleteUsername(m.nameLower);
+      }
+    } else if (m.kind === 'holder') {
+      // Paired with a username mutation — the SQL row is restored there.
+      // The AVL leaf is restored by the prover's version rollback.
+    } else if (m.kind === 'box') {
+      if (m.op === 'insert') {
+        deleteBox(m.boxId);
+      } else {
+        unconsumeBox(m.boxId);
+      }
     }
   }
 

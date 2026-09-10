@@ -164,6 +164,19 @@ const CASES: Record<AnyBox['boxType'], Case> = {
     outputs: (h) => [karmaOut(h.userId, 1n)],
     signer: null,
   },
+  // A username box alone is never a valid sole input — the burn requires karma
+  // inputs beside it (NODE_INTERFACE → Legal box transitions, Burn row). The
+  // authorization itself (the owner's signature) is tested in the burn arm's
+  // dedicated tests; here the box is treated as "no solo transition" so the
+  // test's one-input pattern does not create a transaction step 4 refuses.
+  username: {
+    box: (h) => ({
+      boxType: 'username', value: 0n, createdAtBlock: 1, owner: h.userId,
+      name: new Uint8Array([65]),
+    }),
+    outputs: () => [],
+    signer: null,
+  },
 };
 
 describe('authorization is a property of the transition', () => {

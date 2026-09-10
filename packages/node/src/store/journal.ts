@@ -4,6 +4,7 @@ import type { AnyBox, UserId } from '@dagsocial/types';
 // Type-only: erased at compile time, so this does not create a runtime cycle
 // with identity-records.ts, which imports the recording hook below.
 import type { IdentityRecord, NetworkRecord } from './identity-records.js';
+import type { UsernameRow, HolderRecord } from './usernames.js';
 
 // ---------------------------------------------------------------------------
 // Journal types (node-owned — NODE_INTERFACE → Block Journal)
@@ -38,26 +39,33 @@ export interface NetworkMutation {
   replaced: NetworkRecord;
 }
 
+/** The name record — key H(USERNAME_KEY_DOMAIN ‖ nameLower). */
+export interface UsernameMutation {
+  kind: 'username';
+  nameLower: string;
+  row: UsernameRow | null;
+  replaced?: UsernameRow;
+}
+
+/** The holder record — key H(USERNAME_HOLDER_KEY_DOMAIN ‖ owner). */
+export interface HolderMutation {
+  kind: 'holder';
+  owner: UserId;
+  record: HolderRecord | null;
+  replaced?: HolderRecord;
+}
+
 /**
  * A mutation of any **committed** entity.
  *
- * This is one discriminated union rather than a box log with a sibling
- * `recordMutations` array, and that is load-bearing. A committed entity that
- * never reaches the prover feed is silently absent from the `stateRoot`, and
- * **no test can catch it** — producer and verifier omit it identically, so they
- * agree on a digest over incomplete state. Making the feed derivation switch on
- * `kind` turns "a new entity kind was added and nobody updated the prover feed"
- * into a TypeScript exhaustiveness error. That compile-time check is the only
- * enforcement this invariant has; a parallel array would reinstate exactly the
- * drift-by-omission shape the single log exists to remove.
- *
- * The typed side-records below (`confirmedPostIds`, `likeRecord*`, ...)
- * stay separate arrays because they are **not** in the `stateRoot` — they are
- * node-local bookkeeping with an exact inverse. `kind: 'record'` is the first
- * entry that is both journaled *and* committed, and that is the whole
- * distinction.
+ * NODE_INTERFACE → Block Journal. One discriminated union rather than parallel
+ * arrays, and that is load-bearing: a committed entity that never reaches the
+ * prover feed is silently absent from the `stateRoot`, and **no test can catch
+ * it** — producer and verifier omit it identically. Making the feed derivation
+ * switch on `kind` turns "a new entity kind was added and nobody updated the
+ * prover feed" into a TypeScript exhaustiveness error.
  */
-export type JournalMutation = BoxMutation | RecordMutation | NetworkMutation;
+export type JournalMutation = BoxMutation | RecordMutation | NetworkMutation | UsernameMutation | HolderMutation;
 
 /**
  * Single source of truth for undoing a block and feeding the AVL prover.
@@ -288,6 +296,30 @@ export function recordAppliedUtxoTx(txId: string, txBytes: Uint8Array): void {
 export function recordWithdrawnPost(id: string, content: string | null): void {
   if (openJournal === null) return;
   openJournal.withdrawnPosts.push({ id, content });
+}
+
+/** Record a username (name record) mutation — NODE_INTERFACE → Block Journal. */
+export function recordUsernameMutation(
+  nameLower: string,
+  row: UsernameRow | null,
+  replaced?: UsernameRow,
+): void {
+  if (openJournal === null) return;
+  const entry: UsernameMutation = { kind: 'username', nameLower, row };
+  if (replaced !== undefined) entry.replaced = replaced;
+  openJournal.mutations.push(entry);
+}
+
+/** Record a holder-record mutation — NODE_INTERFACE → Block Journal. */
+export function recordHolderMutation(
+  owner: UserId,
+  record: HolderRecord | null,
+  replaced?: HolderRecord,
+): void {
+  if (openJournal === null) return;
+  const entry: HolderMutation = { kind: 'holder', owner, record };
+  if (replaced !== undefined) entry.replaced = replaced;
+  openJournal.mutations.push(entry);
 }
 
 // ---------------------------------------------------------------------------

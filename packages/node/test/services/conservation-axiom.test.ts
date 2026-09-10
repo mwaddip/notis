@@ -91,6 +91,8 @@ const KARMA_BEARING: Readonly<Record<keyof typeof BOX_TYPE_TAGS, boolean>> = {
   fee: false,
   // Holds 0 by its type (TYPES_INTERFACE → GenesisProofBox).
   genesis_proof: false,
+  // Holds 0n by its type (TYPES_INTERFACE → UsernameBox).
+  username: false,
 };
 
 async function importDb() {

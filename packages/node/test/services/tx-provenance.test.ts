@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import type { AnyBox, AnyBoxCandidate, CandidateOf, CreditBox, KarmaBox, BondBox, KarmaPriceBox, VouchBox, VouchEscrowBox, LikeAccrualBox, EmissionBox, TreasuryBox, FeeBox, KarmaPoolBox } from '@dagsocial/types';
+import type { AnyBox, AnyBoxCandidate, CandidateOf, CreditBox, KarmaBox, BondBox, KarmaPriceBox, VouchBox, VouchEscrowBox, LikeAccrualBox, EmissionBox, TreasuryBox, FeeBox, KarmaPoolBox, UsernameBox } from '@dagsocial/types';
 import type Database from 'better-sqlite3';
 
 /**
@@ -202,6 +202,10 @@ describe('transaction output provenance (Spec G phase C3)', () => {
       karma_pool: [{
         boxType: 'karma_pool', value: 500n, createdAtBlock: 0,
       } satisfies CandidateOf<KarmaPoolBox>],
+      username: [{
+        boxType: 'username', value: 0n, createdAtBlock: 1, owner: user(0xef),
+        name: new Uint8Array([65]),
+      } satisfies CandidateOf<UsernameBox>],
     };
 
     Object.values(candidates).flat().forEach((candidate, index) => {

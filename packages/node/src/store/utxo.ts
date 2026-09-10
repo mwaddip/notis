@@ -21,6 +21,7 @@ import type {
   KarmaPoolBox,
   VouchEscrowBox,
   LikeAccrualBox,
+  UsernameBox,
 } from '@dagsocial/types';
 
 // ---------------------------------------------------------------------------
@@ -302,6 +303,17 @@ export function rowToBox(row: UtxoRow): AnyBox {
         boxType: 'fee',
         value: row.value,
         createdAtBlock,
+        ...prov,
+      };
+
+    case 'username':
+      return {
+        id: row.id,
+        boxType: 'username',
+        value: 0n as 0n,
+        createdAtBlock,
+        owner: new Uint8Array(row.owner!),
+        name: Buffer.from(extra.name as string, 'hex'),
         ...prov,
       };
 
@@ -1088,6 +1100,12 @@ export function insertBox(box: AnyBox): void {
     case 'karma_pool':
     case 'fee': {
       extraData = {};
+      break;
+    }
+    case 'username': {
+      const u = box as UsernameBox;
+      extraData = { name: Buffer.from(u.name).toString('hex') };
+      owner = Buffer.from(u.owner);
       break;
     }
     default: {

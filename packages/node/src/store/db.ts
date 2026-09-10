@@ -135,7 +135,18 @@ const MIGRATIONS = [
     tx_inputs TEXT,
     tx_output_ids TEXT,
     tx_id TEXT,
-    max_valid_height INTEGER
+    max_valid_height INTEGER,
+    username_lower TEXT,
+    username_claimant TEXT
+  )`,
+
+  // Usernames — NODE_INTERFACE → Username records
+  `CREATE TABLE IF NOT EXISTS usernames (
+    name_lower TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    owner TEXT NOT NULL UNIQUE,
+    box_id TEXT NOT NULL,
+    claimed_at_block INTEGER NOT NULL
   )`,
 
   // System config (persistent node-level keypairs, etc.)
@@ -335,6 +346,8 @@ function migrateMempoolTxColumns(database: Database.Database): void {
   // never evicted; the pool drains within `MEMPOOL_EXPIRY_BLOCKS` regardless.
   if (!has('tx_fee')) database.exec(`ALTER TABLE mempool ADD COLUMN tx_fee INTEGER`);
   if (!has('tx_bytes')) database.exec(`ALTER TABLE mempool ADD COLUMN tx_bytes INTEGER`);
+  if (!has('username_lower')) database.exec(`ALTER TABLE mempool ADD COLUMN username_lower TEXT`);
+  if (!has('username_claimant')) database.exec(`ALTER TABLE mempool ADD COLUMN username_claimant TEXT`);
 }
 
 /**
@@ -414,6 +427,10 @@ function createMempoolGateIndexes(database: Database.Database): void {
       ON mempool(tx_id) WHERE tx_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_mempool_fee_rate
       ON mempool(CAST(tx_fee AS REAL) / tx_bytes) WHERE tx_fee IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_mempool_username_lower
+      ON mempool(username_lower) WHERE username_lower IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_mempool_username_claimant
+      ON mempool(username_claimant) WHERE username_claimant IS NOT NULL;
   `);
 }
 
