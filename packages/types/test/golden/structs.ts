@@ -22,7 +22,7 @@
  */
 
 import { ByteReader, ByteWriter, ReaderError } from '@dagsocial/wire';
-import { MAX_GENESIS_PROOF_PAYLOAD_BYTES } from '../../src/constants.js';
+import { MAX_GENESIS_PROOF_PAYLOAD_BYTES, USERNAME_MAX_BYTES } from '../../src/constants.js';
 import {
   readArr,
   readBytesN,
@@ -145,7 +145,8 @@ type BoxContent =
   | { boxType: 'treasury'; value: bigint; createdAtBlock: number }
   | { boxType: 'fee'; value: bigint; createdAtBlock: number }
   | { boxType: 'karma_pool'; value: bigint; createdAtBlock: number }
-  | { boxType: 'karma_price'; value: bigint; createdAtBlock: number };
+  | { boxType: 'karma_price'; value: bigint; createdAtBlock: number }
+  | { boxType: 'username'; value: bigint; createdAtBlock: number; owner: Uint8Array; name: Uint8Array };
 
 // TYPES_INTERFACE → Layout — Boxes, "independent in its numbers, not in its
 // coverage": the corpus's BoxContent['boxType'] and production's
@@ -181,6 +182,7 @@ export const BOX_TAG_BY_TYPE = {
   like_accrual: 11,
   vouch_escrow: 12,
   karma_price: 13,
+  username: 14,
 } as const satisfies Record<BoxContent['boxType'], number>;
 
 /** Reverse lookup derived from `BOX_TAG_BY_TYPE` — `read()` uses this. */
@@ -252,6 +254,8 @@ const boxContentCodec: ValueCodec<BoxContent> = {
         return { boxType: 'karma_pool', value, createdAtBlock };
       case 'karma_price':
         return { boxType: 'karma_price', value, createdAtBlock };
+      case 'username':
+        return { boxType: 'username', value, createdAtBlock, owner: hex(j.owner as string), name: hex(j.name as string) };
       default:
         throw new Error(`boxContent: unknown boxType ${String(j.boxType)}`);
     }
@@ -331,6 +335,18 @@ const boxContentCodec: ValueCodec<BoxContent> = {
         };
       case 'like_accrual':
         return { boxType, value, createdAtBlock, author: readBytesN(r, 32) };
+      case 'username': {
+        const owner = readBytesN(r, 32);
+        const nameLen = readVlqU(r);
+        if (nameLen > USERNAME_MAX_BYTES) {
+          throw new ReaderError(
+            `boxContent: username name is ${nameLen} bytes, over ` +
+              `USERNAME_MAX_BYTES (${USERNAME_MAX_BYTES})`,
+            'out-of-domain',
+          );
+        }
+        return { boxType, value, createdAtBlock, owner, name: r.readBytes(nameLen).slice() };
+      }
       case 'emission':
       case 'treasury':
       case 'fee':

@@ -12,7 +12,7 @@
 // stamps it — the version in force is scheduled by height (TYPES_INTERFACE → Version).
 export const PROTOCOL_VERSION = 1;
 
-// Content limits
+// Content limits (TYPES_INTERFACE → Content limits)
 export const MAX_CONTENT_BYTES = 300;
 /**
  * A post names at most **one** parent (user ruling, 2026-08-09).
@@ -46,6 +46,7 @@ export const MAX_PARENT_REFS = 1;
  * ~35 bytes, so nothing approaches it; `network.test.ts` is what checks them.
  */
 export const MAX_GENESIS_PROOF_PAYLOAD_BYTES = 512;
+export const USERNAME_MAX_BYTES = 24;
 
 // Size caps — consensus bounds on whole encoded structures. Distinct in kind
 // from the content limits above, which are format bounds a codec enforces on one
@@ -109,6 +110,9 @@ export const KARMA_MINIMUM = 10n;                  // floor — decay never redu
 export const POST_PRICE_THREAD = 5n;        // consensus — karma a thread pays to the pool
 export const POST_PRICE_REPLY = 3n;         // consensus — karma a reply pays
 export const REPLY_AUTHOR_SHARE = 1n;       // consensus — the part of a reply's price the parent's author accrues
+
+// Usernames (ARCHITECTURE → Usernames)
+export const USERNAME_BURN_PRICE = 10n; // placeholder — karma a burn pays to the pool
 
 // Likes — one-way burns settled per block (ARCHITECTURE → Per-block accrual and settlement)
 export const LIKE_KARMA_COST = 1n;        // Karma burned by the liker per like (bigint)

@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import { ByteReader, ByteWriter, ReaderError } from '@dagsocial/wire';
-import { MAX_GENESIS_PROOF_PAYLOAD_BYTES } from './constants.js';
+import { MAX_GENESIS_PROOF_PAYLOAD_BYTES, USERNAME_MAX_BYTES } from './constants.js';
 import {
   type StructCodec,
   decodeStruct,
@@ -53,6 +53,8 @@ export const TX_ID_DOMAIN = encoder.encode('dagsocial/tx-id/1');
 export const MINT_ID_DOMAIN = encoder.encode('dagsocial/mint-tx-id/1');
 export const IDENTITY_KEY_DOMAIN = encoder.encode('dagsocial/identity-key/1');
 export const NETWORK_KEY_DOMAIN = encoder.encode('dagsocial/network-key/1');
+export const USERNAME_KEY_DOMAIN = encoder.encode('dagsocial/username-key/1');
+export const USERNAME_HOLDER_KEY_DOMAIN = encoder.encode('dagsocial/username-holder-key/1');
 
 /**
  * The `boxType` tag table — **the single source of the box-type numbering.**
@@ -94,6 +96,7 @@ export const BOX_TYPE_TAGS = Object.freeze({
   like_accrual: 11,
   vouch_escrow: 12,
   karma_price: 13,
+  username: 14,
 } as const satisfies Readonly<Record<BoxCandidate['boxType'], number>>);
 
 /** The `enum8` codec over that table — one table, both directions. */
@@ -123,6 +126,7 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', BOX_TYPE_TAGS);
  *   | fee           | (none)                                                    |
  *   | karma_pool    | (none)                                                    |
  *   | like_accrual  | b32(author)                                               |
+ *   | username      | b32(owner) ‖ lp(name)                                     |
  *   | vouch_escrow  | b32(owner) ‖ vlqU(releaseAtBlock)                          |
  *   | karma_price   | (none)                                                    |
  *
@@ -236,6 +240,10 @@ function writeBoxTypeFields(w: ByteWriter, box: AnyBoxCandidate): void {
       // spend either.
       writeBytesNOrThrow(w, box.author, 32);
       return;
+    case 'username':
+      writeBytesNOrThrow(w, box.owner, 32);
+      writeLp(w, box.name);
+      return;
     case 'vouch_escrow':
       writeBytesNOrThrow(w, box.owner, 32);
       // `vlqU`, total by sentinel, which is the standing every height in this
@@ -289,7 +297,7 @@ function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
   const boxType = BOX_TYPE.read(r);
   const value = readVlqU64(r);
   // Read before the switch because it is prefix, not per-type — one read for
-  // twelve arms, so no arm can walk the shared prefix differently from another.
+  // thirteen arms, so no arm can walk the shared prefix differently from another.
   const createdAtBlock = readVlqU(r);
   switch (boxType) {
     case 'karma':
@@ -353,6 +361,20 @@ function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
         createdAtBlock,
         author: readBytesN(r, 32),
       };
+    case 'username': {
+      const owner = readBytesN(r, 32);
+      const nameLen = readVlqU(r);
+      // TYPES_INTERFACE → Layout — Boxes: the count refused past
+      // USERNAME_MAX_BYTES inside `read`, before a byte of content.
+      if (nameLen > USERNAME_MAX_BYTES) {
+        throw new ReaderError(
+          `readBoxContentFields: username name is ${nameLen} bytes, over ` +
+            `USERNAME_MAX_BYTES (${USERNAME_MAX_BYTES})`,
+          'out-of-domain',
+        );
+      }
+      return { boxType, value: value as 0n, createdAtBlock, owner, name: r.readBytes(nameLen).slice() };
+    }
     case 'vouch_escrow':
       return {
         boxType,
@@ -427,7 +449,7 @@ export function boxRecordBytes(candidate: BoxCandidate, txId: TxId, index: numbe
  * holds these bytes and has to parse them back; a reader written over there
  * would put the box layout in two packages, and the two would be free to
  * disagree about field order with nothing to catch it
- * (NODE_INTERFACE → Three entity kinds, from the other direction). Every other wire struct in this repo is a pair; this one is too.
+ * (NODE_INTERFACE → Entity kinds, from the other direction). Every other wire struct in this repo is a pair; this one is too.
  *
  * Goes through `decodeStruct`, so it carries the whole four-part boundary check
  * (TYPES_INTERFACE → The boundary check): schema projection, exhaustion, and
@@ -616,7 +638,7 @@ export interface BoxCandidate {
   // holes; `BOX_TYPE_TAGS` leaves them out.
   boxType: 'karma' | 'credit' | 'genesis_proof' | 'bond' | 'vouch'
     | 'emission' | 'treasury' | 'fee' | 'karma_pool' | 'like_accrual' | 'vouch_escrow'
-    | 'karma_price';
+    | 'karma_price' | 'username';
   value: bigint;        // integer base units, uniform across box types; value < 2^64 is the `vlqU` wire domain
   // ⚠ **`< 2^64` above is the ENCODABLE domain, and it is wider than the
   // accepted one.** Consensus admits `[0, BOX_VALUE_BOUND)` (`constants.ts`),
@@ -769,6 +791,23 @@ export interface BondBox extends BoxBase {
 export interface KarmaPriceBox extends BoxBase {
   boxType: 'karma_price';
   value: bigint;              // ≥ 1n — what the transaction pays to the pool
+}
+
+// --- Username ---
+
+/**
+ * A soulbound name on the UTXO ledger — TYPES_INTERFACE → UsernameBox;
+ * ARCHITECTURE → Usernames.
+ *
+ * `value` is `0n`: the type has exactly one legal value, and it takes part in
+ * no sum — a claim conserves karma alone, and the box's zero is a structural
+ * zero the value-domain rule names (TYPES_INTERFACE → Box value domain).
+ */
+export interface UsernameBox extends BoxBase {
+  boxType: 'username';
+  value: 0n;
+  owner: Uint8Array;          // 32 raw bytes — the holder
+  name: Uint8Array;           // 1–USERNAME_MAX_BYTES bytes of [A-Za-z0-9_]
 }
 
 // --- Vouch ---
@@ -1007,6 +1046,7 @@ export type AnyBox =
   | CreditBox
   | GenesisProofBox
   | BondBox
+  | UsernameBox
   | VouchBox
   | VouchEscrowBox
   | LikeAccrualBox
@@ -1022,6 +1062,7 @@ export type AnyBoxCandidate =
   | CandidateOf<CreditBox>
   | CandidateOf<GenesisProofBox>
   | CandidateOf<BondBox>
+  | CandidateOf<UsernameBox>
   | CandidateOf<VouchBox>
   | CandidateOf<VouchEscrowBox>
   | CandidateOf<LikeAccrualBox>
