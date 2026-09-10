@@ -59,6 +59,7 @@ function makeDeps(overrides: Partial<MiningDeps> = {}): MiningDeps {
     // is about a node that has met its peers.
     peerReady: () => true,
     miningSecret: SECRET,
+    getUsername: () => null,
     ...overrides,
   };
 }

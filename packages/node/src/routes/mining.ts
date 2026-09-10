@@ -4,6 +4,7 @@ import { computePowHash } from '@dagsocial/validation';
 import type { OrderingBlock } from '@dagsocial/types';
 import { postIdsOf } from '../services/block-posts.js';
 import { resolveIdentityParam, isResolveError } from './page.js';
+import type { UsernameLookup } from './page.js';
 
 // ---------------------------------------------------------------------------
 // Dependency types
@@ -21,6 +22,7 @@ export interface MiningDeps {
    */
   peerReady(): boolean;
   miningSecret: string;
+  getUsername: UsernameLookup;
 }
 
 // ---------------------------------------------------------------------------
@@ -76,7 +78,7 @@ export function createRouter(deps: MiningDeps): Router {
     let minerHex: string | null = null;
     const minerRaw = typeof req.query.miner === 'string' ? req.query.miner : null;
     if (minerRaw !== null) {
-      const resolved = resolveIdentityParam(minerRaw);
+      const resolved = resolveIdentityParam(minerRaw, deps.getUsername);
       if (isResolveError(resolved)) {
         res.status(resolved.status).json({ error: resolved.error });
         return;

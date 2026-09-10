@@ -109,13 +109,13 @@ export function createRouter(deps: VouchesDeps): Router {
 
     let target: string | undefined;
     if (targetRaw) {
-      const resolved = resolveIdentityParam(targetRaw);
+      const resolved = resolveIdentityParam(targetRaw, deps.getUsername);
       if (isResolveError(resolved)) { res.status(resolved.status).json({ error: resolved.error }); return; }
       target = resolved.hex;
     }
     let voucher: string | undefined;
     if (voucherRaw) {
-      const resolved = resolveIdentityParam(voucherRaw);
+      const resolved = resolveIdentityParam(voucherRaw, deps.getUsername);
       if (isResolveError(resolved)) { res.status(resolved.status).json({ error: resolved.error }); return; }
       voucher = resolved.hex;
     }

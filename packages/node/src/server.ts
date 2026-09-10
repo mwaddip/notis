@@ -252,6 +252,7 @@ export function createApp(config: Config): express.Express {
       getSubtreePage: store.getSubtreePage,
       getBlockCreatedAt: store.getBlockCreatedAt,
       getUsernameByOwner: store.getUsernameByOwner,
+      getUsername: store.getUsername,
       getTopologyAuthor: store.getTopologyAuthor,
       admitTx,
       validateTx: (tx, currentBlockHeight) =>
@@ -330,6 +331,7 @@ export function createApp(config: Config): express.Express {
       decayCfg: decayConfig(),
       getNetworkRecord: store.getNetworkRecord,
       membershipBarMultiplier: config.membershipBarMultiplier,
+      getUsername: store.getUsername,
     }),
   );
 
@@ -347,6 +349,7 @@ export function createApp(config: Config): express.Express {
         // solved against had met its peers when it handed out the preimage.
         peerReady: isPeerReady,
         miningSecret: config.miningSecret,
+        getUsername: store.getUsername,
       }),
     );
   }

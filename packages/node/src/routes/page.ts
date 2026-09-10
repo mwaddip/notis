@@ -1,6 +1,7 @@
 import type { PostKey, BoxKey } from '../store/index.js';
 import { isValidUsernameBytes, canonicalUsernameBytes } from '@dagsocial/types';
-import { getUsername } from '../store/usernames.js';
+
+export type UsernameLookup = (nameLower: string) => { owner: string } | null;
 
 // CONSTANTS → HTTP view bounds
 export const PAGE_LIMIT_DEFAULT = 50;
@@ -94,7 +95,10 @@ export function isAfterError(
 }
 
 // NODE_INTERFACE → Identity parameters
-export function resolveIdentityParam(value: string): { hex: string } | { error: string; status: number } {
+export function resolveIdentityParam(
+  value: string,
+  getUsername: UsernameLookup,
+): { hex: string } | { error: string; status: number } {
   if (/^[0-9a-f]{64}$/i.test(value)) {
     return { hex: value.toLowerCase() };
   }
@@ -116,11 +120,14 @@ export function isResolveError(v: { hex: string } | { error: string; status: num
   return 'error' in v;
 }
 
-export function parseViewer(query: Record<string, unknown>): Uint8Array | null | { error: string; status?: number } {
+export function parseViewer(
+  query: Record<string, unknown>,
+  getUsername: UsernameLookup,
+): Uint8Array | null | { error: string; status?: number } {
   const raw = query['viewer'] as string | undefined;
   if (raw === undefined) return null;
   if (typeof raw !== 'string') return { error: 'viewer must be a string' };
-  const resolved = resolveIdentityParam(raw);
+  const resolved = resolveIdentityParam(raw, getUsername);
   if (isResolveError(resolved)) return resolved;
   return new Uint8Array(Buffer.from(resolved.hex, 'hex'));
 }

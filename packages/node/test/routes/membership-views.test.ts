@@ -124,6 +124,7 @@ describe('/karma/:userId membership fields', () => {
         decayCfg: DECAY_CFG,
         getNetworkRecord,
         membershipBarMultiplier: config.membershipBarMultiplier,
+        getUsername: () => null,
         getUtxoEngineDeps: () => ({
           getBox: getBoxWithPending,
           insertBox,
@@ -147,8 +148,8 @@ describe('/karma/:userId membership fields', () => {
           membershipBarMultiplier: config.membershipBarMultiplier,
           putIdentityRecord: () => {},
           protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
-      getUsername: () => null,
-      getUsernameByOwner: () => null,
+          getUsername: () => null,
+          getUsernameByOwner: () => null,
         }),
       };
       const app = express();

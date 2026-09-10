@@ -71,6 +71,7 @@ async function request(
       decayCfg: DECAY_CFG,
       getNetworkRecord: () => ({ memberCount: 1 }),
       membershipBarMultiplier: 1,
+      getUsername: () => null,
       getUtxoEngineDeps: () => ({
         // The pending view, as server.ts wires the submission routes: a grant
         // spending the change box of one still pooled resolves its input here.

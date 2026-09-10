@@ -14,26 +14,26 @@ import {
 
 describe('parseViewer', () => {
   it('returns null when viewer is absent', () => {
-    expect(parseViewer({})).toBeNull();
+    expect(parseViewer({}, () => null)).toBeNull();
   });
 
   it('returns a Uint8Array for a valid 64-char hex viewer', () => {
     const hex = 'ab'.repeat(32);
-    const result = parseViewer({ viewer: hex });
+    const result = parseViewer({ viewer: hex }, () => null);
     expect(isViewerError(result)).toBe(false);
     expect(result).toBeInstanceOf(Uint8Array);
     expect((result as Uint8Array).length).toBe(32);
   });
 
   it('returns an error for a short viewer', () => {
-    const result = parseViewer({ viewer: 'ab'.repeat(16) });
+    const result = parseViewer({ viewer: 'ab'.repeat(16) }, () => null);
     expect(isViewerError(result)).toBe(true);
     if (!isViewerError(result)) return;
     expect(result.error).toContain('malformed identity parameter');
   });
 
   it('returns an error for a non-hex viewer of correct length', () => {
-    const result = parseViewer({ viewer: 'zz'.repeat(32) });
+    const result = parseViewer({ viewer: 'zz'.repeat(32) }, () => null);
     expect(isViewerError(result)).toBe(true);
   });
 });

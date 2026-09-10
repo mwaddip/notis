@@ -117,6 +117,11 @@ export function createRouter(deps: UsernameRouteDeps): Router {
       return;
     }
 
+    if (!tx.inputs.includes(row.boxId)) {
+      res.status(400).json({ error: `Transaction does not consume ${rawName}'s box` });
+      return;
+    }
+
     try {
       const currentHeight = deps.getCurrentHeight() + 1;
       const result = deps.validateTx(tx, currentHeight);
@@ -175,7 +180,7 @@ export function createRouter(deps: UsernameRouteDeps): Router {
       return;
     }
 
-    const resolved = resolveIdentityParam(ownerRaw);
+    const resolved = resolveIdentityParam(ownerRaw, deps.getUsername);
     if (isResolveError(resolved)) {
       res.status(resolved.status).json({ error: resolved.error });
       return;

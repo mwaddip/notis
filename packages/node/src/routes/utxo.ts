@@ -12,6 +12,7 @@ import { getNet } from '../services/net-instance.js';
 import { jsonToTx } from './json-to-tx.js';
 import { respondError } from './respond-error.js';
 import { parseLimit, isLimitError, parseAfter, isAfterError, formatKey, resolveIdentityParam, isResolveError } from './page.js';
+import type { UsernameLookup } from './page.js';
 
 // ---------------------------------------------------------------------------
 // Dependency types
@@ -29,6 +30,7 @@ export interface UtxoDeps {
   decayCfg: DecayCfg;
   getNetworkRecord(): NetworkRecord;
   membershipBarMultiplier: number;
+  getUsername: UsernameLookup;
 }
 
 // ---------------------------------------------------------------------------
@@ -39,7 +41,7 @@ export function createRouter(deps: UtxoDeps): Router {
   const router = Router();
 
   function parseUserId(param: string, res: Response): Uint8Array | null {
-    const resolved = resolveIdentityParam(param);
+    const resolved = resolveIdentityParam(param, deps.getUsername);
     if (isResolveError(resolved)) {
       res.status(resolved.status).json({ error: resolved.error });
       return null;
