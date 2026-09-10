@@ -157,7 +157,7 @@ The node and nginx send no CORS, so the proxy is the only route. `API_PATHS` in 
 `/posts`, `/status`, `/blocks`, `/karma`, `/credits`, `/likes`, `/vouches`, `/invites`, `/usernames` — a path the
 client calls that is not in the table returns the HTML shell, not the API. `/faucet` is proxied to
 `NOTIS_FAUCET` only when it is set, with the `/faucet` prefix stripped (http-proxy prepends the target's
-own path). The client's faucet base is `/faucet` in development and `VITE_FAUCET_BASE` on a deploy;
+own path). The client's faucet base is `/faucet` in development and the shell's `notis-faucet` meta on a deploy, written from `VITE_FAUCET_BASE`;
 empty means no faucet and no button. **The faucet must relay `expiresAtHeight`** — the client refuses a
 202 without it — so a faucet that does not relay it answers the honest refusal, not a grant.
 
@@ -234,25 +234,29 @@ page), and asserts each live post's recomputed `computeContentHash` equals the
 (`CHROME=…`, else Playwright's cached one). Not in `pnpm test` by design — it
 needs a browser and a node.
 
-## Building for a deployment — two bases, and both are required
+## Building for a deployment — three values, written by the build and editable after
 
-**They are different things and neither implies the other:**
-
-- **`--base`** is where the client's *own* files live. It rewrites the asset URLs in `index.html`.
-  Omitted, they are root-absolute (`/assets/…`, `/fonts/…`, `/favicon.svg`), which resolve only if the
-  client is served from the site root.
-- **`VITE_API_BASE`** is where the *node's API* lives, relative to the same origin. Omitted, it is
-  empty, which is right for `pnpm dev` because the dev server proxies the bare API paths.
-- **`VITE_FAUCET_BASE`** is where the *faucet* lives, the same way — `/testnet/faucet` on notis.fun.
-  Omitted, it is empty, which means no faucet and no `ask the faucet for karma` button.
-
-A client served from a subpath, reading an API mounted on a different subpath, needs both. Run vite
-directly rather than through `pnpm --filter`, so no flag has to survive pnpm's argument passing:
+**The deployment is three tags in the shell's head** (`WEB_INTERFACE → The client is served from the
+node's own origin`): `<base href>` — the path the client's own files are served under, opening and
+closing with `/`; `notis-api` — the API's path on the same origin, no trailing slash; `notis-faucet` —
+the faucet's path, empty for no faucet and no `ask the faucet for karma` button. The build writes them
+from `VITE_WEB_BASE`, `VITE_API_BASE` and `VITE_FAUCET_BASE` — `/`, empty and empty under `pnpm dev`,
+where the dev server proxies the bare API paths — and the client reads them from the DOM at load
+(`readBase` and `readMeta` in `src/prefs.ts`). Vite's `base` is `./` for a build, so every reference in
+the built shell is relative and the `<base>` alone decides where the files resolve; `public/fonts/fonts.css`
+names its files beside itself for the same reason. A host with another layout edits the three values in
+`web/index.html` after unzipping.
 
 ```bash
-cd packages/web && VITE_API_BASE=<api path> VITE_FAUCET_BASE=<faucet path> npx vite build --base=<client path>/
+bash packages/web/scripts/build-release.sh   # notis.fun's values → notis-web-<ver>.zip in the repo root
+cd packages/web && VITE_WEB_BASE=<client path>/ VITE_API_BASE=<api path> VITE_FAUCET_BASE=<faucet path> npx vite build
 ```
 
-⚠ **Getting `--base` wrong yields a blank page, not an error.** The HTML loads, every asset 404s, and
-nothing in the console names the cause. Check `dist/index.html` after building: every `href` and `src`
-must begin with the client path.
+Run vite directly rather than through `pnpm --filter`, so no variable has to survive pnpm's argument
+passing. ⚠ **Getting `<base href>` wrong yields a blank page, not an error.** The HTML loads, every asset
+404s, and nothing in the console names the cause. Check the built `index.html`: the three tags carry the
+intended values and every `href` and `src` is relative — `build-release.sh` checks exactly that.
+
+⚠ **A `<base>` element resolves fragment references against itself**, so the client carries none: the mark
+is inline markup (`src/view/mark.ts`), never a sprite referenced by `<use>`, and every URL composed from
+the base is path-absolute.
