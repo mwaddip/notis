@@ -368,6 +368,74 @@ function checkTransitions(
         }
       }
 
+      // NODE_INTERFACE → Username transition rules: a username input in any
+      // shape but the burn's is refused, and a username output in any shape but
+      // the claim's is refused. Guard before the like/post/withdraw chain so
+      // neither can ride another branch's price.
+      const hasUsernameIO = usernameInput !== null || outputs.some(o => o.boxType === 'username');
+      if (hasUsernameIO && (likeTarget !== undefined || post !== undefined || postWithdraw !== undefined)) {
+        return {
+          valid: false,
+          error: 'A username input or output is not legal on a like, post or withdrawal transaction',
+        };
+      }
+
+      // The burn and claim dispatch ahead of every other karma branch — a
+      // burn's KarmaPriceBox would be caught by the price-without-post guard
+      // otherwise, and a claim's username output would fall through unchecked.
+      if (usernameInput !== null) {
+        // NODE_INTERFACE → Username transition rules, Burn row.
+        const uBox = usernameInput as UsernameBox;
+        if (Buffer.from(uBox.owner).toString('hex') !== inputOwnerHex) {
+          return { valid: false, error: 'Burn: username box owner must match the karma inputs\' owner' };
+        }
+        if (priceOutputs.length !== 1) {
+          return { valid: false, error: 'Burn: exactly one KarmaPriceBox required' };
+        }
+        if (priceOutputs[0]!.value !== USERNAME_BURN_PRICE) {
+          return { valid: false, error: `Burn: price must be exactly ${USERNAME_BURN_PRICE}, got ${priceOutputs[0]!.value}` };
+        }
+        const usernameOutputs = outputs.filter(o => o.boxType === 'username');
+        if (usernameOutputs.length !== 0) {
+          return { valid: false, error: 'Burn: no username output allowed' };
+        }
+        if (karmaOutputs.length > 1 || outputs.length !== karmaOutputs.length + 1) {
+          return { valid: false, error: 'Burn: at most one karma output beside the price box' };
+        }
+        return { valid: true };
+      }
+
+      if (outputs.some(o => o.boxType === 'username')) {
+        // NODE_INTERFACE → Username transition rules, Claim row.
+        const usernameOutputs = outputs.filter(o => o.boxType === 'username') as UsernameBox[];
+        if (usernameOutputs.length !== 1) {
+          return { valid: false, error: 'Claim: exactly one username output required' };
+        }
+        const uOut = usernameOutputs[0]!;
+        if (uOut.value !== 0n) {
+          return { valid: false, error: 'Claim: username box value must be 0' };
+        }
+        if (!isValidUsernameBytes(uOut.name)) {
+          return { valid: false, error: 'name invalid' };
+        }
+        if (Buffer.from(uOut.owner).toString('hex') !== inputOwnerHex) {
+          return { valid: false, error: 'Claim: username owner must match the karma inputs\' owner' };
+        }
+        const canonical = Buffer.from(canonicalUsernameBytes(uOut.name)).toString('utf8');
+        const existing = deps.getUsername(canonical);
+        if (existing !== null) {
+          return { valid: false, error: 'name taken' };
+        }
+        const holderName = deps.getUsernameByOwner(inputKarma.owner);
+        if (holderName !== null) {
+          return { valid: false, error: 'identity holds a name' };
+        }
+        if (karmaOutputs.length > 1 || outputs.length !== karmaOutputs.length + 1) {
+          return { valid: false, error: 'Claim: at most one karma output beside the username box' };
+        }
+        return { valid: true };
+      }
+
       if (likeTarget !== undefined) {
         // ⛔ **The forward half of the biconditional** (NODE_INTERFACE → Karma
         // transition rules). `likeTarget` present ⇒ this exact shape and nothing
@@ -738,55 +806,6 @@ function checkTransitions(
             valid: false,
             error: `PostWithdraw post ${postWithdraw.postId} is not authored by the karma input's owner`,
           };
-        }
-      } else if (usernameInput !== null) {
-        // NODE_INTERFACE → Username transition rules, Burn row.
-        // KarmaBox + UsernameBox → KarmaBox + KarmaPriceBox
-        const uBox = usernameInput as UsernameBox;
-        if (Buffer.from(uBox.owner).toString('hex') !== inputOwnerHex) {
-          return { valid: false, error: 'Burn: username box owner must match the karma inputs\' owner' };
-        }
-        if (priceOutputs.length !== 1) {
-          return { valid: false, error: 'Burn: exactly one KarmaPriceBox required' };
-        }
-        if (priceOutputs[0]!.value !== USERNAME_BURN_PRICE) {
-          return { valid: false, error: `Burn: price must be exactly ${USERNAME_BURN_PRICE}, got ${priceOutputs[0]!.value}` };
-        }
-        const usernameOutputs = outputs.filter(o => o.boxType === 'username');
-        if (usernameOutputs.length !== 0) {
-          return { valid: false, error: 'Burn: no username output allowed' };
-        }
-        if (karmaOutputs.length > 1 || outputs.length !== karmaOutputs.length + 1) {
-          return { valid: false, error: 'Burn: at most one karma output beside the price box' };
-        }
-      } else if (outputs.some(o => o.boxType === 'username')) {
-        // NODE_INTERFACE → Username transition rules, Claim row.
-        // KarmaBox → KarmaBox + UsernameBox
-        const usernameOutputs = outputs.filter(o => o.boxType === 'username') as UsernameBox[];
-        if (usernameOutputs.length !== 1) {
-          return { valid: false, error: 'Claim: exactly one username output required' };
-        }
-        const uOut = usernameOutputs[0]!;
-        if (uOut.value !== 0n) {
-          return { valid: false, error: 'Claim: username box value must be 0' };
-        }
-        if (!isValidUsernameBytes(uOut.name)) {
-          return { valid: false, error: 'name invalid' };
-        }
-        if (Buffer.from(uOut.owner).toString('hex') !== inputOwnerHex) {
-          return { valid: false, error: 'Claim: username owner must match the karma inputs\' owner' };
-        }
-        const canonical = Buffer.from(canonicalUsernameBytes(uOut.name)).toString('utf8');
-        const existing = deps.getUsername(canonical);
-        if (existing !== null) {
-          return { valid: false, error: 'name taken' };
-        }
-        const holderName = deps.getUsernameByOwner(inputKarma.owner);
-        if (holderName !== null) {
-          return { valid: false, error: 'identity holds a name' };
-        }
-        if (karmaOutputs.length > 1 || outputs.length !== karmaOutputs.length + 1) {
-          return { valid: false, error: 'Claim: at most one karma output beside the username box' };
         }
       }
       // else: karma → karma only, which is always valid
