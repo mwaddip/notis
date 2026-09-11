@@ -658,8 +658,6 @@ row's label, a balance, a price, a stake, a bond, a reason, a control's word, an
 shows one, is `$NOTIS`; the API's `credits` likewise. Identifiers, classes, DTO fields and the builders keep the API's
 names (`HOUSE_STYLE → Voice`).
 
-> ⚠ **AHEAD OF CODE — 2026-09-11:** the face. Every surface below says `karma`.
-
 **One header control, at the right of the app bar beside the theme toggle.** At one column both are glyphs
 (→ The workspace): the control is a person drawn in the house technique (`HOUSE_STYLE → Illustration`) as
 inline SVG in `currentColor`, the same for every reader and for no reader — the window says who — with the
