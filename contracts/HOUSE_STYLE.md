@@ -435,6 +435,8 @@ Not preachy. The visual register avoids the manifesto; the copy has to as well.
   condescends.
 - **Karma is described, never scored.** "vouched · steady", "long-standing". If a number must
   appear, it is not the headline.
+- **The face says `rep` and `$NOTIS`.** `karma` and `credits` are the API's names, and a surface shows them only
+  where it names the API. The docs site and the client speak the same words (`WEB_INTERFACE → The profile window`).
 
 ## Accessibility contract
 
