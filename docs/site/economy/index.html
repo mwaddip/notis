@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Economy — Notis docs</title>
-<meta name="description" content="How karma and notis work in Notis: invitations earned from endorsement, likes that cost something, a price to post, decay, mining, storage rent, and a launch with no premine.">
+<meta name="description" content="How rep and $NOTIS work in Notis: invitations earned from endorsement, likes that cost something, a price to post, decay, a supply fixed at the first block, storage rent, and a launch where nobody is handed coins.">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Notis docs">
 <meta property="og:title" content="Economy — Notis docs">
-<meta property="og:description" content="Two currencies, one rule. Karma is earned and can't be bought; notis is mined and freely traded. Nothing converts between them.">
+<meta property="og:description" content="Two currencies, one rule. Rep is earned and can't be bought; $NOTIS is released by proof-of-work and freely traded. Nothing converts between them.">
 <meta property="og:url" content="https://docs.notis.fun/economy/">
 <meta name="twitter:card" content="summary">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
@@ -40,29 +40,29 @@
     <header class="page">
       <div class="crumb"><b>Notis</b> / economy</div>
       <h1>Two currencies, one rule.</h1>
-      <p class="lede">Notis runs on <strong>karma</strong> — reputation you earn by contributing — and the <strong>notis</strong> — money that's mined, spent, and traded. Here's how each works, and the game theory that makes cheating cost more than it's worth.</p>
+      <p class="lede">Notis runs on <strong>rep</strong> — reputation you earn by contributing — and <strong>$NOTIS</strong> — money that's released by proof-of-work, spent, and traded. Here's how each works, and the game theory that makes cheating cost more than it's worth. In the API they are <code>karma</code> and <code>credits</code>.</p>
     </header>
 
     <section>
       <h2>The firewall</h2>
-      <p>The single most important rule in the whole system: <strong>karma and notis never convert into each other.</strong> You can't buy karma with money, and you can't cash karma out for money — in either direction, the door is welded shut.</p>
-      <p>That firewall is what keeps reputation <em>meaning</em> something. If karma were purchasable, it would just be money wearing a costume, and the wealthiest — not the most valued — would look the most reputable. Sealing the two apart lets money be money and reputation be reputation, each doing its job honestly.</p>
+      <p>The single most important rule in the whole system: <strong>rep and $NOTIS never convert into each other.</strong> You can't buy rep with money, and you can't cash rep out for money — in either direction, the door is welded shut.</p>
+      <p>That firewall is what keeps reputation <em>meaning</em> something. If rep were purchasable, it would just be money wearing a costume, and the wealthiest — not the most valued — would look the most reputable. Sealing the two apart lets money be money and reputation be reputation, each doing its job honestly.</p>
       <div class="glance">
         <div class="card k">
-          <div class="tag">Karma</div>
+          <div class="tag">Rep</div>
           <h4>Reputation</h4>
           <ul>
             <li><b>Earned</b> socially, by being liked</li>
             <li><b>Indivisible</b> — whole numbers only</li>
             <li><b>Non-transferable</b> — you can't send it</li>
-            <li><b>Decays</b> if you go inactive</li>
+            <li><b>Decays</b> if you go absent</li>
           </ul>
         </div>
         <div class="card c">
-          <div class="tag">Notis</div>
+          <div class="tag">$NOTIS</div>
           <h4>Money</h4>
           <ul>
-            <li><b>Mined</b> via proof-of-work</li>
+            <li><b>Released</b> by proof-of-work from a supply fixed at the first block</li>
             <li><b>8 decimals</b> — divisible like most coins</li>
             <li><b>Transferable</b> and tradeable</li>
             <li><b>Pays fees</b> and secures the chain</li>
@@ -72,105 +72,117 @@
     </section>
 
     <section>
-      <h2>Karma — the reputation economy</h2>
-      <h3>What it's for</h3>
-      <p>Karma is a legible, on-chain record of who the community values. The protocol doesn't try to judge quality itself — its job is to record endorsements <em>honestly</em> and keep the patterns visible, so people and apps can interpret them. The node keeps the books; the community reads them.</p>
-
-      <h3>Where karma comes from — invitations with skin in the game</h3>
-      <p>New karma is created in exactly one place: <span class="accent-k">invitations</span>. Only a <strong>member</strong> can send them, and only as many as they've <strong>earned the right to</strong>: the more the network has vouched for you, the larger your allowance, and every invite draws it down. Each one locks a <strong>bond</strong> of your own karma and grants the newcomer that same amount out of the shared pool; the bond flows back as they earn genuine likes, and forfeits if they never engage.</p>
-      <div class="note">
-        <div class="label">Why it's built this way</div>
-        <p>The scarce resource is endorsement, and it's the one thing you can't mint for yourself. A vouch only counts when it comes from a member older than you, so every endorsement that raises your allowance traces back through real members to the founders. A ring of accounts you control can vouch for each other endlessly and gain nothing — none of them carries that weight — so a fake account earns no allowance and invites no one.</p>
-        <p>The bond is a supply dial, not the defence: equal to the grant, it only sets how much of a completed invite's karma stays in circulation. Inviting real people is nearly free — the likes that vest your bond would have happened anyway — while a fake account never clears the first gate at all. Endorsement you can't fake, spent through an allowance you had to earn: that's the whole of it.</p>
-      </div>
-
-      <h3>Likes — endorsements that have to cost something</h3>
-      <p>A like isn't free. The liker spends a little karma; the author is paid most of it back, and a small sliver is burned. Why make liking cost anything at all? Because a <strong>free like is just noise</strong> — it carries no information. A like that cost the giver something is a real signal that they valued what they saw.</p>
-      <p>And because a fraction burns on every like, a ring of accounts liking each other's posts slowly <strong>bleeds</strong> karma instead of printing it. Genuine appreciation moves value toward good contributors; manufactured appreciation just drains the manufacturer. (It's all whole numbers — an author collects <code>x−1</code> karma for every <code>x</code> likes, with one burned. No fractions anywhere, by design.)</p>
-
-      <h3>Vouches — endorsing people, not posts</h3>
-      <p>A like says "I valued this post." A <strong>vouch</strong> says "I stand behind this <em>person</em>." It's the one karma mechanic you can take back: you stake 1 karma on someone, and — unlike everything else on the ledger — that karma isn't spent or burned. It's held in escrow, still yours.</p>
-      <p>To withdraw, you <strong>unvouch</strong>, and your karma is released back to you after a <strong>cooldown</strong>. That delay is the anti-spam: you can't flip a vouch on and off to manufacture a signal, because pulling it out locks your stake for the cooldown before it returns. So a vouch is a cheap, <em>reversible</em> way to put a little of your reputation on the line for someone — without the permanence of a like.</p>
-
-      <h3>Decay — reputation you have to keep earning</h3>
-      <p>Karma isn't a trophy you win once. If an identity goes quiet, its karma <span class="accent-k">decays</span>; stay genuinely active and it doesn't. The hard part is stopping people from faking "active" on the cheap — so keeping your karma alive is tied to <strong>posting</strong>, and posting isn't free: a post pays a fixed <strong>price</strong> in karma to the shared pool, and nothing comes back.</p>
-      <div class="note">
-        <div class="label">The paradox that does the work</div>
-        <p>The only <em>cheap</em> way to keep your karma alive is to post things people actually like — the likes a good post earns are paid on top of its price. Wash-posting junk just to reset the clock pays that price over and over for nothing, which bleeds karma faster than the decay it's dodging. You cannot fake activity without paying for it, and paying for it costs more than sitting still would.</p>
-      </div>
-
-      <h3>Sybil resistance, in one idea</h3>
-      <p>You can't make a network like this truly un-gameable — given enough patience and accounts, anything can be Sybil-attacked. So the goal isn't perfection; it's to make gaming <strong>slow, visible, and more expensive than it's worth</strong>. The one door that mints karma — the invitation — opens only for members, and only as far as real endorsement has earned them, so a faker's reach is capped at what people who mean it will stake on them. And because every endorsement lives on-chain, unnatural accumulation leaves patterns that apps and indexers can flag. The protocol stays a neutral record-keeper — judgment stays with the community.</p>
+      <h2>Nothing is created, nothing is destroyed</h2>
+      <p>Both ledgers run under one accounting rule, and it is stricter than it sounds: <strong>after the first block, no unit of either currency is ever created or destroyed.</strong> The whole supply of rep sits in a pool from the start, and the whole supply of $NOTIS sits in an emission box. Every mechanism on this page moves value between people and those two reserves — an invitation draws rep out of the pool, decay and prices send it back, a mined block releases $NOTIS from the box and a forfeited bonus returns some. There is no function anywhere that takes an amount and conjures it, and no step in which a unit exists nowhere, not even for an instant.</p>
+      <p>Where these pages say a slice is <em>burned</em>, read it as <em>returned to the pool</em> — that is what a holder experiences, the rep leaves and does not come back, but the books still balance. The invariant is checkable: the sum of every rep box plus the pool is the same number at every height since genesis, and a node that ever computed a different one would have found a bug, not a feature.</p>
     </section>
 
     <section>
-      <h2>Notis — the money and security economy</h2>
+      <h2>Rep — the reputation economy</h2>
       <h3>What it's for</h3>
-      <p>The notis is the utility layer: the money that pays for scarce network resources — storage, priority — and, above all, <strong>rewards the miners who secure the chain</strong>. The public square runs on karma; the notis runs the machinery underneath it.</p>
+      <p>Rep is a legible, on-chain record of who the community values. The protocol doesn't try to judge quality itself — its job is to record endorsements <em>honestly</em> and keep the patterns visible, so people and apps can interpret them. The node keeps the books; the community reads them.</p>
 
-      <h3>Where notis comes from</h3>
-      <p>New <span class="accent-c">notis</span> are mined through proof-of-work and issued as block rewards on a schedule that <strong>tapers toward a fixed cap</strong> — issuance slows over time instead of inflating forever.</p>
+      <h3>Where rep comes from — invitations with skin in the game</h3>
+      <p>Rep reaches a new person in exactly one way: an <span class="accent-k">invitation</span>. Only a <strong>member</strong> or a founder can send one, and a member only as many as they've <strong>earned the right to</strong>: the more the network has vouched for you, the larger your allowance, and every invite draws it down for good. Each one locks a <strong>bond</strong> of your own rep and grants the newcomer that same amount out of the shared pool. Thirty days later the bond settles, once, against how many likes the newcomer has received: one rep of it comes back to you for every three likes, and whatever hasn't vested returns to the pool.</p>
+      <div class="note">
+        <div class="label">Why it's built this way</div>
+        <p>The scarce resource is endorsement, and it's the one thing you can't manufacture for yourself. A vouch only counts when it comes from a member who became one before you, so every endorsement that raises your allowance traces back through real members to the founders. A ring of accounts you control can vouch for each other endlessly and gain nothing — none of them carries that weight — so a fake account earns no allowance and invites no one.</p>
+        <p>The bond is a supply dial, not the defence: equal to the grant, it only sets how much of a completed invite's rep stays in circulation. Inviting real people is nearly free — the likes that vest your bond would have happened anyway — while a fake account never clears the first gate at all. Endorsement you can't fake, spent through an allowance you had to earn: that's the whole of it.</p>
+      </div>
+
+      <h3>Likes — endorsements that have to cost something</h3>
+      <p>A like isn't free. The liker spends a little rep; the author is paid most of it, and a small sliver returns to the pool. Why make liking cost anything at all? Because a <strong>free like is just noise</strong> — it carries no information. A like that cost the giver something is a real signal that they valued what they saw.</p>
+      <p>And because a fraction of every like goes back to the pool, a ring of accounts liking each other's posts slowly <strong>bleeds</strong> rep instead of printing it. Genuine appreciation moves value toward good contributors; manufactured appreciation just drains the manufacturer. (It's all whole numbers — an author collects <code>x−1</code> rep for every <code>x</code> likes, with one returning to the pool. No fractions anywhere, by design.)</p>
+
+      <h3>Vouches — endorsing people, not posts</h3>
+      <p>A like says "I valued this post." A <strong>vouch</strong> says "I stand behind this <em>person</em>." Only members vouch, and vouches are what membership rests on. It's the one rep mechanic you can take back: you stake 1 rep on someone, and — unlike everything else on the ledger — that rep isn't spent. It's held, still yours.</p>
+      <p>To take it back, you <strong>unvouch</strong>. The stake returns once the vouch is at least an hour old, and until it is back you can't cast another — so a vouch can't be flipped on and off to manufacture a signal. A vouch is a cheap, <em>reversible</em> way to put a little of your reputation on the line for someone, without the permanence of a like.</p>
+
+      <h3>Decay — reputation you have to keep earning</h3>
+      <p>Rep isn't a trophy you win once. An identity that has spent nothing for four weeks starts losing five rep a day, counted from its last act, down to a floor of ten; anyone who acts at all loses nothing. Any act that spends rep resets the clock — a post, a like, a vouch, an invite, a claimed name — and nothing you merely receive does, so a second account can't keep your clock running for you.</p>
+      <div class="note">
+        <div class="label">What decay is aimed at</div>
+        <p>Absence, not quiet. One like a month is enough to count as present, and that is the point: decay isn't a tax on people who are around, it's the slow return of rep that nobody is using. Posting is a separate matter — a post pays a fixed <strong>price</strong> in rep to the shared pool because it occupies the shared record, and that price is spent the same whether the post is read a thousand times or never.</p>
+      </div>
+
+      <h3>Sybil resistance, in one idea</h3>
+      <p>You can't make a network like this truly un-gameable — given enough patience and accounts, anything can be Sybil-attacked. So the goal isn't perfection; it's to make gaming <strong>slow, visible, and more expensive than it's worth</strong>. The one door through which rep reaches a new person — the invitation — opens only for members and founders, and for a member only as far as real endorsement has earned them, so a faker's reach is capped at what people who mean it will stake on them. And because every endorsement lives on-chain, unnatural accumulation leaves patterns that apps and indexers can flag. The protocol stays a neutral record-keeper — judgment stays with the community.</p>
+    </section>
+
+    <section>
+      <h2>$NOTIS — the money and security economy</h2>
+      <h3>What it's for</h3>
+      <p>$NOTIS is the utility layer: the money that pays for scarce network resources — storage, priority — and, above all, <strong>rewards the miners who secure the chain</strong>. The public square runs on rep; $NOTIS runs the machinery underneath it.</p>
+
+      <h3>Where $NOTIS comes from</h3>
+      <p>The whole supply exists from the first block, in an emission box that only mining opens. Each block <span class="accent-c">releases</span> a portion of it to the miner who found it, on a schedule that pays a steady rate for about two years and then steps down every eleven months or so, for close to four decades. Nothing is ever minted: when the box is empty, blocks carry only fees and rent. What ends the schedule is the box's balance, not a date — a forfeited bonus returns to the box and extends it a little.</p>
 
       <h3>Where a block's reward goes</h3>
-      <p>A block pays out from three sources, and they are not treated alike. Newly issued notis are divided; fees are mostly passed through; storage rent goes entirely to the miner. Nothing here is a fixed percentage yet, but the <em>order</em> and the <em>routes</em> are settled.</p>
+      <p>A block's income has three sources: the $NOTIS it releases, the fees its transactions carry, and the storage rent it collects. The first two are split four ways; rent goes to the miner whole. The shares are provisional.</p>
       <div class="tbl-wrap">
         <table>
           <thead>
-            <tr><th>Source</th><th>Reserve</th><th>Miners</th><th>Supporter shares</th></tr>
+            <tr><th>Slice</th><th>Of emission and fees</th><th>Goes to</th></tr>
           </thead>
           <tbody>
             <tr>
-              <td><b>Coinbase</b><br><span class="muted">newly issued, tapering to a cap</span></td>
-              <td>a slice off the top</td>
-              <td>a guaranteed floor, plus anything left over</td>
-              <td>the remainder, while staked</td>
+              <td><b>Reserve</b></td>
+              <td class="n">5%</td>
+              <td>a box no rule can spend from — it accrues and sits</td>
             </tr>
             <tr>
-              <td><b>Transaction fees</b><br><span class="muted">on notis transfers only</span></td>
-              <td>a modest slice</td>
-              <td>the rest</td>
-              <td class="muted">—</td>
+              <td><b>Miners' floor</b></td>
+              <td class="n">35%</td>
+              <td>the miner, guaranteed — plus every remainder from the other three</td>
+            </tr>
+            <tr>
+              <td><b>Supporter shares</b></td>
+              <td class="n">35%</td>
+              <td>early supporters who have staked, once that mechanism runs on the chain; until then, the miner</td>
+            </tr>
+            <tr>
+              <td><b>Inclusion bonus</b></td>
+              <td class="n">25%</td>
+              <td>the miner, in proportion to how many distinct people's rep transactions the block carries; the part not earned returns to the emission box</td>
             </tr>
             <tr>
               <td><b>Storage rent</b><br><span class="muted">recycled, never printed</span></td>
-              <td class="muted">never</td>
-              <td>all of it</td>
-              <td class="muted">—</td>
+              <td class="n">—</td>
+              <td>the miner, all of it — never the reserve</td>
             </tr>
           </tbody>
         </table>
       </div>
-      <p>Three things in that table are worth saying out loud. <strong>Karma operations pay no fee at all</strong> — posting, liking, inviting and vouching cost karma and proof-of-work, never money, or money would leak into the public square. <strong>Supporter shares draw only on newly issued notis</strong>, never on fees or rent, so they can never eat into what secures the chain day to day. And <strong>storage rent never reaches the reserve</strong>: rent <em>is</em> the perpetual security budget, so it goes to miners whole.</p>
-      <p>Within the coinbase the order is fixed: the reserve slice comes off first, then the miners' floor is guaranteed, then supporter shares take what's left, and anything they don't claim returns to miners. Unclaimed share doesn't accumulate anywhere — it is simply mined.</p>
+      <p>Three things in that table are worth saying out loud. <strong>Rep operations pay no fee at all</strong> — posting, liking, inviting and vouching cost rep, never money, or money would leak into the public square. <strong>The inclusion bonus pays miners for carrying the social layer</strong>: a block full of many people's posts and likes earns more of it than an empty one, and a miner who leaves them out forfeits that part to the emission box, where it pays whoever is mining decades later — a cost, not a delay. And <strong>storage rent never reaches the reserve</strong>: rent <em>is</em> the perpetual security budget, so it goes to miners whole.</p>
 
       <h3>Paying for security — forever</h3>
-      <p>A chain secured by mining has to keep paying its miners, or it gets cheap to attack. Once new issuance tapers off, miners keep earning from the two <strong>perpetual</strong> sources above: transaction fees, and <strong>storage rent</strong>.</p>
+      <p>A chain secured by mining has to keep paying its miners, or it gets cheap to attack. Once emission runs out, miners keep earning from the two <strong>perpetual</strong> sources above: transaction fees, and <strong>storage rent</strong>.</p>
       <div class="note">
         <div class="label">Storage rent</div>
         <p>A small charge on coins that sit completely untouched for years (about four) — it gently recycles genuinely lost or dormant coins back to miners. The effect is a <em>permanent security budget without permanent inflation</em>: nothing new is printed, long-lost coins simply return to circulation to keep the lights on. Coins you actually use never pay it, because touching them resets the clock.</p>
       </div>
 
-      <h3>A fair launch — no premine</h3>
-      <p>Notis starts from <strong>zero supply</strong>. Nobody is handed a pile of coins at genesis, and there is no team allocation.</p>
-      <p>What exists instead is a claim on the <em>flow</em>. Early supporters can link their identity before launch and draw a share of the coinbase, proportional to what they held, for as long as they keep it staked and for at most two years. Those shares come from a pre-existing Notis token on Solana that funded development through creator fees — the project has never sold any of it.</p>
-      <p>A share of the flow can't be dumped on day one, isn't diluted by inflation, and can be exited whenever the holder chooses. Unstaking is <strong>one-way</strong>, so nobody can time it in and out. And the <strong>miners' floor</strong> guarantees miners keep a healthy share of every block no matter how many supporters take part, so the chain stays secure regardless of turnout. Miners receive <span class="accent-c">notis only</span>, keeping the social and value layers strictly separated.</p>
+      <h3>A fair launch — nobody is handed coins</h3>
+      <p>On the main network <strong>nobody holds a single $NOTIS at genesis</strong> — no premine, no team allocation. The supply exists from the first block, but only mining releases it, one block at a time. (The testnet seeds a faucet so testers can try things; that is the testnet's job, not a claim on the real chain.)</p>
+      <p>What exists instead is a claim on the <em>flow</em>. Early supporters can link a Notis identity to the wallet that holds a pre-existing Notis token on Solana — a token that funded development through creator fees; the project has never sold any of it — and draw the supporter share of the coinbase, proportional to what they hold, for as long as they keep it staked and for at most two years. The linking runs through the project's Telegram bot; the share itself is paid by the chain once the main network runs, and until then that slice goes to miners.</p>
+      <p>A share of the flow can't be dumped on day one, isn't diluted by inflation, and can be exited whenever the holder chooses. Unstaking is <strong>one-way</strong>, so nobody can time it in and out. And the <strong>miners' floor</strong> guarantees miners keep a healthy share of every block no matter how many supporters take part, so the chain stays secure regardless of turnout. Miners receive <span class="accent-c">$NOTIS only</span>, keeping the social and value layers strictly separated.</p>
 
       <h3>The fine print</h3>
-      <p>The reserve is <strong>locked under the current protocol</strong> — there is no rule that permits spending from it, so it accrues and sits. Unlocking it is a future protocol version's problem, not a key somebody holds. And notis carry <strong>eight decimal places</strong> — like most cryptocurrencies — handled as exact integers under the hood, with apps placing the decimal for display.</p>
+      <p>The reserve is <strong>locked under the current protocol</strong> — there is no rule that permits spending from it, so it accrues and sits. Unlocking it is a future protocol version's problem, not a key somebody holds. And $NOTIS carries <strong>eight decimal places</strong> — like most cryptocurrencies — handled as exact integers under the hood, with apps placing the decimal for display.</p>
     </section>
 
     <section>
       <h2>The through-line</h2>
       <div class="kicker">
         <p>If one idea ties it all together, it's this: <strong>value should be expensive to fake and cheap to earn honestly.</strong></p>
-        <p>Minting karma takes an invitation, and invitations are rationed by endorsement you can't fake. Endorsing costs something, so endorsements mean something. Staying reputable costs genuine contribution. Securing the chain is paid for in perpetuity, so attacking it never pays off. And money and reputation sit in separate sealed compartments, so neither can corrupt the other.</p>
+        <p>Rep reaches a newcomer only by invitation, and invitations are rationed by endorsement you can't fake. Endorsing costs something, so endorsements mean something. Staying reputable costs showing up. Securing the chain is paid for in perpetuity, so attacking it never pays off. And money and reputation sit in separate sealed compartments, so neither can corrupt the other.</p>
         <p>Notis doesn't try to make cheating <em>impossible</em> — it makes cheating a <strong>losing trade</strong>.</p>
       </div>
     </section>
 
     <footer>
       <p class="mono">NOTIS · decentralized social network · dual-ledger · proof-of-work</p>
-      <p>Design in progress — numbers shown are illustrative and will be tuned on a live testnet. · <a href="https://notis.fun">notis.fun</a></p>
+      <p>Design in progress — the shares and prices shown are the network's provisional values and may change. · <a href="https://notis.fun">notis.fun</a></p>
     </footer>
   </div>
 </main>
