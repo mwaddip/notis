@@ -464,7 +464,11 @@ export async function resolveFork(
           `the start by ${MAX_CHAIN_RESPONSE_ITEMS}, so this is unreachable`);
       }
 
-      // Hash the whole page — one unhashable entry refuses it.
+      // Each accepted page is hashed in full before any of it is matched:
+      // an unhashable header anywhere in the page refuses the page whole
+      // (`misbehavior`), and never falls through to genesis. Hashing only
+      // until the first match would let the peer choose where the poison
+      // sits relative to the match, which is the peer's choice again.
       const pageHashes: Array<{ header: BlockHeader; hash: string }> = [];
       for (let i = 0; i < page.length; i++) {
         const h = blockHash(page[i]!);

@@ -3776,18 +3776,23 @@ describe('the fork walk', () => {
     };
     expect(blockHash(poisoned)).toBeNull();
 
-    // Page is [height 4 (unrelated), height 3 (shared), height 1 (poisoned)].
+    // Page: [4 (unrelated), 3 (shared), 2 (filler), 1 (poisoned)].
     const unrelatedH4: BlockHeader = {
       ...sharedHeader,
       height: 4,
       prevBlockHash: 'cc'.repeat(32),
     };
-    const net = stubNet([unrelatedH4, sharedHeader, poisoned], []);
+    const fillerH2: BlockHeader = {
+      ...sharedHeader,
+      height: 2,
+      prevBlockHash: 'cc'.repeat(32),
+    };
+    const net = stubNet([unrelatedH4, sharedHeader, fillerH2, poisoned], []);
     await forkResolution.resolveFork(dummyBlock(unrelatedH4), net, 'peer-poison2');
 
     // The match at height 3 is not taken — the whole page is hashed first.
     expect(net.penalties).toEqual([
-      expect.objectContaining({ kind: 'misbehavior', reason: expect.stringContaining('fork-walk') }),
+      expect.objectContaining({ kind: 'misbehavior', reason: expect.stringMatching(/unhashable/) }),
     ]);
     expect(ordering.getCurrentHeight()).toBe(4);
   });
@@ -3815,12 +3820,20 @@ describe('the fork walk', () => {
     };
     expect(blockHash(poisonedMatch)).toBeNull();
 
+    const fillerH3: BlockHeader = {
+      ...ordering.getOrderingBlock(3)!.header,
+      prevBlockHash: 'cc'.repeat(32),
+    };
     const deepMatch = ordering.getOrderingBlock(2)!.header;
-    const net = stubNet([poisonedMatch, deepMatch], []);
+    const fillerH1: BlockHeader = {
+      ...ordering.getOrderingBlock(1)!.header,
+      prevBlockHash: 'cc'.repeat(32),
+    };
+    const net = stubNet([poisonedMatch, fillerH3, deepMatch, fillerH1], []);
     await forkResolution.resolveFork(dummyBlock(poisonedMatch), net, 'peer-deeper');
 
     expect(net.penalties).toEqual([
-      expect.objectContaining({ kind: 'misbehavior', reason: expect.stringContaining('fork-walk') }),
+      expect.objectContaining({ kind: 'misbehavior', reason: expect.stringMatching(/unhashable/) }),
     ]);
     expect(ordering.getCurrentHeight()).toBe(5);
   });
