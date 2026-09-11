@@ -195,7 +195,7 @@ function likeArea(post: PostJson, opts: CardOpts, meta: HTMLElement): void {
   if (lk) meta.appendChild(lk);
   if (opts.onLike) {
     const lb = el('button', 'word');
-    lb.setAttribute('aria-label', 'like this post — permanent, and moves karma to its author');
+    lb.setAttribute('aria-label', 'like this post — permanent, and moves rep to its author');
     lb.textContent = 'like';
     lb.addEventListener('click', () => {
       // A locked identity unlocks first, in a row under the meta and in response to
@@ -247,7 +247,7 @@ function withdrawArea(post: PostJson, opts: CardOpts): HTMLElement | null {
   wb.textContent = 'withdraw';
   if (opts.canWithdraw === false) {
     (wb as HTMLButtonElement).disabled = true;
-    const reason = 'needs one karma box to sign with; this key has none';
+    const reason = 'needs one rep box to sign with; this key has none';
     wb.title = reason;
     wb.setAttribute('aria-label', reason);
     return wb;

@@ -185,7 +185,7 @@ function loadedState(b: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx,
 
   // karma — the balance that spends, the faucet step, or the grant in flight.
   {
-    const { row: r, field } = row('karma');
+    const { row: r, field } = row('rep');
     field.classList.add('karma-field'); // the App updates this in place when a grant lands
     renderKarmaField(field, handlers, ctx);
     b.appendChild(r);
@@ -318,7 +318,7 @@ function updateInvites(field: HTMLElement, handlers: ProfileHandlers, ctx: Profi
     return;
   }
   if (k.invitesAvailable === null) {
-    line.appendChild(el('div', 'hint', 'as many as your karma covers.'));
+    line.appendChild(el('div', 'hint', 'as many as your rep covers.'));
   } else if (k.member) {
     const l = el('div', 'hint');
     l.append(mono(String(k.invitesAvailable)), k.invitesAvailable === 1 ? ' invite available.' : ' invites available.');
@@ -354,14 +354,14 @@ function inviteForm(
   bondInput.max = params.bondMax;
   bondInput.step = '1';
   bondInput.value = params.bondMin; // default the minimum
-  bondInput.setAttribute('aria-label', 'the bond, in karma');
+  bondInput.setAttribute('aria-label', 'the bond, in rep');
 
   const submit = el('button', 'word', 'invite') as HTMLButtonElement;
   submit.type = 'submit';
 
   const copy = el('div', 'hint');
   copy.append(
-    "they receive the bond's karma from the pool. your bond comes back as they receive likes, one karma per ",
+    "they receive the bond's rep from the pool. your bond comes back as they receive likes, one rep per ",
     String(INVITE_BOND_VEST_PER_LIKES),
     ', and the rest goes to the pool after ',
     mono(String(params.probationBlocks)),
@@ -424,7 +424,7 @@ function standingBonds(field: HTMLElement, handlers: ProfileHandlers, ctx: Profi
     btn.addEventListener('click', () => handlers.openAuthor(bond.inviteePublicKey, origin));
     bondRow.appendChild(btn);
     const value = el('span', 'hint');
-    value.append(mono(bond.value), ' karma');
+    value.append(mono(bond.value), ' rep');
     bondRow.appendChild(value);
     field.appendChild(bondRow);
   }
@@ -466,19 +466,19 @@ export function renderKarmaField(field: HTMLElement, handlers: ProfileHandlers, 
   }
   const faucetBase = prefs.faucet;
   if (faucetBase !== '') {
-    const ask = el('button', 'word', 'ask the faucet for karma') as HTMLButtonElement;
+    const ask = el('button', 'word', 'ask the faucet for rep') as HTMLButtonElement;
     ask.addEventListener('click', () => handlers.askFaucet());
     field.appendChild(ask);
     return;
   }
-  field.appendChild(el('span', 'inkmute', 'no karma yet.'));
+  field.appendChild(el('span', 'inkmute', 'no rep yet.'));
 }
 
 /** effective karma, or `E effective · T held` when decay has opened a gap — a
  *  client showing the face total would promise karma the next spend does not have. */
 function balance(field: HTMLElement, k: KarmaResult): void {
   if (k.effective === k.total) {
-    field.append(mono(k.effective), ' karma');
+    field.append(mono(k.effective), ' rep');
   } else {
     field.append(mono(k.effective), ' effective · ', mono(k.total), ' held');
   }
@@ -628,7 +628,7 @@ function updateUsername(field: HTMLElement, handlers: ProfileHandlers, ctx: Prof
     const burn = el('button', 'word', 'burn') as HTMLButtonElement;
     if (!ctx.canAffordBurn) {
       burn.disabled = true;
-      burn.title = `a burn costs ${USERNAME_BURN_PRICE} karma; this key has less`;
+      burn.title = `a burn costs ${USERNAME_BURN_PRICE} rep; this key has less`;
     }
     burn.addEventListener('click', () => {
       burnConfirm(line, handlers, ctx, burn);
@@ -639,7 +639,7 @@ function updateUsername(field: HTMLElement, handlers: ProfileHandlers, ctx: Prof
     hint.append(
       `held since block `,
       mono(String(ctx.ownName.claimedAtBlock)),
-      `. a burn costs ${USERNAME_BURN_PRICE} karma and restores your free claim.`,
+      `. a burn costs ${USERNAME_BURN_PRICE} rep and restores your free claim.`,
     );
     line.appendChild(hint);
     return;
@@ -647,7 +647,7 @@ function updateUsername(field: HTMLElement, handlers: ProfileHandlers, ctx: Prof
 
   // Holding none — the claim form or the "no karma box" hint.
   if (!ctx.canSignClaim) {
-    line.appendChild(el('div', 'hint', 'a claim spends and returns one karma box; this key has none.'));
+    line.appendChild(el('div', 'hint', 'a claim spends and returns one rep box; this key has none.'));
     return;
   }
   claimForm(formSlot as HTMLElement, handlers, ctx);
@@ -672,7 +672,7 @@ function claimForm(slot: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx
 
   const hint = el('div', 'hint');
   hint.append(
-    `free, once per key. 1 to 24 letters, digits or _, shown as typed; one name is one name whatever its case. a later burn costs ${USERNAME_BURN_PRICE} karma and restores the claim.`,
+    `free, once per key. 1 to 24 letters, digits or _, shown as typed; one name is one name whatever its case. a later burn costs ${USERNAME_BURN_PRICE} rep and restores the claim.`,
   );
 
   form.append(input, submit, refusal, hint);
@@ -715,7 +715,7 @@ function burnConfirm(line: HTMLElement, handlers: ProfileHandlers, ctx: ProfileC
   const saved = [...line.childNodes];
   const wrap = el('div', 'pf-confirm');
   const q = el('div', 'pf-refusal');
-  q.textContent = `burn @${name} for ${USERNAME_BURN_PRICE} karma? the name is open to anyone again, and your free claim returns.`;
+  q.textContent = `burn @${name} for ${USERNAME_BURN_PRICE} rep? the name is open to anyone again, and your free claim returns.`;
   wrap.appendChild(q);
   const actions = el('div', 'pf-actions');
   const confirm = el('button', 'word', 'burn') as HTMLButtonElement;
@@ -805,7 +805,7 @@ export function preferenceRows(handlers: ProfileHandlers, ctx: ProfileCtx): HTML
     const input = el('input') as HTMLInputElement;
     input.value = prefs.faucet;
     input.placeholder = BUILD_FAUCET_BASE || 'none';
-    input.setAttribute('aria-label', 'the faucet this client asks for karma');
+    input.setAttribute('aria-label', 'the faucet this client asks for rep');
     input.addEventListener('change', () => handlers.setFaucet(input.value));
     field.appendChild(input);
     field.appendChild(el('div', 'hint', 'blank uses the build default. a foreign origin needs CORS the faucet does not send yet, and will fail.'));

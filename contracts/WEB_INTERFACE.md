@@ -652,6 +652,12 @@ withdrawn card, the shape they asked for (→ The withdraw control).
 
 ### The profile window *(identity interface)*
 
+**The face says `rep`, and the API says `karma`.** Wherever the client shows a person the unit of reputation — a
+row's label, a balance, a price, a stake, a bond, a reason, a control's word, an `aria-label`, a `title` — the word is
+`rep`; `karma` appears on a surface only where it names the API's own path or field. The coin, where a surface ever
+shows one, is `$NOTIS`; the API's `credits` likewise. Identifiers, classes, DTO fields and the builders keep the API's
+names (`HOUSE_STYLE → Voice`).
+
 **One header control, at the right of the app bar beside the theme toggle.** At one column both are glyphs
 (→ The workspace): the control is a person drawn in the house technique (`HOUSE_STYLE → Illustration`) as
 inline SVG in `currentColor`, the same for every reader and for no reader — the window says who — with the
@@ -669,7 +675,7 @@ this browser. create one, or import a file."* — then `create` and `import`. Wi
 ```
 key          the whole 64 hex, mono, selectable
 standing     resident · member · root — the node's word
-karma        the balance that spends, or the faucet step
+rep          the balance that spends, or the faucet step
 invites      K available · the invite form · the reader's standing bonds
 username     @Name · burn  /  the claim form  /  the flight — → The username row
 passphrase   locked · unlock  /  unlocked · lock
@@ -709,11 +715,11 @@ from `/status` `membership` since a resident's own `memberBar` is still zero; a 
 H · K invites available."*; a root — nothing more.
 
 **The `invites` row** *(membership actions)*: the line — `K invites available` for a member, *"as many
-as your karma covers"* for a root, *"invites come with membership"* for a resident; the form, a real
+as your rep covers"* for a root, *"invites come with membership"* for a resident; the form, a real
 `<form>` in place shown only when an invite is available and the spendable view covers the minimum
 bond — the invitee's key, 64 hex pasted out of band, and the bond, a number inside `/status`'s
 `inviteBondMin`–`inviteBondMax`, **default the minimum** — with what happens under it: *"they receive the
-bond's karma from the pool. your bond comes back as they receive likes, one karma per three, and the
+bond's rep from the pool. your bond comes back as they receive likes, one rep per three, and the
 rest goes to the pool after N blocks."* (`INVITE_BOND_VEST_PER_LIKES` from `@dagsocial/types`,
 `inviteProbationBlocks` from `/status`); the flight in the row, the deferred unlock in the row when
 locked; and beneath, **the reader's standing bonds** from `GET /invites/<key>`, one row per bond —
@@ -721,14 +727,14 @@ the invitee's identity (→ The identity display, so the reader can vouch for th
 and the bond's value — following `next`. No settle height: no view serves it, and the client invents
 no number. The available count drops when the bond lands, in place, never animated.
 
-**Karma is `effective`**, the value every sufficiency check on the node reads — `E effective · T held`
-when decay has opened a gap, because the face `total` would promise karma the next spend does not have.
+**The balance is `effective`**, the value every sufficiency check on the node reads — `E effective · T held`
+when decay has opened a gap, because the face `total` would promise rep the next spend does not have.
 This is the one place a balance rests on the reading surface. **No credits row** while the client spends
 no credits. **A card by the loaded key reads `· you`** after the prefix, muted ink, text only.
 
 ### The faucet step *(identity interface)*
 
-**In the karma row, one word — `ask the faucet for karma` — while three things hold:** an
+**In the rep row, one word — `ask the faucet for rep` — while three things hold:** an
 identity is loaded, its `/karma` `boxCount` is 0, and a faucet base is configured. Not a header control:
 a grant is once per key for ever (`NODE_INTERFACE → Faucet`), so a standing control would sit dead before
 its one press and after it. The request carries only the public key, so a **locked** identity can ask.
@@ -763,24 +769,24 @@ fixed row and never the window (`HOUSE_STYLE → Motion`). What the row shows fo
 from `GET /usernames?owner=<key>` at identity load, on the profile's `↻`, and on every reconcile while a claim
 or burn stands (→ The wallet); a 404 is *holding none*, and a read not yet answered is `—`.
 
-- **Holding none, nothing pending, a karma box to spend:** the claim form — a real `<form>`: one text field
+- **Holding none, nothing pending, a rep box to spend:** the claim form — a real `<form>`: one text field
   (*the name to claim*, `maxlength` 24, no autocomplete, no autocapitalise, no spellcheck), the word `claim`,
   one refusal line, and under it *free, once per key. 1 to 24 letters, digits or _, shown as typed; one name is
-  one name whatever its case. a later burn costs N karma and restores the claim.* — `N` is
+  one name whatever its case. a later burn costs N rep and restores the claim.* — `N` is
   `USERNAME_BURN_PRICE` from `@dagsocial/types`. The value is trimmed and one leading `@` dropped, since `@` is the
   written form and never the name (`ARCHITECTURE → Usernames`), and refused with *a name is 1 to 24 letters,
   digits or _.* unless `isValidUsernameBytes` accepts its UTF-8 bytes — the one implementation of the rule,
   never a copy and never an HTML `pattern` (`TYPES_INTERFACE → Content limits`). A locked identity mounts the
   unlock form in a row under the form, and success continues (→ The identity module). The client looks no
   name up before the attempt: a claim costs nothing but the transaction, and its refusal is one sentence.
-- **Holding none and no karma box:** one line — *a claim spends and returns one karma box; this key has none.*
+- **Holding none and no rep box:** one line — *a claim spends and returns one rep box; this key has none.*
   — the gate the withdraw control reads (→ The withdraw control); no form.
 - **A claim or a burn pending** — the ledger's entry, durable across a reload: the pending handle in `inkMute`
   and the stage line `submitted` in the flight slot, `submitting…` while the press is in flight; no control.
-- **Holding `@Name`:** the handle, the word `burn`, and *held since block N. a burn costs N karma and restores
-  your free claim.* `burn` is disabled with the reason as its `title` — *a burn costs N karma; this key has
+- **Holding `@Name`:** the handle, the word `burn`, and *held since block N. a burn costs N rep and restores
+  your free claim.* `burn` is disabled with the reason as its `title` — *a burn costs N rep; this key has
   less* — while `effective` is under `USERNAME_BURN_PRICE`, the invite gate's shape; the node's refusal is the
-  truth for everything else. The press asks in place, as `forget` does — *burn @Name for N karma? the name is
+  truth for everything else. The press asks in place, as `forget` does — *burn @Name for N rep? the name is
   open to anyone again, and your free claim returns.* with `burn` and `keep`, focus on `keep`, Esc and `keep`
   restoring the word — and the question's `burn` signs, the unlock form in the question's place first when the
   identity is locked. The name and its box are resolved at the press (→ The wallet).
@@ -890,9 +896,9 @@ second press, on the row's `withdraw`, signs: a locked identity gets the unlock 
 first, and success continues the flight (→ The identity module). The copy never says "deleted" (→ The
 withdrawn state).
 
-**The client withholds one gate: a key with no karma box cannot sign a withdrawal.** The transaction
+**The client withholds one gate: a key with no rep box cannot sign a withdrawal.** The transaction
 spends and returns one karma box, so with an empty spendable view the button renders disabled with the
-reason as its `title` — *"needs one karma box to sign with; this key has none"* (`HOUSE_STYLE →
+reason as its `title` — *"needs one rep box to sign with; this key has none"* (`HOUSE_STYLE →
 Interaction`). The maturity bind, liveness and authorship are the node's to refuse.
 
 **The flight runs in the slot.** The second press replaces the `withdraw` button with the stage line —

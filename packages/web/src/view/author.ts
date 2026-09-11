@@ -187,11 +187,11 @@ function yourVouch(field: HTMLElement, ctx: AuthorCtx, vouchAction: (k: string) 
     // (HOUSE_STYLE → Interaction → "A word is a control, and it wears no box").
     const btn = el('button', 'word');
     btn.textContent = 'vouch';
-    btn.setAttribute('aria-label', 'vouch for this author — stakes 1 karma');
+    btn.setAttribute('aria-label', 'vouch for this author — stakes 1 rep');
     btn.addEventListener('click', () => vouchAction(ctx.authorKey));
     field.appendChild(btn);
     const line = el('span', 'hint');
-    line.append('stakes 1 karma, returned when you unvouch after a cooldown of ', mono(String(yv.cooldownBlocks)), ' blocks.');
+    line.append('stakes 1 rep, returned when you unvouch after a cooldown of ', mono(String(yv.cooldownBlocks)), ' blocks.');
     field.appendChild(line);
   } else {
     field.append(el('span', 'standing', 'vouched'));

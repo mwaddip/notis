@@ -65,7 +65,7 @@ export async function submitPostFlow(
   try {
     built = buildPost(ctx, content, parent);
   } catch (e) {
-    if (e instanceof InsufficientKarma) return clientRejection('not enough karma to post right now.');
+    if (e instanceof InsufficientKarma) return clientRejection('not enough rep to post right now.');
     throw e;
   }
   const body = await deps.write.submitPost(signedJson(built.tx, deps.identity, built.txId, id.pubKeyHex), content);
@@ -103,7 +103,7 @@ export async function submitLikeFlow(deps: SubmitDeps, targetId: string): Promis
   try {
     built = buildLike(ctx, targetId, target.confirmedAuthor);
   } catch (e) {
-    if (e instanceof InsufficientKarma) return clientRejection('not enough karma to like right now.');
+    if (e instanceof InsufficientKarma) return clientRejection('not enough rep to like right now.');
     throw e;
   }
   const body = await deps.write.submitLike(signedJson(built.tx, deps.identity, built.txId, id.pubKeyHex));
@@ -135,7 +135,7 @@ export async function submitVouchFlow(deps: SubmitDeps, targetKey: string): Prom
   try {
     built = buildVouch(ctx, targetKey);
   } catch (e) {
-    if (e instanceof InsufficientKarma) return clientRejection('not enough karma to vouch right now.');
+    if (e instanceof InsufficientKarma) return clientRejection('not enough rep to vouch right now.');
     throw e;
   }
   const body = await deps.write.submitVouch(signedJson(built.tx, deps.identity, built.txId, id.pubKeyHex));
@@ -208,7 +208,7 @@ export async function submitInviteFlow(deps: SubmitDeps, inviteeKey: string, bon
   try {
     built = buildInvite(ctx, inviteeKey, bond);
   } catch (e) {
-    if (e instanceof InsufficientKarma) return clientRejection('not enough karma to cover the bond right now.');
+    if (e instanceof InsufficientKarma) return clientRejection('not enough rep to cover the bond right now.');
     throw e;
   }
   const body = await deps.write.submitInvite(signedJson(built.tx, deps.identity, built.txId, id.pubKeyHex));
@@ -242,7 +242,7 @@ export async function submitWithdrawFlow(deps: SubmitDeps, postId: string): Prom
   try {
     built = buildWithdraw(ctx, postId);
   } catch (e) {
-    if (e instanceof InsufficientKarma) return clientRejection('no karma box to sign a withdrawal with.');
+    if (e instanceof InsufficientKarma) return clientRejection('no rep box to sign a withdrawal with.');
     throw e;
   }
   const body = await deps.write.submitWithdraw(postId, signedJson(built.tx, deps.identity, built.txId, id.pubKeyHex));
@@ -273,7 +273,7 @@ export async function submitClaimFlow(deps: SubmitDeps, name: string): Promise<S
   try {
     built = buildClaim(ctx, name);
   } catch (e) {
-    if (e instanceof InsufficientKarma) return clientRejection('no karma box to sign a claim with.');
+    if (e instanceof InsufficientKarma) return clientRejection('no rep box to sign a claim with.');
     throw e;
   }
   const body = await deps.write.submitClaim(signedJson(built.tx, deps.identity, built.txId, id.pubKeyHex));
@@ -309,7 +309,7 @@ export async function submitBurnFlow(deps: SubmitDeps): Promise<SubmitResult<Bur
   try {
     built = buildBurn(ctx, { boxId: held.boxId });
   } catch (e) {
-    if (e instanceof InsufficientKarma) return clientRejection('not enough karma to burn right now.');
+    if (e instanceof InsufficientKarma) return clientRejection('not enough rep to burn right now.');
     throw e;
   }
   const body = await deps.write.submitBurn(held.name, signedJson(built.tx, deps.identity, built.txId, id.pubKeyHex));

@@ -199,7 +199,7 @@ describe('submitPostFlow', () => {
     // Four karma cannot cover a thread's price of five.
     const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, [{ boxId: BOX_ID, value: '4' }]), write: write(okPost, okLike), ledger, identity };
     const res = await submitPostFlow(deps, 'a thread', null);
-    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough karma to post right now.' } });
+    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough rep to post right now.' } });
     expect(writeCalls).toEqual([]);
     expect(ledger.size).toBe(0);
   });
@@ -235,7 +235,7 @@ describe('submitLikeFlow', () => {
     const ledger = new PendingLedger(PUB);
     const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, []), write: write(okPost, okLike), ledger, identity };
     const res = await submitLikeFlow(deps, TARGET_ID);
-    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough karma to like right now.' } });
+    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough rep to like right now.' } });
     expect(writeCalls).toEqual([]);
     expect(ledger.size).toBe(0);
   });
@@ -337,7 +337,7 @@ describe('submitVouchFlow', () => {
     const ledger = new PendingLedger(PUB);
     const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, []), write: write(), ledger, identity };
     const res = await submitVouchFlow(deps, VOUCH_TARGET);
-    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough karma to vouch right now.' } });
+    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough rep to vouch right now.' } });
     expect(writeCalls).toEqual([]);
     expect(ledger.size).toBe(0);
   });
@@ -406,7 +406,7 @@ describe('submitInviteFlow', () => {
     const ledger = new PendingLedger(PUB);
     const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, [{ boxId: BOX_ID, value: '50' }]), write: write(), ledger, identity };
     const res = await submitInviteFlow(deps, INVITEE, 100n);
-    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough karma to cover the bond right now.' } });
+    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough rep to cover the bond right now.' } });
     expect(writeCalls).toEqual([]);
     expect(ledger.size).toBe(0);
   });
@@ -442,7 +442,7 @@ describe('submitWithdrawFlow', () => {
     const ledger = new PendingLedger(PUB);
     const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, []), write: write(), ledger, identity };
     const res = await submitWithdrawFlow(deps, TARGET_ID);
-    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'no karma box to sign a withdrawal with.' } });
+    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'no rep box to sign a withdrawal with.' } });
     expect(writeCalls).toEqual([]);
     expect(ledger.size).toBe(0);
   });
@@ -491,7 +491,7 @@ describe('submitClaimFlow', () => {
     const ledger = new PendingLedger(PUB);
     const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, []), write: write(), ledger, identity };
     const res = await submitClaimFlow(deps, 'Alice_01');
-    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'no karma box to sign a claim with.' } });
+    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'no rep box to sign a claim with.' } });
     expect(writeCalls).toEqual([]);
     expect(ledger.size).toBe(0);
   });
@@ -539,7 +539,7 @@ describe('submitBurnFlow', () => {
     const ledger = new PendingLedger(PUB);
     const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, [{ boxId: BOX_ID, value: '5' }]), write: write(), ledger, identity };
     const res = await submitBurnFlow(deps);
-    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough karma to burn right now.' } });
+    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough rep to burn right now.' } });
     expect(writeCalls).toEqual([]);
     expect(ledger.size).toBe(0);
   });

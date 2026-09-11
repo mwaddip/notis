@@ -400,7 +400,7 @@ describe('card — the withdraw control', () => {
     const c = card(confirmed(PUB), { you: true, onWithdraw: () => {}, canWithdraw: false });
     const wb = metaWithdraw(c);
     expect(wb.disabled).toBe(true);
-    expect(wb.title).toBe('needs one karma box to sign with; this key has none');
+    expect(wb.title).toBe('needs one rep box to sign with; this key has none');
     // A disabled control opens no confirm row.
     document.body.appendChild(c);
     wb.click();

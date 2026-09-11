@@ -67,16 +67,16 @@ function download(filename: string, text: string): void {
 // (HOUSE_STYLE → Voice). A client-side refusal (status 0) already reads that way.
 function postRejectionCopy(r: Rejection): string {
   if (r.status === 0) return r.message;
-  if (r.status === 409) return 'that karma is still tied up in a post that has not landed.';
+  if (r.status === 409) return 'that rep is still tied up in a post that has not landed.';
   if (r.status === 503) return 'the node is full right now.';
-  if (/karma/i.test(r.message)) return 'not enough karma to post right now.';
+  if (/karma/i.test(r.message)) return 'not enough rep to post right now.';
   return 'the node said: ' + r.message.toLowerCase();
 }
 
 function likeRejectionCopy(r: Rejection): string {
   if (r.status === 0) return r.message;
   if (r.status === 409) return 'you have already liked this post';
-  if (/karma/i.test(r.message)) return 'not enough karma';
+  if (/karma/i.test(r.message)) return 'not enough rep';
   return r.message.toLowerCase();
 }
 
@@ -90,7 +90,7 @@ function vouchRejectionCopy(r: Rejection): string {
   if (/self|yourself/.test(m)) return "you can't vouch for yourself";
   if (/already|duplicate|exist/.test(m)) return 'you already vouch for this identity';
   if (/cooldown|escrow|held/.test(m)) return 'your last unvouch is still in its cooldown';
-  if (/balance|karma/.test(m)) return 'not enough karma held to vouch';
+  if (/balance|karma/.test(m)) return 'not enough rep held to vouch';
   return 'the node said: ' + m;
 }
 
@@ -101,7 +101,7 @@ function inviteRejectionCopy(r: Rejection): string {
   if (/already|holds|account|record|exist/.test(m)) return 'that key already holds an account';
   if (/no invites|available/.test(m)) return 'no invites available right now';
   if (/bond|range|min|max/.test(m)) return 'that bond is outside the allowed range';
-  if (/karma|balance/.test(m)) return 'not enough karma to cover the bond';
+  if (/karma|balance/.test(m)) return 'not enough rep to cover the bond';
   return 'the node said: ' + m;
 }
 
@@ -111,7 +111,7 @@ function inviteRejectionCopy(r: Rejection): string {
  *  reads that way. */
 function withdrawRejectionCopy(r: Rejection): string {
   if (r.status === 0) return r.message;
-  if (r.status === 409) return 'that karma box is still tied up in a transaction that has not landed';
+  if (r.status === 409) return 'that rep box is still tied up in a transaction that has not landed';
   if (r.status === 503) return "the node's pool is full right now";
   const m = r.message.toLowerCase();
   if (/earlier block|not confirmed/.test(m)) return 'this post has not landed yet';
@@ -1450,7 +1450,7 @@ export class App {
     } catch {
       // The spendable view could not be read; the foot says so and post stays
       // disabled, rather than a disabled button with no reason.
-      this.composers.get(key)?.setKarmaError("can't read your karma right now");
+      this.composers.get(key)?.setKarmaError("can't read your rep right now");
     }
   }
 
@@ -1680,7 +1680,7 @@ export class App {
       return { kind: 'reason', text: `your stake from an unvouch is held until block ${this.escrowHeldUntil}` };
     }
     if (this.profileKarma !== null && BigInt(this.profileKarma.effective) < VOUCH_MIN_BALANCE) {
-      return { kind: 'reason', text: `vouching needs ${VOUCH_MIN_BALANCE} karma held` };
+      return { kind: 'reason', text: `vouching needs ${VOUCH_MIN_BALANCE} rep held` };
     }
     const v = this.vouched.get(key);
     if (v) return { kind: 'vouched', sinceBlock: v.createdAtBlock, cooldownBlocks };
