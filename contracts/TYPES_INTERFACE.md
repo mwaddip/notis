@@ -1588,12 +1588,12 @@ domain is everything representable. Padding or truncating a malformed id to 32 b
 onto a **well-formed id's encoding** — a consensus-level id collision, strictly worse than the panic
 it avoids. Throwing writers are named `…OrThrow` so the exception is visible at every call site.
 
-> ⚠ **Every throwing writer needs its domain established upstream, and two obligations are
+> ⚠ **Every throwing writer needs its domain established upstream, and one obligation is
 > outstanding.**
 >
-> **1. `bigint` at `block-apply.ts:867`** — `computeTxId` runs there behind `checkTxEnvelope` only,
-> which deliberately does not type output entries (`utxo-engine.ts:908`); the `u64` pin is
-> `checkOutputShape` at `validateTx` step 4, later. Booked to Phase 6.
+> **1. `bigint` behind `computeTxId` — RESOLVED.** On the block-apply path `checkOutputShape`
+> now runs before `computeTxId` hashes the decoded value, so the output values' `u64` domain is
+> established upstream of the hash, not later at a `validateTx` step.
 >
 > **2. `b32` on the post path — PARTIAL, and it inverted the migration order.**
 > Under the new layout `author` and `challenge` were `b32` and `parentRefs` `arr(refs, b32)` —

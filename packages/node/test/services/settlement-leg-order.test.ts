@@ -15,6 +15,7 @@ import {
 import type {
   AnyBox,
   BondBox,
+  CreditBox,
   EmissionBox,
   KarmaBox,
   KarmaPriceBox,
@@ -298,5 +299,111 @@ describe('the settlement declares the block\'s era', () => {
     if (!('tx' in era1) || !('tx' in era128)) return;
     expect(era128.tx.protocolVersion).toBe(128);
     expect(encodeTx(era128.tx).length).toBe(encodeTx(era1.tx).length + 1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Coinbase tail binding — count capped at 1 and createdAtBlock pinned to the
+// block height (MINING_INTERFACE → On block receipt, step 2).
+// ---------------------------------------------------------------------------
+
+describe('coinbase tail binding', () => {
+  const ONE_ERA = [{ version: 1, fromHeight: 0 }] as const;
+
+  function validTx() {
+    const result = buildSettlement(
+      deps, HEIGHT, ONE_ERA, EMISSION, MINER_REWARD_DELAY, body, miner.userId);
+    if (!('tx' in result)) throw new Error(`fixture: ${result.error}`);
+    return result.tx;
+  }
+
+  it('accepts the honest single-output coinbase', () => {
+    const tx = validTx();
+    const check = checkSettlement(
+      deps, HEIGHT, ONE_ERA, EMISSION, MINER_REWARD_DELAY, body, tx);
+    expect(check.valid).toBe(true);
+  });
+
+  it('rejects a 2-output coinbase summing to the miner slice', () => {
+    const tx = validTx();
+    const coinbase = tx.outputs.find(
+      (o): o is CreditBox => o.boxType === 'credit')!;
+    const half = coinbase.value / 2n;
+    const poisoned = {
+      ...tx,
+      outputs: [
+        ...tx.outputs.filter((o) => o.boxType !== 'credit'),
+        { ...coinbase, value: half },
+        { ...coinbase, value: coinbase.value - half },
+      ],
+    };
+    const check = checkSettlement(
+      deps, HEIGHT, ONE_ERA, EMISSION, MINER_REWARD_DELAY, body, poisoned);
+    expect(check.valid).toBe(false);
+    expect(check.error).toMatch(/exactly 1 required/);
+  });
+
+  it('rejects createdAtBlock ahead of height', () => {
+    const tx = validTx();
+    const idx = tx.outputs.findIndex((o) => o.boxType === 'credit');
+    const poisoned = {
+      ...tx,
+      outputs: tx.outputs.map((o, i) =>
+        i === idx ? { ...o, createdAtBlock: HEIGHT + 5 } : o),
+    };
+    const check = checkSettlement(
+      deps, HEIGHT, ONE_ERA, EMISSION, MINER_REWARD_DELAY, body, poisoned);
+    expect(check.valid).toBe(false);
+    expect(check.error).toMatch(/coinbase createdAtBlock/);
+  });
+
+  it('rejects createdAtBlock below height', () => {
+    const tx = validTx();
+    const idx = tx.outputs.findIndex((o) => o.boxType === 'credit');
+    const poisoned = {
+      ...tx,
+      outputs: tx.outputs.map((o, i) =>
+        i === idx ? { ...o, createdAtBlock: HEIGHT - 3 } : o),
+    };
+    const check = checkSettlement(
+      deps, HEIGHT, ONE_ERA, EMISSION, MINER_REWARD_DELAY, body, poisoned);
+    expect(check.valid).toBe(false);
+    expect(check.error).toMatch(/coinbase createdAtBlock/);
+  });
+
+  it('rejects createdAtBlock of 0', () => {
+    const tx = validTx();
+    const idx = tx.outputs.findIndex((o) => o.boxType === 'credit');
+    const poisoned = {
+      ...tx,
+      outputs: tx.outputs.map((o, i) =>
+        i === idx ? { ...o, createdAtBlock: 0 } : o),
+    };
+    const check = checkSettlement(
+      deps, HEIGHT, ONE_ERA, EMISSION, MINER_REWARD_DELAY, body, poisoned);
+    expect(check.valid).toBe(false);
+    expect(check.error).toMatch(/coinbase createdAtBlock/);
+  });
+
+  it('accepts zero coinbase outputs when miner slice is zero', () => {
+    const zeroDeps: SettlementDeps = {
+      ...deps,
+      getLikeCarryBox: () => null,
+      getBondsSettlingAt: () => [],
+      getEscrowsReleasableAt: () => [],
+      getLapsedVouches: () => [],
+      getDecayPlans: () => [],
+    };
+    const zeroBody: SettlementBody = {
+      fees: 0n, rent: 0n, actors: 0,
+      feeBoxIds: [], invites: [], markers: [], priceBoxes: [],
+    };
+    const result = buildSettlement(
+      zeroDeps, HEIGHT, ONE_ERA, 0n, MINER_REWARD_DELAY, zeroBody, miner.userId);
+    if (!('tx' in result)) throw new Error(`fixture: ${result.error}`);
+    expect(result.tx.outputs.filter((o) => o.boxType === 'credit')).toHaveLength(0);
+    const check = checkSettlement(
+      zeroDeps, HEIGHT, ONE_ERA, 0n, MINER_REWARD_DELAY, zeroBody, result.tx);
+    expect(check.valid).toBe(true);
   });
 });
