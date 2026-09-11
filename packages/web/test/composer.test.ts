@@ -41,7 +41,7 @@ describe('composer — the foot', () => {
     const { ctrl } = open({ price: 5 });
     const karma = ctrl.el.querySelector('.karma')!;
     expect(karma.querySelector('.n')?.textContent).toBe('5');
-    expect(karma.textContent).toContain('karma');
+    expect(karma.textContent).toContain('rep');
     // affordable unknown → post disabled even with content.
     const ta = ctrl.el.querySelector('textarea') as HTMLTextAreaElement;
     type(ta, 'hello');
@@ -56,17 +56,17 @@ describe('composer — the foot', () => {
     expect(postBtn(ctrl.el).disabled).toBe(false);
     ctrl.setAffordable(false);
     expect(postBtn(ctrl.el).disabled).toBe(true);
-    expect(ctrl.el.querySelector('.karma')?.textContent).toBe('not enough karma to post right now');
+    expect(ctrl.el.querySelector('.karma')?.textContent).toBe('not enough rep to post right now');
   });
 
   it('a failed affordability read shows a reason in the foot, post disabled, and clears on a later read', () => {
     const { ctrl, ta } = open();
     type(ta, 'a real post');
-    ctrl.setKarmaError("can't read your karma right now");
-    expect(ctrl.el.querySelector('.karma')?.textContent).toBe("can't read your karma right now");
+    ctrl.setKarmaError("can't read your rep right now");
+    expect(ctrl.el.querySelector('.karma')?.textContent).toBe("can't read your rep right now");
     expect(postBtn(ctrl.el).disabled).toBe(true);
     ctrl.setAffordable(true);
-    expect(ctrl.el.querySelector('.karma')?.textContent).toContain('karma');
+    expect(ctrl.el.querySelector('.karma')?.textContent).toContain('rep');
     expect(ctrl.el.querySelector('.karma .n')?.textContent).toBe('5');
     expect(postBtn(ctrl.el).disabled).toBe(false);
   });

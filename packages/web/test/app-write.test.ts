@@ -268,6 +268,6 @@ describe('the App write surface — transport failures end cleanly', () => {
     (h.app as unknown as { openComposer(p: string | null): void }).openComposer(null);
     await flush(); // let the fire-and-forget affordability read settle
     const ctrl = (h.drive.composers as Map<string, { el: HTMLElement }>).get('@feed')!;
-    expect(ctrl.el.querySelector('.karma')?.textContent).toBe("can't read your karma right now");
+    expect(ctrl.el.querySelector('.karma')?.textContent).toBe("can't read your rep right now");
   });
 });

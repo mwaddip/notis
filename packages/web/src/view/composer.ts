@@ -128,7 +128,7 @@ export function makeComposer(opts: ComposerOpts): ComposerController {
     karma.textContent = '';
     // Say what happens, not what went wrong (HOUSE_STYLE → Voice).
     const message =
-      karmaError ?? (affordable === false ? (opts.isReply ? 'not enough karma to reply right now' : 'not enough karma to post right now') : null);
+      karmaError ?? (affordable === false ? (opts.isReply ? 'not enough rep to reply right now' : 'not enough rep to post right now') : null);
     if (message !== null) {
       karma.classList.add('short');
       karma.textContent = message;
@@ -138,7 +138,7 @@ export function makeComposer(opts: ComposerOpts): ComposerController {
     // and only while spending it.
     karma.classList.remove('short');
     karma.appendChild(el('span', 'n', String(opts.price)));
-    karma.appendChild(document.createTextNode(' karma'));
+    karma.appendChild(document.createTextNode(' rep'));
   }
 
   /** Post is enabled when affordable, the composed content fits, and — text — the

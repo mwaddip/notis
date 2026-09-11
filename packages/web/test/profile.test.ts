@@ -89,7 +89,7 @@ describe('profile window — the invites row', () => {
     const member = rowField(render(handlers(), memberCtx()), 'invites')!;
     expect(member.textContent).toContain('2 invites available');
     const root = rowField(render(handlers(), memberCtx({ karma: karmaResult({ userId: KEY, member: true, invitesAvailable: null }) })), 'invites')!;
-    expect(root.textContent).toContain('as many as your karma covers');
+    expect(root.textContent).toContain('as many as your rep covers');
     const resident = rowField(render(handlers(), memberCtx({ karma: karmaResult({ userId: KEY, member: false, invitesAvailable: 0 }) })), 'invites')!;
     expect(resident.textContent).toContain('invites come with membership');
   });
@@ -107,7 +107,7 @@ describe('profile window — the invites row', () => {
     expect(bond.max).toBe('1000');
     // The copy's numbers come from /status and types.
     expect(form.textContent).toContain('43200');
-    expect(form.textContent).toContain('one karma per 3');
+    expect(form.textContent).toContain('one rep per 3');
   });
 
   it('submitting a valid key and bond calls invite; an invalid key refuses with no invite', () => {
@@ -136,7 +136,7 @@ describe('profile window — the invites row', () => {
     });
     const field = rowField(render(h, c), 'invites')!;
     const bondRow = field.querySelector('.bond')!;
-    expect(bondRow.textContent).toContain('100 karma');
+    expect(bondRow.textContent).toContain('100 rep');
     expect(bondRow.querySelector('.vmark')).toBeNull();
     const btn = bondRow.querySelector('.authorbtn') as HTMLElement;
     expect(btn.classList.contains('hex')).toBe(true);
@@ -183,7 +183,7 @@ describe('profile window — the invites row', () => {
     expect((field.querySelector('input[type="text"]') as HTMLInputElement).value).toBe('a-key-in-progress');
     // The line dropped by one and the bond appeared.
     expect(field.querySelector('.invites-line')?.textContent).toContain('1 invite available');
-    expect(field.querySelector('.invites-bonds')?.textContent).toContain('100 karma');
+    expect(field.querySelector('.invites-bonds')?.textContent).toContain('100 rep');
   });
 });
 
@@ -348,48 +348,48 @@ describe('profile window — standing per tier', () => {
 
 describe('profile window — the karma field and the faucet step', () => {
   it('shows the balance when a box is held', () => {
-    const f = rowField(render(handlers(), ctx({ identity: unlocked, karma: karmaResult({ boxCount: 1, total: '227', effective: '227' }) })), 'karma')!;
-    expect(f.textContent).toContain('227 karma');
+    const f = rowField(render(handlers(), ctx({ identity: unlocked, karma: karmaResult({ boxCount: 1, total: '227', effective: '227' }) })), 'rep')!;
+    expect(f.textContent).toContain('227 rep');
   });
 
   it('shows effective and held when decay has opened a gap', () => {
-    const f = rowField(render(handlers(), ctx({ identity: unlocked, karma: karmaResult({ boxCount: 1, total: '227', effective: '200' }) })), 'karma')!;
+    const f = rowField(render(handlers(), ctx({ identity: unlocked, karma: karmaResult({ boxCount: 1, total: '227', effective: '200' }) })), 'rep')!;
     expect(f.textContent).toContain('200 effective');
     expect(f.textContent).toContain('227 held');
   });
 
   it('the faucet step shows only with an identity, no karma, and a faucet configured', () => {
     prefs.faucet = '/faucet';
-    const withFaucet = rowField(render(handlers(), ctx({ identity: unlocked, karma: karmaResult({ boxCount: 0 }) })), 'karma')!;
-    expect(button(withFaucet, 'ask the faucet for karma')).not.toBeNull();
+    const withFaucet = rowField(render(handlers(), ctx({ identity: unlocked, karma: karmaResult({ boxCount: 0 }) })), 'rep')!;
+    expect(button(withFaucet, 'ask the faucet for rep')).not.toBeNull();
 
     // Karma held → the balance, no faucet button.
-    const held = rowField(render(handlers(), ctx({ identity: unlocked, karma: karmaResult({ boxCount: 1, total: '5', effective: '5' }) })), 'karma')!;
-    expect(button(held, 'ask the faucet for karma')).toBeNull();
+    const held = rowField(render(handlers(), ctx({ identity: unlocked, karma: karmaResult({ boxCount: 1, total: '5', effective: '5' }) })), 'rep')!;
+    expect(button(held, 'ask the faucet for rep')).toBeNull();
 
-    // No faucet configured → no button, "no karma yet."
+    // No faucet configured → no button, "no rep yet."
     prefs.faucet = '';
-    const noFaucet = rowField(render(handlers(), ctx({ identity: unlocked, karma: karmaResult({ boxCount: 0 }) })), 'karma')!;
-    expect(button(noFaucet, 'ask the faucet for karma')).toBeNull();
-    expect(noFaucet.textContent).toContain('no karma yet');
+    const noFaucet = rowField(render(handlers(), ctx({ identity: unlocked, karma: karmaResult({ boxCount: 0 }) })), 'rep')!;
+    expect(button(noFaucet, 'ask the faucet for rep')).toBeNull();
+    expect(noFaucet.textContent).toContain('no rep yet');
   });
 
   it('the faucet button asks the faucet', () => {
     prefs.faucet = '/faucet';
     const asked: number[] = [];
-    const f = rowField(render(handlers({ askFaucet: () => asked.push(1) }), ctx({ identity: unlocked, karma: karmaResult({ boxCount: 0 }) })), 'karma')!;
-    button(f, 'ask the faucet for karma')!.click();
+    const f = rowField(render(handlers({ askFaucet: () => asked.push(1) }), ctx({ identity: unlocked, karma: karmaResult({ boxCount: 0 }) })), 'rep')!;
+    button(f, 'ask the faucet for rep')!.click();
     expect(asked).toHaveLength(1);
   });
 
   it('a pending grant reads working…, an expired one names the height with ask again', () => {
     prefs.faucet = '/faucet';
-    const pending = rowField(render(handlers(), ctx({ identity: unlocked, karma: karmaResult({ boxCount: 0 }), grant: { state: 'pending' } })), 'karma')!;
+    const pending = rowField(render(handlers(), ctx({ identity: unlocked, karma: karmaResult({ boxCount: 0 }), grant: { state: 'pending' } })), 'rep')!;
     expect(pending.textContent).toContain('working…');
 
     const expired = rowField(
       render(handlers(), ctx({ identity: unlocked, karma: karmaResult({ boxCount: 0 }), grant: { state: 'expired', atHeight: 5999 } })),
-      'karma',
+      'rep',
     )!;
     expect(expired.textContent).toContain('5999');
     expect(button(expired, 'ask again')).not.toBeNull();
@@ -420,7 +420,7 @@ describe('profile — the username row', () => {
 
   it('holding none, no karma box — the hint, no form', () => {
     const f = rowField(render(handlers(), memberCtx({ canSignClaim: false })), 'username')!;
-    expect(f.textContent).toContain('a claim spends and returns one karma box');
+    expect(f.textContent).toContain('a claim spends and returns one rep box');
     expect(f.querySelector('form')).toBeNull();
   });
 
@@ -433,7 +433,7 @@ describe('profile — the username row', () => {
     expect(input.maxLength).toBe(24);
     expect(button(form, 'claim')).not.toBeNull();
     expect(form.textContent).toContain('free, once per key');
-    expect(form.textContent).toContain('10 karma');
+    expect(form.textContent).toContain('10 rep');
   });
 
   it('the claim form validates through isValidUsernameBytes and drops a leading @', () => {
@@ -489,7 +489,7 @@ describe('profile — the username row', () => {
     button(f, 'burn')!.click();
     const confirm = f.querySelector('.pf-confirm') as HTMLElement;
     expect(confirm).not.toBeNull();
-    expect(confirm.textContent).toContain('burn @Alice_01 for 10 karma');
+    expect(confirm.textContent).toContain('burn @Alice_01 for 10 rep');
     expect(button(confirm, 'keep')).not.toBeNull();
     expect(document.activeElement?.textContent).toBe('keep');
     document.body.removeChild(body);

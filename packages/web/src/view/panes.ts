@@ -87,7 +87,7 @@ function bar(k: string, ci: number, focused: boolean, lone: boolean, handlers: H
     label.appendChild(el('span', 'name', 'profile'));
     // The profile window's ↻ re-reads standing and karma — the first window with
     // something to refresh (WEB_INTERFACE → The profile window).
-    ctl.appendChild(ctlBtn('↻', 'refresh standing and karma', () => handlers.refreshProfile()));
+    ctl.appendChild(ctlBtn('↻', 'refresh standing and rep', () => handlers.refreshProfile()));
   } else {
     const m = threadLabel(k, ctx);
     // The spine: a 4px OKLCH edge from the author key. Set even while the thread

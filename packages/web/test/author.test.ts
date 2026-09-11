@@ -77,7 +77,7 @@ describe('the author window', () => {
     const vouchBtn = [...yv.querySelectorAll('button')].find((x) => x.textContent === 'vouch')!;
     expect(vouchBtn).not.toBeNull();
     expect(vouchBtn.classList.contains('word')).toBe(true);
-    expect(yv.textContent).toContain('stakes 1 karma');
+    expect(yv.textContent).toContain('stakes 1 rep');
     expect(yv.textContent).toContain('60');
     vouchBtn.click();
     expect(h.calls.vouch).toEqual([AUTHOR]);

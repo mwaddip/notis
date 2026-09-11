@@ -264,7 +264,7 @@ describe('the App withdraw flight', () => {
     [{ status: 400, message: 'Post is not confirmed in an earlier block' }, 'this post has not landed yet'],
     [{ status: 400, message: 'Post is already withdrawn or unknown' }, 'this post is already withdrawn'],
     [{ status: 400, message: "Invalid postWithdraw transaction: PostWithdraw post x is not authored by the karma input's owner" }, 'only the author can withdraw this post'],
-    [{ status: 409, message: 'conflict' }, 'that karma box is still tied up in a transaction that has not landed'],
+    [{ status: 409, message: 'conflict' }, 'that rep box is still tied up in a transaction that has not landed'],
     [{ status: 503, message: 'mempool full' }, "the node's pool is full right now"],
   ] as [Rejection, string][])('maps the node refusal %o into the voice register', async (rejection, copy) => {
     const h = harness({ kind: 'reject', rejection });
