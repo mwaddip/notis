@@ -166,8 +166,8 @@ function applyDecayPlans(
 }
 
 /**
- * The production decay dependencies, mirroring `block-apply.ts`'s construction
- * (`getKarmaOwners` is the same `SELECT DISTINCT owner` the apply path runs).
+ * The production decay dependencies, mirroring `block-apply.ts`'s `decayDeps`:
+ * `getKarmaBoxes` (the ordered read), `getIdentityRecord`, `putIdentityRecord`.
  *
  * Kept as one function so the shape the harness injects and the shape block
  * application injects stay visibly the same.
@@ -295,9 +295,9 @@ export async function runScenario(scenario: Scenario): Promise<ScenarioCapture> 
     }
   }
 
-  // `getKarmaOwners` returns owners in SQLite's row order, so the journal's
-  // per-block entry order is an artifact of insertion. Sort so the fixture pins
-  // decay outcomes rather than a storage detail.
+  // `allKarmaPostBody` orders by owner, but the journal's per-block entry
+  // order is an artifact of insertion. Sort so the fixture pins decay outcomes
+  // rather than a storage detail.
   decayEvents.sort((a, b) => a.height - b.height || a.owner.localeCompare(b.owner));
 
   const finalBalances: Record<string, string> = {};

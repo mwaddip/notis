@@ -793,13 +793,9 @@ function finalizeBlock(block: OrderingBlock): void {
  * settlement transaction's determinism obligation).
  */
 /**
- * The decay pass's seams, all through the store.
- *
- * ⛔ **`getKarmaOwners` carries an `ORDER BY`, and that is a consensus
- * obligation.** Its result is walked into the settlement's input and output
- * lists, which the transaction id hashes in order, so an unordered
- * `SELECT DISTINCT` is a fork between two nodes holding identical state
- * (NODE_INTERFACE → Determinism is this mechanism's whole risk).
+ * The decay pass's three seams: `getKarmaBoxes` (the ordered read, `ORDER BY
+ * value DESC, id`), `getIdentityRecord` and `putIdentityRecord`. All through
+ * the store (NODE_INTERFACE → Determinism is this mechanism's whole risk).
  */
 export const decayDeps: DecayDeps = {
   getKarmaBoxes,
