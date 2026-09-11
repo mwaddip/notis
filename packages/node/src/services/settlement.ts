@@ -711,10 +711,28 @@ export function checkSettlement(
 
   // ---- 4. The coinbase ----
   //
-  // The sum is the rule; the partition and the payout key are the producer's
-  // (MINING_INTERFACE → Coinbase Application, receipt step 2).
+  // Exactly one credit output at the block height when the slice is positive,
+  // none when it is zero (MINING_INTERFACE → On block receipt, step 2).
+  const coinbaseTail = settlement.outputs.slice(n);
+  if (derived.minerSlice > 0n) {
+    if (coinbaseTail.length !== 1) {
+      return {
+        valid: false,
+        error:
+          `coinbase tail has ${coinbaseTail.length} outputs, exactly 1 required ` +
+          `when miner slice is positive`,
+      };
+    }
+  } else if (coinbaseTail.length !== 0) {
+    return {
+      valid: false,
+      error:
+        `coinbase tail has ${coinbaseTail.length} outputs, none allowed when ` +
+        `miner slice is zero`,
+    };
+  }
   let coinbaseTotal = 0n;
-  for (const out of settlement.outputs.slice(n)) {
+  for (const out of coinbaseTail) {
     if (out.boxType !== 'credit') {
       return {
         valid: false,
@@ -738,6 +756,13 @@ export function checkSettlement(
         error:
           `coinbase lockedUntilBlock ${credit.lockedUntilBlock} != expected ` +
           `${derived.lockedUntilBlock}`,
+      };
+    }
+    if (credit.createdAtBlock !== height) {
+      return {
+        valid: false,
+        error:
+          `coinbase createdAtBlock ${credit.createdAtBlock} != block height ${height}`,
       };
     }
     coinbaseTotal += credit.value;

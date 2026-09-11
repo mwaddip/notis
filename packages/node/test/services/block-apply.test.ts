@@ -1648,26 +1648,13 @@ describe('block-apply mint provenance', () => {
     vi.resetModules();
   });
 
-  it('a split coinbase mints one box per output, each with its own txId', async () => {
+  it('a 2-output coinbase is rejected under the cap-1 rule', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
-    const utxo = await importUtxo();
     const blockApply = await importBlockApply();
     const { computeBlockReward } = await import('../../src/services/block-creator.js');
-    // ⛔ **The coinbase is ONE transaction's outputs now, not N mint events.**
-    // Each output is a `CreditBox` of the settlement, so its provenance is the
-    // settlement's own `txId` at the output's own position — no synthetic mint
-    // id, no per-output subject, and `UNIQUE(tx_id, output_index)` is satisfied
-    // by the positions rather than by distinct ids (MINING_INTERFACE → Coinbase
-    // Application: the credits are spent from the `EmissionBox` by the
-    // transaction that emits them).
-    //
-    // Two outputs on the MINER's side, which is the multi-output shape devnet
-    // can reach: only the treasury side is pinned to an amount and an owner, so
-    // a producer may pay their own slice to more than one key. The pair here
-    // sums to that slice exactly.
     const { splitCoinbase } = await import('../../src/services/coinbase-split.js');
     const miner = makeTestIdentity();
     const second = makeTestIdentity();
@@ -1681,21 +1668,7 @@ describe('block-apply mint provenance', () => {
         { owner: second.userId, value: secondShare },
       ]),
     });
-    expect(blockApply.applyOrderingBlock(block)).toBe(true);
-
-    const minerBox = utxo.getCreditBoxes(miner.userId)[0];
-    const treasuryBox = utxo.getCreditBoxes(second.userId)[0];
-    expect(minerBox).toBeDefined();
-    expect(treasuryBox).toBeDefined();
-
-    // ONE txId — the settlement's — and the positions are what separate them.
-    const settlementId = block.utxoTxTree.utxoTxIds[block.utxoTxTree.utxoTxIds.length - 1]!;
-    expect(minerBox!.txId).toBe(settlementId);
-    expect(treasuryBox!.txId).toBe(settlementId);
-    expect(minerBox!.index).not.toBe(treasuryBox!.index);
-    // …and therefore two distinct box ids, which is the property the shared-txId
-    // hazard was about.
-    expect(minerBox!.id).not.toBe(treasuryBox!.id);
+    expect(blockApply.applyOrderingBlock(block)).toBe(false);
   });
 
   it('a stale untouched identity keeps its face karma — no decay settlement leg', async () => {
