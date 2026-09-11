@@ -220,7 +220,7 @@ reason `'target'`).
 | Rule | Statement | Class |
 |---|---|---|
 | **Order** | `createdAt(N) > createdAt(N−1)` for N ≥ 2 — strict, Ergo's header rule 205 | **consensus** — a violation is a bad chain: refuse; in a fork segment refuse-whole and penalise `misbehavior` (reason `'time'`) |
-| **Future bound** | `createdAt(N) ≤ now + MAX_FUTURE_DRIFT_MS`, `now` the receiving node's clock | **acceptance**, not consensus — the block may be valid a minute later: refuse, **no penalty, no `refused_headers` mark** (`NODE_INTERFACE → Fork choice decides on verified headers`, what is remembered); in a fork segment reason `'clock'`, the one refusal that is not a verdict on the chain |
+| **Future bound** | `createdAt(N) ≤ now + MAX_FUTURE_DRIFT_MS`, `now` the receiving node's clock | **acceptance**, not consensus — the block may be valid a minute later: refuse, **no penalty, no `refused_headers` mark** (`NODE_INTERFACE → Fork choice decides on verified headers`, what is remembered); in a fork segment reason `'clock'`, the one refusal that is not a verdict on the chain; inside a reorg the funnel's refusal aborts the switch — no mark, no penalty, no memo (`NODE_INTERFACE → Fork choice decides on verified headers`, step 10) |
 
 Block 1 has no parent and no order check; the future bound applies to it as to every block.
 
@@ -232,7 +232,10 @@ an attacker who keeps pushing walks difficulty to the floor. A future-refused bl
 sync path — the producer's next `SyncInfo` shows a taller tip, the receiver's `heightByBlockId` lacks
 the id, and the `Inv → ModifierRequest` round re-delivers it inside the bound (`NET_INTERFACE → Sync
 State Machine`). Replay never trips it: a stored block is in the past by the time it is re-applied on
-restart or in a reorg.
+restart. A reorg applies the peer's blocks, each inside the bound at the header walk (reason
+`'clock'` there); the funnel's re-check fails only if this node's clock stepped backward in
+between, and then the switch aborts with no mark (`NODE_INTERFACE → Fork choice decides on
+verified headers`, step 10).
 
 **What the bound buys an attacker, and no more.** Every honest receiver holds chain time at
 `real + skew`, and under an absolute schedule the chain can be at most `skew / ideal` = 10 blocks ahead

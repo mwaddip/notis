@@ -5517,3 +5517,209 @@ describe('resolveFork — re-score memo', () => {
     expect(net.headerRequests.length).toBe(firstCount);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Tests — reorg abort on a refusal that is not a consensus verdict
+// (NODE_INTERFACE → Fork choice decides on verified headers, step 10).
+// ---------------------------------------------------------------------------
+
+describe('resolveFork — reorg abort classes', () => {
+  beforeEach(async () => { vi.resetModules(); });
+  afterEach(async () => {
+    try { (await importBlockCreator()).stopBlockCreator(); } catch {}
+    const { setClock } = await import('../../src/services/difficulty.js');
+    setClock(null);
+    vi.doUnmock('../../src/store/journal.js');
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it('a backward clock step during the reorg aborts without a mark and without a penalty', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const { setClock } = await import('../../src/services/difficulty.js');
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    const rh = await importRefusedHeaders();
+    const { applyOrderingBlock } = (await import(
+      '../../src/services/block-apply.js'
+    )) as { applyOrderingBlock: (block: OrderingBlock) => boolean };
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const t1 = 1_000_000;
+    const slack = MAX_FUTURE_DRIFT_MS;
+    const futureStamp = t1 + slack - 1000;
+    setClock(() => t1);
+    await mineNextBlock(bc);
+    expect(ordering.getCurrentHeight()).toBe(1);
+    const sharedH1 = ordering.getOrderingBlock(1)!.header;
+
+    // Build the competing chain: apply blocks at a clock where the stamps
+    // pass, collecting each one, then revert back to height 1.
+    setClock(() => futureStamp + 10_000);
+    const theirBlocks: OrderingBlock[] = [];
+    for (const h of [2, 3, 4]) {
+      const b = await makeApplicableBlock({
+        height: h,
+        createdAt: futureStamp + (h - 2) * 1000,
+      });
+      expect(applyOrderingBlock(b)).toBe(true);
+      theirBlocks.push(b);
+    }
+    const theirHeaders = [...theirBlocks].reverse().map(b => b.header)
+      .concat(sharedH1);
+    for (let h = 4; h > 1; h--) forkResolution.revertBlock(h);
+    expect(ordering.getCurrentHeight()).toBe(1);
+
+    // Mine our chain to 2 blocks so the fork is meaningful.
+    setClock(() => t1 + 60_000);
+    await mineNextBlock(bc);
+    expect(ordering.getCurrentHeight()).toBe(2);
+    const preHash2 = blockHash(ordering.getOrderingBlock(2)!.header)!;
+
+    // The stub steps the clock backward when delivering blocks, so the
+    // funnel's future-bound re-check fails on the first block.
+    const headerRequests: number[] = [];
+    const net: ForkResolutionNet & {
+      penalties: Array<{ peerId: string; kind: string; reason: string }>;
+    } = {
+      getConnectedPeers: () => ['peer-clock'],
+      requestHeaders: async (startHeight, maxCount) => {
+        headerRequests.push(startHeight);
+        return theirHeaders
+          .filter(h => h.height <= startHeight)
+          .sort((a, b) => b.height - a.height)
+          .slice(0, maxCount);
+      },
+      requestBlocks: async (startHeight, endHeight) => {
+        setClock(() => t1 - slack - 1);
+        return theirBlocks.filter(
+          b => b.header.height >= startHeight && b.header.height <= endHeight,
+        );
+      },
+      penalizePeer: (peerId, kind, reason) => {
+        (net as any).penalties.push({ peerId, kind, reason });
+      },
+      peerTipHeight: () => 4,
+      penalties: [],
+    };
+
+    await forkResolution.resolveFork(theirBlocks[2]!, net, 'peer-clock');
+
+    // Chain, DB and prover at pre-reorg state
+    expect(ordering.getCurrentHeight()).toBe(2);
+    expect(blockHash(ordering.getOrderingBlock(2)!.header)).toBe(preHash2);
+
+    // No mark
+    const futureHashes = theirBlocks.map(b => blockHash(b.header)!);
+    expect(rh.anyRefusedHeader(futureHashes)).toBe(false);
+
+    // No penalty
+    expect(net.penalties).toEqual([]);
+
+    // The warning names the class
+    const warnings = warnSpy.mock.calls.map(c => String(c[0]));
+    expect(warnings.some(w => w.includes('class=acceptance'))).toBe(true);
+
+    // No memo was written: the same peer at the same tip re-runs the walk
+    // (a memo would short-circuit step 2 and make zero header requests).
+    const requestsBefore = headerRequests.length;
+    setClock(() => futureStamp + 10_000);
+    const net2: ForkResolutionNet & {
+      penalties: Array<{ peerId: string; kind: string; reason: string }>;
+    } = {
+      ...net,
+      requestBlocks: async (startHeight, endHeight) => {
+        return theirBlocks.filter(
+          b => b.header.height >= startHeight && b.header.height <= endHeight,
+        );
+      },
+      penalties: [],
+    };
+    await forkResolution.resolveFork(theirBlocks[2]!, net2, 'peer-clock');
+    expect(headerRequests.length).toBeGreaterThan(requestsBefore);
+    expect(ordering.getCurrentHeight()).toBe(4);
+  });
+
+  it('a local fault during the reorg aborts without a mark and without a penalty', async () => {
+    // Set up the mock BEFORE any module import so it is in place when
+    // block-apply.ts loads journal.js.
+    let throwArmed = false;
+    vi.doMock('../../src/store/journal.js', async () => {
+      const actual = await vi.importActual<typeof import('../../src/store/journal.js')>(
+        '../../src/store/journal.js',
+      );
+      return {
+        ...actual,
+        insertBlockJournal: (...args: unknown[]) => {
+          if (throwArmed) {
+            throwArmed = false;
+            throw new Error('unexpected local fault');
+          }
+          return (actual.insertBlockJournal as Function)(...args);
+        },
+      };
+    });
+
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    const rh = await importRefusedHeaders();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const { applyOrderingBlock } = (await import(
+      '../../src/services/block-apply.js'
+    )) as { applyOrderingBlock: (block: OrderingBlock) => boolean };
+
+    await mineNextBlock(bc);
+    expect(ordering.getCurrentHeight()).toBe(1);
+
+    // Build a heavier competing chain of 3 blocks.
+    const theirBlocks: OrderingBlock[] = [];
+    for (const h of [2, 3, 4]) {
+      const b = await makeApplicableBlock({ height: h });
+      expect(applyOrderingBlock(b)).toBe(true);
+      theirBlocks.push(b);
+    }
+    const theirHeaders = [...theirBlocks].reverse().map(b => b.header)
+      .concat(ordering.getOrderingBlock(1)!.header);
+    for (let h = 4; h > 1; h--) forkResolution.revertBlock(h);
+    expect(ordering.getCurrentHeight()).toBe(1);
+
+    // Mine our chain to 2 blocks
+    await mineNextBlock(bc);
+    expect(ordering.getCurrentHeight()).toBe(2);
+    const preHash2 = blockHash(ordering.getOrderingBlock(2)!.header)!;
+
+    // Arm the throw for the first reorg block.
+    throwArmed = true;
+
+    const net = stubNet(theirHeaders, theirBlocks);
+    await forkResolution.resolveFork(theirBlocks[2]!, net, 'peer-local');
+
+    // Chain at pre-reorg state
+    expect(ordering.getCurrentHeight()).toBe(2);
+    expect(blockHash(ordering.getOrderingBlock(2)!.header)).toBe(preHash2);
+
+    // No mark
+    const hashes = theirBlocks.map(b => blockHash(b.header)!);
+    expect(rh.anyRefusedHeader(hashes)).toBe(false);
+
+    // No penalty
+    expect(net.penalties).toEqual([]);
+
+    // The error log names the class
+    const errors = errorSpy.mock.calls.map(c => String(c[0]));
+    expect(errors.some(e => e.includes('class=local'))).toBe(true);
+  });
+});

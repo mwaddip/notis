@@ -257,6 +257,31 @@ export class ReorgBlockRejectedError extends Error {
 }
 
 /**
+ * The reorg abandoned its switch on a refusal that is not a consensus verdict
+ * (NODE_INTERFACE → Fork choice decides on verified headers, step 10).
+ *
+ * Two classes reach here: `'acceptance'` (the future bound, re-run against
+ * this node's clock at apply — MINING_INTERFACE → Header timestamp rules)
+ * and `'local'` (the funnel's catch of an unexpected throw). Neither is
+ * attributable to the peer, so the switch is abandoned with no mark, no
+ * penalty and no memo.
+ */
+export class ReorgAbortedError extends Error {
+  constructor(
+    readonly height: number,
+    readonly hash: string,
+    readonly class_: 'acceptance' | 'local',
+    readonly detail?: string,
+  ) {
+    super(
+      `reorg aborted at height ${height} (${hash}): class=${class_}` +
+      (detail ? `: ${detail}` : ''),
+    );
+    this.name = 'ReorgAbortedError';
+  }
+}
+
+/**
  * The boundary. Diagnostic first, death second; everything else re-thrown
  * unchanged, so no other error changes shape by passing through here.
  *
