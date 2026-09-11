@@ -111,7 +111,6 @@ export interface Config {
   // (ARCHITECTURE → Protocol Versioning).
   protocolVersionSchedule: readonly ProtocolEra[];
   // AVL state root
-  verifyStateRoot: boolean;
   maxProofHistory: number;
   avlKeyLength: number;
   // Net settings
@@ -171,12 +170,7 @@ export function loadConfig(): Readonly<Config> {
     storageRentPeriodBlocks: profile.storageRentPeriodBlocks,
     maxReorgDepth: profile.maxReorgDepth,
     protocolVersionSchedule: profile.protocolVersionSchedule,
-    // AVL state root. On by default since Spec B P3: producer and verifier now
-    // agree by construction — the header carries the POST-block digest (H-6),
-    // both feeds are canonically ordered (M-12), and the mutation set is
-    // journal-derived (P1) — so a mismatch is genuine state divergence and
-    // must reject the block. `VERIFY_STATE_ROOT=false` disables it.
-    verifyStateRoot: process.env['VERIFY_STATE_ROOT'] !== 'false',
+    // AVL state root (NODE_INTERFACE → AVL+ State Root).
     maxProofHistory: parseInt(
       process.env['MAX_PROOF_HISTORY'] ?? '1440',
       10,

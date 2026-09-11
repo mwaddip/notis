@@ -442,19 +442,18 @@ function applyBlockBody(block: OrderingBlock): boolean {
       feed.usernamePuts, feed.holderPuts, feed.removedRecordKeys,
     );
 
-    // Verify against block header (gated). The prover is restored by the
-    // funnel's single rollback point, not here.
-    if (config.verifyStateRoot) {
-      const expectedHex = Buffer.from(computedDigest).toString('hex');
-      if (block.header.stateRoot !== expectedHex) {
-        console.warn(
-          `stateRoot mismatch at height ${block.header.height}: ` +
-          `computed=${expectedHex.slice(0, 16)}... ` +
-          `header=${block.header.stateRoot.slice(0, 16)}...`,
-        );
-        abortBlockJournal();
-        return false;
-      }
+    // Verify against block header — unconditional on every node holding a
+    // prover (NODE_INTERFACE → AVL+ State Root). The prover is restored by
+    // the funnel's single rollback point, not here.
+    const expectedHex = Buffer.from(computedDigest).toString('hex');
+    if (block.header.stateRoot !== expectedHex) {
+      console.warn(
+        `stateRoot mismatch at height ${block.header.height}: ` +
+        `computed=${expectedHex.slice(0, 16)}... ` +
+        `header=${block.header.stateRoot.slice(0, 16)}...`,
+      );
+      abortBlockJournal();
+      return false;
     }
 
     // Checkpoint prover state at this height
@@ -1035,8 +1034,8 @@ function applyMutationPhase(
       }
 
       // Every input resolves — full re-validation. A tx that lists the same
-      // input twice is malformed; validateTx catches it as a liveness failure
-      // after the first consume.
+      // input twice is refused by validateTx step 1 (duplicate input ids),
+      // before any liveness read.
       const revalidated = validateTx(utxoDeps, item.tx, height);
       if (!revalidated.valid) {
         console.warn(

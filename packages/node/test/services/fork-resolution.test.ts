@@ -39,7 +39,7 @@ import {
   signHeader,
   signTransaction,
   solveHeaderPow, seedPostTx, fillerTx, activateProverOverStore, insertPoisonedBlock,
-  buildMinedHeaderChain } from '../helpers.js';
+  buildMinedHeaderChain, changeBoxOf } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Test config
@@ -1143,6 +1143,68 @@ describe('reorg', () => {
     // Mempool should have re-inserted transactions
     const pendingAfter = mempool.getPendingEntries(100);
     expect(pendingAfter.length).toBeGreaterThan(0);
+  });
+
+  it('reorg re-inserts lowest height first — getPendingEntries holds the parent before the child', async () => {
+    // NODE_INTERFACE → Block Journal. A parent tx at h=1 and its child at h=2,
+    // reorg both away, getPendingEntries returns the parent first (lower rowid).
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+    const posts = await importPosts();
+    const utxo = await importUtxo();
+    const mempool = await importMempoolFresh();
+    const bc = await importBlockCreator();
+    const { computeTxId, decodeTx } = await import('@dagsocial/types');
+
+    const liker = makeTestIdentity();
+    const author = makeTestIdentity();
+    const startBox = makeKarmaBox(100n, liker.userId, 0);
+    utxo.insertBox(startBox);
+
+    // Two posts, seeded so the block confirms them at §8b.
+    const { commit: cA, tx: postATx, postId: postAId, content: contentA } = await seedPostTx(author, 'reorg order a');
+    const { commit: cB, tx: postBTx, postId: postBId, content: contentB } = await seedPostTx(author, 'reorg order b');
+    posts.insertPost(postAId, cA, contentA);
+    posts.insertPost(postBId, cB, contentB);
+
+    // Block 1: txA (like from startBox).
+    const txA = makeLikeTx(liker, startBox, postAId, author.userId);
+    const txAId = computeTxId(txA);
+    mempool.insertUtxoTx(postATx, 1000);
+    mempool.insertUtxoTx(txA, 1000);
+    bc.startBlockCreator(testConfig);
+    await mineNextBlock(bc);
+
+    const ordering = await importOrdering();
+    expect(ordering.getCurrentHeight()).toBe(1);
+
+    // Block 2: txB (like from txA's change box — depends on txA).
+    mempool.insertUtxoTx(postBTx, 1000);
+    const txB = makeLikeTx(liker, changeBoxOf(txA), postBId, author.userId);
+    const txBId = computeTxId(txB);
+    mempool.insertUtxoTx(txB, 1000);
+    await mineNextBlock(bc);
+    expect(ordering.getCurrentHeight()).toBe(2);
+
+    // Reorg both away.
+    bc.stopBlockCreator();
+    const forkResolution = await importForkResolution();
+    forkResolution.reorg(0, []);
+    expect(ordering.getCurrentHeight()).toBe(0);
+
+    // The pool holds both in ascending height order: txA (from h=1) before
+    // txB (from h=2), because the reorg re-inserts lowest height first.
+    const pending = mempool.getPendingEntries(100);
+    const pooledIds = pending
+      .filter(e => e.utxoTxBytes !== null)
+      .map(e => computeTxId(decodeTx(e.utxoTxBytes!)));
+    const aIdx = pooledIds.indexOf(txAId);
+    const bIdx = pooledIds.indexOf(txBId);
+    expect(aIdx).toBeGreaterThanOrEqual(0);
+    expect(bIdx).toBeGreaterThanOrEqual(0);
+    expect(aIdx).toBeLessThan(bIdx);
   });
 
   it('a re-insert whose input a pending entry spends is dropped, not thrown', async () => {

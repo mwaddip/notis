@@ -673,8 +673,8 @@ export function createOrderingBlock(): OrderingBlock | null {
     // digest: apply compares against the post-mutation digest, so a pre-block
     // root can never verify. PoW covers the header, so this must be known before
     // mining. A node with no prover falls back to EMPTY_STATE_ROOT — test-only,
-    // since production initializes one at startup, and a peer running with
-    // VERIFY_STATE_ROOT on rejects such a block, which is correct.
+    // since production initializes one at startup, and a peer holding a prover
+    // rejects such a block, which is correct.
     const speculation = computePostBlockStateRoot(candidate, newHeight);
 
     // 19c. A body the mutation phase rejected is evicted and the build repeats
