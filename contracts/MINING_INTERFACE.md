@@ -459,9 +459,9 @@ not parallel arrays").
    grows with what was selected, so it is **rebuilt on each trim iteration**, never measured
    once (trimming shrinks it monotonically)
 2. `income = computeBlockReward(height) + fees`, `fees = Σ FeeBox.value` over the body
-3. Split per the slice table below. **Only the miner's slice becomes settlement credit
-   outputs**; the treasury's accrues to the `TreasuryBox` (TYPES_INTERFACE → TreasuryBox)
-4. The miner's slice rides as **credit outputs of the settlement transaction** — the body
+3. Split per the slice table below. **Only the miner's slice becomes a settlement credit
+   output**; the treasury's accrues to the `TreasuryBox` (TYPES_INTERFACE → TreasuryBox)
+4. The miner's slice rides as **a single credit output of the settlement transaction** — the body
    has no `coinbaseOutputs` field, and the credits are **spent from the `EmissionBox`** (and
    the consumed fee boxes) by the same transaction that emits them: source and destination
    named in one operation, nothing minted
@@ -516,7 +516,7 @@ derived from the same `splitCoinbase` result and neither is the producer's choic
 
 ### On block receipt (relay node):
 1. Verify PoW
-2. Verify the settlement's credit outputs sum to the **miner's slice** the slice table yields for this height, fee sum and actor count — `income` less the treasury share and the unearned bonus; the first accrues to the `TreasuryBox` and the second is never minted, so neither is a credit output
+2. Verify the coinbase is **exactly one credit output when the miner's slice is positive, and none when it is zero**, its `value` equal to the **miner's slice** the slice table yields for this height, fee sum and actor count — `income` less the treasury share and the unearned bonus; the first accrues to the `TreasuryBox` and the second is never minted, so neither is a credit output — and its `createdAtBlock` equal to the block `height`. More than one coinbase output, or a `createdAtBlock` other than `height`, rejects the block: the count and the stamp are constrained, not producer-chosen
 3. Verify the two box transitions, both **exactly**: the emission box's successor holds `value − min(computeBlockReward(height), value) + unearned` and the treasury box's holds `value + treasury`. ⛔ **`min` is the release cap and `unearned` is the return.** The release is what the schedule owes bounded by what the box holds, and the forfeited bonus is added straight back — which is why this successor, alone among the two, can exceed its predecessor. This is where the split is enforced — emission and treasury successors are inputs and outputs of the same transaction, so a block paying the whole income to its miner is refused by **conservation itself**
 4. Verify no output carries `value === 0` — otherwise `[]` and `[{value: 0}]` are two valid encodings of one block, with different `utxoTxRoot` and different block hashes. **Not made redundant by conservation**, which a zero-value output satisfies
 5. Settlement credit outputs with `lockedUntilBlock > currentHeight` are stored but not spendable — `SPEND_TIMING`'s `credit` entry refuses a locked input at `validateTx` step 3
