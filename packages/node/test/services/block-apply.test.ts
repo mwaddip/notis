@@ -765,13 +765,10 @@ describe('block-apply journal recording', () => {
       expect(utxo.getCreditBoxes(sender.userId)[0]!.value).toBe(85_000n);
     });
 
-    // The order pin. B's body position is 0 though its input is A's output —
-    // the deferral loop applies A first, but `predictSettlementBody` and §11a
-    // both collect the settlement in COMMITTED order, one of the three orders
-    // NODE_INTERFACE → "Three ordering sources are permitted and no fourth is"
-    // permits. This pins that the settlement's fee box ids follow body order,
-    // not apply order.
-    it('settles fee box ids in committed order, not dependency order, when a consumer precedes its producer', async () => {
+    // The order pin. The body lists A then B (dependency order), and the
+    // settlement's fee-box inputs follow that order — apply order IS
+    // committed order (NODE_INTERFACE → Block finalization).
+    it('settles fee box ids in committed order when a chain applies in one pass', async () => {
       const db = await importDb();
       db.initDb(':memory:');
       db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
@@ -795,8 +792,8 @@ describe('block-apply journal recording', () => {
       ) as CreditBox;
       const txB = makeCreditTx(sender, [aOutput], 5_000n);
 
-      // The body lists the consumer first: B ahead of the A it spends.
-      const block = await makeApplicableBlock({ miner, utxoTxs: [txB, txA] });
+      // Body in dependency order: A before B.
+      const block = await makeApplicableBlock({ miner, utxoTxs: [txA, txB] });
 
       expect(blockApply.applyOrderingBlock(block)).toBe(true);
       expect(utxo.getCreditBoxes(miner.userId)[0]!.value).toBe(await minerSliceAt1(15_000n, 0));
@@ -805,14 +802,14 @@ describe('block-apply journal recording', () => {
         const txId = computeTxId(tx);
         return tx.outputs.map((out, i) => materializeOutput(out as never, txId, i));
       };
-      const bFeeId = materialize(txB).find((b) => b.boxType === 'fee')!.id!;
       const aFeeId = materialize(txA).find((b) => b.boxType === 'fee')!.id!;
+      const bFeeId = materialize(txB).find((b) => b.boxType === 'fee')!.id!;
 
       const settlementTxs = block.utxoTxTree.utxoTxs;
       const settlementTx = decodeTx(settlementTxs[settlementTxs.length - 1]!);
       expect(
-        settlementTx.inputs.filter((id) => id === bFeeId || id === aFeeId),
-      ).toEqual([bFeeId, aFeeId]);
+        settlementTx.inputs.filter((id) => id === aFeeId || id === bFeeId),
+      ).toEqual([aFeeId, bFeeId]);
     });
 
     // The attribution guard. A karma-side deficit is not a fee, and an unvouch
@@ -1319,56 +1316,78 @@ describe('block-apply embedded tx re-validation', () => {
     );
   });
 
-  it('still defers and retries a tx that consumes a box created in the same block', async () => {
+  it('rejects a block whose body lists a consumer ahead of its producer', async () => {
+    // NODE_INTERFACE → Block finalization → "The body is in dependency order,
+    // and that is a consensus rule". The same fixture as the positive test
+    // below, with the body listing txB (which spends txA's output) first.
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
 
     const utxo = await importUtxo();
     const posts = await importPosts();
-    const mempool = await importMempoolFresh();
-    const { computeTxId } = await import('@dagsocial/types');
 
     const liker = makeTestIdentity();
     const startBox = makeKarmaBox(100n, liker.userId, 0);
     utxo.insertBox(startBox);
 
-    // N2b: likes need confirmed live targets — two real posts, confirmed by
-    // the same block that carries the chained likes.
     const author = makeTestIdentity();
-    const { commit: commitA, tx: postATx, postId: postAId, content: contentA } = await seedPostTx(author, 'defer-retry target a');
-    const { commit: commitB, tx: postBTx, postId: postBId, content: contentB } = await seedPostTx(author, 'defer-retry target b');
+    const { commit: commitA, tx: postATx, postId: postAId, content: contentA } = await seedPostTx(author, 'forward-ref target a');
+    const { commit: commitB, tx: postBTx, postId: postBId, content: contentB } = await seedPostTx(author, 'forward-ref target b');
     posts.insertPost(postAId, commitA, contentA);
     posts.insertPost(postBId, commitB, contentB);
-    mempool.insertUtxoTx(postATx, 1000);
-    mempool.insertUtxoTx(postBTx, 1000);
 
     const txA = makeLikeTx(liker, startBox, postAId, author.userId);
     const txB = makeLikeTx(liker, changeBoxOf(txA), postBId, author.userId);
 
-    // B goes in first, so the block lists it first and its input does not
-    // exist on the first pass — the "inputs not present yet" case, which must
-    // still defer and retry rather than take the block down.
-    mempool.insertUtxoTx(txB, 1000);
-    mempool.insertUtxoTx(txA, 1000);
+    // Body: [postA, postB, txB, txA] — txB's input is a forward reference.
+    const block = await makeApplicableBlock({
+      utxoTxs: [postATx, postBTx, txB, txA],
+    });
 
-    const block = await mineBlockOverMempool();
-    // Block order is pool order: the two post transactions, then txB ahead of
-    // the txA it depends on — the inversion the multi-pass loop has to survive.
-    // The settlement is the body's LAST entry and is not part of the fill.
-    expect(block!.utxoTxTree.utxoTxIds.slice(0, -1)).toEqual([
-      computeTxId(postATx),
-      computeTxId(postBTx),
-      computeTxId(txB),
-      computeTxId(txA),
-    ]);
+    const blockApply = await importBlockApply();
+    expect(blockApply.applyOrderingBlock(block)).toBe(false);
+
+    // No journal: the block was rejected before any tx was applied.
+    const journal = await importJournalStore();
+    expect(journal.getBlockJournal(1)).toBeNull();
+    // The start box is unspent.
+    expect(utxo.getBox(startBox.id!)).not.toBeNull();
+  });
+
+  it('applies a dependency chain in committed order', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+    const utxo = await importUtxo();
+    const posts = await importPosts();
+
+    const liker = makeTestIdentity();
+    const startBox = makeKarmaBox(100n, liker.userId, 0);
+    utxo.insertBox(startBox);
+
+    const author = makeTestIdentity();
+    const { commit: commitA, tx: postATx, postId: postAId, content: contentA } = await seedPostTx(author, 'chain target a');
+    const { commit: commitB, tx: postBTx, postId: postBId, content: contentB } = await seedPostTx(author, 'chain target b');
+    posts.insertPost(postAId, commitA, contentA);
+    posts.insertPost(postBId, commitB, contentB);
+
+    const txA = makeLikeTx(liker, startBox, postAId, author.userId);
+    const txB = makeLikeTx(liker, changeBoxOf(txA), postBId, author.userId);
+
+    // Body: [postA, postB, txA, txB] — dependency order.
+    const block = await makeApplicableBlock({
+      utxoTxs: [postATx, postBTx, txA, txB],
+    });
+
+    const blockApply = await importBlockApply();
+    expect(blockApply.applyOrderingBlock(block)).toBe(true);
 
     const journal = await importJournalStore();
     const saved = journal.getBlockJournal(1);
     expect(saved).not.toBeNull();
-    // Applied in dependency order, not block order: the two post transactions
-    // and txA go on the first pass, txB on the second — where block order put
-    // txB ahead of txA.
+    // `appliedUtxoTxs` in body order.
     expect(saved!.appliedUtxoTxs.map((t) => t.txId)).toEqual([
       computeTxId(postATx),
       computeTxId(postBTx),
@@ -1385,12 +1404,9 @@ describe('block-apply embedded tx re-validation', () => {
   });
 
   // -------------------------------------------------------------------------
-  // A block is invalid if any embedded transaction does not apply
-  //
-  // The two arms beside it in the same loop already reject the block — a failed
-  // re-validation and a like on an unconfirmed post. The liveness arm was the
-  // one that warned and carried on, which left the header committing to a
-  // `utxoTxIds` its own `stateRoot` did not reflect.
+  // NODE_INTERFACE → Block finalization → "The body is in dependency order,
+  // and that is a consensus rule". An unresolved input — a forward reference,
+  // a box that never existed — rejects the block on the single pass.
   // -------------------------------------------------------------------------
 
   /**
@@ -1459,10 +1475,7 @@ describe('block-apply embedded tx re-validation', () => {
     expect(journal.getBlockJournal(1)).toBeNull();
   });
 
-  it('applies a dependency chain deeper than twenty in one block', async () => {
-    // The regression for removing the pass cap. At twenty the tail was dropped
-    // silently and the block applied anyway; a node with a different cap would
-    // have accepted a different set from the same bytes.
+  it('applies a dependency chain deeper than twenty in one block in committed order', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
@@ -1481,9 +1494,8 @@ describe('block-apply embedded tx re-validation', () => {
       current = changeBoxOf(tx);
     }
 
-    // Reversed, so no transaction's input exists until the one after it in the
-    // block has applied: the deepest ordering the retry loop can be handed.
-    const block = await makeApplicableBlock({ utxoTxs: [...chain].reverse() });
+    // In dependency order: each tx's input is the previous tx's output.
+    const block = await makeApplicableBlock({ utxoTxs: chain });
 
     const blockApply = await importBlockApply();
     expect(blockApply.applyOrderingBlock(block)).toBe(true);
@@ -1497,6 +1509,33 @@ describe('block-apply embedded tx re-validation', () => {
     const tip = utxo.getBox(changeBoxOf(chain[CHAIN - 1]!).id!) as KarmaBox | null;
     expect(tip).not.toBeNull();
     expect(tip!.value).toBe(100n);
+  });
+
+  it('rejects a deep dependency chain listed in reverse order', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+    const utxo = await importUtxo();
+    const owner = makeTestIdentity();
+    const root = makeKarmaBox(100n, owner.userId, 0);
+    utxo.insertBox(root);
+
+    const CHAIN = 25;
+    const chain: UtxoTransaction[] = [];
+    let current: KarmaBox = root;
+    for (let i = 0; i < CHAIN; i++) {
+      const tx = makeSelfTransferTx(owner, current);
+      chain.push(tx);
+      current = changeBoxOf(tx);
+    }
+
+    // Reversed: every tx's input is a forward reference.
+    const block = await makeApplicableBlock({ utxoTxs: [...chain].reverse() });
+
+    const blockApply = await importBlockApply();
+    expect(blockApply.applyOrderingBlock(block)).toBe(false);
+    expect(utxo.getBox(root.id!)).not.toBeNull();
   });
 
   // -------------------------------------------------------------------------

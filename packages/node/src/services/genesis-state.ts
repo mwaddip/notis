@@ -335,7 +335,6 @@ export function seedGenesisState(): void {
         { key: networkRecordKey(), network: nr },
       ];
 
-      handle.storage.deleteVersionAtHeight(GENESIS_HEIGHT);
       bootstrapAvlProver(handle, boxes, GENESIS_HEIGHT, records, networkPuts);
 
       // The postcondition of the two lines above: the genesis this node just

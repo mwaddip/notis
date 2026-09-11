@@ -4,6 +4,7 @@ import {
   MissingStoredBlockError,
   MissingJournalError,
   MissingStateVersionError,
+  DuplicateStateVersionError,
   CorruptChainStateError,
   failStopIfCorruptChain,
   guardStoreRead,
@@ -102,7 +103,7 @@ describe('failStopIfCorruptChain', () => {
     expect(errors[0]).toContain('not contiguous');
   });
 
-  it('a third kind must not need a boundary edit to be fatal — journal and version', () => {
+  it('a third kind must not need a boundary edit to be fatal — journal, version and duplicate', () => {
     const journal = new MissingJournalError('revertBlock', 5);
     expect(journal.site).toBe('revertBlock');
     expect(journal.height).toBe(5);
@@ -115,8 +116,14 @@ describe('failStopIfCorruptChain', () => {
     expect(version.name).toBe('MissingStateVersionError');
     expect(version).toBeInstanceOf(CorruptChainStateError);
 
-    // All six members are fatal through the same boundary, keyed on the base
-    // class. No boundary edit required for these two.
+    const duplicate = new DuplicateStateVersionError('update', 3);
+    expect(duplicate.site).toBe('update');
+    expect(duplicate.height).toBe(3);
+    expect(duplicate.name).toBe('DuplicateStateVersionError');
+    expect(duplicate).toBeInstanceOf(CorruptChainStateError);
+
+    // All seven members are fatal through the same boundary, keyed on the base
+    // class. No boundary edit required for these three.
     const exited: number[] = [];
     vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
       exited.push(code ?? 0);
@@ -126,7 +133,8 @@ describe('failStopIfCorruptChain', () => {
 
     expect(() => failStopIfCorruptChain(journal)).toThrow('process.exit');
     expect(() => failStopIfCorruptChain(version)).toThrow('process.exit');
-    expect(exited).toEqual([1, 1]);
+    expect(() => failStopIfCorruptChain(duplicate)).toThrow('process.exit');
+    expect(exited).toEqual([1, 1, 1]);
   });
 
   it('guardStoreRead wraps a family error into a fail-stop', () => {

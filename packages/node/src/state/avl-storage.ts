@@ -2,6 +2,7 @@ import type { VersionedAVLStorage, BatchAVLProver, AvlTreeConfig } from '@ergots
 import { serializeNode, deserializeNode, label, newInternal } from '@ergots/avltree';
 import type { AvlNode } from '@ergots/avltree';
 import type Database from 'better-sqlite3';
+import { DuplicateStateVersionError } from '../services/corrupt-state.js';
 
 /**
  * SQLite-backed VersionedAVLStorage.
@@ -11,7 +12,10 @@ import type Database from 'better-sqlite3';
  * its children's labels, so an unchanged subtree carries the same label in
  * every version and `avl_tree_nodes` holds it once per lifetime, keyed
  * `(label, first_seen_height)`; `avl_tree_versions` is one row per applied
- * block, the version being the digest (root label ‖ tree height). An update at
+ * block, the version being the digest (root label ‖ tree height) and `height`
+ * UNIQUE by index. `update` inserts one row per call and refuses a second at
+ * the same height as `DuplicateStateVersionError`; `version()` and
+ * `versionAtOrBeforeHeight` read a total order by that constraint. An update at
  * height `h` orphans the previous tree's nodes the new tree no longer holds and
  * writes the new tree's nodes that have no live row; a version resolves from
  * its root label through the rows alive at its height.
@@ -47,8 +51,15 @@ export class SqliteAvlStorage implements VersionedAVLStorage {
     const insertVersion = this.db.prepare(
       'INSERT INTO avl_tree_versions (version, height) VALUES (?, ?)',
     );
+    const hasVersionAtHeight = this.db.prepare(
+      'SELECT 1 FROM avl_tree_versions WHERE height = ? LIMIT 1',
+    );
 
     this.db.transaction(() => {
+      // NODE_INTERFACE → AVL+ State Root: one row per height.
+      if (hasVersionAtHeight.get(height)) {
+        throw new DuplicateStateVersionError('update', height);
+      }
       // Orphan before writing. The removed set and the new tree are disjoint,
       // so the walk never consults a row the orphaning touches; the order is
       // stated so that every live row the walk reads is a row the new tree

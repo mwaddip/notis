@@ -673,8 +673,8 @@ export function createOrderingBlock(): OrderingBlock | null {
     // digest: apply compares against the post-mutation digest, so a pre-block
     // root can never verify. PoW covers the header, so this must be known before
     // mining. A node with no prover falls back to EMPTY_STATE_ROOT — test-only,
-    // since production initializes one at startup, and a peer running with
-    // VERIFY_STATE_ROOT on rejects such a block, which is correct.
+    // since production initializes one at startup, and a peer holding a prover
+    // rejects such a block, which is correct.
     const speculation = computePostBlockStateRoot(candidate, newHeight);
 
     // 19c. A body the mutation phase rejected is evicted and the build repeats
@@ -793,13 +793,9 @@ function finalizeBlock(block: OrderingBlock): void {
  * settlement transaction's determinism obligation).
  */
 /**
- * The decay pass's seams, all through the store.
- *
- * ⛔ **`getKarmaOwners` carries an `ORDER BY`, and that is a consensus
- * obligation.** Its result is walked into the settlement's input and output
- * lists, which the transaction id hashes in order, so an unordered
- * `SELECT DISTINCT` is a fork between two nodes holding identical state
- * (NODE_INTERFACE → Determinism is this mechanism's whole risk).
+ * The decay pass's three seams: `getKarmaBoxes` (the ordered read, `ORDER BY
+ * value DESC, id`), `getIdentityRecord` and `putIdentityRecord`. All through
+ * the store (NODE_INTERFACE → Determinism is this mechanism's whole risk).
  */
 export const decayDeps: DecayDeps = {
   getKarmaBoxes,

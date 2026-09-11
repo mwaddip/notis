@@ -19,13 +19,11 @@ import {
  * insert-then-remove pairs but does **not** dedupe repeated removes — so a
  * `consumed` list carrying one id twice would refuse on the second `Remove`.
  *
- * What prevents it is the apply loop's liveness pre-check, which runs against
- * state the loop is itself evolving: once the first transaction's `applyTx`
- * marks the box spent, the second fails `getBox(id) !== null`, is deferred to
- * `remaining`, and is never applied. No pass can make progress on it, so the
- * block is rejected rather than applied with a transaction missing.
- * `consumeBox` is the backstop under that: it refuses a consume of an id no
- * live row holds, so the second remove could not be journalled at all.
+ * What prevents it: the single-pass input check resolves against the confirmed
+ * set as the loop evolves it. Once the first transaction's `applyTx` marks the
+ * box spent, the second's `getBox` returns null and the block is rejected at
+ * once. `consumeBox` is the backstop under that: it refuses a consume of an id
+ * no live row holds, so the second remove could not be journalled at all.
  *
  * The assertion is that the boundary is not reached — a root comparison cannot
  * see this, because the block never gets far enough to produce a root.

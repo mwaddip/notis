@@ -189,6 +189,10 @@ export function bootstrapAvlProver(
       );
     }
   }
+  // The constructor writes the empty tree's version at height 0 on a fresh
+  // store; the bootstrap replaces the version at its height — at genesis,
+  // that row (NODE_INTERFACE → AVL+ State Root).
+  handle.storage.deleteVersionAtHeight(currentHeight);
   // Checkpoint at current tip
   handle.prover.generateProofAndUpdateStorage([
     [HEIGHT_SENTINEL, encodeHeight(currentHeight)],

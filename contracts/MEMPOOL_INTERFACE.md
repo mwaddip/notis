@@ -144,6 +144,23 @@ form and `hasPendingClaimBy` one name per identity (`NODE_INTERFACE` → Usernam
 burn needs no gate of its own**: it spends the name box, and a second spend of that box is the
 pending-spend conflict every transaction meets.
 
+### getBoxWithPending
+
+```
+getBoxWithPending(boxId: string): AnyBox | null
+```
+
+The pending view of one box: the confirmed UTXO set **∪** pending outputs **−** pending inputs, the
+subtraction first and over both halves — a box a pooled entry already spends is not spendable again,
+confirmed or pending. **Submission's `getBox`, and nothing else's.** The HTTP routes validate against
+it, so a transaction spending the change of one still in the pool is admitted — and a child therefore
+enters the pool only while its predecessor is confirmed or already pooled, taking the later rowid,
+which is the order the fill preserves and the ordering rule at apply requires (`NODE_INTERFACE →
+Block finalization`). The relay path validates against the confirmed set alone (`getBox`), which is
+stricter and orders the same way. ⛔ **Never block application's.** Apply resolves inputs against the
+confirmed set (`NODE_INTERFACE → Block finalization`); a block's inputs decided by one node's unshared
+pool would be a fork.
+
 ### getPendingEntries
 
 ```

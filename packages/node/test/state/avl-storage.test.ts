@@ -3,6 +3,7 @@ import Database from 'better-sqlite3';
 import { BatchAVLProver, PersistentBatchAVLProver, label } from '@ergots/avltree';
 import type { AvlNode } from '@ergots/avltree';
 import { SqliteAvlStorage } from '../../src/state/avl-storage.js';
+import { DuplicateStateVersionError } from '../../src/services/corrupt-state.js';
 import { openAvlDb } from '../helpers.js';
 
 const HEIGHT_SENTINEL = new Uint8Array(32); // all zeros
@@ -335,6 +336,39 @@ describe('SqliteAvlStorage', () => {
 
     db.prepare('DELETE FROM avl_tree_nodes WHERE label = ?').run(rootLabelOf(v1));
     expect(() => storage.rollback(v1)).toThrow(/Missing node/);
+  });
+
+  it('a second update at the same height throws DuplicateStateVersionError and leaves the table unchanged', () => {
+    const storage = new SqliteAvlStorage(db, AVL_CONFIG);
+    const prover = new BatchAVLProver(32, null);
+    const persisted = new PersistentBatchAVLProver(prover, storage, [[HEIGHT_SENTINEL, encodeHeight(0)]]);
+    insert(persisted, 1);
+    checkpoint(persisted, 1);
+
+    const rowsBefore = (db.prepare('SELECT COUNT(*) AS n FROM avl_tree_versions').get() as { n: number }).n;
+
+    // A second update at height 1 is refused.
+    insert(persisted, 2);
+    expect(() => checkpoint(persisted, 1)).toThrow(DuplicateStateVersionError);
+
+    const rowsAfter = (db.prepare('SELECT COUNT(*) AS n FROM avl_tree_versions').get() as { n: number }).n;
+    expect(rowsAfter).toBe(rowsBefore);
+  });
+
+  it('deleteVersionAtHeight then update at the same height succeeds', () => {
+    const storage = new SqliteAvlStorage(db, AVL_CONFIG);
+    const prover = new BatchAVLProver(32, null);
+    const persisted = new PersistentBatchAVLProver(prover, storage, [[HEIGHT_SENTINEL, encodeHeight(0)]]);
+    insert(persisted, 1);
+    checkpoint(persisted, 1);
+    insert(persisted, 2);
+    checkpoint(persisted, 2);
+
+    storage.deleteVersionAtHeight(2);
+    // Now height 2 is free.
+    insert(persisted, 3);
+    expect(() => checkpoint(persisted, 2)).not.toThrow();
+    expect(storage.version()).not.toBeNull();
   });
 });
 

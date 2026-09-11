@@ -13,10 +13,10 @@ import {
 } from '../helpers.js';
 
 // ---------------------------------------------------------------------------
-// Spec B P3 acceptance, verifier side: with VERIFY_STATE_ROOT on (the default
-// since P3), a block whose header commits to state it does not produce is
-// rejected, and rejecting it costs nothing — the DB is untouched and the AVL
-// prover is back at its pre-block digest.
+// The stateRoot check is unconditional on every node holding a prover
+// (NODE_INTERFACE → AVL+ State Root). A block whose header commits to state
+// it does not produce is rejected, and rejecting it costs nothing — the DB
+// is untouched and the AVL prover is back at its pre-block digest.
 //
 // The producer side (the header carries the post-block digest) is covered
 // end-to-end by every suite that builds a block through the creator or through
@@ -88,11 +88,6 @@ describe('stateRoot verification (P3 acceptance)', () => {
   });
   afterEach(() => {
     vi.resetModules();
-  });
-
-  it('is on by default', async () => {
-    const { config } = await import('../../src/config.js');
-    expect(config.verifyStateRoot).toBe(true);
   });
 
   it('rejects a block whose stateRoot is wrong, leaving the DB and prover untouched', async () => {

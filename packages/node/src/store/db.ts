@@ -211,6 +211,11 @@ const AVL_NODES_INDEXES = `
   CREATE INDEX IF NOT EXISTS idx_avl_tree_nodes_first_seen ON avl_tree_nodes(first_seen_height);
 `;
 
+// NODE_INTERFACE → AVL+ State Root: `height` UNIQUE by index.
+const AVL_VERSIONS_INDEX = `
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_avl_tree_versions_height ON avl_tree_versions(height);
+`;
+
 // The schema the fresh-database branch below and the test fixtures both execute
 // (NODE_INTERFACE → AVL+ State Root → "AVL storage shares nodes across versions;
 // a row is a node's lifetime") — one exported text, so the two cannot drift apart.
@@ -222,6 +227,7 @@ export const AVL_SCHEMA = `
   );
   ${AVL_NODES_TABLE('avl_tree_nodes')};
   ${AVL_NODES_INDEXES}
+  ${AVL_VERSIONS_INDEX}
 `;
 
 function migrateAvlTree(database: Database.Database): void {
@@ -238,6 +244,7 @@ function migrateAvlTree(database: Database.Database): void {
   const cols = database.prepare("PRAGMA table_info('avl_tree_nodes')").all() as Array<{ name: string }>;
   if (cols.some(c => c.name === 'version')) convertAvlNodesToSharedLayout(database);
   database.exec(AVL_NODES_INDEXES);
+  database.exec(AVL_VERSIONS_INDEX);
 }
 
 /**

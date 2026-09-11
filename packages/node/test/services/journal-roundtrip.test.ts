@@ -269,7 +269,7 @@ async function assertRoundTrip(
     stateRoot: Buffer.from(postDigest).toString('hex'),
   });
   // …and it is what the producer committed to before mining, so a verifier
-  // running VERIFY_STATE_ROOT accepts exactly the blocks a producer builds.
+  // holding a prover accepts exactly the blocks a producer builds.
   expect(classBlock.header.stateRoot).toBe(Buffer.from(postDigest).toString('hex'));
 
   // 2c. …and it left no trace: its transaction rolled back, the prover was

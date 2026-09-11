@@ -712,9 +712,9 @@ to verify box existence or absence without storing the full UTXO set.
 - **Module:** `packages/node/src/state/` (avl-storage, avl-prover, avl-endpoint)
 - **Proof endpoint:** `GET /api/v1/proof/:boxId?atHeight=N` — returns an
   inclusion or exclusion proof for a box at a given block height
-- **Config flags:** `VERIFY_STATE_ROOT` (`consensus-check` — validate stateRoot at
-  block apply, **default on**), `MAX_PROOF_HISTORY` (`local` — prune
-  old proof versions). **`AVL_KEY_LENGTH`** is no longer configuration at all — it is a
+- **Config flags:** `MAX_PROOF_HISTORY` (`local` — prune old proof versions). The
+  stateRoot check at block apply is unconditional — no variable disables it.
+  **`AVL_KEY_LENGTH`** is no longer configuration at all — it is a
   `@dagsocial/types` export (TYPES_INTERFACE → State format), imported by `config.ts` and
   plumbed through `Config.avlKeyLength`. It determines the **shape** of every `stateRoot`,
   so two nodes differing on it compute different digests for identical state; P2-A removed

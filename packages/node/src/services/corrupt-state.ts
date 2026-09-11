@@ -237,6 +237,21 @@ export class MissingStateVersionError extends CorruptChainStateError {
 }
 
 /**
+ * A version row already stands at the height being checkpointed — the store's
+ * version history has run ahead of its chain (NODE_INTERFACE → AVL+ State Root).
+ */
+export class DuplicateStateVersionError extends CorruptChainStateError {
+  constructor(site: string, height: number) {
+    super(
+      site,
+      height,
+      `a version row already stands at height ${height} — ` +
+      `the store's version history has run ahead of its chain`,
+    );
+  }
+}
+
+/**
  * A block the apply funnel rejected during a reorg (NODE_INTERFACE → Fork
  * choice decides on verified headers, step 11). Distinct from
  * `CorruptChainStateError`: a rejected peer block is a peer's fault and does
