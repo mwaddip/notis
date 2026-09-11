@@ -339,7 +339,6 @@ environment is not merely discouraged, it has no effect.
 | `BOOTSTRAP_PEERS` | the profile's (testnet: `/dns4/notis.fun/tcp/9733`) | Comma-separated libp2p multiaddrs; when set, replaces the profile's list |
 | `LISTEN_ADDRS` | `/ip4/0.0.0.0/tcp/0` | libp2p listen addresses |
 | `WEB_SHELL_PATH` | — | Path of the web client's `index.html`; empty means `GET /shell/:id` answers 404 |
-| `VERIFY_STATE_ROOT` | `true` | Verify each block's committed `stateRoot` at apply. `false` removes the sole backstop against a body that differs from its header's |
 | `BLOCK_BODY_BUDGET_BYTES` | the protocol cap | Body bytes this node fills the blocks **it produces** to; clamped to the cap |
 | `MAX_MEMPOOL_ENTRIES` | `10000` | Mempool capacity; submissions beyond it are refused |
 | `MIN_FEE_RATE_PER_BYTE` | `0` | Relay fee floor per in-block byte — admission policy, not consensus |

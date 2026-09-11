@@ -1176,7 +1176,7 @@ tree collapse into clean rejections:
 > **It is not a promise that no condition may halt the node**, and a whole *class* of conditions
 > deliberately does. **The allowlist keys on `CorruptChainStateError`, the base class — not on any
 > one subclass** — which is the property `corrupt-state.test.ts` pins as *"a third kind must not need
-> a boundary edit to be fatal"*. Six subclasses, and every boundary is fatal for all of them with no
+> a boundary edit to be fatal"*. Seven subclasses, and every boundary is fatal for all of them with no
 > boundary edit.
 >
 > | Subclass | Raised when | Raising site |
@@ -1187,6 +1187,7 @@ tree collapse into clean rejections:
 > | `DivergedStateTreeError` | the AVL+ tree refuses an operation the UTXO store implies must succeed | `state/avl-prover.ts` |
 > | `MissingJournalError` | a block journal inside retention is absent. Every height `revertBlock` can be asked for lies inside what `purgeOldJournals` keeps: deletion is strictly below `tip − maxReorgDepth`, the fork walk's lowest non-genesis answer is `tip − maxReorgDepth + 1` and the revert starts one above it, and its genesis answer is reachable only while `tip ≤ maxReorgDepth` | `services/fork-resolution.ts` → `revertBlock` |
 > | `MissingStateVersionError` | no AVL version at or before a fork height the walk answers within. `MAX_PROOF_HISTORY < maxReorgDepth` is refused at load (Configuration), so a missing version is a row the store lost | `services/fork-resolution.ts` → `reorg` |
+> | `DuplicateStateVersionError` | a version row already stands at the height being checkpointed — the store's version history has run ahead of its chain. The write path keeps one row per height and `idx_avl_tree_versions_height` refuses a second (AVL+ State Root) | `state/avl-storage.ts` → `update` |
 >
 > The class is outside the totality property's scope by construction, and the argument is about
 > **provenance, not validation** — but it takes two shapes, and only the first is about bytes.
@@ -2600,8 +2601,8 @@ is not last, is refused without reading a single box.
 #### Construction ordering
 
 1. It depends on the block's **content**, not only on its inputs, so it is built last and validated
-   last. The apply loop's existing deferral handles input dependencies; this is a different kind and
-   needs its own rule.
+   last. The apply loop satisfies input dependencies by position — the body is in dependency order
+   (→ Block finalization); this is a different kind and needs its own rule.
 2. Only the producer can build it, since only they know the block's contents — the position the
    coinbase already occupies.
 3. ⚠ **The producer's byte budget must absorb a body-dependent tail.** The reservation that seeds the
@@ -2640,7 +2641,10 @@ unassigned config *is* a server-role node: it applies blocks and builds no templ
     collection, like dedup and the epoch-boundary check are gone — likes are ordinary
     mempool UTXO transactions, so they flow through step 7 like any other tx; dedup is
     the like-record's existence, enforced at apply; there is no epoch.)*
-7. UTXO entries → `utxoTxIds` (posts and likes included — no sidecar diversion)
+7. UTXO entries → `utxoTxIds` in pool order (posts and likes included — no sidecar diversion).
+    Pool order is dependency order for a chain — a child is admitted only while its predecessor is
+    confirmed or pooled (`MEMPOOL_INTERFACE → getBoxWithPending`) — and the byte-budget trim pops
+    from the end, so the body satisfies the ordering rule the applier enforces (→ Block finalization)
 8. *(Retired with sub-blocks — folded into step 7.)*
 12. Always produce a block, whatever its coinbase comes to. An empty block below
     the emission terminus carries that height's emission; above it
@@ -2683,30 +2687,39 @@ unassigned config *is* a server-role node: it applies blocks and builds no templ
    The decode pass runs first and carries its own rule —
    see "Embedded transactions: a mismatch rejects the block": a tx whose bytes
    cannot be proven to be the id declared beside them rejects the block before
-   this step sees a queue. Then, for each embedded UTXO tx, once its inputs are all
-   present, **fully re-validate with `validateTx`** (authorization, transitions,
-   conservation — not just liveness), then apply (`applyTx`). A block producer is
-   untrusted (permissionless PoW), so nothing is assumed verified. **If
-   a tx whose inputs are present fails validation, the entire block is rejected**
-   and nothing is applied — a valid block must not contain an invalid tx. This runs
-   on every apply path (local finalization, gossip receipt, reorg). Input *presence*
-   is handled by deferral: a tx whose inputs are not yet present is retried, because
-   an earlier tx in the same block may create them (intra-block dependency).
-   Idempotent: skips boxes already inserted or spent (survives gossip loopback).
+   this step sees a queue. Then **one pass over the body, in committed order**: for
+   each embedded UTXO tx, every input must resolve in the confirmed UTXO set as it
+   stands at that point — the pre-block set plus the outputs of this block's earlier
+   transactions, minus the inputs they consumed — then **fully re-validate with
+   `validateTx`** (authorization, transitions, conservation — not just liveness),
+   then apply (`applyTx`). A block producer is untrusted (permissionless PoW), so
+   nothing is assumed verified. **If a tx fails validation, the entire block is
+   rejected** and nothing is applied — a valid block must not contain an invalid tx.
+   This runs on every apply path (local finalization, gossip receipt, reorg).
 
-   **A block is invalid if any embedded transaction does not apply.** Deferral ends
-   when a pass applies nothing; anything still queued at that point can never apply,
-   and **the block is rejected** — the same rule as a failed re-validation, reaching
-   the case deferral leaves open. Partial application is not an outcome: a block
-   whose `utxoTxIds` names a transaction its own application dropped commits a
-   `stateRoot` that does not reflect its own transaction set.
+   **The body is in dependency order, and that is a consensus rule.** A transaction
+   that spends an output of another transaction in the same block follows it. An
+   input that resolves neither in the confirmed set nor to an earlier transaction of
+   the block — a forward reference, a box an earlier transaction already consumed, a
+   box that never existed — **rejects the block**, the same verdict a failed
+   re-validation reaches. The rule carries no number, so it is not a parameter two
+   nodes could set differently: every node walks the same body once, in the order the
+   block commits, from the same prior state, and reaches the same verdict. Partial
+   application is not an outcome: a block whose `utxoTxIds` names a transaction its
+   own application dropped commits a `stateRoot` that does not reflect its own
+   transaction set. Apply order is committed order — the settlement's fee-box inputs,
+   the journal's `appliedUtxoTxs` and every per-transaction collection list the body's
+   order, and there is no second order to reconcile.
 
-   ⚠ **The rule carries no pass bound, deliberately.** Termination comes from
-   "a pass applied nothing", so the pass count is bounded by the block's transaction
-   count and never needs stating. **A retry cap would be a consensus parameter** —
-   two nodes with different caps would disagree about a block carrying a dependency
-   chain longer than the smaller one, and the disagreement would be indistinguishable
-   from this rule working. A chain of any depth the block can hold must apply.
+   **A produced body satisfies it by construction.** Submission validates against the
+   pending view (`MEMPOOL_INTERFACE → getBoxWithPending`), so a child enters the pool
+   only while its predecessor is confirmed or already pooled and takes the later
+   rowid; the fill reads the pool in rowid order and the byte-budget trim pops from
+   the end (→ Block creation); reorg re-insertion returns reverted transactions
+   lowest height first, each block's in its applied order (→ Block Journal). No
+   produced body lists a consumer ahead of its producer. A body the mutation phase
+   refuses anyway — a child whose predecessor left the pool by expiry or eviction —
+   is evicted and the fill repeats (`MINING_INTERFACE → Template and submit`).
 5. Remove confirmed entries from mempool (`removeEntry` for each confirmed rowid).
    ⚠ **This runs even when the block was rejected**, and that is deliberate,
    not an oversight: whatever made the body invalid is still pooled, so
@@ -2759,9 +2772,8 @@ returns them as a discriminated union so no caller can conflate them):
 | **body rejected** | the mutation phase rejected this body | **produce nothing, and evict the included mempool entries** |
 
 A producer with no prover initialized writes `EMPTY_STATE_ROOT`. Production
-nodes always initialize one at startup, so this is a test-only path — but a
-node running with `VERIFY_STATE_ROOT` enabled will reject such a block, which
-is correct.
+nodes always initialize one at startup, so this is a test-only path — and a
+node holding a prover rejects such a block, which is correct.
 
 **Body rejected is fatal to production, and the eviction is not optional.**
 Mining over a body this node's own mutation phase refuses produces a block
@@ -3491,6 +3503,7 @@ block has confirmed. Idempotent insert (first block to confirm a postId wins);
 |----------|-----------|-------------|
 | `insertUtxoTx(tx, expiresAtHeight)` | `(UtxoTransaction, number) => number` | Queue UTXO tx, returns rowid |
 | `getPendingEntries(limit)` | `(number) => PoolEntry[]` | FIFO-ordered pending entries |
+| `getBoxWithPending(boxId)` | `(string) => AnyBox \| null` | The pending view — confirmed ∪ pending outputs − pending inputs; submission's `getBox`, never block application's (MEMPOOL_INTERFACE → getBoxWithPending; → Block finalization) |
 | `purgeExpired(currentHeight)` | `(number) => number` | Remove entries past expiry, returns count |
 | `hasPendingLike(targetPostId, likerId)` | `(string, string) => boolean` | SQL EXISTS over gate metadata — unbounded (M-8) |
 | `countPendingInvites(inviterId)` | `(string) => number` | SQL COUNT over gate metadata — unbounded (M-8) |
@@ -3723,14 +3736,17 @@ version rows** (`SqliteAvlStorage.deleteVersionAtHeight`). The version rows
 are per-block derived state exactly like the block and journal rows: left
 behind, `versionAtOrBeforeHeight` resolves rolled-back state (proof endpoint
 included), and re-applying a block at the height — a reorg back to a
-previously-reverted chain — re-inserts the same content-addressed version
-and trips its PRIMARY KEY, permanently rejecting the block.
+previously-reverted chain — finds a row already standing at its height, which
+`update` refuses as `DuplicateStateVersionError` (→ AVL+ State Root).
 Apply-then-revert MUST restore the exact pre-block UTXO set and AVL digest
 for every mutation class: the settlement transaction's every leg (coinbase
 credits, protocol-box successors, invite grants, like markers and carry,
 decay replacements, fee-box consumption), like-record inserts, withdrawals (rows restored
 exactly), user txs, **identity records** and the network record. Reorg
-re-insertion reads `appliedUtxoTxs` (txBytes) alone — **a withdrawal is one of those
+re-insertion reads `appliedUtxoTxs` (txBytes) alone, **lowest reverted height first and each
+block's transactions in their applied order** — the order that re-pools a dependent chain
+predecessor first, which the fill preserves and the ordering rule at apply requires (→ Block
+finalization) — and **a withdrawal is one of those
 transactions**, so it needs no second channel; `confirmedPostIds` is not a mempool key.
 
 Reverse order is what makes a record written **more than once in one block**
@@ -3754,11 +3770,11 @@ the network record and the username records (see "Entity kinds" below).
 - **avl-prover:** Generates inclusion/exclusion proofs for any key
 - **avl-endpoint:** `GET /api/v1/proof/:boxId?atHeight=N` — serves proofs to
   light clients
-- **Config:** `VERIFY_STATE_ROOT` (validate on apply, **default on** — set
-  `VERIFY_STATE_ROOT=false` to disable) and `MAX_PROOF_HISTORY` (prune old
-  proof versions)
+- **Config:** `MAX_PROOF_HISTORY` (prune old proof versions). The check below
+  is not configurable — no variable disables it
 - **Verification:** apply computes the post-mutation digest and rejects the
-  block unless it equals `header.stateRoot`. Both sides are post-block (H-6),
+  block unless it equals `header.stateRoot`, on every node holding a prover
+  (production always). Both sides are post-block (H-6),
   both feeds are canonically ordered (M-12), and the mutation set is
   journal-derived (P1) — so a mismatch means genuine state divergence, not a
   representation difference. A rejected block leaves the prover restored by
@@ -3773,7 +3789,18 @@ the network record and the username records (see "Entity kinds" below).
   every version and is stored **once per lifetime**: `avl_tree_nodes` is
   `label, node_data, first_seen_height, orphaned_at_height NULL` with `(label, first_seen_height)`
   the primary key, and `avl_tree_versions` one row per applied block, the version being the digest
-  (root label ‖ tree height). **`update` at height `h` first orphans the previous cycle's nodes the
+  (root label ‖ tree height) and **`height` UNIQUE by index** — `idx_avl_tree_versions_height`,
+  created beside the node-table indexes on every open, fresh or existing. One row per height is
+  what the write path keeps (`update` inserts one inside the apply's transaction; a fork revert's
+  `deleteVersionAtHeight` removes the height's inside the reorg's, before any re-apply); the index is
+  what refuses a second, and
+  `version()` and `versionAtOrBeforeHeight` — `ORDER BY height DESC LIMIT 1` — read a total order
+  by that constraint (→ "HAS AN `ORDER BY`" IS THE WRONG TEST. "IS THE ORDERING KEY UNIQUE" IS THE
+  RIGHT ONE). A row already standing at the height `update` is asked to checkpoint is a store whose
+  version history has run ahead of its chain: `update` checks before it inserts and raises
+  `DuplicateStateVersionError`, a `CorruptChainStateError` and fail-stop like
+  `MissingStateVersionError`, its mirror; the index is the backstop under that check. **`update` at
+  height `h` first orphans the previous cycle's nodes the
   tree no longer holds** — the prover reports them (`removedNodes()`, valid inside `update` because
   `generateProofAndUpdateStorage` runs update before the proof; a reported label with no live row is
   tolerated) — setting `orphaned_at_height = h` on the label's live row; **then it walks the new tree
@@ -4365,10 +4392,8 @@ rejection (step 10) is the expensive case and the one remembered: verified heade
 body. **The mark records a consensus rejection and nothing else** — a rejection that depends on
 local configuration or policy must not mark, because a persisted mark is only as right as the node
 that wrote it; the schedule is checked at step 5 precisely so that a wrong-profile node never
-reaches step 10. "Depends on" is about the verdict, not about enforcement: the funnel's one
-configuration-gated check — `stateRoot` under `VERIFY_STATE_ROOT` — switches whether *this* node
-enforces a consensus rule, not what the rule says, so a node that enforces it marks a chain whose
-root is wrong for every node, and a node that does not never reaches the mark. Two arms of the
+reaches step 10. No check in the funnel is configuration-gated: the `stateRoot` comparison runs on
+every node holding a prover, so a root mismatch is a consensus rejection and marks. Two arms of the
 funnel are not verdicts on the chain, and step 10's abort keeps both off the mark: the future bound,
 an acceptance rule re-run against this node's clock at apply, and the catch that converts an
 unexpected throw into a refusal. Every other rejection in the funnel is consensus-determined
@@ -4552,7 +4577,7 @@ All config via environment variables with defaults.
 | Class | Meaning | Rule |
 |---|---|---|
 | `consensus` | Changing it diverges committed state or block validity | **MUST NOT be readable from the environment.** Two nodes differing on any one of these partition permanently. These belong in `@dagsocial/types` as constants |
-| `consensus-check` | Does not change what is *valid*; disables a node's own verification of it | May be configurable, but the contract must state what stops being checked |
+| ~~`consensus-check`~~ | **retired** — no variable carries it. `VERIFY_STATE_ROOT`, the one that did, is removed: a switch that disables a node's own verification of a consensus rule is a way to apply what every other node rejects | none is admitted |
 | `advertised` | Reported to clients; the verifier enforces a compile-time constant instead | Changing it changes what the node *claims*, not what it *accepts* |
 | `network-identity` | Selects the network — **and with it every consensus parameter, the wire magic, and the genesis** | Not a within-network parameter; nodes on different values are different networks. **Exactly one variable carries this class** |
 | `local` | Genuinely a node's own choice — producer behaviour, resource ceilings | Free to vary |
@@ -4600,7 +4625,7 @@ its actual reach.
 | ~~`CREDIT_TREASURY_PCT`~~ | **removed** | ~~`10`~~ | → universal constant `COINBASE_TREASURY_PCT` (`@dagsocial/types`). The **env key** keeps this name; only the constant renamed, so a rename sweep that rewrites the string here changes what `config.test.ts` guards |
 | ~~`TREASURY_PUBKEY`~~ | **removed** | ~~`""`~~ | Gone entirely, with no destination. The treasury's share accrues to a `TreasuryBox` that block application holds no release path for, so no key names it — see MINING_INTERFACE → Coinbase Application |
 | ~~`CREDIT_INITIAL_REWARD`~~ | **removed** | ~~`10000000000`~~ | → universal constant `CREDIT_INITIAL_REWARD` (`@dagsocial/types`), which `block-creator.ts` imports directly. The dead `Config.creditInitialReward` field it left behind was pruned 2026-08-07 (audit **A5**, closed) |
-| `VERIFY_STATE_ROOT` | `consensus-check` | `true` | Verify `header.stateRoot` at apply (Spec B P3). ⚠ Setting `false` removes the **sole backstop** against the `computeTxId`-collision class, where two distinct block bodies share a header |
+| ~~`VERIFY_STATE_ROOT`~~ | **removed** | ~~`true`~~ | Gone, with no destination: the `stateRoot` check at apply is unconditional on every node holding a prover (→ AVL+ State Root). It is the sole backstop against the `computeTxId`-collision class, where two distinct block bodies share a header, and no variable may switch it off |
 | ~~`NETWORK_MODE`~~ | **renamed** | ~~`testnet`~~ | → `NETWORK_TYPE`. The name changes because the meaning does: it selected a faucet flag, it now selects the whole consensus parameter table |
 | ~~`MAX_SUB_BLOCKS_PER_BLOCK`~~ | **replaced** | ~~`1000`~~ | → `BLOCK_BODY_BUDGET_BYTES`. A count, named for a structure that no longer exists, capping every entry type at once. Its "CONSENSUS GAP" note is closed by `MAX_BLOCK_BODY_BYTES` (`TYPES_INTERFACE` → Size caps), which is enforced in structure validation |
 | `BLOCK_BODY_BUDGET_BYTES` | `local` | `MAX_BLOCK_BODY_BYTES` | Body bytes this node fills blocks **it produces** to. Genuinely local: a miner may publish smaller blocks. **Clamped to `MAX_BLOCK_BODY_BYTES`** — a node cannot raise its own consensus bound, and a value above it would build blocks every peer rejects |
@@ -4847,10 +4872,10 @@ ids; once a mismatch kills the block rather than skipping the tx, the bytes are 
 committed through `computeTxId`, and "the body is swappable under an unchanged header" stops being
 true.
 
-**Input liveness is covered by the deferral rule, not left open.** A transaction whose inputs never
-appear rejects the block — the same verdict a byte mismatch reaches, and the one the deferral rule
-states ("A block is invalid if any embedded transaction does not apply"). There is no pass bound:
-every node runs the same progress-terminating loop over the same transaction set from the same prior
+**Input liveness is covered by the ordering rule, not left open.** A transaction whose input does not
+resolve — in the confirmed set or to an earlier transaction of the block — rejects the block, the same
+verdict a byte mismatch reaches (→ Block finalization → "The body is in dependency order, and that is
+a consensus rule"). Every node walks the same body once, in committed order, from the same prior
 state, so every node reaches the same verdict. If input liveness ever stops being decidable from
 local state alone, this is what has to be re-derived.
 
