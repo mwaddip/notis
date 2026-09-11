@@ -373,12 +373,13 @@ holds no byte of the content anywhere (§Invariants → Content sovereignty). Us
 
 ### 2. UTXO Ledger (Value Layer)
 
-The UTXO layer tracks two non-fungible value types:
+The UTXO layer holds two value types and one soulbound asset:
 
-| Asset | Tradeable | Earned via | Spent via | Decays | Mint/Burn |
+| Asset | Tradeable | Earned via | Spent via | Decays | Supply |
 |-------|-----------|------------|-----------|--------|-----------|
-| **Karma** | No | Likes on posts | Invites, likes | Yes (storage rent) | Mint: like rewards. Burn: invite bond forfeiture |
-| **Credits** | Yes | Validator rewards, genesis | Ads, transfers (future) | No | Mint: ordering block rewards |
+| **Karma** | No | Likes (`x−1` per `x`), the reply share, an invite's grant, a bond's vested return | Posts, likes, invites, vouches, a name's claim and burn | Yes — `KARMA_DECAY_AMOUNT` per period after `KARMA_STALE_THRESHOLD_BLOCKS` idle, to the pool (§Karma decay) | Fixed at genesis; the pool spends the invite grant and receives decay, the like remainder, bond forfeiture, the post price and the username burn (§UTXO conservation) |
+| **Credits** | Yes | Coinbase releases from the `EmissionBox`; the faucet's seed where a profile names one | Transfers, fees, storage rent | No — rent collects an untouched box after `storageRentPeriodBlocks` | Fixed at genesis in the `EmissionBox`; released, never minted; rent recycles (§The conservation axiom) |
+| **Username** | No — soulbound | A claim, one free per identity | A burn for `USERNAME_BURN_PRICE` | No | — (§Usernames) |
 
 Both are stored as **boxes** — UTXO entries a transition must be authorized to
 spend. Boxes are consumed and created in transactions; the set of unspent boxes
@@ -2048,10 +2049,10 @@ no object check compares against it and no producer stamps it.
   after the genesis seeding (§The conservation axiom). What moves is **circulation**: the
   settlement transaction spends the pool and receives into it, and it is the pool's **only**
   spender — one settlement per block, so two spends never contend (NODE_INTERFACE → The
-  settlement transaction). Exactly four transfers return karma to the pool — **decay**,
+  settlement transaction). Exactly five transfers return karma to the pool — **decay**,
   **the like remainder** (per `x = LIKES_PER_KARMA_PAYOUT` likes, `x−1` recirculates to the
   author and 1 goes to the pool), **bond forfeiture** (the unvested remainder at a bond's
-  settlement) and **the post price** (§The post price) — and the **invite grant** draws
+  settlement), **the post price** (§The post price) and **the username burn** (§Usernames) — and the **invite grant** draws
   from it: `G` enters circulation when a bond is created, and the unvested part leaves when
   it settles. Circulation grows only as fast as the network admits members who earn likes,
   and shrinks when it admits members who do not — on top of decay and the like remainder,
