@@ -11,6 +11,7 @@ export function makeConfig(overrides: Partial<NetConfig> = {}): NetConfig {
   return {
     magic: MAGIC_TESTNET,
     protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
+    orderingBlockPowTargetFloorBits: 2304,
     bootstrapPeers: [],
     listenAddrs: '/ip4/0.0.0.0/tcp/0',
     maxPeers: 10,

@@ -118,14 +118,20 @@ export interface PeerRecord {
 // ---------------------------------------------------------------------------
 
 export interface NetConfig {
-  // Both supplied by the node from its resolved network profile. Net receives
-  // these values, it never resolves them — no NetworkProfile import, no env
-  // read, no default (NET_INTERFACE → Consensus parameters net enforces).
+  // All three supplied by the node from its resolved network profile. Net
+  // receives these values, it never resolves them — no NetworkProfile import,
+  // no env read, no default (NET_INTERFACE → Consensus parameters net enforces).
   magic: number;
   // The profile's era table (TYPES_INTERFACE → Version). The handshake, the tx
   // validator and the boundary sweep read the era at chainHeight() + 1 from it;
   // the block validator reads it at each header's height (NET_INTERFACE → Config).
   protocolVersionSchedule: readonly ProtocolEra[];
+  // The profile's difficulty floor: the ordering-block topic validator refuses
+  // a header below it (NET_INTERFACE → Consensus parameters net enforces). Node
+  // refuses a profile floor below ORDERING_BLOCK_POW_TARGET_FLOOR (2304) and a
+  // NaN at load time; a NaN here would compare false and silently disable the
+  // check, so the bound lives at the source, not at every consumer.
+  orderingBlockPowTargetFloorBits: number;
   bootstrapPeers: string[];
   listenAddrs: string;
   maxPeers: number;

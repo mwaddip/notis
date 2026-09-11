@@ -63,6 +63,8 @@ function makeHarness(
     schedule?: readonly ProtocolEra[];
     chainHeight?: () => number;
     penaltyScoreThreshold?: number;
+    floorBits?: number;
+    scheduledTargetBits?: (header: BlockHeader) => number | null;
   } = {},
 ) {
   const topicValidators = new Map<string, CapturedValidator>();
@@ -85,7 +87,9 @@ function makeHarness(
     onTx: () => {},
   }, karmaMembers,
     opts.schedule ?? [{ version: 1, fromHeight: 0 }],
-    opts.chainHeight ?? (() => 0));
+    opts.chainHeight ?? (() => 0),
+    opts.floorBits ?? ORDERING_BLOCK_POW_TARGET_FLOOR,
+    opts.scheduledTargetBits ?? (() => null));
 
   const penaltySpy = vi.spyOn(peerMgr, 'recordPenalty');
   return { topicValidators, peerMgr, penaltySpy, karmaMembers };
@@ -522,6 +526,8 @@ function makeDispatchHarness(handlers: {
     new Set<string>(),
     [{ version: 1, fromHeight: 0 }],
     () => 0,
+    ORDERING_BLOCK_POW_TARGET_FLOOR,
+    () => null,
   );
 
   // `from` is left undefined so the Active-peer filter is skipped — this suite
@@ -825,5 +831,166 @@ describe('version gate — a mismatch is Transient (50), not misbehavior (100)',
 
     expect(result).toBe(TopicValidatorResult.Reject);
     expect(penaltySpy).toHaveBeenCalledWith('misbehavior', peer.id, 100, expect.anything());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Network floor and scheduled-target checks — NET_INTERFACE → Stage 1,
+// → Consensus parameters net enforces
+// ---------------------------------------------------------------------------
+
+describe('ordering-block topic validator — network floor and schedule', () => {
+  const NETWORK_FLOOR = 3000;
+
+  const baseHeader: BlockHeader = {
+    protocolVersion: 1,
+    height: 7,
+    prevBlockHash: '11'.repeat(32),
+    utxoTxRoot: '33'.repeat(32),
+    stateRoot: EMPTY_STATE_ROOT,
+    validatorId: new Uint8Array(32).fill(9),
+    powNonce: 0,
+    powTargetBits: NETWORK_FLOOR,
+    createdAt: 1_722_470_400_000,
+    interlinkRoot: '00'.repeat(32),
+  };
+
+  function makeBlock(header: BlockHeader): OrderingBlock {
+    return {
+      header,
+      utxoTxTree: settlementBody(),
+      validatorSignature: new Uint8Array(64),
+    };
+  }
+
+  let minedNonce = -1;
+
+  beforeAll(() => {
+    for (let n = 0; n < 2_000_000; n++) {
+      if (verifyOrderingBlockPoW({ ...baseHeader, powNonce: n })) {
+        minedNonce = n;
+        break;
+      }
+    }
+    if (minedNonce < 0) throw new Error('PoW search at network floor exhausted');
+  });
+
+  it('rejects a header below the network floor with misbehavior 100', () => {
+    const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set(), {
+      floorBits: NETWORK_FLOOR,
+    });
+    const validate = topicValidators.get(TOPICS.orderingBlock)!;
+    const peer = newPeer(peerMgr);
+
+    // bits above the constant floor (2304) so structure passes
+    const block = makeBlock({ ...baseHeader, powNonce: minedNonce, powTargetBits: NETWORK_FLOOR - 1 });
+    const result = validate(peer, { data: encodeOrderingBlock(block) });
+
+    expect(result).toBe(TopicValidatorResult.Reject);
+    expect(penaltySpy).toHaveBeenCalledWith(
+      'misbehavior', peer.id, 100, 'ordering block below the network floor',
+    );
+  });
+
+  it('accepts at or above the floor, valid PoW, no provider', () => {
+    const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set(), {
+      floorBits: NETWORK_FLOOR,
+    });
+    const validate = topicValidators.get(TOPICS.orderingBlock)!;
+    const peer = newPeer(peerMgr);
+
+    const block = makeBlock({ ...baseHeader, powNonce: minedNonce });
+    const result = validate(peer, { data: encodeOrderingBlock(block) });
+
+    expect(result).toBe(TopicValidatorResult.Accept);
+    expect(penaltySpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects when provider answers a number ≠ bits, no penalty', () => {
+    const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set(), {
+      floorBits: NETWORK_FLOOR,
+      scheduledTargetBits: () => NETWORK_FLOOR + 100,
+    });
+    const validate = topicValidators.get(TOPICS.orderingBlock)!;
+    const peer = newPeer(peerMgr);
+    const kindSpy = vi.spyOn(peerMgr, 'recordPenaltyKind');
+
+    const block = makeBlock({ ...baseHeader, powNonce: minedNonce });
+    const result = validate(peer, { data: encodeOrderingBlock(block) });
+
+    expect(result).toBe(TopicValidatorResult.Reject);
+    expect(penaltySpy).not.toHaveBeenCalled();
+    expect(kindSpy).not.toHaveBeenCalled();
+  });
+
+  it('accepts when provider answers the header\'s own bits', () => {
+    const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set(), {
+      floorBits: NETWORK_FLOOR,
+      scheduledTargetBits: () => NETWORK_FLOOR,
+    });
+    const validate = topicValidators.get(TOPICS.orderingBlock)!;
+    const peer = newPeer(peerMgr);
+
+    const block = makeBlock({ ...baseHeader, powNonce: minedNonce });
+    const result = validate(peer, { data: encodeOrderingBlock(block) });
+
+    expect(result).toBe(TopicValidatorResult.Accept);
+    expect(penaltySpy).not.toHaveBeenCalled();
+  });
+
+  it('accepts when provider answers null', () => {
+    const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set(), {
+      floorBits: NETWORK_FLOOR,
+      scheduledTargetBits: () => null,
+    });
+    const validate = topicValidators.get(TOPICS.orderingBlock)!;
+    const peer = newPeer(peerMgr);
+
+    const block = makeBlock({ ...baseHeader, powNonce: minedNonce });
+    const result = validate(peer, { data: encodeOrderingBlock(block) });
+
+    expect(result).toBe(TopicValidatorResult.Accept);
+    expect(penaltySpy).not.toHaveBeenCalled();
+  });
+
+  it('a header below the floor with invalid PoW records the floor reason, not PoW', () => {
+    const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set(), {
+      floorBits: NETWORK_FLOOR,
+    });
+    const validate = topicValidators.get(TOPICS.orderingBlock)!;
+    const peer = newPeer(peerMgr);
+
+    const block = makeBlock({ ...baseHeader, powNonce: 0, powTargetBits: NETWORK_FLOOR - 1 });
+    const result = validate(peer, { data: encodeOrderingBlock(block) });
+
+    expect(result).toBe(TopicValidatorResult.Reject);
+    expect(penaltySpy).toHaveBeenCalledTimes(1);
+    expect(penaltySpy).toHaveBeenCalledWith(
+      'misbehavior', peer.id, 100, 'ordering block below the network floor',
+    );
+  });
+
+  it('a provider set after subscribeTopics is consulted (late-bound closure)', () => {
+    let provider: ((h: BlockHeader) => number | null) = () => null;
+    const { topicValidators, peerMgr, penaltySpy } = makeHarness(new Set(), {
+      floorBits: NETWORK_FLOOR,
+      scheduledTargetBits: (h) => provider(h),
+    });
+    const validate = topicValidators.get(TOPICS.orderingBlock)!;
+
+    const block = makeBlock({ ...baseHeader, powNonce: minedNonce });
+    const data = encodeOrderingBlock(block);
+
+    // No provider → Accept
+    expect(validate(newPeer(peerMgr), { data })).toBe(TopicValidatorResult.Accept);
+
+    // Set a provider that disagrees → Reject, no penalty
+    provider = () => NETWORK_FLOOR + 100;
+    expect(validate(newPeer(peerMgr), { data })).toBe(TopicValidatorResult.Reject);
+    expect(penaltySpy).not.toHaveBeenCalled();
+
+    // Set a provider that agrees → Accept
+    provider = () => NETWORK_FLOOR;
+    expect(validate(newPeer(peerMgr), { data })).toBe(TopicValidatorResult.Accept);
   });
 });
