@@ -2451,17 +2451,17 @@ describe('validateAndApplyTx', () => {
     }
 
     it('refuses a credit input before its lockedUntilBlock', () => {
-      const box = lockedCreditIn(50_000n, 200, 200);
+      const box = lockedCreditIn(50_000n, 200, 20);
       const tx = buildSignedTx([box.id!], [creditOut(50_000n)], ownerPrivKey, ownerPubKey);
-      const r = validateTx(deps, tx, 199);
+      const r = validateTx(deps, tx, 19);
       expect(r.valid).toBe(false);
-      expect(r.error).toMatch(/locked until 200/);
+      expect(r.error).toMatch(/locked until 20/);
     });
 
     it('accepts the same input at exactly lockedUntilBlock', () => {
-      const box = lockedCreditIn(50_000n, 201, 200);
+      const box = lockedCreditIn(50_000n, 201, 20);
       const tx = buildSignedTx([box.id!], [creditOut(50_000n)], ownerPrivKey, ownerPubKey);
-      expect(validateTx(deps, tx, 200).valid).toBe(true);
+      expect(validateTx(deps, tx, 20).valid).toBe(true);
     });
 
     it('accepts a credit input carrying no lock', () => {
@@ -2471,14 +2471,14 @@ describe('validateAndApplyTx', () => {
     });
 
     it('refuses on timing before authorization, on an unsigned locked spend', () => {
-      const box = lockedCreditIn(50_000n, 203, 200);
+      const box = lockedCreditIn(50_000n, 203, 20);
       const tx: UtxoTransaction = {
         inputs: [box.id!],
         outputs: [creditOut(50_000n)],
         signatures: {},
         protocolVersion: 1,
       };
-      const r = validateTx(deps, tx, 199);
+      const r = validateTx(deps, tx, 19);
       expect(r.error).toMatch(/locked until/);
       expect(r.error).not.toMatch(/signature/i);
     });

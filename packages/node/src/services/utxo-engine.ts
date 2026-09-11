@@ -258,7 +258,6 @@ function checkTransitions(
   post: PostCommit | undefined,
   postWithdraw: PostWithdrawCommit | undefined,
   currentBlockHeight: number,
-  hasSignatures: boolean,
 ): { valid: boolean; error?: string } {
   // ⛔ **THE MARKER'S CONVERSE, AND IT HAS NO PREDECESSOR** (NODE_INTERFACE →
   // Karma transition rules — the like accrual marker is an exemption from the
@@ -296,6 +295,16 @@ function checkTransitions(
   // When step 4 admits mixed karma+username inputs (the burn), treat as karma.
   const usernameInput = inputs.find(b => b.boxType === 'username') ?? null;
   const inputType = usernameInput ? 'karma' as const : inputs[0]!.boxType;
+
+  // NODE_INTERFACE → Legal box transitions → "A payload binds the transition,
+  // exclusively."
+  if (inputType !== 'karma' &&
+      (post !== undefined || postWithdraw !== undefined || likeTarget !== undefined)) {
+    return {
+      valid: false,
+      error: 'A payload field is legal only on a karma transition',
+    };
+  }
 
   switch (inputType) {
     // ------------------------------------------------------------------
@@ -564,6 +573,25 @@ function checkTransitions(
             };
           }
         }
+      } else if (postWithdraw !== undefined) {
+        // NODE_INTERFACE → Legal box transitions → "A payload binds the
+        // transition, exclusively." Ahead of the output-shape arms so a
+        // payload selects its own arm and a foreign vouch/bond output beside
+        // it is refused.
+        if (karmaOutputs.length !== 1 || outputs.length !== 1) {
+          return {
+            valid: false,
+            error: 'PostWithdraw transition requires exactly one karma output',
+          };
+        }
+        const postAuthor = deps.getTopologyAuthor(postWithdraw.postId);
+        if (postAuthor === null ||
+            Buffer.from(postAuthor).toString('hex') !== inputOwnerHex) {
+          return {
+            valid: false,
+            error: `PostWithdraw post ${postWithdraw.postId} is not authored by the karma input's owner`,
+          };
+        }
       } else if (priceOutputs.length > 0) {
         // The biconditional's reverse: a price box with no post payload.
         return {
@@ -784,29 +812,6 @@ function checkTransitions(
             error: `Only a root or a member may invite`,
           };
         }
-      } else if (postWithdraw !== undefined) {
-        // karma → karma (conserving, with a PostWithdrawCommit payload).
-        // ⛔ **An IMPLICATION, never a biconditional**: `postWithdraw` present ⟹
-        // all-karma inputs sharing one owner (pinned above), exactly one karma
-        // output, total output equals total input (step 7's unconditional
-        // conservation), and `inputKarma.owner` is the post's `block_topology`
-        // author. The reverse does not hold: the right side is an ordinary
-        // conserving self-transfer, and forbidding it would break plain karma
-        // self-consolidation.
-        if (karmaOutputs.length !== 1 || outputs.length !== 1) {
-          return {
-            valid: false,
-            error: 'PostWithdraw transition requires exactly one karma output',
-          };
-        }
-        const postAuthor = deps.getTopologyAuthor(postWithdraw.postId);
-        if (postAuthor === null ||
-            Buffer.from(postAuthor).toString('hex') !== inputOwnerHex) {
-          return {
-            valid: false,
-            error: `PostWithdraw post ${postWithdraw.postId} is not authored by the karma input's owner`,
-          };
-        }
       }
       // else: karma → karma only, which is always valid
 
@@ -857,13 +862,14 @@ function checkTransitions(
       // ---- Rent biconditional (NODE_INTERFACE → "Storage rent is a
       // transition requiring no signature") ----
       //
-      // A credit transaction with no signatures that passed authorization is a
-      // rent collection — every input is rent-eligible, which is the only way
-      // authorization accepts an unsigned credit spend. The biconditional:
-      // unsigned credit ⟺ rent collection. The forward direction is enforced
-      // by the shape rules below; the backward direction is structural —
-      // authorization refuses an unsigned non-eligible credit box.
-      if (!hasSignatures) {
+      // NODE_INTERFACE → "The unsigned rent path is identified by authorization
+      // requiring no signature, never by an empty signature map." Keyed on
+      // rent ELIGIBILITY of every input, not on `tx.signatures` being empty.
+      const allRentEligible = inputs.every(box => {
+        const credit = box as CreditBox;
+        return currentBlockHeight - credit.createdAtBlock > deps.storageRentPeriodBlocks;
+      });
+      if (allRentEligible) {
         const creditOutputs = outputs.filter((o) => o.boxType === 'credit');
         let totalCharge = 0n;
         let expectedSuccessors = 0;
@@ -1998,6 +2004,7 @@ function checkAuthorization(
 ): UtxoResult {
   const AUTHORIZATION = authorizationTable(storageRentPeriodBlocks);
   const txHash = Buffer.from(computeTxId(tx), 'hex');
+  const requiredKeys = new Set<string>();
 
   for (const box of inputBoxes) {
     if (!Object.hasOwn(AUTHORIZATION, box.boxType)) {
@@ -2016,6 +2023,18 @@ function checkAuthorization(
     if (signerKey === null) continue;
     if (!signerKey || !verifyGuardSignature(tx, txHash, signerKey)) {
       return { valid: false, error: rule.unsigned(box, tx) };
+    }
+    requiredKeys.add(Buffer.from(signerKey).toString('hex'));
+  }
+
+  // NODE_INTERFACE → Legal box transitions → "The signature map carries no key
+  // a transition does not require."
+  for (const key of Object.keys(tx.signatures)) {
+    if (!requiredKeys.has(key)) {
+      return {
+        valid: false,
+        error: `Signature map carries unrequired key ${key.slice(0, 16)}…`,
+      };
     }
   }
 
@@ -2211,7 +2230,6 @@ export function validateTx(
     tx.post,
     tx.postWithdraw,
     currentBlockHeight,
-    Object.keys(tx.signatures).length > 0,
   );
   if (!transitionCheck.valid) return transitionCheck;
 

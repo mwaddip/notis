@@ -62,6 +62,13 @@ const INVENTORY: HeightMention[] = [
     capsHeight: false,
     note: 'error message template literal for the rent successor check',
   },
+  {
+    key: 'currentBlockHeight - credit.createdAtBlock > deps.storageRentPeriodBlocks',
+    capsHeight: false,
+    note:
+      'rent eligibility predicate — the same comparison creditAuthorization ' +
+      'uses, computed from input boxes rather than the signature map',
+  },
 ];
 
 describe('ceiling obligation', () => {

@@ -562,7 +562,7 @@ describe('UTXO routes', () => {
       // until L is spendable in the block at height L, so the route whose tip is
       // L - 1 admits it — one block earlier than a tip-height judge would. The
       // pair isolates the lock: the same signed transaction, only the tip moves.
-      const L = 300;
+      const L = 20;
       const locked = seedProvenance<CreditBox>({
         boxType: 'credit',
         value: 50_000n,

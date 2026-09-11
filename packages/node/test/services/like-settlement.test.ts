@@ -534,13 +534,15 @@ describe('per-block like settlement (P2-D N2b)', () => {
   // -------------------------------------------------------------------------
 
 
-  it('a spare-signature like tx embedded directly in a block applies, with the liker = the karma input owner', async () => {
+  it('a spare-signature like tx embedded directly in a block is rejected (unrequired key)', async () => {
+    // A spare signature is an unrequired key (NODE_INTERFACE → Legal box
+    // transitions → "The signature map carries no key a transition does not
+    // require."), so the block is refused.
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
     const utxo = await importUtxo();
     const posts = await importPosts();
-    const likeRecords = await importLikeRecords();
     const blockApply = await importBlockApply();
 
     const author = makeTestIdentity();
@@ -553,10 +555,6 @@ describe('per-block like settlement (P2-D N2b)', () => {
     const box = makeKarmaBox(2n, liker.userId, 0);
     utxo.insertBox(box);
 
-    // The gateway's one-signature rule is gateway policy: a validator can
-    // embed a like tx carrying a spare signature directly. The spare entry is
-    // FIRST in the map, so a settlement that read the signature map instead
-    // of the input boxes would resolve the wrong liker.
     const tx: UtxoTransaction = {
       inputs: [box.id!],
       outputs: [
@@ -566,8 +564,6 @@ describe('per-block like settlement (P2-D N2b)', () => {
           createdAtBlock: 0,
           owner: liker.userId,
         },
-        // The marker, so the transaction conserves — the shape is the engine's
-        // and this case's subject is the SIGNATURE map, not the shape.
         {
           boxType: 'like_accrual',
           value: 1n,
@@ -579,18 +575,14 @@ describe('per-block like settlement (P2-D N2b)', () => {
       protocolVersion: PROTOCOL_VERSION,
       likeTarget: postId,
     };
-    signTransaction(tx, spare.privateKey, hex(spare.userId)); // spare, first
-    signTransaction(tx, liker.privateKey, hex(liker.userId)); // owner
-    expect(Object.keys(tx.signatures)[0]).toBe(hex(spare.userId));
+    signTransaction(tx, spare.privateKey, hex(spare.userId));
+    signTransaction(tx, liker.privateKey, hex(liker.userId));
 
     expect(
       blockApply.applyOrderingBlock(
         await makeApplicableBlock({ height: 2, utxoTxs: [tx] }),
       ),
-    ).toBe(true);
-
-    expect(likeRecords.hasLikeRecord(postId, liker.userId)).toBe(true);
-    expect(likeRecords.hasLikeRecord(postId, spare.userId)).toBe(false);
+    ).toBe(false);
   });
 
   // -------------------------------------------------------------------------
