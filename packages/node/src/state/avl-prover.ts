@@ -189,6 +189,10 @@ export function bootstrapAvlProver(
       );
     }
   }
+  // The constructor wrote an empty-tree version at the same height
+  // (createAvlProver passes height 0); delete it before the populated-tree
+  // checkpoint so the UNIQUE index on height is not violated.
+  handle.storage.deleteVersionAtHeight(currentHeight);
   // Checkpoint at current tip
   handle.prover.generateProofAndUpdateStorage([
     [HEIGHT_SENTINEL, encodeHeight(currentHeight)],

@@ -156,6 +156,8 @@ describe('migrateAvlTree — the per-version layout converts in place', () => {
     const idx = (getDb().pragma('index_list(avl_tree_nodes)') as Array<{ name: string }>).map(i => i.name);
     expect(idx).toContain('idx_avl_tree_nodes_orphaned');
     expect(idx).toContain('idx_avl_tree_nodes_first_seen');
+    const vidx = (getDb().pragma('index_list(avl_tree_versions)') as Array<{ name: string; unique: number }>);
+    expect(vidx.find(i => i.name === 'idx_avl_tree_versions_height')?.unique).toBe(1);
     closeDb();
   });
 
@@ -176,6 +178,8 @@ describe('migrateAvlTree — the per-version layout converts in place', () => {
     const idx = (db.pragma('index_list(avl_tree_nodes)') as Array<{ name: string }>).map(i => i.name);
     expect(idx).toContain('idx_avl_tree_nodes_orphaned');
     expect(idx).toContain('idx_avl_tree_nodes_first_seen');
+    const vidx = (db.pragma('index_list(avl_tree_versions)') as Array<{ name: string; unique: number }>);
+    expect(vidx.find(i => i.name === 'idx_avl_tree_versions_height')?.unique).toBe(1);
 
     // The versions table is untouched.
     const storage = new SqliteAvlStorage(db, AVL_CONFIG);
