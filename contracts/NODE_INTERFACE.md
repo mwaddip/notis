@@ -5050,6 +5050,16 @@ funnel:
 - **`setHeightByBlockIdProvider(getHeightByBlockHash)`**: the height holding a block id — an indexed
   point lookup on the same column — behind the inbound `Inv` filter and `ModifierRequest` resolution
   (NET_INTERFACE → Sync Handler Registration). Unwrapped for the same reason
+- **`setScheduledTargetProvider(scheduledPowTargetBits)`**: the target the schedule requires of a
+  gossiped header, for net's stage-1 refusal of a mis-scheduled block whose parent this node holds
+  (NET_INTERFACE → Stage 1). Height 1 answers the anchor's bits (`config.orderingBlockPowTargetBits`);
+  otherwise the `block_hash` column at `header.height − 1` is read first, and only when it equals
+  `header.prevBlockHash` is that block's header decoded and `scheduledTargetBits(parent.header)` — the
+  funnel's own evaluation (→ Difficulty schedule) — answered; every other case answers `null`. The
+  header decode is a store read, so the provider is handed over **wrapped** in `failStopIfCorruptChain`
+  like `setHeadersHandler`'s: a stored row that will not decode stops the node rather than banning the
+  relayer as "malformed" inside the validator's catch. `NetConfig` receives the profile's
+  `orderingBlockPowTargetFloorBits` the way it receives `magic` and the era table
 
 A block carries its posts whole in `utxoTxs`, so there is no content-sweep and
 no per-post serve path. `onPeerActive` is wired to peer-readiness

@@ -931,12 +931,16 @@ Node start
 
 | Penalty | Trigger | Score |
 |---------|---------|-------|
-| `misbehavior` | Invalid message — fails Stage 1: structure, ordering-block PoW, the packet rule (a post without a body or a body without a post), a body that fails `verifyPostBody`, or the karma-membership gate (`gossip.ts` call sites); a pulled body that fails its commitment (the `MODIFIER_POST_BODY` receive arm) | 100 |
+| `misbehavior` | Invalid message — fails Stage 1: structure, an ordering-block header below the network's floor, ordering-block PoW, the packet rule (a post without a body or a body without a post), a body that fails `verifyPostBody`, or the karma-membership gate (`gossip.ts` call sites); a pulled body that fails its commitment (the `MODIFIER_POST_BODY` receive arm) | 100 |
 | `ProtocolViolation` | Undecodable/malformed frame or message; wrong-network handshake | permanent ban |
 | `Transient` | Transient handshake failure / timeout (`handshake.ts`) | 50 |
 | `Transient` | A version mismatch — a gossiped block or transaction whose declared version is not its era (`gossip.ts` call sites), or a header segment `verifyHeaderChain` refuses with reason `'version'` in fork resolution (via `NetNode.penalizePeer`): compatibility, never a violation | 50 |
 | `misbehavior` | Fork resolution, via `NetNode.penalizePeer` from node's `resolveFork` (NODE_INTERFACE → Fork choice decides on verified headers): a header segment that fails `verifyHeaderChain` other than the window-miss case and the `'version'` reason; a segment containing a refused header; a delivered block whose hash is not the verified header's; a verified-header chain rejected by the apply funnel; a header page that is not an answer to its request — a height above the start asked, a hole, a repeat or an ascent | 100 |
 | `Transient` | Fork resolution, via `NetNode.penalizePeer`: a block answer shorter than the verified segment, or a header page short of full that does not reach height 1 (non-delivery) | 50 |
+
+**One stage-1 refusal records nothing:** a scheduled-target mismatch over a parent this node holds is
+Rejected, never forwarded and not penalised — the previous hop may not hold the parent (→ Stage 1 →
+"A scheduled-target mismatch is refused, never forwarded, and never penalised"); `onPeerPenalised` does not fire for it.
 
 **`NetNode.penalizePeer(peerId, kind: 'misbehavior' | 'transient', reason)`** is node's one call
 into this system: it records the named tier against the peer with the reason string and nothing
@@ -1189,15 +1193,26 @@ ban); well-formed but invalid → misbehavior penalty (100), except a version mi
 
 | Topic | Checks before Accept |
 |-------|----------------------|
-| ordering-block | `verifyOrderingBlockStructure`; protocol version — `verifyProtocolVersion(header.protocolVersion, header.height, schedule)`, a mismatch Rejected with `Transient`; `header.height` is a safe integer (NaN/float/±Infinity → Reject); ordering-block PoW (`verifyOrderingBlockPoW`) — the solution must satisfy the header's own `powTargetBits` (bounded ≥ `ORDERING_BLOCK_POW_TARGET_FLOOR` by structure), and a non-safe-integer `powNonce`/`powTargetBits` never verifies (audit M-6, M-9) |
+| ordering-block | `verifyOrderingBlockStructure`; protocol version — `verifyProtocolVersion(header.protocolVersion, header.height, schedule)`, a mismatch Rejected with `Transient`; `header.height` is a safe integer (NaN/float/±Infinity → Reject); **the network's floor** — `header.powTargetBits < NetConfig.orderingBlockPowTargetFloorBits` is Rejected with `misbehavior` (→ Consensus parameters net enforces); ordering-block PoW (`verifyOrderingBlockPoW`) — the solution must satisfy the header's own `powTargetBits` (bounded ≥ `ORDERING_BLOCK_POW_TARGET_FLOOR` by structure), and a non-safe-integer `powNonce`/`powTargetBits` never verifies (audit M-6, M-9); **the schedule, when this node holds the parent** — the scheduled-target provider's answer for the header, `null` when the parent is not held; a number that differs from `header.powTargetBits` is **Rejected with no penalty** (→ Stage 1 → "A scheduled-target mismatch is refused, never forwarded, and never penalised") |
 | tx | `decodeTxPacket`; `verifyTxStructure`; protocol version — `verifyTxProtocolVersion(tx, chainHeight() + 1, schedule)`, the envelope's and the commit's against the next block's era, a mismatch Rejected with `Transient`; the packet rule (`tx.post` present ⟺ `content` present); `verifyPostBody(content, tx.post.contentHash)` for a post-bearing tx; then the cached karma-membership gate — the author holds karma at all (`NODE_INTERFACE` → Post transactions). Order as under Gossip Topics |
 
-Stage 1 is stateless. It does **not** check the difficulty schedule
-(`powTargetBits` against the schedule over the stored parent, `MINING_INTERFACE → Difficulty
-Schedule`), the header timestamp rules, chain linkage, validator signatures, or state roots — those are apply-time checks in
-`@dagsocial/node`, enforced for every entry path (gossip, sync, reorg) by
-the block-apply funnel. The relay PoW gate exists to make mesh propagation
-cost-bearing: no zero-work ordering block may be re-gossiped (audit M-9).
+Stage 1 is stateless but for one provider read. It does **not** check the header timestamp rules,
+chain linkage, validator signatures, or state roots — those are apply-time checks in
+`@dagsocial/node`, enforced for every entry path (gossip, sync, reorg) by the block-apply funnel.
+The difficulty schedule (`powTargetBits` against the schedule over the stored parent,
+`MINING_INTERFACE → Difficulty Schedule`) is apply-time too, and stage 1 asks it once, through the
+scheduled-target provider, for the one case it can answer without trusting anything: a header whose
+parent this node holds. The relay PoW gate exists to make mesh propagation cost-bearing: no
+zero-work ordering block may be re-gossiped (audit M-9), and the network's floor puts the price of a
+forwarded header at the network's own minimum rather than the resolution floor's nine bits.
+
+**A scheduled-target mismatch is refused, never forwarded, and never penalised.** The verdict is
+deterministic given the parent — ASERT over the parent's stamp and the anchor, no clock — so it is
+a consensus verdict: a header carrying the wrong target for its parent applies on no node that holds
+that parent. The penalty is withheld because the previous hop may not hold the parent — a peer still
+syncing forwards on the floor and the PoW alone, honestly — and the refusal's whole value is that
+the first hop holding the parent stops the forward. The originator pays the hashes and nothing else;
+a direct flood is bounded by the floor's cost per message, and nothing it sends reaches the funnel.
 
 ### Stage 2 (node package, stateful)
 
@@ -1302,6 +1317,7 @@ offer.
 | `setChainHeightProvider(cb)` | `(() => number) => void` | Provider for the chain tip height — the one number behind the handshake `chainHeight`, `SyncInfo.tipHeight`, every `peerHeight > ourHeight` comparison, the stall-progress measure and the served chain query's tip. **One read is one provider call**: `SyncStore.chainHeight()` returns the provider's value and never walks the chain through the headers provider (ARCHITECTURE → Correct and cheap are separate obligations). Unset → `0`, as a node with no chain. The node hands over its store's `MAX(height)` — the same tip its block creator and fork resolution read — so the height `net` advertises is the height the node mines on |
 | `setBlockIdProvider(cb)` | `((height: number) => string \| null) => void` | Provider for the block id at a height — behind the ids an Inv continuation announces to a peer behind us. The id is the store's own, written at block application; `net` never computes an id from a header. **One id is one provider call**, a point read that decodes no block (ARCHITECTURE → Correct and cheap are separate obligations). Unset → `null` — nothing to announce |
 | `setHeightByBlockIdProvider(cb)` | `((id: string) => number \| null) => void` | Provider for the height holding a block id, or `null` for an id not on our chain — the read that filters an inbound `Inv` (an id we hold or already requested is not re-requested) and resolves a `ModifierRequest`'s ids to the heights it serves from. **One id is one provider call, never a chain walk**: a message of k ids costs k point lookups, and no message rebuilds an id index of the whole chain (ARCHITECTURE → Correct and cheap are separate obligations). Unset → `null` — every id unknown, nothing served |
+| `setScheduledTargetProvider(cb)` | `((header: BlockHeader) => number \| null) => void` | Provider for the ordering-block topic validator's schedule check: the `powTargetBits` the schedule requires of `header`, or `null` when this node does not hold `header`'s parent — a header at height 1 answers the anchor's bits; otherwise the stored block at `header.height − 1` whose id is `header.prevBlockHash`, evaluated as the apply funnel evaluates it (`MINING_INTERFACE → Difficulty Schedule`). **One header is one provider call.** Unset → `null` — every header passes on the floor and its own PoW alone (→ Stage 1) |
 | `onSyncComplete(cb)` | `(() => void) => void` | Fired on every entry into the `synced` phase |
 | `setPostBodyProvider(cb)` | `((postId: string) => string \| null) => void` | Provider for the `MODIFIER_POST_BODY` serve arm: the body this node holds for the id, or `null` — served locally or omitted, never relayed (→ Local-Serve-Before-Relay). |
 | `setMissingBodiesProvider(cb)` | `((limit: number) => { id: string; contentHash: Uint8Array }[]) => void` | Provider the `backfill` phase reads: up to `limit` post ids whose rows hold no body, newest first, each with the commitment the body must hash to. An empty answer ends the phase. |
@@ -1359,6 +1375,9 @@ interface NetConfig {
   protocolVersionSchedule: readonly ProtocolEra[]   // the profile's era table (TYPES_INTERFACE → Version):
                                    // the handshake, the tx validator and the boundary sweep read the
                                    // era at chainHeight() + 1 from it; the block validator each header's
+  orderingBlockPowTargetFloorBits: number   // the profile's difficulty floor (TYPES_INTERFACE → Network
+                                   // profiles): the ordering-block topic validator refuses a header
+                                   // below it (→ Consensus parameters net enforces)
 
   // Peer discovery
   minPeers: number                 // floor for fill phase (default 3)
@@ -1378,15 +1397,20 @@ interface NetConfig {
 ### Consensus parameters net enforces
 
 Stage-1 relay validation checks ordering-block proof-of-work before forwarding
-(`verifyOrderingBlockStructure` + `verifyOrderingBlockPoW`), but that check needs no
-per-network parameter: a block is checked against its own header's `powTargetBits` and the
-`ORDERING_BLOCK_POW_TARGET_FLOOR` constant from `@dagsocial/types`. The one per-network
-value net receives is `magic`. Net receives values; it does not resolve them, does not
-import `NetworkProfile`, and reads no environment variable for them.
+(`verifyOrderingBlockStructure` + `verifyOrderingBlockPoW`): a block is checked against its own
+header's `powTargetBits`, bounded by the `ORDERING_BLOCK_POW_TARGET_FLOOR` constant from
+`@dagsocial/types` inside the structure check **and by the network's own floor**,
+`orderingBlockPowTargetFloorBits`, which reaches the topic validator as a `NetConfig` value
+(→ Stage 1). The scheduled target reaches it as a **provider**, never a parameter: node answers
+`setScheduledTargetProvider` for a header whose parent it holds and `null` otherwise (→ Sync
+Handler Registration). Net receives values; it does not resolve them, does not import
+`NetworkProfile`, and reads no environment variable for them.
 
 | Value | Why net needs it | Today |
 |---|---|---|
 | `magic` | Frame assembly and the frame-magic check | ✅ Supplied by the node from its resolved profile — see §Magic Bytes |
+| `protocolVersionSchedule` | The era at a height — the handshake, both topic validators, the boundary sweep | ✅ Supplied by the node from its resolved profile — see §Config |
+| `orderingBlockPowTargetFloorBits` | The ordering-block topic validator refuses a header whose `powTargetBits` is below it — `misbehavior`, the tier PoW-invalid carries: no honest producer on this network mines below its floor, and the schedule's clamp never asks for it (`MINING_INTERFACE → Difficulty Schedule`) | ✅ Supplied by the node from its resolved profile — required, no default |
 
 > ✅ **RESOLVED — verified 2026-08-10, re-verified 2026-08-11 by count. The resolution stated at
 > the foot of this note was carried out:** `net/src/config.ts` no longer exists, `loadNetConfig`

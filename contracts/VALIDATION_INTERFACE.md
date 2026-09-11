@@ -396,11 +396,13 @@ non-negative safe integer.
 Checks the solution against the header's **own** `powTargetBits` only. It does
 **not** enforce a floor or the height-scheduled target: the
 `ORDERING_BLOCK_POW_TARGET_FLOOR` lower bound is a gossip pre-filter inside
-`verifyOrderingBlockStructure`, and the authoritative height-scheduled target is
-enforced at block apply (`@dagsocial/node`, audit M-2 — see NODE_INTERFACE
-"Ordering block apply-time authorization"). A producer that writes a low target
-into its own header still passes this function; the apply-time check is what
-rejects it.
+`verifyOrderingBlockStructure`; the network's own floor and, for a header whose
+parent the receiving node holds, the scheduled target are `@dagsocial/net`'s
+stage-1 checks over values node supplies (`NET_INTERFACE → Stage 1`); and the
+authoritative height-scheduled target is enforced at block apply
+(`@dagsocial/node`, audit M-2 — see NODE_INTERFACE "Ordering block apply-time
+authorization"). A producer that writes a low target into its own header still
+passes this function; the checks around it are what reject it.
 
 Used by nodes to verify ordering-block PoW before applying a relayed block, and by
 the block creator to verify externally-submitted mining solutions.
