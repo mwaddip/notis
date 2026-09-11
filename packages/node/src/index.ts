@@ -29,6 +29,7 @@ import { enterDiscovery, notePeerMet } from './services/peer-readiness.js';
 import { createAvlProver } from './state/avl-prover.js';
 import { handleOrderingBlock, pullBlocksHandler } from './services/handle-block.js';
 import { failStopIfCorruptChain, guardStoreRead } from './services/corrupt-state.js';
+import { scheduledPowTargetBits } from './services/difficulty.js';
 import {
   getKarmaBox,
   getKarmaBoxes,
@@ -142,6 +143,8 @@ const net = new NetNode(
     // The profile's era table, supplied like `magic` — the handshake, tx
     // validator and boundary sweep read the era from it (NET_INTERFACE → Config).
     protocolVersionSchedule: config.profile.protocolVersionSchedule,
+    // NODE_INTERFACE → Configuration
+    orderingBlockPowTargetFloorBits: config.orderingBlockPowTargetFloorBits,
     bootstrapPeers: config.bootstrapPeers,
     listenAddrs: config.listenAddrs,
     maxPeers: config.maxPeers,
@@ -275,6 +278,10 @@ net.setBlocksHandler(pullBlocksHandler(net));
 // handshake and query as a peer's fault inside `net`'s contained catches.
 const guardedGetOrderingBlock = guardStoreRead(getOrderingBlock);
 net.setHeadersHandler(guardedGetOrderingBlock);
+
+// NODE_INTERFACE → Sync handlers: the scheduled-target provider decodes a
+// stored header, so `guardStoreRead` promotes a corrupt row to a fail-stop.
+net.setScheduledTargetProvider(guardStoreRead(scheduledPowTargetBits));
 
 // The tip height net advertises in handshakes and SyncInfo — the store's
 // MAX(height), unwrapped: it decodes no row (NODE_INTERFACE → Sync handlers).
