@@ -119,12 +119,20 @@ export function subscribeTopics(
         );
         return TopicValidatorResult.Reject;
       }
+      // No explicit height guard here, and adding one would be dead code:
+      // `verifyOrderingBlockStructure` above covers the header's whole
+      // encodable domain, and its `height` rule is `isU64Safe` (audit M-6), so
+      // NaN and floats are already rejected one gate earlier — for every input,
+      // not merely the NaN/1.5 cases the test below pins.
+
       // NET_INTERFACE → Consensus parameters net enforces
       if (block.header.powTargetBits < floorBits) {
         peerMgr.recordPenalty('misbehavior', _peer.toString(), 100, 'ordering block below the network floor');
         return TopicValidatorResult.Reject;
       }
       if (!validators.verifyOrderingBlockPoW(block.header)) {
+        // A zero-work block must die at the first hop, not be re-gossiped
+        // mesh-wide (NET_INTERFACE → Stage 1).
         peerMgr.recordPenalty('misbehavior', _peer.toString(), 100, 'ordering block PoW invalid');
         return TopicValidatorResult.Reject;
       }
