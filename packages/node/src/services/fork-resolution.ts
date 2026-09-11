@@ -168,8 +168,8 @@ export function revertBlock(height: number): void {
   // exactly like the block and journal rows: left behind, they make
   // versionAtOrBeforeHeight resolve rolled-back state, and re-applying a
   // block at this height (reorg back to a previously-reverted chain) would
-  // re-insert the same content-addressed version and trip its PRIMARY KEY —
-  // the funnel's totality catch would then reject every re-applied block.
+  // find a row already standing at its height, which `update` refuses as
+  // `DuplicateStateVersionError` (NODE_INTERFACE → AVL+ State Root).
   rollbackBlockTopology(height);
   deleteOrderingBlock(height);
   deleteBlockJournal(height);
@@ -281,14 +281,16 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[]): void {
     avlHandle.prover.rollback(version);
   }
 
-  // Phase 2: re-insert reverted txs to mempool.
+  // Phase 2: re-insert reverted txs to mempool, lowest height first.
   //
   // A post rides its own transaction, so re-inserting the transactions
   // re-inserts the posts. `journal.confirmedPostIds` is the un-confirm half
   // of the rollback and not a mempool key (NODE_INTERFACE → Block Journal).
+  // Ascending order re-pools a predecessor before its dependent, so the fill
+  // preserves the ordering rule at apply (NODE_INTERFACE → Block finalization).
   const newTipHeight = forkHeight + newBlocks.length;
   const mempoolExpiry = newTipHeight + MEMPOOL_EXPIRY_BLOCKS;
-  for (const journal of revertedJournals) {
+  for (const journal of [...revertedJournals].reverse()) {
     // Re-insert UTXO txs
     for (const txRecord of journal.appliedUtxoTxs) {
       const tx = decodeTx(txRecord.txBytes);

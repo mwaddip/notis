@@ -149,14 +149,12 @@ export function makePostCommit(authorId: Uint8Array, content = 'test post', over
  * production path could never produce.
  *
  * ⚠ **`karmaBox` is returned, not seeded, and any caller whose block carries the
- * transaction has to insert it.** Apply defers a transaction whose inputs are
- * absent and REJECTS the block when they never arrive — the block commits to the
- * tx in `utxoTxIds`, so a body that cannot apply it is a body its own `stateRoot`
- * cannot reflect. An unseeded input therefore fails loudly at
- * `applyOrderingBlock`, never quietly at the assertions downstream. The box is
- * deterministic in the author and the content, so seeding it twice for one
- * fixture is a `UNIQUE(tx_id, output_index)` failure rather than a silent second
- * box.
+ * transaction has to insert it.** Apply rejects a block carrying a transaction
+ * whose input does not resolve (NODE_INTERFACE → Block finalization). An
+ * unseeded input therefore fails loudly at `applyOrderingBlock`, never quietly
+ * at the assertions downstream. The box is deterministic in the author and the
+ * content, so seeding it twice for one fixture is a `UNIQUE(tx_id,
+ * output_index)` failure rather than a silent second box.
  *
  * The transaction satisfies the engine's post biconditional: one karma input,
  * at most one karma change output, one `KarmaPriceBox` and — for a reply — one
@@ -626,10 +624,9 @@ export function priceBoxOf(tx: UtxoTransaction): AnyBox {
  * re-derives — the coinbase's slices, the treasury key, the maturity lock —
  * reads the `src/config.js` singleton and the network profile instead, because
  * a creator reading a local value would build blocks its own network refuses.
- * Everything else — `verifyStateRoot` in `applyOrderingBlock`,
- * `maxMempoolEntries` in the mempool cap, `avlKeyLength` in `createAvlProver` —
- * imports that singleton too, which no test mocks, so an incomplete fixture is
- * simply never observed.
+ * Everything else — `maxMempoolEntries` in the mempool cap, `avlKeyLength`
+ * in `createAvlProver` — imports that singleton too, which no test mocks,
+ * so an incomplete fixture is simply never observed.
  *
  * Note what this design does with a newly *required* field: it fills it with the
  * value production runs with, silently and correctly, rather than failing the

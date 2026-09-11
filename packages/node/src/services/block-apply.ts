@@ -798,22 +798,14 @@ function applyMutationPhase(
 
   // 11. Apply UTXO transactions from the block.
   //
-  // Two distinct failure modes, deliberately handled differently:
-  //
-  //  - Inputs not present yet → defer and retry. A tx may consume a box
-  //    created by an earlier tx in the same block, and block order does not
-  //    have to be dependency order, so the loop makes repeated passes until it
-  //    stops making progress. A tx whose inputs never arrive rejects the block:
-  //    the block commits to it in `utxoTxIds`, so a body that cannot apply it
-  //    is a body its own `stateRoot` cannot reflect.
-  //
-  //  - Inputs present but the tx is invalid → reject the whole block. Validator
-  //    selection is permissionless PoW, so the producer is untrusted and
-  //    nothing about an embedded tx may be assumed: it may never have passed
-  //    pool entry or relay validation on any node. Once a tx's inputs are all
-  //    present it is fully decidable, so it is re-validated here in full —
-  //    signatures, authorization, transitions, conservation — and a failure means the
-  //    block itself is malformed. A valid block cannot contain an invalid tx.
+  // NODE_INTERFACE → Block finalization → "The body is in dependency order,
+  // and that is a consensus rule". One pass over the body in committed order:
+  // every input resolves in the confirmed set as it stands at that point —
+  // the pre-block set plus this block's earlier transactions' outputs, minus
+  // their consumed inputs — or the block is rejected. Then full re-validation
+  // (signatures, authorization, transitions, conservation), then apply. A
+  // block producer is untrusted (permissionless PoW), so nothing about an
+  // embedded tx is assumed verified.
   const utxoDeps = {
     getBox,
       insertBox,
@@ -984,12 +976,9 @@ function applyMutationPhase(
   // block creates, and until the loop has applied that one, the confirmed set
   // this phase reads through does not hold the output.
   //
-  // ⛔ **Collected in COMMITTED TRANSACTION ORDER, not apply order.** The
-  // deferral loop below may apply a later transaction first, and the settlement
-  // lists its fee-box inputs in the order the body fixes — so each transaction's
-  // contribution is written to its own slot and the slots are flattened after
-  // the loop. That is the difference between an order the block fixes and one
-  // this node's dependency resolution happened to produce.
+  // Apply order is committed order (NODE_INTERFACE → Block finalization), so
+  // `perTxOutputs`, `appliedTxs` and every per-transaction list are in the
+  // body's order — the order the settlement's fee-box inputs must follow.
   //
   // `appliedTxs` carries each transaction with its FIRST input box, which is
   // all `actorOf` reads, and reading it is sound only because `validateTx` has
@@ -1034,36 +1023,20 @@ function applyMutationPhase(
   const escrows = getVouchEscrowsReleasableAt(height, MAX_ESCROW_RETURNS_PER_BLOCK);
   const lapsedVouches = getLapsedVouches(MAX_LAPSE_WITHDRAWALS_PER_BLOCK);
 
-  // Multi-pass: try to apply txs, retrying those whose inputs aren't
-  // available yet (may have been created by an earlier tx in this block).
-  //
-  // ⛔ **There is no pass bound, and adding one would create a consensus
-  // parameter.** Validity is "every embedded transaction applied", with no
-  // number in it; a cap makes a block carrying a chain deeper than the cap
-  // invalid here and valid on a node that chose a larger one, from the same
-  // bytes. Selection cannot fix that — selection is local, and an incoming
-  // block is not bound by it.
-  //
-  // Termination does not rest on a cap either. The `applied === 0` return below
-  // ends the loop the moment a pass makes no progress, so every pass that
-  // continues applied at least one transaction and the pass count is bounded by
-  // the block's transaction count.
-  while (queue.length > 0) {
-    const remaining: QueuedTx[] = [];
-    let applied = 0;
-
-    for (const item of queue) {
-      const allInputsExist = item.tx.inputs.every((id) => getBox(id) !== null);
-      if (!allInputsExist) {
-        remaining.push(item);
-        continue;
+  // One pass, in committed order (NODE_INTERFACE → Block finalization).
+  for (const item of queue) {
+      const unresolvedInput = item.tx.inputs.find((id) => getBox(id) === null);
+      if (unresolvedInput !== undefined) {
+        console.warn(
+          `Rejected block height=${height}: embedded UTXO tx ${item.txId} ` +
+          `has an unresolved input ${unresolvedInput}`,
+        );
+        return false;
       }
 
-      // Every input is present, so the verdict cannot change on a later pass:
-      // full re-validation, and anything it rejects rejects the block. Testing
-      // presence first is what keeps the two cases apart — the only reason
-      // validateTx could still fail on liveness is a tx that lists the same
-      // input twice, which is malformed, not deferrable.
+      // Every input resolves — full re-validation. A tx that lists the same
+      // input twice is malformed; validateTx catches it as a liveness failure
+      // after the first consume.
       const revalidated = validateTx(utxoDeps, item.tx, height);
       if (!revalidated.valid) {
         console.warn(
@@ -1202,7 +1175,6 @@ function applyMutationPhase(
       }
 
       applyTx(utxoDeps, item.tx, item.outputs, height);
-      applied++;
 
       // The spend is the activity (ARCHITECTURE → Karma decay). The karma arm
       // pins one owner for all karma inputs; the first input's owner is that
@@ -1261,25 +1233,6 @@ function applyMutationPhase(
       // Box mutations are journaled by the store choke point; the tx itself
       // is kept for mempool re-insertion on reorg.
       recordAppliedUtxoTx(item.txId, encodeTx(item.tx));
-    }
-
-    if (applied === 0) {
-      // No progress, so these inputs will never exist: the block commits in
-      // `utxoTxIds` to a transaction its own `stateRoot` cannot reflect. Reject
-      // it, like the two arms above — the block is invalid if any embedded
-      // transaction does not apply (NODE_INTERFACE → "A block is invalid if any
-      // embedded transaction does not apply").
-      for (const item of remaining) {
-        console.warn(
-          `Rejected block height=${height}: embedded UTXO tx ${item.txId} ` +
-          `has an input no transaction in this block creates and the chain ` +
-          `does not hold`,
-        );
-      }
-      return false;
-    }
-    queue.length = 0;
-    queue.push(...remaining);
   }
 
   // 8b. Process withdrawal transactions from this block.
@@ -1328,11 +1281,9 @@ function applyMutationPhase(
   // creator whose own settlement does not match its body declines to produce the
   // block instead of mining one every peer will refuse.
   //
-  // ⛔ **The body is read in COMMITTED transaction order**, walking
-  // `utxoTxIds` rather than the order deferral applied them in. The settlement
-  // lists its fee-box inputs in that order and its id hashes them in that order,
-  // so a node whose dependency resolution ran differently must still derive the
-  // same transaction.
+  // The settlement reads the body in committed order — which IS the apply
+  // order (NODE_INTERFACE → Block finalization). The settlement's fee-box
+  // inputs and its id hash them in that order.
   const settlementBody = emptyBody();
   for (let i = 0; i < lastIndex; i++) {
     const txId = block.utxoTxTree.utxoTxIds[i]!;

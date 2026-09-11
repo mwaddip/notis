@@ -112,9 +112,9 @@ export function entryByteCost(txBytes: Uint8Array): number {
  * spent by an entry the pool holds.
  *
  * Two pooled transactions naming one box put both into one block, where the
- * first spends the box and the second cannot apply — the state a block is
- * invalid for carrying (NODE_INTERFACE → "A block is invalid if any embedded
- * transaction does not apply").
+ * first spends the box and the second's input does not resolve — the ordering
+ * rule rejects the block (NODE_INTERFACE → Block finalization → "The body is
+ * in dependency order, and that is a consensus rule").
  * Refusing at admission is what keeps this node from composing such a block.
  *
  * A `ClientError`, so the refusal reaches the submitter as its own message
