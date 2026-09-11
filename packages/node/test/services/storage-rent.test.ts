@@ -210,7 +210,10 @@ describe('storage rent', () => {
 
   // ---- 3. Biconditional (backward) ----
 
-  it('a signed credit spend on a rent-eligible box is a normal transfer, not rent', () => {
+  it('a signed credit spend on a rent-eligible box is rejected (unrequired key)', () => {
+    // NODE_INTERFACE → "The signature map carries no key a transition does not
+    // require." A rent-eligible box's authorization requires no key, so any
+    // signature is unrequired — retargeted from the old permissive behavior.
     const height = 100;
     const box = seedCredit(100_000_000n, height - RENT_PERIOD - 1);
     const bob = rawPublicKey(generateKeyPairSync('ed25519').publicKey);
@@ -227,7 +230,8 @@ describe('storage rent', () => {
     const aliceHex = Buffer.from(alicePub).toString('hex');
     signTransaction(tx, alice.privateKey, aliceHex);
     const result = validateTx(deps, tx, height);
-    expect(result.valid).toBe(true);
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('unrequired key');
   });
 
   // ---- 4. Income term ----
