@@ -416,17 +416,13 @@ export async function resolveFork(
 
     // 3. The fork walk — page down from ourTip
     // (NODE_INTERFACE → Fork choice decides on verified headers, step 3).
-    //
-    // Each page is hashed in full before any of it is matched: an unhashable
-    // header anywhere in the page refuses the page whole (`misbehavior`), and
-    // never falls through to genesis. Hashing only until the first match
-    // would let the peer choose where the poison sits relative to the match,
-    // which is the peer's choice again.
     const maxReorgDepth = config.maxReorgDepth;
     const lowestExamined = Math.max(currentHeight - maxReorgDepth + 1, 1);
     let forkHeight: number | null = null;
     const allForkWalkHeaders: BlockHeader[] = [];
     let requestStart = currentHeight;
+    const maxPages = Math.ceil(maxReorgDepth / MAX_CHAIN_RESPONSE_ITEMS);
+    let pageCount = 0;
 
     forkWalk: while (requestStart >= lowestExamined) {
       const page = await net.requestHeaders(requestStart, MAX_CHAIN_RESPONSE_ITEMS, peerId);
@@ -435,7 +431,40 @@ export async function resolveFork(
         return;
       }
 
-      // Hash the whole page first — one unhashable entry refuses it.
+      // NET_INTERFACE → `GetHeaders` / `GetBlocks` responses: a page has
+      // one shape, and the requester holds a page to it.
+      if (page[0]!.height > requestStart) {
+        net.penalizePeer(peerId, 'misbehavior',
+          `fork-walk page: height ${page[0]!.height} above the requested start ${requestStart}`);
+        return;
+      }
+      for (let i = 1; i < page.length; i++) {
+        const expected = page[i - 1]!.height - 1;
+        const actual = page[i]!.height;
+        if (actual !== expected) {
+          const fault = actual > page[i - 1]!.height ? 'ascent'
+            : actual === page[i - 1]!.height ? 'repeat'
+            : 'hole';
+          net.penalizePeer(peerId, 'misbehavior',
+            `fork-walk page: ${fault} at height ${actual} (expected ${expected})`);
+          return;
+        }
+      }
+      const lowestInPage = page[page.length - 1]!.height;
+      if (page.length < MAX_CHAIN_RESPONSE_ITEMS && lowestInPage > 1) {
+        net.penalizePeer(peerId, 'transient',
+          `fork-walk page: short page (${page.length} headers, lowest height ${lowestInPage})`);
+        return;
+      }
+
+      pageCount++;
+      if (pageCount > maxPages) {
+        throw new Error(
+          `Fork walk exceeded ${maxPages} pages — every accepted page moves ` +
+          `the start by ${MAX_CHAIN_RESPONSE_ITEMS}, so this is unreachable`);
+      }
+
+      // Hash the whole page — one unhashable entry refuses it.
       const pageHashes: Array<{ header: BlockHeader; hash: string }> = [];
       for (let i = 0; i < page.length; i++) {
         const h = blockHash(page[i]!);
@@ -450,14 +479,7 @@ export async function resolveFork(
         pageHashes.push({ header: page[i]!, hash: h });
       }
 
-      // Now match — heights above ourTip cannot occur (the request starts there).
       for (const { header, hash } of pageHashes) {
-        if (header.height > currentHeight) {
-          throw new Error(
-            `Fork walk: peer served header at height ${header.height} above ` +
-            `our tip ${currentHeight} — the request started there`,
-          );
-        }
         if (header.height < lowestExamined) continue;
 
         // A null from getOrderingBlockHash at 1 ≤ h ≤ ourTip is the
@@ -475,11 +497,7 @@ export async function resolveFork(
         allForkWalkHeaders.push(header);
       }
 
-      const lowestSeen = page.reduce(
-        (min, hdr) => Math.min(min, hdr.height),
-        page[0]!.height,
-      );
-      requestStart = lowestSeen - 1;
+      requestStart = lowestInPage - 1;
     }
 
     if (forkHeight === null) {
