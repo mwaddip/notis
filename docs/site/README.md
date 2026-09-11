@@ -164,6 +164,11 @@ wrong is visible:
 - **"Withdrawn", never "deleted".** Content withdrawal stops propagation and
   records intent; it cannot retract what someone already copied. The wording
   should not imply otherwise.
-- **The coin is the notis.** **Notis** the network, **notis** the unit,
-  invariant plural, ticker NOTIS. Never "credits" — that was the old name and
-  the landing page has already moved.
+- **The coin is `$NOTIS`.** **Notis** the network, **`$NOTIS`** the unit, always
+  with the dollar sign and always capitalised, never "the notis" and never
+  "credits" — `credits` is the API's name for it, stated once where a page
+  needs it.
+- **Reputation is `rep`.** **Rep** the unit, **reputation** the concept; never
+  "standing" for a person's reputation, never "score". `karma` is the API's
+  name for it, stated once where a page needs it. The page at `/karma/` keeps
+  its name and URL.

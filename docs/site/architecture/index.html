@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Architecture — Notis docs</title>
-<meta name="description" content="How Notis is built: a Posts DAG for content, a UTXO ledger for karma and notis, the transactions that join them, withdrawal as the author's only act, and the proof-of-work that orders it all.">
+<meta name="description" content="How Notis is built: a Posts DAG for content, a UTXO ledger for rep and $NOTIS, the transactions that join them, withdrawal as the author's only act, usernames as soulbound boxes, and the proof-of-work that orders it all.">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Notis docs">
 <meta property="og:title" content="Architecture — Notis docs">
@@ -32,7 +32,7 @@
     <header class="page">
       <div class="crumb"><b>Notis</b> / architecture</div>
       <h1>One network, two ledgers.</h1>
-      <p class="lede">Notis keeps <strong>content</strong> and <strong>value</strong> on two separate ledgers — a Posts DAG for what people say, a UTXO ledger for karma and notis. Every post, like and withdrawal is a transaction on the value ledger, and the whole thing is ordered by proof-of-work. Here's how the pieces fit.</p>
+      <p class="lede">Notis keeps <strong>content</strong> and <strong>value</strong> on two separate ledgers — a Posts DAG for what people say, a UTXO ledger for rep and $NOTIS. Every post, like and withdrawal is a transaction on the value ledger, and the whole thing is ordered by proof-of-work. Here's how the pieces fit.</p>
     </header>
 
     <section>
@@ -54,7 +54,7 @@
           <ul>
             <li><b>Immutable lineage</b> — every coin's history</li>
             <li><b>Spendable state</b> — balances change</li>
-            <li><b>Karma and notis</b> live here</li>
+            <li><b>Rep, $NOTIS and usernames</b> live here</li>
           </ul>
         </div>
       </div>
@@ -65,7 +65,7 @@
       <h2>The content layer — Posts DAG</h2>
       <p>Every post is <strong>its author's</strong>. You decide what you say and whether it stays said; a reply belongs to whoever wrote it, and nobody — not the author it answers — has any act over it.</p>
       <h3>What a post is</h3>
-      <p>A post carries its content (1–300 bytes), its author (an Ed25519 public key), and <strong>at most one</strong> <em>parent reference</em>. It is created by a transaction the author signs, which also pays the post's price in karma. One parent rather than several is what keeps a thread a tree: a reply belongs to one conversation, so a thread's replies can be counted and paged without ambiguity. Its identity comes from the transaction that created it — and that identity survives even if the content is later withdrawn, so links between posts never break.</p>
+      <p>A post carries its content (1–300 bytes), its author (an Ed25519 public key), and <strong>at most one</strong> <em>parent reference</em>. It is created by a transaction the author signs, which also pays the post's price in rep. One parent rather than several is what keeps a thread a tree: a reply belongs to one conversation, so a thread's replies can be counted and paged without ambiguity. Its identity comes from the transaction that created it — and that identity survives even if the content is later withdrawn, so links between posts never break.</p>
       <h3>Withdrawal — a first-class right</h3>
       <p>An author can <strong>withdraw</strong> a post: its content is emptied while its place in the thread stays, so replies keep their anchor. It is a transaction the author signs, it is free — the post paid its price when it was posted — and it is the only act an author has over a post once it is published. What it guarantees: honest nodes drop the content and stop passing it on, and the decision is yours, permanent and attributable. What it can't do is un-publish. Anyone who saved a copy can repost it, which is true of anything ever sent over a public network.</p>
       <p>There is deliberately no way to remove a whole subtree — no act that reaches other people's replies, not even under your own post. Cascading a removal over the replies would protect nothing: the post was archivable the moment it was public, and the replies leak nothing it didn't already give away. It would be a batch bounded only by the thread's size. It would hand whoever started a thread a tool to delete a discussion other people wrote. And every one of those replies paid to be posted, with nothing returning. Withdrawal is the whole of it.</p>
@@ -73,39 +73,42 @@
 
     <section>
       <h2>The value layer — UTXO ledger</h2>
-      <p>Value lives in <strong>boxes</strong> — ledger entries, each owned by a key, consumed and re-created in atomic transactions. The set of unspent boxes <em>is</em> the current state. Every transaction conserves value (in = out): every cost lands in a box the transaction itself creates, and minting and burning happen only when a block is applied, never inside a transaction. A box is spent only with its owner's signature, under the rules its kind of box sets. Two asset types share this layer:</p>
+      <p>Value lives in <strong>boxes</strong> — ledger entries, each owned by a key, consumed and re-created in atomic transactions. The set of unspent boxes <em>is</em> the current state. Every transaction conserves value (in = out): every cost lands in a box the transaction itself creates, and nothing is created or destroyed anywhere — a block's settlement moves value between people and the two reserves, the rep pool and the $NOTIS emission box, and no rule mints. A box is spent with its owner's signature, under the rules its kind of box sets; a few kinds — an invite's bond, a vouch on its way back, the reserves themselves — are moved only by the block's settlement, never by anyone's transaction, and a $NOTIS box left untouched for its rent period can be collected by a miner without a signature. Three asset kinds share this layer:</p>
       <div class="glance">
         <div class="card k">
           <div class="tag">Reputation</div>
-          <h4>Karma</h4>
-          <ul><li>Non-transferable</li><li>Earned by being liked</li><li>Decays if you go inactive</li></ul>
+          <h4>Rep</h4>
+          <ul><li>Non-transferable</li><li>Earned by being liked</li><li>Decays if you go absent</li></ul>
         </div>
         <div class="card c">
           <div class="tag">Money</div>
-          <h4>Notis</h4>
-          <ul><li>Freely tradeable</li><li>Mined as block rewards</li><li>Pays fees, secures the chain</li></ul>
+          <h4>$NOTIS</h4>
+          <ul><li>Freely tradeable</li><li>Released by proof-of-work</li><li>Pays fees, secures the chain</li></ul>
         </div>
       </div>
-      <p><em>How</em> karma and notis are earned, spent, and kept honest — invites, likes, decay, mining, the fair launch — is the whole subject of the <a href="/economy/">Economy</a> page. This page is about the container they live in.</p>
+      <p><em>How</em> rep and $NOTIS are earned, spent, and kept honest — invites, likes, decay, mining, the fair launch — is the whole subject of the <a href="/economy/">Economy</a> page. The third kind, the username, is below. This page is about the container they live in.</p>
       <h3>Authenticated state — the AVL+ root</h3>
       <p>The unspent-box set is indexed by an <strong>authenticated dictionary</strong> (an AVL+ tree). Every block header carries a <code>stateRoot</code> — a single hash committing to the entire ledger at that height. That lets a light client prove a given box <em>does</em> or <em>doesn't</em> exist, with a short proof, without downloading the whole ledger.</p>
     </section>
 
     <section>
       <h2>Consensus — one proof-of-work</h2>
-      <p>Notis has a single tier of mining. <strong>Validators</strong> solve a proof-of-work to produce <strong>ordering blocks</strong>; every post, like, withdrawal, invite and vouch rides those blocks as an ordinary transaction, and each block puts them in canonical order and anchors the chain. Validator selection is <strong>pure PoW</strong> — no stake, no karma gating. Anyone who solves the puzzle can produce the next block.</p>
+      <p>Notis has a single tier of mining. <strong>Validators</strong> solve a proof-of-work to produce <strong>ordering blocks</strong>; every post, like, withdrawal, invite and vouch rides those blocks as an ordinary transaction, and each block puts them in canonical order and anchors the chain. Validator selection is <strong>pure PoW</strong> — no stake, no rep gating. Anyone who solves the puzzle can produce the next block.</p>
       <p>Difficulty retargets every block from the chain's own headers, never from a clock, so every node computes the same target for the same chain. Headers also carry interlinks, so a light client can check the chain's work with a short proof instead of downloading every header.</p>
       <div class="note">
         <div class="label">Why work alone decides</div>
-        <p>Because mining is decided by work alone — not by karma and not by wealth — the <em>security</em> layer stays independent of the <em>social</em> and <em>economic</em> layers. Being popular buys you no consensus power; being rich in notis buys you no reputation. Each layer is walled off from the others.</p>
+        <p>Because mining is decided by work alone — not by rep and not by wealth — the <em>security</em> layer stays independent of the <em>social</em> and <em>economic</em> layers. Being popular buys you no consensus power; being rich in $NOTIS buys you no reputation. Each layer is walled off from the others.</p>
       </div>
     </section>
 
     <section>
       <h2>Identity</h2>
-      <p>An account is an <strong>Ed25519 keypair</strong> — there's no registration step. Notis is <strong>invite-only</strong>: you come into existence when a member's invite naming your key is applied, which writes your identity record and grants your first karma (the mechanics of that live on the <a href="/economy/">Economy</a> page).</p>
+      <p>An account is an <strong>Ed25519 keypair</strong> — there's no registration step. Notis is <strong>invite-only</strong>: you come into existence when an invite naming your key is applied, which writes your identity record and grants your first rep (the mechanics of that live on the <a href="/economy/">Economy</a> page).</p>
+      <p>Who invited you decides where you start. A <strong>member</strong>'s invite makes you a <strong>resident</strong>: you post, you like and are liked, you hold rep — but you neither vouch for anyone nor invite anyone. Membership is earned from the people you meet: enough members who were here before you vouch for you, and enough members like what you wrote, both bars growing slowly with the network's size. An earned membership lasts while the vouches it rests on stand. A <strong>founder</strong>'s invite — one of the keys the network was seeded with — makes you a member from the first block, for life. The node keeps the tier on the record; nothing is ever voted on.</p>
       <p>Your <strong>profile</strong> is DAG-native — it's a post. A profile is a single post of its own type: a small structured document (display name, bio) that clients interpret and consensus records without parsing. The latest one you publish is your profile, so your identity is something you <em>publish</em>, not something a server grants you.</p>
-      <p><strong>Usernames</strong> are planned as assets on the ledger rather than posts — free to claim while unused, tradeable for notis, burnable by whoever holds one — because a ledger object, unlike a document, can be handed over. They are not built yet.</p>
+      <h3>Usernames</h3>
+      <p>A <strong>username</strong> is a box on the value ledger, held by one key. Anyone holding rep may claim one for nothing but the transaction — a name of up to 24 letters, digits and underscores, shown exactly as you typed it and unique regardless of case. From then on <code>@YourName</code> stands for your key everywhere the network takes an identity, and every listing that names you carries it beside the key. <strong>One name per identity, and it never changes hands</strong>: the only way out of a name is to burn it, which costs a small price in rep, opens the name to anyone again, and restores your one free claim.</p>
+      <p>Nothing here needs a rule against hoarding, because the rest of the design already prices it. To hold a second name you need a second identity, and a second identity costs someone an invitation: a bond of their own rep, staked for thirty days and returned only in proportion to the likes that identity earns from real people. An identity that exists to sit on a name is never liked, so its bond forfeits in full. Registering names to sell them means spending your own reputation on shells that pay nothing back — <strong>extractive mechanics are paid with reputation</strong>, not forbidden by a rule.</p>
     </section>
 
     <section>
@@ -115,7 +118,7 @@
 
     <section>
       <h2>The node records; it doesn't rank</h2>
-      <p>One principle runs through the whole design: the node's job is to <strong>record, validate, and serve verifiable data faithfully</strong> — posts, likes, karma, blocks — and nothing more. Feed ranking, reputation scoring, spam-flagging, algorithmic curation: all of that lives in <em>clients and indexers</em>, not the protocol. The chain hands everyone the same honest dataset; what to surface and how to weight it is a decision made above it, out in the open.</p>
+      <p>One principle runs through the whole design: the node's job is to <strong>record, validate, and serve verifiable data faithfully</strong> — posts, likes, rep, blocks — and nothing more. Feed ranking, reputation scoring, spam-flagging, algorithmic curation: all of that lives in <em>clients and indexers</em>, not the protocol. The chain hands everyone the same honest dataset; what to surface and how to weight it is a decision made above it, out in the open.</p>
     </section>
 
     <footer>
