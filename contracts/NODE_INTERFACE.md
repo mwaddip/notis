@@ -1448,6 +1448,28 @@ transition. There is no second pass that consults the box to decide who may spen
 **Rows that name no signer require the owner's signature** — every karma and credit row above. That
 is a requirement of those transitions, stated once here, not a property the box carries.
 
+⛔ **The signature map carries no key a transition does not require.** Authorization looks each
+required signer up in the map and verifies it; a key beyond that set is verified by nothing, so it
+must be refused rather than ignored. An unrequired key is not free malleability — `computeTxId`
+hashes the map, so it moves the id — but it is a **shape lever**: the rent transition below is the
+unsigned credit spend, and a rule that read "the map is empty" would let one unrequired key turn a
+rent collection into an ordinary transfer to any owner. `checkAuthorization` collects the keys the
+inputs require and refuses a transaction whose map holds any other.
+
+⛔ **A payload binds the transition, exclusively.** A `post`, `postWithdraw` or `likeTarget` is
+present ⟹ every input is a `karma` box **and** the transition is the payload's — selected by the
+payload ahead of any output-shape arm, admitting only that transition's own outputs. The envelope's
+one-payload rule (→ Transaction envelope shape) stops two payloads sharing a transaction; this
+stops a single payload riding a transition that does not read it. Both halves are load-bearing and
+answer different attackers: a payload on a non-`karma` input (a credit or vouch spend) reaches no arm
+that reads it, yet `postsOf`/`withdrawalsOf` act on it at apply — so a credit self-transfer confirms
+a post under any author, or withdraws any post, for the price of the transfer; and a `postWithdraw`
+or `post` beside a `vouch` or `bond` output, though its inputs are karma, is dispatched by the output
+into the vouch or invite arm, which never reads the payload while apply still acts on it. Each payload
+arm therefore admits only its own outputs (a withdrawal is `karma → karma`, exactly one karma output;
+a post its price and marker; a like its marker), and a `vouch`, `bond` or foreign output beside a
+payload is refused.
+
 #### Storage rent is a transition requiring no signature
 
 
@@ -1460,6 +1482,15 @@ currentBlockHeight - box.createdAtBlock > profile.storageRentPeriodBlocks
 
 **It names no key**, so it satisfies the rule above rather than excepting it: the requirement is *no
 signature at all*, which this table already admits as a shape.
+
+⛔ **The unsigned rent path is identified by authorization requiring no signature, never by an empty
+signature map.** The two coincide only while the map cannot hold an unrequired key — which is exactly
+what "The signature map carries no key a transition does not require" (→ Legal box transitions)
+guarantees. The rent shape (successor to the **same owner**, or the box consumed whole, with the
+charge as the fee) governs a transaction precisely when no input required a signature; a signed credit
+spend takes the ordinary transfer shape. Deciding this on map-emptiness would let one unrequired
+signature skip the rent shape and redirect a rent-eligible box's whole value to a stranger — the two
+rules close that together.
 
 ⛔ **RENT IS AN ORDINARY BODY TRANSACTION, NOT A SETTLEMENT LEG, AND THE CHOICE IS LOAD-BEARING.**
 The settlement's input list is **derived whole** and a verifier recomputes it position by position
