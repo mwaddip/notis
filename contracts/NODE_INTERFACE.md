@@ -4326,12 +4326,20 @@ with the chain untouched:
    height → refuse, penalise `misbehavior`, nothing reverted. The range is the verified branch's,
    never a peer-claimed tip height.
 9. **Tip re-read.** Our tip moved during the awaits → abort, no penalty.
-10. **The switch.** `reorg(f, blocks)`, atomic: on a rejected block it throws
-    `ReorgBlockRejectedError { height, hash }` after the transaction has rolled back and the prover
-    is restored.
-11. **The mark.** `resolveFork` catches that error and, **after** the rollback, records the rejected
-    block's hash in `refused_headers` in its own write, and penalises `misbehavior`. A mark written
-    inside the reorg transaction would roll back with it.
+10. **The switch.** `reorg(f, blocks)`, atomic, every block through the funnel's classified entry
+    (`applyOrderingBlockVerdict`, → "The funnel answers with a class"): a **consensus** refusal throws
+    `ReorgBlockRejectedError { height, hash }` after the transaction has rolled back and the prover is
+    restored; an **acceptance** refusal (the future bound, re-run against this node's clock at apply)
+    or a **local** one (the funnel's catch of an unexpected throw) throws
+    `ReorgAbortedError { height, hash, class }` after the same rollback — the switch is abandoned and
+    our chain kept.
+11. **The mark.** `resolveFork` catches `ReorgBlockRejectedError` and, **after** the rollback, records
+    the rejected block's hash in `refused_headers` in its own write, and penalises `misbehavior`. A
+    mark written inside the reorg transaction would roll back with it. **An abort marks nothing,
+    penalises nobody and writes no memo** — it is logged, and the sync path re-delivers the branch
+    (`MINING_INTERFACE → Header timestamp rules`): a clock refusal is a verdict of this node's clock,
+    a local fault is not attributable to the peer, and a mark is only as right as the node that wrote
+    it.
 
 **The horizon's price is memory.** All `n` blocks are held before the switch — the transaction is
 synchronous and cannot await a page — so a reorg holds up to `n × MAX_BLOCK_BODY_BYTES`, with `n ≤
@@ -4360,8 +4368,11 @@ that wrote it; the schedule is checked at step 5 precisely so that a wrong-profi
 reaches step 10. "Depends on" is about the verdict, not about enforcement: the funnel's one
 configuration-gated check — `stateRoot` under `VERIFY_STATE_ROOT` — switches whether *this* node
 enforces a consensus rule, not what the rule says, so a node that enforces it marks a chain whose
-root is wrong for every node, and a node that does not never reaches the mark. Every other
-rejection in the funnel is consensus-determined outright.
+root is wrong for every node, and a node that does not never reaches the mark. Two arms of the
+funnel are not verdicts on the chain, and step 10's abort keeps both off the mark: the future bound,
+an acceptance rule re-run against this node's clock at apply, and the catch that converts an
+unexpected throw into a refusal. Every other rejection in the funnel is consensus-determined
+outright.
 
 **Both entries converge.** Gossip receipt and pull-sync both reach `handleOrderingBlock(block,
 fromPeerId)`: a block already held (our block at its height hashes to its header) is a **no-op** —
@@ -4849,9 +4860,10 @@ local state alone, this is what has to be re-derived.
 > per-height censorship primitive against that node.
 >
 > **Nothing implements this, and that is the point** — measured 2026-08-10, no negative cache keyed
-> on a block hash exists anywhere. `applyOrderingBlock` has **four** callers: `index.ts`'s gossip and
-> sync handlers discard the boolean, `fork-resolution` throws on it and rolls the savepoint back, and
-> `block-creator` assigns it. **None memoizes by hash**, which is the property that matters — an
+> on a block hash exists anywhere. The funnel has **three** call sites for four paths:
+> `handleOrderingBlock` (gossip and pull converge there; the boolean is the pull batch's continue
+> signal), `block-creator`, which assigns it, and `reorg`, which reads the classified verdict and
+> throws on it. **None memoizes by hash**, which is the property that matters — an
 > earlier draft of this paragraph said "both call sites discard its boolean", reaching the right
 > conclusion from a count that was short by two. Net's bans are keyed on peer id or address, and
 > `sync-machine`'s `outstanding` is an in-flight request set: a rejected block is never stored, so it
@@ -4916,6 +4928,15 @@ a crashing block is re-fetched on restart and crashes again — a single
 cheaply-mined block would otherwise be a permanent, self-reapplying kill for
 every node that receives it. Structure validation closes the known instance;
 totality bounds every future one.
+
+**The funnel answers with a class.** `applyOrderingBlockVerdict(block)` is the funnel's body: it
+answers `{ applied: true }` or `{ applied: false, class }`, `class` one of `'consensus'` (every
+explicit rejection), `'acceptance'` (the future bound — `MINING_INTERFACE → Header timestamp rules`)
+or `'local'` (the catch above, with the error's text). `applyOrderingBlock(block)` is its boolean
+projection, `verdict.applied`, for the callers that need only the continue signal —
+`handleOrderingBlock` and the block creator; `reorg` reads the class (→ Fork choice decides on
+verified headers, step 10). Both entries are total, and the `CorruptChainStateError` re-throw is the
+one exception of both.
 
 **Validator signature (H-1).** Before applying any state, the block is rejected
 unless `verifyValidatorSignature(block.header, block.validatorSignature)` (from
