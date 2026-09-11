@@ -129,18 +129,41 @@ import { putNetworkRecord } from '../store/identity-records.js';
 class BlockRejected extends Error {}
 
 /**
+ * The future bound failed at apply (MINING_INTERFACE → Header timestamp rules).
+ * A module-local marker: the funnel's catch classifies it as `'acceptance'`,
+ * never letting it escape.
+ */
+class BlockBeyondFutureBound extends Error {}
+
+/**
+ * NODE_INTERFACE → "The funnel answers with a class".
+ */
+export type ApplyVerdict =
+  | { applied: true }
+  | { applied: false; class: 'consensus' | 'acceptance' | 'local'; detail?: string };
+
+/**
+ * The boolean projection of the verdict — for callers that need only the
+ * continue signal (NODE_INTERFACE → "The funnel answers with a class").
+ */
+export function applyOrderingBlock(block: OrderingBlock): boolean {
+  return applyOrderingBlockVerdict(block).applied;
+}
+
+/**
  * Apply an ordering block — all of it, or none of it.
  *
  * A block is a single unit of state transition, so every mutation it makes
  * (post confirmation, UTXO transactions,
  * per-block like settlement, decay) lives in one SQLite transaction. Any rejection — at any
  * step — rolls the whole thing back, leaving the node on the state it had
- * before the block arrived. Returns false for a rejected block; `reorg()`
- * nests this inside its own transaction, which SQLite handles as a savepoint.
+ * before the block arrived. Returns a verdict whose `applied` is the boolean,
+ * and whose `class` names the refusal when it is not; `reorg()` nests this
+ * inside its own transaction, which SQLite handles as a savepoint.
  *
  * The funnel is total: no input makes this function throw. A block that causes
  * an unexpected exception is a block the node rejects, on the same terms as an
- * explicit rejection — transaction rolled back, journal dropped, `false`
+ * explicit rejection — transaction rolled back, journal dropped, verdict
  * returned, detail logged. That is not defensive padding. The gossip callback
  * is `async` and the net layer discards its promise, so a propagated throw
  * becomes an unhandled rejection, which exits the process on Node ≥ 15; and
@@ -148,7 +171,7 @@ class BlockRejected extends Error {}
  * and dies again. One cheaply-mined block would otherwise be a permanent,
  * self-reapplying kill for every node that receives it.
  */
-export function applyOrderingBlock(block: OrderingBlock): boolean {
+export function applyOrderingBlockVerdict(block: OrderingBlock): ApplyVerdict {
   // Structure first, before any field of `block` is read. Until this returns
   // valid, nothing about the object's shape is known: the fields below are
   // decoded from an untrusted producer and reach `Buffer.from` further down,
@@ -161,7 +184,7 @@ export function applyOrderingBlock(block: OrderingBlock): boolean {
   const structure = validation.verifyOrderingBlockStructure(block);
   if (!structure.valid) {
     console.warn(`Rejected block: invalid structure: ${structure.error}`);
-    return false;
+    return { applied: false, class: 'consensus' };
   }
   // SQLite rollback does not reach the AVL prover's in-memory state, so the
   // funnel snapshots the digest before the transaction and restores it on
@@ -175,16 +198,21 @@ export function applyOrderingBlock(block: OrderingBlock): boolean {
     if (current && Buffer.from(current).equals(Buffer.from(preDigest))) return;
     avlHandle.prover.rollback(preDigest);
   };
-  let applied: boolean;
   try {
-    applied = getDb().transaction(() => {
+    getDb().transaction(() => {
       if (!applyBlockBody(block)) throw new BlockRejected();
-      return true;
     })();
   } catch (err) {
     if (err instanceof BlockRejected) {
       restoreProver();
-      return false;
+      return { applied: false, class: 'consensus' };
+    }
+    // MINING_INTERFACE → Header timestamp rules: the future bound is an
+    // acceptance rule, not a consensus verdict.
+    if (err instanceof BlockBeyondFutureBound) {
+      abortBlockJournal();
+      restoreProver();
+      return { applied: false, class: 'acceptance' };
     }
     // The one throw this funnel does not convert into a rejection.
     //
@@ -210,12 +238,13 @@ export function applyOrderingBlock(block: OrderingBlock): boolean {
     // state. What is left is to drop the half-built journal (a no-op if the
     // body already finished it), restore the prover, and answer the caller
     // the same way an explicit rejection does.
+    const detail = String(err);
     console.error(
-      `Rejected block height=${block.header.height}: unexpected failure during apply: ${String(err)}`,
+      `Rejected block height=${block.header.height}: unexpected failure during apply: ${detail}`,
     );
     abortBlockJournal();
     restoreProver();
-    return false;
+    return { applied: false, class: 'local', detail };
   }
 
   // The tip moved, so a miner node's template moved with it — one template per
@@ -235,7 +264,7 @@ export function applyOrderingBlock(block: OrderingBlock): boolean {
     // sweep peers below the new era (NET_INTERFACE → API).
     getNet()?.tipApplied(block.header.height);
   }
-  return applied;
+  return { applied: true };
 }
 
 function applyBlockBody(block: OrderingBlock): boolean {
@@ -278,8 +307,7 @@ function applyBlockBody(block: OrderingBlock): boolean {
     // MINING_INTERFACE → Header timestamp rules, future bound (height 1)
     if (!validation.verifyCreatedAtBound(block.header, nowMs(), MAX_FUTURE_DRIFT_MS)) {
       console.warn(`Rejected block height=${block.header.height}: createdAt beyond the future bound`);
-      abortBlockJournal();
-      return false;
+      throw new BlockBeyondFutureBound();
     }
   } else {
     // Every throw in this branch reads our own stored tip, not the arriving
@@ -309,8 +337,7 @@ function applyBlockBody(block: OrderingBlock): boolean {
     // MINING_INTERFACE → Header timestamp rules, future bound
     if (!validation.verifyCreatedAtBound(block.header, nowMs(), MAX_FUTURE_DRIFT_MS)) {
       console.warn(`Rejected block height=${block.header.height}: createdAt beyond the future bound`);
-      abortBlockJournal();
-      return false;
+      throw new BlockBeyondFutureBound();
     }
     const storedInterlinks = getInterlinks(currentHeight);
     if (storedInterlinks === null) {

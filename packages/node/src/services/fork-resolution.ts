@@ -36,7 +36,7 @@ import { putIdentityRecord, deleteIdentityRecord, putNetworkRecord } from '../st
 import { putUsername, deleteUsername } from '../store/usernames.js';
 import { tryGetAvlProver } from '../state/avl-prover.js';
 import { GENESIS_HEIGHT } from './genesis-state.js';
-import { applyOrderingBlock } from './block-apply.js';
+import { applyOrderingBlockVerdict } from './block-apply.js';
 import { registerPlaceholder } from './backfill.js';
 import { getPlaceholdersAt } from '../store/index.js';
 import { noteTip } from '../metrics.js';
@@ -49,6 +49,7 @@ import {
   MissingStateVersionError,
   UnhashableStoredHeaderError,
   ReorgBlockRejectedError,
+  ReorgAbortedError,
 } from './corrupt-state.js';
 import { retargetParams, anchorCreatedAt as storedAnchorCreatedAt, nowMs } from './difficulty.js';
 import { config } from '../config.js';
@@ -301,11 +302,16 @@ export function reorg(forkHeight: number, newBlocks: OrderingBlock[]): void {
     }
   }
 
-  // Phase 3: apply new chain
+  // Phase 3: apply new chain — through the classified entry
+  // (NODE_INTERFACE → Fork choice decides on verified headers, step 10).
   for (const block of newBlocks) {
-    if (!applyOrderingBlock(block)) {
+    const verdict = applyOrderingBlockVerdict(block);
+    if (!verdict.applied) {
       const hash = blockHash(block.header) ?? 'unhashable';
-      throw new ReorgBlockRejectedError(block.header.height, hash);
+      if (verdict.class === 'consensus') {
+        throw new ReorgBlockRejectedError(block.header.height, hash);
+      }
+      throw new ReorgAbortedError(block.header.height, hash, verdict.class, verdict.detail);
     }
     for (const p of getPlaceholdersAt(block.header.height)) {
       registerPlaceholder(p.id, p.contentHash, block.header.height, '');
@@ -723,6 +729,21 @@ export async function resolveFork(
     reorg(forkHeight, allBlocks);
     console.log(`Reorg complete: new tip at height=${forkHeight + n}`);
   } catch (err) {
+    // NODE_INTERFACE → Fork choice decides on verified headers, step 10–11.
+    if (err instanceof ReorgAbortedError) {
+      if (err.class_ === 'acceptance') {
+        console.warn(
+          `Fork resolution: reorg aborted at height ${err.height} (${err.hash}), ` +
+          `class=acceptance — no mark, no penalty`,
+        );
+      } else {
+        console.error(
+          `Fork resolution: reorg aborted at height ${err.height} (${err.hash}), ` +
+          `class=local: ${err.detail ?? '(no detail)'}`,
+        );
+      }
+      return;
+    }
     // 11. The mark — after the rollback, in its own write.
     if (err instanceof ReorgBlockRejectedError) {
       insertRefusedHeader(err.hash, err.height, getCurrentHeight());

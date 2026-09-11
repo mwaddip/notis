@@ -144,6 +144,10 @@ async function importBlockApply() {
     '../../src/services/block-apply.js'
   )) as unknown as {
     applyOrderingBlock: (block: OrderingBlock) => boolean;
+    applyOrderingBlockVerdict: (block: OrderingBlock) => (
+      | { applied: true }
+      | { applied: false; class: string; detail?: string }
+    );
   };
 }
 
@@ -3015,6 +3019,96 @@ describe('the step-2 header version check', () => {
     // The block that declares the era applies at that same height.
     const at = await makeApplicableBlock({ protocolVersion: 2, height: 2 });
     expect(blockApply.applyOrderingBlock(at)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The verdict entry classifies each refusal (NODE_INTERFACE → "The funnel
+// answers with a class").
+// ---------------------------------------------------------------------------
+
+describe('applyOrderingBlockVerdict classes', () => {
+  beforeEach(async () => { vi.resetModules(); });
+  afterEach(async () => {
+    try { (await importBlockCreator()).stopBlockCreator(); } catch {}
+    vi.doUnmock('../../src/store/journal.js');
+    vi.resetModules();
+  });
+
+  it('answers acceptance for a block beyond the future bound', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+    const { setClock } = await import('../../src/services/difficulty.js');
+    const t = 1_000_000;
+    setClock(() => t);
+
+    const block = await makeApplicableBlock({ createdAt: t + MAX_FUTURE_DRIFT_MS + 1 });
+    const ba = await importBlockApply();
+    const verdict = ba.applyOrderingBlockVerdict(block);
+
+    expect(verdict.applied).toBe(false);
+    expect((verdict as { class: string }).class).toBe('acceptance');
+
+    // The boolean projection agrees.
+    expect(ba.applyOrderingBlock(block)).toBe(false);
+    setClock(null);
+  });
+
+  it('answers local with detail for an unanticipated throw', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+    vi.doMock('../../src/store/journal.js', async () => {
+      const actual = await vi.importActual<typeof import('../../src/store/journal.js')>(
+        '../../src/store/journal.js',
+      );
+      return {
+        ...actual,
+        insertBlockJournal: () => {
+          throw new Error('disk on fire');
+        },
+      };
+    });
+
+    const ba = await importBlockApply();
+    const block = await makeApplicableBlock();
+    const verdict = ba.applyOrderingBlockVerdict(block);
+
+    expect(verdict.applied).toBe(false);
+    expect((verdict as { class: string }).class).toBe('local');
+    expect((verdict as { detail?: string }).detail).toContain('disk on fire');
+
+    // The boolean projection agrees.
+    expect(ba.applyOrderingBlock(block)).toBe(false);
+  });
+
+  it('answers consensus for a PoW-invalid block', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+    const block = await makeApplicableBlock();
+    block.header.powNonce = unsolvedHeaderPow(block.header);
+    const ba = await importBlockApply();
+    const verdict = ba.applyOrderingBlockVerdict(block);
+
+    expect(verdict.applied).toBe(false);
+    expect((verdict as { class: string }).class).toBe('consensus');
+  });
+
+  it('answers applied true for a valid block', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+    const block = await makeApplicableBlock();
+    const ba = await importBlockApply();
+    const verdict = ba.applyOrderingBlockVerdict(block);
+
+    expect(verdict).toEqual({ applied: true });
   });
 });
 
