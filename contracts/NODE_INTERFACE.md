@@ -3792,8 +3792,10 @@ the network record and the username records (see "Entity kinds" below).
   (root label ‖ tree height) and **`height` UNIQUE by index** — `idx_avl_tree_versions_height`,
   created beside the node-table indexes on every open, fresh or existing. One row per height is
   what the write path keeps (`update` inserts one inside the apply's transaction; a fork revert's
-  `deleteVersionAtHeight` removes the height's inside the reorg's, before any re-apply); the index is
-  what refuses a second, and
+  `deleteVersionAtHeight` removes the height's inside the reorg's, before any re-apply; and
+  `bootstrapAvlProver` deletes the version at its own height before its checkpoint — on a fresh store
+  the empty tree's row `createAvlProver` writes at height 0, so seeding at genesis leaves one row
+  there); the index is what refuses a second, and
   `version()` and `versionAtOrBeforeHeight` — `ORDER BY height DESC LIMIT 1` — read a total order
   by that constraint (→ "HAS AN `ORDER BY`" IS THE WRONG TEST. "IS THE ORDERING KEY UNIQUE" IS THE
   RIGHT ONE). A row already standing at the height `update` is asked to checkpoint is a store whose
@@ -4443,8 +4445,8 @@ malformed header into "we fork at genesis" and buy a full-chain reorg attempt wi
 short chains where the whole walk is inside the horizon.
 
 **Downstream of a `0`,** `reorg` reverts every block, rolls the prover to
-`versionAtOrBeforeHeight(0)` — the genesis version, and the genesis one only because seeding
-deletes the empty tree's height-0 version before writing its own — and re-applies from a
+`versionAtOrBeforeHeight(0)` — the genesis version, and the genesis one only because
+`bootstrapAvlProver` deletes the empty tree's height-0 version before writing its own — and re-applies from a
 `currentHeight` of 0, which is the chain-link check's genesis branch. Verified end to end
 rather than reasoned about; `test/services/fork-resolution.test.ts` pins the round trip against
 the pinned root.
