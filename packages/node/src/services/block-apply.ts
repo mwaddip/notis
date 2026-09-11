@@ -1024,214 +1024,214 @@ function applyMutationPhase(
 
   // One pass, in committed order (NODE_INTERFACE → Block finalization).
   for (const item of queue) {
-      const unresolvedInput = item.tx.inputs.find((id) => getBox(id) === null);
-      if (unresolvedInput !== undefined) {
+    const unresolvedInput = item.tx.inputs.find((id) => getBox(id) === null);
+    if (unresolvedInput !== undefined) {
+      console.warn(
+        `Rejected block height=${height}: embedded UTXO tx ${item.txId} ` +
+        `has an unresolved input ${unresolvedInput}`,
+      );
+      return false;
+    }
+
+    // Every input resolves — full re-validation. A tx that lists the same
+    // input twice is refused by validateTx step 1 (duplicate input ids),
+    // before any liveness read.
+    const revalidated = validateTx(utxoDeps, item.tx, height);
+    if (!revalidated.valid) {
+      console.warn(
+        `Rejected block height=${height}: embedded UTXO tx ` +
+        `${item.txId} failed re-validation: ${revalidated.error}`,
+      );
+      return false;
+    }
+
+    // Like apply rules (NODE_INTERFACE → Per-block like settlement):
+    // re-checked at apply — consensus, not gateway courtesy — and BEFORE
+    // applyTx, so a failing like never mutates state. Any failure rejects
+    // the whole block, like any other invalid embedded tx.
+    let likeToRecord: {
+      targetPostId: string;
+      likerId: Uint8Array;
+      authorHex: string;
+    } | null = null;
+    if (item.tx.likeTarget !== undefined) {
+      const targetPostId = item.tx.likeTarget;
+      // Confirmed ⟺ a topology row exists, and its author — never
+      // dag_posts.author — is who the like credits: placeholder rows carry
+      // a zeroed author, and a like on a confirmed but content-less post
+      // must credit the consensus-recorded author.
+      const authorHex = getTopologyAuthor(targetPostId);
+      if (authorHex === null) {
         console.warn(
-          `Rejected block height=${height}: embedded UTXO tx ${item.txId} ` +
-          `has an unresolved input ${unresolvedInput}`,
+          `Rejected block height=${height}: like tx ${item.txId} targets ` +
+          `unconfirmed post ${targetPostId}`,
         );
         return false;
       }
-
-      // Every input resolves — full re-validation. A tx that lists the same
-      // input twice is refused by validateTx step 1 (duplicate input ids),
-      // before any liveness read.
-      const revalidated = validateTx(utxoDeps, item.tx, height);
-      if (!revalidated.valid) {
+      // NODE_INTERFACE → Karma transition rules: a like targets a live post
+      // only — a placeholder is live (credits the topology author). A
+      // withdrawn post, or an unknown one, rejects.
+      const target = getPost(targetPostId);
+      if (!isLivePost(target)) {
         console.warn(
-          `Rejected block height=${height}: embedded UTXO tx ` +
-          `${item.txId} failed re-validation: ${revalidated.error}`,
+          `Rejected block height=${height}: like tx ${item.txId} targets ` +
+          `withdrawn or unknown post ${targetPostId}`,
         );
         return false;
       }
-
-      // Like apply rules (NODE_INTERFACE → Per-block like settlement):
-      // re-checked at apply — consensus, not gateway courtesy — and BEFORE
-      // applyTx, so a failing like never mutates state. Any failure rejects
-      // the whole block, like any other invalid embedded tx.
-      let likeToRecord: {
-        targetPostId: string;
-        likerId: Uint8Array;
-        authorHex: string;
-      } | null = null;
-      if (item.tx.likeTarget !== undefined) {
-        const targetPostId = item.tx.likeTarget;
-        // Confirmed ⟺ a topology row exists, and its author — never
-        // dag_posts.author — is who the like credits: placeholder rows carry
-        // a zeroed author, and a like on a confirmed but content-less post
-        // must credit the consensus-recorded author.
-        const authorHex = getTopologyAuthor(targetPostId);
-        if (authorHex === null) {
-          console.warn(
-            `Rejected block height=${height}: like tx ${item.txId} targets ` +
-            `unconfirmed post ${targetPostId}`,
-          );
-          return false;
-        }
-        // NODE_INTERFACE → Karma transition rules: a like targets a live post
-        // only — a placeholder is live (credits the topology author). A
-        // withdrawn post, or an unknown one, rejects.
-        const target = getPost(targetPostId);
-        if (!isLivePost(target)) {
-          console.warn(
-            `Rejected block height=${height}: like tx ${item.txId} targets ` +
-            `withdrawn or unknown post ${targetPostId}`,
-          );
-          return false;
-        }
-        // The liker is the karma inputs' owner, read from the input boxes —
-        // never from the signature map. The gateway's one-signature rule is
-        // gateway policy; a validator can embed a spare-signature like tx
-        // directly, and it must still apply with the liker the owner state
-        // names. validateTx above pinned every input to one karma owner, so
-        // the first input names it.
-        const likerId = (getBox(item.tx.inputs[0]!) as KarmaBox).owner;
-        // One like per account per post, structurally: the key exists or it
-        // does not. Applied likes earlier in this block already inserted
-        // their record, so an intra-block duplicate fails here too.
-        if (hasLikeRecord(targetPostId, likerId)) {
-          console.warn(
-            `Rejected block height=${height}: like tx ${item.txId} ` +
-            `duplicates an existing like-record for ${targetPostId}`,
-          );
-          return false;
-        }
-        likeToRecord = { targetPostId, likerId, authorHex };
+      // The liker is the karma inputs' owner, read from the input boxes —
+      // never from the signature map. The gateway's one-signature rule is
+      // gateway policy; a validator can embed a spare-signature like tx
+      // directly, and it must still apply with the liker the owner state
+      // names. validateTx above pinned every input to one karma owner, so
+      // the first input names it.
+      const likerId = (getBox(item.tx.inputs[0]!) as KarmaBox).owner;
+      // One like per account per post, structurally: the key exists or it
+      // does not. Applied likes earlier in this block already inserted
+      // their record, so an intra-block duplicate fails here too.
+      if (hasLikeRecord(targetPostId, likerId)) {
+        console.warn(
+          `Rejected block height=${height}: like tx ${item.txId} ` +
+          `duplicates an existing like-record for ${targetPostId}`,
+        );
+        return false;
       }
+      likeToRecord = { targetPostId, likerId, authorHex };
+    }
 
-      // ⛔ **THE UNVOUCH NEEDS NO ARM HERE.** The stake moves into a
-      // `VouchEscrowBox` the voucher's own transaction outputs, so `applyTx`
-      // inserts it like any other output and the store's choke point journals it
-      // with an exact inverse. ✅ **The obligation is committed state**, in the
-      // UTXO set and therefore in the `stateRoot`, so nothing has to remember it
-      // (ARCHITECTURE → Vouch boxes).
+    // ⛔ **THE UNVOUCH NEEDS NO ARM HERE.** The stake moves into a
+    // `VouchEscrowBox` the voucher's own transaction outputs, so `applyTx`
+    // inserts it like any other output and the store's choke point journals it
+    // with an exact inverse. ✅ **The obligation is committed state**, in the
+    // UTXO set and therefore in the `stateRoot`, so nothing has to remember it
+    // (ARCHITECTURE → Vouch boxes).
 
-      // ⛔ **One invitee per block.** The bond IS the request, so a second bond
-      // naming a key an earlier transaction in this block already named would
-      // draw a second grant from the pool for one key. Refused before `applyTx`,
-      // so a rejected block has mutated nothing on this transaction's account.
-      const bondOut = bondOutputOf(item.outputs);
-      if (bondOut !== null) {
-        const inviteeHex = Buffer.from(bondOut.inviteePublicKey).toString('hex');
-        if (invitedThisBlock.has(inviteeHex)) {
-          console.warn(
-            `Rejected block height=${height}: invite tx ${item.txId} names ` +
-            `${inviteeHex}, which another bond in this block already names`,
-          );
-          return false;
-        }
-        invitedThisBlock.set(inviteeHex, bondOut.inviterId);
+    // ⛔ **One invitee per block.** The bond IS the request, so a second bond
+    // naming a key an earlier transaction in this block already named would
+    // draw a second grant from the pool for one key. Refused before `applyTx`,
+    // so a rejected block has mutated nothing on this transaction's account.
+    const bondOut = bondOutputOf(item.outputs);
+    if (bondOut !== null) {
+      const inviteeHex = Buffer.from(bondOut.inviteePublicKey).toString('hex');
+      if (invitedThisBlock.has(inviteeHex)) {
+        console.warn(
+          `Rejected block height=${height}: invite tx ${item.txId} names ` +
+          `${inviteeHex}, which another bond in this block already names`,
+        );
+        return false;
       }
+      invitedThisBlock.set(inviteeHex, bondOut.inviterId);
+    }
 
-      // Before `applyTx` consumes them. Every input is present (tested at the
-      // top of this iteration) and reading the first is sound because
-      // `validateTx` has just passed (NODE_INTERFACE → `validateTx` step 3).
-      const firstInput = item.tx.inputs[0];
-      const firstInputBox = firstInput !== undefined ? getBox(firstInput)! : null;
+    // Before `applyTx` consumes them. Every input is present (tested at the
+    // top of this iteration) and reading the first is sound because
+    // `validateTx` has just passed (NODE_INTERFACE → `validateTx` step 3).
+    const firstInput = item.tx.inputs[0];
+    const firstInputBox = firstInput !== undefined ? getBox(firstInput)! : null;
 
-      // Capture a username input before applyTx consumes it — the burn's
-      // deleteUsername needs the name from the box.
-      let capturedUsernameInput: AnyBox | null = null;
-      for (const inputId of item.tx.inputs) {
-        const b = getBox(inputId);
-        if (b && b.boxType === 'username') { capturedUsernameInput = b; break; }
-      }
-      if (firstInputBox !== null) {
-        appliedTxs.push({ tx: item.tx, inputBoxes: [firstInputBox] });
-      }
+    // Capture a username input before applyTx consumes it — the burn's
+    // deleteUsername needs the name from the box.
+    let capturedUsernameInput: AnyBox | null = null;
+    for (const inputId of item.tx.inputs) {
+      const b = getBox(inputId);
+      if (b && b.boxType === 'username') { capturedUsernameInput = b; break; }
+    }
+    if (firstInputBox !== null) {
+      appliedTxs.push({ tx: item.tx, inputBoxes: [firstInputBox] });
+    }
 
-      // Rent recognition by shape: an unsigned credit-side tx that passed
-      // authorization is a rent collection (NODE_INTERFACE → "Storage rent
-      // is a transition requiring no signature"). The biconditional is
-      // structural — authorization refuses unsigned non-eligible credit.
-      if (isCreditSideTx(item.tx) && Object.keys(item.tx.signatures).length === 0) {
-        rentTxIds.add(item.txId);
-      }
+    // Rent recognition by shape: an unsigned credit-side tx that passed
+    // authorization is a rent collection (NODE_INTERFACE → "Storage rent
+    // is a transition requiring no signature"). The biconditional is
+    // structural — authorization refuses unsigned non-eligible credit.
+    if (isCreditSideTx(item.tx) && Object.keys(item.tx.signatures).length === 0) {
+      rentTxIds.add(item.txId);
+    }
 
-      perTxOutputs.set(item.txId, item.outputs);
+    perTxOutputs.set(item.txId, item.outputs);
 
-      // Track vouch targets for the membership pass. Capture the pre-block
-      // record BEFORE applyTx modifies it — both inputs (consumed) and outputs
-      // (created), so the pass sees the true pre-block value.
-      for (const inputId of item.tx.inputs) {
-        const inputBox = getBox(inputId);
-        if (inputBox && inputBox.boxType === 'vouch') {
-          const targetHex = Buffer.from((inputBox as VouchBox).targetId).toString('hex');
-          membershipTouched.add(targetHex);
-          if (!preBlockRecords.has(targetHex)) {
-            preBlockRecords.set(targetHex, getIdentityRecord((inputBox as VouchBox).targetId));
-          }
+    // Track vouch targets for the membership pass. Capture the pre-block
+    // record BEFORE applyTx modifies it — both inputs (consumed) and outputs
+    // (created), so the pass sees the true pre-block value.
+    for (const inputId of item.tx.inputs) {
+      const inputBox = getBox(inputId);
+      if (inputBox && inputBox.boxType === 'vouch') {
+        const targetHex = Buffer.from((inputBox as VouchBox).targetId).toString('hex');
+        membershipTouched.add(targetHex);
+        if (!preBlockRecords.has(targetHex)) {
+          preBlockRecords.set(targetHex, getIdentityRecord((inputBox as VouchBox).targetId));
         }
       }
-      for (const out of item.outputs) {
-        if (out.boxType === 'vouch') {
-          const targetHex = Buffer.from((out as VouchBox).targetId).toString('hex');
-          membershipTouched.add(targetHex);
-          if (!preBlockRecords.has(targetHex)) {
-            preBlockRecords.set(targetHex, getIdentityRecord((out as VouchBox).targetId));
-          }
+    }
+    for (const out of item.outputs) {
+      if (out.boxType === 'vouch') {
+        const targetHex = Buffer.from((out as VouchBox).targetId).toString('hex');
+        membershipTouched.add(targetHex);
+        if (!preBlockRecords.has(targetHex)) {
+          preBlockRecords.set(targetHex, getIdentityRecord((out as VouchBox).targetId));
         }
       }
+    }
 
-      applyTx(utxoDeps, item.tx, item.outputs, height);
+    applyTx(utxoDeps, item.tx, item.outputs, height);
 
-      // The spend is the activity (ARCHITECTURE → Karma decay). The karma arm
-      // pins one owner for all karma inputs; the first input's owner is that
-      // owner. The write lands after applyTx's box writes, so reverse replay
-      // restores it first (NODE_INTERFACE → Populating the record).
-      if (firstInputBox?.boxType === 'karma') {
-        recordKarmaActivity((firstInputBox as KarmaBox).owner);
-      }
+    // The spend is the activity (ARCHITECTURE → Karma decay). The karma arm
+    // pins one owner for all karma inputs; the first input's owner is that
+    // owner. The write lands after applyTx's box writes, so reverse replay
+    // restores it first (NODE_INTERFACE → Populating the record).
+    if (firstInputBox?.boxType === 'karma') {
+      recordKarmaActivity((firstInputBox as KarmaBox).owner);
+    }
 
-      if (likeToRecord !== null) {
-        // Journalled side-record (inverse: deleteLikeRecord), plus the
-        // in-memory accrual §11b settles.
-        insertLikeRecord(likeToRecord.targetPostId, likeToRecord.likerId, height);
-        likesPerAuthor.set(
+    if (likeToRecord !== null) {
+      // Journalled side-record (inverse: deleteLikeRecord), plus the
+      // in-memory accrual §11b settles.
+      insertLikeRecord(likeToRecord.targetPostId, likeToRecord.likerId, height);
+      likesPerAuthor.set(
+        likeToRecord.authorHex,
+        (likesPerAuthor.get(likeToRecord.authorHex) ?? 0) + 1,
+      );
+      // ARCHITECTURE → Membership: memberLikes bumped iff member(liker).
+      const likerRecord = getIdentityRecord(likeToRecord.likerId);
+      if (likerRecord && isMember(likerRecord)) {
+        memberLikesPerAuthor.set(
           likeToRecord.authorHex,
-          (likesPerAuthor.get(likeToRecord.authorHex) ?? 0) + 1,
+          (memberLikesPerAuthor.get(likeToRecord.authorHex) ?? 0) + 1,
         );
-        // ARCHITECTURE → Membership: memberLikes bumped iff member(liker).
-        const likerRecord = getIdentityRecord(likeToRecord.likerId);
-        if (likerRecord && isMember(likerRecord)) {
-          memberLikesPerAuthor.set(
-            likeToRecord.authorHex,
-            (memberLikesPerAuthor.get(likeToRecord.authorHex) ?? 0) + 1,
-          );
-        }
       }
+    }
 
-      // NODE_INTERFACE → Username transition rules.
-      // Claim: a username output → putUsername.
-      const usernameOut = item.outputs.find(o => o.boxType === 'username');
-      if (usernameOut) {
-        const u = usernameOut as UsernameBox;
-        const canonical = Buffer.from(canonicalUsernameBytes(u.name)).toString('utf8');
-        putUsername({
-          nameLower: canonical,
-          name: Buffer.from(u.name).toString('utf8'),
-          owner: Buffer.from(u.owner).toString('hex'),
-          boxId: usernameOut.id!,
-          claimedAtBlock: height,
-        });
-      }
-      // Burn: a username input → deleteUsername. The box is read before applyTx
-      // consumed it (capturedUsernameInput, captured above).
-      if (capturedUsernameInput) {
-        const u = capturedUsernameInput as UsernameBox;
-        const canonical = Buffer.from(canonicalUsernameBytes(u.name)).toString('utf8');
-        deleteUsername(canonical);
-      }
+    // NODE_INTERFACE → Username transition rules.
+    // Claim: a username output → putUsername.
+    const usernameOut = item.outputs.find(o => o.boxType === 'username');
+    if (usernameOut) {
+      const u = usernameOut as UsernameBox;
+      const canonical = Buffer.from(canonicalUsernameBytes(u.name)).toString('utf8');
+      putUsername({
+        nameLower: canonical,
+        name: Buffer.from(u.name).toString('utf8'),
+        owner: Buffer.from(u.owner).toString('hex'),
+        boxId: usernameOut.id!,
+        claimedAtBlock: height,
+      });
+    }
+    // Burn: a username input → deleteUsername. The box is read before applyTx
+    // consumed it (capturedUsernameInput, captured above).
+    if (capturedUsernameInput) {
+      const u = capturedUsernameInput as UsernameBox;
+      const canonical = Buffer.from(canonicalUsernameBytes(u.name)).toString('utf8');
+      deleteUsername(canonical);
+    }
 
-      // Remove from the local mempool if present. This is the whole of the
-      // cleanup for a block that arrived from a peer — a block this node mined
-      // is cleaned by rowid in `finalizeBlock`, which reaches every included
-      // entry wherever it sits (MEMPOOL_INTERFACE → Confirmed-entry cleanup reaches every row).
-      removeUtxoTxEntry(item.txId);
+    // Remove from the local mempool if present. This is the whole of the
+    // cleanup for a block that arrived from a peer — a block this node mined
+    // is cleaned by rowid in `finalizeBlock`, which reaches every included
+    // entry wherever it sits (MEMPOOL_INTERFACE → Confirmed-entry cleanup reaches every row).
+    removeUtxoTxEntry(item.txId);
 
-      // Box mutations are journaled by the store choke point; the tx itself
-      // is kept for mempool re-insertion on reorg.
-      recordAppliedUtxoTx(item.txId, encodeTx(item.tx));
+    // Box mutations are journaled by the store choke point; the tx itself
+    // is kept for mempool re-insertion on reorg.
+    recordAppliedUtxoTx(item.txId, encodeTx(item.tx));
   }
 
   // 8b. Process withdrawal transactions from this block.
