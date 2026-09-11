@@ -608,7 +608,8 @@ the network profile (`TYPES_INTERFACE §Network profiles`), selected together by
    value, and the emission box's successor pins the release net of the forfeit. A
    total-only check on the coinbase alone would accept a block that forfeited nothing
 3. Coinbase outputs cannot be spent before `lockedUntilBlock`, and every coinbase
-   output's `lockedUntilBlock` **equals `height + CREDIT_MINER_REWARD_DELAY`** —
+   output's `lockedUntilBlock` **equals `height + creditMinerRewardDelay`** (the network
+   profile's reward delay, `CREDIT_MINER_REWARD_DELAY` by default, 10 on devnet) —
    enforced at apply on all paths (gossip, sync, reorg), not only in the gossip
    validator. A block with any other coinbase lock is rejected.
 4. `powTargetBits` **equals the schedule evaluated over the stored parent** (→ Difficulty

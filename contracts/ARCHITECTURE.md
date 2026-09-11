@@ -2299,7 +2299,7 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   claim. A post's parent refs and its creating transaction's signature MUST be
   verified by the local node before the post enters the store.
   > ✅ **RESOLVED BY STRUCTURE on both write paths.** `dag_posts` has one production
-  > writer — `insertPost` — with two production callers.
+  > writer — `insertPost` — with three production callers.
   > - `post-service.ts` cannot store ahead of validation, by naming: `createPost`
   >   derives the post id from the `TxId` that `validateTx` returns
   >   (`computePostId` takes no `Post`), so the store write has nothing to name
@@ -2309,13 +2309,6 @@ These invariants are adopted from production-grade Ergo Rust node practices:
   >   stores and confirms posts ahead of the embedded-transaction re-validation,
   >   inside one synchronous SQLite transaction — every rejection path rolls the
   >   whole phase back, so a post stored by a rejected block is never readable.
-  >
-  > ⚠ **`verifyPoW` has three call sites and a re-export, and one site is outside the
-  > verifier** — `net/src/gossip.ts` (gossip relay validation), and `verifier.ts` inside both
-  > `verifyPost` and `verifyPostForRelay`. The re-export at `node/src/services/pow.ts` is a
-  > second entry point under a different module path, invisible to a search for callers of the
-  > original. **Unreachability from block application is unverified** — it rests on a search
-  > nobody has run, so treat it as open rather than as either answer.
 - **Every validation rule declares itself protocol or local policy** — a rule
   every node must reach the same verdict on is protocol and changing it forks the
   network; a rule this node applies alone is local policy and may change freely.

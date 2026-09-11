@@ -1565,7 +1565,7 @@ the treasury.
 | KarmaBox | KarmaBox + KarmaPriceBox + LikeAccrualBox | **Reply**: `post` present with one parent ⟺ exactly one `KarmaPriceBox` output of exactly `POST_PRICE_REPLY − REPLY_AUTHOR_SHARE` **and** exactly one `LikeAccrualBox` output of exactly `REPLY_AUTHOR_SHARE` whose `author` is the parent's author from `block_topology`. The karma output as above; the signing key is the post's author. **Value conserved** |
 | KarmaBox | KarmaBox + BondBox | **Invite**: karma outputs same owner, value conserved; `inviteBondMin ≤ bond.value ≤ inviteBondMax` (per-network caps) and the settlement grants **exactly `bond.value`**; `bond.inviterId` = the karma input owner; `inviteePublicKey` holds **no `IdentityRecord`**, and **no other bond in this block names it**; `bond.inviterId` is a root, or a member with `⌊memberVouches / D(N)⌋ − invitesUsed ≥ 1` on its record at apply, `N` from pre-body state (→ Bond transition rules, → Membership pass) |
 | KarmaBox | KarmaBox + VouchBox | Vouch cast: karma outputs same owner; `vouch.value == VOUCH_KARMA_AMOUNT`; `vouch.voucherId` == the karma input's owner; the voucher is a member — `member(voucher)` on its record at apply (→ Membership pass); `vouch.targetId ≠ vouch.voucherId`; the target holds an `IdentityRecord`; no unspent `vouch` box carries the same `(voucherId, targetId)`; the voucher's **summed** karma balance ≥ `VOUCH_MIN_BALANCE`; no unspent escrow names the voucher; `vouch.createdAtBlock` within `[height − VOUCH_CAST_HEIGHT_WINDOW, height]` (the upper bound is step 6's; the window bounds backdating, which would shorten the cooldown the escrow derives from it) |
-| KarmaBox | KarmaBox + UsernameBox | **Claim**: exactly one `username` output — `owner` = the karma inputs' owner, `value == 0n`, its `name` valid (`VALIDATION_INTERFACE → verifyTxStructure`); no name record for the name's canonical form; **no holder record for the owner** (available, holding none); the karma output same owner, value conserved; the signing key is the owner's (→ Username transition rules) |
+| KarmaBox | KarmaBox + UsernameBox | **Claim**: exactly one `username` output — `owner` = the karma inputs' owner, `value == 0n`, its `name` valid (`TYPES_INTERFACE → UsernameBox`); no name record for the name's canonical form; **no holder record for the owner** (available, holding none); the karma output same owner, value conserved; the signing key is the owner's (→ Username transition rules) |
 | KarmaBox + UsernameBox | KarmaBox + KarmaPriceBox | **Burn**: exactly one `username` input, its `owner` the karma inputs' owner, holder-signed; exactly one `KarmaPriceBox` output of exactly `USERNAME_BURN_PRICE`; no `username` output; the karma output same owner, value conserved (→ Username transition rules) |
 | VouchBox | VouchEscrowBox | **Unvouch**: exactly one VouchBox input, voucher-signed; exactly one escrow output with `value ==` the consumed box's, `owner == voucherId`, and `releaseAtBlock == vouch.createdAtBlock + vouchCooldownBlocks` — an exact pin, derivable from the consumed box alone. The cooldown runs from the **cast**, so a long-held endorsement costs no extra lockup and no withdrawal pattern returns the stake early. Value conserved |
 | VouchEscrowBox | KarmaBox | **Block application only**: the settlement of the first block at or past `releaseAtBlock` consumes the escrow and returns its value to `owner` as karma (§The settlement transaction) — **no user transaction can spend a `VouchEscrowBox`**. Withdrawal itself is never gated — only the stake's return waits, and it waits in the escrow |
@@ -4827,13 +4827,12 @@ ids; once a mismatch kills the block rather than skipping the tx, the bytes are 
 committed through `computeTxId`, and "the body is swappable under an unchanged header" stops being
 true.
 
-**What the obligation does NOT cover, stated so the asymmetry is not read as an oversight.** A tx
-whose inputs never appear is still dropped after the multi-pass loop exhausts `MAX_PASSES`, and the
-block still applies. That survives because it is not the same property: the bytes there *do* match
-their declared id, every node runs the same bounded loop over the same tx set from the same prior
-state, and so every node drops the same txs. A block declaring a tx it never applies is a
-producer-quality problem, not a divergence. If input liveness ever stops being decidable from local
-state alone, this paragraph is what has to be re-derived.
+**Input liveness is covered by the deferral rule, not left open.** A transaction whose inputs never
+appear rejects the block — the same verdict a byte mismatch reaches, and the one the deferral rule
+states ("A block is invalid if any embedded transaction does not apply"). There is no pass bound:
+every node runs the same progress-terminating loop over the same transaction set from the same prior
+state, so every node reaches the same verdict. If input liveness ever stops being decidable from
+local state alone, this is what has to be re-derived.
 
 > ⚠ **Rejection is of BYTES, not of the block hash.** A node that rejects a malformed body MUST
 > remain willing to accept a well-formed body for the same block hash from another peer. Caching
