@@ -5583,11 +5583,13 @@ describe('resolveFork — reorg abort classes', () => {
 
     // The stub steps the clock backward when delivering blocks, so the
     // funnel's future-bound re-check fails on the first block.
+    const headerRequests: number[] = [];
     const net: ForkResolutionNet & {
       penalties: Array<{ peerId: string; kind: string; reason: string }>;
     } = {
       getConnectedPeers: () => ['peer-clock'],
       requestHeaders: async (startHeight, maxCount) => {
+        headerRequests.push(startHeight);
         return theirHeaders
           .filter(h => h.height <= startHeight)
           .sort((a, b) => b.height - a.height)
@@ -5623,9 +5625,10 @@ describe('resolveFork — reorg abort classes', () => {
     const warnings = warnSpy.mock.calls.map(c => String(c[0]));
     expect(warnings.some(w => w.includes('class=acceptance'))).toBe(true);
 
-    // Restore the clock and the same branch is adoptable (no memo was written).
+    // No memo was written: the same peer at the same tip re-runs the walk
+    // (a memo would short-circuit step 2 and make zero header requests).
+    const requestsBefore = headerRequests.length;
     setClock(() => futureStamp + 10_000);
-    forkResolution.resetForkResolutionMemo();
     const net2: ForkResolutionNet & {
       penalties: Array<{ peerId: string; kind: string; reason: string }>;
     } = {
@@ -5638,6 +5641,7 @@ describe('resolveFork — reorg abort classes', () => {
       penalties: [],
     };
     await forkResolution.resolveFork(theirBlocks[2]!, net2, 'peer-clock');
+    expect(headerRequests.length).toBeGreaterThan(requestsBefore);
     expect(ordering.getCurrentHeight()).toBe(4);
   });
 
