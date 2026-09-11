@@ -4275,9 +4275,18 @@ with the chain untouched:
    the highest match is `f`. Heights examined: `ourTip … max(ourTip − maxReorgDepth + 1, 1)`. No
    match: `f = GENESIS_HEIGHT` when `ourTip ≤ maxReorgDepth` (the chains share only the genesis
    state), else `null` → no decision, no penalty: a fork past the horizon is indistinguishable from an
-   honest peer. No headers at all → no decision, no penalty: "has nothing" is legitimate. An
-   **unhashable** header in a page refuses the page whole and penalises `misbehavior` — `'domain'`,
-   one step early — and never falls through to genesis.
+   honest peer. No headers at all → no decision, no penalty: "has nothing" is legitimate.
+   **A page is held to the request it answers, before any of it is hashed or matched** — the one
+   shape the serve arm produces (NET_INTERFACE → `GetHeaders` / `GetBlocks` responses): every height
+   at or below the start requested, heights consecutive and descending, and the page full
+   (`MAX_CHAIN_RESPONSE_ITEMS`) unless it reaches height 1. A height above the start, a hole, a
+   repeat or an ascent is a served chain that is not one: the page is refused whole, `misbehavior`,
+   no decision, no memo. A short page that does not reach height 1 is under-delivery: refused whole,
+   `transient`, no decision, no memo. Every accepted page therefore moves the start down by at least
+   400, so the walk asks at most `⌈maxReorgDepth / 400⌉` pages (NET_INTERFACE → Pull Requests) —
+   asserted in the loop, reachable by no peer's choice. An **unhashable** header in a page refuses
+   the page whole and penalises `misbehavior` — `'domain'`, one step early — and never falls through
+   to genesis.
 4. **The anchor and our work.** Anchor = `{ prevBlockHash, height: f, interlinks, createdAt }`
    where `prevBlockHash` is the hash of our block at `f`, or `GENESIS_PREV_BLOCK_HASH` at `f = 0`;
    `interlinks` is the vector the block at `f + 1` must commit to — `updateInterlinks(getInterlinks(f),

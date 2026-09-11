@@ -935,8 +935,8 @@ Node start
 | `ProtocolViolation` | Undecodable/malformed frame or message; wrong-network handshake | permanent ban |
 | `Transient` | Transient handshake failure / timeout (`handshake.ts`) | 50 |
 | `Transient` | A version mismatch — a gossiped block or transaction whose declared version is not its era (`gossip.ts` call sites), or a header segment `verifyHeaderChain` refuses with reason `'version'` in fork resolution (via `NetNode.penalizePeer`): compatibility, never a violation | 50 |
-| `misbehavior` | Fork resolution, via `NetNode.penalizePeer` from node's `resolveFork` (NODE_INTERFACE → Fork choice decides on verified headers): a header segment that fails `verifyHeaderChain` other than the window-miss case and the `'version'` reason; a segment containing a refused header; a delivered block whose hash is not the verified header's; a verified-header chain rejected by the apply funnel | 100 |
-| `Transient` | Fork resolution, via `NetNode.penalizePeer`: a block answer shorter than the verified segment (non-delivery) | 50 |
+| `misbehavior` | Fork resolution, via `NetNode.penalizePeer` from node's `resolveFork` (NODE_INTERFACE → Fork choice decides on verified headers): a header segment that fails `verifyHeaderChain` other than the window-miss case and the `'version'` reason; a segment containing a refused header; a delivered block whose hash is not the verified header's; a verified-header chain rejected by the apply funnel; a header page that is not an answer to its request — a height above the start asked, a hole, a repeat or an ascent | 100 |
+| `Transient` | Fork resolution, via `NetNode.penalizePeer`: a block answer shorter than the verified segment, or a header page short of full that does not reach height 1 (non-delivery) | 50 |
 
 **`NetNode.penalizePeer(peerId, kind: 'misbehavior' | 'transient', reason)`** is node's one call
 into this system: it records the named tier against the peer with the reason string and nothing
@@ -1157,6 +1157,14 @@ the CBOR would have been the band-aid; the root cause was the second dialect, so
 - **A response that does not decode THROWS; it must never resolve to `[]`.** `requestBlocks`' result
   goes straight to `reorg(forkHeight, newBlocks)`, which reverts above the fork point and applies what
   it is given — so an empty array *truncates our own chain* instead of failing to extend it.
+- **A `Headers` page has one shape, and a requester holds a page to it.** The serve arm walks our
+  chain down from `min(startHeight, ourTip)` for `min(maxCount, MAX_CHAIN_RESPONSE_ITEMS)` headers or
+  until height 1: heights consecutive and descending, none above the start asked, the page full
+  unless it reaches the bottom. Nothing else is an answer — a height above the start, a hole, a
+  repeat or an ascent is a served chain that is not one (`misbehavior`); a short page that does not
+  reach height 1 is under-delivery (`transient`); an empty page is "has nothing". Fork resolution's
+  walk is the requester that enforces it (NODE_INTERFACE → Fork choice decides on verified headers,
+  step 3).
 
 Removed protocols:
 - The old text-based `/dagsocial/sync/1` (individual sub-block request/response) —
@@ -1269,7 +1277,8 @@ headers); a page adding nothing or a substituted block is refused there and pena
 
 **Fork resolution pages, and asks for nothing it has not verified.** The fork point is found by
 paging the peer's headers **down from our own tip** — `requestHeaders(ourTip, MAX_CHAIN_RESPONSE_ITEMS)`,
-then from the lowest height seen − 1 — over at most `⌈maxReorgDepth / 400⌉` pages; the competing
+then from the lowest height seen − 1 — each page held to the one shape the serve arm produces
+(→ `GetHeaders` / `GetBlocks` responses), over at most `⌈maxReorgDepth / 400⌉` pages; the competing
 branch is then scored **upward** in pages of the same query, each verified against the anchor the
 previous page returned, until it is heavier than ours above the fork or it ends (NODE_INTERFACE → Fork
 choice decides on verified headers). The block range then requested is `forkHeight + 1 … forkHeight +

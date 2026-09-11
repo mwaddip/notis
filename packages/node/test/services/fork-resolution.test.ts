@@ -3478,7 +3478,7 @@ describe('the fork walk', () => {
     peerHeader.powNonce = solveHeaderPow(peerHeader);
     expect(blockHash(peerHeader)).not.toBeNull();
 
-    const theirHeaders = [peerHeader, block2];
+    const theirHeaders = [peerHeader, block2, ordering.getOrderingBlock(1)!.header];
     const trigger = { header: peerHeader, utxoTxTree: { utxoTxIds: [], utxoTxs: [] }, validatorSignature: new Uint8Array(64) } as OrderingBlock;
 
     setClock(() => t1 + 5 * 60_000);
@@ -3776,18 +3776,23 @@ describe('the fork walk', () => {
     };
     expect(blockHash(poisoned)).toBeNull();
 
-    // Page is [height 4 (unrelated), height 3 (shared), height 1 (poisoned)].
+    // Page: [4 (unrelated), 3 (shared), 2 (filler), 1 (poisoned)].
     const unrelatedH4: BlockHeader = {
       ...sharedHeader,
       height: 4,
       prevBlockHash: 'cc'.repeat(32),
     };
-    const net = stubNet([unrelatedH4, sharedHeader, poisoned], []);
+    const fillerH2: BlockHeader = {
+      ...sharedHeader,
+      height: 2,
+      prevBlockHash: 'cc'.repeat(32),
+    };
+    const net = stubNet([unrelatedH4, sharedHeader, fillerH2, poisoned], []);
     await forkResolution.resolveFork(dummyBlock(unrelatedH4), net, 'peer-poison2');
 
     // The match at height 3 is not taken — the whole page is hashed first.
     expect(net.penalties).toEqual([
-      expect.objectContaining({ kind: 'misbehavior', reason: expect.stringContaining('fork-walk') }),
+      expect.objectContaining({ kind: 'misbehavior', reason: expect.stringMatching(/unhashable/) }),
     ]);
     expect(ordering.getCurrentHeight()).toBe(4);
   });
@@ -3815,12 +3820,20 @@ describe('the fork walk', () => {
     };
     expect(blockHash(poisonedMatch)).toBeNull();
 
+    const fillerH3: BlockHeader = {
+      ...ordering.getOrderingBlock(3)!.header,
+      prevBlockHash: 'cc'.repeat(32),
+    };
     const deepMatch = ordering.getOrderingBlock(2)!.header;
-    const net = stubNet([poisonedMatch, deepMatch], []);
+    const fillerH1: BlockHeader = {
+      ...ordering.getOrderingBlock(1)!.header,
+      prevBlockHash: 'cc'.repeat(32),
+    };
+    const net = stubNet([poisonedMatch, fillerH3, deepMatch, fillerH1], []);
     await forkResolution.resolveFork(dummyBlock(poisonedMatch), net, 'peer-deeper');
 
     expect(net.penalties).toEqual([
-      expect.objectContaining({ kind: 'misbehavior', reason: expect.stringContaining('fork-walk') }),
+      expect.objectContaining({ kind: 'misbehavior', reason: expect.stringMatching(/unhashable/) }),
     ]);
     expect(ordering.getCurrentHeight()).toBe(5);
   });
@@ -3900,6 +3913,18 @@ describe('the fork walk', () => {
       });
     }
     fakeHeaders.push(shared2);
+    fakeHeaders.push({
+      height: 1,
+      prevBlockHash: 'ab'.repeat(32),
+      stateRoot: EMPTY_STATE_ROOT,
+      utxoTxRoot: '00'.repeat(32),
+      powTargetBits: testConfig.orderingBlockPowTargetBits,
+      powNonce: 0,
+      protocolVersion: PROTOCOL_VERSION,
+      createdAt: 1000 + 60000,
+      validatorId: new Uint8Array(32),
+      interlinkRoot: '00'.repeat(32),
+    });
 
     const net = stubNet(fakeHeaders, []);
     await expect(
@@ -3907,6 +3932,293 @@ describe('the fork walk', () => {
     ).rejects.toThrow(MissingStoredBlockError);
 
     expect(ordering.getCurrentHeight()).toBe(5);
+  });
+
+  // -------------------------------------------------------------------------
+  // Page shape — NODE_INTERFACE → Fork choice decides on verified headers,
+  // step 3; NET_INTERFACE → `GetHeaders` / `GetBlocks` responses.
+  // -------------------------------------------------------------------------
+
+  it('the pin — a single-header page at ourTip is a short page', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    for (let i = 0; i < 3; i++) await mineNextBlock(bc);
+    expect(ordering.getCurrentHeight()).toBe(3);
+
+    const peerHeader: BlockHeader = {
+      height: 3,
+      prevBlockHash: 'ff'.repeat(32),
+      stateRoot: EMPTY_STATE_ROOT,
+      utxoTxRoot: '00'.repeat(32),
+      powTargetBits: testConfig.orderingBlockPowTargetBits,
+      powNonce: 0,
+      protocolVersion: PROTOCOL_VERSION,
+      createdAt: 1_000_000,
+      validatorId: new Uint8Array(32),
+      interlinkRoot: '00'.repeat(32),
+    };
+
+    const net = stubNet([peerHeader], []);
+    await forkResolution.resolveFork(dummyBlock(peerHeader), net, 'peer-pin');
+
+    expect(net.penalties).toEqual([
+      expect.objectContaining({ kind: 'transient', reason: expect.stringMatching(/short page/) }),
+    ]);
+    expect(net.headerRequests).toHaveLength(1);
+    expect(net.blockRequests).toEqual([]);
+    expect(ordering.getCurrentHeight()).toBe(3);
+
+    // No memo — a second call asks again.
+    await forkResolution.resolveFork(dummyBlock(peerHeader), net, 'peer-pin');
+    expect(net.headerRequests).toHaveLength(2);
+  });
+
+  it('a height above the start on page 2', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const { setClock } = await import('../../src/services/difficulty.js');
+
+    const bigConfig = makeTestConfig({ maxReorgDepth: 450 });
+    vi.doMock('../../src/config.js', () => ({ config: bigConfig, loadConfig: () => bigConfig }));
+
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(bigConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const t1 = 1_000_000;
+    for (let i = 0; i < 450; i++) {
+      setClock(() => t1 + i * 60_000);
+      await mineNextBlock(bc);
+    }
+    expect(ordering.getCurrentHeight()).toBe(450);
+
+    // Page 1: honest headers 450..51 (full). Page 2: the peer serves heights
+    // starting above the requested start (450 again instead of ≤ 50).
+    const honestHeaders: BlockHeader[] = [];
+    for (let h = 450; h >= 1; h--) {
+      honestHeaders.push({
+        height: h,
+        prevBlockHash: 'ff'.repeat(32),
+        stateRoot: EMPTY_STATE_ROOT,
+        utxoTxRoot: '00'.repeat(32),
+        powTargetBits: bigConfig.orderingBlockPowTargetBits,
+        powNonce: 0,
+        protocolVersion: PROTOCOL_VERSION,
+        createdAt: t1 + h * 60_000,
+        validatorId: new Uint8Array(32),
+        interlinkRoot: '00'.repeat(32),
+      });
+    }
+
+    let requestCount = 0;
+    const headerRequests: Array<{ startHeight: number; maxCount: number }> = [];
+    const penalties: Array<{ peerId: string; kind: string; reason: string }> = [];
+    const net: ForkResolutionNet = {
+      getConnectedPeers: () => ['peer-above'],
+      requestHeaders: async (startHeight: number, maxCount: number) => {
+        headerRequests.push({ startHeight, maxCount });
+        requestCount++;
+        if (requestCount === 1) {
+          return honestHeaders
+            .filter(h => h.height <= startHeight)
+            .sort((a, b) => b.height - a.height)
+            .slice(0, maxCount);
+        }
+        // Page 2: maliciously top the page at 450 again.
+        return honestHeaders
+          .filter(h => h.height <= 450)
+          .sort((a, b) => b.height - a.height)
+          .slice(0, maxCount);
+      },
+      requestBlocks: async () => [],
+      penalizePeer: (peerId: string, kind: string, reason: string) => {
+        penalties.push({ peerId, kind, reason });
+      },
+      peerTipHeight: () => 450,
+    };
+
+    setClock(() => t1 + 451 * 60_000);
+    await forkResolution.resolveFork(
+      dummyBlock(honestHeaders[0]!),
+      net,
+      'peer-above',
+    );
+
+    expect(penalties).toEqual([
+      expect.objectContaining({
+        kind: 'misbehavior',
+        reason: expect.stringMatching(/above the requested start/),
+      }),
+    ]);
+    expect(headerRequests).toHaveLength(2);
+    expect(ordering.getCurrentHeight()).toBe(450);
+  }, 120_000);
+
+  it('a hole in a page', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    for (let i = 0; i < 5; i++) await mineNextBlock(bc);
+
+    const headerRequests: Array<{ startHeight: number; maxCount: number }> = [];
+    const penalties: Array<{ peerId: string; kind: string; reason: string }> = [];
+    const net: ForkResolutionNet = {
+      getConnectedPeers: () => ['peer-hole'],
+      requestHeaders: async (startHeight: number, maxCount: number) => {
+        headerRequests.push({ startHeight, maxCount });
+        // Heights 5, 4, 2, 1 — a hole (missing 3).
+        return [
+          { height: 5, prevBlockHash: 'aa'.repeat(32), stateRoot: EMPTY_STATE_ROOT, utxoTxRoot: '00'.repeat(32), powTargetBits: testConfig.orderingBlockPowTargetBits, powNonce: 0, protocolVersion: PROTOCOL_VERSION, createdAt: 1000, validatorId: new Uint8Array(32), interlinkRoot: '00'.repeat(32) },
+          { height: 4, prevBlockHash: 'aa'.repeat(32), stateRoot: EMPTY_STATE_ROOT, utxoTxRoot: '00'.repeat(32), powTargetBits: testConfig.orderingBlockPowTargetBits, powNonce: 0, protocolVersion: PROTOCOL_VERSION, createdAt: 1000, validatorId: new Uint8Array(32), interlinkRoot: '00'.repeat(32) },
+          { height: 2, prevBlockHash: 'aa'.repeat(32), stateRoot: EMPTY_STATE_ROOT, utxoTxRoot: '00'.repeat(32), powTargetBits: testConfig.orderingBlockPowTargetBits, powNonce: 0, protocolVersion: PROTOCOL_VERSION, createdAt: 1000, validatorId: new Uint8Array(32), interlinkRoot: '00'.repeat(32) },
+          { height: 1, prevBlockHash: 'aa'.repeat(32), stateRoot: EMPTY_STATE_ROOT, utxoTxRoot: '00'.repeat(32), powTargetBits: testConfig.orderingBlockPowTargetBits, powNonce: 0, protocolVersion: PROTOCOL_VERSION, createdAt: 1000, validatorId: new Uint8Array(32), interlinkRoot: '00'.repeat(32) },
+        ] as BlockHeader[];
+      },
+      requestBlocks: async () => [],
+      penalizePeer: (peerId: string, kind: string, reason: string) => {
+        penalties.push({ peerId, kind, reason });
+      },
+      peerTipHeight: () => 5,
+    };
+
+    await forkResolution.resolveFork(dummyBlock({ height: 5 } as BlockHeader), net, 'peer-hole');
+
+    expect(penalties).toEqual([
+      expect.objectContaining({ kind: 'misbehavior', reason: expect.stringMatching(/hole/) }),
+    ]);
+    expect(headerRequests).toHaveLength(1);
+    expect(ordering.getCurrentHeight()).toBe(5);
+  });
+
+  it('a repeat in a page', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    for (let i = 0; i < 5; i++) await mineNextBlock(bc);
+
+    const penalties: Array<{ peerId: string; kind: string; reason: string }> = [];
+    const net: ForkResolutionNet = {
+      getConnectedPeers: () => ['peer-repeat'],
+      requestHeaders: async () => {
+        return [
+          { height: 5, prevBlockHash: 'aa'.repeat(32), stateRoot: EMPTY_STATE_ROOT, utxoTxRoot: '00'.repeat(32), powTargetBits: testConfig.orderingBlockPowTargetBits, powNonce: 0, protocolVersion: PROTOCOL_VERSION, createdAt: 1000, validatorId: new Uint8Array(32), interlinkRoot: '00'.repeat(32) },
+          { height: 5, prevBlockHash: 'bb'.repeat(32), stateRoot: EMPTY_STATE_ROOT, utxoTxRoot: '00'.repeat(32), powTargetBits: testConfig.orderingBlockPowTargetBits, powNonce: 0, protocolVersion: PROTOCOL_VERSION, createdAt: 1000, validatorId: new Uint8Array(32), interlinkRoot: '00'.repeat(32) },
+        ] as BlockHeader[];
+      },
+      requestBlocks: async () => [],
+      penalizePeer: (peerId: string, kind: string, reason: string) => {
+        penalties.push({ peerId, kind, reason });
+      },
+      peerTipHeight: () => 5,
+    };
+
+    await forkResolution.resolveFork(dummyBlock({ height: 5 } as BlockHeader), net, 'peer-repeat');
+
+    expect(penalties).toEqual([
+      expect.objectContaining({ kind: 'misbehavior', reason: expect.stringMatching(/repeat/) }),
+    ]);
+    expect(ordering.getCurrentHeight()).toBe(5);
+  });
+
+  it('an ascent in a page', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    for (let i = 0; i < 5; i++) await mineNextBlock(bc);
+
+    const penalties: Array<{ peerId: string; kind: string; reason: string }> = [];
+    const net: ForkResolutionNet = {
+      getConnectedPeers: () => ['peer-ascent'],
+      requestHeaders: async () => {
+        return [
+          { height: 5, prevBlockHash: 'aa'.repeat(32), stateRoot: EMPTY_STATE_ROOT, utxoTxRoot: '00'.repeat(32), powTargetBits: testConfig.orderingBlockPowTargetBits, powNonce: 0, protocolVersion: PROTOCOL_VERSION, createdAt: 1000, validatorId: new Uint8Array(32), interlinkRoot: '00'.repeat(32) },
+          { height: 7, prevBlockHash: 'aa'.repeat(32), stateRoot: EMPTY_STATE_ROOT, utxoTxRoot: '00'.repeat(32), powTargetBits: testConfig.orderingBlockPowTargetBits, powNonce: 0, protocolVersion: PROTOCOL_VERSION, createdAt: 1000, validatorId: new Uint8Array(32), interlinkRoot: '00'.repeat(32) },
+        ] as BlockHeader[];
+      },
+      requestBlocks: async () => [],
+      penalizePeer: (peerId: string, kind: string, reason: string) => {
+        penalties.push({ peerId, kind, reason });
+      },
+      peerTipHeight: () => 7,
+    };
+
+    await forkResolution.resolveFork(dummyBlock({ height: 7 } as BlockHeader), net, 'peer-ascent');
+
+    expect(penalties).toEqual([
+      expect.objectContaining({ kind: 'misbehavior', reason: expect.stringMatching(/ascent/) }),
+    ]);
+    expect(ordering.getCurrentHeight()).toBe(5);
+  });
+
+  it('a short page not at the bottom', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const ordering = await importOrdering();
+    const forkResolution = await importForkResolution();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    for (let i = 0; i < 3; i++) await mineNextBlock(bc);
+
+    // Peer at height 3, our height 2 — page [3, 2], missing height 1.
+    const penalties: Array<{ peerId: string; kind: string; reason: string }> = [];
+    const net: ForkResolutionNet = {
+      getConnectedPeers: () => ['peer-short'],
+      requestHeaders: async () => {
+        return [
+          { height: 3, prevBlockHash: 'aa'.repeat(32), stateRoot: EMPTY_STATE_ROOT, utxoTxRoot: '00'.repeat(32), powTargetBits: testConfig.orderingBlockPowTargetBits, powNonce: 0, protocolVersion: PROTOCOL_VERSION, createdAt: 1000, validatorId: new Uint8Array(32), interlinkRoot: '00'.repeat(32) },
+          { height: 2, prevBlockHash: 'aa'.repeat(32), stateRoot: EMPTY_STATE_ROOT, utxoTxRoot: '00'.repeat(32), powTargetBits: testConfig.orderingBlockPowTargetBits, powNonce: 0, protocolVersion: PROTOCOL_VERSION, createdAt: 1000, validatorId: new Uint8Array(32), interlinkRoot: '00'.repeat(32) },
+        ] as BlockHeader[];
+      },
+      requestBlocks: async () => [],
+      penalizePeer: (peerId: string, kind: string, reason: string) => {
+        penalties.push({ peerId, kind, reason });
+      },
+      peerTipHeight: () => 3,
+    };
+
+    await forkResolution.resolveFork(dummyBlock({ height: 3 } as BlockHeader), net, 'peer-short');
+
+    expect(penalties).toEqual([
+      expect.objectContaining({ kind: 'transient', reason: expect.stringMatching(/short page/) }),
+    ]);
+    expect(ordering.getCurrentHeight()).toBe(3);
   });
 });
 
