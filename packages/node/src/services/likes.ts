@@ -19,12 +19,13 @@ import { ClientError } from './client-error.js';
 const LIKE_TARGET_RE = /^[0-9a-f]{64}$/;
 
 /**
- * Cast a like on a target post. A like is a burn transaction, never a box.
+ * Cast a like on a target post (NODE_INTERFACE → Likes).
  *
  * Receives a pre-built, signed UtxoTransaction from the client with
  * `likeTarget` set. The engine enforces the biconditional like shape — karma
- * inputs with one owner, at most one karma output with that same owner, and a
- * deficit of exactly `LIKE_KARMA_COST`. There is no free tier, no refund
+ * inputs with one owner, at most one karma output with that same owner, and
+ * one `LikeAccrualBox` carrying exactly `LIKE_KARMA_COST` to the target's
+ * author. The transaction conserves. There is no free tier, no refund
  * schedule, and no unlike: one like per `(liker, post)`, forever.
  *
  * These gateway checks are courtesy; the consensus checks run again at block
