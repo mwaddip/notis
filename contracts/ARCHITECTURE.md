@@ -344,7 +344,8 @@ An author's power over a post they wrote is **withdrawal**: the content is dropp
 identity, its place in the thread and every reply beneath it stay (NODE_INTERFACE → Withdrawal
 transactions). It is free — the post paid its price at posting (§The post price) — it is authorized
 by the author's own signature over the withdrawal transaction, and it is the whole of what an author
-may do to a post after posting it. Who "the author" is, is itself consensus data: every confirmed
+may do to a post after posting it — a like, the other act over a post, is never the author's
+(§Likes). Who "the author" is, is itself consensus data: every confirmed
 post's `author` is the signer of its creating transaction, recorded at confirmation in
 `block_topology`, and a withdrawal is valid only if the karma input's owner equals that recorded
 author (audit H-3) — so a signature from anyone else, however valid for its own key, authorizes
@@ -439,12 +440,15 @@ values in boxes move only when a transaction touches the identity.
   background sweep. An identity nothing touches keeps its face values and its
   virtual decay indefinitely; its effective value still dissolves, and the
   pool — seeded with the supply total — does not depend on decay inflow.
-- **Clocks:** the touching spend is activity — `lastActivityBlock` advances when
-  block application applies a user transaction that spends the identity's karma,
-  whether or not it leaves a karma box (`NODE_INTERFACE` → Populating the
-  record); squaring advances `lastDecayBlock`. Received value — a like payout, a
-  vesting return, a settlement re-emit — is **not** activity: no settlement
-  output and no settlement consumption moves the activity half.
+- **Clocks: posting is activity, and nothing else is.** `lastActivityBlock` advances
+  when block application applies the identity's post transaction — a thread or a
+  reply, the transaction carrying a `post` commit (`NODE_INTERFACE` → Populating the
+  record); squaring advances `lastDecayBlock`. No other spend moves the activity
+  half: a like, an invite, a vouch cast or unvouch, a username claim or burn, a
+  withdrawal and a bare consolidation all leave it where it stands, so resetting the
+  clock costs a post's price and never less. Received value — a like payout, a
+  vesting return, a settlement re-emit — is **not** activity either: no settlement
+  output and no settlement consumption moves it.
 - **The clock starts at onboarding.** A never-onboarded identity is neither
   active nor inactive — inactivity presupposes activity — and the invite is
   the one onboarding path, so the claim that creates the identity record
@@ -889,8 +893,11 @@ sidecars and no standalone like pool.
   (placeholder rows carry a zeroed author).
 - `(liker, target)` must not already exist in the like-records — one like per account per
   post, structurally enforced: the key exists or it does not.
-- Self-likes are legal and uneconomical by construction: each burns real karma and returns
-  at most `(x−1)/x` of it.
+- **A like is another's act.** The liker — the karma inputs' owner — is not the target's
+  author as `block_topology` records it. A self-like is invalid at admission and at apply
+  alike, refused by the like arm of `validateTx` beside the marker's author check
+  (NODE_INTERFACE → Karma transition rules), so no like of one's own post reaches the
+  counters that hold standing.
 
 Applying the transaction writes the `(liker, target)` **like-record** (journalled) and
 increments the target author's like count for this block — and, where the liker is a member at
@@ -993,7 +1000,7 @@ settlement   KarmaPriceBox(p) → pool(+p)         consumed in the block that cr
   the bond settles against, nor any count a rule reads as likes. A reply pays the parent's author
   whether the parent is live or withdrawn — every confirmed id has a topology author.
 - **Self-replies get no special case.** The author pays the price and their own accrual receives
-  the share — a net loss, as a self-like is.
+  the share — a net loss.
 - **A `KarmaPriceBox` is the karma-side twin of `FeeBox`**: what a karma action pays, named as an
   output so the transaction conserves, with no owner, consumed only by the settlement
   (TYPES_INTERFACE → KarmaPriceBox). It is the transition any later karma price takes.
@@ -1475,10 +1482,11 @@ chain or owed one:
 | **the committee rule** (2026-09-06) | the identity record a root's grant writes — `memberSinceBlock`, `memberBar` — and the network record's `N` (§Earned, standing, and well-founded by age) |
 
 | **usernames** (2026-09-10) | **nothing that exists** — box tag 14, two AVL leaf domains, a store table and two nullable mempool columns are *added*; no existing byte, layout or verdict moves. **Owes no reset** (→ "When a reset is not owed") — the first change of its class |
+| **posting is activity** (2026-09-12) | the identity leaf's `lastActivityBlock` on every identity that liked, invited, vouched, claimed or withdrew, so every `stateRoot` from the first such spend; the like verdict — a self-like is refused (§Likes); the settlement's `actors` — a bare consolidation counts nobody (MINING_INTERFACE → Coinbase Application) |
 
-**Outstanding against the live node: nothing.** Testnet's chain began at the 2026-09-06 reset, whose
-block 1 the profile pins as `genesisId` (§What varies per network); every reset row is in it, and the
-usernames row owes none.
+**Outstanding against the live node: the 2026-09-12 row, owed a fresh chain.** Testnet's chain began at
+the 2026-09-06 reset, whose block 1 the profile pins as `genesisId` (§What varies per network); every
+earlier reset row is in it, and the usernames row owes none.
 
 **When a reset is not owed.** A change that **adds** a box-type tag, an AVL leaf domain, a store table
 or a nullable column, and leaves every existing committed byte and every existing rule's verdict

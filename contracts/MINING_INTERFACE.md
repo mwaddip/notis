@@ -487,11 +487,23 @@ consumed by the settlement in the block that created it.
 | Storage rent | — | A third income **term**, not a slice: the treasury takes `COINBASE_TREASURY_PCT` of emission and of fees and **none of rent**, so rent reaches the miner floor entire |
 
 `actors` is the count of **distinct owners of the karma boxes** spent by the block's
-karma-side transactions, excluding the block's own validator.
+karma-side transactions, excluding the block's own validator and counting no bare
+consolidation.
 
 ⛔ **Never derived from `tx.signatures`.** Producing a signature is free, so a
 signature-keyed count is inflated by appending keys that hold nothing. Every karma-side
-operation spends a box that names its actor, and creating any of those boxes cost karma.
+operation spends a box that names its actor, and what bounds the count is that the act cost
+karma.
+
+⛔ **A bare consolidation counts nobody.** The `KarmaBox → KarmaBox` row — every output a
+karma box, no `post`, `postWithdraw` or `likeTarget` — conserves at zero cost and repeats
+without bound, so a miner holding sybil karma identities could raise `actors` by one per
+identity per block for nothing; it counts no actor (NODE_INTERFACE → Legal box transitions).
+Every other karma-side row pays inside the transaction — a post's price, a like's marker, an
+invite's bond, a vouch's stake, a burn's price — or is bounded one-to-one by a row that paid:
+a withdrawal by its post, a claim by its identity — one per invite bond, a fixed few at genesis —
+an unvouch by its cast.
+A row added later states which of the two it is.
 
 **The miner floor takes the remainder**, so the outputs sum to exactly the income: four
 percentages of one income do not sum back to it under truncation. That routes both the
