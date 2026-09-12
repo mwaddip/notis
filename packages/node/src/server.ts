@@ -9,6 +9,7 @@ import { createRouter as blockRoutes, KARMA_SUPPLY_TYPES } from './routes/blocks
 import { createRouter as miningRoutes } from './routes/mining.js';
 import { createRouter as nipopowRoutes } from './routes/nipopow.js';
 import { createRouter as usernameRoutes } from './routes/usernames.js';
+import { createRouter as backerRoutes } from './routes/backers.js';
 import { createPopowHeaderReader } from './services/nipopow.js';
 import * as store from './store/index.js';
 import { guardStoreRead } from './services/corrupt-state.js';
@@ -329,6 +330,21 @@ export function createApp(config: Config): express.Express {
         validateTx(utxoEngineDeps, tx, currentBlockHeight),
       getUsername: store.getUsername,
       getUsernameByOwner: store.getUsernameByOwner,
+    }),
+  );
+
+  // Backers — /backers
+  app.use(
+    '/backers',
+    backerRoutes({
+      ...utxoEngineDeps,
+      getCurrentHeight: store.getCurrentHeight,
+      validateTx: (tx, currentBlockHeight) =>
+        validateTx(utxoEngineDeps, tx, currentBlockHeight),
+      getBackerPoolBox: store.getBackerPoolBox,
+      getBackerStakeBox: store.getBackerStakeBox,
+      backerSupply: config.profile.backerSupply,
+      creditFixedRateBlocks: config.creditFixedRateBlocks,
     }),
   );
 

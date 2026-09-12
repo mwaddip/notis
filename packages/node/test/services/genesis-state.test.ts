@@ -436,8 +436,11 @@ describe('seedGenesisState — a store that is not empty', () => {
       key: s.records.identityRecordKey(r.identityId),
       record: r.record,
     }));
-    // devnet (the pinned test profile): karma, credit, proof, emission, pool.
-    expect(boxes.length).toBe(5);
+    // devnet: karma, credit, proof, emission, karma_pool, plus backer stakes
+    // and the backer pool box when the table is non-empty.
+    const table = profileFor('devnet').backerTable;
+    const backerBoxes = table.length > 0 ? table.length + 1 : 0;
+    expect(boxes.length).toBe(5 + backerBoxes);
     expect(records.length).toBe(1);
 
     const nr = s.records.getNetworkRecord();
