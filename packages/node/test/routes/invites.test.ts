@@ -35,7 +35,7 @@ import { createRouter } from '../../src/routes/invites.js';
 import type { InvitesDeps } from '../../src/routes/invites.js';
 import { ClientError } from '../../src/services/client-error.js';
 import { config } from '../../src/config.js';
-import { MempoolFullError } from '../../src/store/mempool.js';
+import { MempoolFullError, PendingSpendConflictError } from '../../src/store/mempool.js';
 import { unlinkSync } from 'fs';
 
 const TEST_DB = '/tmp/dagsocial-test-routes-invites.sqlite';
@@ -272,6 +272,20 @@ describe('invites routes', () => {
 
       expect(res.status).toBe(403);
       expect((res.data as Record<string, unknown>).error).toBe('not the inviter');
+    });
+
+    it('a conflicting spend reaches the client as a 409 naming the box', async () => {
+      const boxId = 'ab'.repeat(32);
+      const res = await request('/', 'POST', { tx: EMPTY_TX }, {
+        createInvite: () => {
+          throw new PendingSpendConflictError(boxId);
+        },
+      });
+
+      expect(res.status).toBe(409);
+      const body = res.data as Record<string, unknown>;
+      expect(body.error).toContain(boxId);
+      expect(body.error).toMatch(/already spent by a pending/i);
     });
 
     it('maps a full mempool to 503 with a generic body', async () => {

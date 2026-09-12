@@ -24,7 +24,7 @@ import type { KarmaBox, UsernameBox, UtxoTransaction } from '@dagsocial/types';
 import { rawPublicKey, seedProvenance, signTransaction, txToJson } from '../helpers.js';
 import { config } from '../../src/config.js';
 import { beginBlockJournal, finishBlockJournal } from '../../src/store/journal.js';
-import { setMempoolCap, DEFAULT_MAX_MEMPOOL_ENTRIES } from '../../src/store/mempool.js';
+import { setMempoolCap, DEFAULT_MAX_MEMPOOL_ENTRIES, PendingSpendConflictError } from '../../src/store/mempool.js';
 
 const TEST_DB = '/tmp/dagsocial-test-routes-usernames.sqlite';
 
@@ -511,6 +511,71 @@ describe('username routes', () => {
 
     const res = await post(app, '/usernames/NobodyHoldsThis/burn', { tx: txToJson(tx) });
     expect(res.status).toBe(404);
+  });
+
+  it('POST /usernames — a conflicting spend answers 409 naming the box', async () => {
+    const boxId = 'ab'.repeat(32);
+    const deps = makeDeps();
+    const conflictApp = express();
+    conflictApp.use(express.json());
+    conflictApp.use('/usernames', createRouter({
+      ...deps,
+      getCurrentHeight,
+      validateTx: (): never => { throw new PendingSpendConflictError(boxId); },
+      getUsername,
+      getUsernameByOwner,
+    }));
+    const c = makeKeys();
+    const kb = seedKarma(c.pub, 100n);
+    const tx: UtxoTransaction = {
+      inputs: [kb.id!],
+      outputs: [
+        { boxType: 'username', value: 0n, createdAtBlock: 1, owner: c.pub, name: Buffer.from('Conflict409', 'utf8') } as any,
+        { boxType: 'karma', value: 100n, createdAtBlock: 1, owner: c.pub } as any,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(tx, c.priv, c.hex);
+    const res = await post(conflictApp, '/usernames', { tx: txToJson(tx) });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain(boxId);
+    expect(res.body.error).toMatch(/already spent by a pending/i);
+  });
+
+  it('POST /usernames/:name/burn — a conflicting spend answers 409 naming the box', async () => {
+    const boxId = 'cd'.repeat(32);
+    const deps = makeDeps();
+    const conflictApp = express();
+    conflictApp.use(express.json());
+    conflictApp.use('/usernames', createRouter({
+      ...deps,
+      getCurrentHeight,
+      validateTx: (): never => { throw new PendingSpendConflictError(boxId); },
+      getUsername,
+      getUsernameByOwner,
+    }));
+    const burner = makeKeys();
+    const kb = seedKarma(burner.pub, 100n);
+    const uBox = seedUsernameBox(burner.pub, 'BurnConflict');
+    beginBlockJournal(1);
+    putUsername({ nameLower: 'burnconflict', name: 'BurnConflict', owner: burner.hex, boxId: uBox.id!, claimedAtBlock: 1 });
+    finishBlockJournal();
+
+    const tx: UtxoTransaction = {
+      inputs: [kb.id!, uBox.id!],
+      outputs: [
+        { boxType: 'karma', value: 100n, createdAtBlock: 1, owner: burner.pub } as any,
+        { boxType: 'karma_price', value: 0n, createdAtBlock: 1 } as any,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(tx, burner.priv, burner.hex);
+    const res = await post(conflictApp, '/usernames/BurnConflict/burn', { tx: txToJson(tx) });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain(boxId);
+    expect(res.body.error).toMatch(/already spent by a pending/i);
   });
 
   it('POST /usernames/:name/burn — 400 for a wrong price', async () => {

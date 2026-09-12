@@ -20,6 +20,7 @@ import { getIdentityRecord, putIdentityRecord } from '../../src/store/identity-r
 import { putUsername, getUsernameByOwner } from '../../src/store/usernames.js';
 import { getBoxWithPending } from '../../src/store/mempool.js';
 import { setNet } from '../../src/services/net-instance.js';
+import { PendingSpendConflictError } from '../../src/store/mempool.js';
 import {
   generateKeyPair,
   computeTxId,
@@ -665,6 +666,75 @@ describe('UTXO routes', () => {
       expect(String((res.data as Record<string, unknown>).error)).toContain(
         'Invalid credit transfer',
       );
+    });
+
+    it('a conflicting spend answers 409 naming the box', async () => {
+      const boxId = 'ab'.repeat(32);
+      const conflictDeps = {
+        getKarmaTotal: () => 0n,
+        getKarmaBoxesPage: () => ({ rows: [], count: 0, next: undefined }),
+        getIdentityRecord: () => null,
+        getCreditValue: () => 0n,
+        getCreditBoxesPage: () => ({ rows: [], count: 0, next: undefined }),
+        getBondBoxesPage: () => ({ rows: [], count: 0, next: undefined }),
+        getCurrentHeight: () => 100,
+        decayCfg: DECAY_CFG,
+        getNetworkRecord: () => ({ memberCount: 1 }),
+        membershipBarMultiplier: 1,
+        getUsername: () => null,
+        getUsernameByOwner: () => null,
+        getUtxoEngineDeps: () => ({
+          getBox: () => { throw new PendingSpendConflictError(boxId); },
+          insertBox: () => {},
+          consumeBox: () => {},
+          getKarmaBox: () => null,
+          getKarmaValue: () => 0n,
+          hasActiveVouchEscrow: () => false,
+          vouchCooldownBlocks: 2,
+          inviteBondMin: 0n,
+          inviteBondMax: 0n,
+          decayCfg: DECAY_CFG,
+          storageRentPeriodBlocks: 40,
+          getBoxProvenance: () => null,
+          getTopologyAuthor: () => null,
+          getPendingPostAuthor: () => null,
+          getIdentityRecord: () => null,
+          getKarmaBoxes: () => [],
+          runInTransaction: (fn: () => void) => fn(),
+          getVouchBox: () => null,
+          getNetworkRecord: () => ({ memberCount: 1 }),
+          membershipBarMultiplier: 1,
+          putIdentityRecord: () => {},
+          protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
+          getUsername: () => null,
+          getUsernameByOwner: () => null,
+        }),
+      };
+      const app = express();
+      app.use(express.json());
+      app.use(createRouter(conflictDeps as any));
+      const res = await new Promise<{ status: number; data: unknown }>((resolve) => {
+        const server = app.listen(0, () => {
+          const addr = server.address() as { port: number };
+          const r = http.request(
+            { hostname: 'localhost', port: addr.port, path: '/credits/transfer', method: 'POST',
+              headers: { 'Content-Type': 'application/json' } },
+            (httpRes) => {
+              let d = '';
+              httpRes.on('data', (c) => (d += c));
+              httpRes.on('end', () => { server.close(); resolve({ status: httpRes.statusCode!, data: JSON.parse(d) }); });
+            },
+          );
+          r.write(JSON.stringify({
+            tx: { inputs: ['cc'.repeat(32)], outputs: [{ boxType: 'credit', value: '10', owner: 'dd'.repeat(32) }], signatures: {}, protocolVersion: PROTOCOL_VERSION },
+          }));
+          r.end();
+        });
+      });
+      expect(res.status).toBe(409);
+      const body = res.data as Record<string, unknown>;
+      expect(body.error).toContain(boxId);
+      expect(body.error).toMatch(/already spent by a pending/i);
     });
 
     it('pools a valid transfer, answers pending, broadcasts — and settles nothing', async () => {

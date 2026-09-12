@@ -19,7 +19,7 @@ import type { BackerStakeBox, BackerPoolBox, UtxoTransaction } from '@dagsocial/
 import { seedProvenance, signTransaction, txToJson, rawPublicKey } from '../helpers.js';
 import { config } from '../../src/config.js';
 import { beginBlockJournal, finishBlockJournal } from '../../src/store/journal.js';
-import { setMempoolCap, DEFAULT_MAX_MEMPOOL_ENTRIES } from '../../src/store/mempool.js';
+import { setMempoolCap, DEFAULT_MAX_MEMPOOL_ENTRIES, PendingSpendConflictError } from '../../src/store/mempool.js';
 import { generateKeyPairSync } from 'crypto';
 
 const TEST_DB = ':memory:';
@@ -232,6 +232,37 @@ describe('backer routes', () => {
       const r = await postReq(app, '/backers/unstake', {});
       expect(r.status).toBe(400);
       expect(r.body.error).toContain('unstake transaction');
+    });
+
+    it('a conflicting spend answers 409 naming the box', async () => {
+      const boxId = 'ab'.repeat(32);
+      const deps = makeDeps();
+      const conflictApp = express();
+      conflictApp.use(express.json());
+      conflictApp.use('/backers', createRouter({
+        ...deps,
+        getCurrentHeight,
+        validateTx: (): never => { throw new PendingSpendConflictError(boxId); },
+        getBackerPoolBox,
+        getBackerStakeBox,
+        backerSupply: 100n,
+        creditFixedRateBlocks: 1_000_000,
+      }));
+      const stake = seedStake(holder.pub, 50n);
+      const tx: UtxoTransaction = {
+        inputs: [stake.id!],
+        outputs: [
+          { boxType: 'backer_stake', value: 0n, createdAtBlock: 1, owner: holder.pub, weight: 30n } as any,
+          { boxType: 'backer_unstake', value: 0n, createdAtBlock: 1, owner: holder.pub, weight: 20n } as any,
+        ],
+        signatures: {},
+        protocolVersion: PROTOCOL_VERSION,
+      };
+      signTransaction(tx, holder.priv, holder.hex);
+      const r = await postReq(conflictApp, '/backers/unstake', { tx: txToJson(tx) });
+      expect(r.status).toBe(409);
+      expect(r.body.error).toContain(boxId);
+      expect(r.body.error).toMatch(/already spent by a pending/i);
     });
   });
 });
