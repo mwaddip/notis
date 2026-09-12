@@ -152,7 +152,11 @@ getBoxWithPending(boxId: string): AnyBox | null
 
 The pending view of one box: the confirmed UTXO set **∪** pending outputs **−** pending inputs, the
 subtraction first and over both halves — a box a pooled entry already spends is not spendable again,
-confirmed or pending. **Submission's `getBox`, and nothing else's.** The HTTP routes validate against
+confirmed or pending. ⛔ **The subtraction answers as the pending-spend conflict, never as an absent
+box**: for a box a pooled entry spends the view throws `PendingSpendConflictError` (409) where
+`validateTx` reads the input, so every write route's 409 is reachable and a client can tell a box tied
+up in the pool from one spent on chain (`WEB_INTERFACE → The wallet`, the pending ledger's 409); `null` is the
+answer for a box that exists nowhere. **Submission's `getBox`, and nothing else's.** The HTTP routes validate against
 it, so a transaction spending the change of one still in the pool is admitted — and a child therefore
 enters the pool only while its predecessor is confirmed or already pooled, taking the later rowid,
 which is the order the fill preserves and the ordering rule at apply requires (`NODE_INTERFACE →
