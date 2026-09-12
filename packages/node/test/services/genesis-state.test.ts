@@ -199,7 +199,7 @@ describe('seedGenesisState', () => {
     }
   });
 
-  it('mainnet seeds the proof, emission and pool boxes; the faucet networks seed five', async () => {
+  it('mainnet seeds the proof, emission and pool boxes; faucet networks seed five plus their backer boxes', async () => {
     // Not a restatement of `isFaucetNetwork` — it pins which boxes are OUTSIDE
     // that gate. Inside it, mainnet would have no genesis state at all and no
     // network identity at height 0; the emission box being outside it is what
@@ -217,9 +217,9 @@ describe('seedGenesisState', () => {
     expect((await underProfile('mainnet')).boxTypes)
       .toEqual(['emission', 'genesis_proof', 'karma_pool']);
     expect((await underProfile('testnet')).boxTypes)
-      .toEqual(['credit', 'emission', 'genesis_proof', 'karma', 'karma_pool']);
+      .toEqual(['backer_pool', 'backer_stake', 'credit', 'emission', 'genesis_proof', 'karma', 'karma_pool']);
     expect((await underProfile('devnet')).boxTypes)
-      .toEqual(['credit', 'emission', 'genesis_proof', 'karma', 'karma_pool']);
+      .toEqual(['backer_pool', 'backer_stake', 'backer_stake', 'credit', 'emission', 'genesis_proof', 'karma', 'karma_pool']);
   });
 
   it('the three networks reach three distinct height-0 roots', async () => {
@@ -553,5 +553,63 @@ describe('assertGenesisRoot', () => {
       vi.doUnmock('../../src/config.js');
       vi.resetModules();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Backer table validation — NODE_INTERFACE → The genesis state root is
+// checked fail-stop.
+// ---------------------------------------------------------------------------
+
+describe('backer table validation', () => {
+  it('accepts a valid table', async () => {
+    const { validateBackerTable } = await import('../../src/store/system.js');
+    expect(() => validateBackerTable([
+      { key: 'aa'.repeat(32), weight: 20n },
+      { key: 'bb'.repeat(32), weight: 30n },
+    ], 100n)).not.toThrow();
+  });
+
+  it('refuses a duplicate key', async () => {
+    const { validateBackerTable } = await import('../../src/store/system.js');
+    expect(() => validateBackerTable([
+      { key: 'aa'.repeat(32), weight: 20n },
+      { key: 'aa'.repeat(32), weight: 30n },
+    ], 100n)).toThrow(/not ascending/);
+  });
+
+  it('refuses unsorted keys', async () => {
+    const { validateBackerTable } = await import('../../src/store/system.js');
+    expect(() => validateBackerTable([
+      { key: 'bb'.repeat(32), weight: 20n },
+      { key: 'aa'.repeat(32), weight: 30n },
+    ], 100n)).toThrow(/not ascending/);
+  });
+
+  it('refuses zero weight', async () => {
+    const { validateBackerTable } = await import('../../src/store/system.js');
+    expect(() => validateBackerTable([
+      { key: 'aa'.repeat(32), weight: 0n },
+    ], 100n)).toThrow(/weight must be at least 1/);
+  });
+
+  it('refuses sum over supply', async () => {
+    const { validateBackerTable } = await import('../../src/store/system.js');
+    expect(() => validateBackerTable([
+      { key: 'aa'.repeat(32), weight: 60n },
+      { key: 'bb'.repeat(32), weight: 50n },
+    ], 100n)).toThrow(/exceeds backerSupply/);
+  });
+
+  it('refuses supply zero with a row', async () => {
+    const { validateBackerTable } = await import('../../src/store/system.js');
+    expect(() => validateBackerTable([
+      { key: 'aa'.repeat(32), weight: 10n },
+    ], 0n)).toThrow(/backerSupply is 0/);
+  });
+
+  it('accepts an empty table with supply 0', async () => {
+    const { validateBackerTable } = await import('../../src/store/system.js');
+    expect(() => validateBackerTable([], 0n)).not.toThrow();
   });
 });
