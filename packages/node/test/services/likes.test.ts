@@ -427,6 +427,6 @@ describe('likes service (P2-D: the like is a burn transaction)', () => {
     };
     signTransaction(tx, likerPrivKey, likerPubKeyHex);
 
-    expect(() => castLike(selfDeps, tx, 5)).toThrow(/own post/);
+    expect(() => castLike(selfDeps, tx, 5)).toThrow(/one's own post/);
   });
 });

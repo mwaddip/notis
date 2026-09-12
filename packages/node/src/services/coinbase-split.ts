@@ -46,36 +46,36 @@ export function isCreditSideTx(tx: UtxoTransaction): boolean {
 }
 
 /**
- * The actor of a karma-side transaction, read from the box it spends.
+ * The actor of a karma-side transaction, or null for credit-side and for
+ * a bare consolidation (MINING_INTERFACE → Coinbase Application).
  *
  * ⛔ **Never from `tx.signatures`.** Producing a signature is free, so a
  * signature-keyed count is inflated to any size by appending keys that hold
  * nothing. Every karma-side operation spends a box that names its actor, and
- * what bounds the count is that spending one of those boxes cost karma —
- * an invite bonds at least `inviteBondMin` and a vouch stakes `VOUCH_KARMA_AMOUNT`
- * (NODE_INTERFACE → Bond transition rules, Vouch transition rules).
+ * what bounds the count is that the act cost karma — an invite bonds at least
+ * `inviteBondMin` and a vouch stakes `VOUCH_KARMA_AMOUNT` (NODE_INTERFACE →
+ * Bond transition rules, Vouch transition rules).
  *
  * Reading `inputBoxes[0]` alone is sound only after `validateTx`: step 3 pins
  * every input to one `boxType`, karma inputs additionally share one owner, and
  * the vouch arm bounds the transaction to a single input. On an unvalidated
  * body the first input is the producer's choice.
- *
- * ⛔ **The box is the whole input, and the transaction is not consulted.** Every
- * karma-side row of the transition table names its actor in the box it spends
- * (NODE_INTERFACE → Legal box transitions), so no arm needs the output list to
- * tell two shapes apart.
  */
-function actorOf(inputBoxes: AnyBox[]): Uint8Array | null {
+function actorOf(tx: UtxoTransaction, inputBoxes: AnyBox[]): Uint8Array | null {
   const first = inputBoxes[0];
   if (!first) return null;
   switch (first.boxType) {
-    case 'karma':
-      return (first as KarmaBox).owner;
+    case 'karma': {
+      // NODE_INTERFACE → Legal box transitions (Consolidation row).
+      const bare = tx.post === undefined &&
+        tx.postWithdraw === undefined &&
+        tx.likeTarget === undefined &&
+        tx.outputs.every((o) => o.boxType === 'karma');
+      return bare ? null : (first as KarmaBox).owner;
+    }
     case 'vouch':
       return (first as VouchBox).voucherId;
     default:
-      // Credit — the other ledger. It pays a fee instead, and counting it here
-      // would pay for one transaction twice.
       return null;
   }
 }
@@ -93,8 +93,8 @@ export function countKarmaActors(
 ): number {
   const seen = new Set<string>();
   const self = Buffer.from(validatorId).toString('hex');
-  for (const { inputBoxes } of embedded) {
-    const actor = actorOf(inputBoxes);
+  for (const { tx, inputBoxes } of embedded) {
+    const actor = actorOf(tx, inputBoxes);
     if (!actor) continue;
     const actorHex = Buffer.from(actor).toString('hex');
     if (actorHex !== self) seen.add(actorHex);

@@ -3212,6 +3212,35 @@ describe('T4: activity clock in the user-transaction loop', () => {
     expect(record?.lastActivityBlock ?? 0).toBe(0);
   });
 
+  it('a mined block carrying a consolidation applies — the producer actors count agrees', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+    const owner = makeTestIdentity();
+    const utxo = await importUtxo();
+    const karmaBox = makeKarmaBox(100n, owner.userId, 0, 58);
+    utxo.insertBox(karmaBox);
+
+    const consolidationTx: UtxoTransaction = {
+      inputs: [karmaBox.id!],
+      outputs: [
+        { boxType: 'karma', value: 100n, createdAtBlock: 0, owner: owner.userId } as never,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(consolidationTx, owner.privateKey, hex(owner.userId));
+
+    const mempool = await importMempoolFresh();
+    mempool.insertUtxoTx(consolidationTx, 1000);
+
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const block = await mineNextBlock(bc);
+    expect(block).not.toBeNull();
+  });
+
   // -----------------------------------------------------------------------
   // A thread and its reply apply in either body order (§8 before §11)
   // -----------------------------------------------------------------------
@@ -3288,8 +3317,8 @@ describe('a self-like is refused at block application', () => {
     const posts = await importPosts();
 
     const author = makeTestIdentity();
-    const { commit, tx: postTx, postId, content } = makePostTx(author, 'self-like target');
-    utxo.insertBox(makePostTx(author, 'self-like target').karmaBox);
+    const { commit, tx: postTx, postId, content, karmaBox: postKarma } = makePostTx(author, 'self-like target');
+    utxo.insertBox(postKarma);
     posts.insertPost(postId, commit, content);
 
     const block1 = await makeApplicableBlock({ utxoTxs: [postTx] });
@@ -3313,8 +3342,8 @@ describe('a self-like is refused at block application', () => {
 
     const author = makeTestIdentity();
     const liker = makeTestIdentity();
-    const { commit, tx: postTx, postId, content } = makePostTx(author, 'other-like target');
-    utxo.insertBox(makePostTx(author, 'other-like target').karmaBox);
+    const { commit, tx: postTx, postId, content, karmaBox: postKarma } = makePostTx(author, 'other-like target');
+    utxo.insertBox(postKarma);
     posts.insertPost(postId, commit, content);
 
     const block1 = await makeApplicableBlock({ utxoTxs: [postTx] });
