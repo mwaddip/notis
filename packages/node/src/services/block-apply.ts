@@ -1175,11 +1175,11 @@ function applyMutationPhase(
 
     applyTx(utxoDeps, item.tx, item.outputs, height);
 
-    // The spend is the activity (ARCHITECTURE → Karma decay). The karma arm
-    // pins one owner for all karma inputs; the first input's owner is that
-    // owner. The write lands after applyTx's box writes, so reverse replay
-    // restores it first (NODE_INTERFACE → Populating the record).
-    if (firstInputBox?.boxType === 'karma') {
+    // Posting is the activity (NODE_INTERFACE → Populating the record). The
+    // post arm pins the author to the karma inputs' owner, so firstInputBox
+    // is the author. The write lands after applyTx's box writes, so reverse
+    // replay restores it first.
+    if (item.tx.post !== undefined) {
       recordKarmaActivity((firstInputBox as KarmaBox).owner);
     }
 
