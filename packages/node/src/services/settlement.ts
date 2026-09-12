@@ -72,6 +72,8 @@ import {
 import type {
   AnyBox,
   AnyBoxCandidate,
+  BackerPoolBox,
+  BackerUnstakeBox,
   BondBox,
   CreditBox,
   EmissionBox,
@@ -84,7 +86,7 @@ import type {
   ProtocolEra,
 } from '@dagsocial/types';
 import { verifyProtocolVersion } from '@dagsocial/validation';
-import { splitCoinbase } from './coinbase-split.js';
+import { splitCoinbase, backerLeg } from './coinbase-split.js';
 import type { DecayPlan } from './decay.js';
 
 // ---------------------------------------------------------------------------
@@ -133,6 +135,11 @@ export interface SettlementBody {
    * and returns their sum to the pool (NODE_INTERFACE → The settlement transaction).
    */
   priceBoxes: Array<{ id: string; value: bigint }>;
+  /**
+   * Every `BackerUnstakeBox` the body's transactions created, in committed
+   * transaction order.
+   */
+  unstakes: Array<{ id: string; owner: Uint8Array; weight: bigint }>;
 }
 
 /**
@@ -172,6 +179,10 @@ export interface SettlementDeps {
   vouchCooldownBlocks: number;
   /** What every stale identity owes, in the decay pass's stated owner order. */
   getDecayPlans: () => DecayPlan[];
+  /** The pre-body backer pool box, or null on a network with no backer table. */
+  getBackerPoolBox: () => BackerPoolBox | null;
+  backerSupply: bigint;
+  creditFixedRateBlocks: number;
 }
 
 /** What a settlement's construction or check answers with. */
@@ -253,7 +264,39 @@ function derive(
   inputs.push(emissionBox.id);
   const release = emission < emissionBox.value ? emission : emissionBox.value;
 
-  const split = splitCoinbase(release, body.fees, body.rent, body.actors);
+  // ---- 2′. The backer leg (MINING_INTERFACE → The backer pool) ----
+  //
+  // Computed before splitCoinbase because the draw is an argument to it.
+  // The pool box is read from pre-body state (captured by the caller).
+  const backerPoolBox = deps.getBackerPoolBox();
+  const inWindow = height <= deps.creditFixedRateBlocks;
+  const totalUnstaked = body.unstakes.reduce((s, u) => s + u.weight, 0n);
+  let backerDraw = 0n;
+  let backerReleases: bigint[] = [];
+  let backerStaked = backerPoolBox?.staked ?? 0n;
+  let backerAccrual = backerPoolBox?.accrual ?? 0n;
+  let backerPoolValue = backerPoolBox?.value ?? 0n;
+
+  if (backerPoolBox && deps.backerSupply > 0n) {
+    if (totalUnstaked > backerPoolBox.staked) {
+      return { error: `backer unstake weight ${totalUnstaked} exceeds staked ${backerPoolBox.staked}` };
+    }
+    const leg = backerLeg(
+      release + body.fees,
+      deps.backerSupply,
+      backerPoolBox.staked,
+      backerPoolBox.accrual,
+      body.unstakes,
+      inWindow,
+    );
+    backerDraw = leg.draw;
+    backerReleases = leg.releases;
+    backerStaked = leg.staked;
+    backerAccrual = leg.accrual;
+    backerPoolValue = backerPoolBox.value + leg.draw - backerReleases.reduce((a, b) => a + b, 0n);
+  }
+
+  const split = splitCoinbase(release, body.fees, body.rent, body.actors, backerDraw);
   const remaining = emissionBox.value - release + split.unearned;
   outputs.push({ boxType: 'emission', value: remaining, createdAtBlock: height });
 
@@ -281,6 +324,24 @@ function derive(
       value: (box?.value ?? 0n) + split.treasury,
       createdAtBlock: height,
     });
+  }
+
+  // ---- 2″. Backer pool inputs and successor ----
+  //
+  // The pool box is spent on every block inside the window, and outside it on
+  // every block whose body carries an unstake (MINING_INTERFACE → The backer
+  // pool). The successor is emitted after the treasury's, ahead of the karma
+  // pool's.
+  if (backerPoolBox && backerPoolBox.id && (inWindow || totalUnstaked > 0n)) {
+    inputs.push(backerPoolBox.id);
+    for (const u of body.unstakes) inputs.push(u.id);
+    outputs.push({
+      boxType: 'backer_pool',
+      value: backerPoolValue,
+      staked: backerStaked,
+      accrual: backerAccrual,
+      createdAtBlock: height,
+    } as AnyBoxCandidate);
   }
 
   // ---- 3. What every karma leg owes the pool, and what it draws ----
@@ -501,6 +562,22 @@ function derive(
         boxType: 'karma',
         value: plan.newValue,
         owner: plan.owner,
+        createdAtBlock: height,
+      });
+    }
+  }
+  // ---- 6′. Backer releases ----
+  //
+  // One credit output per unstake marker whose release is positive, in
+  // committed transaction order — no lock, createdAtBlock = height
+  // (MINING_INTERFACE → The backer pool).
+  for (let i = 0; i < body.unstakes.length; i++) {
+    const r = backerReleases[i] ?? 0n;
+    if (r > 0n) {
+      outputs.push({
+        boxType: 'credit',
+        value: r,
+        owner: body.unstakes[i]!.owner,
         createdAtBlock: height,
       });
     }
@@ -864,6 +941,23 @@ function grantBytes(amount: bigint, version: number): number {
   return encodeTx(probe(0, 1, amount, version)).length - probeBases(version).base;
 }
 
+const creditOutputBytesByVersion = new Map<number, number>();
+function creditOutputBytes(version: number): number {
+  let cached = creditOutputBytesByVersion.get(version);
+  if (cached === undefined) {
+    const base = probeBases(version).base;
+    const withCredit = encodeTx({
+      inputs: [],
+      outputs: [{ boxType: 'credit' as const, value: 1n, createdAtBlock: 0, owner: new Uint8Array(32) }],
+      signatures: {},
+      protocolVersion: version,
+    }).length;
+    cached = withCredit - base;
+    creditOutputBytesByVersion.set(version, cached);
+  }
+  return cached;
+}
+
 /**
  * What one pooled transaction adds to the settlement, in bytes.
  *
@@ -906,6 +1000,10 @@ export function settlementMarginalBytes(tx: UtxoTransaction): number {
     // inputs and needs `k + 1`, and the sizer has the last word either way.
     else if (out.boxType === 'like_accrual') bytes += inputBytes;
     else if (out.boxType === 'karma_price') bytes += inputBytes;
+    // NODE_INTERFACE → The settlement transaction: one input (the marker) and
+    // one credit output per unstake, unconditionally — over-reserving on a
+    // zero-release marker is the safe direction.
+    else if (out.boxType === 'backer_unstake') bytes += inputBytes + creditOutputBytes(version);
   }
   return bytes;
 }
@@ -937,13 +1035,16 @@ export function contributeToBody(body: SettlementBody, outputs: AnyBox[], isRent
       body.markers.push({ id: marker.id!, author: marker.author, value: marker.value });
     } else if (out.boxType === 'karma_price') {
       body.priceBoxes.push({ id: out.id!, value: out.value });
+    } else if (out.boxType === 'backer_unstake') {
+      const marker = out as BackerUnstakeBox;
+      body.unstakes.push({ id: marker.id!, owner: marker.owner, weight: marker.weight });
     }
   }
 }
 
 /** A body with nothing in it yet. */
 export function emptyBody(): SettlementBody {
-  return { fees: 0n, rent: 0n, actors: 0, feeBoxIds: [], invites: [], markers: [], priceBoxes: [] };
+  return { fees: 0n, rent: 0n, actors: 0, feeBoxIds: [], invites: [], markers: [], priceBoxes: [], unstakes: [] };
 }
 
 /**

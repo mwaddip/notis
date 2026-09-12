@@ -135,6 +135,7 @@ const body: SettlementBody = {
   invites: [{ invitee: newInvitee.userId, amount: 15n }],
   markers: [{ id: markerBox.id!, author: likeAuthor.userId, value: 3n }],
   priceBoxes: [{ id: priceBox.id!, value: 5n }],
+  unstakes: [],
 };
 
 const deps: SettlementDeps = {
@@ -154,6 +155,9 @@ const deps: SettlementDeps = {
     hex(invitee) === hex(bondInvitee.userId) ? 9n : 0n,
   getDecayPlans: () => [decayPlan],
   vouchCooldownBlocks: 2,
+  getBackerPoolBox: () => null,
+  backerSupply: 0n,
+  creditFixedRateBlocks: 1_000_000,
 };
 
 // Derived from the constants, for the output-value assertions below.
@@ -396,7 +400,7 @@ describe('coinbase tail binding', () => {
     };
     const zeroBody: SettlementBody = {
       fees: 0n, rent: 0n, actors: 0,
-      feeBoxIds: [], invites: [], markers: [], priceBoxes: [],
+      feeBoxIds: [], invites: [], markers: [], priceBoxes: [], unstakes: [],
     };
     const result = buildSettlement(
       zeroDeps, HEIGHT, ONE_ERA, 0n, MINER_REWARD_DELAY, zeroBody, miner.userId);

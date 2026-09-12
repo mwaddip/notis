@@ -11,6 +11,7 @@
 
 import {
   COINBASE_TREASURY_PCT,
+  COINBASE_BACKER_PCT,
   COINBASE_BONUS_PCT,
   INCLUSION_BONUS_K,
 } from '@dagsocial/types';
@@ -121,14 +122,15 @@ export function countKarmaActors(
  * independent truncations of one pool leak a base unit between them; a
  * subtraction cannot.
  *
- * The backer pool has no consumer — nothing stakes and nothing links — so its
- * share falls to the miner floor along with every other remainder.
+ * The backer draw is a fifth argument defaulting to `0n`, so every existing
+ * call and test stands.
  */
 export function splitCoinbase(
   emission: bigint,
   fees: bigint,
   rent: bigint,
   actors: number,
+  backerDraw = 0n,
 ): { treasury: bigint; miner: bigint; unearned: bigint } {
   const income = emission + fees + rent;
   // NODE_INTERFACE → "Storage rent is a transition requiring no signature":
@@ -146,5 +148,51 @@ export function splitCoinbase(
   const earned = (bonusPool * a) / (a + INCLUSION_BONUS_K);
   const unearned = bonusPool - earned;
 
-  return { treasury, miner: income - treasury - unearned, unearned };
+  return { treasury, miner: income - treasury - unearned - backerDraw, unearned };
+}
+
+/**
+ * The backer pool's per-block arithmetic (MINING_INTERFACE → The backer pool).
+ *
+ * Pure: every number is an argument, no store, no config, no profile. Called
+ * by `derive()` alone; the draw is handed to `splitCoinbase` as its fifth
+ * argument.
+ */
+export function backerLeg(
+  base: bigint,
+  supply: bigint,
+  stakedBefore: bigint,
+  accrualBefore: bigint,
+  unstakes: ReadonlyArray<{ weight: bigint }>,
+  inWindow: boolean,
+): {
+  releases: bigint[];
+  staked: bigint;
+  accrual: bigint;
+  draw: bigint;
+} {
+  const releases: bigint[] = [];
+  let totalUnstaked = 0n;
+  for (const u of unstakes) {
+    const r = supply > 0n ? (u.weight * accrualBefore) / supply : 0n;
+    releases.push(r);
+    totalUnstaked += u.weight;
+  }
+  const staked = stakedBefore - totalUnstaked;
+
+  let inc: bigint;
+  if (!inWindow) {
+    inc = 0n;
+  } else if (staked === 0n || 100n * staked <= BigInt(COINBASE_BACKER_PCT) * supply) {
+    inc = base;
+  } else {
+    inc = (base * BigInt(COINBASE_BACKER_PCT) * supply) / (100n * staked);
+  }
+
+  const draw = staked > 0n && supply > 0n
+    ? (staked * inc + supply - 1n) / supply
+    : 0n;
+  const accrual = accrualBefore + inc;
+
+  return { releases, staked, accrual, draw };
 }

@@ -93,6 +93,7 @@ import {
   getLikeCarryBox,
   getTreasuryBox,
   getKarmaPoolBox,
+  getBackerPoolBox,
   putIdentityRecord,
   getInterlinks,
 } from '../store/index.js';
@@ -905,6 +906,7 @@ export function settlementDepsWith(
   plans: () => DecayPlan[],
   escrows: VouchEscrowBox[],
   lapsedVouches: VouchBox[] = [],
+  capturedBackerPoolBox: (() => import('@dagsocial/types').BackerPoolBox | null) | null = null,
 ): SettlementDeps {
   return {
     getEmissionBox,
@@ -922,6 +924,9 @@ export function settlementDepsWith(
       getIdentityRecord(invitee)?.lifetimeLikesReceived ?? 0n,
     getDecayPlans: plans,
     vouchCooldownBlocks: nodeConfig.vouchCooldownBlocks,
+    getBackerPoolBox: capturedBackerPoolBox ?? (() => null),
+    backerSupply: nodeConfig.profile.backerSupply,
+    creditFixedRateBlocks: nodeConfig.creditFixedRateBlocks,
   };
 }
 
@@ -1002,8 +1007,13 @@ export function buildBlockSettlement(
   const postBody = collectPostBodyKarma(decoded);
   const escrows = getVouchEscrowsReleasableAt(height, MAX_ESCROW_RETURNS_PER_BLOCK);
   const lapsed = getLapsedVouches(MAX_LAPSE_WITHDRAWALS_PER_BLOCK);
+  const capturedPool = getBackerPoolBox();
   return buildSettlement(
-    settlementDepsWith(() => deriveKarmaDecay(decayDeps, postBody, height, decayConfig()), escrows, lapsed),
+    settlementDepsWith(
+      () => deriveKarmaDecay(decayDeps, postBody, height, decayConfig()),
+      escrows, lapsed,
+      () => capturedPool,
+    ),
     height,
     nodeConfig.protocolVersionSchedule,
     computeBlockReward(height),

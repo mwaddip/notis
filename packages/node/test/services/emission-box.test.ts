@@ -88,12 +88,15 @@ function settle(
       getLifetimeLikes: () => 0n,
       getDecayPlans: () => [],
       vouchCooldownBlocks: 2,
+      getBackerPoolBox: () => null,
+      backerSupply: 0n,
+      creditFixedRateBlocks: 1_000_000,
     },
     height,
     [{ version: 1, fromHeight: 0 }],
     emission,
     s.config.config.creditMinerRewardDelay,
-    { fees: opts.fees ?? 0n, rent: 0n, actors: opts.actors ?? 0, feeBoxIds: [], invites: [], markers: [], priceBoxes: [] },
+    { fees: opts.fees ?? 0n, rent: 0n, actors: opts.actors ?? 0, feeBoxIds: [], invites: [], markers: [], priceBoxes: [], unstakes: [] },
     makeTestIdentity().userId,
   );
   if ('error' in built) return false;

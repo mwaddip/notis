@@ -40,6 +40,8 @@ export {
   getEmissionBox,
   getTreasuryBox,
   getKarmaPoolBox,
+  getBackerPoolBox,
+  getBackerStakeBox,
   getCreditBoxes,
   getRentEligibleCreditBoxes,
   getBondFor,
