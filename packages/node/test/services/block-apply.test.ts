@@ -324,11 +324,11 @@ describe('block-apply journal recording', () => {
     // Insert a standalone UTXO transaction in mempool. The like targets the
     // post this same block confirms — N2b's apply rules reject a like on an
     // unconfirmed target, and topology lands (§8b) before the tx loop (§11),
-    // so confirm-and-like-in-one-block is the valid shape. A self-like is
-    // legal (and uneconomical) by contract.
-    const karmaBox = makeKarmaBox(100n, author.userId, 0);
+    // so confirm-and-like-in-one-block is the valid shape.
+    const liker = makeTestIdentity();
+    const karmaBox = makeKarmaBox(100n, liker.userId, 0);
     utxo.insertBox(karmaBox);
-    const likeTx = makeLikeTx(author, karmaBox, postId, author.userId);
+    const likeTx = makeLikeTx(liker, karmaBox, postId, author.userId);
     mempool.insertUtxoTx(likeTx, 1000);
 
     bc.startBlockCreator(testConfig);
@@ -3268,6 +3268,64 @@ describe('T4: activity clock in the user-transaction loop', () => {
       utxoTxs: [replyResult.tx, threadResult.tx],
     });
     expect(blockApply.applyOrderingBlock(block)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A self-like is refused (NODE_INTERFACE → Karma transition rules)
+// ---------------------------------------------------------------------------
+
+describe('a self-like is refused at block application', () => {
+  beforeEach(() => { vi.doUnmock('../../src/config.js'); vi.restoreAllMocks(); vi.resetModules(); });
+  afterEach(() => { vi.restoreAllMocks(); vi.resetModules(); });
+
+  it('a block carrying a self-like is rejected', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const blockApply = await importBlockApply();
+    const utxo = await importUtxo();
+    const posts = await importPosts();
+
+    const author = makeTestIdentity();
+    const { commit, tx: postTx, postId, content } = makePostTx(author, 'self-like target');
+    utxo.insertBox(makePostTx(author, 'self-like target').karmaBox);
+    posts.insertPost(postId, commit, content);
+
+    const block1 = await makeApplicableBlock({ utxoTxs: [postTx] });
+    expect(blockApply.applyOrderingBlock(block1)).toBe(true);
+
+    const selfKarma = makeKarmaBox(100n, author.userId, 0, 60);
+    utxo.insertBox(selfKarma);
+    const selfLikeTx = makeLikeTx(author, selfKarma, postId, author.userId);
+
+    const block2 = await makeApplicableBlock({ height: 2, utxoTxs: [selfLikeTx] });
+    expect(blockApply.applyOrderingBlock(block2)).toBe(false);
+  });
+
+  it('a like by another identity on the same post applies', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const blockApply = await importBlockApply();
+    const utxo = await importUtxo();
+    const posts = await importPosts();
+
+    const author = makeTestIdentity();
+    const liker = makeTestIdentity();
+    const { commit, tx: postTx, postId, content } = makePostTx(author, 'other-like target');
+    utxo.insertBox(makePostTx(author, 'other-like target').karmaBox);
+    posts.insertPost(postId, commit, content);
+
+    const block1 = await makeApplicableBlock({ utxoTxs: [postTx] });
+    expect(blockApply.applyOrderingBlock(block1)).toBe(true);
+
+    const likerKarma = makeKarmaBox(100n, liker.userId, 0, 61);
+    utxo.insertBox(likerKarma);
+    const otherLikeTx = makeLikeTx(liker, likerKarma, postId, author.userId);
+
+    const block2 = await makeApplicableBlock({ height: 2, utxoTxs: [otherLikeTx] });
+    expect(blockApply.applyOrderingBlock(block2)).toBe(true);
   });
 });
 

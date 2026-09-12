@@ -488,9 +488,10 @@ describe('block-creator', () => {
     posts.insertPost(postId, commit, content);
     mempool.insertUtxoTx(postTx, 1000);
 
-    const karmaBox = makeKarmaBox(100n, author.userId, 0);
+    const liker = makeTestIdentity();
+    const karmaBox = makeKarmaBox(100n, liker.userId, 0);
     utxo.insertBox(karmaBox);
-    mempool.insertUtxoTx(makeLikeTx(author, karmaBox, postId), 1000);
+    mempool.insertUtxoTx(makeLikeTx(liker, karmaBox, postId, author.userId), 1000);
 
     bc.startBlockCreator(testConfig);
     const block = await mineNextBlock(bc);
