@@ -3,8 +3,7 @@ import { asertTargetBits } from '@dagsocial/validation';
 import type { RetargetParams } from '@dagsocial/validation';
 import type { BlockHeader } from '@dagsocial/types';
 import { config } from '../config.js';
-import { getBlockCreatedAt } from '../store/index.js';
-import { getCurrentHeight } from '../store/index.js';
+import { getBlockCreatedAt, getCurrentHeight, getOrderingBlockHash, getOrderingBlock } from '../store/index.js';
 import { MissingStoredBlockError } from './corrupt-state.js';
 
 /** NODE_INTERFACE → Configuration */
@@ -41,6 +40,23 @@ export function anchorCreatedAt(): number {
  */
 export function scheduledTargetBits(parent: BlockHeader): number {
   return asertTargetBits(retargetParams(), anchorCreatedAt(), parent);
+}
+
+/**
+ * The scheduled target for the block above `header`, answerable only when this
+ * node holds `header`'s parent at `height - 1`. NET_INTERFACE → Consensus
+ * parameters net enforces: the topic validator calls this to reject a header
+ * off the schedule.
+ */
+export function scheduledPowTargetBits(header: BlockHeader): number | null {
+  const parentHeight = header.height - 1;
+  if (!Number.isSafeInteger(parentHeight) || parentHeight < 0) return null;
+  if (parentHeight === 0) return config.orderingBlockPowTargetBits;
+  const storedHash = getOrderingBlockHash(parentHeight);
+  if (storedHash === null || storedHash !== header.prevBlockHash) return null;
+  const parent = getOrderingBlock(parentHeight);
+  if (parent === null) return null;
+  return scheduledTargetBits(parent.header);
 }
 
 // NODE_INTERFACE → Difficulty schedule: the clock seam. `nowMs()` returns

@@ -5,7 +5,7 @@ import {
   encodeTxPacket,
   protocolVersionAt,
 } from '@dagsocial/types';
-import type { OrderingBlock, UtxoTransaction, ProtocolEra } from '@dagsocial/types';
+import type { OrderingBlock, UtxoTransaction, BlockHeader, ProtocolEra } from '@dagsocial/types';
 import { TopicValidatorResult } from '@libp2p/interface';
 import type { PubSub } from '@libp2p/interface';
 import type { GossipsubEvents } from '@chainsafe/libp2p-gossipsub';
@@ -86,6 +86,9 @@ export function subscribeTopics(
   // block's, chainHeight() + 1 (NET_INTERFACE → Stage 1).
   schedule: readonly ProtocolEra[],
   chainHeight: () => number,
+  // NET_INTERFACE → Consensus parameters net enforces
+  floorBits: number,
+  scheduledTargetBits: (header: BlockHeader) => number | null,
 ): void {
   const gs = libp2p.services.pubsub;
 
@@ -121,12 +124,25 @@ export function subscribeTopics(
       // encodable domain, and its `height` rule is `isU64Safe` (audit M-6), so
       // NaN and floats are already rejected one gate earlier — for every input,
       // not merely the NaN/1.5 cases the test below pins.
+
+      // NET_INTERFACE → Consensus parameters net enforces
+      if (block.header.powTargetBits < floorBits) {
+        peerMgr.recordPenalty('misbehavior', _peer.toString(), 100, 'ordering block below the network floor');
+        return TopicValidatorResult.Reject;
+      }
       if (!validators.verifyOrderingBlockPoW(block.header)) {
-        // Bogus — a zero-work block must die at the first hop, not be
-        // re-gossiped mesh-wide (audit M-9). Stage 1 checks the header's own
-        // floor-bounded target only; the difficulty schedule is apply-time
-        // node policy.
+        // A zero-work block must die at the first hop, not be re-gossiped
+        // mesh-wide (NET_INTERFACE → Stage 1).
         peerMgr.recordPenalty('misbehavior', _peer.toString(), 100, 'ordering block PoW invalid');
+        return TopicValidatorResult.Reject;
+      }
+      // NET_INTERFACE → Stage 1 → "A scheduled-target mismatch is refused,
+      // never forwarded, and never penalised"
+      const expected = scheduledTargetBits(block.header);
+      if (expected !== null && block.header.powTargetBits !== expected) {
+        console.log(
+          `[net] scheduled-target mismatch: height=${block.header.height} bits=${block.header.powTargetBits} expected=${expected}`,
+        );
         return TopicValidatorResult.Reject;
       }
       return TopicValidatorResult.Accept;

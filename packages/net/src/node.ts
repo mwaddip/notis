@@ -555,6 +555,8 @@ export class NetNode {
   private peerActiveHandlers: Array<(peerId: string, direction: 'inbound' | 'outbound') => void> = [];
   private peerDisconnectedHandlers: Array<(peerId: string, reason: string) => void> = [];
   private peerPenalisedHandlers: Array<(peerId: string, kind: string, detail: string | null) => void> = [];
+  // NET_INTERFACE → Sync Handler Registration
+  private scheduledTargetProvider: ((header: BlockHeader) => number | null) | null = null;
   // NET_INTERFACE → Sync Handler Registration: post body seams
   private postBodyProvider: ((postId: string) => string | null) | null = null;
   private postBodyHandlers: Array<(postId: string, content: string, fromPeerId: string) => boolean> = [];
@@ -760,6 +762,8 @@ export class NetNode {
       this.karmaMembers,
       this.config.protocolVersionSchedule,
       () => this.syncStore.chainHeight(),
+      this.config.orderingBlockPowTargetFloorBits,
+      (header) => this.scheduledTargetProvider?.(header) ?? null,
     );
 
     // Log listen addresses
@@ -1673,6 +1677,11 @@ export class NetNode {
   // -----------------------------------------------------------------------
   // Post body seams — NET_INTERFACE → Sync Handler Registration
   // -----------------------------------------------------------------------
+
+  // NET_INTERFACE → Sync Handler Registration
+  setScheduledTargetProvider(cb: (header: BlockHeader) => number | null): void {
+    this.scheduledTargetProvider = cb;
+  }
 
   setPostBodyProvider(cb: (postId: string) => string | null): void {
     this.postBodyProvider = cb;

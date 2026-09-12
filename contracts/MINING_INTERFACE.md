@@ -210,7 +210,11 @@ an acceptance rule and not a target input.
 from the schedule evaluated over the **stored parent** is rejected — a consensus check, not a sanity
 floor. A height-1 block's bits must equal `B_a`. Fork choice recomputes every competing header's target
 from that branch's own headers and never trusts a declared one (`VALIDATION_INTERFACE → verifyHeaderChain`,
-reason `'target'`).
+reason `'target'`). **Relay asks the same question once, ahead of apply**, for a gossiped header whose
+parent the receiving node holds: the ordering-block topic validator reads the scheduled target through
+node's provider and refuses to forward a header whose bits differ — no penalty, since the previous hop
+may lack the parent, and the block never reaches the funnel; a header whose parent the node lacks is
+forwarded on the network's floor and its own PoW alone (`NET_INTERFACE → Stage 1`).
 
 ### Header timestamp rules
 
