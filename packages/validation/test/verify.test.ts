@@ -594,6 +594,9 @@ describe('verifyTxStructure — genesis_proof outputs', () => {
     like_accrual: { boxType: 'like_accrual', value: 1n, createdAtBlock: 0, author: new Uint8Array(32) },
     vouch_escrow: { boxType: 'vouch_escrow', value: 1n, createdAtBlock: 0, owner: new Uint8Array(32), releaseAtBlock: 42 },
     username: { boxType: 'username', value: 0n, createdAtBlock: 0, owner: new Uint8Array(32), name: new Uint8Array([0x41]) },
+    backer_stake: { boxType: 'backer_stake', value: 0n, createdAtBlock: 0, owner: new Uint8Array(32), weight: 1n },
+    backer_unstake: { boxType: 'backer_unstake', value: 0n, createdAtBlock: 0, owner: new Uint8Array(32), weight: 1n },
+    backer_pool: { boxType: 'backer_pool', value: 0n, createdAtBlock: 0, staked: 0n, accrual: 0n },
     emission: { boxType: 'emission', value: 100n, createdAtBlock: 0 },
     treasury: { boxType: 'treasury', value: 100n, createdAtBlock: 0 },
     fee: { boxType: 'fee', value: 100n, createdAtBlock: 0 },
@@ -762,6 +765,100 @@ describe('verifyTxStructure — username outputs', () => {
   it('a transaction with no username output is untouched by the rule', () => {
     const karmaOut: AnyBoxCandidate = { boxType: 'karma', value: 5n, createdAtBlock: 0, owner: new Uint8Array(32) };
     expect(verifyTxStructure(txWith([karmaOut]))).toEqual({ valid: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// verifyTxStructure — a backer output's weight is typed here
+// ---------------------------------------------------------------------------
+//
+// VALIDATION_INTERFACE → "A backer output's weight is typed here". The clause
+// refuses backer_stake and backer_unstake outputs whose weight is not a bigint
+// or is 0n.
+
+describe('verifyTxStructure — backer outputs', () => {
+  const REASON = 'backer weight invalid';
+
+  const txWith = (outputs: AnyBoxCandidate[]): UtxoTransaction => ({
+    inputs: ['aa'.repeat(32)],
+    outputs,
+    signatures: {},
+    protocolVersion: 1,
+  });
+
+  const stakeOut = (weight: unknown): AnyBoxCandidate => ({
+    boxType: 'backer_stake',
+    value: 0n,
+    createdAtBlock: 0,
+    owner: new Uint8Array(32),
+    weight: weight as bigint,
+  });
+
+  const unstakeOut = (weight: unknown): AnyBoxCandidate => ({
+    boxType: 'backer_unstake',
+    value: 0n,
+    createdAtBlock: 0,
+    owner: new Uint8Array(32),
+    weight: weight as bigint,
+  });
+
+  it('accepts a backer_stake with weight 1n', () => {
+    expect(verifyTxStructure(txWith([stakeOut(1n)]))).toEqual({ valid: true });
+  });
+
+  it('accepts a backer_unstake with weight 1n', () => {
+    expect(verifyTxStructure(txWith([unstakeOut(1n)]))).toEqual({ valid: true });
+  });
+
+  it('accepts a backer_stake with a large weight', () => {
+    expect(verifyTxStructure(txWith([stakeOut(10n ** 18n)]))).toEqual({ valid: true });
+  });
+
+  it('rejects a backer_stake with weight 0n', () => {
+    expect(verifyTxStructure(txWith([stakeOut(0n)]))).toEqual({
+      valid: false, error: REASON,
+    });
+  });
+
+  it('rejects a backer_unstake with weight 0n', () => {
+    expect(verifyTxStructure(txWith([unstakeOut(0n)]))).toEqual({
+      valid: false, error: REASON,
+    });
+  });
+
+  it('rejects a backer_stake with a number weight', () => {
+    expect(verifyTxStructure(txWith([stakeOut(5)]))).toEqual({
+      valid: false, error: REASON,
+    });
+  });
+
+  it('rejects a backer_stake with a string weight', () => {
+    expect(verifyTxStructure(txWith([stakeOut('1')]))).toEqual({
+      valid: false, error: REASON,
+    });
+  });
+
+  it('rejects a backer_unstake with a number weight', () => {
+    expect(verifyTxStructure(txWith([unstakeOut(42)]))).toEqual({
+      valid: false, error: REASON,
+    });
+  });
+
+  it('rejects a backer_stake with absent weight', () => {
+    const out = { boxType: 'backer_stake', value: 0n, createdAtBlock: 0, owner: new Uint8Array(32) } as unknown as AnyBoxCandidate;
+    expect(verifyTxStructure(txWith([out]))).toEqual({
+      valid: false, error: REASON,
+    });
+  });
+
+  it('the clause reaches backer_stake but not other types', () => {
+    const karmaOut: AnyBoxCandidate = { boxType: 'karma', value: 5n, createdAtBlock: 0, owner: new Uint8Array(32) };
+    expect(verifyTxStructure(txWith([karmaOut]))).toEqual({ valid: true });
+  });
+
+  it('the clause reaches backer_unstake but not backer_pool', () => {
+    const poolOut: AnyBoxCandidate = { boxType: 'backer_pool', value: 0n, createdAtBlock: 0, staked: 0n, accrual: 0n };
+    expect(verifyTxStructure(txWith([poolOut]))).toEqual({ valid: true });
   });
 });
 

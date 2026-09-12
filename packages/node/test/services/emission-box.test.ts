@@ -88,12 +88,15 @@ function settle(
       getLifetimeLikes: () => 0n,
       getDecayPlans: () => [],
       vouchCooldownBlocks: 2,
+      getBackerPoolBox: () => null,
+      backerSupply: 0n,
+      creditFixedRateBlocks: 1_000_000,
     },
     height,
     [{ version: 1, fromHeight: 0 }],
     emission,
     s.config.config.creditMinerRewardDelay,
-    { fees: opts.fees ?? 0n, rent: 0n, actors: opts.actors ?? 0, feeBoxIds: [], invites: [], markers: [], priceBoxes: [] },
+    { fees: opts.fees ?? 0n, rent: 0n, actors: opts.actors ?? 0, feeBoxIds: [], invites: [], markers: [], priceBoxes: [], unstakes: [] },
     makeTestIdentity().userId,
   );
   if ('error' in built) return false;
@@ -362,6 +365,7 @@ describe('credit conservation across a block', () => {
         emission: s.utxo.getEmissionBox()?.value ?? 0n,
         treasury: s.utxo.getTreasuryBox()?.value ?? 0n,
         credit: s.utxo.getCreditBoxes(miner.userId).reduce((n, b) => n + b.value, 0n),
+        backerPool: s.utxo.getBackerPoolBox()?.value ?? 0n,
       };
 
       const block = await makeApplicableBlock({ miner });
@@ -371,25 +375,23 @@ describe('credit conservation across a block', () => {
         emission: s.utxo.getEmissionBox()?.value ?? 0n,
         treasury: s.utxo.getTreasuryBox()?.value ?? 0n,
         credit: s.utxo.getCreditBoxes(miner.userId).reduce((n, b) => n + b.value, 0n),
+        backerPool: s.utxo.getBackerPoolBox()?.value ?? 0n,
       };
 
-      // ⛔ **No correction term, and the fee deficit needs none** — the
-      // transaction inputs and outputs are already on both sides of the sums
-      // (spec §3.6):
-      //   created − consumed = −emission + treasury + (O − I) + miner = 0
+      // The emission box releases to the treasury, the backer pool and the
+      // miner (MINING_INTERFACE → The slices).
       const consumed = before.emission - after.emission;
-      const created = (after.treasury - before.treasury) + (after.credit - before.credit);
+      const created = (after.treasury - before.treasury)
+        + (after.credit - before.credit)
+        + (after.backerPool - before.backerPool);
       expect(consumed).toBe(created);
 
-      // Non-vacuity: an identity over two zeroes holds trivially. This block
-      // really did release emission and really did accrue to the treasury.
       expect(consumed).toBeGreaterThan(0n);
       expect(after.treasury).toBeGreaterThan(before.treasury);
       expect(after.credit).toBeGreaterThan(before.credit);
 
-      // And the split, not only the sum: the miner's slice is the coinbase, the
-      // treasury's is the box, and the two together are the whole release.
-      const split = s.split.splitCoinbase(s.creator.computeBlockReward(1), 0n, 0n, 0);
+      const backerDraw = after.backerPool - before.backerPool;
+      const split = s.split.splitCoinbase(s.creator.computeBlockReward(1), 0n, 0n, 0, backerDraw);
       expect(after.credit - before.credit).toBe(split.miner);
       expect(after.treasury - before.treasury).toBe(split.treasury);
     } finally {

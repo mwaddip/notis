@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import type { AnyBox, AnyBoxCandidate, CandidateOf, CreditBox, KarmaBox, BondBox, KarmaPriceBox, VouchBox, VouchEscrowBox, LikeAccrualBox, EmissionBox, TreasuryBox, FeeBox, KarmaPoolBox, UsernameBox } from '@dagsocial/types';
+import type { AnyBox, AnyBoxCandidate, CandidateOf, CreditBox, KarmaBox, BondBox, KarmaPriceBox, VouchBox, VouchEscrowBox, LikeAccrualBox, EmissionBox, TreasuryBox, FeeBox, KarmaPoolBox, UsernameBox, BackerStakeBox, BackerUnstakeBox, BackerPoolBox } from '@dagsocial/types';
 import type Database from 'better-sqlite3';
 
 /**
@@ -206,6 +206,18 @@ describe('transaction output provenance (Spec G phase C3)', () => {
         boxType: 'username', value: 0n, createdAtBlock: 1, owner: user(0xef),
         name: new Uint8Array([65]),
       } satisfies CandidateOf<UsernameBox>],
+      backer_stake: [{
+        boxType: 'backer_stake', value: 0n, createdAtBlock: 0, owner: user(0xf0),
+        weight: 50n,
+      } satisfies CandidateOf<BackerStakeBox>],
+      backer_unstake: [{
+        boxType: 'backer_unstake', value: 0n, createdAtBlock: 0, owner: user(0xf1),
+        weight: 30n,
+      } satisfies CandidateOf<BackerUnstakeBox>],
+      backer_pool: [{
+        boxType: 'backer_pool', value: 0n, createdAtBlock: 0,
+        staked: 80n, accrual: 0n,
+      } satisfies CandidateOf<BackerPoolBox>],
     };
 
     Object.values(candidates).flat().forEach((candidate, index) => {

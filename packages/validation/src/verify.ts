@@ -723,6 +723,14 @@ export function verifyTxStructure(tx: UtxoTransaction): { valid: boolean; error?
       }
     }
   }
+  // VALIDATION_INTERFACE → "A backer output's weight is typed here"
+  for (const out of tx.outputs) {
+    if (isObject(out) && (out.boxType === 'backer_stake' || out.boxType === 'backer_unstake')) {
+      if (typeof out.weight !== 'bigint' || out.weight === 0n) {
+        return { valid: false, error: 'backer weight invalid' };
+      }
+    }
+  }
   // Check for duplicate inputs
   const seen = new Set<string>();
   for (const input of tx.inputs) {

@@ -146,7 +146,10 @@ type BoxContent =
   | { boxType: 'fee'; value: bigint; createdAtBlock: number }
   | { boxType: 'karma_pool'; value: bigint; createdAtBlock: number }
   | { boxType: 'karma_price'; value: bigint; createdAtBlock: number }
-  | { boxType: 'username'; value: bigint; createdAtBlock: number; owner: Uint8Array; name: Uint8Array };
+  | { boxType: 'username'; value: bigint; createdAtBlock: number; owner: Uint8Array; name: Uint8Array }
+  | { boxType: 'backer_stake'; value: bigint; createdAtBlock: number; owner: Uint8Array; weight: bigint }
+  | { boxType: 'backer_unstake'; value: bigint; createdAtBlock: number; owner: Uint8Array; weight: bigint }
+  | { boxType: 'backer_pool'; value: bigint; createdAtBlock: number; staked: bigint; accrual: bigint };
 
 // TYPES_INTERFACE → Layout — Boxes, "independent in its numbers, not in its
 // coverage": the corpus's BoxContent['boxType'] and production's
@@ -183,6 +186,9 @@ export const BOX_TAG_BY_TYPE = {
   vouch_escrow: 12,
   karma_price: 13,
   username: 14,
+  backer_stake: 15,
+  backer_unstake: 16,
+  backer_pool: 17,
 } as const satisfies Record<BoxContent['boxType'], number>;
 
 /** Reverse lookup derived from `BOX_TAG_BY_TYPE` — `read()` uses this. */
@@ -256,6 +262,12 @@ const boxContentCodec: ValueCodec<BoxContent> = {
         return { boxType: 'karma_price', value, createdAtBlock };
       case 'username':
         return { boxType: 'username', value, createdAtBlock, owner: hex(j.owner as string), name: hex(j.name as string) };
+      case 'backer_stake':
+        return { boxType: 'backer_stake', value, createdAtBlock, owner: hex(j.owner as string), weight: BigInt(j.weight as string) };
+      case 'backer_unstake':
+        return { boxType: 'backer_unstake', value, createdAtBlock, owner: hex(j.owner as string), weight: BigInt(j.weight as string) };
+      case 'backer_pool':
+        return { boxType: 'backer_pool', value, createdAtBlock, staked: BigInt(j.staked as string), accrual: BigInt(j.accrual as string) };
       default:
         throw new Error(`boxContent: unknown boxType ${String(j.boxType)}`);
     }
@@ -347,6 +359,11 @@ const boxContentCodec: ValueCodec<BoxContent> = {
         }
         return { boxType, value, createdAtBlock, owner, name: r.readBytes(nameLen).slice() };
       }
+      case 'backer_stake':
+      case 'backer_unstake':
+        return { boxType, value, createdAtBlock, owner: readBytesN(r, 32), weight: readVlqU64(r) };
+      case 'backer_pool':
+        return { boxType, value, createdAtBlock, staked: readVlqU64(r), accrual: readVlqU64(r) };
       case 'emission':
       case 'treasury':
       case 'fee':

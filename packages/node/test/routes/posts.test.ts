@@ -47,6 +47,7 @@ import type {
   UtxoTransaction,
 } from '@dagsocial/types';
 import { createRouter } from '../../src/routes/posts.js';
+import { PendingSpendConflictError } from '../../src/store/mempool.js';
 import { unlinkSync } from 'fs';
 import { config } from '../../src/config.js';
 
@@ -238,6 +239,74 @@ describe('posts routes', () => {
       content: 'test',
     });
     expect(res.status).toBe(400);
+  });
+
+  it('POST /posts — a conflicting spend answers 409 naming the box', async () => {
+    const boxId = 'ab'.repeat(32);
+    const content = 'test-409-post';
+    const contentHash = computeContentHash(content);
+    const deps = {
+      verifyPost: () => ({ valid: true as const }),
+      insertPost,
+      getPost,
+      queryPostsPage,
+      getKarmaBoxes,
+      getIdentityRecord: storeGetIdentityRecord,
+      decayCfg: {
+        staleThresholdBlocks: KARMA_STALE_THRESHOLD_BLOCKS,
+        decayIntervalBlocks: KARMA_DECAY_INTERVAL_BLOCKS,
+        decayAmount: KARMA_DECAY_AMOUNT,
+        karmaMinimum: KARMA_MINIMUM,
+      },
+      storageRentPeriodBlocks: 40,
+      getBoxProvenance: () => null,
+      getKarmaBox,
+      getLikeRecordCount,
+      getDescendantCount,
+      hasLikeRecord,
+      getUsernameByOwner,
+      getAncestorsNearest,
+      getSubtreePage,
+      getBlockCreatedAt,
+      inviteBondMin: config.inviteBondMin,
+      inviteBondMax: config.inviteBondMax,
+      getTopologyAuthor: () => null,
+      getPendingPostAuthor,
+      getCurrentHeight,
+      protocolVersionSchedule: [{ version: 1, fromHeight: 0 }] as const,
+      getUsername: () => null,
+      admitTx: insertUtxoTx,
+      runInTransaction: (fn: () => void) => fn(),
+      validateTx: (): never => { throw new PendingSpendConflictError(boxId); },
+      getBox: () => null,
+    };
+    const app = express();
+    app.use(express.json());
+    app.use('/posts', createRouter(deps));
+    const res = await new Promise<{ status: number; data: unknown }>((resolve) => {
+      const server = app.listen(0, () => {
+        const addr = server.address() as { port: number };
+        const r = http.request(
+          { hostname: 'localhost', port: addr.port, path: '/posts/', method: 'POST',
+            headers: { 'Content-Type': 'application/json' } },
+          (httpRes) => {
+            let d = '';
+            httpRes.on('data', (c) => (d += c));
+            httpRes.on('end', () => { server.close(); resolve({ status: httpRes.statusCode!, data: JSON.parse(d) }); });
+          },
+        );
+        r.write(JSON.stringify({
+          tx: { inputs: ['11'.repeat(32)], outputs: [], signatures: {}, protocolVersion: 1,
+            post: { contentHash: Buffer.from(contentHash).toString('hex'), author: '11'.repeat(32), parentRefs: [] } },
+          content,
+        }));
+        r.end();
+      });
+    });
+    expect(res.status).toBe(409);
+    const body = res.data as Record<string, unknown>;
+    expect(body.reason).toContain(boxId);
+    expect(body.reason).toMatch(/already spent by a pending/i);
   });
 
   // -----------------------------------------------------------------------

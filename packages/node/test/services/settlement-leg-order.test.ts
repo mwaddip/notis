@@ -14,6 +14,8 @@ import {
 } from '@dagsocial/types';
 import type {
   AnyBox,
+  BackerPoolBox,
+  BackerUnstakeBox,
   BondBox,
   CreditBox,
   EmissionBox,
@@ -51,6 +53,7 @@ const escrowOwner = makeTestIdentity();
 const lapseOwner  = makeTestIdentity();
 const decayOwner  = makeTestIdentity();
 const newInvitee  = makeTestIdentity();
+const backerOwner = makeTestIdentity();
 
 // ---- Protocol boxes ----
 
@@ -110,11 +113,24 @@ const priceBox = seedProvenance<KarmaPriceBox>({
   boxType: 'karma_price', value: 5n, createdAtBlock: HEIGHT,
 }, HEIGHT, labelNonce('leg-order-price'));
 
+// ---- Backer boxes ----
+
+const BACKER_SUPPLY = 100n;
+const backerPoolBoxObj = seedProvenance<BackerPoolBox>({
+  boxType: 'backer_pool', value: 500n, staked: 50n, accrual: 1000n, createdAtBlock: 0,
+}, 1, labelNonce('leg-order-backer-pool'));
+
+const unstakeMarker = seedProvenance<BackerUnstakeBox>({
+  boxType: 'backer_unstake', value: 0n as 0n, owner: backerOwner.userId, weight: 10n,
+  createdAtBlock: HEIGHT,
+}, HEIGHT, labelNonce('leg-order-unstake'));
+
 // ---- Lookup for checkSettlement's conservation check ----
 
 const boxMap = new Map<string, AnyBox>();
 for (const box of [emissionBox, treasuryBox, poolBox, markerBox, carryBox,
-                    bondBox, escrowBox, lapsedVouchBox, decayKarmaBox, feeBox, priceBox]) {
+                    bondBox, escrowBox, lapsedVouchBox, decayKarmaBox, feeBox, priceBox,
+                    backerPoolBoxObj, unstakeMarker]) {
   boxMap.set(box.id!, box as AnyBox);
 }
 
@@ -135,6 +151,7 @@ const body: SettlementBody = {
   invites: [{ invitee: newInvitee.userId, amount: 15n }],
   markers: [{ id: markerBox.id!, author: likeAuthor.userId, value: 3n }],
   priceBoxes: [{ id: priceBox.id!, value: 5n }],
+  unstakes: [{ id: unstakeMarker.id!, owner: backerOwner.userId, weight: 10n }],
 };
 
 const deps: SettlementDeps = {
@@ -154,6 +171,9 @@ const deps: SettlementDeps = {
     hex(invitee) === hex(bondInvitee.userId) ? 9n : 0n,
   getDecayPlans: () => [decayPlan],
   vouchCooldownBlocks: 2,
+  getBackerPoolBox: () => backerPoolBoxObj as BackerPoolBox,
+  backerSupply: BACKER_SUPPLY,
+  creditFixedRateBlocks: 1_000_000,
 };
 
 // Derived from the constants, for the output-value assertions below.
@@ -177,13 +197,16 @@ describe('settlement leg order', () => {
 
     // ---- Inputs: exact order ----
     //
-    //   emission → treasury → markers (committed tx order) →
+    //   emission → treasury → backer pool → unstake marker →
+    //   like markers (committed tx order) →
     //   price boxes (committed tx order) → carry (ascending author hex) →
     //   bonds (ascending box id) → escrows (ascending box id) →
-    //   decay consumed → pool → fees (committed tx order)
+    //   lapsed vouches → decay consumed → pool → fees (committed tx order)
     expect(tx.inputs).toEqual([
       emissionBox.id,
       treasuryBox.id,
+      backerPoolBoxObj.id,
+      unstakeMarker.id,
       markerBox.id,
       priceBox.id,
       carryBox.id,
@@ -197,54 +220,72 @@ describe('settlement leg order', () => {
 
     // ---- Outputs: exact order ----
     //
-    //   emission successor → treasury successor → pool successor →
+    //   emission successor → treasury successor → backer pool successor →
+    //   karma pool successor →
     //   invite grants → like payouts + carry → bond vested →
-    //   escrow returns → decay replacements → coinbase credit
+    //   escrow returns → lapse escrows → decay replacements →
+    //   backer releases → coinbase credit
     const outs = tx.outputs;
-    expect(outs).toHaveLength(11);
 
-    expect(outs[0]!.boxType).toBe('emission');
-    // 1000 − min(100, 1000) + unearned(23) = 923
-    // splitCoinbase(100, 10, 0, 1): bonusPool=(110×25)/100=27,
-    // earned=27×1/6=4, unearned=23
-    expect(outs[0]!.value).toBe(923n);
+    let idx = 0;
+    expect(outs[idx]!.boxType).toBe('emission');
+    idx++;
 
-    expect(outs[1]!.boxType).toBe('treasury');
+    expect(outs[idx]!.boxType).toBe('treasury');
+    idx++;
 
-    expect(outs[2]!.boxType).toBe('karma_pool');
+    expect(outs[idx]!.boxType).toBe('backer_pool');
+    idx++;
 
-    expect(outs[3]!.boxType).toBe('karma');
-    expect((outs[3] as KarmaBox).owner).toEqual(newInvitee.userId);
-    expect(outs[3]!.value).toBe(15n);
+    expect(outs[idx]!.boxType).toBe('karma_pool');
+    idx++;
 
-    expect(outs[4]!.boxType).toBe('karma');
-    expect((outs[4] as KarmaBox).owner).toEqual(likeAuthor.userId);
-    expect(outs[4]!.value).toBe(likePaid);
+    expect(outs[idx]!.boxType).toBe('karma');
+    expect((outs[idx] as KarmaBox).owner).toEqual(newInvitee.userId);
+    expect(outs[idx]!.value).toBe(15n);
+    idx++;
 
-    expect(outs[5]!.boxType).toBe('like_accrual');
-    expect((outs[5] as LikeAccrualBox).author).toEqual(likeAuthor.userId);
-    expect(outs[5]!.value).toBe(likeCarry);
+    expect(outs[idx]!.boxType).toBe('karma');
+    expect((outs[idx] as KarmaBox).owner).toEqual(likeAuthor.userId);
+    expect(outs[idx]!.value).toBe(likePaid);
+    idx++;
 
-    expect(outs[6]!.boxType).toBe('karma');
-    expect((outs[6] as KarmaBox).owner).toEqual(bondInviter.userId);
-    expect(outs[6]!.value).toBe(bondVested);
+    expect(outs[idx]!.boxType).toBe('like_accrual');
+    expect((outs[idx] as LikeAccrualBox).author).toEqual(likeAuthor.userId);
+    expect(outs[idx]!.value).toBe(likeCarry);
+    idx++;
 
-    expect(outs[7]!.boxType).toBe('karma');
-    expect((outs[7] as KarmaBox).owner).toEqual(escrowOwner.userId);
-    expect(outs[7]!.value).toBe(10n);
+    expect(outs[idx]!.boxType).toBe('karma');
+    expect((outs[idx] as KarmaBox).owner).toEqual(bondInviter.userId);
+    expect(outs[idx]!.value).toBe(bondVested);
+    idx++;
 
-    // The lapse leg's escrow output: vouch_escrow, value = vouch.value,
-    // owner = voucher, releaseAtBlock = createdAtBlock + cooldown.
-    expect(outs[8]!.boxType).toBe('vouch_escrow');
-    expect((outs[8] as VouchEscrowBox).owner).toEqual(lapseOwner.userId);
-    expect(outs[8]!.value).toBe(1n);
-    expect((outs[8] as VouchEscrowBox).releaseAtBlock).toBe(3 + 2); // createdAtBlock + vouchCooldownBlocks
+    expect(outs[idx]!.boxType).toBe('karma');
+    expect((outs[idx] as KarmaBox).owner).toEqual(escrowOwner.userId);
+    expect(outs[idx]!.value).toBe(10n);
+    idx++;
 
-    expect(outs[9]!.boxType).toBe('karma');
-    expect((outs[9] as KarmaBox).owner).toEqual(decayOwner.userId);
-    expect(outs[9]!.value).toBe(8n);
+    expect(outs[idx]!.boxType).toBe('vouch_escrow');
+    expect((outs[idx] as VouchEscrowBox).owner).toEqual(lapseOwner.userId);
+    expect(outs[idx]!.value).toBe(1n);
+    expect((outs[idx] as VouchEscrowBox).releaseAtBlock).toBe(3 + 2);
+    idx++;
 
-    expect(outs[10]!.boxType).toBe('credit');
+    expect(outs[idx]!.boxType).toBe('karma');
+    expect((outs[idx] as KarmaBox).owner).toEqual(decayOwner.userId);
+    expect(outs[idx]!.value).toBe(8n);
+    idx++;
+
+    // The backer release — one credit output per unstake marker whose
+    // release is positive, after decay replacements and before the coinbase.
+    expect(outs[idx]!.boxType).toBe('credit');
+    expect((outs[idx] as CreditBox).owner).toEqual(backerOwner.userId);
+    expect(outs[idx]!.createdAtBlock).toBe(HEIGHT);
+    expect((outs[idx] as CreditBox).lockedUntilBlock).toBeUndefined();
+    idx++;
+
+    expect(outs[idx]!.boxType).toBe('credit');
+    expect(idx).toBe(outs.length - 1);
 
     // Builder and verifier share derive(), so checkSettlement passing is
     // necessary but not sufficient — the positional assertions above are
@@ -310,6 +351,14 @@ describe('the settlement declares the block\'s era', () => {
 describe('coinbase tail binding', () => {
   const ONE_ERA = [{ version: 1, fromHeight: 0 }] as const;
 
+  function findCoinbaseIdx(tx: { outputs: readonly import('@dagsocial/types').AnyBoxCandidate[] }): number {
+    for (let i = tx.outputs.length - 1; i >= 0; i--) {
+      const o = tx.outputs[i]!;
+      if (o.boxType === 'credit' && 'lockedUntilBlock' in o) return i;
+    }
+    return -1;
+  }
+
   function validTx() {
     const result = buildSettlement(
       deps, HEIGHT, ONE_ERA, EMISSION, MINER_REWARD_DELAY, body, miner.userId);
@@ -326,13 +375,13 @@ describe('coinbase tail binding', () => {
 
   it('rejects a 2-output coinbase summing to the miner slice', () => {
     const tx = validTx();
-    const coinbase = tx.outputs.find(
-      (o): o is CreditBox => o.boxType === 'credit')!;
+    const coinbaseIdx = findCoinbaseIdx(tx);
+    const coinbase = tx.outputs[coinbaseIdx] as CreditBox;
     const half = coinbase.value / 2n;
     const poisoned = {
       ...tx,
       outputs: [
-        ...tx.outputs.filter((o) => o.boxType !== 'credit'),
+        ...tx.outputs.filter((_, i) => i !== coinbaseIdx),
         { ...coinbase, value: half },
         { ...coinbase, value: coinbase.value - half },
       ],
@@ -345,7 +394,7 @@ describe('coinbase tail binding', () => {
 
   it('rejects createdAtBlock ahead of height', () => {
     const tx = validTx();
-    const idx = tx.outputs.findIndex((o) => o.boxType === 'credit');
+    const idx = findCoinbaseIdx(tx);
     const poisoned = {
       ...tx,
       outputs: tx.outputs.map((o, i) =>
@@ -359,7 +408,7 @@ describe('coinbase tail binding', () => {
 
   it('rejects createdAtBlock below height', () => {
     const tx = validTx();
-    const idx = tx.outputs.findIndex((o) => o.boxType === 'credit');
+    const idx = findCoinbaseIdx(tx);
     const poisoned = {
       ...tx,
       outputs: tx.outputs.map((o, i) =>
@@ -373,7 +422,7 @@ describe('coinbase tail binding', () => {
 
   it('rejects createdAtBlock of 0', () => {
     const tx = validTx();
-    const idx = tx.outputs.findIndex((o) => o.boxType === 'credit');
+    const idx = findCoinbaseIdx(tx);
     const poisoned = {
       ...tx,
       outputs: tx.outputs.map((o, i) =>
@@ -396,7 +445,7 @@ describe('coinbase tail binding', () => {
     };
     const zeroBody: SettlementBody = {
       fees: 0n, rent: 0n, actors: 0,
-      feeBoxIds: [], invites: [], markers: [], priceBoxes: [],
+      feeBoxIds: [], invites: [], markers: [], priceBoxes: [], unstakes: [],
     };
     const result = buildSettlement(
       zeroDeps, HEIGHT, ONE_ERA, 0n, MINER_REWARD_DELAY, zeroBody, miner.userId);

@@ -27,6 +27,7 @@ export const GENESIS_FAUCET_CREDITS = 1;
 export const GENESIS_PROOF = 2;
 export const GENESIS_EMISSION = 3;
 export const GENESIS_KARMA_POOL = 4;
+export const GENESIS_BACKER_POOL = 5;
 
 // `u32BE` is *imported* from types and must never be mirrored here. These bytes
 // land in a `subject`, which types hashes as opaque input, so a second copy
@@ -82,6 +83,17 @@ export function genesisContext(which: number): MintContext {
  */
 export function genesisCommitteeContext(member: Uint8Array): MintContext {
   return { reason: 'genesis-committee', subject: Uint8Array.from(member) };
+}
+
+/**
+ * `genesis-backer` — 32 bytes: the backer's raw Notis public key.
+ *
+ * The committee-context shape: one box per row in the backer table, keyed on
+ * the owner's key so `(height, reason, subject)` is distinct per backer
+ * (NODE_INTERFACE → Reason and subject table).
+ */
+export function genesisBackerContext(owner: Uint8Array): MintContext {
+  return { reason: 'genesis-backer', subject: Uint8Array.from(owner) };
 }
 
 // ---------------------------------------------------------------------------

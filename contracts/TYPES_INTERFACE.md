@@ -1086,6 +1086,74 @@ state keys on is derived from it, never stored in it (→ Content limits).
 takes part in no sum — a claim conserves karma alone, and the box's zero is a structural zero the
 value-domain rule names (→ Box value domain).
 
+### BackerStakeBox
+
+```
+BackerStakeBox extends BoxBase {
+  boxType: "backer_stake"
+  value: 0n                    // structurally 0n — the type has one legal value, as username has
+  owner: UserId                // 32 raw bytes — the Notis identity the deposit named
+  weight: bigint               // ≥ 1n — locked token base units still staked
+}
+```
+
+A backer's stake (`ARCHITECTURE → The backer pool`): **created by genesis seeding only**, one per backer-table
+row, and spent by the unstake alone — owner-signed, retiring part or all of `weight` into a `BackerUnstakeBox`
+and leaving at most one successor of strictly smaller `weight` to the same owner (`NODE_INTERFACE → Backer
+transition rules`). No transfer shape exists; at most one live stake box per owner. `weight` is not value — it
+takes part in no sum — and `value` is the structural zero the value-domain rule names (→ Box value domain). A
+stake's accrued credits are not a field: they are `⌊weight × pool.accrual / backerSupply⌋` against the live
+`BackerPoolBox`, and an unstake releases the retired weight's share of them.
+
+### BackerUnstakeBox
+
+```
+BackerUnstakeBox extends BoxBase {
+  boxType: "backer_unstake"
+  value: 0n                    // structurally 0n
+  owner: UserId                // the stake's owner — who the release is paid to
+  weight: bigint               // ≥ 1n — the weight this transaction retires
+}
+```
+
+The marker an unstake emits — `KarmaPriceBox`'s shape one ledger over: a marker to a party the transaction
+cannot name a box for, consumed by the settlement of the block that created it, which pays `owner` the release
+the retired weight has earned (`NODE_INTERFACE → The settlement transaction`). **No user transition admits one
+as an input.** It exists because a transaction must carry an output (`VALIDATION_INTERFACE →
+verifyTxStructure`), so a full unstake with no successor still has a shape — and because the settlement then
+derives its unstake list from the body's outputs in committed order, as it derives every other marker, never
+from a spent input. Tag 16.
+
+### BackerPoolBox
+
+```
+BackerPoolBox extends BoxBase {
+  boxType: "backer_pool"
+  value: bigint                // credits accrued to backers and not yet released, in base units
+  staked: bigint               // Σ weight over every live BackerStakeBox
+  accrual: bigint              // the credits a stake equal to the whole snapshot supply would have accrued since genesis
+}
+```
+
+**Where the coinbase's backer slice lands, and the one leaf the whole backer set writes.** Genesis creates it
+iff the network's backer table is non-empty — `value 0n`, `staked` the table's summed weight, `accrual 0n` —
+and it exists at every height thereafter whatever its value, the karma pool's rule for the karma pool's
+reason: a release must always have somewhere to come from and the accumulator somewhere to live. The
+settlement is its only spender: on every block inside the accrual window it draws this block's backer slice
+into `value`, advances `accrual` by what a whole-supply stake earned, and lowers `staked` by the weight the
+body's unstakes retired, paying each retired weight its share out of `value`; outside the window it is spent
+only by a block whose body carries an unstake (`MINING_INTERFACE → The backer pool`). **No owner, and
+therefore no signer**; its two trailing fields are the accumulator's state, not a party.
+
+`accrual` is bounded by the base it accrues over — at most `emission + fees` per block, and only inside the
+window — so it sits inside `vlqU64` by orders of magnitude on every profile, and `writeVlqU64OrThrow` is the
+guard. `value ≥ staked × accrual / backerSupply` at every height, which is what makes every release payable
+(`MINING_INTERFACE → The backer pool`). Tag 17.
+
+**Sets** (`NODE_INTERFACE → Three karma sets`): all three backer types answer **no** three times — none is
+karma, none is created by a karma spend, none is in the karma total that never changes. On the credit side the
+pool box is credits out of circulation, like the treasury (`ARCHITECTURE → UTXO conservation`).
+
 ### UtxoTransaction
 
 ```
@@ -1793,6 +1861,9 @@ from this table — a use that reads every cell as an instruction rather than as
 | 12 | `vouch_escrow` |
 | 13 | `karma_price` |
 | 14 | `username` |
+| 15 | `backer_stake` |
+| 16 | `backer_unstake` |
+| 17 | `backer_pool` |
 | **255** | ⛔ **PERMANENTLY UNASSIGNED — the probe value. Never give it a type.** |
 
 > ## Tracked reservations (remnant-bounded — tag rules, condition 3)
@@ -1852,6 +1923,9 @@ from this table — a use that reads every cell as an instruction rather than as
 | `vouch_escrow` | `b32(owner)` ‖ `vlqU(releaseAtBlock)` |
 | `karma_price` | *(none)* |
 | `username` | `b32(owner)` ‖ `lp(name)` — the count refused past `USERNAME_MAX_BYTES` inside `read`, before a byte of content (→ Content limits) |
+| `backer_stake` | `b32(owner)` ‖ `vlqU64(weight)` |
+| `backer_unstake` | `b32(owner)` ‖ `vlqU64(weight)` |
+| `backer_pool` | `vlqU64(staked)` ‖ `vlqU64(accrual)` |
 
 > ## ⛔ WHAT A NEW BOX TYPE COSTS, AND WHY A GREP FOR THE TYPE MISSES THE WORST SITE
 >
@@ -2613,7 +2687,15 @@ export interface NetworkProfile {
   readonly genesisProofPayload: string;   // hex — the GenesisProofBox payload, distinct per network
   readonly genesisStateRoot: string;      // hex, 66 chars — the pinned height-0 AVL+ root
   readonly genesisId: string;             // hex(32) or '' — the pinned height-1 block hash; '' = unpinned
+
+  // The backer pool — the snapshot's denominator and its rows (ARCHITECTURE → The backer pool); the accrual
+  // window is creditFixedRateBlocks above. 0n and no rows = no backer pool on this network.
+  readonly backerSupply: bigint;
+  readonly backerTable: readonly BackerRow[];   // ascending key, unique, every weight ≥ 1n, Σ weight ≤ backerSupply
 }
+
+export interface BackerRow { readonly key: string; readonly weight: bigint; }               // key: 64 hex, a Notis public key
+export interface BackerTable { readonly supply: bigint; readonly rows: readonly BackerRow[]; }  // one module per network under src/backers/
 
 export const NETWORK_PROFILES: Readonly<Record<NetworkType, NetworkProfile>>;
 export function profileFor(network: NetworkType): NetworkProfile;
@@ -2625,6 +2707,15 @@ export const MAGIC_DEVNET  = 0x44444147;  // "DDAG"
 /** The canonical set. `net` must derive its frame-magic check from this, never a local literal. */
 export const KNOWN_FRAME_MAGICS: readonly number[];
 ```
+
+**The backer table is per network; the leg is not.** `backerSupply` and `backerTable` are the genesis input of
+`ARCHITECTURE → The backer pool` — the snapshot's denominator and its rows, seeded as one `BackerStakeBox` per
+row and one `BackerPoolBox` (§BackerPoolBox) under `genesisStateRoot`. Each network's table is a module under
+`src/backers/`, `BackerTable`-shaped, that the profile imports: mainnet's is the fill tool's output and empty
+until the snapshot (`supply 0n`, no rows); testnet's names the faucet identity at `40n` of `100n`; devnet's two
+published test identities at `20n` and `30n` of `100n`, so the cap binds at genesis and stops binding once the
+first unstakes whole (`CONSTANTS → Per-network values`). The accrual window is `creditFixedRateBlocks`, already
+a field.
 
 **The difficulty band is per network; the schedule is not.** `orderingBlockPowTargetBits` is the
 anchor — block 1's target and the yardstick every superblock level is measured against (→ Interlink
@@ -2781,7 +2872,7 @@ threshold / percentage / bits** constants stay `number`.
   `LIKES_PER_KARMA_PAYOUT` (a count), `MEMBER_LIKES_MULTIPLIER` (a count), `MAX_*`,
   `CREDIT_MINER_REWARD_DELAY` (a block count, NOT an amount), and every coinbase
   percentage — `COINBASE_TREASURY_PCT`, `COINBASE_MINER_FLOOR_PCT`,
-  `COINBASE_BACKER_PCT`, `COINBASE_BONUS_PCT`, `MEMPOOL_CREDIT_SHARE_PCT`.
+  `COINBASE_BACKER_PCT`, `COINBASE_BONUS_PCT`, `BACKER_UNSTAKE_MIN_PCT`, `MEMPOOL_CREDIT_SHARE_PCT`.
   **`INCLUSION_BONUS_K` is the exception and is `bigint`**: it is a denominator in
   the bonus curve, which computes in base units. The exhaustive per-constant classification rides in the dispatch prompt.
 
@@ -3124,7 +3215,8 @@ export const CREDIT_REWARD_REDUCTION = 1n * 10n ** 8n; // consensus — 1 credit
 export const CREDIT_MINER_REWARD_DELAY = 1440;         // consensus — blocks before coinbase spendable (24h at 60s blocks)
 export const COINBASE_TREASURY_PCT = 5;      // consensus — per income TERM: of emission and of fees, never of rent
 export const COINBASE_MINER_FLOOR_PCT = 35;  // consensus — guaranteed, and takes every remainder
-export const COINBASE_BACKER_PCT = 35;       // consensus — AHEAD OF CODE, falls to the miner floor
+export const COINBASE_BACKER_PCT = 35;       // consensus — the cap on the aggregate backer claim, of emission + fees (MINING_INTERFACE → The backer pool)
+export const BACKER_UNSTAKE_MIN_PCT = 1;     // consensus — a partial unstake retires at least this share of its stake (NODE_INTERFACE → Backer transition rules)
 export const COINBASE_BONUS_PCT = 25;        // consensus — the inclusion bonus pool
 export const INCLUSION_BONUS_K = 5n;         // consensus — the bonus curve's knee
 export const MEMPOOL_CREDIT_SHARE_PCT = 50;  // policy — credit share of the pool

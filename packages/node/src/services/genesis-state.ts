@@ -5,7 +5,10 @@ import {
   ensureGenesisProofBox,
   ensureEmissionBox,
   ensureKarmaPoolBox,
+  ensureBackerPoolBox,
   seedGenesisCommittee,
+  seedGenesisBackers,
+  validateBackerTable,
 } from '../store/system.js';
 import { emissionTotal } from './block-creator.js';
 import {
@@ -291,6 +294,22 @@ export function seedGenesisState(): void {
         config.profile.genesisCommitteeKeys.length +
         (faucetPubKeyHex !== undefined ? 1 : 0);
       putNetworkRecord({ memberCount: rootCount });
+
+      // The backer table — validated first, then one stake per row, then the
+      // pool box when the table is non-empty. After the committee and before
+      // the karma pool (NODE_INTERFACE → The genesis state root is checked
+      // fail-stop).
+      validateBackerTable(
+        config.profile.backerTable,
+        config.profile.backerSupply,
+      );
+      const backerStaked = seedGenesisBackers(
+        config.profile.backerTable,
+        GENESIS_HEIGHT,
+      );
+      if (config.profile.backerTable.length > 0) {
+        ensureBackerPoolBox(backerStaked, GENESIS_HEIGHT);
+      }
 
       // Every network too, and for the emission box's reason sharpened: every
       // karma mint draws from this box, so a network seeded without it can mint

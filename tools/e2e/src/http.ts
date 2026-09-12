@@ -355,6 +355,75 @@ export async function getUsernameByOwner(
 }
 
 // NODE_INTERFACE → UTXO queries
+export interface CreditPage {
+  userId: string;
+  total: string;
+  boxes: { boxId: string; value: string; lockedUntilBlock?: number }[];
+  boxCount: number;
+  next: string | null;
+}
+
+export async function getCredits(
+  node: NodeProcess,
+  userId: string,
+): Promise<CreditPage> {
+  const res = await fetch(`${node.url}/credits/${userId}`);
+  const data = await res.json();
+  if (!res.ok) throw new NodeError(res.status, data as Record<string, unknown>);
+  return data as CreditPage;
+}
+
+export async function postCreditTransfer(
+  node: NodeProcess,
+  txJson: Record<string, unknown>,
+): Promise<{ status: string; txId: string; expiresAtHeight: number }> {
+  const data = await jsonPost(node, '/credits/transfer', { tx: txJson });
+  return data as { status: string; txId: string; expiresAtHeight: number };
+}
+
+// NODE_INTERFACE → Backers
+export interface BackersResponse {
+  supply: string;
+  staked: string;
+  accrual: string;
+  unreleased: string;
+  accrualEndsAtBlock: number;
+}
+
+export async function getBackers(
+  node: NodeProcess,
+): Promise<BackersResponse> {
+  const res = await fetch(`${node.url}/backers`);
+  const data = await res.json();
+  if (!res.ok) throw new NodeError(res.status, data as Record<string, unknown>);
+  return data as BackersResponse;
+}
+
+export interface BackerResponse {
+  owner: string;
+  boxId: string;
+  weight: string;
+  accrued: string;
+}
+
+export async function getBacker(
+  node: NodeProcess,
+  userId: string,
+): Promise<BackerResponse> {
+  const res = await fetch(`${node.url}/backers/${userId}`);
+  const data = await res.json();
+  if (!res.ok) throw new NodeError(res.status, data as Record<string, unknown>);
+  return data as BackerResponse;
+}
+
+export async function postUnstake(
+  node: NodeProcess,
+  txJson: Record<string, unknown>,
+): Promise<{ status: string; txId: string; expiresAtHeight: number }> {
+  const data = await jsonPost(node, '/backers/unstake', { tx: txJson });
+  return data as { status: string; txId: string; expiresAtHeight: number };
+}
+
 export interface BondPage {
   bonds: { id: string; value: string; inviterId: string; inviterName: string | null; inviteePublicKey: string; inviteeName: string | null; createdAtBlock: number }[];
   bondCount: number;

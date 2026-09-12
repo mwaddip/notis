@@ -600,7 +600,7 @@ export function findPendingOutput(boxId: string): AnyBox | null {
  * predecessor's input stays refused.
  */
 export function getBoxWithPending(boxId: string): AnyBox | null {
-  if (hasPendingSpend([boxId]) !== null) return null;
+  if (hasPendingSpend([boxId]) !== null) throw new PendingSpendConflictError(boxId);
   return getBox(boxId) ?? findPendingOutput(boxId);
 }
 

@@ -1441,6 +1441,14 @@ committee is still empty; only a running node trips. The committee set itself is
 not a register row: `CONSTANTS → Excluded` lists it with the identity fields, because it names a
 network rather than tunes one.
 
+**The backer stakes are seeded beside the committee.** On a network whose profile carries a backer table
+(§The backer pool), genesis creates one `BackerStakeBox` per row — `owner` the row's key, `weight` its locked
+amount — and one `BackerPoolBox` holding no credits, the table's summed weight and an accrual of zero, every
+one under `genesisStateRoot`. The table is validated before the root is compared — keys unique and ascending,
+weights positive, their sum at most `backerSupply` — so a bad table is refused by name and never as a root
+mismatch (NODE_INTERFACE → The genesis state root is checked fail-stop). A network whose table is empty seeds
+none of them and runs no backer leg.
+
 **A committee credit grant and a committee dissolution period are not part of the design as it
 stands.** Their parameters — `GENESIS_CREDITS_PER_MEMBER` / `genesisCreditsPerMember` and
 `BOOTSTRAP_PERIOD_BLOCKS` / `bootstrapPeriodBlocks` — were removed 2026-08-21 (user ruling): no
@@ -1453,6 +1461,8 @@ relied on. A mechanism that needs either brings its own parameter with its own r
 | `GENESIS_KARMA_PER_MEMBER` | Initial karma per committee member |
 | `SYSTEM_KARMA_INITIAL` | The faucet identity's karma, seeded on the networks whose profile names a `faucetPublicKey` (`NODE_INTERFACE → Faucet`) |
 | `FAUCET_CREDITS_INITIAL` | The faucet identity's credits, seeded beside the karma |
+| `backerSupply` | The backer snapshot's total supply, the denominator of every stake's claim — a `NetworkProfile` field; `0n` where no backer pool exists (§The backer pool) |
+| `backerTable` | The backer snapshot's rows — one Notis key and its locked weight each — seeded as `BackerStakeBox`es; a `NetworkProfile` field, empty on mainnet until the snapshot |
 
 ---
 
@@ -1483,8 +1493,9 @@ chain or owed one:
 
 | **usernames** (2026-09-10) | **nothing that exists** — box tag 14, two AVL leaf domains, a store table and two nullable mempool columns are *added*; no existing byte, layout or verdict moves. **Owes no reset** (→ "When a reset is not owed") — the first change of its class |
 | **posting is activity** (2026-09-12) | the identity leaf's `lastActivityBlock` on every identity that liked, invited, vouched, claimed or withdrew, so every `stateRoot` from the first such spend; the like verdict — a self-like is refused (§Likes); the settlement's `actors` — a bare consolidation counts nobody (MINING_INTERFACE → Coinbase Application) |
+| **the backer pool** (2026-09-12) | the genesis box set on testnet and devnet — one `BackerStakeBox` per table row and the `BackerPoolBox`, so both networks' `genesisStateRoot` pins; the settlement of every block inside the accrual window (the pool box's successor) and of every block carrying an unstake; three box-type tags. Mainnet's genesis is untouched while its table is empty. **Rides the collected reset** with the row above |
 
-**Outstanding against the live node: the 2026-09-12 row, owed a fresh chain.** Testnet's chain began at
+**Outstanding against the live node: the two 2026-09-12 rows, owed one fresh chain.** Testnet's chain began at
 the 2026-09-06 reset, whose block 1 the profile pins as `genesisId` (§What varies per network); every
 earlier reset row is in it, and the usernames row owes none.
 
@@ -1713,7 +1724,7 @@ not be independently readable.
 `CREDIT_MINER_REWARD_DELAY` · `CREDIT_FIXED_RATE_BLOCKS` ·
 `CREDIT_EPOCH_BLOCKS` · `CREDIT_EMISSION_TOTAL` · `GENESIS_KARMA_PER_MEMBER` · `INVITE_BOND_MIN` · `INVITE_BOND_MAX` ·
 `genesisCommitteeKeys` · `genesisProofPayload` · `genesisStateRoot` · `genesisId` · `faucetPublicKey` ·
-`storageRentPeriodBlocks` · `membershipBarMultiplier` · `maxReorgDepth`
+`storageRentPeriodBlocks` · `membershipBarMultiplier` · `maxReorgDepth` · `backerSupply` · `backerTable`
 
 **Every name is spelled by its definition site, and the case says which one.** A `SCREAMING_CASE` name
 is a `constants.ts` export that a profile field reads; a `camelCase` name is a `NetworkProfile` field
@@ -1730,6 +1741,13 @@ axis rather than opening a fourth.
 > RULE is universal and the NUMBER is not**: every profile's total must be *strictly below* its own
 > curve's sum, which is what leaves a paying tail for a returned inclusion bonus to drain through. The
 > resulting fraction is a consequence and not a parameter — no profile carries one.
+
+> ⚠ **`backerSupply` and `backerTable` are field-only and genesis.** The table is the snapshot of the
+> migration contract each network seeds as stake boxes, and the supply is that snapshot's denominator
+> (§The backer pool); both are launch facts like `genesisCommitteeKeys`, and the accrual window they run
+> under is `creditFixedRateBlocks`, a field this axis already carries. Testnet's and devnet's tables are
+> hand-written over keys whose secrets are held or published; mainnet's is the fill tool's output and is
+> empty until the snapshot, so mainnet's `genesisStateRoot` holds no stake.
 
 > ⚠ **`storageRentPeriodBlocks` is field-only for the reason rent's rate is not: the rate is
 > economics and universal, the period is timescale and per-network.** ⛔ **Devnet's is bounded from
@@ -2090,6 +2108,11 @@ no object check compares against it and no producer stamps it.
   > (TYPES_INTERFACE → EmissionBox). An observer reads how much may still be emitted
   > instead of trusting that a schedule will be honoured — which is what makes the
   > fair-launch claim checkable on day one rather than a promise about future code.
+  >
+  > **The backer pool box is credits out of circulation, like the treasury** — the backer slice of released
+  > emission and fees, held until a backer's unstake releases their share (§The backer pool). Its value is
+  > inside the released term and outside every balance, so it neither raises the bound nor counts toward
+  > circulation.
 - **Every UTXO transaction conserves value, unconditionally — the exception list is empty.**
   **NODE_INTERFACE's `validateTx` step 7 is the authoritative statement** — derive from it,
   never maintain a parallel list here. Each cost lands in a box the transaction itself
@@ -2246,6 +2269,39 @@ advisory.
 **Growth is intended.** Credits held there are out of circulation, so the treasury is mildly
 deflationary and grows without bound until a spend gate exists — the second term of the credit
 supply's upper bound, not an addition to it.
+
+### The backer pool
+
+**A share of the coinbase flow for the token that funded the project, owed to the Notis identities its
+holders named — never a stock, never karma.** The pre-existing Notis token on Solana is locked in a migration
+contract; every deposit names a 32-byte Notis public key, and the key is mandatory — a Solana key never
+stands in for a Notis identity, and no flow asks a holder to import a Solana secret anywhere. A snapshot of
+the contract at one slot yields the **backer table**: each Notis key with the amount locked under it, and the
+token's total supply at that slot. **The node never reads Solana.** The table is a genesis input like the
+committee — seeded as stake boxes, covered by `genesisStateRoot` (§Genesis) — and producing it from public
+Solana data is a tool's job, so "no premine, verifiable" is a property anyone can recompute rather than a
+claim.
+
+**A backer's claim is their weight over the snapshot supply.** Of each block's emission plus fees — never
+rent, which reaches the miner entire — a stake of weight `w` accrues `w / supply`, until the aggregate claim
+would exceed `COINBASE_BACKER_PCT` of that base; above that the slice is exactly the cap, split pro rata over
+the staked weight. Unmigrated supply therefore leaves its share with the miner, and the miner keeps at least
+the floor by arithmetic: the treasury's share, the cap and the inclusion bonus sum below one hundred
+percent (`MINING_INTERFACE → The backer pool`, the formula and its worked vectors).
+
+**Accrual is locked while staked, and unstaking is one-way.** What a stake accrues sits in the
+`BackerPoolBox` — one box for the whole backer set, holding the unreleased credits, the staked total and a
+per-supply accumulator, so a block writes one leaf however many backers exist. A backer unstakes part or all
+of their weight in one transaction; the block's settlement pays them the same fraction of what has accrued,
+as credits spendable at once, and the retired weight is gone: there is no restaking, and a stake moves by no
+other transaction — it is soulbound like a username. While the cap binds, weight that leaves raises every
+stayer's share until the aggregate claim falls back under the cap, where each stayer is at their raw claim
+and the rest returns to the miner — the dilution offset, as one formula.
+
+**Accrual runs for the fixed-rate emission period and stops at the first decay block** — the public
+commitment of "at most two years", anchored at the network's genesis and measured in its
+`creditFixedRateBlocks`. Nothing releases on its own at the end: a full unstake then costs nothing, and stakes
+drain at their owners' pace.
 
 ---
 
@@ -2619,3 +2675,8 @@ backfill — and a withdrawn post keeps its row with `content` `NULL` and its ma
 - **Username proofs in the light client:** the name record, then the box it names
 - **A name whose holder's karma is gone:** held forever today; release on decay is a rule for a later
   version
+- **The backer table's fill tool:** reads the migration contract at the snapshot slot and writes mainnet's
+  table module; its record of slot, address and method is what makes the table reproducible (§The backer
+  pool). The Solana contract itself is outside this repository
+- **The backer unstake control in the web client**, and the profile window's copyable public key for the
+  deposit flow (`WEB_INTERFACE`)

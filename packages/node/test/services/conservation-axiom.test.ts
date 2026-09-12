@@ -93,6 +93,10 @@ const KARMA_BEARING: Readonly<Record<keyof typeof BOX_TYPE_TAGS, boolean>> = {
   genesis_proof: false,
   // Holds 0n by its type (TYPES_INTERFACE → UsernameBox).
   username: false,
+  // NODE_INTERFACE → Three karma sets: the pool box holds credits, not karma.
+  backer_stake: false,
+  backer_unstake: false,
+  backer_pool: false,
 };
 
 async function importDb() {

@@ -57,6 +57,7 @@ import {
   putUsername,
 } from '../../src/store/index.js';
 import { castVouch, initiateUnvouch } from '../../src/services/vouch.js';
+import { PendingSpendConflictError } from '../../src/store/mempool.js';
 
 /** The cooldown this fixture's engine deps declare; the escrow's floor reads it. */
 const COOLDOWN = 2;
@@ -341,6 +342,64 @@ describe('vouch routes — the JSON edge', () => {
     const res = await request('/', 'POST', { userId: voucher.hex, targetId: target.hex });
     expect(res.status).toBe(400);
     expect((res.data as Record<string, unknown>)['reason']).toBe('tx required');
+  });
+
+  it('POST /vouches — a conflicting spend answers 409 naming the box', async () => {
+    const boxId = 'ab'.repeat(32);
+    const deps = {
+      ...engineDeps(),
+      castVouch: () => { throw new PendingSpendConflictError(boxId); },
+      initiateUnvouch,
+      getCurrentHeight: () => HEIGHT,
+    };
+    const app = express();
+    app.use(express.json());
+    app.use(createRouter(deps));
+    const res = await new Promise<{ status: number; data: unknown }>((resolve) => {
+      const server = app.listen(0, () => {
+        const addr = server.address() as { port: number };
+        const payload = Buffer.from(JSON.stringify({ tx: { inputs: ['a'.repeat(64)], outputs: [], signatures: {}, protocolVersion: 1 } }));
+        const req = http.request(
+          { hostname: 'localhost', port: addr.port, path: '/', method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': String(payload.length) } },
+          (r) => { let d = ''; r.on('data', (c) => (d += c)); r.on('end', () => { server.close(); resolve({ status: r.statusCode!, data: JSON.parse(d) }); }); },
+        );
+        req.write(payload);
+        req.end();
+      });
+    });
+    expect(res.status).toBe(409);
+    expect((res.data as Record<string, unknown>)['reason']).toContain(boxId);
+    expect((res.data as Record<string, unknown>)['reason']).toMatch(/already spent by a pending/i);
+  });
+
+  it('DELETE /vouches/:targetId — a conflicting spend answers 409 naming the box', async () => {
+    const boxId = 'cd'.repeat(32);
+    const deps = {
+      ...engineDeps(),
+      castVouch,
+      initiateUnvouch: () => { throw new PendingSpendConflictError(boxId); },
+      getCurrentHeight: () => HEIGHT,
+    };
+    const app = express();
+    app.use(express.json());
+    app.use(createRouter(deps));
+    const res = await new Promise<{ status: number; data: unknown }>((resolve) => {
+      const server = app.listen(0, () => {
+        const addr = server.address() as { port: number };
+        const payload = Buffer.from(JSON.stringify({ tx: { inputs: ['a'.repeat(64)], outputs: [], signatures: {}, protocolVersion: 1 } }));
+        const req = http.request(
+          { hostname: 'localhost', port: addr.port, path: `/${target.hex}`, method: 'DELETE',
+            headers: { 'Content-Type': 'application/json', 'Content-Length': String(payload.length) } },
+          (r) => { let d = ''; r.on('data', (c) => (d += c)); r.on('end', () => { server.close(); resolve({ status: r.statusCode!, data: JSON.parse(d) }); }); },
+        );
+        req.write(payload);
+        req.end();
+      });
+    });
+    expect(res.status).toBe(409);
+    expect((res.data as Record<string, unknown>)['reason']).toContain(boxId);
+    expect((res.data as Record<string, unknown>)['reason']).toMatch(/already spent by a pending/i);
   });
 
   // -------------------------------------------------------------------------

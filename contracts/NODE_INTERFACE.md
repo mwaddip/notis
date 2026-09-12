@@ -514,6 +514,21 @@ row of a page (`targetName` on the target arm, `inviterName` on the bonds) is ca
 row, and not covered: the `userId` a `/karma` or `/credits` answer echoes, the `owner` of a `/usernames` answer,
 the cooldowns arm (no identity).
 
+### Backers
+
+A stake is a `BackerStakeBox` seeded at genesis from the network's backer table (`ARCHITECTURE → The backer
+pool`; the arm → Backer transition rules). The write takes a client-built, client-signed transaction like
+every other route's.
+
+| Method | Path | Request | Response | Errors |
+|--------|------|---------|----------|--------|
+| `GET` | `/backers` | — | `{ supply, staked, accrual, unreleased, accrualEndsAtBlock }` — the profile's `backerSupply`, the pool box's `staked`, `accrual` and `value` as decimal strings, and `creditFixedRateBlocks` as a plain number | 404 `no backer pool` on a network whose table is empty |
+| `GET` | `/backers/:userId` | `:userId` a key or an `@handle` (→ Identity parameters) | `{ owner, boxId, weight, accrued }` — the identity's live stake; `accrued = ⌊weight × accrual / supply⌋` against the current pool box, a decimal string | 404 `no backer pool` on a network whose table is empty, ahead of the parameter; else 400 malformed; 404 `unknown handle`; 404 `no stake` |
+| `POST` | `/backers/unstake` | `{ tx: UtxoTransaction }` — one stake in, the marker and at most one successor out | `{ status: "pending", txId, expiresAtHeight }` (200) | 400 with the refusal named — `unstake weight not conserved`, `unstake below minimum`, `unstake marker names another owner`, `stake successor names another owner`, or `validateTx`'s reason; 409 pending-spend conflict; 503 pool full |
+
+`/status` carries nothing of the pool; a client reads `/backers`. The refusals mirror the arm's rules for a
+legible 400, as the username routes mirror theirs.
+
 #### Identity parameters
 
 **A parameter typed *identity* is a 64-hex public key or an `@handle`.** A handle — `@` followed by a
@@ -521,7 +536,7 @@ well-formed name — resolves through the name record at request time, on its ca
 holder's key; an unknown handle answers **404 `unknown handle`**, and a value that is neither answers
 400 as a malformed key does. The identity-typed parameters are `author` and `viewer` on `GET /posts`,
 `GET /posts/:id` and `GET /posts/:id/thread`; `target` and `voucher` on `GET /vouches`; `:userId` on
-`GET /karma/:userId`, `GET /credits/:userId` and `GET /invites/:userId`; `miner` on
+`GET /karma/:userId`, `GET /credits/:userId`, `GET /invites/:userId` and `GET /backers/:userId`; `miner` on
 `GET /mining/template`; and `owner` on `GET /usernames`. **A signed transaction carries keys, never
 handles**: a client resolves a handle here before it builds, and shows the key it resolved to. A name
 that changes holder between that resolution and the transaction's confirmation pays the old holder,
@@ -687,6 +702,10 @@ transaction** — it never reaches `validateTx`. So it joins `genesis_proof`, `e
 transition set; and its value must **never** reach `totalKarma`, which reports circulation and
 would otherwise overstate it by the entire uncirculated supply — that puts it outside the supply
 set.
+
+⚠ **`backer_stake`, `backer_unstake` and `backer_pool` answer no three times** (`TYPES_INTERFACE →
+BackerPoolBox`): none is karma, none is created by a karma spend, and none is in the total that never
+changes — the pool box holds credits. Every verdict table carries their rows all the same.
 
 ⚠ **Membership is therefore three-way, not two.** "Which list?" is the wrong question to ask of a
 new box type. The right one is asked three times, independently: *may a karma spend create it?*,
@@ -934,7 +953,7 @@ with a clock today:
 
 Every other type is always spendable *at this gate*: the timed boxes
 (`bond`, `karma_price`, `emission`, `treasury`, `karma_pool`, `like_accrual`,
-`vouch_escrow`) are `BLOCK_APPLICATION_ONLY`, so their timing is enforced by no
+`vouch_escrow`) — and `backer_unstake` and `backer_pool` beside them — are `BLOCK_APPLICATION_ONLY`, so their timing is enforced by no
 user transaction being able to name them at all — `vouch_escrow.releaseAtBlock`
 is read by the settlement leg that returns it, not by this gate. This table
 exists for the types that must be **user-spendable and carry a clock**.
@@ -1091,7 +1110,7 @@ schema for its `boxType`**:
   > the shape `bond`, `like_accrual` and `karma_price` have: a user transaction creates the
   > box, and only block application may consume it. The schema below has a row for
   > every boxType a user transaction may emit. `genesis_proof`,
-  > `emission`, `treasury` and `karma_pool` have none, because no transaction may create them.
+  > `emission`, `treasury`, `karma_pool` and `backer_pool` have none, because no transaction may create them.
 - **Field types are pinned** (field-type pin). Every present field's runtime
   type matches its `TYPES_INTERFACE` box definition:
   - `bigint`, `0 ≤ v < BOX_VALUE_BOUND` (TYPES_INTERFACE → "Box value domain"):
@@ -1576,6 +1595,9 @@ the treasury.
 | KarmaPriceBox | — | **Settlement only.** No user transition admits one as an input; the settlement of the block that created it consumes it and returns its value to the pool |
 | BondBox | KarmaBox / — | Block application only: settlement at the probation deadline — **no user transaction can spend a `BondBox`** |
 | KarmaPoolBox | KarmaPoolBox + … | **Settlement only** — the pool's sole spender, spent in blocks whose settlement moves karma and left alone otherwise |
+| BackerStakeBox | BackerUnstakeBox [+ BackerStakeBox] | **Unstake**: exactly one `backer_stake` input, owner-signed; exactly one `backer_unstake` output — `owner` the input's, `weight ≥ 1n`, `value 0n`; at most one `backer_stake` output — `owner` the input's, `weight ≥ 1n`, `value 0n`; `marker.weight + successor.weight == input.weight`; `marker.weight × 100 ≥ input.weight × BACKER_UNSTAKE_MIN_PCT`; nothing else (→ Backer transition rules). `value` is `0n` throughout, so step 7 sees nothing and the arm conserves weight |
+| BackerUnstakeBox | — | **Settlement only.** No user transition admits one as an input; the settlement of the block that created it consumes it and pays its `owner` the release (§The settlement transaction) |
+| BackerPoolBox | BackerPoolBox | **Settlement only** — spent on every block inside the accrual window and on every block whose body carries an unstake (MINING_INTERFACE → The backer pool) |
 
 ⚠ **"Same owner" binds the inputs to each other, not only the outputs to
 `inputs[0]`.** Every karma row above requires **all karma inputs to share one
@@ -2014,6 +2036,38 @@ the state they read and write (→ Username records):
   no free claim), moves no leaf layout — a leaf layout change after leaves exist is a committed-byte
   move (`ARCHITECTURE → Deploy gate`).
 
+### Backer transition rules
+
+A stake is a box (`TYPES_INTERFACE → BackerStakeBox`), seeded at genesis and never created by a user
+transaction; the unstake is its one transition and the marker (→ BackerUnstakeBox) its one product
+(`ARCHITECTURE → The backer pool`):
+
+- **Exactly one stake input, and the owner signs.** `AUTHORIZATION` for `backer_stake` is the owner's key,
+  the karma row's requirement; a second stake input is refused by the arm — one stake per owner, one
+  transition per stake.
+- **Weight is conserved by the arm, not by step 7.** `value` is the structural `0n` on the stake, the marker
+  and the successor — the arm refuses any other, as the claim arm refuses a username's — so conservation sees
+  `0 == 0`; the arm pins `marker.weight + (successor?.weight ?? 0n) == input.weight`, both weights at least
+  `1n`: zero weight means no box, the value-domain rule one field over. Both outputs name the input's `owner`;
+  a foreign owner on either is refused.
+- **A partial unstake retires at least `BACKER_UNSTAKE_MIN_PCT` of the stake**: `marker.weight × 100 ≥
+  input.weight × BACKER_UNSTAKE_MIN_PCT`. An unstake is a karma-class pool entry that pays nothing
+  (`MEMPOOL_INTERFACE → Eviction`), so without a floor a stake of `w` is `w` free transactions; with it a stake
+  drains in at most `⌈ln w / ln(100 / (100 − BACKER_UNSTAKE_MIN_PCT))⌉` partial unstakes, and a full unstake
+  always passes.
+- **Counts no actor** toward the inclusion bonus (`MINING_INTERFACE → Coinbase Application`): its input is
+  not a karma box, and `actorOf` answers null with no arm of its own.
+- **Apply writes boxes and nothing else.** No identity record moves — `lastActivityBlock` is a post's
+  (→ Populating the record) — and no clock starts. The marker leaves with the block's settlement, which pays
+  the release from pre-body state (→ The settlement transaction).
+- **Nothing else touches the three types.** A `backer_stake` output on a transaction whose input is not a
+  `backer_stake` box is refused by that input's arm (the karma arm's allowlist, the credit arm's `credit`/`fee`
+  pair); `backer_pool` is a protocol output no user transaction may emit (→ Output shape); a `backer_unstake`
+  or `backer_pool` input is `BLOCK_APPLICATION_ONLY`. Genesis is the only creator of a stake (→ The genesis
+  state root is checked fail-stop), the settlement the only spender of the marker and the pool.
+- **A second unstake of one stake box is the pending-spend conflict** every transaction meets at admission
+  (409); a partial unstake's successor is spendable the block after it lands, like any output.
+
 ### Membership pass
 
 Membership is a predicate on the identity record — `member(m) ⟺ memberSinceBlock > 0 ∧
@@ -2182,10 +2236,11 @@ forms, so a mirror implementation derives the same ids:
 
 | `reason` | Subject | Encoding | Bytes | Site |
 |----------|---------|----------|-------|------|
-| `genesis` | which genesis box | `u32BE(k)`: `0` = faucet karma stake, `1` = faucet credits, `2` = genesis proof, `3` = emission, `4` = karma pool | 4 | genesis seeding — `ensureSystemKarmaBox` / `ensureFaucetCreditBox` / `ensureGenesisProofBox` / `ensureEmissionBox` / `ensureKarmaPoolBox`. Selectors `0` and `1` exist only where the profile names a faucet identity; `2`–`4` on every network |
+| `genesis` | which genesis box | `u32BE(k)`: `0` = faucet karma stake, `1` = faucet credits, `2` = genesis proof, `3` = emission, `4` = karma pool, `5` = backer pool | 4 | genesis seeding — `ensureSystemKarmaBox` / `ensureFaucetCreditBox` / `ensureGenesisProofBox` / `ensureEmissionBox` / `ensureKarmaPoolBox` / `ensureBackerPoolBox`. Selectors `0` and `1` exist only where the profile names a faucet identity; `2`–`4` on every network; `5` where the backer table is non-empty (`ARCHITECTURE → Genesis`) |
 | `genesis-committee` | the committee member | raw | 32 | genesis seeding — `seedGenesisCommittee`, one karma box per `genesisCommitteeKeys` entry, drawn out of the pool |
+| `genesis-backer` | the backer | raw | 32 | genesis seeding — one `BackerStakeBox` per `backerTable` row, the row's key as the subject (`TYPES_INTERFACE → BackerStakeBox`). A backer who is also a committee member holds two boxes under two reasons, so the two synthetic ids never meet |
 
-**Two reasons, and the set is closed by the one producer class.** A settlement output needs
+**Three reasons, and the set is closed by the one producer class.** A settlement output needs
 no reason — it has a transaction — so a new reason enters only with a new genesis box or a new
 conserving-in-place direct producer, of which there are none. Tags are `@dagsocial/types`' (`MINT_REASON`); this table
 deliberately does not repeat them. **Reasons retired before mainnet are deleted outright —
@@ -2193,8 +2248,9 @@ numbers and names both free, no reservation list** (user, 2026-08-19); a **live*
 renumbered (TYPES_INTERFACE → Primitives).
 
 **Why `(height, reason, subject)` cannot repeat, per row.** Genesis seeding runs once, on an empty store; each
-`genesis` selector names exactly one box, and a committee key appears at most once in
-`genesisCommitteeKeys`.
+`genesis` selector names exactly one box, a committee key appears at most once in
+`genesisCommitteeKeys`, and a backer key at most once in `backerTable` — the seeder refuses a duplicate before
+the root is compared.
 
 ⛔ **One `genesis` selector names ONE box.** N boxes under one `k` would derive one synthetic
 txId, one `computeBoxId` preimage, and the second insert violates `UNIQUE(tx_id, output_index)`
@@ -2402,12 +2458,13 @@ encoding added to the table above, and an argument at the call site that
 **One per block, covering both ledgers, and it is the LAST entry in `utxoTxIds`** — that is the
 whole of how it is identified (`@dagsocial/validation` refuses a body with no last entry;
 what the settlement contains is consensus and is this section's). It is the **only** spender of
-the karma pool, the emission box and the treasury box, and the only consumer of fee boxes.
+the karma pool, the emission box, the treasury box and the backer pool box, and the only consumer of fee
+boxes and unstake markers.
 
 | | |
 |---|---|
-| **Consumes, in this order** | the emission box (when this height releases) · the treasury box (when this block accrues to it) · every `LikeAccrualBox` marker the block's like and reply transactions emitted, in committed transaction order · every `KarmaPriceBox` the block's transactions created — a post's price or a burn's (→ Username transition rules) — in committed transaction order · the carry box of every author the block credits, ascending author hex · **at most `MAX_BOND_SETTLEMENTS_PER_BLOCK`** `BondBox`es whose invitee's `invitedAtBlock` is at or before `height − inviteProbationBlocks` in pre-body state, ascending `(invitedAtBlock, box id)` · **at most `MAX_ESCROW_RETURNS_PER_BLOCK`** `VouchEscrowBox`es at or past their `releaseAtBlock` in pre-body state, ascending `(releaseAtBlock, box id)` · **at most `MAX_LAPSE_WITHDRAWALS_PER_BLOCK`** `VouchBox`es whose `voucherId` is not a member in pre-body state, ascending box id · the karma boxes decay charges · the karma pool box (when this block draws or returns) · every `FeeBox` the body's transactions created, in committed transaction order |
-| **Emits, in this order** | the successors of the three protocol boxes — emission, treasury, karma pool · the invite grants · like payouts and carry successors · the vested part of each settling bond, back to its inviter · each released escrow's value, back to its owner · one `VouchEscrowBox` per lapse withdrawal — the vouch's value, `owner` its voucher, `releaseAtBlock = vouch.createdAtBlock + vouchCooldownBlocks` · decay replacements · the coinbase's single credit output |
+| **Consumes, in this order** | the emission box (when this height releases) · the treasury box (when this block accrues to it) · the backer pool box (on every block inside the accrual window, and on every block whose body carries an unstake — MINING_INTERFACE → The backer pool) · every `BackerUnstakeBox` the body's transactions created, in committed transaction order · every `LikeAccrualBox` marker the block's like and reply transactions emitted, in committed transaction order · every `KarmaPriceBox` the block's transactions created — a post's price or a burn's (→ Username transition rules) — in committed transaction order · the carry box of every author the block credits, ascending author hex · **at most `MAX_BOND_SETTLEMENTS_PER_BLOCK`** `BondBox`es whose invitee's `invitedAtBlock` is at or before `height − inviteProbationBlocks` in pre-body state, ascending `(invitedAtBlock, box id)` · **at most `MAX_ESCROW_RETURNS_PER_BLOCK`** `VouchEscrowBox`es at or past their `releaseAtBlock` in pre-body state, ascending `(releaseAtBlock, box id)` · **at most `MAX_LAPSE_WITHDRAWALS_PER_BLOCK`** `VouchBox`es whose `voucherId` is not a member in pre-body state, ascending box id · the karma boxes decay charges · the karma pool box (when this block draws or returns) · every `FeeBox` the body's transactions created, in committed transaction order |
+| **Emits, in this order** | the successors of the four protocol boxes — emission, treasury, backer pool, karma pool · the invite grants · like payouts and carry successors · the vested part of each settling bond, back to its inviter · each released escrow's value, back to its owner · one `VouchEscrowBox` per lapse withdrawal — the vouch's value, `owner` its voucher, `releaseAtBlock = vouch.createdAtBlock + vouchCooldownBlocks` · decay replacements · one credit release per `BackerUnstakeBox` whose release is positive, in committed transaction order — `value` the release, `owner` the marker's, no lock, `createdAtBlock` the height · the coinbase's single credit output |
 
 ⛔ **A leg the body does not drive is capped, and the remainder waits.** Bonds, escrows and
 lapsed vouches are read from chain state, so no producer can shrink them by selecting a
@@ -2417,6 +2474,16 @@ height until a block consumes it. A consumed candidate leaves the queue by being
 is no cursor to store. ⚠ **The three caps and the empty-body settlement are the liveness
 relation** (`TYPES_INTERFACE` → Size caps): whatever the chain state holds, the settlement of an
 empty body fits `MAX_SETTLEMENT_BYTES`, so a block exists at every height.
+
+⚠ **The backer leg reads PRE-BODY state and the body's markers, and its arithmetic is
+`MINING_INTERFACE → The backer pool`.** The pool box is captured before the apply loop on both sides, like
+the escrows and decay; the unstake list is `body.unstakes`, filled by `contributeToBody` from every
+`backer_unstake` output in committed order — the producer's `predictSettlementBody` and the applier's §11a
+read the same outputs. Each marker is an input; each positive release a derived credit output with no lock;
+the pool successor a derived output beside the emission's and the treasury's. The leg is body-driven, so it
+needs no cap: the producer keeps it inside `MAX_SETTLEMENT_BYTES` by selection, and
+`settlementMarginalBytes` reserves one input and one credit output per marker — the output unconditionally,
+since a release's sign is not readable from the transaction's bytes.
 
 ⛔ **The two orders are consensus.** `derive()` builds the input list and the output list leg by leg in exactly these sequences, and a verifier recomputes both and compares the block's settlement to them position by position — the input list whole, the derived outputs element-wise; the coinbase is constrained, never derived (→ "Determinism is this mechanism's whole risk", the derived / producer-chosen table, where output ordering is a derived field). A leg moved is every settlement's bytes moved, on both sides identically. `node/test/services/settlement-leg-order.test.ts` pins both sequences with one fixture that fires every leg at once.
 
@@ -3034,6 +3101,8 @@ walks a subtree over topology (the thread's subtree is `dag_parent_refs`', Store
 | `getUnspentBoxes()` | `() => AnyBox[]` — all unspent boxes (for AVL bootstrapping), `ORDER BY created_at_block` with ties in no stated order; `bootstrapAvlProver` sorts them canonically, so no reader depends on the tie order |
 | `getKarmaBox(owner)` | `(Uint8Array) => KarmaBox \| null` — single box (backward compat) |
 | `getKarmaBoxes(owner)` | `(Uint8Array) => KarmaBox[]` — multi-box listing: full boxes, keyed on `id` |
+| `getBackerStakeBox(owner)` | `(UserId) => BackerStakeBox \| null` — the identity's live stake, at most one (→ Backer transition rules) |
+| `getBackerPoolBox()` | `() => BackerPoolBox \| null` — the one live pool box, `ORDER BY id LIMIT 1` like the emission, treasury and karma-pool reads; null on a network whose table is empty. **Consensus input**: the settlement's backer leg, read from pre-body state on both sides (§The settlement transaction), never at the check |
 | `getKarmaBoxesPage(owner, page)` | `(Uint8Array, Page<BoxKey>) => { rows: KarmaBox[], next: BoxKey \| null, count: number }` — the view's page of the set `getKarmaBoxes` reads, `ORDER BY value DESC, id` strictly after `after` (two index ranges — `value = ? AND id > ?`, then `value < ?` — concatenated in that order), over the same `KARMA_UNSPENT_WHERE` fragment; never a consensus input — every balance check reads the whole set through `getKarmaBoxes` / `getKarmaValue` |
 | `getKarmaValue(owner)` | `(Uint8Array) => bigint` — **summed** value of every unspent karma box. **Consensus input** (the vouch minimum-balance gate), and the single implementation every validation path shares. It must sum, never read one box: `getKarmaBox` is `LIMIT 1` with no `ORDER BY`, so a single-box read makes the verdict a function of SQLite's physical row order — M-12's class. Kept as one store function rather than a closure per deps literal, because a consensus-critical read reproduced at each call site is the mirror pattern that produced `computeTxIdLocal` and the copied `u32BE`. The predicate is the `KARMA_UNSPENT_WHERE` fragment that `getKarmaTotal`, the `COUNT` and the page share — the set is named once; the sum is computed here, in process |
 | `getKarmaTotal(owner)` | `(Uint8Array) => bigint` — the view's total: `COALESCE(SUM(value), 0)` over `KARMA_UNSPENT_WHERE`, an index scan of the owner's unspent entries; `/karma/:userId`'s `total`. Never a consensus input, and equal to `getKarmaValue` on every owner (a test pins it) |
@@ -4241,8 +4310,9 @@ read behind one.
 `seedGenesisState` computes the height-0 AVL+ root over the boxes it seeded and compares it to
 the profile's `genesisStateRoot`. Its set is the proof box and the `EmissionBox` on every
 network, plus the system karma and faucet credit boxes on the faucet-bearing ones, the
-committee's karma boxes, every root's identity record and the network record. **A mismatch
-throws and the node does not start**
+committee's karma boxes, every root's identity record, the network record, and on a network whose backer
+table is non-empty one `BackerStakeBox` per row and the `BackerPoolBox` (`ARCHITECTURE → Genesis`). **A
+mismatch throws and the node does not start**
 (`assertGenesisRoot`, exported so it is reachable without a boot). Refusal rather than a
 warning follows `loadConfig`'s below-floor ordering target: proceeding silently means running a
 chain that forks from every honest peer at height 1, discovered later and somewhere else.
@@ -4259,6 +4329,13 @@ than on every start.
 records, the network record, the tree rows and the flag together, so a divergent genesis is never
 committed. Checked after the commit it would fail exactly once: the next start finds the flag set,
 skips seeding, and runs on the divergent state with nothing left to check it.
+
+**The backer table is validated before the root is compared, inside the seeding transaction.** Keys unique
+and ascending byte-wise, every `weight ≥ 1n`, their sum at most `backerSupply`, and `backerSupply > 0n` when
+a row exists — each refusal names the row and the rule, so a bad module is refused as itself and never as a
+root mismatch. Each row seeds one `BackerStakeBox` under its own synthetic mint provenance, the committee's
+per-member pattern; the `BackerPoolBox` follows with `value 0n`, `staked` the summed weight, `accrual 0n`
+(`TYPES_INTERFACE → BackerPoolBox`).
 
 **The root count is checked after the pin, and outside the seeding transaction.** Seeding writes
 a root record per committee key and for the faucet identity where one is seeded, and the network

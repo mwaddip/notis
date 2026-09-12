@@ -177,6 +177,34 @@ const CASES: Record<AnyBox['boxType'], Case> = {
     outputs: () => [],
     signer: null,
   },
+  // NODE_INTERFACE → Backer transition rules: the owner's key.
+  backer_stake: {
+    box: (h) => ({
+      boxType: 'backer_stake', value: 0n, createdAtBlock: 0, owner: h.userId,
+      weight: 100n,
+    }),
+    outputs: (h) => [{
+      boxType: 'backer_unstake' as const, value: 0n, createdAtBlock: 0,
+      owner: h.userId, weight: 100n,
+    } as never],
+    signer: 'holder',
+  },
+  backer_unstake: {
+    box: (h) => ({
+      boxType: 'backer_unstake', value: 0n, createdAtBlock: 0, owner: h.userId,
+      weight: 50n,
+    }),
+    outputs: () => [],
+    signer: null,
+  },
+  backer_pool: {
+    box: () => ({
+      boxType: 'backer_pool', value: 100n, createdAtBlock: 0,
+      staked: 50n, accrual: 0n,
+    }),
+    outputs: () => [],
+    signer: null,
+  },
 };
 
 describe('authorization is a property of the transition', () => {

@@ -5,6 +5,9 @@ import type {
   GenesisProofBox,
   EmissionBox,
   KarmaPoolBox,
+  BackerStakeBox,
+  BackerPoolBox,
+  BackerRow,
 } from '@dagsocial/types';
 import {
   insertBox,
@@ -13,15 +16,18 @@ import {
   getGenesisProofBox,
   getEmissionBox,
   getKarmaPoolBox,
+  getBackerPoolBox,
 } from './utxo.js';
 import { putIdentityRecord } from './identity-records.js';
 import {
   GENESIS_EMISSION,
   GENESIS_FAUCET_CREDITS,
+  GENESIS_BACKER_POOL,
   GENESIS_KARMA_POOL,
   GENESIS_PROOF,
   GENESIS_SYSTEM_KARMA,
   MINT_OUTPUT_INDEX,
+  genesisBackerContext,
   genesisCommitteeContext,
   genesisContext,
   mintTxIdFor,
@@ -388,6 +394,108 @@ export function ensureKarmaPoolBox(granted: bigint, currentHeight: number): Karm
     value: KARMA_SUPPLY_TOTAL - granted,
     createdAtBlock: genesisHeight,
     txId: mintTxIdFor(genesisContext(GENESIS_KARMA_POOL), genesisHeight),
+    index: MINT_OUTPUT_INDEX,
+  };
+  box.id = computeBoxId(box);
+  insertBox(box);
+  return box;
+}
+
+// ---------------------------------------------------------------------------
+// Backer pool genesis
+// ---------------------------------------------------------------------------
+
+/**
+ * Validate the backer table's shape and refuse with a named rule per row.
+ *
+ * Runs inside the seeding transaction, before the root is compared, so a bad
+ * module is refused as itself and never as a root mismatch
+ * (NODE_INTERFACE → The genesis state root is checked fail-stop).
+ */
+export function validateBackerTable(
+  rows: readonly BackerRow[],
+  supply: bigint,
+): void {
+  if (rows.length > 0 && supply <= 0n) {
+    throw new Error(
+      'Backer table has rows but backerSupply is 0 — a network with backers must name a supply',
+    );
+  }
+  let prev = '';
+  let weightSum = 0n;
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i]!;
+    if (r.key.length !== 64 || !/^[0-9a-f]{64}$/.test(r.key)) {
+      throw new Error(`Backer table row ${i}: key "${r.key}" is not 64 hex chars`);
+    }
+    if (r.key <= prev) {
+      throw new Error(`Backer table row ${i}: key "${r.key}" is not ascending`);
+    }
+    if (r.weight < 1n) {
+      throw new Error(`Backer table row ${i}: weight must be at least 1`);
+    }
+    weightSum += r.weight;
+    prev = r.key;
+  }
+  if (weightSum > supply) {
+    throw new Error(
+      `Backer table weight sum ${weightSum} exceeds backerSupply ${supply}`,
+    );
+  }
+}
+
+/**
+ * Seed one `BackerStakeBox` per backer table row and return the summed weight.
+ *
+ * The committee pattern: one box per key under its own mint context, ascending
+ * key, no identity record (NODE_INTERFACE → Backer transition rules: "Apply
+ * writes boxes and nothing else").
+ */
+export function seedGenesisBackers(
+  rows: readonly BackerRow[],
+  currentHeight: number,
+): bigint {
+  const genesisHeight = genesisMintHeight(currentHeight);
+  let staked = 0n;
+
+  for (const row of rows) {
+    const owner = new Uint8Array(Buffer.from(row.key, 'hex'));
+    const box: BackerStakeBox = {
+      boxType: 'backer_stake',
+      value: 0n as 0n,
+      createdAtBlock: genesisHeight,
+      owner,
+      weight: row.weight,
+      txId: mintTxIdFor(genesisBackerContext(owner), genesisHeight),
+      index: MINT_OUTPUT_INDEX,
+    };
+    box.id = computeBoxId(box);
+    insertBox(box);
+    staked += row.weight;
+  }
+
+  return staked;
+}
+
+/**
+ * Ensure the backer pool box exists. Only seeded when the network's table is
+ * non-empty (NODE_INTERFACE → The genesis state root is checked fail-stop).
+ */
+export function ensureBackerPoolBox(
+  staked: bigint,
+  currentHeight: number,
+): BackerPoolBox {
+  const existing = getBackerPoolBox();
+  if (existing) return existing;
+
+  const genesisHeight = genesisMintHeight(currentHeight);
+  const box: BackerPoolBox = {
+    boxType: 'backer_pool',
+    value: 0n,
+    staked,
+    accrual: 0n,
+    createdAtBlock: genesisHeight,
+    txId: mintTxIdFor(genesisContext(GENESIS_BACKER_POOL), genesisHeight),
     index: MINT_OUTPUT_INDEX,
   };
   box.id = computeBoxId(box);

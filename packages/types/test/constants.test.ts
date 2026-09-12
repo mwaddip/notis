@@ -37,6 +37,7 @@ import {
   VOUCH_CAST_HEIGHT_WINDOW,
   SYSTEM_KARMA_INITIAL,
   FAUCET_CREDITS_INITIAL,
+  BACKER_UNSTAKE_MIN_PCT,
 } from '../src/index.js';
 
 describe('PoW difficulty constants', () => {
@@ -207,6 +208,18 @@ describe('mempool policy dials', () => {
   it('carries a non-negative bigint fee floor', () => {
     expect(typeof MIN_FEE_RATE_PER_BYTE).toBe('bigint');
     expect(MIN_FEE_RATE_PER_BYTE).toBeGreaterThanOrEqual(0n);
+  });
+});
+
+describe('backer unstake minimum', () => {
+  it('is a number (percentage), not a bigint', () => {
+    expect(typeof BACKER_UNSTAKE_MIN_PCT).toBe('number');
+  });
+
+  it('is a positive integer inside [1, 100]', () => {
+    expect(Number.isSafeInteger(BACKER_UNSTAKE_MIN_PCT)).toBe(true);
+    expect(BACKER_UNSTAKE_MIN_PCT).toBeGreaterThanOrEqual(1);
+    expect(BACKER_UNSTAKE_MIN_PCT).toBeLessThanOrEqual(100);
   });
 });
 

@@ -44,6 +44,7 @@ export {
   COINBASE_MINER_FLOOR_PCT,
   COINBASE_BACKER_PCT,
   COINBASE_BONUS_PCT,
+  BACKER_UNSTAKE_MIN_PCT,
   INCLUSION_BONUS_K,
   MEMPOOL_CREDIT_SHARE_PCT,
   MIN_FEE_RATE_PER_BYTE,
@@ -71,7 +72,7 @@ export {
   MAGIC_DEVNET,
   KNOWN_FRAME_MAGICS,
 } from './network.js';
-export type { NetworkType, NetworkProfile, ProtocolEra } from './network.js';
+export type { NetworkType, NetworkProfile, ProtocolEra, BackerRow, BackerTable } from './network.js';
 
 // Identity
 export { generateKeyPair } from './identity.js';
@@ -133,6 +134,9 @@ export type {
   FeeBox,
   KarmaPriceBox,
   UsernameBox,
+  BackerStakeBox,
+  BackerUnstakeBox,
+  BackerPoolBox,
   KarmaPoolBox,
   AnyBox,
   UtxoTransaction,

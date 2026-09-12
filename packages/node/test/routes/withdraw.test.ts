@@ -141,6 +141,18 @@ describe('withdraw route', () => {
     expect(body.error).toBe('Post is not confirmed in an earlier block');
   });
 
+  it('POST /posts/:id/withdraw — a conflicting spend answers 409 naming the box', async () => {
+    const { PendingSpendConflictError } = await import('../../src/store/mempool.js');
+    const boxId = 'ab'.repeat(32);
+    const res = await request(TEST_POST_HASH, { tx: makeJsonPostWithdrawTxBody() }, () => {
+      throw new PendingSpendConflictError(boxId);
+    });
+    expect(res.status).toBe(409);
+    const body = res.data as Record<string, unknown>;
+    expect(body.error).toContain(boxId);
+    expect(body.error).toMatch(/already spent by a pending/i);
+  });
+
   it('POST /posts/:id/withdraw returns 500 for unexpected errors', async () => {
     const res = await request(TEST_POST_HASH, { tx: makeJsonPostWithdrawTxBody() }, () => {
       throw new Error('unexpected');

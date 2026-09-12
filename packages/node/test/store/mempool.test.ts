@@ -649,7 +649,7 @@ describe('mempool store', () => {
       expect(mem.getBoxWithPending(changeId)!.id).toBe(changeId);
     });
 
-    it('does not serve a pending output that a later pending input consumed', async () => {
+    it('throws PendingSpendConflictError for a pending output a later entry consumed', async () => {
       const mem = await importMempoolFresh();
 
       const parent = chainTx([CONFIRMED], [karmaOut(95n)]);
@@ -658,13 +658,13 @@ describe('mempool store', () => {
 
       mem.insertUtxoTx(chainTx([changeId], [karmaOut(90n)]) as never, 1000);
 
-      // The row is still findable — subtracting the spend is the view's job,
-      // not the index's.
       expect(mem.findPendingOutput(changeId)).not.toBeNull();
-      expect(mem.getBoxWithPending(changeId)).toBeNull();
+      expect(() => mem.getBoxWithPending(changeId)).toThrow(
+        mem.PendingSpendConflictError,
+      );
     });
 
-    it('subtracts a pending spend from the confirmed set too', async () => {
+    it('throws PendingSpendConflictError for a confirmed box a pending entry spends', async () => {
       const mem = await importMempoolFresh();
       const utxo = await import('../../src/store/utxo.js');
       const { computeBoxId } = await import('@dagsocial/types');
@@ -684,7 +684,9 @@ describe('mempool store', () => {
 
       mem.insertUtxoTx(chainTx([confirmed.id], [karmaOut(99n)]) as never, 1000);
 
-      expect(mem.getBoxWithPending(confirmed.id)).toBeNull();
+      expect(() => mem.getBoxWithPending(confirmed.id)).toThrow(
+        mem.PendingSpendConflictError,
+      );
     });
 
     it('answers null for a box no one holds', async () => {

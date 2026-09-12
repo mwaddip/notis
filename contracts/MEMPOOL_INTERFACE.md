@@ -152,7 +152,11 @@ getBoxWithPending(boxId: string): AnyBox | null
 
 The pending view of one box: the confirmed UTXO set **∪** pending outputs **−** pending inputs, the
 subtraction first and over both halves — a box a pooled entry already spends is not spendable again,
-confirmed or pending. **Submission's `getBox`, and nothing else's.** The HTTP routes validate against
+confirmed or pending. ⛔ **The subtraction answers as the pending-spend conflict, never as an absent
+box**: for a box a pooled entry spends the view throws `PendingSpendConflictError` (409) where
+`validateTx` reads the input, so every write route's 409 is reachable and a client can tell a box tied
+up in the pool from one spent on chain (`WEB_INTERFACE → The wallet`, the pending ledger's 409); `null` is the
+answer for a box that exists nowhere. **Submission's `getBox`, and nothing else's.** The HTTP routes validate against
 it, so a transaction spending the change of one still in the pool is admitted — and a child therefore
 enters the pool only while its predecessor is confirmed or already pooled, taking the later rowid,
 which is the order the fill preserves and the ordering rule at apply requires (`NODE_INTERFACE →
@@ -519,7 +523,9 @@ domain), and a plain integer read rounds silently above 2⁵³ — the displacem
 comparison would then weigh a fee no transaction carries.
 
 **Fee-ordered eviction over a single pool would be worse than none.** Every
-karma-side operation bids zero — posts, likes, invites, vouches — so paying
+karma-side operation bids zero — posts, likes, invites, vouches, a backer's unstake
+(`NODE_INTERFACE → Backer transition rules`, a karma-class entry: its outputs are a stake
+and a marker, not credit) — so paying
 traffic would evict all of them, and the coinbase's inclusion bonus
 (MINING_INTERFACE → Coinbase Application) would then pay for work that could no
 longer reach the pool at all. The class boundary is what keeps the bonus

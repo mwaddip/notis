@@ -179,7 +179,8 @@ Amounts are base units of 10⁻⁸ credit (`TYPES_INTERFACE → Denomination`).
 |---|---|---|---|---|---|---|
 | `COINBASE_TREASURY_PCT` | `5` | of emission and of fees, never of rent | consensus | provisional; the four slices sum to 100, asserted in the types suite | PROVISIONAL | `MINING_INTERFACE → Coinbase Application` |
 | `COINBASE_MINER_FLOOR_PCT` | `35` | guaranteed, takes every remainder | consensus | provisional | PROVISIONAL | `MINING_INTERFACE → Coinbase Application` |
-| `COINBASE_BACKER_PCT` | `35` | nothing stakes, so it falls to the floor | consensus | provisional | PROVISIONAL | `MINING_INTERFACE → Coinbase Application` |
+| `COINBASE_BACKER_PCT` | `35` | the cap on the aggregate backer claim, of emission and of fees | consensus | provisional; may be tuned down between the snapshot and go-live if little supply locks (user, 2026-09-12) | PROVISIONAL | `MINING_INTERFACE → The backer pool` |
+| `BACKER_UNSTAKE_MIN_PCT` | `1` | a partial unstake retires at least 1 % of its stake — the spam bound on a fee-less transaction | consensus | proposed 2026-09-12 with the unit; no ruling | PROVISIONAL | `NODE_INTERFACE → Backer transition rules` |
 | `COINBASE_BONUS_PCT` | `25` | the inclusion bonus pool | consensus | provisional | PROVISIONAL | `MINING_INTERFACE → Coinbase Application` |
 | `INCLUSION_BONUS_K` | `5n` | the curve's knee: half the pool at 5 actors | consensus | provisional; uncapped and hyperbolic by design, only the knee is a number | PROVISIONAL | `MINING_INTERFACE → Coinbase Application` |
 | `MEMPOOL_CREDIT_SHARE_PCT` | `50` | credit entries' share of the pool | policy | provisional; mirrors no ceiling — an idle pool slot costs nothing, so no measurement forces it | PROVISIONAL | `MEMPOOL_INTERFACE → Eviction` |
@@ -241,6 +242,7 @@ devnet differ where a cell says so. The identity fields — `magic`, `genesisCom
 | `creditEmissionTotal` | `42_264_000_000_000_000n` | `42_264_000_000_000_000n` | `36_200_000_000_000n` | timescale | strictly below devnet's own curve sum of 386 400 credits — the rule every profile's total obeys | DERIVED | `TYPES_INTERFACE → EmissionBox` |
 | `storageRentPeriodBlocks` | `2_102_400` | `2_102_400` | `100` | timescale | mainnet: 4 years, exactly `2 × creditFixedRateBlocks`, Ergo's wall clock. Devnet: above the deepest height any e2e scenario reaches — 51, the fork chapter's strand case, measured — with headroom | DERIVED | `ARCHITECTURE → What varies per network` |
 | `genesisKarmaPerMember` | `1000n` | `1000n` | `1000n` | genesis | carried from the constant on all three | CHOSEN | `ARCHITECTURE → Genesis` |
+| `backerSupply` | `0n` | `100n` | `100n` | genesis | the backer snapshot's total supply — mainnet's is the fill tool's and empty until the snapshot; the test networks' small integers make the leg's vectors hand-checkable, with the cap binding at genesis (40 % and 50 % staked) | CHOSEN | `TYPES_INTERFACE → Network profiles` |
 | `inviteBondMin` | `100n` | `100n` | `5n` | cap | a bond of `B` vests in `V · B` likes, so the floor decides whether a fixture can drive one to the end: 5 costs 15 likes | DERIVED | `TYPES_INTERFACE → Invites` |
 | `inviteBondMax` | `250n` | `1000n` | `250n` | cap | testnet's is relaxed so a tester arrives with enough karma to post and like freely — a cap, not a mechanic; devnet keeps mainnet's so the range check has both ends to fail against | DECIDED | `TYPES_INTERFACE → Invites` |
 | `membershipBarMultiplier` | `10` | `1` | `1` | cap | testnet's and devnet's `1` keep the vouch bar at one while `N` is small — `D(1) = 1`, where `10` gives `D(1) = 2` — so the first earned members need one counted vouch and two member likes; on a chain whose only root is the faucet the first members are conferred, not set, since the faucet neither vouches nor likes (`NODE_INTERFACE → Faucet`); mainnet's `10` is fixed by the user's two anchors (2026-08-28): `D = 10` at 100 members, `100` at 100 000 | DERIVED | `ARCHITECTURE → Membership` |
@@ -340,7 +342,7 @@ check can tell an omission from an exclusion.
 | `MSG_HANDSHAKE`, `MSG_SYNC_INFO`, `MSG_INV`, `MSG_MODIFIER_REQUEST`, `MSG_MODIFIER_RESPONSE`, `MSG_GET_PEERS`, `MSG_PEERS`, `MSG_GET_HEADERS`, `MSG_HEADERS`, `MSG_GET_BLOCKS`, `MSG_BLOCKS` | message codes — `NET_INTERFACE → Frame Format` |
 | `MODIFIER_ORDERING_BLOCK`, `MODIFIER_POST_BODY` | modifier type ids — `NET_INTERFACE → ModifierRequest` |
 | `GET_PEERS_INTERVAL_MS`, `OUTBOUND_TICK_INTERVAL_MS` | local cadences — `NET_INTERFACE → Outbound Manager` |
-| `genesisCommitteeKeys`, `faucetPublicKey`, `genesisProofPayload`, `genesisStateRoot`, `genesisId`, `bootstrapPeers` | identity fields — non-numeric, listed for completeness |
+| `genesisCommitteeKeys`, `faucetPublicKey`, `genesisProofPayload`, `genesisStateRoot`, `genesisId`, `bootstrapPeers`, `backerTable` | identity fields — non-numeric, listed for completeness |
 
 ## What the register makes visible
 

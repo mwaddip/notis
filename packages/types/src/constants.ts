@@ -220,8 +220,8 @@ export const MEMPOOL_EXPIRY_BLOCKS = 720;               // Blocks before mempool
  */
 export const COINBASE_TREASURY_PCT = 5;      // Taken per income TERM — of emission and of fees, never of rent
 export const COINBASE_MINER_FLOOR_PCT = 35;  // Guaranteed, and takes every remainder the divisions leave
-export const COINBASE_BACKER_PCT = 35;       // Scaled by the migrated fraction — nothing stakes, so it falls to the floor
-export const COINBASE_BONUS_PCT = 25;        // Earned by including karma-side work; the rest locks in the treasury
+export const COINBASE_BACKER_PCT = 35;       // The cap on the aggregate backer claim, of emission and of fees
+export const COINBASE_BONUS_PCT = 25;        // Earned by including karma-side work; the unearned remainder returns to the EmissionBox
 
 /**
  * The inclusion bonus curve's knee: `pool × actors / (actors + K)`, where
@@ -251,6 +251,10 @@ export const INCLUSION_BONUS_K = 5n;
  * idle pool slot costs nothing, so no measurement forces this number.
  */
 export const MEMPOOL_CREDIT_SHARE_PCT = 50;
+
+// NODE_INTERFACE → Backer transition rules: a partial unstake retires at least
+// this percentage of the stake — the spam bound on a fee-less karma-class entry.
+export const BACKER_UNSTAKE_MIN_PCT = 1;
 
 /**
  * Relay policy: the fee rate beneath which a node refuses a credit transaction

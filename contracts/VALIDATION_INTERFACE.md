@@ -821,8 +821,9 @@ verifyTxStructure(tx: UtxoTransaction): { valid: boolean; error?: string }
 
 Checks: `tx` is an object, `inputs` is a non-empty array, `outputs` is a
 non-empty array, **no output is a `genesis_proof` box**, **every `username` output's `name` is
-1–`USERNAME_MAX_BYTES` bytes of `[A-Za-z0-9_]`** (→ "A `username` output's name is typed here"), no
-duplicate inputs,
+1–`USERNAME_MAX_BYTES` bytes of `[A-Za-z0-9_]`** (→ "A `username` output's name is typed here"), **every
+`backer_stake` and `backer_unstake` output's `weight` is at least `1n`** (→ "A backer output's weight is
+typed here"), no duplicate inputs,
 `protocolVersion` is a number, **when `post` is present, `verifyPostCommitDomains(tx.post)`**
 — the commit's domain established before `postFieldBytes` can run inside `computeTxId`, and
 **no content check, because the transaction carries no content** — and **the encoded
@@ -909,6 +910,15 @@ what makes it this package's — the argument that placed the `genesis_proof` ru
 peer-scoring reason: a malformed name refused in the gossip validator costs its sender the structural
 penalty and relays nowhere. Uniqueness, the free claim and the holder's state are `@dagsocial/node`'s
 (`NODE_INTERFACE` → Username transition rules); this package holds no state and cannot judge them.
+
+#### A backer output's weight is typed here
+
+A `backer_stake` or `backer_unstake` box (`TYPES_INTERFACE → BackerStakeBox`, → BackerUnstakeBox) carries
+`weight` as a `bigint`. This check refuses an output whose `weight` is `0n` — zero weight means no box — with
+`backer weight invalid`; it reads the candidate output and nothing else, the argument that placed the
+`username` rule above. The structural zero `value`, weight conservation, the owner pin and the minimum are
+`@dagsocial/node`'s (`NODE_INTERFACE` → Backer transition rules); this package holds no state and cannot
+judge them.
 
 **The length is refused twice, and the two are not redundant.** The codec's `lp` reader stops at
 `USERNAME_MAX_BYTES` before it reads a byte of content (`TYPES_INTERFACE` → Layout — Boxes), so an

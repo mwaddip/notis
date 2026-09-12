@@ -97,6 +97,9 @@ export const BOX_TYPE_TAGS = Object.freeze({
   vouch_escrow: 12,
   karma_price: 13,
   username: 14,
+  backer_stake: 15,
+  backer_unstake: 16,
+  backer_pool: 17,
 } as const satisfies Readonly<Record<BoxCandidate['boxType'], number>>);
 
 /** The `enum8` codec over that table — one table, both directions. */
@@ -129,6 +132,9 @@ const BOX_TYPE = enum8<BoxCandidate['boxType']>('boxType', BOX_TYPE_TAGS);
  *   | username      | b32(owner) ‖ lp(name)                                     |
  *   | vouch_escrow  | b32(owner) ‖ vlqU(releaseAtBlock)                          |
  *   | karma_price   | (none)                                                    |
+ *   | backer_stake  | b32(owner) ‖ vlqU64(weight)                               |
+ *   | backer_unstake| b32(owner) ‖ vlqU64(weight)                               |
+ *   | backer_pool   | vlqU64(staked) ‖ vlqU64(accrual)                           |
  *
  * **`emission`, `treasury`, `fee`, `karma_pool` and `karma_price` stop after
  * the prefix**, and an empty cell above is a layout rather than an omission
@@ -243,6 +249,15 @@ function writeBoxTypeFields(w: ByteWriter, box: AnyBoxCandidate): void {
     case 'username':
       writeBytesNOrThrow(w, box.owner, 32);
       writeLp(w, box.name);
+      return;
+    case 'backer_stake':
+    case 'backer_unstake':
+      writeBytesNOrThrow(w, box.owner, 32);
+      writeVlqU64OrThrow(w, box.weight);
+      return;
+    case 'backer_pool':
+      writeVlqU64OrThrow(w, box.staked);
+      writeVlqU64OrThrow(w, box.accrual);
       return;
     case 'vouch_escrow':
       writeBytesNOrThrow(w, box.owner, 32);
@@ -375,6 +390,23 @@ function readBoxContentFields(r: ByteReader): DecodedBoxCandidate {
       }
       return { boxType, value: value as 0n, createdAtBlock, owner, name: r.readBytes(nameLen).slice() };
     }
+    case 'backer_stake':
+    case 'backer_unstake':
+      return {
+        boxType,
+        value: value as 0n,
+        createdAtBlock,
+        owner: readBytesN(r, 32),
+        weight: readVlqU64(r),
+      };
+    case 'backer_pool':
+      return {
+        boxType,
+        value,
+        createdAtBlock,
+        staked: readVlqU64(r),
+        accrual: readVlqU64(r),
+      };
     case 'vouch_escrow':
       return {
         boxType,
@@ -543,7 +575,8 @@ export function computeCandidateBoxId(candidate: BoxCandidate, txId: TxId, index
  */
 export type MintReason =
   | 'genesis'
-  | 'genesis-committee';
+  | 'genesis-committee'
+  | 'genesis-backer';
 
 /**
  * The `MintReason` tag table.
@@ -571,6 +604,7 @@ export type MintReason =
 const MINT_REASON = enum8<MintReason>('mintReason', {
   genesis: 6,
   'genesis-committee': 13,
+  'genesis-backer': 14,
 });
 
 /**
@@ -638,7 +672,7 @@ export interface BoxCandidate {
   // holes; `BOX_TYPE_TAGS` leaves them out.
   boxType: 'karma' | 'credit' | 'genesis_proof' | 'bond' | 'vouch'
     | 'emission' | 'treasury' | 'fee' | 'karma_pool' | 'like_accrual' | 'vouch_escrow'
-    | 'karma_price' | 'username';
+    | 'karma_price' | 'username' | 'backer_stake' | 'backer_unstake' | 'backer_pool';
   value: bigint;        // integer base units, uniform across box types; value < 2^64 is the `vlqU` wire domain
   // ⚠ **`< 2^64` above is the ENCODABLE domain, and it is wider than the
   // accepted one.** Consensus admits `[0, BOX_VALUE_BOUND)` (`constants.ts`),
@@ -808,6 +842,32 @@ export interface UsernameBox extends BoxBase {
   value: 0n;
   owner: Uint8Array;          // 32 raw bytes — the holder
   name: Uint8Array;           // 1–USERNAME_MAX_BYTES bytes of [A-Za-z0-9_]
+}
+
+// --- Backer pool ---
+
+// TYPES_INTERFACE → BackerStakeBox; ARCHITECTURE → The backer pool.
+export interface BackerStakeBox extends BoxBase {
+  boxType: 'backer_stake';
+  value: 0n;
+  owner: Uint8Array;          // 32 raw bytes — the Notis identity the deposit named
+  weight: bigint;             // ≥ 1n — locked token base units still staked
+}
+
+// TYPES_INTERFACE → BackerUnstakeBox.
+export interface BackerUnstakeBox extends BoxBase {
+  boxType: 'backer_unstake';
+  value: 0n;
+  owner: Uint8Array;          // 32 raw bytes — the stake's owner
+  weight: bigint;             // ≥ 1n — the weight this transaction retires
+}
+
+// TYPES_INTERFACE → BackerPoolBox; MINING_INTERFACE → The backer pool.
+export interface BackerPoolBox extends BoxBase {
+  boxType: 'backer_pool';
+  value: bigint;              // credits accrued and not yet released
+  staked: bigint;             // Σ weight over every live BackerStakeBox
+  accrual: bigint;            // credits per whole supply accrued since genesis
 }
 
 // --- Vouch ---
@@ -1054,7 +1114,10 @@ export type AnyBox =
   | EmissionBox
   | TreasuryBox
   | FeeBox
-  | KarmaPoolBox;
+  | KarmaPoolBox
+  | BackerStakeBox
+  | BackerUnstakeBox
+  | BackerPoolBox;
 
 /** Every box type in its creator-built form — no `id`, no provenance. */
 export type AnyBoxCandidate =
@@ -1070,7 +1133,10 @@ export type AnyBoxCandidate =
   | CandidateOf<EmissionBox>
   | CandidateOf<TreasuryBox>
   | CandidateOf<FeeBox>
-  | CandidateOf<KarmaPoolBox>;
+  | CandidateOf<KarmaPoolBox>
+  | CandidateOf<BackerStakeBox>
+  | CandidateOf<BackerUnstakeBox>
+  | CandidateOf<BackerPoolBox>;
 
 // ---------------------------------------------------------------------------
 // UTXO transaction

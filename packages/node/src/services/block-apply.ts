@@ -71,6 +71,7 @@ import {
   getVouchBox,
   getNetworkRecord,
   getLapsedVouches,
+  getBackerPoolBox,
   putUsername,
   deleteUsername,
   getUsername,
@@ -1021,6 +1022,7 @@ function applyMutationPhase(
   // side only.
   const escrows = getVouchEscrowsReleasableAt(height, MAX_ESCROW_RETURNS_PER_BLOCK);
   const lapsedVouches = getLapsedVouches(MAX_LAPSE_WITHDRAWALS_PER_BLOCK);
+  const capturedBackerPool = getBackerPoolBox();
 
   // One pass, in committed order (NODE_INTERFACE → Block finalization).
   for (const item of queue) {
@@ -1293,7 +1295,7 @@ function applyMutationPhase(
 
   const emission = computeBlockReward(height);
   const settlementCheck = checkSettlement(
-    settlementDepsWith(() => decayPlans, escrows, lapsedVouches),
+    settlementDepsWith(() => decayPlans, escrows, lapsedVouches, () => capturedBackerPool),
     height,
     config.protocolVersionSchedule,
     emission,

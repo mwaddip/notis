@@ -151,7 +151,7 @@ function jsonToPostWithdrawCommit(raw: unknown): PostWithdrawCommit {
  * Coerced before validation — leaving one as a number would change its
  * positional encoding and so the computed box id.
  */
-const VALUE_BOX_FIELDS = new Set(['value']);
+const VALUE_BOX_FIELDS = new Set(['value', 'weight', 'staked', 'accrual']);
 
 /**
  * Convert hex-encoded Uint8Array fields inside a single box object, coerce
