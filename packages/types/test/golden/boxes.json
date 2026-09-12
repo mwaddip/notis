@@ -264,6 +264,34 @@
       },
       "bytes": "0e00ac02000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f08416c6963655f3939",
       "note": "45 bytes: 'Alice_99' stored as typed. The codec preserves case; the alphabet is not the codec's concern — a byte outside [A-Za-z0-9_] still encodes and decodes because verifyTxStructure refuses it, not this package. Built at createdAtBlock 300, the prefix's third field, 2 VLQ byte(s)."
+    },
+    {
+      "name": "box/backer-stake",
+      "codec": "boxContent",
+      "value": { "boxType": "backer_stake", "value": "0", "createdAtBlock": 300, "owner": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "weight": "40" },
+      "bytes": "0f00ac02aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa28",
+      "note": "Tag 15. value is structurally 0n as username has. Tail is b32(owner) then vlqU64(weight). The prefix carries createdAtBlock 300, the third field, 2 VLQ bytes."
+    },
+    {
+      "name": "box/backer-unstake",
+      "codec": "boxContent",
+      "value": { "boxType": "backer_unstake", "value": "0", "createdAtBlock": 300, "owner": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "weight": "10" },
+      "bytes": "1000ac02aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0a",
+      "note": "Tag 16. The same trailing-field layout as backer_stake: b32(owner) then vlqU64(weight). The tag alone tells them apart. The prefix carries createdAtBlock 300, the third field, 2 VLQ bytes."
+    },
+    {
+      "name": "box/backer-pool-nonzero",
+      "codec": "boxContent",
+      "value": { "boxType": "backer_pool", "value": "1470000000", "createdAtBlock": 300, "staked": "50", "accrual": "2940000000" },
+      "bytes": "1180d7f9bc05ac023280aef3f90a",
+      "note": "Tag 17. No owner. Tail is vlqU64(staked) then vlqU64(accrual). value holds credits not yet released. The prefix carries createdAtBlock 300, the third field, 2 VLQ bytes."
+    },
+    {
+      "name": "box/backer-pool-zero",
+      "codec": "boxContent",
+      "value": { "boxType": "backer_pool", "value": "0", "createdAtBlock": 300, "staked": "0", "accrual": "0" },
+      "bytes": "1100ac020000",
+      "note": "The pool box at genesis or after full release. All three u64 fields at zero. The prefix carries createdAtBlock 300, the third field, 2 VLQ bytes."
     }
   ],
   "rejects": [

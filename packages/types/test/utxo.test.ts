@@ -38,7 +38,7 @@ import {
 } from '../src/index.js';
 import { readPostWithdrawCommitFields } from '../src/post-withdraw.js';
 import { ByteReader } from '@dagsocial/wire';
-import type { AnyBoxCandidate, BoxBase, BoxCandidate, CandidateOf, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, GenesisProofBox, EmissionBox, TreasuryBox, FeeBox, KarmaPoolBox, UtxoTransaction, PostWithdrawCommit, MintReason } from '../src/index.js';
+import type { AnyBoxCandidate, BoxBase, BoxCandidate, CandidateOf, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, GenesisProofBox, EmissionBox, TreasuryBox, FeeBox, KarmaPoolBox, BackerStakeBox, BackerUnstakeBox, BackerPoolBox, UtxoTransaction, PostWithdrawCommit, MintReason } from '../src/index.js';
 
 /**
  * The height every fixture in this file is built at, and `ac 02` wherever a
@@ -68,6 +68,10 @@ const FIXTURE_TX_ID = 'e'.repeat(64);
 const IN_1 = '1a'.repeat(32);
 const IN_2 = '2b'.repeat(32);
 const PUBKEY_HEX = '3c'.repeat(32);
+
+const BACKER_STAKE_FIXTURE = { boxType: 'backer_stake' as const, value: 0n as BackerStakeBox['value'], createdAtBlock: 300, owner: new Uint8Array(32).fill(0xaa), weight: 40n };
+const BACKER_UNSTAKE_FIXTURE = { boxType: 'backer_unstake' as const, value: 0n as BackerUnstakeBox['value'], createdAtBlock: 300, owner: new Uint8Array(32).fill(0xaa), weight: 10n };
+const BACKER_POOL_FIXTURE = { boxType: 'backer_pool' as const, value: 1_470_000_000n, createdAtBlock: 300, staked: 50n, accrual: 2_940_000_000n } satisfies CandidateOf<BackerPoolBox>;
 
 function makeKarmaBox(overrides: Partial<KarmaBox> = {}): KarmaBox {
   return {
@@ -207,6 +211,9 @@ describe('boxes', () => {
       karma_pool: { boxType: 'karma_pool', value: 100n, createdAtBlock: FIXTURE_HEIGHT, txId: FIXTURE_TX_ID, index: 14 },
       karma_price: { boxType: 'karma_price', value: 5n, createdAtBlock: FIXTURE_HEIGHT, txId: FIXTURE_TX_ID, index: 15 },
       username: { boxType: 'username', value: 0n, createdAtBlock: FIXTURE_HEIGHT, owner, name: new Uint8Array([0x61]), txId: FIXTURE_TX_ID, index: 16 },
+      backer_stake: { boxType: 'backer_stake', value: 0n, createdAtBlock: FIXTURE_HEIGHT, owner, weight: 40n, txId: FIXTURE_TX_ID, index: 17 },
+      backer_unstake: { boxType: 'backer_unstake', value: 0n, createdAtBlock: FIXTURE_HEIGHT, owner, weight: 10n, txId: FIXTURE_TX_ID, index: 18 },
+      backer_pool: { boxType: 'backer_pool', value: 1_470_000_000n, createdAtBlock: FIXTURE_HEIGHT, staked: 50n, accrual: 2_940_000_000n, txId: FIXTURE_TX_ID, index: 19 },
     } satisfies Record<BoxCandidate['boxType'], unknown>;
 
     for (const [boxType, box] of Object.entries(BOX_FOR_ID)) {
@@ -512,6 +519,7 @@ function u32BEMirror(n: number): Uint8Array {
 const MINT_REASON_GOLDENS: Readonly<Record<MintReason, string>> = {
   genesis:                '9010dd1d6fe6029eb8e856fe38467836781ce43ddad1ce01c0af7afc0bc7b7b2',
   'genesis-committee':    '0cf15bc43dcc566062faad29d7e9569aa12f43e034ecd8babd19bffd85715d12',
+  'genesis-backer':       '62836985b94a5679810e0ba68b501d0be64b8ffe92cc031c4ae7d75e04b66cbf',
 };
 
 const MINT_GOLDEN_HEIGHT = 1;
@@ -1040,6 +1048,9 @@ const TAILED_CANDIDATES: AnyBoxCandidate[] = [
   { boxType: 'vouch', value: 1n, createdAtBlock: 0, voucherId: owner, targetId: inviter },
   { boxType: 'vouch_escrow', value: 0n, createdAtBlock: 0, owner, releaseAtBlock: 0 },
   { boxType: 'like_accrual', value: 0n, createdAtBlock: 0, author: inviter },
+  { boxType: 'backer_stake', value: 0n, createdAtBlock: 0, owner, weight: 1n },
+  { boxType: 'backer_unstake', value: 0n, createdAtBlock: 0, owner, weight: 1n },
+  { boxType: 'backer_pool', value: 0n, createdAtBlock: 0, staked: 0n, accrual: 0n },
 ];
 
 describe('emission, treasury, fee and karma_pool', () => {
@@ -1181,6 +1192,50 @@ describe('emission, treasury, fee and karma_pool', () => {
     expect(hexOf(canonicalBoxBytes(genesis))).toBe('0affffffffffffffff7fac02');
     const record = boxRecordFromBytes(boxRecordBytes(genesis, FIXTURE_TX_ID, 0));
     expect(record.candidate).toEqual(genesis);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// backer_stake, backer_unstake and backer_pool — the backer pool's three types
+// ---------------------------------------------------------------------------
+
+describe('backer boxes', () => {
+  const hexOf = (b: Uint8Array) => Buffer.from(b).toString('hex');
+
+  it('tags are 15, 16 and 17', () => {
+    expect(canonicalBoxBytes(BACKER_STAKE_FIXTURE)[0]).toBe(15);
+    expect(canonicalBoxBytes(BACKER_UNSTAKE_FIXTURE)[0]).toBe(16);
+    expect(canonicalBoxBytes(BACKER_POOL_FIXTURE)[0]).toBe(17);
+  });
+
+  it('stake and unstake read value as 0n', () => {
+    const record = boxRecordFromBytes(boxRecordBytes(BACKER_STAKE_FIXTURE, FIXTURE_TX_ID, 0));
+    expect(record.candidate.value).toBe(0n);
+    const uRecord = boxRecordFromBytes(boxRecordBytes(BACKER_UNSTAKE_FIXTURE, FIXTURE_TX_ID, 0));
+    expect(uRecord.candidate.value).toBe(0n);
+  });
+
+  it('weight past 2^64 is refused by the throwing writer', () => {
+    const overStake: CandidateOf<BackerStakeBox> = { ...BACKER_STAKE_FIXTURE, weight: 2n ** 64n };
+    expect(() => canonicalBoxBytes(overStake)).toThrow();
+    const overUnstake: CandidateOf<BackerUnstakeBox> = { ...BACKER_UNSTAKE_FIXTURE, weight: 2n ** 64n };
+    expect(() => canonicalBoxBytes(overUnstake)).toThrow();
+  });
+
+  it('pool staked and accrual past 2^64 are refused', () => {
+    const over: CandidateOf<BackerPoolBox> = { ...BACKER_POOL_FIXTURE, staked: 2n ** 64n };
+    expect(() => canonicalBoxBytes(over)).toThrow();
+    const overA: CandidateOf<BackerPoolBox> = { ...BACKER_POOL_FIXTURE, accrual: 2n ** 64n };
+    expect(() => canonicalBoxBytes(overA)).toThrow();
+  });
+
+  it('stake and unstake share trailing-field layout but the tag separates them', () => {
+    const atWeight40 = { ...BACKER_UNSTAKE_FIXTURE, weight: 40n };
+    const sBytes = hexOf(canonicalBoxBytes(BACKER_STAKE_FIXTURE));
+    const uBytes = hexOf(canonicalBoxBytes(atWeight40));
+    expect(sBytes.slice(2)).toBe(uBytes.slice(2));
+    expect(sBytes.slice(0, 2)).toBe('0f');
+    expect(uBytes.slice(0, 2)).toBe('10');
   });
 });
 
@@ -1521,6 +1576,12 @@ describe('boxRecordFromBytes', () => {
     karma_pool: [['karma_pool', { boxType: 'karma_pool' as const, value: BOX_VALUE_BOUND - 1n, createdAtBlock: FIXTURE_HEIGHT }]],
     karma_price: [['karma_price', { boxType: 'karma_price' as const, value: 5n, createdAtBlock: FIXTURE_HEIGHT }]],
     username: [['username', { boxType: 'username' as const, value: 0n, createdAtBlock: FIXTURE_HEIGHT, owner, name: new Uint8Array([0x41, 0x6c, 0x69, 0x63, 0x65, 0x5f, 0x39, 0x39]) }]],
+    backer_stake: [['backer_stake', { boxType: 'backer_stake' as const, value: 0n, createdAtBlock: FIXTURE_HEIGHT, owner, weight: 40n }]],
+    backer_unstake: [['backer_unstake', { boxType: 'backer_unstake' as const, value: 0n, createdAtBlock: FIXTURE_HEIGHT, owner, weight: 10n }]],
+    backer_pool: [
+      ['backer_pool (non-zero)', { boxType: 'backer_pool' as const, value: 1_470_000_000n, createdAtBlock: FIXTURE_HEIGHT, staked: 50n, accrual: 2_940_000_000n }],
+      ['backer_pool (all zero)', { boxType: 'backer_pool' as const, value: 0n, createdAtBlock: FIXTURE_HEIGHT, staked: 0n, accrual: 0n }],
+    ],
   } satisfies Record<BoxCandidate['boxType'], readonly (readonly [string, AnyBoxCandidate])[]>;
 
   const ALL_BOX_TYPE_PAIRS: [string, AnyBoxCandidate][] =
@@ -1669,6 +1730,7 @@ describe('computeMintTxId', () => {
       ALL_MINT_REASONS.filter((b) => b !== a && b.startsWith(a)).map((b) => `${a} ⊏ ${b}`),
     );
     expect(prefixPairs).toContain('genesis ⊏ genesis-committee');
+    expect(prefixPairs).toContain('genesis ⊏ genesis-backer');
 
     // What a text encoding does with that pair, demonstrated rather than
     // argued: `reason ‖ subject` as bare ASCII gives `genesis` over
@@ -1701,6 +1763,12 @@ describe('computeMintTxId', () => {
     const bogus = 'not-a-reason' as MintReason;
     expect(() => computeMintTxId(1, bogus, shortSubject)).not.toThrow();
     expect(computeMintTxId(1, bogus, shortSubject)).not.toBe(a);
+  });
+
+  it('genesis-committee and genesis-backer produce distinct txIds for the same owner at one height', () => {
+    const key = new Uint8Array(32).fill(0xaa);
+    expect(computeMintTxId(0, 'genesis-committee', key))
+      .not.toBe(computeMintTxId(0, 'genesis-backer', key));
   });
 
   it('the subject is length-prefixed, so its encoding need not be self-delimiting', () => {
@@ -2298,6 +2366,9 @@ describe('the box-type tables', () => {
     karma_pool: { boxType: 'karma_pool', value: 100n, createdAtBlock: FIXTURE_HEIGHT },
     karma_price: { boxType: 'karma_price', value: 5n, createdAtBlock: FIXTURE_HEIGHT },
     username: { boxType: 'username', value: 0n, createdAtBlock: FIXTURE_HEIGHT, owner, name: new Uint8Array([0x61]) },
+    backer_stake: { boxType: 'backer_stake', value: 0n, createdAtBlock: FIXTURE_HEIGHT, owner, weight: 40n },
+    backer_unstake: { boxType: 'backer_unstake', value: 0n, createdAtBlock: FIXTURE_HEIGHT, owner, weight: 10n },
+    backer_pool: { boxType: 'backer_pool', value: 100n, createdAtBlock: FIXTURE_HEIGHT, staked: 50n, accrual: 200n },
   };
 
   // The table IS the numbering the encoder writes rather than a restatement of
@@ -2338,6 +2409,7 @@ describe('the box-type tables', () => {
       karma: 0, credit: 1, genesis_proof: 3, bond: 4, vouch: 6,
       emission: 7, treasury: 8, fee: 9, karma_pool: 10,
       like_accrual: 11, vouch_escrow: 12, karma_price: 13, username: 14,
+      backer_stake: 15, backer_unstake: 16, backer_pool: 17,
     });
   });
 
