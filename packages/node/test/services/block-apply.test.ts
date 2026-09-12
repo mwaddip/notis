@@ -8,6 +8,7 @@ import {
 } from 'vitest';
 import {
   computeTxId,
+  computePostId,
   PROTOCOL_VERSION,
   LIKE_KARMA_COST,
   KARMA_STALE_THRESHOLD_BLOCKS,
@@ -16,6 +17,9 @@ import {
   ORDERING_BLOCK_POW_TARGET_FLOOR,
   MAX_BLOCK_BODY_BYTES,
   MAX_FUTURE_DRIFT_MS,
+  POST_PRICE_THREAD,
+  POST_PRICE_REPLY,
+  REPLY_AUTHOR_SHARE,
 } from '@dagsocial/types';
 import { verifyOrderingBlockPoW } from '@dagsocial/validation';
 import type {
@@ -320,11 +324,11 @@ describe('block-apply journal recording', () => {
     // Insert a standalone UTXO transaction in mempool. The like targets the
     // post this same block confirms — N2b's apply rules reject a like on an
     // unconfirmed target, and topology lands (§8b) before the tx loop (§11),
-    // so confirm-and-like-in-one-block is the valid shape. A self-like is
-    // legal (and uneconomical) by contract.
-    const karmaBox = makeKarmaBox(100n, author.userId, 0);
+    // so confirm-and-like-in-one-block is the valid shape.
+    const liker = makeTestIdentity();
+    const karmaBox = makeKarmaBox(100n, liker.userId, 0);
     utxo.insertBox(karmaBox);
-    const likeTx = makeLikeTx(author, karmaBox, postId, author.userId);
+    const likeTx = makeLikeTx(liker, karmaBox, postId, author.userId);
     mempool.insertUtxoTx(likeTx, 1000);
 
     bc.startBlockCreator(testConfig);
@@ -2862,7 +2866,7 @@ describe('T4: activity clock in the user-transaction loop', () => {
     expect(record!.lastActivityBlock).toBe(1);
   });
 
-  it('a like exact-spend (no karma output) advances lastActivityBlock', async () => {
+  it('a like does not advance lastActivityBlock', async () => {
     const db = await importDb();
     db.initDb(':memory:');
     db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
@@ -2894,8 +2898,7 @@ describe('T4: activity clock in the user-transaction loop', () => {
 
     const records = await import('../../src/store/identity-records.js');
     const record = records.getIdentityRecord(liker.userId);
-    expect(record).not.toBeNull();
-    expect(record!.lastActivityBlock).toBe(2);
+    expect(record?.lastActivityBlock ?? 0).toBe(0);
   });
 
   it('a settlement output to an owner does not advance their clock', async () => {
@@ -2932,6 +2935,310 @@ describe('T4: activity clock in the user-transaction loop', () => {
 
     const authorRecordAfter = records.getIdentityRecord(author.userId);
     expect(authorRecordAfter!.lastActivityBlock).toBe(authorActivityBefore);
+  });
+
+  // -----------------------------------------------------------------------
+  // NODE_INTERFACE → Populating the record: posting is activity, nothing else
+  // -----------------------------------------------------------------------
+
+  it('a reply advances lastActivityBlock', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+    const author = makeTestIdentity();
+    const replier = makeTestIdentity();
+
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'T4 reply target');
+    const posts = await importPosts();
+    posts.insertPost(postId, commit, content);
+    const mempool = await importMempoolFresh();
+    mempool.insertUtxoTx(postTx, 1000);
+
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    await mineNextBlock(bc);
+
+    const utxo = await importUtxo();
+    const replierKarma = makeKarmaBox(100n, replier.userId, 0, 51);
+    utxo.insertBox(replierKarma);
+
+    const replyCommit = makePostCommit(replier.userId, 'T4 reply', { parentRefs: [postId] });
+    const replyTx: UtxoTransaction = {
+      inputs: [replierKarma.id!],
+      outputs: [
+        { boxType: 'karma', value: 100n - POST_PRICE_REPLY, createdAtBlock: 0, owner: replier.userId } as never,
+        { boxType: 'karma_price', value: POST_PRICE_REPLY - REPLY_AUTHOR_SHARE, createdAtBlock: 0 } as never,
+        { boxType: 'like_accrual', value: REPLY_AUTHOR_SHARE, createdAtBlock: 0, author: author.userId } as never,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+      post: replyCommit,
+    };
+    signTransaction(replyTx, replier.privateKey, hex(replier.userId));
+    const replyPostId = computePostId(computeTxId(replyTx), 0);
+    posts.insertPost(replyPostId, replyCommit, 'T4 reply');
+    mempool.insertUtxoTx(replyTx, 1000);
+
+    const block2 = await mineNextBlock(bc);
+    expect(block2).not.toBeNull();
+
+    const records = await import('../../src/store/identity-records.js');
+    const record = records.getIdentityRecord(replier.userId);
+    expect(record).not.toBeNull();
+    expect(record!.lastActivityBlock).toBe(2);
+  });
+
+  it('a post paid from an exact balance (no karma output) advances lastActivityBlock', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+    const author = makeTestIdentity();
+    const utxo = await importUtxo();
+    const karmaBox = makeKarmaBox(POST_PRICE_THREAD, author.userId, 0, 52);
+    utxo.insertBox(karmaBox);
+
+    const commit = makePostCommit(author.userId, 'T4 exact post');
+    const postTx: UtxoTransaction = {
+      inputs: [karmaBox.id!],
+      outputs: [
+        { boxType: 'karma_price', value: POST_PRICE_THREAD, createdAtBlock: 0 } as never,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+      post: commit,
+    };
+    signTransaction(postTx, author.privateKey, hex(author.userId));
+    const postId = computePostId(computeTxId(postTx), 0);
+    const posts = await importPosts();
+    posts.insertPost(postId, commit, 'T4 exact post');
+    const mempool = await importMempoolFresh();
+    mempool.insertUtxoTx(postTx, 1000);
+
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const block = await mineNextBlock(bc);
+    expect(block).not.toBeNull();
+
+    const records = await import('../../src/store/identity-records.js');
+    const record = records.getIdentityRecord(author.userId);
+    expect(record).not.toBeNull();
+    expect(record!.lastActivityBlock).toBe(1);
+  });
+
+  it('an invite does not advance the inviter lastActivityBlock', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const blockApply = await importBlockApply();
+
+    const inviter = makeTestIdentity();
+    const invitee = makeTestIdentity();
+    const utxo = await importUtxo();
+    const records = await import('../../src/store/identity-records.js');
+
+    const karmaBox = makeKarmaBox(100n, inviter.userId, 0, 53);
+    utxo.insertBox(karmaBox);
+    records.putIdentityRecord(inviter.userId, {
+      lastActivityBlock: 0, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
+
+    const bondValue = 5n;
+    const inviteTxObj: UtxoTransaction = {
+      inputs: [karmaBox.id!],
+      outputs: [
+        { boxType: 'karma', value: 100n - bondValue, createdAtBlock: 0, owner: inviter.userId } as never,
+        { boxType: 'bond', value: bondValue, createdAtBlock: 0, inviterId: inviter.userId, inviteePublicKey: invitee.userId } as never,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(inviteTxObj, inviter.privateKey, hex(inviter.userId));
+
+    const block = await makeApplicableBlock({ utxoTxs: [inviteTxObj] });
+    expect(blockApply.applyOrderingBlock(block)).toBe(true);
+
+    const record = records.getIdentityRecord(inviter.userId);
+    expect(record?.lastActivityBlock ?? 0).toBe(0);
+  });
+
+  it('a vouch does not advance lastActivityBlock', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const blockApply = await importBlockApply();
+
+    const voucher = makeTestIdentity();
+    const target = makeTestIdentity();
+    const utxo = await importUtxo();
+    const records = await import('../../src/store/identity-records.js');
+
+    const karmaBox = makeKarmaBox(100n, voucher.userId, 0, 54);
+    utxo.insertBox(karmaBox);
+    records.putIdentityRecord(voucher.userId, {
+      lastActivityBlock: 0, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 1, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
+    records.putIdentityRecord(target.userId, {
+      lastActivityBlock: 0, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
+
+    const vouchTx: UtxoTransaction = {
+      inputs: [karmaBox.id!],
+      outputs: [
+        { boxType: 'karma', value: 100n - VOUCH_KARMA_AMOUNT, createdAtBlock: 0, owner: voucher.userId } as never,
+        { boxType: 'vouch', value: 1n, createdAtBlock: 0, voucherId: voucher.userId, targetId: target.userId } as never,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(vouchTx, voucher.privateKey, hex(voucher.userId));
+
+    const block = await makeApplicableBlock({ utxoTxs: [vouchTx] });
+    expect(blockApply.applyOrderingBlock(block)).toBe(true);
+
+    const record = records.getIdentityRecord(voucher.userId);
+    expect(record?.lastActivityBlock ?? 0).toBe(0);
+  });
+
+  it('a username claim does not advance lastActivityBlock', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const blockApply = await importBlockApply();
+
+    const claimer = makeTestIdentity();
+    const utxo = await importUtxo();
+    const records = await import('../../src/store/identity-records.js');
+
+    const karmaBox = makeKarmaBox(100n, claimer.userId, 0, 55);
+    utxo.insertBox(karmaBox);
+    records.putIdentityRecord(claimer.userId, {
+      lastActivityBlock: 0, lastDecayBlock: 0, invitedAtBlock: 0,
+      lifetimeLikesReceived: 0n, memberSinceBlock: 0, memberBar: 0,
+      memberVouches: 0, memberLikes: 0n, invitesUsed: 0,
+    });
+
+    const claimTx: UtxoTransaction = {
+      inputs: [karmaBox.id!],
+      outputs: [
+        { boxType: 'karma', value: 100n, createdAtBlock: 0, owner: claimer.userId } as never,
+        { boxType: 'username', value: 0n, createdAtBlock: 0, owner: claimer.userId, name: new TextEncoder().encode('testname') } as never,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(claimTx, claimer.privateKey, hex(claimer.userId));
+
+    const block = await makeApplicableBlock({ utxoTxs: [claimTx] });
+    expect(blockApply.applyOrderingBlock(block)).toBe(true);
+
+    const record = records.getIdentityRecord(claimer.userId);
+    expect(record?.lastActivityBlock ?? 0).toBe(0);
+  });
+
+  it('a withdrawal does not advance lastActivityBlock', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+    const author = makeTestIdentity();
+    const { commit, tx: postTx, postId, content } = await seedPostTx(author, 'T4 withdraw target');
+    const posts = await importPosts();
+    posts.insertPost(postId, commit, content);
+    const mempool = await importMempoolFresh();
+    mempool.insertUtxoTx(postTx, 1000);
+
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    await mineNextBlock(bc);
+
+    const records = await import('../../src/store/identity-records.js');
+    const afterPost = records.getIdentityRecord(author.userId);
+    const clockAfterPost = afterPost!.lastActivityBlock;
+
+    const utxo = await importUtxo();
+    const withdrawKarma = makeKarmaBox(100n, author.userId, 0, 56);
+    utxo.insertBox(withdrawKarma);
+    const withdrawTx: UtxoTransaction = {
+      inputs: [withdrawKarma.id!],
+      outputs: [{ boxType: 'karma', value: 100n, createdAtBlock: 0, owner: author.userId } as never],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+      postWithdraw: { postId },
+    };
+    signTransaction(withdrawTx, author.privateKey, hex(author.userId));
+    mempool.insertUtxoTx(withdrawTx, 1000);
+
+    await mineNextBlock(bc);
+
+    const afterWithdraw = records.getIdentityRecord(author.userId);
+    expect(afterWithdraw!.lastActivityBlock).toBe(clockAfterPost);
+  });
+
+  it('a bare consolidation does not advance lastActivityBlock', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const blockApply = await importBlockApply();
+
+    const owner = makeTestIdentity();
+    const utxo = await importUtxo();
+    const records = await import('../../src/store/identity-records.js');
+
+    const karmaBox = makeKarmaBox(100n, owner.userId, 0, 57);
+    utxo.insertBox(karmaBox);
+
+    const consolidationTx: UtxoTransaction = {
+      inputs: [karmaBox.id!],
+      outputs: [
+        { boxType: 'karma', value: 100n, createdAtBlock: 0, owner: owner.userId } as never,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(consolidationTx, owner.privateKey, hex(owner.userId));
+
+    const block = await makeApplicableBlock({ utxoTxs: [consolidationTx] });
+    expect(blockApply.applyOrderingBlock(block)).toBe(true);
+
+    const record = records.getIdentityRecord(owner.userId);
+    expect(record?.lastActivityBlock ?? 0).toBe(0);
+  });
+
+  it('a mined block carrying a consolidation applies — the producer actors count agrees', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+
+    const owner = makeTestIdentity();
+    const utxo = await importUtxo();
+    const karmaBox = makeKarmaBox(100n, owner.userId, 0, 58);
+    utxo.insertBox(karmaBox);
+
+    const consolidationTx: UtxoTransaction = {
+      inputs: [karmaBox.id!],
+      outputs: [
+        { boxType: 'karma', value: 100n, createdAtBlock: 0, owner: owner.userId } as never,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+    };
+    signTransaction(consolidationTx, owner.privateKey, hex(owner.userId));
+
+    const mempool = await importMempoolFresh();
+    mempool.insertUtxoTx(consolidationTx, 1000);
+
+    const bc = await importBlockCreator();
+    bc.startBlockCreator(testConfig);
+    const block = await mineNextBlock(bc);
+    expect(block).not.toBeNull();
   });
 
   // -----------------------------------------------------------------------
@@ -2990,6 +3297,64 @@ describe('T4: activity clock in the user-transaction loop', () => {
       utxoTxs: [replyResult.tx, threadResult.tx],
     });
     expect(blockApply.applyOrderingBlock(block)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A self-like is refused (NODE_INTERFACE → Karma transition rules)
+// ---------------------------------------------------------------------------
+
+describe('a self-like is refused at block application', () => {
+  beforeEach(() => { vi.doUnmock('../../src/config.js'); vi.restoreAllMocks(); vi.resetModules(); });
+  afterEach(() => { vi.restoreAllMocks(); vi.resetModules(); });
+
+  it('a block carrying a self-like is rejected', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const blockApply = await importBlockApply();
+    const utxo = await importUtxo();
+    const posts = await importPosts();
+
+    const author = makeTestIdentity();
+    const { commit, tx: postTx, postId, content, karmaBox: postKarma } = makePostTx(author, 'self-like target');
+    utxo.insertBox(postKarma);
+    posts.insertPost(postId, commit, content);
+
+    const block1 = await makeApplicableBlock({ utxoTxs: [postTx] });
+    expect(blockApply.applyOrderingBlock(block1)).toBe(true);
+
+    const selfKarma = makeKarmaBox(100n, author.userId, 0, 60);
+    utxo.insertBox(selfKarma);
+    const selfLikeTx = makeLikeTx(author, selfKarma, postId, author.userId);
+
+    const block2 = await makeApplicableBlock({ height: 2, utxoTxs: [selfLikeTx] });
+    expect(blockApply.applyOrderingBlock(block2)).toBe(false);
+  });
+
+  it('a like by another identity on the same post applies', async () => {
+    const db = await importDb();
+    db.initDb(':memory:');
+    db.getDb().prepare('INSERT OR REPLACE INTO network_record (id, member_count) VALUES (1, 1)').run();
+    const blockApply = await importBlockApply();
+    const utxo = await importUtxo();
+    const posts = await importPosts();
+
+    const author = makeTestIdentity();
+    const liker = makeTestIdentity();
+    const { commit, tx: postTx, postId, content, karmaBox: postKarma } = makePostTx(author, 'other-like target');
+    utxo.insertBox(postKarma);
+    posts.insertPost(postId, commit, content);
+
+    const block1 = await makeApplicableBlock({ utxoTxs: [postTx] });
+    expect(blockApply.applyOrderingBlock(block1)).toBe(true);
+
+    const likerKarma = makeKarmaBox(100n, liker.userId, 0, 61);
+    utxo.insertBox(likerKarma);
+    const otherLikeTx = makeLikeTx(liker, likerKarma, postId, author.userId);
+
+    const block2 = await makeApplicableBlock({ height: 2, utxoTxs: [otherLikeTx] });
+    expect(blockApply.applyOrderingBlock(block2)).toBe(true);
   });
 });
 

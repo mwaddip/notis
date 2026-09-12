@@ -264,7 +264,7 @@ an ordering block includes the transaction.
 
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
-| `POST` | `/likes` | `{ tx: UtxoTransaction }` — client-signed like tx (`likeTarget` set) | `{ status: "pending", txId, expiresAtHeight }` | 400 if `likeTarget` missing/malformed, post unknown or withdrawn, insufficient karma, already liked, or tx invalid |
+| `POST` | `/likes` | `{ tx: UtxoTransaction }` — client-signed like tx (`likeTarget` set) | `{ status: "pending", txId, expiresAtHeight }` | 400 if `likeTarget` missing/malformed, post unknown, withdrawn or one's own, insufficient karma, already liked, or tx invalid |
 
 **There is no `/likes/remove`** (unlike is not a feature), no free tier, and no refund
 schedule. One like per `(liker, post)`, forever, costing exactly `LIKE_KARMA_COST`.
@@ -278,7 +278,8 @@ schedule. One like per `(liker, post)`, forever, costing exactly `LIKE_KARMA_COS
 4. `validateTx` — the engine enforces the biconditional like shape **both ways** (§validateTx
    step 7): karma inputs one owner, at most one karma output same owner (omitted when the change
    would be zero), plus exactly one `LikeAccrualBox` output of exactly `LIKE_KARMA_COST` whose
-   `author` is the target's author — and the transaction **conserves**. There is no deficit.
+   `author` is the target's author and not the liker — and the transaction **conserves**. There is
+   no deficit.
 5. Insert into mempool: `insertUtxoTx(tx, expiresAtHeight)` (gate metadata
    `like_target`/`like_liker` from `likeTarget` + the signer)
 6. Return `{ status: "pending", txId, expiresAtHeight }`
@@ -910,8 +911,8 @@ Returns `{ valid, error?, computedOutputs?, txId? }`. On success, `computedOutpu
 contains boxes with pre-computed IDs (for use by `applyTx`), and `txId` is the
 deterministic transaction ID.
 
-**Used at pool entry** for ideal validation (though currently gated by signing
-mismatch — see Known Gaps in SESSION_CONTEXT.md).
+**One implementation, both gates:** admission runs it on every transaction it accepts, and
+block application runs it again on every embedded transaction before the block applies.
 
 ### Spend timing (`SPEND_TIMING`)
 
@@ -1560,8 +1561,8 @@ the treasury.
 
 | Consumed | Created | Condition |
 |----------|---------|-----------|
-| KarmaBox | KarmaBox | Same owner, balance change (earn/spend) |
-| KarmaBox | KarmaBox + LikeAccrualBox | **Like**: `likeTarget` present ⟺ exactly one `LikeAccrualBox` output of exactly `LIKE_KARMA_COST` whose `author` is the target's author from `block_topology` — **and the converse**, a `LikeAccrualBox` output ⟺ exactly one of `likeTarget` present or `post` present with a parent (the Reply row). At most one karma output, same owner as all inputs — omitted when the change would be zero; target live; `(liker, target)` not recorded. **Value conserved** |
+| KarmaBox | KarmaBox | **Consolidation**: same owner, value conserved — the one karma-side row that pays nothing, so it counts no actor toward the inclusion bonus (MINING_INTERFACE → Coinbase Application) and moves no activity clock (→ Populating the record) |
+| KarmaBox | KarmaBox + LikeAccrualBox | **Like**: `likeTarget` present ⟺ exactly one `LikeAccrualBox` output of exactly `LIKE_KARMA_COST` whose `author` is the target's author from `block_topology`, and that author is not the liker — the karma inputs' owner — **and the converse**, a `LikeAccrualBox` output ⟺ exactly one of `likeTarget` present or `post` present with a parent (the Reply row). At most one karma output, same owner as all inputs — omitted when the change would be zero; target live; `(liker, target)` not recorded. **Value conserved** |
 | KarmaBox | KarmaBox + KarmaPriceBox | **Thread**: `post` present with no `parentRefs` ⟺ exactly one `KarmaPriceBox` output of exactly `POST_PRICE_THREAD` and no `LikeAccrualBox`. At most one karma output, same owner as all inputs — omitted when the change would be zero; the signing key is the post's author. **Value conserved** — a post carries **no** deficit and **no** surplus |
 | KarmaBox | KarmaBox + KarmaPriceBox + LikeAccrualBox | **Reply**: `post` present with one parent ⟺ exactly one `KarmaPriceBox` output of exactly `POST_PRICE_REPLY − REPLY_AUTHOR_SHARE` **and** exactly one `LikeAccrualBox` output of exactly `REPLY_AUTHOR_SHARE` whose `author` is the parent's author from `block_topology`. The karma output as above; the signing key is the post's author. **Value conserved** |
 | KarmaBox | KarmaBox + BondBox | **Invite**: karma outputs same owner, value conserved; `inviteBondMin ≤ bond.value ≤ inviteBondMax` (per-network caps) and the settlement grants **exactly `bond.value`**; `bond.inviterId` = the karma input owner; `inviteePublicKey` holds **no `IdentityRecord`**, and **no other bond in this block names it**; `bond.inviterId` is a root, or a member with `⌊memberVouches / D(N)⌋ − invitesUsed ≥ 1` on its record at apply, `N` from pre-body state (→ Bond transition rules, → Membership pass) |
@@ -1848,6 +1849,10 @@ inside the network's reported supply.
   lock's `owner` bind to the karma **input's** owner, and the signature is that
   owner's. A withdrawal keeps its single karma output — its inputs are
   at least `1n`, so it is.
+- ⛔ **A like is another's act.** The like arm refuses a `likeTarget` whose `block_topology`
+  author is the karma inputs' owner — one check beside the marker's author check, so
+  admission and block application refuse a self-like at the same site and no like of one's
+  own post reaches `lifetimeLikesReceived` or `memberLikes` (ARCHITECTURE → Likes).
 
 > ## ⛔ THE LIKE ACCRUAL MARKER IS AN EXEMPTION FROM THE RULE ABOVE, AND IT MUST NOT BEHAVE LIKE ONE
 >
@@ -2103,8 +2108,8 @@ identity's first decay by one block, which is a behaviour change D10 forbids.
 Found by reading the code.
 
 **Staleness reads the record.** `lastActivityBlock` is the height of the owner's
-most recent karma-spending transaction (§Populating the record), so the predicate
-is "no spend within the threshold window".
+most recent post transaction — a thread or a reply (§Populating the record) — so the
+predicate is "no post within the threshold window".
 
 **`owedPeriods` changes, deliberately — one accepted exception to D10.** The old
 code measures from the **oldest** non-decay box (falling back to the youngest
@@ -2125,9 +2130,9 @@ taken deliberately pre-network rather than discovered later. Pinned by
 `test/fixtures/decay-divergence.json`.
 
 The record is populated at the producing paths: `lastActivityBlock` on the
-owner's own karma-spending activity — **received value (a like payout, a
-vesting return, a settlement re-emit) is not activity and must not reset the
-clock** — and `lastDecayBlock` when a squaring fires.
+owner's own post transaction — **no other spend is activity, and received value (a
+like payout, a vesting return, a settlement re-emit) is not either; nothing but a
+post resets the clock** — and `lastDecayBlock` when a squaring fires.
 
 ---
 
@@ -2524,11 +2529,11 @@ apply the body, because the settlement is *in* that body. So pre-body state is t
 producer and verifier can both read and agree on. **A derivation taken after the apply loop is a
 different function on the two sides.**
 
-⚠ **It fails on the ordinary case, not an exotic one.** Spending karma advances `lastActivityBlock`
-when the transaction applies, so an identity that is decay-eligible **before** the loop is fresh **after** it.
-A producer deriving post-body says "no decay" and a verifier deriving pre-body says "decay" — or the
-reverse — and **the block never validates.** The identity does not have to do anything unusual: it
-has to transact in the block that decays it.
+⚠ **It fails on the ordinary case, not an exotic one.** Posting advances `lastActivityBlock`
+when the post transaction applies, so an identity that is decay-eligible **before** the loop is fresh
+**after** it. A producer deriving post-body says "no decay" and a verifier deriving pre-body says
+"decay" — or the reverse — and **the block never validates.** The identity does not have to do
+anything unusual: it has to post in the block that decays it.
 
 ⚠ **The liveness cost is real, deterministic, and not a fork.** A block whose body spends a karma box
 the settlement's plan also names is **invalid** — the settlement lists an already-consumed input.
@@ -2866,7 +2871,8 @@ shape, validated by the engine):
 1. Re-checks at apply: target confirmed and **live** at this height (likes on withdrawn
    posts rejected by stated rule; a placeholder — body not held — **is** live, `isLivePost`
    decides); author resolved from **`block_topology`**, never
-   `dag_posts.author`; like-record `(liker, targetPostId)` absent — else the tx is
+   `dag_posts.author`, and not the liker — the karma inputs' owner (→ Karma transition
+   rules); like-record `(liker, targetPostId)` absent — else the tx is
    invalid and the block is rejected
 2. Writes the like-record via `insertLikeRecord` (journalled side-record)
 3. Applies the transaction's outputs like any other — the `LikeAccrualBox` marker among
@@ -3106,7 +3112,7 @@ creator-declared, so a backdated box would backdate its owner's clock, and the
 
 ```
 IdentityRecord {
-  lastActivityBlock: number     // u32 — starts at the claim height that creates the record; advanced when block application applies a user transaction spending the owner's karma
+  lastActivityBlock: number     // u32 — starts at the claim height that creates the record; advanced when block application applies the owner's post transaction, thread or reply
   lastDecayBlock: number        // u32 — bumped when decay fires
   invitedAtBlock: number        // u32 — height the invite grant applied; 0 = never invited
   lifetimeLikesReceived: bigint // likes this identity has ever received; never decremented
@@ -3268,15 +3274,18 @@ box keyspace, which is a distinct concern from how the bytes are typed.
 #### Populating the record
 
 - **`lastActivityBlock`** — advanced by **block application**, to the block's
-  height, when a user transaction whose inputs are karma boxes applies: the
-  inputs share one owner (→ Karma transition rules), and that owner's record is
-  written through `putIdentityRecord` after the transaction's box writes, so
-  reverse replay restores it before the boxes it followed. **Whether or not the
-  transaction leaves a karma output** — an exact spend is activity. The
-  settlement's consumption of karma boxes (the decay leg) and every settlement
-  output — grants, payouts, vests, returns, refunds, decay re-emits — leave it
-  untouched: they apply outside the user-transaction loop. Unvouch and credit
-  transactions spend no karma and advance nothing.
+  height, when a post transaction applies — a transaction carrying a `post`
+  commit, thread or reply: its karma inputs share one owner, the post's author
+  (→ Post transactions), and that owner's record is written through
+  `putIdentityRecord` after the transaction's box writes, so reverse replay
+  restores it before the boxes it followed. **Whether or not the transaction
+  leaves a karma output** — a post paid from an exact balance is activity. No
+  other user transaction advances it: a like, an invite, a vouch cast or unvouch,
+  a username claim or burn, a withdrawal, a bare consolidation and every credit
+  transaction leave it where it stands. The settlement's consumption of karma
+  boxes (the decay leg) and every settlement output — grants, payouts, vests,
+  returns, refunds, decay re-emits — leave it untouched: they apply outside the
+  user-transaction loop.
 - **`lastDecayBlock`** — bumped when decay fires for that owner.
 - **`invitedAtBlock`** — written only by block application when an invite grant
   applies (the settlement's grant leg); every other writer carries it through.

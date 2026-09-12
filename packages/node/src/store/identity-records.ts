@@ -20,8 +20,9 @@ import type { UserId } from '@dagsocial/types';
  * one; `decay.ts` carries the full argument.
  *
  * **Who populates this.** `recordKarmaActivity` bumps `lastActivityBlock`
- * from the open journal's height when block application applies a user
- * transaction whose inputs are karma boxes; `commitDecayClocks` bumps
+ * from the open journal's height when a post transaction applies — the
+ * transaction carries a `post` commit (NODE_INTERFACE → Populating the
+ * record); `commitDecayClocks` bumps
  * `lastDecayBlock` when decay fires; and `ensureSystemKarmaBox` writes
  * genesis's own record, since it runs outside block application where the
  * choke point has no height to read.
@@ -38,7 +39,7 @@ import type { UserId } from '@dagsocial/types';
  * two representations cannot drift.
  */
 export interface IdentityRecord {
-  /** u32 — bumped when a non-decay karma box is created for the owner. */
+  /** u32 — bumped when the owner's post transaction applies. */
   lastActivityBlock: number;
   /** u32 — bumped when decay fires. */
   lastDecayBlock: number;

@@ -45,9 +45,13 @@ function vouchBox(voucherId: Uint8Array, targetId: Uint8Array): VouchBox {
   } as VouchBox;
 }
 
-/** A transaction shell — only `outputs` and `signatures` matter to the count. */
-function tx(outputs: object[], signatures: Record<string, Uint8Array> = {}): UtxoTransaction {
-  return { inputs: [], outputs, signatures, protocolVersion: 1 } as unknown as UtxoTransaction;
+/** A transaction shell — outputs, signatures and payload fields matter to the count. */
+function tx(
+  outputs: object[],
+  signatures: Record<string, Uint8Array> = {},
+  payload: Record<string, unknown> = {},
+): UtxoTransaction {
+  return { inputs: [], outputs, signatures, protocolVersion: 1, ...payload } as unknown as UtxoTransaction;
 }
 
 function entry(t: UtxoTransaction, inputBoxes: AnyBox[]) {
@@ -181,27 +185,27 @@ describe('countKarmaActors', () => {
     const t = tx([karmaBox(9n, ALICE)], {
       [Buffer.from(MALLORY).toString('hex')]: new Uint8Array(64),
       [Buffer.from(BOB).toString('hex')]: new Uint8Array(64),
-    });
+    }, { post: {} });
     expect(countKarmaActors([entry(t, [karmaBox(10n, ALICE)])], VALIDATOR)).toBe(1);
   });
 
   // Generalises the author ≠ validator rule: a validator cannot raise their own
   // bonus by including their own work.
   it('does not count the validator as their own actor', () => {
-    const t = tx([karmaBox(9n, VALIDATOR)]);
+    const t = tx([karmaBox(9n, VALIDATOR)], {}, { post: {} });
     expect(countKarmaActors([entry(t, [karmaBox(10n, VALIDATOR)])], VALIDATOR)).toBe(0);
   });
 
   it('counts one actor once however many transactions they spend', () => {
-    const a = entry(tx([karmaBox(9n, ALICE)]), [karmaBox(10n, ALICE)]);
-    const b = entry(tx([karmaBox(8n, ALICE)]), [karmaBox(9n, ALICE)]);
-    const c = entry(tx([karmaBox(7n, ALICE)]), [karmaBox(8n, ALICE)]);
+    const a = entry(tx([karmaBox(9n, ALICE)], {}, { post: {} }), [karmaBox(10n, ALICE)]);
+    const b = entry(tx([karmaBox(8n, ALICE)], {}, { post: {} }), [karmaBox(9n, ALICE)]);
+    const c = entry(tx([karmaBox(7n, ALICE)], {}, { post: {} }), [karmaBox(8n, ALICE)]);
     expect(countKarmaActors([a, b, c], VALIDATOR)).toBe(1);
   });
 
   it('counts distinct owners separately', () => {
-    const a = entry(tx([karmaBox(9n, ALICE)]), [karmaBox(10n, ALICE)]);
-    const b = entry(tx([karmaBox(9n, BOB)]), [karmaBox(10n, BOB)]);
+    const a = entry(tx([karmaBox(9n, ALICE)], {}, { post: {} }), [karmaBox(10n, ALICE)]);
+    const b = entry(tx([karmaBox(9n, BOB)], {}, { post: {} }), [karmaBox(10n, BOB)]);
     expect(countKarmaActors([a, b], VALIDATOR)).toBe(2);
   });
 
@@ -234,6 +238,47 @@ describe('countKarmaActors', () => {
     // over distinct owners of the karma spent, and both spend Alice's.
     const post = entry(tx([karmaBox(9n, ALICE)]), [karmaBox(10n, ALICE)]);
     expect(countKarmaActors([invite, post], VALIDATOR)).toBe(1);
+  });
+
+  // MINING_INTERFACE → Coinbase Application: the KarmaBox → KarmaBox row
+  // conserves at zero cost and counts no actor.
+  it('counts no actor for a bare consolidation', () => {
+    const consolTx = tx([karmaBox(10n, ALICE)]);
+    expect(countKarmaActors([entry(consolTx, [karmaBox(10n, ALICE)])], VALIDATOR)).toBe(0);
+  });
+
+  it('a consolidation beside a post counts the owner once', () => {
+    const consolTx = tx([karmaBox(10n, ALICE)]);
+    const postTx = tx([karmaBox(9n, ALICE)]);
+    (postTx as unknown as Record<string, unknown>).post = {};
+    expect(
+      countKarmaActors(
+        [entry(consolTx, [karmaBox(10n, ALICE)]), entry(postTx, [karmaBox(10n, ALICE)])],
+        VALIDATOR,
+      ),
+    ).toBe(1);
+  });
+
+  it('a like from an exact balance counts', () => {
+    const likeTx = tx([
+      { boxType: 'like_accrual', value: 2n, author: BOB } as AnyBox,
+    ]);
+    (likeTx as unknown as Record<string, unknown>).likeTarget = 'aa'.repeat(32);
+    expect(countKarmaActors([entry(likeTx, [karmaBox(2n, ALICE)])], VALIDATOR)).toBe(1);
+  });
+
+  it('a withdrawal counts', () => {
+    const withTx = tx([karmaBox(10n, ALICE)]);
+    (withTx as unknown as Record<string, unknown>).postWithdraw = { postId: 'bb'.repeat(32) };
+    expect(countKarmaActors([entry(withTx, [karmaBox(10n, ALICE)])], VALIDATOR)).toBe(1);
+  });
+
+  it('a claim counts', () => {
+    const claimTx = tx([
+      karmaBox(10n, ALICE),
+      { boxType: 'username', value: 0n, owner: ALICE, name: new Uint8Array(4) } as AnyBox,
+    ]);
+    expect(countKarmaActors([entry(claimTx, [karmaBox(10n, ALICE)])], VALIDATOR)).toBe(1);
   });
 
   it('counts nothing for a transaction with no inputs resolved', () => {

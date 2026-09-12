@@ -34,7 +34,7 @@ const NEVER_ACTIVE: IdentityRecord = {
 };
 
 /**
- * Is this identity stale — no normal activity within the threshold window?
+ * Is this identity stale — no post within the threshold window?
  *
  *     stale = (height − lastActivityBlock) >= staleThresholdBlocks
  *

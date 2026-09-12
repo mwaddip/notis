@@ -393,4 +393,40 @@ describe('likes service (P2-D: the like is a burn transaction)', () => {
     expect(karmaBox).not.toBeNull();
     expect(karmaBox!.value).toBe(100n); // unchanged — pending
   });
+
+  // -----------------------------------------------------------------------
+  // 8. A self-like is refused at admission
+  // -----------------------------------------------------------------------
+  it('castLike rejects a like on the liker own post', () => {
+    const selfDeps: UtxoEngineDeps = {
+      ...deps,
+      getTopologyAuthor: () => likerPubKey,
+    };
+    const karma = createKarmaBox(likerPubKey, 100n, 1);
+    const postId = createTestPost(likerId);
+
+    const tx: UtxoTransaction = {
+      inputs: [karma.id!],
+      outputs: [
+        {
+          boxType: 'karma',
+          value: karma.value - LIKE_KARMA_COST,
+          createdAtBlock: 0,
+          owner: likerPubKey,
+        } as KarmaBox,
+        {
+          boxType: 'like_accrual',
+          value: LIKE_KARMA_COST,
+          createdAtBlock: 0,
+          author: likerPubKey,
+        } as LikeAccrualBox,
+      ],
+      signatures: {},
+      protocolVersion: PROTOCOL_VERSION,
+      likeTarget: postId,
+    };
+    signTransaction(tx, likerPrivKey, likerPubKeyHex);
+
+    expect(() => castLike(selfDeps, tx, 5)).toThrow(/one's own post/);
+  });
 });

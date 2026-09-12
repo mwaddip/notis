@@ -493,6 +493,14 @@ function checkTransitions(
               `but ${likeTarget}'s author is ${Buffer.from(author).toString('hex')}`,
           };
         }
+        // NODE_INTERFACE → Karma transition rules: the liker is not the author.
+        if (Buffer.from(author).toString('hex') ===
+            Buffer.from(inputKarma.owner).toString('hex')) {
+          return {
+            valid: false,
+            error: `A like of one's own post ${likeTarget} is refused`,
+          };
+        }
       } else if (post !== undefined) {
         // NODE_INTERFACE → Legal box transitions (Thread and Reply rows).
         if (!Buffer.from(post.author).equals(Buffer.from(inputKarma.owner))) {
