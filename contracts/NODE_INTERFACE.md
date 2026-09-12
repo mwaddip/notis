@@ -2241,10 +2241,11 @@ forms, so a mirror implementation derives the same ids:
 
 | `reason` | Subject | Encoding | Bytes | Site |
 |----------|---------|----------|-------|------|
-| `genesis` | which genesis box | `u32BE(k)`: `0` = faucet karma stake, `1` = faucet credits, `2` = genesis proof, `3` = emission, `4` = karma pool | 4 | genesis seeding — `ensureSystemKarmaBox` / `ensureFaucetCreditBox` / `ensureGenesisProofBox` / `ensureEmissionBox` / `ensureKarmaPoolBox`. Selectors `0` and `1` exist only where the profile names a faucet identity; `2`–`4` on every network |
+| `genesis` | which genesis box | `u32BE(k)`: `0` = faucet karma stake, `1` = faucet credits, `2` = genesis proof, `3` = emission, `4` = karma pool, `5` = backer pool | 4 | genesis seeding — `ensureSystemKarmaBox` / `ensureFaucetCreditBox` / `ensureGenesisProofBox` / `ensureEmissionBox` / `ensureKarmaPoolBox` / `ensureBackerPoolBox`. Selectors `0` and `1` exist only where the profile names a faucet identity; `2`–`4` on every network; `5` where the backer table is non-empty (`ARCHITECTURE → Genesis`) |
 | `genesis-committee` | the committee member | raw | 32 | genesis seeding — `seedGenesisCommittee`, one karma box per `genesisCommitteeKeys` entry, drawn out of the pool |
+| `genesis-backer` | the backer | raw | 32 | genesis seeding — one `BackerStakeBox` per `backerTable` row, the row's key as the subject (`TYPES_INTERFACE → BackerStakeBox`). A backer who is also a committee member holds two boxes under two reasons, so the two synthetic ids never meet |
 
-**Two reasons, and the set is closed by the one producer class.** A settlement output needs
+**Three reasons, and the set is closed by the one producer class.** A settlement output needs
 no reason — it has a transaction — so a new reason enters only with a new genesis box or a new
 conserving-in-place direct producer, of which there are none. Tags are `@dagsocial/types`' (`MINT_REASON`); this table
 deliberately does not repeat them. **Reasons retired before mainnet are deleted outright —
@@ -2252,8 +2253,9 @@ numbers and names both free, no reservation list** (user, 2026-08-19); a **live*
 renumbered (TYPES_INTERFACE → Primitives).
 
 **Why `(height, reason, subject)` cannot repeat, per row.** Genesis seeding runs once, on an empty store; each
-`genesis` selector names exactly one box, and a committee key appears at most once in
-`genesisCommitteeKeys`.
+`genesis` selector names exactly one box, a committee key appears at most once in
+`genesisCommitteeKeys`, and a backer key at most once in `backerTable` — the seeder refuses a duplicate before
+the root is compared.
 
 ⛔ **One `genesis` selector names ONE box.** N boxes under one `k` would derive one synthetic
 txId, one `computeBoxId` preimage, and the second insert violates `UNIQUE(tx_id, output_index)`
