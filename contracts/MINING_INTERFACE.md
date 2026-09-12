@@ -488,7 +488,9 @@ consumed by the settlement in the block that created it.
 
 `actors` is the count of **distinct owners of the karma boxes** spent by the block's
 karma-side transactions, excluding the block's own validator and counting no bare
-consolidation.
+consolidation. A credit-side transaction counts nobody: its fee is already in the income the
+bonus pool is a share of, so counting its actor as well would pay a miner twice for one
+transaction.
 
 ⛔ **Never derived from `tx.signatures`.** Producing a signature is free, so a
 signature-keyed count is inflated by appending keys that hold nothing. Every karma-side
