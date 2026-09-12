@@ -18,11 +18,12 @@ import {
   membershipBar,
   isValidUsernameBytes,
   canonicalUsernameBytes,
+  BACKER_UNSTAKE_MIN_PCT,
 } from '@dagsocial/types';
 import { isCreditSideTx } from './coinbase-split.js';
 import { effectiveKarma } from './decay.js';
 import type { DecayCfg } from './decay.js';
-import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, UsernameBox, PostCommit, PostWithdrawCommit, ProtocolEra } from '@dagsocial/types';
+import type { UtxoTransaction, AnyBox, AnyBoxCandidate, KarmaBox, CreditBox, BondBox, VouchBox, VouchEscrowBox, LikeAccrualBox, UsernameBox, BackerStakeBox, BackerUnstakeBox, PostCommit, PostWithdrawCommit, ProtocolEra } from '@dagsocial/types';
 
 // `computeTxId` has exactly one implementation and it is types'. This engine
 // must never grow a local copy: the id it returns is both the hash
@@ -68,6 +69,9 @@ const KARMA_TRANSITION_VERDICT: Record<AnyBox['boxType'], boolean> = {
   genesis_proof: false,
   karma_pool: false,
   vouch_escrow: false,
+  backer_stake: false,
+  backer_unstake: false,
+  backer_pool: false,
 };
 
 /**
@@ -1011,6 +1015,68 @@ function checkTransitions(
       return { valid: true };
     }
 
+    // ------------------------------------------------------------------
+    // BackerStakeBox → [BackerStakeBox] + BackerUnstakeBox — unstake
+    // NODE_INTERFACE → Backer transition rules
+    // ------------------------------------------------------------------
+    case 'backer_stake': {
+      if (inputs.length !== 1) {
+        return { valid: false, error: 'Unstake must consume exactly one BackerStakeBox' };
+      }
+      const stake = inputs[0] as BackerStakeBox;
+      const markerOutputs = outputs.filter(o => o.boxType === 'backer_unstake');
+      const successorOutputs = outputs.filter(o => o.boxType === 'backer_stake');
+      if (markerOutputs.length !== 1) {
+        return { valid: false, error: 'Unstake must produce exactly one backer_unstake marker' };
+      }
+      if (successorOutputs.length > 1) {
+        return { valid: false, error: 'Unstake may produce at most one backer_stake successor' };
+      }
+      if (outputs.length !== markerOutputs.length + successorOutputs.length) {
+        return { valid: false, error: 'Unstake outputs must be the marker and at most one successor' };
+      }
+      const marker = markerOutputs[0] as BackerUnstakeBox;
+      const successor = successorOutputs.length === 1
+        ? successorOutputs[0] as BackerStakeBox
+        : null;
+
+      if (marker.weight < 1n) {
+        return { valid: false, error: 'unstake marker weight must be at least 1' };
+      }
+      if (successor !== null && successor.weight < 1n) {
+        return { valid: false, error: 'stake successor weight must be at least 1' };
+      }
+
+      const expectedWeight = marker.weight + (successor?.weight ?? 0n);
+      if (expectedWeight !== stake.weight) {
+        return { valid: false, error: 'unstake weight not conserved' };
+      }
+
+      // NODE_INTERFACE → Backer transition rules: a partial unstake retires at
+      // least BACKER_UNSTAKE_MIN_PCT of the stake.
+      if (marker.weight * 100n < stake.weight * BigInt(BACKER_UNSTAKE_MIN_PCT)) {
+        return { valid: false, error: 'unstake below minimum' };
+      }
+
+      const stakeOwnerHex = Buffer.from(stake.owner).toString('hex');
+      if (Buffer.from(marker.owner).toString('hex') !== stakeOwnerHex) {
+        return { valid: false, error: 'unstake marker names another owner' };
+      }
+      if (successor !== null &&
+          Buffer.from(successor.owner).toString('hex') !== stakeOwnerHex) {
+        return { valid: false, error: 'stake successor names another owner' };
+      }
+
+      if (marker.value !== 0n) {
+        return { valid: false, error: 'backer_unstake value must be 0' };
+      }
+      if (successor !== null && successor.value !== 0n) {
+        return { valid: false, error: 'backer_stake successor value must be 0' };
+      }
+
+      return { valid: true };
+    }
+
     default:
       return { valid: false, error: `Unknown box type: ${inputType}` };
   }
@@ -1557,6 +1623,9 @@ const OUTPUT_SHAPE: Record<OutputBoxType, OutputShapeEntry> = (() => {
     treasury: shape('settlement', { boxType: null, value: 'u64', createdAtBlock: 'uint' }),
     karma_pool: shape('settlement', { boxType: null, value: 'u64', createdAtBlock: 'uint' }),
     username: shape('user', { boxType: null, value: 'u64', createdAtBlock: 'uint', owner: 'bytes32', name: 'bytes' }),
+    backer_stake: shape('user', { boxType: null, value: 'u64', createdAtBlock: 'uint', owner: 'bytes32', weight: 'u64' }),
+    backer_unstake: shape('user', { boxType: null, value: 'u64', createdAtBlock: 'uint', owner: 'bytes32', weight: 'u64' }),
+    backer_pool: shape('settlement', { boxType: null, value: 'u64', createdAtBlock: 'uint', staked: 'u64', accrual: 'u64' }),
   };
 })();
 
@@ -1820,6 +1889,9 @@ const SPEND_TIMING: Readonly<Record<AnyBox['boxType'], SpendTiming>> = {
   karma_pool: ALWAYS_SPENDABLE,
   like_accrual: ALWAYS_SPENDABLE,
   username: ALWAYS_SPENDABLE,
+  backer_stake: ALWAYS_SPENDABLE,
+  backer_unstake: ALWAYS_SPENDABLE,
+  backer_pool: ALWAYS_SPENDABLE,
 };
 
 /**
@@ -1993,6 +2065,12 @@ function authorizationTable(
   },
 
   username: OWNER_SIGNATURE,
+
+  // NODE_INTERFACE → Backer transition rules: the owner's key.
+  backer_stake: OWNER_SIGNATURE,
+  // Consumed only by the settlement (MINING_INTERFACE → The backer pool).
+  backer_unstake: BLOCK_APPLICATION_ONLY,
+  backer_pool: BLOCK_APPLICATION_ONLY,
   };
 }
 

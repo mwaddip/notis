@@ -22,6 +22,9 @@ import type {
   VouchEscrowBox,
   LikeAccrualBox,
   UsernameBox,
+  BackerStakeBox,
+  BackerUnstakeBox,
+  BackerPoolBox,
 } from '@dagsocial/types';
 
 // ---------------------------------------------------------------------------
@@ -317,6 +320,39 @@ export function rowToBox(row: UtxoRow): AnyBox {
         ...prov,
       };
 
+    case 'backer_stake':
+      return {
+        id: row.id,
+        boxType: 'backer_stake',
+        value: 0n as 0n,
+        createdAtBlock,
+        owner: new Uint8Array(row.owner!),
+        weight: BigInt(extra.weight as string),
+        ...prov,
+      };
+
+    case 'backer_unstake':
+      return {
+        id: row.id,
+        boxType: 'backer_unstake',
+        value: 0n as 0n,
+        createdAtBlock,
+        owner: new Uint8Array(row.owner!),
+        weight: BigInt(extra.weight as string),
+        ...prov,
+      };
+
+    case 'backer_pool':
+      return {
+        id: row.id,
+        boxType: 'backer_pool',
+        value: row.value,
+        createdAtBlock,
+        staked: BigInt(extra.staked as string),
+        accrual: BigInt(extra.accrual as string),
+        ...prov,
+      };
+
     default:
       throw new Error(`Unknown box_type: ${row.box_type}`);
   }
@@ -455,6 +491,42 @@ export function getKarmaPoolBox(): KarmaPoolBox | null {
     .safeIntegers()
     .get() as UtxoRow | undefined;
   return row ? (rowToBox(row) as KarmaPoolBox) : null;
+}
+
+/**
+ * Return the unspent backer pool box, or null on a network whose table is
+ * empty (NODE_INTERFACE → The settlement transaction).
+ *
+ * `ORDER BY id` for the same reason its siblings carry: `LIMIT 1` alone names
+ * no row.
+ */
+export function getBackerPoolBox(): BackerPoolBox | null {
+  const row = getDb()
+    .prepare(
+      `SELECT * FROM utxo_boxes
+       WHERE box_type = 'backer_pool' AND spent_at_block IS NULL
+       ORDER BY id
+       LIMIT 1`,
+    )
+    .safeIntegers()
+    .get() as UtxoRow | undefined;
+  return row ? (rowToBox(row) as BackerPoolBox) : null;
+}
+
+/**
+ * Return the live stake box for the given owner, or null if none.
+ */
+export function getBackerStakeBox(owner: Uint8Array): BackerStakeBox | null {
+  const row = getDb()
+    .prepare(
+      `SELECT * FROM utxo_boxes
+       WHERE box_type = 'backer_stake' AND owner = ? AND spent_at_block IS NULL
+       ORDER BY id
+       LIMIT 1`,
+    )
+    .safeIntegers()
+    .get(Buffer.from(owner)) as UtxoRow | undefined;
+  return row ? (rowToBox(row) as BackerStakeBox) : null;
 }
 
 /**
@@ -1106,6 +1178,23 @@ export function insertBox(box: AnyBox): void {
       const u = box as UsernameBox;
       extraData = { name: Buffer.from(u.name).toString('hex') };
       owner = Buffer.from(u.owner);
+      break;
+    }
+    case 'backer_stake': {
+      const b = box as BackerStakeBox;
+      extraData = { weight: b.weight.toString() };
+      owner = Buffer.from(b.owner);
+      break;
+    }
+    case 'backer_unstake': {
+      const b = box as BackerUnstakeBox;
+      extraData = { weight: b.weight.toString() };
+      owner = Buffer.from(b.owner);
+      break;
+    }
+    case 'backer_pool': {
+      const b = box as BackerPoolBox;
+      extraData = { staked: b.staked.toString(), accrual: b.accrual.toString() };
       break;
     }
     default: {

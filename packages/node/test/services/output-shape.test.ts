@@ -145,6 +145,22 @@ function honestCandidate(
         owner,
         name: new Uint8Array([65]),
       };
+    case 'backer_stake':
+      return {
+        boxType: 'backer_stake',
+        value: 0n,
+        createdAtBlock: 0,
+        owner,
+        weight: 50n,
+      };
+    case 'backer_unstake':
+      return {
+        boxType: 'backer_unstake',
+        value: 0n,
+        createdAtBlock: 0,
+        owner,
+        weight: 30n,
+      };
     default:
       throw new Error(`no honest candidate for ${boxType}`);
   }
@@ -163,7 +179,7 @@ function honestCandidate(
  */
 type OutputBoxType = Exclude<
   AnyBox['boxType'],
-  'genesis_proof' | 'emission' | 'treasury' | 'karma_pool'
+  'genesis_proof' | 'emission' | 'treasury' | 'karma_pool' | 'backer_pool'
 >;
 
 /**
@@ -185,6 +201,8 @@ const CREATABLE: Record<OutputBoxType, true> = {
   like_accrual: true,
   vouch_escrow: true,
   username: true,
+  backer_stake: true,
+  backer_unstake: true,
 };
 
 const BOX_TYPES = Object.keys(CREATABLE) as readonly OutputBoxType[];
@@ -255,6 +273,8 @@ describe('checkOutputShape (direct)', () => {
       like_accrual: 'author',
       vouch_escrow: 'releaseAtBlock',
       username: 'owner',
+      backer_stake: 'weight',
+      backer_unstake: 'weight',
     };
     for (const t of BOX_TYPES) {
       const c = honestCandidate(t, owner);

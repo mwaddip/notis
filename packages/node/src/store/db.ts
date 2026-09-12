@@ -47,7 +47,7 @@ const MIGRATIONS = [
   //
   `CREATE TABLE IF NOT EXISTS utxo_boxes (
     id TEXT PRIMARY KEY,
-    box_type TEXT NOT NULL,           -- in enum8 tag order: 'karma' | 'credit' | 'genesis_proof' | 'bond' | 'vouch' | 'emission' | 'treasury' | 'fee' | 'karma_pool' | 'like_accrual' | 'vouch_escrow' | 'karma_price'
+    box_type TEXT NOT NULL,           -- in enum8 tag order: 'karma' | 'credit' | 'genesis_proof' | 'bond' | 'vouch' | 'emission' | 'treasury' | 'fee' | 'karma_pool' | 'like_accrual' | 'vouch_escrow' | 'karma_price' | 'username' | 'backer_stake' | 'backer_unstake' | 'backer_pool'
     value INTEGER NOT NULL,
     created_at_block INTEGER NOT NULL,
     spent_at_block INTEGER,           -- NULL = unspent

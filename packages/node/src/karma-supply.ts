@@ -43,6 +43,9 @@ const KARMA_SUPPLY_VERDICT: Record<AnyBox['boxType'], boolean> = {
   karma_pool: false,
   karma_price: false,
   username: false,
+  backer_stake: false,
+  backer_unstake: false,
+  backer_pool: false,
 };
 
 /**

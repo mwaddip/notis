@@ -7,6 +7,7 @@ import {
   GENESIS_FAUCET_CREDITS,
   genesisContext,
   genesisCommitteeContext,
+  genesisBackerContext,
   mintTxIdFor,
 } from '../../src/mint-provenance.js';
 import type { MintContext } from '../../src/mint-provenance.js';
@@ -20,6 +21,7 @@ const HEIGHT = 4242;
 const ALL_CONTEXTS = {
   genesis: { ctx: genesisContext(GENESIS_SYSTEM_KARMA), bytes: 4 },
   'genesis-committee': { ctx: genesisCommitteeContext(OWNER), bytes: 32 },
+  'genesis-backer': { ctx: genesisBackerContext(OWNER), bytes: 32 },
 } satisfies Record<MintReason, { ctx: MintContext; bytes: number }>;
 
 function allContexts(): Array<{ ctx: MintContext; bytes: number }> {
