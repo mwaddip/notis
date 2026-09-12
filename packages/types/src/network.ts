@@ -245,14 +245,12 @@ const MAINNET_PROFILE: NetworkProfile = Object.freeze({
   // launched, not a format change. hex("dagsocial/mainnet/genesis-proof/mock")
   genesisProofPayload: '646167736f6369616c2f6d61696e6e65742f67656e657369732d70726f6f662f6d6f636b',
   // Over FOUR leaves — the proof box, the emission box, the karma pool box and
-  // the network record. The faucet's karma and credit boxes are the ones this
-  // profile does not seed, because it names no `faucetPublicKey`; the emission
-  // and pool boxes are seeded everywhere on purpose, because every block's
-  // coinbase is released from the one and every karma mint draws from the other
-  // (TYPES_INTERFACE → EmissionBox, KarmaPoolBox). The other two networks seed
-  // SEVEN leaves — those three boxes, these four, and the faucet identity's
-  // record — which is why this root's trailing height byte (`03`) differs from
-  // theirs (`04`).
+  // the network record. The faucet's karma and credit boxes are absent because
+  // this profile names no `faucetPublicKey`; the backer pool box and per-row
+  // stake boxes are absent because its `backerTable` is empty. The other two
+  // networks seed these four, the faucet identity's boxes and record, a backer
+  // stake box per `backerTable` row and the backer pool box — which is why this
+  // root's trailing height byte (`03`) differs from theirs (`04`).
   genesisStateRoot: 'e2a156c44ddb8cc40587b28fc3ce7a8c01c2657f94e5752a063d9b13912b322703',
   genesisId: '',
 
@@ -298,10 +296,11 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   // — the one field whose whole job is to keep them apart.
   // hex("dagsocial/testnet/genesis-proof/mock")
   genesisProofPayload: '646167736f6369616c2f746573746e65742f67656e657369732d70726f6f662f6d6f636b',
-  // Overridden for the same reason as the payload above, and it is the same
-  // single failure: the spread would hand testnet mainnet's root, and a root is
-  // exactly what a node checks its own seeded state against.
-  genesisStateRoot: 'd5be2f66c8d10f0408f726b982a1c1282b9577587aefc1cab6808f0a218bf45403',
+  // Overridden for the same reason as the payload above — the spread would hand
+  // testnet mainnet's root. Four things separate this root from mainnet's: the
+  // proof payload, the faucet identity's boxes and record, a backer stake box
+  // per `backerTable` row, and the backer pool box.
+  genesisStateRoot: 'e889005d151873c962856f0475059405746e12a067db573e495bf88c864d3efd04',
   // Testnet's block 1, mined 2026-09-06 on the chain that began at that day's
   // reset (TYPES_INTERFACE → "genesisId pins block 1, and is empty until a
   // network has one"). Mainnet's and devnet's stay ''.
@@ -384,13 +383,13 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   genesisKarmaPerMember: GENESIS_KARMA_PER_MEMBER,
   // hex("dagsocial/devnet/genesis-proof/mock") — mock, see mainnet above
   genesisProofPayload: '646167736f6369616c2f6465766e65742f67656e657369732d70726f6f662f6d6f636b',
-  // Three things separate this root from testnet's, not one: the proof box's
-  // payload, the emission box's value — carried as `creditEmissionTotal`, so
-  // smaller here than on the two networks that share mainnet's total — and
-  // the faucet identity, since the two profiles name DIFFERENT
-  // `faucetPublicKey`s and therefore seed differently-owned karma and credit
-  // boxes.
-  genesisStateRoot: '438480fde1b5ca026f9d2498fe0a0049c9b5e89e003e6ebcb7807da12d2c1dc304',
+  // Four things separate this root from testnet's: the proof payload, the
+  // emission box's value — carried as `creditEmissionTotal`, smaller here than
+  // on the two networks that share mainnet's total — the faucet identity, since
+  // the two profiles name DIFFERENT `faucetPublicKey`s and therefore seed
+  // differently-owned boxes, and the backer table — two rows here, one on
+  // testnet — which seeds a different stake set.
+  genesisStateRoot: '62446ad8644593989ce0ce1858eb3aac32666081edd55d7204c110fe3932cfc204',
   genesisId: '',
 
   backerSupply: DEVNET_BACKERS.supply,

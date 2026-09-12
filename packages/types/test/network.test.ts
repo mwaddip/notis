@@ -19,6 +19,7 @@ import {
   ORDERING_BLOCK_POW_TARGET_FLOOR,
 } from '../src/index.js';
 import type { NetworkType, NetworkProfile, ProtocolEra } from '../src/index.js';
+import { createHash, createPrivateKey, createPublicKey } from 'crypto';
 
 // The full contract field set — TYPES_INTERFACE → Network profiles. Guards both
 // directions: a missing field and an added one (per-network creep is how a devnet
@@ -758,14 +759,13 @@ describe('backer tables', () => {
   });
 
   it('devnet keys are re-derivable from the published seeds', () => {
-    const crypto = require('crypto');
     const DER_PREFIX = Buffer.from('302e020100300506032b657004220420', 'hex');
 
     function derivePublicKey(seedString: string): string {
-      const seed = crypto.createHash('blake2b512').update(seedString).digest().subarray(0, 32);
+      const seed = createHash('blake2b512').update(seedString).digest().subarray(0, 32);
       const der = Buffer.concat([DER_PREFIX, seed]);
-      const keyObj = crypto.createPrivateKey({ key: der, format: 'der', type: 'pkcs8' });
-      const spki = crypto.createPublicKey(keyObj).export({ type: 'spki', format: 'der' });
+      const keyObj = createPrivateKey({ key: der, format: 'der', type: 'pkcs8' });
+      const spki = createPublicKey(keyObj).export({ type: 'spki', format: 'der' });
       return Buffer.from(spki.subarray(spki.length - 32)).toString('hex');
     }
 
