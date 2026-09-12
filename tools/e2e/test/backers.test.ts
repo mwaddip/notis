@@ -100,18 +100,15 @@ describe('backers', () => {
     expect(unstake1Res.status).toBe('pending');
     expect(unstake1Res.txId).toBeTruthy();
 
-    // A second unstake of the same stake box while the first is pending.
-    // FINDING: the contract (NODE_INTERFACE → Backers) says 409 pending-spend
-    // conflict, but validateTx sees the box as absent via getBoxWithPending
-    // (which returns null for a pending-spent box) and answers 400 before
-    // admitTx's 409 path runs. Reported to main.
+    // NODE_INTERFACE → Backers: 409 on pending-spend conflict
     const unstake1Dup = buildUnstakeTx(DEVNET_BACKER_A, stakeA.boxId, 20n, 5n, 1, version);
     try {
       await postUnstake(miner, unstake1Dup.json);
       expect.unreachable('should have thrown');
     } catch (err) {
       expect(err).toBeInstanceOf(NodeError);
-      expect((err as NodeError).status).toBe(400);
+      expect((err as NodeError).status).toBe(409);
+      expect((err as NodeError).message).toContain('already spent by a pending transaction');
     }
 
     // The template is rebuilt on tip movement, not on mempool changes, so the
