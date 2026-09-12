@@ -606,9 +606,6 @@ no fees), `c = 35`; `node/test/services/backer-leg.test.ts` pins every cell:
 Block 2 pays the stayer `30/40` of the slice instead of `30/50`; block 3's slice is the stayer's raw 30 %
 and the other 5 % of base stays with the miner. `V` equals the sum of live accruals on every row.
 
-> ⚠ **AHEAD OF CODE — 2026-09-12, the backer pool unit.** `backerLeg`, the fifth argument, the leg in
-> `derive()`, the byte reservation and the vectors follow on the branch.
-
 ### On block receipt (relay node):
 1. Verify PoW
 2. Verify the coinbase is **exactly one credit output when the miner's slice is positive, and none when it is zero**, its `value` equal to the **miner's slice** the slice table yields for this height, fee sum and actor count — `income` less the treasury share, the unearned bonus and the backer draw; the first accrues to the `TreasuryBox`, the second is never minted and the third accrues to the `BackerPoolBox`, so none is a coinbase output — and its `createdAtBlock` equal to the block `height`. More than one coinbase output, or a `createdAtBlock` other than `height`, rejects the block: the count and the stamp are constrained, not producer-chosen

@@ -1449,9 +1449,6 @@ weights positive, their sum at most `backerSupply` — so a bad table is refused
 mismatch (NODE_INTERFACE → The genesis state root is checked fail-stop). A network whose table is empty seeds
 none of them and runs no backer leg.
 
-> ⚠ **AHEAD OF CODE — 2026-09-12, the backer pool unit.** The seeding and the table validation follow on the
-> branch; the objects are `TYPES_INTERFACE → BackerStakeBox` and → BackerPoolBox.
-
 **A committee credit grant and a committee dissolution period are not part of the design as it
 stands.** Their parameters — `GENESIS_CREDITS_PER_MEMBER` / `genesisCreditsPerMember` and
 `BOOTSTRAP_PERIOD_BLOCKS` / `bootstrapPeriodBlocks` — were removed 2026-08-21 (user ruling): no
@@ -2305,11 +2302,6 @@ and the rest returns to the miner — the dilution offset, as one formula.
 commitment of "at most two years", anchored at the network's genesis and measured in its
 `creditFixedRateBlocks`. Nothing releases on its own at the end: a full unstake then costs nothing, and stakes
 drain at their owners' pace.
-
-> ⚠ **AHEAD OF CODE — 2026-09-12, the backer pool unit.** The objects are `TYPES_INTERFACE → BackerStakeBox`,
-> → BackerUnstakeBox and → BackerPoolBox; the arithmetic `MINING_INTERFACE → The backer pool`; the transaction
-> and the settlement leg `NODE_INTERFACE → Backer transition rules` and → The settlement transaction. The
-> Solana contract and the tool that fills the table are outside this repository's protocol.
 
 ---
 

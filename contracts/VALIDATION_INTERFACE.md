@@ -920,8 +920,6 @@ A `backer_stake` or `backer_unstake` box (`TYPES_INTERFACE → BackerStakeBox`, 
 `@dagsocial/node`'s (`NODE_INTERFACE` → Backer transition rules); this package holds no state and cannot
 judge them.
 
-> ⚠ **AHEAD OF CODE — 2026-09-12, the backer pool unit.** The check follows on the branch.
-
 **The length is refused twice, and the two are not redundant.** The codec's `lp` reader stops at
 `USERNAME_MAX_BYTES` before it reads a byte of content (`TYPES_INTERFACE` → Layout — Boxes), so an
 over-long name in wire bytes never becomes a candidate; this check is the one an already-built

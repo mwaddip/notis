@@ -523,13 +523,11 @@ every other route's.
 | Method | Path | Request | Response | Errors |
 |--------|------|---------|----------|--------|
 | `GET` | `/backers` | — | `{ supply, staked, accrual, unreleased, accrualEndsAtBlock }` — the profile's `backerSupply`, the pool box's `staked`, `accrual` and `value` as decimal strings, and `creditFixedRateBlocks` as a plain number | 404 `no backer pool` on a network whose table is empty |
-| `GET` | `/backers/:userId` | `:userId` a key or an `@handle` (→ Identity parameters) | `{ owner, boxId, weight, accrued }` — the identity's live stake; `accrued = ⌊weight × accrual / supply⌋` against the current pool box, a decimal string | 400 malformed; 404 `unknown handle`; 404 `no stake` |
+| `GET` | `/backers/:userId` | `:userId` a key or an `@handle` (→ Identity parameters) | `{ owner, boxId, weight, accrued }` — the identity's live stake; `accrued = ⌊weight × accrual / supply⌋` against the current pool box, a decimal string | 404 `no backer pool` on a network whose table is empty, ahead of the parameter; else 400 malformed; 404 `unknown handle`; 404 `no stake` |
 | `POST` | `/backers/unstake` | `{ tx: UtxoTransaction }` — one stake in, the marker and at most one successor out | `{ status: "pending", txId, expiresAtHeight }` (200) | 400 with the refusal named — `unstake weight not conserved`, `unstake below minimum`, `unstake marker names another owner`, `stake successor names another owner`, or `validateTx`'s reason; 409 pending-spend conflict; 503 pool full |
 
 `/status` carries nothing of the pool; a client reads `/backers`. The refusals mirror the arm's rules for a
 legible 400, as the username routes mirror theirs.
-
-> ⚠ **AHEAD OF CODE — 2026-09-12, the backer pool unit.** The three routes follow on the branch.
 
 #### Identity parameters
 
@@ -2069,9 +2067,6 @@ transaction; the unstake is its one transition and the marker (→ BackerUnstake
   state root is checked fail-stop), the settlement the only spender of the marker and the pool.
 - **A second unstake of one stake box is the pending-spend conflict** every transaction meets at admission
   (409); a partial unstake's successor is spendable the block after it lands, like any output.
-
-> ⚠ **AHEAD OF CODE — 2026-09-12, the backer pool unit.** The arm, the three rows in `OUTPUT_SHAPE`,
-> `SPEND_TIMING` and `AUTHORIZATION`, the verdict tables' rows and the store's reads follow on the branch.
 
 ### Membership pass
 

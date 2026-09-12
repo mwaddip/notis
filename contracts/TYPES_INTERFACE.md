@@ -1105,9 +1105,6 @@ takes part in no sum — and `value` is the structural zero the value-domain rul
 stake's accrued credits are not a field: they are `⌊weight × pool.accrual / backerSupply⌋` against the live
 `BackerPoolBox`, and an unstake releases the retired weight's share of them.
 
-> ⚠ **AHEAD OF CODE — 2026-09-12, the backer pool unit.** Tag 15; the codec arm, the reader, the golden
-> vectors and every union-keyed table follow on the branch.
-
 ### BackerUnstakeBox
 
 ```
@@ -2719,9 +2716,6 @@ until the snapshot (`supply 0n`, no rows); testnet's names the faucet identity a
 published test identities at `20n` and `30n` of `100n`, so the cap binds at genesis and stops binding once the
 first unstakes whole (`CONSTANTS → Per-network values`). The accrual window is `creditFixedRateBlocks`, already
 a field.
-
-> ⚠ **AHEAD OF CODE — 2026-09-12, the backer pool unit.** The two fields, the row type and the three modules
-> follow on the branch.
 
 **The difficulty band is per network; the schedule is not.** `orderingBlockPowTargetBits` is the
 anchor — block 1's target and the yardstick every superblock level is measured against (→ Interlink
