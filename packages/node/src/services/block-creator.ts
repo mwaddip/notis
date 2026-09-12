@@ -905,8 +905,8 @@ export function decayConfig(): {
 export function settlementDepsWith(
   plans: () => DecayPlan[],
   escrows: VouchEscrowBox[],
-  lapsedVouches: VouchBox[] = [],
-  capturedBackerPoolBox: (() => import('@dagsocial/types').BackerPoolBox | null) | null = null,
+  lapsedVouches: VouchBox[],
+  capturedBackerPoolBox: () => import('@dagsocial/types').BackerPoolBox | null,
 ): SettlementDeps {
   return {
     getEmissionBox,
@@ -924,7 +924,7 @@ export function settlementDepsWith(
       getIdentityRecord(invitee)?.lifetimeLikesReceived ?? 0n,
     getDecayPlans: plans,
     vouchCooldownBlocks: nodeConfig.vouchCooldownBlocks,
-    getBackerPoolBox: capturedBackerPoolBox ?? (() => null),
+    getBackerPoolBox: capturedBackerPoolBox,
     backerSupply: nodeConfig.profile.backerSupply,
     creditFixedRateBlocks: nodeConfig.creditFixedRateBlocks,
   };

@@ -1,7 +1,22 @@
 // MINING_INTERFACE → The backer pool — the arithmetic, the worked vectors, and
 // the invariant V ≥ Σ accrued(stake).
 import { describe, it, expect } from 'vitest';
-import { backerLeg } from '../../src/services/coinbase-split.js';
+import { backerLeg, splitCoinbase } from '../../src/services/coinbase-split.js';
+import {
+  buildSettlement,
+  checkSettlement,
+} from '../../src/services/settlement.js';
+import type { SettlementDeps, SettlementBody } from '../../src/services/settlement.js';
+import type {
+  AnyBox,
+  AnyBoxCandidate,
+  BackerPoolBox,
+  EmissionBox,
+  KarmaPoolBox,
+  CreditBox,
+  UtxoTransaction,
+} from '@dagsocial/types';
+import { makeTestIdentity, seedProvenance } from '../helpers.js';
 
 // Devnet's numbers: S = 100, stakes 20 and 30, base = 4_200_000_000 (42 credits, no fees), c = 35.
 const S = 100n;
@@ -99,13 +114,6 @@ describe('backer leg — edge cases', () => {
     expect(leg.releases[0]).toBe(0n);
   });
 
-  it('unstake weight > staked is the caller\'s refusal, not the leg\'s', () => {
-    // backerLeg is pure arithmetic — staked goes negative. The caller
-    // (derive()) refuses the block before calling.
-    const leg = backerLeg(BASE, S, 10n, 1000n, [{ weight: 20n }], true);
-    expect(leg.staked).toBe(-10n);
-  });
-
   it('outside window with unstakes still computes releases', () => {
     const leg = backerLeg(BASE, S, 50n, 2_000_000_000n, [{ weight: 10n }], false);
     expect(leg.releases).toEqual([200_000_000n]);
@@ -175,3 +183,198 @@ function mulberry32(seed: number): () => number {
     return ((v ^ (v >>> 14)) >>> 0) / 4294967296;
   };
 }
+
+// ---------------------------------------------------------------------------
+// Settlement-level tests — derive() through buildSettlement / checkSettlement
+// ---------------------------------------------------------------------------
+
+const ONE_ERA = [{ version: 1, fromHeight: 0 }] as const;
+const DELAY = 5;
+const WINDOW = 1_000_000;
+
+const miner = makeTestIdentity();
+const backerOwner2 = makeTestIdentity();
+
+let sn = 1000;
+function makePoolBox(v: bigint, t: bigint, a: bigint): BackerPoolBox {
+  return seedProvenance<BackerPoolBox>(
+    { boxType: 'backer_pool', value: v, staked: t, accrual: a, createdAtBlock: 0 },
+    1, sn++,
+  );
+}
+
+function makeDeps(opts: {
+  emission: bigint;
+  poolBox: BackerPoolBox | null;
+  supply: bigint;
+  window?: number;
+}): SettlementDeps {
+  const emBox = seedProvenance<EmissionBox>(
+    { boxType: 'emission', value: opts.emission, createdAtBlock: 0 }, 1, sn++,
+  );
+  const kpBox = seedProvenance<KarmaPoolBox>(
+    { boxType: 'karma_pool', value: 1000n, createdAtBlock: 0 }, 1, sn++,
+  );
+  const boxes = new Map<string, AnyBox>();
+  boxes.set(emBox.id!, emBox as AnyBox);
+  boxes.set(kpBox.id!, kpBox as AnyBox);
+  if (opts.poolBox) boxes.set(opts.poolBox.id!, opts.poolBox as AnyBox);
+  return {
+    getEmissionBox: () => emBox as EmissionBox,
+    getTreasuryBox: () => null,
+    getKarmaPoolBox: () => kpBox as KarmaPoolBox,
+    getBox: (id) => boxes.get(id) ?? null,
+    getLikeCarryBox: () => null,
+    getBondsSettlingAt: () => [],
+    getEscrowsReleasableAt: () => [],
+    getLapsedVouches: () => [],
+    getLifetimeLikes: () => 0n,
+    getDecayPlans: () => [],
+    vouchCooldownBlocks: 2,
+    getBackerPoolBox: () => opts.poolBox,
+    backerSupply: opts.supply,
+    creditFixedRateBlocks: opts.window ?? WINDOW,
+  };
+}
+
+function emptyBodyWith(unstakes: SettlementBody['unstakes'] = []): SettlementBody {
+  return { fees: 0n, rent: 0n, actors: 0, feeBoxIds: [], invites: [], markers: [], priceBoxes: [], unstakes };
+}
+
+describe('backer leg — settlement-level (derive through buildSettlement/checkSettlement)', () => {
+  it('successor fields match the vector table at block 1', () => {
+    const pool = makePoolBox(0n, 50n, 0n);
+    const deps = makeDeps({ emission: BASE, poolBox: pool, supply: S });
+    const result = buildSettlement(deps, 1, ONE_ERA, BASE, DELAY, emptyBodyWith(), miner.userId);
+    expect('tx' in result).toBe(true);
+    if (!('tx' in result)) return;
+    const successor = result.tx.outputs.find(o => o.boxType === 'backer_pool') as BackerPoolBox | undefined;
+    expect(successor).toBeDefined();
+    expect(successor!.value).toBe(1_470_000_000n);
+    expect(successor!.staked).toBe(50n);
+    expect(successor!.accrual).toBe(2_940_000_000n);
+  });
+
+  it('an unstake produces a credit release with the marker owner, no lock, createdAtBlock=height', () => {
+    const pool = makePoolBox(1_470_000_000n, 50n, 2_940_000_000n);
+    const marker = seedProvenance<import('@dagsocial/types').BackerUnstakeBox>(
+      { boxType: 'backer_unstake', value: 0n as 0n, owner: backerOwner2.userId, weight: 10n, createdAtBlock: 2 },
+      2, sn++,
+    );
+    const deps = makeDeps({ emission: BASE, poolBox: pool, supply: S });
+    const body = emptyBodyWith([{ id: marker.id!, owner: backerOwner2.userId, weight: 10n }]);
+    const result = buildSettlement(deps, 2, ONE_ERA, BASE, DELAY, body, miner.userId);
+    expect('tx' in result).toBe(true);
+    if (!('tx' in result)) return;
+    const credits = result.tx.outputs.filter(o => o.boxType === 'credit') as CreditBox[];
+    const release = credits.find(c =>
+      Buffer.from(c.owner).toString('hex') === Buffer.from(backerOwner2.userId).toString('hex'),
+    );
+    expect(release).toBeDefined();
+    expect(release!.value).toBe(294_000_000n);
+    expect(release!.createdAtBlock).toBe(2);
+    expect(release!.lockedUntilBlock).toBeUndefined();
+  });
+
+  it('miner slice is income − treasury − unearned − draw', () => {
+    const pool = makePoolBox(0n, 50n, 0n);
+    const deps = makeDeps({ emission: BASE, poolBox: pool, supply: S });
+    const result = buildSettlement(deps, 1, ONE_ERA, BASE, DELAY, emptyBodyWith(), miner.userId);
+    expect('tx' in result).toBe(true);
+    if (!('tx' in result)) return;
+    const split = splitCoinbase(BASE, 0n, 0n, 0, 1_470_000_000n);
+    const coinbase = result.tx.outputs.filter(o => o.boxType === 'credit') as CreditBox[];
+    const minerOut = coinbase.find(c =>
+      Buffer.from(c.owner).toString('hex') === Buffer.from(miner.userId).toString('hex'),
+    );
+    expect(minerOut).toBeDefined();
+    expect(minerOut!.value).toBe(split.miner);
+  });
+
+  it('outside the window with no unstake — pool box is neither input nor output', () => {
+    const pool = makePoolBox(100n, 50n, 1000n);
+    const deps = makeDeps({ emission: BASE, poolBox: pool, supply: S, window: 0 });
+    const result = buildSettlement(deps, 1, ONE_ERA, BASE, DELAY, emptyBodyWith(), miner.userId);
+    expect('tx' in result).toBe(true);
+    if (!('tx' in result)) return;
+    expect(result.tx.inputs).not.toContain(pool.id);
+    expect(result.tx.outputs.find(o => o.boxType === 'backer_pool')).toBeUndefined();
+  });
+
+  it('outside the window with an unstake — pool box spent, inc is 0', () => {
+    const pool = makePoolBox(500n, 50n, 2_000_000_000n);
+    const marker = seedProvenance<import('@dagsocial/types').BackerUnstakeBox>(
+      { boxType: 'backer_unstake', value: 0n as 0n, owner: backerOwner2.userId, weight: 10n, createdAtBlock: 5 },
+      5, sn++,
+    );
+    const deps = makeDeps({ emission: BASE, poolBox: pool, supply: S, window: 0 });
+    const body = emptyBodyWith([{ id: marker.id!, owner: backerOwner2.userId, weight: 10n }]);
+    const result = buildSettlement(deps, 5, ONE_ERA, BASE, DELAY, body, miner.userId);
+    expect('tx' in result).toBe(true);
+    if (!('tx' in result)) return;
+    expect(result.tx.inputs).toContain(pool.id);
+    const successor = result.tx.outputs.find(o => o.boxType === 'backer_pool') as BackerPoolBox | undefined;
+    expect(successor).toBeDefined();
+    expect(successor!.accrual).toBe(2_000_000_000n);
+  });
+
+  it('U > T0 is refused by buildSettlement', () => {
+    const pool = makePoolBox(100n, 10n, 1000n);
+    const marker = seedProvenance<import('@dagsocial/types').BackerUnstakeBox>(
+      { boxType: 'backer_unstake', value: 0n as 0n, owner: backerOwner2.userId, weight: 20n, createdAtBlock: 2 },
+      2, sn++,
+    );
+    const deps = makeDeps({ emission: BASE, poolBox: pool, supply: S });
+    const body = emptyBodyWith([{ id: marker.id!, owner: backerOwner2.userId, weight: 20n }]);
+    const result = buildSettlement(deps, 2, ONE_ERA, BASE, DELAY, body, miner.userId);
+    expect('error' in result).toBe(true);
+    if ('error' in result) expect(result.error).toContain('exceeds staked');
+  });
+
+  it('checkSettlement refuses a successor whose accrual is off by one', () => {
+    const pool = makePoolBox(0n, 50n, 0n);
+    const deps = makeDeps({ emission: BASE, poolBox: pool, supply: S });
+    const result = buildSettlement(deps, 1, ONE_ERA, BASE, DELAY, emptyBodyWith(), miner.userId);
+    expect('tx' in result).toBe(true);
+    if (!('tx' in result)) return;
+    const tx = result.tx;
+    const poolIdx = tx.outputs.findIndex(o => o.boxType === 'backer_pool');
+    expect(poolIdx).toBeGreaterThanOrEqual(0);
+    const tampered: UtxoTransaction = {
+      ...tx,
+      outputs: tx.outputs.map((o, i) =>
+        i === poolIdx
+          ? { ...o, accrual: (o as BackerPoolBox).accrual + 1n }
+          : o,
+      ) as AnyBoxCandidate[],
+    };
+    const check = checkSettlement(deps, 1, ONE_ERA, BASE, DELAY, emptyBodyWith(), tampered);
+    expect(check.valid).toBe(false);
+  });
+
+  it('checkSettlement refuses a release off by one', () => {
+    const pool = makePoolBox(1_470_000_000n, 50n, 2_940_000_000n);
+    const marker = seedProvenance<import('@dagsocial/types').BackerUnstakeBox>(
+      { boxType: 'backer_unstake', value: 0n as 0n, owner: backerOwner2.userId, weight: 10n, createdAtBlock: 2 },
+      2, sn++,
+    );
+    const deps = makeDeps({ emission: BASE, poolBox: pool, supply: S });
+    const body = emptyBodyWith([{ id: marker.id!, owner: backerOwner2.userId, weight: 10n }]);
+    const result = buildSettlement(deps, 2, ONE_ERA, BASE, DELAY, body, miner.userId);
+    expect('tx' in result).toBe(true);
+    if (!('tx' in result)) return;
+    const tx = result.tx;
+    const releaseIdx = tx.outputs.findIndex(o =>
+      o.boxType === 'credit' && !('lockedUntilBlock' in o && o.lockedUntilBlock !== undefined),
+    );
+    expect(releaseIdx).toBeGreaterThanOrEqual(0);
+    const tampered: UtxoTransaction = {
+      ...tx,
+      outputs: tx.outputs.map((o, i) =>
+        i === releaseIdx ? { ...o, value: o.value + 1n } : o,
+      ) as AnyBoxCandidate[],
+    };
+    const check = checkSettlement(deps, 2, ONE_ERA, BASE, DELAY, body, tampered);
+    expect(check.valid).toBe(false);
+  });
+});

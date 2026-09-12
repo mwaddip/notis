@@ -271,13 +271,15 @@ function derive(
   const backerPoolBox = deps.getBackerPoolBox();
   const inWindow = height <= deps.creditFixedRateBlocks;
   const totalUnstaked = body.unstakes.reduce((s, u) => s + u.weight, 0n);
+  const backerActive = backerPoolBox !== null && backerPoolBox.id !== undefined
+    && deps.backerSupply > 0n && (inWindow || totalUnstaked > 0n);
   let backerDraw = 0n;
   let backerReleases: bigint[] = [];
-  let backerStaked = backerPoolBox?.staked ?? 0n;
-  let backerAccrual = backerPoolBox?.accrual ?? 0n;
-  let backerPoolValue = backerPoolBox?.value ?? 0n;
+  let backerStaked = 0n;
+  let backerAccrual = 0n;
+  let backerPoolValue = 0n;
 
-  if (backerPoolBox && deps.backerSupply > 0n) {
+  if (backerActive) {
     if (totalUnstaked > backerPoolBox.staked) {
       return { error: `backer unstake weight ${totalUnstaked} exceeds staked ${backerPoolBox.staked}` };
     }
@@ -332,8 +334,8 @@ function derive(
   // every block whose body carries an unstake (MINING_INTERFACE → The backer
   // pool). The successor is emitted after the treasury's, ahead of the karma
   // pool's.
-  if (backerPoolBox && backerPoolBox.id && (inWindow || totalUnstaked > 0n)) {
-    inputs.push(backerPoolBox.id);
+  if (backerActive) {
+    inputs.push(backerPoolBox.id!);
     for (const u of body.unstakes) inputs.push(u.id);
     outputs.push({
       boxType: 'backer_pool',
@@ -341,7 +343,7 @@ function derive(
       staked: backerStaked,
       accrual: backerAccrual,
       createdAtBlock: height,
-    } as AnyBoxCandidate);
+    });
   }
 
   // ---- 3. What every karma leg owes the pool, and what it draws ----
