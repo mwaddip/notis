@@ -519,7 +519,9 @@ domain), and a plain integer read rounds silently above 2⁵³ — the displacem
 comparison would then weigh a fee no transaction carries.
 
 **Fee-ordered eviction over a single pool would be worse than none.** Every
-karma-side operation bids zero — posts, likes, invites, vouches — so paying
+karma-side operation bids zero — posts, likes, invites, vouches, a backer's unstake
+(`NODE_INTERFACE → Backer transition rules`, a karma-class entry: its outputs are a stake
+and a marker, not credit) — so paying
 traffic would evict all of them, and the coinbase's inclusion bonus
 (MINING_INTERFACE → Coinbase Application) would then pay for work that could no
 longer reach the pool at all. The class boundary is what keeps the bonus

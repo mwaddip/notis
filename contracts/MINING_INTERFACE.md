@@ -75,7 +75,8 @@ one alone leaks.
 | `CREDIT_MINER_REWARD_DELAY` | 1440 | Blocks before coinbase can be spent (24h at 60s) |
 | `COINBASE_TREASURY_PCT` | 5 | Percent of emission and of fees to treasury — never of storage rent |
 | `COINBASE_MINER_FLOOR_PCT` | 35 | Guaranteed miner share, and it takes every remainder |
-| `COINBASE_BACKER_PCT` | 35 | Backer pool. **AHEAD OF CODE** — nothing stakes, so it falls to the miner floor |
+| `COINBASE_BACKER_PCT` | 35 | The cap on the aggregate backer claim, as a share of emission and of fees — never of rent (→ The backer pool) |
+| `BACKER_UNSTAKE_MIN_PCT` | 1 | A partial unstake retires at least this share of its stake (NODE_INTERFACE → Backer transition rules) |
 | `COINBASE_BONUS_PCT` | 25 | The inclusion bonus pool |
 | `INCLUSION_BONUS_K` | 5n | The bonus curve's knee — at `K` actors the miner earns half the pool. `bigint`, because the curve computes in base units |
 
@@ -467,7 +468,8 @@ not parallel arrays").
    once (trimming shrinks it monotonically)
 2. `income = computeBlockReward(height) + fees`, `fees = Σ FeeBox.value` over the body
 3. Split per the slice table below. **Only the miner's slice becomes a settlement credit
-   output**; the treasury's accrues to the `TreasuryBox` (TYPES_INTERFACE → TreasuryBox)
+   output**; the treasury's accrues to the `TreasuryBox` (TYPES_INTERFACE → TreasuryBox), and the
+   backer draw to the `BackerPoolBox`, out of which the body's unstakes are paid (→ The backer pool)
 4. The miner's slice rides as **a single credit output of the settlement transaction** — the body
    has no `coinbaseOutputs` field, and the credits are **spent from the `EmissionBox`** (and
    the consumed fee boxes) by the same transaction that emits them: source and destination
@@ -482,7 +484,7 @@ consumed by the settlement in the block that created it.
 |---|---|---|
 | Treasury | `COINBASE_TREASURY_PCT` | Per **term** — of emission and of fees, never of storage rent |
 | Miner floor | `COINBASE_MINER_FLOOR_PCT` | Guaranteed, plus every remainder |
-| Backer pool | `COINBASE_BACKER_PCT` | **AHEAD OF CODE** — nothing stakes and nothing links, so this share falls to the miner floor |
+| Backer pool | up to `COINBASE_BACKER_PCT` | The draw `P` of → The backer pool: the staked weight's claim on `emission + fees`, capped at this share; what the cap or an unmigrated supply leaves unclaimed falls to the miner floor. Zero outside the accrual window, and on a network with no backer table |
 | Inclusion bonus | `COINBASE_BONUS_PCT` | `pool × actors ÷ (actors + INCLUSION_BONUS_K)` to the miner; the unearned remainder is **not minted** — it returns to the `EmissionBox`, which is why that successor is `value − release + unearned` and can exceed its predecessor. The pool is a share of income, so it is computed over the **release** like every other slice |
 | Storage rent | — | A third income **term**, not a slice: the treasury takes `COINBASE_TREASURY_PCT` of emission and of fees and **none of rent**, so rent reaches the miner floor entire |
 
@@ -504,7 +506,9 @@ identity per block for nothing; it counts no actor (NODE_INTERFACE → Legal box
 Every other karma-side row pays inside the transaction — a post's price, a like's marker, an
 invite's bond, a vouch's stake, a burn's price — or is bounded one-to-one by a row that paid:
 a withdrawal by its post, a claim by its identity — one per invite bond, a fixed few at genesis —
-an unvouch by its cast.
+an unvouch by its cast. **An unstake counts nobody**: its input is a `BackerStakeBox`, not a karma box,
+and it pays no karma — bounded instead by its own weight and `BACKER_UNSTAKE_MIN_PCT` (NODE_INTERFACE →
+Backer transition rules).
 A row added later states which of the two it is.
 
 **The miner floor takes the remainder**, so the outputs sum to exactly the income: four
@@ -535,11 +539,81 @@ paid out of released emission plus recreated fees, so it is a settlement credit 
 treasury's is never released at all, so it is a value the successor box carries. Both are
 derived from the same `splitCoinbase` result and neither is the producer's choice.
 
+### The backer pool
+
+**The slice is a draw from `emission + fees` into the `BackerPoolBox`, computed once per block from the
+staked weight, and paid out by unstakes** (`ARCHITECTURE → The backer pool`; the objects `TYPES_INTERFACE →
+BackerPoolBox`, → BackerStakeBox, → BackerUnstakeBox; the transaction `NODE_INTERFACE → Backer transition
+rules`). For the settlement of height `h`, with the pool box read from **pre-body state** holding
+`(V, T₀, A₀)` — its `value`, `staked`, `accrual` — `S = backerSupply`, `c = COINBASE_BACKER_PCT`,
+`W = creditFixedRateBlocks`, and `base = release + fees` (the emission term as the box pays it, plus the
+block's fee sum; **never rent** — the third exclusion beside the treasury's and the bonus pool's):
+
+```
+unstakes  = the body's backer_unstake markers, in committed transaction order, each (id, owner, u)
+r_j       = ⌊ u_j × A₀ / S ⌋                                   the release paid for marker j
+R = Σ r_j ;  U = Σ u_j ;  the block is refused if U > T₀
+T         = T₀ − U                                              the weight staked after this block's unstakes
+inc       = 0                                  if h > W        the window has closed
+          = base                               if 100·T ≤ c·S   the cap does not bind: the raw claim per unit of weight
+          = ⌊ base × c × S / (100 × T) ⌋        otherwise        the cap binds: c % of base, split over T
+P         = ⌈ T × inc / S ⌉  =  (T × inc + S − 1) / S           the draw (0 when T = 0)
+successor = ( V + P − R,  T,  A₀ + inc )
+miner     = income − treasury − unearned − P
+accrued(stake) = ⌊ stake.weight × accrual / S ⌋                 what a stake releases if unstaked whole, now
+```
+
+**All integer, `bigint` throughout; one truncation per block and one per unstake, never one per backer per
+block.** `accrual` is denominated in credits per whole supply: the rate per unit of weight is
+`min(base/S, c·base/(100·T))`, which for `T ≤ S` lies in `[c·base/(100·S), base/S]`, so `accrual` grows by
+at most `base` a block and stays inside `vlqU64` on every profile.
+
+⛔ **The invariant the pool keeps: `V ≥ T × accrual / S` at every height**, hence `V` covers every live
+stake's `accrued`. The ceiling on `P` and the floors on `r_j` give `V′ ≥ T₀A₀/S + T·inc/S − U·A₀/S =
+T(A₀ + inc)/S`; the pool never underflows, no release is short, and the rounding's dust stays in the box.
+
+**This is the miner floor and the dilution offset as one function.** Under the cap each stake accrues its
+raw claim `weight/S` of base and the slice's unclaimed part falls to the miner — an unmigrated supply pays
+miners; over it the slice is exactly `c %` of base split pro rata over `T`, so weight an unstake frees raises
+every stayer's rate, and the `min` caps each stayer at their raw claim. The miner keeps at least
+`100 − COINBASE_TREASURY_PCT − c − COINBASE_BONUS_PCT` percent of base plus rent by arithmetic; no rule
+states the floor twice.
+
+**The pool box is spent on every block inside the window, and outside it on every block whose body carries
+an unstake** — `h ≤ W ∨ U > 0`, one condition with no dependence on `T`, the emission box's shape. The
+releases are **derived outputs** — `value r_j`, `owner` the marker's, **no `lockedUntilBlock`**,
+`createdAtBlock = h` — in committed order after the decay replacements and ahead of the coinbase tail
+(`NODE_INTERFACE → The settlement transaction`); a marker whose release rounds to zero emits none. A release
+carries no lock because it is derived from pre-body state like a like payout and not producer-chosen like
+the coinbase. A network whose profile carries no table has no pool box and runs no leg: `P = 0`, and the
+slice falls to the miner floor with every other remainder.
+
+**Producer and verifier compute it once.** The draw is one exported function beside `splitCoinbase` —
+`backerLeg(base, S, T₀, A₀, unstakes, inWindow) → { releases, staked, accrual, draw }` — with no store, no
+config and no profile: every number is an argument, and `derive()` alone calls it and hands `draw` to
+`splitCoinbase` as its fifth argument. The pre-body pool box is captured with the escrow and lapse lists,
+never read at the check.
+
+**Worked vectors on devnet's profile** — `S = 100`, stakes `20` and `30`, `base = 4 200 000 000` (42 credits,
+no fees), `c = 35`; `node/test/services/backer-leg.test.ts` pins every cell:
+
+| Block | Body | `inc` | `P` | `V` after | `accrual` after | stake 20 accrued | stake 30 accrued |
+|---|---|---|---|---|---|---|---|
+| 1 | — | `T = 50`, the cap binds: `2 940 000 000` | `1 470 000 000` | `1 470 000 000` | `2 940 000 000` | `588 000 000` | `882 000 000` |
+| 2 | the first unstakes 10 of 20: `r = 294 000 000` | `T = 40`, binds: `3 675 000 000` | `1 470 000 000` | `2 646 000 000` | `6 615 000 000` | `661 500 000` (weight 10) | `1 984 500 000` |
+| 3 | the first unstakes its last 10: `r = 661 500 000` | `T = 30`, does not bind: `4 200 000 000` | `1 260 000 000` | `3 244 500 000` | `10 815 000 000` | — | `3 244 500 000` |
+
+Block 2 pays the stayer `30/40` of the slice instead of `30/50`; block 3's slice is the stayer's raw 30 %
+and the other 5 % of base stays with the miner. `V` equals the sum of live accruals on every row.
+
+> ⚠ **AHEAD OF CODE — 2026-09-12, the backer pool unit.** `backerLeg`, the fifth argument, the leg in
+> `derive()`, the byte reservation and the vectors follow on the branch.
+
 ### On block receipt (relay node):
 1. Verify PoW
-2. Verify the coinbase is **exactly one credit output when the miner's slice is positive, and none when it is zero**, its `value` equal to the **miner's slice** the slice table yields for this height, fee sum and actor count — `income` less the treasury share and the unearned bonus; the first accrues to the `TreasuryBox` and the second is never minted, so neither is a credit output — and its `createdAtBlock` equal to the block `height`. More than one coinbase output, or a `createdAtBlock` other than `height`, rejects the block: the count and the stamp are constrained, not producer-chosen
-3. Verify the two box transitions, both **exactly**: the emission box's successor holds `value − min(computeBlockReward(height), value) + unearned` and the treasury box's holds `value + treasury`. ⛔ **`min` is the release cap and `unearned` is the return.** The release is what the schedule owes bounded by what the box holds, and the forfeited bonus is added straight back — which is why this successor, alone among the two, can exceed its predecessor. This is where the split is enforced — emission and treasury successors are inputs and outputs of the same transaction, so a block paying the whole income to its miner is refused by **conservation itself**
-4. Verify no output carries `value === 0` — otherwise `[]` and `[{value: 0}]` are two valid encodings of one block, with different `utxoTxRoot` and different block hashes. **Not made redundant by conservation**, which a zero-value output satisfies
+2. Verify the coinbase is **exactly one credit output when the miner's slice is positive, and none when it is zero**, its `value` equal to the **miner's slice** the slice table yields for this height, fee sum and actor count — `income` less the treasury share, the unearned bonus and the backer draw; the first accrues to the `TreasuryBox`, the second is never minted and the third accrues to the `BackerPoolBox`, so none is a coinbase output — and its `createdAtBlock` equal to the block `height`. More than one coinbase output, or a `createdAtBlock` other than `height`, rejects the block: the count and the stamp are constrained, not producer-chosen
+3. Verify the two box transitions, both **exactly**: the emission box's successor holds `value − min(computeBlockReward(height), value) + unearned` and the treasury box's holds `value + treasury`. ⛔ **`min` is the release cap and `unearned` is the return.** The release is what the schedule owes bounded by what the box holds, and the forfeited bonus is added straight back — which is why this successor, alone among the two, can exceed its predecessor. This is where the split is enforced — emission and treasury successors are inputs and outputs of the same transaction, so a block paying the whole income to its miner is refused by **conservation itself**. On a network with a backer table the `BackerPoolBox` transition is the third, exact as the other two — the successor holds `value + P − R`, `staked − U`, `accrual + inc` — and each unstake's release is a derived credit output, exact (→ The backer pool)
+4. Verify no coinbase output carries `value === 0` — otherwise `[]` and `[{value: 0}]` are two valid encodings of one block, with different `utxoTxRoot` and different block hashes. **Not made redundant by conservation**, which a zero-value output satisfies
 5. Settlement credit outputs with `lockedUntilBlock > currentHeight` are stored but not spendable — `SPEND_TIMING`'s `credit` entry refuses a locked input at `validateTx` step 3
 
 **Both transitions ride in the block**, as parts of a transaction committed under
@@ -626,7 +700,9 @@ the network profile (`TYPES_INTERFACE §Network profiles`), selected together by
    `value === 0`** at any height
 2. The coinbase's split matches the slice table above. The **miner's** half is the
    coinbase's sum; the **treasury's** half is enforced as the `TreasuryBox` successor's
-   value, and the emission box's successor pins the release net of the forfeit. A
+   value, the emission box's successor pins the release net of the forfeit, and the
+   `BackerPoolBox` successor and the release outputs pin the backer draw and every release
+   (→ The backer pool). A
    total-only check on the coinbase alone would accept a block that forfeited nothing
 3. Coinbase outputs cannot be spent before `lockedUntilBlock`, and every coinbase
    output's `lockedUntilBlock` **equals `height + creditMinerRewardDelay`** (the network
