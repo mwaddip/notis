@@ -72,7 +72,7 @@ export {
   MAGIC_DEVNET,
   KNOWN_FRAME_MAGICS,
 } from './network.js';
-export type { NetworkType, NetworkProfile, ProtocolEra } from './network.js';
+export type { NetworkType, NetworkProfile, ProtocolEra, BackerRow, BackerTable } from './network.js';
 
 // Identity
 export { generateKeyPair } from './identity.js';

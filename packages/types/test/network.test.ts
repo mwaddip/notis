@@ -50,6 +50,8 @@ const REQUIRED_PROFILE_FIELDS = [
   'genesisStateRoot',
   'genesisId',
   'storageRentPeriodBlocks',
+  'backerSupply',
+  'backerTable',
 ].sort();
 
 // ⛔ Optional, and the ABSENCE is the fact rather than a gap. Mainnet names no
@@ -167,6 +169,9 @@ describe('NETWORK_PROFILES', () => {
       'faucetPublicKey',
       // The pinned height-1 block hash — empty until a network has one.
       'genesisId',
+      // The backer snapshot — genesis input, per network (TYPES_INTERFACE → Network profiles).
+      'backerSupply',
+      'backerTable',
     ]);
     // ⚠ **Caps, not mechanics** (ARCHITECTURE → "What varies per network, and
     // what must not"). Every name here is a BOUND; a formula or a ratio may not
@@ -691,6 +696,93 @@ describe('protocolVersionAt', () => {
     for (const bad of bads) {
       expect(() => protocolVersionAt(ONE_ERA, bad as number)).not.toThrow();
       expect(protocolVersionAt(ONE_ERA, bad as number)).toBeNull();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Backer tables — TYPES_INTERFACE → Network profiles, ARCHITECTURE → The backer pool
+// ---------------------------------------------------------------------------
+
+describe('backer tables', () => {
+  for (const [name, profile] of Object.entries(NETWORK_PROFILES) as [NetworkType, NetworkProfile][]) {
+    describe(name, () => {
+      it('rows are sorted ascending by key', () => {
+        for (let i = 1; i < profile.backerTable.length; i++) {
+          const prev = profile.backerTable[i - 1]!;
+          const cur = profile.backerTable[i]!;
+          expect(
+            prev.key < cur.key,
+            `${name}: row ${i - 1} (${prev.key.slice(0, 8)}…) >= row ${i} (${cur.key.slice(0, 8)}…)`,
+          ).toBe(true);
+        }
+      });
+
+      it('keys are unique', () => {
+        const keys = profile.backerTable.map((r) => r.key);
+        expect(new Set(keys).size).toBe(keys.length);
+      });
+
+      it('every weight is at least 1n', () => {
+        for (const row of profile.backerTable) {
+          expect(row.weight, `${name}: key ${row.key.slice(0, 8)}…`).toBeGreaterThanOrEqual(1n);
+        }
+      });
+
+      it('sum of weights does not exceed backerSupply', () => {
+        const sum = profile.backerTable.reduce((acc, r) => acc + r.weight, 0n);
+        expect(sum).toBeLessThanOrEqual(profile.backerSupply);
+      });
+    });
+  }
+
+  it('mainnet has supply 0n and no rows', () => {
+    expect(NETWORK_PROFILES.mainnet.backerSupply).toBe(0n);
+    expect(NETWORK_PROFILES.mainnet.backerTable).toEqual([]);
+  });
+
+  it('testnet has the faucet key at weight 40 of supply 100', () => {
+    const t = NETWORK_PROFILES.testnet;
+    expect(t.backerSupply).toBe(100n);
+    expect(t.backerTable).toHaveLength(1);
+    expect(t.backerTable[0]!.key).toBe(NETWORK_PROFILES.testnet.faucetPublicKey);
+    expect(t.backerTable[0]!.weight).toBe(40n);
+  });
+
+  it('devnet has two rows at weights 20 and 30 of supply 100', () => {
+    const d = NETWORK_PROFILES.devnet;
+    expect(d.backerSupply).toBe(100n);
+    expect(d.backerTable).toHaveLength(2);
+    expect(d.backerTable[0]!.weight).toBe(20n);
+    expect(d.backerTable[1]!.weight).toBe(30n);
+  });
+
+  it('devnet keys are re-derivable from the published seeds', () => {
+    const crypto = require('crypto');
+    const DER_PREFIX = Buffer.from('302e020100300506032b657004220420', 'hex');
+
+    function derivePublicKey(seedString: string): string {
+      const seed = crypto.createHash('blake2b512').update(seedString).digest().subarray(0, 32);
+      const der = Buffer.concat([DER_PREFIX, seed]);
+      const keyObj = crypto.createPrivateKey({ key: der, format: 'der', type: 'pkcs8' });
+      const spki = crypto.createPublicKey(keyObj).export({ type: 'spki', format: 'der' });
+      return Buffer.from(spki.subarray(spki.length - 32)).toString('hex');
+    }
+
+    const keyA = derivePublicKey('dagsocial/devnet/backer/A');
+    const keyB = derivePublicKey('dagsocial/devnet/backer/B');
+
+    const d = NETWORK_PROFILES.devnet;
+    const keys = d.backerTable.map((r) => r.key);
+    expect(keys).toContain(keyA);
+    expect(keys).toContain(keyB);
+    expect(d.backerTable.find((r) => r.key === keyA)!.weight).toBe(20n);
+    expect(d.backerTable.find((r) => r.key === keyB)!.weight).toBe(30n);
+  });
+
+  it('backerTable is frozen on every network', () => {
+    for (const profile of Object.values(NETWORK_PROFILES)) {
+      expect(Object.isFrozen(profile.backerTable), profile.networkType).toBe(true);
     }
   });
 });

@@ -14,6 +14,9 @@
 // — so a relaxed bound diverges without hiding anything. Every field added here says which
 // of the two it is (ARCHITECTURE → "What varies per network, and what must not").
 
+import { MAINNET_BACKERS } from './backers/mainnet.js';
+import { TESTNET_BACKERS } from './backers/testnet.js';
+import { DEVNET_BACKERS } from './backers/devnet.js';
 import {
   ORDERING_BLOCK_POW_TARGET_BITS,
   ORDERING_BLOCK_POW_TARGET_FLOOR,
@@ -159,7 +162,15 @@ export interface NetworkProfile {
    */
   readonly genesisStateRoot: string;
   readonly genesisId: string;             // hex(32) or '' — the pinned height-1 block hash; '' = unpinned
+
+  // The backer pool — the snapshot's denominator and its rows (ARCHITECTURE → The backer pool);
+  // the accrual window is creditFixedRateBlocks above. 0n and no rows = no backer pool on this network.
+  readonly backerSupply: bigint;
+  readonly backerTable: readonly BackerRow[];
 }
+
+export interface BackerRow { readonly key: string; readonly weight: bigint; }
+export interface BackerTable { readonly supply: bigint; readonly rows: readonly BackerRow[]; }
 
 // The network magics live here, not in @dagsocial/wire: wire has zero runtime dependencies
 // and keeps them, so it must not import from types. The frame codec takes `magic` as a
@@ -244,6 +255,9 @@ const MAINNET_PROFILE: NetworkProfile = Object.freeze({
   // theirs (`04`).
   genesisStateRoot: 'e2a156c44ddb8cc40587b28fc3ce7a8c01c2657f94e5752a063d9b13912b322703',
   genesisId: '',
+
+  backerSupply: MAINNET_BACKERS.supply,
+  backerTable: Object.freeze(MAINNET_BACKERS.rows),
 } satisfies NetworkProfile);
 
 // testnet: mainnet's MECHANICS with relaxed CAPS — the public playground. A testnet that
@@ -292,6 +306,9 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   // reset (TYPES_INTERFACE → "genesisId pins block 1, and is empty until a
   // network has one"). Mainnet's and devnet's stay ''.
   genesisId: 'b2098a763ab690240095c1a2998689f2e3112e0328c767edd16d2d70e45e1fa7',
+
+  backerSupply: TESTNET_BACKERS.supply,
+  backerTable: Object.freeze(TESTNET_BACKERS.rows),
 } satisfies NetworkProfile);
 
 // devnet: compressed timescale, same economics. `karmaDecayIntervalBlocks` (3) and
@@ -375,6 +392,9 @@ const DEVNET_PROFILE: NetworkProfile = Object.freeze({
   // boxes.
   genesisStateRoot: '438480fde1b5ca026f9d2498fe0a0049c9b5e89e003e6ebcb7807da12d2c1dc304',
   genesisId: '',
+
+  backerSupply: DEVNET_BACKERS.supply,
+  backerTable: Object.freeze(DEVNET_BACKERS.rows),
 } satisfies NetworkProfile);
 
 export const NETWORK_PROFILES: Readonly<Record<NetworkType, NetworkProfile>> = Object.freeze({
