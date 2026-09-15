@@ -1,11 +1,13 @@
 Notis web client
 ================
 
-A static bundle served from the same origin as a Notis node's HTTP
-API — the node sends no CORS headers.
+A static bundle served beside a Notis node's HTTP API by default.
+The node answers any origin, so the client can be served elsewhere
+and pointed at any node; the faucet answers its own origin only,
+so a faucet base is same-origin.
 
-Serve the web/ directory as static files. The node and the client
-share one origin; nginx.example.conf shows one way to front both.
+Serve the web/ directory as static files; nginx.example.conf shows
+one way to front the node, the faucet and the client together.
 
 
 Configuring for your layout
@@ -39,5 +41,5 @@ set); without that, serve index.html for the same path.
 nginx.example.conf shows both options.
 
 
-A foreign origin in a tag fails until the node sends CORS headers.
+A foreign origin in the notis-api tag works; in notis-faucet it fails.
 See the repository's README for the rest.
