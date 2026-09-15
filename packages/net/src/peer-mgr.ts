@@ -43,16 +43,16 @@ interface BanEntry {
 }
 
 /**
- * Optional callbacks fired when a ban is imposed or expires, carrying the
- * peer's declared address. NetNode binds these to PeerDb.ban/unban so the
- * peerId-keyed and address-keyed ban surfaces cannot drift apart (contract:
- * "Ban surfaces are unified"). Callbacks — not a PeerDb import — keep
- * peer-mgr a leaf module.
+ * Optional callbacks for ban lifecycle events. NetNode binds onBan/onUnban
+ * to PeerDb.ban/unban so the peerId-keyed and address-keyed ban surfaces
+ * cannot drift apart, and onBanned to the connection close and the
+ * sync-machine notice (NET_INTERFACE → "A ban ends the connection").
  */
 export interface PeerBanHooks {
   onBan?: (address: string) => void;
   onUnban?: (address: string) => void;
   onPenalty?: (peerId: string, kind: string, detail: string | null) => void;
+  onBanned?: (peerId: string) => void;
 }
 
 export class PeerManager {
@@ -181,6 +181,7 @@ export class PeerManager {
     this.peers.delete(peerId);
     this.metadata.delete(peerId);
     for (const addr of addresses) this.hooks.onBan?.(addr);
+    this.hooks.onBanned?.(peerId);
   }
 
   /**
