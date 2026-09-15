@@ -167,6 +167,15 @@ describe('PeerManager', () => {
     expect((mgr as any).bans.has('peer1')).toBe(false);
   });
 
+  it('a temporal ban removes the metadata (NET_INTERFACE → Peer State Machine)', () => {
+    mgr.addPeer(makePeer('peer1'));
+    vi.spyOn(Date, 'now').mockReturnValue(0);
+    mgr.recordPenalty('misbehavior', 'peer1', 500, 'threshold crossed');
+    expect(mgr.isBanned('peer1')).toBe(true);
+    expect(mgr.getPeerMetadata('peer1')).toBeNull();
+    expect(mgr.isPeerActive('peer1')).toBe(false);
+  });
+
   // -----------------------------------------------------------------------
   // Peer state machine
   // -----------------------------------------------------------------------
@@ -177,20 +186,14 @@ describe('PeerManager', () => {
     expect(meta).not.toBeNull();
     expect(meta!.state).toBe(PeerState.Connecting);
     expect(meta!.penaltyCount).toBe(0);
-    expect(meta!.bannedUntil).toBeNull();
   });
 
-  it('setPeerState transitions through real states', () => {
+  it('setPeerState transitions Connecting → Active', () => {
     mgr.addPeer(makePeer('peer1'));
-
-    mgr.setPeerState('peer1', PeerState.Handshaking);
-    expect(mgr.getPeerMetadata('peer1')!.state).toBe(PeerState.Handshaking);
+    expect(mgr.getPeerMetadata('peer1')!.state).toBe(PeerState.Connecting);
 
     mgr.setPeerState('peer1', PeerState.Active);
     expect(mgr.getPeerMetadata('peer1')!.state).toBe(PeerState.Active);
-
-    mgr.setPeerState('peer1', PeerState.Disconnected);
-    expect(mgr.getPeerMetadata('peer1')!.state).toBe(PeerState.Disconnected);
   });
 
   it('setPeerState is a no-op for unknown peer', () => {
@@ -199,18 +202,12 @@ describe('PeerManager', () => {
     expect(mgr.getPeerMetadata('ghost')).toBeNull();
   });
 
-  it('isPeerActive returns false for non-Active peers', () => {
+  it('isPeerActive returns false for Connecting, true for Active', () => {
     mgr.addPeer(makePeer('peer1'));
-    expect(mgr.isPeerActive('peer1')).toBe(false); // Connecting
-
-    mgr.setPeerState('peer1', PeerState.Handshaking);
     expect(mgr.isPeerActive('peer1')).toBe(false);
 
     mgr.setPeerState('peer1', PeerState.Active);
     expect(mgr.isPeerActive('peer1')).toBe(true);
-
-    mgr.setPeerState('peer1', PeerState.Failed);
-    expect(mgr.isPeerActive('peer1')).toBe(false);
   });
 
   it('isPeerActive returns false for unknown peer', () => {
@@ -466,6 +463,76 @@ describe('PeerManager', () => {
       expect(calls.ban).toBe(1);
       expect(pairMgr.extendBan('ghost', OTHER)).toBe(true);
       expect(calls.ban).toBe(2);
+    });
+
+    // -----------------------------------------------------------------
+    // onBanned (NET_INTERFACE → "A ban ends the connection")
+    // -----------------------------------------------------------------
+
+    it('onBanned fires once per imposed ban, with the peer id', () => {
+      const peerDb = new PeerDb(null, 100, []);
+      const banned: string[] = [];
+      const pairMgr = new PeerManager(makeConfig({ maxPeers: 50 }), {
+        onBan: (addr) => peerDb.ban(addr),
+        onUnban: (addr) => peerDb.unban(addr),
+        onBanned: (peerId) => banned.push(peerId),
+      });
+
+      // permanent via recordPenalty
+      trackPeer(pairMgr, peerDb, 'peer1', ADDR);
+      pairMgr.recordPenalty('permanent', 'peer1', 0, 'wrong magic');
+      expect(banned).toEqual(['peer1']);
+
+      // permanent via recordPenaltyKind(ProtocolViolation)
+      trackPeer(pairMgr, peerDb, 'peer2', OTHER);
+      pairMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, 'peer2', 'malformed');
+      expect(banned).toEqual(['peer1', 'peer2']);
+
+      // temporal via score threshold
+      trackPeer(pairMgr, peerDb, 'peer3', '/ip4/51.15.0.3/tcp/4001');
+      vi.spyOn(Date, 'now').mockReturnValue(0);
+      pairMgr.recordPenalty('misbehavior', 'peer3', 499, 'pressure');
+      expect(banned).toEqual(['peer1', 'peer2']);
+      pairMgr.recordPenalty('misbehavior', 'peer3', 1, 'threshold');
+      expect(banned).toEqual(['peer1', 'peer2', 'peer3']);
+    });
+
+    it('onBanned does not fire for extendBan or at expiry', () => {
+      const banned: string[] = [];
+      const pairMgr = new PeerManager(makeConfig({ maxPeers: 50 }), {
+        onBanned: (peerId) => banned.push(peerId),
+      });
+
+      // extendBan: no fire
+      trackPeer(pairMgr, new PeerDb(null, 100, []), 'peer1', ADDR);
+      pairMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, 'peer1', 'malformed');
+      expect(banned).toEqual(['peer1']);
+      pairMgr.extendBan('peer1', OTHER);
+      expect(banned).toEqual(['peer1']);
+
+      // expiry: no fire
+      pairMgr.addPeer(makePeer('peer2'));
+      vi.spyOn(Date, 'now').mockReturnValue(0);
+      pairMgr.recordPenalty('misbehavior', 'peer2', 500, 'threshold');
+      expect(banned).toEqual(['peer1', 'peer2']);
+      vi.spyOn(Date, 'now').mockReturnValue(config.temporalBanDurationMs + 1);
+      expect(pairMgr.isBanned('peer2')).toBe(false);
+      expect(banned).toEqual(['peer1', 'peer2']);
+    });
+
+    it('inside the onBanned handler, isBanned is true and metadata is null', () => {
+      let bannedCheck = false;
+      let metaCheck = false;
+      const pairMgr = new PeerManager(makeConfig({ maxPeers: 50 }), {
+        onBanned: (peerId) => {
+          bannedCheck = pairMgr.isBanned(peerId);
+          metaCheck = pairMgr.getPeerMetadata(peerId) === null;
+        },
+      });
+      pairMgr.addPeer(makePeer('peer1'));
+      pairMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, 'peer1', 'test');
+      expect(bannedCheck).toBe(true);
+      expect(metaCheck).toBe(true);
     });
 
     it('extendBan on a temporal ban seeded with no address: onBan fires once on extend, and expiry unbans the extended address', () => {

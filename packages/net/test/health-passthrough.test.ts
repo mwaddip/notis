@@ -71,6 +71,8 @@ function makeHandshakeHarness() {
       handshakeHandler = cb;
     },
     getMultiaddrs: () => [],
+    getConnections: () => [],
+    hangUp: () => Promise.resolve(),
     peerId: { toString: () => 'self-peer-id' },
   };
 

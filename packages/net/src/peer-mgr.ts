@@ -43,16 +43,17 @@ interface BanEntry {
 }
 
 /**
- * Optional callbacks fired when a ban is imposed or expires, carrying the
- * peer's declared address. NetNode binds these to PeerDb.ban/unban so the
- * peerId-keyed and address-keyed ban surfaces cannot drift apart (contract:
- * "Ban surfaces are unified"). Callbacks — not a PeerDb import — keep
- * peer-mgr a leaf module.
+ * Optional callbacks for ban lifecycle events. NetNode binds onBan/onUnban
+ * to PeerDb.ban/unban so the peerId-keyed and address-keyed ban surfaces
+ * cannot drift apart, and onBanned to the connection close and the
+ * sync-machine notice (NET_INTERFACE → "A ban ends the connection").
+ * Callbacks — not a PeerDb import — keep peer-mgr a leaf module.
  */
 export interface PeerBanHooks {
   onBan?: (address: string) => void;
   onUnban?: (address: string) => void;
   onPenalty?: (peerId: string, kind: string, detail: string | null) => void;
+  onBanned?: (peerId: string) => void;
 }
 
 export class PeerManager {
@@ -93,7 +94,6 @@ export class PeerManager {
         peerId: peer.id,
         state: PeerState.Connecting,
         penaltyCount: 0,
-        bannedUntil: null,
         lastSeenMs: Date.now(),
         address: null,
         protocolVersion: null,
@@ -155,11 +155,7 @@ export class PeerManager {
     const now = Date.now();
 
     if (type === 'permanent') {
-      // Instant permanent ban — works even if peer was never added.
-      // imposeBan reads the address before the metadata.delete below.
       this.imposeBan(peerId, now, null);
-      this.peers.delete(peerId);
-      this.metadata.delete(peerId);
       this.hooks.onPenalty?.(peerId, type, reason);
       return;
     }
@@ -169,11 +165,12 @@ export class PeerManager {
   }
 
   /**
-   * Impose a ban and propagate it to the address surface. The metadata read
-   * happens here, before the permanent-ban callers delete the metadata —
-   * reading after that delete would silently drop the propagation. A peer
-   * with no recorded address (banned before its handshake completed) opens
-   * the ban's address set empty; `extendBan` is what grows it later.
+   * Impose a ban, remove the row and its metadata, and propagate the
+   * address to PeerDb. A peer with no recorded address (banned before its
+   * handshake completed) opens the ban's address set empty; `extendBan` is
+   * what grows it later. The address read precedes the metadata delete:
+   * reading after it silently drops the propagation
+   * (NET_INTERFACE → Peer State Machine).
    */
   private imposeBan(peerId: string, now: number, banExpiresAt: number | null): void {
     const address = this.metadata.get(peerId)?.address ?? null;
@@ -185,7 +182,10 @@ export class PeerManager {
       if (oldest === undefined) break;
       this.bans.delete(oldest);
     }
+    this.peers.delete(peerId);
+    this.metadata.delete(peerId);
     for (const addr of addresses) this.hooks.onBan?.(addr);
+    this.hooks.onBanned?.(peerId);
   }
 
   /**
@@ -223,11 +223,7 @@ export class PeerManager {
 
     switch (kind) {
       case PenaltyKind.ProtocolViolation: {
-        // Permanent ban — remove peer entirely.
-        // imposeBan reads the address before the metadata.delete below.
         this.imposeBan(peerId, now, null);
-        this.peers.delete(peerId);
-        this.metadata.delete(peerId);
         this.hooks.onPenalty?.(peerId, kind, reason);
         return;
       }
@@ -275,11 +271,6 @@ export class PeerManager {
     if (entry.penaltyScore >= this.config.penaltyScoreThreshold) {
       const banExpiresAt = now + this.config.temporalBanDurationMs;
       this.imposeBan(peerId, now, banExpiresAt);
-      this.peers.delete(peerId);
-      if (meta) {
-        meta.state = PeerState.Banned;
-        meta.bannedUntil = banExpiresAt;
-      }
     }
   }
 

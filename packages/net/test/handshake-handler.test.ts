@@ -98,6 +98,8 @@ function makeHandshakeHarness(opts: {
       if (protocol === '/dagsocial/handshake/1') captured = cb;
     },
     getMultiaddrs: () => (opts.multiaddrs ?? []).map((s) => ({ toString: () => s })),
+    getConnections: () => [],
+    hangUp: () => Promise.resolve(),
     peerId: { toString: () => 'self-peer-id' },
   };
 
@@ -187,6 +189,8 @@ function makeOutboundHarness(opts: { closeRejects?: boolean } = {}) {
   internals.libp2p = {
     getPeers: () => [{ toString: () => peerId }],
     getMultiaddrs: () => [],
+    getConnections: () => [],
+    hangUp: () => Promise.resolve(),
     peerId: { toString: () => 'self-peer-id' },
     dialProtocol: async () => ({
       sink: async (chunks: Iterable<Uint8Array>) => {
