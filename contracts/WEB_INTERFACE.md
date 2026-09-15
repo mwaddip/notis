@@ -118,18 +118,20 @@ package.
 
 ## The client is served from the node's own origin
 
-⛔ **The node sends no CORS headers.** `packages/node/src` contains no `cors` middleware, no
-`Access-Control` response header, and `cors` is not a dependency. A browser client served from any
-other origin cannot read the API at all.
+> ⚠ **AHEAD OF CODE — 2026-09-15, the CORS unit.** The `node` and `faucet` preference hints, a comment in
+> the read client, the dev server's comments and the deploy note say the node sends no CORS headers; the
+> unit rewrites them to the two rules below.
 
-So the client is served **same-origin** with the API it reads — in development by the dev server's
-proxy, in production by whatever fronts the node. **The client never hardcodes an absolute API
-origin**; its default is same-origin, and a configured override to a foreign origin will fail until
-the node gains CORS. The setting says so rather than failing silently.
+**The node answers any origin** (`NODE_INTERFACE → Cross-origin requests`): every answer of its public API
+carries `Access-Control-Allow-Origin: *`, so a client on any origin reads it — a third-party client on its
+own host, or this client pointed at a node on the reader's own machine. **The client never hardcodes an
+absolute API origin**: its default is same-origin, served beside the API — in development by the dev
+server's proxy, in production by whatever fronts the node — and the `node` preference
+(→ The profile window) names any other; its hint says so.
 
-⚠ **This is a constraint on deployment, not a property of the protocol.** A third-party client on its
-own origin is impossible today, and that bears on the anti-lock-in property the project claims
-elsewhere.
+⛔ **The faucet sends no CORS header**, so the client reaches it from the origin it is served beside, and a
+foreign `faucet` preference fails; its hint says so. The rule is the faucet's, for its rate limit's sake
+(`NODE_INTERFACE → Faucet`).
 
 **The client ships as its own product.** `vite build` makes it a static bundle, served by whatever fronts
 the node; the node's own distributables carry no client (`NODE_INTERFACE → The node serves no client`).
@@ -158,8 +160,8 @@ host with another layout edits those three values, and the picture's URL below, 
 `<base>`'s `href` resolved against the page, its path with a trailing `/` (`/` when the element is absent),
 is the base `decideMode` takes (→ The standalone thread); each meta's content, trimmed, one trailing `/`
 stripped, is the default a stored preference overrides (→ The profile window). The read takes the element's
-attribute through the URL constructor, never `document.baseURI`. A foreign origin in a tag fails exactly as
-one in the preference does, until the node gains CORS.
+attribute through the URL constructor, never `document.baseURI`. A foreign origin in a tag behaves exactly
+as one in the preference does: the node's answers any origin, the faucet's only its own.
 
 **The shell carries the site's preview card, and the picture's URL is the fourth configured value.** After the
 three tags the head carries `description`, `og:type` website, `og:site_name` Notis, `og:title` Notis,
