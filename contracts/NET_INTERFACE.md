@@ -374,12 +374,6 @@ byte cap and read deadline bound that work but do not decline it. The check is b
 directions because that is the identity the transport proves; an address is tied to a peer only by a
 dial, so an address ban can cover no more spellings than dials have named.
 
-> ⚠ **AHEAD OF CODE — 2026-09-15, the ban hang-up unit.** The two leads below lead the code. In the tree
-> a banned peer's inbound connection upgrades and holds a slot until its handshake stream is refused, and
-> a ban closes nothing: the connection stands until the peer drops it, the sync machine keeps the peer as
-> a pick candidate until libp2p's own disconnect event, which a ban never raises, and each pick of it
-> costs a stall window.
-
 **A banned peer's inbound connection is refused at the transport.** The libp2p connection gater's
 `denyInboundEncryptedConnection` answers `isBanned` on the peer id the security handshake has just
 proven — after Noise, before the muxer, the earliest point that has an identity to ask about. A banned
@@ -1085,10 +1079,6 @@ attributed to the sending peer. Three penalty tiers:
   penalized (NAT'd peers sending private addresses is normal)
 
 ## Peer State Machine
-
-> ⚠ **AHEAD OF CODE — 2026-09-15, the ban hang-up unit.** `PeerState` still declares `Handshaking`,
-> `Disconnected`, `Failed` and `Banned`, and `PeerMetadata` a `bannedUntil`; no production path sets any
-> of them, and the unit deletes the five with the tests that assigned them to local variables.
 
 States: `Connecting → Active`. A peer's row opens `Connecting` when its connection upgrades
 (`peer:connect`) and becomes `Active` when its handshake completes in either direction (→ Handshake).
