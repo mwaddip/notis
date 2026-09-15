@@ -1496,8 +1496,9 @@ chain or owed one:
 | **the backer pool** (2026-09-12) | the genesis box set on testnet and devnet — one `BackerStakeBox` per table row and the `BackerPoolBox`, so both networks' `genesisStateRoot` pins; the settlement of every block inside the accrual window (the pool box's successor) and of every block carrying an unstake; three box-type tags. Mainnet's genesis is untouched while its table is empty. **Rides the collected reset** with the row above |
 
 **Outstanding against the live node: the two 2026-09-12 rows, owed one fresh chain.** Testnet's chain began at
-the 2026-09-06 reset, whose block 1 the profile pins as `genesisId` (§What varies per network); every
-earlier reset row is in it, and the usernames row owes none.
+the 2026-09-06 reset; the profile's `genesisId` is `''` until the reset that ships those two rows has mined its
+block 1, pinned in the release after (§What varies per network); every earlier reset row is in the live chain,
+and the usernames row owes none.
 
 **When a reset is not owed.** A change that **adds** a box-type tag, an AVL leaf domain, a store table
 or a nullable column, and leaves every existing committed byte and every existing rule's verdict
