@@ -3,9 +3,10 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import http from 'http';
 import type { AddressInfo } from 'net';
 import { initDb, getDb, closeDb } from '../src/store/db.js';
-import { createApp } from '../src/server.js';
+import { createApp, createAdminApp } from '../src/server.js';
 import type { Config } from '../src/config.js';
 import { MAX_BLOCK_BODY_BYTES, profileFor } from '@dagsocial/types';
+import { resetForTests, getCounters } from '../src/metrics.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -131,6 +132,106 @@ describe('server', () => {
           gateServer.close();
         }
       });
+    }
+  });
+
+  // NODE_INTERFACE → Cross-origin requests
+  describe('CORS', () => {
+    it('OPTIONS /posts: 204, empty body, the four headers, no credentials', async () => {
+      const res = await fetch(`${baseUrl}/posts`, {
+        method: 'OPTIONS',
+        headers: {
+          Origin: 'https://example.com',
+          'Access-Control-Request-Method': 'POST',
+          'Access-Control-Request-Headers': 'content-type',
+        },
+      });
+      expect(res.status).toBe(204);
+      const body = await res.text();
+      expect(body).toBe('');
+      expect(res.headers.get('access-control-allow-origin')).toBe('*');
+      expect(res.headers.get('access-control-allow-methods')).toBe('GET, POST, DELETE, OPTIONS');
+      expect(res.headers.get('access-control-allow-headers')).toBe('Content-Type, Authorization');
+      expect(res.headers.get('access-control-max-age')).toBe('86400');
+      expect(res.headers.has('access-control-allow-credentials')).toBe(false);
+    });
+
+    it('OPTIONS /no/such/path: 204 with the same headers', async () => {
+      const res = await fetch(`${baseUrl}/no/such/path`, {
+        method: 'OPTIONS',
+        headers: { Origin: 'https://example.com' },
+      });
+      expect(res.status).toBe(204);
+      expect(res.headers.get('access-control-allow-origin')).toBe('*');
+      expect(res.headers.get('access-control-allow-methods')).toBe('GET, POST, DELETE, OPTIONS');
+      expect(res.headers.get('access-control-allow-headers')).toBe('Content-Type, Authorization');
+      expect(res.headers.get('access-control-max-age')).toBe('86400');
+    });
+
+    it('GET /status with Origin: 200 and Access-Control-Allow-Origin: *', async () => {
+      const res = await fetch(`${baseUrl}/status`, {
+        headers: { Origin: 'https://example.com' },
+      });
+      expect(res.status).toBe(200);
+      expect(res.headers.get('access-control-allow-origin')).toBe('*');
+    });
+
+    it('GET /no/such/path with Origin: 404 and the header', async () => {
+      const res = await fetch(`${baseUrl}/no/such/path`, {
+        headers: { Origin: 'https://example.com' },
+      });
+      expect(res.status).toBe(404);
+      expect(res.headers.get('access-control-allow-origin')).toBe('*');
+    });
+
+    it('POST /posts with Origin and a body the route refuses: 400 and the header', async () => {
+      const res = await fetch(`${baseUrl}/posts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Origin: 'https://example.com',
+        },
+        body: '{}',
+      });
+      expect(res.status).toBe(400);
+      expect(res.headers.get('access-control-allow-origin')).toBe('*');
+    });
+
+    it('http_requests_total increments for an OPTIONS', async () => {
+      resetForTests();
+      await fetch(`${baseUrl}/posts`, {
+        method: 'OPTIONS',
+        headers: { Origin: 'https://example.com' },
+      });
+      expect(getCounters().httpRequestsTotal).toBe(1);
+    });
+  });
+});
+
+// NODE_INTERFACE → Cross-origin requests: the admin app sends none.
+describe('admin app CORS', () => {
+  it('GET /health with Origin: 200 and no Access-Control-Allow-Origin', async () => {
+    const adminServer = createAdminApp(
+      makeTestConfig({ adminPort: 0, adminBindAddress: '127.0.0.1' }),
+      {
+        getConnectedPeers: () => [],
+        syncPhase: () => 'idle',
+        protocolVersionSchedule: [{ version: 1, fromHeight: 0 }],
+      },
+    );
+    await new Promise<void>((resolve) => {
+      if (adminServer.listening) { resolve(); return; }
+      adminServer.once('listening', resolve);
+    });
+    try {
+      const addr = adminServer.address() as AddressInfo;
+      const res = await fetch(`http://127.0.0.1:${addr.port}/health`, {
+        headers: { Origin: 'https://example.com' },
+      });
+      expect(res.status).toBe(200);
+      expect(res.headers.has('access-control-allow-origin')).toBe(false);
+    } finally {
+      adminServer.close();
     }
   });
 });
