@@ -46,6 +46,9 @@ rsync -a \
   --exclude '*.db-wal' \
   --exclude '*.db-shm' \
   --exclude '*.deb' \
+  `# The release job builds the tarball and the web zip into this root before the .deb` \
+  --exclude '*.tar.gz' \
+  --exclude '*.zip' \
   --exclude 'prompts' \
   --exclude 'tmp' \
   --exclude 'CLAUDE.md' \
