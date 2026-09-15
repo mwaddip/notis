@@ -51,13 +51,10 @@ export type PenaltyType = 'misbehavior' | 'permanent';
 // Peer state machine
 // ---------------------------------------------------------------------------
 
+// NET_INTERFACE → Peer State Machine
 export enum PeerState {
   Connecting = 'connecting',
-  Handshaking = 'handshaking',
   Active = 'active',
-  Disconnected = 'disconnected',
-  Failed = 'failed',
-  Banned = 'banned',
 }
 
 // ---------------------------------------------------------------------------
@@ -79,7 +76,6 @@ export interface PeerMetadata {
   peerId: string;
   state: PeerState;
   penaltyCount: number;
-  bannedUntil: number | null; // null = not banned, timestamp = ban expiration
   lastSeenMs: number;
   /**
    * The address this node dialled, or the address the peer declared —

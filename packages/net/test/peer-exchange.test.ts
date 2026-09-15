@@ -304,8 +304,8 @@ describe('duePeerExchange cadence', () => {
 
   it('never selects a peer that is not Active', () => {
     const peerMgr = makePeerMgr();
-    peerMgr.addPeer({ id: 'handshaking', multiaddrs: [], protocols: [], connectedAt: Date.now() });
-    peerMgr.setPeerState('handshaking', PeerState.Handshaking);
+    // A Connecting peer is the non-Active state production sets
+    peerMgr.addPeer({ id: 'connecting', multiaddrs: [], protocols: [], connectedAt: Date.now() });
     activePeer(peerMgr, 'active');
 
     expect(duePeerExchange(peerMgr, new Map(), Date.now())).toEqual(['active']);

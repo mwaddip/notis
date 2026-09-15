@@ -167,6 +167,15 @@ describe('PeerManager', () => {
     expect((mgr as any).bans.has('peer1')).toBe(false);
   });
 
+  it('a temporal ban removes the metadata (NET_INTERFACE → Peer State Machine)', () => {
+    mgr.addPeer(makePeer('peer1'));
+    vi.spyOn(Date, 'now').mockReturnValue(0);
+    mgr.recordPenalty('misbehavior', 'peer1', 500, 'threshold crossed');
+    expect(mgr.isBanned('peer1')).toBe(true);
+    expect(mgr.getPeerMetadata('peer1')).toBeNull();
+    expect(mgr.isPeerActive('peer1')).toBe(false);
+  });
+
   // -----------------------------------------------------------------------
   // Peer state machine
   // -----------------------------------------------------------------------
@@ -177,20 +186,14 @@ describe('PeerManager', () => {
     expect(meta).not.toBeNull();
     expect(meta!.state).toBe(PeerState.Connecting);
     expect(meta!.penaltyCount).toBe(0);
-    expect(meta!.bannedUntil).toBeNull();
   });
 
-  it('setPeerState transitions through real states', () => {
+  it('setPeerState transitions Connecting → Active', () => {
     mgr.addPeer(makePeer('peer1'));
-
-    mgr.setPeerState('peer1', PeerState.Handshaking);
-    expect(mgr.getPeerMetadata('peer1')!.state).toBe(PeerState.Handshaking);
+    expect(mgr.getPeerMetadata('peer1')!.state).toBe(PeerState.Connecting);
 
     mgr.setPeerState('peer1', PeerState.Active);
     expect(mgr.getPeerMetadata('peer1')!.state).toBe(PeerState.Active);
-
-    mgr.setPeerState('peer1', PeerState.Disconnected);
-    expect(mgr.getPeerMetadata('peer1')!.state).toBe(PeerState.Disconnected);
   });
 
   it('setPeerState is a no-op for unknown peer', () => {
@@ -199,18 +202,12 @@ describe('PeerManager', () => {
     expect(mgr.getPeerMetadata('ghost')).toBeNull();
   });
 
-  it('isPeerActive returns false for non-Active peers', () => {
+  it('isPeerActive returns false for Connecting, true for Active', () => {
     mgr.addPeer(makePeer('peer1'));
-    expect(mgr.isPeerActive('peer1')).toBe(false); // Connecting
-
-    mgr.setPeerState('peer1', PeerState.Handshaking);
     expect(mgr.isPeerActive('peer1')).toBe(false);
 
     mgr.setPeerState('peer1', PeerState.Active);
     expect(mgr.isPeerActive('peer1')).toBe(true);
-
-    mgr.setPeerState('peer1', PeerState.Failed);
-    expect(mgr.isPeerActive('peer1')).toBe(false);
   });
 
   it('isPeerActive returns false for unknown peer', () => {
