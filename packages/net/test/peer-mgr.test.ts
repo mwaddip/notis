@@ -502,12 +502,22 @@ describe('PeerManager', () => {
       const pairMgr = new PeerManager(makeConfig({ maxPeers: 50 }), {
         onBanned: (peerId) => banned.push(peerId),
       });
+
+      // extendBan: no fire
       trackPeer(pairMgr, new PeerDb(null, 100, []), 'peer1', ADDR);
       pairMgr.recordPenaltyKind(PenaltyKind.ProtocolViolation, 'peer1', 'malformed');
       expect(banned).toEqual(['peer1']);
-
       pairMgr.extendBan('peer1', OTHER);
       expect(banned).toEqual(['peer1']);
+
+      // expiry: no fire
+      pairMgr.addPeer(makePeer('peer2'));
+      vi.spyOn(Date, 'now').mockReturnValue(0);
+      pairMgr.recordPenalty('misbehavior', 'peer2', 500, 'threshold');
+      expect(banned).toEqual(['peer1', 'peer2']);
+      vi.spyOn(Date, 'now').mockReturnValue(config.temporalBanDurationMs + 1);
+      expect(pairMgr.isBanned('peer2')).toBe(false);
+      expect(banned).toEqual(['peer1', 'peer2']);
     });
 
     it('inside the onBanned handler, isBanned is true and metadata is null', () => {

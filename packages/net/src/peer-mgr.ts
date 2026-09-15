@@ -47,6 +47,7 @@ interface BanEntry {
  * to PeerDb.ban/unban so the peerId-keyed and address-keyed ban surfaces
  * cannot drift apart, and onBanned to the connection close and the
  * sync-machine notice (NET_INTERFACE → "A ban ends the connection").
+ * Callbacks — not a PeerDb import — keep peer-mgr a leaf module.
  */
 export interface PeerBanHooks {
   onBan?: (address: string) => void;
@@ -165,7 +166,9 @@ export class PeerManager {
 
   /**
    * Impose a ban, remove the row and its metadata, and propagate the
-   * address to PeerDb. The address read precedes the metadata delete:
+   * address to PeerDb. A peer with no recorded address (banned before its
+   * handshake completed) opens the ban's address set empty; `extendBan` is
+   * what grows it later. The address read precedes the metadata delete:
    * reading after it silently drops the propagation
    * (NET_INTERFACE → Peer State Machine).
    */
@@ -173,6 +176,7 @@ export class PeerManager {
     const address = this.metadata.get(peerId)?.address ?? null;
     const addresses = address !== null ? [address] : [];
     this.bans.set(peerId, { peerId, bannedAt: now, banExpiresAt, addresses });
+    // Insertion order is chronological, so the first keys are the oldest bans.
     while (this.bans.size > MAX_TRACKED_BANS) {
       const oldest = this.bans.keys().next().value;
       if (oldest === undefined) break;
