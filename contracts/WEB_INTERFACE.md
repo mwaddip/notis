@@ -118,18 +118,16 @@ package.
 
 ## The client is served from the node's own origin
 
-⛔ **The node sends no CORS headers.** `packages/node/src` contains no `cors` middleware, no
-`Access-Control` response header, and `cors` is not a dependency. A browser client served from any
-other origin cannot read the API at all.
+**The node answers any origin** (`NODE_INTERFACE → Cross-origin requests`): every answer of its public API
+carries `Access-Control-Allow-Origin: *`, so a client on any origin reads it — a third-party client on its
+own host, or this client pointed at a node on the reader's own machine. **The client never hardcodes an
+absolute API origin**: its default is same-origin, served beside the API — in development by the dev
+server's proxy, in production by whatever fronts the node — and the `node` preference
+(→ The profile window) names any other; its hint says so.
 
-So the client is served **same-origin** with the API it reads — in development by the dev server's
-proxy, in production by whatever fronts the node. **The client never hardcodes an absolute API
-origin**; its default is same-origin, and a configured override to a foreign origin will fail until
-the node gains CORS. The setting says so rather than failing silently.
-
-⚠ **This is a constraint on deployment, not a property of the protocol.** A third-party client on its
-own origin is impossible today, and that bears on the anti-lock-in property the project claims
-elsewhere.
+⛔ **The faucet sends no CORS header**, so the client reaches it from the origin it is served beside, and a
+foreign `faucet` preference fails; its hint says so. The rule is the faucet's, for its rate limit's sake
+(`NODE_INTERFACE → Faucet`).
 
 **The client ships as its own product.** `vite build` makes it a static bundle, served by whatever fronts
 the node; the node's own distributables carry no client (`NODE_INTERFACE → The node serves no client`).
@@ -149,7 +147,8 @@ opens its head with
 ```
 
 — the path the client's own files are served under, opening and closing with `/`; the API's path on the
-same origin, no trailing slash; the faucet's, empty for no faucet (→ The faucet step). Every reference the
+same origin, or any node's absolute origin, no trailing slash; the faucet's on the same origin, empty for
+no faucet (→ The faucet step). Every reference the
 built shell makes is relative, and so is every reference inside `public/` — the fonts stylesheet names its
 files beside itself — so the `<base>` alone decides where the client's files resolve, on the workspace page
 and on a standalone page alike. The build writes the three from `VITE_WEB_BASE`, `VITE_API_BASE` and
@@ -158,8 +157,8 @@ host with another layout edits those three values, and the picture's URL below, 
 `<base>`'s `href` resolved against the page, its path with a trailing `/` (`/` when the element is absent),
 is the base `decideMode` takes (→ The standalone thread); each meta's content, trimmed, one trailing `/`
 stripped, is the default a stored preference overrides (→ The profile window). The read takes the element's
-attribute through the URL constructor, never `document.baseURI`. A foreign origin in a tag fails exactly as
-one in the preference does, until the node gains CORS.
+attribute through the URL constructor, never `document.baseURI`. A foreign origin in a tag behaves exactly
+as one in the preference does: the node's answers any origin, the faucet's only its own.
 
 **The shell carries the site's preview card, and the picture's URL is the fourth configured value.** After the
 three tags the head carries `description`, `og:type` website, `og:site_name` Notis, `og:title` Notis,
@@ -953,7 +952,7 @@ client that expects to announce itself first is built against an endpoint that d
 ## Dependencies
 
 - **No WASM.** Pure-TS only, per the preference order the project holds for every package.
-- No server-side rendering — a static bundle served same-origin with the API.
+- No server-side rendering — a static bundle, served beside the API by default.
 - Modern browser. **No Web Crypto.** Keys and signatures are pure TS through `@noble/curves`, the
   family the shim already carries, so the write surface needs no secure context and adds no
   primitive the read surface lacks. The identity envelope's scrypt and ChaCha20-Poly1305 are the same
@@ -962,7 +961,7 @@ client that expects to announce itself first is built against an endpoint that d
 
 ## Preconditions
 
-- `@dagsocial/node` HTTP API reachable **on the origin serving the client**
+- `@dagsocial/node` HTTP API reachable from the client's origin — the node answers every origin
 - Static assets served, fonts among them — self-hosted, never fetched from a third party
 - The standalone path `<base>p/<id>` answered with the client's shell — by the node's `GET /shell/:id`
   behind the host's proxy for a preview, or the shell plain without one (→ Links)

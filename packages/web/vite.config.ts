@@ -3,10 +3,11 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import inject from '@rollup/plugin-inject';
 
-// The client is served same-origin with the API it reads — the node sends no
-// CORS headers (WEB_INTERFACE → "The client is served from the node's own
-// origin"). In development that origin is this dev server, which proxies the
-// bare API paths through to the node. In production nginx fronts both.
+// The client's default API base is same-origin
+// (WEB_INTERFACE → The client is served from the node's own origin), so the dev
+// server proxies the bare API paths for the default to hold. In production
+// nginx or another front does the same, or the client is pointed at a node on
+// any origin — the node answers every origin (NODE_INTERFACE → Cross-origin requests).
 //
 // A dev node listens on 3000 (packages/node/scripts/dev.mjs → httpPort). Set
 // NOTIS_NODE to point the proxy elsewhere.
@@ -39,8 +40,8 @@ if (!process.env['VITE_API_BASE']) process.env['VITE_API_BASE'] = '';
 if (!process.env['VITE_FAUCET_BASE']) process.env['VITE_FAUCET_BASE'] = '';
 if (!process.env['VITE_PUBLIC_ORIGIN']) process.env['VITE_PUBLIC_ORIGIN'] = '';
 
-// The API paths mounted bare on the node, proxied so the browser sees them
-// same-origin — the node and nginx send no CORS
+// The API paths mounted bare on the node, proxied so the client's same-origin
+// default holds in development
 // (WEB_INTERFACE → The client is served from the node's own origin). The read
 // routes (/posts, /status, /blocks) and the write surface's: /karma the spendable
 // view and /likes, plus /credits, /vouches, /invites and /usernames whose builders

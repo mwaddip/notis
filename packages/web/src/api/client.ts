@@ -44,7 +44,7 @@ export interface Api {
 
 export class NodeClient implements Api {
   // The origin is read fresh on every call, never captured — the settings
-  // window can repoint it, and a foreign origin fails until the node gains CORS.
+  // window can repoint it to any origin (NODE_INTERFACE → Cross-origin requests).
   // The default is same-origin: an empty base.
   constructor(private origin: () => string) {}
 

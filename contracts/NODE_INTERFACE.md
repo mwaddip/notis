@@ -104,13 +104,37 @@ are hex-encoded.
 **The node is an HTTP API and nothing else.** It serves no page at `/`, no static file and no bundle;
 `GET /` answers 404 like any unmounted path. A client is a separate product against this contract:
 `@dagsocial/web` is one implementation of the client side (`WEB_INTERFACE`), served by whatever fronts
-the node, and another may be written against the same API. A client on an origin other than the node's
-needs CORS (`WEB_INTERFACE → The client is served from the node's own origin`). The one client file the
-node reads is the shell `WEB_SHELL_PATH` names, which `GET /shell/:id` answers with a post's preview tags
-for the host's proxy to place (→ Link previews) — a link-preview service, not a served client.
+the node, and another may be written against the same API. A client on any origin reads it
+(→ Cross-origin requests); `@dagsocial/web` is served beside the API by default
+(`WEB_INTERFACE → The client is served from the node's own origin`). The one client file the node reads is
+the shell `WEB_SHELL_PATH` names, which `GET /shell/:id` answers with a post's preview tags for the host's
+proxy to place (→ Link previews) — a link-preview service, not a served client.
 
 **No demo UI exists.** The node package carries no page, no static directory and no mirror test; the
 web client's builder vectors are constants that read no file (`WEB_INTERFACE → The wallet`).
+
+### Cross-origin requests
+
+**The node answers any origin.** Every answer of the public app carries `Access-Control-Allow-Origin: *`,
+whatever its status — a route's 400, the 404 for an unmounted path and the error handler's 500 included — so
+a browser page on any origin reads the API: a client on its own host, or one served beside another node and
+pointed at this one. **An `OPTIONS` request to any path is answered 204 with no body, ahead of the body parser
+and every route**, whether or not it is a browser's preflight, carrying `Access-Control-Allow-Origin: *`,
+`Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS`, `Access-Control-Allow-Headers: Content-Type,
+Authorization` and `Access-Control-Max-Age: 86400`; no route sees an `OPTIONS`. The values are fixed in the
+code — there is no origin list and no environment variable — and an operator who wants less puts it in the
+proxy that fronts the node. `Access-Control-Allow-Credentials` is never sent. The answer counts in
+`http_requests_total` like any request the public app receives (→ Admin Listener).
+
+**`*` hands a page on another origin exactly what curl has.** The node sets no cookie and keeps no session, so
+a request carries nothing its sender did not put there; every write is a transaction the client signed,
+which the same page could submit from anywhere; and the mining routes' bearer (→ Mining) is explicit — a
+browser attaches it only when the page holds the secret, and a page holding the secret needed no browser.
+An origin list would exist to protect an ambient credential, and none exists. **The admin listener sends no
+CORS header**: it is the operator's, unauthenticated on loopback, and a page on any origin must not read a
+local node's metrics through it (→ Admin Listener). **The faucet sends none** (→ Faucet): its rate limit is
+keyed on the caller's address, so a page on another origin could spend each visitor's allowance on a key of
+its choosing.
 
 ### Posts
 
@@ -571,7 +595,9 @@ lie this whole bundle exists to remove. A client seeing `null` learns something 
 ⚠ **A client's faucet call therefore goes to a proxy, not to the node.** The web client posts to
 `<faucet>/karma` under its configured faucet base — on notis.fun `/testnet/faucet/`, which the
 deployment maps to the faucet service's own port (`WEB_INTERFACE → The faucet step`); the node's own
-origin has nothing to answer it with.
+origin has nothing to answer it with. **The service sends no CORS header**, so a client reaches it from
+the origin it is served beside: its rate limit is keyed on the caller's address, and a page on another
+origin could spend each visitor's allowance on a key of its choosing (→ Cross-origin requests).
 
 **The service's edge, for any client that calls it.** `POST <faucet>/karma { pubkey }` answers
 `202 { txId, status: "pending", expiresAtHeight }` once the invite is in the node's pool —
@@ -4565,7 +4591,7 @@ two proof systems compose without the client trusting the node for either.
 
 A second Express server on `127.0.0.1:ADMIN_PORT` (default 3001). Never
 binds to a non-loopback address — a non-loopback bind logs a WARN at
-startup.
+startup. It sends no CORS header on any answer (→ Cross-origin requests).
 
 **Every value is in-memory; `/health` and `/stats` never query the database.** The admin router is a
 reader of two things: the node's **metrics** (`node/src/metrics.ts` — one module, written at four seams,

@@ -786,7 +786,7 @@ export function preferenceRows(handlers: ProfileHandlers, ctx: ProfileCtx): HTML
     rows.push(r);
   }
 
-  // Node — the effective base; a foreign origin fails until the node gains CORS.
+  // Node — the effective base; any origin works (NODE_INTERFACE → Cross-origin requests).
   {
     const { row: r, field } = row('node');
     const input = el('input') as HTMLInputElement;
@@ -795,7 +795,7 @@ export function preferenceRows(handlers: ProfileHandlers, ctx: ProfileCtx): HTML
     input.setAttribute('aria-label', 'the node this client reads');
     input.addEventListener('change', () => handlers.setNode(input.value));
     field.appendChild(input);
-    field.appendChild(el('div', 'hint', 'blank resets to the build default. a foreign origin needs CORS the node does not send yet, and will fail.'));
+    field.appendChild(el('div', 'hint', 'blank resets to the build default. any origin works: the node answers every origin.'));
     rows.push(r);
   }
 
@@ -808,7 +808,7 @@ export function preferenceRows(handlers: ProfileHandlers, ctx: ProfileCtx): HTML
     input.setAttribute('aria-label', 'the faucet this client asks for rep');
     input.addEventListener('change', () => handlers.setFaucet(input.value));
     field.appendChild(input);
-    field.appendChild(el('div', 'hint', 'blank uses the build default. a foreign origin needs CORS the faucet does not send yet, and will fail.'));
+    field.appendChild(el('div', 'hint', 'blank uses the build default. a foreign origin fails: the faucet answers its own origin only.'));
     rows.push(r);
   }
 
