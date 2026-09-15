@@ -96,8 +96,9 @@ old poll, and re-reads every open surface with the new `viewer`.
 ## Web-relevant invariants
 
 **From `WEB_INTERFACE.md`:**
-- **Same origin, always.** The node sends no CORS headers. Never hardcode an absolute API origin; the
-  default is same-origin and a configured foreign origin will fail until the node gains CORS.
+- **Same origin by default, any origin by preference.** The node answers every origin
+  (`NODE_INTERFACE → Cross-origin requests`); the faucet answers its own only. Never hardcode an absolute
+  API origin: the default is same-origin, and the `node` preference names any other.
 - **Paging is keyset.** `after=<key>` in, `next` out. **Follow `next`; never page on a count of rows
   you rendered** — rows get filtered out of a page and the count lies.
 - **Withdrawn is never "deleted."** It keeps its identity and its replies hang off it. Hiding it inside
@@ -153,7 +154,8 @@ the vite proxy there — the node, and the faucet, which is a separate service u
 NOTIS_NODE=https://notis.fun/testnet/api NOTIS_FAUCET=https://notis.fun/testnet/faucet pnpm --filter @dagsocial/web dev
 ```
 
-The node and nginx send no CORS, so the proxy is the only route. `API_PATHS` in `vite.config.ts` proxies
+The client's default API base is same-origin, so the dev server proxies the bare API paths for the default
+to hold. `API_PATHS` in `vite.config.ts` proxies
 `/posts`, `/status`, `/blocks`, `/karma`, `/credits`, `/likes`, `/vouches`, `/invites`, `/usernames` — a path the
 client calls that is not in the table returns the HTML shell, not the API. `/faucet` is proxied to
 `NOTIS_FAUCET` only when it is set, with the `/faucet` prefix stripped (http-proxy prepends the target's
