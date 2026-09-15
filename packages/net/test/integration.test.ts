@@ -648,11 +648,12 @@ describe('the outbound funnel refuses a banned peer before the handshake', () =>
   }, TIMEOUT);
 
   // NET_INTERFACE → "A banned peer's inbound connection is refused at the transport"
-  it('a pre-banned peer id is refused at the gater — no handshake line', async () => {
+  it('a pre-banned peer id is refused at the gater', async () => {
     nodeA = new NetNode(makeConfig(), validators);
     await nodeA.start();
     const aAddr = nodeA.libp2pNode?.getMultiaddrs()[0]?.toString();
     expect(aAddr).toBeTruthy();
+    const bareAAddr = aAddr!.split('/p2p/')[0]!;
 
     nodeB = new NetNode(makeBaseConfig({ bootstrapPeers: [], minPeers: 0 }), validators);
     await nodeB.start();
@@ -664,9 +665,10 @@ describe('the outbound funnel refuses a banned peer before the handshake', () =>
     );
 
     const logSpy = vi.spyOn(console, 'log');
+    const warnSpy = vi.spyOn(console, 'warn');
     const internalsB = nodeB as unknown as Internals;
     internalsB.peerDb.record({
-      address: aAddr!.split('/p2p/')[0]!,
+      address: bareAAddr,
       lastSeenMs: Date.now(),
       agentName: 'test',
       nodeName: '',
@@ -677,14 +679,21 @@ describe('the outbound funnel refuses a banned peer before the handshake', () =>
     await new Promise((r) => setTimeout(r, 3000));
 
     const logs = logSpy.mock.calls.map((args) => String(args[0]));
+    const warns = warnSpy.mock.calls.map((args) => String(args[0]));
     logSpy.mockRestore();
+    warnSpy.mockRestore();
+    const all = [...logs, ...warns];
 
     expect(nodeA.libp2pNode?.getConnections()).toHaveLength(0);
     expect(nodeA.getConnectedPeers()).toEqual([]);
-    // The mechanism: no inbound handshake line on A — the gater refused the
-    // connection before the handshake handler ran.
-    expect(logs.some((l) =>
-      l.includes('[net] inbound handshake from') && l.includes(bId),
-    )).toBe(false);
+    // The discriminating lines: the gater aborts the upgrade before
+    // connection:open and peer:connect fire on A, and before B's dial
+    // succeeds. The handler's own isBanned check would also suppress the
+    // handshake log, so a no-handshake assertion proves nothing about
+    // which guard refused.
+    expect(all.some((l) => l.includes(`[net] connection:open peer=${bId}`))).toBe(false);
+    expect(all.some((l) => l.includes(`[net] peer:connect ${bId}`))).toBe(false);
+    expect(all.some((l) => l.includes(`[net] dial FAILED: ${bareAAddr}`))).toBe(true);
+    expect(all.some((l) => l.includes(`[net] dial succeeded: ${bareAAddr}`))).toBe(false);
   }, TIMEOUT);
 });

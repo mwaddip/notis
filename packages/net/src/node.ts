@@ -952,10 +952,10 @@ export class NetNode {
 
     libp2p.handle('/dagsocial/handshake/1', async ({ stream, connection }) => {
       const peerId = connection.remotePeer.toString();
-      // NET_INTERFACE → "A banned peer's inbound connection is refused at the
-      // transport": the gater is the same predicate one layer up. This check
-      // stays — a peer can be banned after its connection upgraded and before
-      // its handshake ran.
+      // NET_INTERFACE → "A banned peer's handshake is refused unread". The gater
+      // refuses the same predicate one layer down, at the transport; this check
+      // covers a peer banned between its connection's upgrade and its handshake,
+      // and the interval before a ban's hang-up completes.
       if (this.peerMgr.isBanned(peerId)) {
         await stream.close().catch(() => { /* the peer is already gone */ });
         return;
@@ -1470,9 +1470,11 @@ export class NetNode {
 
   /**
    * Close a peer's libp2p connection and drop it from the manager. Called by
-   * the boundary sweep (tipApplied) and by the onBanned binding. `hangUp`
-   * closes every connection to the peer; the `peer:disconnect` event it
-   * raises repeats the removal idempotently.
+   * the boundary sweep (tipApplied) and by the onBanned binding. The PeerId
+   * comes from the live connection, so no id-parsing dependency is needed.
+   * The manager row is removed here so the peer is no longer Active at once;
+   * the `peer:disconnect` event the hang-up raises repeats the removal
+   * idempotently.
    */
   private disconnectPeer(peerId: string): void {
     const conn = this.libp2p?.getConnections().find(c => c.remotePeer.toString() === peerId);
