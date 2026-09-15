@@ -374,6 +374,37 @@ byte cap and read deadline bound that work but do not decline it. The check is b
 directions because that is the identity the transport proves; an address is tied to a peer only by a
 dial, so an address ban can cover no more spellings than dials have named.
 
+> ⚠ **AHEAD OF CODE — 2026-09-15, the ban hang-up unit.** The two leads below lead the code. In the tree
+> a banned peer's inbound connection upgrades and holds a slot until its handshake stream is refused, and
+> a ban closes nothing: the connection stands until the peer drops it, the sync machine keeps the peer as
+> a pick candidate until libp2p's own disconnect event, which a ban never raises, and each pick of it
+> costs a stall window.
+
+**A banned peer's inbound connection is refused at the transport.** The libp2p connection gater's
+`denyInboundEncryptedConnection` answers `isBanned` on the peer id the security handshake has just
+proven — after Noise, before the muxer, the earliest point that has an identity to ask about. A banned
+peer's inbound connection is aborted inside the upgrade: it never becomes a connection, holds no slot
+against `maxPeers`, raises no `peer:connect`, and never reaches the handshake handler. The handler's own
+check (above) is the same predicate one layer up and stays: a peer can be banned after its connection
+upgraded and before its handshake ran — a gossip topic validator penalises before the Active gate — and
+the hang-up a ban raises (below) completes asynchronously. Outbound is not gated: the outbound hooks
+fire inside the dial, before the funnel sees the connection, and the gater sees the resolved address,
+never the spelling the funnel dialled, so gating there would refuse the dial every tick and never tie
+the spelling to the ban. The funnel's close-and-learn is the outbound refusal, and `denyDialPeer` is
+consulted only for a dial that names a peer id, which seeds and PeerDb records do not.
+
+**A ban ends the connection.** When `PeerManager` imposes a ban — permanent or temporal, from whichever
+entry recorded the penalty — it fires `onBanned(peerId)` after its own bookkeeping (the row and the
+metadata removed, the addresses propagated), and `NetNode` binds it to the close it already owns: every
+connection to the peer is hung up and the sync machine is told as for a disconnect, synchronously — the
+peer leaves the retained-height table, so it is never again a pick candidate, and if it was the sync
+peer the machine rotates at once rather than after a stall window. The `peer:disconnect` event the
+hang-up raises repeats both idempotently, and `onPeerDisconnected` fires from it as for any close. Until
+the close completes the peer's gossip and sync frames are refused at their Active gates like any
+non-Active peer's. A ban that leaves the connection standing is one the sync machine cannot see — the
+banned peer stays a candidate, its requests go unanswered, and each pick of it costs a stall window
+before rotation.
+
 **Ban policy** — two tiers, split by what a failure is evidence of:
 
 *Frame tier — the payload never decoded as a frame, or the frame refused itself.* Close the
@@ -553,7 +584,8 @@ pick_sync_peer() → sync_from_peer() → backfill() → synced()
 
 - **Pick:** the machine retains each Active peer's last advertised height — the handshake
   `chainHeight` at peer-active, refreshed by every inbound `SyncInfo.tipHeight`, dropped at
-  disconnect — and picks the retained-highest peer above our own height, stalled peers
+  disconnect or ban (→ Handshake, "A ban ends the connection") — and picks the retained-highest peer
+  above our own height, stalled peers
   excluded. The pick runs at peer-active, at every inbound SyncInfo, and at every entry into
   `idle` or `synced` (stall rotation, sync-peer disconnect, backfill's exits), so a taller
   peer learned mid-sync is adopted the moment the current conversation ends — a bridging node
@@ -1054,7 +1086,16 @@ attributed to the sending peer. Three penalty tiers:
 
 ## Peer State Machine
 
-States: `Connecting → Handshaking → Active → Disconnected | Failed`
+> ⚠ **AHEAD OF CODE — 2026-09-15, the ban hang-up unit.** `PeerState` still declares `Handshaking`,
+> `Disconnected`, `Failed` and `Banned`, and `PeerMetadata` a `bannedUntil`; no production path sets any
+> of them, and the unit deletes the five with the tests that assigned them to local variables.
+
+States: `Connecting → Active`. A peer's row opens `Connecting` when its connection upgrades
+(`peer:connect`) and becomes `Active` when its handshake completes in either direction (→ Handshake).
+There is no state after `Active`: a disconnect or a ban **removes the row** (`PeerManager.removePeer`;
+→ Handshake, "A ban ends the connection"), and a ban is recorded in the ban set, never in the row it
+removes (→ "Ban surfaces are unified"). A peer whose handshake does not complete stays `Connecting`
+while its connection stands.
 
 Invariant: No events leak from non-Active peers. Messages from peers not
 in `Active` state are rejected before reaching the router.
@@ -1323,7 +1364,7 @@ offer.
 | `setMissingBodiesProvider(cb)` | `((limit: number) => { id: string; contentHash: Uint8Array }[]) => void` | Provider the `backfill` phase reads: up to `limit` post ids whose rows hold no body, newest first, each with the commitment the body must hash to. An empty answer ends the phase. |
 | `onPostBody(cb)` | `((postId: string, content: string, fromPeerId: string) => boolean) => void` | Delivery of a pulled body that verified against its commitment. The handler stores it and returns `true` (real progress for the stall clock) or `false` (row gone or already filled — no progress, no penalty). |
 | `onPeerActive(cb)` | `((peerId: string, direction: 'inbound' \| 'outbound') => void) => void` | Fired when a peer completes the handshake and becomes Active; `direction` is the connection's. |
-| `onPeerDisconnected(cb)` | `((peerId: string, reason: string) => void) => void` | Fired after a peer's disconnect is processed (`PeerManager.removePeer`). `reason` is always `''` — libp2p's `peer:disconnect` carries none; the parameter is the shape JOURNAL_EVENTS → peer_disconnected names. |
+| `onPeerDisconnected(cb)` | `((peerId: string, reason: string) => void) => void` | Fired after a peer's disconnect is processed (`PeerManager.removePeer`), the disconnect a ban's hang-up raises included (→ Handshake, "A ban ends the connection"). `reason` is always `''` — libp2p's `peer:disconnect` carries none; the parameter is the shape JOURNAL_EVENTS → peer_disconnected names. |
 | `onPeerPenalised(cb)` | `((peerId: string, kind: string, detail: string \| null) => void) => void` | Fired by `PeerManager` itself at its two penalty entries, `recordPenalty` and `recordPenaltyKind` — so every path that records a penalty reaches it, `gossip.ts`'s and `penalizePeer`'s included; `kind` is the `PenaltyType` / `PenaltyKind` string as recorded, `detail` the reason. |
 
 **These four are what JOURNAL_EVENTS → Peer Events / Sync Events and NODE_INTERFACE → Admin Listener read** —
@@ -1482,8 +1523,9 @@ Handler Registration). Net receives values; it does not resolve them, does not i
 - Unknown message codes and peer capabilities are preserved, not rejected
 - A node is never its own peer: a connection to its own peer id is closed at the dial and refused
   at the handshake, and the PeerDb self-address filter keeps its own addresses out of the fill phase
-- A banned peer is never handshaken: refused unread inbound, closed at the dial outbound, and every
-  address a dial ties to it leaves PeerDb
+- A banned peer is never handshaken: its inbound connection is refused at the transport and its
+  handshake stream unread, the dial is closed outbound, and every address a dial ties to it leaves
+  PeerDb; a ban ends the connection it lands on, and the sync machine drops the peer at once
 - Bogus addresses filtered silently; malformed Peers trigger permanent ban
 - Stage 1 reads no store — its one stateful input is the cached
   karma-membership set (`NODE_INTERFACE` → Post transactions); the body check reads only
