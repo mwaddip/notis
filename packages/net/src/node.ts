@@ -583,6 +583,11 @@ export class NetNode {
           }
         }
       },
+      // NET_INTERFACE → "A ban ends the connection"
+      onBanned: (peerId) => {
+        this.disconnectPeer(peerId);
+        this.syncMachine?.onPeerDisconnect(peerId);
+      },
     });
   }
 
@@ -617,6 +622,11 @@ export class NetNode {
         ping: ping(),
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } as any,
+      // NET_INTERFACE → "A banned peer's inbound connection is refused at the transport"
+      connectionGater: {
+        denyInboundEncryptedConnection: (peerId: { toString(): string }) =>
+          this.peerMgr.isBanned(peerId.toString()),
+      },
       connectionManager: {
         maxConnections: this.config.maxPeers,
         minConnections: 0,
@@ -942,10 +952,10 @@ export class NetNode {
 
     libp2p.handle('/dagsocial/handshake/1', async ({ stream, connection }) => {
       const peerId = connection.remotePeer.toString();
-      // A banned peer's handshake is refused unread — no decode, no reply, no
-      // Active transition (NET_INTERFACE → "A banned peer's handshake is refused
-      // unread"). Reading and validating it would spend work on a peer whose ban
-      // is the whole point.
+      // NET_INTERFACE → "A banned peer's inbound connection is refused at the
+      // transport": the gater is the same predicate one layer up. This check
+      // stays — a peer can be banned after its connection upgraded and before
+      // its handshake ran.
       if (this.peerMgr.isBanned(peerId)) {
         await stream.close().catch(() => { /* the peer is already gone */ });
         return;
@@ -1459,11 +1469,10 @@ export class NetNode {
   }
 
   /**
-   * Close a peer's libp2p connection and drop it from the manager. `hangUp`
-   * closes every connection to the peer; the PeerId comes from the live
-   * connection, so no id-parsing dependency is needed. The manager row is
-   * removed here so the peer is no longer Active at once — the `peer:disconnect`
-   * event that hangUp raises repeats the removal idempotently.
+   * Close a peer's libp2p connection and drop it from the manager. Called by
+   * the boundary sweep (tipApplied) and by the onBanned binding. `hangUp`
+   * closes every connection to the peer; the `peer:disconnect` event it
+   * raises repeats the removal idempotently.
    */
   private disconnectPeer(peerId: string): void {
     const conn = this.libp2p?.getConnections().find(c => c.remotePeer.toString() === peerId);

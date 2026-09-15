@@ -18,7 +18,7 @@ import {
 } from '@dagsocial/validation';
 import { NetNode } from '../src/node.js';
 import type { NetConfig, NetValidators } from '../src/types.js';
-import { PenaltyKind, PeerState } from '../src/types.js';
+import { PenaltyKind } from '../src/types.js';
 import { makeConfig as makeBaseConfig } from './helpers.js';
 import type { PeerDb } from '../src/peerdb.js';
 import type { PeerManager } from '../src/peer-mgr.js';
@@ -567,19 +567,19 @@ describe('the outbound funnel refuses a banned peer before the handshake', () =>
     });
 
     internalsB.peerMgr.recordPenalty('misbehavior', aId, 500, 'test');
-    // Control: the ban takes A out of the peers map at once and leaves the
-    // live connection open — a ban does not hang up a connection; it is the
-    // SECOND tick this test measures.
+    // NET_INTERFACE → "A ban ends the connection": the ban hangs up every
+    // connection to the peer. The hang-up is asynchronous.
     expect(nodeB.getConnectedPeers()).not.toContain(aId);
-    expect(nodeB.libp2pNode?.getConnections()).toHaveLength(1);
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(nodeB.libp2pNode?.getConnections()).toHaveLength(0);
 
     internalsB.outboundTick();
     await new Promise((r) => setTimeout(r, 1500));
 
     expect(nodeB.getConnectedPeers()).not.toContain(aId);
-    expect(internalsB.peerMgr.getPeerMetadata(aId)?.state).not.toBe(PeerState.Active);
+    expect(internalsB.peerMgr.getPeerMetadata(aId)).toBeNull();
     expect(internalsB.peerDb.isBanned(dnsAddr)).toBe(true);
-    expect(nodeB.libp2pNode?.getConnections().length).toBeLessThanOrEqual(1);
+    expect(nodeB.libp2pNode?.getConnections()).toHaveLength(0);
   }, TIMEOUT);
 
   it('a seed that resolves to a banned peer is dialled again on the next tick', async () => {
@@ -622,5 +622,69 @@ describe('the outbound funnel refuses a banned peer before the handshake', () =>
     logSpy.mockRestore();
     expect(logs.filter((l) => l.includes(`resolved to banned peer ${aId}`))).toHaveLength(2);
     expect(nodeB.libp2pNode?.getConnections()).toEqual([]);
+  }, TIMEOUT);
+
+  // NET_INTERFACE → "A ban ends the connection"
+  it('A bans B — both sides see the close', async () => {
+    nodeA = new NetNode(makeConfig(), validators);
+    await nodeA.start();
+    const aAddr = nodeA.libp2pNode?.getMultiaddrs()[0]?.toString();
+    expect(aAddr).toBeTruthy();
+
+    nodeB = new NetNode(makeConfig([aAddr!]), validators);
+    await nodeB.start();
+    await new Promise((r) => setTimeout(r, 3000));
+    const bId = nodeB.peerId();
+    expect(nodeA.getConnectedPeers()).toContain(bId);
+
+    (nodeA as unknown as Internals).peerMgr.recordPenalty(
+      'misbehavior', bId, 500, 'test',
+    );
+    await new Promise((r) => setTimeout(r, 1500));
+
+    expect(nodeA.libp2pNode?.getConnections()).toHaveLength(0);
+    expect(nodeA.getConnectedPeers()).not.toContain(bId);
+    expect(nodeB.getConnectedPeers()).not.toContain(nodeA.peerId());
+  }, TIMEOUT);
+
+  // NET_INTERFACE → "A banned peer's inbound connection is refused at the transport"
+  it('a pre-banned peer id is refused at the gater — no handshake line', async () => {
+    nodeA = new NetNode(makeConfig(), validators);
+    await nodeA.start();
+    const aAddr = nodeA.libp2pNode?.getMultiaddrs()[0]?.toString();
+    expect(aAddr).toBeTruthy();
+
+    nodeB = new NetNode(makeBaseConfig({ bootstrapPeers: [], minPeers: 0 }), validators);
+    await nodeB.start();
+    const bId = nodeB.peerId();
+
+    // Ban B's peer id before B dials
+    (nodeA as unknown as Internals).peerMgr.recordPenaltyKind(
+      PenaltyKind.ProtocolViolation, bId, 'test',
+    );
+
+    const logSpy = vi.spyOn(console, 'log');
+    const internalsB = nodeB as unknown as Internals;
+    internalsB.peerDb.record({
+      address: aAddr!.split('/p2p/')[0]!,
+      lastSeenMs: Date.now(),
+      agentName: 'test',
+      nodeName: '',
+      protocolVersion: PROTOCOL_VERSION,
+      capabilities: [],
+    });
+    internalsB.outboundTick();
+    await new Promise((r) => setTimeout(r, 3000));
+
+    const logs = logSpy.mock.calls.map((args) => String(args[0]));
+    logSpy.mockRestore();
+
+    expect(nodeA.libp2pNode?.getConnections()).toHaveLength(0);
+    expect(nodeA.getConnectedPeers()).toEqual([]);
+    // The mechanism: no inbound handshake line on A — the gater refused the
+    // connection before the handshake handler ran.
+    expect(logs.some((l) =>
+      l.includes('[net] inbound handshake from') && l.includes(bId),
+    )).toBe(false);
   }, TIMEOUT);
 });
