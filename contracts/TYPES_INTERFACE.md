@@ -2797,9 +2797,9 @@ overridden explicitly and `network.test.ts` asserts the override rather than the
 **`genesisId` pins block 1, and is empty until a network has one.** Hex(32) of the height-1 block's
 `blockHash`, or `''`. When set, the height-1 chain-link refuses any other block 1 (`NODE_INTERFACE` →
 Ordering block apply-time authorization, genesis pin) and a NiPoPoW proof must anchor on it
-(→ Interlink vector). Devnet is always `''` — every run mines its own block 1. **Testnet is `''`** from the
-reset that ships the two 2026-09-12 rows (`ARCHITECTURE → Deploy gate`) until that reset's block 1 is mined and
-pinned in the release after. Mainnet is `''` until its block 1 exists and is pinned in the release
+(→ Interlink vector). Devnet is always `''` — every run mines its own block 1. **Testnet is pinned to
+`39ef01d11ccd9b10e0c6f7f87031a90f8a12faa94f77e5520843b30bc37a44fe`**, its block 1, mined 2026-09-15 on the chain
+that began at that day's reset (`ARCHITECTURE → Deploy gate`). Mainnet is `''` until its block 1 exists and is pinned in the release
 after: a value, not a format, so pinning it moves no bytes. Field-only and per-network like the other genesis fields; `network.test.ts`
 asserts each profile's own value rather than the spread.
 

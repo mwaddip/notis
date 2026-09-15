@@ -301,10 +301,9 @@ const TESTNET_PROFILE: NetworkProfile = Object.freeze({
   // proof payload, the faucet identity's boxes and record, a backer stake box
   // per `backerTable` row, and the backer pool box.
   genesisStateRoot: 'e889005d151873c962856f0475059405746e12a067db573e495bf88c864d3efd04',
-  // '' until the network has a block 1 to pin; mainnet's and devnet's are ''
-  // too (TYPES_INTERFACE → "genesisId pins block 1, and is empty until a
-  // network has one").
-  genesisId: '',
+  // Block 1, mined 2026-09-15 (TYPES_INTERFACE → "genesisId pins block 1, and
+  // is empty until a network has one").
+  genesisId: '39ef01d11ccd9b10e0c6f7f87031a90f8a12faa94f77e5520843b30bc37a44fe',
 
   backerSupply: TESTNET_BACKERS.supply,
   backerTable: Object.freeze(TESTNET_BACKERS.rows),
