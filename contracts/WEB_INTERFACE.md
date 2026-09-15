@@ -118,10 +118,6 @@ package.
 
 ## The client is served from the node's own origin
 
-> ⚠ **AHEAD OF CODE — 2026-09-15, the CORS unit.** The `node` and `faucet` preference hints, a comment in
-> the read client, the dev server's comments and the deploy note say the node sends no CORS headers; the
-> unit rewrites them to the two rules below.
-
 **The node answers any origin** (`NODE_INTERFACE → Cross-origin requests`): every answer of its public API
 carries `Access-Control-Allow-Origin: *`, so a client on any origin reads it — a third-party client on its
 own host, or this client pointed at a node on the reader's own machine. **The client never hardcodes an
@@ -151,7 +147,8 @@ opens its head with
 ```
 
 — the path the client's own files are served under, opening and closing with `/`; the API's path on the
-same origin, no trailing slash; the faucet's, empty for no faucet (→ The faucet step). Every reference the
+same origin, or any node's absolute origin, no trailing slash; the faucet's on the same origin, empty for
+no faucet (→ The faucet step). Every reference the
 built shell makes is relative, and so is every reference inside `public/` — the fonts stylesheet names its
 files beside itself — so the `<base>` alone decides where the client's files resolve, on the workspace page
 and on a standalone page alike. The build writes the three from `VITE_WEB_BASE`, `VITE_API_BASE` and
@@ -955,7 +952,7 @@ client that expects to announce itself first is built against an endpoint that d
 ## Dependencies
 
 - **No WASM.** Pure-TS only, per the preference order the project holds for every package.
-- No server-side rendering — a static bundle served same-origin with the API.
+- No server-side rendering — a static bundle, served beside the API by default.
 - Modern browser. **No Web Crypto.** Keys and signatures are pure TS through `@noble/curves`, the
   family the shim already carries, so the write surface needs no secure context and adds no
   primitive the read surface lacks. The identity envelope's scrypt and ChaCha20-Poly1305 are the same
@@ -964,7 +961,7 @@ client that expects to announce itself first is built against an endpoint that d
 
 ## Preconditions
 
-- `@dagsocial/node` HTTP API reachable **on the origin serving the client**
+- `@dagsocial/node` HTTP API reachable from the client's origin — the node answers every origin
 - Static assets served, fonts among them — self-hosted, never fetched from a third party
 - The standalone path `<base>p/<id>` answered with the client's shell — by the node's `GET /shell/:id`
   behind the host's proxy for a preview, or the shell plain without one (→ Links)

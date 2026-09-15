@@ -370,10 +370,11 @@ as `dagsocial-faucet`, stopped until its key is in place.
 surface on transactions the browser builds and signs: posts and replies, likes, vouches, invites,
 withdrawals, a username claimed or burned. It is a product of its own: the node serves no client,
 and this one is an implementation of the API's client side that another may be written against.
-It is a static bundle that must be served **from the same origin as the node's API**: the node
-sends no CORS headers, so a client on any other origin cannot read it. On notis.fun nginx fronts
-both, the API under `/testnet/api/` and the client under `/web/`; a node run on its own has no UI
-until something serves the client beside it.
+It is a static bundle served beside the node's API by default: on notis.fun nginx fronts both, the API
+under `/testnet/api/` and the client under `/web/`. The node answers any origin — every answer carries
+`Access-Control-Allow-Origin: *` — so the client can be served from another host and pointed at any
+node, and the profile window's `node` preference can name a node on the reader's own machine; Chrome
+gates that last case behind its local-network permission. The faucet answers its own origin only.
 
 **Get it from a release** — `notis-web-<ver>.zip` — or build the same zip yourself with
 `bash packages/web/scripts/build-release.sh`. Inside, `web/` is the bundle, `nginx.example.conf` a
@@ -390,7 +391,8 @@ for notis.fun's layout:
 ```
 
 They name the path the client is served under (opening and closing with `/`), the API's path on the
-same origin, the faucet's — empty for no faucet and no faucet button — and the preview picture's
+same origin or any node's absolute origin, the faucet's on the same origin — empty for no faucet and
+no faucet button — and the preview picture's
 absolute URL (`<origin><base>og.png`). A host with another layout edits those four values and nothing
 else: every reference in the bundle is relative to the base. A reader can still point their own
 browser at another node or faucet from the profile window's preferences.

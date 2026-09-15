@@ -115,9 +115,6 @@ web client's builder vectors are constants that read no file (`WEB_INTERFACE →
 
 ### Cross-origin requests
 
-> ⚠ **AHEAD OF CODE — 2026-09-15, the CORS unit.** The public app sends no `Access-Control-*` header and
-> answers an `OPTIONS` request with Express's own `Allow` list; the rule below is what the unit implements.
-
 **The node answers any origin.** Every answer of the public app carries `Access-Control-Allow-Origin: *`,
 whatever its status — a route's 400, the 404 for an unmounted path and the error handler's 500 included — so
 a browser page on any origin reads the API: a client on its own host, or one served beside another node and
