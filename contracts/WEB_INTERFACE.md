@@ -76,6 +76,17 @@ every control the card carries in a pane, a way from it into the workspace, and 
 such a URL (→ The standalone thread, → The way into the workspace, → Links). It is the App in a mode, not a
 second renderer, and with no identity loaded it is the read surface exactly.
 
+### The extension slice — the same client as its own page, the key in the extension
+
+> ⚠ **AHEAD OF CODE (2026-09-16, the extension)** — this slice is designed and not built; → The extension states it, and the
+> `Status:` line above gains it when its unit merges (the section is the rule; this slice is its name in the Scope).
+
+**The client bundled as a browser extension, the identity held by the extension's background, and every
+write signed there.** The property it serves: after install, Notis needs no hosted page, no server-held
+key, no server that signs, and no call home — the only traffic is to the node(s) the reader configured.
+It is the App in a second build, not a second client: with no identity loaded it is the read surface
+exactly, and with one it is the write surface with its signing moved out of the page (→ The extension).
+
 ## The browser reaches `@dagsocial/types` through a build-time shim
 
 `@dagsocial/types` and `@dagsocial/validation` are written against Node: `createHash('blake2b512')`
@@ -137,13 +148,24 @@ Each GitHub release carries it as **`notis-web-<ver>.zip`** beside the node's th
 workflow's linux job runs. Never an installer. `<ver>` is the repository's version, the one the node's
 artifacts carry.
 
-**The deployment is three tags in the shell's head, and nothing in the bundle's bytes.** `web/index.html`
+> ⚠ **AHEAD OF CODE (2026-09-16, the extension)** — the two extension artifacts below are the extension unit's.
+
+**The extension ships beside it, twice.** Each release also carries **`notis-extension-<ver>-chrome.zip`**
+and **`notis-extension-<ver>-firefox.zip`** — the same client built as an extension page (→ The
+extension), each zip a directory holding the bundle, the background script, the prompt page, the icons
+and that browser's `manifest.json`, built by `packages/web/scripts/build-extension.sh`, which the release
+workflow's linux job runs after `build-release.sh`. A store listing is a separate act; the zips load
+unpacked (Chrome) or as a temporary add-on (Firefox) as they are. Never an installer, and no `update_url`.
+
+**The deployment is five tags in the shell's head, and nothing in the bundle's bytes.** `web/index.html`
 opens its head with
 
 ```html
 <base href="/web/">
 <meta name="notis-api" content="/testnet/api">
 <meta name="notis-faucet" content="/testnet/faucet">
+<meta name="notis-nodes" content="[]">
+<meta name="notis-public" content="">
 ```
 
 — the path the client's own files are served under, opening and closing with `/`; the API's path on the
@@ -151,14 +173,28 @@ same origin, or any node's absolute origin, no trailing slash; the faucet's on t
 no faucet (→ The faucet step). Every reference the
 built shell makes is relative, and so is every reference inside `public/` — the fonts stylesheet names its
 files beside itself — so the `<base>` alone decides where the client's files resolve, on the workspace page
-and on a standalone page alike. The build writes the three from `VITE_WEB_BASE`, `VITE_API_BASE` and
-`VITE_FAUCET_BASE` — `/`, empty and empty under the dev server; notis.fun's layout in the release — and a
-host with another layout edits those three values, and the picture's URL below, in one file. The client reads them once, at load: the
+and on a standalone page alike. The build writes the five from `VITE_WEB_BASE`, `VITE_API_BASE`,
+`VITE_FAUCET_BASE`, `VITE_NODES` and `VITE_PUBLIC` — `/`, empty, empty, `[]` and empty under the dev server
+and in the web release; the extension build's values are its own (→ The extension) — and a
+host with another layout edits those five values, and the picture's URL below, in one file. The client reads them once, at load: the
 `<base>`'s `href` resolved against the page, its path with a trailing `/` (`/` when the element is absent),
 is the base `decideMode` takes (→ The standalone thread); each meta's content, trimmed, one trailing `/`
 stripped, is the default a stored preference overrides (→ The profile window). The read takes the element's
 attribute through the URL constructor, never `document.baseURI`. A foreign origin in a tag behaves exactly
 as one in the preference does: the node's answers any origin, the faucet's only its own.
+
+> ⚠ **AHEAD OF CODE (2026-09-16, the extension)** — the two values below and the node's resolution rule are the extension unit's.
+
+**The two later tags.** `notis-nodes` is a JSON array of API bases — the build's **seed list**, one per
+network, the extension build's way of naming a node without a hosted page (→ The extension); anything
+that is not a JSON array of strings reads as `[]`. `notis-public` is an origin and base, opening with a
+scheme and closing with `/`, or empty — the URL `link` copies from (→ Links): a page whose own location
+is not shareable, an extension page, needs one; the web build leaves it empty and `link` copies the
+page's own location, as before. **The node the client talks to resolves in one order:** the stored
+`node` preference, else the first entry of `notis-nodes`, else `notis-api`. At start, when `GET /status`
+fails and the list has more entries, the App adopts the next one that answers — for the session, not
+stored, so the list keeps governing; when none answers, the feed's own report line says *no node
+answered — set one in @profile*, and the `node` row is where one is typed. No first-run screen.
 
 **The shell carries the site's preview card, and the picture's URL is the fourth configured value.** After the
 three tags the head carries `description`, `og:type` website, `og:site_name` Notis, `og:title` Notis,
@@ -177,6 +213,125 @@ fragment reference — `<use href="#id">`, `<a href="#id">` — becomes a refere
 document on every page but the base itself. So the client carries none: the mark is inline markup in each
 header that renders it (`HOUSE_STYLE → Where the artwork lives`), and every URL the client composes from its
 base is path-absolute.
+
+## The extension
+
+> ⚠ **AHEAD OF CODE (2026-09-16, the extension)** — this whole section states the extension unit, designed 2026-09-16 and
+> not yet built; every rule here is the code's target.
+
+**The client bundled as a browser extension — Chrome and Firefox, Manifest V3 — with the identity held
+by the extension's background and every write signed there.** It is `@dagsocial/web`'s second build
+target, not a second client: the App is byte-identical between the web build and the extension build,
+and only the identity implementation it is handed, the two extra pages and the shell's values differ. The
+property it serves is stated in the Scope (→ The extension slice): no hosted page, no server-held key, no
+server that signs, no call home.
+
+**Three contexts, and what each may hold.**
+
+- **The page** is the App at the extension's own origin (`chrome-extension://<id>/`,
+  `moz-extension://<uuid>/`). That origin's `localStorage` is persistent and private to the extension,
+  so the preferences, the pending ledger, the layout and the lock-and-channel pair between page tabs
+  (→ The way into the workspace) work exactly as on the web. **The page never holds a seed.** Its
+  identity module is a **proxy**: `current()` is a snapshot `{ pubKeyHex, locked, backedUp }` fetched
+  once before the App constructs and kept fresh from the browser's `storage.onChanged` — which is also
+  what fires `onChange` — and every other call is a message to the background. The page runs the
+  workspace mode only: an outside deep link lands on the website, not the extension, so the standalone
+  mode is unreachable here, and `link` copies from `notis-public` (→ The client is served from the
+  node's own origin).
+- **The background** — a service worker on Chrome, an event page on Firefox — holds the identity service
+  and nothing else. **It may be killed between any two events, so it keeps no state in globals** and
+  reloads what it needs from storage on every call. The envelope and the backed-up flag live in
+  `storage.local` under `notis.identity` and `notis.identity.backedup`, the envelope the shape → The
+  identity module states; a clear value there reads as no identity. **The unlocked seed lives in
+  `storage.session`** under `notis.seed` — memory-only, never written to disk, cleared when the browser
+  closes, and it survives the worker being killed, which is what makes the design workable. `lock`
+  deletes it; closing the browser is a lock; **the lock state is per browser, not per tab.** A drafted key
+  lives in `storage.session` under `notis.draft` between `draft` and `create`. Never in a worker global.
+- **The prompt window** is a small extension page, `prompt.html`, the background opens with
+  `windows.create({ type: 'popup' })` when a signature needs a human — one at a time. It shows what is
+  being signed, derived by the background from the transaction bytes it was handed, never taken from
+  the page. Approve signs; decline, Esc, or closing the window is a decline. It is a surface, and every
+  rule of `HOUSE_STYLE` applies to it: the face says `rep` and `$NOTIS` (`HOUSE_STYLE → Voice`), its
+  `sign` and `cancel` are a commit pair like the composer's (`HOUSE_STYLE → Interaction`), *working…*
+  while it signs.
+
+**The action button opens or focuses the page** — `action.onClicked` finds a tab at the page's URL and
+raises it, else creates one. No `default_popup`, since one suppresses `onClicked`.
+
+**Permissions and policy, the whole list.** `storage` and `tabs`; the browser's default extension-page
+CSP, `script-src 'self'` — which is why the shell's theme script is a file the shell references and not
+an inline script, in both builds; **no host permission for the node**, because every node answers every
+origin (`NODE_INTERFACE → Cross-origin requests`) and an extension page fetches under CORS like any page;
+**one optional host permission, for a faucet origin the reader sets** — the faucet sends no CORS header
+(`NODE_INTERFACE → Faucet`) and an extension context bypasses CORS only for a host it was granted, so the
+`faucet` row's `set` requests it from the press and stores the preference only when granted (→ The
+profile window). No `update_url`.
+
+**The manifest** is one template and two emitted files. Common: Manifest V3, the repository's version,
+the action with no popup, the permissions above, the mark at 16, 32, 48 and 128 px as PNG
+(`HOUSE_STYLE → Where the artwork lives`: the files are tracked, the pipeline is not). Chrome: a
+service-worker background, a minimum of Chrome 112, and a pinned `key` so the extension id is stable.
+Firefox: an event-page background and `browser_specific_settings.gecko` with a minimum of Firefox 121.
+**The background is one classic file with no `import`**, built in lib mode, so both browsers run it as
+they are.
+
+**The seed list** is the one per-network fact the build carries: `notis-nodes` in the shell (→ The
+client is served from the node's own origin), testnet `["https://notis.fun/testnet/api"]`, mainnet `[]`
+until there is one. It lives in the extension's build configuration, never in `@dagsocial/types`.
+
+**The policy.** The ledger a transaction moves is read from its outputs: **any output with `boxType`
+`credit` or `fee` is a credits transaction; otherwise karma.** Inputs are ids only
+(`TYPES_INTERFACE → Layout — UtxoTransaction`), so the read is output-side by necessity, and it is
+sufficient — value conserves per ledger, a whole-input fee still outputs `fee`
+(`TYPES_INTERFACE → FeeBox`), and a `fee` output on a karma-side transaction is refused by the node, so
+nothing karma-side can be misfiled. Then: **credits are always prompted** — not a preference; **karma is
+silent while unlocked** by default, and one preference, *sign each rep action: don't ask · ask*, held by
+the background under `notis.signPolicy`, prompts for it too. The client has no credits write yet
+(`NODE_INTERFACE → Credits` exists on the node; the builder is a later unit), so under the default no
+prompt appears; the first credits builder inherits it with nothing to add.
+
+**The messages** — page to background, promise-returning, each answering a plain result or `{ error }`,
+the background reloading its state from storage on every one: `state` (the proxy's snapshot, with the
+policy), `draft`, `discardDraft`, `create { passphrase }`, `inspectFile { text }`, `importFile { text,
+passphrase }`, `exportFile { password }` (the envelope text; the page makes the download), `unlock {
+passphrase }`, `lock`, `forget`, `policy { karma }`, `sign { txBytes, txIdHex, hint }`, `ack { id }`; and
+from the prompt page only, checked by the sender's URL, `approve { id }` and `decline { id }`. Change
+notification is not a message: the page listens to `storage.onChanged` — `local` for the envelope's
+presence, the backed-up flag and the policy, `session` for the seed's presence, which *is* `locked`.
+
+**`sign`, in the background, in order.** `txBytes` is `encodeTx` of the unsigned transaction; `hint` is
+`{ content? }`, a post's body, shown only when it verifies.
+
+1. `decodeTx(txBytes)`, the canonical decoder — a failure is `refused: undecodable`.
+2. `computeTxId(tx)` must equal `txIdHex`, else `refused: id-mismatch`. The page's id is a claim; the
+   background's is the truth, and the signature is over the truth.
+3. `tx.signatures` must be empty, else `refused: already-signed`.
+4. The ledger, from the outputs.
+5. Karma under *don't ask*: the seed present → `{ signature }` at once, 128 hex; absent → `{ locked }`.
+6. Otherwise **the prompt**: the request `{ id, txIdHex, txBytes, summary, hint }` is written to
+   `storage.session` under `notis.sign.<id>`, the prompt page opens on that id, and the page is answered
+   `{ pending: id }` — the proxy then waits on `storage.session.onChanged` for the record's `result`, and
+   `pending` never reaches the wallet. **A worker killed while the human reads the prompt loses
+   nothing.**
+7. `approve` reloads the record and the seed, signs over `txIdHex`, writes `result: { signature }` and
+   removes the window; `decline`, Esc, or the window's close writes `result: { declined }`. A seed absent
+   at approve time — locked from another tab meanwhile — is the unlock form inside the prompt, then the
+   approval: a prompted flow never dead-ends on a lock.
+8. **One prompt at a time**: a second `sign` needing one while a record has no result is
+   `refused: busy`. On start, every record without a result is declined — a window that vanished with
+   the browser. A record is removed on the page's `ack`.
+
+**The summary the prompt shows is derived from the transaction.** Its kind — thread or reply from
+`tx.post` and its parent refs, like from `likeTarget`, withdraw from `postWithdraw`, vouch, unvouch,
+invite, claim and burn from the outputs' `boxType`s, credits from any `credit` or `fee` output — and what
+it spends: the outputs that are not change, change being any output to the signer's own key; for credits,
+the `credit` outputs whose `owner` is not the signer and the `fee`. A post's content is shown only when
+`computeContentHash(content) === tx.post.contentHash`; a target is its post id or key in mono, never a
+name the page supplied. `protocolVersion` is shown small and not checked — the node refuses a wrong era.
+
+**The build check that keeps the web bundle honest:** the web build's assets contain no `chrome.`
+reference. `build-release.sh` checks it; `build-extension.sh` checks the extension's shell has no inline
+script, its background has no `import`, its manifests parse, and `web-ext lint` is clean.
 
 ## Reading the feed and threads
 
@@ -525,7 +680,7 @@ the exported file is the same envelope — one codec, and importing an encrypted
 | Open | scrypt with the envelope's own parameters; the tag verified; the public key recomputed from the seed **must equal** `pubKeyHex` | a wrong passphrase, an edited header and a flipped byte are each refused with a reason |
 | Import | an envelope, stored verbatim after one successful open; **or** a clear key file `{ pubKeyHex, privKeyBase64 }` — validated as before (48 bytes, the prefix, the recomputed key) and sealed under a passphrase the reader sets | the clear shape is a **file shape only** — a clear value found in storage reads as no identity and is left in place; this client writes no clear file |
 | Export | a **fresh** seal under a password the reader types, downloaded as `notis-identity-<prefix>.json` | needs the seed, so a locked identity unlocks first |
-| Signing | `ed25519.sign` from `@noble/curves` over the 32 transaction-id bytes | 64 raw bytes, hex in JSON, keyed by the hex public key; **throws while locked** |
+| Signing | `ed25519.sign` from `@noble/curves` over the 32 transaction-id bytes, behind `sign(txBytes, txIdHex): Promise<SignResult>` | 64 raw bytes, hex in JSON, keyed by the hex public key; **answers `locked` while locked** (→ The wallet) |
 | Post ID | the node's `postId` from the `POST /posts` response | never derived client-side — the node is authoritative and the value is in the reply |
 
 **No Web Crypto, still.** scrypt and ChaCha20 are pure TS in the family the shim carries, and the
@@ -538,9 +693,20 @@ AES because a pure-JS AES leans on table lookups a pure-JS ChaCha does not need.
 public key only: `current()` answers `{ pubKeyHex, locked: true }`, reads carry `viewer`, the write
 controls render. The first write — or the profile's own `unlock` — takes the passphrase, and the seed
 then sits in JS memory until `lock`, a reload or the tab's end. No idle timeout. **Every write checks
-`locked` before its flight**, because the unlock is a form and `sign` is synchronous: `post` shows the
+`locked` before its flight**, because the unlock is a form in place, and a lock that lands between the
+check and the signature is a race the flight answers as `notSigned` (→ The wallet): `post` shows the
 unlock form in the composer's foot, `like` in a row under the card's meta row, downward and in response
 to the press (`HOUSE_STYLE → Motion`), and success continues the flight.
+
+> ⚠ **AHEAD OF CODE (2026-09-16, the extension)** — the async seam and the extension's seed lifetime in the paragraph below are
+> the extension unit's; the in-page implementation's own behaviour is unchanged by it.
+
+**`sign` is asynchronous, and there are two implementations of one seam.** `sign(txBytes, txIdHex)`
+answers a `SignResult` — `{ signature }`, `{ locked }`, `{ declined }` or `{ refused: reason }` (→ The
+wallet). The in-page module, the web build's, signs from the seed in its memory and never answers
+`declined`; the extension's proxy forwards to the background, whose seed lives for the browser, not the
+tab, and whose prompt can decline (→ The extension). A drafted key in the extension lives in the
+background's session store between `draft` and `create`.
 
 **`sign` is the only path to the seed.** `current()` returns the public key and the lock state and
 nothing else, and no DTO carries the seed. The module's surface:
@@ -551,7 +717,8 @@ create(passphrase): Promise<Identity> — seals and stores the draft      discar
 inspectFile(text): { kind: 'clear' | 'encrypted', pubKeyHex }
 importFile(text, passphrase): Promise<Identity>  exportFile(password): Promise<string>
 unlock(passphrase): Promise<void>                lock(): void            forget(): void
-sign(txIdHex): string                            backedUp(): boolean     onChange(listener): void
+sign(txBytes, txIdHex): Promise<SignResult>     backedUp(): boolean     onChange(listener): void
+policy?(): 'silent' | 'ask'   setPolicy?(p): Promise<void>   — the extension's proxy only (→ The extension)
 ```
 
 **The browser may remember the passphrase.** Every passphrase form is a real `<form>` with a read-only
@@ -617,6 +784,25 @@ one is a wire change.
 shapes the node uses — `{ error: <status>, reason }` and `{ error: <message> }`; a 409 drops the entry
 and re-reads the spendable view, and the reader sees the rejection.
 
+> ⚠ **AHEAD OF CODE (2026-09-16, the extension)** — the `notSigned` arm and the collapse after the signature below are the
+> extension unit's; in the web build the arm's `declined` never fires.
+
+**A flow can end before the node ever sees it: `notSigned`.** Beside `ok` and `rejection`, every submit
+flow answers `{ ok: false, notSigned: 'locked' | 'declined' | 'refused', reason }` when the signature did
+not come — the key locked between the pre-check and the signature, the prompt declined (→ The
+extension), or the background refused. It means *nothing was spent and the node never saw this*, and it
+is answered without a stage: **the composer's collapse into the hollow card happens after the
+signature, not before it.** The post flow calls `onSigned` between the signature and the POST, and the
+composer path collapses there; so on `notSigned` **the composer is still open with its text** —
+`locked` mounts the unlock form in its foot, `declined` re-enables it with one foot line, *not sent.*,
+`refused` re-enables it with the reason, *one approval at a time.* for a second prompt. That is the
+fourth ending beside the three above — landed, expired, rejected: the text is still there, and the reader
+made no mistake. The other writes keep their optimistic step and undo it — the like's overlay, the
+withdraw's transient flight, the vouch mark, an invite's, a claim's or a burn's row flight — with the
+line in their report: *like not sent.*, *withdraw not sent.*, or *your key is locked* for the race. A
+`try again` on an expired card returns to *expired* on `notSigned`, `try again` still offered. A
+transport failure after the collapse stays the rejected ending.
+
 **Reconcile runs on the reader's own refresh and on the bounded poll below.** A pending post is landed
 when `GET /posts/:postId` answers `confirmed`, expired on a 404 or once the tip passes
 `expiresAtHeight`; a pending like is landed when `likedByViewer` turns `true`, and the row the reconcile
@@ -681,6 +867,7 @@ passphrase   locked · unlock  /  unlocked · lock
 export · forget — each a form in place (import is offered only with no identity loaded)
 ────
 theme · identity tint · node · faucet · arrangement — the preferences
+sign each rep action · don't ask / ask — in the extension only (→ The extension)
 ```
 
 The window's `↻` is live — the first window with something to refresh — and re-reads `/karma/:key`.
@@ -730,6 +917,16 @@ no number. The available count drops when the bond lands, in place, never animat
 when decay has opened a gap, because the face `total` would promise rep the next spend does not have.
 This is the one place a balance rests on the reading surface. **No credits row** while the client spends
 no credits. **A card by the loaded key reads `· you`** after the prefix, muted ink, text only.
+
+> ⚠ **AHEAD OF CODE (2026-09-16, the extension)** — the two rows below are the extension unit's.
+
+**Two preference rows the extension adds or changes.** *sign each rep action: don't ask · ask* is the
+background's policy (→ The extension), read through `state` and set through `policy`; it renders only
+when the identity module implements `policy` — the extension's proxy — so the web build has no such
+row. The *faucet* row is unchanged on the web; in the extension its `set` requests the optional host
+permission for that origin from the press and stores the preference only when granted; denied, the row
+reports *the browser refused access to that origin.* and stores nothing. The `node` row needs nothing:
+the node answers every origin.
 
 ### The faucet step *(identity interface)*
 
@@ -958,6 +1155,9 @@ client that expects to announce itself first is built against an endpoint that d
   primitive the read surface lacks. The identity envelope's scrypt and ChaCha20-Poly1305 are the same
   family — `@noble/hashes` and `@noble/ciphers` — and its randomness is `getRandomValues`, which no
   secure context gates (→ The identity module).
+- ⚠ **AHEAD OF CODE (2026-09-16, the extension)** — the extension's dependency line is the extension unit's:
+  **Manifest V3, and nothing added.** The `chrome.*` surface the extension uses is declared in the
+  package's own `chrome.d.ts`; `@types/chrome` is not a dependency, and no polyfill is (→ The extension).
 
 ## Preconditions
 
@@ -973,6 +1173,16 @@ client that expects to announce itself first is built against an endpoint that d
 - **Storage never holds the seed in the clear.** The stored identity is an encrypted envelope, the seed
   is decrypted into memory on demand and for the tab only, and a clear value in storage reads as no
   identity (→ The identity module). *(identity interface)*
+- ⚠ **AHEAD OF CODE (2026-09-16, the extension)** — the four invariants below are the extension unit's.
+- **In the extension the seed is never at rest in the clear either**, and it lives for the browser, not
+  the tab: the envelope in `storage.local`, the seed in `storage.session` only (→ The extension).
+  *(extension)*
+- **The background signs only a transaction it decoded itself, under an id it recomputed itself.** The
+  page's bytes and id are claims; a mismatch is refused, never signed (→ The extension). *(extension)*
+- **The prompt's summary is derived from the transaction**, never from what the page says about it; a
+  page-supplied body is shown only when it hashes to the commit (→ The extension). *(extension)*
+- **The web bundle carries no extension code.** The build checks it; the App is one source tree in two
+  builds (→ The extension). *(extension)*
 - **Every read carries the viewer's key once an identity is loaded, and none does before.** *(write
   surface)*
 - **A consensus constant is imported; a per-network number is read.** `POST_PRICE_THREAD`,
