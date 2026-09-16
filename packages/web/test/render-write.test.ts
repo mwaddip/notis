@@ -11,8 +11,10 @@ import { contentHashHex } from '../src/integrity';
 
 // The write surface rendered: the composer opens in its slot and collapses to a
 // hollow card, the composer element is reused by reference across a rebuild and
-// across renderFeedInto, and the like control obeys §7's exclusions. render
-// -region.test.ts covers the no-identity case; here an identity is loaded.
+// across renderFeedInto, and the like control follows the row's rules
+// (WEB_INTERFACE → "A feed card carries the like and the copy glyph in its meta
+// row"). render-region.test.ts covers the no-identity case; here an identity is
+// loaded.
 
 const PUB = 'aa'.repeat(32); // the reader
 const OTHER = 'ee'.repeat(32); // someone else

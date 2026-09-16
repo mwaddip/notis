@@ -9,12 +9,12 @@ export type IdTint = 'spine' | 'wash' | 'both' | 'off';
 
 const KEY_THEME = 'notis.theme';
 const KEY_IDTINT = 'notis.idtint';
-const KEY_NODE = 'notis.node';
+export const KEY_NODE = 'notis.node';
 const KEY_FAUCET = 'notis.faucet';
 export const KEY_LAYOUT = 'notis.layout';
 
-// The deployment reads — three tags in the shell's head, read once at load
-// (WEB_INTERFACE → The client is served from the node's own origin).
+// The deployment reads — five tags in the shell's head, read once at load
+// (WEB_INTERFACE → "The client is served from the node's own origin").
 
 export function readBase(): string {
   const el = document.querySelector('base');
@@ -32,9 +32,41 @@ export function readMeta(name: string): string {
   return v.endsWith('/') ? v.slice(0, -1) : v;
 }
 
+/** Parse the `notis-nodes` meta as a JSON array of strings — anything else
+ *  answers `[]` (WEB_INTERFACE → "The client is served from the node's own
+ *  origin"). The build injects the per-network seed list. */
+export function readNodesMeta(): string[] {
+  const el = document.querySelector<HTMLMetaElement>('meta[name="notis-nodes"]');
+  if (!el) return [];
+  const raw = el.content.trim();
+  if (raw === '') return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const out: string[] = [];
+    for (const v of parsed) if (typeof v === 'string' && v !== '') out.push(v);
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/** Read `notis-public` — the origin + base a link to a post should carry, or
+ *  empty when the deployment has none (WEB_INTERFACE → "The client is served
+ *  from the node's own origin"). Always ends with `/` when non-empty. */
+export function readPublicMeta(): string {
+  const el = document.querySelector<HTMLMetaElement>('meta[name="notis-public"]');
+  if (!el) return '';
+  const v = el.content.trim();
+  if (v === '') return '';
+  return v.endsWith('/') ? v : v + '/';
+}
+
 export const WEB_BASE = readBase();
 export const BUILD_BASE = readMeta('notis-api');
 export const BUILD_FAUCET_BASE = readMeta('notis-faucet');
+export const BUILD_NODES = readNodesMeta();
+export const BUILD_PUBLIC = readPublicMeta();
 
 // The wash percentages are large because the wash colour sits at the ground's
 // own lightness — the mix controls how much hue comes through and nothing else,
@@ -70,13 +102,25 @@ export function removeStore(key: string): void {
   }
 }
 
+/** Resolve the node the client talks to at boot:
+ *  the stored preference ?? the first entry of the build's seed list ?? the
+ *  same-origin `notis-api` (WEB_INTERFACE → "The client is served from the
+ *  node's own origin"). When none can serve, the App reports it and asks the
+ *  reader to set one in `@profile`. */
+function initialNode(): string {
+  const stored = readStore(KEY_NODE);
+  if (stored) return stored;
+  if (BUILD_NODES.length > 0) return BUILD_NODES[0]!;
+  return BUILD_BASE;
+}
+
 export const prefs = {
   theme: (readStore(KEY_THEME) === 'dark' ? 'dark' : 'light') as Theme,
   idtint: ((): IdTint => {
     const v = readStore(KEY_IDTINT);
     return v === 'wash' || v === 'both' || v === 'off' ? v : 'spine';
   })(),
-  node: readStore(KEY_NODE) ?? BUILD_BASE,
+  node: initialNode(),
   faucet: readStore(KEY_FAUCET) ?? BUILD_FAUCET_BASE,
 };
 
@@ -118,8 +162,8 @@ export function setNode(origin: string): void {
     prefs.node = trimmed;
     writeStore(KEY_NODE, trimmed);
   } else {
-    // Cleared — reset to the build default rather than forcing same-origin.
-    prefs.node = BUILD_BASE;
+    // Cleared — reset to the first of the seed list or the same-origin default.
+    prefs.node = BUILD_NODES[0] ?? BUILD_BASE;
     removeStore(KEY_NODE);
   }
 }

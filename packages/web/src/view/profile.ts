@@ -46,6 +46,13 @@ export interface ProfileHandlers {
   // The username row (WEB_INTERFACE → The username row).
   claimUsername: (name: string) => void;
   burnUsername: () => void;
+  // The extension's binary sign policy (WEB_INTERFACE → The profile window).
+  // Defined only in the extension build; the row renders only when both are set.
+  policy?: () => 'silent' | 'ask';
+  setPolicy?: (p: 'silent' | 'ask') => Promise<void>;
+  // The extension's faucet-origin permission gate — the `set` on the faucet row
+  // requests it from the press. Defined only in the extension build.
+  requestFaucetOrigin?: (origin: string) => Promise<boolean>;
 }
 
 export interface ProfileCtx {
@@ -799,16 +806,48 @@ export function preferenceRows(handlers: ProfileHandlers, ctx: ProfileCtx): HTML
     rows.push(r);
   }
 
-  // Faucet — the same shape as node; empty means no faucet and no button.
+  // Faucet — the same shape as node; empty means no faucet and no button. In
+  // the extension the `set` requests host permission for the origin (a user
+  // gesture, as the API requires); denied, the row's hint names the refusal
+  // and the preference is not stored (WEB_INTERFACE → The profile window).
   {
     const { row: r, field } = row('faucet');
     const input = el('input') as HTMLInputElement;
     input.value = prefs.faucet;
     input.placeholder = BUILD_FAUCET_BASE || 'none';
     input.setAttribute('aria-label', 'the faucet this client asks for rep');
-    input.addEventListener('change', () => handlers.setFaucet(input.value));
+    const hint = el('div', 'hint', 'blank uses the build default. a foreign origin fails: the faucet answers its own origin only.');
+    input.addEventListener('change', () => void (async () => {
+      const value = input.value.trim();
+      if (value !== '' && handlers.requestFaucetOrigin) {
+        const granted = await handlers.requestFaucetOrigin(value);
+        if (!granted) {
+          hint.textContent = 'the browser refused access to that origin.';
+          return;
+        }
+      }
+      handlers.setFaucet(input.value);
+    })());
     field.appendChild(input);
-    field.appendChild(el('div', 'hint', 'blank uses the build default. a foreign origin fails: the faucet answers its own origin only.'));
+    field.appendChild(hint);
+    rows.push(r);
+  }
+
+  // The extension's binary sign policy — visible only when both hooks are
+  // present (the in-page module implements neither). *sign each rep action*
+  // controls whether karma writes prompt (WEB_INTERFACE → The profile window).
+  if (handlers.policy && handlers.setPolicy) {
+    const { row: r, field } = row('sign each rep action');
+    const current = handlers.policy();
+    const seg = el('div', 'seg');
+    for (const [label, value] of [['don\'t ask', 'silent'], ['ask', 'ask']] as const) {
+      const btn = el('button', 'word', label);
+      btn.setAttribute('aria-pressed', current === value ? 'true' : 'false');
+      btn.addEventListener('click', () => { void handlers.setPolicy?.(value); });
+      seg.appendChild(btn);
+    }
+    field.appendChild(seg);
+    field.appendChild(el('div', 'hint', 'credits are always prompted. rep is silent while unlocked unless you ask.'));
     rows.push(r);
   }
 

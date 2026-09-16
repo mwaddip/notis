@@ -192,6 +192,14 @@ export interface Handlers {
   // The username row (WEB_INTERFACE → The username row).
   claimUsername: (name: string) => void;
   burnUsername: () => void;
+  // The extension's binary sign policy (WEB_INTERFACE → The profile window).
+  // Defined only in the extension build — the profile row renders only when
+  // both are present.
+  policy?: () => 'silent' | 'ask';
+  setPolicy?: (p: 'silent' | 'ask') => Promise<void>;
+  // The extension's faucet-origin permission gate — the faucet row's `set`
+  // requests it from the press (WEB_INTERFACE → The profile window).
+  requestFaucetOrigin?: (origin: string) => Promise<boolean>;
 }
 
 /** What the App calls on the identity module — the single reference it holds

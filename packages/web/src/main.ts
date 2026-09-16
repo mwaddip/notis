@@ -19,12 +19,17 @@ if (!appbar || !feed || !panes) throw new Error('missing app shell elements');
 // The identity swap point — WEB_INTERFACE → The extension. The web build's
 // substitution renders this a static false, so Rollup dead-code-eliminates
 // bootstrapProxy and the extension module never enters the bundle.
-const idm: AppIdentity = import.meta.env.VITE_IDENTITY === 'extension'
-  ? await bootstrapProxy(chrome)
-  : identity;
+const isExtension = import.meta.env.VITE_IDENTITY === 'extension';
+const idm: AppIdentity = isExtension ? await bootstrapProxy(chrome) : identity;
+// The extension's faucet row asks the browser to grant access to the origin
+// before storing (WEB_INTERFACE → The profile window). The web build passes
+// nothing — the row stores without a check, as it always did.
+const requestFaucetOrigin = isExtension
+  ? (origin: string): Promise<boolean> => chrome.permissions.request({ origins: [origin + '/*'] })
+  : undefined;
 
 const mode = decideMode(location.pathname, WEB_BASE);
-new App(undefined, undefined, idm, undefined, createTabs()).start(appbar, feed, panes, mode);
+new App(undefined, undefined, idm, undefined, createTabs(), requestFaucetOrigin).start(appbar, feed, panes, mode);
 
 // Restoring a stored preference is painted, not transitioned: drop the
 // transition-suppressing class only after the first paint (HOUSE_STYLE → Motion).

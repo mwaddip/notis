@@ -5,7 +5,7 @@ import type { Mode } from './mode';
 import type { Tabs } from './tabs';
 import { el, shortHex, preservingScroll } from './dom';
 import { contentHashHex } from './integrity';
-import { prefs, setTheme, setIdTint, setNode, setFaucet, writeStore, KEY_LAYOUT, type Theme, type IdTint } from './prefs';
+import { prefs, setTheme, setIdTint, setNode, setFaucet, writeStore, readStore, BUILD_NODES, BUILD_PUBLIC, KEY_LAYOUT, KEY_NODE, type Theme, type IdTint } from './prefs';
 import { renderFeedInto, replaceFeedCard } from './view/feed';
 import { renderPanesInto, renderRegionElement, renderBars } from './view/panes';
 import { makeComposer, type ComposerController } from './view/composer';
@@ -228,12 +228,25 @@ export class App {
   private usernameFlight: Flight | null = null;
   private usernameInFlight: { kind: 'claim' | 'burn'; name: string } | null = null;
 
+  // Optional in the extension build — the faucet row's `set` requests host
+  // permission for the origin before storing (WEB_INTERFACE → The profile
+  // window). Absent, the row stores without a permission check.
+  private readonly requestFaucetOrigin: ((origin: string) => Promise<boolean>) | null;
+
   // Every dependency is injectable so a test can drive the App over fakes.
-  constructor(client?: Api, writeClient?: WriteClient, identity?: AppIdentity, ledger?: PendingLedger, tabs?: Tabs) {
+  constructor(
+    client?: Api,
+    writeClient?: WriteClient,
+    identity?: AppIdentity,
+    ledger?: PendingLedger,
+    tabs?: Tabs,
+    requestFaucetOrigin?: (origin: string) => Promise<boolean>,
+  ) {
     this.client = client ?? new NodeClient(() => prefs.node);
     this.writeClient = writeClient ?? new WriteClient(() => prefs.node);
     this.idm = identity ?? identitySingleton;
     this.faucetClient = new FaucetClient(() => prefs.faucet);
+    this.requestFaucetOrigin = requestFaucetOrigin ?? null;
     // The ledger is for the identity loaded at construction; a change of identity
     // rebuilds it at once through onChange (WEB_INTERFACE → "An identity change
     // takes effect at once").
@@ -293,6 +306,15 @@ export class App {
       moreBonds: () => void this.moreBonds(),
       claimUsername: (name) => void this.claimUsername(name),
       burnUsername: () => void this.burnUsername(),
+      // The extension's identity exposes both policy and setPolicy; the in-page
+      // module implements neither, and the profile row renders only when both
+      // are present (WEB_INTERFACE → The profile window).
+      ...(this.idm.policy && this.idm.setPolicy
+        ? { policy: () => this.idm.policy!(), setPolicy: (p) => this.idm.setPolicy!(p) }
+        : {}),
+      ...(this.requestFaucetOrigin
+        ? { requestFaucetOrigin: (origin: string) => this.requestFaucetOrigin!(origin) }
+        : {}),
     };
   }
 
@@ -488,7 +510,12 @@ export class App {
       pendingUsername: this.usernameInFlight ?? pendingUsernameEntry(this.ledger.all()),
       canSignClaim: this.canSignWithdraw(), // same predicate — a spendable box
       canAffordBurn: this.canAffordBurn(),
-      linkUrl: (id) => new URL(this.base + 'p/' + id, location.href).href,
+      // notis-public names the origin + base a shareable link should carry;
+      // empty means the current location, which is the web build's default
+      // (WEB_INTERFACE → "The client is served from the node's own origin").
+      linkUrl: (id) => BUILD_PUBLIC !== ''
+        ? BUILD_PUBLIC + 'p/' + id
+        : new URL(this.base + 'p/' + id, location.href).href,
     };
   }
 
@@ -973,7 +1000,13 @@ export class App {
       this.indexRows([...res.posts, ...res.pending]);
     } catch (e) {
       feed.loading = false;
-      feed.error = msg(e);
+      // The build's seed list is one per-network fact; if this feed load failed
+      // and the reader has no stored node preference, the extension's shell
+      // asks the reader to set one in @profile (WEB_INTERFACE → "The client is
+      // served from the node's own origin").
+      feed.error = BUILD_NODES.length > 0 && readStore(KEY_NODE) === null
+        ? 'no node answered — set one in @profile'
+        : msg(e);
     }
     this.renderFeed();
   }

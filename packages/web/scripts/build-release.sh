@@ -23,7 +23,7 @@ echo "==> Building $PKG.zip"
 pnpm --filter '@dagsocial/web^...' build
 
 cd packages/web
-VITE_PUBLIC_ORIGIN=https://notis.fun VITE_WEB_BASE=/web/ VITE_API_BASE=/testnet/api VITE_FAUCET_BASE=/testnet/faucet npx vite build
+VITE_PUBLIC_ORIGIN=https://notis.fun VITE_WEB_BASE=/web/ VITE_API_BASE=/testnet/api VITE_FAUCET_BASE=/testnet/faucet VITE_NODES="[]" VITE_PUBLIC="" npx vite build
 
 # ---------------------------------------------------------------------------
 # Check the build
@@ -36,9 +36,20 @@ grep -q 'name="notis-api" content="/testnet/api"' "$SHELL_FILE" \
   || { echo "FAIL: notis-api meta missing or wrong"; exit 1; }
 grep -q 'name="notis-faucet" content="/testnet/faucet"' "$SHELL_FILE" \
   || { echo "FAIL: notis-faucet meta missing or wrong"; exit 1; }
+grep -q "name=\"notis-nodes\" content='\[\]'" "$SHELL_FILE" \
+  || { echo "FAIL: notis-nodes meta missing or wrong (web build: empty JSON array)"; exit 1; }
+grep -q 'name="notis-public" content=""' "$SHELL_FILE" \
+  || { echo "FAIL: notis-public meta missing or wrong (web build: empty)"; exit 1; }
 grep -q 'property="og:image" content="https://notis.fun/web/og.png"' "$SHELL_FILE" \
   || { echo "FAIL: og:image meta missing or wrong"; exit 1; }
 [ -f dist/og.png ] || { echo "FAIL: dist/og.png missing"; exit 1; }
+grep -q '<script src="theme.js">' "$SHELL_FILE" \
+  || { echo "FAIL: theme.js script src missing"; exit 1; }
+if grep -q '<script>' "$SHELL_FILE"; then
+  echo "FAIL: inline <script> in the built shell — extension pages' default CSP forbids it (WEB_INTERFACE → The extension)"
+  exit 1
+fi
+[ -f dist/theme.js ] || { echo "FAIL: dist/theme.js missing"; exit 1; }
 
 if grep -En 'href="/[^"]*"|src="/[^"]*"' "$SHELL_FILE" | grep -v '<base '; then
   echo "FAIL: root-absolute href or src in the built shell (above)"

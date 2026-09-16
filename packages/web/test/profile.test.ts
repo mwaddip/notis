@@ -222,6 +222,66 @@ describe('profile window — the two states', () => {
       }
     }
   });
+
+  it('the sign-each-rep-action row is absent when policy/setPolicy are — the in-page module', () => {
+    const body = render(handlers(), ctx());
+    expect(rowField(body, 'sign each rep action')).toBeNull();
+  });
+
+  it('the sign-each-rep-action row renders only when both policy and setPolicy are present — the extension', () => {
+    const p = vi.fn(() => 'silent' as const);
+    const sp = vi.fn(async () => {});
+    const body = render(handlers({ policy: p, setPolicy: sp }), ctx({ identity: unlocked }));
+    const field = rowField(body, 'sign each rep action');
+    expect(field).not.toBeNull();
+    // The seg carries two aria-pressed buttons; silent is pressed.
+    const buttons = [...(field?.querySelectorAll('button') ?? [])];
+    expect(buttons.map((b) => b.textContent?.trim())).toEqual(["don't ask", 'ask']);
+    expect(buttons[0]!.getAttribute('aria-pressed')).toBe('true');
+    expect(buttons[1]!.getAttribute('aria-pressed')).toBe('false');
+    // A press on 'ask' calls setPolicy('ask').
+    buttons[1]!.click();
+    expect(sp).toHaveBeenCalledWith('ask');
+  });
+
+  it('the faucet row without a requestFaucetOrigin handler calls setFaucet directly', async () => {
+    const setFaucet = vi.fn();
+    const body = render(handlers({ setFaucet }), ctx());
+    const field = rowField(body, 'faucet');
+    const input = field!.querySelector('input') as HTMLInputElement;
+    input.value = 'https://faucet.example';
+    input.dispatchEvent(new Event('change'));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(setFaucet).toHaveBeenCalledWith('https://faucet.example');
+  });
+
+  it('the faucet row with a requestFaucetOrigin handler requests permission first; a refusal reports and does not store', async () => {
+    const setFaucet = vi.fn();
+    const requestFaucetOrigin = vi.fn(async () => false);
+    const body = render(handlers({ setFaucet, requestFaucetOrigin }), ctx());
+    const field = rowField(body, 'faucet')!;
+    const input = field.querySelector('input') as HTMLInputElement;
+    input.value = 'https://faucet.example';
+    input.dispatchEvent(new Event('change'));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(requestFaucetOrigin).toHaveBeenCalledWith('https://faucet.example');
+    expect(setFaucet).not.toHaveBeenCalled();
+    // The hint names the refusal.
+    expect(field.querySelector('.hint')?.textContent).toBe('the browser refused access to that origin.');
+  });
+
+  it('the faucet row with a granted requestFaucetOrigin then stores', async () => {
+    const setFaucet = vi.fn();
+    const requestFaucetOrigin = vi.fn(async () => true);
+    const body = render(handlers({ setFaucet, requestFaucetOrigin }), ctx());
+    const field = rowField(body, 'faucet')!;
+    const input = field.querySelector('input') as HTMLInputElement;
+    input.value = 'https://faucet.example';
+    input.dispatchEvent(new Event('change'));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(requestFaucetOrigin).toHaveBeenCalledWith('https://faucet.example');
+    expect(setFaucet).toHaveBeenCalledWith('https://faucet.example');
+  });
 });
 
 describe('profile window — the forms in place', () => {

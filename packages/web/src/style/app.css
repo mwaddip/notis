@@ -103,8 +103,8 @@ header .spacer { flex: 1 1 auto; }
 /* The foot control: load older, reporting what it did. */
 .feed-foot { padding: 4px 0 24px; }
 
-/* Cards cap at the 660px §Spacing sets for the feed column: a 300-byte post
-   reads as a card at that width and not wider. */
+/* Cards cap at the 660px HOUSE_STYLE → Spacing sets for the feed column: a
+   300-byte post reads as a card at that width and not wider. */
 .card { max-width: 660px; }
 .card {
   display: flex; align-items: stretch;

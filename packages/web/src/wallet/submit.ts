@@ -10,10 +10,11 @@ import type {
 } from '../api/write';
 import { isRejection } from '../api/write';
 
-// The submit orchestration — the one path from a composer press or a like to the
-// node: resolve the confirmed author, read the spendable view and era (§5.1
-// order), build the transaction, sign it, POST it, and on a 2xx add the ledger
-// entry. Nothing retries (WEB_INTERFACE → "Nothing retries"): a rejection comes
+// The submit orchestration — the one path from a composer press or a like to
+// the node: resolve the confirmed author, read the spendable view and the era
+// (WEB_INTERFACE → "Reads before a write, in this order: `GET /karma/:key` following `next`, then `GET /status`"),
+// build the transaction, sign it, POST it, and on a 2xx add the ledger entry.
+// Nothing retries (WEB_INTERFACE → "Nothing retries"): a rejection comes
 // straight back for the caller to show.
 
 /** The four things a sign attempt can end in (WEB_INTERFACE → The identity

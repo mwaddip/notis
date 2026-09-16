@@ -17,6 +17,12 @@ describe('shell deploy tags', () => {
   it('carries the notis-faucet meta with the VITE_FAUCET_BASE placeholder', () => {
     expect(html).toContain('<meta name="notis-faucet" content="%VITE_FAUCET_BASE%">');
   });
+  it('carries the notis-nodes meta with the VITE_NODES placeholder — a JSON array of API bases', () => {
+    expect(html).toContain(`<meta name="notis-nodes" content='%VITE_NODES%'>`);
+  });
+  it('carries the notis-public meta with the VITE_PUBLIC placeholder — the origin+base a shareable link carries', () => {
+    expect(html).toContain('<meta name="notis-public" content="%VITE_PUBLIC%">');
+  });
   it('<base> precedes every URL-bearing element', () => {
     const basePos = html.indexOf('<base ');
     expect(basePos).toBeGreaterThan(-1);
@@ -25,6 +31,18 @@ describe('shell deploy tags', () => {
       if (pos === -1) continue;
       expect(basePos).toBeLessThan(pos);
     }
+  });
+});
+
+describe('shell theme script — one file, no inline scripts (extension pages\' default CSP)', () => {
+  it('references theme.js relative — one shell serves both builds', () => {
+    expect(html).toContain('<script src="theme.js"></script>');
+  });
+  it('carries no inline <script> — the module entry is the only other script', () => {
+    // The module entry `<script type="module" src="src/main.ts">` is a script
+    // with a src, not inline. An inline script has no src attribute.
+    const inline = html.match(/<script(?![^>]*\bsrc\b)[^>]*>[\s\S]*?<\/script>/g) ?? [];
+    expect(inline).toHaveLength(0);
   });
 });
 
@@ -66,14 +84,14 @@ describe('shell sprite removed', () => {
 });
 
 describe('shell icon links', () => {
-  it('links the SVG favicon with type', () => {
-    expect(html).toContain('<link rel="icon" href="/favicon.svg" type="image/svg+xml">');
+  it('links the SVG favicon with type — relative, so <base> decides where it lives', () => {
+    expect(html).toContain('<link rel="icon" href="favicon.svg" type="image/svg+xml">');
   });
-  it('links the ICO favicon', () => {
-    expect(html).toContain('<link rel="icon" href="/favicon.ico" sizes="32x32">');
+  it('links the ICO favicon relative', () => {
+    expect(html).toContain('<link rel="icon" href="favicon.ico" sizes="32x32">');
   });
-  it('links the apple-touch-icon', () => {
-    expect(html).toContain('<link rel="apple-touch-icon" href="/apple-touch-icon.png">');
+  it('links the apple-touch-icon relative', () => {
+    expect(html).toContain('<link rel="apple-touch-icon" href="apple-touch-icon.png">');
   });
 });
 
