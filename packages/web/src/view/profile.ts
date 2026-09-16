@@ -28,8 +28,8 @@ export interface ProfileHandlers {
   setNode: (origin: string) => void;
   setFaucet: (origin: string) => void;
   // identity operations
-  inspectFile: (text: string) => { kind: 'clear' | 'encrypted'; pubKeyHex: string };
-  draftIdentity: () => { pubKeyHex: string }; // a key held before the passphrase, so the form names it
+  inspectFile: (text: string) => Promise<{ kind: 'clear' | 'encrypted'; pubKeyHex: string }>;
+  draftIdentity: () => Promise<{ pubKeyHex: string }>; // a key held before the passphrase, so the form names it
   createIdentity: (passphrase: string) => Promise<void>; // seals and stores the drafted key
   discardDraft: () => void; // the reader cancelled create
   importIdentity: (text: string, passphrase: string) => Promise<void>;
@@ -101,21 +101,21 @@ function emptyState(b: HTMLElement, handlers: ProfileHandlers): void {
   const field = el('div', 'field pf-inline');
 
   const create = el('button', 'word', 'create') as HTMLButtonElement;
-  create.addEventListener('click', () => {
+  create.addEventListener('click', () => void (async () => {
     // Draft the key first so the form shows its prefix as the username — the key
     // exists before the passphrase, so the manager's saved entry names it
     // (WEB_INTERFACE → The profile window). Cancelling discards the draft.
-    const { pubKeyHex } = handlers.draftIdentity();
+    const { pubKeyHex } = await handlers.draftIdentity();
     field.replaceChildren(
       setPassphraseForm(pubKeyHex, (p) => handlers.createIdentity(p), () => {
         handlers.discardDraft();
         restoreInline();
       }),
     );
-  });
+  })());
 
   const importBtn = el('button', 'word', 'import') as HTMLButtonElement;
-  importBtn.addEventListener('click', () => pickFile((text) => revealImport(field, handlers, text, restoreInline)));
+  importBtn.addEventListener('click', () => pickFile((text) => void revealImport(field, handlers, text, restoreInline)));
 
   const restoreInline = (): void => {
     field.replaceChildren(create, importBtn);
@@ -140,10 +140,10 @@ function pickFile(onText: (text: string) => void): void {
 
 /** Inspect the file and reveal the form its kind needs: a clear file sets a
  *  passphrase, an encrypted one is opened by the passphrase that admits it. */
-function revealImport(field: HTMLElement, handlers: ProfileHandlers, text: string, restore: () => void): void {
+async function revealImport(field: HTMLElement, handlers: ProfileHandlers, text: string, restore: () => void): Promise<void> {
   let inspected: { kind: 'clear' | 'encrypted'; pubKeyHex: string };
   try {
-    inspected = handlers.inspectFile(text);
+    inspected = await handlers.inspectFile(text);
   } catch (e) {
     const line = el('div', 'pf-refusal', e instanceof Error ? e.message : String(e));
     const back = el('button', 'word', 'back') as HTMLButtonElement;

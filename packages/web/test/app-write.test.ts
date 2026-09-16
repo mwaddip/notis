@@ -93,10 +93,10 @@ function harness(thrown: ThrowOpts = {}): Harness {
       if (thrown.sign?.kind === 'never') return await new Promise(() => {}); // hangs forever
       return { signature: 'ab'.repeat(64) };
     },
-    draft: () => ({ pubKeyHex: PUB }),
+    draft: async () => ({ pubKeyHex: PUB }),
     create: async () => ({ pubKeyHex: PUB }),
     discardDraft: () => {},
-    inspectFile: () => ({ kind: 'clear', pubKeyHex: PUB }),
+    inspectFile: async () => ({ kind: 'clear', pubKeyHex: PUB }),
     importFile: async () => ({ pubKeyHex: PUB }),
     exportFile: async () => '{}',
     unlock: async () => { locked = false; },

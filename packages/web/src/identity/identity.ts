@@ -56,8 +56,9 @@ export class IdentityModule {
 
   /** Draft a fresh key — generated through the shim and held privately, not stored;
    *  current() is unchanged until create seals it. A second draft replaces the first
-   *  (WEB_INTERFACE → The identity module). */
-  draft(): Identity {
+   *  (WEB_INTERFACE → The identity module). Async so the same seam serves the
+   *  extension's proxy, which routes it as a message; here it resolves at once. */
+  async draft(): Promise<Identity> {
     const kp = generateKeyPair();
     const pubKeyHex = toHex(kp.publicKey);
     this.draftKp = { pubKeyHex, seed: new Uint8Array(kp.secretKey.subarray(16)) }; // the DER's last 32 bytes
@@ -83,8 +84,8 @@ export class IdentityModule {
   /** Say whether a file's text is the clear file shape or an encrypted
    *  envelope, and whose key it is. The seed parseFile derives for a clear file
    *  stays inside this module (WEB_INTERFACE → "sign is the only path to the
-   *  seed"). */
-  inspectFile(text: string): { kind: 'clear' | 'encrypted'; pubKeyHex: string } {
+   *  seed"). Async so the same seam serves the extension's proxy. */
+  async inspectFile(text: string): Promise<{ kind: 'clear' | 'encrypted'; pubKeyHex: string }> {
     const parsed = parseFile(text);
     return { kind: parsed.kind, pubKeyHex: parsed.pubKeyHex };
   }

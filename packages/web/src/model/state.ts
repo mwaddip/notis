@@ -160,8 +160,8 @@ export interface Handlers {
   setNode: (origin: string) => void;
   setFaucet: (origin: string) => void;
   // identity operations (WEB_INTERFACE → The profile window)
-  inspectFile: (text: string) => { kind: 'clear' | 'encrypted'; pubKeyHex: string };
-  draftIdentity: () => { pubKeyHex: string };
+  inspectFile: (text: string) => Promise<{ kind: 'clear' | 'encrypted'; pubKeyHex: string }>;
+  draftIdentity: () => Promise<{ pubKeyHex: string }>;
   createIdentity: (passphrase: string) => Promise<void>;
   discardDraft: () => void;
   importIdentity: (text: string, passphrase: string) => Promise<void>;
@@ -203,10 +203,13 @@ export interface Handlers {
 export interface AppIdentity {
   current(): { pubKeyHex: string; locked: boolean } | null;
   sign(txBytes: Uint8Array, txIdHex: string): Promise<SignResult>;
-  draft(): { pubKeyHex: string };
+  /** Draft a fresh keypair — asynchronous because the extension's proxy sends
+   *  it as a message; the in-page module wraps its result in Promise.resolve. */
+  draft(): Promise<{ pubKeyHex: string }>;
   create(passphrase: string): Promise<{ pubKeyHex: string }>;
   discardDraft(): void;
-  inspectFile(text: string): { kind: 'clear' | 'encrypted'; pubKeyHex: string };
+  /** Read a file's shape — asynchronous for the same reason as `draft`. */
+  inspectFile(text: string): Promise<{ kind: 'clear' | 'encrypted'; pubKeyHex: string }>;
   importFile(text: string, passphrase: string): Promise<{ pubKeyHex: string }>;
   exportFile(password: string): Promise<string>;
   unlock(passphrase: string): Promise<void>;

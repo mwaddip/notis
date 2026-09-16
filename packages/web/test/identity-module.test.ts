@@ -28,8 +28,8 @@ function bytesToBase64(bytes: Uint8Array): string {
 }
 
 // The common path: draft a key, then seal and store it under a passphrase.
-function mint(m: IdentityModule, passphrase: string): Promise<Identity> {
-  m.draft();
+async function mint(m: IdentityModule, passphrase: string): Promise<Identity> {
+  await m.draft();
   return m.create(passphrase);
 }
 
@@ -273,9 +273,9 @@ describe('identity module — signing interop with the node verifier', () => {
 });
 
 describe('identity module — the draft split', () => {
-  it('draft() holds a key privately — not stored, current() unchanged', () => {
+  it('draft() holds a key privately — not stored, current() unchanged', async () => {
     const m = new IdentityModule();
-    const d = m.draft();
+    const d = await m.draft();
     expect(d.pubKeyHex).toMatch(/^[0-9a-f]{64}$/);
     expect(m.current()).toBeNull();
     expect(localStorage.getItem(IDENTITY_KEY)).toBeNull();
@@ -283,7 +283,7 @@ describe('identity module — the draft split', () => {
 
   it('create() seals and stores the drafted key, loaded unlocked; the created key is the drafted one', async () => {
     const m = new IdentityModule();
-    const d = m.draft();
+    const d = await m.draft();
     const id = await m.create('pw');
     expect(id.pubKeyHex).toBe(d.pubKeyHex);
     expect(m.current()).toEqual({ pubKeyHex: d.pubKeyHex, locked: false });
@@ -292,15 +292,15 @@ describe('identity module — the draft split', () => {
 
   it('a second draft replaces the first', async () => {
     const m = new IdentityModule();
-    const d1 = m.draft();
-    const d2 = m.draft();
+    const d1 = await m.draft();
+    const d2 = await m.draft();
     expect(d2.pubKeyHex).not.toBe(d1.pubKeyHex);
     expect((await m.create('pw')).pubKeyHex).toBe(d2.pubKeyHex);
   });
 
   it('discardDraft drops the draft, and create with no draft throws', async () => {
     const m = new IdentityModule();
-    m.draft();
+    await m.draft();
     m.discardDraft();
     await expect(m.create('pw')).rejects.toThrow(/no drafted key/);
     await expect(new IdentityModule().create('pw')).rejects.toThrow(/no drafted key/);
@@ -310,10 +310,10 @@ describe('identity module — the draft split', () => {
     const m = new IdentityModule();
     const events: Array<Identity | null> = [];
     m.onChange((id) => events.push(id));
-    m.draft();
+    await m.draft();
     m.discardDraft();
     expect(events).toHaveLength(0);
-    m.draft();
+    await m.draft();
     const id = await m.create('pw');
     expect(events).toEqual([{ pubKeyHex: id.pubKeyHex }]);
   });

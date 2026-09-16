@@ -49,6 +49,9 @@ declare namespace chrome {
       addListener(
         listener: (changes: Record<string, StorageChange>, areaName: 'local' | 'session' | 'sync' | 'managed') => void,
       ): void;
+      removeListener(
+        listener: (changes: Record<string, StorageChange>, areaName: 'local' | 'session' | 'sync' | 'managed') => void,
+      ): void;
     }
     const local: StorageArea;
     const session: StorageArea;

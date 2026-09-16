@@ -3,8 +3,7 @@
 // real API does; onMessage dispatches to registered listeners with a controllable
 // `sender`; tabs / windows / action / permissions are the small pieces the
 // background touches. Two `FakeChrome` instances over the same fixture prove the
-// worker-restart claim — WEB_INTERFACE → The extension, "It survives the worker
-// being killed".
+// worker-restart claim WEB_INTERFACE → "The unlocked seed lives in `storage.session`" carries.
 
 interface Fixture {
   local: Map<string, unknown>;
@@ -185,6 +184,12 @@ export function fakeChrome(fixture: Fixture = freshFixture(), origin = 'chrome-e
           listener: (changes: Record<string, chrome.storage.StorageChange>, area: 'local' | 'session') => void,
         ) {
           fixture.changedListeners.push(listener);
+        },
+        removeListener(
+          listener: (changes: Record<string, chrome.storage.StorageChange>, area: 'local' | 'session') => void,
+        ) {
+          const i = fixture.changedListeners.indexOf(listener);
+          if (i >= 0) fixture.changedListeners.splice(i, 1);
         },
       } as unknown as chrome.storage.OnChangedEvent,
     },

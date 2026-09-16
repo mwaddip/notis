@@ -22,8 +22,8 @@ function handlers(over: Partial<ProfileHandlers> = {}): ProfileHandlers {
     setIdTint: () => {},
     setNode: () => {},
     setFaucet: () => {},
-    inspectFile: () => ({ kind: 'clear', pubKeyHex: KEY }),
-    draftIdentity: () => ({ pubKeyHex: KEY }),
+    inspectFile: async () => ({ kind: 'clear', pubKeyHex: KEY }),
+    draftIdentity: async () => ({ pubKeyHex: KEY }),
     createIdentity: async () => {},
     discardDraft: () => {},
     importIdentity: async () => {},
@@ -225,12 +225,12 @@ describe('profile window — the two states', () => {
 });
 
 describe('profile window — the forms in place', () => {
-  it('create drafts a key first and names it as the set form username; cancel discards', () => {
+  it('create drafts a key first and names it as the set form username; cancel discards', async () => {
     const drafted: number[] = [];
     const discarded: number[] = [];
     const body = render(
       handlers({
-        draftIdentity: () => {
+        draftIdentity: async () => {
           drafted.push(1);
           return { pubKeyHex: KEY };
         },
@@ -239,6 +239,8 @@ describe('profile window — the forms in place', () => {
       ctx(),
     );
     button(body, 'create')!.click();
+    // draftIdentity is async — let its microtask settle before the form draws.
+    await new Promise((r) => setTimeout(r, 0));
     expect(drafted).toHaveLength(1); // the key exists before the passphrase
     const form = body.querySelector('form.pf') as HTMLElement;
     const pws = [...form.querySelectorAll('input')].filter((i) => (i as HTMLInputElement).type === 'password') as HTMLInputElement[];

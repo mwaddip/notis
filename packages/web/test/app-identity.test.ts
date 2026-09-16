@@ -38,14 +38,14 @@ function fakeIdentity(): AppIdentity {
   return {
     current: () => cur,
     sign: async () => ({ signature: 'ab'.repeat(64) }),
-    draft: () => ({ pubKeyHex: KEY }),
+    draft: async () => ({ pubKeyHex: KEY }),
     create: async () => {
       cur = { pubKeyHex: KEY, locked: false };
       fire({ pubKeyHex: KEY });
       return { pubKeyHex: KEY };
     },
     discardDraft: () => {},
-    inspectFile: () => ({ kind: 'clear', pubKeyHex: KEY }),
+    inspectFile: async () => ({ kind: 'clear', pubKeyHex: KEY }),
     importFile: async () => {
       cur = { pubKeyHex: KEY, locked: false };
       fire({ pubKeyHex: KEY });
