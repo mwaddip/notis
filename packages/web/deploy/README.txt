@@ -13,7 +13,7 @@ one way to front the node, the faucet and the client together.
 Configuring for your layout
 ---------------------------
 
-Four values in web/index.html control where the client looks:
+Six values in web/index.html control where the client looks:
 
   <base href="/web/">
     The path the client's own files are served under,
@@ -25,10 +25,18 @@ Four values in web/index.html control where the client looks:
   <meta name="notis-faucet" content="/testnet/faucet">
     The faucet's path, or empty for no faucet button.
 
+  <meta name="notis-nodes" content='[]'>
+    A JSON array of API bases the client tries in order at boot when
+    no node preference is stored. Empty for the web build.
+
+  <meta name="notis-public" content="">
+    The origin+base a shareable post link should carry. Empty means
+    the client uses its own location, which is right for the web build.
+
   <meta property="og:image" content="https://notis.fun/web/og.png">
     The picture's absolute URL, <origin><base>og.png.
 
-The defaults match notis.fun's layout. Edit all four for another.
+The defaults match notis.fun's layout. Edit all six for another.
 
 
 The standalone page

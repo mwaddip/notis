@@ -429,3 +429,11 @@ function errorMessage(e: unknown): string {
   return String(e);
 }
 
+// Auto-install at module load — the background is loaded by the browser's own
+// runtime, so listeners must register before the first event. Tests build the
+// module through a fake `chrome` and call install(api) themselves; the guard
+// keeps them from double-installing here.
+if (typeof globalThis !== 'undefined' && typeof (globalThis as { chrome?: unknown }).chrome !== 'undefined') {
+  install((globalThis as unknown as { chrome: typeof chrome }).chrome);
+}
+
