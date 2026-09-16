@@ -70,6 +70,13 @@ interface ThrowOpts {
   like?: boolean;
   currentBlock?: boolean;
   karma?: boolean;
+  /** post returns confirmedAuthor: null — a reply's parent that never confirmed. */
+  noConfirmedAuthor?: boolean;
+  /** post throws — a transport failure BEFORE the sign happens. */
+  postThrows?: boolean;
+  /** karma returns a spendable view below the thread's price — an
+   *  InsufficientKarma rejection BEFORE the sign happens. */
+  lowKarma?: boolean;
   /** Steer the fake signer for the notSigned tests. Absent is a plain success. */
   sign?: { kind: 'locked' | 'declined' | 'refused' | 'never'; reason?: string };
 }
@@ -104,11 +111,18 @@ function harness(thrown: ThrowOpts = {}): Harness {
   let liked = false;
   let locked = false;
 
-  const karma: KarmaResult = karmaResult({ userId: PUB, total: '227', effective: '227', boxes: [{ boxId: BOX, value: '227' }], boxCount: 1, height: 6000 });
+  const karma: KarmaResult = thrown.lowKarma
+    ? karmaResult({ userId: PUB, total: '4', effective: '4', boxes: [{ boxId: BOX, value: '4' }], boxCount: 1, height: 6000 })
+    : karmaResult({ userId: PUB, total: '227', effective: '227', boxes: [{ boxId: BOX, value: '227' }], boxCount: 1, height: 6000 });
   const fakeApi: Api = {
     feed: async (_p, viewer): Promise<FeedResult> => { feedViewers.push(viewer); return { posts: [], next: null, pending: [], pendingCount: 0 }; },
     thread: async () => null,
-    post: async (id) => confirmedPost(id, liked),
+    post: async (id) => {
+      if (thrown.postThrows) throw new Error('node unreachable');
+      const p = confirmedPost(id, liked);
+      if (thrown.noConfirmedAuthor) return { ...p, confirmedAuthor: null };
+      return p;
+    },
     status: async () => statusResult(),
     currentBlock: async (): Promise<BlockCurrent> => {
       if (thrown.currentBlock) throw new Error('node unreachable');
@@ -386,5 +400,57 @@ describe('the App write surface — the notSigned arm', () => {
     expect(h.drive.optimisticLikes.has(target)).toBe(false);
     expect(h.ledger.size).toBe(0);
     expect(h.drive.state.feed.report).toBe('your key is locked');
+  });
+
+  // A rejection or a transport failure BEFORE the sign leaves submission === null
+  // in submitComposer — onSigned never fired. The composer is still open with its
+  // text and its foot names the reason; nothing was spent (WEB_INTERFACE →
+  // The wallet).
+  it('a reply to a parent with no confirmed author returns the composer with the reason', async () => {
+    const h = harness({ noConfirmedAuthor: true });
+    const parent = 'dd'.repeat(32);
+    h.drive.openComposer(parent);
+    const ctrl = composer(h) ?? (h.drive.composers as Map<string, { el: HTMLElement }>).get(parent);
+    (ctrl!.el.querySelector('.composer-text') as HTMLTextAreaElement).value = 'a reply';
+    await h.drive.submitComposer(parent, 'a reply');
+    expect(h.drive.state.submissions).toHaveLength(0);
+    // The composer under the parent key is still present with its text.
+    const still = (h.drive.composers as Map<string, { el: HTMLElement }>).get(parent);
+    expect(still).toBeDefined();
+    expect((still!.el.querySelector('.composer-text') as HTMLTextAreaElement).value).toBe('a reply');
+    expect(still!.el.querySelector('.karma')?.textContent).toBe('that post has no confirmed author to reply under.');
+  });
+
+  it('an InsufficientKarma rejection at build time returns the composer with the reason', async () => {
+    const h = harness({ lowKarma: true });
+    h.drive.openComposer(null);
+    (composer(h)!.el.querySelector('.composer-text') as HTMLTextAreaElement).value = 'draft';
+    await h.drive.submitComposer(null, 'draft');
+    expect(h.drive.state.submissions).toHaveLength(0);
+    expect(composer(h)).toBeDefined();
+    expect(composer(h)!.el.querySelector('.karma')?.textContent).toBe('not enough rep to post right now.');
+  });
+
+  it('a transport failure before the sign returns the composer with the node line', async () => {
+    // A reply — post throws before the sign runs. The composer stays open.
+    const h = harness({ postThrows: true });
+    const parent = 'dd'.repeat(32);
+    h.drive.openComposer(parent);
+    const ctrl = (h.drive.composers as Map<string, { el: HTMLElement }>).get(parent)!;
+    (ctrl.el.querySelector('.composer-text') as HTMLTextAreaElement).value = 'a reply';
+    await h.drive.submitComposer(parent, 'a reply');
+    expect(h.drive.state.submissions).toHaveLength(0);
+    const still = (h.drive.composers as Map<string, { el: HTMLElement }>).get(parent);
+    expect(still).toBeDefined();
+    expect(still!.el.querySelector('.karma')?.textContent).toBe("can't reach the node right now.");
+  });
+
+  it("refused strips a trailing period from the reason so \"characters.\" does not render as \"characters..\"", async () => {
+    const h = harness({ sign: { kind: 'refused', reason: 'a transaction id to sign must be 64 hex characters.' } });
+    h.drive.openComposer(null);
+    (composer(h)!.el.querySelector('.composer-text') as HTMLTextAreaElement).value = 'x';
+    await h.drive.submitComposer(null, 'x');
+    expect(composer(h)!.el.querySelector('.karma')?.textContent)
+      .toBe('post not sent: a transaction id to sign must be 64 hex characters.');
   });
 });

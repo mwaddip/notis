@@ -124,11 +124,13 @@ function withdrawRejectionCopy(r: Rejection): string {
  *  wallet, "the fourth ending is the composer still open"). `locked` reports
  *  the race directly; the extension's `busy` refusal reads *"one approval at a
  *  time."*; a `declined` reads *"<action> not sent."*; every other `refused`
- *  carries its reason — *"<action> not sent: <reason>."*. */
+ *  carries its reason — *"<action> not sent: <reason>."*. The trailing period
+ *  of the reason is stripped before the template — the in-page module's
+ *  *"…64 hex characters."* would otherwise render *"…characters.."*. */
 function notSignedCopy(kind: 'locked' | 'declined' | 'refused', reason: string, action: string): string {
   if (kind === 'locked') return 'your key is locked';
   if (reason === 'busy') return 'one approval at a time.';
-  if (kind === 'refused') return `${action} not sent: ${reason}.`;
+  if (kind === 'refused') return `${action} not sent: ${reason.replace(/\.$/, '')}.`;
   return `${action} not sent.`;
 }
 
@@ -1521,18 +1523,34 @@ export class App {
     try {
       result = await submitPostFlow({ ...this.submitDeps(), onSigned }, text, parentId);
     } catch {
-      // A transport failure follows a signature, so onSigned has fired and the
-      // submission is present.
-      if (submission === null) throw new Error('a transport failure before onSigned');
-      submission.stage = 'rejected';
-      submission.reason = "can't reach the node right now.";
-      this.renderForParent(parentId);
+      // A transport failure. Before the sign — a pre-sign read threw and
+      // onSigned never fired — the composer is still open with its text; after
+      // the sign, the submission is present and settles as *rejected*.
+      if (submission === null) {
+        ctrl.setSending(false);
+        ctrl.setNotSent("can't reach the node right now.");
+      } else {
+        submission.stage = 'rejected';
+        submission.reason = "can't reach the node right now.";
+        this.renderForParent(parentId);
+      }
       return;
     }
-    if (result.ok || 'rejection' in result) {
-      // A rejection can only follow a signature, so onSigned has fired.
-      if (submission === null) throw new Error('a rejection before onSigned');
-      this.settle(submission, result);
+    if (result.ok) {
+      // The sign fired, so onSigned fired, so the submission is present.
+      this.settle(submission!, result);
+      return;
+    }
+    if ('rejection' in result) {
+      // A rejection can precede the sign (a no-confirmedAuthor reply,
+      // InsufficientKarma). onSigned then never fired and the composer is still
+      // open with its text; after the sign, the submission settles as *rejected*.
+      if (submission === null) {
+        ctrl.setSending(false);
+        ctrl.setNotSent(postRejectionCopy(result.rejection));
+      } else {
+        this.settle(submission, result);
+      }
       return;
     }
     // notSigned — no hollow card, composer still open with its text.
