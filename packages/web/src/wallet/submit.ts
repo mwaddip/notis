@@ -1,3 +1,4 @@
+import { encodeTx } from '@dagsocial/types';
 import { readBuildContext } from './reads';
 import { buildPost, buildLike, buildVouch, buildUnvouch, buildInvite, buildWithdraw, buildClaim, buildBurn, txToJson, InsufficientKarma } from './builders';
 import type { PendingLedger } from './ledger';
@@ -15,11 +16,27 @@ import { isRejection } from '../api/write';
 // entry. Nothing retries (WEB_INTERFACE → "Nothing retries"): a rejection comes
 // straight back for the caller to show.
 
+/** The four things a sign attempt can end in (WEB_INTERFACE → The identity
+ *  module). The in-page module answers `signature`, `locked` or `refused` and
+ *  never `declined`; the extension's proxy adds `declined` (and folds a `busy`
+ *  case into `refused`). `pending` is the proxy's own business and never surfaces
+ *  here. */
+export type SignResult =
+  | { signature: string }
+  | { locked: true }
+  | { declined: true }
+  | { refused: string };
+
 /** The seam onto the seed — current() carries the public key, sign() the only
- *  path to the seed (WEB_INTERFACE → "sign is the only path to the seed"). */
+ *  path to the seed (WEB_INTERFACE → "sign is the only path to the seed"). The
+ *  extension's proxy implements the same shape over the background service
+ *  (WEB_INTERFACE → The extension). `txBytes` is `encodeTx` of the unsigned
+ *  transaction, so the background decodes and recomputes the id it signs over
+ *  rather than trusting the page's claim (WEB_INTERFACE → The extension, sign's
+ *  eight steps). */
 export interface Signer {
   current(): { pubKeyHex: string } | null;
-  sign(txIdHex: string): string;
+  sign(txBytes: Uint8Array, txIdHex: string): Promise<SignResult>;
 }
 
 export interface SubmitDeps {
@@ -27,15 +44,43 @@ export interface SubmitDeps {
   write: Pick<WriteClient, 'submitPost' | 'submitLike' | 'submitVouch' | 'submitUnvouch' | 'submitInvite' | 'submitWithdraw' | 'submitClaim' | 'submitBurn'>;
   ledger: PendingLedger;
   identity: Signer;
+  /** Called after a successful sign and before the POST — the composer path
+   *  uses it to collapse into the hollow card in the same slot (WEB_INTERFACE →
+   *  The wallet, "the fourth ending is the composer still open"). Only
+   *  submitPostFlow calls it; every other flow leaves it unset. */
+  onSigned?: () => void;
 }
 
 export type SubmitResult<B> =
   | { ok: true; entry: PendingEntry; body: B }
-  | { ok: false; rejection: Rejection };
+  | { ok: false; rejection: Rejection }
+  | { ok: false; notSigned: 'locked' | 'declined' | 'refused'; reason: string };
 
 /** A client-side refusal (no HTTP round trip) — status 0, message shown as-is. */
 function clientRejection(message: string): { ok: false; rejection: Rejection } {
   return { ok: false, rejection: { status: 0, message } };
+}
+
+/** Sign the built tx and return the JSON the node accepts, or the `notSigned`
+ *  arm the flight ends in (WEB_INTERFACE → The wallet). The signature rides on
+ *  the txId, so `signatures[pubKeyHex]` is set on the JSON, not on the tx
+ *  (`signedJson`'s old shape). */
+async function signBody(
+  tx: Parameters<typeof txToJson>[0],
+  identity: Signer,
+  txId: string,
+  pubKeyHex: string,
+): Promise<
+  | { ok: true; body: Record<string, unknown> }
+  | { ok: false; notSigned: 'locked' | 'declined' | 'refused'; reason: string }
+> {
+  const r = await identity.sign(encodeTx(tx), txId);
+  if ('locked' in r) return { ok: false, notSigned: 'locked', reason: 'your key is locked' };
+  if ('declined' in r) return { ok: false, notSigned: 'declined', reason: 'not sent' };
+  if ('refused' in r) return { ok: false, notSigned: 'refused', reason: r.refused };
+  const body = txToJson(tx);
+  body.signatures = { [pubKeyHex]: r.signature };
+  return { ok: true, body };
 }
 
 /** Submit a root post (parentId null) or a reply. A reply's share is addressed to
@@ -68,7 +113,12 @@ export async function submitPostFlow(
     if (e instanceof InsufficientKarma) return clientRejection('not enough rep to post right now.');
     throw e;
   }
-  const body = await deps.write.submitPost(signedJson(built.tx, deps.identity, built.txId, id.pubKeyHex), content);
+  const signed = await signBody(built.tx, deps.identity, built.txId, id.pubKeyHex);
+  if (!signed.ok) return signed;
+  // Between the sign and the POST — the composer collapses here (WEB_INTERFACE →
+  // The wallet). Post is the only flow that carries onSigned.
+  deps.onSigned?.();
+  const body = await deps.write.submitPost(signed.body, content);
   if (isRejection(body)) return { ok: false, rejection: body };
   // The node echoes the id it computed over the same transaction; a mismatch
   // means the two encodings diverged, so the entry is refused rather than
@@ -106,7 +156,9 @@ export async function submitLikeFlow(deps: SubmitDeps, targetId: string): Promis
     if (e instanceof InsufficientKarma) return clientRejection('not enough rep to like right now.');
     throw e;
   }
-  const body = await deps.write.submitLike(signedJson(built.tx, deps.identity, built.txId, id.pubKeyHex));
+  const signed = await signBody(built.tx, deps.identity, built.txId, id.pubKeyHex);
+  if (!signed.ok) return signed;
+  const body = await deps.write.submitLike(signed.body);
   if (isRejection(body)) return { ok: false, rejection: body };
   if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
 
@@ -138,7 +190,9 @@ export async function submitVouchFlow(deps: SubmitDeps, targetKey: string): Prom
     if (e instanceof InsufficientKarma) return clientRejection('not enough rep to vouch right now.');
     throw e;
   }
-  const body = await deps.write.submitVouch(signedJson(built.tx, deps.identity, built.txId, id.pubKeyHex));
+  const signed = await signBody(built.tx, deps.identity, built.txId, id.pubKeyHex);
+  if (!signed.ok) return signed;
+  const body = await deps.write.submitVouch(signed.body);
   if (isRejection(body)) return { ok: false, rejection: body };
   if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
 
@@ -181,7 +235,9 @@ export async function submitUnvouchFlow(deps: SubmitDeps, targetKey: string): Pr
     { boxId: vouch.boxId, value: BigInt(vouch.value), createdAtBlock: vouch.createdAtBlock },
     status.vouchCooldownBlocks,
   );
-  const body = await deps.write.submitUnvouch(targetKey, signedJson(built.tx, deps.identity, built.txId, id.pubKeyHex));
+  const signed = await signBody(built.tx, deps.identity, built.txId, id.pubKeyHex);
+  if (!signed.ok) return signed;
+  const body = await deps.write.submitUnvouch(targetKey, signed.body);
   if (isRejection(body)) return { ok: false, rejection: body };
   if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
 
@@ -211,7 +267,9 @@ export async function submitInviteFlow(deps: SubmitDeps, inviteeKey: string, bon
     if (e instanceof InsufficientKarma) return clientRejection('not enough rep to cover the bond right now.');
     throw e;
   }
-  const body = await deps.write.submitInvite(signedJson(built.tx, deps.identity, built.txId, id.pubKeyHex));
+  const signed = await signBody(built.tx, deps.identity, built.txId, id.pubKeyHex);
+  if (!signed.ok) return signed;
+  const body = await deps.write.submitInvite(signed.body);
   if (isRejection(body)) return { ok: false, rejection: body };
   if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
 
@@ -245,7 +303,9 @@ export async function submitWithdrawFlow(deps: SubmitDeps, postId: string): Prom
     if (e instanceof InsufficientKarma) return clientRejection('no rep box to sign a withdrawal with.');
     throw e;
   }
-  const body = await deps.write.submitWithdraw(postId, signedJson(built.tx, deps.identity, built.txId, id.pubKeyHex));
+  const signed = await signBody(built.tx, deps.identity, built.txId, id.pubKeyHex);
+  if (!signed.ok) return signed;
+  const body = await deps.write.submitWithdraw(postId, signed.body);
   if (isRejection(body)) return { ok: false, rejection: body };
   if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
   if (typeof body.expiresAtHeight !== 'number') return clientRejection('the node answered without an expiry height');
@@ -276,7 +336,9 @@ export async function submitClaimFlow(deps: SubmitDeps, name: string): Promise<S
     if (e instanceof InsufficientKarma) return clientRejection('no rep box to sign a claim with.');
     throw e;
   }
-  const body = await deps.write.submitClaim(signedJson(built.tx, deps.identity, built.txId, id.pubKeyHex));
+  const signed = await signBody(built.tx, deps.identity, built.txId, id.pubKeyHex);
+  if (!signed.ok) return signed;
+  const body = await deps.write.submitClaim(signed.body);
   if (isRejection(body)) return { ok: false, rejection: body };
   if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
   if (typeof body.expiresAtHeight !== 'number') return clientRejection('the node answered without an expiry height');
@@ -312,7 +374,9 @@ export async function submitBurnFlow(deps: SubmitDeps): Promise<SubmitResult<Bur
     if (e instanceof InsufficientKarma) return clientRejection('not enough rep to burn right now.');
     throw e;
   }
-  const body = await deps.write.submitBurn(held.name, signedJson(built.tx, deps.identity, built.txId, id.pubKeyHex));
+  const signed = await signBody(built.tx, deps.identity, built.txId, id.pubKeyHex);
+  if (!signed.ok) return signed;
+  const body = await deps.write.submitBurn(held.name, signed.body);
   if (isRejection(body)) return { ok: false, rejection: body };
   if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
   if (typeof body.expiresAtHeight !== 'number') return clientRejection('the node answered without an expiry height');
@@ -348,15 +412,3 @@ async function resolveVouchBox(
   return null;
 }
 
-/** Serialise the unsigned tx and inject the one signature over its id — the
- *  signature is not in the txId preimage, so it is added after the id is fixed. */
-function signedJson(
-  tx: Parameters<typeof txToJson>[0],
-  identity: Signer,
-  txId: string,
-  pubKeyHex: string,
-): Record<string, unknown> {
-  const body = txToJson(tx);
-  body.signatures = { [pubKeyHex]: identity.sign(txId) };
-  return body;
-}

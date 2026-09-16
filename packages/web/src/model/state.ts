@@ -3,6 +3,7 @@ import type { Workspace, Origin } from './workspace';
 import type { Theme, IdTint } from '../prefs';
 import type { Flight } from '../view/card';
 import type { YourVouch } from '../view/author';
+import type { SignResult } from '../wallet/submit';
 
 // The read surface's runtime state, and the handler contract the pure view
 // modules render against. Types only — no cycle between controller and views.
@@ -194,11 +195,14 @@ export interface Handlers {
 }
 
 /** What the App calls on the identity module — the single reference it holds
- *  (WEB_INTERFACE → The identity module). The wallet keeps its own narrower Signer
- *  seam (submit.ts), the extension swap point, so this is not it. */
+ *  (WEB_INTERFACE → The identity module). It extends the wallet's Signer seam
+ *  and adds the operations the profile window and the reader's own flow need.
+ *  The extension's proxy implements the same interface over the background
+ *  service; the in-page module implements it directly (WEB_INTERFACE → The
+ *  extension). */
 export interface AppIdentity {
   current(): { pubKeyHex: string; locked: boolean } | null;
-  sign(txIdHex: string): string;
+  sign(txBytes: Uint8Array, txIdHex: string): Promise<SignResult>;
   draft(): { pubKeyHex: string };
   create(passphrase: string): Promise<{ pubKeyHex: string }>;
   discardDraft(): void;
@@ -210,4 +214,9 @@ export interface AppIdentity {
   forget(): void;
   backedUp(): boolean;
   onChange(listener: (id: { pubKeyHex: string } | null) => void): void;
+  /** The extension's binary policy for karma-side signs (WEB_INTERFACE → The
+   *  profile window). Absent on the in-page module — the profile row renders
+   *  only when both are present. */
+  policy?(): 'silent' | 'ask';
+  setPolicy?(p: 'silent' | 'ask'): Promise<void>;
 }

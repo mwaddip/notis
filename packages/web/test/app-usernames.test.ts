@@ -79,7 +79,7 @@ function fakeWrite(): WriteClient {
 function fakeIdentity(): AppIdentity {
   return {
     current: () => idState,
-    sign: (t: string) => { signCalls.push(t); return 'ab'.repeat(64); },
+    sign: async (_bytes: Uint8Array, t: string) => { signCalls.push(t); return { signature: 'ab'.repeat(64) }; },
     onChange: (cb: () => void) => { onChangeCb = cb; },
     draft: () => ({ pubKeyHex: ME }),
     create: async () => ({ pubKeyHex: ME }),

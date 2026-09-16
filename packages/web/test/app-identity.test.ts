@@ -37,7 +37,7 @@ function fakeIdentity(): AppIdentity {
   };
   return {
     current: () => cur,
-    sign: () => 'ab'.repeat(64),
+    sign: async () => ({ signature: 'ab'.repeat(64) }),
     draft: () => ({ pubKeyHex: KEY }),
     create: async () => {
       cur = { pubKeyHex: KEY, locked: false };

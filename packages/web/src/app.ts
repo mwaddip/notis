@@ -120,6 +120,16 @@ function withdrawRejectionCopy(r: Rejection): string {
   return 'the node said: ' + m;
 }
 
+/** A notSigned reason mapped to what the region shows (WEB_INTERFACE → The
+ *  wallet, "the fourth ending is the composer still open"). `locked` reports the
+ *  race directly; the extension's `busy` refusal reads *"one approval at a
+ *  time."*; every other kind reads *"<action> not sent."*. */
+function notSignedCopy(kind: 'locked' | 'declined' | 'refused', reason: string, action: string): string {
+  if (kind === 'locked') return 'your key is locked';
+  if (reason === 'busy') return 'one approval at a time.';
+  return `${action} not sent.`;
+}
+
 /** A username rejection in the voice register (WEB_INTERFACE → The username row,
  *  HOUSE_STYLE → Voice). A client-side refusal (status 0) already reads that way. */
 function usernameRejectionCopy(r: Rejection): string {
@@ -1464,9 +1474,8 @@ export class App {
     const cur = this.idm.current();
     if (cur === null) return;
     if (cur.locked) {
-      // The seed is not loaded and sign is synchronous, so the unlock is a form in
-      // the composer foot; on success the flight continues (WEB_INTERFACE → The
-      // identity module). Esc returns to editing with the draft intact.
+      // The pre-check: mount the unlock form in the composer foot. Esc returns to
+      // editing with the draft intact (WEB_INTERFACE → The identity module).
       const ctrl = this.composers.get(composerKey(parentId));
       if (!ctrl) return;
       ctrl.showUnlock(cur.pubKeyHex, async (p) => {
@@ -1477,25 +1486,86 @@ export class App {
       });
       return;
     }
-    // Collapse the composer into the hollow card in the same slot at once.
-    this.composers.delete(composerKey(parentId));
-    const submission: Submission = {
-      localKey: 'local-' + ++this.submitSeq,
-      content: text,
-      parentId,
-      author: cur.pubKeyHex,
-      contentHash: contentHashHex(text),
-      stage: 'submitting',
-      txId: null,
-      postId: null,
-      blockHeight: null,
-      expiresAtHeight: null,
-      reason: null,
+    const ctrl = this.composers.get(composerKey(parentId));
+    if (!ctrl) return;
+    // The composer takes its `sending` look; the collapse into the hollow card
+    // moves to after the signature (WEB_INTERFACE → The wallet, "the fourth
+    // ending is the composer still open"). No hollow card exists while sign is
+    // unresolved.
+    ctrl.setSending(true);
+    let submission: Submission | null = null;
+    const onSigned = (): void => {
+      // Between the sign and the POST: collapse the composer, push the pending
+      // submission, and render the hollow card in the same slot.
+      this.composers.delete(composerKey(parentId));
+      submission = {
+        localKey: 'local-' + ++this.submitSeq,
+        content: text,
+        parentId,
+        author: cur.pubKeyHex,
+        contentHash: contentHashHex(text),
+        stage: 'submitting',
+        txId: null,
+        postId: null,
+        blockHeight: null,
+        expiresAtHeight: null,
+        reason: null,
+      };
+      this.state.submissions.push(submission);
+      this.renderForParent(parentId);
+      this.focusOpener(parentId);
     };
-    this.state.submissions.push(submission);
-    this.renderForParent(parentId);
-    this.focusOpener(parentId);
-    await this.flight(submission, () => submitPostFlow(this.submitDeps(), text, parentId));
+    let result;
+    try {
+      result = await submitPostFlow({ ...this.submitDeps(), onSigned }, text, parentId);
+    } catch {
+      // A transport failure. If onSigned fired, a submission was pushed; if not,
+      // the composer is still open with its text (WEB_INTERFACE → The wallet).
+      if (submission !== null) {
+        (submission as Submission).stage = 'rejected';
+        (submission as Submission).reason = "can't reach the node right now.";
+        this.renderForParent(parentId);
+      } else {
+        ctrl.setSending(false);
+        ctrl.setNotSent("can't reach the node right now.");
+      }
+      return;
+    }
+    if (result.ok) {
+      if (submission !== null) {
+        (submission as Submission).stage = 'submitted';
+        (submission as Submission).txId = result.entry.txId;
+        (submission as Submission).postId = result.entry.postId;
+        (submission as Submission).expiresAtHeight = result.entry.expiresAtHeight;
+      }
+      this.startPoll();
+      this.renderForParent(parentId);
+      return;
+    }
+    if ('rejection' in result) {
+      if (submission !== null) {
+        (submission as Submission).stage = 'rejected';
+        (submission as Submission).reason = postRejectionCopy(result.rejection);
+        this.renderForParent(parentId);
+      } else {
+        // A rejection happens only after a successful sign, so onSigned must
+        // have fired and submission must be set. This branch is defensive.
+        ctrl.setSending(false);
+        ctrl.setNotSent(postRejectionCopy(result.rejection));
+      }
+      return;
+    }
+    // notSigned — no hollow card, composer still open with its text.
+    if (result.notSigned === 'locked') {
+      ctrl.setSending(false);
+      ctrl.showUnlock(cur.pubKeyHex, async (p) => {
+        await this.idm.unlock(p);
+        await this.submitComposer(parentId, ctrl.text());
+      });
+    } else {
+      ctrl.setSending(false);
+      ctrl.setNotSent(notSignedCopy(result.notSigned, result.reason, 'post'));
+    }
   }
 
   private async tryAgain(localKey: string): Promise<void> {
@@ -1513,17 +1583,17 @@ export class App {
     await this.flight(sub, () => submitPostFlow(this.submitDeps(), sub.content, sub.parentId));
   }
 
-  /** Drive a submission's flight: submitted on a 2xx, rejected otherwise. */
+  /** Drive a submission's flight from a `try again`. notSigned there has no
+   *  composer to return to, so it returns the card to *expired* with the same
+   *  action still offered (WEB_INTERFACE → The wallet). */
   private async flight(
     sub: Submission,
-    run: () => Promise<{ ok: true; entry: { txId: string; postId: string; expiresAtHeight: number } } | { ok: false; rejection: Rejection }>,
+    run: () => Promise<{ ok: true; entry: { txId: string; postId: string; expiresAtHeight: number } } | { ok: false; rejection: Rejection } | { ok: false; notSigned: 'locked' | 'declined' | 'refused'; reason: string }>,
   ): Promise<void> {
     let result;
     try {
       result = await run();
     } catch {
-      // A transport failure is an ending, not a stuck 'submitting' (WEB_INTERFACE →
-      // The wallet: every flight ends in one of the three endings).
       sub.stage = 'rejected';
       sub.reason = "can't reach the node right now.";
       this.renderForParent(sub.parentId);
@@ -1535,9 +1605,13 @@ export class App {
       sub.postId = result.entry.postId;
       sub.expiresAtHeight = result.entry.expiresAtHeight;
       this.startPoll();
-    } else {
+    } else if ('rejection' in result) {
       sub.stage = 'rejected';
       sub.reason = postRejectionCopy(result.rejection);
+    } else {
+      // notSigned during a try-again — return the card to *expired* with the
+      // action still offered.
+      sub.stage = 'expired';
     }
     this.renderForParent(sub.parentId);
   }
@@ -1566,7 +1640,10 @@ export class App {
       return;
     }
     this.optimisticLikes.delete(postId);
-    this.setReportForPost(postId, 'like rejected: ' + likeRejectionCopy(result.rejection));
+    const line = 'rejection' in result
+      ? 'like rejected: ' + likeRejectionCopy(result.rejection)
+      : notSignedCopy(result.notSigned, result.reason, 'like');
+    this.setReportForPost(postId, line);
     this.renderRegionsForPost(postId);
     if (this.feedHasPost(postId)) this.renderFeed();
   }
@@ -1592,12 +1669,14 @@ export class App {
       return;
     }
     // Either way the transient flight steps aside: on ok the ledger's entry now
-    // renders 'submitted'; on a rejection the control returns.
+    // renders 'submitted'; on a rejection or notSigned the control returns.
     this.withdrawFlights.delete(postId);
     if (result.ok) {
       this.startPoll();
-    } else {
+    } else if ('rejection' in result) {
       this.setReportForPost(postId, 'withdraw rejected: ' + withdrawRejectionCopy(result.rejection));
+    } else {
+      this.setReportForPost(postId, notSignedCopy(result.notSigned, result.reason, 'withdraw'));
     }
     this.renderRegionsForPost(postId);
   }
@@ -1784,7 +1863,10 @@ export class App {
       this.startPoll();
     } else {
       this.optimisticVouches.delete(key);
-      if (d) d.flight = { stage: 'rejected', reason: 'vouch rejected: ' + vouchRejectionCopy(result.rejection) };
+      const reason = 'rejection' in result
+        ? 'vouch rejected: ' + vouchRejectionCopy(result.rejection)
+        : notSignedCopy(result.notSigned, result.reason, 'vouch');
+      if (d) d.flight = { stage: 'rejected', reason };
     }
     this.renderRegionsFor(authorWindowId(key));
   }
@@ -1809,7 +1891,12 @@ export class App {
       if (d) d.flight = { stage: 'submitted' };
       this.startPoll();
     } else if (d) {
-      d.flight = { stage: 'rejected', reason: 'unvouch rejected: ' + vouchRejectionCopy(result.rejection) };
+      d.flight = {
+        stage: 'rejected',
+        reason: 'rejection' in result
+          ? 'unvouch rejected: ' + vouchRejectionCopy(result.rejection)
+          : notSignedCopy(result.notSigned, result.reason, 'unvouch'),
+      };
     }
     this.renderRegionsFor(authorWindowId(key));
   }
@@ -1990,7 +2077,10 @@ export class App {
       this.inviteFlight = { stage: 'submitted' };
       this.startPoll();
     } else {
-      this.inviteFlight = { stage: 'rejected', reason: 'invite rejected: ' + inviteRejectionCopy(result.rejection) };
+      const reason = 'rejection' in result
+        ? 'invite rejected: ' + inviteRejectionCopy(result.rejection)
+        : notSignedCopy(result.notSigned, result.reason, 'invite');
+      this.inviteFlight = { stage: 'rejected', reason };
     }
     this.renderInvitesRowInPlace();
   }
@@ -2046,7 +2136,10 @@ export class App {
       this.usernameFlight = null;
       this.startPoll();
     } else {
-      this.usernameFlight = { stage: 'rejected', reason: 'claim rejected: ' + usernameRejectionCopy(result.rejection) };
+      const reason = 'rejection' in result
+        ? 'claim rejected: ' + usernameRejectionCopy(result.rejection)
+        : notSignedCopy(result.notSigned, result.reason, 'claim');
+      this.usernameFlight = { stage: 'rejected', reason };
     }
     this.renderUsernameRowInPlace();
   }
@@ -2073,7 +2166,10 @@ export class App {
       this.usernameFlight = null;
       this.startPoll();
     } else {
-      this.usernameFlight = { stage: 'rejected', reason: 'burn rejected: ' + usernameRejectionCopy(result.rejection) };
+      const reason = 'rejection' in result
+        ? 'burn rejected: ' + usernameRejectionCopy(result.rejection)
+        : notSignedCopy(result.notSigned, result.reason, 'burn');
+      this.usernameFlight = { stage: 'rejected', reason };
     }
     this.renderUsernameRowInPlace();
   }

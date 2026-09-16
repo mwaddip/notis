@@ -57,9 +57,9 @@ function harness(): Harness {
   const signed: string[] = [];
   const identity: AppIdentity = {
     current: () => ({ pubKeyHex: PUB, locked: false }),
-    sign: (txId) => {
+    sign: async (_bytes, txId) => {
       signed.push(txId);
-      return 'ab'.repeat(64);
+      return { signature: 'ab'.repeat(64) };
     },
     draft: () => ({ pubKeyHex: PUB }),
     create: async () => ({ pubKeyHex: PUB }),
@@ -202,7 +202,7 @@ describe('feed cards carry like and link', () => {
     const signed: string[] = [];
     const identity: AppIdentity = {
       current: () => ({ pubKeyHex: PUB, locked: false }),
-      sign: (txId) => { signed.push(txId); return 'ab'.repeat(64); },
+      sign: async (_bytes, txId) => { signed.push(txId); return { signature: 'ab'.repeat(64) }; },
       draft: () => ({ pubKeyHex: PUB }),
       create: async () => ({ pubKeyHex: PUB }),
       discardDraft: () => {},
@@ -281,7 +281,7 @@ describe('feed cards carry like and link', () => {
     const signed: string[] = [];
     const identity: AppIdentity = {
       current: () => ({ pubKeyHex: PUB, locked: false }),
-      sign: (txId) => { signed.push(txId); return 'ab'.repeat(64); },
+      sign: async (_bytes, txId) => { signed.push(txId); return { signature: 'ab'.repeat(64) }; },
       draft: () => ({ pubKeyHex: PUB }),
       create: async () => ({ pubKeyHex: PUB }),
       discardDraft: () => {},
@@ -334,7 +334,7 @@ describe('a locked like from the feed mounts the unlock row', () => {
     const liked: { likeTarget: string }[] = [];
     const identity: AppIdentity = {
       current: () => ({ pubKeyHex: PUB, locked: lockState }),
-      sign: () => 'ab'.repeat(64),
+      sign: async () => ({ signature: 'ab'.repeat(64) }),
       draft: () => ({ pubKeyHex: PUB }),
       create: async () => ({ pubKeyHex: PUB }),
       discardDraft: () => {},
@@ -401,7 +401,7 @@ describe('a like landing updates every surface holding the post', () => {
     let liked = false;
     const identity: AppIdentity = {
       current: () => ({ pubKeyHex: PUB, locked: false }),
-      sign: (txId) => { signed.push(txId); return 'ab'.repeat(64); },
+      sign: async (_bytes, txId) => { signed.push(txId); return { signature: 'ab'.repeat(64) }; },
       draft: () => ({ pubKeyHex: PUB }),
       create: async () => ({ pubKeyHex: PUB }),
       discardDraft: () => {},

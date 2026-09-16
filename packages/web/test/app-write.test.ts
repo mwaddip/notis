@@ -40,6 +40,7 @@ interface Harness {
   panes: HTMLElement;
   drive: {
     submitComposer(parentId: string | null, text: string): Promise<void>;
+    openComposer(parentId: string | null): void;
     likePost(postId: string): Promise<void>;
     loadFeed(): Promise<void>;
     pollTick(): Promise<void>;
@@ -54,18 +55,37 @@ interface Harness {
   setLocked(v: boolean): void;
 }
 
+/** The composer's onSubmit is what fires the flow in production; a test that
+ *  starts from submitComposer alone bypasses the composer and its collapse
+ *  hook. Open the composer first, then submit — the natural user path. No
+ *  setTimeout: it would hang under `vi.useFakeTimers()`. openComposer's
+ *  fire-and-forget affordability read is not on submitComposer's path. */
+async function post(h: Harness, parentId: string | null, text: string): Promise<void> {
+  h.drive.openComposer(parentId);
+  await h.drive.submitComposer(parentId, text);
+}
+
 interface ThrowOpts {
   submit?: boolean;
   like?: boolean;
   currentBlock?: boolean;
   karma?: boolean;
+  /** Steer the fake signer for the notSigned tests. Absent is a plain success. */
+  sign?: { kind: 'locked' | 'declined' | 'refused' | 'never'; reason?: string };
 }
 
 function harness(thrown: ThrowOpts = {}): Harness {
   const signCalls: string[] = [];
   const identity: AppIdentity = {
     current: () => ({ pubKeyHex: PUB, locked }),
-    sign: (t) => { signCalls.push(t); return 'ab'.repeat(64); },
+    sign: async (_bytes, t) => {
+      signCalls.push(t);
+      if (thrown.sign?.kind === 'locked') return { locked: true };
+      if (thrown.sign?.kind === 'declined') return { declined: true };
+      if (thrown.sign?.kind === 'refused') return { refused: thrown.sign.reason ?? 'refused' };
+      if (thrown.sign?.kind === 'never') return await new Promise(() => {}); // hangs forever
+      return { signature: 'ab'.repeat(64) };
+    },
     draft: () => ({ pubKeyHex: PUB }),
     create: async () => ({ pubKeyHex: PUB }),
     discardDraft: () => {},
@@ -143,7 +163,7 @@ afterEach(() => {
 describe('the App write surface — a post flight', () => {
   it('submitComposer lands a submission and a ledger entry, and starts the poll', async () => {
     const h = harness();
-    await h.drive.submitComposer(null, 'a new thread');
+    await post(h, null, 'a new thread');
     expect(h.drive.state.submissions).toHaveLength(1);
     const sub = h.drive.state.submissions[0]!;
     expect(sub).toMatchObject({ parentId: null, author: PUB, stage: 'submitted', postId: 'newpost' });
@@ -179,7 +199,7 @@ describe('the App write surface — a post flight', () => {
   it('the bounded poll lands the submission on a height change and stops at zero', async () => {
     vi.useFakeTimers();
     const h = harness();
-    await h.drive.submitComposer(null, 'a new thread');
+    await post(h, null, 'a new thread');
     // One poll tick: the tip has moved (0 → 6001), the post reads confirmed.
     await h.drive.pollTick();
     const sub = h.drive.state.submissions[0]!;
@@ -191,7 +211,7 @@ describe('the App write surface — a post flight', () => {
 
   it('a settled submission is cleared on a feed refresh so the node data takes over', async () => {
     const h = harness();
-    await h.drive.submitComposer(null, 'a new thread');
+    await post(h, null, 'a new thread');
     h.drive.state.submissions[0]!.stage = 'landed';
     await (h.app as unknown as { refreshFeed(): Promise<void> }).refreshFeed();
     expect(h.drive.state.submissions).toHaveLength(0);
@@ -212,7 +232,7 @@ describe('the App write surface — a post flight', () => {
     const region2Before = panes.querySelectorAll('.region')[1];
 
     // A reply under P1's thread lands through the poll.
-    await h.drive.submitComposer(P1, 'a reply');
+    await post(h, P1, 'a reply');
     await h.drive.pollTick();
 
     // The reply's region was re-rendered, but the unrelated region survived by
@@ -241,7 +261,7 @@ describe('the App write surface — like and reads', () => {
 describe('the App write surface — transport failures end cleanly', () => {
   it('a submit that throws ends the flight as rejected, never stuck submitting', async () => {
     const h = harness({ submit: true });
-    await h.drive.submitComposer(null, 'a thread');
+    await post(h, null, 'a thread');
     const sub = h.drive.state.submissions[0]!;
     expect(sub.stage).toBe('rejected');
     expect(sub.reason).toBe("can't reach the node right now.");
@@ -257,7 +277,7 @@ describe('the App write surface — transport failures end cleanly', () => {
 
   it('the poll survives a failed read and keeps its cadence', async () => {
     const h = harness({ currentBlock: true });
-    await h.drive.submitComposer(null, 'a thread'); // succeeds; only currentBlock throws
+    await post(h, null, 'a thread'); // succeeds; only currentBlock throws
     expect(h.ledger.size).toBe(1);
     await expect(h.drive.pollTick()).resolves.toBeUndefined(); // no unhandled rejection
     expect(h.ledger.size).toBe(1); // nothing reconciled, the entry stands
@@ -269,5 +289,95 @@ describe('the App write surface — transport failures end cleanly', () => {
     await flush(); // let the fire-and-forget affordability read settle
     const ctrl = (h.drive.composers as Map<string, { el: HTMLElement }>).get('@feed')!;
     expect(ctrl.el.querySelector('.karma')?.textContent).toBe("can't read your rep right now");
+  });
+});
+
+// The fourth ending — the composer is still open with its text, no hollow card
+// exists while sign is unresolved, and every other write undoes its optimistic
+// state (WEB_INTERFACE → The wallet).
+describe('the App write surface — the notSigned arm', () => {
+  const composer = (h: Harness): { el: HTMLElement; text: () => string } | undefined => {
+    return (h.drive.composers as Map<string, { el: HTMLElement; text: () => string }>).get('@feed');
+  };
+
+  it('declined: the composer stays open with its text, the foot reads "not sent."', async () => {
+    const h = harness({ sign: { kind: 'declined' } });
+    h.drive.openComposer(null);
+    const ctrl = composer(h)!;
+    (ctrl.el.querySelector('.composer-text') as HTMLTextAreaElement).value = 'draft that never sent';
+    await h.drive.submitComposer(null, 'draft that never sent');
+    // No hollow card pushed; composer still present with its text.
+    expect(h.drive.state.submissions).toHaveLength(0);
+    expect(composer(h)).toBeDefined();
+    expect((composer(h)!.el.querySelector('.composer-text') as HTMLTextAreaElement).value).toBe('draft that never sent');
+    expect(composer(h)!.el.querySelector('.karma')?.textContent).toBe('post not sent.');
+  });
+
+  it('refused: the composer stays open, the foot names the reason (or "one approval at a time." for busy)', async () => {
+    const h = harness({ sign: { kind: 'refused', reason: 'busy' } });
+    h.drive.openComposer(null);
+    await h.drive.submitComposer(null, 'draft');
+    expect(h.drive.state.submissions).toHaveLength(0);
+    expect(composer(h)!.el.querySelector('.karma')?.textContent).toBe('one approval at a time.');
+  });
+
+  it('locked: the composer stays open and the unlock form takes its foot', async () => {
+    const h = harness({ sign: { kind: 'locked' } });
+    h.drive.openComposer(null);
+    (composer(h)!.el.querySelector('.composer-text') as HTMLTextAreaElement).value = 'still here';
+    await h.drive.submitComposer(null, 'still here');
+    expect(h.drive.state.submissions).toHaveLength(0);
+    expect(composer(h)!.el.querySelector('form.pf')).not.toBeNull();
+  });
+
+  it('no hollow card exists while sign is unresolved', async () => {
+    const h = harness({ sign: { kind: 'never' } });
+    h.drive.openComposer(null);
+    // Fire the flow without awaiting — the sign will hang forever.
+    void h.drive.submitComposer(null, 'a thread');
+    await flush();
+    // The composer is still present; no submission pushed.
+    expect(h.drive.state.submissions).toHaveLength(0);
+    expect(composer(h)).toBeDefined();
+  });
+
+  it('try again → expired on notSigned; the card holds the action', async () => {
+    // First run: succeed, then set the submission to expired to prepare try-again.
+    const h = harness();
+    await post(h, null, 'a thread');
+    const sub = h.drive.state.submissions[0]!;
+    sub.stage = 'expired';
+    sub.expiresAtHeight = 6720;
+    // Now steer the signer into a decline, run tryAgain, and observe the card
+    // returns to expired (not rejected).
+    const tryAgain = (h.app as unknown as { tryAgain(key: string): Promise<void> }).tryAgain.bind(h.app);
+    // Swap the identity's sign to return declined for this run.
+    const idm = (h.app as unknown as { idm: AppIdentity }).idm;
+    const originalSign = idm.sign.bind(idm);
+    idm.sign = async () => ({ declined: true });
+    try {
+      await tryAgain(sub.localKey);
+    } finally {
+      idm.sign = originalSign;
+    }
+    expect(sub.stage).toBe('expired');
+  });
+
+  it('like: notSigned undoes the optimistic like and reports "like not sent."', async () => {
+    const h = harness({ sign: { kind: 'declined' } });
+    const post = 'cc'.repeat(32);
+    await h.drive.likePost(post);
+    expect(h.drive.optimisticLikes.has(post)).toBe(false);
+    expect(h.ledger.size).toBe(0);
+  });
+
+  it('like: locked reports "your key is locked" and the next press mounts the unlock', async () => {
+    const h = harness({ sign: { kind: 'locked' } });
+    const post = 'cc'.repeat(32);
+    await h.drive.likePost(post);
+    expect(h.drive.optimisticLikes.has(post)).toBe(false);
+    // The report line names the lock; the reader's next press mounts the unlock
+    // as today (WEB_INTERFACE → The wallet, "the fourth ending").
+    expect(h.ledger.size).toBe(0);
   });
 });

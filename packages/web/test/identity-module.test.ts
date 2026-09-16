@@ -57,7 +57,8 @@ describe('identity module — create, export, import', () => {
     expect(imported.pubKeyHex).toBe(id.pubKeyHex);
     // Import leaves it unlocked, so it can sign — the seed came across.
     expect(b.current()).toEqual({ pubKeyHex: id.pubKeyHex, locked: false });
-    expect(b.sign('ab'.repeat(32))).toHaveLength(128);
+    const r = await b.sign(new Uint8Array(), 'ab'.repeat(32));
+    expect(r).toMatchObject({ signature: expect.stringMatching(/^[0-9a-f]{128}$/) });
   });
 
   it('a clear file imports under a set passphrase, stored as an envelope, and can sign', async () => {
@@ -68,7 +69,8 @@ describe('identity module — create, export, import', () => {
     const id = await m.importFile(clear, 'chosen passphrase');
     expect(id.pubKeyHex).toBe(pubKeyHex);
     expect(m.current()).toEqual({ pubKeyHex, locked: false });
-    expect(m.sign('cd'.repeat(32))).toHaveLength(128);
+    const r = await m.sign(new Uint8Array(), 'cd'.repeat(32));
+    expect(r).toMatchObject({ signature: expect.stringMatching(/^[0-9a-f]{128}$/) });
 
     // Storage never holds the clear shape — it is sealed on import.
     const stored = JSON.parse(localStorage.getItem(IDENTITY_KEY) as string);
@@ -120,7 +122,10 @@ describe('identity module — create, export, import', () => {
     expect(m.current()).toBeNull();
     expect(localStorage.getItem(IDENTITY_KEY)).toBeNull();
     expect(m.backedUp()).toBe(false);
-    expect(() => m.sign('ab'.repeat(32))).toThrow(/no identity/);
+    // No seed loaded is the same shape as locked in the SignResult vocabulary —
+    // the in-page module never answers `declined` (WEB_INTERFACE → The identity
+    // module).
+    expect(await m.sign(new Uint8Array(), 'ab'.repeat(32))).toEqual({ locked: true });
     await expect(m.exportFile('file')).rejects.toThrow(/no unlocked identity/);
   });
 });
@@ -131,15 +136,15 @@ describe('identity module — locked at rest, unlocked on demand', () => {
 
     const b = new IdentityModule(); // reads the stored envelope
     expect(b.current()).toEqual({ pubKeyHex: id.pubKeyHex, locked: true });
-    expect(() => b.sign('ab'.repeat(32))).toThrow(/locked/);
+    expect(await b.sign(new Uint8Array(), 'ab'.repeat(32))).toEqual({ locked: true });
 
     await b.unlock('the passphrase');
     expect(b.current()).toEqual({ pubKeyHex: id.pubKeyHex, locked: false });
-    expect(b.sign('ab'.repeat(32))).toHaveLength(128);
+    expect(await b.sign(new Uint8Array(), 'ab'.repeat(32))).toMatchObject({ signature: expect.stringMatching(/^[0-9a-f]{128}$/) });
 
     b.lock();
     expect(b.current()).toEqual({ pubKeyHex: id.pubKeyHex, locked: true });
-    expect(() => b.sign('ab'.repeat(32))).toThrow(/locked/);
+    expect(await b.sign(new Uint8Array(), 'ab'.repeat(32))).toEqual({ locked: true });
   });
 
   it('unlock refuses a wrong passphrase and stays locked', async () => {
@@ -228,8 +233,10 @@ describe('identity module — signing interop with the node verifier', () => {
     const m = new IdentityModule();
     const { pubKeyHex } = await mint(m, 'pw');
     const txIdHex = '9a'.repeat(32);
-    const sigHex = m.sign(txIdHex);
-    expect(sigHex).toHaveLength(128);
+    const r = await m.sign(new Uint8Array(), txIdHex);
+    expect(r).toMatchObject({ signature: expect.stringMatching(/^[0-9a-f]{128}$/) });
+    if (!('signature' in r)) return;
+    const sigHex = r.signature;
 
     // The node wraps the 32-byte key in the fixed SPKI prefix and verifies raw
     // Ed25519 over the 32 id bytes.
@@ -240,13 +247,28 @@ describe('identity module — signing interop with the node verifier', () => {
     expect(nodeVerify(null, hexToBytes('00'.repeat(32)), key, hexToBytes(sigHex))).toBe(false);
   });
 
-  it('sign refuses anything but 64 lowercase hex — it is the one path to the seed', async () => {
+  it('sign refuses anything but 64 lowercase hex — the answer is `refused`, never a throw', async () => {
     const m = new IdentityModule();
     await mint(m, 'pw');
     for (const bad of ['', 'abc', 'ab'.repeat(31), 'ab'.repeat(33), 'zz'.repeat(32), 'AB'.repeat(32), `${'ab'.repeat(32)} `]) {
-      expect(() => m.sign(bad), bad).toThrow(/64 hex/);
+      expect(await m.sign(new Uint8Array(), bad), bad).toEqual({ refused: 'a transaction id to sign must be 64 hex characters.' });
     }
-    expect(m.sign('ab'.repeat(32))).toHaveLength(128);
+    expect(await m.sign(new Uint8Array(), 'ab'.repeat(32))).toMatchObject({ signature: expect.stringMatching(/^[0-9a-f]{128}$/) });
+  });
+
+  it('the in-page module never answers `declined` — that is the extension proxy\'s arm', async () => {
+    // A run over every reachable state in the in-page module: unlocked, locked,
+    // no-identity, bad-input. None answers `declined`.
+    const m = new IdentityModule();
+    const results: unknown[] = [];
+    results.push(await m.sign(new Uint8Array(), 'ab'.repeat(32))); // no identity → locked
+    await mint(m, 'pw');
+    results.push(await m.sign(new Uint8Array(), 'ab'.repeat(32))); // unlocked → signature
+    m.lock();
+    results.push(await m.sign(new Uint8Array(), 'ab'.repeat(32))); // locked
+    await m.unlock('pw');
+    results.push(await m.sign(new Uint8Array(), 'not-hex')); // refused
+    for (const r of results) expect(r as Record<string, unknown>).not.toHaveProperty('declined');
   });
 });
 
@@ -265,7 +287,7 @@ describe('identity module — the draft split', () => {
     const id = await m.create('pw');
     expect(id.pubKeyHex).toBe(d.pubKeyHex);
     expect(m.current()).toEqual({ pubKeyHex: d.pubKeyHex, locked: false });
-    expect(m.sign('ab'.repeat(32))).toHaveLength(128);
+    expect(await m.sign(new Uint8Array(), 'ab'.repeat(32))).toMatchObject({ signature: expect.stringMatching(/^[0-9a-f]{128}$/) });
   });
 
   it('a second draft replaces the first', async () => {
