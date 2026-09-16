@@ -50,6 +50,17 @@ if grep -n "url('/" dist/fonts/fonts.css; then
   exit 1
 fi
 
+# The web bundle carries no extension code — WEB_INTERFACE → The extension.
+# `chrome.` in an extension bundle is `chrome.runtime`, `chrome.storage` &c.; the
+# web bundle carries none of that, so a stray chunk from the extension entries
+# would surface as a hit here. A build value branches `main.ts`; this proves the
+# tree-shake worked.
+if grep -Fnq "chrome." dist/assets/*.js; then
+  echo "FAIL: chrome.* reference found in the web bundle (extension code leaked into the zip)"
+  grep -Fn "chrome." dist/assets/*.js | head -5
+  exit 1
+fi
+
 echo "==> Build checks passed"
 
 # ---------------------------------------------------------------------------
