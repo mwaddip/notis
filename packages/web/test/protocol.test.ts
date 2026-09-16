@@ -3,8 +3,8 @@ import { describe, it, expect } from 'vitest';
 import { isMessage, KNOWN_KINDS, REFUSED_UNKNOWN, type Message } from '../src/extension/protocol';
 
 // The wire shapes are closed at the type level; runtime, they are refused when
-// the guard doesn't recognise the kind (WEB_INTERFACE → The extension, §4.3).
-// A shape that lies about its kind reaches the dispatcher as unknown, and the
+// the guard doesn't recognise the kind (WEB_INTERFACE → "The messages"). A
+// shape that lies about its kind reaches the dispatcher as unknown, and the
 // answer is one `{ error }` shape.
 
 describe('isMessage — every known kind passes, everything else is refused', () => {
@@ -35,7 +35,7 @@ describe('isMessage — every known kind passes, everything else is refused', ()
 });
 
 describe('KNOWN_KINDS — the full set of what the dispatcher understands', () => {
-  it('is exactly the 15 kinds in §4.3', () => {
+  it('is exactly the 15 kinds the contract lists', () => {
     const expected: Array<Message['kind']> = [
       'state', 'draft', 'discardDraft', 'create', 'inspectFile',
       'importFile', 'exportFile', 'unlock', 'lock', 'forget',

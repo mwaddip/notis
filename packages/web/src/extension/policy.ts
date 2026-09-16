@@ -1,17 +1,18 @@
 import type { UtxoTransaction, AnyBoxCandidate } from '@dagsocial/types';
+import { toHex } from '../identity/envelope';
 import type { SignSummary, CreditSend } from './protocol';
 
 // The classification and summary the prompt uses. Pure functions, so they can
-// be tested against the wallet's own builders (WEB_INTERFACE → The extension,
-// §4.5). The background derives the summary from the decoded transaction, not
-// from any hint the page supplied — a name on the summary is never taken from
-// what the page said about them.
+// be tested against the wallet's own builders (WEB_INTERFACE → "The summary the
+// prompt shows is derived from the transaction"). The background derives the
+// summary from the decoded transaction, not from any hint the page supplied — a
+// name on the summary is never taken from what the page said about them.
 
-/** The ledger the transaction moves — WEB_INTERFACE → The extension, §4.1. Any
- *  output with `boxType` `credit` or `fee` names the credits side; otherwise
- *  the transaction is karma-side. Inputs are ids only, so the classification
- *  is output-side by necessity, and it is sufficient (value conserves per
- *  ledger; the node refuses a `fee` on a karma-side transaction). */
+/** The ledger the transaction moves — WEB_INTERFACE → "The policy". Any output
+ *  with `boxType` `credit` or `fee` names the credits side; otherwise the
+ *  transaction is karma-side. Inputs are ids only, so the classification is
+ *  output-side by necessity, and it is sufficient (value conserves per ledger;
+ *  the node refuses a `fee` on a karma-side transaction). */
 export type Ledger = 'karma' | 'credits';
 
 export function classifyLedger(tx: UtxoTransaction): Ledger {
@@ -23,13 +24,18 @@ export function classifyLedger(tx: UtxoTransaction): Ledger {
 
 /** The summary the prompt shows, derived from the transaction alone. `signerHex`
  *  is the signer's public key — output boxes to that key are change and are
- *  never listed as spent (WEB_INTERFACE → The extension, §4.5). */
+ *  never listed as spent (WEB_INTERFACE → "The summary the prompt shows is
+ *  derived from the transaction"). An unrecognised karma-side shape — a bare
+ *  consolidation of karma, legal on the ledger but not something the client
+ *  builds — reads as `other`; a throw here would reject the background's
+ *  message-handling promise and the page would never resolve. */
 export function summarise(tx: UtxoTransaction, signerHex: string): SignSummary {
   const ledger = classifyLedger(tx);
   if (ledger === 'credits') return credits(tx, signerHex);
 
-  // Karma-side kinds branch on the transaction's shape, in the order the spec's
-  // table lists them (WEB_INTERFACE → The extension, §4.5).
+  // Karma-side kinds branch on the transaction's shape, in the order the
+  // contract lists them (WEB_INTERFACE → "The summary the prompt shows is
+  // derived from the transaction").
   if (tx.post) {
     const kind: 'thread' | 'reply' = tx.post.parentRefs.length > 0 ? 'reply' : 'thread';
     return { kind, spendRep: sumKarmaSideSpend(tx) };
@@ -42,25 +48,28 @@ export function summarise(tx: UtxoTransaction, signerHex: string): SignSummary {
   }
   // Vouch, unvouch, invite, claim, burn — from the outputs' `boxType`s.
   const vouchOut = firstOut(tx, 'vouch');
-  if (vouchOut) return { kind: 'vouch', targetHex: bytesHex(vouchOut.targetId), spendRep: valueOf(vouchOut) };
+  if (vouchOut) return { kind: 'vouch', targetHex: toHex(vouchOut.targetId), spendRep: valueOf(vouchOut) };
   const escrowOut = firstOut(tx, 'vouch_escrow');
   if (escrowOut && !firstOut(tx, 'vouch')) {
-    // An escrow with the target on its owner key — the input vouch names the
-    // pair, so it is read from the escrow's owner.
-    return { kind: 'unvouch', targetHex: bytesHex(escrowOut.owner) };
+    // The `VouchEscrowBox` carries `owner` — the voucher, where the karma
+    // returns — and no target; the input vouch is an id only, so the target
+    // is not derivable from the transaction. The prompt says "sign this
+    // unvouch?" and nothing more — the reader pressed the row.
+    return { kind: 'unvouch' };
   }
   const bondOut = firstOut(tx, 'bond');
-  if (bondOut) return { kind: 'invite', inviteeHex: bytesHex(bondOut.inviteePublicKey), spendRep: valueOf(bondOut) };
+  if (bondOut) return { kind: 'invite', inviteeHex: toHex(bondOut.inviteePublicKey), spendRep: valueOf(bondOut) };
   const nameOut = firstOut(tx, 'username');
   if (nameOut) return { kind: 'claim', name: nameToText(nameOut.name) };
   // Burn: a `karma_price` output present with `post` and `likeTarget` absent —
-  // the username box it spends is an input (an id only) and the burn's price
-  // rides the `karma_price` output.
+  // the username box it spends is an input (an id only, so the name is not
+  // in the transaction) and the burn's price rides the `karma_price` output.
   const priceOut = firstOut(tx, 'karma_price');
-  if (priceOut) return { kind: 'burn', name: '', spendRep: valueOf(priceOut) };
-  // No kind matched. The refusal here lives in the caller; policy.summarise is
-  // pure and returns a shape the caller decides on.
-  throw new Error('unrecognised karma-side transaction shape');
+  if (priceOut) return { kind: 'burn', spendRep: valueOf(priceOut) };
+  // A bare karma consolidation — karma in, karma change out, nothing else — is
+  // legal on the ledger and the client never builds one; the prompt reads
+  // "sign this rep transaction?".
+  return { kind: 'other', spendRep: sumNonChangeKarma(tx, signerHex) };
 }
 
 // ---------------------------------------------------------------------------
@@ -68,13 +77,27 @@ export function summarise(tx: UtxoTransaction, signerHex: string): SignSummary {
 // ---------------------------------------------------------------------------
 
 /** Sum of the `karma_price` and `like_accrual` outputs' values — the karma the
- *  transaction spends on a post or a like (WEB_INTERFACE → The extension,
- *  §4.5). A thread has one price + zero accrual; a reply one price + one
- *  accrual (the parent's author's share); a like one accrual alone. */
+ *  transaction spends on a post or a like (WEB_INTERFACE → "The summary the
+ *  prompt shows is derived from the transaction"). A thread has one price
+ *  + zero accrual; a reply one price + one accrual (the parent's author's
+ *  share); a like one accrual alone. */
 function sumKarmaSideSpend(tx: UtxoTransaction): string {
   let total = 0n;
   for (const out of tx.outputs) {
     if (out.boxType === 'karma_price' || out.boxType === 'like_accrual') total += out.value;
+  }
+  return total.toString();
+}
+
+/** Non-change karma outputs' total, for the `other` catch-all — a consolidation
+ *  has only change and sums to zero (WEB_INTERFACE → "The summary the prompt
+ *  shows is derived from the transaction"). */
+function sumNonChangeKarma(tx: UtxoTransaction, signerHex: string): string {
+  let total = 0n;
+  for (const out of tx.outputs) {
+    if (out.boxType !== 'karma') continue;
+    if (toHex(out.owner) === signerHex) continue;
+    total += out.value;
   }
   return total.toString();
 }
@@ -84,9 +107,10 @@ function credits(tx: UtxoTransaction, signerHex: string): SignSummary {
   let feeValue = '0';
   for (const out of tx.outputs) {
     if (out.boxType === 'credit') {
-      const ownerHex = bytesHex(out.owner);
+      const ownerHex = toHex(out.owner);
       // Change is any output to the signer's own key — never listed as spent
-      // (WEB_INTERFACE → The extension, §4.5).
+      // (WEB_INTERFACE → "The summary the prompt shows is derived from the
+      // transaction").
       if (ownerHex === signerHex) continue;
       sends.push({ ownerHex, value: out.value.toString() });
     } else if (out.boxType === 'fee') {
@@ -105,12 +129,6 @@ function firstOut<T extends AnyBoxCandidate['boxType']>(tx: UtxoTransaction, box
 
 function valueOf(box: { value: bigint }): string {
   return box.value.toString();
-}
-
-function bytesHex(bytes: Uint8Array): string {
-  let s = '';
-  for (const b of bytes) s += b.toString(16).padStart(2, '0');
-  return s;
 }
 
 const NAME_DECODER = new TextDecoder('utf-8');

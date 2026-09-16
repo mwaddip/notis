@@ -2,7 +2,7 @@
 // The extension, "No dependency is added". Declared here so `types: []` stays
 // and no @types/chrome is pulled in. Both Chrome (MV3 service worker) and
 // Firefox (event page) present these under the `chrome` global with
-// promise-returning calls; the spike's Phase 0 confirmed (a) on both.
+// promise-returning calls (WEB_INTERFACE → "The messages").
 
 declare namespace chrome {
   namespace runtime {

@@ -12,7 +12,8 @@ import { classifyLedger, summarise } from '../src/extension/policy';
 // builders. A transaction is built with the shape the flow produces, the
 // summary is derived from the encoded → decoded transaction (so no test
 // artefact rides on the builder's own object identity), and the assertion
-// pins the summary WEB_INTERFACE → The extension, §4.5, spells out.
+// pins the summary WEB_INTERFACE → "The summary the prompt shows is derived
+// from the transaction" spells out.
 
 const SIGNER = 'aa'.repeat(32);
 const AUTHOR = 'bb'.repeat(32);
@@ -116,12 +117,9 @@ describe('summarise — the derived summary matches the transaction shape', () =
     expect(BigInt(s.spendRep)).toBeGreaterThan(0n);
   });
 
-  it('an unvouch names its target (the escrow\'s owner) and spends nothing', () => {
+  it('an unvouch carries no target — the VouchEscrowBox has none and the input vouch is an id only', () => {
     const { tx } = buildUnvouch(ctx(), { boxId: VOUCH_BOX, value: 1n, createdAtBlock: 5900 }, 100);
-    // The unvouch's escrow output has the SIGNER's own key as owner (it is
-    // held for them); its `targetHex` in the summary is that key.
-    const s = summarise(roundtrip(tx), SIGNER);
-    expect(s).toEqual({ kind: 'unvouch', targetHex: SIGNER });
+    expect(summarise(roundtrip(tx), SIGNER)).toEqual({ kind: 'unvouch' });
   });
 
   it('an invite names the invitee and the bond\'s value', () => {
@@ -134,12 +132,24 @@ describe('summarise — the derived summary matches the transaction shape', () =
     expect(summarise(roundtrip(tx), SIGNER)).toEqual({ kind: 'claim', name: 'Alice_01' });
   });
 
-  it('a burn is a karma_price with post and likeTarget absent — spends USERNAME_BURN_PRICE', () => {
+  it('a burn is a karma_price with post and likeTarget absent — spends USERNAME_BURN_PRICE, no name', () => {
     const { tx } = buildBurn(ctx(), { boxId: '44'.repeat(32) });
-    const s = summarise(roundtrip(tx), SIGNER);
-    expect(s.kind).toBe('burn');
-    if (s.kind !== 'burn') return;
-    expect(s.spendRep).toBe(USERNAME_BURN_PRICE.toString());
+    expect(summarise(roundtrip(tx), SIGNER)).toEqual({ kind: 'burn', spendRep: USERNAME_BURN_PRICE.toString() });
+  });
+
+  it('a bare karma consolidation — karma in, karma change out — reads as `other` and does not throw', () => {
+    // Karma to the signer as change, nothing else. Legal on the ledger; the
+    // client never builds one, so the summary is the catch-all rather than a
+    // throw the dispatcher would surface as a rejected message promise.
+    const tx: UtxoTransaction = {
+      inputs: [BOX],
+      outputs: [
+        { boxType: 'karma', value: 200n, createdAtBlock: 6000, owner: hexToBytes(SIGNER) },
+      ] as AnyBoxCandidate[],
+      signatures: {},
+      protocolVersion: 1,
+    };
+    expect(summarise(tx, SIGNER)).toEqual({ kind: 'other', spendRep: '0' });
   });
 
   it('credits: signer-owned outputs are change, never listed as sent', () => {

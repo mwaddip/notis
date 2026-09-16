@@ -11,9 +11,9 @@ import { toHex, hexToBytes } from '../src/identity/envelope';
 
 // The background reloads state from storage on every call. Every `storage.local`
 // write MUST be seed-free — the seed lives in `storage.session` alone
-// (WEB_INTERFACE → The extension, §3.2). A second background instance built on
-// the same fixture answers `approve` for the first's prompt — the storage-
-// mediated claim, pinned by run (Phase 0 hypothesis (b) confirmed).
+// (WEB_INTERFACE → "Three contexts, and what each may hold"). A second
+// background instance built on the same fixture answers `approve` for the
+// first's prompt — the storage-mediated claim, pinned by run.
 
 // ---------------------------------------------------------------------------
 // Test setup — a real key pair, a tx built through the wallet's own builders.
@@ -119,7 +119,7 @@ describe('background — policy', () => {
 });
 
 // ---------------------------------------------------------------------------
-// sign — the eight steps, WEB_INTERFACE → The extension, §4.4.
+// sign — WEB_INTERFACE → "`sign`, in the background, in order".
 // ---------------------------------------------------------------------------
 
 describe('background — sign steps 1-3 refusals', () => {
@@ -311,7 +311,7 @@ describe('background — a fresh instance over the same storage answers approve'
 
 // ---------------------------------------------------------------------------
 // The hint's content is shown only when it verifies against the commit
-// (WEB_INTERFACE → The extension, §4.5).
+// (WEB_INTERFACE → "The summary the prompt shows is derived from the transaction").
 // ---------------------------------------------------------------------------
 
 describe('background — sign hint verification', () => {
@@ -385,7 +385,8 @@ function promptSender(c: FakeChrome): chrome.runtime.MessageSender {
 }
 
 /** Every value in storage.local must NOT contain a 64-hex seed — the seed
- *  lives in storage.session alone (WEB_INTERFACE → The extension, §3.2). */
+ *  lives in storage.session alone (WEB_INTERFACE → "Three contexts, and what
+ *  each may hold"). */
 function assertLocalSeedFree(c: FakeChrome): void {
   const seedHex = c.storage.session.get('notis.seed');
   if (typeof seedHex !== 'string') return; // no seed to look for

@@ -5,7 +5,7 @@ import { seal, open, parseFile, toHex, hexToBytes, IdentityError, type Envelope 
 import { generateKeyPair } from '@dagsocial/types';
 import {
   isMessage, REFUSED_UNKNOWN,
-  type AppSnapshot, type SignAnswer, type SignHint, type SignRecord, type SignSummary,
+  type AppSnapshot, type SignAnswer, type SignHint, type SignRecord,
 } from './protocol';
 import { summarise, classifyLedger } from './policy';
 
@@ -13,12 +13,11 @@ import { summarise, classifyLedger } from './policy';
 // the envelope in `storage.local` and the unlocked seed in `storage.session`,
 // reloads what it needs from storage on every call, and never keeps state in a
 // worker global. Records the prompt page reads live in `storage.session`, so a
-// worker killed while the human reads the prompt loses nothing (Phase 0's
-// hypothesis (b) confirmed).
+// worker killed while the human reads the prompt loses nothing
+// (WEB_INTERFACE → "Three contexts, and what each may hold").
 
 // ---------------------------------------------------------------------------
-// Storage keys — WEB_INTERFACE → The extension, "Three contexts, and what each
-// may hold".
+// Storage keys — WEB_INTERFACE → "Three contexts, and what each may hold".
 // ---------------------------------------------------------------------------
 
 const K_ENVELOPE = 'notis.identity';
@@ -215,7 +214,7 @@ async function setPolicy(api: typeof chrome, karma: 'silent' | 'ask'): Promise<'
 }
 
 // ---------------------------------------------------------------------------
-// sign — the eight steps, WEB_INTERFACE → The extension, §4.4.
+// sign — WEB_INTERFACE → "`sign`, in the background, in order".
 // ---------------------------------------------------------------------------
 
 async function signMessage(api: typeof chrome, txBytesHex: string, txIdHex: string, hint: SignHint): Promise<SignAnswer> {
@@ -243,7 +242,7 @@ async function signMessage(api: typeof chrome, txBytesHex: string, txIdHex: stri
   if (await hasOpenPromptRecord(api)) return { refused: 'busy' };
   const env = await readEnvelope(api);
   if (env === null) return { locked: true };
-  const summary = deriveSummaryOrThrow(tx, env.pubKeyHex);
+  const summary = summarise(tx, env.pubKeyHex);
   const record: SignRecord = {
     id: randomId(),
     txIdHex,
@@ -268,7 +267,7 @@ async function signMessage(api: typeof chrome, txBytesHex: string, txIdHex: stri
 }
 
 /** approve is checked by the sender's URL — an approval message may come only
- *  from the prompt page (WEB_INTERFACE → The extension, §4.3). */
+ *  from the prompt page (WEB_INTERFACE → "The messages"). */
 async function approve(api: typeof chrome, id: string, sender: chrome.runtime.MessageSender): Promise<'ok' | { error: string }> {
   if (!isFromPromptPage(api, sender)) return { error: 'approve is only accepted from the prompt page' };
   const record = await readRecord(api, id);
@@ -314,9 +313,9 @@ async function windowClosed(api: typeof chrome, windowId: number): Promise<void>
 }
 
 /** On background start, every record without a result is declined — a window
- *  that vanished with the browser (WEB_INTERFACE → The extension, §4.4 step
- *  8). Records are removed on `ack`, so a lingering result-less record is a
- *  crash. */
+ *  that vanished with the browser (WEB_INTERFACE → "`sign`, in the background,
+ *  in order"). Records are removed on `ack`, so a lingering result-less record
+ *  is a crash. */
 async function sweepOrphanedRecords(api: typeof chrome): Promise<void> {
   const records = await readAllRecords(api);
   for (const [key, record] of records) {
@@ -328,8 +327,8 @@ async function sweepOrphanedRecords(api: typeof chrome): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// The action button — WEB_INTERFACE → The extension, "The action button opens
-// or focuses the page". No default_popup, since one suppresses onClicked.
+// The action button — WEB_INTERFACE → "The action button opens or focuses the
+// page". No default_popup, since one suppresses onClicked.
 // ---------------------------------------------------------------------------
 
 async function raiseOrOpenPage(api: typeof chrome): Promise<void> {
@@ -415,16 +414,13 @@ function randomId(): string {
 
 function verifiedHint(tx: UtxoTransaction, hint: SignHint): SignHint {
   // Content is shown only when its hash matches the commit — WEB_INTERFACE →
-  // The extension, §4.5. Any other field the page might sneak in is dropped.
+  // "The summary the prompt shows is derived from the transaction". Any other
+  // field the page might sneak in is dropped.
   if (typeof hint.content === 'string' && tx.post) {
     const computed = toHex(computeContentHash(hint.content));
     if (computed === toHex(tx.post.contentHash)) return { content: hint.content };
   }
   return {};
-}
-
-function deriveSummaryOrThrow(tx: UtxoTransaction, signerHex: string): SignSummary {
-  return summarise(tx, signerHex);
 }
 
 function errorMessage(e: unknown): string {
