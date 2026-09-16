@@ -100,8 +100,8 @@ function harness(thrown: ThrowOpts = {}): Harness {
     importFile: async () => ({ pubKeyHex: PUB }),
     exportFile: async () => '{}',
     unlock: async () => { locked = false; },
-    lock: () => { locked = true; },
-    forget: () => {},
+    lock: async () => { locked = true; },
+    forget: async () => {},
     backedUp: () => false,
     onChange: () => {},
   };

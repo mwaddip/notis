@@ -283,7 +283,7 @@ export class App {
       importIdentity: async (text, p) => { await this.idm.importFile(text, p); },
       exportIdentity: (p) => this.exportIdentity(p),
       forgetIdentity: () => this.idm.forget(),
-      lockIdentity: () => this.idm.lock(),
+      lockIdentity: async () => { await this.idm.lock(); this.renderRegionsFor('@profile'); },
       unlockIdentity: (p) => this.idm.unlock(p),
       askFaucet: () => void this.askFaucet(),
       openComposer: (parentId) => this.openComposer(parentId),
@@ -308,9 +308,14 @@ export class App {
       burnUsername: () => void this.burnUsername(),
       // The extension's identity exposes both policy and setPolicy; the in-page
       // module implements neither, and the profile row renders only when both
-      // are present (WEB_INTERFACE → The profile window).
+      // are present (WEB_INTERFACE → The profile window). setPolicy re-renders
+      // the profile after the proxy's snapshot refreshes, so the row's pressed
+      // state moves without waiting on the next unrelated draw.
       ...(this.idm.policy && this.idm.setPolicy
-        ? { policy: () => this.idm.policy!(), setPolicy: (p) => this.idm.setPolicy!(p) }
+        ? {
+            policy: () => this.idm.policy!(),
+            setPolicy: async (p) => { await this.idm.setPolicy!(p); this.renderRegionsFor('@profile'); },
+          }
         : {}),
       ...(this.requestFaucetOrigin
         ? { requestFaucetOrigin: (origin: string) => this.requestFaucetOrigin!(origin) }
@@ -999,16 +1004,50 @@ export class App {
       feed.loading = false;
       this.indexRows([...res.posts, ...res.pending]);
     } catch (e) {
-      feed.loading = false;
-      // The build's seed list is one per-network fact; if this feed load failed
-      // and the reader has no stored node preference, the extension's shell
-      // asks the reader to set one in @profile (WEB_INTERFACE → "The client is
-      // served from the node's own origin").
-      feed.error = BUILD_NODES.length > 0 && readStore(KEY_NODE) === null
-        ? 'no node answered — set one in @profile'
-        : msg(e);
+      // No stored preference and a seed list — walk it, adopting the first one
+      // that answers, for the session only (WEB_INTERFACE → "The client is
+      // served from the node's own origin"). When none answers, the friendly
+      // line names the state.
+      if (readStore(KEY_NODE) === null && BUILD_NODES.length > 0) {
+        const walked = await this.walkSeedList();
+        if (walked !== null) {
+          feed.posts = walked.res.posts.filter(isLivePost);
+          feed.pending = this.dedupeOwn(walked.res.pending.filter(isLivePost));
+          feed.next = walked.res.next;
+          feed.loaded = true;
+          feed.loading = false;
+          this.indexRows([...walked.res.posts, ...walked.res.pending]);
+          this.renderFeed();
+          return;
+        }
+        feed.loading = false;
+        feed.error = 'no node answered — set one in @profile';
+      } else {
+        feed.loading = false;
+        feed.error = msg(e);
+      }
     }
     this.renderFeed();
+  }
+
+  /** Adopt the first seed after `prefs.node` that answers /status. In-memory,
+   *  never stored — the list keeps governing across the session
+   *  (WEB_INTERFACE → "The client is served from the node's own origin"). */
+  private async walkSeedList(): Promise<{ base: string; res: Awaited<ReturnType<Api['feed']>> } | null> {
+    const seen = new Set([prefs.node]);
+    for (const base of BUILD_NODES) {
+      if (seen.has(base)) continue;
+      seen.add(base);
+      const probe = new NodeClient(() => base);
+      try {
+        const res = await probe.feed({ limit: FEED_LIMIT }, this.viewer(), undefined, true);
+        prefs.node = base; // session only — no writeStore.
+        return { base, res };
+      } catch {
+        // try the next entry
+      }
+    }
+    return null;
   }
 
   private async refreshFeed(): Promise<void> {

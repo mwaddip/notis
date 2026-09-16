@@ -39,6 +39,7 @@ export interface SignRecord {
   id: string;            // 32 hex characters — the record's own id, its storage key suffix
   txIdHex: string;       // the 64-hex id the signature will cover
   txBytesHex: string;    // the unsigned tx bytes, hex — decoded by the background, never trusted from the page
+  pubKeyHex: string;     // the signer's public key at write time; the prompt's unlock form keys the password manager on it
   summary: SignSummary;  // derived from the transaction, never taken from the page
   hint: SignHint;        // the page's display data, verified before it is shown
   createdAt: number;     // Date.now() at write — telemetry only, never checked

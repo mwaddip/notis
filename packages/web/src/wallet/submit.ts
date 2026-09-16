@@ -33,11 +33,13 @@ export type SignResult =
  *  extension's proxy implements the same shape over the background service
  *  (WEB_INTERFACE → The extension). `txBytes` is `encodeTx` of the unsigned
  *  transaction, so the background decodes and recomputes the id it signs over
- *  rather than trusting the page's claim (WEB_INTERFACE → The extension, sign's
- *  eight steps). */
+ *  rather than trusting the page's claim (WEB_INTERFACE → "`sign`, in the
+ *  background, in order"). The optional `hint` carries page-supplied display
+ *  data — a post's content — verified against the tx's commit before it is
+ *  shown, so it can never mislead the human at the prompt. */
 export interface Signer {
   current(): { pubKeyHex: string } | null;
-  sign(txBytes: Uint8Array, txIdHex: string): Promise<SignResult>;
+  sign(txBytes: Uint8Array, txIdHex: string, hint?: { content?: string }): Promise<SignResult>;
 }
 
 export interface SubmitDeps {
@@ -70,11 +72,12 @@ async function signBody(
   identity: Signer,
   txId: string,
   pubKeyHex: string,
+  hint?: { content?: string },
 ): Promise<
   | { ok: true; body: Record<string, unknown> }
   | { ok: false; notSigned: 'locked' | 'declined' | 'refused'; reason: string }
 > {
-  const r = await identity.sign(encodeTx(tx), txId);
+  const r = await identity.sign(encodeTx(tx), txId, hint);
   if ('locked' in r) return { ok: false, notSigned: 'locked', reason: 'your key is locked' };
   if ('declined' in r) return { ok: false, notSigned: 'declined', reason: 'not sent' };
   if ('refused' in r) return { ok: false, notSigned: 'refused', reason: r.refused };
@@ -113,7 +116,10 @@ export async function submitPostFlow(
     if (e instanceof InsufficientKarma) return clientRejection('not enough rep to post right now.');
     throw e;
   }
-  const signed = await signBody(built.tx, deps.identity, built.txId, id.pubKeyHex);
+  // The post's content is the one hint the prompt verifies against the commit
+  // (WEB_INTERFACE → "The summary the prompt shows is derived from the
+  // transaction"). Every other flow passes no hint.
+  const signed = await signBody(built.tx, deps.identity, built.txId, id.pubKeyHex, { content });
   if (!signed.ok) return signed;
   // Between the sign and the POST — the composer collapses here (WEB_INTERFACE →
   // The wallet). Post is the only flow that carries onSigned.

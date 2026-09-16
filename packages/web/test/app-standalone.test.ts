@@ -71,8 +71,8 @@ function fakeIdentity(): AppIdentity {
     },
     exportFile: async () => '{}',
     unlock: async () => { if (cur) cur.locked = false; },
-    lock: () => { if (cur) cur.locked = true; },
-    forget: () => {
+    lock: async () => { if (cur) cur.locked = true; },
+    forget: async () => {
       cur = null;
       for (const l of listeners) l(null);
     },

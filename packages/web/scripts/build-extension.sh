@@ -71,12 +71,20 @@ echo "==> Running extension build checks"
 
 for target in "$CHROME_DIR" "$FIREFOX_DIR"; do
   shell="$target/index.html"
-  prompt="$target/extension/prompt.html"
+  prompt="$target/prompt.html"
 
   # The shell carries no inline <script> — the extension page's default CSP
-  # forbids it (WEB_INTERFACE → "Permissions and policy, the whole list").
-  if grep -qE '<script(?![^>]*\bsrc\b)' "$shell"; then
+  # forbids it (WEB_INTERFACE → "Permissions and policy, the whole list"). An
+  # inline script is literally <script> (no attributes); a `src=` script is
+  # `<script src=...>`. `grep -q '<script>'` catches the first without a PCRE
+  # lookahead — a lookahead exits 2 on both matches and none, which `if`
+  # reads as false either way.
+  if grep -q '<script>' "$shell"; then
     echo "FAIL: inline <script> in $shell"
+    exit 1
+  fi
+  if [ -f "$prompt" ] && grep -q '<script>' "$prompt"; then
+    echo "FAIL: inline <script> in $prompt"
     exit 1
   fi
 

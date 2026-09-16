@@ -57,8 +57,8 @@ function harness(resp: WithdrawResp = { kind: 'ok' }) {
     importFile: async () => ({ pubKeyHex: PUB }),
     exportFile: async () => '{}',
     unlock: async () => {},
-    lock: () => {},
-    forget: () => {},
+    lock: async () => {},
+    forget: async () => {},
     backedUp: () => false,
     onChange: (l) => { listener = l; },
   };

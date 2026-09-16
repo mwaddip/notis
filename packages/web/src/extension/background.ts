@@ -247,6 +247,7 @@ async function signMessage(api: typeof chrome, txBytesHex: string, txIdHex: stri
     id: randomId(),
     txIdHex,
     txBytesHex,
+    pubKeyHex: env.pubKeyHex,
     summary,
     hint: verifiedHint(tx, hint),
     createdAt: Date.now(),

@@ -28,8 +28,8 @@ function handlers(over: Partial<ProfileHandlers> = {}): ProfileHandlers {
     discardDraft: () => {},
     importIdentity: async () => {},
     exportIdentity: async () => {},
-    forgetIdentity: () => {},
-    lockIdentity: () => {},
+    forgetIdentity: async () => {},
+    lockIdentity: async () => {},
     unlockIdentity: async () => {},
     askFaucet: () => {},
     invite: () => {},
@@ -202,15 +202,16 @@ describe('profile window — the two states', () => {
     expect(key.querySelector('.mono')!.textContent).toBe(KEY);
   });
 
-  it('the passphrase row reads locked · unlock, or unlocked · lock', () => {
+  it('the passphrase row reads locked · unlock, or unlocked · lock', async () => {
     const lf = rowField(render(handlers(), ctx({ identity: { pubKeyHex: KEY, locked: true } })), 'passphrase')!;
     expect(lf.textContent).toContain('locked');
     expect(button(lf, 'unlock')).not.toBeNull();
 
     const asked: number[] = [];
-    const uf = rowField(render(handlers({ lockIdentity: () => asked.push(1) }), ctx({ identity: unlocked })), 'passphrase')!;
+    const uf = rowField(render(handlers({ lockIdentity: async () => { asked.push(1); } }), ctx({ identity: unlocked })), 'passphrase')!;
     expect(uf.textContent).toContain('unlocked');
     button(uf, 'lock')!.click();
+    await new Promise((r) => setTimeout(r, 0));
     expect(asked).toHaveLength(1);
   });
 
@@ -242,6 +243,24 @@ describe('profile window — the two states', () => {
     // A press on 'ask' calls setPolicy('ask').
     buttons[1]!.click();
     expect(sp).toHaveBeenCalledWith('ask');
+  });
+
+  it('the sign-each-rep-action row shows the new pressed state on the next render', async () => {
+    // policy() carries a mutable state; a re-render after setPolicy resolves
+    // reads the new value — the App does this via renderRegionsFor('@profile').
+    let policy: 'silent' | 'ask' = 'silent';
+    const p = () => policy;
+    const sp = async (v: 'silent' | 'ask'): Promise<void> => { policy = v; };
+    const h = handlers({ policy: p, setPolicy: sp });
+    const first = render(h, ctx({ identity: unlocked }));
+    const firstButtons = [...rowField(first, 'sign each rep action')!.querySelectorAll('button')];
+    firstButtons[1]!.click();
+    await new Promise((r) => setTimeout(r, 0));
+    // A subsequent render reads the fresh policy value.
+    const next = render(h, ctx({ identity: unlocked }));
+    const nextButtons = [...rowField(next, 'sign each rep action')!.querySelectorAll('button')];
+    expect(nextButtons[0]!.getAttribute('aria-pressed')).toBe('false');
+    expect(nextButtons[1]!.getAttribute('aria-pressed')).toBe('true');
   });
 
   it('the faucet row without a requestFaucetOrigin handler calls setFaucet directly', async () => {
@@ -338,9 +357,11 @@ describe('profile window — the forms in place', () => {
     expect(button(field, 'lock')).not.toBeNull();
   });
 
-  it('locking in place turns the row back to locked · unlock', () => {
+  it('locking in place turns the row back to locked · unlock', async () => {
     const field = rowField(render(handlers(), ctx({ identity: { pubKeyHex: KEY, locked: false } })), 'passphrase')!;
     button(field, 'lock')!.click();
+    // lockIdentity is async — let its microtask settle before the row redraws.
+    await new Promise((r) => setTimeout(r, 0));
     expect(field.textContent).toContain('locked');
     expect(button(field, 'unlock')).not.toBeNull();
   });

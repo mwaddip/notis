@@ -91,6 +91,7 @@ describe('proxy.sign — the SignResult vocabulary', () => {
       summary: { kind: 'thread', spendRep: '5' },
       hint: {},
       createdAt: 0,
+      pubKeyHex: PUB,
       result: { signature: 'ff'.repeat(64) },
     };
     c.storage.session.set(key, record);
@@ -116,6 +117,7 @@ describe('proxy.sign — the SignResult vocabulary', () => {
       summary: { kind: 'like', targetHex: KEY, spendRep: '1' },
       hint: {},
       createdAt: 0,
+      pubKeyHex: PUB,
       result: { declined: true },
     };
     c.storage.session.set(key, record);
@@ -137,6 +139,7 @@ describe('proxy.sign — the SignResult vocabulary', () => {
       summary: { kind: 'thread', spendRep: '5' },
       hint: {},
       createdAt: 0,
+      pubKeyHex: PUB,
       result: { signature: 'aa'.repeat(64) },
     };
     c.storage.session.set(key, record);
@@ -233,6 +236,7 @@ describe('proxy — ack the record after reading a result', () => {
       summary: { kind: 'like', targetHex: KEY, spendRep: '1' },
       hint: {},
       createdAt: 0,
+      pubKeyHex: PUB,
       result: { signature: '11'.repeat(64) },
     };
     c.storage.session.set(key, record);
@@ -246,6 +250,77 @@ describe('proxy — ack the record after reading a result', () => {
 // ---------------------------------------------------------------------------
 // The proxy implements AppIdentity — passthrough operations reach the wire.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Snapshot refresh — every mutating call refreshes before it resolves, so the
+// App reading current().locked (or policy(), backedUp()) after `await` sees
+// the fresh state, not the pre-mutation snapshot.
+// ---------------------------------------------------------------------------
+
+describe('proxy — mutating calls refresh the snapshot before resolving', () => {
+  it('await unlock() then current().locked is false — no round-trip through onChanged', async () => {
+    const c = fakeChrome();
+    let locked = true;
+    c.api.runtime.sendMessage = (async (m: unknown) => {
+      const kind = (m as { kind: string }).kind;
+      if (kind === 'state') return { pubKeyHex: PUB, locked, backedUp: true, policy: 'silent' };
+      if (kind === 'unlock') { locked = false; return 'ok'; }
+      if (kind === 'lock') { locked = true; return 'ok'; }
+      return { error: 'unexpected' };
+    }) as typeof chrome.runtime.sendMessage;
+    const proxy = await bootstrapProxy(c.api);
+    expect(proxy.current()?.locked).toBe(true);
+    await proxy.unlock('pw');
+    expect(proxy.current()?.locked).toBe(false);
+    await proxy.lock();
+    expect(proxy.current()?.locked).toBe(true);
+  });
+
+  it('await forget() then current() is null immediately', async () => {
+    const c = fakeChrome();
+    let cur: unknown = { pubKeyHex: PUB, locked: false, backedUp: true, policy: 'silent' };
+    c.api.runtime.sendMessage = (async (m: unknown) => {
+      const kind = (m as { kind: string }).kind;
+      if (kind === 'state') return cur;
+      if (kind === 'forget') { cur = null; return 'ok'; }
+      return { error: 'unexpected' };
+    }) as typeof chrome.runtime.sendMessage;
+    const proxy = await bootstrapProxy(c.api);
+    expect(proxy.current()).not.toBeNull();
+    await proxy.forget();
+    expect(proxy.current()).toBeNull();
+  });
+
+  it('await setPolicy() then policy() answers the new value', async () => {
+    const c = fakeChrome();
+    let policy: 'silent' | 'ask' = 'silent';
+    c.api.runtime.sendMessage = (async (m: unknown) => {
+      const kind = (m as { kind: string; karma?: 'silent' | 'ask' }).kind;
+      if (kind === 'state') return { pubKeyHex: PUB, locked: false, backedUp: true, policy };
+      if (kind === 'policy') { policy = (m as { karma: 'silent' | 'ask' }).karma; return 'ok'; }
+      return { error: 'unexpected' };
+    }) as typeof chrome.runtime.sendMessage;
+    const proxy = await bootstrapProxy(c.api);
+    expect(proxy.policy?.()).toBe('silent');
+    await proxy.setPolicy!('ask');
+    expect(proxy.policy?.()).toBe('ask');
+  });
+
+  it('await exportFile() then backedUp() answers true', async () => {
+    const c = fakeChrome();
+    let backed = false;
+    c.api.runtime.sendMessage = (async (m: unknown) => {
+      const kind = (m as { kind: string }).kind;
+      if (kind === 'state') return { pubKeyHex: PUB, locked: false, backedUp: backed, policy: 'silent' };
+      if (kind === 'exportFile') { backed = true; return { text: '{}' }; }
+      return { error: 'unexpected' };
+    }) as typeof chrome.runtime.sendMessage;
+    const proxy = await bootstrapProxy(c.api);
+    expect(proxy.backedUp()).toBe(false);
+    await proxy.exportFile('pw');
+    expect(proxy.backedUp()).toBe(true);
+  });
+});
 
 describe('proxy — the pass-through operations reach the background', () => {
   it('draft, create, unlock, exportFile pass through as messages', async () => {
@@ -266,7 +341,9 @@ describe('proxy — the pass-through operations reach the background', () => {
     expect(await proxy.create('pw')).toEqual({ pubKeyHex: KEY });
     await proxy.unlock('pw');
     expect(await proxy.exportFile('file-pw')).toBe('{"envelope":true}');
-    expect(sent.map((m) => m.kind)).toEqual(['draft', 'create', 'unlock', 'exportFile']);
+    // Every mutating call now refreshes the snapshot from `state` before it
+    // resolves — the App's post-mutation read sees the fresh value.
+    expect(sent.map((m) => m.kind)).toEqual(['draft', 'create', 'state', 'unlock', 'state', 'exportFile', 'state']);
   });
 
   it('an { error } answer is thrown as a rejection', async () => {

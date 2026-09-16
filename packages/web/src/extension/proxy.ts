@@ -63,13 +63,12 @@ export class ExtensionProxy implements AppIdentity {
   }
 
   async create(passphrase: string): Promise<{ pubKeyHex: string }> {
-    return await sendMessage(this.api, { kind: 'create', passphrase }) as { pubKeyHex: string };
+    const answer = await sendMessage(this.api, { kind: 'create', passphrase }) as { pubKeyHex: string };
+    await this.refreshSnapshot();
+    return answer;
   }
 
   discardDraft(): void {
-    // Fire-and-forget: the profile view treats this as a cleanup and doesn't
-    // observe the outcome. The background writes to storage.session, which
-    // fires onChanged; if a listener cares, that is where it hears about it.
     fireAndForget(this.api, { kind: 'discardDraft' });
   }
 
@@ -78,24 +77,31 @@ export class ExtensionProxy implements AppIdentity {
   }
 
   async importFile(text: string, passphrase: string): Promise<{ pubKeyHex: string }> {
-    return await sendMessage(this.api, { kind: 'importFile', text, passphrase }) as { pubKeyHex: string };
+    const answer = await sendMessage(this.api, { kind: 'importFile', text, passphrase }) as { pubKeyHex: string };
+    await this.refreshSnapshot();
+    return answer;
   }
 
   async exportFile(password: string): Promise<string> {
     const answer = await sendMessage(this.api, { kind: 'exportFile', password }) as { text: string };
+    // exportFile sets the backed-up flag — refresh so backedUp() answers fresh.
+    await this.refreshSnapshot();
     return answer.text;
   }
 
   async unlock(passphrase: string): Promise<void> {
     await sendMessage(this.api, { kind: 'unlock', passphrase });
+    await this.refreshSnapshot();
   }
 
-  lock(): void {
-    fireAndForget(this.api, { kind: 'lock' });
+  async lock(): Promise<void> {
+    await sendMessage(this.api, { kind: 'lock' });
+    await this.refreshSnapshot();
   }
 
-  forget(): void {
-    fireAndForget(this.api, { kind: 'forget' });
+  async forget(): Promise<void> {
+    await sendMessage(this.api, { kind: 'forget' });
+    await this.refreshSnapshot();
   }
 
   backedUp(): boolean {
@@ -112,6 +118,21 @@ export class ExtensionProxy implements AppIdentity {
 
   async setPolicy(p: 'silent' | 'ask'): Promise<void> {
     await sendMessage(this.api, { kind: 'policy', karma: p });
+    await this.refreshSnapshot();
+  }
+
+  /** Read the snapshot fresh from the background — the caller then reads
+   *  current()/backedUp()/policy() and sees the change without waiting on the
+   *  storage.onChanged round-trip (which still fires for cross-tab updates). */
+  private async refreshSnapshot(): Promise<void> {
+    const next = await sendMessage(this.api, { kind: 'state' }) as AppSnapshot | null;
+    this.snapshot = next;
+    const nextPub = next?.pubKeyHex ?? null;
+    if (nextPub !== this.lastPubKeyHex) {
+      this.lastPubKeyHex = nextPub;
+      const id = next === null ? null : { pubKeyHex: next.pubKeyHex };
+      for (const l of this.listeners) l(id);
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -165,10 +186,10 @@ export class ExtensionProxy implements AppIdentity {
   }
 
   /** A storage change may indicate a new identity, a lock flip, a backedUp
-   *  flip, or a policy change. Refresh the snapshot and fire onChange when the
-   *  identity's pubKeyHex actually moved — a fresh key or forget/no-key. Lock,
-   *  backedUp and policy changes update the snapshot silently; render surfaces
-   *  read them via current()/backedUp()/policy() on their next draw. */
+   *  flip, or a policy change. Refresh the snapshot and, if the pubKeyHex
+   *  actually moved, fire onChange. Lock/backedUp/policy updates the snapshot
+   *  silently; render surfaces read them via current()/backedUp()/policy() on
+   *  their next draw. */
   private async onStorageChanged(
     changes: Record<string, chrome.storage.StorageChange>,
     area: 'local' | 'session' | 'sync' | 'managed',
@@ -178,14 +199,7 @@ export class ExtensionProxy implements AppIdentity {
       (area === 'local' && (K_ENVELOPE in changes || K_BACKEDUP in changes || K_POLICY in changes)) ||
       (area === 'session' && K_SEED in changes);
     if (!relevant) return;
-    const next = await sendMessage(this.api, { kind: 'state' }) as AppSnapshot | null;
-    this.snapshot = next;
-    const nextPub = next?.pubKeyHex ?? null;
-    if (nextPub !== this.lastPubKeyHex) {
-      this.lastPubKeyHex = nextPub;
-      const id = next === null ? null : { pubKeyHex: next.pubKeyHex };
-      for (const l of this.listeners) l(id);
-    }
+    await this.refreshSnapshot();
   }
 }
 

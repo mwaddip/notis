@@ -88,8 +88,8 @@ function fakeIdentity(): AppIdentity {
     importFile: async () => ({ pubKeyHex: ME }),
     exportFile: async () => '',
     unlock: async () => {},
-    lock: () => {},
-    forget: () => {},
+    lock: async () => {},
+    forget: async () => {},
     backedUp: () => true,
   } as unknown as AppIdentity;
 }

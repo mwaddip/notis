@@ -27,7 +27,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         index: resolve(__dirname, 'index.html'),
-        prompt: resolve(__dirname, 'extension/prompt.html'),
+        prompt: resolve(__dirname, 'prompt.html'),
       },
       plugins: [
         inject({ modules: { Buffer: [BUFFER_MODULE, 'Buffer'] }, exclude: [/node_modules[/\\]buffer[/\\]/] }),

@@ -55,10 +55,10 @@ function fakeIdentity(): AppIdentity {
     unlock: async () => {
       if (cur) cur = { pubKeyHex: cur.pubKeyHex, locked: false };
     },
-    lock: () => {
+    lock: async () => {
       if (cur) cur = { pubKeyHex: cur.pubKeyHex, locked: true };
     },
-    forget: () => {
+    forget: async () => {
       cur = null;
       fire(null);
     },

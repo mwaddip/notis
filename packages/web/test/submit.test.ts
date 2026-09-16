@@ -72,10 +72,12 @@ function reads(
 const vouchRow = (over: Partial<VouchesVoucherResult['vouches'][number]> = {}): VouchesVoucherResult['vouches'][number] => ({
   boxId: VOUCH_BOX, value: '1', createdAtBlock: 5900, voucherId: PUB, targetId: VOUCH_TARGET, voucherName: null, targetName: null, ...over,
 });
+let signHints: Array<{ content?: string } | undefined>;
 const identity = {
   current: () => ({ pubKeyHex: PUB }),
-  sign: async (_bytes: Uint8Array, txId: string) => {
+  sign: async (_bytes: Uint8Array, txId: string, hint?: { content?: string }) => {
     signCalls.push(txId);
+    signHints.push(hint);
     return { signature: SIG } as const;
   },
 };
@@ -137,6 +139,7 @@ function write(
 
 beforeEach(() => {
   signCalls = [];
+  signHints = [];
   postReads = [];
   writeCalls = [];
   heldName = null;
@@ -703,6 +706,24 @@ describe('onSigned — the collapse hook fires between sign and POST, only on po
     const res = await submitPostFlow(deps, 'a thread', null);
     expect(res).toEqual({ ok: false, notSigned: 'declined', reason: 'not sent' });
     expect(events).toEqual([]);
+  });
+
+  it('the post flow passes { content } as the hint; every other flow passes no hint', async () => {
+    heldName = { name: 'Alice_01', owner: PUB, boxId: '44'.repeat(32), claimedAtBlock: 5050 };
+    const ledger = new PendingLedger(PUB);
+    const base: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [vouchRow()]), write: write(), ledger, identity };
+    await submitPostFlow(base, 'the content the prompt verifies', null);
+    expect(signHints).toEqual([{ content: 'the content the prompt verifies' }]);
+    signHints = [];
+    await submitLikeFlow(base, TARGET_ID);
+    await submitVouchFlow(base, VOUCH_TARGET);
+    await submitUnvouchFlow(base, VOUCH_TARGET);
+    await submitInviteFlow(base, INVITEE, 100n);
+    await submitWithdrawFlow(base, TARGET_ID);
+    await submitClaimFlow(base, 'Alice_01');
+    await submitBurnFlow(base);
+    // Every hint after the first is undefined — no flow but post supplies one.
+    expect(signHints.every((h) => h === undefined)).toBe(true);
   });
 
   it('like, withdraw, vouch, invite, claim, burn: onSigned is never called even if supplied', async () => {

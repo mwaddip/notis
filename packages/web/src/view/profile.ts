@@ -34,8 +34,8 @@ export interface ProfileHandlers {
   discardDraft: () => void; // the reader cancelled create
   importIdentity: (text: string, passphrase: string) => Promise<void>;
   exportIdentity: (password: string) => Promise<void>;
-  forgetIdentity: () => void;
-  lockIdentity: () => void;
+  forgetIdentity: () => Promise<void>;
+  lockIdentity: () => Promise<void>;
   unlockIdentity: (passphrase: string) => Promise<void>;
   askFaucet: () => void;
   // membership actions — the invites row (WEB_INTERFACE → The profile window)
@@ -519,10 +519,12 @@ function passphraseRow(field: HTMLElement, handlers: ProfileHandlers, pubKeyHex:
   } else {
     field.append(el('span', 'inkmute', 'unlocked'), ' ');
     const lock = el('button', 'word', 'lock') as HTMLButtonElement;
-    lock.addEventListener('click', () => {
-      handlers.lockIdentity();
-      passphraseRow(field, handlers, pubKeyHex, true); // now locked
-    });
+    lock.addEventListener('click', () => void (async () => {
+      // Await the lock so the extension's proxy refreshes its snapshot before
+      // the next draw reads current().locked (WEB_INTERFACE → The extension).
+      await handlers.lockIdentity();
+      passphraseRow(field, handlers, pubKeyHex, true);
+    })());
     field.appendChild(lock);
   }
 }
@@ -564,7 +566,7 @@ function forgetConfirm(field: HTMLElement, handlers: ProfileHandlers, backedUp: 
   wrap.appendChild(el('div', 'pf-refusal', line));
   const actions = el('div', 'pf-actions');
   const forget = el('button', 'word', 'forget') as HTMLButtonElement;
-  forget.addEventListener('click', () => handlers.forgetIdentity());
+  forget.addEventListener('click', () => void handlers.forgetIdentity());
   const keep = el('button', 'word', 'keep') as HTMLButtonElement;
   keep.addEventListener('click', restore);
   actions.append(forget, keep);
@@ -847,7 +849,7 @@ export function preferenceRows(handlers: ProfileHandlers, ctx: ProfileCtx): HTML
       seg.appendChild(btn);
     }
     field.appendChild(seg);
-    field.appendChild(el('div', 'hint', 'credits are always prompted. rep is silent while unlocked unless you ask.'));
+    field.appendChild(el('div', 'hint', 'sending $NOTIS always asks. rep is silent while unlocked unless you ask.'));
     rows.push(r);
   }
 

@@ -96,8 +96,12 @@ async function approve(button: HTMLButtonElement): Promise<void> {
     const record = await readRecord();
     if (!record) return;
     showUnlockThenApprove(record, button);
+    return;
   }
-  // On success the background closes the window.
+  // The background's `windows.remove` swallows a failure; close ourselves too
+  // so a stuck popup does not linger (WEB_INTERFACE → "`sign`, in the
+  // background, in order").
+  window.close();
 }
 
 async function decline(): Promise<void> {
@@ -110,8 +114,7 @@ async function decline(): Promise<void> {
 function showUnlockThenApprove(record: SignRecord, button: HTMLButtonElement): void {
   const container = root!.querySelector('.prompt') as HTMLElement;
   const box = el('div', 'unlock-in-prompt');
-  const pubKeyHex = (record.summary as { signerHex?: string }).signerHex ?? '';
-  const form = unlockForm(pubKeyHex, async (p) => {
+  const form = unlockForm(record.pubKeyHex, async (p) => {
     const r = await chrome.runtime.sendMessage({ kind: 'unlock', passphrase: p });
     if (r && typeof r === 'object' && 'error' in r) throw new Error((r as { error: string }).error);
     // Once unlocked, retry approve.

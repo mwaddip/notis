@@ -22,18 +22,21 @@ if (!version || !chromeDir || !firefoxDir) {
 const tpl = JSON.parse(readFileSync(join(HERE, 'manifest.template.json'), 'utf8'));
 tpl.version = version;
 
-// The Chrome build's pinned public key — makes the extension id stable, which
-// is what the proof harness addresses `chrome-extension://<id>/` under. The
-// value is a placeholder Ed25519 SPKI; the real key lives in the repo's build
-// configuration, injected here from an env var to keep the private half out
-// of the tree.
-const chromeKey = process.env.NOTIS_EXTENSION_KEY;
+// Chrome's `manifest.key` is a base64 RSA SPKI *public* key: it is public by
+// nature, and it belongs in the tree so every build derives the same
+// extension id. The private half is needed by nothing we do — unpacked
+// loading and the proof harness compute the id from the public key alone,
+// as `sha256(DER)` mapped `0-9a-f` → `a-p` on its first 32 hex chars.
+// NOTIS_EXTENSION_KEY overrides at build time if a fork wants its own id.
+const DEFAULT_CHROME_KEY =
+  'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0m2QfexgOKo7VGSOhQBEYOv/3/U7ug3EO7eXiUW3zTKgWPA10iz4lZ9GX4puIhmT8vgVyCnouruglTz4Fb7GiUXaq9gZwZP/LRlJrte61OqIlSYxtlaUDImADIUU/1AzD9Uzoff6OgxGfiiMjQPTWE6xIP+su7L5emPvPkJQWXVvVuoYra3N6Rfr/c8OwIL86E/gYHp+bWnbBKpkRNc6g1u8h+OK0Vei/BnSH2HcmpGSlAqAMYaKvrUhkxL4bHu5d/HGNYLMDs2VpuoXWMjg5+SMTsB07no+lATU6+J2dnPKY5Rc/VQsRTdFhAjG1gxrmk17s7fT5oYBs4NqwcHOgwIDAQAB';
+const chromeKey = process.env.NOTIS_EXTENSION_KEY ?? DEFAULT_CHROME_KEY;
 
 const chrome = {
   ...tpl,
   background: { service_worker: 'background.js' },
   minimum_chrome_version: '112',
-  ...(chromeKey ? { key: chromeKey } : {}),
+  key: chromeKey,
 };
 
 const firefox = {

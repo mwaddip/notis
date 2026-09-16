@@ -123,15 +123,17 @@ export class IdentityModule {
     this.seed = await open(this.envelope, passphrase);
   }
 
-  /** Drop the seed from memory; current() then reads locked. */
-  lock(): void {
+  /** Drop the seed from memory; current() then reads locked. Async so the same
+   *  seam serves the extension's proxy, which refreshes its snapshot from
+   *  storage before resolving; here it resolves at once. */
+  async lock(): Promise<void> {
     this.seed = null;
   }
 
   /** Drop the identity from memory, storage and the backup flag. The key's pending
    *  ledger is left, so a key re-imported later resumes it (WEB_INTERFACE → The
-   *  profile window, Forget). */
-  forget(): void {
+   *  profile window). Async for the same reason as `lock`. */
+  async forget(): Promise<void> {
     this.seed = null;
     this.pubKeyHex = null;
     this.envelope = null;
@@ -149,7 +151,7 @@ export class IdentityModule {
    *  `declined` — that is the extension proxy's arm (WEB_INTERFACE → The identity
    *  module). `txBytes` is ignored here; the extension's background needs it,
    *  since it re-derives the id it signs over. */
-  async sign(_txBytes: Uint8Array, txIdHex: string): Promise<SignResult> {
+  async sign(_txBytes: Uint8Array, txIdHex: string, _hint?: { content?: string }): Promise<SignResult> {
     if (this.seed === null) return { locked: true };
     if (!HEX64.test(txIdHex)) return { refused: 'a transaction id to sign must be 64 hex characters.' };
     return { signature: toHex(ed25519.sign(hexToBytes(txIdHex), this.seed)) };

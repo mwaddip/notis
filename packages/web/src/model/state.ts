@@ -166,8 +166,8 @@ export interface Handlers {
   discardDraft: () => void;
   importIdentity: (text: string, passphrase: string) => Promise<void>;
   exportIdentity: (password: string) => Promise<void>;
-  forgetIdentity: () => void;
-  lockIdentity: () => void;
+  forgetIdentity: () => Promise<void>;
+  lockIdentity: () => Promise<void>;
   unlockIdentity: (passphrase: string) => Promise<void>;
   askFaucet: () => void;
   // write surface
@@ -210,7 +210,7 @@ export interface Handlers {
  *  extension). */
 export interface AppIdentity {
   current(): { pubKeyHex: string; locked: boolean } | null;
-  sign(txBytes: Uint8Array, txIdHex: string): Promise<SignResult>;
+  sign(txBytes: Uint8Array, txIdHex: string, hint?: { content?: string }): Promise<SignResult>;
   /** Draft a fresh keypair — asynchronous because the extension's proxy sends
    *  it as a message; the in-page module wraps its result in Promise.resolve. */
   draft(): Promise<{ pubKeyHex: string }>;
@@ -221,8 +221,8 @@ export interface AppIdentity {
   importFile(text: string, passphrase: string): Promise<{ pubKeyHex: string }>;
   exportFile(password: string): Promise<string>;
   unlock(passphrase: string): Promise<void>;
-  lock(): void;
-  forget(): void;
+  lock(): Promise<void>;
+  forget(): Promise<void>;
   backedUp(): boolean;
   onChange(listener: (id: { pubKeyHex: string } | null) => void): void;
   /** The extension's binary policy for karma-side signs (WEB_INTERFACE → The
