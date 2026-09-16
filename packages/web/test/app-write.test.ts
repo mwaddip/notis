@@ -364,20 +364,27 @@ describe('the App write surface — the notSigned arm', () => {
   });
 
   it('like: notSigned undoes the optimistic like and reports "like not sent."', async () => {
+    const target = 'cc'.repeat(32);
+    // Place the target in the feed so setReportForPost has a surface to write to.
     const h = harness({ sign: { kind: 'declined' } });
-    const post = 'cc'.repeat(32);
-    await h.drive.likePost(post);
-    expect(h.drive.optimisticLikes.has(post)).toBe(false);
+    h.drive.state.feed.posts = [
+      { ...confirmedPost(target), id: target, likedByViewer: false } as unknown as (typeof h.drive.state.feed.posts)[number],
+    ];
+    await h.drive.likePost(target);
+    expect(h.drive.optimisticLikes.has(target)).toBe(false);
     expect(h.ledger.size).toBe(0);
+    expect(h.drive.state.feed.report).toBe('like not sent.');
   });
 
-  it('like: locked reports "your key is locked" and the next press mounts the unlock', async () => {
+  it('like: locked reports "your key is locked" on the feed', async () => {
+    const target = 'cc'.repeat(32);
     const h = harness({ sign: { kind: 'locked' } });
-    const post = 'cc'.repeat(32);
-    await h.drive.likePost(post);
-    expect(h.drive.optimisticLikes.has(post)).toBe(false);
-    // The report line names the lock; the reader's next press mounts the unlock
-    // as today (WEB_INTERFACE → The wallet, "the fourth ending").
+    h.drive.state.feed.posts = [
+      { ...confirmedPost(target), id: target, likedByViewer: false } as unknown as (typeof h.drive.state.feed.posts)[number],
+    ];
+    await h.drive.likePost(target);
+    expect(h.drive.optimisticLikes.has(target)).toBe(false);
     expect(h.ledger.size).toBe(0);
+    expect(h.drive.state.feed.report).toBe('your key is locked');
   });
 });

@@ -63,8 +63,7 @@ function clientRejection(message: string): { ok: false; rejection: Rejection } {
 
 /** Sign the built tx and return the JSON the node accepts, or the `notSigned`
  *  arm the flight ends in (WEB_INTERFACE → The wallet). The signature rides on
- *  the txId, so `signatures[pubKeyHex]` is set on the JSON, not on the tx
- *  (`signedJson`'s old shape). */
+ *  the txId, so `signatures[pubKeyHex]` is set on the JSON, not on the tx. */
 async function signBody(
   tx: Parameters<typeof txToJson>[0],
   identity: Signer,

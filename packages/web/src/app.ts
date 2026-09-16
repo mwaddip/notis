@@ -121,12 +121,14 @@ function withdrawRejectionCopy(r: Rejection): string {
 }
 
 /** A notSigned reason mapped to what the region shows (WEB_INTERFACE → The
- *  wallet, "the fourth ending is the composer still open"). `locked` reports the
- *  race directly; the extension's `busy` refusal reads *"one approval at a
- *  time."*; every other kind reads *"<action> not sent."*. */
+ *  wallet, "the fourth ending is the composer still open"). `locked` reports
+ *  the race directly; the extension's `busy` refusal reads *"one approval at a
+ *  time."*; a `declined` reads *"<action> not sent."*; every other `refused`
+ *  carries its reason — *"<action> not sent: <reason>."*. */
 function notSignedCopy(kind: 'locked' | 'declined' | 'refused', reason: string, action: string): string {
   if (kind === 'locked') return 'your key is locked';
   if (reason === 'busy') return 'one approval at a time.';
+  if (kind === 'refused') return `${action} not sent: ${reason}.`;
   return `${action} not sent.`;
 }
 
@@ -1493,7 +1495,7 @@ export class App {
     // ending is the composer still open"). No hollow card exists while sign is
     // unresolved.
     ctrl.setSending(true);
-    let submission: Submission | null = null;
+    let submission = null as Submission | null;
     const onSigned = (): void => {
       // Between the sign and the POST: collapse the composer, push the pending
       // submission, and render the hollow card in the same slot.
@@ -1519,40 +1521,18 @@ export class App {
     try {
       result = await submitPostFlow({ ...this.submitDeps(), onSigned }, text, parentId);
     } catch {
-      // A transport failure. If onSigned fired, a submission was pushed; if not,
-      // the composer is still open with its text (WEB_INTERFACE → The wallet).
-      if (submission !== null) {
-        (submission as Submission).stage = 'rejected';
-        (submission as Submission).reason = "can't reach the node right now.";
-        this.renderForParent(parentId);
-      } else {
-        ctrl.setSending(false);
-        ctrl.setNotSent("can't reach the node right now.");
-      }
-      return;
-    }
-    if (result.ok) {
-      if (submission !== null) {
-        (submission as Submission).stage = 'submitted';
-        (submission as Submission).txId = result.entry.txId;
-        (submission as Submission).postId = result.entry.postId;
-        (submission as Submission).expiresAtHeight = result.entry.expiresAtHeight;
-      }
-      this.startPoll();
+      // A transport failure follows a signature, so onSigned has fired and the
+      // submission is present.
+      if (submission === null) throw new Error('a transport failure before onSigned');
+      submission.stage = 'rejected';
+      submission.reason = "can't reach the node right now.";
       this.renderForParent(parentId);
       return;
     }
-    if ('rejection' in result) {
-      if (submission !== null) {
-        (submission as Submission).stage = 'rejected';
-        (submission as Submission).reason = postRejectionCopy(result.rejection);
-        this.renderForParent(parentId);
-      } else {
-        // A rejection happens only after a successful sign, so onSigned must
-        // have fired and submission must be set. This branch is defensive.
-        ctrl.setSending(false);
-        ctrl.setNotSent(postRejectionCopy(result.rejection));
-      }
+    if (result.ok || 'rejection' in result) {
+      // A rejection can only follow a signature, so onSigned has fired.
+      if (submission === null) throw new Error('a rejection before onSigned');
+      this.settle(submission, result);
       return;
     }
     // notSigned — no hollow card, composer still open with its text.
@@ -1599,19 +1579,31 @@ export class App {
       this.renderForParent(sub.parentId);
       return;
     }
+    if (result.ok || 'rejection' in result) {
+      this.settle(sub, result);
+      return;
+    }
+    // notSigned during a try-again — return the card to *expired* with the
+    // action still offered.
+    sub.stage = 'expired';
+    this.renderForParent(sub.parentId);
+  }
+
+  /** Land a signed submission's flight — the two settling arms shared by
+   *  submitComposer and the try-again path (WEB_INTERFACE → The wallet). */
+  private settle(
+    sub: Submission,
+    result: { ok: true; entry: { txId: string; postId: string; expiresAtHeight: number } } | { ok: false; rejection: Rejection },
+  ): void {
     if (result.ok) {
       sub.stage = 'submitted';
       sub.txId = result.entry.txId;
       sub.postId = result.entry.postId;
       sub.expiresAtHeight = result.entry.expiresAtHeight;
       this.startPoll();
-    } else if ('rejection' in result) {
+    } else {
       sub.stage = 'rejected';
       sub.reason = postRejectionCopy(result.rejection);
-    } else {
-      // notSigned during a try-again — return the card to *expired* with the
-      // action still offered.
-      sub.stage = 'expired';
     }
     this.renderForParent(sub.parentId);
   }
