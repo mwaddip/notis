@@ -313,6 +313,15 @@ manifest are untouched, and the granted path is the hand pass. Devnet's decay ou
 speed, so the miner is paced from outside — a stop-and-continue loop around its PID, a few blocks a minute — for
 the throwaway's rep to last the run.
 
+⛔ **A proof stack is stopped by PID, never by name.** This machine's `dagsocial-miner` user unit runs the same
+`packages/node/scripts/miner.mjs` against testnet, and `pkill -f miner.mjs` kills it — it did, twice on 2026-09-17,
+stalling the chain for an hour and three quarters and then for forty minutes. Resolve the stack's pids from the ports
+the recipe names (`ss -ltnp`) and `kill` those; after the last run, `systemctl --user is-active dagsocial-miner` must
+print `active`. ⚠ Devnet's storage rent period is a hundred blocks: a box that sits through it is charged
+`STORAGE_RENT_PER_BYTE` per record byte at the producer's next collection, so a long run at a fast pace shows a
+throwaway's grant shrunk — keep a run short, and start the faucet with `FAUCET_CREDIT_AMOUNT=10000000000` (100
+$NOTIS, what step 12a reads) and `FAUCET_BOND_AMOUNT=250`.
+
 ⚠ **A `<base>` element resolves fragment references against itself**, so the client carries none: the mark
 is inline markup (`src/view/mark.ts`), never a sprite referenced by `<use>`, and every URL composed from
 the base is path-absolute.
