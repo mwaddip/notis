@@ -180,6 +180,42 @@ describe('app.css — the handle', () => {
   });
 });
 
+describe('app.css — the status corner', () => {
+  it('the base .corner rule is fixed at the viewport\'s bottom-right, 16px in', () => {
+    const blocks = css.match(/\.corner\s*\{[^}]*\}/g) ?? [];
+    const base = blocks.find((b) => b.includes('position: fixed'));
+    expect(base).toBeDefined();
+    expect(base!).toContain('right: 16px');
+    expect(base!).toContain('bottom: 16px');
+    expect(base!).toContain('background: transparent');
+    expect(base!).toContain('border: 0');
+  });
+  it('the led is 8px round; fresh greenText, stale clay, down/none inkMute', () => {
+    expect(css).toMatch(/\.corner \.led\s*\{[^}]*width: 8px/);
+    expect(css).toMatch(/\.corner \.led\s*\{[^}]*height: 8px/);
+    expect(css).toMatch(/\.corner \.led\s*\{[^}]*border-radius: 50%/);
+    expect(css).toMatch(/\.corner \.led\.fresh\s*\{[^}]*background: var\(--greenText\)/);
+    expect(css).toMatch(/\.corner \.led\.stale\s*\{[^}]*background: var\(--clay\)/);
+    expect(css).toMatch(/\.corner \.led\.down, \.corner \.led\.none\s*\{[^}]*background: var\(--inkMute\)/);
+  });
+  it('the corner\'s hover rule sits inside the hover block (HOUSE_STYLE → Interaction)', () => {
+    const hover = mediaBlock('@media (hover: hover) {');
+    expect(hover).toContain('.corner:hover');
+  });
+  it('the coarse-pointer block grows the hit box by padding', () => {
+    const coarse = mediaBlock('@media (pointer: coarse) {');
+    expect(coarse).toContain('.corner');
+    expect(coarse).toMatch(/\.corner \{[^}]*padding: 10px/);
+  });
+  it('never a transition rule on .corner or its parts', () => {
+    // "Numbers never animate" (HOUSE_STYLE → Motion). The general
+    // prefers-reduced-motion clamp is not a per-selector rule.
+    for (const block of (css.match(/\.corner[^\{]*\{[^}]*\}/g) ?? [])) {
+      expect(block).not.toContain('transition');
+    }
+  });
+});
+
 describe('fonts.css — the self-hosted italic face', () => {
   it('a second Plus Jakarta Sans @font-face is italic, weight 400 700, its own src', () => {
     const faces = fontsCss.match(/@font-face\s*\{[^}]*\}/g) ?? [];

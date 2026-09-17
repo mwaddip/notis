@@ -26,6 +26,7 @@ import { readBuildContext } from './wallet/reads';
 import { submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, submitClaimFlow, submitBurnFlow, submitSendFlow, type SubmitDeps } from './wallet/submit';
 import { identity as identitySingleton } from './identity/identity';
 import { renderKarmaField, renderInvitesRow, renderUsernameRow, renderCreditsRow, resetCreditsSendForm, type ResolvedRecipient } from './view/profile';
+import { cornerState, renderCorner, CORNER_POLL_MS, type CornerState } from './view/corner';
 import type { Flight } from './view/card';
 import type { YourVouch } from './view/author';
 import {
@@ -204,6 +205,15 @@ export class App {
   private submitSeq = 0;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private lastPolledHeight = 0;
+  // The status corner (WEB_INTERFACE → The status corner) — a timer independent
+  // of the bounded landing poll, mounted once as a fixed element and driven
+  // while the tab is visible.
+  private cornerEl: HTMLButtonElement | null = null;
+  private cornerTimer: ReturnType<typeof setInterval> | null = null;
+  private cornerLastTip: number | null = null;
+  private cornerLastRiseAt: number | null = null;
+  private cornerLastReadOk: boolean | null = null;
+  private cornerVisHandler: (() => void) | null = null;
   // The loaded key's /karma, read on the profile window's open and its ↻, and a
   // faucet grant in flight or one that lapsed — both feed the profile window's ctx.
   private profileKarma: KarmaResult | null = null;
@@ -431,6 +441,9 @@ export class App {
     // poll runs while it holds one (WEB_INTERFACE → The wallet). startPoll guards on
     // an empty ledger, so this is a no-op when there is nothing to reconcile.
     this.startPoll();
+    // The status corner mounts once, fixed to the viewport, in the workspace and
+    // the standalone mode alike (WEB_INTERFACE → The status corner).
+    this.mountCorner();
   }
 
   start(appbar: HTMLElement, feedEl: HTMLElement, panesEl: HTMLElement, mode?: Mode): void {
@@ -2391,6 +2404,93 @@ export class App {
   private renderCreditsRowInPlace(): void {
     const field = document.querySelector<HTMLElement>('.credits-field');
     if (field) renderCreditsRow(field, this.handlers, this.ctx());
+  }
+
+  // ---- the status corner (WEB_INTERFACE → The status corner) ----
+  // A timer independent of the bounded landing poll: reads /blocks/current every
+  // CORNER_POLL_MS while the tab is visible, feeds viewerTip, and re-renders the
+  // corner in place — never a region re-render. The dot's colour comes from
+  // cornerState over the last read's outcome; the height is the tip in mono.
+
+  private mountCorner(): void {
+    if (this.cornerEl !== null) return;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    renderCorner(btn, this.currentCornerState(), this.cornerLastTip);
+    // A press re-reads at once — the corner is a control (WEB_INTERFACE → The
+    // status corner, HOUSE_STYLE → Interaction).
+    btn.addEventListener('click', () => void this.cornerTick());
+    document.body.appendChild(btn);
+    this.cornerEl = btn;
+    // Visibility drives the timer: stop while hidden, an immediate read on
+    // resume (WEB_INTERFACE → The status corner).
+    this.cornerVisHandler = () => this.onCornerVisibility();
+    document.addEventListener('visibilitychange', this.cornerVisHandler);
+    if (this.cornerVisible()) {
+      void this.cornerTick();
+      this.startCornerPoll();
+    }
+  }
+
+  private cornerVisible(): boolean {
+    return document.visibilityState === 'visible';
+  }
+
+  private startCornerPoll(): void {
+    if (this.cornerTimer !== null) return;
+    this.cornerTimer = setInterval(() => void this.cornerTick(), CORNER_POLL_MS);
+  }
+
+  private stopCornerPoll(): void {
+    if (this.cornerTimer === null) return;
+    clearInterval(this.cornerTimer);
+    this.cornerTimer = null;
+  }
+
+  private onCornerVisibility(): void {
+    if (this.cornerVisible()) {
+      void this.cornerTick();
+      this.startCornerPoll();
+    } else {
+      this.stopCornerPoll();
+    }
+  }
+
+  /** cornerState over the App's own held state — the last tip, the last rise's
+   *  time, whether the last read answered (WEB_INTERFACE → The status corner). */
+  private currentCornerState(): CornerState {
+    return cornerState({
+      lastTip: this.cornerLastTip,
+      lastRiseAt: this.cornerLastRiseAt,
+      lastReadOk: this.cornerLastReadOk,
+      now: Date.now(),
+    });
+  }
+
+  private renderCornerNow(): void {
+    if (this.cornerEl === null) return;
+    renderCorner(this.cornerEl, this.currentCornerState(), this.cornerLastTip);
+  }
+
+  /** Read /blocks/current, update the corner's state, feed viewerTip. The first
+   *  answering read is treated as a rise, so a page opens fresh — the corner
+   *  never opens clay on load for a chain the client has not yet observed
+   *  (WEB_INTERFACE → The status corner). A failed read keeps the last known
+   *  tip and turns the dot muted. */
+  private async cornerTick(): Promise<void> {
+    try {
+      const b = await this.client.currentBlock();
+      const now = Date.now();
+      if (this.cornerLastTip === null || b.height > this.cornerLastTip) {
+        this.cornerLastRiseAt = now;
+      }
+      this.cornerLastTip = b.height;
+      this.cornerLastReadOk = true;
+      this.bumpTip(b.height);
+    } catch {
+      this.cornerLastReadOk = false;
+    }
+    this.renderCornerNow();
   }
 
   // ---- the bounded landing poll (WEB_INTERFACE → The wallet) ----
