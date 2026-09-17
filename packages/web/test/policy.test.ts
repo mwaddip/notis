@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest';
 import { encodeTx, decodeTx, POST_PRICE_THREAD, POST_PRICE_REPLY, LIKE_KARMA_COST, USERNAME_BURN_PRICE } from '@dagsocial/types';
 import type { UtxoTransaction, AnyBoxCandidate } from '@dagsocial/types';
 import {
-  buildPost, buildLike, buildVouch, buildUnvouch, buildInvite, buildWithdraw, buildClaim, buildBurn,
+  buildPost, buildLike, buildVouch, buildUnvouch, buildInvite, buildWithdraw, buildClaim, buildBurn, buildSend,
   type BuildContext,
 } from '../src/wallet/builders';
 import { classifyLedger, summarise } from '../src/extension/policy';
@@ -169,6 +169,24 @@ describe('summarise — the derived summary matches the transaction shape', () =
       kind: 'credits',
       sends: [{ ownerHex: TARGET_KEY, value: '12' }],
       feeValue: '1',
+    });
+  });
+
+  it("buildSend's SEND_MAIN output summarises to one payment and a zero fee", () => {
+    // 12.5 $NOTIS from a 100 box (WEB_INTERFACE → The wallet). Change to the
+    // signer at index 0, payment at 1, no fee. Round-trip through the wire so
+    // the summary reads the shape a real prompt would see.
+    const sendCtx: BuildContext = {
+      spendable: [{ boxId: BOX, value: 10_000_000_000n }],
+      height: 5000,
+      era: 1,
+      author: SIGNER,
+    };
+    const { tx } = buildSend(sendCtx, TARGET_KEY, 1_250_000_000n);
+    expect(summarise(roundtrip(tx), SIGNER)).toEqual({
+      kind: 'credits',
+      sends: [{ ownerHex: TARGET_KEY, value: '1250000000' }],
+      feeValue: '0',
     });
   });
 });
