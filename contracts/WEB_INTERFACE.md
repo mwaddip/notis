@@ -61,10 +61,13 @@ Every section and invariant below marked *(write surface)* belongs to this slice
 is the rest.
 
 **The slice is the identity machinery, the composer for a root and a reply, like, the membership
-actions — vouch, unvouch and invite — withdraw, the author's own controls' first unit, and the username
-surface — a name's claim and burn** — on transactions the browser builds and signs. The identity interface — the
-`@profile` window, its six operations and the faucet karma step — is stated below (→ The identity module, → The
-profile window, → The faucet step); the name's row is its own section (→ The username row).
+actions — vouch, unvouch and invite — withdraw, the author's own controls' first unit, the username
+surface — a name's claim and burn — and the credits send, a transfer of $NOTIS to a key or a handle** — on
+transactions the browser builds and signs. The identity interface — the `@profile` window, its six operations
+and the faucet's two steps — is stated below (→ The identity module, → The profile window, → The faucet step);
+the name's row is its own section (→ The username row), and the `$NOTIS` row is in the profile window's section.
+
+> ⚠ **AHEAD OF CODE (2026-09-17, the credits send)** — the send and the faucet's $NOTIS step are not built; the rest of the slice is.
 
 **With no identity loaded, the client is the read surface exactly.** No `new post`, no `↩ reply`, no
 `like`, no `viewer` parameter. The way in is `create` or `import` in the `@profile` window (→ The
@@ -279,9 +282,10 @@ sufficient — value conserves per ledger, a whole-input fee still outputs `fee`
 (`TYPES_INTERFACE → FeeBox`), and a `fee` output on a karma-side transaction is refused by the node, so
 nothing karma-side can be misfiled. Then: **credits are always prompted** — not a preference; **karma is
 silent while unlocked** by default, and one preference, *sign each rep action: don't ask · ask*, held by
-the background under `notis.signPolicy`, prompts for it too. The client has no credits write yet
-(`NODE_INTERFACE → Credits` exists on the node; the builder is a later unit), so under the default no
-prompt appears; the first credits builder inherits it with nothing to add.
+the background under `notis.signPolicy`, prompts for it too. The credits send (→ The profile window) is the
+write that prompts under the default; it inherits the prompt with nothing to add.
+
+> ⚠ **AHEAD OF CODE (2026-09-17, the credits send)** — the send is not built; under the default no prompt appears yet.
 
 **The messages** — page to background, promise-returning, each answering a plain result or `{ error }`,
 the background reloading its state from storage on every one: `state` (the proxy's snapshot, with the
@@ -324,6 +328,11 @@ name** — the vouch box and the name box are inputs, ids only, so neither is in
 karma-side shape is shown as its spend**, *sign this rep transaction?*. A post's content is shown only when
 `computeContentHash(content) === tx.post.contentHash`; a target is its post id or key in mono, never a
 name the page supplied. `protocolVersion` is shown small and not checked — the node refuses a wrong era.
+**A credits amount on the prompt is $NOTIS, never base units** — the heading names the total sent, *send 12.5
+$NOTIS?*, each line its payment and recipient, and a fee line only when the transaction carries a `fee` box
+(→ The wallet, the denomination rule).
+
+> ⚠ **AHEAD OF CODE (2026-09-17, the credits send)** — the prompt prints base units and a zero fee line today.
 
 **The build check that keeps the web bundle honest:** the web build's assets contain no `chrome.`
 reference. `build-release.sh` checks it; `build-extension.sh` checks the extension's shell has no inline
@@ -736,18 +745,29 @@ it can re-point a like.
 Every output declares `createdAtBlock`, which may not be below any input's
 (`TYPES_INTERFACE → Monotonic creation height`), and a `/karma` row carries no `createdAtBlock` — so
 the client declares the `/status` height, and reading it *after* the boxes is what guarantees no
-selected box is newer than the height declared.
+selected box is newer than the height declared. **A send reads the other ledger by the same rule:
+`GET /credits/:key` following `next`, then `GET /status`** — and a credit row whose `lockedUntilBlock` is
+above the `/status` height is left out of the view (`TYPES_INTERFACE → CreditBox`): the node judges a spend
+at tip + 1, so the client is conservative by one block, and the node's refusal stays the truth.
+
+> ⚠ **AHEAD OF CODE (2026-09-17, the credits send)** — the credits read and its view are this unit's.
 
 **The spendable view** is the confirmed boxes, minus the inputs of the client's own pending
 transactions, plus their predicted change — `computeCandidateBoxId(change, txId, 0)`, exact because
-ids are provenance-derived. **The pending ledger is persisted, per identity** —
+ids are provenance-derived. **There are two views over one ledger, split by the entry's kind:** a `send`
+entry's inputs and change are credit boxes and count in the credits view only, and every other kind's count
+in the rep view only — so a send's change is never offered to a post, nor a post's to a send.
+
+> ⚠ **AHEAD OF CODE (2026-09-17, the credits send)** — the ledger holds one view today; the split is this unit's.
+
+**The pending ledger is persisted, per identity** —
 `notis.pending.<pubKeyHex>`, constructed for the loaded identity at start, so a key never sees another
 key's entries and cannot try to spend its predicted change; a reload that forgot the ledger would
 re-spend a box the node holds pending and receive a 409 for a failure the reader never saw. **An
 identity change rebuilds the ledger for the new key at once** (→ The identity module, `onChange`).
 
-**Builders exist for a post, a like, a vouch, an unvouch, an invite, a withdrawal, a claim and a burn, and nothing
-else.** A root
+**Builders exist for a post, a like, a vouch, an unvouch, an invite, a withdrawal, a claim, a burn and a send, and
+nothing else.** A root
 post: change and a `karma_price` of `POST_PRICE_THREAD`. A reply: change, a `karma_price` of
 `POST_PRICE_REPLY − REPLY_AUTHOR_SHARE`, and a `like_accrual` of `REPLY_AUTHOR_SHARE` to the parent's
 **`confirmedAuthor`** from `GET /posts/:id` — never the row's `author`, which is a claim rather than the
@@ -769,9 +789,27 @@ the reader's key, `name` the bytes as typed (`TYPES_INTERFACE → UsernameBox`);
 since the transaction needs one box to spend. A burn: karma covering `USERNAME_BURN_PRICE` and the reader's
 `username` box in — the box resolved **at the press** from `GET /usernames?owner=`, never from a render — the karma
 change at index 0 when any, and one `karma_price` of exactly `USERNAME_BURN_PRICE`
-(`NODE_INTERFACE → Username transition rules`). Zero change is no box (`TYPES_INTERFACE → Box value domain`).
-Every builder is frozen against vectors held as constants in `builders.test.ts`; a change that moves
-one is a wire change.
+(`NODE_INTERFACE → Username transition rules`). A send: unlocked credit boxes covering the amount in — the
+credits view above — the credit change to the reader's key at index 0 when any, the payment — one `credit` box of
+the amount to the recipient's key — at the next index, and no `fee` box (`TYPES_INTERFACE → FeeBox`: a
+transaction carrying none is valid consensus, and the relay floor is zero, `MEMPOOL_INTERFACE → Fee floor`); an
+exact spend emits the payment alone. **Every credit output meets the per-byte floor** — `value ≥
+MIN_BOX_VALUE_PER_BYTE × byteLength(boxRecordBytes(out, txId, i))` (`TYPES_INTERFACE → Box value domain`),
+checked once the id is known, exactly as the node checks it — and a payment or a change below it is a client
+refusal that names the floor, so the reader never spends a rejection to learn it. Zero change is no box
+(`TYPES_INTERFACE → Box value domain`). Every builder is frozen against vectors held as constants in
+`builders.test.ts`; a change that moves one is a wire change.
+
+> ⚠ **AHEAD OF CODE (2026-09-17, the credits send)** — `buildSend`, its floor check and its vectors are this unit's.
+
+**A credits amount crosses the API in base units and reaches the face in $NOTIS.** Every `value` on the wire
+is a decimal string of base units — 10⁻⁸ of a credit (`TYPES_INTERFACE → Denomination`) — and the face never
+shows one: a base-unit amount is formatted as $NOTIS with up to eight decimals and no trailing zeros, and a
+typed amount is parsed the same way — digits, at most one point, at most eight decimals, nothing else. One
+module does both, and every surface that shows a credits amount reads it — the `$NOTIS` row, its confirm and
+flight lines, and the extension's prompt (→ The extension). Rep is indivisible and stays a plain integer.
+
+> ⚠ **AHEAD OF CODE (2026-09-17, the credits send)** — the module is this unit's; the prompt prints base units today.
 
 **Nothing retries.** A rejection is one `Rejection { status, message }`, normalised from both body
 shapes the node uses — `{ error: <status>, reason }` and `{ error: <message> }`; a 409 drops the entry
@@ -811,6 +849,13 @@ marker (`NODE_INTERFACE → The withdrawal phase`), and expired at once on a 404
 A pending claim is landed when `GET /usernames?owner=<key>` answers the name, a pending burn when it no longer
 does — one read per reconcile while either stands, as the bonds are read once for an invite — each expired once
 the tip passes its `expiresAtHeight`; the answer is the reader's own name (→ The username row).
+A pending send is landed when `GET /credits/<recipient>` following `next` lists the payment box —
+`computeCandidateBoxId(payment, txId, index)`, exact — and expired once the tip passes its `expiresAtHeight`; on
+landing the reader's own `/credits` is re-read and the `$NOTIS` row's balance moves in place (→ The profile
+window). A pending credits grant is landed when `GET /credits/<key>` lists the box the faucet named
+(→ The faucet step).
+
+> ⚠ **AHEAD OF CODE (2026-09-17, the credits send)** — the two reconciles are this unit's.
 
 **The reader's vouch set is client state read from the node, never stored:** `GET /vouches?voucher=<key>`
 to the end of `next` at identity load, again on every vouch or unvouch landing, and the cooldown arm
@@ -852,6 +897,7 @@ this browser. create one, or import a file."* — then `create` and `import`. Wi
 key          the whole 64 hex, mono, selectable
 standing     resident · member · root — the node's word
 rep          the balance that spends, or the faucet step
+$NOTIS       the spendable balance · the send form / the confirm row / the flight · or the faucet step
 invites      K available · the invite form · the reader's standing bonds
 username     @Name · burn  /  the claim form  /  the flight — → The username row
 passphrase   locked · unlock  /  unlocked · lock
@@ -861,7 +907,8 @@ theme · identity tint · node · faucet · arrangement — the preferences
 sign each rep action · don't ask / ask — in the extension only (→ The extension)
 ```
 
-The window's `↻` is live — the first window with something to refresh — and re-reads `/karma/:key`.
+The window's `↻` is live — the first window with something to refresh — and re-reads `/karma/:key` and
+`/credits/:key`.
 
 **The six operations are forms in place, and each is a real `<form>`** the browser's password manager
 can save from (→ The identity module). Enter submits, Esc cancels and returns focus to the button that
@@ -906,8 +953,27 @@ no number. The available count drops when the bond lands, in place, never animat
 
 **The balance is `effective`**, the value every sufficiency check on the node reads — `E effective · T held`
 when decay has opened a gap, because the face `total` would promise rep the next spend does not have.
-This is the one place a balance rests on the reading surface. **No credits row** while the client spends
-no credits. **A card by the loaded key reads `· you`** after the prefix, muted ink, text only.
+This is the one place a rep balance rests on the reading surface. **A card by the loaded key reads `· you`**
+after the prefix, muted ink, text only.
+
+**The `$NOTIS` row** *(write surface)*: the balance from `GET /credits/:key` — the spendable sum, formatted as
+$NOTIS (→ The wallet), in `gold` (`HOUSE_STYLE → "Gold means credits and nothing else"`) — and beneath it, when
+a box is locked, one muted line, *N $NOTIS more unlock by block H*, H the latest `lockedUntilBlock` among them.
+With no spendable box: the faucet step when a faucet is set (→ The faucet step), else *no $NOTIS yet.* Then the
+send form, a real `<form>` in place: the recipient — a 64-hex key or an `@handle` — the amount in $NOTIS, and
+the word `send`. **An identity input takes a key or a handle, and a handle is resolved at the press** through
+`GET /usernames/:name` (`NODE_INTERFACE → Identity parameters`) — a signed transaction carries keys only — an
+unknown one refused in place, *no one holds that name.*; then **the confirm row**, the burn's pattern: *send
+12.5 $NOTIS to @bob · <prefix>?* — the handle when one resolved, and always the key it resolved to, in mono, the
+prefix the identity display renders — with `send` and `keep`, focus on `keep`, Esc keeps. A locked identity
+unlocks in the row first; the flight renders in the row; a pending send — *12.5 $NOTIS to @bob · submitted*,
+from the ledger's entry, so it survives a reload — stands until it lands, when the line reads *sent* and the
+balance moves in place, or expires. Refusals in the register: an amount or a change below the floor names the
+minimum; a shortfall is *not enough $NOTIS.*; `declined` and `refused` are *not sent.* and the reason (→ The
+wallet, `notSigned`). In the extension the prompt asks after the confirm, because credits always prompt
+(→ The extension).
+
+> ⚠ **AHEAD OF CODE (2026-09-17, the credits send)** — the row, the resolution, the confirm and the flight are this unit's.
 
 **Two preference rows the extension adds or changes.** *sign each rep action: don't ask · ask* is the
 background's policy (→ The extension), read through `state` and set through `policy`; it renders only
@@ -945,6 +1011,19 @@ motion contract asks of pending state (`HOUSE_STYLE → Motion`).
 ⛔ **A 202 without `expiresAtHeight` is refused** — *"the faucet did not say when its invite expires."*
 — never bounded by a guess: a grant with no expiry would run the poll for ever, which the motion
 contract forbids. The faucet relays the field (`NODE_INTERFACE → Faucet`).
+
+**The $NOTIS step, in the `$NOTIS` row — `ask the faucet for $NOTIS` — while an identity is loaded, its
+`/credits` shows no spendable box, and a faucet base is configured.** The call is `POST <faucet>/credits
+{ pubkey }` in the same module; the answer is `202 { txId, status, expiresAtHeight, boxId }`
+(`NODE_INTERFACE → Faucet`) — the transfer's expiry relayed from the node, and the id of the box the grant
+creates. The wait rides the ledger as a `creditGrant` entry whose subject is that box id, `inputs: []` and no
+change, so it is inert in both views; reconcile is `GET /credits/:key`: the box listed → landed, and the row's
+balance reads it; past `expiresAtHeight` and absent → expired — *no block took the faucet's transfer by height
+N.* with `ask again`. A 202 without a numeric `expiresAtHeight` or a 64-hex `boxId` is refused, for the reason
+above. The relayed refusals map as the rep step's do, except a 400 — credits repeat, so it is not the
+once-per-key rule: *the faucet refused that key.* and the message.
+
+> ⚠ **AHEAD OF CODE (2026-09-17, the credits send)** — the step, the entry kind and its reconcile are this unit's.
 
 ### The username row *(username surface)*
 
@@ -1115,6 +1194,7 @@ one is: the client records no entry it cannot track.
 | Client action | Endpoint | Standing |
 |---------------|----------|----------|
 | Ask the faucet for karma | `POST <faucet>/karma` — `{ pubkey }` → `{ txId, status, expiresAtHeight }` | *(identity interface)* — the faucet's edge, not the node's (`NODE_INTERFACE → Faucet`) |
+| Ask the faucet for $NOTIS | `POST <faucet>/credits` — `{ pubkey }` → `{ txId, status, expiresAtHeight, boxId }` | *(identity interface)* — the faucet's edge, repeatable (`NODE_INTERFACE → Faucet`) |
 | Submit a post | `POST /posts` — `{ tx, content }` → `{ postId, status, expiresAtHeight, txId }` | *(write surface)* |
 | Like | `POST /likes` — `{ tx }` → `{ status, txId, expiresAtHeight }` | *(write surface)* |
 | Standing and balance | `GET /karma/:userId`, `GET /credits/:userId` | *(write surface)* — the spendable view |
@@ -1126,6 +1206,10 @@ one is: the client records no entry it cannot track.
 | Claim a name | `POST /usernames` — `{ tx }` → `{ status, txId, expiresAtHeight, name }` | *(username surface)* |
 | Burn a name | `POST /usernames/:name/burn` — `{ tx }` → `{ status, txId, expiresAtHeight }` | *(username surface)* |
 | The reader's own name; an author's name | `GET /usernames?owner=` — 404 is *no name* | *(username surface)* — a read, in the read client |
+| Send $NOTIS | `POST /credits/transfer` — `{ tx }` → `{ status, txId, expiresAtHeight }` | *(write surface)* |
+| A handle's holder | `GET /usernames/:name` — 404 is *unknown* | *(write surface)* — a read, in the read client; resolved at the press, before a send builds |
+
+> ⚠ **AHEAD OF CODE (2026-09-17, the credits send)** — the three rows above this line are this unit's.
 
 **The write client is its own module beside the read client.** The read client issues `GET` requests
 and nothing else, and that stays literally checkable; the writes live next door, and a `viewer`
@@ -1191,6 +1275,8 @@ client that expects to announce itself first is built against an endpoint that d
   and one emoji is four of them; the composer counts it down from the moment it opens (→ Content).
   *(write surface)*
 - **All hashing is client-side; the node verifies, it does not assist.** *(write surface)*
+- **A credits amount reaches the face in $NOTIS, never in base units**, and a typed amount is parsed to base
+  units by the same module (→ The wallet). *(write surface)*
 - **The read surface holds no key and signs nothing.** Its boundary is checkable: it issues `GET`
   requests and nothing else, and it constructs no transaction.
 - **The standalone workspace is never persisted, and only the lock holder writes the arrangement.** A page
