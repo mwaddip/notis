@@ -258,7 +258,8 @@ This means:
 - New primitives are designed for what they record, not for how a client might
   interpret them
 - The node serves no client either — no page, no bundle. A client is a separate product against
-  the HTTP API, and `@dagsocial/web` is one implementation of it (`NODE_INTERFACE → The node serves no client`)
+  the HTTP API, and `@dagsocial/web` is one implementation of it, shipped as a static bundle and as a browser
+  extension (`NODE_INTERFACE → The node serves no client`; `WEB_INTERFACE → The extension`)
 
 ---
 

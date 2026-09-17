@@ -48,7 +48,10 @@ Seven packages, in dependency order:
   tiling workspace, both themes — and the **write surface's first slice**: an identity held in the
   browser, the composer for a root and a reply, and like, on transactions the client builds and signs
   itself. It hashes only through `@dagsocial/types`, reached by a build-time `crypto` shim, and signs
-  with `@noble/curves`; with no identity loaded it is the read surface exactly.
+  with `@noble/curves`; with no identity loaded it is the read surface exactly. **It also builds as a browser
+  extension** — the same client as the extension's own page, the key held by the extension's background,
+  credits signed by hand and rep silently (`WEB_INTERFACE → The extension`); each release carries its two zips
+  beside the web zip.
 
 Three tools live under `tools/` — in the workspace by the `tools/*` glob, so in `pnpm -r test`:
 

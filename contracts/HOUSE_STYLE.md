@@ -364,9 +364,10 @@ it for anything.
 - **A word is a control, and it wears no box.** Every action that is a word renders as the word alone — no
   border, no fill, no padding beyond its hit box, the row's own face; `ink` at rest, `inkMute` when it cannot
   act; the pointer cursor and the focus ring; under `hover: hover` an underline and nothing else. The identity
-  prefix set the pattern (`WEB_INTERFACE → The identity display`) and every word follows it. The one boxed
-  pair is the composer's `post` and `cancel` (user, 2026-09-08); the inverse-filled header words are fills, not
-  boxes, and stay.
+  prefix set the pattern (`WEB_INTERFACE → The identity display`) and every word follows it. **A box marks a
+  commit pair and a surface's primary action** — the composer's `post` and `cancel`, the extension prompt's
+  `sign` and `cancel`, and the feed's `new post` (user, 2026-09-08 and 2026-09-16); the inverse-filled header
+  words are fills, not boxes, and stay.
 - **Nothing is fetched from a third party without the reader's act.** An image, a title, a
   preview — nothing the page renders on its own reaches beyond the origin, because every such
   request tells that party who is reading and when. What a reader chooses to load, they load

@@ -241,6 +241,7 @@ preconfigured for testnet:
 | `dagsocial-node_<ver>_amd64.deb` | the node and the faucet service as systemd units for a Debian host with Node ≥ 22; configuration in `/etc/dagsocial/node.env` and `faucet.env` |
 | `notis-node-<ver>-win-x64-setup.exe` | a per-user Windows installer with **Notis Node** and **Notis Node (Miner)** shortcuts |
 | `notis-web-<ver>.zip` | the browser client, a static bundle configured after download (→ Web client) |
+| `notis-extension-<ver>-chrome.zip` · `-firefox.zip` | the same client as a browser extension, the key held by the extension (→ Browser extension) |
 
 The Windows installer is unsigned, so SmartScreen warns on first run.
 
@@ -380,21 +381,24 @@ gates that last case behind its local-network permission. The faucet answers its
 `bash packages/web/scripts/build-release.sh`. Inside, `web/` is the bundle, `nginx.example.conf` a
 complete vhost excerpt, and `README.txt` the serving note.
 
-**The deployment is four values in the head of `web/index.html`**, and the release ships them set
+**The deployment is six values in the head of `web/index.html`**, and the release ships them set
 for notis.fun's layout:
 
 ```html
 <base href="/web/">
 <meta name="notis-api" content="/testnet/api">
 <meta name="notis-faucet" content="/testnet/faucet">
+<meta name="notis-nodes" content='[]'>
+<meta name="notis-public" content="">
 <meta property="og:image" content="https://notis.fun/web/og.png">
 ```
 
 They name the path the client is served under (opening and closing with `/`), the API's path on the
 same origin or any node's absolute origin, the faucet's on the same origin — empty for no faucet and
-no faucet button — and the preview picture's
-absolute URL (`<origin><base>og.png`). A host with another layout edits those four values and nothing
-else: every reference in the bundle is relative to the base. A reader can still point their own
+no faucet button — a JSON list of API bases the client tries in order when no node preference is stored
+(empty on the web), the origin and base a copied post link should carry (empty means the page's own), and
+the preview picture's absolute URL (`<origin><base>og.png`). A host with another layout edits those six
+values and nothing else: every reference in the bundle is relative to the base. A reader can still point their own
 browser at another node or faucet from the profile window's preferences.
 
 Serve `web/` as static files with no SPA fallback — a path that is not a file is a 404. The one path
@@ -416,6 +420,18 @@ of this is needed: `pnpm --filter @dagsocial/web dev` proxies the API and serves
 
 A fresh identity needs an invite from an existing member; on testnet the faucet grants one through
 the client's profile window.
+
+### Browser extension
+
+The same client ships as a browser extension for Chrome and Firefox — `notis-extension-<ver>-chrome.zip`
+and `-firefox.zip` in each release, or `bash packages/web/scripts/build-extension.sh`. The client is the
+extension's own page (the toolbar button opens it), the identity lives in the extension's background — the
+encrypted envelope at rest, the unlocked key in session memory that ends with the browser — and every write
+is signed there. Sending `$NOTIS` always asks in a prompt window; rep actions sign silently while unlocked,
+or ask too if you choose so in the profile. The extension needs no hosted page and calls no home: it talks
+only to the node(s) you configure, starting from the seed list built into it. Load the Chrome zip unpacked
+in developer mode, the Firefox zip as a temporary add-on from `about:debugging`; store listings are a
+separate step.
 
 ### Light client
 

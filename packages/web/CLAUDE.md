@@ -54,11 +54,17 @@ absolute URL (`WEB_INTERFACE → Links`). Behind nginx `/web/p/<id>` is answered
 say how to serve it. **At one column the screens are history** (`WEB_INTERFACE → The workspace`): a tap that
 changes the screen pushes an entry, a move back onto the previous screen consumes it by the arrow or by a swipe,
 a swipe elsewhere is no entry. **A word control wears no box** (`HOUSE_STYLE → Interaction`): the word alone,
-as the identity prefix renders; the composer's `post` and `cancel` are the one boxed pair; the copy glyph is
+as the identity prefix renders; a box marks a commit pair and a surface's primary action — the composer's `post` and `cancel`, the extension prompt's `sign` and `cancel`, the feed's `new post` (`HOUSE_STYLE → Interaction`); the copy glyph is
 the interface's third icon. **The username surface** (`WEB_INTERFACE → The username row`): the `@profile`
 window's `username` row claims a name and burns it, in place, with the flight in the row; **the handle `@Name`
 stands where a row carries a name** — the who row, the bars, the header, the standalone title — in the page face
-at 600, the same control the prefix is (`WEB_INTERFACE → The identity display`).
+at 600, the same control the prefix is (`WEB_INTERFACE → The identity display`). **The extension**
+(`WEB_INTERFACE → The extension`): the same client built as a browser extension for Chrome and Firefox — the
+App as the extension's own page, the identity held by the background (the envelope in `storage.local`, the
+unlocked seed in `storage.session`, never a worker global), every write signed there through the
+`Signer` seam's proxy; credits always prompted in the prompt window, rep silent while unlocked unless the
+*sign each rep action* row says ask; the `notSigned` arm and the fourth ending — the composer still open;
+the shell's `notis-nodes` seed list and `notis-public` link origin; one manifest template → two zips.
 
 - **Owns:** `packages/web/*` — its own source, tests, build config and static assets.
 - **Does NOT own:** any other package, `contracts/` or `prompts/`.
@@ -81,11 +87,12 @@ slice — stop and report, do not implement it.**
 `like`, no `viewer` parameter, and `render-region.test.ts` stays green by node identity. **Once an
 identity is loaded, every read carries `viewer=<pubKeyHex>`** and `likedByViewer` is the node's answer.
 
-**The identity is encrypted at rest and unlocked per tab** (`WEB_INTERFACE → The identity module`).
+**The identity is encrypted at rest and unlocked per tab on the web, per browser in the extension**
+(`WEB_INTERFACE → The identity module`, `→ The extension`).
 Storage holds an envelope — scrypt and ChaCha20-Poly1305 over the seed, `identity/envelope.ts` — never
 the seed in the clear; a page load restores the envelope and the public key only, so `current()` reads
-`{ pubKeyHex, locked: true }` until an unlock, and `sign(txIdHex)` — the only path to the seed — throws
-while locked. **Every write checks `locked` before its flight** and mounts the unlock form in place: the
+`{ pubKeyHex, locked: true }` until an unlock, and `sign(txBytes, txIdHex, hint?)` — the only path to the seed —
+answers `locked` while locked (`WEB_INTERFACE → The wallet`). **Every write checks `locked` before its flight** and mounts the unlock form in place: the
 composer's foot for `post`, a row under the card's meta for `like`, the confirm row's place for
 `withdraw`. The way in is the `@profile`
 window's `create` and `import`; a production build has no other door. `draft()` makes the key before
@@ -236,19 +243,21 @@ page), and asserts each live post's recomputed `computeContentHash` equals the
 (`CHROME=…`, else Playwright's cached one). Not in `pnpm test` by design — it
 needs a browser and a node.
 
-## Building for a deployment — four values, written by the build and editable after
+## Building for a deployment — six values, written by the build and editable after
 
-**The deployment is four values in the shell's head** (`WEB_INTERFACE → The client is served from the
+**The deployment is six values in the shell's head** (`WEB_INTERFACE → The client is served from the
 node's own origin`): `<base href>` — the path the client's own files are served under, opening and
 closing with `/`; `notis-api` — the API's path on the same origin, no trailing slash; `notis-faucet` —
-the faucet's path, empty for no faucet and no `ask the faucet for karma` button; the `og:image` content —
-the picture's absolute URL, `<origin><base>og.png`. The build writes them
-from `VITE_WEB_BASE`, `VITE_API_BASE`, `VITE_FAUCET_BASE` and `VITE_PUBLIC_ORIGIN` — `/`, empty, empty
+the faucet's path, empty for no faucet and no `ask the faucet for karma` button; `notis-nodes` — a JSON
+array of API bases tried in order when no node preference is stored, `[]` on the web; `notis-public` — the
+origin and base a copied link carries, empty for the page's own; the `og:image` content — the picture's
+absolute URL, `<origin><base>og.png`. The build writes them from `VITE_WEB_BASE`, `VITE_API_BASE`,
+`VITE_FAUCET_BASE`, `VITE_NODES`, `VITE_PUBLIC` and `VITE_PUBLIC_ORIGIN` — `/`, empty, empty, `[]`, empty
 and empty under `pnpm dev`, where the dev server proxies the bare API paths — and the client reads them
-from the DOM at load (`readBase` and `readMeta` in `src/prefs.ts`). Vite's `base` is `./` for a build,
+from the DOM at load (`readBase`, `readMeta`, `readNodesMeta` and `readPublicMeta` in `src/prefs.ts`). Vite's `base` is `./` for a build,
 so every reference in the built shell is relative and the `<base>` alone decides where the files resolve;
 `public/fonts/fonts.css` names its files beside itself for the same reason. A host with another layout
-edits the four values in `web/index.html` after unzipping.
+edits the six values in `web/index.html` after unzipping.
 
 ```bash
 bash packages/web/scripts/build-release.sh   # notis.fun's values → notis-web-<ver>.zip in the repo root
@@ -257,8 +266,38 @@ cd packages/web && VITE_PUBLIC_ORIGIN=<origin> VITE_WEB_BASE=<client path>/ VITE
 
 Run vite directly rather than through `pnpm --filter`, so no variable has to survive pnpm's argument
 passing. ⚠ **Getting `<base href>` wrong yields a blank page, not an error.** The HTML loads, every asset
-404s, and nothing in the console names the cause. Check the built `index.html`: the four values carry the
+404s, and nothing in the console names the cause. Check the built `index.html`: the six values carry the
 intended values and every `href` and `src` is relative — `build-release.sh` checks exactly that.
+
+## The extension — the second build target
+
+```bash
+bash packages/web/scripts/build-extension.sh          # notis-extension-<ver>-chrome.zip and -firefox.zip in the repo root
+VITE_NODES='["http://localhost:3300"]' VITE_PUBLIC='' bash packages/web/scripts/build-extension.sh   # devnet values, for the proof
+```
+
+Two Vite builds — the pages (`index.html`, `prompt.html`) through `vite.extension.config.ts`, the background
+as one IIFE file through `vite.background.config.ts` — then `extension/emit-manifests.mjs` writes each
+browser's `manifest.json` from `extension/manifest.template.json`, the icons under `extension/icons/` are
+copied in, the checks run (no inline `<script>`, `<base href="/">`, the two metas at the build's values, no
+`import` in `background.js`, the manifests parse, every reference relative, `web-ext lint` clean on the Firefox
+stage — its two `innerHTML` warnings are the static inline mark), and the two zips are made from a fresh
+stage. The Chrome manifest's `key` is the tracked RSA public key in the emitter, so the extension id is stable
+(`kafmnekclgkjnkhnbafdoefnlllboddm`); `NOTIS_EXTENSION_KEY` overrides it. `main.ts` takes the identity
+implementation from `VITE_IDENTITY` (`page` | `extension`), and `build-release.sh` checks the web bundle
+carries no `chrome.` reference. **The extension's source lives in `src/extension/`** — `background.ts`,
+`proxy.ts`, `protocol.ts`, `policy.ts`, `prompt.ts`, `chrome.d.ts` (the `chrome.*` surface used, no
+`@types/chrome`) — with `test/fake-chrome.ts` for the Node tests.
+
+**The proof** is `scripts/extension-check/run.mjs`: headless Chromium over raw CDP (the cached Chrome for
+Testing; no Playwright) loading the unpacked Chrome build, driving the twelve steps of the extension section
+through the real UI — the composer, the like word, the profile rows, the prompt window — against a local
+devnet: `node packages/node/scripts/dev.mjs`, `tools/faucet/dist` with the devnet faucet key
+(`tools/e2e/src/identities.ts`, devnet-only and public by design), `promote.mjs` for a throwaway member,
+the extension built with devnet values. Step 8 lets the worker die by a ≥ 30 s idle wait — `chrome.runtime.reload`
+clears `storage.session` and proves nothing — and the worker target is the one whose URL ends in
+`/background.js` (Chrome ships a built-in Hangouts worker first). Ports above 19000. The throwaway's key file
+and the faucet's live under a scratch path, never in the repo, a log or a report.
 
 ⚠ **A `<base>` element resolves fragment references against itself**, so the client carries none: the mark
 is inline markup (`src/view/mark.ts`), never a sprite referenced by `<use>`, and every URL composed from
