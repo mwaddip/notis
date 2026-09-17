@@ -25,7 +25,7 @@ import type { PendingEntry } from './wallet/types';
 import { readBuildContext } from './wallet/reads';
 import { submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, submitClaimFlow, submitBurnFlow, submitSendFlow, type SubmitDeps } from './wallet/submit';
 import { identity as identitySingleton } from './identity/identity';
-import { renderKarmaField, renderInvitesRow, renderUsernameRow, renderCreditsRow, type ResolvedRecipient } from './view/profile';
+import { renderKarmaField, renderInvitesRow, renderUsernameRow, renderCreditsRow, resetCreditsSendForm, type ResolvedRecipient } from './view/profile';
 import type { Flight } from './view/card';
 import type { YourVouch } from './view/author';
 import {
@@ -529,7 +529,9 @@ export class App {
       pendingUsername: this.usernameInFlight ?? pendingUsernameEntry(this.ledger.all()),
       canSignClaim: this.canSignWithdraw(), // same predicate — a spendable box
       canAffordBurn: this.canAffordBurn(),
-      // The $NOTIS row (WEB_INTERFACE → The profile window).
+      // The $NOTIS row (WEB_INTERFACE → The profile window). status carries the
+      // tip the row's spendable-at-height filter reads (WEB_INTERFACE → The wallet).
+      status: this.state.status,
       credits: this.profileCredits,
       creditGrant: this.creditGrantView,
       sendFlight: this.sendFlight,
@@ -1907,9 +1909,8 @@ export class App {
 
   /** Read the whole /credits for a key, following `next` to the end. The
    *  spendable view is the whole page; a landing needs to see every box the
-   *  node has (WEB_INTERFACE → "Paging is keyset. Follow next; never page on a
-   *  count of rows you rendered"). `total` is the identity's total on every
-   *  page, so the first page's value stands. */
+   *  node has (WEB_INTERFACE → "Paging is keyset, never offset"). `total` is
+   *  the identity's total on every page, so the first page's value stands. */
   private async readOwnCredits(key: string): Promise<CreditsResult> {
     const first: CreditsResult = await this.client.credits(key, {});
     const boxes = [...first.boxes];
@@ -2337,6 +2338,10 @@ export class App {
     }
     if (result.ok) {
       this.sendFlight = null; // the pending line is now the ledger's entry
+      // The form clears on an accepted submission; every other ending leaves
+      // its values intact (WEB_INTERFACE → The wallet).
+      const field = document.querySelector<HTMLElement>('.credits-field');
+      if (field) resetCreditsSendForm(field);
       this.startPoll();
     } else if ('rejection' in result) {
       this.sendFlight = { stage: 'rejected', reason: 'send rejected: ' + result.rejection.message };
@@ -2456,8 +2461,7 @@ export class App {
       }
       if (entry.kind === 'creditGrant') {
         if (cur === null) continue;
-        await this.reconcileCreditGrantEntry(entry, tip);
-        creditsChanged = true;
+        if (await this.reconcileCreditGrantEntry(entry, tip)) creditsChanged = true;
         continue;
       }
       if (entry.kind === 'send') {
@@ -2582,8 +2586,10 @@ export class App {
 
   /** Reconcile a pending send: read the recipient's /credits, look for the
    *  payment box (`computeCandidateBoxId`, exact) among their spendable boxes;
-   *  on landing re-read the reader's own /credits and clear the entry
-   *  (WEB_INTERFACE → The wallet). Returns true when the balance moved. */
+   *  on landing re-read the reader's own /credits and record the landed flight
+   *  so the row's flight slot reads *sent* on the same render as the balance
+   *  moves in place (WEB_INTERFACE → The profile window). Returns true when
+   *  the balance moved. */
   private async reconcileSendEntry(entry: PendingEntry, tip: number, meKey: string): Promise<boolean> {
     const recipient = entry.postId; // a send's subject is the recipient's key
     let recipientBoxes;
@@ -2596,7 +2602,9 @@ export class App {
     if (outcome === 'pending') return false;
     this.ledger.remove(entry.txId);
     if (outcome === 'landed') {
-      this.sendFlight = null;
+      // The row renders *sent* directly from this stage; stageLine has no
+      // `landed` case (WEB_INTERFACE → The profile window).
+      this.sendFlight = { stage: 'landed' };
       // Re-read the reader's own /credits so the row's balance moves in place.
       try {
         this.profileCredits = await this.readOwnCredits(meKey);
@@ -2613,18 +2621,20 @@ export class App {
 
   /** Reconcile a pending credits grant: read the reader's own /credits, look
    *  for the box the faucet named — `entry.postId` is that id (WEB_INTERFACE →
-   *  The faucet step). */
-  private async reconcileCreditGrantEntry(entry: PendingEntry, tip: number): Promise<void> {
+   *  The faucet step). Returns true when the entry settled — pending returns
+   *  false so a still-standing grant does not trigger a wasted row re-render
+   *  every tick. */
+  private async reconcileCreditGrantEntry(entry: PendingEntry, tip: number): Promise<boolean> {
     const cur = this.idm.current();
-    if (cur === null) return;
+    if (cur === null) return false;
     let credits;
     try {
       credits = await this.readOwnCredits(cur.pubKeyHex);
     } catch {
-      return;
+      return false;
     }
     const outcome = reconcileCreditGrant(entry, credits, tip);
-    if (outcome === 'pending') return;
+    if (outcome === 'pending') return false;
     this.ledger.remove(entry.txId);
     if (outcome === 'landed') {
       this.profileCredits = credits;
@@ -2632,6 +2642,7 @@ export class App {
     } else {
       this.creditGrantView = { state: 'expired', atHeight: entry.expiresAtHeight };
     }
+    return true;
   }
 
   /** Read every credit box the recipient holds — one page at a time, following

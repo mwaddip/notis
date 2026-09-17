@@ -2,6 +2,7 @@ import type { Api } from '../api/client';
 import type { PendingLedger } from './ledger';
 import type { BuildContext } from './builders';
 import type { SpendableBox } from './types';
+import type { CreditBoxRow } from '../api/dto';
 
 // The reads before a write, in the ONE function that assembles a BuildContext —
 // WEB_INTERFACE → The wallet. The order is a correctness rule, not a preference:
@@ -35,6 +36,36 @@ export async function readBuildContext(
   };
 }
 
+/** The spendable-at-height filter, shared by the credits read and the `$NOTIS`
+ *  row's balance — WEB_INTERFACE → The wallet ("A send reads the other ledger
+ *  by the same rule ... a credit row whose `lockedUntilBlock` is above the
+ *  `/status` height is left out of the view"). `=== height` stays (the node
+ *  judges a spend at tip + 1, so the client is conservative by one block). */
+export function spendableCreditBoxes(
+  boxes: readonly CreditBoxRow[],
+  height: number,
+): CreditBoxRow[] {
+  return boxes.filter((b) => b.lockedUntilBlock === undefined || b.lockedUntilBlock <= height);
+}
+
+/** The locked complement of `spendableCreditBoxes` — the sum of values not yet
+ *  spendable and the latest `lockedUntilBlock` among them; null when nothing is
+ *  locked at this height. Feeds the row's *N $NOTIS more unlock by block H*
+ *  hint (WEB_INTERFACE → The profile window). */
+export function lockedCreditSummary(
+  boxes: readonly CreditBoxRow[],
+  height: number,
+): { value: bigint; height: number } | null {
+  let value = 0n;
+  let latest = 0;
+  for (const b of boxes) {
+    if (b.lockedUntilBlock === undefined || b.lockedUntilBlock <= height) continue;
+    value += BigInt(b.value);
+    if (b.lockedUntilBlock > latest) latest = b.lockedUntilBlock;
+  }
+  return value === 0n ? null : { value, height: latest };
+}
+
 /** The credit-side counterpart — WEB_INTERFACE → The wallet ("A send reads the
  *  other ledger by the same rule: `GET /credits/:key` following `next`, then
  *  `GET /status`"). A row whose `lockedUntilBlock` is above `status.blockHeight`
@@ -45,19 +76,18 @@ export async function readCreditContext(
   ledger: PendingLedger,
   author: string,
 ): Promise<BuildContext> {
-  const rows: Array<{ boxId: string; value: bigint; lockedUntilBlock: number | undefined }> = [];
+  const rows: CreditBoxRow[] = [];
   let after: string | null = null;
   do {
     const page = await reads.credits(author, after === null ? {} : { after });
-    for (const b of page.boxes) rows.push({ boxId: b.boxId, value: BigInt(b.value), lockedUntilBlock: b.lockedUntilBlock });
+    for (const b of page.boxes) rows.push(b);
     after = page.next;
   } while (after !== null);
 
   const status = await reads.status();
 
-  const confirmed: SpendableBox[] = rows
-    .filter((b) => b.lockedUntilBlock === undefined || b.lockedUntilBlock <= status.blockHeight)
-    .map((b) => ({ boxId: b.boxId, value: b.value }));
+  const confirmed: SpendableBox[] = spendableCreditBoxes(rows, status.blockHeight)
+    .map((b) => ({ boxId: b.boxId, value: BigInt(b.value) }));
 
   return {
     spendable: ledger.spendable(confirmed, 'credits'),

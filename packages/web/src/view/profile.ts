@@ -4,7 +4,8 @@ import { unlockForm, setPassphraseForm } from './passphrase';
 import { stageLine, type Flight } from './card';
 import { INVITE_BOND_VEST_PER_LIKES, USERNAME_BURN_PRICE, isValidUsernameBytes } from '@dagsocial/types';
 import { formatCredits, parseCredits } from '../model/credits';
-import type { KarmaResult, BondsResult, CreditsResult, UsernameResult } from '../api/dto';
+import { spendableCreditBoxes, lockedCreditSummary } from '../wallet/reads';
+import type { KarmaResult, BondsResult, CreditsResult, StatusResult, UsernameResult } from '../api/dto';
 import type { Origin } from '../model/workspace';
 
 // The @profile window — WEB_INTERFACE → The profile window. Identity, standing,
@@ -88,7 +89,9 @@ export interface ProfileCtx {
   // The $NOTIS row (WEB_INTERFACE → The profile window). credits null before
   // the first read; sendFlight is the transient ending; pendingSend the ledger
   // entry that survives a reload; creditGrant a faucet transfer in flight or
-  // one that lapsed.
+  // one that lapsed. status.blockHeight is the tip the row's spendable-at-height
+  // filter reads (WEB_INTERFACE → The wallet).
+  status: StatusResult | null;
   credits: CreditsResult | null;
   creditGrant: GrantView | null;
   sendFlight: Flight | null;
@@ -606,40 +609,56 @@ function forgetConfirm(field: HTMLElement, handlers: ProfileHandlers, backedUp: 
 // ---------------------------------------------------------------------------
 // The $NOTIS row — WEB_INTERFACE → The profile window.
 // Three slots (.credits-line, .credits-form, .credits-flight) built once and
-// updated in place, the username row's model.
+// updated in place, the invites row's model — the form the reader is filling
+// survives every in-place update, and clears only after an accepted submission.
 // ---------------------------------------------------------------------------
 
 function creditsRow(field: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx): void {
   field.replaceChildren(el('div', 'credits-line'), el('div', 'credits-form'), el('div', 'credits-flight'));
-  updateCredits(field, handlers, ctx);
-}
-
-/** Update the $NOTIS row's three slots in place from the current ctx — the
- *  username row's model (HOUSE_STYLE → Motion: colour and text in a fixed box). */
-export function renderCreditsRow(field: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx): void {
-  updateCredits(field, handlers, ctx);
-}
-
-/** The spendable sum among the confirmed credit boxes — a box whose
- *  `lockedUntilBlock` is above the view's height is filtered out, the same rule
- *  `readCreditContext` runs (WEB_INTERFACE → The wallet). */
-function spendableCredits(c: CreditsResult): bigint {
-  let sum = 0n;
-  for (const b of c.boxes) sum += BigInt(b.value);
-  return sum;
-}
-
-/** The latest `lockedUntilBlock` among locked boxes, or null when none is
- *  locked, and the value locked. */
-function lockedSummary(c: CreditsResult): { value: bigint; height: number } | null {
-  let value = 0n;
-  let height = 0;
-  for (const b of c.boxes) {
-    if (b.lockedUntilBlock === undefined) continue;
-    value += BigInt(b.value);
-    if (b.lockedUntilBlock > height) height = b.lockedUntilBlock;
+  // The form is built once, here, and left alone by the in-place update
+  // (WEB_INTERFACE → The wallet). A subsequent build is owed only when the
+  // spendable side turned from zero to non-zero — the App asks for it by
+  // clearing the slot before renderCreditsRow.
+  const c = ctx.credits;
+  if (c !== null) {
+    const height = ctx.status?.blockHeight ?? 0;
+    const spendable = sumValues(spendableCreditBoxes(c.boxes, height));
+    if (spendable > 0n) sendForm(field.querySelector('.credits-form') as HTMLElement, handlers, ctx);
   }
-  return value === 0n ? null : { value, height };
+  updateCredits(field, handlers, ctx);
+}
+
+/** Update the $NOTIS row's line and flight in place from the current ctx —
+ *  the invites row's model (HOUSE_STYLE → Motion: colour and text in a fixed
+ *  box). The form slot is left alone; the send/confirm/restoreForm chain owns
+ *  it, and the App calls `resetCreditsSendForm` on an accepted submission. */
+export function renderCreditsRow(field: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx): void {
+  // A spendable side turning from zero to non-zero owes a fresh form.
+  const formSlot = field.querySelector<HTMLElement>('.credits-form');
+  const c = ctx.credits;
+  if (formSlot && c !== null && formSlot.children.length === 0) {
+    const height = ctx.status?.blockHeight ?? 0;
+    const spendable = sumValues(spendableCreditBoxes(c.boxes, height));
+    if (spendable > 0n) sendForm(formSlot, handlers, ctx);
+  }
+  updateCredits(field, handlers, ctx);
+}
+
+/** Reset the send form's inputs — the App calls it after `result.ok` in the
+ *  send flow (WEB_INTERFACE → The wallet). Every other ending leaves the
+ *  values intact. */
+export function resetCreditsSendForm(field: HTMLElement): void {
+  const form = field.querySelector<HTMLFormElement>('form.credits-form');
+  if (!form) return;
+  for (const inp of form.querySelectorAll<HTMLInputElement>('input')) inp.value = '';
+  const refusal = form.querySelector<HTMLElement>('.pf-refusal');
+  if (refusal) refusal.hidden = true;
+}
+
+function sumValues(boxes: readonly { value: string }[]): bigint {
+  let s = 0n;
+  for (const b of boxes) s += BigInt(b.value);
+  return s;
 }
 
 function updateCredits(field: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx): void {
@@ -648,31 +667,35 @@ function updateCredits(field: HTMLElement, handlers: ProfileHandlers, ctx: Profi
   const flight = field.querySelector<HTMLElement>('.credits-flight');
   if (!line || !formSlot || !flight) return;
   line.replaceChildren();
-  formSlot.replaceChildren();
   flight.replaceChildren();
 
   const c = ctx.credits;
   if (c === null) {
     line.appendChild(el('span', 'inkmute', '—'));
+    formSlot.replaceChildren();
     return;
   }
 
-  // Note the spendable view is what the confirmed page holds; the App re-reads
-  // /credits on a send landing and a grant landing so the row moves in place.
-  const spendable = spendableCredits(c);
+  // Spendable at the current tip — WEB_INTERFACE → The wallet. The row and
+  // readCreditContext read one implementation of the rule.
+  const height = ctx.status?.blockHeight ?? 0;
+  const spendableBoxes = spendableCreditBoxes(c.boxes, height);
+  const spendable = sumValues(spendableBoxes);
 
   if (spendable > 0n) {
-    // Balance in gold + "$NOTIS", with the locked-hint beneath when any locked box stands.
+    // Balance in gold + "$NOTIS"; the locked-hint beneath names only what is
+    // above the current height (WEB_INTERFACE → The profile window).
     line.append(el('span', 'mono gold', formatCredits(spendable)), ' $NOTIS');
-    const locked = lockedSummary(c);
+    const locked = lockedCreditSummary(c.boxes, height);
     if (locked) {
       const hint = el('div', 'hint');
       hint.append(mono(formatCredits(locked.value)), ' $NOTIS more unlock by block ', mono(String(locked.height)), '.');
       line.appendChild(hint);
     }
-    sendForm(formSlot, handlers, ctx);
   } else {
-    // No spendable box — the faucet step when a faucet is set, else "no $NOTIS yet."
+    // No spendable box → the faucet step when a faucet is set, else "no $NOTIS yet."
+    // The locked hint still stands so the reader knows what is on its way.
+    const locked = lockedCreditSummary(c.boxes, height);
     if (ctx.creditGrant?.state === 'pending') {
       line.appendChild(el('span', 'inkmute', 'working…'));
     } else if (ctx.creditGrant?.state === 'expired') {
@@ -689,20 +712,32 @@ function updateCredits(field: HTMLElement, handlers: ProfileHandlers, ctx: Profi
     } else {
       line.appendChild(el('span', 'inkmute', 'no $NOTIS yet.'));
     }
+    if (locked) {
+      const hint = el('div', 'hint');
+      hint.append(mono(formatCredits(locked.value)), ' $NOTIS more unlock by block ', mono(String(locked.height)), '.');
+      line.appendChild(hint);
+    }
+    // No spendable box means the form has nothing to spend — drop it.
+    formSlot.replaceChildren();
   }
 
-  // The pending line from the ledger — durable across a reload (WEB_INTERFACE
-  // → The profile window). The handle when the entry carries one, else the
-  // recipient's key prefix, and the amount formatted.
+  // The pending line reads from the ledger — durable across a reload. The row
+  // renders it directly rather than through stageLine, which prints only
+  // "submitted" on that stage and would lose the amount and recipient
+  // (WEB_INTERFACE → The profile window; the identity display's 16-glyph
+  // prefix, → The identity display).
   const ps = ctx.pendingSend;
   if (ps !== null) {
-    const who = ps.toName !== null ? '@' + ps.toName : shortHex(ps.toHex, 10);
-    flight.appendChild(stageLine({ stage: 'submitted', reason: `${formatCredits(ps.amount)} $NOTIS to ${who}` }));
-    // The transient send flight's ending: rejected reads its reason, expired
-    // reads its height (stageLine covers both). A submitting is the App's
-    // stateFlight; a submitted comes from the ledger above.
+    const who = ps.toName !== null ? '@' + ps.toName : shortHex(ps.toHex, 16);
+    const l = el('div', 'stage');
+    l.textContent = `${formatCredits(ps.amount)} $NOTIS to ${who} · submitted`;
+    flight.appendChild(l);
   } else if (ctx.sendFlight) {
-    flight.appendChild(stageLine(ctx.sendFlight));
+    if (ctx.sendFlight.stage === 'landed') {
+      flight.appendChild(el('div', 'stage', 'sent'));
+    } else {
+      flight.appendChild(stageLine(ctx.sendFlight));
+    }
   }
 }
 
@@ -788,11 +823,14 @@ function sendForm(slot: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx)
     // mounts the unlock form first.
     sendConfirm(slot, handlers, ctx, { toHex, toName, amount, raw, amountText: amountInput.value });
   };
+
+  slot.appendChild(form);
 }
 
 /** The confirm row for a send — the burn's pattern. `keep` restores the form
  *  with its values so the reader made no mistake; `send` on a locked identity
- *  mounts the unlock form first, then proceeds. */
+ *  mounts the unlock form first, then proceeds. The prefix is 16 glyphs
+ *  (WEB_INTERFACE → The identity display). */
 function sendConfirm(
   slot: HTMLElement,
   handlers: ProfileHandlers,
@@ -802,7 +840,7 @@ function sendConfirm(
   const wrap = el('div', 'pf-confirm');
   const q = el('div', 'pf-refusal');
   const amount = formatCredits(built.amount);
-  const prefix = shortHex(built.toHex, 10);
+  const prefix = shortHex(built.toHex, 16);
   if (built.toName !== null) {
     q.append('send ', amount, ' $NOTIS to @' + built.toName + ' · ', mono(prefix), '?');
   } else {
@@ -813,7 +851,9 @@ function sendConfirm(
   const sendBtn = el('button', 'word', 'send') as HTMLButtonElement;
   const keep = el('button', 'word', 'keep') as HTMLButtonElement;
 
+  const onEscape = (e: KeyboardEvent): void => { if (e.key === 'Escape') restoreForm(); };
   const restoreForm = (): void => {
+    slot.removeEventListener('keydown', onEscape);
     slot.replaceChildren();
     sendForm(slot, handlers, ctx);
     const f = slot.querySelector<HTMLFormElement>('form');
@@ -832,6 +872,7 @@ function sendConfirm(
           id.pubKeyHex,
           async (p) => {
             await handlers.unlockIdentity(p);
+            restoreForm();
             handlers.send(built.toHex, built.toName, built.amount);
           },
           restoreForm,
@@ -839,10 +880,13 @@ function sendConfirm(
       );
       return;
     }
+    // Restore the form with its values before the flight begins — every
+    // ending but `result.ok` leaves them intact; the App clears them via
+    // `resetCreditsSendForm` (WEB_INTERFACE → The wallet).
+    restoreForm();
     handlers.send(built.toHex, built.toName, built.amount);
   });
 
-  const onEscape = (e: KeyboardEvent): void => { if (e.key === 'Escape') restoreForm(); };
   keep.addEventListener('click', restoreForm);
   actions.append(sendBtn, keep);
   wrap.appendChild(actions);

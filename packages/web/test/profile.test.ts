@@ -1,10 +1,11 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { profileBody, renderInvitesRow, renderUsernameRow, type ProfileHandlers, type ProfileCtx } from '../src/view/profile';
+import { profileBody, renderInvitesRow, renderUsernameRow, renderCreditsRow, resetCreditsSendForm, type ProfileHandlers, type ProfileCtx } from '../src/view/profile';
 import { karmaResult } from './karma-fixture';
 import { prefs } from '../src/prefs';
+import { shortHex } from '../src/dom';
 import type { Origin } from '../src/model/workspace';
-import type { UsernameResult } from '../src/api/dto';
+import type { CreditsResult, StatusResult, UsernameResult } from '../src/api/dto';
 
 const ORIGIN: Origin = { from: 'pane', ci: 0 };
 
@@ -50,7 +51,7 @@ function ctx(over: Partial<ProfileCtx> = {}): ProfileCtx {
     arrangement: '', identity: null, backedUp: false, karma: null, grant: null, membershipBars: null,
     invite: null, canAffordMinBond: false, bonds: null, inviteFlight: null,
     ownName: null, ownNameLoaded: true, usernameFlight: null, pendingUsername: null, canSignClaim: false, canAffordBurn: false,
-    credits: null, creditGrant: null, sendFlight: null, pendingSend: null,
+    status: null, credits: null, creditGrant: null, sendFlight: null, pendingSend: null,
     ...over,
   };
 }
@@ -656,5 +657,353 @@ describe('profile — the username row', () => {
     renderUsernameRow(f, h, c2);
     expect(f.querySelector('.handle')?.textContent).toBe('@Alice_01');
     expect(f.querySelector('form')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The $NOTIS row — WEB_INTERFACE → The profile window.
+// Every state is rendered from a ctx shape the App produces. A locked press
+// mounts the unlock row in place; a landing renders *sent* in the flight slot;
+// the form the reader is filling survives every in-place update.
+// ---------------------------------------------------------------------------
+
+const REC = 'cd'.repeat(32);
+const REC_NAME = 'bob';
+
+function statusAt(blockHeight: number): StatusResult {
+  return {
+    networkType: 'testnet', blockHeight, protocolVersion: 1, postCount: 0, pendingPosts: 0,
+    totalKarma: '0', liquidKarma: '0', totalCredits: '0', inviteProbationBlocks: 0, vouchCooldownBlocks: 0,
+    inviteBondMin: '0', inviteBondMax: '0', membership: { memberCount: 1, memberBar: 1, memberLikesBar: 2 },
+  };
+}
+
+function creditsResult(over: Partial<CreditsResult> = {}): CreditsResult {
+  return { userId: KEY, total: '0', boxes: [], boxCount: 0, next: null, ...over };
+}
+
+function creditsCtx(over: Partial<ProfileCtx> = {}): ProfileCtx {
+  return ctx({ identity: unlocked, status: statusAt(1000), credits: creditsResult(), ...over });
+}
+
+describe('profile window — the $NOTIS row', () => {
+  beforeEach(() => { prefs.faucet = ''; });
+
+  it('credits null shows —', () => {
+    const f = rowField(render(handlers(), ctx({ identity: unlocked })), '$NOTIS')!;
+    expect(f.querySelector('.credits-line')?.textContent).toBe('—');
+    expect(f.querySelector('form.credits-form')).toBeNull();
+    expect(f.querySelector('.credits-flight')?.textContent).toBe('');
+  });
+
+  it('a spendable sum shows the balance in gold + $NOTIS, no locked hint', () => {
+    const c = creditsCtx({
+      credits: creditsResult({ boxes: [{ boxId: 'a'.repeat(32), value: '1250000000' }], boxCount: 1 }),
+    });
+    const f = rowField(render(handlers(), c), '$NOTIS')!;
+    const bal = f.querySelector('.mono.gold') as HTMLElement;
+    expect(bal.textContent).toBe('12.5');
+    expect(f.querySelector('.credits-line')?.textContent).toContain('12.5');
+    expect(f.querySelector('.credits-line')?.textContent).toContain('$NOTIS');
+    expect(f.querySelector('.credits-line .hint')).toBeNull();
+    expect(f.querySelector('form.credits-form')).not.toBeNull();
+  });
+
+  it('a locked box past height stays out of the balance and the hint reads its value (READ-1 defect 1)', () => {
+    // One unlocked at 100_000_000 (1 $NOTIS), one locked to block 2000, height 1000.
+    const c = creditsCtx({
+      credits: creditsResult({
+        boxes: [
+          { boxId: 'a'.repeat(32), value: '100000000' },
+          { boxId: 'b'.repeat(32), value: '900000000', lockedUntilBlock: 2000 },
+        ],
+        boxCount: 2,
+      }),
+    });
+    const f = rowField(render(handlers(), c), '$NOTIS')!;
+    expect((f.querySelector('.mono.gold') as HTMLElement).textContent).toBe('1');
+    const hint = f.querySelector('.credits-line .hint');
+    expect(hint?.textContent).toContain('9 $NOTIS more unlock by block ');
+    expect(hint?.textContent).toContain('2000');
+    // The total is NOT summed with the locked value — the hint stands beside it.
+    expect((f.querySelector('.mono.gold') as HTMLElement).textContent).not.toBe('10');
+  });
+
+  it('a lockedUntilBlock === height is spendable, one past drops (READ-1 defect 1, the boundary)', () => {
+    const c = creditsCtx({
+      status: statusAt(1000),
+      credits: creditsResult({
+        boxes: [
+          { boxId: 'a'.repeat(32), value: '100000000', lockedUntilBlock: 1000 }, // === height, kept
+          { boxId: 'b'.repeat(32), value: '200000000', lockedUntilBlock: 1001 }, // one past, dropped
+        ],
+        boxCount: 2,
+      }),
+    });
+    const f = rowField(render(handlers(), c), '$NOTIS')!;
+    expect((f.querySelector('.mono.gold') as HTMLElement).textContent).toBe('1');
+    expect(f.querySelector('.credits-line .hint')?.textContent).toContain('2 $NOTIS more');
+  });
+
+  it('only locked boxes → the zero branch with the locked hint beneath (READ-1 defect 1)', () => {
+    prefs.faucet = ''; // no faucet → the zero branch reads "no $NOTIS yet."
+    const c = creditsCtx({
+      credits: creditsResult({
+        boxes: [{ boxId: 'a'.repeat(32), value: '900000000', lockedUntilBlock: 2000 }],
+        boxCount: 1,
+      }),
+    });
+    const f = rowField(render(handlers(), c), '$NOTIS')!;
+    const line = f.querySelector('.credits-line')!;
+    expect(line.textContent).toContain('no $NOTIS yet.');
+    expect(line.querySelector('.hint')?.textContent).toContain('9 $NOTIS more unlock by block');
+    expect(f.querySelector('form.credits-form')).toBeNull();
+  });
+
+  it('faucet configured, no spendable → *ask the faucet for $NOTIS*', () => {
+    prefs.faucet = '/faucet';
+    const f = rowField(render(handlers(), creditsCtx()), '$NOTIS')!;
+    expect(button(f, 'ask the faucet for $NOTIS')).not.toBeNull();
+  });
+
+  it('faucet configured, grant pending → working…', () => {
+    prefs.faucet = '/faucet';
+    const f = rowField(render(handlers(), creditsCtx({ creditGrant: { state: 'pending' } })), '$NOTIS')!;
+    expect(f.querySelector('.credits-line')?.textContent).toContain('working…');
+    expect(button(f, 'ask the faucet for $NOTIS')).toBeNull();
+  });
+
+  it('faucet configured, grant expired → the height and *ask again*', () => {
+    prefs.faucet = '/faucet';
+    const f = rowField(render(handlers(), creditsCtx({ creditGrant: { state: 'expired', atHeight: 5999 } })), '$NOTIS')!;
+    expect(f.querySelector('.credits-line')?.textContent).toContain("no block took the faucet's transfer");
+    expect(f.querySelector('.credits-line')?.textContent).toContain('5999');
+    expect(button(f, 'ask again')).not.toBeNull();
+  });
+
+  it('no faucet configured, no credits → *no $NOTIS yet.*', () => {
+    prefs.faucet = '';
+    const f = rowField(render(handlers(), creditsCtx()), '$NOTIS')!;
+    expect(f.querySelector('.credits-line')?.textContent).toContain('no $NOTIS yet.');
+    expect(button(f, 'ask the faucet for $NOTIS')).toBeNull();
+  });
+
+  it('the send form validates: empty amount, non-numeric, zero, ninth decimal, own key', async () => {
+    const c = creditsCtx({
+      credits: creditsResult({ boxes: [{ boxId: 'a'.repeat(32), value: '10000000000' }], boxCount: 1 }),
+    });
+    const f = rowField(render(handlers(), c), '$NOTIS')!;
+    const form = f.querySelector('form.credits-form') as HTMLFormElement;
+    const to = form.querySelector<HTMLInputElement>('input[aria-label*="recipient"]')!;
+    const amount = form.querySelector<HTMLInputElement>('input[aria-label*="amount"]')!;
+    const refusal = form.querySelector<HTMLElement>('.pf-refusal')!;
+
+    const submit = async (t: string, a: string): Promise<void> => {
+      to.value = t; amount.value = a;
+      form.dispatchEvent(new Event('submit', { cancelable: true }));
+      await flush();
+    };
+
+    // Empty amount.
+    await submit(REC, '');
+    expect(refusal.hidden).toBe(false);
+    expect(refusal.textContent).toContain('an amount is digits');
+    // A non-numeric amount.
+    await submit(REC, 'x');
+    expect(refusal.textContent).toContain('an amount is digits');
+    // Zero.
+    await submit(REC, '0');
+    expect(refusal.textContent).toContain('an amount is digits');
+    // Ninth decimal.
+    await submit(REC, '0.123456789');
+    expect(refusal.textContent).toContain('an amount is digits');
+    // Own key → *that is your own key.*
+    await submit(KEY, '1');
+    expect(refusal.textContent).toContain('your own key');
+    // Not a key or a name.
+    await submit('!!', '1');
+    expect(refusal.textContent).toContain('not a key or a name');
+  });
+
+  it('the confirm row: two texts with the 16-glyph prefix (READ-1 nit)', async () => {
+    // resolveRecipient answers a resolved handle for the "@bob" input; the confirm
+    // shows the handle and the 16-glyph key prefix.
+    const h = handlers({ resolveRecipient: async () => ({ key: REC, name: REC_NAME }) });
+    const c = creditsCtx({
+      credits: creditsResult({ boxes: [{ boxId: 'a'.repeat(32), value: '10000000000' }], boxCount: 1 }),
+    });
+    const f = rowField(render(h, c), '$NOTIS')!;
+    const form = f.querySelector('form.credits-form') as HTMLFormElement;
+    const to = form.querySelector<HTMLInputElement>('input[aria-label*="recipient"]')!;
+    const amount = form.querySelector<HTMLInputElement>('input[aria-label*="amount"]')!;
+
+    to.value = '@bob'; amount.value = '12.5';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    let confirm = f.querySelector('.pf-confirm') as HTMLElement;
+    expect(confirm).not.toBeNull();
+    expect(confirm.textContent).toContain('send 12.5 $NOTIS to @bob · ');
+    expect(confirm.querySelector('.mono')?.textContent).toBe(shortHex(REC, 16));
+
+    // A bare key input → the second text: no handle, the prefix in mono.
+    // Re-query the form — restoreForm builds a fresh element on keep.
+    button(f, 'keep')!.click();
+    const OTHER = 'ff'.repeat(32);
+    const form2 = f.querySelector('form.credits-form') as HTMLFormElement;
+    const to2 = form2.querySelector<HTMLInputElement>('input[aria-label*="recipient"]')!;
+    const amount2 = form2.querySelector<HTMLInputElement>('input[aria-label*="amount"]')!;
+    to2.value = OTHER; amount2.value = '1';
+    form2.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    confirm = f.querySelector('.pf-confirm') as HTMLElement;
+    expect(confirm).not.toBeNull();
+    expect(confirm.textContent).toContain('send 1 $NOTIS to ');
+    expect(confirm.textContent).not.toContain('@');
+    expect(confirm.querySelector('.mono')?.textContent).toBe(shortHex(OTHER, 16));
+  });
+
+  it('keep restores the form with its values', async () => {
+    const c = creditsCtx({
+      credits: creditsResult({ boxes: [{ boxId: 'a'.repeat(32), value: '10000000000' }], boxCount: 1 }),
+    });
+    const f = rowField(render(handlers(), c), '$NOTIS')!;
+    const form = f.querySelector('form.credits-form') as HTMLFormElement;
+    const to = form.querySelector<HTMLInputElement>('input[aria-label*="recipient"]')!;
+    const amount = form.querySelector<HTMLInputElement>('input[aria-label*="amount"]')!;
+    to.value = REC; amount.value = '3.14';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    // The confirm row is up.
+    expect(f.querySelector('.pf-confirm')).not.toBeNull();
+    button(f, 'keep')!.click();
+    // The form is back with its values.
+    const back = f.querySelector('form.credits-form') as HTMLFormElement;
+    const inputs = back.querySelectorAll<HTMLInputElement>('input');
+    expect(inputs[0]!.value).toBe(REC);
+    expect(inputs[1]!.value).toBe('3.14');
+  });
+
+  it('a locked press on send mounts the unlock row and calls no handler', async () => {
+    const sent: Array<[string, string | null, bigint]> = [];
+    const h = handlers({ send: (k, n, a) => sent.push([k, n, a]) });
+    const c = creditsCtx({
+      identity: { pubKeyHex: KEY, locked: true },
+      credits: creditsResult({ boxes: [{ boxId: 'a'.repeat(32), value: '10000000000' }], boxCount: 1 }),
+    });
+    const f = rowField(render(h, c), '$NOTIS')!;
+    const form = f.querySelector('form.credits-form') as HTMLFormElement;
+    const to = form.querySelector<HTMLInputElement>('input[aria-label*="recipient"]')!;
+    const amount = form.querySelector<HTMLInputElement>('input[aria-label*="amount"]')!;
+    to.value = REC; amount.value = '1';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    // Confirm shown → press send → the wrap becomes the unlock form.
+    const confirm = f.querySelector('.pf-confirm') as HTMLElement;
+    const sendBtn = [...confirm.querySelectorAll('button')].find((b) => b.textContent === 'send') as HTMLButtonElement;
+    sendBtn.click();
+    // The unlock form is now in the confirm's wrap; the send handler was not called.
+    expect(f.querySelector('form.pf')?.querySelector<HTMLInputElement>('input[type="password"]')).not.toBeNull();
+    expect(sent).toHaveLength(0);
+  });
+
+  it('the pending line reads *<amount> $NOTIS to @bob · submitted* (READ-1 defect 2)', () => {
+    const c = creditsCtx({
+      credits: creditsResult({ boxes: [{ boxId: 'a'.repeat(32), value: '10000000000' }], boxCount: 1 }),
+      pendingSend: { toHex: REC, toName: 'bob', amount: 1_250_000_000n },
+    });
+    const f = rowField(render(handlers(), c), '$NOTIS')!;
+    expect(f.querySelector('.credits-flight')?.textContent).toBe('12.5 $NOTIS to @bob · submitted');
+  });
+
+  it('the pending line falls back to the 16-glyph prefix when toName is null (READ-1 defect 2)', () => {
+    const c = creditsCtx({
+      credits: creditsResult({ boxes: [{ boxId: 'a'.repeat(32), value: '10000000000' }], boxCount: 1 }),
+      pendingSend: { toHex: REC, toName: null, amount: 1_250_000_000n },
+    });
+    const f = rowField(render(handlers(), c), '$NOTIS')!;
+    expect(f.querySelector('.credits-flight')?.textContent).toBe(`12.5 $NOTIS to ${shortHex(REC, 16)} · submitted`);
+  });
+
+  it('a landed flight reads *sent* (READ-1 defect 4)', () => {
+    const c = creditsCtx({
+      credits: creditsResult({ boxes: [{ boxId: 'a'.repeat(32), value: '10000000000' }], boxCount: 1 }),
+      sendFlight: { stage: 'landed' },
+    });
+    const f = rowField(render(handlers(), c), '$NOTIS')!;
+    expect(f.querySelector('.credits-flight')?.textContent).toBe('sent');
+  });
+
+  it('a rejected flight reads the reason; a notSent flight reads *not sent.*; an expired one reads the height', () => {
+    const rejected = rowField(render(handlers(), creditsCtx({
+      credits: creditsResult({ boxes: [{ boxId: 'a'.repeat(32), value: '10000000000' }], boxCount: 1 }),
+      sendFlight: { stage: 'rejected', reason: 'send rejected: not enough $NOTIS.' },
+    })), '$NOTIS')!;
+    expect(rejected.querySelector('.credits-flight')?.textContent).toContain('not enough $NOTIS.');
+
+    const notSent = rowField(render(handlers(), creditsCtx({
+      credits: creditsResult({ boxes: [{ boxId: 'a'.repeat(32), value: '10000000000' }], boxCount: 1 }),
+      sendFlight: { stage: 'rejected', reason: 'send not sent.' },
+    })), '$NOTIS')!;
+    expect(notSent.querySelector('.credits-flight')?.textContent).toContain('send not sent.');
+
+    const expired = rowField(render(handlers(), creditsCtx({
+      credits: creditsResult({ boxes: [{ boxId: 'a'.repeat(32), value: '10000000000' }], boxCount: 1 }),
+      sendFlight: { stage: 'expired', expiresAtHeight: 9000 },
+    })), '$NOTIS')!;
+    expect(expired.querySelector('.credits-flight')?.textContent).toContain('9,000');
+  });
+
+  it('renderCreditsRow leaves the form the reader is filling in place (READ-1 defect 3)', () => {
+    const c = creditsCtx({
+      credits: creditsResult({ boxes: [{ boxId: 'a'.repeat(32), value: '10000000000' }], boxCount: 1 }),
+    });
+    const body = render(handlers(), c);
+    const f = rowField(body, '$NOTIS')!;
+    const form = f.querySelector('form.credits-form') as HTMLFormElement;
+    const to = form.querySelector<HTMLInputElement>('input[aria-label*="recipient"]')!;
+    const amount = form.querySelector<HTMLInputElement>('input[aria-label*="amount"]')!;
+    to.value = REC; amount.value = '3.14';
+
+    // A pending send lands on this row via renderCreditsRow — the form must stay
+    // with its values (WEB_INTERFACE → The wallet).
+    const c2 = creditsCtx({
+      credits: creditsResult({ boxes: [{ boxId: 'a'.repeat(32), value: '10000000000' }], boxCount: 1 }),
+      sendFlight: { stage: 'rejected', reason: 'send not sent.' },
+    });
+    renderCreditsRow(f, handlers(), c2);
+    // Same form element, same values.
+    expect(f.querySelector('form.credits-form')).toBe(form);
+    const inputs = form.querySelectorAll<HTMLInputElement>('input');
+    expect(inputs[0]!.value).toBe(REC);
+    expect(inputs[1]!.value).toBe('3.14');
+    // The flight slot shows the ending.
+    expect(f.querySelector('.credits-flight')?.textContent).toContain('send not sent.');
+  });
+
+  it('resetCreditsSendForm clears the form after an accepted submission (READ-1 defect 3)', () => {
+    const c = creditsCtx({
+      credits: creditsResult({ boxes: [{ boxId: 'a'.repeat(32), value: '10000000000' }], boxCount: 1 }),
+    });
+    const f = rowField(render(handlers(), c), '$NOTIS')!;
+    const form = f.querySelector('form.credits-form') as HTMLFormElement;
+    const inputs = form.querySelectorAll<HTMLInputElement>('input');
+    inputs[0]!.value = REC; inputs[1]!.value = '3.14';
+    resetCreditsSendForm(f);
+    expect(inputs[0]!.value).toBe('');
+    expect(inputs[1]!.value).toBe('');
+  });
+
+  it('renderCreditsRow builds a form when the spendable side turns from zero to non-zero', () => {
+    // Empty at first — no form.
+    const empty = creditsCtx();
+    const body = render(handlers(), empty);
+    const f = rowField(body, '$NOTIS')!;
+    expect(f.querySelector('form.credits-form')).toBeNull();
+    // A grant lands: credits now hold a box; the update owes a fresh form.
+    const withCredits = creditsCtx({
+      credits: creditsResult({ boxes: [{ boxId: 'a'.repeat(32), value: '10000000000' }], boxCount: 1 }),
+    });
+    renderCreditsRow(f, handlers(), withCredits);
+    expect(f.querySelector('form.credits-form')).not.toBeNull();
   });
 });

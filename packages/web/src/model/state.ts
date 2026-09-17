@@ -130,6 +130,9 @@ export interface RenderCtx {
   // own /credits, null before the first read; creditGrant is a faucet transfer
   // in flight or one that lapsed; sendFlight is the transient ending; pendingSend
   // is the ledger's own send entry — the durable line that survives a reload.
+  // status is the last /status the App holds — its blockHeight is the tip the
+  // row's spendable-at-height filter reads (WEB_INTERFACE → The wallet).
+  status: StatusResult | null;
   credits: CreditsResult | null;
   creditGrant: { state: 'pending' } | { state: 'expired'; atHeight: number } | null;
   sendFlight: Flight | null;
