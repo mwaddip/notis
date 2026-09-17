@@ -79,17 +79,17 @@ function fakeWrite(): WriteClient {
 function fakeIdentity(): AppIdentity {
   return {
     current: () => idState,
-    sign: (t: string) => { signCalls.push(t); return 'ab'.repeat(64); },
+    sign: async (_bytes: Uint8Array, t: string) => { signCalls.push(t); return { signature: 'ab'.repeat(64) }; },
     onChange: (cb: () => void) => { onChangeCb = cb; },
-    draft: () => ({ pubKeyHex: ME }),
+    draft: async () => ({ pubKeyHex: ME }),
     create: async () => ({ pubKeyHex: ME }),
     discardDraft: () => {},
-    inspectFile: () => ({ kind: 'clear' as const, pubKeyHex: ME }),
+    inspectFile: async () => ({ kind: 'clear' as const, pubKeyHex: ME }),
     importFile: async () => ({ pubKeyHex: ME }),
     exportFile: async () => '',
     unlock: async () => {},
-    lock: () => {},
-    forget: () => {},
+    lock: async () => {},
+    forget: async () => {},
     backedUp: () => true,
   } as unknown as AppIdentity;
 }

@@ -5,7 +5,7 @@ import type { Mode } from './mode';
 import type { Tabs } from './tabs';
 import { el, shortHex, preservingScroll } from './dom';
 import { contentHashHex } from './integrity';
-import { prefs, setTheme, setIdTint, setNode, setFaucet, writeStore, KEY_LAYOUT, type Theme, type IdTint } from './prefs';
+import { prefs, setTheme, setIdTint, setNode, setFaucet, writeStore, readStore, BUILD_NODES, BUILD_PUBLIC, KEY_LAYOUT, KEY_NODE, type Theme, type IdTint } from './prefs';
 import { renderFeedInto, replaceFeedCard } from './view/feed';
 import { renderPanesInto, renderRegionElement, renderBars } from './view/panes';
 import { makeComposer, type ComposerController } from './view/composer';
@@ -120,6 +120,20 @@ function withdrawRejectionCopy(r: Rejection): string {
   return 'the node said: ' + m;
 }
 
+/** A notSigned reason mapped to what the region shows (WEB_INTERFACE → The
+ *  wallet, "the fourth ending is the composer still open"). `locked` reports
+ *  the race directly; the extension's `busy` refusal reads *"one approval at a
+ *  time."*; a `declined` reads *"<action> not sent."*; every other `refused`
+ *  carries its reason — *"<action> not sent: <reason>."*. The trailing period
+ *  of the reason is stripped before the template — the in-page module's
+ *  *"…64 hex characters."* would otherwise render *"…characters.."*. */
+function notSignedCopy(kind: 'locked' | 'declined' | 'refused', reason: string, action: string): string {
+  if (kind === 'locked') return 'your key is locked';
+  if (reason === 'busy') return 'one approval at a time.';
+  if (kind === 'refused') return `${action} not sent: ${reason.replace(/\.$/, '')}.`;
+  return `${action} not sent.`;
+}
+
 /** A username rejection in the voice register (WEB_INTERFACE → The username row,
  *  HOUSE_STYLE → Voice). A client-side refusal (status 0) already reads that way. */
 function usernameRejectionCopy(r: Rejection): string {
@@ -214,12 +228,25 @@ export class App {
   private usernameFlight: Flight | null = null;
   private usernameInFlight: { kind: 'claim' | 'burn'; name: string } | null = null;
 
+  // Optional in the extension build — the faucet row's `set` requests host
+  // permission for the origin before storing (WEB_INTERFACE → The profile
+  // window). Absent, the row stores without a permission check.
+  private readonly requestFaucetOrigin: ((origin: string) => Promise<boolean>) | null;
+
   // Every dependency is injectable so a test can drive the App over fakes.
-  constructor(client?: Api, writeClient?: WriteClient, identity?: AppIdentity, ledger?: PendingLedger, tabs?: Tabs) {
+  constructor(
+    client?: Api,
+    writeClient?: WriteClient,
+    identity?: AppIdentity,
+    ledger?: PendingLedger,
+    tabs?: Tabs,
+    requestFaucetOrigin?: (origin: string) => Promise<boolean>,
+  ) {
     this.client = client ?? new NodeClient(() => prefs.node);
     this.writeClient = writeClient ?? new WriteClient(() => prefs.node);
     this.idm = identity ?? identitySingleton;
     this.faucetClient = new FaucetClient(() => prefs.faucet);
+    this.requestFaucetOrigin = requestFaucetOrigin ?? null;
     // The ledger is for the identity loaded at construction; a change of identity
     // rebuilds it at once through onChange (WEB_INTERFACE → "An identity change
     // takes effect at once").
@@ -256,7 +283,7 @@ export class App {
       importIdentity: async (text, p) => { await this.idm.importFile(text, p); },
       exportIdentity: (p) => this.exportIdentity(p),
       forgetIdentity: () => this.idm.forget(),
-      lockIdentity: () => this.idm.lock(),
+      lockIdentity: async () => { await this.idm.lock(); this.renderRegionsFor('@profile'); },
       unlockIdentity: (p) => this.idm.unlock(p),
       askFaucet: () => void this.askFaucet(),
       openComposer: (parentId) => this.openComposer(parentId),
@@ -279,6 +306,20 @@ export class App {
       moreBonds: () => void this.moreBonds(),
       claimUsername: (name) => void this.claimUsername(name),
       burnUsername: () => void this.burnUsername(),
+      // The extension's identity exposes both policy and setPolicy; the in-page
+      // module implements neither, and the profile row renders only when both
+      // are present (WEB_INTERFACE → The profile window). setPolicy re-renders
+      // the profile after the proxy's snapshot refreshes, so the row's pressed
+      // state moves without waiting on the next unrelated draw.
+      ...(this.idm.policy && this.idm.setPolicy
+        ? {
+            policy: () => this.idm.policy!(),
+            setPolicy: async (p) => { await this.idm.setPolicy!(p); this.renderRegionsFor('@profile'); },
+          }
+        : {}),
+      ...(this.requestFaucetOrigin
+        ? { requestFaucetOrigin: (origin: string) => this.requestFaucetOrigin!(origin) }
+        : {}),
     };
   }
 
@@ -474,7 +515,12 @@ export class App {
       pendingUsername: this.usernameInFlight ?? pendingUsernameEntry(this.ledger.all()),
       canSignClaim: this.canSignWithdraw(), // same predicate — a spendable box
       canAffordBurn: this.canAffordBurn(),
-      linkUrl: (id) => new URL(this.base + 'p/' + id, location.href).href,
+      // notis-public names the origin + base a shareable link should carry;
+      // empty means the current location, which is the web build's default
+      // (WEB_INTERFACE → "The client is served from the node's own origin").
+      linkUrl: (id) => BUILD_PUBLIC !== ''
+        ? BUILD_PUBLIC + 'p/' + id
+        : new URL(this.base + 'p/' + id, location.href).href,
     };
   }
 
@@ -958,10 +1004,50 @@ export class App {
       feed.loading = false;
       this.indexRows([...res.posts, ...res.pending]);
     } catch (e) {
-      feed.loading = false;
-      feed.error = msg(e);
+      // No stored preference and a seed list — walk it, adopting the first one
+      // that answers, for the session only (WEB_INTERFACE → "The client is
+      // served from the node's own origin"). When none answers, the friendly
+      // line names the state.
+      if (readStore(KEY_NODE) === null && BUILD_NODES.length > 0) {
+        const walked = await this.walkSeedList();
+        if (walked !== null) {
+          feed.posts = walked.res.posts.filter(isLivePost);
+          feed.pending = this.dedupeOwn(walked.res.pending.filter(isLivePost));
+          feed.next = walked.res.next;
+          feed.loaded = true;
+          feed.loading = false;
+          this.indexRows([...walked.res.posts, ...walked.res.pending]);
+          this.renderFeed();
+          return;
+        }
+        feed.loading = false;
+        feed.error = 'no node answered — set one in @profile';
+      } else {
+        feed.loading = false;
+        feed.error = msg(e);
+      }
     }
     this.renderFeed();
+  }
+
+  /** Adopt the first seed after `prefs.node` that answers /status. In-memory,
+   *  never stored — the list keeps governing across the session
+   *  (WEB_INTERFACE → "The client is served from the node's own origin"). */
+  private async walkSeedList(): Promise<{ base: string; res: Awaited<ReturnType<Api['feed']>> } | null> {
+    const seen = new Set([prefs.node]);
+    for (const base of BUILD_NODES) {
+      if (seen.has(base)) continue;
+      seen.add(base);
+      const probe = new NodeClient(() => base);
+      try {
+        const res = await probe.feed({ limit: FEED_LIMIT }, this.viewer(), undefined, true);
+        prefs.node = base; // session only — no writeStore.
+        return { base, res };
+      } catch {
+        // try the next entry
+      }
+    }
+    return null;
   }
 
   private async refreshFeed(): Promise<void> {
@@ -1464,9 +1550,8 @@ export class App {
     const cur = this.idm.current();
     if (cur === null) return;
     if (cur.locked) {
-      // The seed is not loaded and sign is synchronous, so the unlock is a form in
-      // the composer foot; on success the flight continues (WEB_INTERFACE → The
-      // identity module). Esc returns to editing with the draft intact.
+      // The pre-check: mount the unlock form in the composer foot. Esc returns to
+      // editing with the draft intact (WEB_INTERFACE → The identity module).
       const ctrl = this.composers.get(composerKey(parentId));
       if (!ctrl) return;
       ctrl.showUnlock(cur.pubKeyHex, async (p) => {
@@ -1477,25 +1562,80 @@ export class App {
       });
       return;
     }
-    // Collapse the composer into the hollow card in the same slot at once.
-    this.composers.delete(composerKey(parentId));
-    const submission: Submission = {
-      localKey: 'local-' + ++this.submitSeq,
-      content: text,
-      parentId,
-      author: cur.pubKeyHex,
-      contentHash: contentHashHex(text),
-      stage: 'submitting',
-      txId: null,
-      postId: null,
-      blockHeight: null,
-      expiresAtHeight: null,
-      reason: null,
+    const ctrl = this.composers.get(composerKey(parentId));
+    if (!ctrl) return;
+    // The composer takes its `sending` look; the collapse into the hollow card
+    // moves to after the signature (WEB_INTERFACE → The wallet, "the fourth
+    // ending is the composer still open"). No hollow card exists while sign is
+    // unresolved.
+    ctrl.setSending(true);
+    let submission = null as Submission | null;
+    const onSigned = (): void => {
+      // Between the sign and the POST: collapse the composer, push the pending
+      // submission, and render the hollow card in the same slot.
+      this.composers.delete(composerKey(parentId));
+      submission = {
+        localKey: 'local-' + ++this.submitSeq,
+        content: text,
+        parentId,
+        author: cur.pubKeyHex,
+        contentHash: contentHashHex(text),
+        stage: 'submitting',
+        txId: null,
+        postId: null,
+        blockHeight: null,
+        expiresAtHeight: null,
+        reason: null,
+      };
+      this.state.submissions.push(submission);
+      this.renderForParent(parentId);
+      this.focusOpener(parentId);
     };
-    this.state.submissions.push(submission);
-    this.renderForParent(parentId);
-    this.focusOpener(parentId);
-    await this.flight(submission, () => submitPostFlow(this.submitDeps(), text, parentId));
+    let result;
+    try {
+      result = await submitPostFlow({ ...this.submitDeps(), onSigned }, text, parentId);
+    } catch {
+      // A transport failure. Before the sign — a pre-sign read threw and
+      // onSigned never fired — the composer is still open with its text; after
+      // the sign, the submission is present and settles as *rejected*.
+      if (submission === null) {
+        ctrl.setSending(false);
+        ctrl.setNotSent("can't reach the node right now.");
+      } else {
+        submission.stage = 'rejected';
+        submission.reason = "can't reach the node right now.";
+        this.renderForParent(parentId);
+      }
+      return;
+    }
+    if (result.ok) {
+      // The sign fired, so onSigned fired, so the submission is present.
+      this.settle(submission!, result);
+      return;
+    }
+    if ('rejection' in result) {
+      // A rejection can precede the sign (a no-confirmedAuthor reply,
+      // InsufficientKarma). onSigned then never fired and the composer is still
+      // open with its text; after the sign, the submission settles as *rejected*.
+      if (submission === null) {
+        ctrl.setSending(false);
+        ctrl.setNotSent(postRejectionCopy(result.rejection));
+      } else {
+        this.settle(submission, result);
+      }
+      return;
+    }
+    // notSigned — no hollow card, composer still open with its text.
+    if (result.notSigned === 'locked') {
+      ctrl.setSending(false);
+      ctrl.showUnlock(cur.pubKeyHex, async (p) => {
+        await this.idm.unlock(p);
+        await this.submitComposer(parentId, ctrl.text());
+      });
+    } else {
+      ctrl.setSending(false);
+      ctrl.setNotSent(notSignedCopy(result.notSigned, result.reason, 'post'));
+    }
   }
 
   private async tryAgain(localKey: string): Promise<void> {
@@ -1513,22 +1653,38 @@ export class App {
     await this.flight(sub, () => submitPostFlow(this.submitDeps(), sub.content, sub.parentId));
   }
 
-  /** Drive a submission's flight: submitted on a 2xx, rejected otherwise. */
+  /** Drive a submission's flight from a `try again`. notSigned there has no
+   *  composer to return to, so it returns the card to *expired* with the same
+   *  action still offered (WEB_INTERFACE → The wallet). */
   private async flight(
     sub: Submission,
-    run: () => Promise<{ ok: true; entry: { txId: string; postId: string; expiresAtHeight: number } } | { ok: false; rejection: Rejection }>,
+    run: () => Promise<{ ok: true; entry: { txId: string; postId: string; expiresAtHeight: number } } | { ok: false; rejection: Rejection } | { ok: false; notSigned: 'locked' | 'declined' | 'refused'; reason: string }>,
   ): Promise<void> {
     let result;
     try {
       result = await run();
     } catch {
-      // A transport failure is an ending, not a stuck 'submitting' (WEB_INTERFACE →
-      // The wallet: every flight ends in one of the three endings).
       sub.stage = 'rejected';
       sub.reason = "can't reach the node right now.";
       this.renderForParent(sub.parentId);
       return;
     }
+    if (result.ok || 'rejection' in result) {
+      this.settle(sub, result);
+      return;
+    }
+    // notSigned during a try-again — return the card to *expired* with the
+    // action still offered.
+    sub.stage = 'expired';
+    this.renderForParent(sub.parentId);
+  }
+
+  /** Land a signed submission's flight — the two settling arms shared by
+   *  submitComposer and the try-again path (WEB_INTERFACE → The wallet). */
+  private settle(
+    sub: Submission,
+    result: { ok: true; entry: { txId: string; postId: string; expiresAtHeight: number } } | { ok: false; rejection: Rejection },
+  ): void {
     if (result.ok) {
       sub.stage = 'submitted';
       sub.txId = result.entry.txId;
@@ -1566,7 +1722,10 @@ export class App {
       return;
     }
     this.optimisticLikes.delete(postId);
-    this.setReportForPost(postId, 'like rejected: ' + likeRejectionCopy(result.rejection));
+    const line = 'rejection' in result
+      ? 'like rejected: ' + likeRejectionCopy(result.rejection)
+      : notSignedCopy(result.notSigned, result.reason, 'like');
+    this.setReportForPost(postId, line);
     this.renderRegionsForPost(postId);
     if (this.feedHasPost(postId)) this.renderFeed();
   }
@@ -1592,12 +1751,14 @@ export class App {
       return;
     }
     // Either way the transient flight steps aside: on ok the ledger's entry now
-    // renders 'submitted'; on a rejection the control returns.
+    // renders 'submitted'; on a rejection or notSigned the control returns.
     this.withdrawFlights.delete(postId);
     if (result.ok) {
       this.startPoll();
-    } else {
+    } else if ('rejection' in result) {
       this.setReportForPost(postId, 'withdraw rejected: ' + withdrawRejectionCopy(result.rejection));
+    } else {
+      this.setReportForPost(postId, notSignedCopy(result.notSigned, result.reason, 'withdraw'));
     }
     this.renderRegionsForPost(postId);
   }
@@ -1784,7 +1945,10 @@ export class App {
       this.startPoll();
     } else {
       this.optimisticVouches.delete(key);
-      if (d) d.flight = { stage: 'rejected', reason: 'vouch rejected: ' + vouchRejectionCopy(result.rejection) };
+      const reason = 'rejection' in result
+        ? 'vouch rejected: ' + vouchRejectionCopy(result.rejection)
+        : notSignedCopy(result.notSigned, result.reason, 'vouch');
+      if (d) d.flight = { stage: 'rejected', reason };
     }
     this.renderRegionsFor(authorWindowId(key));
   }
@@ -1809,7 +1973,12 @@ export class App {
       if (d) d.flight = { stage: 'submitted' };
       this.startPoll();
     } else if (d) {
-      d.flight = { stage: 'rejected', reason: 'unvouch rejected: ' + vouchRejectionCopy(result.rejection) };
+      d.flight = {
+        stage: 'rejected',
+        reason: 'rejection' in result
+          ? 'unvouch rejected: ' + vouchRejectionCopy(result.rejection)
+          : notSignedCopy(result.notSigned, result.reason, 'unvouch'),
+      };
     }
     this.renderRegionsFor(authorWindowId(key));
   }
@@ -1990,7 +2159,10 @@ export class App {
       this.inviteFlight = { stage: 'submitted' };
       this.startPoll();
     } else {
-      this.inviteFlight = { stage: 'rejected', reason: 'invite rejected: ' + inviteRejectionCopy(result.rejection) };
+      const reason = 'rejection' in result
+        ? 'invite rejected: ' + inviteRejectionCopy(result.rejection)
+        : notSignedCopy(result.notSigned, result.reason, 'invite');
+      this.inviteFlight = { stage: 'rejected', reason };
     }
     this.renderInvitesRowInPlace();
   }
@@ -2046,7 +2218,10 @@ export class App {
       this.usernameFlight = null;
       this.startPoll();
     } else {
-      this.usernameFlight = { stage: 'rejected', reason: 'claim rejected: ' + usernameRejectionCopy(result.rejection) };
+      const reason = 'rejection' in result
+        ? 'claim rejected: ' + usernameRejectionCopy(result.rejection)
+        : notSignedCopy(result.notSigned, result.reason, 'claim');
+      this.usernameFlight = { stage: 'rejected', reason };
     }
     this.renderUsernameRowInPlace();
   }
@@ -2073,7 +2248,10 @@ export class App {
       this.usernameFlight = null;
       this.startPoll();
     } else {
-      this.usernameFlight = { stage: 'rejected', reason: 'burn rejected: ' + usernameRejectionCopy(result.rejection) };
+      const reason = 'rejection' in result
+        ? 'burn rejected: ' + usernameRejectionCopy(result.rejection)
+        : notSignedCopy(result.notSigned, result.reason, 'burn');
+      this.usernameFlight = { stage: 'rejected', reason };
     }
     this.renderUsernameRowInPlace();
   }

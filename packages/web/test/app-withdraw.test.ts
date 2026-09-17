@@ -49,16 +49,16 @@ function harness(resp: WithdrawResp = { kind: 'ok' }) {
   let listener: ((id: { pubKeyHex: string } | null) => void) | null = null;
   const identity: AppIdentity = {
     current: () => ({ pubKeyHex: PUB, locked: false }),
-    sign: (t) => { signCalls.push(t); return 'ab'.repeat(64); },
-    draft: () => ({ pubKeyHex: PUB }),
+    sign: async (_bytes, t) => { signCalls.push(t); return { signature: 'ab'.repeat(64) }; },
+    draft: async () => ({ pubKeyHex: PUB }),
     create: async () => ({ pubKeyHex: PUB }),
     discardDraft: () => {},
-    inspectFile: () => ({ kind: 'clear', pubKeyHex: PUB }),
+    inspectFile: async () => ({ kind: 'clear', pubKeyHex: PUB }),
     importFile: async () => ({ pubKeyHex: PUB }),
     exportFile: async () => '{}',
     unlock: async () => {},
-    lock: () => {},
-    forget: () => {},
+    lock: async () => {},
+    forget: async () => {},
     backedUp: () => false,
     onChange: (l) => { listener = l; },
   };
@@ -105,6 +105,7 @@ function harness(resp: WithdrawResp = { kind: 'ok' }) {
 
   const drive = app as unknown as {
     submitComposer(parentId: string | null, text: string): Promise<void>;
+    openComposer(parentId: string | null): void;
     withdrawPost(postId: string): Promise<void>;
     pollTick(): Promise<void>;
     loadFeed(): Promise<void>;
@@ -330,6 +331,8 @@ describe("the App withdraw landing settles the post's own submission card", () =
     await h.drive.loadMembershipState(); // profileKarma → canSignWithdraw
     // The node confirms NEW, then the poll lands the submission.
     h.setNode(NEW, asResult(postJson(NEW, PUB)));
+    h.drive.openComposer(null);
+    await flush();
     await h.drive.submitComposer(null, text);
     await h.drive.pollTick();
     expect(h.drive.state.submissions[0]!.stage).toBe('landed');
@@ -367,6 +370,8 @@ describe("the App withdraw landing settles the post's own submission card", () =
     const { P, R } = await ownRootOpen(h); // P (own) open in a pane, one reply R by S
     // A reply under P through the composer; the node confirms NEW and the poll lands it.
     h.setNode(NEW, asResult(postJson(NEW, PUB, [P])));
+    h.drive.openComposer(P);
+    await flush();
     await h.drive.submitComposer(P, text);
     await h.drive.pollTick();
     expect(h.drive.state.submissions[0]!).toMatchObject({ stage: 'landed', postId: NEW, parentId: P });

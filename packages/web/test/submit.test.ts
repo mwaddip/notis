@@ -72,11 +72,13 @@ function reads(
 const vouchRow = (over: Partial<VouchesVoucherResult['vouches'][number]> = {}): VouchesVoucherResult['vouches'][number] => ({
   boxId: VOUCH_BOX, value: '1', createdAtBlock: 5900, voucherId: PUB, targetId: VOUCH_TARGET, voucherName: null, targetName: null, ...over,
 });
+let signHints: Array<{ content?: string } | undefined>;
 const identity = {
   current: () => ({ pubKeyHex: PUB }),
-  sign: (txId: string) => {
+  sign: async (_bytes: Uint8Array, txId: string, hint?: { content?: string }) => {
     signCalls.push(txId);
-    return SIG;
+    signHints.push(hint);
+    return { signature: SIG } as const;
   },
 };
 // The node echoes the id it computed over the received tx; the client signs its
@@ -137,6 +139,7 @@ function write(
 
 beforeEach(() => {
   signCalls = [];
+  signHints = [];
   postReads = [];
   writeCalls = [];
   heldName = null;
@@ -542,5 +545,200 @@ describe('submitBurnFlow', () => {
     expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough rep to burn right now.' } });
     expect(writeCalls).toEqual([]);
     expect(ledger.size).toBe(0);
+  });
+});
+
+// -------------------------------------------------------------------------
+// The notSigned arm — one for each ending a sign attempt can have. The wallet
+// short-circuits before the POST, records no entry, and hands the caller a
+// shape that names the ending (WEB_INTERFACE → The wallet).
+// -------------------------------------------------------------------------
+
+const identityLocked = {
+  current: () => ({ pubKeyHex: PUB }),
+  sign: async () => ({ locked: true }) as const,
+};
+const identityDeclined = {
+  current: () => ({ pubKeyHex: PUB }),
+  sign: async () => ({ declined: true }) as const,
+};
+const identityRefused = {
+  current: () => ({ pubKeyHex: PUB }),
+  sign: async () => ({ refused: 'busy' }) as const,
+};
+
+describe('the notSigned arm across every flow', () => {
+  it('post: locked short-circuits before POST, records no entry', async () => {
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity: identityLocked };
+    const res = await submitPostFlow(deps, 'a thread', null);
+    expect(res).toEqual({ ok: false, notSigned: 'locked', reason: 'your key is locked' });
+    expect(writeCalls).toEqual([]);
+    expect(ledger.size).toBe(0);
+  });
+
+  it('post: declined short-circuits before POST, records no entry', async () => {
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity: identityDeclined };
+    const res = await submitPostFlow(deps, 'a thread', null);
+    expect(res).toEqual({ ok: false, notSigned: 'declined', reason: 'not sent' });
+    expect(writeCalls).toEqual([]);
+    expect(ledger.size).toBe(0);
+  });
+
+  it('post: refused carries the reason string through', async () => {
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity: identityRefused };
+    const res = await submitPostFlow(deps, 'a thread', null);
+    expect(res).toEqual({ ok: false, notSigned: 'refused', reason: 'busy' });
+    expect(writeCalls).toEqual([]);
+    expect(ledger.size).toBe(0);
+  });
+
+  it('like: notSigned short-circuits before POST for each ending', async () => {
+    for (const id of [identityLocked, identityDeclined, identityRefused]) {
+      const ledger = new PendingLedger(PUB);
+      const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR), write: write(), ledger, identity: id };
+      const res = await submitLikeFlow(deps, TARGET_ID);
+      expect(res.ok).toBe(false);
+      if (res.ok) return;
+      expect('notSigned' in res).toBe(true);
+      expect(ledger.size).toBe(0);
+    }
+    expect(writeCalls).toEqual([]);
+  });
+
+  it('vouch: notSigned short-circuits before POST', async () => {
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity: identityDeclined };
+    const res = await submitVouchFlow(deps, VOUCH_TARGET);
+    expect(res).toEqual({ ok: false, notSigned: 'declined', reason: 'not sent' });
+    expect(writeCalls).toEqual([]);
+    expect(ledger.size).toBe(0);
+  });
+
+  it('unvouch: notSigned short-circuits before DELETE', async () => {
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [vouchRow()]), write: write(), ledger, identity: identityLocked };
+    const res = await submitUnvouchFlow(deps, VOUCH_TARGET);
+    expect(res).toEqual({ ok: false, notSigned: 'locked', reason: 'your key is locked' });
+    expect(writeCalls).toEqual([]);
+    expect(ledger.size).toBe(0);
+  });
+
+  it('invite: notSigned short-circuits before POST', async () => {
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity: identityRefused };
+    const res = await submitInviteFlow(deps, INVITEE, 100n);
+    expect(res).toEqual({ ok: false, notSigned: 'refused', reason: 'busy' });
+    expect(writeCalls).toEqual([]);
+    expect(ledger.size).toBe(0);
+  });
+
+  it('withdraw: notSigned short-circuits before POST', async () => {
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity: identityDeclined };
+    const res = await submitWithdrawFlow(deps, TARGET_ID);
+    expect(res).toEqual({ ok: false, notSigned: 'declined', reason: 'not sent' });
+    expect(writeCalls).toEqual([]);
+    expect(ledger.size).toBe(0);
+  });
+
+  it('claim: notSigned short-circuits before POST', async () => {
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity: identityLocked };
+    const res = await submitClaimFlow(deps, 'Alice_01');
+    expect(res).toEqual({ ok: false, notSigned: 'locked', reason: 'your key is locked' });
+    expect(writeCalls).toEqual([]);
+    expect(ledger.size).toBe(0);
+  });
+
+  it('burn: notSigned short-circuits before POST', async () => {
+    heldName = { name: 'Alice_01', owner: PUB, boxId: '44'.repeat(32), claimedAtBlock: 5050 };
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity: identityRefused };
+    const res = await submitBurnFlow(deps);
+    expect(res).toEqual({ ok: false, notSigned: 'refused', reason: 'busy' });
+    expect(writeCalls).toEqual([]);
+    expect(ledger.size).toBe(0);
+  });
+});
+
+// -------------------------------------------------------------------------
+// onSigned — the composer's collapse hook. Called exactly once, exactly
+// between the signature and the POST, and only from submitPostFlow. Every
+// other flow leaves it unset.
+// -------------------------------------------------------------------------
+
+describe('onSigned — the collapse hook fires between sign and POST, only on post', () => {
+  it('post: onSigned is called exactly once, after the sign, before the POST', async () => {
+    const events: string[] = [];
+    const trackedIdentity = {
+      current: () => ({ pubKeyHex: PUB }),
+      sign: async (_bytes: Uint8Array, txId: string) => {
+        signCalls.push(txId);
+        events.push('signed');
+        return { signature: SIG } as const;
+      },
+    };
+    const trackedWrite = {
+      ...write(),
+      submitPost: async (tx: Record<string, unknown>, content: string) => {
+        events.push('posted');
+        writeCalls.push({ kind: 'post', tx, content });
+        return { ...okPost, txId: lastSignedTxId() };
+      },
+    };
+    const onSigned = () => events.push('onSigned');
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(), write: trackedWrite, ledger, identity: trackedIdentity, onSigned };
+    const res = await submitPostFlow(deps, 'a thread', null);
+    expect(res.ok).toBe(true);
+    // Signed, then onSigned, then POST — in that order and exactly once each.
+    expect(events).toEqual(['signed', 'onSigned', 'posted']);
+  });
+
+  it('post: onSigned is NOT called when the sign ends notSigned', async () => {
+    const events: string[] = [];
+    const onSigned = () => events.push('onSigned');
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(), write: write(), ledger, identity: identityDeclined, onSigned };
+    const res = await submitPostFlow(deps, 'a thread', null);
+    expect(res).toEqual({ ok: false, notSigned: 'declined', reason: 'not sent' });
+    expect(events).toEqual([]);
+  });
+
+  it('the post flow passes { content } as the hint; every other flow passes no hint', async () => {
+    heldName = { name: 'Alice_01', owner: PUB, boxId: '44'.repeat(32), claimedAtBlock: 5050 };
+    const ledger = new PendingLedger(PUB);
+    const base: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [vouchRow()]), write: write(), ledger, identity };
+    await submitPostFlow(base, 'the content the prompt verifies', null);
+    expect(signHints).toEqual([{ content: 'the content the prompt verifies' }]);
+    signHints = [];
+    await submitLikeFlow(base, TARGET_ID);
+    await submitVouchFlow(base, VOUCH_TARGET);
+    await submitUnvouchFlow(base, VOUCH_TARGET);
+    await submitInviteFlow(base, INVITEE, 100n);
+    await submitWithdrawFlow(base, TARGET_ID);
+    await submitClaimFlow(base, 'Alice_01');
+    await submitBurnFlow(base);
+    // Every hint after the first is undefined — no flow but post supplies one.
+    expect(signHints.every((h) => h === undefined)).toBe(true);
+  });
+
+  it('like, withdraw, vouch, invite, claim, burn: onSigned is never called even if supplied', async () => {
+    const events: string[] = [];
+    heldName = { name: 'Alice_01', owner: PUB, boxId: '44'.repeat(32), claimedAtBlock: 5050 };
+    const onSigned = () => events.push('onSigned');
+    const ledger = new PendingLedger(PUB);
+    const base: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [vouchRow()]), write: write(), ledger, identity, onSigned };
+    await submitLikeFlow(base, TARGET_ID);
+    await submitVouchFlow(base, VOUCH_TARGET);
+    await submitUnvouchFlow(base, VOUCH_TARGET);
+    await submitInviteFlow(base, INVITEE, 100n);
+    await submitWithdrawFlow(base, TARGET_ID);
+    await submitClaimFlow(base, 'Alice_01');
+    await submitBurnFlow(base);
+    expect(events).toEqual([]);
   });
 });

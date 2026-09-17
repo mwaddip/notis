@@ -93,17 +93,17 @@ function fakeWrite(): WriteClient {
 function fakeIdentity(): AppIdentity {
   return {
     current: () => idState,
-    sign: (txId: string) => { lastSigned = txId; return SIG; },
+    sign: async (_bytes: Uint8Array, txId: string) => { lastSigned = txId; return { signature: SIG }; },
     onChange: (cb: () => void) => { onChangeCb = cb; },
-    draft: () => ({ pubKeyHex: ME }),
+    draft: async () => ({ pubKeyHex: ME }),
     create: async () => ({ pubKeyHex: ME }),
     discardDraft: () => {},
-    inspectFile: () => ({ kind: 'clear' as const, pubKeyHex: ME }),
+    inspectFile: async () => ({ kind: 'clear' as const, pubKeyHex: ME }),
     importFile: async () => ({ pubKeyHex: ME }),
     exportFile: async () => '',
     unlock: async () => {},
-    lock: () => {},
-    forget: () => {},
+    lock: async () => {},
+    forget: async () => {},
     backedUp: () => true,
   } as unknown as AppIdentity;
 }

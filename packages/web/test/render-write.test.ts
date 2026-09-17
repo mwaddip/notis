@@ -11,8 +11,10 @@ import { contentHashHex } from '../src/integrity';
 
 // The write surface rendered: the composer opens in its slot and collapses to a
 // hollow card, the composer element is reused by reference across a rebuild and
-// across renderFeedInto, and the like control obeys §7's exclusions. render
-// -region.test.ts covers the no-identity case; here an identity is loaded.
+// across renderFeedInto, and the like control follows the row's rules
+// (WEB_INTERFACE → "A feed card carries the like and the copy glyph in its meta
+// row"). render-region.test.ts covers the no-identity case; here an identity is
+// loaded.
 
 const PUB = 'aa'.repeat(32); // the reader
 const OTHER = 'ee'.repeat(32); // someone else
@@ -57,19 +59,19 @@ function harness(): Harness {
   const signed: string[] = [];
   const identity: AppIdentity = {
     current: () => ({ pubKeyHex: PUB, locked: false }),
-    sign: (txId) => {
+    sign: async (_bytes, txId) => {
       signed.push(txId);
-      return 'ab'.repeat(64);
+      return { signature: 'ab'.repeat(64) };
     },
-    draft: () => ({ pubKeyHex: PUB }),
+    draft: async () => ({ pubKeyHex: PUB }),
     create: async () => ({ pubKeyHex: PUB }),
     discardDraft: () => {},
-    inspectFile: () => ({ kind: 'clear', pubKeyHex: PUB }),
+    inspectFile: async () => ({ kind: 'clear', pubKeyHex: PUB }),
     importFile: async () => ({ pubKeyHex: PUB }),
     exportFile: async () => '{}',
     unlock: async () => {},
-    lock: () => {},
-    forget: () => {},
+    lock: async () => {},
+    forget: async () => {},
     backedUp: () => false,
     onChange: () => {},
   };
@@ -202,16 +204,16 @@ describe('feed cards carry like and link', () => {
     const signed: string[] = [];
     const identity: AppIdentity = {
       current: () => ({ pubKeyHex: PUB, locked: false }),
-      sign: (txId) => { signed.push(txId); return 'ab'.repeat(64); },
-      draft: () => ({ pubKeyHex: PUB }),
+      sign: async (_bytes, txId) => { signed.push(txId); return { signature: 'ab'.repeat(64) }; },
+      draft: async () => ({ pubKeyHex: PUB }),
       create: async () => ({ pubKeyHex: PUB }),
       discardDraft: () => {},
-      inspectFile: () => ({ kind: 'clear', pubKeyHex: PUB }),
+      inspectFile: async () => ({ kind: 'clear', pubKeyHex: PUB }),
       importFile: async () => ({ pubKeyHex: PUB }),
       exportFile: async () => '{}',
       unlock: async () => {},
-      lock: () => {},
-      forget: () => {},
+      lock: async () => {},
+      forget: async () => {},
       backedUp: () => false,
       onChange: () => {},
     };
@@ -281,16 +283,16 @@ describe('feed cards carry like and link', () => {
     const signed: string[] = [];
     const identity: AppIdentity = {
       current: () => ({ pubKeyHex: PUB, locked: false }),
-      sign: (txId) => { signed.push(txId); return 'ab'.repeat(64); },
-      draft: () => ({ pubKeyHex: PUB }),
+      sign: async (_bytes, txId) => { signed.push(txId); return { signature: 'ab'.repeat(64) }; },
+      draft: async () => ({ pubKeyHex: PUB }),
       create: async () => ({ pubKeyHex: PUB }),
       discardDraft: () => {},
-      inspectFile: () => ({ kind: 'clear', pubKeyHex: PUB }),
+      inspectFile: async () => ({ kind: 'clear', pubKeyHex: PUB }),
       importFile: async () => ({ pubKeyHex: PUB }),
       exportFile: async () => '{}',
       unlock: async () => {},
-      lock: () => {},
-      forget: () => {},
+      lock: async () => {},
+      forget: async () => {},
       backedUp: () => false,
       onChange: () => {},
     };
@@ -334,16 +336,16 @@ describe('a locked like from the feed mounts the unlock row', () => {
     const liked: { likeTarget: string }[] = [];
     const identity: AppIdentity = {
       current: () => ({ pubKeyHex: PUB, locked: lockState }),
-      sign: () => 'ab'.repeat(64),
-      draft: () => ({ pubKeyHex: PUB }),
+      sign: async () => ({ signature: 'ab'.repeat(64) }),
+      draft: async () => ({ pubKeyHex: PUB }),
       create: async () => ({ pubKeyHex: PUB }),
       discardDraft: () => {},
-      inspectFile: () => ({ kind: 'clear', pubKeyHex: PUB }),
+      inspectFile: async () => ({ kind: 'clear', pubKeyHex: PUB }),
       importFile: async () => ({ pubKeyHex: PUB }),
       exportFile: async () => '{}',
       unlock: async (p) => { unlocked.push(p); lockState = false; },
-      lock: () => { lockState = true; },
-      forget: () => {},
+      lock: async () => { lockState = true; },
+      forget: async () => {},
       backedUp: () => false,
       onChange: () => {},
     };
@@ -401,16 +403,16 @@ describe('a like landing updates every surface holding the post', () => {
     let liked = false;
     const identity: AppIdentity = {
       current: () => ({ pubKeyHex: PUB, locked: false }),
-      sign: (txId) => { signed.push(txId); return 'ab'.repeat(64); },
-      draft: () => ({ pubKeyHex: PUB }),
+      sign: async (_bytes, txId) => { signed.push(txId); return { signature: 'ab'.repeat(64) }; },
+      draft: async () => ({ pubKeyHex: PUB }),
       create: async () => ({ pubKeyHex: PUB }),
       discardDraft: () => {},
-      inspectFile: () => ({ kind: 'clear', pubKeyHex: PUB }),
+      inspectFile: async () => ({ kind: 'clear', pubKeyHex: PUB }),
       importFile: async () => ({ pubKeyHex: PUB }),
       exportFile: async () => '{}',
       unlock: async () => {},
-      lock: () => {},
-      forget: () => {},
+      lock: async () => {},
+      forget: async () => {},
       backedUp: () => false,
       onChange: () => {},
     };

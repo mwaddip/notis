@@ -55,15 +55,15 @@ function fakeIdentity(): AppIdentity {
   const listeners: Array<(id: { pubKeyHex: string } | null) => void> = [];
   return {
     current: () => cur,
-    sign: () => 'ab'.repeat(64),
-    draft: () => ({ pubKeyHex: KEY }),
+    sign: async () => ({ signature: 'ab'.repeat(64) }),
+    draft: async () => ({ pubKeyHex: KEY }),
     create: async () => {
       cur = { pubKeyHex: KEY, locked: false };
       for (const l of listeners) l({ pubKeyHex: KEY });
       return { pubKeyHex: KEY };
     },
     discardDraft: () => {},
-    inspectFile: () => ({ kind: 'clear', pubKeyHex: KEY }),
+    inspectFile: async () => ({ kind: 'clear', pubKeyHex: KEY }),
     importFile: async () => {
       cur = { pubKeyHex: KEY, locked: false };
       for (const l of listeners) l({ pubKeyHex: KEY });
@@ -71,8 +71,8 @@ function fakeIdentity(): AppIdentity {
     },
     exportFile: async () => '{}',
     unlock: async () => { if (cur) cur.locked = false; },
-    lock: () => { if (cur) cur.locked = true; },
-    forget: () => {
+    lock: async () => { if (cur) cur.locked = true; },
+    forget: async () => {
       cur = null;
       for (const l of listeners) l(null);
     },

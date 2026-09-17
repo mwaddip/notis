@@ -36,6 +36,15 @@ export interface ComposerController {
    *  success continues the flight, Esc returns to editing with the draft intact
    *  (WEB_INTERFACE → The identity module). */
   showUnlock(pubKeyHex: string, onSubmit: (passphrase: string) => Promise<void>): void;
+  /** The composer's *sending* look — post reads *working…* and the fields are
+   *  disabled while the sign is unresolved. On false, the composer returns to
+   *  editing (WEB_INTERFACE → The wallet). */
+  setSending(sending: boolean): void;
+  /** A foot line beside the post button, next to the reader's still-there draft
+   *  — *not sent.*, *one approval at a time.*, or the transport failure — for
+   *  the fourth ending (WEB_INTERFACE → The wallet). Cleared on the next
+   *  keystroke. */
+  setNotSent(message: string): void;
 }
 
 export interface ComposerOpts {
@@ -57,6 +66,8 @@ export function makeComposer(opts: ComposerOpts): ComposerController {
   let affordable: boolean | null = null; // null → not yet read
   let karmaError: string | null = null; // a foot message when the read fails
   let type: PostType = 'text'; // default every open; the choice is not remembered
+  let sending = false; // WEB_INTERFACE → The wallet — the *sending* look
+  let notSentMsg: string | null = null; // the fourth ending's foot line, cleared on the next keystroke
 
   const box = el('div', 'composer' + (opts.depth ? ' depth-' + Math.min(opts.depth, 3) : ''));
   const body = el('div', 'composer-body');
@@ -128,7 +139,7 @@ export function makeComposer(opts: ComposerOpts): ComposerController {
     karma.textContent = '';
     // Say what happens, not what went wrong (HOUSE_STYLE → Voice).
     const message =
-      karmaError ?? (affordable === false ? (opts.isReply ? 'not enough rep to reply right now' : 'not enough rep to post right now') : null);
+      notSentMsg ?? karmaError ?? (affordable === false ? (opts.isReply ? 'not enough rep to reply right now' : 'not enough rep to post right now') : null);
     if (message !== null) {
       karma.classList.add('short');
       karma.textContent = message;
@@ -139,6 +150,17 @@ export function makeComposer(opts: ComposerOpts): ComposerController {
     karma.classList.remove('short');
     karma.appendChild(el('span', 'n', String(opts.price)));
     karma.appendChild(document.createTextNode(' rep'));
+  }
+
+  /** The *sending* look — post reads *working…*, fields inert. Toggle-safe:
+   *  false restores the fields and the button text (WEB_INTERFACE → The wallet). */
+  function applySending(): void {
+    ta.disabled = sending;
+    urlInput.disabled = sending;
+    descInput.disabled = sending;
+    typeSelect.disabled = sending;
+    (cancelBtn as HTMLButtonElement).disabled = sending;
+    postBtn.textContent = sending ? 'working…' : 'post';
   }
 
   /** Post is enabled when affordable, the composed content fits, and — text — the
@@ -157,7 +179,9 @@ export function makeComposer(opts: ComposerOpts): ComposerController {
     budget.textContent = left < 0 ? `${-left} over` : `${left} left`; // N left from the first frame
     budget.classList.toggle('over', left < 0);
     drawKarma();
-    postBtn.disabled = !canPost();
+    // The sending look pins post disabled; otherwise its own gate.
+    postBtn.disabled = sending || !canPost();
+    applySending();
   }
 
   function drawFoot(): void {
@@ -214,9 +238,9 @@ export function makeComposer(opts: ComposerOpts): ComposerController {
     opts.onSubmit(compose());
   }
 
-  ta.addEventListener('input', () => sync());
-  urlInput.addEventListener('input', () => sync());
-  descInput.addEventListener('input', () => sync());
+  ta.addEventListener('input', () => { notSentMsg = null; sync(); });
+  urlInput.addEventListener('input', () => { notSentMsg = null; sync(); });
+  descInput.addEventListener('input', () => { notSentMsg = null; sync(); });
   typeSelect.addEventListener('change', () => {
     type = typeSelect.value as PostType;
     showBody();
@@ -266,6 +290,14 @@ export function makeComposer(opts: ComposerOpts): ComposerController {
           focusField();
         }),
       );
+    },
+    setSending: (s: boolean) => {
+      sending = s;
+      if (!discarding) sync();
+    },
+    setNotSent: (msg: string) => {
+      notSentMsg = msg;
+      if (!discarding) sync();
     },
   };
 }

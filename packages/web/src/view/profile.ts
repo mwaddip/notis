@@ -28,14 +28,14 @@ export interface ProfileHandlers {
   setNode: (origin: string) => void;
   setFaucet: (origin: string) => void;
   // identity operations
-  inspectFile: (text: string) => { kind: 'clear' | 'encrypted'; pubKeyHex: string };
-  draftIdentity: () => { pubKeyHex: string }; // a key held before the passphrase, so the form names it
+  inspectFile: (text: string) => Promise<{ kind: 'clear' | 'encrypted'; pubKeyHex: string }>;
+  draftIdentity: () => Promise<{ pubKeyHex: string }>; // a key held before the passphrase, so the form names it
   createIdentity: (passphrase: string) => Promise<void>; // seals and stores the drafted key
   discardDraft: () => void; // the reader cancelled create
   importIdentity: (text: string, passphrase: string) => Promise<void>;
   exportIdentity: (password: string) => Promise<void>;
-  forgetIdentity: () => void;
-  lockIdentity: () => void;
+  forgetIdentity: () => Promise<void>;
+  lockIdentity: () => Promise<void>;
   unlockIdentity: (passphrase: string) => Promise<void>;
   askFaucet: () => void;
   // membership actions — the invites row (WEB_INTERFACE → The profile window)
@@ -46,6 +46,13 @@ export interface ProfileHandlers {
   // The username row (WEB_INTERFACE → The username row).
   claimUsername: (name: string) => void;
   burnUsername: () => void;
+  // The extension's binary sign policy (WEB_INTERFACE → The profile window).
+  // Defined only in the extension build; the row renders only when both are set.
+  policy?: () => 'silent' | 'ask';
+  setPolicy?: (p: 'silent' | 'ask') => Promise<void>;
+  // The extension's faucet-origin permission gate — the `set` on the faucet row
+  // requests it from the press. Defined only in the extension build.
+  requestFaucetOrigin?: (origin: string) => Promise<boolean>;
 }
 
 export interface ProfileCtx {
@@ -101,21 +108,21 @@ function emptyState(b: HTMLElement, handlers: ProfileHandlers): void {
   const field = el('div', 'field pf-inline');
 
   const create = el('button', 'word', 'create') as HTMLButtonElement;
-  create.addEventListener('click', () => {
+  create.addEventListener('click', () => void (async () => {
     // Draft the key first so the form shows its prefix as the username — the key
     // exists before the passphrase, so the manager's saved entry names it
     // (WEB_INTERFACE → The profile window). Cancelling discards the draft.
-    const { pubKeyHex } = handlers.draftIdentity();
+    const { pubKeyHex } = await handlers.draftIdentity();
     field.replaceChildren(
       setPassphraseForm(pubKeyHex, (p) => handlers.createIdentity(p), () => {
         handlers.discardDraft();
         restoreInline();
       }),
     );
-  });
+  })());
 
   const importBtn = el('button', 'word', 'import') as HTMLButtonElement;
-  importBtn.addEventListener('click', () => pickFile((text) => revealImport(field, handlers, text, restoreInline)));
+  importBtn.addEventListener('click', () => pickFile((text) => void revealImport(field, handlers, text, restoreInline)));
 
   const restoreInline = (): void => {
     field.replaceChildren(create, importBtn);
@@ -140,10 +147,10 @@ function pickFile(onText: (text: string) => void): void {
 
 /** Inspect the file and reveal the form its kind needs: a clear file sets a
  *  passphrase, an encrypted one is opened by the passphrase that admits it. */
-function revealImport(field: HTMLElement, handlers: ProfileHandlers, text: string, restore: () => void): void {
+async function revealImport(field: HTMLElement, handlers: ProfileHandlers, text: string, restore: () => void): Promise<void> {
   let inspected: { kind: 'clear' | 'encrypted'; pubKeyHex: string };
   try {
-    inspected = handlers.inspectFile(text);
+    inspected = await handlers.inspectFile(text);
   } catch (e) {
     const line = el('div', 'pf-refusal', e instanceof Error ? e.message : String(e));
     const back = el('button', 'word', 'back') as HTMLButtonElement;
@@ -512,10 +519,12 @@ function passphraseRow(field: HTMLElement, handlers: ProfileHandlers, pubKeyHex:
   } else {
     field.append(el('span', 'inkmute', 'unlocked'), ' ');
     const lock = el('button', 'word', 'lock') as HTMLButtonElement;
-    lock.addEventListener('click', () => {
-      handlers.lockIdentity();
-      passphraseRow(field, handlers, pubKeyHex, true); // now locked
-    });
+    lock.addEventListener('click', () => void (async () => {
+      // Await the lock so the extension's proxy refreshes its snapshot before
+      // the next draw reads current().locked (WEB_INTERFACE → The extension).
+      await handlers.lockIdentity();
+      passphraseRow(field, handlers, pubKeyHex, true);
+    })());
     field.appendChild(lock);
   }
 }
@@ -557,7 +566,7 @@ function forgetConfirm(field: HTMLElement, handlers: ProfileHandlers, backedUp: 
   wrap.appendChild(el('div', 'pf-refusal', line));
   const actions = el('div', 'pf-actions');
   const forget = el('button', 'word', 'forget') as HTMLButtonElement;
-  forget.addEventListener('click', () => handlers.forgetIdentity());
+  forget.addEventListener('click', () => void handlers.forgetIdentity());
   const keep = el('button', 'word', 'keep') as HTMLButtonElement;
   keep.addEventListener('click', restore);
   actions.append(forget, keep);
@@ -799,16 +808,48 @@ export function preferenceRows(handlers: ProfileHandlers, ctx: ProfileCtx): HTML
     rows.push(r);
   }
 
-  // Faucet — the same shape as node; empty means no faucet and no button.
+  // Faucet — the same shape as node; empty means no faucet and no button. In
+  // the extension the `set` requests host permission for the origin (a user
+  // gesture, as the API requires); denied, the row's hint names the refusal
+  // and the preference is not stored (WEB_INTERFACE → The profile window).
   {
     const { row: r, field } = row('faucet');
     const input = el('input') as HTMLInputElement;
     input.value = prefs.faucet;
     input.placeholder = BUILD_FAUCET_BASE || 'none';
     input.setAttribute('aria-label', 'the faucet this client asks for rep');
-    input.addEventListener('change', () => handlers.setFaucet(input.value));
+    const hint = el('div', 'hint', 'blank uses the build default. a foreign origin fails: the faucet answers its own origin only.');
+    input.addEventListener('change', () => void (async () => {
+      const value = input.value.trim();
+      if (value !== '' && handlers.requestFaucetOrigin) {
+        const granted = await handlers.requestFaucetOrigin(value);
+        if (!granted) {
+          hint.textContent = 'the browser refused access to that origin.';
+          return;
+        }
+      }
+      handlers.setFaucet(input.value);
+    })());
     field.appendChild(input);
-    field.appendChild(el('div', 'hint', 'blank uses the build default. a foreign origin fails: the faucet answers its own origin only.'));
+    field.appendChild(hint);
+    rows.push(r);
+  }
+
+  // The extension's binary sign policy — visible only when both hooks are
+  // present (the in-page module implements neither). *sign each rep action*
+  // controls whether karma writes prompt (WEB_INTERFACE → The profile window).
+  if (handlers.policy && handlers.setPolicy) {
+    const { row: r, field } = row('sign each rep action');
+    const current = handlers.policy();
+    const seg = el('div', 'seg');
+    for (const [label, value] of [['don\'t ask', 'silent'], ['ask', 'ask']] as const) {
+      const btn = el('button', 'word', label);
+      btn.setAttribute('aria-pressed', current === value ? 'true' : 'false');
+      btn.addEventListener('click', () => { void handlers.setPolicy?.(value); });
+      seg.appendChild(btn);
+    }
+    field.appendChild(seg);
+    field.appendChild(el('div', 'hint', 'sending $NOTIS always asks. rep is silent while unlocked unless you ask.'));
     rows.push(r);
   }
 

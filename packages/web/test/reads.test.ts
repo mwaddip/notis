@@ -6,8 +6,9 @@ import type { Api } from '../src/api/client';
 import type { KarmaResult, KarmaBoxRow, StatusResult } from '../src/api/dto';
 import { karmaResult } from './karma-fixture';
 
-// The §5.1 read order — /karma fully paged, THEN /status — is embodied here, not
-// at call sites; the fake records call order so the test can see it.
+// The order WEB_INTERFACE → "Reads before a write, in this order: `GET /karma/:key` following `next`, then `GET /status`" states — /karma fully paged, THEN /status —
+// is embodied here, not at call sites; the fake records call order so the
+// test can see it.
 
 const AUTHOR = 'aa'.repeat(32);
 let calls: string[];
@@ -43,7 +44,7 @@ beforeEach(() => {
   localStorage.clear();
 });
 
-describe('readBuildContext — the §5.1 read order', () => {
+describe('readBuildContext — WEB_INTERFACE → "Reads before a write, in this order: `GET /karma/:key` following `next`, then `GET /status`"', () => {
   it('reads /karma to the end of next, THEN /status, and assembles the context', async () => {
     const pages = [
       karmaPage([{ boxId: 'b1', value: '100' }], 'k1'),

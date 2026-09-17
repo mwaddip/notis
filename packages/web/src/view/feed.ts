@@ -61,10 +61,12 @@ export function renderFeedInto(container: HTMLElement, feed: FeedState, handlers
   // Ruling 8: the note reads "newest first", and nothing else.
   head.appendChild(el('span', 'note', 'newest first'));
   // `new post`, not `post`: the composer it opens has its own post button, and
-  // two controls with different words a few pixels apart is a trap. Only with an
-  // identity loaded (WEB_INTERFACE → The write surface).
+  // two controls with different words a few pixels apart is a trap. Boxed like
+  // the composer's `post`, a commit action the feed's own head carries
+  // (HOUSE_STYLE → Interaction). Only with an identity loaded (WEB_INTERFACE →
+  // The write surface).
   if (ctx.writeEnabled) {
-    const nb = el('button', 'word');
+    const nb = el('button', 'btn btn-primary');
     nb.setAttribute('data-composer-open', FEED_COMPOSER_KEY);
     nb.setAttribute('aria-label', 'write a new post');
     nb.textContent = 'new post';

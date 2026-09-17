@@ -37,15 +37,15 @@ function fakeIdentity(): AppIdentity {
   };
   return {
     current: () => cur,
-    sign: () => 'ab'.repeat(64),
-    draft: () => ({ pubKeyHex: KEY }),
+    sign: async () => ({ signature: 'ab'.repeat(64) }),
+    draft: async () => ({ pubKeyHex: KEY }),
     create: async () => {
       cur = { pubKeyHex: KEY, locked: false };
       fire({ pubKeyHex: KEY });
       return { pubKeyHex: KEY };
     },
     discardDraft: () => {},
-    inspectFile: () => ({ kind: 'clear', pubKeyHex: KEY }),
+    inspectFile: async () => ({ kind: 'clear', pubKeyHex: KEY }),
     importFile: async () => {
       cur = { pubKeyHex: KEY, locked: false };
       fire({ pubKeyHex: KEY });
@@ -55,10 +55,10 @@ function fakeIdentity(): AppIdentity {
     unlock: async () => {
       if (cur) cur = { pubKeyHex: cur.pubKeyHex, locked: false };
     },
-    lock: () => {
+    lock: async () => {
       if (cur) cur = { pubKeyHex: cur.pubKeyHex, locked: true };
     },
-    forget: () => {
+    forget: async () => {
       cur = null;
       fire(null);
     },

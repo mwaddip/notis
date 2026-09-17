@@ -3,6 +3,7 @@ import type { Workspace, Origin } from './workspace';
 import type { Theme, IdTint } from '../prefs';
 import type { Flight } from '../view/card';
 import type { YourVouch } from '../view/author';
+import type { SignResult } from '../wallet/submit';
 
 // The read surface's runtime state, and the handler contract the pure view
 // modules render against. Types only — no cycle between controller and views.
@@ -159,14 +160,14 @@ export interface Handlers {
   setNode: (origin: string) => void;
   setFaucet: (origin: string) => void;
   // identity operations (WEB_INTERFACE → The profile window)
-  inspectFile: (text: string) => { kind: 'clear' | 'encrypted'; pubKeyHex: string };
-  draftIdentity: () => { pubKeyHex: string };
+  inspectFile: (text: string) => Promise<{ kind: 'clear' | 'encrypted'; pubKeyHex: string }>;
+  draftIdentity: () => Promise<{ pubKeyHex: string }>;
   createIdentity: (passphrase: string) => Promise<void>;
   discardDraft: () => void;
   importIdentity: (text: string, passphrase: string) => Promise<void>;
   exportIdentity: (password: string) => Promise<void>;
-  forgetIdentity: () => void;
-  lockIdentity: () => void;
+  forgetIdentity: () => Promise<void>;
+  lockIdentity: () => Promise<void>;
   unlockIdentity: (passphrase: string) => Promise<void>;
   askFaucet: () => void;
   // write surface
@@ -191,23 +192,42 @@ export interface Handlers {
   // The username row (WEB_INTERFACE → The username row).
   claimUsername: (name: string) => void;
   burnUsername: () => void;
+  // The extension's binary sign policy (WEB_INTERFACE → The profile window).
+  // Defined only in the extension build — the profile row renders only when
+  // both are present.
+  policy?: () => 'silent' | 'ask';
+  setPolicy?: (p: 'silent' | 'ask') => Promise<void>;
+  // The extension's faucet-origin permission gate — the faucet row's `set`
+  // requests it from the press (WEB_INTERFACE → The profile window).
+  requestFaucetOrigin?: (origin: string) => Promise<boolean>;
 }
 
 /** What the App calls on the identity module — the single reference it holds
- *  (WEB_INTERFACE → The identity module). The wallet keeps its own narrower Signer
- *  seam (submit.ts), the extension swap point, so this is not it. */
+ *  (WEB_INTERFACE → The identity module). It extends the wallet's Signer seam
+ *  and adds the operations the profile window and the reader's own flow need.
+ *  The extension's proxy implements the same interface over the background
+ *  service; the in-page module implements it directly (WEB_INTERFACE → The
+ *  extension). */
 export interface AppIdentity {
   current(): { pubKeyHex: string; locked: boolean } | null;
-  sign(txIdHex: string): string;
-  draft(): { pubKeyHex: string };
+  sign(txBytes: Uint8Array, txIdHex: string, hint?: { content?: string }): Promise<SignResult>;
+  /** Draft a fresh keypair — asynchronous because the extension's proxy sends
+   *  it as a message; the in-page module wraps its result in Promise.resolve. */
+  draft(): Promise<{ pubKeyHex: string }>;
   create(passphrase: string): Promise<{ pubKeyHex: string }>;
   discardDraft(): void;
-  inspectFile(text: string): { kind: 'clear' | 'encrypted'; pubKeyHex: string };
+  /** Read a file's shape — asynchronous for the same reason as `draft`. */
+  inspectFile(text: string): Promise<{ kind: 'clear' | 'encrypted'; pubKeyHex: string }>;
   importFile(text: string, passphrase: string): Promise<{ pubKeyHex: string }>;
   exportFile(password: string): Promise<string>;
   unlock(passphrase: string): Promise<void>;
-  lock(): void;
-  forget(): void;
+  lock(): Promise<void>;
+  forget(): Promise<void>;
   backedUp(): boolean;
   onChange(listener: (id: { pubKeyHex: string } | null) => void): void;
+  /** The extension's binary policy for karma-side signs (WEB_INTERFACE → The
+   *  profile window). Absent on the in-page module — the profile row renders
+   *  only when both are present. */
+  policy?(): 'silent' | 'ask';
+  setPolicy?(p: 'silent' | 'ask'): Promise<void>;
 }

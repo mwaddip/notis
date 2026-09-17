@@ -2,6 +2,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { generateKeyPair } from '@dagsocial/types';
 import { readStore, writeStore, removeStore } from '../prefs';
 import { seal, open, parseFile, toHex, hexToBytes, IdentityError, type Envelope, type ParsedFile } from './envelope';
+import type { SignResult } from '../wallet/submit';
 
 // The identity machinery — WEB_INTERFACE → The identity module. One identity at a
 // time, stored under `notis.identity` as an encrypted envelope; the seed is
@@ -55,8 +56,9 @@ export class IdentityModule {
 
   /** Draft a fresh key — generated through the shim and held privately, not stored;
    *  current() is unchanged until create seals it. A second draft replaces the first
-   *  (WEB_INTERFACE → The identity module). */
-  draft(): Identity {
+   *  (WEB_INTERFACE → The identity module). Async so the same seam serves the
+   *  extension's proxy, which routes it as a message; here it resolves at once. */
+  async draft(): Promise<Identity> {
     const kp = generateKeyPair();
     const pubKeyHex = toHex(kp.publicKey);
     this.draftKp = { pubKeyHex, seed: new Uint8Array(kp.secretKey.subarray(16)) }; // the DER's last 32 bytes
@@ -82,8 +84,8 @@ export class IdentityModule {
   /** Say whether a file's text is the clear file shape or an encrypted
    *  envelope, and whose key it is. The seed parseFile derives for a clear file
    *  stays inside this module (WEB_INTERFACE → "sign is the only path to the
-   *  seed"). */
-  inspectFile(text: string): { kind: 'clear' | 'encrypted'; pubKeyHex: string } {
+   *  seed"). Async so the same seam serves the extension's proxy. */
+  async inspectFile(text: string): Promise<{ kind: 'clear' | 'encrypted'; pubKeyHex: string }> {
     const parsed = parseFile(text);
     return { kind: parsed.kind, pubKeyHex: parsed.pubKeyHex };
   }
@@ -121,15 +123,17 @@ export class IdentityModule {
     this.seed = await open(this.envelope, passphrase);
   }
 
-  /** Drop the seed from memory; current() then reads locked. */
-  lock(): void {
+  /** Drop the seed from memory; current() then reads locked. Async so the same
+   *  seam serves the extension's proxy, which refreshes its snapshot from
+   *  storage before resolving; here it resolves at once. */
+  async lock(): Promise<void> {
     this.seed = null;
   }
 
   /** Drop the identity from memory, storage and the backup flag. The key's pending
    *  ledger is left, so a key re-imported later resumes it (WEB_INTERFACE → The
-   *  profile window, Forget). */
-  forget(): void {
+   *  profile window). Async for the same reason as `lock`. */
+  async forget(): Promise<void> {
     this.seed = null;
     this.pubKeyHex = null;
     this.envelope = null;
@@ -139,16 +143,18 @@ export class IdentityModule {
   }
 
   /** Ed25519 over the 32 transaction-id bytes, 128 hex out — the only path to the
-   *  seed (WEB_INTERFACE → "sign is the only path to the seed"), and it throws
-   *  while locked. The App checks locked before a flight starts, so a locked sign
-   *  is the safety net rather than the path. A transaction id is exactly 64
-   *  lowercase hex; anything else is refused rather than signed over garbage. */
-  sign(txIdHex: string): string {
-    if (this.seed === null) {
-      throw new IdentityError(this.pubKeyHex === null ? 'no identity is loaded to sign with.' : 'this key is locked.');
-    }
-    if (!HEX64.test(txIdHex)) throw new IdentityError('a transaction id to sign must be 64 hex characters.');
-    return toHex(ed25519.sign(hexToBytes(txIdHex), this.seed));
+   *  seed (WEB_INTERFACE → "sign is the only path to the seed"). The App checks
+   *  locked before a flight starts, so `locked` here is a race the wallet ends in
+   *  the notSigned arm rather than a stuck state (WEB_INTERFACE → The wallet).
+   *  A transaction id is exactly 64 lowercase hex; anything else comes back as
+   *  `refused` rather than signed over garbage. The in-page module never answers
+   *  `declined` — that is the extension proxy's arm (WEB_INTERFACE → The identity
+   *  module). `txBytes` is ignored here; the extension's background needs it,
+   *  since it re-derives the id it signs over. */
+  async sign(_txBytes: Uint8Array, txIdHex: string, _hint?: { content?: string }): Promise<SignResult> {
+    if (this.seed === null) return { locked: true };
+    if (!HEX64.test(txIdHex)) return { refused: 'a transaction id to sign must be 64 hex characters.' };
+    return { signature: toHex(ed25519.sign(hexToBytes(txIdHex), this.seed)) };
   }
 
   /** Whether the loaded key has been written to a file. */
