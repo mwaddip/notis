@@ -160,12 +160,34 @@ export interface BondsResult {
 }
 
 /** `GET /usernames?owner=<key>` — the owner's held name, or 404 when none
- *  (NODE_INTERFACE → Usernames). */
+ *  (NODE_INTERFACE → Usernames). The same shape answers `GET /usernames/:name`,
+ *  the handle → holder resolution the send form runs at the press. */
 export interface UsernameResult {
   name: string;
   owner: string;
   boxId: string;
   claimedAtBlock: number;
+}
+
+/** `GET /credits/:userId` — an unspent credit box (NODE_INTERFACE → UTXO
+ *  queries). `lockedUntilBlock` is present only on boxes the coinbase minted
+ *  locked (TYPES_INTERFACE → CreditBox). */
+export interface CreditBoxRow {
+  boxId: string;
+  value: string;                  // decimal — the client holds it as bigint
+  lockedUntilBlock?: number;
+}
+
+/** `GET /credits/:userId` — the identity's credit boxes, paged by `next`
+ *  (NODE_INTERFACE → UTXO queries). An identity with no unspent credit box
+ *  answers the empty page — `boxes: []`, `boxCount 0`, `total "0"`, `next
+ *  null`. */
+export interface CreditsResult {
+  userId: string;
+  total: string;
+  boxes: CreditBoxRow[];
+  boxCount: number;
+  next: string | null;
 }
 
 // ---------------------------------------------------------------------------

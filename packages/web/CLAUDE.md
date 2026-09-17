@@ -64,7 +64,12 @@ App as the extension's own page, the identity held by the background (the envelo
 unlocked seed in `storage.session`, never a worker global), every write signed there through the
 `Signer` seam's proxy; credits always prompted in the prompt window, rep silent while unlocked unless the
 *sign each rep action* row says ask; the `notSigned` arm and the fourth ending — the composer still open;
-the shell's `notis-nodes` seed list and `notis-public` link origin; one manifest template → two zips.
+the shell's `notis-nodes` seed list and `notis-public` link origin; one manifest template → two zips. **The credits
+send** (`WEB_INTERFACE → The profile window`, `→ The wallet`, `→ The faucet step`): the `@profile` window's `$NOTIS`
+row — the balance in gold, a send to a key or an `@handle` resolved at the press, the confirm row, the flight in the
+row — on a `buildSend` frozen like the others, the ledger's two views split by kind; the faucet's `$NOTIS` step
+beside the rep step; a credits amount is $NOTIS on the face and base units on the wire, through one module the
+extension's prompt reads too.
 
 - **Owns:** `packages/web/*` — its own source, tests, build config and static assets.
 - **Does NOT own:** any other package, `contracts/` or `prompts/`.
@@ -74,9 +79,9 @@ the shell's `notis-nodes` seed list and `notis-public` link origin; one manifest
 ⛔ **The read client (`src/api/client.ts`) issues `GET` requests and nothing else.** No `POST`, no
 `DELETE` for a read. The writes live next door in `src/api/write.ts` — `POST /posts`, `POST /likes`,
 `POST /vouches`, `DELETE /vouches/:targetId` (the one non-`POST` write), `POST /invites` and
-`POST /posts/:id/withdraw`, `POST /usernames` and `POST /usernames/:name/burn`, and no more. A `viewer` parameter is a query on a `GET`, so it stays in the read client; the four membership
+`POST /posts/:id/withdraw`, `POST /usernames`, `POST /usernames/:name/burn` and `POST /credits/transfer`, and no more. A `viewer` parameter is a query on a `GET`, so it stays in the read client; the four membership
 reads (`GET /vouches` by target, by voucher, the cooldown arm; `GET /invites/:userId`) and the name read
-(`GET /usernames?owner=`) are `GET`s in it.
+(`GET /usernames?owner=`), a handle's holder (`GET /usernames/:name`) and the balance (`GET /credits/:userId`) are `GET`s in it.
 
 **It hashes only through `@dagsocial/types`**, reached by the build-time shim — the wallet builders type
 their box candidates and compute every id through the shared implementation, never a copy, which is why
@@ -172,7 +177,8 @@ empty means no faucet and no button. **The faucet must relay `expiresAtHeight`**
 
 **Every transaction spends real testnet karma:** a thread 5, a reply 3, a like 1, a vouch 1 staked, an
 invite its bond; a withdrawal and a claim cost nothing but spend and return one karma box, so a key with none
-can sign neither; a burn `USERNAME_BURN_PRICE` (10). There is no automated test that posts — an automated writer would drain the key and
+can sign neither; a burn `USERNAME_BURN_PRICE` (10); a send spends real testnet $NOTIS — the faucet's credits step
+funds a key, repeatably. There is no automated test that posts — an automated writer would drain the key and
 litter testnet; the wallet builders are pinned offline against frozen vectors an independent
 implementation computed instead.
 Iterate deliberately.
@@ -291,13 +297,21 @@ carries no `chrome.` reference. **The extension's source lives in `src/extension
 
 **The proof** is `scripts/extension-check/run.mjs`: headless Chromium over raw CDP (the cached Chrome for
 Testing; no Playwright) loading the unpacked Chrome build, driving the twelve steps of the extension section
-through the real UI — the composer, the like word, the profile rows, the prompt window — against a local
+through the real UI — the composer, the like word, the profile rows, the prompt window — the twelfth in four
+measured parts (the faucet's `$NOTIS` step, a send approved at the prompt, a send declined, a send from a locked
+identity) — against a local
 devnet: `node packages/node/scripts/dev.mjs`, `tools/faucet/dist` with the devnet faucet key
 (`tools/e2e/src/identities.ts`, devnet-only and public by design), `promote.mjs` for a throwaway member,
 the extension built with devnet values. Step 8 lets the worker die by a ≥ 30 s idle wait — `chrome.runtime.reload`
 clears `storage.session` and proves nothing — and the worker target is the one whose URL ends in
 `/background.js` (Chrome ships a built-in Hangouts worker first). Ports above 19000. The throwaway's key file
-and the faucet's live under a scratch path, never in the repo, a log or a report.
+and the faucet's live under a scratch path, never in the repo, a log or a report. The faucet runs from the
+tree's `tools/faucet` with `FAUCET_CREDIT_AMOUNT` set, and `--faucet` names its origin with the `/faucet` prefix
+the service routes under. At start the harness adds the two loopback origins to the unpacked manifest's
+`host_permissions`, since CDP cannot drive the browser's permission dialog — the tracked template and the packed
+manifest are untouched, and the granted path is the hand pass. Devnet's decay outruns the harness at full mining
+speed, so the miner is paced from outside — a stop-and-continue loop around its PID, a few blocks a minute — for
+the throwaway's rep to last the run.
 
 ⚠ **A `<base>` element resolves fragment references against itself**, so the client carries none: the mark
 is inline markup (`src/view/mark.ts`), never a sprite referenced by `<use>`, and every URL composed from

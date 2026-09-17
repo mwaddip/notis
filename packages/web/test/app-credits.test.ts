@@ -1,0 +1,386 @@
+// @vitest-environment happy-dom
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { App } from '../src/app';
+import type { Api } from '../src/api/client';
+import type { WriteClient, SendSubmitResult, Rejection } from '../src/api/write';
+import type { AppIdentity } from '../src/model/state';
+import type {
+  FeedResult, PostJson, KarmaResult, StatusResult, BlockCurrent, CreditsResult, UsernameResult,
+  VouchesTargetResult, VouchesVoucherResult, VouchCooldownsResult,
+} from '../src/api/dto';
+import type { CreditGrant } from '../src/api/faucet';
+import { karmaResult } from './karma-fixture';
+import { contentHashHex } from '../src/integrity';
+import { prefs } from '../src/prefs';
+
+// The $NOTIS row driven through the App (WEB_INTERFACE → The profile window):
+// the deferred-write pattern of app-usernames.test.ts. Every ctx a row is
+// rendered against is one the App produces — the state a fabricated ctx would
+// hide (WEB-HANDOFF → Method, #214).
+
+const ME = 'aa'.repeat(32);
+const REC = 'cd'.repeat(32);
+const CHANGE_BOX = 'ee'.repeat(32);
+const GRANT_BOX = 'ff'.repeat(32);
+const CBOX = 'bb'.repeat(32); // the reader's own confirmed credit box
+
+let idState: { pubKeyHex: string; locked: boolean } | null;
+let blockHeight: number;
+let creditsSelf: CreditsResult;
+let creditsRecipient: CreditsResult;
+let signCalls: string[];
+let sendResp: (() => SendSubmitResult | Rejection) | null;
+let sendDefer: { resolve: (v: SendSubmitResult | Rejection) => void } | null;
+let signResp: 'signed' | 'declined' | 'locked' | 'refused';
+let faucetCredits: (() => CreditGrant | Rejection) | null;
+const last = (): string => signCalls[signCalls.length - 1]!;
+
+function post(id: string, author: string): PostJson {
+  return {
+    id, content: 'hi', contentHash: contentHashHex('hi'), author, parentRefs: [],
+    protocolVersion: 1, type: 'regular', status: 'confirmed', blockHeight: 10, blockIndex: 0,
+    blockCreatedAt: 0, likeCount: 0, descendantCount: 0, authorName: null, likedByViewer: null,
+  };
+}
+
+function statusResult(): StatusResult {
+  return {
+    networkType: 'testnet', blockHeight, protocolVersion: 1, postCount: 1, pendingPosts: 0,
+    totalKarma: '0', liquidKarma: '0', totalCredits: '0', inviteProbationBlocks: 43200,
+    vouchCooldownBlocks: 60, inviteBondMin: '100', inviteBondMax: '1000',
+    membership: { memberCount: 2, memberBar: 3, memberLikesBar: 6 },
+  };
+}
+
+function memberKarma(): KarmaResult {
+  return karmaResult({
+    userId: ME, member: true, invitesAvailable: 2, memberSinceBlock: 5,
+    boxCount: 1, total: '250', effective: '250',
+    boxes: [{ boxId: 'a1', value: '250' }],
+    height: blockHeight,
+  });
+}
+
+function fakeApi(): Api {
+  return {
+    feed: async () => ({ posts: [post('p1', 'bb'.repeat(32))], next: null, pending: [], pendingCount: 0 } as FeedResult),
+    thread: async () => null,
+    post: async (id) => ({ ...post(id, 'bb'.repeat(32)), confirmedAuthor: 'bb'.repeat(32) }),
+    status: async () => statusResult(),
+    currentBlock: async (): Promise<BlockCurrent> => ({ height: blockHeight, hash: null }),
+    karma: async () => memberKarma(),
+    vouchesByTarget: async (): Promise<VouchesTargetResult> => ({ vouches: [], count: 0, next: null }),
+    vouchesByVoucher: async (): Promise<VouchesVoucherResult> => ({ vouches: [], count: 0, next: null }),
+    vouchCooldowns: async (): Promise<VouchCooldownsResult> => ({ cooldowns: [], count: 0, next: null }),
+    bonds: async () => ({ bonds: [], bondCount: 0, next: null }),
+    usernameByOwner: async (): Promise<UsernameResult | null> => null,
+    usernameByName: async (name: string) => {
+      // A resolved handle for '@bob' → REC; every other name is a 404.
+      if (name.toLowerCase() === 'bob') return { name: 'bob', owner: REC, boxId: 'c'.repeat(32), claimedAtBlock: 1 };
+      return null;
+    },
+    credits: async (key) => key === ME ? creditsSelf : creditsRecipient,
+  };
+}
+
+function fakeWrite(): WriteClient {
+  return {
+    submitSend: async () => {
+      if (sendDefer) return new Promise<SendSubmitResult | Rejection>((r) => { sendDefer = { resolve: r }; });
+      return sendResp ? sendResp() : ({ status: 'pending', txId: last(), expiresAtHeight: blockHeight + 720 });
+    },
+  } as unknown as WriteClient;
+}
+
+function fakeIdentity(): AppIdentity {
+  return {
+    current: () => idState,
+    sign: async (_bytes: Uint8Array, t: string) => {
+      signCalls.push(t);
+      if (signResp === 'signed') return { signature: 'ab'.repeat(64) };
+      if (signResp === 'declined') return { declined: true } as unknown as { signature: string };
+      if (signResp === 'locked') return { locked: true } as unknown as { signature: string };
+      return { refused: 'nope' } as unknown as { signature: string };
+    },
+    onChange: (_cb: () => void) => {},
+    draft: async () => ({ pubKeyHex: ME }),
+    create: async () => ({ pubKeyHex: ME }),
+    discardDraft: () => {},
+    inspectFile: async () => ({ kind: 'clear' as const, pubKeyHex: ME }),
+    importFile: async () => ({ pubKeyHex: ME }),
+    exportFile: async () => '',
+    unlock: async () => {},
+    lock: async () => {},
+    forget: async () => {},
+    backedUp: () => true,
+  } as unknown as AppIdentity;
+}
+
+interface Drive {
+  loadFeed(): Promise<void>;
+  loadMembershipState(): Promise<void>;
+  send(toHex: string, toName: string | null, amount: bigint): Promise<void>;
+  askFaucetCredits(): Promise<void>;
+  pollTick(): Promise<void>;
+  ledger: { all(): Array<{ kind: string; postId: string; txId: string; send?: { boxId: string } }>; size: number };
+  profileCredits: CreditsResult | null;
+  creditGrantView: unknown;
+  sendFlight: { stage: string; reason?: string | null } | null;
+  faucetClient: { askCredits: (key: string) => Promise<CreditGrant | Rejection> };
+}
+
+function harness() {
+  idState = { pubKeyHex: ME, locked: false };
+  blockHeight = 100;
+  signCalls = [];
+  sendResp = null;
+  sendDefer = null;
+  signResp = 'signed';
+  faucetCredits = null;
+  creditsSelf = {
+    userId: ME, total: '10000000000',
+    boxes: [{ boxId: CBOX, value: '10000000000' }],
+    boxCount: 1, next: null,
+  };
+  creditsRecipient = { userId: REC, total: '0', boxes: [], boxCount: 0, next: null };
+
+  const app = new App(fakeApi(), fakeWrite(), fakeIdentity());
+  // Swap the faucet client for a controllable one, so tests drive the credits
+  // grant without touching fetch.
+  (app as unknown as { faucetClient: unknown }).faucetClient = {
+    askCredits: async (_key: string): Promise<CreditGrant | Rejection> => {
+      if (faucetCredits) return faucetCredits();
+      return { txId: '11'.repeat(32), status: 'pending', expiresAtHeight: blockHeight + 720, boxId: GRANT_BOX };
+    },
+  };
+  const appbar = document.createElement('div');
+  const feed = document.createElement('section'); feed.id = 'feed';
+  const panes = document.createElement('section'); panes.id = 'panes';
+  document.body.append(appbar, feed, panes);
+  app.mount(appbar, feed, panes);
+  return { app, appbar, feed, panes, drive: app as unknown as Drive };
+}
+
+const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+
+beforeEach(() => {
+  localStorage.clear();
+  document.body.innerHTML = '';
+  prefs.faucet = '/faucet';
+});
+afterEach(() => { vi.useRealTimers(); });
+
+describe('the send flow', () => {
+  it('a send press writes the transaction and adds a `send` ledger entry', async () => {
+    const h = harness();
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    // 1 $NOTIS = 100_000_000 base units.
+    await h.drive.send(REC, 'bob', 100_000_000n);
+    await flush();
+    const entry = h.drive.ledger.all().find((e) => e.kind === 'send');
+    expect(entry).toBeDefined();
+    expect(entry!.postId).toBe(REC); // the recipient key is the subject
+    expect(entry!.send?.boxId).toBeDefined();
+    // No transient flight ending — the pending line is the ledger's entry.
+    expect(h.drive.sendFlight).toBeNull();
+  });
+
+  it('a decline leaves sendFlight rejected with *send not sent.*', async () => {
+    const h = harness();
+    signResp = 'declined';
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    await h.drive.send(REC, 'bob', 100_000_000n);
+    await flush();
+    // No ledger entry — nothing was spent.
+    expect(h.drive.ledger.all().find((e) => e.kind === 'send')).toBeUndefined();
+    // The row's flight reads *send not sent.* through stageLine.
+    expect(h.drive.sendFlight?.stage).toBe('rejected');
+    expect(h.drive.sendFlight?.reason).toContain('send not sent.');
+  });
+
+  it('a node rejection sets sendFlight rejected with the reason', async () => {
+    const h = harness();
+    sendResp = () => ({ status: 400, message: 'too small' });
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    await h.drive.send(REC, 'bob', 100_000_000n);
+    await flush();
+    expect(h.drive.ledger.all().find((e) => e.kind === 'send')).toBeUndefined();
+    expect(h.drive.sendFlight?.stage).toBe('rejected');
+    expect(h.drive.sendFlight?.reason).toContain('too small');
+  });
+
+  it('a send landing sets sendFlight landed, re-reads the sender /credits and drops the entry (READ-1 defect 4)', async () => {
+    const h = harness();
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    await h.drive.send(REC, 'bob', 100_000_000n);
+    await flush();
+    const entry = h.drive.ledger.all().find((e) => e.kind === 'send')!;
+    expect(h.drive.sendFlight).toBeNull();
+    // The recipient's /credits now lists the payment box (matching the entry's boxId);
+    // the sender's /credits shows the change.
+    creditsRecipient = { userId: REC, total: '100000000', boxes: [{ boxId: entry.send!.boxId, value: '100000000' }], boxCount: 1, next: null };
+    creditsSelf = {
+      userId: ME, total: '9900000000',
+      boxes: [{ boxId: CHANGE_BOX, value: '9900000000' }],
+      boxCount: 1, next: null,
+    };
+    blockHeight = 101;
+    await h.drive.pollTick();
+    await flush();
+    // The entry cleared; the row's flight reads *sent* (stage: 'landed').
+    expect(h.drive.ledger.all().find((e) => e.kind === 'send')).toBeUndefined();
+    expect(h.drive.sendFlight?.stage).toBe('landed');
+    // The sender's /credits reflect the move — the row's balance updates in place.
+    expect(h.drive.profileCredits?.boxes[0]?.boxId).toBe(CHANGE_BOX);
+    expect(h.drive.profileCredits?.boxes[0]?.value).toBe('9900000000');
+  });
+
+  it('a send expiry sets sendFlight expired', async () => {
+    const h = harness();
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    await h.drive.send(REC, 'bob', 100_000_000n);
+    await flush();
+    const entry = h.drive.ledger.all().find((e) => e.kind === 'send')!;
+    // The recipient never lists the box, and the tip advances past expiresAtHeight.
+    blockHeight = 10_000; // way past expiresAtHeight (submitted at 100 + 720)
+    await h.drive.pollTick();
+    await flush();
+    expect(h.drive.ledger.all().find((e) => e.kind === 'send' && e.txId === entry.txId)).toBeUndefined();
+    expect(h.drive.sendFlight?.stage).toBe('expired');
+  });
+});
+
+describe('the faucet credits step', () => {
+  it('a 202 adds a `creditGrant` entry and lands on the read that lists its box', async () => {
+    const h = harness();
+    // No credits yet — the faucet step shows.
+    creditsSelf = { userId: ME, total: '0', boxes: [], boxCount: 0, next: null };
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    await h.drive.askFaucetCredits();
+    await flush();
+    const entry = h.drive.ledger.all().find((e) => e.kind === 'creditGrant');
+    expect(entry).toBeDefined();
+    expect(entry!.postId).toBe(GRANT_BOX);
+    // The landing: /credits now lists the box the faucet named.
+    creditsSelf = { userId: ME, total: '10000000000', boxes: [{ boxId: GRANT_BOX, value: '10000000000' }], boxCount: 1, next: null };
+    blockHeight = 101;
+    await h.drive.pollTick();
+    await flush();
+    expect(h.drive.ledger.all().find((e) => e.kind === 'creditGrant')).toBeUndefined();
+    expect(h.drive.creditGrantView).toBeNull();
+    expect(h.drive.profileCredits?.boxes[0]?.boxId).toBe(GRANT_BOX);
+  });
+
+  it('a 202 whose box never lists expires past expiresAtHeight', async () => {
+    const h = harness();
+    creditsSelf = { userId: ME, total: '0', boxes: [], boxCount: 0, next: null };
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    await h.drive.askFaucetCredits();
+    await flush();
+    expect(h.drive.creditGrantView).toEqual({ state: 'pending' });
+    blockHeight = 10_000;
+    await h.drive.pollTick();
+    await flush();
+    // The entry cleared and the grant view reads expired at the height it was submitted with.
+    expect(h.drive.ledger.all().find((e) => e.kind === 'creditGrant')).toBeUndefined();
+    expect((h.drive.creditGrantView as { state: string; atHeight: number }).state).toBe('expired');
+  });
+});
+
+describe('the row after a landed send', () => {
+  it('the DOM reads *sent* after the landing without a full re-render', async () => {
+    const h = harness();
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    await flush();
+    // The @profile window is mounted — reach the credits row through the DOM.
+    (h.app as unknown as { openProfile: () => void }).openProfile();
+    await flush();
+    // The App has rendered the profile window; the credits row's field exists.
+    const field = document.querySelector<HTMLElement>('.credits-field');
+    expect(field).not.toBeNull();
+    // Submit a send.
+    await h.drive.send(REC, 'bob', 100_000_000n);
+    await flush();
+    const entry = h.drive.ledger.all().find((e) => e.kind === 'send')!;
+    creditsRecipient = { userId: REC, total: '100000000', boxes: [{ boxId: entry.send!.boxId, value: '100000000' }], boxCount: 1, next: null };
+    creditsSelf = {
+      userId: ME, total: '9900000000',
+      boxes: [{ boxId: CHANGE_BOX, value: '9900000000' }],
+      boxCount: 1, next: null,
+    };
+    blockHeight = 101;
+    await h.drive.pollTick();
+    await flush();
+    const flight = document.querySelector<HTMLElement>('.credits-flight');
+    // *sent* — the row's own render on landing.
+    expect(flight?.textContent).toBe('sent');
+    // The balance moves — 99 $NOTIS in gold, in place.
+    const gold = document.querySelector<HTMLElement>('.credits-line .mono.gold');
+    expect(gold?.textContent).toBe('99');
+  });
+
+  it('a declined send leaves both inputs holding their values and the flight reads *send not sent.* (READ-1 defect 3)', async () => {
+    const h = harness();
+    signResp = 'declined';
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    await flush();
+    (h.app as unknown as { openProfile: () => void }).openProfile();
+    await flush();
+    // Fill the form.
+    const form = document.querySelector<HTMLFormElement>('form.credits-form')!;
+    const inputs = form.querySelectorAll<HTMLInputElement>('input');
+    inputs[0]!.value = REC;
+    inputs[1]!.value = '1';
+    // Press send — the confirm row appears.
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    // Press the confirm's send button.
+    const confirmSend = [...document.querySelectorAll<HTMLButtonElement>('.pf-confirm .word')]
+      .find((b) => b.textContent === 'send')!;
+    confirmSend.click();
+    await flush();
+    // The form is back with its values, the flight reads *send not sent.*
+    const backForm = document.querySelector<HTMLFormElement>('form.credits-form')!;
+    const backInputs = backForm.querySelectorAll<HTMLInputElement>('input');
+    expect(backInputs[0]!.value).toBe(REC);
+    expect(backInputs[1]!.value).toBe('1');
+    const flight = document.querySelector<HTMLElement>('.credits-flight');
+    expect(flight?.textContent).toContain('send not sent.');
+  });
+
+  it('an accepted submission clears the form (READ-1 defect 3)', async () => {
+    const h = harness();
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    await flush();
+    (h.app as unknown as { openProfile: () => void }).openProfile();
+    await flush();
+    const form = document.querySelector<HTMLFormElement>('form.credits-form')!;
+    const inputs = form.querySelectorAll<HTMLInputElement>('input');
+    inputs[0]!.value = '@bob'; // resolveRecipient → REC, toName 'bob'
+    inputs[1]!.value = '1';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    const confirmSend = [...document.querySelectorAll<HTMLButtonElement>('.pf-confirm .word')]
+      .find((b) => b.textContent === 'send')!;
+    confirmSend.click();
+    await flush();
+    // A pending line reads *<amount> $NOTIS to @bob · submitted*.
+    const flight = document.querySelector<HTMLElement>('.credits-flight');
+    expect(flight?.textContent).toContain('1 $NOTIS to @bob · submitted');
+    // The form is cleared on the accepted submission.
+    const clearForm = document.querySelector<HTMLFormElement>('form.credits-form')!;
+    const clearInputs = clearForm.querySelectorAll<HTMLInputElement>('input');
+    expect(clearInputs[0]!.value).toBe('');
+    expect(clearInputs[1]!.value).toBe('');
+  });
+});

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { FaucetClient, faucetLine } from '../src/api/faucet';
+const BOX = 'ee'.repeat(32); // a well-formed 64-hex box id
 
 // The faucet client POSTs { pubkey } to <base>/karma and returns either the grant
 // or one normalised Rejection; faucetLine turns a rejection into one register
@@ -97,5 +98,58 @@ describe('faucet client — the rejection lines', () => {
     expect(faucetLine({ status: 0, message: 'the faucet did not say when its invite expires.' })).toBe(
       'the faucet did not say when its invite expires.',
     );
+  });
+});
+
+describe('faucet client — the $NOTIS grant', () => {
+  it('askCredits POSTs { pubkey } to <base>/credits and returns the grant', async () => {
+    mockResponse({ ok: true, status: 202, body: { txId: TX, status: 'pending', expiresAtHeight: 5900, boxId: BOX } });
+    const res = await faucet().askCredits(KEY);
+    expect(last.url).toBe('/faucet/credits');
+    expect(last.method).toBe('POST');
+    expect(last.body).toEqual({ pubkey: KEY });
+    expect(res).toEqual({ txId: TX, status: 'pending', expiresAtHeight: 5900, boxId: BOX });
+  });
+
+  it('a 202 without a numeric expiresAtHeight is refused — no expiry for the transfer', async () => {
+    mockResponse({ ok: true, status: 202, body: { txId: TX, status: 'pending', boxId: BOX } });
+    expect(await faucet().askCredits(KEY)).toEqual({
+      status: 0,
+      message: 'the faucet did not say when its transfer expires.',
+    });
+  });
+
+  it('a 202 without a 64-hex boxId is refused — the grant has no box to recognise', async () => {
+    mockResponse({ ok: true, status: 202, body: { txId: TX, status: 'pending', expiresAtHeight: 5900, boxId: 'nope' } });
+    expect(await faucet().askCredits(KEY)).toEqual({
+      status: 0,
+      message: 'the faucet did not name the box it made.',
+    });
+    mockResponse({ ok: true, status: 202, body: { txId: TX, status: 'pending', expiresAtHeight: 5900 } });
+    expect(await faucet().askCredits(KEY)).toEqual({
+      status: 0,
+      message: 'the faucet did not name the box it made.',
+    });
+  });
+
+  it('a 202 whose txId is not 64 lowercase hex is refused', async () => {
+    mockResponse({ ok: true, status: 202, body: { txId: 'nope', status: 'pending', expiresAtHeight: 5900, boxId: BOX } });
+    expect(await faucet().askCredits(KEY)).toEqual({
+      status: 0,
+      message: 'the faucet did not name the transaction it made.',
+    });
+  });
+});
+
+describe('faucet client — the credits step rejections', () => {
+  it('a 400 for credits is *the faucet refused that key: …* — credits repeat, so it is not the once-per-key line', () => {
+    expect(faucetLine({ status: 400, message: 'rate limited on address' }, 'credits')).toBe(
+      'the faucet refused that key: rate limited on address',
+    );
+  });
+
+  it('429 and 503 read the same as for karma', () => {
+    expect(faucetLine({ status: 429, message: 'slow down' }, 'credits')).toBe('the faucet is busy right now. try again in a while.');
+    expect(faucetLine({ status: 503, message: 'drained' }, 'credits')).toBe('the faucet is empty right now.');
   });
 });

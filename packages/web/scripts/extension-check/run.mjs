@@ -19,7 +19,7 @@
 //     --extension-dir <path> --r-key <path> --node <origin> --faucet <origin>
 
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -37,6 +37,18 @@ const PASSPHRASE = 'proof-pass';
 
 if (!EXT_DIR || !existsSync(EXT_DIR)) { console.error('missing --extension-dir'); process.exit(2); }
 if (!R_KEY || !existsSync(R_KEY)) { console.error('missing --r-key'); process.exit(2); }
+
+// Grant two loopback origins on the *unpacked* manifest — CDP cannot drive the
+// browser's permission dialog, so the App's fetch to the faucet is refused at
+// the network layer even after step 11 stubs `chrome.permissions.request` true.
+// The tracked template (`extension/manifest.template.json`) and the packed
+// release manifest are untouched.
+const MANIFEST_PATH = join(EXT_DIR, 'manifest.json');
+const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'));
+const LOOPBACKS = ['http://127.0.0.1/*', 'http://localhost/*'];
+manifest.host_permissions = [...new Set([...(manifest.host_permissions ?? []), ...LOOPBACKS])];
+writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2) + '\n');
+console.log(`manifest patched: host_permissions += ${JSON.stringify(LOOPBACKS)}`);
 
 const R_TEXT = readFileSync(R_KEY, 'utf8');
 const R_JSON = JSON.parse(R_TEXT);
@@ -521,11 +533,197 @@ async function main() {
   record(11, refusedOk && grantedOk,
     `refused: hint="${refused.hint}" (${refusedOk ? 'ok' : 'FAIL'}), storedFaucet=${refused.storedFaucet}; granted: storedFaucet=${granted.storedFaucet} (${grantedOk ? 'ok' : 'FAIL'})`);
 
-  // --- Step 12 — Credits: not exercised live. The client has no credits
-  // builder yet; the classification is pinned by policy.test.ts's 14 offline
-  // tests. Recorded skipped, not PASS — a proof that runs nothing is READ-6's
-  // shape even when the reason is legitimate.
-  record(12, 'skipped', 'no in-client credits builder; policy.test.ts (14 offline tests) pins the classification');
+  // --- Step 12 — Credits: 12a ask → 12b send + approve → 12c decline →
+  // 12d locked send. WEB_INTERFACE → The profile window, → The wallet,
+  // → The extension. The identity is unlocked (step 9), the policy is
+  // silent (step 9), the faucet base is set from step 11.
+  const DEVNET_FAUCET_KEY = '5468d985c3924a95f3d3dc98b67a41ac2c7cc4cfca4fcbf7c5627452f1617f36';
+  const R_HEX = R_JSON.pubKeyHex;
+
+  // --- 12a — no credits → "ask the faucet for $NOTIS" → ledger creditGrant → landing → 100.
+  // Open the profile if not already.
+  await cx10.eval(`document.querySelector('.credits-field') || document.querySelector('[aria-label="open profile"]').click()`, true);
+  await cx10.waitFor(`!!document.querySelector('.credits-field .credits-line')`, 'credits line');
+  const before12a = await cx10.eval(`(() => {
+    const line = document.querySelector('.credits-field .credits-line');
+    const btns = [...(line?.querySelectorAll('button.word') ?? [])];
+    const ask = btns.find(b => b.textContent.trim() === 'ask the faucet for $NOTIS');
+    return { hasAsk: !!ask, gold: line?.querySelector('.mono.gold')?.textContent ?? null };
+  })()`);
+  await cx10.eval(`(() => {
+    const line = document.querySelector('.credits-field .credits-line');
+    [...line.querySelectorAll('button.word')].find(b => b.textContent.trim() === 'ask the faucet for $NOTIS').click();
+  })()`, true);
+  await cx10.waitFor(`(() => {
+    const raw = localStorage.getItem('notis.pending.' + ${JSON.stringify(R_HEX)}) || '[]';
+    return JSON.parse(raw).some(e => e.kind === 'creditGrant');
+  })()`, 'creditGrant ledger entry', 15000);
+  const grantEntry12a = await cx10.eval(`(() => {
+    const raw = localStorage.getItem('notis.pending.' + ${JSON.stringify(R_HEX)}) || '[]';
+    return JSON.parse(raw).find(e => e.kind === 'creditGrant');
+  })()`);
+  await cx10.waitFor(`document.querySelector('.credits-line .mono.gold')?.textContent === '100'`, 'row reads 100 after grant', 120000);
+  const after12a = await cx10.eval(`(() => ({
+    gold: document.querySelector('.credits-line .mono.gold')?.textContent ?? null,
+    text: document.querySelector('.credits-line')?.textContent?.trim() ?? null,
+  }))()`);
+  const grantOk12a = grantEntry12a?.kind === 'creditGrant' && typeof grantEntry12a.postId === 'string' && /^[0-9a-f]{64}$/.test(grantEntry12a.postId);
+  const askOk12a = before12a.hasAsk;
+  const rowOk12a = after12a.gold === '100' && (after12a.text || '').includes('$NOTIS');
+  record('12a', askOk12a && grantOk12a && rowOk12a,
+    `ask=${askOk12a}, grant.postId=${grantEntry12a?.postId?.slice(0, 8) ?? 'null'}…, landed row='${after12a.text}'`);
+
+  // --- 12b — send 12.5 to the devnet faucet key. Credits always prompt.
+  // Approve → /credits/transfer 200 → landing → row reads 87.5 → faucet /credits has the payment.
+  const events12bStart = cx10.events.length;
+  await cx10.waitFor(`!!document.querySelector('form.credits-form')`, 'send form present');
+  await cx10.eval(`(() => {
+    const form = document.querySelector('form.credits-form');
+    const inputs = form.querySelectorAll('input');
+    inputs[0].value = ${JSON.stringify(DEVNET_FAUCET_KEY)};
+    inputs[1].value = '12.5';
+    form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+  })()`, true);
+  await cx10.waitFor(`!!document.querySelector('.credits-field .pf-confirm')`, 'confirm row 12b');
+  const confirmText12b = await cx10.eval(`document.querySelector('.credits-field .pf-confirm .pf-refusal')?.textContent?.trim() ?? null`);
+  await cx10.eval(`(() => {
+    const confirm = document.querySelector('.credits-field .pf-confirm');
+    [...confirm.querySelectorAll('.pf-actions button.word')].find(b => b.textContent.trim() === 'send').click();
+  })()`, true);
+  const prompt12b = await findExt('prompt.html');
+  let promptShape12b = null;
+  if (prompt12b) {
+    const cxp = await openSession(prompt12b.webSocketDebuggerUrl);
+    await cxp.waitFor(`!!document.querySelector('.prompt .ask')`, 'prompt heading 12b');
+    promptShape12b = await cxp.eval(`(() => ({
+      heading: document.querySelector('.prompt .ask')?.textContent?.trim() ?? null,
+      lines: [...document.querySelectorAll('.prompt .line')].map(l => l.textContent?.trim() ?? ''),
+    }))()`);
+    await cxp.eval(`document.querySelector('.prompt button.btn-primary').click()`, true);
+    await sleep(2000);
+    cxp.s.close();
+  }
+  await sleep(3000);
+  const transfer12b = cx10.events.slice(events12bStart).find((e) =>
+    e.method === 'Network.responseReceived' && (e.params.response.url || '').includes('/credits/transfer'));
+  await cx10.waitFor(`document.querySelector('.credits-line .mono.gold')?.textContent === '87.5'`, 'row reads 87.5 after send', 180000);
+  const faucetCredits12b = await (await fetch(`${NODE}/credits/${DEVNET_FAUCET_KEY}`)).json();
+  const paymentBox = (faucetCredits12b.boxes || []).find((b) => BigInt(b.value) === 1_250_000_000n);
+  const shortFaucet = DEVNET_FAUCET_KEY.slice(0, 16) + '…';
+  const confirmOk12b = confirmText12b === `send 12.5 $NOTIS to ${shortFaucet}?`;
+  const headingOk12b = promptShape12b?.heading === 'send 12.5 $NOTIS?';
+  const lineOk12b = (promptShape12b?.lines?.length === 1) && promptShape12b.lines[0] === `12.5 $NOTIS to ${DEVNET_FAUCET_KEY.slice(0, 8)}…${DEVNET_FAUCET_KEY.slice(-4)}`;
+  const noFeeLine12b = !(promptShape12b?.lines || []).some((l) => l.startsWith('fee '));
+  const transferOk12b = transfer12b?.params.response.status === 200;
+  const rowOk12b = await cx10.eval(`document.querySelector('.credits-line .mono.gold')?.textContent === '87.5'`);
+  record('12b', confirmOk12b && headingOk12b && lineOk12b && noFeeLine12b && transferOk12b && rowOk12b && !!paymentBox,
+    `confirm="${confirmText12b}", heading="${promptShape12b?.heading}", lines=${JSON.stringify(promptShape12b?.lines)}, transfer=${transfer12b?.params.response.status ?? 'null'}, row='87.5'=${rowOk12b}, faucet has 12.5=${!!paymentBox}`);
+
+  // --- 12c — same shape, decline at the prompt. Form values kept, flight "send not sent.", no /credits/transfer.
+  const events12cStart = cx10.events.length;
+  await cx10.waitFor(`!!document.querySelector('form.credits-form')`, 'credits form present 12c');
+  await cx10.eval(`(() => {
+    const form = document.querySelector('form.credits-form');
+    const inputs = form.querySelectorAll('input');
+    inputs[0].value = ${JSON.stringify(DEVNET_FAUCET_KEY)};
+    inputs[1].value = '7.25';
+    form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+  })()`, true);
+  await cx10.waitFor(`!!document.querySelector('.credits-field .pf-confirm')`, 'confirm row 12c');
+  await cx10.eval(`(() => {
+    const confirm = document.querySelector('.credits-field .pf-confirm');
+    [...confirm.querySelectorAll('.pf-actions button.word')].find(b => b.textContent.trim() === 'send').click();
+  })()`, true);
+  const prompt12c = await findExt('prompt.html');
+  if (prompt12c) {
+    const cxp = await openSession(prompt12c.webSocketDebuggerUrl);
+    await cxp.waitFor(`!!document.querySelector('.prompt button.btn-ghost')`, 'prompt cancel 12c');
+    await cxp.eval(`document.querySelector('.prompt button.btn-ghost').click()`, true);
+    await sleep(2000);
+    cxp.s.close();
+  }
+  await sleep(2000);
+  const state12c = await cx10.eval(`(() => {
+    const form = document.querySelector('form.credits-form');
+    const inputs = form ? form.querySelectorAll('input') : [];
+    const flight = document.querySelector('.credits-flight .stage')?.textContent?.trim() ?? null;
+    const gold = document.querySelector('.credits-line .mono.gold')?.textContent ?? null;
+    return { to: inputs[0]?.value ?? null, amount: inputs[1]?.value ?? null, flight, gold };
+  })()`);
+  const transferSeen12c = cx10.events.slice(events12cStart).some((e) =>
+    e.method === 'Network.requestWillBeSent' && (e.params.request.url || '').includes('/credits/transfer'));
+  const formKept12c = state12c.to === DEVNET_FAUCET_KEY && state12c.amount === '7.25';
+  const flightOk12c = state12c.flight === 'send not sent.';
+  const rowUnchanged12c = state12c.gold === '87.5';
+  record('12c', formKept12c && flightOk12c && !transferSeen12c && rowUnchanged12c,
+    `form to='${state12c.to?.slice(0, 8) ?? 'null'}…' amount='${state12c.amount}', flight='${state12c.flight}', no /credits/transfer=${!transferSeen12c}, row='${state12c.gold}'`);
+
+  // --- 12d — lock, then send: confirm mounts unlock in place, no request leaves; unlock; flow proceeds; a further send prompts with no second unlock.
+  await cx10.waitFor(`!!window.__btn('lock')`, 'lock button in profile 12d');
+  await cx10.eval(`window.__btn('lock').click()`, true);
+  await sleep(1000);
+  const lockedSession12d = await cx10.eval(`(async () => (await chrome.storage.session.get('notis.seed'))['notis.seed'] ?? null)()`);
+  const events12dStart = cx10.events.length;
+  await cx10.waitFor(`!!document.querySelector('form.credits-form')`, 'credits form under lock');
+  await cx10.eval(`(() => {
+    const form = document.querySelector('form.credits-form');
+    const inputs = form.querySelectorAll('input');
+    inputs[0].value = ${JSON.stringify(DEVNET_FAUCET_KEY)};
+    inputs[1].value = '5';
+    form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+  })()`, true);
+  await cx10.waitFor(`!!document.querySelector('.credits-field .pf-confirm')`, 'confirm row 12d');
+  await cx10.eval(`(() => {
+    const confirm = document.querySelector('.credits-field .pf-confirm');
+    [...confirm.querySelectorAll('.pf-actions button.word')].find(b => b.textContent.trim() === 'send').click();
+  })()`, true);
+  await sleep(1000);
+  const unlockMounted12d = await cx10.eval(`!!document.querySelector('.credits-field .pf-confirm form.pf input[type="password"]')`);
+  const promptSeen12d = await findExt('prompt.html');
+  const transferSeen12dLocked = cx10.events.slice(events12dStart).some((e) =>
+    e.method === 'Network.requestWillBeSent' && (e.params.request.url || '').includes('/credits/transfer'));
+  await cx10.eval(`(() => {
+    const form = document.querySelector('.credits-field .pf-confirm form.pf');
+    const pw = form.querySelector('input[type="password"]');
+    pw.value = ${JSON.stringify(PASSPHRASE)};
+    form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+  })()`, true);
+  await sleep(3000);
+  const prompt12dFirst = await findExt('prompt.html');
+  if (prompt12dFirst) {
+    const cxp = await openSession(prompt12dFirst.webSocketDebuggerUrl);
+    await cxp.waitFor(`!!document.querySelector('.prompt button.btn-ghost')`, 'prompt 12d first (decline)');
+    await cxp.eval(`document.querySelector('.prompt button.btn-ghost').click()`, true);
+    await sleep(2000);
+    cxp.s.close();
+  }
+  await sleep(2000);
+  await cx10.waitFor(`!!document.querySelector('form.credits-form')`, 'credits form for 12d second send');
+  await cx10.eval(`(() => {
+    const form = document.querySelector('form.credits-form');
+    const inputs = form.querySelectorAll('input');
+    inputs[0].value = ${JSON.stringify(DEVNET_FAUCET_KEY)};
+    inputs[1].value = '2';
+    form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+  })()`, true);
+  await cx10.waitFor(`!!document.querySelector('.credits-field .pf-confirm')`, 'confirm row 12d second');
+  await cx10.eval(`(() => {
+    const confirm = document.querySelector('.credits-field .pf-confirm');
+    [...confirm.querySelectorAll('.pf-actions button.word')].find(b => b.textContent.trim() === 'send').click();
+  })()`, true);
+  await sleep(1000);
+  const unlockMounted12dSecond = await cx10.eval(`!!document.querySelector('.credits-field .pf-confirm form.pf input[type="password"]')`);
+  const prompt12dSecond = await findExt('prompt.html');
+  if (prompt12dSecond) {
+    const cxp = await openSession(prompt12dSecond.webSocketDebuggerUrl);
+    await cxp.waitFor(`!!document.querySelector('.prompt button.btn-ghost')`, 'prompt 12d second (decline)');
+    await cxp.eval(`document.querySelector('.prompt button.btn-ghost').click()`, true);
+    await sleep(2000);
+    cxp.s.close();
+  }
+  record('12d',
+    lockedSession12d === null && unlockMounted12d && !promptSeen12d && !transferSeen12dLocked && !!prompt12dFirst && !unlockMounted12dSecond && !!prompt12dSecond,
+    `session empty=${lockedSession12d === null}, unlock mounted=${unlockMounted12d}, no prompt under lock=${!promptSeen12d}, no /credits/transfer under lock=${!transferSeen12dLocked}, first-send prompt after unlock=${!!prompt12dFirst}, second-send unlock absent=${!unlockMounted12dSecond}, second-send prompt seen=${!!prompt12dSecond}`);
 }
 
 let exitCode = 0;
@@ -541,8 +739,11 @@ for (const r of findings) console.log(`  step ${r.step}: ${r.status} — ${r.det
 const pass = findings.filter((f) => f.status === 'PASS').length;
 const fail = findings.filter((f) => f.status === 'FAIL').length;
 const skipped = findings.filter((f) => f.status === 'SKIPPED').length;
-console.log(`\n${pass} measured, ${fail} failed, ${skipped} skipped`);
-console.log(JSON.stringify({ pass, fail, skipped, findings }, null, 2));
+// One measurement per top-level step. Step 12's sub-parts (12a…12d) collapse
+// into step 12; the summary line reads what WEB_INTERFACE → The extension asks.
+const measured = new Set(findings.map((f) => String(f.step).replace(/[a-d]$/, ''))).size;
+console.log(`\n${measured} measured (${pass} PASS, ${fail} FAIL, ${skipped} SKIPPED)`);
+console.log(JSON.stringify({ measured, pass, fail, skipped, findings }, null, 2));
 if (fail > 0) exitCode = 1;
 
 proc.kill();

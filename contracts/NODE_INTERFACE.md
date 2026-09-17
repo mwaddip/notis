@@ -605,7 +605,10 @@ origin could spend each visitor's allowance on a key of its choosing (→ Cross-
 bound its wait rather than guess a bound; `400 { error }` relays the node's refusal (a key that already
 holds a record — the once-per-identity rule) or names a malformed key; `429 { error }` is the service's
 own rate limit; `503 { error }` is a drained faucet. `POST <faucet>/credits { pubkey }` answers
-`202 { txId, status }` and repeats.
+`202 { txId, status, expiresAtHeight, boxId }` and repeats — `expiresAtHeight` the node's expiry for the
+transfer, relayed from `POST /credits/transfer`'s answer (→ Credits) for the reason the invite's is, and
+`boxId` the granted `credit` box's id, `computeCandidateBoxId` over the payment output at index 0
+(`TYPES_INTERFACE → BoxId`), so a client can recognise the grant among boxes the key already holds.
 
 A faucet is an **ordinary account** whose secret lives in a service outside the node. Genesis seeds
 that account's karma and credit boxes on the networks whose profile names a `faucetPublicKey`;

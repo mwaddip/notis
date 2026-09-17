@@ -74,6 +74,8 @@ function fakeApi(): Api {
     vouchCooldowns: async (): Promise<VouchCooldownsResult> => ({ cooldowns, count: cooldowns.length, next: null }),
     bonds: async () => ({ bonds: [], bondCount: 0, next: null }),
     usernameByOwner: async (key) => authorNameResults?.get(key) ?? (key === ME ? ownNameResult : null),
+    credits: async () => ({ userId: "", total: "0", boxes: [], boxCount: 0, next: null }),
+    usernameByName: async () => null,
   };
 }
 

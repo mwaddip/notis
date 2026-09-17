@@ -1,7 +1,7 @@
 import { readStore, writeStore } from '../prefs';
 import { isWithdrawn } from '../api/dto';
-import type { PostResult, KarmaResult, UsernameResult } from '../api/dto';
-import type { SpendableBox, ChangeRef, PendingEntry, EntryOutcome } from './types';
+import type { PostResult, KarmaResult, UsernameResult, CreditsResult } from '../api/dto';
+import type { SpendableBox, ChangeRef, PendingEntry, EntryOutcome, SendRef } from './types';
 
 // The persisted pending ledger and the spendable view over it
 // (WEB_INTERFACE → The wallet). A reload that forgot the ledger would re-spend a
@@ -54,11 +54,21 @@ export class PendingLedger {
    * predicted change) is spendable exactly when no pending transaction names it
    * as an input, so a change already chained into a later pending transaction
    * drops out too.
+   *
+   * `side` splits the view (WEB_INTERFACE → The wallet: "There are two views
+   * over one ledger"): a `send` entry's inputs and change are credit boxes and
+   * count on the credits side only, a `creditGrant` counts on neither, every
+   * other kind on the karma side only. A send's change is never offered to a
+   * post, nor a post's change to a send.
    */
-  spendable(confirmed: SpendableBox[]): SpendableBox[] {
+  spendable(confirmed: SpendableBox[], side: 'karma' | 'credits' = 'karma'): SpendableBox[] {
     const spent = new Set<string>();
     const changes: SpendableBox[] = [];
     for (const e of this.entries.values()) {
+      if (e.kind === 'creditGrant') continue;              // inputs [], no change — inert
+      const isSend = e.kind === 'send';
+      if (isSend && side !== 'credits') continue;
+      if (!isSend && side !== 'karma') continue;
       for (const id of e.inputs) spent.add(id);
       if (e.change) changes.push({ boxId: e.change.boxId, value: e.change.value });
     }
@@ -114,6 +124,30 @@ export function reconcileLike(entry: PendingEntry, fetched: PostResult | null, t
  *  while still zero, else pending (WEB_INTERFACE → The faucet step). */
 export function reconcileGrant(entry: PendingEntry, karma: KarmaResult, tip: number): EntryOutcome {
   if (karma.boxCount > 0) return 'landed';
+  return tip > entry.expiresAtHeight ? 'expired' : 'pending';
+}
+
+/** A pending send is landed when the recipient's `/credits` lists the payment
+ *  box the client predicted (`send.boxId`), expired past `expiresAtHeight`, else
+ *  pending (WEB_INTERFACE → The wallet, → The profile window). The list is one
+ *  page the caller has already followed to the end, so the presence check is
+ *  O(n). */
+export function reconcileSend(
+  entry: PendingEntry,
+  recipientBoxes: ReadonlyArray<{ boxId: string }>,
+  tip: number,
+): EntryOutcome {
+  const boxId = entry.send?.boxId;
+  if (boxId === undefined) return 'expired'; // a send entry missing its payload cannot land
+  if (recipientBoxes.some((b) => b.boxId === boxId)) return 'landed';
+  return tip > entry.expiresAtHeight ? 'expired' : 'pending';
+}
+
+/** A pending credits grant is landed when the reader's own `/credits` lists the
+ *  box the faucet named — `entry.postId` is that box id (WEB_INTERFACE → The
+ *  faucet step). Expired past its height while absent, else pending. */
+export function reconcileCreditGrant(entry: PendingEntry, credits: CreditsResult, tip: number): EntryOutcome {
+  if (credits.boxes.some((b) => b.boxId === entry.postId)) return 'landed';
   return tip > entry.expiresAtHeight ? 'expired' : 'pending';
 }
 
@@ -222,6 +256,19 @@ export function pendingWithdrawTargets(entries: PendingEntry[]): Set<string> {
   return new Set(entries.filter((e) => e.kind === 'withdraw').map((e) => e.postId));
 }
 
+/** The client's pending sends, each with its resolved recipient, handle (when
+ *  the reader typed one) and amount — the flight slot reads *<amount> $NOTIS to
+ *  @bob · submitted* from the ledger, so a reload keeps it (WEB_INTERFACE → The
+ *  profile window). */
+export function pendingSendEntries(entries: PendingEntry[]): Array<{ toHex: string; toName: string | null; amount: bigint }> {
+  const out: Array<{ toHex: string; toName: string | null; amount: bigint }> = [];
+  for (const e of entries) {
+    if (e.kind !== 'send' || !e.send) continue;
+    out.push({ toHex: e.send.toHex, toName: e.send.toName, amount: e.send.amount });
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Persisted shape — bigints as decimal strings.
 // ---------------------------------------------------------------------------
@@ -231,12 +278,19 @@ interface StoredChange {
   value: string;
   createdAtBlock: number;
 }
+interface StoredSend {
+  toHex: string;
+  toName: string | null;
+  amount: string; // decimal — parsed back to bigint
+  boxId: string;
+}
 interface StoredEntry {
   txId: string;
   kind: PendingEntry['kind'];
   postId: string;
   inputs: string[];
   change?: StoredChange;
+  send?: StoredSend;
   expiresAtHeight: number;
   submittedAtHeight: number;
 }
@@ -248,10 +302,16 @@ function toStored(e: PendingEntry): StoredEntry {
     postId: e.postId,
     inputs: e.inputs,
     ...(e.change ? { change: { boxId: e.change.boxId, value: e.change.value.toString(), createdAtBlock: e.change.createdAtBlock } } : {}),
+    ...(e.send ? { send: { toHex: e.send.toHex, toName: e.send.toName, amount: e.send.amount.toString(), boxId: e.send.boxId } } : {}),
     expiresAtHeight: e.expiresAtHeight,
     submittedAtHeight: e.submittedAtHeight,
   };
 }
+
+const KNOWN_KINDS: ReadonlySet<PendingEntry['kind']> = new Set<PendingEntry['kind']>([
+  'post', 'like', 'grant', 'creditGrant', 'vouch', 'unvouch', 'invite',
+  'withdraw', 'claim', 'burn', 'send',
+]);
 
 /** Validate and convert one stored entry, throwing on any malformed field so
  *  restore() can drop the whole ledger rather than load a partial one. */
@@ -259,7 +319,7 @@ function parseStoredEntry(v: unknown): PendingEntry {
   if (typeof v !== 'object' || v === null) throw new Error('entry is not an object');
   const o = v as Record<string, unknown>;
   if (typeof o.txId !== 'string' || typeof o.postId !== 'string') throw new Error('entry has non-string ids');
-  if (o.kind !== 'post' && o.kind !== 'like' && o.kind !== 'grant' && o.kind !== 'vouch' && o.kind !== 'unvouch' && o.kind !== 'invite' && o.kind !== 'withdraw' && o.kind !== 'claim' && o.kind !== 'burn') {
+  if (typeof o.kind !== 'string' || !KNOWN_KINDS.has(o.kind as PendingEntry['kind'])) {
     throw new Error('entry has an unknown kind');
   }
   if (!Array.isArray(o.inputs) || !o.inputs.every((x) => typeof x === 'string')) throw new Error('entry inputs are not strings');
@@ -274,12 +334,28 @@ function parseStoredEntry(v: unknown): PendingEntry {
     }
     change = { boxId: co.boxId, value: BigInt(co.value), createdAtBlock: co.createdAtBlock };
   }
+  let send: SendRef | undefined;
+  if (o.send !== undefined) {
+    const s = o.send;
+    if (typeof s !== 'object' || s === null) throw new Error('entry send is not an object');
+    const so = s as Record<string, unknown>;
+    if (
+      typeof so.toHex !== 'string' ||
+      (so.toName !== null && typeof so.toName !== 'string') ||
+      typeof so.amount !== 'string' ||
+      typeof so.boxId !== 'string'
+    ) {
+      throw new Error('entry send has a malformed field');
+    }
+    send = { toHex: so.toHex, toName: so.toName as string | null, amount: BigInt(so.amount), boxId: so.boxId };
+  }
   return {
     txId: o.txId,
-    kind: o.kind,
+    kind: o.kind as PendingEntry['kind'],
     postId: o.postId,
     inputs: o.inputs as string[],
     ...(change ? { change } : {}),
+    ...(send ? { send } : {}),
     expiresAtHeight: o.expiresAtHeight,
     submittedAtHeight: o.submittedAtHeight,
   };

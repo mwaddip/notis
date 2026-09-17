@@ -1,6 +1,7 @@
 import { el } from '../dom';
 import { unlockForm } from '../view/passphrase';
-import type { SignRecord, SignSummary } from './protocol';
+import { headingFor, linesFor } from './prompt-summary';
+import type { SignRecord } from './protocol';
 
 // The prompt page — WEB_INTERFACE → "`sign`, in the background, in order". The
 // URL carries `?id=<record id>`; the background wrote the record to
@@ -128,44 +129,4 @@ function showUnlockThenApprove(record: SignRecord, button: HTMLButtonElement): v
 
 function isRecord(v: unknown): v is SignRecord {
   return typeof v === 'object' && v !== null && 'id' in v && 'txIdHex' in v && 'summary' in v;
-}
-
-function headingFor(s: SignSummary): HTMLElement {
-  const text: Record<SignSummary['kind'], string> = {
-    thread: 'sign this thread?',
-    reply: 'sign this reply?',
-    like: 'sign this like?',
-    withdraw: 'sign this withdrawal?',
-    vouch: 'sign this vouch?',
-    unvouch: 'sign this unvouch?',
-    invite: 'sign this invite?',
-    claim: 'sign this name?',
-    burn: 'burn this name?',
-    other: 'sign this rep transaction?',
-    credits: 'send $NOTIS?',
-  };
-  const h = el('h1', 'ask', text[s.kind]);
-  return h;
-}
-
-function linesFor(s: SignSummary, content: string | undefined): string[] {
-  const out: string[] = [];
-  if (s.kind === 'thread' || s.kind === 'reply' || s.kind === 'like' || s.kind === 'vouch' || s.kind === 'invite' || s.kind === 'burn' || s.kind === 'other') {
-    out.push(`${s.spendRep} rep`);
-  }
-  if (s.kind === 'like') out.push(shortenHex(s.targetHex));
-  if (s.kind === 'withdraw') out.push(shortenHex(s.postId));
-  if (s.kind === 'vouch') out.push(shortenHex(s.targetHex));
-  if (s.kind === 'invite') out.push(shortenHex(s.inviteeHex));
-  if (s.kind === 'claim') out.push(s.name);
-  if (s.kind === 'credits') {
-    for (const send of s.sends) out.push(`${send.value} $NOTIS to ${shortenHex(send.ownerHex)}`);
-    out.push(`fee ${s.feeValue} $NOTIS`);
-  }
-  if (content && (s.kind === 'thread' || s.kind === 'reply')) out.push(content);
-  return out;
-}
-
-function shortenHex(hex: string): string {
-  return hex.length > 16 ? `${hex.slice(0, 8)}…${hex.slice(-4)}` : hex;
 }

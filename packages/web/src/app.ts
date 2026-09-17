@@ -1,5 +1,5 @@
 import { NodeClient, type Api } from './api/client';
-import type { PostJson, WithdrawnJson, FeedRow, PostResult, ThreadResult, KarmaResult, BondsResult, UsernameResult } from './api/dto';
+import type { PostJson, WithdrawnJson, FeedRow, PostResult, ThreadResult, KarmaResult, BondsResult, CreditsResult, UsernameResult } from './api/dto';
 import { POST_PRICE_THREAD, POST_PRICE_REPLY, VOUCH_MIN_BALANCE, USERNAME_BURN_PRICE } from '@dagsocial/types';
 import type { Mode } from './mode';
 import type { Tabs } from './tabs';
@@ -18,14 +18,14 @@ import { WriteClient, type Rejection } from './api/write';
 import { FaucetClient, faucetLine } from './api/faucet';
 import {
   PendingLedger, reconcilePost, reconcileLike, reconcileGrant, reconcileVouch, reconcileUnvouch, reconcileInvite, reconcileWithdraw,
-  reconcileClaim, reconcileBurn, pendingUsernameEntry,
+  reconcileClaim, reconcileBurn, reconcileSend, reconcileCreditGrant, pendingUsernameEntry, pendingSendEntries,
   pendingLikeTargets, pendingVouchTargets, pendingWithdrawTargets,
 } from './wallet/ledger';
 import type { PendingEntry } from './wallet/types';
 import { readBuildContext } from './wallet/reads';
-import { submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, submitClaimFlow, submitBurnFlow, type SubmitDeps } from './wallet/submit';
+import { submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, submitClaimFlow, submitBurnFlow, submitSendFlow, type SubmitDeps } from './wallet/submit';
 import { identity as identitySingleton } from './identity/identity';
-import { renderKarmaField, renderInvitesRow, renderUsernameRow } from './view/profile';
+import { renderKarmaField, renderInvitesRow, renderUsernameRow, renderCreditsRow, resetCreditsSendForm, type ResolvedRecipient } from './view/profile';
 import type { Flight } from './view/card';
 import type { YourVouch } from './view/author';
 import {
@@ -227,6 +227,14 @@ export class App {
   private ownNameLoaded = false;
   private usernameFlight: Flight | null = null;
   private usernameInFlight: { kind: 'claim' | 'burn'; name: string } | null = null;
+  // The $NOTIS row (WEB_INTERFACE → The profile window). profileCredits is the
+  // reader's own /credits read at the profile open, the ↻, an identity change
+  // and each landing that moves the balance; creditGrantView is a faucet
+  // transfer in flight or one that lapsed; sendFlight is the transient ending
+  // for the row (the pending state lives in the ledger).
+  private profileCredits: CreditsResult | null = null;
+  private creditGrantView: { state: 'pending' } | { state: 'expired'; atHeight: number } | null = null;
+  private sendFlight: Flight | null = null;
 
   // Optional in the extension build — the faucet row's `set` requests host
   // permission for the origin before storing (WEB_INTERFACE → The profile
@@ -306,6 +314,12 @@ export class App {
       moreBonds: () => void this.moreBonds(),
       claimUsername: (name) => void this.claimUsername(name),
       burnUsername: () => void this.burnUsername(),
+      // The $NOTIS row (WEB_INTERFACE → The profile window). resolveRecipient
+      // is the handle → holder read the form runs at the press; send is the
+      // credits transfer flow; askFaucetCredits is the faucet's $NOTIS step.
+      resolveRecipient: (name) => this.resolveRecipient(name),
+      send: (toHex, toName, amount) => void this.send(toHex, toName, amount),
+      askFaucetCredits: () => void this.askFaucetCredits(),
       // The extension's identity exposes both policy and setPolicy; the in-page
       // module implements neither, and the profile row renders only when both
       // are present (WEB_INTERFACE → The profile window). setPolicy re-renders
@@ -515,6 +529,13 @@ export class App {
       pendingUsername: this.usernameInFlight ?? pendingUsernameEntry(this.ledger.all()),
       canSignClaim: this.canSignWithdraw(), // same predicate — a spendable box
       canAffordBurn: this.canAffordBurn(),
+      // The $NOTIS row (WEB_INTERFACE → The profile window). status carries the
+      // tip the row's spendable-at-height filter reads (WEB_INTERFACE → The wallet).
+      status: this.state.status,
+      credits: this.profileCredits,
+      creditGrant: this.creditGrantView,
+      sendFlight: this.sendFlight,
+      pendingSend: pendingSendEntries(this.ledger.all())[0] ?? null,
       // notis-public names the origin + base a shareable link should carry;
       // empty means the current location, which is the web build's default
       // (WEB_INTERFACE → "The client is served from the node's own origin").
@@ -1409,6 +1430,9 @@ export class App {
     this.ownNameLoaded = false;
     this.usernameFlight = null;
     this.usernameInFlight = null;
+    this.profileCredits = null;
+    this.creditGrantView = null;
+    this.sendFlight = null;
     this.ledger = new PendingLedger(this.idm.current()?.pubKeyHex ?? null);
     this.startPoll(); // the new key's restored ledger may hold entries; guarded on empty
     this.renderHeader();
@@ -1850,14 +1874,15 @@ export class App {
   }
 
   /** Read the reader's membership state — /karma (member, the floor, the tip), the
-   *  vouch set, and the escrow — at identity load and the profile's ↻
-   *  (WEB_INTERFACE → The identity display). */
+   *  vouch set, the escrow, and the $NOTIS row's /credits — at identity load and
+   *  the profile's ↻ (WEB_INTERFACE → The identity display, → The profile window). */
   private async loadMembershipState(): Promise<void> {
     const cur = this.idm.current();
     if (cur === null) return;
     try {
-      const [karma, status, vouched, escrow, bonds, ownName] = await Promise.all([
+      const [karma, credits, status, vouched, escrow, bonds, ownName] = await Promise.all([
         this.client.karma(cur.pubKeyHex),
+        this.readOwnCredits(cur.pubKeyHex),
         this.client.status(),
         this.readVouchSet(cur.pubKeyHex),
         this.readEscrow(cur.pubKeyHex),
@@ -1865,6 +1890,7 @@ export class App {
         this.client.usernameByOwner(cur.pubKeyHex),
       ]);
       this.profileKarma = karma;
+      this.profileCredits = credits;
       this.state.status = status; // vouchCooldownBlocks + the bond range for the invites row
       this.bumpTip(status.blockHeight);
       this.bumpTip(karma.height);
@@ -1879,6 +1905,22 @@ export class App {
     this.renderHeader();
     this.renderFeed();
     this.renderPanes();
+  }
+
+  /** Read the whole /credits for a key, following `next` to the end. The
+   *  spendable view is the whole page; a landing needs to see every box the
+   *  node has (WEB_INTERFACE → "Paging is keyset, never offset"). `total` is
+   *  the identity's total on every page, so the first page's value stands. */
+  private async readOwnCredits(key: string): Promise<CreditsResult> {
+    const first: CreditsResult = await this.client.credits(key, {});
+    const boxes = [...first.boxes];
+    let after: string | null = first.next;
+    while (after !== null) {
+      const page: CreditsResult = await this.client.credits(key, { after });
+      for (const b of page.boxes) boxes.push(b);
+      after = page.next;
+    }
+    return { userId: first.userId, total: first.total, boxes, boxCount: boxes.length, next: null };
   }
 
   /** The mark's gates read `viewerTip`, so it must follow every height the client
@@ -2261,6 +2303,90 @@ export class App {
     if (field) renderUsernameRow(field, this.handlers, this.ctx());
   }
 
+  // ---- the $NOTIS row (WEB_INTERFACE → The profile window) ----
+
+  /** Resolve an @handle to its holder — the row's send form calls this at the
+   *  press, the way the composer resolves nothing (a post has no recipient) and
+   *  the vouch resolves its box at the press (WEB_INTERFACE → The wallet). One
+   *  read per press; a 404 answers *no one holds that name.* */
+  private async resolveRecipient(name: string): Promise<ResolvedRecipient | { refusal: string }> {
+    try {
+      const held = await this.client.usernameByName(name);
+      if (held === null) return { refusal: 'no one holds that name.' };
+      return { key: held.owner, name: held.name };
+    } catch {
+      return { refusal: "can't reach the node right now." };
+    }
+  }
+
+  /** Submit a credits send: the transient flight is submitting, then the ledger
+   *  entry carries the pending line across a reload (WEB_INTERFACE → The
+   *  profile window). A rejection is the row's flight line; a landing re-reads
+   *  /credits and moves the balance in place. */
+  private async send(toHex: string, toName: string | null, amount: bigint): Promise<void> {
+    const cur = this.idm.current();
+    if (cur === null) return;
+    this.sendFlight = { stage: 'submitting' };
+    this.renderCreditsRowInPlace();
+    let result;
+    try {
+      result = await submitSendFlow(this.submitDeps(), toHex, toName, amount);
+    } catch {
+      this.sendFlight = { stage: 'rejected', reason: "send rejected: can't reach the node right now." };
+      this.renderCreditsRowInPlace();
+      return;
+    }
+    if (result.ok) {
+      this.sendFlight = null; // the pending line is now the ledger's entry
+      // The form clears on an accepted submission; every other ending leaves
+      // its values intact (WEB_INTERFACE → The wallet).
+      const field = document.querySelector<HTMLElement>('.credits-field');
+      if (field) resetCreditsSendForm(field);
+      this.startPoll();
+    } else if ('rejection' in result) {
+      this.sendFlight = { stage: 'rejected', reason: 'send rejected: ' + result.rejection.message };
+    } else {
+      // notSigned — every arm's copy (WEB_INTERFACE → The wallet).
+      this.sendFlight = { stage: 'rejected', reason: notSignedCopy(result.notSigned, result.reason, 'send') };
+    }
+    this.renderCreditsRowInPlace();
+  }
+
+  /** Ask the faucet for $NOTIS: a repeatable grant (NODE_INTERFACE → Faucet).
+   *  A 202 rides the ledger as a `creditGrant` entry whose subject is the box
+   *  id the faucet named, so the poll runs while it stands (WEB_INTERFACE → The
+   *  faucet step). */
+  private async askFaucetCredits(): Promise<void> {
+    const cur = this.idm.current();
+    if (cur === null) return;
+    const res = await this.faucetClient.askCredits(cur.pubKeyHex);
+    if ('message' in res) {
+      const region = this.regionFocusedOn('@profile');
+      if (region) {
+        region.report = faucetLine(res, 'credits');
+        this.renderRegion(region.uid);
+      }
+      return;
+    }
+    const entry: PendingEntry = {
+      txId: res.txId,
+      kind: 'creditGrant',
+      postId: res.boxId, // a credits grant's subject is the box id the faucet named
+      inputs: [],
+      expiresAtHeight: res.expiresAtHeight,
+      submittedAtHeight: this.lastPolledHeight,
+    };
+    this.ledger.add(entry);
+    this.creditGrantView = { state: 'pending' };
+    this.startPoll();
+    this.renderCreditsRowInPlace();
+  }
+
+  private renderCreditsRowInPlace(): void {
+    const field = document.querySelector<HTMLElement>('.credits-field');
+    if (field) renderCreditsRow(field, this.handlers, this.ctx());
+  }
+
   // ---- the bounded landing poll (WEB_INTERFACE → The wallet) ----
 
   private startPoll(): void {
@@ -2326,9 +2452,22 @@ export class App {
       bondRows = this.bondsView.bonds;
     }
 
+    let creditsChanged = false;
+
     for (const entry of this.ledger.all()) {
       if (entry.kind === 'grant') {
         await this.reconcileGrantEntry(entry, tip);
+        continue;
+      }
+      if (entry.kind === 'creditGrant') {
+        if (cur === null) continue;
+        if (await this.reconcileCreditGrantEntry(entry, tip)) creditsChanged = true;
+        continue;
+      }
+      if (entry.kind === 'send') {
+        if (cur === null) continue;
+        const changed = await this.reconcileSendEntry(entry, tip, cur.pubKeyHex);
+        if (changed) creditsChanged = true;
         continue;
       }
       if (entry.kind === 'vouch') {
@@ -2440,6 +2579,83 @@ export class App {
     // An invite landing updates the invites row in place, so a form the reader is
     // filling for the next key survives (WEB_INTERFACE → The profile window).
     if (inviteChanged) this.renderInvitesRowInPlace();
+    // A send or credits-grant landing moves the balance in place — the row
+    // moves colour and text in a fixed box (HOUSE_STYLE → Motion).
+    if (creditsChanged) this.renderCreditsRowInPlace();
+  }
+
+  /** Reconcile a pending send: read the recipient's /credits, look for the
+   *  payment box (`computeCandidateBoxId`, exact) among their spendable boxes;
+   *  on landing re-read the reader's own /credits and record the landed flight
+   *  so the row's flight slot reads *sent* on the same render as the balance
+   *  moves in place (WEB_INTERFACE → The profile window). Returns true when
+   *  the balance moved. */
+  private async reconcileSendEntry(entry: PendingEntry, tip: number, meKey: string): Promise<boolean> {
+    const recipient = entry.postId; // a send's subject is the recipient's key
+    let recipientBoxes;
+    try {
+      recipientBoxes = await this.readAllCreditBoxes(recipient);
+    } catch {
+      return false; // a failed read keeps the entry; the next tick retries
+    }
+    const outcome = reconcileSend(entry, recipientBoxes, tip);
+    if (outcome === 'pending') return false;
+    this.ledger.remove(entry.txId);
+    if (outcome === 'landed') {
+      // The row renders *sent* directly from this stage; stageLine has no
+      // `landed` case (WEB_INTERFACE → The profile window).
+      this.sendFlight = { stage: 'landed' };
+      // Re-read the reader's own /credits so the row's balance moves in place.
+      try {
+        this.profileCredits = await this.readOwnCredits(meKey);
+      } catch {
+        // Leaves the last-known state; the ↻ retries.
+      }
+      return true;
+    }
+    // Expired — the row's flight reads it once, then the reader may try again from
+    // the form. The pending line is gone with the entry.
+    this.sendFlight = { stage: 'expired', expiresAtHeight: entry.expiresAtHeight };
+    return true;
+  }
+
+  /** Reconcile a pending credits grant: read the reader's own /credits, look
+   *  for the box the faucet named — `entry.postId` is that id (WEB_INTERFACE →
+   *  The faucet step). Returns true when the entry settled — pending returns
+   *  false so a still-standing grant does not trigger a wasted row re-render
+   *  every tick. */
+  private async reconcileCreditGrantEntry(entry: PendingEntry, tip: number): Promise<boolean> {
+    const cur = this.idm.current();
+    if (cur === null) return false;
+    let credits;
+    try {
+      credits = await this.readOwnCredits(cur.pubKeyHex);
+    } catch {
+      return false;
+    }
+    const outcome = reconcileCreditGrant(entry, credits, tip);
+    if (outcome === 'pending') return false;
+    this.ledger.remove(entry.txId);
+    if (outcome === 'landed') {
+      this.profileCredits = credits;
+      this.creditGrantView = null;
+    } else {
+      this.creditGrantView = { state: 'expired', atHeight: entry.expiresAtHeight };
+    }
+    return true;
+  }
+
+  /** Read every credit box the recipient holds — one page at a time, following
+   *  `next`. The bare {boxId} shape reconcileSend needs. */
+  private async readAllCreditBoxes(key: string): Promise<Array<{ boxId: string }>> {
+    const boxes: Array<{ boxId: string }> = [];
+    let after: string | null = null;
+    do {
+      const page: CreditsResult = await this.client.credits(key, after === null ? {} : { after });
+      for (const b of page.boxes) boxes.push({ boxId: b.boxId });
+      after = page.next;
+    } while (after !== null);
+    return boxes;
   }
 
   // ---- placement, focus and reports for the write surface ----

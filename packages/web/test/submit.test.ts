@@ -1,14 +1,14 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, submitClaimFlow, submitBurnFlow, type SubmitDeps,
+  submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, submitClaimFlow, submitBurnFlow, submitSendFlow, type SubmitDeps,
 } from '../src/wallet/submit';
 import { PendingLedger } from '../src/wallet/ledger';
 import type { Api } from '../src/api/client';
-import type { KarmaBoxRow, KarmaResult, PostResult, StatusResult, VouchesVoucherResult } from '../src/api/dto';
+import type { CreditBoxRow, CreditsResult, KarmaBoxRow, KarmaResult, PostResult, StatusResult, VouchesVoucherResult } from '../src/api/dto';
 import { karmaResult as karmaFixture } from './karma-fixture';
 import { isRejection } from '../src/api/write';
-import type { PostSubmitResult, LikeSubmitResult, VouchSubmitResult, InviteSubmitResult, WithdrawSubmitResult, ClaimSubmitResult, BurnSubmitResult, Rejection } from '../src/api/write';
+import type { PostSubmitResult, LikeSubmitResult, VouchSubmitResult, InviteSubmitResult, WithdrawSubmitResult, ClaimSubmitResult, BurnSubmitResult, SendSubmitResult, Rejection } from '../src/api/write';
 import type { UsernameResult } from '../src/api/dto';
 
 // submit ties the reads, the builders, the ledger, the identity and the write
@@ -30,7 +30,8 @@ const VOUCH_BOX = '44'.repeat(32);
 
 let signCalls: string[];
 let postReads: Array<{ id: string; viewer?: string }>;
-let writeCalls: Array<{ kind: 'post' | 'like' | 'vouch' | 'unvouch' | 'invite' | 'withdraw' | 'claim' | 'burn'; tx: Record<string, unknown>; content?: string; targetHex?: string; postId?: string; name?: string }>;
+let writeCalls: Array<{ kind: 'post' | 'like' | 'vouch' | 'unvouch' | 'invite' | 'withdraw' | 'claim' | 'burn' | 'send'; tx: Record<string, unknown>; content?: string; targetHex?: string; postId?: string; name?: string }>;
+let creditsCalls: Array<{ key: string; after?: string | null }>;
 
 function statusResult(): StatusResult {
   return {
@@ -53,13 +54,22 @@ function postResult(id: string, confirmedAuthor: string | null): PostResult {
 
 let heldName: UsernameResult | null = null;
 
+function creditsResult(boxes: CreditBoxRow[] = []): CreditsResult {
+  const total = boxes.reduce((sum, b) => sum + BigInt(b.value), 0n);
+  return { userId: PUB, total: total.toString(), boxes, boxCount: boxes.length, next: null };
+}
 function reads(
   confirmedAuthor: string | null = PARENT_AUTHOR,
   boxes: KarmaBoxRow[] = FULL_BOXES,
   vouches: VouchesVoucherResult['vouches'] = [],
-): Pick<Api, 'karma' | 'status' | 'post' | 'vouchesByVoucher' | 'usernameByOwner'> {
+  creditBoxes: CreditBoxRow[] = [],
+): Pick<Api, 'karma' | 'credits' | 'status' | 'post' | 'vouchesByVoucher' | 'usernameByOwner'> {
   return {
     karma: async () => karmaResult(boxes),
+    credits: async (key, page) => {
+      creditsCalls.push({ key, after: page?.after });
+      return creditsResult(creditBoxes);
+    },
     status: async () => statusResult(),
     post: async (id, viewer) => {
       postReads.push({ id, viewer });
@@ -92,6 +102,7 @@ const okInvite: InviteSubmitResult = { status: 'pending', txId: 'ignored', expir
 const okWithdraw: WithdrawSubmitResult = { status: 'submitted', txId: 'ignored', postId: 'ignored', expiresAtHeight: 6720 };
 const okClaim: ClaimSubmitResult = { status: 'pending', txId: 'ignored', expiresAtHeight: 6720, name: 'Alice_01' };
 const okBurn: BurnSubmitResult = { status: 'pending', txId: 'ignored', expiresAtHeight: 6720 };
+const okSend: SendSubmitResult = { status: 'pending', txId: 'ignored', expiresAtHeight: 6720 };
 
 function write(
   postResp: PostSubmitResult | Rejection = okPost,
@@ -100,6 +111,7 @@ function write(
   inviteResp: InviteSubmitResult | Rejection = okInvite,
   unvouchResp: VouchSubmitResult | Rejection = okVouch,
   withdrawResp: WithdrawSubmitResult | Rejection = okWithdraw,
+  sendResp: SendSubmitResult | Rejection = okSend,
 ): SubmitDeps['write'] {
   return {
     submitPost: async (tx, content) => {
@@ -134,6 +146,10 @@ function write(
       writeCalls.push({ kind: 'burn', tx, name });
       return { ...okBurn, txId: lastSignedTxId() };
     },
+    submitSend: async (tx) => {
+      writeCalls.push({ kind: 'send', tx });
+      return isRejection(sendResp) ? sendResp : { ...sendResp, txId: lastSignedTxId() };
+    },
   };
 }
 
@@ -142,6 +158,7 @@ beforeEach(() => {
   signHints = [];
   postReads = [];
   writeCalls = [];
+  creditsCalls = [];
   heldName = null;
   localStorage.clear();
 });
@@ -281,6 +298,10 @@ describe('the node txId is compared to the client id', () => {
       submitBurn: async (name, tx) => {
         writeCalls.push({ kind: 'burn', tx, name });
         return { ...okBurn, txId: wrong };
+      },
+      submitSend: async (tx) => {
+        writeCalls.push({ kind: 'send', tx });
+        return { ...okSend, txId: wrong };
       },
     };
   }
@@ -711,7 +732,10 @@ describe('onSigned — the collapse hook fires between sign and POST, only on po
   it('the post flow passes { content } as the hint; every other flow passes no hint', async () => {
     heldName = { name: 'Alice_01', owner: PUB, boxId: '44'.repeat(32), claimedAtBlock: 5050 };
     const ledger = new PendingLedger(PUB);
-    const base: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [vouchRow()]), write: write(), ledger, identity };
+    const base: SubmitDeps = {
+      reads: reads(PARENT_AUTHOR, FULL_BOXES, [vouchRow()], [{ boxId: '55'.repeat(32), value: '10000000000' }]),
+      write: write(), ledger, identity,
+    };
     await submitPostFlow(base, 'the content the prompt verifies', null);
     expect(signHints).toEqual([{ content: 'the content the prompt verifies' }]);
     signHints = [];
@@ -722,16 +746,20 @@ describe('onSigned — the collapse hook fires between sign and POST, only on po
     await submitWithdrawFlow(base, TARGET_ID);
     await submitClaimFlow(base, 'Alice_01');
     await submitBurnFlow(base);
+    await submitSendFlow(base, '44'.repeat(32), null, 1_250_000_000n);
     // Every hint after the first is undefined — no flow but post supplies one.
     expect(signHints.every((h) => h === undefined)).toBe(true);
   });
 
-  it('like, withdraw, vouch, invite, claim, burn: onSigned is never called even if supplied', async () => {
+  it('like, withdraw, vouch, invite, claim, burn, send: onSigned is never called even if supplied', async () => {
     const events: string[] = [];
     heldName = { name: 'Alice_01', owner: PUB, boxId: '44'.repeat(32), claimedAtBlock: 5050 };
     const onSigned = () => events.push('onSigned');
     const ledger = new PendingLedger(PUB);
-    const base: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [vouchRow()]), write: write(), ledger, identity, onSigned };
+    const base: SubmitDeps = {
+      reads: reads(PARENT_AUTHOR, FULL_BOXES, [vouchRow()], [{ boxId: '55'.repeat(32), value: '10000000000' }]),
+      write: write(), ledger, identity, onSigned,
+    };
     await submitLikeFlow(base, TARGET_ID);
     await submitVouchFlow(base, VOUCH_TARGET);
     await submitUnvouchFlow(base, VOUCH_TARGET);
@@ -739,6 +767,151 @@ describe('onSigned — the collapse hook fires between sign and POST, only on po
     await submitWithdrawFlow(base, TARGET_ID);
     await submitClaimFlow(base, 'Alice_01');
     await submitBurnFlow(base);
+    await submitSendFlow(base, '44'.repeat(32), null, 1_250_000_000n);
     expect(events).toEqual([]);
+  });
+});
+
+describe('submitSendFlow', () => {
+  const RECIPIENT = '44'.repeat(32);
+  const CREDIT_BOX: CreditBoxRow = { boxId: '55'.repeat(32), value: '10000000000' }; // 100 $NOTIS
+  it('reads credits then status, signs the id, POSTs { tx }, lands a send entry naming the recipient and payment box', async () => {
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [], [CREDIT_BOX]), write: write(), ledger, identity };
+    // toName is the bare name UsernameResult.name gives; the @ is the written
+    // form and never stored (WEB_INTERFACE → The identity display).
+    const res = await submitSendFlow(deps, RECIPIENT, 'bob', 1_250_000_000n);
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    // Credits were read for the reader's own key, following `next` to the end.
+    expect(creditsCalls[0]?.key).toBe(PUB);
+    // The signature is over the client's own computed id.
+    expect(signCalls).toEqual([res.entry.txId]);
+    expect(writeCalls[0]).toMatchObject({ kind: 'send' });
+    expect((writeCalls[0]!.tx.signatures as Record<string, string>)[PUB]).toBe(SIG);
+    // The tx carries the credit change at index 0 and the payment at index 1.
+    const outputs = writeCalls[0]!.tx.outputs as Array<Record<string, unknown>>;
+    expect(outputs.map((o) => o.boxType)).toEqual(['credit', 'credit']);
+    // The entry names the recipient as postId, carries the SendRef payload, and is in the ledger.
+    expect(res.entry).toMatchObject({
+      kind: 'send',
+      postId: RECIPIENT,
+      send: { toHex: RECIPIENT, toName: 'bob', amount: 1_250_000_000n },
+      expiresAtHeight: 6720,
+      submittedAtHeight: 6000,
+    });
+    expect(res.entry.send?.boxId).toMatch(/^[0-9a-f]{64}$/);
+    expect(ledger.all().map((e) => e.txId)).toEqual([res.entry.txId]);
+  });
+
+  it('no handle is toName null on the entry', async () => {
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [], [CREDIT_BOX]), write: write(), ledger, identity };
+    const res = await submitSendFlow(deps, RECIPIENT, null, 1_250_000_000n);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.entry.send?.toName).toBeNull();
+  });
+
+  it('a send rejection short-circuits: no ledger entry', async () => {
+    const ledger = new PendingLedger(PUB);
+    const rejection: Rejection = { status: 400, message: 'tx decode' };
+    const deps: SubmitDeps = {
+      reads: reads(PARENT_AUTHOR, FULL_BOXES, [], [CREDIT_BOX]),
+      write: write(okPost, okLike, okVouch, okInvite, okVouch, okWithdraw, rejection),
+      ledger, identity,
+    };
+    const res = await submitSendFlow(deps, RECIPIENT, null, 1_250_000_000n);
+    expect(res).toEqual({ ok: false, rejection });
+    expect(ledger.size).toBe(0);
+  });
+
+  it('a node txId mismatch is a client rejection, no entry', async () => {
+    const ledger = new PendingLedger(PUB);
+    const w = write();
+    const wrong = 'ff'.repeat(32);
+    w.submitSend = async (tx) => { writeCalls.push({ kind: 'send', tx }); return { ...okSend, txId: wrong }; };
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [], [CREDIT_BOX]), write: w, ledger, identity };
+    const res = await submitSendFlow(deps, RECIPIENT, null, 1_250_000_000n);
+    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'the node computed a different transaction id' } });
+    expect(ledger.size).toBe(0);
+  });
+
+  it('a 2xx without expiresAtHeight is a client rejection, no entry', async () => {
+    const ledger = new PendingLedger(PUB);
+    const w = write();
+    w.submitSend = async (tx) => { writeCalls.push({ kind: 'send', tx }); return { status: 'pending', txId: lastSignedTxId() } as unknown as SendSubmitResult; };
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [], [CREDIT_BOX]), write: w, ledger, identity };
+    const res = await submitSendFlow(deps, RECIPIENT, null, 1_250_000_000n);
+    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'the node answered without an expiry height' } });
+    expect(ledger.size).toBe(0);
+  });
+
+  it('a spendable view that cannot cover the amount is one rejection, not a throw', async () => {
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = {
+      reads: reads(PARENT_AUTHOR, FULL_BOXES, [], [{ boxId: '55'.repeat(32), value: '100' }]),
+      write: write(), ledger, identity,
+    };
+    const res = await submitSendFlow(deps, RECIPIENT, null, 1_250_000_000n);
+    expect(res).toEqual({ ok: false, rejection: { status: 0, message: 'not enough $NOTIS.' } });
+    expect(writeCalls).toEqual([]);
+    expect(ledger.size).toBe(0);
+  });
+
+  it('a payment below the floor names the floor as $NOTIS', async () => {
+    const ledger = new PendingLedger(PUB);
+    // One base unit is far below the per-byte floor for a credit output.
+    const deps: SubmitDeps = {
+      reads: reads(PARENT_AUTHOR, FULL_BOXES, [], [{ boxId: '55'.repeat(32), value: '1' }]),
+      write: write(), ledger, identity,
+    };
+    const res = await submitSendFlow(deps, RECIPIENT, null, 1n);
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect('rejection' in res).toBe(true);
+    if (!('rejection' in res)) return;
+    // The message names the floor formatted as $NOTIS through the denomination module.
+    expect(res.rejection.message).toMatch(/^send at least \d+(\.\d+)? \$NOTIS\.$/);
+    expect(writeCalls).toEqual([]);
+    expect(ledger.size).toBe(0);
+  });
+
+  it('a change below the floor names the floor and tells the reader to send a little more or all of it', async () => {
+    const ledger = new PendingLedger(PUB);
+    // One box of value V — send V − 1, which leaves 1 base unit of change (below the floor).
+    const deps: SubmitDeps = {
+      reads: reads(PARENT_AUTHOR, FULL_BOXES, [], [{ boxId: '55'.repeat(32), value: '10000000000' }]),
+      write: write(), ledger, identity,
+    };
+    const res = await submitSendFlow(deps, RECIPIENT, null, 10000000000n - 1n);
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect('rejection' in res).toBe(true);
+    if (!('rejection' in res)) return;
+    expect(res.rejection.message).toMatch(/^that leaves change under \d+(\.\d+)? \$NOTIS — send a little more, or all of it\.$/);
+    expect(writeCalls).toEqual([]);
+    expect(ledger.size).toBe(0);
+  });
+
+  it('notSigned in each of the three arms short-circuits before POST', async () => {
+    for (const id of [identityLocked, identityDeclined, identityRefused]) {
+      const ledger = new PendingLedger(PUB);
+      const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [], [CREDIT_BOX]), write: write(), ledger, identity: id };
+      const res = await submitSendFlow(deps, RECIPIENT, null, 1_250_000_000n);
+      expect(res.ok).toBe(false);
+      if (res.ok) return;
+      expect('notSigned' in res).toBe(true);
+      expect(ledger.size).toBe(0);
+    }
+    expect(writeCalls).toEqual([]);
+  });
+
+  it('the send flow passes no hint to sign', async () => {
+    const ledger = new PendingLedger(PUB);
+    const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [], [CREDIT_BOX]), write: write(), ledger, identity };
+    await submitSendFlow(deps, RECIPIENT, 'bob', 1_250_000_000n);
+    expect(signHints).toEqual([undefined]);
   });
 });
