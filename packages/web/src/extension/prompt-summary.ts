@@ -15,7 +15,7 @@ import type { SignSummary } from './protocol';
 export type PromptTarget = { label: string; value: string };
 
 /** Line 1 — what the transaction is. WEB_INTERFACE → The extension → "The
- *  first names the transaction". */
+ *  prompt reads as three lines: what, how much, to whom". */
 export function whatFor(s: SignSummary): string {
   switch (s.kind) {
     case 'thread': return 'Notis post';

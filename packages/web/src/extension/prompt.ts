@@ -13,8 +13,8 @@ import type { SignRecord } from './protocol';
 // The layout is a padded column filling the popup — the lines at the top in
 // the page face, the commit pair bottom-aligned right (WEB_INTERFACE → The
 // extension → "The prompt window"; HOUSE_STYLE → Interaction → "A box marks a
-// commit pair"). The first line is a `<div>`, not an `<h1>` — the App's
-// heading rules must not apply.
+// commit pair and a surface's primary action"). The first line is a `<div>`,
+// not an `<h1>` — the App's heading rules must not apply.
 
 const params = new URLSearchParams(location.search);
 const id = params.get('id') ?? '';
@@ -79,8 +79,8 @@ function drawPrompt(record: SignRecord): void {
   if (amount !== null) lines.appendChild(el('div', 'line amount', amount));
 
   // Line 3 — the target, the value whole, in mono, wrapped. One line per
-  // payment for a transfer (WEB_INTERFACE → The extension → "one *to:* line
-  // per recipient").
+  // payment for a transfer (WEB_INTERFACE → The extension → "The prompt reads
+  // as three lines: what, how much, to whom").
   const targets = targetFor(record.summary);
   if (targets !== null) {
     for (const t of targets) {
@@ -99,7 +99,7 @@ function drawPrompt(record: SignRecord): void {
   if (fee !== null) lines.appendChild(el('div', 'line fee', fee));
 
   // A post's verified content follows as a fourth line (WEB_INTERFACE → The
-  // extension → "A post's verified content follows as a fourth line").
+  // extension → "The prompt reads as three lines: what, how much, to whom").
   const content = record.hint.content;
   if (typeof content === 'string' && (record.summary.kind === 'thread' || record.summary.kind === 'reply')) {
     lines.appendChild(el('div', 'line content', content));
@@ -109,8 +109,8 @@ function drawPrompt(record: SignRecord): void {
 
   // The commit pair — cancel then sign, right-aligned; the pair is bottom-
   // aligned by `.actions { margin-top: auto }` on `main#prompt`. HOUSE_STYLE →
-  // Interaction → "A box marks a commit pair" — the extension prompt's `sign`
-  // and `cancel` are the pair (`.btn-ghost`, `.btn-primary`).
+  // Interaction → "A box marks a commit pair and a surface's primary action"
+  // — the extension prompt's `sign` and `cancel` are the pair.
   const actions = el('div', 'actions');
   const cancel = el('button', 'btn btn-ghost', 'cancel');
   const sign = el('button', 'btn btn-primary', 'sign') as HTMLButtonElement;
@@ -169,8 +169,7 @@ function showUnlockThenApprove(record: SignRecord, button: HTMLButtonElement): v
   });
   box.appendChild(form);
   // The form mounts above the pair, so the pair stays where the reader looks
-  // for it (WEB_INTERFACE → The extension → "The unlock form mounted for a
-  // lock at approve time keeps its place above the pair").
+  // for it (WEB_INTERFACE → The extension → "The prompt window").
   container.insertBefore(box, actions);
 }
 
