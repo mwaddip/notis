@@ -488,6 +488,24 @@ zooms the page on focusing a smaller one; glyphs and words are unchanged. Every 
 declares `viewport-fit=cover` and `interactive-widget=resizes-content`, and the header and the gutters respect
 the safe-area insets.
 
+## The status corner
+
+**A dot and the chain's height, fixed at the viewport's bottom-right, out of the reading path** — the one thing in
+the client that moves unasked (`HOUSE_STYLE → Motion`, the user's exception of 2026-09-17). The height is the tip the
+client last read, in mono; the dot before it says how the reading goes: **green** while the height rose within the
+last ten minutes — blocks progress; **clay** when the node answers but the height has not moved for ten minutes — the
+chain stands; **muted** when the last read failed, or none has run — the number then the last known tip, or `—`. The
+corner reads `GET /blocks/current` every thirty seconds while the tab is visible (`document.visibilityState`) and
+stops while it is hidden: one request per half minute per visible tab, and the bounded landing poll is untouched
+(→ The wallet). Every height the corner reads feeds `viewerTip`, as every read does (→ The identity display). **A
+press re-reads at once** — the corner is a control at the size the pointer needs (`HOUSE_STYLE → Interaction`), and
+the read it makes is the refresh it reports: the number moves in place, never animates, and no other surface
+changes. Its `title` names the state in words — *blocks progressing · tip 2295*, *no new block for 12 minutes · tip
+2295*, *the node did not answer · last tip 2295*. At one column it sits clear of the bar and of every control; in the
+standalone mode it is present, since the page reads the same node; with no node answering at start it reads `—`.
+
+> ⚠ **AHEAD OF CODE (2026-09-17, the status corner)** — no corner exists.
+
 ## The standalone thread
 
 **A post has a URL, and the URL opens the thread alone.** `<origin><base>p/<64hex>` — `https://notis.fun/web/p/<id>`

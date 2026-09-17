@@ -309,6 +309,13 @@ Every rule here is a prohibition, and together they are most of what keeps the p
 - **Motion only ever responds to a user action.** Nothing moves on its own — no autoplay, no
   ambient animation, no live-ticking counts, no "12 new posts" banner sliding in. If the feed
   changed, say so and wait.
+- **The one exception is the status corner's tip** (user, 2026-09-17): a dot and the chain's height at the
+  viewport's bottom-right, out of the reading path, read every thirty seconds while the tab is visible, so a
+  reader can glance whether blocks progress. It moves nothing else — no count on a card, no feed refresh, no
+  banner; the number changes in place and never animates, and the dot is its only colour
+  (`WEB_INTERFACE → The status corner`).
+
+  > ⚠ **AHEAD OF CODE (2026-09-17, the status corner)** — no corner exists; the client polls only while its own writes are pending.
 - **No variable-ratio rewards.** Pull-to-refresh is a slot machine lever. Refresh is a button,
   and it reports what it did.
 - **Numbers never animate.** No count-ups on karma or credits. A ticking number is a slot
