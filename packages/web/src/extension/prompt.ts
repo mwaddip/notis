@@ -1,14 +1,20 @@
 import { el } from '../dom';
 import { unlockForm } from '../view/passphrase';
-import { headingFor, linesFor } from './prompt-summary';
+import { whatFor, amountFor, targetFor, feeFor } from './prompt-summary';
 import type { SignRecord } from './protocol';
 
-// The prompt page — WEB_INTERFACE → "`sign`, in the background, in order". The
+// The prompt page — WEB_INTERFACE → The extension → "The prompt window". The
 // URL carries `?id=<record id>`; the background wrote the record to
 // storage.session under `notis.sign.<id>` before opening this window. Approve
 // signs; decline, Esc, or the window's close is a decline. If the seed is gone
 // at approve time — locked from another tab meanwhile — the unlock form takes
-// the body, and the flow continues once unlocked.
+// the body above the pair, and the flow continues once unlocked.
+//
+// The layout is a padded column filling the popup — the lines at the top in
+// the page face, the commit pair bottom-aligned right (WEB_INTERFACE → The
+// extension → "The prompt window"; HOUSE_STYLE → Interaction → "A box marks a
+// commit pair"). The first line is a `<div>`, not an `<h1>` — the App's
+// heading rules must not apply.
 
 const params = new URLSearchParams(location.search);
 const id = params.get('id') ?? '';
@@ -60,22 +66,59 @@ function waitForRecord(): Promise<void> {
 
 function drawPrompt(record: SignRecord): void {
   const container = el('div', 'prompt');
-  container.appendChild(headingFor(record.summary));
-  const lines = linesFor(record.summary, record.hint.content);
-  if (lines.length) {
-    const list = el('div', 'lines');
-    for (const line of lines) list.appendChild(el('div', 'line', line));
-    container.appendChild(list);
+  const lines = el('div', 'lines');
+
+  // Line 1 — what. The browser's tab name matches at draw so its frame names
+  // the transaction too (WEB_INTERFACE → The extension → "The prompt window").
+  const what = whatFor(record.summary);
+  document.title = what;
+  lines.appendChild(el('div', 'line what', what));
+
+  // Line 2 — the amount, absent for a withdrawal, a claim, an unvouch.
+  const amount = amountFor(record.summary);
+  if (amount !== null) lines.appendChild(el('div', 'line amount', amount));
+
+  // Line 3 — the target, the value whole, in mono, wrapped. One line per
+  // payment for a transfer (WEB_INTERFACE → The extension → "one *to:* line
+  // per recipient").
+  const targets = targetFor(record.summary);
+  if (targets !== null) {
+    for (const t of targets) {
+      const line = el('div', 'line target');
+      if (t.label !== '') {
+        line.appendChild(el('span', 'target-label', t.label));
+        line.appendChild(document.createTextNode(' '));
+      }
+      line.appendChild(el('span', 'target-value', t.value));
+      lines.appendChild(line);
+    }
   }
-  // The controls: sign and cancel — a boxed commit pair (HOUSE_STYLE →
-  // Interaction; the composer's post and cancel are the other).
+
+  // Fee — a `fee` box only.
+  const fee = feeFor(record.summary);
+  if (fee !== null) lines.appendChild(el('div', 'line fee', fee));
+
+  // A post's verified content follows as a fourth line (WEB_INTERFACE → The
+  // extension → "A post's verified content follows as a fourth line").
+  const content = record.hint.content;
+  if (typeof content === 'string' && (record.summary.kind === 'thread' || record.summary.kind === 'reply')) {
+    lines.appendChild(el('div', 'line content', content));
+  }
+
+  container.appendChild(lines);
+
+  // The commit pair — cancel then sign, right-aligned; the pair is bottom-
+  // aligned by `.actions { margin-top: auto }` on `main#prompt`. HOUSE_STYLE →
+  // Interaction → "A box marks a commit pair" — the extension prompt's `sign`
+  // and `cancel` are the pair (`.btn-ghost`, `.btn-primary`).
   const actions = el('div', 'actions');
-  const sign = el('button', 'btn btn-primary', 'sign') as HTMLButtonElement;
   const cancel = el('button', 'btn btn-ghost', 'cancel');
-  sign.addEventListener('click', () => void approve(sign));
+  const sign = el('button', 'btn btn-primary', 'sign') as HTMLButtonElement;
   cancel.addEventListener('click', () => void decline());
-  actions.append(sign, cancel);
+  sign.addEventListener('click', () => void approve(sign));
+  actions.append(cancel, sign);
   container.appendChild(actions);
+
   root!.replaceChildren(container);
   sign.focus();
   document.addEventListener('keydown', (e) => {
@@ -100,8 +143,8 @@ async function approve(button: HTMLButtonElement): Promise<void> {
     return;
   }
   // The background's `windows.remove` swallows a failure; close ourselves too
-  // so a stuck popup does not linger (WEB_INTERFACE → "`sign`, in the
-  // background, in order").
+  // so a stuck popup does not linger (WEB_INTERFACE → The extension → "`sign`,
+  // in the background, in order").
   window.close();
 }
 
@@ -114,6 +157,7 @@ async function decline(): Promise<void> {
 
 function showUnlockThenApprove(record: SignRecord, button: HTMLButtonElement): void {
   const container = root!.querySelector('.prompt') as HTMLElement;
+  const actions = container.querySelector('.actions');
   const box = el('div', 'unlock-in-prompt');
   const form = unlockForm(record.pubKeyHex, async (p) => {
     const r = await chrome.runtime.sendMessage({ kind: 'unlock', passphrase: p });
@@ -124,7 +168,10 @@ function showUnlockThenApprove(record: SignRecord, button: HTMLButtonElement): v
     box.remove();
   });
   box.appendChild(form);
-  container.appendChild(box);
+  // The form mounts above the pair, so the pair stays where the reader looks
+  // for it (WEB_INTERFACE → The extension → "The unlock form mounted for a
+  // lock at approve time keeps its place above the pair").
+  container.insertBefore(box, actions);
 }
 
 function isRecord(v: unknown): v is SignRecord {
