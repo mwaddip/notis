@@ -100,6 +100,8 @@ function harness(): Harness {
     vouchCooldowns: async () => ({ cooldowns: [], count: 0, next: null }),
     bonds: async () => ({ bonds: [], bondCount: 0, next: null }),
     usernameByOwner: async () => null,
+    credits: async () => ({ userId: '', total: '0', boxes: [], boxCount: 0, next: null }),
+    usernameByName: async () => null,
   };
   const writeClient = {
     submitPost: async () => ({ postId: 'newpost', status: 'pending', expiresAtHeight: 6720, txId: echoTxId() }),
@@ -234,6 +236,8 @@ describe('feed cards carry like and link', () => {
       vouchCooldowns: async () => ({ cooldowns: [], count: 0, next: null }),
       bonds: async () => ({ bonds: [], bondCount: 0, next: null }),
       usernameByOwner: async () => null,
+      credits: async () => ({ userId: "", total: "0", boxes: [], boxCount: 0, next: null }),
+      usernameByName: async () => null,
     };
     const writeClient = {
       submitPost: async () => ({ postId: 'newpost', status: 'pending', expiresAtHeight: 6720, txId: echoTxId() }),
@@ -308,6 +312,8 @@ describe('feed cards carry like and link', () => {
       vouchCooldowns: async () => ({ cooldowns: [], count: 0, next: null }),
       bonds: async () => ({ bonds: [], bondCount: 0, next: null }),
       usernameByOwner: async () => null,
+      credits: async () => ({ userId: "", total: "0", boxes: [], boxCount: 0, next: null }),
+      usernameByName: async () => null,
     };
     const writeClient = {
       submitPost: async () => ({ postId: 'x', status: 'pending', expiresAtHeight: 6720, txId: 'x' }),
@@ -361,6 +367,8 @@ describe('a locked like from the feed mounts the unlock row', () => {
       vouchCooldowns: async () => ({ cooldowns: [], count: 0, next: null }),
       bonds: async () => ({ bonds: [], bondCount: 0, next: null }),
       usernameByOwner: async () => null,
+      credits: async () => ({ userId: "", total: "0", boxes: [], boxCount: 0, next: null }),
+      usernameByName: async () => null,
     };
     const writeClient = {
       submitPost: async () => ({ postId: 'x', status: 'pending', expiresAtHeight: 6720, txId: 'x' }),
@@ -441,6 +449,8 @@ describe('a like landing updates every surface holding the post', () => {
       vouchCooldowns: async () => ({ cooldowns: [], count: 0, next: null }),
       bonds: async () => ({ bonds: [], bondCount: 0, next: null }),
       usernameByOwner: async () => null,
+      credits: async () => ({ userId: "", total: "0", boxes: [], boxCount: 0, next: null }),
+      usernameByName: async () => null,
     };
     const writeClient = {
       submitPost: async () => ({ postId: 'x', status: 'pending', expiresAtHeight: 6720, txId: 'x' }),

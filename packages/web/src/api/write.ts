@@ -63,6 +63,14 @@ export interface BurnSubmitResult {
   expiresAtHeight: number;
 }
 
+/** `POST /credits/transfer` 2xx — a signed credit-transfer transaction; the
+ *  three bounded fields, like every other write's (WEB_INTERFACE → Writes). */
+export interface SendSubmitResult {
+  status: string; // 'pending'
+  txId: string;
+  expiresAtHeight: number;
+}
+
 /** One shape for both of the node's rejection bodies: the HTTP status and the
  *  message, normalised from `{ error: <status>, reason }` and `{ error: <message> }`
  *  both (WEB_INTERFACE → Writes). */
@@ -73,7 +81,7 @@ export interface Rejection {
 
 /** A success body carries no `message`; a rejection always does. */
 export function isRejection(
-  r: PostSubmitResult | LikeSubmitResult | VouchSubmitResult | InviteSubmitResult | WithdrawSubmitResult | ClaimSubmitResult | BurnSubmitResult | Rejection,
+  r: PostSubmitResult | LikeSubmitResult | VouchSubmitResult | InviteSubmitResult | WithdrawSubmitResult | ClaimSubmitResult | BurnSubmitResult | SendSubmitResult | Rejection,
 ): r is Rejection {
   return 'message' in r;
 }
@@ -118,6 +126,12 @@ export class WriteClient {
 
   submitBurn(name: string, tx: Record<string, unknown>): Promise<BurnSubmitResult | Rejection> {
     return this.send<BurnSubmitResult>('POST', `/usernames/${encodeURIComponent(name)}/burn`, { tx });
+  }
+
+  /** The credit transfer's write: a signed transaction posted to
+   *  `/credits/transfer` (WEB_INTERFACE → Writes). */
+  submitSend(tx: Record<string, unknown>): Promise<SendSubmitResult | Rejection> {
+    return this.send<SendSubmitResult>('POST', '/credits/transfer', { tx });
   }
 
   private async send<T>(method: string, path: string, body: unknown): Promise<T | Rejection> {

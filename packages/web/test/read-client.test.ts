@@ -120,3 +120,28 @@ describe('read client — the feed roots filter', () => {
     expect(calls[2]).not.toContain('roots');
   });
 });
+
+describe('read client — credits and the handle read', () => {
+  it('credits reads /credits/:key and pages with after, carries no viewer', async () => {
+    const c = client();
+    await c.credits('key1');
+    expect(calls[0]).toBe('/credits/key1');
+    await c.credits('key1', { after: 'boxkey', limit: 100 });
+    expect(calls[1]).toBe('/credits/key1?limit=100&after=boxkey');
+    for (const url of calls) expect(url).not.toContain('viewer');
+  });
+
+  it('usernameByName reads /usernames/:name, strips one leading @, returns null on 404', async () => {
+    const c = client();
+    await c.usernameByName('alice');
+    expect(calls[0]).toBe('/usernames/alice');
+    await c.usernameByName('@bob');
+    expect(calls[1]).toBe('/usernames/bob');
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: false, status: 404, statusText: 'Not Found', json: async () => ({}) } as Response)),
+    );
+    expect(await client().usernameByName('nope')).toBeNull();
+  });
+});

@@ -1,7 +1,7 @@
 import type {
   FeedResult, ThreadResult, PostResult, StatusResult, BlockCurrent, KarmaResult,
   VouchesTargetResult, VouchesVoucherResult, VouchCooldownsResult, BondsResult,
-  UsernameResult,
+  UsernameResult, CreditsResult,
 } from './dto';
 
 // This module issues GET requests and nothing else — no POST, no body. A `viewer`
@@ -33,6 +33,7 @@ export interface Api {
   status(): Promise<StatusResult>;
   currentBlock(): Promise<BlockCurrent>;
   karma(key: string, page?: Page): Promise<KarmaResult>;
+  credits(key: string, page?: Page): Promise<CreditsResult>;
   // The membership reads — GETs, none viewer-bearing (WEB_INTERFACE → The author
   // window, → The profile window). Keyset-paged like `karma`.
   vouchesByTarget(key: string, page?: Page): Promise<VouchesTargetResult>;
@@ -40,6 +41,9 @@ export interface Api {
   vouchCooldowns(key: string, page?: Page): Promise<VouchCooldownsResult>;
   bonds(key: string, page?: Page): Promise<BondsResult>;
   usernameByOwner(key: string): Promise<UsernameResult | null>;
+  // The handle → holder resolution the send form runs at the press; a leading
+  // `@` is stripped, a 404 answers null (WEB_INTERFACE → The $NOTIS row).
+  usernameByName(name: string): Promise<UsernameResult | null>;
 }
 
 export class NodeClient implements Api {
@@ -105,6 +109,10 @@ export class NodeClient implements Api {
     return this.get<KarmaResult>(this.url(`/karma/${encodeURIComponent(key)}`, { limit: page.limit, after: page.after ?? undefined }));
   }
 
+  credits(key: string, page: Page = {}): Promise<CreditsResult> {
+    return this.get<CreditsResult>(this.url(`/credits/${encodeURIComponent(key)}`, { limit: page.limit, after: page.after ?? undefined }));
+  }
+
   vouchesByTarget(key: string, page: Page = {}): Promise<VouchesTargetResult> {
     return this.get<VouchesTargetResult>(this.url('/vouches', { target: key, limit: page.limit, after: page.after ?? undefined }));
   }
@@ -123,5 +131,10 @@ export class NodeClient implements Api {
 
   usernameByOwner(key: string): Promise<UsernameResult | null> {
     return this.getOrNull<UsernameResult>(this.url('/usernames', { owner: key }));
+  }
+
+  usernameByName(name: string): Promise<UsernameResult | null> {
+    const bare = name.startsWith('@') ? name.slice(1) : name;
+    return this.getOrNull<UsernameResult>(this.url(`/usernames/${encodeURIComponent(bare)}`));
   }
 }

@@ -3,17 +3,20 @@ import {
   computeTxId,
   computeCandidateBoxId,
   selectBoxes,
+  boxRecordBytes,
   POST_PRICE_THREAD,
   POST_PRICE_REPLY,
   REPLY_AUTHOR_SHARE,
   LIKE_KARMA_COST,
   VOUCH_KARMA_AMOUNT,
   USERNAME_BURN_PRICE,
+  MIN_BOX_VALUE_PER_BYTE,
 } from '@dagsocial/types';
 import type {
   AnyBoxCandidate,
   BondBox,
   CandidateOf,
+  CreditBox,
   KarmaBox,
   KarmaPriceBox,
   LikeAccrualBox,
@@ -54,6 +57,31 @@ export class InsufficientKarma extends Error {
   ) {
     super(`not enough karma: ${required} required, ${available} available`);
     this.name = 'InsufficientKarma';
+  }
+}
+
+/** Not enough $NOTIS for the send — the credit-side twin of `InsufficientKarma`,
+ *  so the copy differs (WEB_INTERFACE → The $NOTIS row). */
+export class InsufficientCredits extends Error {
+  constructor(
+    readonly required: bigint,
+    readonly available: bigint,
+  ) {
+    super(`not enough credits: ${required} required, ${available} available`);
+    this.name = 'InsufficientCredits';
+  }
+}
+
+/** A credit output below the per-byte floor — a payment or a change too small to
+ *  encode consensus-legally (TYPES_INTERFACE → Box value domain). The reader
+ *  never spends a rejection to learn it (WEB_INTERFACE → The wallet). */
+export class BelowFloor extends Error {
+  constructor(
+    readonly which: 'payment' | 'change',
+    readonly floor: bigint,
+  ) {
+    super(`${which} below the per-byte floor of ${floor} base units`);
+    this.name = 'BelowFloor';
   }
 }
 
@@ -275,6 +303,70 @@ export function buildClaim(ctx: BuildContext, name: string): BuiltTx {
     protocolVersion: ctx.era,
   };
   return finish(tx, karmaOut, spent.value, ctx.height);
+}
+
+/** Build a send: unlocked credit boxes for the amount in, the credit change to
+ *  the reader's key at index 0 when any, the payment — one `credit` box of the
+ *  amount to the recipient's key — at the next index, and no `fee` box
+ *  (WEB_INTERFACE → The wallet). Every credit output meets the per-byte floor
+ *  (TYPES_INTERFACE → Box value domain), checked once the id is known — exactly
+ *  as the node checks it — so `BelowFloor` refuses in place rather than the
+ *  reader learning it from a rejection. An exact spend emits the payment alone.
+ *  `paymentBoxId` is the predicted id of the payment output, so the ledger's
+ *  reconcile can look for it on the recipient's `/credits`. */
+export function buildSend(ctx: BuildContext, toHex: string, amount: bigint): BuiltTx & { paymentBoxId: string } {
+  const spendable = ctx.spendable;
+  const sorted = [...spendable].sort((a, b) => (b.value > a.value ? 1 : b.value < a.value ? -1 : 0));
+  const total = sorted.reduce((sum, b) => sum + b.value, 0n);
+  if (total < amount) throw new InsufficientCredits(amount, total);
+  const selected = selectBoxes(sorted, amount);
+  const selectedTotal = selected.reduce((sum, b) => sum + b.value, 0n);
+  const change = selectedTotal - amount;
+
+  const outputs: AnyBoxCandidate[] = [];
+  const changeBox: CandidateOf<CreditBox> | null =
+    change > 0n
+      ? { boxType: 'credit', value: change, createdAtBlock: ctx.height, owner: hexToBytes(ctx.author) }
+      : null;
+  // Change leads at index 0 because the ledger predicts index 0
+  // (WEB_INTERFACE → The wallet); the payment follows at the next index.
+  if (changeBox) outputs.push(changeBox);
+  const payment: CandidateOf<CreditBox> = {
+    boxType: 'credit',
+    value: amount,
+    createdAtBlock: ctx.height,
+    owner: hexToBytes(toHex),
+  };
+  const paymentIndex = outputs.length;
+  outputs.push(payment);
+
+  const tx: UtxoTransaction = {
+    inputs: selected.map((b) => b.boxId),
+    outputs,
+    signatures: {},
+    protocolVersion: ctx.era,
+  };
+  const txId = computeTxId(tx);
+
+  // The floor, once the id is known: for every `credit` output at index i,
+  // value ≥ MIN_BOX_VALUE_PER_BYTE × byteLength(boxRecordBytes(out, txId, i))
+  // (TYPES_INTERFACE → Box value domain), exactly as the node checks it
+  // (packages/node/src/services/utxo-engine.ts). A change or a payment below the
+  // floor is a client refusal that names the floor.
+  for (let i = 0; i < outputs.length; i++) {
+    const out = outputs[i]!;
+    if (out.boxType !== 'credit') continue;
+    const floor = MIN_BOX_VALUE_PER_BYTE * BigInt(boxRecordBytes(out, txId, i).length);
+    if (out.value < floor) {
+      throw new BelowFloor(i === paymentIndex ? 'payment' : 'change', floor);
+    }
+  }
+
+  const changeRef: ChangeRef | null = changeBox
+    ? { boxId: computeCandidateBoxId(changeBox, txId, 0), value: change, createdAtBlock: ctx.height }
+    : null;
+  const paymentBoxId = computeCandidateBoxId(payment, txId, paymentIndex);
+  return { tx, txId, change: changeRef, paymentBoxId };
 }
 
 /** Build a burn: karma for USERNAME_BURN_PRICE and the reader's name box in,

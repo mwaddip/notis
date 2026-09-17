@@ -12,14 +12,17 @@ import {
   reconcileWithdraw,
   reconcileClaim,
   reconcileBurn,
+  reconcileSend,
+  reconcileCreditGrant,
   pendingUsernameEntry,
+  pendingSendEntries,
   dedupePending,
   pendingLikeTargets,
   pendingVouchTargets,
   pendingWithdrawTargets,
 } from '../src/wallet/ledger';
 import type { PendingEntry } from '../src/wallet/types';
-import type { PostJson, PostResult, WithdrawnJson } from '../src/api/dto';
+import type { PostJson, PostResult, WithdrawnJson, CreditsResult } from '../src/api/dto';
 import { karmaResult } from './karma-fixture';
 
 const KEY = 'aa'.repeat(32); // the identity that owns the ledger
@@ -363,5 +366,139 @@ describe('the username reconciles', () => {
     const b = new PendingLedger(KEY);
     b.add(burnEntry);
     expect(new PendingLedger(KEY).all()).toEqual([burnEntry]);
+  });
+});
+
+// --------------------------------------------------------------------------
+// The credits-side split — WEB_INTERFACE → The wallet ("There are two views
+// over one ledger"): a `send` entry's inputs and change count on the credits
+// side only, a `creditGrant` on neither, every other kind on the karma side
+// only. A send's change is never offered to a post, nor a post's change to a
+// send.
+// --------------------------------------------------------------------------
+
+const RECIPIENT = '99'.repeat(32);
+const PAYMENT_BOX = 'a1'.repeat(32);
+const CREDIT_GRANT_BOX = 'a2'.repeat(32);
+const sendEntry: PendingEntry = {
+  txId: 's1', kind: 'send', postId: RECIPIENT,
+  inputs: ['credit_in1'],
+  change: { boxId: 'credit_chg', value: 500n, createdAtBlock: 5000 },
+  send: { toHex: RECIPIENT, toName: null, amount: 100n, boxId: PAYMENT_BOX },
+  expiresAtHeight: 5720, submittedAtHeight: 5000,
+};
+const sendWithNameEntry: PendingEntry = {
+  ...sendEntry,
+  txId: 's2',
+  send: { toHex: RECIPIENT, toName: 'bob', amount: 250n, boxId: 'a3'.repeat(32) },
+};
+const creditGrantEntry: PendingEntry = {
+  txId: 'cg1', kind: 'creditGrant', postId: CREDIT_GRANT_BOX, inputs: [],
+  expiresAtHeight: 5900, submittedAtHeight: 5800,
+};
+
+describe('the two views over one ledger', () => {
+  it('a send\'s inputs and change count in the credits view — the karma view leaves them alone', () => {
+    const ledger = new PendingLedger(KEY);
+    ledger.add(sendEntry);
+    const credits = [{ boxId: 'credit_in1', value: 600n }, { boxId: 'credit_other', value: 30n }];
+    // Credits view: input dropped, change added.
+    expect(ledger.spendable(credits, 'credits')).toEqual([
+      { boxId: 'credit_other', value: 30n },
+      { boxId: 'credit_chg', value: 500n },
+    ]);
+    // Karma view: the credit input passes through untouched, and no credit change appears.
+    const karma = [{ boxId: 'karma_in', value: 100n }];
+    expect(ledger.spendable(karma, 'karma')).toEqual(karma);
+  });
+
+  it('a post\'s inputs and change count in the karma view — the credits view leaves them alone', () => {
+    const ledger = new PendingLedger(KEY);
+    ledger.add(postEntry);
+    const karma = [{ boxId: 'in1', value: 300n }];
+    expect(ledger.spendable(karma, 'karma')).toEqual([{ boxId: 'chg1', value: 222n }]);
+    const credits = [{ boxId: 'credit_x', value: 500n }];
+    expect(ledger.spendable(credits, 'credits')).toEqual(credits);
+  });
+
+  it('a creditGrant is inert on both sides — it spends nothing and predicts no change', () => {
+    const ledger = new PendingLedger(KEY);
+    ledger.add(creditGrantEntry);
+    const credits = [{ boxId: 'c1', value: 100n }];
+    const karma = [{ boxId: 'k1', value: 100n }];
+    expect(ledger.spendable(credits, 'credits')).toEqual(credits);
+    expect(ledger.spendable(karma, 'karma')).toEqual(karma);
+  });
+
+  it('the default side is karma — every pre-send caller reads the karma view', () => {
+    const ledger = new PendingLedger(KEY);
+    ledger.add(postEntry);
+    expect(ledger.spendable([{ boxId: 'in1', value: 300n }])).toEqual([{ boxId: 'chg1', value: 222n }]);
+  });
+});
+
+describe('the credits reconciles', () => {
+  it('reconcileSend lands when the recipient\'s boxes list the payment box id', () => {
+    expect(reconcileSend(sendEntry, [{ boxId: PAYMENT_BOX }], 5100)).toBe('landed');
+    expect(reconcileSend(sendEntry, [{ boxId: 'other' }], 5100)).toBe('pending');
+    expect(reconcileSend(sendEntry, [], 5721)).toBe('expired');
+  });
+
+  it('reconcileCreditGrant lands when the reader\'s /credits lists the grant\'s box', () => {
+    const withBox: CreditsResult = { userId: KEY, total: '10', boxes: [{ boxId: CREDIT_GRANT_BOX, value: '10' }], boxCount: 1, next: null };
+    const empty: CreditsResult = { userId: KEY, total: '0', boxes: [], boxCount: 0, next: null };
+    expect(reconcileCreditGrant(creditGrantEntry, withBox, 5850)).toBe('landed');
+    expect(reconcileCreditGrant(creditGrantEntry, empty, 5850)).toBe('pending');
+    expect(reconcileCreditGrant(creditGrantEntry, empty, 5901)).toBe('expired');
+    // A key with an unrelated box does not land the grant.
+    const other: CreditsResult = { userId: KEY, total: '5', boxes: [{ boxId: 'unrelated', value: '5' }], boxCount: 1, next: null };
+    expect(reconcileCreditGrant(creditGrantEntry, other, 5850)).toBe('pending');
+  });
+
+  it('pendingSendEntries names the resolved recipient, the handle when one was typed, and the amount', () => {
+    const rows = pendingSendEntries([postEntry, sendEntry, sendWithNameEntry]);
+    expect(rows).toEqual([
+      { toHex: RECIPIENT, toName: null, amount: 100n },
+      { toHex: RECIPIENT, toName: 'bob', amount: 250n },
+    ]);
+  });
+});
+
+describe('the send payload — round trip and malformed refusal', () => {
+  it('the send payload survives localStorage — bigint amount decoded back', () => {
+    const a = new PendingLedger(KEY);
+    a.add(sendEntry);
+    a.add(sendWithNameEntry);
+    const b = new PendingLedger(KEY);
+    expect(b.all()).toEqual(a.all());
+    const restored = b.all().find((e) => e.txId === 's1');
+    expect(restored?.send?.amount).toBe(100n);
+    expect(restored?.send?.toName).toBeNull();
+  });
+
+  it('a creditGrant entry round-trips through localStorage — inputs [] and no send', () => {
+    const a = new PendingLedger(KEY);
+    a.add(creditGrantEntry);
+    expect(new PendingLedger(KEY).all()).toEqual([creditGrantEntry]);
+  });
+
+  it('a malformed send field drops the whole ledger — all or nothing', () => {
+    const good = {
+      txId: 's1', kind: 'send', postId: RECIPIENT, inputs: ['x'],
+      send: { toHex: RECIPIENT, toName: null, amount: '100', boxId: PAYMENT_BOX },
+      expiresAtHeight: 5720, submittedAtHeight: 5000,
+    };
+    localStorage.setItem(STORE, JSON.stringify([good]));
+    expect(new PendingLedger(KEY).size).toBe(1);
+    for (const bad of [
+      { ...good, send: { ...good.send, toHex: 123 } },
+      { ...good, send: { ...good.send, amount: 100 } }, // number, not decimal string
+      { ...good, send: { ...good.send, boxId: null } },
+      { ...good, send: { ...good.send, toName: 5 } }, // not string or null
+      { ...good, send: 'nope' },
+    ]) {
+      localStorage.setItem(STORE, JSON.stringify([bad]));
+      expect(new PendingLedger(KEY).size, JSON.stringify(bad)).toBe(0);
+    }
   });
 });

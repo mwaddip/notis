@@ -28,7 +28,39 @@ export async function readBuildContext(
   const status = await reads.status();
 
   return {
-    spendable: ledger.spendable(confirmed),
+    spendable: ledger.spendable(confirmed, 'karma'),
+    height: status.blockHeight,
+    era: status.protocolVersion,
+    author,
+  };
+}
+
+/** The credit-side counterpart — WEB_INTERFACE → The wallet ("A send reads the
+ *  other ledger by the same rule: `GET /credits/:key` following `next`, then
+ *  `GET /status`"). A row whose `lockedUntilBlock` is above `status.blockHeight`
+ *  is left out — the node judges a spend at tip + 1, so the client is
+ *  conservative by one block. The filter runs after the height is known. */
+export async function readCreditContext(
+  reads: Pick<Api, 'credits' | 'status'>,
+  ledger: PendingLedger,
+  author: string,
+): Promise<BuildContext> {
+  const rows: Array<{ boxId: string; value: bigint; lockedUntilBlock: number | undefined }> = [];
+  let after: string | null = null;
+  do {
+    const page = await reads.credits(author, after === null ? {} : { after });
+    for (const b of page.boxes) rows.push({ boxId: b.boxId, value: BigInt(b.value), lockedUntilBlock: b.lockedUntilBlock });
+    after = page.next;
+  } while (after !== null);
+
+  const status = await reads.status();
+
+  const confirmed: SpendableBox[] = rows
+    .filter((b) => b.lockedUntilBlock === undefined || b.lockedUntilBlock <= status.blockHeight)
+    .map((b) => ({ boxId: b.boxId, value: b.value }));
+
+  return {
+    spendable: ledger.spendable(confirmed, 'credits'),
     height: status.blockHeight,
     era: status.protocolVersion,
     author,

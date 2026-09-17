@@ -154,3 +154,20 @@ describe('write client — rejection normalisation', () => {
     expect(await write().submitWithdraw('p7', {})).toEqual({ status: 403, message: 'not the post author' });
   });
 });
+
+describe('write client — submitSend', () => {
+  it('submitSend POSTs { tx } to /credits/transfer and returns the 2xx body', async () => {
+    mockResponse({ ok: true, status: 200, body: { status: 'pending', txId: 't9', expiresAtHeight: 5720 } });
+    const tx = { inputs: ['cc'.repeat(32)], outputs: [], signatures: {}, protocolVersion: 1 };
+    const res = await write().submitSend(tx);
+    expect(last.url).toBe('/credits/transfer');
+    expect(last.method).toBe('POST');
+    expect(last.body).toEqual({ tx });
+    expect(res).toEqual({ status: 'pending', txId: 't9', expiresAtHeight: 5720 });
+  });
+
+  it('a rejection body normalises', async () => {
+    mockResponse({ ok: false, status: 400, body: { error: 400, reason: 'insufficient credit inputs' } });
+    expect(await write().submitSend({})).toEqual({ status: 400, message: 'insufficient credit inputs' });
+  });
+});

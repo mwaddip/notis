@@ -8,11 +8,18 @@ import {
   buildWithdraw,
   buildClaim,
   buildBurn,
+  buildSend,
   txToJson,
   InsufficientKarma,
+  InsufficientCredits,
+  BelowFloor,
   type BuildContext,
 } from '../src/wallet/builders';
-import { VOUCH_KARMA_AMOUNT, USERNAME_BURN_PRICE, type UtxoTransaction } from '@dagsocial/types';
+import {
+  VOUCH_KARMA_AMOUNT, USERNAME_BURN_PRICE, MIN_BOX_VALUE_PER_BYTE,
+  computeCandidateBoxId,
+  type UtxoTransaction, type CandidateOf, type CreditBox,
+} from '@dagsocial/types';
 
 // The builders produce the box shapes validateTx demands, encoded through
 // @dagsocial/types. The txIds below are frozen — computed by an independent
@@ -448,6 +455,118 @@ describe('burn builder — structural rules', () => {
       expect(e).toBeInstanceOf(InsufficientKarma);
       expect((e as InsufficientKarma).required).toBe(USERNAME_BURN_PRICE);
       expect((e as InsufficientKarma).available).toBe(5n);
+    }
+  });
+});
+
+// -------------------------------------------------------------------------
+// The send builder — WEB_INTERFACE → The wallet. Frozen vectors: fixed inputs
+// (height 5000, era 1, author 'aa'*32, recipient '44'*32, credit boxes of
+// stated values), the frozen txId, the change id and the payment id. Main
+// recomputes every one by hand through the shared codec.
+// -------------------------------------------------------------------------
+
+const RECIPIENT = '44'.repeat(32);
+const CREDIT_BOX = 'cc'.repeat(32);
+const CREDIT_BOX_2 = 'dd'.repeat(32);
+
+const SEND_MAIN_TXID = 'd3bb3f9b115d9065e36284e8a225ca9e2804721298f1bbad09c1baa5372b13e1';
+const SEND_MAIN_CHANGE = 'fb0b8f6e1b2bf54738aacedc98299194b9e470d408ffd077702090b8203a55ed';
+const SEND_MAIN_PAYMENT = '4ad589c04e8bd04a5ac18facc52a1a4b6056bebe4d1dcdc9de24b197eb6e48ad';
+const SEND_EXACT_TXID = 'ccd601ff2a64719e86a8f3bf924326d4fd359998242818fef08601c4042bd1c1';
+const SEND_EXACT_PAYMENT = 'c6b4c791c940eedfa4564f721026506663f41edaf2727ad75a87db60d0f9c7b2';
+const SEND_TWO_TXID = 'a8fd4fa310dd8d9e907677ea2f12fe0bff5849bd6131008e67d44a81672f726e';
+const SEND_TWO_CHANGE = '5213806b6d402b99b5a7f849418ce15082d856a83cda07858cf1ed86e6d9ef5d';
+const SEND_TWO_PAYMENT = '912c1839ce7f0f35c6e1c2a147b3d36b3fb621a97224c8169bdef218a5ab6ada';
+
+describe('send builder — frozen vectors', () => {
+  it('12.5 $NOTIS from a 100 box: change at 0, payment at 1, no fee', () => {
+    const ctx: BuildContext = { spendable: [{ boxId: CREDIT_BOX, value: 10_000_000_000n }], height: 5000, era: 1, author: PUB };
+    const built = buildSend(ctx, RECIPIENT, 1_250_000_000n);
+    expect(built.txId).toBe(SEND_MAIN_TXID);
+    expect(built.change).toEqual({ boxId: SEND_MAIN_CHANGE, value: 8_750_000_000n, createdAtBlock: 5000 });
+    expect(built.paymentBoxId).toBe(SEND_MAIN_PAYMENT);
+    expect(built.tx.inputs).toEqual([CREDIT_BOX]);
+    expect(built.tx.outputs).toEqual([
+      { boxType: 'credit', value: 8_750_000_000n, createdAtBlock: 5000, owner: hexToBytes(PUB) },
+      { boxType: 'credit', value: 1_250_000_000n, createdAtBlock: 5000, owner: hexToBytes(RECIPIENT) },
+    ]);
+    // No fee box on any send this client builds (WEB_INTERFACE → The wallet).
+    expect(built.tx.outputs.some((o) => o.boxType === 'fee')).toBe(false);
+    // The payment id equals an independent computeCandidateBoxId over the same
+    // candidate — the txId, and index 1 in this shape (change at 0, payment at 1).
+    const payment: CandidateOf<CreditBox> = {
+      boxType: 'credit', value: 1_250_000_000n, createdAtBlock: 5000, owner: hexToBytes(RECIPIENT),
+    };
+    expect(computeCandidateBoxId(payment, built.txId, 1)).toBe(built.paymentBoxId);
+  });
+
+  it('an exact spend emits the payment alone — no change, payment at index 0', () => {
+    const ctx: BuildContext = { spendable: [{ boxId: CREDIT_BOX, value: 1_250_000_000n }], height: 5000, era: 1, author: PUB };
+    const built = buildSend(ctx, RECIPIENT, 1_250_000_000n);
+    expect(built.txId).toBe(SEND_EXACT_TXID);
+    expect(built.change).toBeNull();
+    expect(built.paymentBoxId).toBe(SEND_EXACT_PAYMENT);
+    expect(built.tx.outputs).toEqual([
+      { boxType: 'credit', value: 1_250_000_000n, createdAtBlock: 5000, owner: hexToBytes(RECIPIENT) },
+    ]);
+    const payment: CandidateOf<CreditBox> = {
+      boxType: 'credit', value: 1_250_000_000n, createdAtBlock: 5000, owner: hexToBytes(RECIPIENT),
+    };
+    expect(computeCandidateBoxId(payment, built.txId, 0)).toBe(built.paymentBoxId);
+  });
+
+  it('two boxes selected largest-first', () => {
+    const ctx: BuildContext = {
+      spendable: [
+        { boxId: CREDIT_BOX, value: 1_000_000_000n },
+        { boxId: CREDIT_BOX_2, value: 500_000_000n },
+      ], height: 5000, era: 1, author: PUB,
+    };
+    const built = buildSend(ctx, RECIPIENT, 1_400_000_000n);
+    expect(built.txId).toBe(SEND_TWO_TXID);
+    expect(built.change?.boxId).toBe(SEND_TWO_CHANGE);
+    expect(built.paymentBoxId).toBe(SEND_TWO_PAYMENT);
+    expect(built.tx.inputs).toEqual([CREDIT_BOX, CREDIT_BOX_2]);
+  });
+});
+
+describe('send builder — refusals', () => {
+  it('InsufficientCredits when the spendable view cannot cover the amount', () => {
+    const ctx: BuildContext = { spendable: [{ boxId: CREDIT_BOX, value: 500n }], height: 5000, era: 1, author: PUB };
+    expect(() => buildSend(ctx, RECIPIENT, 100_000_000_000n)).toThrow(InsufficientCredits);
+    try {
+      buildSend(ctx, RECIPIENT, 100_000_000_000n);
+    } catch (e) {
+      expect(e).toBeInstanceOf(InsufficientCredits);
+      expect((e as InsufficientCredits).required).toBe(100_000_000_000n);
+      expect((e as InsufficientCredits).available).toBe(500n);
+    }
+  });
+
+  it('BelowFloor payment when the amount is one base unit', () => {
+    // Selecting one big box, sending 1 base unit — the payment record is at
+    // least a few dozen bytes, and MIN_BOX_VALUE_PER_BYTE is 156, so 1n < floor.
+    const ctx: BuildContext = { spendable: [{ boxId: CREDIT_BOX, value: 1_000_000_000n }], height: 5000, era: 1, author: PUB };
+    expect(() => buildSend(ctx, RECIPIENT, 1n)).toThrow(BelowFloor);
+    try {
+      buildSend(ctx, RECIPIENT, 1n);
+    } catch (e) {
+      expect(e).toBeInstanceOf(BelowFloor);
+      expect((e as BelowFloor).which).toBe('payment');
+      expect((e as BelowFloor).floor).toBeGreaterThan(MIN_BOX_VALUE_PER_BYTE);
+    }
+  });
+
+  it('BelowFloor change when the leftover is one base unit', () => {
+    // Selecting a 500_000_001 box and sending 500_000_000 leaves a change of 1n.
+    const ctx: BuildContext = { spendable: [{ boxId: CREDIT_BOX, value: 500_000_001n }], height: 5000, era: 1, author: PUB };
+    expect(() => buildSend(ctx, RECIPIENT, 500_000_000n)).toThrow(BelowFloor);
+    try {
+      buildSend(ctx, RECIPIENT, 500_000_000n);
+    } catch (e) {
+      expect(e).toBeInstanceOf(BelowFloor);
+      expect((e as BelowFloor).which).toBe('change');
     }
   });
 });
