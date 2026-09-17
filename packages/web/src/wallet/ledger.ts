@@ -129,8 +129,9 @@ export function reconcileGrant(entry: PendingEntry, karma: KarmaResult, tip: num
 
 /** A pending send is landed when the recipient's `/credits` lists the payment
  *  box the client predicted (`send.boxId`), expired past `expiresAtHeight`, else
- *  pending (WEB_INTERFACE → The wallet, → The $NOTIS row). The list is one page
- *  the caller has already followed to the end, so the presence check is O(n). */
+ *  pending (WEB_INTERFACE → The wallet, → The profile window). The list is one
+ *  page the caller has already followed to the end, so the presence check is
+ *  O(n). */
 export function reconcileSend(
   entry: PendingEntry,
   recipientBoxes: ReadonlyArray<{ boxId: string }>,
@@ -144,7 +145,7 @@ export function reconcileSend(
 
 /** A pending credits grant is landed when the reader's own `/credits` lists the
  *  box the faucet named — `entry.postId` is that box id (WEB_INTERFACE → The
- *  $NOTIS step). Expired past its height while absent, else pending. */
+ *  faucet step). Expired past its height while absent, else pending. */
 export function reconcileCreditGrant(entry: PendingEntry, credits: CreditsResult, tip: number): EntryOutcome {
   if (credits.boxes.some((b) => b.boxId === entry.postId)) return 'landed';
   return tip > entry.expiresAtHeight ? 'expired' : 'pending';
@@ -258,7 +259,7 @@ export function pendingWithdrawTargets(entries: PendingEntry[]): Set<string> {
 /** The client's pending sends, each with its resolved recipient, handle (when
  *  the reader typed one) and amount — the flight slot reads *<amount> $NOTIS to
  *  @bob · submitted* from the ledger, so a reload keeps it (WEB_INTERFACE → The
- *  $NOTIS row). */
+ *  profile window). */
 export function pendingSendEntries(entries: PendingEntry[]): Array<{ toHex: string; toName: string | null; amount: bigint }> {
   const out: Array<{ toHex: string; toName: string | null; amount: bigint }> = [];
   for (const e of entries) {

@@ -5,9 +5,8 @@
 // serves every surface — the $NOTIS row, its confirm and flight lines, the
 // extension's prompt — so a formatting change moves in one place.
 
-/** 10⁻⁸ of a credit. TYPES_INTERFACE → Denomination (the value denomination
- *  paragraph under Box value domain) states the scale; @dagsocial/types does not
- *  export a name for it. */
+/** 10⁻⁸ of a credit. TYPES_INTERFACE → Denomination states the scale;
+ *  @dagsocial/types does not export a name for it. */
 export const BASE_UNITS_PER_CREDIT = 10n ** 8n;
 
 /** Base units → the face string. Up to eight decimals, trailing zeros dropped,

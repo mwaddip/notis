@@ -23,7 +23,7 @@ export type EntryKind = 'post' | 'like' | 'grant' | 'creditGrant' | 'vouch' | 'u
 /** A pending send's recipient and payment shape — the resolved key and the handle
  *  it came from, the amount, and the payment box's id. Persisted with `amount` as
  *  a decimal string, so the flight and the confirm can read the number back after
- *  a reload (WEB_INTERFACE → The $NOTIS row). */
+ *  a reload (WEB_INTERFACE → The profile window). */
 export interface SendRef {
   toHex: string;
   toName: string | null;
@@ -38,7 +38,7 @@ export interface SendRef {
  *  faucet karma grant the key the grant was asked for; for a faucet credits
  *  grant the box id the faucet named — both grants have no post and carry
  *  `inputs: []` and no `change`, so they are inert in the spendable view
- *  (WEB_INTERFACE → The faucet step, → The $NOTIS step). A send's `postId` is
+ *  (WEB_INTERFACE → The faucet step). A send's `postId` is
  *  the recipient's key. An unvouch's one input is a `vouch` box, not a karma
  *  box, so the spendable view ignores it, and it has no change. A withdrawal's
  *  one karma input is spent and its equal-value output is the entry's `change`,

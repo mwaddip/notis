@@ -64,7 +64,7 @@ export class FaucetClient {
   }
 
   /** Ask the faucet to send this key $NOTIS — a repeatable grant, unlike karma's
-   *  once-per-key invite (WEB_INTERFACE → The $NOTIS step). The 202 must carry
+   *  once-per-key invite (WEB_INTERFACE → The faucet step). The 202 must carry
    *  a numeric `expiresAtHeight` and a 64-hex `boxId` so the ledger can bound
    *  the wait and name the box the grant creates; missing either is a
    *  client-side refusal. */

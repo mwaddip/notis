@@ -61,7 +61,7 @@ export class InsufficientKarma extends Error {
 }
 
 /** Not enough $NOTIS for the send — the credit-side twin of `InsufficientKarma`,
- *  so the copy differs (WEB_INTERFACE → The $NOTIS row). */
+ *  so the copy differs (WEB_INTERFACE → The profile window). */
 export class InsufficientCredits extends Error {
   constructor(
     readonly required: bigint,
@@ -350,9 +350,8 @@ export function buildSend(ctx: BuildContext, toHex: string, amount: bigint): Bui
 
   // The floor, once the id is known: for every `credit` output at index i,
   // value ≥ MIN_BOX_VALUE_PER_BYTE × byteLength(boxRecordBytes(out, txId, i))
-  // (TYPES_INTERFACE → Box value domain), exactly as the node checks it
-  // (packages/node/src/services/utxo-engine.ts). A change or a payment below the
-  // floor is a client refusal that names the floor.
+  // (TYPES_INTERFACE → Box value domain). A change or a payment below the floor
+  // is a client refusal that names the floor.
   for (let i = 0; i < outputs.length; i++) {
     const out = outputs[i]!;
     if (out.boxType !== 'credit') continue;
