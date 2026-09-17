@@ -1,12 +1,13 @@
 import { encodeTx } from '@dagsocial/types';
-import { readBuildContext } from './reads';
-import { buildPost, buildLike, buildVouch, buildUnvouch, buildInvite, buildWithdraw, buildClaim, buildBurn, txToJson, InsufficientKarma } from './builders';
+import { readBuildContext, readCreditContext } from './reads';
+import { buildPost, buildLike, buildVouch, buildUnvouch, buildInvite, buildWithdraw, buildClaim, buildBurn, buildSend, txToJson, InsufficientKarma, InsufficientCredits, BelowFloor } from './builders';
+import { formatCredits } from '../model/credits';
 import type { PendingLedger } from './ledger';
 import type { BuildContext } from './builders';
 import type { PendingEntry } from './types';
 import type { Api } from '../api/client';
 import type {
-  WriteClient, Rejection, PostSubmitResult, LikeSubmitResult, VouchSubmitResult, InviteSubmitResult, WithdrawSubmitResult, ClaimSubmitResult, BurnSubmitResult,
+  WriteClient, Rejection, PostSubmitResult, LikeSubmitResult, VouchSubmitResult, InviteSubmitResult, WithdrawSubmitResult, ClaimSubmitResult, BurnSubmitResult, SendSubmitResult,
 } from '../api/write';
 import { isRejection } from '../api/write';
 
@@ -43,8 +44,8 @@ export interface Signer {
 }
 
 export interface SubmitDeps {
-  reads: Pick<Api, 'karma' | 'status' | 'post' | 'vouchesByVoucher' | 'usernameByOwner'>;
-  write: Pick<WriteClient, 'submitPost' | 'submitLike' | 'submitVouch' | 'submitUnvouch' | 'submitInvite' | 'submitWithdraw' | 'submitClaim' | 'submitBurn'>;
+  reads: Pick<Api, 'karma' | 'credits' | 'status' | 'post' | 'vouchesByVoucher' | 'usernameByOwner'>;
+  write: Pick<WriteClient, 'submitPost' | 'submitLike' | 'submitVouch' | 'submitUnvouch' | 'submitInvite' | 'submitWithdraw' | 'submitClaim' | 'submitBurn' | 'submitSend'>;
   ledger: PendingLedger;
   identity: Signer;
   /** Called after a successful sign and before the POST — the composer path
@@ -393,6 +394,58 @@ export async function submitBurnFlow(deps: SubmitDeps): Promise<SubmitResult<Bur
     postId: held.name,
     inputs: built.tx.inputs,
     ...(built.change ? { change: built.change } : {}),
+    expiresAtHeight: body.expiresAtHeight,
+    submittedAtHeight: ctx.height,
+  };
+  deps.ledger.add(entry);
+  return { ok: true, entry, body };
+}
+
+/** Submit a credits send: credits view in, credit change at index 0 when any,
+ *  the payment — one `credit` box of the amount to `toHex` — at the next index,
+ *  no `fee` box (WEB_INTERFACE → The wallet). `toName` is the handle the reader
+ *  typed, kept for the flight and confirm lines; it never rides the wire — a
+ *  signed transaction carries keys only. `BelowFloor` and `InsufficientCredits`
+ *  refuse in place with the floor formatted through the denomination module. */
+export async function submitSendFlow(
+  deps: SubmitDeps,
+  toHex: string,
+  toName: string | null,
+  amount: bigint,
+): Promise<SubmitResult<SendSubmitResult>> {
+  const id = deps.identity.current();
+  if (id === null) throw new Error('submitSendFlow: no identity loaded');
+
+  const ctx = await readCreditContext(deps.reads, deps.ledger, id.pubKeyHex);
+  let built;
+  try {
+    built = buildSend(ctx, toHex, amount);
+  } catch (e) {
+    if (e instanceof InsufficientCredits) return clientRejection('not enough $NOTIS.');
+    if (e instanceof BelowFloor) {
+      const floor = formatCredits(e.floor);
+      return clientRejection(
+        e.which === 'payment'
+          ? `send at least ${floor} $NOTIS.`
+          : `that leaves change under ${floor} $NOTIS — send a little more, or all of it.`,
+      );
+    }
+    throw e;
+  }
+  const signed = await signBody(built.tx, deps.identity, built.txId, id.pubKeyHex);
+  if (!signed.ok) return signed;
+  const body = await deps.write.submitSend(signed.body);
+  if (isRejection(body)) return { ok: false, rejection: body };
+  if (body.txId !== built.txId) return clientRejection('the node computed a different transaction id');
+  if (typeof body.expiresAtHeight !== 'number') return clientRejection('the node answered without an expiry height');
+
+  const entry: PendingEntry = {
+    txId: built.txId,
+    kind: 'send',
+    postId: toHex, // a send's subject is the recipient's key
+    inputs: built.tx.inputs,
+    ...(built.change ? { change: built.change } : {}),
+    send: { toHex, toName, amount, boxId: built.paymentBoxId },
     expiresAtHeight: body.expiresAtHeight,
     submittedAtHeight: ctx.height,
   };
