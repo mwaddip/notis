@@ -778,7 +778,9 @@ describe('submitSendFlow', () => {
   it('reads credits then status, signs the id, POSTs { tx }, lands a send entry naming the recipient and payment box', async () => {
     const ledger = new PendingLedger(PUB);
     const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [], [CREDIT_BOX]), write: write(), ledger, identity };
-    const res = await submitSendFlow(deps, RECIPIENT, '@bob', 1_250_000_000n);
+    // toName is the bare name UsernameResult.name gives; the @ is the written
+    // form and never stored (WEB_INTERFACE → The identity display).
+    const res = await submitSendFlow(deps, RECIPIENT, 'bob', 1_250_000_000n);
 
     expect(res.ok).toBe(true);
     if (!res.ok) return;
@@ -795,7 +797,7 @@ describe('submitSendFlow', () => {
     expect(res.entry).toMatchObject({
       kind: 'send',
       postId: RECIPIENT,
-      send: { toHex: RECIPIENT, toName: '@bob', amount: 1_250_000_000n },
+      send: { toHex: RECIPIENT, toName: 'bob', amount: 1_250_000_000n },
       expiresAtHeight: 6720,
       submittedAtHeight: 6000,
     });
@@ -909,7 +911,7 @@ describe('submitSendFlow', () => {
   it('the send flow passes no hint to sign', async () => {
     const ledger = new PendingLedger(PUB);
     const deps: SubmitDeps = { reads: reads(PARENT_AUTHOR, FULL_BOXES, [], [CREDIT_BOX]), write: write(), ledger, identity };
-    await submitSendFlow(deps, RECIPIENT, '@bob', 1_250_000_000n);
+    await submitSendFlow(deps, RECIPIENT, 'bob', 1_250_000_000n);
     expect(signHints).toEqual([undefined]);
   });
 });

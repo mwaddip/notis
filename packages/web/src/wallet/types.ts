@@ -20,10 +20,12 @@ export interface ChangeRef {
 
 export type EntryKind = 'post' | 'like' | 'grant' | 'creditGrant' | 'vouch' | 'unvouch' | 'invite' | 'withdraw' | 'claim' | 'burn' | 'send';
 
-/** A pending send's recipient and payment shape — the resolved key and the handle
- *  it came from, the amount, and the payment box's id. Persisted with `amount` as
- *  a decimal string, so the flight and the confirm can read the number back after
- *  a reload (WEB_INTERFACE → The profile window). */
+/** A pending send's recipient and payment shape — the resolved key, the bare
+ *  name the reader typed (as `UsernameResult.name` gives it; the `@` is the
+ *  written form and is never stored — `WEB_INTERFACE → The identity display`),
+ *  the amount, and the payment box's id. Persisted with `amount` as a decimal
+ *  string, so the flight and the confirm can read the number back after a
+ *  reload (WEB_INTERFACE → The profile window). */
 export interface SendRef {
   toHex: string;
   toName: string | null;
