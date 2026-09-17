@@ -1,11 +1,15 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { profileBody, renderInvitesRow, renderUsernameRow, renderCreditsRow, resetCreditsSendForm, type ProfileHandlers, type ProfileCtx } from '../src/view/profile';
 import { karmaResult } from './karma-fixture';
 import { prefs } from '../src/prefs';
 import { shortHex } from '../src/dom';
 import type { Origin } from '../src/model/workspace';
 import type { CreditsResult, StatusResult, UsernameResult } from '../src/api/dto';
+
+const appCss = readFileSync(resolve(process.cwd(), 'src/style/app.css'), 'utf8');
 
 const ORIGIN: Origin = { from: 'pane', ci: 0 };
 
@@ -1104,6 +1108,54 @@ describe('profile window — the $NOTIS row', () => {
     });
     renderCreditsRow(f, handlers(), withCredits);
     expect(f.querySelector('form.credits-form')).not.toBeNull();
+  });
+
+  // The layout — the recipient on its own line, the amount and the boxed `send`
+  // on one line inside .amount-row. The box is the primary action's, the same
+  // classes the composer's `post` and the feed's `new post` wear (WEB_INTERFACE
+  // → The profile window → "The `$NOTIS` row"; HOUSE_STYLE → Interaction → "A
+  // box marks a commit pair and a surface's primary action").
+  describe('the send form — the recipient above, the amount and the boxed send on one line', () => {
+    const spendableCtx = (): ProfileCtx => creditsCtx({
+      credits: creditsResult({ boxes: [{ boxId: 'a'.repeat(32), value: '10000000000' }], boxCount: 1 }),
+    });
+
+    it('the amount input and the send button share .amount-row; the recipient sits above it', () => {
+      const f = rowField(render(handlers(), spendableCtx()), '$NOTIS')!;
+      const form = f.querySelector('form.credits-form') as HTMLFormElement;
+      const to = form.querySelector<HTMLInputElement>('input[aria-label*="recipient"]')!;
+      const amount = form.querySelector<HTMLInputElement>('input[aria-label*="amount"]')!;
+      const send = [...form.querySelectorAll('button')].find((b) => b.textContent === 'send') as HTMLButtonElement;
+      const row = form.querySelector('.amount-row') as HTMLElement;
+      expect(row).not.toBeNull();
+      expect(row.contains(amount)).toBe(true);
+      expect(row.contains(send)).toBe(true);
+      // The recipient sits above the row — it is not itself a child of it.
+      expect(row.contains(to)).toBe(false);
+    });
+
+    it('the send button carries btn btn-primary and type=submit — the primary action\'s box', () => {
+      const f = rowField(render(handlers(), spendableCtx()), '$NOTIS')!;
+      const form = f.querySelector('form.credits-form') as HTMLFormElement;
+      const send = [...form.querySelectorAll('button')].find((b) => b.textContent === 'send') as HTMLButtonElement;
+      expect(send.type).toBe('submit');
+      expect(send.classList.contains('btn')).toBe(true);
+      expect(send.classList.contains('btn-primary')).toBe(true);
+    });
+
+    it('under the app stylesheet the row computes display: flex', () => {
+      const style = document.createElement('style');
+      style.textContent = appCss;
+      document.head.appendChild(style);
+      const body = render(handlers(), spendableCtx());
+      document.body.appendChild(body);
+      const f = rowField(body, '$NOTIS')!;
+      const row = f.querySelector('form.credits-form .amount-row') as HTMLElement;
+      const s = window.getComputedStyle(row);
+      expect(s.display).toBe('flex');
+      document.body.removeChild(body);
+      document.head.removeChild(style);
+    });
   });
 });
 

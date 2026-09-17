@@ -786,15 +786,24 @@ function sendForm(slot: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx)
   amountInput.setAttribute('aria-label', 'the amount in $NOTIS');
   amountInput.autocomplete = 'off';
 
-  const submit = el('button', 'word', 'send') as HTMLButtonElement;
+  // The primary action's box, as the composer's `post` and the feed's `new post`
+  // wear (HOUSE_STYLE → Interaction → "A box marks a commit pair and a surface's
+  // primary action").
+  const submit = el('button', 'btn btn-primary', 'send') as HTMLButtonElement;
   submit.type = 'submit';
+
+  // The amount and the send on one line — the amount input a short field, since
+  // an amount is never long (WEB_INTERFACE → The profile window → "The `$NOTIS`
+  // row").
+  const amountRow = el('div', 'amount-row');
+  amountRow.append(amountInput, submit);
 
   const refusal = el('div', 'pf-refusal');
   refusal.hidden = true;
 
   const hint = el('div', 'hint', '$NOTIS moves when a block takes the send, and a send cannot be undone.');
 
-  form.append(toInput, resolvedKey, amountInput, submit, refusal, hint);
+  form.append(toInput, resolvedKey, amountRow, refusal, hint);
 
   form.addEventListener('submit', (e) => {
     e.preventDefault();
