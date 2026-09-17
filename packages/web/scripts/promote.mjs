@@ -150,6 +150,24 @@ async function main() {
   // 5. The membership pass sets R.
   await waitFor('R to be set a member', async () => (await jget(`/karma/${R.publicKeyHex}`)).member);
   rK = await jget(`/karma/${R.publicKeyHex}`);
+
+  // 6. The faucet posts one thread of its own. The extension proof's step 4
+  // needs a confirmed non-R post to like — this is the one; R can never like
+  // its own post, and without a non-R post in the feed the like word never
+  // renders (WEB_INTERFACE → What the feed reads).
+  console.log('the faucet posts one thread…');
+  await waitFor('like2 to land before the faucet reads its karma', async () => {
+    const p = await jget(`/posts/${t2Res.postId}`).catch(() => null);
+    return p && p.likeCount >= 1;
+  });
+  fK = await jget(`/karma/${DEVNET_FAUCET.publicKeyHex}`);
+  const ft = buildThreadTx(DEVNET_FAUCET, karmaBoxes(fK), 'faucet root thread — a non-R post for step 4', fK.height, version);
+  const ftRes = await jpost('/posts', { tx: ft.json, content: ft.content });
+  await waitFor('the faucet thread to confirm', async () => {
+    const p = await jget(`/posts/${ftRes.postId}`).catch(() => null);
+    return p && p.status === 'confirmed';
+  });
+
   console.log('');
   console.log(`✓ R is a member since block ${rK.memberSinceBlock} — vouches ${rK.memberVouches}, likes ${rK.memberLikes}`);
   console.log(`R_PUBLIC=${R.publicKeyHex}`);
