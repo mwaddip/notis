@@ -117,7 +117,11 @@ async function openSession(wsUrl) {
 }
 
 const findings = [];
-const record = (step, ok, detail) => { findings.push({ step, ok, detail }); console.log(`step ${step}: ${ok ? 'PASS' : 'FAIL'} — ${detail}`); };
+const record = (step, status, detail) => {
+  const s = status === true ? 'PASS' : status === false ? 'FAIL' : status === 'skipped' ? 'SKIPPED' : String(status);
+  findings.push({ step, status: s, detail });
+  console.log(`step ${step}: ${s} — ${detail}`);
+};
 
 async function findExt(pathSuffix) {
   for (let i = 0; i < 100; i++) {
@@ -310,8 +314,11 @@ async function main() {
     const landed5 = await pollKarma(0, 45000).catch(() => ({ ok: true }));
     await sleep(2000);
     const feedShows5 = await cx2.eval(`[...document.querySelectorAll('.card-content')].some(n => n.textContent && n.textContent.includes(${JSON.stringify(CONTENT5)}))`);
-    record(5, promptGone && feedShows5,
-      `heading="${promptShape.heading}", lines=${JSON.stringify(promptShape.lines)}, promptClosed=${promptGone}, feedShows=${feedShows5}`);
+    const headingOk = promptShape.heading === 'sign this thread?';
+    const linesHaveRep = promptShape.lines.some((l) => l.includes('5 rep'));
+    const linesHaveContent = promptShape.lines.some((l) => l.includes(CONTENT5));
+    record(5, promptGone && feedShows5 && headingOk && linesHaveRep && linesHaveContent,
+      `heading="${promptShape.heading}" (${headingOk ? 'ok' : 'FAIL'}), lines=${JSON.stringify(promptShape.lines)} (5 rep=${linesHaveRep}, content=${linesHaveContent}), promptClosed=${promptGone}, feedShows=${feedShows5}`);
     cxp.s.close();
   } else {
     record(5, false, 'no prompt target appeared under ask policy');
@@ -403,19 +410,30 @@ async function main() {
   const prompt8 = await findExt('prompt.html');
   const workerBefore = await findWorker();
   if (prompt8 && workerBefore) {
+    const idBefore = workerBefore.id;
     // Idle-wait ≥30s to let the SW terminate on its own; detaching the CDP
     // session is achieved by not attaching to it. Wait 35s.
-    console.log('step 8: idle-waiting 35s for MV3 SW termination…');
+    console.log(`step 8: worker id=${idBefore}; idle-waiting 35s for MV3 SW termination…`);
     await sleep(35000);
-    // Now approve — the fresh worker instance signs.
+    // The worker should be absent from /json/list now — that IS termination.
+    const workerAtWait = await findWorker();
+    // Approve — the fresh worker instance wakes to receive the sign message.
     const cxp = await openSession(prompt8.webSocketDebuggerUrl);
     await cxp.waitFor(`!!document.querySelector('.prompt button.btn-primary')`, 'prompt sign btn after restart');
     await cxp.eval(`document.querySelector('.prompt button.btn-primary').click()`, true);
+    // Poll until a worker target reappears (the wake), then read its id.
+    let workerAfter = null;
+    for (let i = 0; i < 60; i++) {
+      workerAfter = await findWorker();
+      if (workerAfter && workerAfter.id !== idBefore) break;
+      await sleep(500);
+    }
+    const idAfter = workerAfter?.id ?? null;
     await sleep(4000);
-    const landed8 = await pollKarma(0, 45000);
-    await sleep(2000);
     const feedShows8 = await cx2.eval(`[...document.querySelectorAll('.card-content')].some(n => n.textContent && n.textContent.includes(${JSON.stringify(CONTENT8)}))`);
-    record(8, feedShows8, `post landed after 35s idle wait; feedShows=${feedShows8}`);
+    const idsDiffer = !!idAfter && idAfter !== idBefore;
+    record(8, feedShows8 && idsDiffer,
+      `worker id before=${idBefore}, mid-wait=${workerAtWait ? workerAtWait.id : 'absent'}, after=${idAfter ?? 'null'} (differ=${idsDiffer}); post landed=${feedShows8}`);
     cxp.s.close();
   } else {
     record(8, false, `prompt=${!!prompt8}, worker=${!!workerBefore}`);
@@ -453,9 +471,10 @@ async function main() {
     })()`, true);
     await sleep(6000);
     const feedShows9 = await cx2.eval(`[...document.querySelectorAll('.card-content')].some(n => n.textContent && n.textContent.includes(${JSON.stringify(CONTENT9)}))`);
-    record(9, feedShows9, `unlock mounted, unlocked, landed=${feedShows9}`);
+    record(9, lockedState === null && unlockMounted && feedShows9,
+      `lockedSession=${lockedState === null ? 'empty' : 'present'}, unlockMounted=${unlockMounted}, landed=${feedShows9}`);
   } else {
-    record(9, false, `lockedSession=${lockedState}, unlockMounted=${unlockMounted}`);
+    record(9, false, `lockedSession=${lockedState === null ? 'empty' : 'present'}, unlockMounted=${unlockMounted}`);
   }
 
   // --- Step 10 — Reload the page → still unlocked (session store per browser).
@@ -468,13 +487,17 @@ async function main() {
   const state10 = await cx10.eval(`chrome.runtime.sendMessage({ kind: 'state' })`);
   record(10, state10 && state10.locked === false, `state.locked=${state10?.locked}, pubKeyHex=${state10?.pubKeyHex?.slice(0, 8)}…`);
 
-  // --- Step 11 — Set the faucet preference to the harness's faucet origin →
-  // the row reports the permission outcome. Headless Chrome cannot drive the
-  // permissions dialog interactively; assert the flow reaches
-  // permissions.request and its answer path.
+  // --- Step 11 — Set the faucet preference. The real permissions dialog is
+  // not drivable from headless Chrome (Phase 0 hypothesis (d)); assert the
+  // page's own handler by stubbing `chrome.permissions.request` for both
+  // branches. The manual pass exercises the real dialog.
   await cx10.eval(`document.querySelector('[aria-label="open profile"]').click()`, true);
   await cx10.waitFor(`document.querySelector('input[aria-label="the faucet this client asks for rep"]')`, 'faucet row');
-  const outcome11 = await cx10.eval(`(async () => {
+  // Branch A — refused. Stub resolves false; hint must read the refusal;
+  // storage must not carry the origin.
+  const refused = await cx10.eval(`(async () => {
+    localStorage.removeItem('notis.faucet');
+    chrome.permissions.request = () => Promise.resolve(false);
     const input = document.querySelector('input[aria-label="the faucet this client asks for rep"]');
     input.value = ${JSON.stringify(FAUCET)};
     input.dispatchEvent(new Event('change'));
@@ -483,12 +506,26 @@ async function main() {
     const storedFaucet = localStorage.getItem('notis.faucet');
     return { hint, storedFaucet };
   })()`, true);
-  record(11, outcome11.hint !== null,
-    `hint="${outcome11.hint}", storedFaucet=${outcome11.storedFaucet}`);
+  // Branch B — granted. Stub resolves true; storage must carry the origin.
+  const granted = await cx10.eval(`(async () => {
+    chrome.permissions.request = () => Promise.resolve(true);
+    const input = document.querySelector('input[aria-label="the faucet this client asks for rep"]');
+    // Dispatch change again — same value, but the handler runs on 'change'.
+    input.dispatchEvent(new Event('change'));
+    await new Promise(r => setTimeout(r, 1500));
+    const storedFaucet = localStorage.getItem('notis.faucet');
+    return { storedFaucet };
+  })()`, true);
+  const refusedOk = refused.hint === 'the browser refused access to that origin.' && refused.storedFaucet === null;
+  const grantedOk = granted.storedFaucet === FAUCET;
+  record(11, refusedOk && grantedOk,
+    `refused: hint="${refused.hint}" (${refusedOk ? 'ok' : 'FAIL'}), storedFaucet=${refused.storedFaucet}; granted: storedFaucet=${granted.storedFaucet} (${grantedOk ? 'ok' : 'FAIL'})`);
 
-  // --- Step 12 — Credits: no live builder; the classification is pinned by
-  // policy.test.ts (14 tests). Documented outside the harness.
-  record(12, true, 'credits classification pinned by policy.test.ts (14 offline tests); no in-client builder yet');
+  // --- Step 12 — Credits: not exercised live. The client has no credits
+  // builder yet; the classification is pinned by policy.test.ts's 14 offline
+  // tests. Recorded skipped, not PASS — a proof that runs nothing is READ-6's
+  // shape even when the reason is legitimate.
+  record(12, 'skipped', 'no in-client credits builder; policy.test.ts (14 offline tests) pins the classification');
 }
 
 let exitCode = 0;
@@ -500,8 +537,13 @@ try {
 }
 
 console.log('\n=== SUMMARY ===');
-for (const r of findings) console.log(`  step ${r.step}: ${r.ok ? 'PASS' : 'FAIL'} — ${r.detail}`);
-console.log(JSON.stringify({ pass: findings.filter(f => f.ok).length, fail: findings.filter(f => !f.ok).length, findings }, null, 2));
+for (const r of findings) console.log(`  step ${r.step}: ${r.status} — ${r.detail}`);
+const pass = findings.filter((f) => f.status === 'PASS').length;
+const fail = findings.filter((f) => f.status === 'FAIL').length;
+const skipped = findings.filter((f) => f.status === 'SKIPPED').length;
+console.log(`\n${pass} measured, ${fail} failed, ${skipped} skipped`);
+console.log(JSON.stringify({ pass, fail, skipped, findings }, null, 2));
+if (fail > 0) exitCode = 1;
 
 proc.kill();
 process.exit(exitCode);
