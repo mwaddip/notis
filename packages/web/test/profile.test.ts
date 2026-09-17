@@ -52,6 +52,10 @@ function ctx(over: Partial<ProfileCtx> = {}): ProfileCtx {
     invite: null, canAffordMinBond: false, bonds: null, inviteFlight: null,
     ownName: null, ownNameLoaded: true, usernameFlight: null, pendingUsername: null, canSignClaim: false, canAffordBurn: false,
     status: null, credits: null, creditGrant: null, sendFlight: null, pendingSend: null,
+    // The web arm's default — the confirm row stands. The extension arm's
+    // tests override this to false and cover the flow the prompt confirms
+    // (WEB_INTERFACE → The profile window → "The `$NOTIS` row").
+    confirmInRow: true,
     ...over,
   };
 }
@@ -1100,5 +1104,143 @@ describe('profile window — the $NOTIS row', () => {
     });
     renderCreditsRow(f, handlers(), withCredits);
     expect(f.querySelector('form.credits-form')).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The extension arm — WEB_INTERFACE → The profile window → "The `$NOTIS` row".
+// `confirmInRow: false` — the confirm row does not build; the resolved key
+// renders beneath the recipient field in mono, whole, and `send` fires at
+// once. A locked press mounts the unlock form under the form (the invites
+// row's `.card-unlock` pattern) and proceeds on unlock.
+// ---------------------------------------------------------------------------
+
+function extCtx(over: Partial<ProfileCtx> = {}): ProfileCtx {
+  return creditsCtx({
+    credits: creditsResult({ boxes: [{ boxId: 'a'.repeat(32), value: '10000000000' }], boxCount: 1 }),
+    confirmInRow: false,
+    ...over,
+  });
+}
+
+describe('profile — the $NOTIS row, extension arm (confirmInRow: false)', () => {
+  it('a resolved handle: no .pf-confirm; the whole key beneath the recipient in mono; send called once', async () => {
+    const sent: Array<[string, string | null, bigint]> = [];
+    const h = handlers({
+      send: (k, n, a) => sent.push([k, n, a]),
+      resolveRecipient: async () => ({ key: REC, name: REC_NAME }),
+    });
+    const f = rowField(render(h, extCtx()), '$NOTIS')!;
+    const form = f.querySelector('form.credits-form') as HTMLFormElement;
+    const to = form.querySelector<HTMLInputElement>('input[aria-label*="recipient"]')!;
+    const amount = form.querySelector<HTMLInputElement>('input[aria-label*="amount"]')!;
+    to.value = '@bob'; amount.value = '12.5';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    // No confirm row is ever built on the extension arm.
+    expect(f.querySelector('.pf-confirm')).toBeNull();
+    // The resolved key renders beneath the recipient, mono, whole (never a prefix).
+    const key = form.querySelector<HTMLElement>('.resolved-key')!;
+    expect(key.hidden).toBe(false);
+    expect(key.textContent).toBe(REC);
+    expect(key.classList.contains('mono')).toBe(true);
+    // send was called once with the resolved key.
+    expect(sent).toEqual([[REC, REC_NAME, 1_250_000_000n]]);
+  });
+
+  it('a bare key: no .pf-confirm; the same key beneath the field; send called with name null', async () => {
+    const sent: Array<[string, string | null, bigint]> = [];
+    const h = handlers({ send: (k, n, a) => sent.push([k, n, a]) });
+    const OTHER = 'ff'.repeat(32);
+    const f = rowField(render(h, extCtx()), '$NOTIS')!;
+    const form = f.querySelector('form.credits-form') as HTMLFormElement;
+    const to = form.querySelector<HTMLInputElement>('input[aria-label*="recipient"]')!;
+    const amount = form.querySelector<HTMLInputElement>('input[aria-label*="amount"]')!;
+    to.value = OTHER; amount.value = '3.14';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    expect(f.querySelector('.pf-confirm')).toBeNull();
+    const key = form.querySelector<HTMLElement>('.resolved-key')!;
+    expect(key.hidden).toBe(false);
+    expect(key.textContent).toBe(OTHER);
+    expect(sent).toEqual([[OTHER, null, 314_000_000n]]);
+  });
+
+  it('a locked press mounts the unlock form UNDER the form; unlock proceeds; no confirm row is built', async () => {
+    const sent: Array<[string, string | null, bigint]> = [];
+    const unlockedWith: string[] = [];
+    const h = handlers({
+      send: (k, n, a) => sent.push([k, n, a]),
+      unlockIdentity: async (p) => { unlockedWith.push(p); },
+    });
+    const f = rowField(render(h, extCtx({ identity: { pubKeyHex: KEY, locked: true } })), '$NOTIS')!;
+    const form = f.querySelector('form.credits-form') as HTMLFormElement;
+    const to = form.querySelector<HTMLInputElement>('input[aria-label*="recipient"]')!;
+    const amount = form.querySelector<HTMLInputElement>('input[aria-label*="amount"]')!;
+    to.value = REC; amount.value = '1';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    // No confirm row is ever built.
+    expect(f.querySelector('.pf-confirm')).toBeNull();
+    // The unlock form is UNDER the form, the invites row's .card-unlock pattern.
+    const urow = form.parentElement?.querySelector('.card-unlock');
+    expect(urow).not.toBeNull();
+    // No send yet — the unlock is pending.
+    expect(sent).toHaveLength(0);
+    // The unlock's submit resolves; the send fires.
+    const unlock = urow!.querySelector('form.pf') as HTMLFormElement;
+    (unlock.querySelector('input[type="password"]') as HTMLInputElement).value = 'pw';
+    unlock.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    expect(unlockedWith).toEqual(['pw']);
+    expect(sent).toEqual([[REC, null, 100_000_000n]]);
+    // The card-unlock is gone.
+    expect(form.parentElement?.querySelector('.card-unlock')).toBeNull();
+  });
+
+  it('a second submit after an in-row unlock goes straight through with no new unlock row', async () => {
+    const sent: Array<[string, string | null, bigint]> = [];
+    const unlockedWith: string[] = [];
+    const h = handlers({
+      send: (k, n, a) => sent.push([k, n, a]),
+      unlockIdentity: async (p) => { unlockedWith.push(p); },
+    });
+    const f = rowField(render(h, extCtx({ identity: { pubKeyHex: KEY, locked: true } })), '$NOTIS')!;
+    const form = f.querySelector('form.credits-form') as HTMLFormElement;
+    const to = form.querySelector<HTMLInputElement>('input[aria-label*="recipient"]')!;
+    const amount = form.querySelector<HTMLInputElement>('input[aria-label*="amount"]')!;
+    // First press: locked → the unlock row mounts under the form.
+    to.value = REC; amount.value = '1';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    const urow = form.parentElement?.querySelector('.card-unlock');
+    (urow!.querySelector('input[type="password"]') as HTMLInputElement).value = 'pw';
+    (urow!.querySelector('form.pf') as HTMLFormElement).dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    expect(sent).toEqual([[REC, null, 100_000_000n]]);
+    // Second press: no new unlock row is mounted; send fires straight.
+    const OTHER = 'ff'.repeat(32);
+    to.value = OTHER; amount.value = '2';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    expect(form.parentElement?.querySelector('.card-unlock')).toBeNull();
+    expect(unlockedWith).toEqual(['pw']); // no second unlock asked
+    expect(sent).toEqual([[REC, null, 100_000_000n], [OTHER, null, 200_000_000n]]);
+  });
+
+  it('resetCreditsSendForm clears the resolved-key hint alongside the inputs', () => {
+    // Fill the form and reveal the resolved-key line, then reset.
+    const f = rowField(render(handlers(), extCtx()), '$NOTIS')!;
+    const form = f.querySelector('form.credits-form') as HTMLFormElement;
+    const key = form.querySelector<HTMLElement>('.resolved-key')!;
+    key.textContent = REC;
+    key.hidden = false;
+    const inputs = form.querySelectorAll<HTMLInputElement>('input');
+    inputs[0]!.value = REC; inputs[1]!.value = '1';
+    resetCreditsSendForm(f);
+    expect(inputs[0]!.value).toBe('');
+    expect(inputs[1]!.value).toBe('');
+    expect(key.textContent).toBe('');
+    expect(key.hidden).toBe(true);
   });
 });

@@ -92,8 +92,8 @@ function fakeWrite(): WriteClient {
   } as unknown as WriteClient;
 }
 
-function fakeIdentity(): AppIdentity {
-  return {
+function fakeIdentity(opts: { withPolicy?: boolean } = {}): AppIdentity {
+  const base: Record<string, unknown> = {
     current: () => idState,
     sign: async (_bytes: Uint8Array, t: string) => {
       signCalls.push(t);
@@ -113,7 +113,16 @@ function fakeIdentity(): AppIdentity {
     lock: async () => {},
     forget: async () => {},
     backedUp: () => true,
-  } as unknown as AppIdentity;
+  };
+  // The extension arm — the proxy exposes policy/setPolicy; the in-page
+  // module does not (WEB_INTERFACE → The profile window). ctx.confirmInRow
+  // reads on `!this.idm.policy`, so the presence of the method here is what
+  // turns the confirm row off.
+  if (opts.withPolicy) {
+    base.policy = (): 'silent' | 'ask' => 'silent';
+    base.setPolicy = async (_p: 'silent' | 'ask'): Promise<void> => {};
+  }
+  return base as unknown as AppIdentity;
 }
 
 interface Drive {
@@ -129,7 +138,7 @@ interface Drive {
   faucetClient: { askCredits: (key: string) => Promise<CreditGrant | Rejection> };
 }
 
-function harness() {
+function harness(opts: { withPolicy?: boolean } = {}) {
   idState = { pubKeyHex: ME, locked: false };
   blockHeight = 100;
   signCalls = [];
@@ -144,7 +153,7 @@ function harness() {
   };
   creditsRecipient = { userId: REC, total: '0', boxes: [], boxCount: 0, next: null };
 
-  const app = new App(fakeApi(), fakeWrite(), fakeIdentity());
+  const app = new App(fakeApi(), fakeWrite(), fakeIdentity(opts));
   // Swap the faucet client for a controllable one, so tests drive the credits
   // grant without touching fetch.
   (app as unknown as { faucetClient: unknown }).faucetClient = {
@@ -382,5 +391,80 @@ describe('the row after a landed send', () => {
     const clearInputs = clearForm.querySelectorAll<HTMLInputElement>('input');
     expect(clearInputs[0]!.value).toBe('');
     expect(clearInputs[1]!.value).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The extension arm — the App builds ctx with confirmInRow: false when the
+// identity module implements `policy`, so no .pf-confirm renders and the send
+// fires at once (WEB_INTERFACE → The profile window → "The `$NOTIS` row").
+// ---------------------------------------------------------------------------
+
+describe('the send flow — the extension arm (confirmInRow: false)', () => {
+  it('the send goes straight to the flow — no confirm row is ever built; the resolved key stands beneath the field; the decline keeps the values', async () => {
+    // A `declined` signResp exercises the "prompt says no" ending on the App
+    // side, where the ledger's send entry is never added and the form's
+    // values stay put — every ending but an accepted submission (WEB_INTERFACE
+    // → The wallet). harness() resets signResp to 'signed' at line 147, so
+    // 'declined' is set AFTER the harness build.
+    const h = harness({ withPolicy: true });
+    signResp = 'declined';
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    await flush();
+    (h.app as unknown as { openProfile: () => void }).openProfile();
+    await flush();
+    const form = document.querySelector<HTMLFormElement>('form.credits-form')!;
+    const inputs = form.querySelectorAll<HTMLInputElement>('input');
+    inputs[0]!.value = '@bob'; // resolves to REC, name 'bob'
+    inputs[1]!.value = '1';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    // No confirm row is ever built on the extension arm.
+    expect(document.querySelector('.pf-confirm')).toBeNull();
+    // The resolved key rendered beneath the recipient, in mono, whole.
+    const key = form.querySelector<HTMLElement>('.resolved-key');
+    expect(key?.hidden).toBe(false);
+    expect(key?.textContent).toBe(REC);
+    // signCalls carries one — send() called at once, the signer answered
+    // declined, so the ledger has no send entry.
+    expect(signCalls).toHaveLength(1);
+    expect(h.drive.ledger.all().find((e) => e.kind === 'send')).toBeUndefined();
+    // The form keeps its values (every ending but an accepted submission).
+    expect((form.querySelectorAll<HTMLInputElement>('input'))[0]!.value).toBe('@bob');
+    expect((form.querySelectorAll<HTMLInputElement>('input'))[1]!.value).toBe('1');
+    expect(h.drive.sendFlight?.stage).toBe('rejected');
+    expect(h.drive.sendFlight?.reason).toContain('send not sent.');
+  });
+
+  it('an accepted submission clears the form and the resolved-key hint', async () => {
+    const h = harness({ withPolicy: true });
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    await flush();
+    (h.app as unknown as { openProfile: () => void }).openProfile();
+    await flush();
+    const form = document.querySelector<HTMLFormElement>('form.credits-form')!;
+    const inputs = form.querySelectorAll<HTMLInputElement>('input');
+    inputs[0]!.value = '@bob';
+    inputs[1]!.value = '1';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    // No confirm row is ever built.
+    expect(document.querySelector('.pf-confirm')).toBeNull();
+    // A pending send: the ledger has the entry; the row's pending line reads
+    // the recipient by handle.
+    const entry = h.drive.ledger.all().find((e) => e.kind === 'send');
+    expect(entry).toBeDefined();
+    const flight = document.querySelector<HTMLElement>('.credits-flight');
+    expect(flight?.textContent).toContain('1 $NOTIS to @bob · submitted');
+    // The form and the resolved-key hint cleared on the accepted submission.
+    const clearForm = document.querySelector<HTMLFormElement>('form.credits-form')!;
+    const clearInputs = clearForm.querySelectorAll<HTMLInputElement>('input');
+    expect(clearInputs[0]!.value).toBe('');
+    expect(clearInputs[1]!.value).toBe('');
+    const clearKey = clearForm.querySelector<HTMLElement>('.resolved-key');
+    expect(clearKey?.hidden).toBe(true);
+    expect(clearKey?.textContent).toBe('');
   });
 });
