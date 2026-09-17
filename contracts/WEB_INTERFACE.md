@@ -67,8 +67,6 @@ transactions the browser builds and signs. The identity interface — the `@prof
 and the faucet's two steps — is stated below (→ The identity module, → The profile window, → The faucet step);
 the name's row is its own section (→ The username row), and the `$NOTIS` row is in the profile window's section.
 
-> ⚠ **AHEAD OF CODE (2026-09-17, the credits send)** — the send and the faucet's $NOTIS step are not built; the rest of the slice is.
-
 **With no identity loaded, the client is the read surface exactly.** No `new post`, no `↩ reply`, no
 `like`, no `viewer` parameter. The way in is `create` or `import` in the `@profile` window (→ The
 profile window); nothing else in the interface creates an identity, and a production build exposes no
@@ -285,8 +283,6 @@ silent while unlocked** by default, and one preference, *sign each rep action: d
 the background under `notis.signPolicy`, prompts for it too. The credits send (→ The profile window) is the
 write that prompts under the default; it inherits the prompt with nothing to add.
 
-> ⚠ **AHEAD OF CODE (2026-09-17, the credits send)** — the send is not built; under the default no prompt appears yet.
-
 **The messages** — page to background, promise-returning, each answering a plain result or `{ error }`,
 the background reloading its state from storage on every one: `state` (the proxy's snapshot, with the
 policy), `draft`, `discardDraft`, `create { passphrase }`, `inspectFile { text }`, `importFile { text,
@@ -331,8 +327,6 @@ name the page supplied. `protocolVersion` is shown small and not checked — the
 **A credits amount on the prompt is $NOTIS, never base units** — the heading names the total sent, *send 12.5
 $NOTIS?*, each line its payment and recipient, and a fee line only when the transaction carries a `fee` box
 (→ The wallet, the denomination rule).
-
-> ⚠ **AHEAD OF CODE (2026-09-17, the credits send)** — the prompt prints base units and a zero fee line today.
 
 **The build check that keeps the web bundle honest:** the web build's assets contain no `chrome.`
 reference. `build-release.sh` checks it; `build-extension.sh` checks the extension's shell has no inline
@@ -750,15 +744,11 @@ selected box is newer than the height declared. **A send reads the other ledger 
 above the `/status` height is left out of the view (`TYPES_INTERFACE → CreditBox`): the node judges a spend
 at tip + 1, so the client is conservative by one block, and the node's refusal stays the truth.
 
-> ⚠ **AHEAD OF CODE (2026-09-17, the credits send)** — the credits read and its view are this unit's.
-
 **The spendable view** is the confirmed boxes, minus the inputs of the client's own pending
 transactions, plus their predicted change — `computeCandidateBoxId(change, txId, 0)`, exact because
 ids are provenance-derived. **There are two views over one ledger, split by the entry's kind:** a `send`
 entry's inputs and change are credit boxes and count in the credits view only, and every other kind's count
 in the rep view only — so a send's change is never offered to a post, nor a post's to a send.
-
-> ⚠ **AHEAD OF CODE (2026-09-17, the credits send)** — the ledger holds one view today; the split is this unit's.
 
 **The pending ledger is persisted, per identity** —
 `notis.pending.<pubKeyHex>`, constructed for the loaded identity at start, so a key never sees another
@@ -800,16 +790,13 @@ refusal that names the floor, so the reader never spends a rejection to learn it
 (`TYPES_INTERFACE → Box value domain`). Every builder is frozen against vectors held as constants in
 `builders.test.ts`; a change that moves one is a wire change.
 
-> ⚠ **AHEAD OF CODE (2026-09-17, the credits send)** — `buildSend`, its floor check and its vectors are this unit's.
-
 **A credits amount crosses the API in base units and reaches the face in $NOTIS.** Every `value` on the wire
 is a decimal string of base units — 10⁻⁸ of a credit (`TYPES_INTERFACE → Denomination`) — and the face never
 shows one: a base-unit amount is formatted as $NOTIS with up to eight decimals and no trailing zeros, and a
-typed amount is parsed the same way — digits, at most one point, at most eight decimals, nothing else. One
+typed amount is parsed the same way — digits, at most one point and only between digits, at most eight
+decimals, nothing else. One
 module does both, and every surface that shows a credits amount reads it — the `$NOTIS` row, its confirm and
 flight lines, and the extension's prompt (→ The extension). Rep is indivisible and stays a plain integer.
-
-> ⚠ **AHEAD OF CODE (2026-09-17, the credits send)** — the module is this unit's; the prompt prints base units today.
 
 **Nothing retries.** A rejection is one `Rejection { status, message }`, normalised from both body
 shapes the node uses — `{ error: <status>, reason }` and `{ error: <message> }`; a 409 drops the entry
@@ -854,8 +841,6 @@ A pending send is landed when `GET /credits/<recipient>` following `next` lists 
 landing the reader's own `/credits` is re-read and the `$NOTIS` row's balance moves in place (→ The profile
 window). A pending credits grant is landed when `GET /credits/<key>` lists the box the faucet named
 (→ The faucet step).
-
-> ⚠ **AHEAD OF CODE (2026-09-17, the credits send)** — the two reconciles are this unit's.
 
 **The reader's vouch set is client state read from the node, never stored:** `GET /vouches?voucher=<key>`
 to the end of `next` at identity load, again on every vouch or unvouch landing, and the cooldown arm
@@ -960,20 +945,23 @@ after the prefix, muted ink, text only.
 $NOTIS (→ The wallet), in `gold` (`HOUSE_STYLE → "Gold means credits and nothing else"`) — and beneath it, when
 a box is locked, one muted line, *N $NOTIS more unlock by block H*, H the latest `lockedUntilBlock` among them.
 With no spendable box: the faucet step when a faucet is set (→ The faucet step), else *no $NOTIS yet.* Then the
-send form, a real `<form>` in place: the recipient — a 64-hex key or an `@handle` — the amount in $NOTIS, and
-the word `send`. **An identity input takes a key or a handle, and a handle is resolved at the press** through
-`GET /usernames/:name` (`NODE_INTERFACE → Identity parameters`) — a signed transaction carries keys only — an
-unknown one refused in place, *no one holds that name.*; then **the confirm row**, the burn's pattern: *send
-12.5 $NOTIS to @bob · <prefix>?* — the handle when one resolved, and always the key it resolved to, in mono, the
-prefix the identity display renders — with `send` and `keep`, focus on `keep`, Esc keeps. A locked identity
-unlocks in the row first; the flight renders in the row; a pending send — *12.5 $NOTIS to @bob · submitted*,
-from the ledger's entry, so it survives a reload — stands until it lands, when the line reads *sent* and the
-balance moves in place, or expires. Refusals in the register: an amount or a change below the floor names the
-minimum; a shortfall is *not enough $NOTIS.*; `declined` and `refused` are *not sent.* and the reason (→ The
-wallet, `notSigned`). In the extension the prompt asks after the confirm, because credits always prompt
+send form, a real `<form>` in place: the recipient — a 64-hex key or a handle, the leading `@` optional — the
+amount in $NOTIS, and the word `send`. **An identity input takes a key or a handle, and a handle is resolved at
+the press** through `GET /usernames/:name` (`NODE_INTERFACE → Identity parameters`) — a signed transaction carries
+keys only — an unknown one refused in place, *no one holds that name.*; then **the confirm row**, the burn's
+pattern: *send 12.5 $NOTIS to @bob · <prefix>?* — the handle when one resolved, and always the key it resolved
+to, in mono, the prefix the identity display renders — with `send` and `keep`, focus on `keep`, Esc keeps. A
+locked identity unlocks in the confirm's place first, and the next press needs no second unlock; the flight
+renders in the row; a pending send — *12.5 $NOTIS to @bob · submitted*, from the ledger's entry, so it survives a
+reload — stands until it lands, when the line reads *sent* and the balance moves in place, or expires. **The
+form keeps its values on every ending but an accepted submission, which clears it** — the fourth ending
+(→ The wallet). Refusals in the register: an amount that is not digits with up to eight decimals, or zero, is
+*an amount is digits with up to eight decimals.*; a recipient that is neither is *that is not a key or a name.*;
+the reader's own key is *that is your own key.*; a payment or a change below the floor names it — *send at least
+N $NOTIS.*, *that leaves change under N $NOTIS — send a little more, or all of it.*; a shortfall is *not enough
+$NOTIS.*; a decline is *send not sent.*, a refusal *send not sent: <reason>.*, the lock race *your key is locked*
+(→ The wallet, `notSigned`). In the extension the prompt asks after the confirm, because credits always prompt
 (→ The extension).
-
-> ⚠ **AHEAD OF CODE (2026-09-17, the credits send)** — the row, the resolution, the confirm and the flight are this unit's.
 
 **Two preference rows the extension adds or changes.** *sign each rep action: don't ask · ask* is the
 background's policy (→ The extension), read through `state` and set through `policy`; it renders only
@@ -1021,9 +1009,7 @@ change, so it is inert in both views; reconcile is `GET /credits/:key`: the box 
 balance reads it; past `expiresAtHeight` and absent → expired — *no block took the faucet's transfer by height
 N.* with `ask again`. A 202 without a numeric `expiresAtHeight` or a 64-hex `boxId` is refused, for the reason
 above. The relayed refusals map as the rep step's do, except a 400 — credits repeat, so it is not the
-once-per-key rule: *the faucet refused that key.* and the message.
-
-> ⚠ **AHEAD OF CODE (2026-09-17, the credits send)** — the step, the entry kind and its reconcile are this unit's.
+once-per-key rule: *the faucet refused that key: <message>*.
 
 ### The username row *(username surface)*
 
@@ -1208,8 +1194,6 @@ one is: the client records no entry it cannot track.
 | The reader's own name; an author's name | `GET /usernames?owner=` — 404 is *no name* | *(username surface)* — a read, in the read client |
 | Send $NOTIS | `POST /credits/transfer` — `{ tx }` → `{ status, txId, expiresAtHeight }` | *(write surface)* |
 | A handle's holder | `GET /usernames/:name` — 404 is *unknown* | *(write surface)* — a read, in the read client; resolved at the press, before a send builds |
-
-> ⚠ **AHEAD OF CODE (2026-09-17, the credits send)** — the three rows above this line are this unit's.
 
 **The write client is its own module beside the read client.** The read client issues `GET` requests
 and nothing else, and that stays literally checkable; the writes live next door, and a `viewer`

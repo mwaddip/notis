@@ -297,13 +297,21 @@ carries no `chrome.` reference. **The extension's source lives in `src/extension
 
 **The proof** is `scripts/extension-check/run.mjs`: headless Chromium over raw CDP (the cached Chrome for
 Testing; no Playwright) loading the unpacked Chrome build, driving the twelve steps of the extension section
-through the real UI — the composer, the like word, the profile rows, the prompt window — against a local
+through the real UI — the composer, the like word, the profile rows, the prompt window — the twelfth in four
+measured parts (the faucet's `$NOTIS` step, a send approved at the prompt, a send declined, a send from a locked
+identity) — against a local
 devnet: `node packages/node/scripts/dev.mjs`, `tools/faucet/dist` with the devnet faucet key
 (`tools/e2e/src/identities.ts`, devnet-only and public by design), `promote.mjs` for a throwaway member,
 the extension built with devnet values. Step 8 lets the worker die by a ≥ 30 s idle wait — `chrome.runtime.reload`
 clears `storage.session` and proves nothing — and the worker target is the one whose URL ends in
 `/background.js` (Chrome ships a built-in Hangouts worker first). Ports above 19000. The throwaway's key file
-and the faucet's live under a scratch path, never in the repo, a log or a report.
+and the faucet's live under a scratch path, never in the repo, a log or a report. The faucet runs from the
+tree's `tools/faucet` with `FAUCET_CREDIT_AMOUNT` set, and `--faucet` names its origin with the `/faucet` prefix
+the service routes under. At start the harness adds the two loopback origins to the unpacked manifest's
+`host_permissions`, since CDP cannot drive the browser's permission dialog — the tracked template and the packed
+manifest are untouched, and the granted path is the hand pass. Devnet's decay outruns the harness at full mining
+speed, so the miner is paced from outside — a stop-and-continue loop around its PID, a few blocks a minute — for
+the throwaway's rep to last the run.
 
 ⚠ **A `<base>` element resolves fragment references against itself**, so the client carries none: the mark
 is inline markup (`src/view/mark.ts`), never a sprite referenced by `<use>`, and every URL composed from

@@ -610,8 +610,6 @@ transfer, relayed from `POST /credits/transfer`'s answer (→ Credits) for the r
 `boxId` the granted `credit` box's id, `computeCandidateBoxId` over the payment output at index 0
 (`TYPES_INTERFACE → BoxId`), so a client can recognise the grant among boxes the key already holds.
 
-> ⚠ **AHEAD OF CODE (2026-09-17, the credits send)** — the service answers `202 { txId, status }` today; the two fields are this unit's.
-
 A faucet is an **ordinary account** whose secret lives in a service outside the node. Genesis seeds
 that account's karma and credit boxes on the networks whose profile names a `faucetPublicKey`;
 mainnet's does not, so no faucet identity exists in mainnet state. **Absence of the field is the whole
