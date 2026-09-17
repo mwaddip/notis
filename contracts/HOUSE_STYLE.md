@@ -314,8 +314,6 @@ Every rule here is a prohibition, and together they are most of what keeps the p
   reader can glance whether blocks progress. It moves nothing else — no count on a card, no feed refresh, no
   banner; the number changes in place and never animates, and the dot is its only colour
   (`WEB_INTERFACE → The status corner`).
-
-  > ⚠ **AHEAD OF CODE (2026-09-17, the status corner)** — no corner exists; the client polls only while its own writes are pending.
 - **No variable-ratio rewards.** Pull-to-refresh is a slot machine lever. Refresh is a button,
   and it reports what it did.
 - **Numbers never animate.** No count-ups on karma or credits. A ticking number is a slot
@@ -375,8 +373,6 @@ it for anything.
   commit pair and a surface's primary action** — the composer's `post` and `cancel`, the extension prompt's
   `sign` and `cancel`, the feed's `new post`, and the `$NOTIS` row's `send` (user, 2026-09-08, 2026-09-16 and
   2026-09-17); the inverse-filled header words are fills, not boxes, and stay.
-
-  > ⚠ **AHEAD OF CODE (2026-09-17, the send box)** — the `$NOTIS` row's `send` is a word today.
 - **Nothing is fetched from a third party without the reader's act.** An image, a title, a
   preview — nothing the page renders on its own reaches beyond the origin, because every such
   request tells that party who is reading and when. What a reader chooses to load, they load

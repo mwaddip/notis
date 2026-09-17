@@ -504,8 +504,6 @@ changes. Its `title` names the state in words — *blocks progressing · tip 229
 2295*, *the node did not answer · last tip 2295*. At one column it sits clear of the bar and of every control; in the
 standalone mode it is present, since the page reads the same node; with no node answering at start it reads `—`.
 
-> ⚠ **AHEAD OF CODE (2026-09-17, the status corner)** — no corner exists.
-
 ## The standalone thread
 
 **A post has a URL, and the URL opens the thread alone.** `<origin><base>p/<64hex>` — `https://notis.fun/web/p/<id>`
@@ -995,8 +993,6 @@ N $NOTIS.*, *that leaves change under N $NOTIS — send a little more, or all of
 $NOTIS.*; a decline is *send not sent.*, a refusal *send not sent: <reason>.*, the lock race *your key is locked*
 (→ The wallet, `notSigned`). In the extension the prompt is the one confirmation, because credits always prompt
 (→ The extension).
-
-> ⚠ **AHEAD OF CODE (2026-09-17, the send box)** — the amount field spans the width with `send` a word beneath it today.
 
 **Two preference rows the extension adds or changes.** *sign each rep action: don't ask · ask* is the
 background's policy (→ The extension), read through `state` and set through `policy`; it renders only
