@@ -19,7 +19,7 @@
 //     --extension-dir <path> --r-key <path> --node <origin> --faucet <origin>
 
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -37,6 +37,18 @@ const PASSPHRASE = 'proof-pass';
 
 if (!EXT_DIR || !existsSync(EXT_DIR)) { console.error('missing --extension-dir'); process.exit(2); }
 if (!R_KEY || !existsSync(R_KEY)) { console.error('missing --r-key'); process.exit(2); }
+
+// Grant two loopback origins on the *unpacked* manifest — CDP cannot drive the
+// browser's permission dialog, so the App's fetch to the faucet is refused at
+// the network layer even after step 11 stubs `chrome.permissions.request` true.
+// The tracked template (`extension/manifest.template.json`) and the packed
+// release manifest are untouched.
+const MANIFEST_PATH = join(EXT_DIR, 'manifest.json');
+const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'));
+const LOOPBACKS = ['http://127.0.0.1/*', 'http://localhost/*'];
+manifest.host_permissions = [...new Set([...(manifest.host_permissions ?? []), ...LOOPBACKS])];
+writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2) + '\n');
+console.log(`manifest patched: host_permissions += ${JSON.stringify(LOOPBACKS)}`);
 
 const R_TEXT = readFileSync(R_KEY, 'utf8');
 const R_JSON = JSON.parse(R_TEXT);
@@ -710,8 +722,8 @@ async function main() {
     cxp.s.close();
   }
   record('12d',
-    lockedSession12d === null && unlockMounted12d && !promptSeen12d && !transferSeen12dLocked && !unlockMounted12dSecond && !!prompt12dSecond,
-    `session empty=${lockedSession12d === null}, unlock mounted=${unlockMounted12d}, no prompt under lock=${!promptSeen12d}, no /credits/transfer under lock=${!transferSeen12dLocked}, second-send unlock absent=${!unlockMounted12dSecond}, second-send prompt seen=${!!prompt12dSecond}`);
+    lockedSession12d === null && unlockMounted12d && !promptSeen12d && !transferSeen12dLocked && !!prompt12dFirst && !unlockMounted12dSecond && !!prompt12dSecond,
+    `session empty=${lockedSession12d === null}, unlock mounted=${unlockMounted12d}, no prompt under lock=${!promptSeen12d}, no /credits/transfer under lock=${!transferSeen12dLocked}, first-send prompt after unlock=${!!prompt12dFirst}, second-send unlock absent=${!unlockMounted12dSecond}, second-send prompt seen=${!!prompt12dSecond}`);
 }
 
 let exitCode = 0;
