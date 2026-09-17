@@ -251,8 +251,6 @@ server that signs, no call home.
   pair bottom-aligned, `cancel` on the left and `sign` on the right** (`HOUSE_STYLE → Interaction`), *working…*
   while it signs; the page's title is the first line, so the browser's frame names the transaction too.
 
-  > ⚠ **AHEAD OF CODE (2026-09-17, the prompt window)** — the window opens at 420 × 320 unplaced, the page has no layout of its own, the pair reads `sign` then `cancel`.
-
 **The action button opens or focuses the page** — `action.onClicked` finds a tab at the page's URL and
 raises it, else creates one. No `default_popup`, since one suppresses `onClicked`.
 
@@ -334,13 +332,11 @@ transfer* · *Notis post* · *Notis reply* · *Notis like* · *Notis vouch* · *
 withdrawal* · *Notis name* · *Notis burn* — and any other karma-side shape *Notis rep transaction*; the second its
 amount — *10 $NOTIS*, *5 rep*, none for a withdrawal or a claim; the third its target — *to:* and the key for a
 transfer or an invite, *for:* and the key for a vouch, *post:* and the id for a like or a withdrawal, the name for a
-claim or a burn, none for an unvouch — **the key or id whole, in mono, wrapped**: the prompt is where a reader
+claim, none for a burn (its name box is an input, ids only) or an unvouch — **the key or id whole, in mono, wrapped**: the prompt is where a reader
 verifies a destination, and a prefix is what a look-alike key defeats. A post's verified content follows as a
 fourth line; `protocolVersion` small beneath. **A credits amount on the prompt is $NOTIS, never base units** — a
 transfer's amount is the sum of its payments, one *to:* line per recipient, and a fee line only when the
 transaction carries a `fee` box (→ The wallet, the denomination rule).
-
-> ⚠ **AHEAD OF CODE (2026-09-17, the prompt window)** — the first line is a question today (*send 12.5 $NOTIS?*, *sign this thread?*) and the target a prefix.
 
 **The build check that keeps the web bundle honest:** the web build's assets contain no `chrome.`
 reference. `build-release.sh` checks it; `build-extension.sh` checks the extension's shell has no inline
@@ -980,8 +976,6 @@ N $NOTIS.*, *that leaves change under N $NOTIS — send a little more, or all of
 $NOTIS.*; a decline is *send not sent.*, a refusal *send not sent: <reason>.*, the lock race *your key is locked*
 (→ The wallet, `notSigned`). In the extension the prompt is the one confirmation, because credits always prompt
 (→ The extension).
-
-> ⚠ **AHEAD OF CODE (2026-09-17, the prompt window)** — the confirm row stands in both builds today.
 
 **Two preference rows the extension adds or changes.** *sign each rep action: don't ask · ask* is the
 background's policy (→ The extension), read through `state` and set through `policy`; it renders only
