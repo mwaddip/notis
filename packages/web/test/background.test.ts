@@ -192,6 +192,54 @@ describe('background — sign prompt path (ask or credits)', () => {
     expect(c.windows.created).toHaveLength(1);
   });
 
+  // WEB_INTERFACE → The extension → "The prompt window" — 360 × 420, placed at
+  // the top-right of the last-focused browser window (left + width - 360 - 16,
+  // top + 80), focused; unplaced when the geometry is unknown.
+  it('the prompt window opens at 360 × 420, focused, placed at the last-focused window\'s top-right', async () => {
+    const c = await bootstrappedChrome();
+    c.windows.setLastFocused({ left: 100, top: 50, width: 1200, height: 800 });
+    await c.send({ kind: 'policy', karma: 'ask' });
+    const { txBytesHex, txIdHex } = unsignedThreadTx(await pubKey(c));
+    await c.send({ kind: 'sign', txBytesHex, txIdHex });
+    expect(c.windows.created).toHaveLength(1);
+    const props = c.windows.created[0]!;
+    expect(props.width).toBe(360);
+    expect(props.height).toBe(420);
+    expect(props.focused).toBe(true);
+    expect(props.type).toBe('popup');
+    // left = 100 + 1200 - 360 - 16 = 924; top = 50 + 80 = 130
+    expect(props.left).toBe(924);
+    expect(props.top).toBe(130);
+  });
+
+  it('when the last-focused geometry is unknown the popup opens unplaced but at the same size', async () => {
+    const c = await bootstrappedChrome();
+    // A missing width — the placement drops.
+    c.windows.setLastFocused({ left: 100, top: 50 });
+    await c.send({ kind: 'policy', karma: 'ask' });
+    const { txBytesHex, txIdHex } = unsignedThreadTx(await pubKey(c));
+    await c.send({ kind: 'sign', txBytesHex, txIdHex });
+    const props = c.windows.created[0]!;
+    expect(props.width).toBe(360);
+    expect(props.height).toBe(420);
+    expect(props.focused).toBe(true);
+    expect(props.left).toBeUndefined();
+    expect(props.top).toBeUndefined();
+  });
+
+  it('when getLastFocused throws the popup opens unplaced', async () => {
+    const c = await bootstrappedChrome();
+    c.windows.setLastFocused(null); // the fake's arm for a thrown API call
+    await c.send({ kind: 'policy', karma: 'ask' });
+    const { txBytesHex, txIdHex } = unsignedThreadTx(await pubKey(c));
+    await c.send({ kind: 'sign', txBytesHex, txIdHex });
+    const props = c.windows.created[0]!;
+    expect(props.width).toBe(360);
+    expect(props.height).toBe(420);
+    expect(props.left).toBeUndefined();
+    expect(props.top).toBeUndefined();
+  });
+
   it('a second sign that would need a prompt while one is open ⇒ refused: busy', async () => {
     const c = await bootstrappedChrome();
     await c.send({ kind: 'policy', karma: 'ask' });

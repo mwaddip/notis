@@ -37,6 +37,11 @@ export interface FakeChrome {
     created: chrome.windows.CreateProps[];
     removed: number[];
     setNextId(id: number): void;
+    /** The Window returned by `getLastFocused` — a plain object with any of
+     *  `left`, `top`, `width`, `height` set (missing or non-numeric ⇒ the
+     *  background reads it as an unknown geometry, WEB_INTERFACE → The extension
+     *  → "The prompt window"). Null skips the call entirely. */
+    setLastFocused(win: chrome.windows.Window | null): void;
   };
   tabs: {
     queried: Array<{ url?: string | string[] }>;
@@ -87,6 +92,7 @@ export function fakeChrome(fixture: Fixture = freshFixture(), origin = 'chrome-e
       created: [],
       removed: [],
       setNextId: (id) => { nextWindowId = id; },
+      setLastFocused: (win) => { lastFocused = win; },
     },
     tabs: {
       queried: [],
@@ -113,6 +119,9 @@ export function fakeChrome(fixture: Fixture = freshFixture(), origin = 'chrome-e
   let nextWindowId = 100;
   let queryResult: chrome.tabs.Tab[] = [];
   let nextRequestOutcome = true;
+  // The Window `getLastFocused` returns; null means the API throws — a caller
+  // reading it defensively must treat it as an unknown geometry.
+  let lastFocused: chrome.windows.Window | null = { left: 100, top: 50, width: 1200, height: 800 };
 
   const storageArea = (map: Map<string, unknown>, area: 'local' | 'session'): chrome.storage.StorageArea => ({
     async get(keys) {
@@ -218,6 +227,10 @@ export function fakeChrome(fixture: Fixture = freshFixture(), origin = 'chrome-e
       },
       async update(_id, _props) { return {}; },
       async remove(id) { state.windows.removed.push(id); },
+      async getLastFocused() {
+        if (lastFocused === null) throw new Error('no last-focused window');
+        return lastFocused;
+      },
       onRemoved: {
         addListener(listener: (id: number) => void) { onWindowRemovedListeners.push(listener); },
       } as unknown as chrome.windows.OnRemovedEvent,
