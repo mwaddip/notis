@@ -77,8 +77,16 @@ export function createApp(cfg: FaucetConfig, client: NodeClient): express.Expres
       const built = buildCreditTransferTx(
         cfg, await client.creditBoxes(cfg.publicKeyHex), pubkey, blockHeight, protocolVersion,
       );
-      await client.submitTransfer(built.tx);
-      res.status(202).json({ txId: built.txId, status: 'pending' });
+      // `buildCreditTransferTx` emits the payment at index 0 unconditionally,
+      // so `built.payment` is non-null here (transfer.ts).
+      if (built.payment === null) throw new Error('transfer built no payment output');
+      const { expiresAtHeight } = await client.submitTransfer(built.tx);
+      res.status(202).json({
+        txId: built.txId,
+        status: 'pending',
+        expiresAtHeight,
+        boxId: built.payment.boxId,
+      });
     } catch (err) {
       relay(res, err);
     }

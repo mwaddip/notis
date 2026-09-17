@@ -24,7 +24,7 @@ export interface NodeClient {
   karmaBoxes(pubKeyHex: string): Promise<BoxRef[]>;
   creditBoxes(pubKeyHex: string): Promise<BoxRef[]>;
   submitInvite(tx: Record<string, unknown>): Promise<{ expiresAtHeight: number }>;
-  submitTransfer(tx: Record<string, unknown>): Promise<void>;
+  submitTransfer(tx: Record<string, unknown>): Promise<{ expiresAtHeight: number }>;
 }
 
 interface WireBox {
@@ -99,8 +99,18 @@ export class HttpNodeClient implements NodeClient {
     return { expiresAtHeight: body.expiresAtHeight };
   }
 
-  async submitTransfer(tx: Record<string, unknown>): Promise<void> {
-    await this.post(`${this.base}/credits/transfer`, { tx });
+  /**
+   * NODE_INTERFACE → Credits: the 2xx body carries `expiresAtHeight`, the
+   * mempool entry's expiry, relayed so a caller can bound its wait. A 2xx body
+   * with no numeric `expiresAtHeight` is refused — the posture `submitInvite`
+   * already takes.
+   */
+  async submitTransfer(tx: Record<string, unknown>): Promise<{ expiresAtHeight: number }> {
+    const body = (await this.post(`${this.base}/credits/transfer`, { tx })) as { expiresAtHeight?: number };
+    if (typeof body.expiresAtHeight !== 'number') {
+      throw new NodeError(502, 'transfer response carried no expiresAtHeight');
+    }
+    return { expiresAtHeight: body.expiresAtHeight };
   }
 
   private async post(url: string, body: unknown): Promise<unknown> {

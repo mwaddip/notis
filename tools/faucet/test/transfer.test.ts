@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { computeTxId } from '@dagsocial/types';
+import { computeCandidateBoxId, computeTxId } from '@dagsocial/types';
+import type { AnyBoxCandidate } from '@dagsocial/types';
 import { buildCreditTransferTx } from '../src/transfer.js';
 import { C1, ERA, baseCfg as cfg, outputsOf, pubHex, recipient, verifies } from './fixture.js';
 
@@ -79,5 +80,29 @@ describe('buildCreditTransferTx', () => {
   it('refuses a recipient that is the faucet itself', () => {
     expect(() => buildCreditTransferTx(cfg, [{ boxId: C1, value: 500n }], pubHex, 512, ERA))
       .toThrow(/itself/i);
+  });
+
+  // TYPES_INTERFACE → BoxId: the payment's id is `computeCandidateBoxId` over
+  // the payment output — outputs[0] — with the built txId at index 0. Derived
+  // from the output that was SIGNED (tx.ts → BuiltTx.payment), never rebuilt
+  // from the amount and the owner. Computed independently here — through
+  // @dagsocial/types — and asserted equal.
+  it('emits the payment BoxRef derived from outputs[0] on the built txId (change case)', () => {
+    const built = buildCreditTransferTx(cfg, [{ boxId: C1, value: 500n }], recipient, 512, ERA);
+    const paymentOut: AnyBoxCandidate = {
+      boxType: 'credit', value: cfg.creditAmount, createdAtBlock: 512, owner: Buffer.from(recipient, 'hex'),
+    };
+    const expected = computeCandidateBoxId(paymentOut, built.txId, 0);
+    expect(built.payment).toEqual({ boxId: expected, value: cfg.creditAmount });
+  });
+
+  it('emits the payment BoxRef derived from outputs[0] on the built txId (exact-spend case)', () => {
+    const built = buildCreditTransferTx(cfg, [{ boxId: C1, value: 1n }], recipient, 512, ERA);
+    expect(outputsOf(built.tx)).toHaveLength(1);
+    const paymentOut: AnyBoxCandidate = {
+      boxType: 'credit', value: cfg.creditAmount, createdAtBlock: 512, owner: Buffer.from(recipient, 'hex'),
+    };
+    const expected = computeCandidateBoxId(paymentOut, built.txId, 0);
+    expect(built.payment).toEqual({ boxId: expected, value: cfg.creditAmount });
   });
 });

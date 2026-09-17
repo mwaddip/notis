@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import request from 'supertest';
+import { computeCandidateBoxId } from '@dagsocial/types';
+import type { AnyBoxCandidate } from '@dagsocial/types';
 import { createApp } from '../src/server.js';
 import { NodeError } from '../src/node-client.js';
 import type { NodeClient } from '../src/node-client.js';
@@ -18,7 +20,7 @@ beforeEach(() => {
     karmaBoxes: async () => [{ boxId: K1, value: 1000n }],
     creditBoxes: async () => [{ boxId: C1, value: 1000n }],
     submitInvite: async (tx) => { submitted.push(tx); return { expiresAtHeight: 821 }; },
-    submitTransfer: async (tx) => { submitted.push(tx); },
+    submitTransfer: async (tx) => { submitted.push(tx); return { expiresAtHeight: 921 }; },
   };
 });
 
@@ -126,6 +128,42 @@ describe('POST /faucet/credits', () => {
     expect(submitted).toHaveLength(1);
     const outputs = submitted[0]!.outputs as Record<string, unknown>[];
     expect(outputs[0]).toEqual({ boxType: 'credit', value: '100', createdAtBlock: 100, owner: recipient });
+  });
+
+  // NODE_INTERFACE → Faucet: the 202 body carries `expiresAtHeight` — the
+  // node's own mempool expiry, relayed from `POST /credits/transfer`'s answer —
+  // and `boxId`, the payment output's id (TYPES_INTERFACE → BoxId), so a client
+  // can recognise the grant among boxes the key already holds.
+  it('relays expiresAtHeight and the payment boxId', async () => {
+    const res = await request(createApp(cfg, client))
+      .post('/faucet/credits').send({ pubkey: recipient });
+    expect(res.status).toBe(202);
+    expect(res.body.expiresAtHeight).toBe(921);
+    expect(res.body.boxId).toMatch(/^[0-9a-f]{64}$/);
+    // The boxId equals `computeCandidateBoxId` over outputs[0] of the
+    // submitted transaction at index 0 with the built txId — derived from the
+    // output that was signed, exactly as the transfer builder derives it.
+    const submittedOut = (submitted[0]!.outputs as Record<string, unknown>[])[0]!;
+    const paymentOut: AnyBoxCandidate = {
+      boxType: submittedOut['boxType'] as 'credit',
+      value: BigInt(submittedOut['value'] as string),
+      createdAtBlock: submittedOut['createdAtBlock'] as number,
+      owner: Buffer.from(submittedOut['owner'] as string, 'hex'),
+    };
+    const expected = computeCandidateBoxId(paymentOut, res.body.txId as string, 0);
+    expect(res.body.boxId).toBe(expected);
+  });
+
+  // NODE_INTERFACE → Faucet: a node answer without a numeric expiresAtHeight
+  // is refused as a 502 by the node client, and the server relays that.
+  it('relays a 502 when the node answer carries no expiresAtHeight', async () => {
+    client.submitTransfer = async () => {
+      throw new NodeError(502, 'transfer response carried no expiresAtHeight');
+    };
+    const res = await request(createApp(cfg, client))
+      .post('/faucet/credits').send({ pubkey: recipient });
+    expect(res.status).toBe(502);
+    expect(res.body.error).toMatch(/expiresAtHeight/);
   });
 
   // Separate limits: spending a credit allowance must not consume the invite one.

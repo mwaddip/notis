@@ -24,6 +24,16 @@ export interface BuiltTx {
    * application never materializes.
    */
   readonly change: BoxRef | null;
+  /**
+   * The payment output — the box the transaction grants to the recipient — as
+   * the next transaction may spend it, or `null` when the transaction emits
+   * none of its own (an invite grants no output; the block's settlement does).
+   *
+   * ⛔ **Derived from the output that was SIGNED**, on the same rule as
+   * `change`: rebuilding it from the amount and the owner would state the
+   * transaction twice.
+   */
+  readonly payment: BoxRef | null;
 }
 
 export const HEX64 = /^[0-9a-f]{64}$/;
@@ -43,6 +53,7 @@ export function signAndRender(
   cfg: FaucetConfig,
   tx: UtxoTransaction,
   changeIndex: number | null,
+  paymentIndex: number | null = null,
 ): BuiltTx {
   const txId = computeTxId(tx);
   const privKey = createPrivateKey({ key: cfg.secretKey, format: 'der', type: 'pkcs8' });
@@ -54,12 +65,17 @@ export function signAndRender(
   // `computeCandidateBoxId`, not `computeBoxId`: an output is a candidate and
   // carries no provenance, and this is the derivation block application applies
   // to it (TYPES_INTERFACE → BoxId).
-  const changeOut = changeIndex === null ? undefined : tx.outputs[changeIndex];
-  const change: BoxRef | null = changeOut === undefined || changeIndex === null
-    ? null
-    : { boxId: computeCandidateBoxId(changeOut, txId, changeIndex), value: changeOut.value };
+  const change = refFromIndex(tx, txId, changeIndex);
+  const payment = refFromIndex(tx, txId, paymentIndex);
 
-  return { txId, changeValue: change?.value ?? 0n, change, tx: txToJson(signed) };
+  return { txId, changeValue: change?.value ?? 0n, change, payment, tx: txToJson(signed) };
+}
+
+function refFromIndex(tx: UtxoTransaction, txId: string, index: number | null): BoxRef | null {
+  if (index === null) return null;
+  const out = tx.outputs[index];
+  if (out === undefined) return null;
+  return { boxId: computeCandidateBoxId(out, txId, index), value: out.value };
 }
 
 /**

@@ -120,3 +120,33 @@ describe('HttpNodeClient submitInvite', () => {
     await expect(client.submitInvite(tx)).rejects.toThrow(NodeError);
   });
 });
+
+describe('HttpNodeClient submitTransfer', () => {
+  const client = new HttpNodeClient('http://localhost:3000');
+  const tx = { inputs: [], outputs: [] };
+
+  // NODE_INTERFACE → Credits: the 2xx body carries expiresAtHeight, relayed so
+  // a caller can bound its wait — the same rule as submitInvite's.
+  it('returns expiresAtHeight from the 200 body', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      json(200, { status: 'pending', txId: 'ee'.repeat(32), expiresAtHeight: 921 }),
+    );
+    await expect(client.submitTransfer(tx)).resolves.toEqual({ expiresAtHeight: 921 });
+  });
+
+  // NODE_INTERFACE → Faucet: a 2xx with no numeric expiresAtHeight is refused
+  // rather than relayed as an unbounded grant.
+  it('refuses a 200 with no expiresAtHeight', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      json(200, { status: 'pending', txId: 'ee'.repeat(32) }),
+    );
+    await expect(client.submitTransfer(tx)).rejects.toThrow(NodeError);
+  });
+
+  it('a non-ok response is still a NodeError', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      json(400, { error: 'Invalid credit transfer: signature verification failed' }),
+    );
+    await expect(client.submitTransfer(tx)).rejects.toThrow(NodeError);
+  });
+});
