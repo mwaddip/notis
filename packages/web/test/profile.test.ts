@@ -38,6 +38,9 @@ function handlers(over: Partial<ProfileHandlers> = {}): ProfileHandlers {
     moreBonds: () => {},
     claimUsername: () => {},
     burnUsername: () => {},
+    resolveRecipient: async () => ({ refusal: 'no one holds that name.' }),
+    send: () => {},
+    askFaucetCredits: () => {},
     ...over,
   };
 }
@@ -47,6 +50,7 @@ function ctx(over: Partial<ProfileCtx> = {}): ProfileCtx {
     arrangement: '', identity: null, backedUp: false, karma: null, grant: null, membershipBars: null,
     invite: null, canAffordMinBond: false, bonds: null, inviteFlight: null,
     ownName: null, ownNameLoaded: true, usernameFlight: null, pendingUsername: null, canSignClaim: false, canAffordBurn: false,
+    credits: null, creditGrant: null, sendFlight: null, pendingSend: null,
     ...over,
   };
 }

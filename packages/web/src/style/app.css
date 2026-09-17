@@ -423,14 +423,21 @@ header .spacer { flex: 1 1 auto; }
 .mono { font-family: var(--mono); }
 .winbody .inkmute { color: var(--inkMute); }
 .winbody .standing { color: var(--greenText); }
+/* Gold means credits and nothing else (HOUSE_STYLE → "Gold means credits and
+   nothing else"): the $NOTIS row's balance number. The token is defined per
+   theme on :root; the class carries it to a run of text. */
+.gold { color: var(--gold); }
 /* The key row's full hex wraps within the 660px cap rather than overflowing. */
 .winbody .field .mono { word-break: break-all; }
 
 /* The karma and passphrase fields flow inline — the balance and its unit, or the
    word and its button, on one line — where the default field stacks its rows. The
    karma field is a fixed line box: a grant landing changes colour and text, not
-   height, the geometry price the motion contract asks (HOUSE_STYLE → Motion). */
+   height, the geometry price the motion contract asks (HOUSE_STYLE → Motion).
+   The credits field is the same shape as the karma field, so a landing moves
+   colour and text in a fixed box. */
 .karma-field { display: block; min-height: 22px; }
+.credits-field { display: block; min-height: 22px; }
 .pp-field { display: block; }
 .username-field { display: block; }
 

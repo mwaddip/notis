@@ -1,4 +1,4 @@
-import type { PostJson, WithdrawnJson, FeedRow, StatusResult, KarmaResult, VouchesTargetResult, BondsResult, UsernameResult } from '../api/dto';
+import type { PostJson, WithdrawnJson, FeedRow, StatusResult, KarmaResult, VouchesTargetResult, BondsResult, CreditsResult, UsernameResult } from '../api/dto';
 import type { Workspace, Origin } from './workspace';
 import type { Theme, IdTint } from '../prefs';
 import type { Flight } from '../view/card';
@@ -126,6 +126,14 @@ export interface RenderCtx {
   pendingUsername: { kind: 'claim' | 'burn'; name: string } | null;
   canSignClaim: boolean;
   canAffordBurn: boolean;
+  // The $NOTIS row (WEB_INTERFACE → The profile window). credits is the reader's
+  // own /credits, null before the first read; creditGrant is a faucet transfer
+  // in flight or one that lapsed; sendFlight is the transient ending; pendingSend
+  // is the ledger's own send entry — the durable line that survives a reload.
+  credits: CreditsResult | null;
+  creditGrant: { state: 'pending' } | { state: 'expired'; atHeight: number } | null;
+  sendFlight: Flight | null;
+  pendingSend: { toHex: string; toName: string | null; amount: bigint } | null;
   // WEB_INTERFACE → Links
   linkUrl: (id: string) => string;
 }
@@ -192,6 +200,12 @@ export interface Handlers {
   // The username row (WEB_INTERFACE → The username row).
   claimUsername: (name: string) => void;
   burnUsername: () => void;
+  // The $NOTIS row (WEB_INTERFACE → The profile window). resolveRecipient is
+  // the handle → holder read the row's send form runs at the press; send is
+  // the credits transfer; askFaucetCredits is the faucet's $NOTIS step.
+  resolveRecipient: (name: string) => Promise<{ key: string; name: string | null } | { refusal: string }>;
+  send: (toHex: string, toName: string | null, amount: bigint) => void;
+  askFaucetCredits: () => void;
   // The extension's binary sign policy (WEB_INTERFACE → The profile window).
   // Defined only in the extension build — the profile row renders only when
   // both are present.

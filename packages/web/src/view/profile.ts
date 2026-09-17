@@ -3,7 +3,8 @@ import { prefs, BUILD_BASE, BUILD_FAUCET_BASE, type Theme, type IdTint } from '.
 import { unlockForm, setPassphraseForm } from './passphrase';
 import { stageLine, type Flight } from './card';
 import { INVITE_BOND_VEST_PER_LIKES, USERNAME_BURN_PRICE, isValidUsernameBytes } from '@dagsocial/types';
-import type { KarmaResult, BondsResult, UsernameResult } from '../api/dto';
+import { formatCredits, parseCredits } from '../model/credits';
+import type { KarmaResult, BondsResult, CreditsResult, UsernameResult } from '../api/dto';
 import type { Origin } from '../model/workspace';
 
 // The @profile window — WEB_INTERFACE → The profile window. Identity, standing,
@@ -20,6 +21,11 @@ import type { Origin } from '../model/workspace';
 
 /** How the faucet grant reads while it stands or after it lapses. */
 export type GrantView = { state: 'pending' } | { state: 'expired'; atHeight: number };
+
+/** The recipient the send form resolved at the press: a key with an optional
+ *  handle (WEB_INTERFACE → The profile window). A handle read that came back
+ *  empty is a refusal, so this is the success shape. */
+export type ResolvedRecipient = { key: string; name: string | null };
 
 export interface ProfileHandlers {
   // preferences, folded in from the settings window
@@ -46,6 +52,11 @@ export interface ProfileHandlers {
   // The username row (WEB_INTERFACE → The username row).
   claimUsername: (name: string) => void;
   burnUsername: () => void;
+  // The $NOTIS row — the send form and its resolution (WEB_INTERFACE → The
+  // profile window). The App resolves an @handle to a key at the press.
+  resolveRecipient: (text: string) => Promise<ResolvedRecipient | { refusal: string }>;
+  send: (toHex: string, toName: string | null, amount: bigint) => void;
+  askFaucetCredits: () => void;
   // The extension's binary sign policy (WEB_INTERFACE → The profile window).
   // Defined only in the extension build; the row renders only when both are set.
   policy?: () => 'silent' | 'ask';
@@ -74,6 +85,14 @@ export interface ProfileCtx {
   pendingUsername: { kind: 'claim' | 'burn'; name: string } | null;
   canSignClaim: boolean;
   canAffordBurn: boolean;
+  // The $NOTIS row (WEB_INTERFACE → The profile window). credits null before
+  // the first read; sendFlight is the transient ending; pendingSend the ledger
+  // entry that survives a reload; creditGrant a faucet transfer in flight or
+  // one that lapsed.
+  credits: CreditsResult | null;
+  creditGrant: GrantView | null;
+  sendFlight: Flight | null;
+  pendingSend: { toHex: string; toName: string | null; amount: bigint } | null;
 }
 
 const ID_TINTS: IdTint[] = ['spine', 'wash', 'both', 'off'];
@@ -195,6 +214,15 @@ function loadedState(b: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx,
     const { row: r, field } = row('rep');
     field.classList.add('karma-field'); // the App updates this in place when a grant lands
     renderKarmaField(field, handlers, ctx);
+    b.appendChild(r);
+  }
+
+  // $NOTIS — the balance in gold, the send form, its confirm and flight, or the
+  // faucet's credits step (WEB_INTERFACE → The profile window).
+  {
+    const { row: r, field } = row('$NOTIS');
+    field.classList.add('credits-field'); // the App updates this in place on a landing
+    creditsRow(field, handlers, ctx);
     b.appendChild(r);
   }
 
@@ -573,6 +601,254 @@ function forgetConfirm(field: HTMLElement, handlers: ProfileHandlers, backedUp: 
   wrap.appendChild(actions);
   field.replaceChildren(wrap);
   keep.focus(); // focus on keep — the non-destructive choice
+}
+
+// ---------------------------------------------------------------------------
+// The $NOTIS row — WEB_INTERFACE → The profile window.
+// Three slots (.credits-line, .credits-form, .credits-flight) built once and
+// updated in place, the username row's model.
+// ---------------------------------------------------------------------------
+
+function creditsRow(field: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx): void {
+  field.replaceChildren(el('div', 'credits-line'), el('div', 'credits-form'), el('div', 'credits-flight'));
+  updateCredits(field, handlers, ctx);
+}
+
+/** Update the $NOTIS row's three slots in place from the current ctx — the
+ *  username row's model (HOUSE_STYLE → Motion: colour and text in a fixed box). */
+export function renderCreditsRow(field: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx): void {
+  updateCredits(field, handlers, ctx);
+}
+
+/** The spendable sum among the confirmed credit boxes — a box whose
+ *  `lockedUntilBlock` is above the view's height is filtered out, the same rule
+ *  `readCreditContext` runs (WEB_INTERFACE → The wallet). */
+function spendableCredits(c: CreditsResult): bigint {
+  let sum = 0n;
+  for (const b of c.boxes) sum += BigInt(b.value);
+  return sum;
+}
+
+/** The latest `lockedUntilBlock` among locked boxes, or null when none is
+ *  locked, and the value locked. */
+function lockedSummary(c: CreditsResult): { value: bigint; height: number } | null {
+  let value = 0n;
+  let height = 0;
+  for (const b of c.boxes) {
+    if (b.lockedUntilBlock === undefined) continue;
+    value += BigInt(b.value);
+    if (b.lockedUntilBlock > height) height = b.lockedUntilBlock;
+  }
+  return value === 0n ? null : { value, height };
+}
+
+function updateCredits(field: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx): void {
+  const line = field.querySelector<HTMLElement>('.credits-line');
+  const formSlot = field.querySelector<HTMLElement>('.credits-form');
+  const flight = field.querySelector<HTMLElement>('.credits-flight');
+  if (!line || !formSlot || !flight) return;
+  line.replaceChildren();
+  formSlot.replaceChildren();
+  flight.replaceChildren();
+
+  const c = ctx.credits;
+  if (c === null) {
+    line.appendChild(el('span', 'inkmute', '—'));
+    return;
+  }
+
+  // Note the spendable view is what the confirmed page holds; the App re-reads
+  // /credits on a send landing and a grant landing so the row moves in place.
+  const spendable = spendableCredits(c);
+
+  if (spendable > 0n) {
+    // Balance in gold + "$NOTIS", with the locked-hint beneath when any locked box stands.
+    line.append(el('span', 'mono gold', formatCredits(spendable)), ' $NOTIS');
+    const locked = lockedSummary(c);
+    if (locked) {
+      const hint = el('div', 'hint');
+      hint.append(mono(formatCredits(locked.value)), ' $NOTIS more unlock by block ', mono(String(locked.height)), '.');
+      line.appendChild(hint);
+    }
+    sendForm(formSlot, handlers, ctx);
+  } else {
+    // No spendable box — the faucet step when a faucet is set, else "no $NOTIS yet."
+    if (ctx.creditGrant?.state === 'pending') {
+      line.appendChild(el('span', 'inkmute', 'working…'));
+    } else if (ctx.creditGrant?.state === 'expired') {
+      line.appendChild(el('span', 'inkmute', "no block took the faucet's transfer by height "));
+      line.appendChild(mono(String(ctx.creditGrant.atHeight)));
+      line.appendChild(document.createTextNode('. '));
+      const again = el('button', 'word', 'ask again') as HTMLButtonElement;
+      again.addEventListener('click', () => handlers.askFaucetCredits());
+      line.appendChild(again);
+    } else if (prefs.faucet !== '') {
+      const ask = el('button', 'word', 'ask the faucet for $NOTIS') as HTMLButtonElement;
+      ask.addEventListener('click', () => handlers.askFaucetCredits());
+      line.appendChild(ask);
+    } else {
+      line.appendChild(el('span', 'inkmute', 'no $NOTIS yet.'));
+    }
+  }
+
+  // The pending line from the ledger — durable across a reload (WEB_INTERFACE
+  // → The profile window). The handle when the entry carries one, else the
+  // recipient's key prefix, and the amount formatted.
+  const ps = ctx.pendingSend;
+  if (ps !== null) {
+    const who = ps.toName !== null ? '@' + ps.toName : shortHex(ps.toHex, 10);
+    flight.appendChild(stageLine({ stage: 'submitted', reason: `${formatCredits(ps.amount)} $NOTIS to ${who}` }));
+    // The transient send flight's ending: rejected reads its reason, expired
+    // reads its height (stageLine covers both). A submitting is the App's
+    // stateFlight; a submitted comes from the ledger above.
+  } else if (ctx.sendFlight) {
+    flight.appendChild(stageLine(ctx.sendFlight));
+  }
+}
+
+/** The send form — the recipient (a key or an @handle), the amount ($NOTIS
+ *  through parseCredits, never `type=number` which drops decimals and refuses a
+ *  locale), the word `send`, a refusal line, and the hint. On submit: parse the
+ *  amount, then the recipient — a 64-hex key straight through, else an @handle
+ *  stripped of one leading `@` and validated as a username, resolved through the
+ *  App at the press; the reader's own key refuses in place. */
+function sendForm(slot: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx): void {
+  const form = el('form', 'pf credits-form') as HTMLFormElement;
+
+  const toInput = el('input') as HTMLInputElement;
+  toInput.type = 'text';
+  toInput.placeholder = 'a key or @handle';
+  toInput.setAttribute('aria-label', 'the recipient — a 64-hex key or an @handle');
+  toInput.autocomplete = 'off';
+  toInput.autocapitalize = 'off';
+  toInput.spellcheck = false;
+
+  const amountInput = el('input') as HTMLInputElement;
+  amountInput.type = 'text';
+  amountInput.setAttribute('inputmode', 'decimal');
+  amountInput.placeholder = '$NOTIS';
+  amountInput.setAttribute('aria-label', 'the amount in $NOTIS');
+  amountInput.autocomplete = 'off';
+
+  const submit = el('button', 'word', 'send') as HTMLButtonElement;
+  submit.type = 'submit';
+
+  const refusal = el('div', 'pf-refusal');
+  refusal.hidden = true;
+
+  const hint = el('div', 'hint', '$NOTIS moves when a block takes the send, and a send cannot be undone.');
+
+  form.append(toInput, amountInput, submit, refusal, hint);
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    void submitForm();
+  });
+
+  const submitForm = async (): Promise<void> => {
+    refusal.hidden = true;
+    // Amount first — a bad number never asks the network for a handle.
+    const amount = parseCredits(amountInput.value);
+    if (amount === null || amount === 0n) {
+      refusal.textContent = 'an amount is digits with up to eight decimals.';
+      refusal.hidden = false;
+      return;
+    }
+    // Recipient: a bare 64 hex is a key; else an @handle (one leading @ stripped) validated as a username.
+    const raw = toInput.value.trim();
+    const asKey = raw.toLowerCase();
+    let toHex: string;
+    let toName: string | null = null;
+    if (/^[0-9a-f]{64}$/.test(asKey)) {
+      toHex = asKey;
+    } else {
+      const naked = raw.startsWith('@') ? raw.slice(1) : raw;
+      const bytes = new TextEncoder().encode(naked);
+      if (!isValidUsernameBytes(bytes)) {
+        refusal.textContent = 'that is not a key or a name.';
+        refusal.hidden = false;
+        return;
+      }
+      const res = await handlers.resolveRecipient(naked);
+      if ('refusal' in res) {
+        refusal.textContent = res.refusal;
+        refusal.hidden = false;
+        return;
+      }
+      toHex = res.key;
+      toName = res.name;
+    }
+    if (toHex === ctx.identity?.pubKeyHex) {
+      refusal.textContent = 'that is your own key.';
+      refusal.hidden = false;
+      return;
+    }
+    // The confirm row, in the form's slot; keep restores the form with its
+    // values (the fourth ending, WEB_INTERFACE → The wallet). A locked identity
+    // mounts the unlock form first.
+    sendConfirm(slot, handlers, ctx, { toHex, toName, amount, raw, amountText: amountInput.value });
+  };
+}
+
+/** The confirm row for a send — the burn's pattern. `keep` restores the form
+ *  with its values so the reader made no mistake; `send` on a locked identity
+ *  mounts the unlock form first, then proceeds. */
+function sendConfirm(
+  slot: HTMLElement,
+  handlers: ProfileHandlers,
+  ctx: ProfileCtx,
+  built: { toHex: string; toName: string | null; amount: bigint; raw: string; amountText: string },
+): void {
+  const wrap = el('div', 'pf-confirm');
+  const q = el('div', 'pf-refusal');
+  const amount = formatCredits(built.amount);
+  const prefix = shortHex(built.toHex, 10);
+  if (built.toName !== null) {
+    q.append('send ', amount, ' $NOTIS to @' + built.toName + ' · ', mono(prefix), '?');
+  } else {
+    q.append('send ', amount, ' $NOTIS to ', mono(prefix), '?');
+  }
+  wrap.appendChild(q);
+  const actions = el('div', 'pf-actions');
+  const sendBtn = el('button', 'word', 'send') as HTMLButtonElement;
+  const keep = el('button', 'word', 'keep') as HTMLButtonElement;
+
+  const restoreForm = (): void => {
+    slot.replaceChildren();
+    sendForm(slot, handlers, ctx);
+    const f = slot.querySelector<HTMLFormElement>('form');
+    if (f) {
+      const inputs = f.querySelectorAll<HTMLInputElement>('input');
+      if (inputs[0]) inputs[0].value = built.raw;
+      if (inputs[1]) inputs[1].value = built.amountText;
+    }
+  };
+
+  sendBtn.addEventListener('click', () => {
+    const id = ctx.identity;
+    if (id?.locked) {
+      wrap.replaceChildren(
+        unlockForm(
+          id.pubKeyHex,
+          async (p) => {
+            await handlers.unlockIdentity(p);
+            handlers.send(built.toHex, built.toName, built.amount);
+          },
+          restoreForm,
+        ),
+      );
+      return;
+    }
+    handlers.send(built.toHex, built.toName, built.amount);
+  });
+
+  const onEscape = (e: KeyboardEvent): void => { if (e.key === 'Escape') restoreForm(); };
+  keep.addEventListener('click', restoreForm);
+  actions.append(sendBtn, keep);
+  wrap.appendChild(actions);
+  slot.replaceChildren(wrap);
+  keep.focus();
+  slot.addEventListener('keydown', onEscape);
 }
 
 // ---------------------------------------------------------------------------
