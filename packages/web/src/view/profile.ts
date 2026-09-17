@@ -410,6 +410,10 @@ function inviteForm(
   refusal.hidden = true;
 
   form.append(keyInput, bondInput, submit, refusal, copy);
+  // The effective ctx — an in-row unlock fires no onChange, so every submit
+  // reads the identity from `cur`, which the unlock path replaces so the next
+  // press goes straight to the flow (WEB_INTERFACE → The wallet).
+  let cur = ctx;
   form.addEventListener('submit', (e) => {
     e.preventDefault();
     const key = keyInput.value.trim().toLowerCase();
@@ -421,7 +425,7 @@ function inviteForm(
     refusal.hidden = true;
     const bond = BigInt(bondInput.value || params.bondMin);
     const go = (): void => handlers.invite(key, bond);
-    const id = ctx.identity;
+    const id = cur.identity;
     if (id?.locked) {
       // The seed is not loaded and sign is synchronous, so unlock in a row under
       // the form first; on success the invite proceeds, Esc drops the row
@@ -433,6 +437,7 @@ function inviteForm(
           id.pubKeyHex,
           async (p) => {
             await handlers.unlockIdentity(p);
+            cur = { ...cur, identity: { pubKeyHex: id.pubKeyHex, locked: false } };
             go();
           },
           () => urow.remove(),
@@ -851,11 +856,17 @@ function sendConfirm(
   const sendBtn = el('button', 'word', 'send') as HTMLButtonElement;
   const keep = el('button', 'word', 'keep') as HTMLButtonElement;
 
+  // The effective ctx — an in-row unlock fires no onChange, so every read of
+  // the identity goes through `cur`, which the unlock path replaces so the
+  // rebuilt form and any next press go straight to the flow (WEB_INTERFACE →
+  // The wallet).
+  let cur = ctx;
+
   const onEscape = (e: KeyboardEvent): void => { if (e.key === 'Escape') restoreForm(); };
   const restoreForm = (): void => {
     slot.removeEventListener('keydown', onEscape);
     slot.replaceChildren();
-    sendForm(slot, handlers, ctx);
+    sendForm(slot, handlers, cur);
     const f = slot.querySelector<HTMLFormElement>('form');
     if (f) {
       const inputs = f.querySelectorAll<HTMLInputElement>('input');
@@ -865,13 +876,14 @@ function sendConfirm(
   };
 
   sendBtn.addEventListener('click', () => {
-    const id = ctx.identity;
+    const id = cur.identity;
     if (id?.locked) {
       wrap.replaceChildren(
         unlockForm(
           id.pubKeyHex,
           async (p) => {
             await handlers.unlockIdentity(p);
+            cur = { ...cur, identity: { pubKeyHex: id.pubKeyHex, locked: false } };
             restoreForm();
             handlers.send(built.toHex, built.toName, built.amount);
           },

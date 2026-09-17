@@ -133,6 +133,48 @@ describe('profile window — the invites row', () => {
     expect(invited).toEqual([[INVITEE, 150n]]);
   });
 
+  it('after an in-row unlock, a second invite goes straight through with no new unlock row', async () => {
+    // An in-row unlock fires no onChange, so the App does not re-render the
+    // profile; the invite form holds its own effective ctx so the next press
+    // sees the unlocked identity (WEB_INTERFACE → The wallet).
+    const invited: Array<[string, bigint]> = [];
+    const unlockedWith: string[] = [];
+    const h = handlers({
+      invite: (k, b) => invited.push([k, b]),
+      unlockIdentity: async (p) => { unlockedWith.push(p); },
+    });
+    const field = rowField(render(h, memberCtx({ identity: { pubKeyHex: KEY, locked: true } })), 'invites')!;
+    const form = field.querySelector('form.invite-form') as HTMLFormElement;
+    const keyInput = form.querySelector('input[type="text"]') as HTMLInputElement;
+    const bondInput = form.querySelector('input[type="number"]') as HTMLInputElement;
+
+    // First press: locked → the unlock row mounts under the form, no invite.
+    keyInput.value = INVITEE;
+    bondInput.value = '150';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    const urow = field.querySelector('.card-unlock');
+    expect(urow).not.toBeNull();
+    expect(invited).toHaveLength(0);
+
+    // The unlock's submit resolves; the invite fires.
+    const unlock = urow!.querySelector('form.pf') as HTMLFormElement;
+    (unlock.querySelector('input[type="password"]') as HTMLInputElement).value = 'pw';
+    unlock.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    expect(unlockedWith).toEqual(['pw']);
+    expect(invited).toEqual([[INVITEE, 150n]]);
+
+    // Second press: the effective ctx is unlocked, so the invite fires directly —
+    // no second unlock is asked, and no new .card-unlock row appears.
+    const OTHER = 'ef'.repeat(32);
+    keyInput.value = OTHER;
+    bondInput.value = '200';
+    form.dispatchEvent(new Event('submit', { cancelable: true }));
+    expect(field.querySelectorAll('.card-unlock')).toHaveLength(1); // still the one from the first press
+    expect(unlockedWith).toHaveLength(1); // no second unlock asked
+    expect(invited).toEqual([[INVITEE, 150n], [OTHER, 200n]]);
+  });
+
   it('the standing bonds show the invitee identity and value; the invitee prefix opens their window', () => {
     const opened: string[] = [];
     const h = handlers({ openAuthor: (k) => opened.push(k) });
@@ -904,6 +946,59 @@ describe('profile window — the $NOTIS row', () => {
     // The unlock form is now in the confirm's wrap; the send handler was not called.
     expect(f.querySelector('form.pf')?.querySelector<HTMLInputElement>('input[type="password"]')).not.toBeNull();
     expect(sent).toHaveLength(0);
+  });
+
+  it('after an in-row unlock, a second send goes straight through with no unlock form mounted', async () => {
+    // An in-row unlock fires no onChange, so the App does not re-render the
+    // profile; sendConfirm holds its own effective ctx so the rebuilt form and
+    // the next press see the unlocked identity (WEB_INTERFACE → The wallet).
+    const sent: Array<[string, string | null, bigint]> = [];
+    const unlockedWith: string[] = [];
+    const h = handlers({
+      send: (k, n, a) => sent.push([k, n, a]),
+      unlockIdentity: async (p) => { unlockedWith.push(p); },
+    });
+    const c = creditsCtx({
+      identity: { pubKeyHex: KEY, locked: true },
+      credits: creditsResult({ boxes: [{ boxId: 'a'.repeat(32), value: '10000000000' }], boxCount: 1 }),
+    });
+    const f = rowField(render(h, c), '$NOTIS')!;
+
+    // First press: submit → confirm → send → unlock form mounts, no send yet.
+    const form1 = f.querySelector('form.credits-form') as HTMLFormElement;
+    const inputs1 = form1.querySelectorAll<HTMLInputElement>('input');
+    inputs1[0]!.value = REC; inputs1[1]!.value = '1';
+    form1.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    const confirm1 = f.querySelector('.pf-confirm') as HTMLElement;
+    ([...confirm1.querySelectorAll('button')].find((b) => b.textContent === 'send') as HTMLButtonElement).click();
+    // The confirm wrap now holds the unlock form (a password input identifies it).
+    const unlock = f.querySelector('.pf-confirm form') as HTMLFormElement;
+    expect(unlock.querySelector('input[type="password"]')).not.toBeNull();
+    expect(sent).toHaveLength(0);
+
+    // The unlock's submit resolves: send fires, the unlock form is gone, and
+    // the slot holds a fresh sendForm built with an unlocked effective ctx.
+    (unlock.querySelector('input[type="password"]') as HTMLInputElement).value = 'pw';
+    unlock.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    expect(unlockedWith).toEqual(['pw']);
+    expect(sent).toHaveLength(1);
+    expect(f.querySelector('input[type="password"]')).toBeNull();
+    expect(f.querySelector('form.credits-form')).not.toBeNull();
+
+    // Second press: fill the rebuilt form, submit, press send. The rebuilt
+    // form's ctx is unlocked, so send fires straight — no unlock form mounts.
+    const form2 = f.querySelector('form.credits-form') as HTMLFormElement;
+    const inputs2 = form2.querySelectorAll<HTMLInputElement>('input');
+    inputs2[0]!.value = REC; inputs2[1]!.value = '2';
+    form2.dispatchEvent(new Event('submit', { cancelable: true }));
+    await flush();
+    const confirm2 = f.querySelector('.pf-confirm') as HTMLElement;
+    ([...confirm2.querySelectorAll('button')].find((b) => b.textContent === 'send') as HTMLButtonElement).click();
+    expect(f.querySelector('input[type="password"]')).toBeNull();
+    expect(sent).toHaveLength(2);
+    expect(unlockedWith).toHaveLength(1); // no second unlock asked
   });
 
   it('the pending line reads *<amount> $NOTIS to @bob · submitted* (READ-1 defect 2)', () => {
