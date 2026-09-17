@@ -536,6 +536,12 @@ export class App {
       creditGrant: this.creditGrantView,
       sendFlight: this.sendFlight,
       pendingSend: pendingSendEntries(this.ledger.all())[0] ?? null,
+      // The web build's identity module has no `policy`; the extension's proxy
+      // has (WEB_INTERFACE → The profile window). `!this.idm.policy` is
+      // therefore the same predicate the sign-each-rep-action row renders on:
+      // the confirm row stands where policy is absent, and yields to the
+      // prompt where policy is defined.
+      confirmInRow: !this.idm.policy,
       // notis-public names the origin + base a shareable link should carry;
       // empty means the current location, which is the web build's default
       // (WEB_INTERFACE → "The client is served from the node's own origin").

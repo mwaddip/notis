@@ -96,6 +96,11 @@ export interface ProfileCtx {
   creditGrant: GrantView | null;
   sendFlight: Flight | null;
   pendingSend: { toHex: string; toName: string | null; amount: bigint } | null;
+  // The $NOTIS row's confirm — true on the web (the confirm row stands in the
+  // form's slot), false in the extension (the prompt is the one confirmation
+  // — WEB_INTERFACE → The profile window → "The `$NOTIS` row"). The App fills
+  // it `!this.idm.policy`: the in-page module has no policy, the proxy has.
+  confirmInRow: boolean;
 }
 
 const ID_TINTS: IdTint[] = ['spine', 'wash', 'both', 'off'];
@@ -651,13 +656,15 @@ export function renderCreditsRow(field: HTMLElement, handlers: ProfileHandlers, 
 
 /** Reset the send form's inputs — the App calls it after `result.ok` in the
  *  send flow (WEB_INTERFACE → The wallet). Every other ending leaves the
- *  values intact. */
+ *  values intact. The extension arm's resolved-key hint clears here too. */
 export function resetCreditsSendForm(field: HTMLElement): void {
   const form = field.querySelector<HTMLFormElement>('form.credits-form');
   if (!form) return;
   for (const inp of form.querySelectorAll<HTMLInputElement>('input')) inp.value = '';
   const refusal = form.querySelector<HTMLElement>('.pf-refusal');
   if (refusal) refusal.hidden = true;
+  const resolvedKey = form.querySelector<HTMLElement>('.resolved-key');
+  if (resolvedKey) { resolvedKey.textContent = ''; resolvedKey.hidden = true; }
 }
 
 function sumValues(boxes: readonly { value: string }[]): bigint {
@@ -751,7 +758,10 @@ function updateCredits(field: HTMLElement, handlers: ProfileHandlers, ctx: Profi
  *  locale), the word `send`, a refusal line, and the hint. On submit: parse the
  *  amount, then the recipient — a 64-hex key straight through, else an @handle
  *  stripped of one leading `@` and validated as a username, resolved through the
- *  App at the press; the reader's own key refuses in place. */
+ *  App at the press; the reader's own key refuses in place. With `confirmInRow`
+ *  the web build's confirm row stands next; without it, the extension takes the
+ *  key beneath the field and calls `send` at once — WEB_INTERFACE → The profile
+ *  window → "The `$NOTIS` row". */
 function sendForm(slot: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx): void {
   const form = el('form', 'pf credits-form') as HTMLFormElement;
 
@@ -762,6 +772,12 @@ function sendForm(slot: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx)
   toInput.autocomplete = 'off';
   toInput.autocapitalize = 'off';
   toInput.spellcheck = false;
+
+  // The resolved-key line beneath the recipient — extension arm only, shown
+  // after a submit resolves. Kept in the form so `resetCreditsSendForm` can
+  // clear it alongside the inputs on an accepted submission.
+  const resolvedKey = el('div', 'hint resolved-key mono');
+  resolvedKey.hidden = true;
 
   const amountInput = el('input') as HTMLInputElement;
   amountInput.type = 'text';
@@ -778,12 +794,17 @@ function sendForm(slot: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx)
 
   const hint = el('div', 'hint', '$NOTIS moves when a block takes the send, and a send cannot be undone.');
 
-  form.append(toInput, amountInput, submit, refusal, hint);
+  form.append(toInput, resolvedKey, amountInput, submit, refusal, hint);
 
   form.addEventListener('submit', (e) => {
     e.preventDefault();
     void submitForm();
   });
+
+  // The effective ctx — an in-row unlock fires no onChange, so every read of
+  // the identity goes through `cur`, which the unlock path replaces so the
+  // next press proceeds without a second unlock (WEB_INTERFACE → The wallet).
+  let cur = ctx;
 
   const submitForm = async (): Promise<void> => {
     refusal.hidden = true;
@@ -818,15 +839,46 @@ function sendForm(slot: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx)
       toHex = res.key;
       toName = res.name;
     }
-    if (toHex === ctx.identity?.pubKeyHex) {
+    if (toHex === cur.identity?.pubKeyHex) {
       refusal.textContent = 'that is your own key.';
       refusal.hidden = false;
       return;
     }
-    // The confirm row, in the form's slot; keep restores the form with its
-    // values (the fourth ending, WEB_INTERFACE → The wallet). A locked identity
-    // mounts the unlock form first.
-    sendConfirm(slot, handlers, ctx, { toHex, toName, amount, raw, amountText: amountInput.value });
+    if (cur.confirmInRow) {
+      // The web build: the confirm row stands in the form's slot; keep
+      // restores the form with its values (the fourth ending, WEB_INTERFACE →
+      // The wallet). A locked identity mounts the unlock form first.
+      sendConfirm(slot, handlers, cur, { toHex, toName, amount, raw, amountText: amountInput.value });
+      return;
+    }
+    // The extension: the prompt is the one confirmation (WEB_INTERFACE → The
+    // profile window → "The `$NOTIS` row"). Render the resolved key beneath
+    // the recipient field, whole in mono, and call `send` at once. A locked
+    // identity mounts the unlock form under the form, the invites row's
+    // `.card-unlock` pattern, and proceeds on unlock.
+    resolvedKey.textContent = toHex;
+    resolvedKey.hidden = false;
+    const go = (): void => handlers.send(toHex, toName, amount);
+    const id = cur.identity;
+    if (id?.locked) {
+      if (form.parentElement?.querySelector('.card-unlock')) return; // already open
+      const urow = el('div', 'card-unlock');
+      urow.appendChild(
+        unlockForm(
+          id.pubKeyHex,
+          async (p) => {
+            await handlers.unlockIdentity(p);
+            cur = { ...cur, identity: { pubKeyHex: id.pubKeyHex, locked: false } };
+            urow.remove();
+            go();
+          },
+          () => urow.remove(),
+        ),
+      );
+      form.insertAdjacentElement('afterend', urow);
+      return;
+    }
+    go();
   };
 
   slot.appendChild(form);

@@ -29,6 +29,12 @@ const K_SIGN_PREFIX = 'notis.sign.';
 
 const HEX64 = /^[0-9a-f]{64}$/;
 
+// The prompt window's size — WEB_INTERFACE → The extension → "The prompt window".
+const PROMPT_WIDTH = 360;
+const PROMPT_HEIGHT = 420;
+const PROMPT_MARGIN = 16; // the gap between the popup's right edge and the browser window's
+const PROMPT_TOP = 80;    // the drop under the toolbar
+
 // ---------------------------------------------------------------------------
 // The dispatcher — one runtime.onMessage listener over the closed Message set;
 // unknown kinds are refused with `{ error: 'unknown message kind' }`.
@@ -254,11 +260,16 @@ async function signMessage(api: typeof chrome, txBytesHex: string, txIdHex: stri
   };
   const key = K_SIGN_PREFIX + record.id;
   await api.storage.session.set({ [key]: record });
+  // WEB_INTERFACE → The extension → "The prompt window" — the popup opens at the
+  // top-right of the last-focused browser window, under the toolbar; unplaced
+  // when the geometry is unknown (a missing or non-numeric field).
   const w = await api.windows.create({
     type: 'popup',
     url: api.runtime.getURL('prompt.html') + '?id=' + record.id,
-    width: 420,
-    height: 320,
+    width: PROMPT_WIDTH,
+    height: PROMPT_HEIGHT,
+    focused: true,
+    ...await promptPlacement(api),
   });
   if (typeof w.id === 'number') {
     record.windowId = w.id;
@@ -405,6 +416,18 @@ function isRecord(v: unknown): v is SignRecord {
 function isFromPromptPage(api: typeof chrome, sender: chrome.runtime.MessageSender): boolean {
   const url = typeof sender.url === 'string' ? sender.url : '';
   return url.startsWith(api.runtime.getURL('prompt.html'));
+}
+
+// WEB_INTERFACE → The extension → "The prompt window" — top-right of the
+// last-focused browser window, under the toolbar; unplaced when the geometry
+// is unknown (a missing or non-numeric field).
+async function promptPlacement(api: typeof chrome): Promise<{ left: number; top: number } | Record<string, never>> {
+  let win: chrome.windows.Window | null = null;
+  try { win = await api.windows.getLastFocused(); } catch { win = null; }
+  if (win === null) return {};
+  const { left, top, width } = win;
+  if (typeof left !== 'number' || typeof top !== 'number' || typeof width !== 'number') return {};
+  return { left: left + width - PROMPT_WIDTH - PROMPT_MARGIN, top: top + PROMPT_TOP };
 }
 
 function randomId(): string {

@@ -240,13 +240,16 @@ server that signs, no call home.
   closes, and it survives the worker being killed, which is what makes the design workable. `lock`
   deletes it; closing the browser is a lock; **the lock state is per browser, not per tab.** A drafted key
   lives in `storage.session` under `notis.draft` between `draft` and `create`. Never in a worker global.
-- **The prompt window** is a small extension page, `prompt.html`, the background opens with
-  `windows.create({ type: 'popup' })` when a signature needs a human — one at a time. It shows what is
-  being signed, derived by the background from the transaction bytes it was handed, never taken from
-  the page. Approve signs; decline, Esc, or closing the window is a decline. It is a surface, and every
-  rule of `HOUSE_STYLE` applies to it: the face says `rep` and `$NOTIS` (`HOUSE_STYLE → Voice`), its
-  `sign` and `cancel` are a commit pair like the composer's (`HOUSE_STYLE → Interaction`), *working…*
-  while it signs.
+- **The prompt window** is a small extension page, `prompt.html`, the background opens when a signature
+  needs a human — one at a time — as a popup the size and place of a wallet's: `windows.create({ type:
+  'popup', width: 360, height: 420, focused: true, left, top })`, `left` and `top` placing it at the top-right
+  of the last-focused browser window (`windows.getLastFocused`), under the toolbar; unplaced when that
+  geometry is unknown. It shows what is being signed, derived by the background from the transaction bytes
+  it was handed, never taken from the page. Approve signs; decline, Esc, or closing the window is a decline.
+  It is a surface, and every rule of `HOUSE_STYLE` applies to it: the face says `rep` and `$NOTIS`
+  (`HOUSE_STYLE → Voice`); **the page is a padded column filling the popup — the lines at the top, the commit
+  pair bottom-aligned, `cancel` on the left and `sign` on the right** (`HOUSE_STYLE → Interaction`), *working…*
+  while it signs; the page's title is the first line, so the browser's frame names the transaction too.
 
 **The action button opens or focuses the page** — `action.onClicked` finds a tab at the page's URL and
 raises it, else creates one. No `default_popup`, since one suppresses `onClicked`.
@@ -324,9 +327,16 @@ name** — the vouch box and the name box are inputs, ids only, so neither is in
 karma-side shape is shown as its spend**, *sign this rep transaction?*. A post's content is shown only when
 `computeContentHash(content) === tx.post.contentHash`; a target is its post id or key in mono, never a
 name the page supplied. `protocolVersion` is shown small and not checked — the node refuses a wrong era.
-**A credits amount on the prompt is $NOTIS, never base units** — the heading names the total sent, *send 12.5
-$NOTIS?*, each line its payment and recipient, and a fee line only when the transaction carries a `fee` box
-(→ The wallet, the denomination rule).
+**The prompt reads as three lines: what, how much, to whom.** The first names the transaction — *Notis
+transfer* · *Notis post* · *Notis reply* · *Notis like* · *Notis vouch* · *Notis unvouch* · *Notis invite* · *Notis
+withdrawal* · *Notis name* · *Notis burn* — and any other karma-side shape *Notis rep transaction*; the second its
+amount — *10 $NOTIS*, *5 rep*, none for a withdrawal or a claim; the third its target — *to:* and the key for a
+transfer or an invite, *for:* and the key for a vouch, *post:* and the id for a like or a withdrawal, the name for a
+claim, none for a burn (its name box is an input, ids only) or an unvouch — **the key or id whole, in mono, wrapped**: the prompt is where a reader
+verifies a destination, and a prefix is what a look-alike key defeats. A post's verified content follows as a
+fourth line; `protocolVersion` small beneath. **A credits amount on the prompt is $NOTIS, never base units** — a
+transfer's amount is the sum of its payments, one *to:* line per recipient, and a fee line only when the
+transaction carries a `fee` box (→ The wallet, the denomination rule).
 
 **The build check that keeps the web bundle honest:** the web build's assets contain no `chrome.`
 reference. `build-release.sh` checks it; `build-extension.sh` checks the extension's shell has no inline
@@ -948,10 +958,14 @@ With no spendable box: the faucet step when a faucet is set (→ The faucet step
 send form, a real `<form>` in place: the recipient — a 64-hex key or a handle, the leading `@` optional — the
 amount in $NOTIS, and the word `send`. **An identity input takes a key or a handle, and a handle is resolved at
 the press** through `GET /usernames/:name` (`NODE_INTERFACE → Identity parameters`) — a signed transaction carries
-keys only — an unknown one refused in place, *no one holds that name.*; then **the confirm row**, the burn's
-pattern: *send 12.5 $NOTIS to @bob · <prefix>?* — the handle when one resolved, and always the key it resolved
-to, in mono, the prefix the identity display renders — with `send` and `keep`, focus on `keep`, Esc keeps. A
-locked identity unlocks in the confirm's place first, and the next press needs no second unlock; the flight
+keys only — an unknown one refused in place, *no one holds that name.*; then, **in the web build, the confirm
+row**, the burn's pattern: *send 12.5 $NOTIS to @bob · <prefix>?* — the handle when one resolved, and always the
+key it resolved to, in mono, the prefix the identity display renders — with `send` and `keep`, focus on `keep`, Esc
+keeps; **in the extension there is no confirm row**: `send` shows the key it resolved to beneath the field, in
+mono, and goes to the flow — the prompt is the confirmation (→ The extension) — the build told apart by the
+identity module implementing `policy`, the predicate the policy row reads. A locked identity unlocks in place
+first — in the confirm's place on the web, under the form in the extension — and the next press needs no second
+unlock; the flight
 renders in the row; a pending send — *12.5 $NOTIS to @bob · submitted*, from the ledger's entry, so it survives a
 reload — stands until it lands, when the line reads *sent* and the balance moves in place, or expires. **The
 form keeps its values on every ending but an accepted submission, which clears it** — the fourth ending
@@ -960,7 +974,7 @@ form keeps its values on every ending but an accepted submission, which clears i
 the reader's own key is *that is your own key.*; a payment or a change below the floor names it — *send at least
 N $NOTIS.*, *that leaves change under N $NOTIS — send a little more, or all of it.*; a shortfall is *not enough
 $NOTIS.*; a decline is *send not sent.*, a refusal *send not sent: <reason>.*, the lock race *your key is locked*
-(→ The wallet, `notSigned`). In the extension the prompt asks after the confirm, because credits always prompt
+(→ The wallet, `notSigned`). In the extension the prompt is the one confirmation, because credits always prompt
 (→ The extension).
 
 **Two preference rows the extension adds or changes.** *sign each rep action: don't ask · ask* is the

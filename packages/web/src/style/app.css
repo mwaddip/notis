@@ -547,6 +547,29 @@ header .spacer { flex: 1 1 auto; }
   .who .hex, .who .when { font-size: 10px; }
 }
 
+/* ---------- the extension's prompt window ---------- */
+/* WEB_INTERFACE → The extension → "The prompt window": a padded column filling
+   the popup — the lines at the top in the page face, the commit pair bottom-
+   aligned right (HOUSE_STYLE → Interaction → "A box marks a commit pair"). The
+   first line is a `<div>`, not an `<h1>` — the App's heading rules must not
+   apply. The target's key or id renders whole, in mono, wrapped, so a look-
+   alike prefix cannot pass unnoticed. */
+main#prompt {
+  display: flex; flex-direction: column;
+  min-height: 100vh; box-sizing: border-box;
+  padding: 20px;
+}
+main#prompt .prompt { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+main#prompt .lines { display: flex; flex-direction: column; gap: 8px; }
+main#prompt .line { font-size: 15px; line-height: 1.35; color: var(--ink); }
+main#prompt .line.what { font-size: 17px; font-weight: 600; }
+main#prompt .line.target .target-label { color: var(--inkMute); }
+main#prompt .line.target .target-value { font-family: var(--mono); word-break: break-all; }
+main#prompt .line.fee { color: var(--inkMute); font-size: 13px; }
+main#prompt .line.content { color: var(--inkMute); font-style: italic; }
+main#prompt .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; padding-top: 16px; }
+main#prompt .unlock-in-prompt { margin-top: 12px; }
+
 /* Hover applies only where hover exists — every hover rule sits in this block, so
    a tap never leaves a control stuck in its hover look on a device that cannot
    hover (WEB_INTERFACE → The workspace, HOUSE_STYLE → Interaction). */

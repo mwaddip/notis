@@ -76,6 +76,10 @@ declare namespace chrome {
   namespace windows {
     interface Window {
       id?: number;
+      left?: number;
+      top?: number;
+      width?: number;
+      height?: number;
     }
     interface CreateProps {
       url?: string;
@@ -83,10 +87,13 @@ declare namespace chrome {
       focused?: boolean;
       width?: number;
       height?: number;
+      left?: number;
+      top?: number;
     }
     function create(props: CreateProps): Promise<Window>;
     function update(windowId: number, props: { focused?: boolean }): Promise<Window>;
     function remove(windowId: number): Promise<void>;
+    function getLastFocused(): Promise<Window>;
     interface OnRemovedEvent {
       addListener(listener: (windowId: number) => void): void;
     }
