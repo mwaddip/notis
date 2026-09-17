@@ -366,8 +366,10 @@ it for anything.
   act; the pointer cursor and the focus ring; under `hover: hover` an underline and nothing else. The identity
   prefix set the pattern (`WEB_INTERFACE → The identity display`) and every word follows it. **A box marks a
   commit pair and a surface's primary action** — the composer's `post` and `cancel`, the extension prompt's
-  `sign` and `cancel`, and the feed's `new post` (user, 2026-09-08 and 2026-09-16); the inverse-filled header
-  words are fills, not boxes, and stay.
+  `sign` and `cancel`, the feed's `new post`, and the `$NOTIS` row's `send` (user, 2026-09-08, 2026-09-16 and
+  2026-09-17); the inverse-filled header words are fills, not boxes, and stay.
+
+  > ⚠ **AHEAD OF CODE (2026-09-17, the send box)** — the `$NOTIS` row's `send` is a word today.
 - **Nothing is fetched from a third party without the reader's act.** An image, a title, a
   preview — nothing the page renders on its own reaches beyond the origin, because every such
   request tells that party who is reading and when. What a reader chooses to load, they load

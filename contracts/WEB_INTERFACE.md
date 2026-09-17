@@ -955,8 +955,9 @@ after the prefix, muted ink, text only.
 $NOTIS (→ The wallet), in `gold` (`HOUSE_STYLE → "Gold means credits and nothing else"`) — and beneath it, when
 a box is locked, one muted line, *N $NOTIS more unlock by block H*, H the latest `lockedUntilBlock` among them.
 With no spendable box: the faucet step when a faucet is set (→ The faucet step), else *no $NOTIS yet.* Then the
-send form, a real `<form>` in place: the recipient — a 64-hex key or a handle, the leading `@` optional — the
-amount in $NOTIS, and the word `send`. **An identity input takes a key or a handle, and a handle is resolved at
+send form, a real `<form>` in place: the recipient — a 64-hex key or a handle, the leading `@` optional — on a line
+of its own, and beneath it the amount in $NOTIS beside the boxed `send` on one line — a short field, since an amount is
+never long, and the box the primary action's, green as `new post` is (`HOUSE_STYLE → Interaction`). **An identity input takes a key or a handle, and a handle is resolved at
 the press** through `GET /usernames/:name` (`NODE_INTERFACE → Identity parameters`) — a signed transaction carries
 keys only — an unknown one refused in place, *no one holds that name.*; then, **in the web build, the confirm
 row**, the burn's pattern: *send 12.5 $NOTIS to @bob · <prefix>?* — the handle when one resolved, and always the
@@ -976,6 +977,8 @@ N $NOTIS.*, *that leaves change under N $NOTIS — send a little more, or all of
 $NOTIS.*; a decline is *send not sent.*, a refusal *send not sent: <reason>.*, the lock race *your key is locked*
 (→ The wallet, `notSigned`). In the extension the prompt is the one confirmation, because credits always prompt
 (→ The extension).
+
+> ⚠ **AHEAD OF CODE (2026-09-17, the send box)** — the amount field spans the width with `send` a word beneath it today.
 
 **Two preference rows the extension adds or changes.** *sign each rep action: don't ask · ask* is the
 background's policy (→ The extension), read through `state` and set through `policy`; it renders only
