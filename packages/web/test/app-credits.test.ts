@@ -145,7 +145,7 @@ interface Drive {
   faucetClient: { askCredits: (key: string) => Promise<CreditGrant | Rejection> };
 }
 
-function harness(opts: { withPolicy?: boolean } = {}) {
+function harness(opts: { withPolicy?: boolean; requestFaucetOrigin?: (o: string) => Promise<boolean> } = {}) {
   idState = { pubKeyHex: ME, locked: false };
   blockHeight = 100;
   signCalls = [];
@@ -162,7 +162,7 @@ function harness(opts: { withPolicy?: boolean } = {}) {
   };
   creditsRecipient = { userId: REC, total: '0', boxes: [], boxCount: 0, next: null };
 
-  const app = new App(fakeApi(), fakeWrite(), fakeIdentity(opts));
+  const app = new App(fakeApi(), fakeWrite(), fakeIdentity(opts), undefined, undefined, opts.requestFaucetOrigin);
   // Swap the faucet client for a controllable one, so tests drive the credits
   // grant without touching fetch.
   (app as unknown as { faucetClient: unknown }).faucetClient = {
@@ -270,6 +270,93 @@ describe('the send flow', () => {
     await flush();
     expect(h.drive.ledger.all().find((e) => e.kind === 'send' && e.txId === entry.txId)).toBeUndefined();
     expect(h.drive.sendFlight?.stage).toBe('expired');
+  });
+});
+
+// WEB_INTERFACE → The faucet step → "In the extension the press asks the
+// browser for the faucet's origin first" — the extension arm carries the
+// permission hook; the web arm carries none.
+describe('the App faucet permission — the extension arm ($NOTIS step)', () => {
+  const FAUCET_ORIGIN = 'https://faucet.example';
+
+  async function pressAskCredits(h: ReturnType<typeof harness>): Promise<HTMLButtonElement> {
+    // No credits yet — the wallet's step shows.
+    creditsSelf = { userId: ME, total: '0', boxes: [], boxCount: 0, next: null };
+    prefs.faucet = FAUCET_ORIGIN;
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    await (h.app as unknown as { openWallet: () => Promise<void> }).openWallet();
+    await flush();
+    const btn = [...document.querySelectorAll<HTMLButtonElement>('.winbody .row .word')]
+      .find((b) => b.textContent === 'ask the faucet for $NOTIS')!;
+    return btn;
+  }
+
+  it('the hook is invoked synchronously from the ask press, before any await; the faucet request has not left when the hook is held', async () => {
+    const hookCalls: string[] = [];
+    const hook = (o: string): Promise<boolean> => {
+      hookCalls.push(o);
+      return new Promise(() => {}); // held for ever
+    };
+    const h = harness({ requestFaucetOrigin: hook });
+    let creditsAskCalls = 0;
+    (h.app as unknown as { faucetClient: { askCredits: (k: string) => Promise<unknown> } }).faucetClient = {
+      askCredits: async () => { creditsAskCalls++; return { txId: '11'.repeat(32), status: 'pending', expiresAtHeight: 820, boxId: GRANT_BOX }; },
+    };
+    const btn = await pressAskCredits(h);
+    btn.click();
+    expect(hookCalls).toEqual([FAUCET_ORIGIN]);
+    expect(creditsAskCalls).toBe(0);
+    await flush();
+    await flush();
+    expect(creditsAskCalls).toBe(0);
+  });
+
+  it('a refused permission reports on the wallet window and no faucet request leaves', async () => {
+    const h = harness({ requestFaucetOrigin: async () => false });
+    let creditsAskCalls = 0;
+    (h.app as unknown as { faucetClient: { askCredits: (k: string) => Promise<unknown> } }).faucetClient = {
+      askCredits: async () => { creditsAskCalls++; return { txId: '11'.repeat(32), status: 'pending', expiresAtHeight: 820, boxId: GRANT_BOX }; },
+    };
+    const btn = await pressAskCredits(h);
+    btn.click();
+    await flush();
+    await flush();
+    expect(creditsAskCalls).toBe(0);
+    // The report line is the wallet column's — "the browser refused access to
+    // that origin." — rendered as the .report node of the focused column.
+    const report = document.querySelector('.report');
+    expect(report?.textContent).toContain('the browser refused access to that origin.');
+  });
+
+  it('a granted permission lets the faucet request leave and the ledger holds the creditGrant', async () => {
+    const h = harness({ requestFaucetOrigin: async () => true });
+    let creditsAskCalls = 0;
+    (h.app as unknown as { faucetClient: { askCredits: (k: string) => Promise<unknown> } }).faucetClient = {
+      askCredits: async () => { creditsAskCalls++; return { txId: '11'.repeat(32), status: 'pending', expiresAtHeight: 820, boxId: GRANT_BOX }; },
+    };
+    const btn = await pressAskCredits(h);
+    btn.click();
+    await flush();
+    await flush();
+    expect(creditsAskCalls).toBe(1);
+    const entry = h.drive.ledger.all().find((e) => e.kind === 'creditGrant');
+    expect(entry).toBeDefined();
+    expect(entry!.postId).toBe(GRANT_BOX);
+  });
+
+  it('with no hook (the web build), the ask leaves as today', async () => {
+    const h = harness(); // no requestFaucetOrigin
+    let creditsAskCalls = 0;
+    (h.app as unknown as { faucetClient: { askCredits: (k: string) => Promise<unknown> } }).faucetClient = {
+      askCredits: async () => { creditsAskCalls++; return { txId: '11'.repeat(32), status: 'pending', expiresAtHeight: 820, boxId: GRANT_BOX }; },
+    };
+    const btn = await pressAskCredits(h);
+    btn.click();
+    await flush();
+    await flush();
+    expect(creditsAskCalls).toBe(1);
+    expect(h.drive.ledger.all().find((e) => e.kind === 'creditGrant')).toBeDefined();
   });
 });
 

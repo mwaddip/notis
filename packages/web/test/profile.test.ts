@@ -1,10 +1,14 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { profileBody, renderInvitesRow, renderUsernameRow, type ProfileHandlers, type ProfileCtx } from '../src/view/profile';
 import { karmaResult } from './karma-fixture';
 import { prefs } from '../src/prefs';
 import type { Origin } from '../src/model/workspace';
 import type { UsernameResult } from '../src/api/dto';
+
+const appCss = readFileSync(resolve(process.cwd(), 'src/style/app.css'), 'utf8');
 
 const ORIGIN: Origin = { from: 'pane', ci: 0 };
 
@@ -452,6 +456,28 @@ describe('profile — the key as a copy control', () => {
     } finally {
       if (originalClipboard === undefined) delete (navigator as unknown as { clipboard?: unknown }).clipboard;
       else Object.defineProperty(navigator, 'clipboard', { configurable: true, value: originalClipboard });
+    }
+  });
+
+  // The key control's face and size rest on stylesheet order: `.word`
+  // (`font: inherit`) then `.mono` (the mono family) then `.key-copy` (the
+  // labels' 12.5px), all one class each. Only the rule's text is pinned
+  // elsewhere; here the rendered measure is what the reader sees.
+  it('under the stylesheet, the .key-copy button computes the mono family and 12.5px', () => {
+    const style = document.createElement('style');
+    style.textContent = appCss;
+    document.head.appendChild(style);
+    const body = render(handlers(), ctx({ identity: unlocked }));
+    document.body.appendChild(body);
+    try {
+      const btn = body.querySelector('button.key-copy') as HTMLElement;
+      const s = window.getComputedStyle(btn);
+      expect(s.fontSize).toBe('12.5px');
+      // `--mono` resolves to a cascade whose first family is JetBrains Mono.
+      expect(s.fontFamily).toContain('JetBrains Mono');
+    } finally {
+      document.body.removeChild(body);
+      document.head.removeChild(style);
     }
   });
 });

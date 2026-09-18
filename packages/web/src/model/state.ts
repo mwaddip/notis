@@ -176,7 +176,6 @@ export interface Handlers {
   setTheme: (t: Theme) => void;
   setIdTint: (m: IdTint) => void;
   setNode: (origin: string) => void;
-  setFaucet: (origin: string) => void;
   // identity operations (WEB_INTERFACE → The profile window)
   inspectFile: (text: string) => Promise<{ kind: 'clear' | 'encrypted'; pubKeyHex: string }>;
   draftIdentity: () => Promise<{ pubKeyHex: string }>;
@@ -217,14 +216,11 @@ export interface Handlers {
   resolveRecipient: (name: string) => Promise<{ key: string; name: string | null } | { refusal: string }>;
   send: (toHex: string, toName: string | null, amount: bigint) => void;
   askFaucetCredits: () => void;
-  // The extension's binary sign policy (WEB_INTERFACE → The profile window).
-  // Defined only in the extension build — the profile row renders only when
-  // both are present.
+  // The extension's binary sign policy (WEB_INTERFACE → The settings window).
+  // Defined only in the extension build — the row renders only when both are
+  // present.
   policy?: () => 'silent' | 'ask';
   setPolicy?: (p: 'silent' | 'ask') => Promise<void>;
-  // The extension's faucet-origin permission gate — the faucet row's `set`
-  // requests it from the press (WEB_INTERFACE → The profile window).
-  requestFaucetOrigin?: (origin: string) => Promise<boolean>;
 }
 
 /** What the App calls on the identity module — the single reference it holds

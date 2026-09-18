@@ -8,16 +8,17 @@ import { prefs } from '../src/prefs';
 const appCss = readFileSync(resolve(process.cwd(), 'src/style/app.css'), 'utf8');
 
 // The @settings window rendered from a fake handlers shape
-// (WEB_INTERFACE → The settings window): the four preference rows — theme,
-// identity tint, node, faucet — plus the extension's sign-each-rep-action row,
-// and the tint row's two-sample preview above its four words.
+// (WEB_INTERFACE → The settings window): the three preference rows — theme,
+// identity tint, node — plus the extension's sign-each-rep-action row, and the
+// tint row's two-sample preview above its four words. No `faucet` row: the
+// faucet's base is the build's value (WEB_INTERFACE → The settings window →
+// "No `faucet` row and no `arrangement` row").
 
 function handlers(over: Partial<SettingsHandlers> = {}): SettingsHandlers {
   return {
     setTheme: () => {},
     setIdTint: () => {},
     setNode: () => {},
-    setFaucet: () => {},
     ...over,
   };
 }
@@ -37,9 +38,9 @@ beforeEach(() => {
 });
 
 describe('settings window — the preference rows', () => {
-  it('emits theme, identity tint, node and faucet — the same shape without an identity', () => {
+  it('emits theme, identity tint and node — the same shape without an identity', () => {
     const body = settingsBody(handlers());
-    for (const label of ['theme', 'identity tint', 'node', 'faucet']) {
+    for (const label of ['theme', 'identity tint', 'node']) {
       expect(rowField(body, label), label).not.toBeNull();
     }
   });
@@ -196,41 +197,20 @@ describe('settings window — the sign-each-rep-action row', () => {
   });
 });
 
-describe('settings window — the faucet row', () => {
-  it('without a requestFaucetOrigin handler, a change calls setFaucet directly', async () => {
-    const setFaucet = vi.fn();
-    const body = settingsBody(handlers({ setFaucet }));
-    const input = rowField(body, 'faucet')!.querySelector('input') as HTMLInputElement;
-    input.value = 'https://faucet.example';
-    input.dispatchEvent(new Event('change'));
-    await new Promise((r) => setTimeout(r, 0));
-    expect(setFaucet).toHaveBeenCalledWith('https://faucet.example');
+describe('settings window — no faucet row', () => {
+  // The faucet's base is the build's value, never a preference
+  // (WEB_INTERFACE → The settings window → "No `faucet` row and no `arrangement`
+  // row"). The row is absent whether or not the extension's permission hook is
+  // wired through — the hook has left the settings surface entirely and lives
+  // on the App, called synchronously from the ask press (→ The faucet step).
+  it('no `faucet` row in the settings window, without the hook (web build)', () => {
+    expect(rowField(settingsBody(handlers()), 'faucet')).toBeNull();
   });
 
-  it('with requestFaucetOrigin, a refused origin reports and does not store', async () => {
-    const setFaucet = vi.fn();
-    const requestFaucetOrigin = vi.fn(async () => false);
-    const body = settingsBody(handlers({ setFaucet, requestFaucetOrigin }));
-    const field = rowField(body, 'faucet')!;
-    const input = field.querySelector('input') as HTMLInputElement;
-    input.value = 'https://faucet.example';
-    input.dispatchEvent(new Event('change'));
-    await new Promise((r) => setTimeout(r, 0));
-    expect(requestFaucetOrigin).toHaveBeenCalledWith('https://faucet.example');
-    expect(setFaucet).not.toHaveBeenCalled();
-    expect(field.querySelector('.hint')?.textContent).toBe('the browser refused access to that origin.');
-  });
-
-  it('with requestFaucetOrigin, a granted origin then stores', async () => {
-    const setFaucet = vi.fn();
-    const requestFaucetOrigin = vi.fn(async () => true);
-    const body = settingsBody(handlers({ setFaucet, requestFaucetOrigin }));
-    const field = rowField(body, 'faucet')!;
-    const input = field.querySelector('input') as HTMLInputElement;
-    input.value = 'https://faucet.example';
-    input.dispatchEvent(new Event('change'));
-    await new Promise((r) => setTimeout(r, 0));
-    expect(requestFaucetOrigin).toHaveBeenCalledWith('https://faucet.example');
-    expect(setFaucet).toHaveBeenCalledWith('https://faucet.example');
+  it('no `faucet` row in the settings window, with the hook (extension build)', () => {
+    // The extension arm carries the sign policy; the SettingsHandlers shape
+    // holds no faucet-side hook to pass here at all.
+    const withPolicy = handlers({ policy: () => 'silent', setPolicy: async () => {} });
+    expect(rowField(settingsBody(withPolicy), 'faucet')).toBeNull();
   });
 });

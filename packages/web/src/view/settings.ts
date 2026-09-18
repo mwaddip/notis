@@ -1,5 +1,5 @@
 import { el } from '../dom';
-import { prefs, BUILD_BASE, BUILD_FAUCET_BASE, type Theme, type IdTint } from '../prefs';
+import { prefs, BUILD_BASE, type Theme, type IdTint } from '../prefs';
 import { stopHue } from '../model/identity';
 
 // The @settings window — WEB_INTERFACE → The settings window. The client's
@@ -9,8 +9,10 @@ import { stopHue } from '../model/identity';
 // — each a fixed stop of the identity arc, aria-hidden, no handler, not `.win`
 // since the samples are thread bars, the shape the tint applies to. The tint is
 // :root's attribute and custom properties (src/prefs.ts applyIdTint), so a
-// press moves the samples with no re-render. The window renders the same with
-// and without an identity.
+// press moves the samples with no re-render. No `faucet` row: the faucet's base
+// is the build's value (WEB_INTERFACE → The settings window → "No `faucet` row
+// and no `arrangement` row"). The window renders the same with and without an
+// identity.
 
 /** The narrow shape the settings rows call. Handlers satisfies it structurally,
  *  so the App passes its own handlers straight through. */
@@ -18,14 +20,10 @@ export interface SettingsHandlers {
   setTheme: (t: Theme) => void;
   setIdTint: (m: IdTint) => void;
   setNode: (origin: string) => void;
-  setFaucet: (origin: string) => void;
   // The extension's binary sign policy — the row renders only when both hooks
   // are present (WEB_INTERFACE → The settings window; the extension's proxy).
   policy?: () => 'silent' | 'ask';
   setPolicy?: (p: 'silent' | 'ask') => Promise<void>;
-  // The extension's faucet-origin permission gate — the faucet row's `set`
-  // requests it from the press (WEB_INTERFACE → The extension).
-  requestFaucetOrigin?: (origin: string) => Promise<boolean>;
 }
 
 const ID_TINTS: IdTint[] = ['spine', 'wash', 'both', 'off'];
@@ -96,33 +94,6 @@ export function settingsBody(handlers: SettingsHandlers): HTMLElement {
     input.addEventListener('change', () => handlers.setNode(input.value));
     field.appendChild(input);
     field.appendChild(el('div', 'hint', 'blank resets to the build default. any origin works: the node answers every origin.'));
-    b.appendChild(r);
-  }
-
-  // faucet — the same shape as node; empty means no faucet and no button. In
-  // the extension the `set` requests host permission for the origin (a user
-  // gesture, as the API requires); denied, the row's hint names the refusal
-  // and the preference is not stored (WEB_INTERFACE → The extension).
-  {
-    const { row: r, field } = row('faucet');
-    const input = el('input') as HTMLInputElement;
-    input.value = prefs.faucet;
-    input.placeholder = BUILD_FAUCET_BASE || 'none';
-    input.setAttribute('aria-label', 'the faucet this client asks for rep');
-    const hint = el('div', 'hint', 'blank uses the build default. a foreign origin fails: the faucet answers its own origin only.');
-    input.addEventListener('change', () => void (async () => {
-      const value = input.value.trim();
-      if (value !== '' && handlers.requestFaucetOrigin) {
-        const granted = await handlers.requestFaucetOrigin(value);
-        if (!granted) {
-          hint.textContent = 'the browser refused access to that origin.';
-          return;
-        }
-      }
-      handlers.setFaucet(input.value);
-    })());
-    field.appendChild(input);
-    field.appendChild(hint);
     b.appendChild(r);
   }
 

@@ -91,7 +91,14 @@ interface Harness {
   setHeight(h: number): void;
 }
 
-function harness(ledger: PendingLedger = new PendingLedger(null)): Harness {
+interface HarnessOpts {
+  ledger?: PendingLedger;
+  requestFaucetOrigin?: (origin: string) => Promise<boolean>;
+}
+
+function harness(opts: PendingLedger | HarnessOpts = {}): Harness {
+  const optsObj: HarnessOpts = opts instanceof PendingLedger ? { ledger: opts } : opts;
+  const ledger = optsObj.ledger ?? new PendingLedger(null);
   const idn = fakeIdentity();
   const feedViewers: Array<string | undefined> = [];
   const karmaKeys: string[] = [];
@@ -125,7 +132,7 @@ function harness(ledger: PendingLedger = new PendingLedger(null)): Harness {
   };
   const writeClient = {} as unknown as WriteClient;
 
-  const app = new App(fakeApi, writeClient, idn, ledger);
+  const app = new App(fakeApi, writeClient, idn, ledger, undefined, optsObj.requestFaucetOrigin);
   const appbar = document.createElement('div');
   const feed = document.createElement('section'); feed.id = 'feed';
   const panes = document.createElement('section'); panes.id = 'panes';
@@ -311,5 +318,102 @@ describe('the App profile window — /karma and the faucet grant', () => {
     await h.drive.pollTick();
     expect(h.drive.ledger.size).toBe(0);
     expect(h.drive.grantView).toEqual({ state: 'expired', atHeight: 6100 });
+  });
+});
+
+// WEB_INTERFACE → The faucet step → "In the extension the press asks the
+// browser for the faucet's origin first" — the extension arm carries the
+// permission hook; the web arm carries none, and the ask leaves as today.
+describe('the App faucet permission — the extension arm (rep step)', () => {
+  const FAUCET_ORIGIN = 'https://faucet.example';
+
+  // The button on the mounted profile window is the real click surface. The
+  // profile window is opened first; the ask press then drives the App.
+  async function pressAsk(h: Harness): Promise<HTMLButtonElement> {
+    await h.idn.create('pw');
+    await flush();
+    prefs.faucet = FAUCET_ORIGIN;
+    h.drive.openProfile();
+    await flush();
+    const btn = [...document.querySelectorAll<HTMLButtonElement>('.winbody .row .word')]
+      .find((b) => b.textContent === 'ask the faucet for rep')!;
+    return btn;
+  }
+
+  it('the hook is invoked synchronously from the ask press, before any await; the faucet request has not left when the hook is held', async () => {
+    // A hook that never resolves — it holds the App's `await` open. If the
+    // ask reached the faucet before the hook returns, faucetKarmaCalls would
+    // be non-zero right after the click.
+    const hookCalls: string[] = [];
+    const hook = (o: string): Promise<boolean> => {
+      hookCalls.push(o);
+      return new Promise(() => {}); // held for ever
+    };
+    const h = harness({ requestFaucetOrigin: hook });
+    let faucetKarmaCalls = 0;
+    (h.app as unknown as { faucetClient: { askKarma: (k: string) => Promise<unknown> } }).faucetClient = {
+      askKarma: async () => { faucetKarmaCalls++; return { txId: 'cc'.repeat(32), status: 'pending', expiresAtHeight: 6100 }; },
+    };
+    const btn = await pressAsk(h);
+    // The click is a synchronous dispatch; the listener runs `handlers.askFaucet()`
+    // which void-calls this.askFaucet(); the sync prefix runs until the first
+    // `await`. The hook must have been called by the time `.click()` returns.
+    btn.click();
+    expect(hookCalls).toEqual([FAUCET_ORIGIN]);
+    expect(faucetKarmaCalls).toBe(0);
+    // Two microtask flushes prove the hold: the outer askFaucet is suspended
+    // on `await permission` and cannot reach `askKarma`.
+    await flush();
+    await flush();
+    expect(faucetKarmaCalls).toBe(0);
+  });
+
+  it('a refused permission reports on the profile window and no faucet request leaves', async () => {
+    const h = harness({ requestFaucetOrigin: async () => false });
+    let faucetKarmaCalls = 0;
+    (h.app as unknown as { faucetClient: { askKarma: (k: string) => Promise<unknown> } }).faucetClient = {
+      askKarma: async () => { faucetKarmaCalls++; return { txId: 'cc'.repeat(32), status: 'pending', expiresAtHeight: 6100 }; },
+    };
+    const btn = await pressAsk(h);
+    btn.click();
+    await flush();
+    await flush();
+    expect(faucetKarmaCalls).toBe(0);
+    expect(h.drive.ledger.size).toBe(0);
+    // The report line is the profile column's — "the browser refused access to
+    // that origin." — rendered as the .report node of the focused column.
+    const report = document.querySelector('.report');
+    expect(report?.textContent).toContain('the browser refused access to that origin.');
+  });
+
+  it('a granted permission lets the faucet request leave and the ledger holds the grant', async () => {
+    const h = harness({ requestFaucetOrigin: async () => true });
+    let faucetKarmaCalls = 0;
+    (h.app as unknown as { faucetClient: { askKarma: (k: string) => Promise<unknown> } }).faucetClient = {
+      askKarma: async () => { faucetKarmaCalls++; return { txId: 'cc'.repeat(32), status: 'pending', expiresAtHeight: 6100 }; },
+    };
+    const btn = await pressAsk(h);
+    btn.click();
+    await flush();
+    await flush();
+    expect(faucetKarmaCalls).toBe(1);
+    const entries = h.drive.ledger.all();
+    expect(entries.map((e: PendingEntry) => e.kind)).toEqual(['grant']);
+    expect(h.drive.grantView).toEqual({ state: 'pending' });
+  });
+
+  it('with no hook (the web build), the ask leaves as today', async () => {
+    const h = harness(); // no requestFaucetOrigin passed
+    let faucetKarmaCalls = 0;
+    (h.app as unknown as { faucetClient: { askKarma: (k: string) => Promise<unknown> } }).faucetClient = {
+      askKarma: async () => { faucetKarmaCalls++; return { txId: 'cc'.repeat(32), status: 'pending', expiresAtHeight: 6100 }; },
+    };
+    const btn = await pressAsk(h);
+    btn.click();
+    await flush();
+    await flush();
+    expect(faucetKarmaCalls).toBe(1);
+    const entries = h.drive.ledger.all();
+    expect(entries.map((e: PendingEntry) => e.kind)).toEqual(['grant']);
   });
 });

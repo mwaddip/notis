@@ -5,7 +5,7 @@ import type { Mode } from './mode';
 import type { Tabs } from './tabs';
 import { el, shortHex, preservingScroll } from './dom';
 import { contentHashHex } from './integrity';
-import { prefs, setTheme, setIdTint, setNode, setFaucet, writeStore, readStore, BUILD_NODES, BUILD_PUBLIC, KEY_LAYOUT, KEY_NODE, type Theme, type IdTint } from './prefs';
+import { prefs, setTheme, setIdTint, setNode, writeStore, readStore, BUILD_NODES, BUILD_PUBLIC, KEY_LAYOUT, KEY_NODE, type Theme, type IdTint } from './prefs';
 import { renderFeedInto, replaceFeedCard } from './view/feed';
 import { renderPanesInto, renderRegionElement, renderBars } from './view/panes';
 import { makeComposer, type ComposerController } from './view/composer';
@@ -247,9 +247,11 @@ export class App {
   private creditGrantView: { state: 'pending' } | { state: 'expired'; atHeight: number } | null = null;
   private sendFlight: Flight | null = null;
 
-  // Optional in the extension build — the faucet row's `set` requests host
-  // permission for the origin before storing (WEB_INTERFACE → The profile
-  // window). Absent, the row stores without a permission check.
+  // Optional in the extension build — the App's own hook, called synchronously
+  // from `askFaucet` / `askFaucetCredits` before any await, so the browser's
+  // user-input window is still open when the permission request leaves
+  // (WEB_INTERFACE → The faucet step → "In the extension the press asks the
+  // browser for the faucet's origin first"). Absent on the web build.
   private readonly requestFaucetOrigin: ((origin: string) => Promise<boolean>) | null;
 
   // Every dependency is injectable so a test can drive the App over fakes.
@@ -297,7 +299,6 @@ export class App {
       setTheme: (t) => this.changeTheme(t),
       setIdTint: (m) => this.changeIdTint(m),
       setNode: (origin) => void this.changeNode(origin),
-      setFaucet: (origin) => this.changeFaucet(origin),
       inspectFile: (text) => this.idm.inspectFile(text),
       draftIdentity: () => this.idm.draft(),
       createIdentity: async (p) => { await this.idm.create(p); },
@@ -345,9 +346,6 @@ export class App {
             policy: () => this.idm.policy!(),
             setPolicy: async (p) => { await this.idm.setPolicy!(p); this.renderRegionsFor('@settings'); },
           }
-        : {}),
-      ...(this.requestFaucetOrigin
-        ? { requestFaucetOrigin: (origin: string) => this.requestFaucetOrigin!(origin) }
         : {}),
     };
   }
@@ -1479,16 +1477,6 @@ export class App {
     for (const id of openSet(this.state.workspace)) if (!isWin(id)) void this.fetchThread(id);
   }
 
-  private changeFaucet(origin: string): void {
-    setFaucet(origin);
-    // The @settings row shows the new base; the @profile rep step and the
-    // @wallet $NOTIS step both read `prefs.faucet` to decide whether to render
-    // "ask the faucet" (WEB_INTERFACE → The faucet step).
-    this.renderRegionsFor('@settings');
-    this.renderRegionsFor('@profile');
-    this.renderRegionsFor('@wallet');
-  }
-
   // -------------------------------------------------------------------------
   // Identity — the profile window's operations, the /karma read, the faucet step
   // (WEB_INTERFACE → The profile window, → The faucet step).
@@ -1556,10 +1544,27 @@ export class App {
 
   /** Ask the faucet — a 202 rides the bounded poll as a grant entry; a rejection is
    *  one register line (WEB_INTERFACE → The faucet step). The request carries only
-   *  the public key, so a locked identity can ask. */
+   *  the public key, so a locked identity can ask. In the extension the hook is
+   *  called synchronously from the press before any await, so the browser's
+   *  user-input window is still open (WEB_INTERFACE → The faucet step → "In the
+   *  extension the press asks the browser for the faucet's origin first"). */
   private async askFaucet(): Promise<void> {
     const cur = this.idm.current();
     if (cur === null) return;
+    // The hook is invoked synchronously here — an `await` in front of the
+    // request loses the user-input window in Firefox.
+    const permission = this.requestFaucetOrigin ? this.requestFaucetOrigin(prefs.faucet) : null;
+    if (permission !== null) {
+      const granted = await permission;
+      if (!granted) {
+        const region = this.regionFocusedOn('@profile');
+        if (region) {
+          region.report = 'the browser refused access to that origin.';
+          this.renderRegion(region.uid);
+        }
+        return;
+      }
+    }
     const res = await this.faucetClient.askKarma(cur.pubKeyHex);
     if ('message' in res) {
       const region = this.regionFocusedOn('@profile');
@@ -2447,10 +2452,27 @@ export class App {
   /** Ask the faucet for $NOTIS: a repeatable grant (NODE_INTERFACE → Faucet).
    *  A 202 rides the ledger as a `creditGrant` entry whose subject is the box
    *  id the faucet named, so the poll runs while it stands (WEB_INTERFACE → The
-   *  faucet step). */
+   *  faucet step). In the extension the hook is called synchronously from the
+   *  press before any await, so the browser's user-input window is still open
+   *  (WEB_INTERFACE → The faucet step → "In the extension the press asks the
+   *  browser for the faucet's origin first"). */
   private async askFaucetCredits(): Promise<void> {
     const cur = this.idm.current();
     if (cur === null) return;
+    // The hook is invoked synchronously here — an `await` in front of the
+    // request loses the user-input window in Firefox.
+    const permission = this.requestFaucetOrigin ? this.requestFaucetOrigin(prefs.faucet) : null;
+    if (permission !== null) {
+      const granted = await permission;
+      if (!granted) {
+        const region = this.regionFocusedOn('@wallet');
+        if (region) {
+          region.report = 'the browser refused access to that origin.';
+          this.renderRegion(region.uid);
+        }
+        return;
+      }
+    }
     const res = await this.faucetClient.askCredits(cur.pubKeyHex);
     if ('message' in res) {
       const region = this.regionFocusedOn('@wallet');

@@ -21,9 +21,10 @@ if (!appbar || !feed || !panes) throw new Error('missing app shell elements');
 // bootstrapProxy and the extension module never enters the bundle.
 const isExtension = import.meta.env.VITE_IDENTITY === 'extension';
 const idm: AppIdentity = isExtension ? await bootstrapProxy(chrome) : identity;
-// The extension's faucet row asks the browser to grant access to the origin
-// before storing (WEB_INTERFACE → The profile window). The web build passes
-// nothing — the row stores without a check, as it always did.
+// The extension asks the browser to grant access to the faucet's origin from
+// within the press's own call stack, before any other asynchronous work
+// (WEB_INTERFACE → The faucet step → "In the extension the press asks the
+// browser for the faucet's origin first"). The web build passes nothing.
 const requestFaucetOrigin = isExtension
   ? (origin: string): Promise<boolean> => chrome.permissions.request({ origins: [origin + '/*'] })
   : undefined;

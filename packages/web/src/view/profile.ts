@@ -164,7 +164,7 @@ function loadedState(b: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx,
   // updates the row in place (renderUsernameRow); the next build — a reopen,
   // the ↻, a reload — places it (HOUSE_STYLE → Motion).
   if (ctx.ownName !== null) appendUsernameRow(b, handlers, ctx);
-  appendKeyRow(b, handlers, ctx, id.pubKeyHex);
+  appendKeyRow(b, ctx, id.pubKeyHex);
   if (ctx.ownName === null) appendUsernameRow(b, handlers, ctx);
 
   // rep — the balance that spends, the faucet step, or the grant in flight.
@@ -224,7 +224,7 @@ function loadedState(b: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx,
  *  no timer, the copy glyph's pattern (→ Links). Where the clipboard refuses,
  *  the control is replaced by the key as selectable mono text followed by
  *  *— copy it by hand*. The backup line stays beneath until the first export. */
-function appendKeyRow(b: HTMLElement, _handlers: ProfileHandlers, ctx: ProfileCtx, pubKeyHex: string): void {
+function appendKeyRow(b: HTMLElement, ctx: ProfileCtx, pubKeyHex: string): void {
   const { row: r, field } = row('key');
   keyCopyControl(field, pubKeyHex);
   if (!ctx.backedUp) {
