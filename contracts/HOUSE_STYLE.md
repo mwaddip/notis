@@ -81,12 +81,12 @@ control styled as the inverse ground is the loudest thing on a phone screen, and
 moon need no learning (user, 2026-09-07). **The workspace's phone header carries no theme control** — its three
 glyphs open the three windows, and the theme is the settings window's first row (user, 2026-09-18;
 `WEB_INTERFACE → The settings window`) — so the sun or moon stands on the standalone page's phone header alone
-(`WEB_INTERFACE → The standalone thread`). With the phone header's person, coin and gear
+(`WEB_INTERFACE → The standalone thread`). With the phone header's person, wallet and gear
 (`WEB_INTERFACE → The profile window`) and the card's copy glyph (`WEB_INTERFACE → Links`), it is one of the
 five icons the interface carries; the rulings open iconography nowhere else (→ Deliberately not decided).
 
-> ⚠ **AHEAD OF CODE (2026-09-18, the three windows)** — the workspace's phone header carries the sun or moon
-> beside one other glyph, a person; no coin and no gear exist.
+> ⚠ **AHEAD OF CODE (2026-09-18, the three windows)** — the workspace's phone header carries two glyphs, a person
+> and a gear; no wallet glyph exists.
 
 ### Light — Sand
 
@@ -474,7 +474,7 @@ Not preachy. The visual register avoids the manifesto; the copy has to as well.
 - **A grid or layout system.** Owned by each surface.
 - **Iconography.** Whether the illustration technique scales down to UI icons at 16–24px is
   untested and may need a separate, plainer treatment. Five icons exist — the standalone page's theme glyph
-  (→ Colour), the phone header's person, coin and gear (`WEB_INTERFACE → The profile window`) and the card's
+  (→ Colour), the phone header's person, wallet and gear (`WEB_INTERFACE → The profile window`) and the card's
   copy glyph (`WEB_INTERFACE → Links`), drawn in the technique at 20px and 16px — and they are the test, not the
   decision.
 - **Data visualisation.** Nothing here covers charts. The only categorical palette this contract

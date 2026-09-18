@@ -488,15 +488,15 @@ never the only route: `‹` stands beside it (`HOUSE_STYLE → Accessibility con
 
 **What differs at one column, and nothing else does:** the bar carries `↻ ✕` — `←` and `→` arrange columns,
 and a phone reader has one screen at a time; the header's three window controls are glyphs at the header's
-control size — a person, a coin and a gear (→ The profile window) — and it carries no theme control, since the
+control size — a person, a wallet and a gear (→ The profile window) — and it carries no theme control, since the
 theme is the settings window's first row (→ The settings window); the header's gap is 8px; the empty panel is
 not rendered, since nothing lies right of the feed. The phone header — `‹`, the mark and the wordmark, the
-person, the coin, the gear, `›` — is 371px wide with every control 44px wide and none shrinking, and **under 372px
+person, the wallet, the gear, `›` — is 371px wide with every control 44px wide and none shrinking, and **under 372px
 the wordmark yields and the mark stands alone**, 324px on a 360px screen; `dark`, `light`, `profile`, `wallet`,
 `settings` and the prefix stay words wherever the header is the tiling one.
 
-> ⚠ **AHEAD OF CODE (2026-09-18, the three windows)** — the phone header carries two glyphs, a person and the sun
-> or moon, at 319px with the wordmark at every width.
+> ⚠ **AHEAD OF CODE (2026-09-18, the three windows)** — the phone header carries two glyphs, a person and a gear,
+> at 319px with the wordmark at every width.
 
 **A window's load updates its bar in every column holding it**, and its body only where it is focused, so a
 selection or a scroll in another window's body survives and a restored stack shows every excerpt as its thread
@@ -917,7 +917,7 @@ names (`HOUSE_STYLE → Voice`).
 
 **Three header controls open the three windows — profile, wallet, settings — at the right of the app bar, the
 theme toggle after them at tiling.** At one column the three are glyphs (→ The workspace) drawn in the house
-technique (`HOUSE_STYLE → Illustration`) as inline SVG in `currentColor` — a person, a coin, a gear — the same
+technique (`HOUSE_STYLE → Illustration`) as inline SVG in `currentColor` — a person, a wallet, a gear — the same
 for every reader and for no reader — the window says who — labelled *open profile*, *open wallet*, *open
 settings*; no identity colour and no avatar, as below. At tiling they are words in one outlined style: the
 profile control reads `profile` with no identity; with one, the key prefix in mono — `shortHex(pubKeyHex, 16)`,
