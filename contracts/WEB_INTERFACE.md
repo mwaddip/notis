@@ -461,6 +461,18 @@ reaches — *show the feed* when the feed is the next member on the left, else *
 (`HOUSE_STYLE → Deliberately not decided`). A gesture is never the only route, as hover is not
 (`HOUSE_STYLE → Accessibility contract`).
 
+**The header's children share one axis.** At tiling the row is text: the wordmark sits on the one baseline the
+header's words share — a row mixing mono with proportional type aligns on the baseline (`HOUSE_STYLE → Typography`)
+— and the mark hangs on that baseline with its centre on the words' box centre. At one column every child is a
+box — the arrows, the lockup, the glyphs — and the bar centres them on one axis. A typographic arrow is centred
+by its ink, not by its em box: the glyph is lifted by a fixed fraction of its size, which the self-hosted face
+makes exact. At every width each child's ink centre lies within one pixel of the axis, and a glyph's ink is centred
+in its own 20px box.
+
+> ⚠ **AHEAD OF CODE (2026-09-18, the header's axis)** — the lockup's baseline is the mark's bottom edge, so the
+> brand sits 6px above the controls at every width; a phone's arrows sit 2.5px below them, and the wallet glyph's ink
+> half a pixel above its box's centre.
+
 **At one column the screens are history.** A tap that changes the screen — an open, a raise, `‹`, `›`, a `✕`
 that shows another member — pushes a history entry naming the screen by its column's focused window, the
 feed as `feed`; the URL does not change, since the arrangement is not in it. A move that lands on the screen
