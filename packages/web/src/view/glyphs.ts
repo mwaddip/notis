@@ -10,7 +10,7 @@
 const NS = 'http://www.w3.org/2000/svg';
 
 /** A 20×20 currentColor svg — the box every glyph is drawn in. fill inherits, so
- *  the polygons below need none of their own. */
+ *  the shapes below need none of their own. */
 function glyph(): SVGSVGElement {
   const svg = document.createElementNS(NS, 'svg');
   svg.setAttribute('viewBox', '0 0 20 20');
@@ -22,6 +22,16 @@ function glyph(): SVGSVGElement {
 function polygon(points: string): SVGPolygonElement {
   const p = document.createElementNS(NS, 'polygon');
   p.setAttribute('points', points);
+  return p;
+}
+
+/** A path in the house technique: `M`/`L`/`Z` only, `fill-rule="evenodd"` so a
+ *  subpath drawn inside a body carves the hole. No curve command
+ *  (HOUSE_STYLE → Illustration). */
+function path(d: string): SVGPathElement {
+  const p = document.createElementNS(NS, 'path');
+  p.setAttribute('d', d);
+  p.setAttribute('fill-rule', 'evenodd');
   return p;
 }
 
@@ -53,24 +63,15 @@ export function moonGlyph(): SVGSVGElement {
   return svg;
 }
 
-/** A gear: eight straight-edged teeth around a faceted hub, no smooth curve
- *  (HOUSE_STYLE → Illustration). The teeth are wedges — a rectangle with a
- *  narrower top — placed at the eight compass points; the hub is an irregular
- *  octagon centred on the box. */
+/** A gear as one body: a single outline carrying eight teeth around a faceted
+ *  hole. One `<path>` of `M`/`L`/`Z` only, `fill-rule="evenodd"` so the inner
+ *  subpath carves the hole (HOUSE_STYLE → Illustration). */
 export function gearGlyph(): SVGSVGElement {
   const svg = glyph();
-  // Eight teeth in compass order — N, NE, E, SE, S, SW, W, NW.
-  for (const tooth of [
-    '9.2,1.4 10.8,1.4 11.2,4.2 8.8,4.2',
-    '15.1,3.5 16.5,4.9 14.5,6.9 12.8,5.2',
-    '18.6,9.2 18.6,10.8 15.8,11.2 15.8,8.8',
-    '16.5,15.1 15.1,16.5 12.8,14.8 14.5,13.1',
-    '10.8,18.6 9.2,18.6 8.8,15.8 11.2,15.8',
-    '4.9,16.5 3.5,15.1 5.5,13.1 7.2,14.8',
-    '1.4,10.8 1.4,9.2 4.2,8.8 4.2,11.2',
-    '3.5,4.9 4.9,3.5 7.2,5.2 5.5,6.9',
-  ]) svg.appendChild(polygon(tooth));
-  svg.appendChild(polygon('10,6.6 12.5,7.5 13.4,10 12.6,12.4 10,13.4 7.6,12.5 6.6,10 7.5,7.6')); // hub
+  svg.appendChild(path(
+    'M8.7 4.2 L8.9 1.6 L11.1 1.5 L11.3 4.2 L13.3 5.1 L15.3 3.4 L16.8 5.0 L15.0 6.9 L15.7 8.6 L18.4 8.8 L18.5 11.0 L15.8 11.2 L14.9 13.2 L16.7 15.2 L15.1 16.7 L13.1 15.0 L11.4 15.7 L11.3 18.4 L9.1 18.5 L8.8 15.8 L6.8 14.9 L4.7 16.7 L3.2 15.1 L5.0 13.1 L4.3 11.3 L1.6 11.2 L1.4 9.0 L4.2 8.8 L5.0 6.8 L3.3 4.8 L4.9 3.3 L6.9 5.0 Z ' +
+    'M11.1 7.4 L12.4 9.1 L12.6 11.0 L11.0 12.5 L9.0 12.7 L7.6 10.9 L7.4 9.0 L9.0 7.6 Z',
+  ));
   return svg;
 }
 

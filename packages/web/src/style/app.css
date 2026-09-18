@@ -68,11 +68,10 @@ header .spacer { flex: 1 1 auto; }
 }
 .theme-btn:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: 2px; }
 
-/* The tiling profile and settings words wear .hdr-word — one class replacing the
-   inline background/color/border overrides they used to compose on top of
-   .theme-btn. The outlined counterpart of the filled theme word: transparent
-   background, ink text and a borderStrong outline that stands as its sole
-   boundary at 3:1 (HOUSE_STYLE → Colour, → Interaction). */
+/* The tiling profile and settings words wear .hdr-word — the outlined
+   counterpart of the filled theme word: transparent background, ink text and a
+   borderStrong outline that stands as its sole boundary at 3:1
+   (HOUSE_STYLE → Colour, → Interaction). */
 .hdr-word {
   font-family: var(--sans); font-size: 12.5px; padding: 4px 12px; cursor: pointer;
   border: 1px solid var(--borderStrong); border-radius: 4px;

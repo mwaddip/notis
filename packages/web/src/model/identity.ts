@@ -21,6 +21,13 @@ export function identityStop(keyHex: string): number {
   return h % ID_STOPS;
 }
 
+/** The hue in OKLCH degrees for a given stop — the one place the arc's step
+ *  is computed, so every surface that shows a fixed stop reads the same table
+ *  (WEB_INTERFACE → The settings window, HOUSE_STYLE → Identity colour). */
+export function stopHue(stop: number): number {
+  return ID_ARC_START + stop * (ID_ARC_SPAN / ID_STOPS);
+}
+
 export function identityHue(keyHex: string): number {
-  return ID_ARC_START + identityStop(keyHex) * (ID_ARC_SPAN / ID_STOPS);
+  return stopHue(identityStop(keyHex));
 }

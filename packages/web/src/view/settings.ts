@@ -1,6 +1,6 @@
 import { el } from '../dom';
 import { prefs, BUILD_BASE, BUILD_FAUCET_BASE, type Theme, type IdTint } from '../prefs';
-import { ID_ARC_START, ID_ARC_SPAN, ID_STOPS } from '../model/identity';
+import { stopHue } from '../model/identity';
 
 // The @settings window — WEB_INTERFACE → The settings window. The client's
 // preferences in the .winbody/.row/label/.field pattern, no identity read, its
@@ -12,8 +12,8 @@ import { ID_ARC_START, ID_ARC_SPAN, ID_STOPS } from '../model/identity';
 // press moves the samples with no re-render. The window renders the same with
 // and without an identity.
 
-/** The narrow shape the settings rows call. RenderCtx.Handlers satisfies it
- *  structurally, so the App passes its own handlers straight through. */
+/** The narrow shape the settings rows call. Handlers satisfies it structurally,
+ *  so the App passes its own handlers straight through. */
 export interface SettingsHandlers {
   setTheme: (t: Theme) => void;
   setIdTint: (m: IdTint) => void;
@@ -30,14 +30,11 @@ export interface SettingsHandlers {
 
 const ID_TINTS: IdTint[] = ['spine', 'wash', 'both', 'off'];
 
-// The two stops the tint preview shows — derived from ID_STOPS so a change to
-// the arc moves the samples too (HOUSE_STYLE → Identity colour). Never a bare
-// degree literal: identityHue's own table is the truth.
+// The two stops the tint preview shows — a fixed pair on the identity arc, read
+// through stopHue so a change to the arc moves the samples too
+// (HOUSE_STYLE → Identity colour).
 const SAMPLE_STOP_A = 2;
 const SAMPLE_STOP_B = 8;
-function stopHue(idx: number): number {
-  return ID_ARC_START + idx * (ID_ARC_SPAN / ID_STOPS);
-}
 
 function row(label: string): { row: HTMLElement; field: HTMLElement } {
   const r = el('div', 'row');
@@ -71,8 +68,10 @@ export function settingsBody(handlers: SettingsHandlers): HTMLElement {
     preview.setAttribute('aria-hidden', 'true');
     const sampleA = el('div', 'bar tint-sample');
     sampleA.style.setProperty('--idh', String(stopHue(SAMPLE_STOP_A)));
+    sampleA.appendChild(el('span', 'bar-label', 'a title bar'));
     const sampleB = el('div', 'bar tint-sample focused');
     sampleB.style.setProperty('--idh', String(stopHue(SAMPLE_STOP_B)));
+    sampleB.appendChild(el('span', 'bar-label', 'the focused title bar'));
     preview.append(sampleA, sampleB);
     field.appendChild(preview);
     const seg = el('div', 'seg');
