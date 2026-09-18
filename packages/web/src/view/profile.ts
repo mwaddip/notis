@@ -6,13 +6,15 @@ import { INVITE_BOND_VEST_PER_LIKES, USERNAME_BURN_PRICE, isValidUsernameBytes }
 import type { KarmaResult, BondsResult, UsernameResult } from '../api/dto';
 import type { Origin } from '../model/workspace';
 
-// The @profile window — WEB_INTERFACE → The profile window. Identity, standing,
-// karma and the faucet step, in the .winbody/.row/label/.field pattern. Every
-// preference lives in the settings window (WEB_INTERFACE → The settings window).
-// No avatar and no identity colour: nothing here may invite a reader to check
-// identity by colour (HOUSE_STYLE → Identity colour). The six operations are
-// forms in place; each is a real <form> the browser's password manager can save
-// from (→ passphrase.ts). The copy is the voice register (HOUSE_STYLE → Voice):
+// The @profile window — WEB_INTERFACE → The profile window. The key's own
+// rows — key, rep, invites, username, passphrase, export, forget — in the
+// .winbody/.row/label/.field pattern. Everything $NOTIS is the wallet's
+// (WEB_INTERFACE → The wallet window) and every preference the settings
+// window's (WEB_INTERFACE → The settings window). No avatar and no identity
+// colour: nothing here may invite a reader to check identity by colour
+// (HOUSE_STYLE → Identity colour). The six operations are forms in place;
+// each is a real <form> the browser's password manager can save from
+// (→ passphrase.ts). The copy is the voice register (HOUSE_STYLE → Voice):
 // what happens, never at the reader's expense, lowercase.
 //
 // The window declares the narrow shapes it reads and calls; the App's RenderCtx and
@@ -48,7 +50,6 @@ export interface ProfileCtx {
   backedUp: boolean;
   karma: KarmaResult | null; // the loaded key's /karma, once read
   grant: GrantView | null; // a faucet grant in flight, or one that lapsed
-  membershipBars: { memberBar: number; memberLikesBar: number } | null; // from /status
   // The invites row (WEB_INTERFACE → The profile window).
   invite: { bondMin: string; bondMax: string; probationBlocks: number } | null; // from /status
   canAffordMinBond: boolean;   // the spendable covers the minimum bond
@@ -150,7 +151,7 @@ async function revealImport(field: HTMLElement, handlers: ProfileHandlers, text:
 }
 
 // ---------------------------------------------------------------------------
-// An identity loaded — key, standing, karma, passphrase, export, forget.
+// An identity loaded — key, rep, invites, username, passphrase, export, forget.
 // ---------------------------------------------------------------------------
 
 function loadedState(b: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx, origin: Origin): void {
@@ -163,13 +164,6 @@ function loadedState(b: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx,
     if (!ctx.backedUp) {
       field.appendChild(el('div', 'hint', 'this key lives in this browser only. export it to keep it.'));
     }
-    b.appendChild(r);
-  }
-
-  // standing — the node's word, and a muted line beneath with its numbers.
-  {
-    const { row: r, field } = row('standing');
-    standing(field, ctx.karma, ctx.membershipBars);
     b.appendChild(r);
   }
 
@@ -229,43 +223,6 @@ function loadedState(b: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx,
     field.appendChild(trigger);
     b.appendChild(r);
   }
-}
-
-/** The standing word and its muted numbers line, for a key's own /karma. Shared
- *  with the author window, which reads it for another identity (WEB_INTERFACE →
- *  The author window: "the same function, given another key's KarmaResult"). */
-export function standing(
-  field: HTMLElement,
-  k: KarmaResult | null,
-  bars: { memberBar: number; memberLikesBar: number } | null,
-): void {
-  if (k === null) {
-    field.appendChild(el('span', 'inkmute', '—'));
-    return;
-  }
-  if (k.invitesAvailable === null) {
-    field.appendChild(el('span', 'standing', 'root'));
-    return;
-  }
-  if (k.member) {
-    field.appendChild(el('span', 'standing', 'member'));
-    const line = el('div', 'hint');
-    line.append('since block ', mono(String(k.memberSinceBlock)), ' · ', mono(String(k.invitesAvailable)), ' invites available.');
-    field.appendChild(line);
-    return;
-  }
-  field.appendChild(el('span', 'standing', 'resident'));
-  const vBar = bars?.memberBar ?? k.memberBar;
-  const lBar = bars?.memberLikesBar ?? 0;
-  const line = el('div', 'hint');
-  line.append(
-    "members are made by other members' vouches and likes. this key has ",
-    mono(`${k.memberVouches} of ${vBar}`),
-    ' vouches and ',
-    mono(`${k.memberLikes} of ${lBar}`),
-    ' likes.',
-  );
-  field.appendChild(line);
 }
 
 /** The invites row (WEB_INTERFACE → The profile window): the tier line, the form
@@ -469,14 +426,12 @@ export function renderKarmaField(field: HTMLElement, handlers: ProfileHandlers, 
   field.appendChild(el('span', 'inkmute', 'no rep yet.'));
 }
 
-/** effective karma, or `E effective · T held` when decay has opened a gap — a
- *  client showing the face total would promise karma the next spend does not have. */
+/** The row's label counts what the number counts, so the number stands alone —
+ *  the effective view, the value every sufficiency check on the node reads, never
+ *  the face total (WEB_INTERFACE → The profile window → "The `rep` row is the
+ *  `effective` number alone"). */
 function balance(field: HTMLElement, k: KarmaResult): void {
-  if (k.effective === k.total) {
-    field.append(mono(k.effective), ' rep');
-  } else {
-    field.append(mono(k.effective), ' effective · ', mono(k.total), ' held');
-  }
+  field.append(mono(k.effective));
 }
 
 // Lock and unlock are local to the window — they fire no onChange, so the row

@@ -9,9 +9,9 @@ import type { UsernameResult } from '../src/api/dto';
 const ORIGIN: Origin = { from: 'pane', ci: 0 };
 
 // The @profile window rendered from a fake handlers/ctx (WEB_INTERFACE → The
-// profile window): the two states, the six operations' forms, standing per tier,
-// the karma field's states and the faucet step's three-condition rule. The create
-// form's username value is pinned with the draft split (4c), not here.
+// profile window): the two states, the six operations' forms, no standing row
+// on any tier, the rep row's number, and the faucet step's three-condition rule.
+// The create form's username value is pinned with the draft split (4c), not here.
 
 const KEY = 'ab'.repeat(32);
 const unlocked = { pubKeyHex: KEY, locked: false };
@@ -40,7 +40,7 @@ function handlers(over: Partial<ProfileHandlers> = {}): ProfileHandlers {
 
 function ctx(over: Partial<ProfileCtx> = {}): ProfileCtx {
   return {
-    identity: null, backedUp: false, karma: null, grant: null, membershipBars: null,
+    identity: null, backedUp: false, karma: null, grant: null,
     invite: null, canAffordMinBond: false, bonds: null, inviteFlight: null,
     ownName: null, ownNameLoaded: true, usernameFlight: null, pendingUsername: null, canSignClaim: false, canAffordBurn: false,
     ...over,
@@ -368,51 +368,31 @@ describe('profile window — the forms in place', () => {
   });
 });
 
-describe('profile window — standing per tier', () => {
-  it('root when invitesAvailable is null', () => {
-    const f = rowField(render(handlers(), ctx({ identity: unlocked, karma: karmaResult({ boxCount: 1, invitesAvailable: null }) })), 'standing')!;
-    expect(f.querySelector('.standing')!.textContent).toBe('root');
-  });
-
-  it('member with since-block and invites available', () => {
-    const f = rowField(
-      render(handlers(), ctx({ identity: unlocked, karma: karmaResult({ boxCount: 1, member: true, memberSinceBlock: 5000, invitesAvailable: 3 }) })),
-      'standing',
-    )!;
-    expect(f.querySelector('.standing')!.textContent).toBe('member');
-    expect(f.textContent).toContain('since block');
-    expect(f.textContent).toContain('5000');
-    expect(f.textContent).toContain('3 invites available');
-  });
-
-  it('resident with vouch and like counts against the network bars', () => {
-    const f = rowField(
-      render(
-        handlers(),
-        ctx({
-          identity: unlocked,
-          karma: karmaResult({ boxCount: 1, member: false, memberVouches: 1, memberLikes: '2', invitesAvailable: 0 }),
-          membershipBars: { memberBar: 2, memberLikesBar: 2 },
-        }),
-      ),
-      'standing',
-    )!;
-    expect(f.querySelector('.standing')!.textContent).toBe('resident');
-    expect(f.textContent).toContain('1 of 2');
-    expect(f.textContent).toContain('vouches');
+describe('profile window — no standing row for any tier', () => {
+  it('no standing row for a root, a member or a resident (WEB_INTERFACE → "No window renders standing")', () => {
+    for (const karma of [
+      karmaResult({ boxCount: 1, invitesAvailable: null }),                                            // root
+      karmaResult({ boxCount: 1, member: true, memberSinceBlock: 5000, invitesAvailable: 3 }),          // member
+      karmaResult({ boxCount: 1, member: false, memberVouches: 1, memberLikes: '2', invitesAvailable: 0 }), // resident
+    ]) {
+      const body = render(handlers(), ctx({ identity: unlocked, karma }));
+      expect(rowField(body, 'standing')).toBeNull();
+    }
   });
 });
 
 describe('profile window — the karma field and the faucet step', () => {
-  it('shows the balance when a box is held', () => {
-    const f = rowField(render(handlers(), ctx({ identity: unlocked, karma: karmaResult({ boxCount: 1, total: '227', effective: '227' }) })), 'rep')!;
-    expect(f.textContent).toContain('227 rep');
-  });
-
-  it('shows effective and held when decay has opened a gap', () => {
-    const f = rowField(render(handlers(), ctx({ identity: unlocked, karma: karmaResult({ boxCount: 1, total: '227', effective: '200' }) })), 'rep')!;
-    expect(f.textContent).toContain('200 effective');
-    expect(f.textContent).toContain('227 held');
+  it('the rep row reads the effective number alone, with and without a decay gap (WEB_INTERFACE → "The `rep` row is the `effective` number alone")', () => {
+    // No gap — the row's label says what the number counts, so no unit follows it.
+    const flush = rowField(render(handlers(), ctx({ identity: unlocked, karma: karmaResult({ boxCount: 1, total: '227', effective: '227' }) })), 'rep')!;
+    expect(flush.querySelector('.mono')!.textContent).toBe('227');
+    expect(flush.textContent).toBe('227'); // no ' rep', no ' effective · N held'
+    // A decay gap — still the effective number alone, never `held`.
+    const decayed = rowField(render(handlers(), ctx({ identity: unlocked, karma: karmaResult({ boxCount: 1, total: '227', effective: '200' }) })), 'rep')!;
+    expect(decayed.querySelector('.mono')!.textContent).toBe('200');
+    expect(decayed.textContent).toBe('200');
+    expect(decayed.textContent).not.toContain('held');
+    expect(decayed.textContent).not.toContain('effective');
   });
 
   it('the faucet step shows only with an identity, no karma, and a faucet configured', () => {

@@ -213,15 +213,17 @@ describe('the App profile window — /karma and the faucet grant', () => {
     expect(h.karmaKeys).toContain(KEY);
   });
 
-  it('the standing row reads the tier after the /karma read on open', async () => {
+  it('the rep row reads the effective number after the /karma read on open', async () => {
     const h = harness();
     await h.idn.create('pw');
     await flush();
+    h.setBoxCount(1); // the next /karma read carries the box, so effective is 250
     h.drive.openProfile();
     await flush();
-    // The read re-renders the whole region, so standing updates from ctx.karma
+    // The read re-renders the whole region, so the rep field updates from ctx.karma
     // rather than being left at "—" by a karma-field-only update.
-    expect(document.querySelector('.winbody .standing')?.textContent).toBe('resident');
+    const rep = [...document.querySelectorAll('.winbody .row')].find((r) => r.querySelector('label')?.textContent === 'rep');
+    expect(rep?.querySelector('.field .mono')?.textContent).toBe('250');
   });
 
   it('askFaucet adds a grant entry and starts the poll; the grant lands when a box appears', async () => {

@@ -87,9 +87,9 @@ function bar(k: string, ci: number, focused: boolean, lone: boolean, handlers: H
   } else if (k === '@profile') {
     label.setAttribute('aria-label', 'show this window');
     label.appendChild(el('span', 'name', 'profile'));
-    // The profile window's ↻ re-reads standing and karma
+    // The profile window's ↻ re-reads /karma/:key and the reader's name
     // (WEB_INTERFACE → The profile window).
-    ctl.appendChild(ctlBtn('↻', 'refresh standing and rep', () => handlers.refreshProfile()));
+    ctl.appendChild(ctlBtn('↻', 'refresh rep', () => handlers.refreshProfile()));
   } else if (k === '@settings') {
     label.setAttribute('aria-label', 'show this window');
     label.appendChild(el('span', 'name', 'settings'));
@@ -187,10 +187,8 @@ function authorCtxFrom(key: string, ci: number, ctx: RenderCtx): AuthorCtx {
   return {
     authorKey: key,
     origin: { from: 'pane', ci },
-    karma: d?.karma ?? null,
     endorsers: d?.endorsers ?? null,
     endorsersNext: d?.endorsersNext ?? false,
-    membershipBars: ctx.membershipBars,
     writeEnabled: ctx.writeEnabled,
     ownKey: ctx.ownKey,
     locked: ctx.identity?.locked ?? false,

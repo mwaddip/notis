@@ -1,10 +1,9 @@
 // @vitest-environment happy-dom
 import { describe, it, expect } from 'vitest';
 import { authorBody, authorPostsBody, type AuthorCtx, type AuthorHandlers, type PostsCtx, type PostsHandlers } from '../src/view/author';
-import type { PostJson, KarmaResult } from '../src/api/dto';
+import type { PostJson } from '../src/api/dto';
 import type { FeedState } from '../src/model/state';
 import type { Origin } from '../src/model/workspace';
-import { karmaResult } from './karma-fixture';
 import { contentHashHex } from '../src/integrity';
 
 // The author window and the author-posts window render against narrow ctx/handler
@@ -17,9 +16,6 @@ const ME = 'cd'.repeat(32);
 const E1 = '11'.repeat(32);
 const ORIGIN: Origin = { from: 'pane', ci: 0 };
 
-function memberKarma(over: Partial<KarmaResult> = {}): KarmaResult {
-  return karmaResult({ userId: AUTHOR, member: true, invitesAvailable: 2, memberSinceBlock: 4000, ...over });
-}
 const noHandlers = (): AuthorHandlers & { calls: Record<string, unknown[]> } => {
   const calls: Record<string, unknown[]> = { openAuthor: [], openAuthorPosts: [], vouch: [], unvouch: [], moreEndorsers: [], unlock: [] };
   return {
@@ -37,10 +33,8 @@ function baseCtx(over: Partial<AuthorCtx> = {}): AuthorCtx {
   return {
     authorKey: AUTHOR,
     origin: ORIGIN,
-    karma: memberKarma(),
     endorsers: { vouches: [{ voucherId: E1, targetId: AUTHOR, voucherName: null, targetName: null }], count: 1, next: null },
     endorsersNext: false,
-    membershipBars: { memberBar: 3, memberLikesBar: 6 },
     writeEnabled: true,
     ownKey: ME,
     locked: false,
@@ -53,11 +47,11 @@ function baseCtx(over: Partial<AuthorCtx> = {}): AuthorCtx {
 }
 
 describe('the author window', () => {
-  it('with no identity is the read surface: key, standing, endorsers, no your-vouch row', () => {
+  it('with no identity is the read surface: key, name, endorsers, posts, no your-vouch row', () => {
     const h = noHandlers();
     const b = authorBody(h, baseCtx({ writeEnabled: false, ownKey: null, yourVouch: null }));
     const labels = [...b.querySelectorAll('.row > label')].map((l) => l.textContent);
-    expect(labels).toEqual(['key', 'name', 'standing', 'endorsers', 'posts']);
+    expect(labels).toEqual(['key', 'name', 'endorsers', 'posts']);
     expect(b.querySelector('.vmark')).toBeNull();
     expect(b.querySelector('.row .mono')?.textContent).toBe(AUTHOR);
   });
@@ -179,13 +173,12 @@ describe('the author window', () => {
     expect(nameRow(none).textContent).toContain('no name');
   });
 
-  it('the name row sits between key and standing', () => {
+  it('the rows are key · name · endorsers · your vouch · posts, and no standing row on either window', () => {
     const h = noHandlers();
-    const b = authorBody(h, baseCtx());
-    const labels = [...b.querySelectorAll('.row > label')].map((l) => l.textContent);
-    expect(labels[0]).toBe('key');
-    expect(labels[1]).toBe('name');
-    expect(labels[2]).toBe('standing');
+    const withIdentity = [...authorBody(h, baseCtx()).querySelectorAll('.row > label')].map((l) => l.textContent);
+    expect(withIdentity).toEqual(['key', 'name', 'endorsers', 'your vouch', 'posts']);
+    const withoutIdentity = [...authorBody(h, baseCtx({ writeEnabled: false, ownKey: null, yourVouch: null })).querySelectorAll('.row > label')].map((l) => l.textContent);
+    expect(withoutIdentity).toEqual(['key', 'name', 'endorsers', 'posts']);
   });
 
   it('a locked vouch mounts the unlock under the your-vouch row, then vouches', async () => {

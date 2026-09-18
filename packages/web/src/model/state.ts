@@ -87,14 +87,13 @@ export interface RenderCtx {
   // <postId>:<index in document order> (WEB_INTERFACE → Content).
   expandedImages: ReadonlySet<string>;
   // Profile window (WEB_INTERFACE → The profile window). identity carries the lock
-  // state; karma and membershipBars come from the node; grant is a faucet grant in
-  // flight or one that lapsed. These inline shapes structurally match
-  // view/profile.ts's ProfileCtx, so one contract serves both.
+  // state; karma is the loaded key's /karma; grant is a faucet grant in flight or
+  // one that lapsed. These inline shapes structurally match view/profile.ts's
+  // ProfileCtx, so one contract serves both.
   identity: { pubKeyHex: string; locked: boolean } | null;
   backedUp: boolean;
   karma: KarmaResult | null;
   grant: { state: 'pending' } | { state: 'expired'; atHeight: number } | null;
-  membershipBars: { memberBar: number; memberLikesBar: number } | null;
   // Membership actions (WEB_INTERFACE → The identity display).
   member: boolean;
   // The your-vouch row's state for an identity — the App derives it from the
@@ -149,7 +148,6 @@ export interface RenderCtx {
 
 /** One open author window's reads and flight (WEB_INTERFACE → The author window). */
 export interface AuthorWindowData {
-  karma: KarmaResult | null;
   endorsers: VouchesTargetResult | null;
   endorsersNext: boolean;
   flight: Flight | null;
@@ -202,7 +200,7 @@ export interface Handlers {
   vouch: (key: string) => void;                    // + at once, no confirmation
   unvouch: (key: string) => void;                  // from the author window, the box resolved at the press
   openAuthor: (key: string, origin: Origin) => void;
-  refreshAuthor: (key: string) => void;            // the author window's ↻ — re-reads /karma and the endorsers
+  refreshAuthor: (key: string) => void;            // the author window's ↻ — re-reads the endorsers page and the subject's name
   openAuthorPosts: (key: string, origin: Origin) => void;
   refreshAuthorPosts: (key: string) => void;       // the posts window's ↻ — reports what it did
   authorPostsMore: (key: string) => void;          // the posts window's `more`, following next

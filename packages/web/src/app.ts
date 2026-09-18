@@ -527,7 +527,6 @@ export class App {
       backedUp: this.idm.backedUp(),
       karma: this.profileKarma,
       grant: this.grantView,
-      membershipBars: this.state.status?.membership ?? null,
       member: this.isMember(),
       yourVouch: (key) => this.yourVouchFor(key),
       author: this.authorData,
@@ -2151,7 +2150,7 @@ export class App {
   // ---- the author window and the author-posts window ----
 
   private ensureAuthorData(key: string): string {
-    if (!this.authorData.has(key)) this.authorData.set(key, { karma: null, endorsers: null, endorsersNext: false, flight: null, username: null, usernameLoaded: false });
+    if (!this.authorData.has(key)) this.authorData.set(key, { endorsers: null, endorsersNext: false, flight: null, username: null, usernameLoaded: false });
     return key;
   }
 
@@ -2175,13 +2174,11 @@ export class App {
     const d = this.authorData.get(key);
     if (!d) return;
     try {
-      const [karma, endorsers, username] = await Promise.all([this.client.karma(key), this.client.vouchesByTarget(key), this.client.usernameByOwner(key)]);
-      d.karma = karma;
+      const [endorsers, username] = await Promise.all([this.client.vouchesByTarget(key), this.client.usernameByOwner(key)]);
       d.endorsers = endorsers;
       d.endorsersNext = endorsers.next !== null;
       d.username = username;
       d.usernameLoaded = true;
-      this.bumpTip(karma.height);
     } catch {
       return; // leave the window's last data; the ↻ retries
     }

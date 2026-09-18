@@ -461,7 +461,7 @@ header .spacer { flex: 1 1 auto; }
 .seg .word { color: var(--inkMute); }
 .seg .word[aria-pressed="true"] { color: var(--ink); }
 
-/* ---------- profile window — identity, standing, karma, the forms ---------- */
+/* ---------- profile window — identity, karma, the forms ---------- */
 .winrule { border: 0; border-top: 1px solid var(--border); margin: 6px 0 18px; }
 .mono { font-family: var(--mono); }
 .winbody .inkmute { color: var(--inkMute); }
