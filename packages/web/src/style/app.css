@@ -392,6 +392,33 @@ header .spacer { flex: 1 1 auto; }
   font-size: 12px; color: var(--inkMute); padding: 4px 0; word-break: break-all;
 }
 
+/* The status corner — a dot and the chain's height fixed at the viewport's
+   bottom-right, out of the reading path (WEB_INTERFACE → The status corner). A
+   word-sized control with no box (HOUSE_STYLE → Interaction → "A word is a
+   control, and it wears no box"): no border, no fill, the focus ring. The height
+   is machine data — mono at the small size (HOUSE_STYLE → Typography) — and it
+   never animates (HOUSE_STYLE → Motion → "Numbers never animate"). At one column
+   16px in from both edges is clear of the bar and every control, since the bar
+   sits at the top of each column. */
+.corner {
+  position: fixed; right: 16px; bottom: 16px; z-index: 100;
+  display: inline-flex; align-items: center; gap: 6px;
+  -webkit-appearance: none; appearance: none;
+  background: transparent; border: 0; border-radius: 0;
+  padding: 0; margin: 0;
+  font: inherit; font-size: 11.5px; line-height: 1;
+  color: var(--inkMute); cursor: pointer;
+}
+.corner:focus-visible { outline: 2px solid var(--borderStrong); outline-offset: 2px; }
+.corner .led {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--inkMute); display: inline-block; flex: 0 0 auto;
+}
+.corner .led.fresh { background: var(--greenText); }
+.corner .led.stale { background: var(--clay); }
+.corner .led.down, .corner .led.none { background: var(--inkMute); }
+.corner .tip { color: var(--inkMute); }
+
 /* ---------- window body — the profile window's rows ---------- */
 .winbody { max-width: 660px; }
 .winbody .row { display: flex; align-items: baseline; gap: 8px; margin-bottom: 14px; }
@@ -451,6 +478,16 @@ header .spacer { flex: 1 1 auto; }
 .pf-actions { display: flex; gap: 8px; }
 .pf-refusal { font-size: 11.5px; color: var(--clay); }
 .pf-confirm { display: flex; flex-direction: column; gap: 6px; }
+
+/* The $NOTIS row's send form — the amount and the boxed send share one line,
+   the amount a short field since an amount is never long — 12345.12345678 fits
+   and the row never wraps at the narrowest window (a phone at 390 with the
+   16px gutters). The box is the primary action's, the same the composer's
+   `post` and the feed's `new post` wear (WEB_INTERFACE → The profile window
+   → "The `$NOTIS` row", HOUSE_STYLE → Interaction → "A box marks a commit pair
+   and a surface's primary action"). */
+.credits-form .amount-row { display: flex; gap: 8px; align-items: center; }
+.credits-form .amount-row input { flex: 0 1 12ch; min-width: 8ch; }
 
 /* A card by the loaded key reads · you after the prefix — muted ink, text only, no
    colour, since identity colour may never identify anyone (HOUSE_STYLE → Identity colour). */
@@ -590,6 +627,11 @@ main#prompt .unlock-in-prompt { margin-top: 12px; }
   .ctl:disabled:hover { background: transparent; color: var(--inkMute); }
   .word:not(:disabled):hover { text-decoration: underline; text-underline-offset: 2px; }
   .authorbtn:hover { color: var(--ink); }
+  /* The status corner darkens the ink on hover — the same treatment .authorbtn
+     carries, since the corner is a word control with no box
+     (WEB_INTERFACE → The status corner, HOUSE_STYLE → Interaction). */
+  .corner:hover { color: var(--ink); }
+  .corner:hover .tip { color: var(--ink); }
 }
 
 /* Hit size follows the pointer: on a coarse pointer every control's hit box grows
@@ -618,4 +660,8 @@ main#prompt .unlock-in-prompt { margin-top: 12px; }
   .meta .linkbtn { padding: 10px 0 10px 20px; margin: -10px 0 -10px auto; }
   /* Text fields at 16px so WebKit does not zoom the page on focus. */
   .composer textarea, .composer input, .winbody input { font-size: 16px; }
+  /* The status corner grows its hit box by padding, its right/bottom shrunk by
+     the same amount so the visual content stays anchored 16px from both edges
+     (WEB_INTERFACE → The status corner, HOUSE_STYLE → Interaction). */
+  .corner { right: 6px; bottom: 6px; padding: 10px; }
 }

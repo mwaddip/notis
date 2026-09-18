@@ -309,6 +309,11 @@ Every rule here is a prohibition, and together they are most of what keeps the p
 - **Motion only ever responds to a user action.** Nothing moves on its own — no autoplay, no
   ambient animation, no live-ticking counts, no "12 new posts" banner sliding in. If the feed
   changed, say so and wait.
+- **The one exception is the status corner's tip** (user, 2026-09-17): a dot and the chain's height at the
+  viewport's bottom-right, out of the reading path, read every thirty seconds while the tab is visible, so a
+  reader can glance whether blocks progress. It moves nothing else — no count on a card, no feed refresh, no
+  banner; the number changes in place and never animates, and the dot is its only colour
+  (`WEB_INTERFACE → The status corner`).
 - **No variable-ratio rewards.** Pull-to-refresh is a slot machine lever. Refresh is a button,
   and it reports what it did.
 - **Numbers never animate.** No count-ups on karma or credits. A ticking number is a slot
@@ -366,8 +371,8 @@ it for anything.
   act; the pointer cursor and the focus ring; under `hover: hover` an underline and nothing else. The identity
   prefix set the pattern (`WEB_INTERFACE → The identity display`) and every word follows it. **A box marks a
   commit pair and a surface's primary action** — the composer's `post` and `cancel`, the extension prompt's
-  `sign` and `cancel`, and the feed's `new post` (user, 2026-09-08 and 2026-09-16); the inverse-filled header
-  words are fills, not boxes, and stay.
+  `sign` and `cancel`, the feed's `new post`, and the `$NOTIS` row's `send` (user, 2026-09-08, 2026-09-16 and
+  2026-09-17); the inverse-filled header words are fills, not boxes, and stay.
 - **Nothing is fetched from a third party without the reader's act.** An image, a title, a
   preview — nothing the page renders on its own reaches beyond the origin, because every such
   request tells that party who is reading and when. What a reader chooses to load, they load
