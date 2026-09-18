@@ -368,6 +368,94 @@ describe('profile window — the forms in place', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// The key as a copy control (WEB_INTERFACE → The profile window → "The key is
+// a control, and a press copies it").
+// ---------------------------------------------------------------------------
+
+describe('profile — the key as a copy control', () => {
+  it('the key row holds a button in the word pattern, mono, the whole 64 hex, labelled copy this key', () => {
+    const f = rowField(render(handlers(), ctx({ identity: unlocked })), 'key')!;
+    const btn = f.querySelector('button.key-copy') as HTMLButtonElement;
+    expect(btn).not.toBeNull();
+    expect(btn.classList.contains('word')).toBe(true);
+    expect(btn.classList.contains('mono')).toBe(true);
+    expect(btn.textContent).toBe(KEY);
+    expect(btn.getAttribute('aria-label')).toBe('copy this key');
+    expect(btn.type).toBe('button');
+  });
+
+  it('a press writes the key to the clipboard and appends the muted copied follower; a second press writes nothing (WEB_INTERFACE → The profile window → "The key is a control, and a press copies it")', async () => {
+    const writes: string[] = [];
+    // The fake clipboard resolves; nothing else in this file writes it.
+    const originalClipboard = (navigator as unknown as { clipboard?: unknown }).clipboard;
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: async (t: string) => { writes.push(t); } },
+    });
+    try {
+      const f = rowField(render(handlers(), ctx({ identity: unlocked })), 'key')!;
+      const btn = f.querySelector('button.key-copy') as HTMLButtonElement;
+      btn.click();
+      await flush();
+      expect(writes).toEqual([KEY]);
+      const note = btn.querySelector('.key-copy-note') as HTMLElement;
+      expect(note).not.toBeNull();
+      expect(note.classList.contains('inkmute')).toBe(true);
+      expect(note.textContent).toBe(' copied');
+      // The key still stands in the button — the note is appended, not a replacement.
+      expect(btn.textContent).toBe(KEY + ' copied');
+      // A second press writes nothing new and adds no second note.
+      btn.click();
+      await flush();
+      expect(writes).toEqual([KEY]);
+      expect(f.querySelectorAll('.key-copy-note')).toHaveLength(1);
+    } finally {
+      if (originalClipboard === undefined) delete (navigator as unknown as { clipboard?: unknown }).clipboard;
+      else Object.defineProperty(navigator, 'clipboard', { configurable: true, value: originalClipboard });
+    }
+  });
+
+  it('with no clipboard write, the control is replaced by selectable mono text followed by — copy it by hand', () => {
+    const originalClipboard = (navigator as unknown as { clipboard?: unknown }).clipboard;
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined });
+    try {
+      const f = rowField(render(handlers(), ctx({ identity: unlocked })), 'key')!;
+      const btn = f.querySelector('button.key-copy') as HTMLButtonElement;
+      btn.click();
+      // The button is gone; the mono key and the "— copy it by hand" tail stand in its place.
+      expect(f.querySelector('button.key-copy')).toBeNull();
+      const monoSpan = f.querySelector('.mono') as HTMLElement;
+      expect(monoSpan).not.toBeNull();
+      expect(monoSpan.textContent).toBe(KEY);
+      expect(f.textContent).toContain('— copy it by hand');
+    } finally {
+      if (originalClipboard === undefined) delete (navigator as unknown as { clipboard?: unknown }).clipboard;
+      else Object.defineProperty(navigator, 'clipboard', { configurable: true, value: originalClipboard });
+    }
+  });
+
+  it('a clipboard rejection replaces the control by selectable text (the fallback path)', async () => {
+    const originalClipboard = (navigator as unknown as { clipboard?: unknown }).clipboard;
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: async () => { throw new Error('nope'); } },
+    });
+    try {
+      const f = rowField(render(handlers(), ctx({ identity: unlocked })), 'key')!;
+      const btn = f.querySelector('button.key-copy') as HTMLButtonElement;
+      btn.click();
+      await flush();
+      expect(f.querySelector('button.key-copy')).toBeNull();
+      expect((f.querySelector('.mono') as HTMLElement).textContent).toBe(KEY);
+      expect(f.textContent).toContain('— copy it by hand');
+    } finally {
+      if (originalClipboard === undefined) delete (navigator as unknown as { clipboard?: unknown }).clipboard;
+      else Object.defineProperty(navigator, 'clipboard', { configurable: true, value: originalClipboard });
+    }
+  });
+});
+
 describe('profile window — no standing row for any tier', () => {
   it('no standing row for a root, a member or a resident (WEB_INTERFACE → "No window renders standing")', () => {
     for (const karma of [
@@ -440,14 +528,29 @@ describe('profile window — the karma field and the faucet step', () => {
 const HELD: UsernameResult = { name: 'Alice_01', owner: KEY, boxId: 'dd'.repeat(32), claimedAtBlock: 100 };
 
 describe('profile — the username row', () => {
-  it('the row sits between invites and passphrase', () => {
-    const b = render(handlers(), memberCtx());
-    const labels = [...b.querySelectorAll('.row label')].map((l) => l.textContent);
-    const inv = labels.indexOf('invites');
-    const un = labels.indexOf('username');
-    const pp = labels.indexOf('passphrase');
-    expect(un).toBeGreaterThan(inv);
-    expect(un).toBeLessThan(pp);
+  it('the row sits above key when a name is held, below it otherwise (WEB_INTERFACE → The username row → "A name is claimed and burned from the profile window, in one row whose place follows the name")', () => {
+    // Holding none — the row stands below key.
+    const withoutName = [...render(handlers(), memberCtx()).querySelectorAll('.row label')].map((l) => l.textContent);
+    expect(withoutName).toEqual(['key', 'username', 'rep', 'invites', 'passphrase', 'export', 'forget']);
+    // Holding a name at build time — the row places on top.
+    const withName = [...render(handlers(), memberCtx({ ownName: HELD, canAffordBurn: true })).querySelectorAll('.row label')].map((l) => l.textContent);
+    expect(withName).toEqual(['username', 'key', 'rep', 'invites', 'passphrase', 'export', 'forget']);
+  });
+
+  it('a landing updates the row where it stands and moves no row (HOUSE_STYLE → Motion → "Pending state is the one legitimate unsolicited update, and it pays for itself in geometry")', () => {
+    // Built without a name — the row stands below key.
+    const b = render(handlers(), memberCtx({ canSignClaim: true }));
+    const before = [...b.querySelectorAll('.row label')].map((l) => l.textContent);
+    const usernameField = rowField(b, 'username')!;
+    expect(usernameField.querySelector('form')).not.toBeNull();
+    // A landing renders the row in place with a name held.
+    renderUsernameRow(usernameField, handlers(), memberCtx({ ownName: HELD, canAffordBurn: true }));
+    const after = [...b.querySelectorAll('.row label')].map((l) => l.textContent);
+    // The order is unchanged: the row still stands below key.
+    expect(after).toEqual(before);
+    // The row's content is updated: the form is gone, the handle stands.
+    expect(usernameField.querySelector('form')).toBeNull();
+    expect(usernameField.querySelector('.handle')?.textContent).toBe('@Alice_01');
   });
 
   it('not read yet — muted dash', () => {
@@ -467,10 +570,29 @@ describe('profile — the username row', () => {
     expect(form).not.toBeNull();
     const input = form.querySelector('input') as HTMLInputElement;
     expect(input.getAttribute('aria-label')).toBe('the name to claim');
+    expect(input.placeholder).toBe('a name');
     expect(input.maxLength).toBe(24);
     expect(button(form, 'claim')).not.toBeNull();
     expect(form.textContent).toContain('free, once per key');
     expect(form.textContent).toContain('10 rep');
+  });
+
+  it('the input and the boxed claim share one flex row; claim is btn btn-primary type=submit (WEB_INTERFACE → The username row → "Holding none, nothing pending, a rep box to spend")', () => {
+    const f = rowField(render(handlers(), memberCtx({ canSignClaim: true })), 'username')!;
+    const form = f.querySelector('form') as HTMLFormElement;
+    const nameRow = form.querySelector('.name-row') as HTMLElement;
+    expect(nameRow).not.toBeNull();
+    const input = nameRow.querySelector('input') as HTMLInputElement;
+    const submit = nameRow.querySelector('button') as HTMLButtonElement;
+    expect(input).not.toBeNull();
+    expect(submit.textContent).toBe('claim');
+    expect(submit.type).toBe('submit');
+    expect(submit.classList.contains('btn')).toBe(true);
+    expect(submit.classList.contains('btn-primary')).toBe(true);
+    // The refusal and the rule sentence sit beneath the row (siblings of it in the form).
+    expect(form.children[0]).toBe(nameRow);
+    expect(form.querySelector('.pf-refusal')).not.toBeNull();
+    expect(form.querySelector('.hint')).not.toBeNull();
   });
 
   it('the claim form validates through isValidUsernameBytes and drops a leading @', () => {

@@ -151,23 +151,23 @@ async function revealImport(field: HTMLElement, handlers: ProfileHandlers, text:
 }
 
 // ---------------------------------------------------------------------------
-// An identity loaded — key, rep, invites, username, passphrase, export, forget.
+// An identity loaded — the username row above key when a name is held, below it
+// otherwise, and then rep, invites, passphrase, export, forget.
 // ---------------------------------------------------------------------------
 
 function loadedState(b: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx, origin: Origin): void {
   const id = ctx.identity!;
 
-  // key — the whole 64 hex, mono, selectable; the backup line until the first export.
-  {
-    const { row: r, field } = row('key');
-    field.appendChild(mono(id.pubKeyHex));
-    if (!ctx.backedUp) {
-      field.appendChild(el('div', 'hint', 'this key lives in this browser only. export it to keep it.'));
-    }
-    b.appendChild(r);
-  }
+  // WEB_INTERFACE → The username row → "A name is claimed and burned from the
+  // profile window, in one row whose place follows the name": above key with a
+  // name held, below it otherwise, decided when the window is built. A landing
+  // updates the row in place (renderUsernameRow); the next build — a reopen,
+  // the ↻, a reload — places it (HOUSE_STYLE → Motion).
+  if (ctx.ownName !== null) appendUsernameRow(b, handlers, ctx);
+  appendKeyRow(b, handlers, ctx, id.pubKeyHex);
+  if (ctx.ownName === null) appendUsernameRow(b, handlers, ctx);
 
-  // karma — the balance that spends, the faucet step, or the grant in flight.
+  // rep — the balance that spends, the faucet step, or the grant in flight.
   {
     const { row: r, field } = row('rep');
     field.classList.add('karma-field'); // the App updates this in place when a grant lands
@@ -179,14 +179,6 @@ function loadedState(b: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx,
   {
     const { row: r, field } = row('invites');
     invitesRow(field, handlers, ctx, origin);
-    b.appendChild(r);
-  }
-
-  // username — the claim form or the held name and burn (WEB_INTERFACE → The username row).
-  {
-    const { row: r, field } = row('username');
-    field.classList.add('username-field');
-    usernameRow(field, handlers, ctx);
     b.appendChild(r);
   }
 
@@ -223,6 +215,56 @@ function loadedState(b: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx,
     field.appendChild(trigger);
     b.appendChild(r);
   }
+}
+
+/** WEB_INTERFACE → The profile window → "The key is a control, and a press
+ *  copies it": the whole 64 hex, mono, the labels' size, wrapping by break-all,
+ *  left-aligned, labelled *copy this key*. The press writes the clipboard and
+ *  the word `copied` follows the key, muted, until the window is next built —
+ *  no timer, the copy glyph's pattern (→ Links). Where the clipboard refuses,
+ *  the control is replaced by the key as selectable mono text followed by
+ *  *— copy it by hand*. The backup line stays beneath until the first export. */
+function appendKeyRow(b: HTMLElement, _handlers: ProfileHandlers, ctx: ProfileCtx, pubKeyHex: string): void {
+  const { row: r, field } = row('key');
+  keyCopyControl(field, pubKeyHex);
+  if (!ctx.backedUp) {
+    field.appendChild(el('div', 'hint', 'this key lives in this browser only. export it to keep it.'));
+  }
+  b.appendChild(r);
+}
+
+function keyCopyControl(field: HTMLElement, pubKeyHex: string): void {
+  let copied = false;
+  const btn = el('button', 'word mono key-copy') as HTMLButtonElement;
+  btn.type = 'button';
+  btn.textContent = pubKeyHex;
+  btn.setAttribute('aria-label', 'copy this key');
+  const fallback = (): void => {
+    if (!btn.parentNode) return; // guard against a rejection after the button is gone
+    btn.replaceWith(mono(pubKeyHex), el('span', null, ' — copy it by hand'));
+  };
+  btn.addEventListener('click', () => {
+    if (copied) return;
+    if (typeof navigator.clipboard?.writeText !== 'function') {
+      fallback();
+      return;
+    }
+    navigator.clipboard.writeText(pubKeyHex).then(
+      () => {
+        copied = true;
+        btn.appendChild(el('span', 'key-copy-note inkmute', ' copied'));
+      },
+      fallback,
+    );
+  });
+  field.appendChild(btn);
+}
+
+function appendUsernameRow(b: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx): void {
+  const { row: r, field } = row('username');
+  field.classList.add('username-field');
+  usernameRow(field, handlers, ctx);
+  b.appendChild(r);
 }
 
 /** The invites row (WEB_INTERFACE → The profile window): the tier line, the form
@@ -617,8 +659,16 @@ function claimForm(slot: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx
   (input as HTMLInputElement).autocapitalize = 'off';
   input.spellcheck = false;
 
-  const submit = el('button', 'word', 'claim') as HTMLButtonElement;
+  // HOUSE_STYLE → Interaction → "A box marks a commit pair and a surface's
+  // primary action": `claim` wears the primary-action box, green as the
+  // wallet's `send` (WEB_INTERFACE → The username row → "Holding none, nothing
+  // pending, a rep box to spend").
+  const submit = el('button', 'btn btn-primary', 'claim') as HTMLButtonElement;
   submit.type = 'submit';
+
+  // The input and the boxed claim on one line, the wallet's send-row pattern.
+  const nameRow = el('div', 'name-row');
+  nameRow.append(input, submit);
 
   const refusal = el('div', 'pf-refusal');
   refusal.hidden = true;
@@ -628,7 +678,7 @@ function claimForm(slot: HTMLElement, handlers: ProfileHandlers, ctx: ProfileCtx
     `free, once per key. 1 to 24 letters, digits or _, shown as typed; one name is one name whatever its case. a later burn costs ${USERNAME_BURN_PRICE} rep and restores the claim.`,
   );
 
-  form.append(input, submit, refusal, hint);
+  form.append(nameRow, refusal, hint);
   form.addEventListener('submit', (e) => {
     e.preventDefault();
     let v = input.value.trim();

@@ -506,6 +506,24 @@ header .spacer { flex: 1 1 auto; }
 .credits-form .amount-row { display: flex; gap: 8px; align-items: center; }
 .credits-form .amount-row input { flex: 0 1 12ch; min-width: 8ch; }
 
+/* The username's claim form — the input and the boxed `claim` on one line, the
+   wallet's send-row pattern; the input takes the width since a name is not
+   short (WEB_INTERFACE → The username row → "Holding none, nothing pending, a
+   rep box to spend", HOUSE_STYLE → Interaction → "A box marks a commit pair
+   and a surface's primary action"). */
+.username-form .name-row { display: flex; gap: 8px; align-items: center; }
+.username-form .name-row input { flex: 1 1 auto; min-width: 0; }
+
+/* The key as a copy control (WEB_INTERFACE → The profile window → "The key is
+   a control, and a press copies it"): the whole 64 hex at the labels' size,
+   mono, wrapping by break-all through `.winbody .field .mono`, left-aligned
+   so the wrapped hex reads from the field's edge. The muted `copied` follower
+   stays inside the button until the window is next built — no timer — and
+   never wraps between its letters (HOUSE_STYLE → Motion → "Pending state is
+   the one legitimate unsolicited update"). */
+.key-copy { font-size: 12.5px; text-align: left; }
+.key-copy-note { font-family: var(--sans); color: var(--inkMute); word-break: normal; }
+
 /* A card by the loaded key reads · you after the prefix — muted ink, text only, no
    colour, since identity colour may never identify anyone (HOUSE_STYLE → Identity colour). */
 .you { color: var(--inkMute); }

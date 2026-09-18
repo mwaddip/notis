@@ -244,6 +244,29 @@ describe('app.css — the status corner', () => {
   });
 });
 
+describe('app.css — the key as a copy control', () => {
+  it('.key-copy pins font-size 12.5px and text-align left (WEB_INTERFACE → The profile window → "The key is a control, and a press copies it")', () => {
+    const block = css.match(/\.key-copy\s*\{[^}]*\}/)?.[0];
+    expect(block).toBeDefined();
+    expect(block!).toContain('font-size: 12.5px');
+    expect(block!).toContain('text-align: left');
+  });
+  it('.key-copy-note is inkmute in the sans face and never breaks between its letters', () => {
+    const block = css.match(/\.key-copy-note\s*\{[^}]*\}/)?.[0];
+    expect(block).toBeDefined();
+    expect(block!).toContain('color: var(--inkMute)');
+    expect(block!).toContain('font-family: var(--sans)');
+    expect(block!).toContain('word-break: normal');
+  });
+});
+
+describe('app.css — the username claim form', () => {
+  it('.username-form .name-row is a flex row with the input taking the width (WEB_INTERFACE → The username row → "Holding none, nothing pending, a rep box to spend")', () => {
+    expect(css).toMatch(/\.username-form \.name-row\s*\{[^}]*display: flex/);
+    expect(css).toMatch(/\.username-form \.name-row input\s*\{[^}]*flex: 1 1 auto/);
+  });
+});
+
 describe('fonts.css — the self-hosted italic face', () => {
   it('a second Plus Jakarta Sans @font-face is italic, weight 400 700, its own src', () => {
     const faces = fontsCss.match(/@font-face\s*\{[^}]*\}/g) ?? [];

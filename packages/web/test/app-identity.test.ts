@@ -264,6 +264,32 @@ describe('the App profile window — /karma and the faucet grant', () => {
     expect(h.drive.profileKarma?.boxCount).toBe(1);
   });
 
+  it('a press on the key control inside the mounted profile window copies the loaded key (WEB_INTERFACE → The profile window → "The key is a control, and a press copies it")', async () => {
+    const h = harness();
+    await h.idn.create('pw');
+    await flush();
+    h.drive.openProfile();
+    await flush();
+    const btn = document.querySelector('.winbody .row button.key-copy') as HTMLButtonElement;
+    expect(btn).not.toBeNull();
+    expect(btn.textContent).toBe(KEY);
+    const writes: string[] = [];
+    const originalClipboard = (navigator as unknown as { clipboard?: unknown }).clipboard;
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: async (t: string) => { writes.push(t); } },
+    });
+    try {
+      btn.click();
+      await flush();
+      expect(writes).toEqual([KEY]);
+      expect(btn.querySelector('.key-copy-note')?.textContent).toBe(' copied');
+    } finally {
+      if (originalClipboard === undefined) delete (navigator as unknown as { clipboard?: unknown }).clipboard;
+      else Object.defineProperty(navigator, 'clipboard', { configurable: true, value: originalClipboard });
+    }
+  });
+
   it('a grant expires past its height while still zero', async () => {
     const h = harness();
     await h.idn.create('pw');
