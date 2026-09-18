@@ -147,6 +147,22 @@ describe('settings window — the identity-tint preview', () => {
     off.click();
     expect(setIdTint).toHaveBeenCalledWith('off');
   });
+
+  // WEB_INTERFACE → The settings window → "The identity tint shows what it
+  // sets": the press moves the four words' pressed state in place, so the same
+  // four nodes carry the new aria-pressed after a press.
+  it('a press flips aria-pressed on the SAME four word nodes', () => {
+    prefs.idtint = 'spine';
+    const body = settingsBody(handlers());
+    const field = rowField(body, 'identity tint')!;
+    const before = [...field.querySelectorAll<HTMLButtonElement>('.seg .word')];
+    expect(before.map((w) => w.getAttribute('aria-pressed'))).toEqual(['true', 'false', 'false', 'false']);
+    const off = before.find((w) => w.textContent === 'off')!;
+    off.click();
+    const after = [...field.querySelectorAll<HTMLButtonElement>('.seg .word')];
+    for (let i = 0; i < 4; i++) expect(after[i]).toBe(before[i]);
+    expect(after.map((w) => w.getAttribute('aria-pressed'))).toEqual(['false', 'false', 'false', 'true']);
+  });
 });
 
 describe('settings window — the node row', () => {

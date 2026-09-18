@@ -122,6 +122,34 @@ describe('the App settings control', () => {
     expect(rowAfter.querySelector<HTMLButtonElement>('button.theme-btn')?.textContent).toBe('light');
   });
 
+  // WEB_INTERFACE → The settings window → "The identity tint shows what it
+  // sets": the press moves the four words' pressed state in place and rebuilds
+  // nothing, so the same nodes stand before and after, the pressed word keeps
+  // the keyboard's focus, and :root carries the new data-idtint.
+  it('a tint press rebuilds nothing: same nodes, focus preserved, :root data-idtint updated', async () => {
+    const { appbar, panes } = mount();
+    appbar.querySelector<HTMLElement>('button[aria-label="open settings"]')!.click();
+    await flush();
+    const tintRow = [...panes.querySelectorAll('.winbody .row')]
+      .find((r) => r.querySelector('label')?.textContent === 'identity tint')!;
+    const wordsBefore = [...tintRow.querySelectorAll<HTMLButtonElement>('.seg .word')];
+    const samplesBefore = [...tintRow.querySelectorAll<HTMLElement>('.tint-sample')];
+    expect(wordsBefore).toHaveLength(4);
+    expect(samplesBefore).toHaveLength(2);
+    const off = wordsBefore.find((w) => w.textContent === 'off')!;
+    off.focus();
+    expect(document.activeElement).toBe(off);
+    off.click();
+    await flush();
+    const wordsAfter = [...tintRow.querySelectorAll<HTMLButtonElement>('.seg .word')];
+    const samplesAfter = [...tintRow.querySelectorAll<HTMLElement>('.tint-sample')];
+    for (let i = 0; i < 4; i++) expect(wordsAfter[i]).toBe(wordsBefore[i]);
+    for (let i = 0; i < 2; i++) expect(samplesAfter[i]).toBe(samplesBefore[i]);
+    expect(wordsAfter.map((w) => w.getAttribute('aria-pressed'))).toEqual(['false', 'false', 'false', 'true']);
+    expect(document.activeElement).toBe(off);
+    expect(document.documentElement.getAttribute('data-idtint')).toBe('off');
+  });
+
   it('notis.layout holds @settings after an open, and a fresh App restores the window', async () => {
     const { appbar } = mount();
     appbar.querySelector<HTMLElement>('button[aria-label="open settings"]')!.click();

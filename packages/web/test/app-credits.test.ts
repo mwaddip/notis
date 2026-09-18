@@ -432,6 +432,36 @@ describe('the row after a landed send', () => {
     expect(gold?.textContent).toBe('99');
   });
 
+  // WEB_INTERFACE → The wallet window → "The `send` row": the row stands
+  // while a send's own line stands, so a send of the whole balance still reads
+  // its ending — *sent* visible in a visible row even at zero balance.
+  it('a whole-balance send lands with the send row visible and *sent* readable at zero balance', async () => {
+    const h = harness();
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    await flush();
+    await (h.app as unknown as { openWallet: () => Promise<void> }).openWallet();
+    await flush();
+    // Send the whole balance: 100 $NOTIS = 10_000_000_000 base units.
+    await h.drive.send(REC, 'bob', 10_000_000_000n);
+    await flush();
+    const entry = h.drive.ledger.all().find((e) => e.kind === 'send')!;
+    creditsRecipient = { userId: REC, total: '10000000000', boxes: [{ boxId: entry.send!.boxId, value: '10000000000' }], boxCount: 1, next: null };
+    // The sender's /credits now hold no box — the whole balance is out.
+    creditsSelf = { userId: ME, total: '0', boxes: [], boxCount: 0, next: null };
+    blockHeight = 101;
+    await h.drive.pollTick();
+    await flush();
+    const field = document.querySelector<HTMLElement>('.credits-field')!;
+    const sendRow = field.querySelector<HTMLElement>(':scope > .send-row')!;
+    expect(sendRow.hidden).toBe(false);
+    const flight = document.querySelector<HTMLElement>('.credits-flight');
+    expect(flight?.textContent).toBe('sent');
+    // The balance line reads the zero-branch — no spendable box, no faucet.
+    const gold = document.querySelector<HTMLElement>('.credits-line .mono.gold');
+    expect(gold).toBeNull();
+  });
+
   it('a declined send leaves both inputs holding their values and the flight reads *send not sent.* (READ-1 defect 3)', async () => {
     const h = harness();
     signResp = 'declined';

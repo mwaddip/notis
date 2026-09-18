@@ -76,7 +76,17 @@ export function settingsBody(handlers: SettingsHandlers): HTMLElement {
     for (const v of ID_TINTS) {
       const btn = el('button', 'word', v);
       btn.setAttribute('aria-pressed', prefs.idtint === v ? 'true' : 'false');
-      btn.addEventListener('click', () => handlers.setIdTint(v));
+      btn.addEventListener('click', () => {
+        // The tint follows :root's data-idtint and custom properties
+        // (src/prefs.ts applyIdTint), so the press moves the four words'
+        // pressed state in place and rebuilds nothing — the pressed word
+        // keeps the keyboard's focus (WEB_INTERFACE → The settings window →
+        // "The identity tint shows what it sets").
+        for (const w of seg.querySelectorAll<HTMLButtonElement>('.word')) {
+          w.setAttribute('aria-pressed', w === btn ? 'true' : 'false');
+        }
+        handlers.setIdTint(v);
+      });
       seg.appendChild(btn);
     }
     field.appendChild(seg);

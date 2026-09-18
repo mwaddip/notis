@@ -119,6 +119,38 @@ describe('wallet window — the two states', () => {
     }));
     expect(creditsField(spendable)!.querySelector<HTMLElement>(':scope > .send-row')?.hidden).toBe(false);
   });
+
+  // The `send` row stands while a send's own line stands — its flight, the
+  // pending line, *sent* — so a send of the whole balance still reads its
+  // ending (WEB_INTERFACE → The wallet window → "The `send` row").
+  it('a landed flight with no spendable box keeps the send row visible with *sent*', () => {
+    const c = creditsCtx({ credits: creditsResult(), sendFlight: { stage: 'landed' } });
+    const f = creditsField(render(handlers(), c))!;
+    expect(f.querySelector<HTMLElement>(':scope > .send-row')?.hidden).toBe(false);
+    expect(f.querySelector('.credits-flight')?.textContent).toBe('sent');
+    expect(f.querySelector('form.credits-form')).toBeNull();
+  });
+
+  it('a rejected flight with no spendable box keeps the send row visible', () => {
+    const c = creditsCtx({
+      credits: creditsResult(),
+      sendFlight: { stage: 'rejected', reason: 'send not sent.' },
+    });
+    const f = creditsField(render(handlers(), c))!;
+    expect(f.querySelector<HTMLElement>(':scope > .send-row')?.hidden).toBe(false);
+    expect(f.querySelector('.credits-flight')?.textContent).toContain('send not sent.');
+  });
+
+  it('a rebuild with a pending send and no spendable box shows the send row', () => {
+    const c = creditsCtx({
+      credits: creditsResult(),
+      pendingSend: { toHex: REC, toName: 'bob', amount: 1_250_000_000n },
+    });
+    const f = creditsField(render(handlers(), c))!;
+    expect(f.querySelector<HTMLElement>(':scope > .send-row')?.hidden).toBe(false);
+    expect(f.querySelector('.credits-flight')?.textContent).toBe('12.5 $NOTIS to @bob · submitted');
+    expect(f.querySelector('form.credits-form')).toBeNull();
+  });
 });
 
 

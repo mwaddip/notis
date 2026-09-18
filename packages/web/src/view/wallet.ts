@@ -84,19 +84,17 @@ export function walletBody(handlers: WalletHandlers, ctx: WalletCtx): HTMLElemen
   sendRow.classList.add('send-row');
   sendField.appendChild(el('div', 'credits-form'));
   sendField.appendChild(el('div', 'credits-flight'));
-  sendRow.hidden = true; // updateCredits reveals it when a box is spendable
+  sendRow.hidden = true; // updateCredits sets the row's visibility from one predicate
   field.appendChild(sendRow);
   b.appendChild(field);
-  // updateCredits reads the credits-* slots; sendForm mounts into .credits-form
-  // when a spendable box turns up, and reveals the send row alongside.
+  // sendForm mounts into .credits-form when a spendable box turns up; the row
+  // stands whenever spendable > 0 or a send's line stands, and updateCredits
+  // is the one place that decides.
   const c = ctx.credits;
   if (c !== null) {
     const height = ctx.status?.blockHeight ?? 0;
     const spendable = sumValues(spendableCreditBoxes(c.boxes, height));
-    if (spendable > 0n) {
-      sendForm(field.querySelector('.credits-form') as HTMLElement, handlers, ctx);
-      sendRow.hidden = false;
-    }
+    if (spendable > 0n) sendForm(field.querySelector('.credits-form') as HTMLElement, handlers, ctx);
   }
   updateCredits(field, handlers, ctx);
   return b;
@@ -157,21 +155,15 @@ function updateCredits(field: HTMLElement, handlers: WalletHandlers, ctx: Wallet
   flight.replaceChildren();
 
   const c = ctx.credits;
+  const height = ctx.status?.blockHeight ?? 0;
+  // Spendable at the current tip — WEB_INTERFACE → The wallet. The row and
+  // readCreditContext read one implementation of the rule.
+  const spendable = c === null ? 0n : sumValues(spendableCreditBoxes(c.boxes, height));
+
   if (c === null) {
     line.appendChild(el('span', 'inkmute', '—'));
     formSlot.replaceChildren();
-    toggleSendRow(field, false);
-    return;
-  }
-
-  // Spendable at the current tip — WEB_INTERFACE → The wallet. The row and
-  // readCreditContext read one implementation of the rule.
-  const height = ctx.status?.blockHeight ?? 0;
-  const spendableBoxes = spendableCreditBoxes(c.boxes, height);
-  const spendable = sumValues(spendableBoxes);
-
-  if (spendable > 0n) {
-    toggleSendRow(field, true);
+  } else if (spendable > 0n) {
     // Balance in gold + "$NOTIS"; the locked-hint beneath names only what is
     // above the current height (WEB_INTERFACE → The wallet window).
     line.append(el('span', 'mono gold', formatCredits(spendable)), ' $NOTIS');
@@ -208,7 +200,6 @@ function updateCredits(field: HTMLElement, handlers: WalletHandlers, ctx: Wallet
     }
     // No spendable box means the form has nothing to spend — drop it.
     formSlot.replaceChildren();
-    toggleSendRow(field, false);
   }
 
   // The pending line reads from the ledger — durable across a reload. The row
@@ -229,6 +220,12 @@ function updateCredits(field: HTMLElement, handlers: WalletHandlers, ctx: Wallet
       flight.appendChild(stageLine(ctx.sendFlight));
     }
   }
+
+  // The `send` row stands while a box is spendable, and while a send's own
+  // line stands — its flight, the pending line, *sent* — so a send of the
+  // whole balance still reads its ending (WEB_INTERFACE → The wallet window
+  // → "The `send` row"). One predicate, read here.
+  toggleSendRow(field, spendable > 0n || ctx.pendingSend !== null || ctx.sendFlight !== null);
 }
 
 /** The send form — the recipient (a key or an @handle), the amount ($NOTIS

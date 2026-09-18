@@ -1462,8 +1462,11 @@ export class App {
   }
 
   private changeIdTint(m: IdTint): void {
-    setIdTint(m); // the bars follow the CSS custom properties — no re-render needed
-    this.renderRegionsFor('@settings');
+    // The tint is :root's data-idtint and custom properties (src/prefs.ts
+    // applyIdTint); the seg's own click moves the four words' pressed state in
+    // place (WEB_INTERFACE → The settings window → "The identity tint shows
+    // what it sets"), so no region re-render is owed.
+    setIdTint(m);
   }
 
   private async changeNode(origin: string): Promise<void> {
