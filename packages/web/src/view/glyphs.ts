@@ -1,11 +1,11 @@
-// The interface's three icons — a person for the profile control, the moon on
-// Sand / the sun on Bistre for the theme control, and the copy glyph for the
-// link control on a card. Drawn in the house technique: flat, faceted,
-// straight-edged, a little wobble in the angles, no smooth curves — every shape
-// a polygon, never a circle or an arc (HOUSE_STYLE → Illustration,
-// HOUSE_STYLE → Deliberately not decided, HOUSE_STYLE → Colour → "On a phone
-// the theme control is a sun or a moon", WEB_INTERFACE → The profile window,
-// WEB_INTERFACE → Links).
+// The interface's icons — a person for the profile control, a gear for the
+// settings control, the moon on Sand / the sun on Bistre for the standalone
+// theme control, and the copy glyph for the link control on a card. Drawn in
+// the house technique: flat, faceted, straight-edged, a little wobble in the
+// angles, no smooth curves — every shape a polygon, never a circle or an arc
+// (HOUSE_STYLE → Illustration, HOUSE_STYLE → Deliberately not decided,
+// HOUSE_STYLE → Colour → "On a phone the theme control is a sun or a moon",
+// WEB_INTERFACE → The profile window, WEB_INTERFACE → Links).
 
 const NS = 'http://www.w3.org/2000/svg';
 
@@ -50,6 +50,27 @@ export function sunGlyph(): SVGSVGElement {
 export function moonGlyph(): SVGSVGElement {
   const svg = glyph();
   svg.appendChild(polygon('13,2.8 8,3.4 4.6,6 3.1,10 4.6,14.1 8,16.6 13,17.2 10.2,15.2 8.1,12.2 7.6,10 8.1,7.8 10.2,4.8'));
+  return svg;
+}
+
+/** A gear: eight straight-edged teeth around a faceted hub, no smooth curve
+ *  (HOUSE_STYLE → Illustration). The teeth are wedges — a rectangle with a
+ *  narrower top — placed at the eight compass points; the hub is an irregular
+ *  octagon centred on the box. */
+export function gearGlyph(): SVGSVGElement {
+  const svg = glyph();
+  // Eight teeth in compass order — N, NE, E, SE, S, SW, W, NW.
+  for (const tooth of [
+    '9.2,1.4 10.8,1.4 11.2,4.2 8.8,4.2',
+    '15.1,3.5 16.5,4.9 14.5,6.9 12.8,5.2',
+    '18.6,9.2 18.6,10.8 15.8,11.2 15.8,8.8',
+    '16.5,15.1 15.1,16.5 12.8,14.8 14.5,13.1',
+    '10.8,18.6 9.2,18.6 8.8,15.8 11.2,15.8',
+    '4.9,16.5 3.5,15.1 5.5,13.1 7.2,14.8',
+    '1.4,10.8 1.4,9.2 4.2,8.8 4.2,11.2',
+    '3.5,4.9 4.9,3.5 7.2,5.2 5.5,6.9',
+  ]) svg.appendChild(polygon(tooth));
+  svg.appendChild(polygon('10,6.6 12.5,7.5 13.4,10 12.6,12.4 10,13.4 7.6,12.5 6.6,10 7.5,7.6')); // hub
   return svg;
 }
 

@@ -71,7 +71,6 @@ export interface RenderCtx {
   openSet: Set<string>;
   thread: (id: string) => ThreadState | undefined;
   post: (id: string) => PostJson | undefined;
-  arrangement: string; // the workspace as #r1,r2|r5 text, for @profile
   // The width class — the client shows one column at a time below the breakpoint,
   // the same value as the stylesheet's media query (WEB_INTERFACE → The workspace).
   oneColumn: boolean;
@@ -162,6 +161,7 @@ export interface Handlers {
   refreshFeed: () => void;
   loadOlder: () => void;
   openProfile: () => void;
+  openSettings: () => void; // the header's `settings` control (WEB_INTERFACE → The settings window)
   refreshProfile: () => void; // the @profile window's ↻ re-reads /karma
   // region / window
   focus: (id: string) => void;

@@ -23,10 +23,6 @@ const unlocked = { pubKeyHex: KEY, locked: false };
 
 function handlers(over: Partial<ProfileHandlers> = {}): ProfileHandlers {
   return {
-    setTheme: () => {},
-    setIdTint: () => {},
-    setNode: () => {},
-    setFaucet: () => {},
     inspectFile: async () => ({ kind: 'clear', pubKeyHex: KEY }),
     draftIdentity: async () => ({ pubKeyHex: KEY }),
     createIdentity: async () => {},
@@ -52,7 +48,7 @@ function handlers(over: Partial<ProfileHandlers> = {}): ProfileHandlers {
 
 function ctx(over: Partial<ProfileCtx> = {}): ProfileCtx {
   return {
-    arrangement: '', identity: null, backedUp: false, karma: null, grant: null, membershipBars: null,
+    identity: null, backedUp: false, karma: null, grant: null, membershipBars: null,
     invite: null, canAffordMinBond: false, bonds: null, inviteFlight: null,
     ownName: null, ownNameLoaded: true, usernameFlight: null, pendingUsername: null, canSignClaim: false, canAffordBurn: false,
     status: null, credits: null, creditGrant: null, sendFlight: null, pendingSend: null,
@@ -270,91 +266,16 @@ describe('profile window — the two states', () => {
     expect(asked).toHaveLength(1);
   });
 
-  it('the preference rows — theme, identity tint, node, faucet, arrangement — appear in both states', () => {
+  it('preference rows do not appear in the profile window — they belong to @settings', () => {
+    // WEB_INTERFACE → The profile window: everything the settings window holds
+    // is absent here (WEB_INTERFACE → The settings window). test/settings.test.ts
+    // pins the presence there.
     for (const c of [ctx(), ctx({ identity: unlocked })]) {
       const body = render(handlers(), c);
-      for (const label of ['theme', 'identity tint', 'node', 'faucet', 'arrangement']) {
-        expect(rowField(body, label), label).not.toBeNull();
+      for (const label of ['theme', 'identity tint', 'node', 'faucet', 'sign each rep action', 'arrangement']) {
+        expect(rowField(body, label), label).toBeNull();
       }
     }
-  });
-
-  it('the sign-each-rep-action row is absent when policy/setPolicy are — the in-page module', () => {
-    const body = render(handlers(), ctx());
-    expect(rowField(body, 'sign each rep action')).toBeNull();
-  });
-
-  it('the sign-each-rep-action row renders only when both policy and setPolicy are present — the extension', () => {
-    const p = vi.fn(() => 'silent' as const);
-    const sp = vi.fn(async () => {});
-    const body = render(handlers({ policy: p, setPolicy: sp }), ctx({ identity: unlocked }));
-    const field = rowField(body, 'sign each rep action');
-    expect(field).not.toBeNull();
-    // The seg carries two aria-pressed buttons; silent is pressed.
-    const buttons = [...(field?.querySelectorAll('button') ?? [])];
-    expect(buttons.map((b) => b.textContent?.trim())).toEqual(["don't ask", 'ask']);
-    expect(buttons[0]!.getAttribute('aria-pressed')).toBe('true');
-    expect(buttons[1]!.getAttribute('aria-pressed')).toBe('false');
-    // A press on 'ask' calls setPolicy('ask').
-    buttons[1]!.click();
-    expect(sp).toHaveBeenCalledWith('ask');
-  });
-
-  it('the sign-each-rep-action row shows the new pressed state on the next render', async () => {
-    // policy() carries a mutable state; a re-render after setPolicy resolves
-    // reads the new value — the App does this via renderRegionsFor('@profile').
-    let policy: 'silent' | 'ask' = 'silent';
-    const p = () => policy;
-    const sp = async (v: 'silent' | 'ask'): Promise<void> => { policy = v; };
-    const h = handlers({ policy: p, setPolicy: sp });
-    const first = render(h, ctx({ identity: unlocked }));
-    const firstButtons = [...rowField(first, 'sign each rep action')!.querySelectorAll('button')];
-    firstButtons[1]!.click();
-    await new Promise((r) => setTimeout(r, 0));
-    // A subsequent render reads the fresh policy value.
-    const next = render(h, ctx({ identity: unlocked }));
-    const nextButtons = [...rowField(next, 'sign each rep action')!.querySelectorAll('button')];
-    expect(nextButtons[0]!.getAttribute('aria-pressed')).toBe('false');
-    expect(nextButtons[1]!.getAttribute('aria-pressed')).toBe('true');
-  });
-
-  it('the faucet row without a requestFaucetOrigin handler calls setFaucet directly', async () => {
-    const setFaucet = vi.fn();
-    const body = render(handlers({ setFaucet }), ctx());
-    const field = rowField(body, 'faucet');
-    const input = field!.querySelector('input') as HTMLInputElement;
-    input.value = 'https://faucet.example';
-    input.dispatchEvent(new Event('change'));
-    await new Promise((r) => setTimeout(r, 0));
-    expect(setFaucet).toHaveBeenCalledWith('https://faucet.example');
-  });
-
-  it('the faucet row with a requestFaucetOrigin handler requests permission first; a refusal reports and does not store', async () => {
-    const setFaucet = vi.fn();
-    const requestFaucetOrigin = vi.fn(async () => false);
-    const body = render(handlers({ setFaucet, requestFaucetOrigin }), ctx());
-    const field = rowField(body, 'faucet')!;
-    const input = field.querySelector('input') as HTMLInputElement;
-    input.value = 'https://faucet.example';
-    input.dispatchEvent(new Event('change'));
-    await new Promise((r) => setTimeout(r, 0));
-    expect(requestFaucetOrigin).toHaveBeenCalledWith('https://faucet.example');
-    expect(setFaucet).not.toHaveBeenCalled();
-    // The hint names the refusal.
-    expect(field.querySelector('.hint')?.textContent).toBe('the browser refused access to that origin.');
-  });
-
-  it('the faucet row with a granted requestFaucetOrigin then stores', async () => {
-    const setFaucet = vi.fn();
-    const requestFaucetOrigin = vi.fn(async () => true);
-    const body = render(handlers({ setFaucet, requestFaucetOrigin }), ctx());
-    const field = rowField(body, 'faucet')!;
-    const input = field.querySelector('input') as HTMLInputElement;
-    input.value = 'https://faucet.example';
-    input.dispatchEvent(new Event('change'));
-    await new Promise((r) => setTimeout(r, 0));
-    expect(requestFaucetOrigin).toHaveBeenCalledWith('https://faucet.example');
-    expect(setFaucet).toHaveBeenCalledWith('https://faucet.example');
   });
 });
 

@@ -1,5 +1,5 @@
 import { el, shortHex } from '../dom';
-import { prefs, BUILD_BASE, BUILD_FAUCET_BASE, type Theme, type IdTint } from '../prefs';
+import { prefs } from '../prefs';
 import { unlockForm, setPassphraseForm } from './passphrase';
 import { stageLine, type Flight } from './card';
 import { INVITE_BOND_VEST_PER_LIKES, USERNAME_BURN_PRICE, isValidUsernameBytes } from '@dagsocial/types';
@@ -9,13 +9,13 @@ import type { KarmaResult, BondsResult, CreditsResult, StatusResult, UsernameRes
 import type { Origin } from '../model/workspace';
 
 // The @profile window — WEB_INTERFACE → The profile window. Identity, standing,
-// karma and the faucet step, with the preference rows folded in from the settings
-// window, in the .winbody/.row/label/.field pattern. No avatar and no identity
-// colour: nothing here may invite a reader to check identity by colour
-// (HOUSE_STYLE → Identity colour). The six operations are forms in place; each is a
-// real <form> the browser's password manager can save from (→ passphrase.ts). The
-// copy is the voice register (HOUSE_STYLE → Voice): what happens, never at the
-// reader's expense, lowercase.
+// karma and the faucet step, in the .winbody/.row/label/.field pattern. Every
+// preference lives in the settings window (WEB_INTERFACE → The settings window).
+// No avatar and no identity colour: nothing here may invite a reader to check
+// identity by colour (HOUSE_STYLE → Identity colour). The six operations are
+// forms in place; each is a real <form> the browser's password manager can save
+// from (→ passphrase.ts). The copy is the voice register (HOUSE_STYLE → Voice):
+// what happens, never at the reader's expense, lowercase.
 //
 // The window declares the narrow shapes it reads and calls; the App's RenderCtx and
 // Handlers satisfy them structurally, so there is one contract, not two.
@@ -29,11 +29,6 @@ export type GrantView = { state: 'pending' } | { state: 'expired'; atHeight: num
 export type ResolvedRecipient = { key: string; name: string | null };
 
 export interface ProfileHandlers {
-  // preferences, folded in from the settings window
-  setTheme: (t: Theme) => void;
-  setIdTint: (m: IdTint) => void;
-  setNode: (origin: string) => void;
-  setFaucet: (origin: string) => void;
   // identity operations
   inspectFile: (text: string) => Promise<{ kind: 'clear' | 'encrypted'; pubKeyHex: string }>;
   draftIdentity: () => Promise<{ pubKeyHex: string }>; // a key held before the passphrase, so the form names it
@@ -58,17 +53,9 @@ export interface ProfileHandlers {
   resolveRecipient: (text: string) => Promise<ResolvedRecipient | { refusal: string }>;
   send: (toHex: string, toName: string | null, amount: bigint) => void;
   askFaucetCredits: () => void;
-  // The extension's binary sign policy (WEB_INTERFACE → The profile window).
-  // Defined only in the extension build; the row renders only when both are set.
-  policy?: () => 'silent' | 'ask';
-  setPolicy?: (p: 'silent' | 'ask') => Promise<void>;
-  // The extension's faucet-origin permission gate — the `set` on the faucet row
-  // requests it from the press. Defined only in the extension build.
-  requestFaucetOrigin?: (origin: string) => Promise<boolean>;
 }
 
 export interface ProfileCtx {
-  arrangement: string; // the workspace as #r1,r2|r5 text
   identity: { pubKeyHex: string; locked: boolean } | null;
   backedUp: boolean;
   karma: KarmaResult | null; // the loaded key's /karma, once read
@@ -103,8 +90,6 @@ export interface ProfileCtx {
   confirmInRow: boolean;
 }
 
-const ID_TINTS: IdTint[] = ['spine', 'wash', 'both', 'off'];
-
 function row(label: string): { row: HTMLElement; field: HTMLElement } {
   const r = el('div', 'row');
   r.appendChild(el('label', null, label));
@@ -121,8 +106,6 @@ export function profileBody(handlers: ProfileHandlers, ctx: ProfileCtx, origin: 
   const b = el('div', 'winbody');
   if (ctx.identity === null) emptyState(b, handlers);
   else loadedState(b, handlers, ctx, origin);
-  b.appendChild(el('hr', 'winrule'));
-  for (const r of preferenceRows(handlers, ctx)) b.appendChild(r);
   return b;
 }
 
@@ -1154,105 +1137,3 @@ function burnConfirm(line: HTMLElement, handlers: ProfileHandlers, ctx: ProfileC
   line.addEventListener('keydown', onEscape);
 }
 
-// ---------------------------------------------------------------------------
-// The preferences — theme, identity tint, node, faucet, arrangement.
-// ---------------------------------------------------------------------------
-
-export function preferenceRows(handlers: ProfileHandlers, ctx: ProfileCtx): HTMLElement[] {
-  const rows: HTMLElement[] = [];
-
-  // Theme — the control names and shows the theme it would switch TO, never the
-  // one already active (HOUSE_STYLE → Colour), styled as the inverse ground.
-  {
-    const { row: r, field } = row('theme');
-    const target = prefs.theme === 'dark' ? 'light' : 'dark';
-    const btn = el('button', 'theme-btn', target);
-    btn.setAttribute('aria-label', `switch to ${target} theme`);
-    btn.addEventListener('click', () => handlers.setTheme(target));
-    field.appendChild(btn);
-    rows.push(r);
-  }
-
-  // Identity tint — spine / wash / both / off, defaulting to spine.
-  {
-    const { row: r, field } = row('identity tint');
-    const seg = el('div', 'seg');
-    for (const v of ID_TINTS) {
-      const btn = el('button', 'word', v);
-      btn.setAttribute('aria-pressed', prefs.idtint === v ? 'true' : 'false');
-      btn.addEventListener('click', () => handlers.setIdTint(v));
-      seg.appendChild(btn);
-    }
-    field.appendChild(seg);
-    field.appendChild(el('div', 'hint', 'the 4px edge on a title bar, from the author key. never an identifier.'));
-    rows.push(r);
-  }
-
-  // Node — the effective base; any origin works (NODE_INTERFACE → Cross-origin requests).
-  {
-    const { row: r, field } = row('node');
-    const input = el('input') as HTMLInputElement;
-    input.value = prefs.node;
-    input.placeholder = BUILD_BASE || 'same-origin (default)';
-    input.setAttribute('aria-label', 'the node this client reads');
-    input.addEventListener('change', () => handlers.setNode(input.value));
-    field.appendChild(input);
-    field.appendChild(el('div', 'hint', 'blank resets to the build default. any origin works: the node answers every origin.'));
-    rows.push(r);
-  }
-
-  // Faucet — the same shape as node; empty means no faucet and no button. In
-  // the extension the `set` requests host permission for the origin (a user
-  // gesture, as the API requires); denied, the row's hint names the refusal
-  // and the preference is not stored (WEB_INTERFACE → The profile window).
-  {
-    const { row: r, field } = row('faucet');
-    const input = el('input') as HTMLInputElement;
-    input.value = prefs.faucet;
-    input.placeholder = BUILD_FAUCET_BASE || 'none';
-    input.setAttribute('aria-label', 'the faucet this client asks for rep');
-    const hint = el('div', 'hint', 'blank uses the build default. a foreign origin fails: the faucet answers its own origin only.');
-    input.addEventListener('change', () => void (async () => {
-      const value = input.value.trim();
-      if (value !== '' && handlers.requestFaucetOrigin) {
-        const granted = await handlers.requestFaucetOrigin(value);
-        if (!granted) {
-          hint.textContent = 'the browser refused access to that origin.';
-          return;
-        }
-      }
-      handlers.setFaucet(input.value);
-    })());
-    field.appendChild(input);
-    field.appendChild(hint);
-    rows.push(r);
-  }
-
-  // The extension's binary sign policy — visible only when both hooks are
-  // present (the in-page module implements neither). *sign each rep action*
-  // controls whether karma writes prompt (WEB_INTERFACE → The profile window).
-  if (handlers.policy && handlers.setPolicy) {
-    const { row: r, field } = row('sign each rep action');
-    const current = handlers.policy();
-    const seg = el('div', 'seg');
-    for (const [label, value] of [['don\'t ask', 'silent'], ['ask', 'ask']] as const) {
-      const btn = el('button', 'word', label);
-      btn.setAttribute('aria-pressed', current === value ? 'true' : 'false');
-      btn.addEventListener('click', () => { void handlers.setPolicy?.(value); });
-      seg.appendChild(btn);
-    }
-    field.appendChild(seg);
-    field.appendChild(el('div', 'hint', 'sending $NOTIS always asks. rep is silent while unlocked unless you ask.'));
-    rows.push(r);
-  }
-
-  // Arrangement — the workspace as the #r1,r2|r5 text, readable and copyable.
-  {
-    const { row: r, field } = row('arrangement');
-    const text = ctx.arrangement;
-    field.appendChild(el('div', text ? 'arr' : 'arr empty', text || '(no windows open)'));
-    rows.push(r);
-  }
-
-  return rows;
-}

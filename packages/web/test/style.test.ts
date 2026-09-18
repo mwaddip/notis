@@ -97,7 +97,7 @@ describe('app.css — touch by the pointer', () => {
     expect(coarse).not.toBe('');
     for (const sel of [
       '.ctl', '.feed-head .ctl', '.bar', '.meta', '.stage', '.karma-field',
-      '.btn', '.theme-btn',
+      '.btn', '.theme-btn', '.hdr-word',
       '.composer-foot select', '.word', '.authorbtn', '.composer textarea', '.composer input', '.winbody input',
     ]) {
       expect(coarse).toContain(sel);
@@ -119,6 +119,15 @@ describe('app.css — the one-column header', () => {
   });
   it('the base header .ctl.none reserves its space at tiling', () => {
     expect(css).toMatch(/header \.ctl\.none \{[^}]*visibility: hidden/);
+  });
+  it('.hdr-word wears the outlined ghost look — transparent, ink, borderStrong', () => {
+    // The tiling profile and settings words share one class: outlined, transparent,
+    // beside the filled theme word (HOUSE_STYLE → Colour, → Interaction).
+    const blocks = css.match(/\.hdr-word\s*\{[^}]*\}/g) ?? [];
+    const base = blocks.find((b) => b.includes('background: transparent'));
+    expect(base).toBeDefined();
+    expect(base!).toContain('color: var(--ink)');
+    expect(base!).toContain('border: 1px solid var(--borderStrong)');
   });
 });
 

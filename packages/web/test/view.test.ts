@@ -165,23 +165,28 @@ describe('the bar carries the handle where the root row carries a name', () => {
 interface WidthDrive { onWidthClassChange(matches: boolean): void; }
 
 describe('the header at one column', () => {
-  it('the two controls are SVG glyph buttons with the labels, no .theme-btn, the arrows carry none', () => {
+  it('the profile and settings controls are SVG glyph buttons; no theme control, no .theme-btn', () => {
     const { app, appbar } = mountApp();
     (app as unknown as WidthDrive).onWidthClassChange(true); // cross the breakpoint
 
-    // No word buttons at one column — the two controls are glyphs
-    // (WEB_INTERFACE → The workspace → "What differs at one column, and nothing else does").
+    // No word buttons at one column — the workspace controls are glyphs, and
+    // no theme control renders here (WEB_INTERFACE → The workspace →
+    // "What differs at one column, and nothing else does"; → The settings
+    // window: the theme is the settings window's first row).
     expect(appbar.querySelectorAll('.theme-btn').length).toBe(0);
+    expect(appbar.querySelector('button[aria-label^="switch to "]')).toBeNull();
 
-    // The profile control is a person glyph, the theme control the moon (Sand) or
-    // the sun (Bistre); each a .hdr-glyph button holding one svg, with the label the
-    // word carries. happy-dom keeps createElementNS svgs queryable (test/mark.test.ts).
+    // The profile control is a person glyph, the settings control a gear; each
+    // a .hdr-glyph button holding one svg, with the label the word carries.
+    // happy-dom keeps createElementNS svgs queryable (test/mark.test.ts).
     const profile = appbar.querySelector<HTMLElement>('button[aria-label="open profile"]')!;
-    const theme = appbar.querySelector<HTMLElement>('button[aria-label^="switch to "]')!;
+    const settings = appbar.querySelector<HTMLElement>('button[aria-label="open settings"]')!;
     expect(profile.classList.contains('hdr-glyph')).toBe(true);
-    expect(theme.classList.contains('hdr-glyph')).toBe(true);
+    expect(settings.classList.contains('hdr-glyph')).toBe(true);
     expect(profile.querySelectorAll('svg').length).toBe(1);
-    expect(theme.querySelectorAll('svg').length).toBe(1);
+    expect(settings.querySelectorAll('svg').length).toBe(1);
+    // The two glyphs are the only header controls between the arrows.
+    expect(appbar.querySelectorAll('.hdr-glyph').length).toBe(2);
 
     // An empty workspace has nothing either way, so both arrows carry `none`
     // (the stylesheet makes it absent at one column, space-reserved at tiling).

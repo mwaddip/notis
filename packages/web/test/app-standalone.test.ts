@@ -159,7 +159,7 @@ describe('standalone mode', () => {
 });
 
 describe('standalone header', () => {
-  it('has the brand, add to workspace, the theme control, no arrows, no profile', () => {
+  it('has the brand, add to workspace, the theme control, no arrows, no window controls', () => {
     const { appbar, feed, panes } = mountShell();
     const app = new App(fakeApi());
     app.mount(appbar, feed, panes, { kind: 'standalone', id: P1, base: '/' });
@@ -170,7 +170,11 @@ describe('standalone header', () => {
     expect(wayIn).toBeTruthy();
     expect(wayIn?.textContent).toBe('add to workspace');
     expect(appbar.querySelectorAll('.ctl').length).toBe(0);
+    // No workspace-window controls: WEB_INTERFACE → The standalone thread —
+    // creating, importing, exporting and forgetting an identity are the
+    // workspace's; there is no profile, no wallet, no settings here.
     expect(appbar.querySelector('[aria-label="open profile"]')).toBeNull();
+    expect(appbar.querySelector('[aria-label="open settings"]')).toBeNull();
   });
 
   it('the way-in is theme-btn at wide width and btn-ghost at one column', () => {

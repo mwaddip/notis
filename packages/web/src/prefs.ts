@@ -106,7 +106,7 @@ export function removeStore(key: string): void {
  *  the stored preference ?? the first entry of the build's seed list ?? the
  *  same-origin `notis-api` (WEB_INTERFACE → "The client is served from the
  *  node's own origin"). When none can serve, the App reports it and asks the
- *  reader to set one in `@profile`. */
+ *  reader to set one in the settings window. */
 function initialNode(): string {
   const stored = readStore(KEY_NODE);
   if (stored) return stored;

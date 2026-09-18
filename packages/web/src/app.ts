@@ -9,7 +9,7 @@ import { prefs, setTheme, setIdTint, setNode, setFaucet, writeStore, readStore, 
 import { renderFeedInto, replaceFeedCard } from './view/feed';
 import { renderPanesInto, renderRegionElement, renderBars } from './view/panes';
 import { makeComposer, type ComposerController } from './view/composer';
-import { personGlyph, sunGlyph, moonGlyph } from './view/glyphs';
+import { personGlyph, sunGlyph, moonGlyph, gearGlyph } from './view/glyphs';
 import { MARK } from './view/mark';
 import { serialise, parse, authorWindowId, postsWindowId, windowSubject } from './model/arrangement';
 import { reconcileNewer, isLivePost } from './model/feed-reconcile';
@@ -283,6 +283,7 @@ export class App {
       refreshFeed: () => void this.refreshFeed(),
       loadOlder: () => void this.loadOlder(),
       openProfile: () => this.openProfile(),
+      openSettings: () => this.openSettings(),
       refreshProfile: () => void this.refreshProfileKarma(),
       focus: (id) => this.focus(id),
       refreshThread: (id) => void this.refreshThread(id),
@@ -338,7 +339,7 @@ export class App {
       ...(this.idm.policy && this.idm.setPolicy
         ? {
             policy: () => this.idm.policy!(),
-            setPolicy: async (p) => { await this.idm.setPolicy!(p); this.renderRegionsFor('@profile'); },
+            setPolicy: async (p) => { await this.idm.setPolicy!(p); this.renderRegionsFor('@settings'); },
           }
         : {}),
       ...(this.requestFaucetOrigin
@@ -508,7 +509,6 @@ export class App {
       openSet: openSet(this.state.workspace),
       thread: (id) => this.state.threads.get(id),
       post: (id) => this.state.posts.get(id),
-      arrangement: serialise(this.state.workspace),
       oneColumn: this.oneColumn,
       standalone: this.standalone,
       writeEnabled: cur !== null,
@@ -619,16 +619,14 @@ export class App {
     bar.appendChild(brand);
     bar.appendChild(el('span', 'spacer'));
 
-    // The profile and theme controls. The theme control names and shows the theme
-    // it would switch TO (HOUSE_STYLE → Colour); the profile control shows a person
-    // or the key prefix. At one column both are glyphs at the header's control
-    // size — a person, and the moon on Sand / the sun on Bistre — inline SVG in
-    // currentColor drawn in the house technique, the same for every reader and for
-    // none since the window says who (WEB_INTERFACE → The profile window,
-    // HOUSE_STYLE → Colour → "On a phone the theme control is a sun or a moon",
-    // HOUSE_STYLE → Illustration). At tiling they are words: 'profile' or the key
-    // prefix in mono, and the theme's word; no avatar, no identity colour
-    // (WEB_INTERFACE → The profile window; HOUSE_STYLE → Identity colour).
+    // The profile, settings and theme controls. At one column the workspace
+    // carries no theme control — the theme is the settings window's first row
+    // (WEB_INTERFACE → The workspace, → The settings window); the two glyphs are
+    // a person and a gear, inline SVG in currentColor drawn in the house
+    // technique (HOUSE_STYLE → Illustration). At tiling `profile` and `settings`
+    // wear one outlined class — .hdr-word — beside the filled `theme` word; no
+    // avatar and no identity colour (WEB_INTERFACE → The profile window;
+    // HOUSE_STYLE → Identity colour).
     const target: Theme = prefs.theme === 'dark' ? 'light' : 'dark';
     if (this.oneColumn) {
       const profile = el('button', 'hdr-glyph');
@@ -637,17 +635,14 @@ export class App {
       profile.addEventListener('click', () => this.openProfile());
       bar.appendChild(profile);
 
-      const theme = el('button', 'hdr-glyph');
-      theme.setAttribute('aria-label', `switch to ${target} theme`);
-      theme.appendChild(target === 'dark' ? moonGlyph() : sunGlyph());
-      theme.addEventListener('click', () => this.changeTheme(target));
-      bar.appendChild(theme);
+      const settings = el('button', 'hdr-glyph');
+      settings.setAttribute('aria-label', 'open settings');
+      settings.appendChild(gearGlyph());
+      settings.addEventListener('click', () => this.openSettings());
+      bar.appendChild(settings);
     } else {
       const cur = this.idm.current();
-      const profile = el('button', 'theme-btn');
-      profile.style.background = 'transparent';
-      profile.style.color = 'var(--ink)';
-      profile.style.border = '1px solid var(--borderStrong)';
+      const profile = el('button', 'hdr-word');
       if (cur === null) {
         profile.textContent = 'profile';
       } else if (this.ownName) {
@@ -660,6 +655,11 @@ export class App {
       profile.setAttribute('aria-label', 'open profile');
       profile.addEventListener('click', () => this.openProfile());
       bar.appendChild(profile);
+
+      const settings = el('button', 'hdr-word', 'settings');
+      settings.setAttribute('aria-label', 'open settings');
+      settings.addEventListener('click', () => this.openSettings());
+      bar.appendChild(settings);
 
       const theme = el('button', 'theme-btn', target);
       theme.setAttribute('aria-label', `switch to ${target} theme`);
@@ -1061,7 +1061,7 @@ export class App {
           return;
         }
         feed.loading = false;
-        feed.error = 'no node answered — set one in @profile';
+        feed.error = 'no node answered — set one in settings';
       } else {
         feed.loading = false;
         feed.error = msg(e);
@@ -1241,6 +1241,19 @@ export class App {
     this.moveView('@profile');
   }
 
+  private openSettings(): void {
+    // No node read is owed: the settings window is preferences only
+    // (WEB_INTERFACE → The settings window).
+    const res = openWindow(this.state.workspace, '@settings', { from: 'feed' });
+    this.saveLayout();
+    if (res.raised) {
+      this.renderRegion(res.column.uid);
+    } else {
+      this.renderPanes();
+    }
+    this.moveView('@settings');
+  }
+
   private focus(id: string): void {
     const column = focusWindow(this.state.workspace, id);
     if (column) {
@@ -1394,12 +1407,12 @@ export class App {
   private changeTheme(t: Theme): void {
     setTheme(t);
     this.renderHeader();
-    this.renderRegionsFor('@profile');
+    this.renderRegionsFor('@settings');
   }
 
   private changeIdTint(m: IdTint): void {
     setIdTint(m); // the bars follow the CSS custom properties — no re-render needed
-    this.renderRegionsFor('@profile');
+    this.renderRegionsFor('@settings');
   }
 
   private async changeNode(origin: string): Promise<void> {
@@ -1407,7 +1420,7 @@ export class App {
     // Everything loaded came from the old node; drop it and re-read.
     this.state.threads.clear();
     this.state.posts.clear();
-    this.renderRegionsFor('@profile');
+    this.renderRegionsFor('@settings');
     this.renderPanes();
     await this.loadFeed();
     for (const id of openSet(this.state.workspace)) if (!isWin(id)) void this.fetchThread(id);
@@ -1415,7 +1428,11 @@ export class App {
 
   private changeFaucet(origin: string): void {
     setFaucet(origin);
-    this.renderRegionsFor('@profile'); // the faucet row shows the new base, the step its availability
+    // The @settings row shows the new base; the @profile rep step and the
+    // wallet's $NOTIS step read `prefs.faucet` to decide whether to render
+    // "ask the faucet" (WEB_INTERFACE → The faucet step).
+    this.renderRegionsFor('@settings');
+    this.renderRegionsFor('@profile');
   }
 
   // -------------------------------------------------------------------------
