@@ -85,9 +85,6 @@ glyphs open the three windows, and the theme is the settings window's first row 
 (`WEB_INTERFACE → The profile window`) and the card's copy glyph (`WEB_INTERFACE → Links`), it is one of the
 five icons the interface carries; the rulings open iconography nowhere else (→ Deliberately not decided).
 
-> ⚠ **AHEAD OF CODE (2026-09-18, the three windows)** — the workspace's phone header carries two glyphs, a person
-> and a gear; no wallet glyph exists.
-
 ### Light — Sand
 
 | Token | Value | vs ground | Role |
@@ -382,9 +379,6 @@ it for anything.
   `sign` and `cancel`, the feed's `new post`, the wallet's `send` and the username row's `claim` (user,
   2026-09-08, 2026-09-16, 2026-09-17 and 2026-09-18); the inverse-filled header words are fills, not boxes, and
   stay.
-
-  > ⚠ **AHEAD OF CODE (2026-09-18, the three windows)** — the profile's key is selectable text, `claim` is a word,
-  > and `send` is a row of the profile window.
 - **Nothing is fetched from a third party without the reader's act.** An image, a title, a
   preview — nothing the page renders on its own reaches beyond the origin, because every such
   request tells that party who is reading and when. What a reader chooses to load, they load

@@ -13,7 +13,8 @@ a phone, touch sizes by the pointer — and the **standalone thread** — a post
 the way into the workspace, `link` on a card — and the **username surface** — the claim and the burn from the
 `@profile` window, the handle `@Name` where a row carries a name — and the **extension** — the same client as
 the extension's own page, the key held by the extension's background, credits signed by hand and rep silently
-(→ The extension) — are implemented
+(→ The extension) — and the **three windows** — `@profile`, `@wallet` and `@settings`, a header control for each
+(→ The profile window, → The wallet window, → The settings window) — are implemented
 **Protocol version:** read from the node, never held — see Invariants
 
 
@@ -67,9 +68,6 @@ transactions the browser builds and signs. The identity interface — the `@prof
 and the faucet's two steps — is stated below (→ The identity module, → The profile window, → The faucet step);
 the name's row is its own section (→ The username row), and everything `$NOTIS` is the wallet window's
 (→ The wallet window).
-
-> ⚠ **AHEAD OF CODE (2026-09-18, the three windows)** — the preference rows and the `$NOTIS` row are rows of the
-> `@profile` window; no `@settings` and no `@wallet` window exists.
 
 **With no identity loaded, the client is the read surface exactly.** No `new post`, no `↩ reply`, no
 `like`, no `viewer` parameter. The way in is `create` or `import` in the `@profile` window (→ The
@@ -144,9 +142,6 @@ server's proxy, in production by whatever fronts the node — and the `node` pre
 shell's `notis-faucet` value is a path on that origin — and the extension, whose value is an absolute base, asks
 the browser for that host at the press (→ The faucet step). The rule is the faucet's, for its rate limit's sake
 (`NODE_INTERFACE → Faucet`).
-
-> ⚠ **AHEAD OF CODE (2026-09-18, the three windows)** — a `faucet` preference row overrides the shell's value in
-> both builds, and its hint says a foreign origin fails.
 
 **The client ships as its own product.** `vite build` makes it a static bundle, served by whatever fronts
 the node; the node's own distributables carry no client (`NODE_INTERFACE → The node serves no client`).
@@ -272,9 +267,6 @@ origin (`NODE_INTERFACE → Cross-origin requests`) and an extension page fetche
 (`NODE_INTERFACE → Faucet`) and an extension context bypasses CORS only for a host it was granted, so the
 `ask the faucet` press requests it before the request leaves (→ The faucet step). No `update_url`.
 
-> ⚠ **AHEAD OF CODE (2026-09-18, the three windows)** — the permission is requested by the `faucet` preference
-> row's `set`, for an origin the reader types, and the preference is stored only when granted.
-
 **The manifest** is one template and two emitted files. Common: Manifest V3, the repository's version,
 the action with no popup, the permissions above, the mark at 16, 32, 48 and 128 px as PNG
 (`HOUSE_STYLE → Where the artwork lives`: the files are tracked, the pipeline is not). Chrome: a
@@ -289,8 +281,6 @@ client is served from the node's own origin): `notis-nodes`, testnet `["https://
 `[]` until there is one; and `notis-faucet`, testnet `https://notis.fun/testnet/faucet`, mainnet empty —
 `VITE_FAUCET_BASE` overriding it as `VITE_NODES` overrides the list. They live in the extension's build
 configuration, never in `@dagsocial/types`.
-
-> ⚠ **AHEAD OF CODE (2026-09-18, the three windows)** — the extension build's `notis-faucet` is empty.
 
 **The policy.** The ledger a transaction moves is read from its outputs: **any output with `boxType`
 `credit` or `fee` is a credits transaction; otherwise karma.** Inputs are ids only
@@ -415,9 +405,6 @@ one focused; focusing another swaps the body and no bar moves. A thread is one k
 stacks windows in a column, `|` starts the next column — persisted under `notis.layout`, and `serialise` and
 `parse` are inverses over it. A stored `/` parses as a `,`, the stacks it separated joining in order, and is never written.
 
-> ⚠ **AHEAD OF CODE (2026-09-18, the three windows)** — `@profile` is the one fixed window id: a stored
-> `@settings` parses to `@profile`, `@wallet` is no id, and the profile window shows the arrangement in a row.
-
 **One placement rule.** Opening targets the column immediately right of the surface the press came from — the
 feed and the header sit left of column 0 — and creates it only if it is not already there, joining that
 column's stack otherwise. An open window is raised, never duplicated. Reuse is what keeps columns from
@@ -494,9 +481,6 @@ not rendered, since nothing lies right of the feed. The phone header — `‹`, 
 person, the wallet, the gear, `›` — is 371px wide with every control 44px wide and none shrinking, and **under 372px
 the wordmark yields and the mark stands alone**, 324px on a 360px screen; `dark`, `light`, `profile`, `wallet`,
 `settings` and the prefix stay words wherever the header is the tiling one.
-
-> ⚠ **AHEAD OF CODE (2026-09-18, the three windows)** — the phone header carries two glyphs, a person and a gear,
-> at 319px with the wordmark at every width.
 
 **A window's load updates its bar in every column holding it**, and its body only where it is focused, so a
 selection or a scroll in another window's body survives and a restored stack shows every excerpt as its thread
@@ -949,11 +933,6 @@ this key*; the press writes it to the clipboard and the word `copied` follows th
 is next built — the copy glyph's pattern (→ Links), no timer. Where the clipboard refuses, the key becomes
 selectable text followed by *— copy it by hand*. The backup line stays beneath it until the first export.
 
-> ⚠ **AHEAD OF CODE (2026-09-18, the three windows)** — one header control opens `@profile`, which holds every
-> row: the key as selectable text at the window's base size, a `standing` row, the `$NOTIS` row, the `username`
-> row between `invites` and `passphrase`, and the preference rows under a rule; its `↻` re-reads `/credits/:key`
-> too.
-
 **The six operations are forms in place, and each is a real `<form>`** the browser's password manager
 can save from (→ The identity module). Enter submits, Esc cancels and returns focus to the button that
 opened it, and a refusal is one sentence in the voice register under the fields.
@@ -980,9 +959,6 @@ predicate and `invitesAvailable: null` the node saying root (`NODE_INTERFACE →
 them for what they gate — the `invites` row's line, the reason a reader cannot vouch (→ The author window) — and
 shows the word on no surface (user, 2026-09-18).
 
-> ⚠ **AHEAD OF CODE (2026-09-18, the three windows)** — a `standing` row renders the word and a muted line of its
-> numbers, in the profile window and in the author window.
-
 **The `invites` row** *(membership actions)*: the line — `K invites available` for a member, *"as many
 as your rep covers"* for a root, *"invites come with membership"* for a resident; the form, a real
 `<form>` in place shown only when an invite is available and the spendable view covers the minimum
@@ -1000,9 +976,6 @@ no number. The available count drops when the bond lands, in place, never animat
 reads, never the face `total`, which would promise rep the next spend does not have; the row's label says what
 the number counts, so no unit follows it (user, 2026-09-18). This is the one place a rep balance rests on the
 reading surface. **A card by the loaded key reads `· you`** after the prefix, muted ink, text only.
-
-> ⚠ **AHEAD OF CODE (2026-09-18, the three windows)** — the row reads `N rep`, and `E effective · T held` when
-> decay has opened a gap.
 
 ### The wallet window *(write surface)*
 
@@ -1050,9 +1023,6 @@ $NOTIS.*; a decline is *send not sent.*, a refusal *send not sent: <reason>.*, t
 (→ The wallet, `notSigned`). In the extension the prompt is the one confirmation, because credits always prompt
 (→ The extension).
 
-> ⚠ **AHEAD OF CODE (2026-09-18, the three windows)** — no `@wallet` window exists: the balance, the faucet's
-> `$NOTIS` step and the send form are the `@profile` window's `$NOTIS` row, and its `↻` reads `/credits/:key`.
-
 ### The settings window *(read surface)*
 
 **`@settings`** — an `@`-window opened from the header's `settings` control (→ The profile window), placed,
@@ -1082,9 +1052,6 @@ web build has no such row.
 **No `faucet` row and no `arrangement` row.** The faucet's base is the build's value (→ The faucet step), and the
 arrangement is persisted text with no row of its own (→ The workspace).
 
-> ⚠ **AHEAD OF CODE (2026-09-18, the three windows)** — no `@settings` window exists: the preference rows close
-> the `@profile` window under a rule, a `faucet` row and an `arrangement` row among them, with no tint sample.
-
 ### The faucet step *(identity interface)*
 
 **In the rep row, one word — `ask the faucet for rep` — while three things hold:** an
@@ -1102,9 +1069,6 @@ press asks the browser for the faucet's origin first** — the one optional host
 inside the press itself and before any other asynchronous work, since a browser grants a permission only from a
 reader's act; an origin already granted answers at once with no dialog; refused, the window's report line reads
 *the browser refused access to that origin.* and no request leaves.
-
-> ⚠ **AHEAD OF CODE (2026-09-18, the three windows)** — a `faucet` preference row overrides the shell's value,
-> and in the extension its `set`, not the press, asks for the origin.
 
 The call, `POST <faucet>/karma { pubkey }`, lives in its own module beside the write client — the read
 client stays GET-only and the write client stays the node's edge — and the faucet's `{ error }` bodies
@@ -1166,9 +1130,6 @@ or burn stands (→ The wallet); a 404 is *holding none*, and a read not yet ans
   open to anyone again, and your free claim returns.* with `burn` and `keep`, focus on `keep`, Esc and `keep`
   restoring the word — and the question's `burn` signs, the unlock form in the question's place first when the
   identity is locked. The name and its box are resolved at the press (→ The wallet).
-
-> ⚠ **AHEAD OF CODE (2026-09-18, the three windows)** — the row sits between `invites` and `passphrase` whatever
-> the reader holds, and `claim` is a word beneath its field.
 
 **The flight ends in the row.** A rejection reads *claim rejected:* or *burn rejected:* and the node's refusal
 as a sentence — *that name is taken.*, *this key already holds a name.*, *that name is not 1 to 24 letters,
@@ -1237,9 +1198,6 @@ posts        a word that opens the author-posts window beside this one
 ```
 
 No standing and no balance: an author's window shows neither (→ The profile window, → The wallet window).
-
-> ⚠ **AHEAD OF CODE (2026-09-18, the three windows)** — a `standing` row sits between `name` and `endorsers`, with
-> a resident's progress against the bars from `/status`, and the `↻` re-reads the subject's `/karma/:key` for it.
 
 **`vouch` is a word, and this row is the one place a vouch is cast**
 (`HOUSE_STYLE → Interaction`): a press on it vouches at once — no confirmation — with the stakes sentence
