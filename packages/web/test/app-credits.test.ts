@@ -32,6 +32,8 @@ let sendResp: (() => SendSubmitResult | Rejection) | null;
 let sendDefer: { resolve: (v: SendSubmitResult | Rejection) => void } | null;
 let signResp: 'signed' | 'declined' | 'locked' | 'refused';
 let faucetCredits: (() => CreditGrant | Rejection) | null;
+let creditsCalls: string[];
+let creditsDefer: { resolve: (v: CreditsResult) => void } | null;
 const last = (): string => signCalls[signCalls.length - 1]!;
 
 function post(id: string, author: string): PostJson {
@@ -78,7 +80,13 @@ function fakeApi(): Api {
       if (name.toLowerCase() === 'bob') return { name: 'bob', owner: REC, boxId: 'c'.repeat(32), claimedAtBlock: 1 };
       return null;
     },
-    credits: async (key) => key === ME ? creditsSelf : creditsRecipient,
+    credits: async (key) => {
+      creditsCalls.push(key);
+      if (creditsDefer && key === ME) {
+        return new Promise<CreditsResult>((r) => { creditsDefer = { resolve: r }; });
+      }
+      return key === ME ? creditsSelf : creditsRecipient;
+    },
   };
 }
 
@@ -131,7 +139,7 @@ interface Drive {
   askFaucetCredits(): Promise<void>;
   pollTick(): Promise<void>;
   ledger: { all(): Array<{ kind: string; postId: string; txId: string; send?: { boxId: string } }>; size: number };
-  profileCredits: CreditsResult | null;
+  walletCredits: CreditsResult | null;
   creditGrantView: unknown;
   sendFlight: { stage: string; reason?: string | null } | null;
   faucetClient: { askCredits: (key: string) => Promise<CreditGrant | Rejection> };
@@ -145,6 +153,8 @@ function harness(opts: { withPolicy?: boolean } = {}) {
   sendDefer = null;
   signResp = 'signed';
   faucetCredits = null;
+  creditsCalls = [];
+  creditsDefer = null;
   creditsSelf = {
     userId: ME, total: '10000000000',
     boxes: [{ boxId: CBOX, value: '10000000000' }],
@@ -243,8 +253,8 @@ describe('the send flow', () => {
     expect(h.drive.ledger.all().find((e) => e.kind === 'send')).toBeUndefined();
     expect(h.drive.sendFlight?.stage).toBe('landed');
     // The sender's /credits reflect the move — the row's balance updates in place.
-    expect(h.drive.profileCredits?.boxes[0]?.boxId).toBe(CHANGE_BOX);
-    expect(h.drive.profileCredits?.boxes[0]?.value).toBe('9900000000');
+    expect(h.drive.walletCredits?.boxes[0]?.boxId).toBe(CHANGE_BOX);
+    expect(h.drive.walletCredits?.boxes[0]?.value).toBe('9900000000');
   });
 
   it('a send expiry sets sendFlight expired', async () => {
@@ -282,7 +292,7 @@ describe('the faucet credits step', () => {
     await flush();
     expect(h.drive.ledger.all().find((e) => e.kind === 'creditGrant')).toBeUndefined();
     expect(h.drive.creditGrantView).toBeNull();
-    expect(h.drive.profileCredits?.boxes[0]?.boxId).toBe(GRANT_BOX);
+    expect(h.drive.walletCredits?.boxes[0]?.boxId).toBe(GRANT_BOX);
   });
 
   it('a 202 whose box never lists expires past expiresAtHeight', async () => {
@@ -465,5 +475,113 @@ describe('the send flow — the extension arm (confirmInRow: false)', () => {
     const clearKey = clearForm.querySelector<HTMLElement>('.resolved-key');
     expect(clearKey?.hidden).toBe(true);
     expect(clearKey?.textContent).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The wallet's reads — the wallet window owns /credits, and the profile's ↻
+// re-reads /karma and the reader's name (WEB_INTERFACE → The profile window,
+// → The wallet window).
+// ---------------------------------------------------------------------------
+
+describe('the wallet reads', () => {
+  it('identity load reads no /credits — the wallet owns the read (WEB_INTERFACE → The profile window)', async () => {
+    const h = harness();
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    expect(creditsCalls.filter((k) => k === ME).length).toBe(0);
+  });
+
+  it('a fresh wallet open reads /credits; a raise does not (WEB_INTERFACE → The wallet window)', async () => {
+    const h = harness();
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    // First open — a fresh window mounts and /credits is read.
+    (h.app as unknown as { openWallet: () => void }).openWallet();
+    await flush();
+    const afterOpen = creditsCalls.filter((k) => k === ME).length;
+    expect(afterOpen).toBe(1);
+    // Second open — the raise; no new /credits call.
+    (h.app as unknown as { openWallet: () => void }).openWallet();
+    await flush();
+    expect(creditsCalls.filter((k) => k === ME).length).toBe(afterOpen);
+  });
+
+  it("openWallet fires and moves at once — the window is mounted and the view moved BEFORE /credits answers", async () => {
+    // Hold the /credits read open by hand: the fake defers the promise until
+    // the test resolves it. If openWallet awaited it, the window would not
+    // mount and the view would not move before release (WEB_INTERFACE → The
+    // wallet window; openProfile's pattern for /karma).
+    const h = harness();
+    creditsDefer = { resolve: () => {} }; // seat the defer before openWallet fires
+    let moved: string | null = null;
+    (h.app as unknown as { moveView: (id: string) => void }).moveView = (id: string) => { moved = id; };
+    (h.app as unknown as { openWallet: () => void }).openWallet();
+    await flush();
+    // The /credits read fired (the counter rose) but has not answered yet
+    // (creditsDefer holds the promise). The wallet's bar is in the DOM and
+    // the App's moveView was called with '@wallet' — the press moved on.
+    expect(creditsCalls.filter((k) => k === ME).length).toBe(1);
+    const bar = document.querySelector('.bars .bar .bar-label .name');
+    expect(bar?.textContent).toBe('wallet');
+    expect(moved).toBe('@wallet');
+    // Release the read — the balance lands in place, nothing else moves.
+    creditsDefer!.resolve({ userId: ME, total: '10000000000', boxes: [{ boxId: CBOX, value: '10000000000' }], boxCount: 1, next: null });
+    creditsDefer = null;
+    await flush();
+    await flush();
+    expect(h.drive.walletCredits?.boxes[0]?.boxId).toBe(CBOX);
+  });
+
+  it("the wallet's ↻ re-reads /credits and moves the balance in place", async () => {
+    const h = harness();
+    creditsSelf = { userId: ME, total: '10000000000', boxes: [{ boxId: CBOX, value: '10000000000' }], boxCount: 1, next: null };
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    (h.app as unknown as { openWallet: () => void }).openWallet();
+    await flush();
+    await flush();
+    const before = creditsCalls.filter((k) => k === ME).length;
+    // The node's answer changes: fewer $NOTIS.
+    creditsSelf = { userId: ME, total: '500000000', boxes: [{ boxId: 'dd'.repeat(32), value: '500000000' }], boxCount: 1, next: null };
+    await (h.app as unknown as { refreshWalletCredits: () => Promise<void> }).refreshWalletCredits();
+    await flush();
+    expect(creditsCalls.filter((k) => k === ME).length).toBe(before + 1);
+    // The balance moves in place — the gold reads the new spendable sum (5 $NOTIS).
+    const gold = document.querySelector<HTMLElement>('.credits-line .mono.gold');
+    expect(gold?.textContent).toBe('5');
+  });
+
+  it("the profile's ↻ (refreshProfileKarma) issues no /credits request", async () => {
+    const h = harness();
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    const before = creditsCalls.filter((k) => k === ME).length;
+    await (h.app as unknown as { refreshProfileKarma: () => Promise<void> }).refreshProfileKarma();
+    await flush();
+    expect(creditsCalls.filter((k) => k === ME).length).toBe(before);
+  });
+
+  it('a send landing with the wallet closed reconciles the ledger and throws nothing', async () => {
+    const h = harness();
+    await h.drive.loadFeed();
+    await h.drive.loadMembershipState();
+    // The wallet is not opened — .credits-field is absent from the DOM.
+    expect(document.querySelector('.credits-field')).toBeNull();
+    await h.drive.send(REC, 'bob', 100_000_000n);
+    await flush();
+    const entry = h.drive.ledger.all().find((e) => e.kind === 'send')!;
+    expect(entry).toBeDefined();
+    // The recipient's /credits now lists the payment box; the sender's /credits shows the change.
+    creditsRecipient = { userId: REC, total: '100000000', boxes: [{ boxId: entry.send!.boxId, value: '100000000' }], boxCount: 1, next: null };
+    creditsSelf = { userId: ME, total: '9900000000', boxes: [{ boxId: CHANGE_BOX, value: '9900000000' }], boxCount: 1, next: null };
+    blockHeight = 101;
+    // The landing must not throw when the wallet has no field mounted.
+    await h.drive.pollTick();
+    await flush();
+    expect(h.drive.ledger.all().find((e) => e.kind === 'send')).toBeUndefined();
+    expect(h.drive.sendFlight?.stage).toBe('landed');
+    // The App still updated walletCredits — a later open renders the moved balance.
+    expect(h.drive.walletCredits?.boxes[0]?.boxId).toBe(CHANGE_BOX);
   });
 });

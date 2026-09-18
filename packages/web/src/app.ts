@@ -238,12 +238,12 @@ export class App {
   private ownNameLoaded = false;
   private usernameFlight: Flight | null = null;
   private usernameInFlight: { kind: 'claim' | 'burn'; name: string } | null = null;
-  // The $NOTIS row (WEB_INTERFACE → The profile window). profileCredits is the
-  // reader's own /credits read at the profile open, the ↻, an identity change
-  // and each landing that moves the balance; creditGrantView is a faucet
-  // transfer in flight or one that lapsed; sendFlight is the transient ending
-  // for the row (the pending state lives in the ledger).
-  private profileCredits: CreditsResult | null = null;
+  // The wallet window (WEB_INTERFACE → The wallet window). walletCredits is the
+  // reader's own /credits, read at the wallet open, the wallet's ↻, an identity
+  // change while the wallet is open, and each landing that moves the balance;
+  // creditGrantView is a faucet transfer in flight or one that lapsed; sendFlight
+  // is the transient ending for the row (the pending state lives in the ledger).
+  private walletCredits: CreditsResult | null = null;
   private creditGrantView: { state: 'pending' } | { state: 'expired'; atHeight: number } | null = null;
   private sendFlight: Flight | null = null;
 
@@ -285,7 +285,7 @@ export class App {
       loadOlder: () => void this.loadOlder(),
       openProfile: () => this.openProfile(),
       openSettings: () => this.openSettings(),
-      openWallet: () => void this.openWallet(),
+      openWallet: () => this.openWallet(),
       refreshProfile: () => void this.refreshProfileKarma(),
       refreshWallet: () => void this.refreshWalletCredits(),
       focus: (id) => this.focus(id),
@@ -548,7 +548,7 @@ export class App {
       // The $NOTIS row (WEB_INTERFACE → The profile window). status carries the
       // tip the row's spendable-at-height filter reads (WEB_INTERFACE → The wallet).
       status: this.state.status,
-      credits: this.profileCredits,
+      credits: this.walletCredits,
       creditGrant: this.creditGrantView,
       sendFlight: this.sendFlight,
       pendingSend: pendingSendEntries(this.ledger.all())[0] ?? null,
@@ -641,7 +641,7 @@ export class App {
       const wallet = el('button', 'hdr-glyph');
       wallet.setAttribute('aria-label', 'open wallet');
       wallet.appendChild(walletGlyph());
-      wallet.addEventListener('click', () => void this.openWallet());
+      wallet.addEventListener('click', () => this.openWallet());
       bar.appendChild(wallet);
 
       const settings = el('button', 'hdr-glyph');
@@ -667,7 +667,7 @@ export class App {
 
       const wallet = el('button', 'hdr-word', 'wallet');
       wallet.setAttribute('aria-label', 'open wallet');
-      wallet.addEventListener('click', () => void this.openWallet());
+      wallet.addEventListener('click', () => this.openWallet());
       bar.appendChild(wallet);
 
       const settings = el('button', 'hdr-word', 'settings');
@@ -1268,16 +1268,19 @@ export class App {
     this.moveView('@settings');
   }
 
-  private async openWallet(): Promise<void> {
+  private openWallet(): void {
     const res = openWindow(this.state.workspace, '@wallet', { from: 'feed' });
     this.saveLayout();
     if (res.raised) {
       this.renderRegion(res.column.uid);
     } else {
       this.renderPanes();
-      // A fresh open reads /credits so the balance is up-to-date; a raise brings
-      // the existing window forward (WEB_INTERFACE → The wallet window).
-      await this.refreshWalletCredits();
+      // A fresh open fires /credits and moves the view at once — the read
+      // lands in place through renderCreditsRowInPlace; a raise brings the
+      // existing window forward (WEB_INTERFACE → The wallet window). Fire-
+      // and-move: the view never waits on the network, so a hanging /credits
+      // does not strand the press (openProfile's pattern for /karma).
+      void this.refreshWalletCredits();
     }
     this.moveView('@wallet');
   }
@@ -1288,7 +1291,7 @@ export class App {
     const cur = this.idm.current();
     if (cur === null) return;
     try {
-      this.profileCredits = await this.readOwnCredits(cur.pubKeyHex);
+      this.walletCredits = await this.readOwnCredits(cur.pubKeyHex);
     } catch {
       return; // a failed read leaves the last-known state; the next ↻ retries
     }
@@ -1508,7 +1511,7 @@ export class App {
     this.ownNameLoaded = false;
     this.usernameFlight = null;
     this.usernameInFlight = null;
-    this.profileCredits = null;
+    this.walletCredits = null;
     this.creditGrantView = null;
     this.sendFlight = null;
     this.ledger = new PendingLedger(this.idm.current()?.pubKeyHex ?? null);
@@ -1519,6 +1522,11 @@ export class App {
     for (const id of openSet(this.state.workspace)) if (!isWin(id)) void this.fetchThread(id);
     // The vouch set, member flag and escrow for the new key, then the marks re-render.
     if (this.idm.current() !== null) void this.loadMembershipState();
+    // The wallet is per-identity too — re-read /credits when the wallet is open
+    // (WEB_INTERFACE → The wallet window).
+    if (this.idm.current() !== null && openSet(this.state.workspace).has('@wallet')) {
+      void this.refreshWalletCredits();
+    }
   }
 
   /** A fresh sealed file for the reader to keep. Needs the seed, so the profile
@@ -1952,15 +1960,15 @@ export class App {
   }
 
   /** Read the reader's membership state — /karma (member, the floor, the tip), the
-   *  vouch set, the escrow, and the $NOTIS row's /credits — at identity load and
-   *  the profile's ↻ (WEB_INTERFACE → The identity display, → The profile window). */
+   *  vouch set, the escrow, /status, the bonds and the reader's own name — at
+   *  identity load and the profile's ↻. /credits is the wallet's own read
+   *  (WEB_INTERFACE → The profile window, → The wallet window). */
   private async loadMembershipState(): Promise<void> {
     const cur = this.idm.current();
     if (cur === null) return;
     try {
-      const [karma, credits, status, vouched, escrow, bonds, ownName] = await Promise.all([
+      const [karma, status, vouched, escrow, bonds, ownName] = await Promise.all([
         this.client.karma(cur.pubKeyHex),
-        this.readOwnCredits(cur.pubKeyHex),
         this.client.status(),
         this.readVouchSet(cur.pubKeyHex),
         this.readEscrow(cur.pubKeyHex),
@@ -1968,7 +1976,6 @@ export class App {
         this.client.usernameByOwner(cur.pubKeyHex),
       ]);
       this.profileKarma = karma;
-      this.profileCredits = credits;
       this.state.status = status; // vouchCooldownBlocks + the bond range for the invites row
       this.bumpTip(status.blockHeight);
       this.bumpTip(karma.height);
@@ -2772,7 +2779,7 @@ export class App {
       this.sendFlight = { stage: 'landed' };
       // Re-read the reader's own /credits so the row's balance moves in place.
       try {
-        this.profileCredits = await this.readOwnCredits(meKey);
+        this.walletCredits = await this.readOwnCredits(meKey);
       } catch {
         // Leaves the last-known state; the ↻ retries.
       }
@@ -2802,7 +2809,7 @@ export class App {
     if (outcome === 'pending') return false;
     this.ledger.remove(entry.txId);
     if (outcome === 'landed') {
-      this.profileCredits = credits;
+      this.walletCredits = credits;
       this.creditGrantView = null;
     } else {
       this.creditGrantView = { state: 'expired', atHeight: entry.expiresAtHeight };

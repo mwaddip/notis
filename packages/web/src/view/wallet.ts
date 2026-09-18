@@ -77,9 +77,11 @@ export function walletBody(handlers: WalletHandlers, ctx: WalletCtx): HTMLElemen
   }
   const field = el('div', 'field credits-field');
   const { row: balanceRow, field: balanceField } = row('balance');
+  balanceRow.classList.add('balance-row');
   balanceField.appendChild(el('div', 'credits-line'));
   field.appendChild(balanceRow);
   const { row: sendRow, field: sendField } = row('send');
+  sendRow.classList.add('send-row');
   sendField.appendChild(el('div', 'credits-form'));
   sendField.appendChild(el('div', 'credits-flight'));
   sendRow.hidden = true; // updateCredits reveals it when a box is spendable
@@ -137,12 +139,12 @@ function sumValues(boxes: readonly { value: string }[]): bigint {
   return s;
 }
 
-/** The send row is the credits-field's second child row — walletBody starts it
- *  hidden and updateCredits toggles it as the spendable side changes
- *  (WEB_INTERFACE → The wallet window → "The `send` row"). */
+/** Toggle the `.send-row` — walletBody starts it hidden and updateCredits
+ *  shows or hides it as the spendable side changes. Selects by class, so
+ *  the geometry of the credits-field wrapper does not decide the row's
+ *  identity (WEB_INTERFACE → The wallet window → "The `send` row"). */
 function toggleSendRow(field: HTMLElement, show: boolean): void {
-  const rows = field.querySelectorAll<HTMLElement>(':scope > .row');
-  const sendRow = rows[1] ?? null;
+  const sendRow = field.querySelector<HTMLElement>(':scope > .send-row');
   if (sendRow) sendRow.hidden = !show;
 }
 

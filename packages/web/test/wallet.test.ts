@@ -91,31 +91,33 @@ describe('wallet window — the two states', () => {
     expect(body.querySelector('.credits-line')).toBeNull();
   });
 
-  it('with an identity, .credits-field wraps the balance and send rows; slot classes present', () => {
+  it('with an identity, .credits-field wraps the balance and send rows carrying their classes; slot classes present', () => {
     const body = render(handlers(), creditsCtx());
     const field = creditsField(body)!;
     expect(field).not.toBeNull();
-    // Two child rows: balance and send.
-    const rows = field.querySelectorAll<HTMLElement>(':scope > .row');
-    expect(rows.length).toBe(2);
-    expect(rows[0]!.querySelector('label')?.textContent).toBe('balance');
-    expect(rows[1]!.querySelector('label')?.textContent).toBe('send');
-    // The slot classes carry into the balance and send rows (WEB_INTERFACE →
-    // The wallet window → "The `balance` row", → "The `send` row").
+    // The two rows carry .balance-row and .send-row — the identity toggleSendRow
+    // selects by, so the geometry of credits-field does not decide the row's
+    // identity (WEB_INTERFACE → The wallet window → "The `balance` row",
+    // → "The `send` row").
+    const balance = field.querySelector<HTMLElement>(':scope > .balance-row');
+    const send = field.querySelector<HTMLElement>(':scope > .send-row');
+    expect(balance).not.toBeNull();
+    expect(send).not.toBeNull();
+    expect(balance!.querySelector('label')?.textContent).toBe('balance');
+    expect(send!.querySelector('label')?.textContent).toBe('send');
+    // The slot classes stand inside the balance and send rows.
     expect(field.querySelector('.credits-line')).not.toBeNull();
     expect(field.querySelector('.credits-form')).not.toBeNull();
     expect(field.querySelector('.credits-flight')).not.toBeNull();
   });
 
-  it('the send row is hidden while no box is spendable and shown once one is', () => {
+  it('.send-row is hidden while no box is spendable and shown once one is', () => {
     const empty = render(handlers(), creditsCtx());
-    const rows = creditsField(empty)!.querySelectorAll<HTMLElement>(':scope > .row');
-    expect(rows[1]!.hidden).toBe(true);
+    expect(creditsField(empty)!.querySelector<HTMLElement>(':scope > .send-row')?.hidden).toBe(true);
     const spendable = render(handlers(), creditsCtx({
       credits: creditsResult({ boxes: [{ boxId: 'a'.repeat(32), value: '10000000000' }], boxCount: 1 }),
     }));
-    const spendableRows = creditsField(spendable)!.querySelectorAll<HTMLElement>(':scope > .row');
-    expect(spendableRows[1]!.hidden).toBe(false);
+    expect(creditsField(spendable)!.querySelector<HTMLElement>(':scope > .send-row')?.hidden).toBe(false);
   });
 });
 
