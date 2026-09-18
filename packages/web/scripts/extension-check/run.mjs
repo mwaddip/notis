@@ -50,6 +50,21 @@ manifest.host_permissions = [...new Set([...(manifest.host_permissions ?? []), .
 writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2) + '\n');
 console.log(`manifest patched: host_permissions += ${JSON.stringify(LOOPBACKS)}`);
 
+// The build's faucet base is the shell's `notis-faucet` — WEB_INTERFACE →
+// "The faucet step". prefs.faucet reads it once at load, and the press's
+// permission ask uses that value. A build whose meta does not match --faucet
+// would die at step 11 with no word why, so fail fast here and name it.
+const SHELL_PATH = join(EXT_DIR, 'index.html');
+const shellHtml = readFileSync(SHELL_PATH, 'utf8');
+const faucetMetaMatch = shellHtml.match(/<meta[^>]+name="notis-faucet"[^>]+content="([^"]*)"[^>]*>/);
+const shellFaucet = faucetMetaMatch ? faucetMetaMatch[1] : null;
+if (shellFaucet !== FAUCET) {
+  console.error(`FAIL: shell notis-faucet="${shellFaucet}" != --faucet="${FAUCET}"`);
+  console.error(`      rebuild with VITE_FAUCET_BASE=${FAUCET} bash packages/web/scripts/build-extension.sh`);
+  process.exit(2);
+}
+console.log(`shell notis-faucet=${shellFaucet} matches --faucet`);
+
 const R_TEXT = readFileSync(R_KEY, 'utf8');
 const R_JSON = JSON.parse(R_TEXT);
 
@@ -506,51 +521,73 @@ async function main() {
   const state10 = await cx10.eval(`chrome.runtime.sendMessage({ kind: 'state' })`);
   record(10, state10 && state10.locked === false, `state.locked=${state10?.locked}, pubKeyHex=${state10?.pubKeyHex?.slice(0, 8)}…`);
 
-  // --- Step 11 — Set the faucet preference. The real permissions dialog is
-  // not drivable from headless Chrome (Phase 0 hypothesis (d)); assert the
-  // page's own handler by stubbing `chrome.permissions.request` for both
-  // branches. The manual pass exercises the real dialog.
-  await cx10.eval(`document.querySelector('[aria-label="open profile"]').click()`, true);
-  await cx10.waitFor(`document.querySelector('input[aria-label="the faucet this client asks for rep"]')`, 'faucet row');
-  // Branch A — refused. Stub resolves false; hint must read the refusal;
-  // storage must not carry the origin.
-  const refused = await cx10.eval(`(async () => {
-    localStorage.removeItem('notis.faucet');
-    chrome.permissions.request = () => Promise.resolve(false);
-    const input = document.querySelector('input[aria-label="the faucet this client asks for rep"]');
-    input.value = ${JSON.stringify(FAUCET)};
-    input.dispatchEvent(new Event('change'));
-    await new Promise(r => setTimeout(r, 1500));
-    const hint = input.parentElement.querySelector('.hint')?.textContent ?? null;
-    const storedFaucet = localStorage.getItem('notis.faucet');
-    return { hint, storedFaucet };
+  // --- Step 11 — the faucet press asks the browser for the origin
+  // (WEB_INTERFACE → The faucet step → "In the extension the press asks the
+  // browser for the faucet's origin first"). Open the wallet, stub
+  // `chrome.permissions.request` to record its argument, press "ask the
+  // faucet for $NOTIS", assert the refused branch: the region's report line
+  // reads the refusal, no request reaches the faucet, and the ledger holds
+  // no `creditGrant`. Restore the stub to resolve true — the granted branch
+  // is step 12a, and 12a asserts the stub was asked again before the request
+  // left. The real permissions dialog is not drivable from headless Chrome;
+  // the manual pass exercises it.
+  await cx10.eval(`document.querySelector('[aria-label="open wallet"]').click()`, true);
+  await cx10.waitFor(`!!document.querySelector('.credits-field .credits-line button.word')`, 'wallet ask word');
+  const events11Start = cx10.events.length;
+  await cx10.eval(`(() => {
+    window.__permCalls = [];
+    chrome.permissions.request = (args) => {
+      window.__permCalls.push({ origins: args?.origins ?? null, at: performance.now() });
+      return Promise.resolve(false);
+    };
   })()`, true);
-  // Branch B — granted. Stub resolves true; storage must carry the origin.
-  const granted = await cx10.eval(`(async () => {
-    chrome.permissions.request = () => Promise.resolve(true);
-    const input = document.querySelector('input[aria-label="the faucet this client asks for rep"]');
-    // Dispatch change again — same value, but the handler runs on 'change'.
-    input.dispatchEvent(new Event('change'));
-    await new Promise(r => setTimeout(r, 1500));
-    const storedFaucet = localStorage.getItem('notis.faucet');
-    return { storedFaucet };
+  await cx10.eval(`(() => {
+    const line = document.querySelector('.credits-field .credits-line');
+    [...line.querySelectorAll('button.word')].find(b => b.textContent.trim() === 'ask the faucet for $NOTIS').click();
   })()`, true);
-  const refusedOk = refused.hint === 'the browser refused access to that origin.' && refused.storedFaucet === null;
-  const grantedOk = granted.storedFaucet === FAUCET;
-  record(11, refusedOk && grantedOk,
-    `refused: hint="${refused.hint}" (${refusedOk ? 'ok' : 'FAIL'}), storedFaucet=${refused.storedFaucet}; granted: storedFaucet=${granted.storedFaucet} (${grantedOk ? 'ok' : 'FAIL'})`);
+  await cx10.waitFor(`(() => {
+    const region = document.querySelector('.credits-field')?.closest('.region');
+    return region?.querySelector('.report')?.textContent === 'the browser refused access to that origin.';
+  })()`, 'wallet region report reads refusal', 5000);
+  const refused11 = await cx10.eval(`(() => {
+    const region = document.querySelector('.credits-field')?.closest('.region');
+    const report = region?.querySelector('.report')?.textContent ?? null;
+    const calls = window.__permCalls;
+    const raw = localStorage.getItem('notis.pending.' + ${JSON.stringify(R_JSON.pubKeyHex)}) || '[]';
+    const hasGrant = JSON.parse(raw).some(e => e.kind === 'creditGrant');
+    return { report, callCount: calls.length, firstOrigins: calls[0]?.origins ?? null, hasGrant };
+  })()`);
+  const faucetRequestSeen11 = cx10.events.slice(events11Start).some((e) =>
+    e.method === 'Network.requestWillBeSent' && (e.params.request.url || '').startsWith(FAUCET));
+  // Restore the stub to true for step 12a — same recorder, so 12a can see
+  // that the stub was asked again before the request left.
+  await cx10.eval(`(() => {
+    chrome.permissions.request = (args) => {
+      window.__permCalls.push({ origins: args?.origins ?? null, at: performance.now() });
+      return Promise.resolve(true);
+    };
+  })()`, true);
+  const originsExpected = FAUCET + '/*';
+  const originsOk11 = refused11.callCount === 1 && Array.isArray(refused11.firstOrigins) && refused11.firstOrigins[0] === originsExpected;
+  const reportOk11 = refused11.report === 'the browser refused access to that origin.';
+  const noRequest11 = !faucetRequestSeen11;
+  const noGrant11 = !refused11.hasGrant;
+  record(11, originsOk11 && reportOk11 && noRequest11 && noGrant11,
+    `stub calls=${refused11.callCount}, origins[0]=${JSON.stringify(refused11.firstOrigins?.[0] ?? null)} (want=${JSON.stringify(originsExpected)}), report=${JSON.stringify(refused11.report)}, no faucet request=${noRequest11} (CDP Network), no creditGrant=${noGrant11}`);
 
   // --- Step 12 — Credits: 12a ask → 12b send + approve → 12c decline →
-  // 12d locked send. WEB_INTERFACE → The profile window, → The wallet,
+  // 12d locked send. WEB_INTERFACE → The wallet window, → The faucet step,
   // → The extension. The identity is unlocked (step 9), the policy is
-  // silent (step 9), the faucet base is set from step 11.
+  // silent (step 9), and the wallet is already open from step 11 with the
+  // permissions stub resolving true.
   const DEVNET_FAUCET_KEY = '5468d985c3924a95f3d3dc98b67a41ac2c7cc4cfca4fcbf7c5627452f1617f36';
   const R_HEX = R_JSON.pubKeyHex;
 
-  // --- 12a — no credits → "ask the faucet for $NOTIS" → ledger creditGrant → landing → 100.
-  // Open the profile if not already.
-  await cx10.eval(`document.querySelector('.credits-field') || document.querySelector('[aria-label="open profile"]').click()`, true);
+  // --- 12a — press ask under the granted stub → the stub is asked again
+  // BEFORE /credits POST leaves → ledger creditGrant → landing → 100.
   await cx10.waitFor(`!!document.querySelector('.credits-field .credits-line')`, 'credits line');
+  const events12aStart = cx10.events.length;
+  const permCallsBefore12a = await cx10.eval(`window.__permCalls.length`);
   const before12a = await cx10.eval(`(() => {
     const line = document.querySelector('.credits-field .credits-line');
     const btns = [...(line?.querySelectorAll('button.word') ?? [])];
@@ -569,6 +606,16 @@ async function main() {
     const raw = localStorage.getItem('notis.pending.' + ${JSON.stringify(R_HEX)}) || '[]';
     return JSON.parse(raw).find(e => e.kind === 'creditGrant');
   })()`);
+  // The stub was asked again — the second call sits at index `permCallsBefore12a`.
+  const permCall12a = await cx10.eval(`(() => {
+    const call = window.__permCalls[${permCallsBefore12a}] ?? null;
+    return call ? { origins: call.origins, at: call.at } : null;
+  })()`);
+  const faucetRequestEvent12a = cx10.events.slice(events12aStart).find((e) =>
+    e.method === 'Network.requestWillBeSent' && (e.params.request.url || '').startsWith(FAUCET));
+  const askedAgain12a = permCall12a !== null && Array.isArray(permCall12a.origins) && permCall12a.origins[0] === originsExpected;
+  const askedBeforeRequest12a = permCall12a !== null && !!faucetRequestEvent12a
+    && permCall12a.at <= faucetRequestEvent12a.params.wallTime * 1000;
   await cx10.waitFor(`document.querySelector('.credits-line .mono.gold')?.textContent === '100'`, 'row reads 100 after grant', 120000);
   const after12a = await cx10.eval(`(() => ({
     gold: document.querySelector('.credits-line .mono.gold')?.textContent ?? null,
@@ -577,14 +624,14 @@ async function main() {
   const grantOk12a = grantEntry12a?.kind === 'creditGrant' && typeof grantEntry12a.postId === 'string' && /^[0-9a-f]{64}$/.test(grantEntry12a.postId);
   const askOk12a = before12a.hasAsk;
   const rowOk12a = after12a.gold === '100' && (after12a.text || '').includes('$NOTIS');
-  record('12a', askOk12a && grantOk12a && rowOk12a,
-    `ask=${askOk12a}, grant.postId=${grantEntry12a?.postId?.slice(0, 8) ?? 'null'}…, landed row='${after12a.text}'`);
+  record('12a', askOk12a && grantOk12a && rowOk12a && askedAgain12a && askedBeforeRequest12a,
+    `ask=${askOk12a}, stub-asked-again=${askedAgain12a} (origins[0]=${JSON.stringify(permCall12a?.origins?.[0] ?? null)}), asked-before-request=${askedBeforeRequest12a}, grant.postId=${grantEntry12a?.postId?.slice(0, 8) ?? 'null'}…, landed row='${after12a.text}'`);
 
   // --- 12b — send 12.5 to the devnet faucet key. In the extension arm the
   // resolved-key hint appears beneath the recipient and the prompt opens at
-  // once, no confirm row (WEB_INTERFACE → The profile window → "The `$NOTIS`
-  // row"; → The extension → "The prompt window"). Approve → /credits/transfer
-  // 200 → landing → row reads 87.5 → faucet /credits has the payment.
+  // once, no confirm row (WEB_INTERFACE → The wallet window → "The `send` row";
+  // → The extension). Approve → /credits/transfer 200 → landing → row reads
+  // 87.5 → faucet /credits has the payment.
   const events12bStart = cx10.events.length;
   await cx10.waitFor(`!!document.querySelector('form.credits-form')`, 'send form present');
   await cx10.eval(`(() => {
@@ -648,8 +695,8 @@ async function main() {
     `no .pf-confirm=${noConfirm12b}, resolved-key='${(resolvedKey12b ?? '').slice(0, 8)}…${(resolvedKey12b ?? '').slice(-4)}'=whole=${resolvedOk12b}, lines=${JSON.stringify((promptShape12b || []).map((l) => `${l.cls}:${l.text}`))}, transfer=${transfer12b?.params.response.status ?? 'null'}, row='87.5'=${rowOk12b}, faucet has 12.5=${!!paymentBox}, screenshot saved=${shotSaved12b}`);
 
   // --- 12c — same extension arm, decline at the prompt. Both form inputs kept,
-  // flight "send not sent.", no /credits/transfer (WEB_INTERFACE → The profile
-  // window → "The `$NOTIS` row" — the fourth ending).
+  // flight "send not sent.", no /credits/transfer (WEB_INTERFACE → The wallet
+  // window → "The `send` row" — the fourth ending).
   const events12cStart = cx10.events.length;
   await cx10.waitFor(`!!document.querySelector('form.credits-form')`, 'credits form present 12c');
   await cx10.eval(`(() => {
@@ -689,17 +736,20 @@ async function main() {
   record('12c', noConfirm12c && formKept12c && flightOk12c && !transferSeen12c && rowUnchanged12c,
     `no .pf-confirm=${noConfirm12c}, form to='${state12c.to?.slice(0, 8) ?? 'null'}…' amount='${state12c.amount}', flight='${state12c.flight}', no /credits/transfer=${!transferSeen12c}, row='${state12c.gold}'`);
 
-  // --- 12d — lock, then send: the extension arm mounts the unlock form UNDER
-  // the credits form (`.credits-field .card-unlock`, the invites row's pattern
-  // — WEB_INTERFACE → The profile window → "The `$NOTIS` row"), never in a
-  // `.pf-confirm`. No prompt, no /credits/transfer under lock. Unlock →
-  // the flight proceeds → the first-send prompt after unlock. Decline it. A
-  // second send goes straight to the prompt — cur.identity was mutated, no
-  // second unlock (WEB_INTERFACE → The wallet).
+  // --- 12d — lock in the profile, return to the wallet, then send: the
+  // extension arm mounts the unlock form UNDER the credits form
+  // (`.credits-field .card-unlock`, the invites row's pattern — WEB_INTERFACE
+  // → The wallet window → "The `send` row"), never in a `.pf-confirm`. No
+  // prompt, no /credits/transfer under lock. Unlock → the flight proceeds →
+  // the first-send prompt after unlock. Decline it. A second send goes
+  // straight to the prompt — cur.identity was mutated, no second unlock
+  // (WEB_INTERFACE → The wallet window → "The `send` row").
+  await cx10.eval(`document.querySelector('[aria-label="open profile"]').click()`, true);
   await cx10.waitFor(`!!window.__btn('lock')`, 'lock button in profile 12d');
   await cx10.eval(`window.__btn('lock').click()`, true);
   await sleep(1000);
   const lockedSession12d = await cx10.eval(`(async () => (await chrome.storage.session.get('notis.seed'))['notis.seed'] ?? null)()`);
+  await cx10.eval(`document.querySelector('[aria-label="open wallet"]').click()`, true);
   const events12dStart = cx10.events.length;
   await cx10.waitFor(`!!document.querySelector('form.credits-form')`, 'credits form under lock');
   await cx10.eval(`(() => {
