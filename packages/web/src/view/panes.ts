@@ -2,6 +2,7 @@ import { el, reportNode, shortHex } from '../dom';
 import { card, submissionToPost, flightFor, listCardOpts, type CardOpts } from './card';
 import { profileBody } from './profile';
 import { settingsBody } from './settings';
+import { walletBody } from './wallet';
 import { authorBody, authorPostsBody, type AuthorCtx, type PostsCtx } from './author';
 import { flattenThread } from '../model/thread';
 import { identityHue } from '../model/identity';
@@ -96,6 +97,12 @@ function bar(k: string, ci: number, focused: boolean, lone: boolean, handlers: H
     // here is read from the node (WEB_INTERFACE → The workspace,
     // → The settings window).
     ctl.appendChild(ctlBtn('↻', 'refresh — nothing to re-read', null, true));
+  } else if (k === '@wallet') {
+    label.setAttribute('aria-label', 'show this window');
+    label.appendChild(el('span', 'name', 'wallet'));
+    // The wallet window's ↻ re-reads /credits/:key
+    // (WEB_INTERFACE → The wallet window).
+    ctl.appendChild(ctlBtn('↻', 'refresh the balance', () => handlers.refreshWallet()));
   } else if (win) {
     // An @-window neither arm knows: the bar shell without a label, so the
     // close and move controls still apply. isWindowId filters on parse, so a
@@ -225,6 +232,10 @@ function renderRegionBody(body: HTMLElement, focusedK: string, ci: number, handl
   }
   if (focusedK === '@settings') {
     body.appendChild(settingsBody(handlers));
+    return;
+  }
+  if (focusedK === '@wallet') {
+    body.appendChild(walletBody(handlers, ctx));
     return;
   }
   if (isWin(focusedK)) {

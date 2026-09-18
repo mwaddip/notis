@@ -136,9 +136,10 @@ export interface RenderCtx {
   creditGrant: { state: 'pending' } | { state: 'expired'; atHeight: number } | null;
   sendFlight: Flight | null;
   pendingSend: { toHex: string; toName: string | null; amount: bigint } | null;
-  // The $NOTIS row's confirm — true on the web build (the confirm row stands),
-  // false in the extension (the prompt is the one confirmation). WEB_INTERFACE
-  // → The profile window → "The `$NOTIS` row". The App fills it
+  // The wallet's send row confirm — true on the web build (the confirm row
+  // stands), false in the extension (the prompt is the one confirmation —
+  // WEB_INTERFACE → The wallet window → "in the web build, the confirm row",
+  // → "in the extension there is no confirm row"). The App fills it
   // `!this.idm.policy`, the same predicate the policy row reads on.
   confirmInRow: boolean;
   // WEB_INTERFACE → Links
@@ -162,7 +163,9 @@ export interface Handlers {
   loadOlder: () => void;
   openProfile: () => void;
   openSettings: () => void; // the header's `settings` control (WEB_INTERFACE → The settings window)
+  openWallet: () => void; // the header's `wallet` control (WEB_INTERFACE → The wallet window)
   refreshProfile: () => void; // the @profile window's ↻ re-reads /karma
+  refreshWallet: () => void; // the @wallet window's ↻ re-reads /credits
   // region / window
   focus: (id: string) => void;
   refreshThread: (id: string) => void;

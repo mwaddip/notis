@@ -1,8 +1,9 @@
-// The interface's icons — a person for the profile control, a gear for the
-// settings control, the moon on Sand / the sun on Bistre for the standalone
-// theme control, and the copy glyph for the link control on a card. Drawn in
-// the house technique: flat, faceted, straight-edged, a little wobble in the
-// angles, no smooth curves — every shape a polygon, never a circle or an arc
+// The interface's icons — a person for the profile control, a wallet for the
+// wallet control, a gear for the settings control, the moon on Sand / the sun
+// on Bistre for the standalone theme control, and the copy glyph for the link
+// control on a card. Drawn in the house technique: flat, faceted, straight-
+// edged, a little wobble in the angles, no smooth curves — every shape a
+// polygon or an M/L/Z path, never a circle or an arc
 // (HOUSE_STYLE → Illustration, HOUSE_STYLE → Deliberately not decided,
 // HOUSE_STYLE → Colour → "On a phone the theme control is a sun or a moon",
 // WEB_INTERFACE → The profile window, WEB_INTERFACE → Links).
@@ -72,6 +73,20 @@ export function gearGlyph(): SVGSVGElement {
     'M8.7 4.2 L8.9 1.6 L11.1 1.5 L11.3 4.2 L13.3 5.1 L15.3 3.4 L16.8 5.0 L15.0 6.9 L15.7 8.6 L18.4 8.8 L18.5 11.0 L15.8 11.2 L14.9 13.2 L16.7 15.2 L15.1 16.7 L13.1 15.0 L11.4 15.7 L11.3 18.4 L9.1 18.5 L8.8 15.8 L6.8 14.9 L4.7 16.7 L3.2 15.1 L5.0 13.1 L4.3 11.3 L1.6 11.2 L1.4 9.0 L4.2 8.8 L5.0 6.8 L3.3 4.8 L4.9 3.3 L6.9 5.0 Z ' +
     'M11.1 7.4 L12.4 9.1 L12.6 11.0 L11.0 12.5 L9.0 12.7 L7.6 10.9 L7.4 9.0 L9.0 7.6 Z',
   ));
+  return svg;
+}
+
+/** A wallet as one body — the pouch with its clasp tab and coin-slot hole
+ *  drawn as one `<path>` with `fill-rule="evenodd"`, the flap above it a
+ *  polygon. The body is one path so the hole carves it (HOUSE_STYLE →
+ *  Illustration, WEB_INTERFACE → The profile window → "Three header controls open the three windows — profile, wallet, settings — at the right of the app bar, the theme toggle after them at tiling"). */
+export function walletGlyph(): SVGSVGElement {
+  const svg = glyph();
+  svg.appendChild(path(
+    'M2.2 5.6 L15.6 5.2 L16.4 6.4 L16.5 8.4 L18.0 8.6 L18.1 12.6 L16.5 12.8 L16.4 15.6 L15.4 16.6 L3.2 16.5 L2.1 15.4 Z ' +
+    'M13.2 9.6 L15.6 9.5 L15.7 11.8 L13.3 11.9 Z',
+  ));
+  svg.appendChild(polygon('3.0,3.9 13.9,2.6 15.0,4.2 3.2,4.6')); // the flap
   return svg;
 }
 

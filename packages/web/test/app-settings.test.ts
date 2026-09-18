@@ -96,8 +96,9 @@ describe('the App settings control', () => {
     const bars = panes.querySelectorAll('.bars .bar');
     // A raise brings the existing window forward — one bar, not two.
     expect(bars.length).toBe(1);
-    // The arrangement holds one column with one @settings window.
-    const drive = mount().app; void drive; // silence unused
+    // notis.layout carries exactly one @settings, so the raise wrote no duplicate.
+    const stored = localStorage.getItem(KEY_LAYOUT) ?? '';
+    expect(stored.match(/@settings/g)?.length ?? 0).toBe(1);
   });
 
   it('a press on the row\'s theme word flips both the header word and the row', async () => {

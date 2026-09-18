@@ -13,10 +13,9 @@ import { karmaResult } from './karma-fixture';
 import { contentHashHex } from '../src/integrity';
 import { prefs } from '../src/prefs';
 
-// The $NOTIS row driven through the App (WEB_INTERFACE → The profile window):
-// the deferred-write pattern of app-usernames.test.ts. Every ctx a row is
-// rendered against is one the App produces — the state a fabricated ctx would
-// hide (WEB-HANDOFF → Method, #214).
+// The balance and send rows driven through the App (WEB_INTERFACE → The wallet
+// window): every ctx the row is rendered against is one the App produces — the
+// state a fabricated ctx would hide.
 
 const ME = 'aa'.repeat(32);
 const REC = 'cd'.repeat(32);
@@ -309,8 +308,8 @@ describe('the row after a landed send', () => {
     await h.drive.loadFeed();
     await h.drive.loadMembershipState();
     await flush();
-    // The @profile window is mounted — reach the credits row through the DOM.
-    (h.app as unknown as { openProfile: () => void }).openProfile();
+    // The @wallet window is mounted — reach the credits row through the DOM.
+    await (h.app as unknown as { openWallet: () => Promise<void> }).openWallet();
     await flush();
     // The App has rendered the profile window; the credits row's field exists.
     const field = document.querySelector<HTMLElement>('.credits-field');
@@ -342,7 +341,7 @@ describe('the row after a landed send', () => {
     await h.drive.loadFeed();
     await h.drive.loadMembershipState();
     await flush();
-    (h.app as unknown as { openProfile: () => void }).openProfile();
+    await (h.app as unknown as { openWallet: () => Promise<void> }).openWallet();
     await flush();
     // Fill the form.
     const form = document.querySelector<HTMLFormElement>('form.credits-form')!;
@@ -371,7 +370,7 @@ describe('the row after a landed send', () => {
     await h.drive.loadFeed();
     await h.drive.loadMembershipState();
     await flush();
-    (h.app as unknown as { openProfile: () => void }).openProfile();
+    await (h.app as unknown as { openWallet: () => Promise<void> }).openWallet();
     await flush();
     const form = document.querySelector<HTMLFormElement>('form.credits-form')!;
     const inputs = form.querySelectorAll<HTMLInputElement>('input');
@@ -397,7 +396,7 @@ describe('the row after a landed send', () => {
 // ---------------------------------------------------------------------------
 // The extension arm — the App builds ctx with confirmInRow: false when the
 // identity module implements `policy`, so no .pf-confirm renders and the send
-// fires at once (WEB_INTERFACE → The profile window → "The `$NOTIS` row").
+// fires at once (WEB_INTERFACE → The wallet window → "in the extension there is no confirm row").
 // ---------------------------------------------------------------------------
 
 describe('the send flow — the extension arm (confirmInRow: false)', () => {
@@ -412,7 +411,7 @@ describe('the send flow — the extension arm (confirmInRow: false)', () => {
     await h.drive.loadFeed();
     await h.drive.loadMembershipState();
     await flush();
-    (h.app as unknown as { openProfile: () => void }).openProfile();
+    await (h.app as unknown as { openWallet: () => Promise<void> }).openWallet();
     await flush();
     const form = document.querySelector<HTMLFormElement>('form.credits-form')!;
     const inputs = form.querySelectorAll<HTMLInputElement>('input');
@@ -442,7 +441,7 @@ describe('the send flow — the extension arm (confirmInRow: false)', () => {
     await h.drive.loadFeed();
     await h.drive.loadMembershipState();
     await flush();
-    (h.app as unknown as { openProfile: () => void }).openProfile();
+    await (h.app as unknown as { openWallet: () => Promise<void> }).openWallet();
     await flush();
     const form = document.querySelector<HTMLFormElement>('form.credits-form')!;
     const inputs = form.querySelectorAll<HTMLInputElement>('input');

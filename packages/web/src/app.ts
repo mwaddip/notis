@@ -9,7 +9,7 @@ import { prefs, setTheme, setIdTint, setNode, setFaucet, writeStore, readStore, 
 import { renderFeedInto, replaceFeedCard } from './view/feed';
 import { renderPanesInto, renderRegionElement, renderBars } from './view/panes';
 import { makeComposer, type ComposerController } from './view/composer';
-import { personGlyph, sunGlyph, moonGlyph, gearGlyph } from './view/glyphs';
+import { personGlyph, sunGlyph, moonGlyph, gearGlyph, walletGlyph } from './view/glyphs';
 import { MARK } from './view/mark';
 import { serialise, parse, authorWindowId, postsWindowId, windowSubject } from './model/arrangement';
 import { reconcileNewer, isLivePost } from './model/feed-reconcile';
@@ -25,7 +25,8 @@ import type { PendingEntry } from './wallet/types';
 import { readBuildContext } from './wallet/reads';
 import { submitPostFlow, submitLikeFlow, submitVouchFlow, submitUnvouchFlow, submitInviteFlow, submitWithdrawFlow, submitClaimFlow, submitBurnFlow, submitSendFlow, type SubmitDeps } from './wallet/submit';
 import { identity as identitySingleton } from './identity/identity';
-import { renderKarmaField, renderInvitesRow, renderUsernameRow, renderCreditsRow, resetCreditsSendForm, type ResolvedRecipient } from './view/profile';
+import { renderKarmaField, renderInvitesRow, renderUsernameRow } from './view/profile';
+import { renderCreditsRow, resetCreditsSendForm, type ResolvedRecipient } from './view/wallet';
 import { cornerState, renderCorner, CORNER_POLL_MS, type CornerState } from './view/corner';
 import type { Flight } from './view/card';
 import type { YourVouch } from './view/author';
@@ -284,7 +285,9 @@ export class App {
       loadOlder: () => void this.loadOlder(),
       openProfile: () => this.openProfile(),
       openSettings: () => this.openSettings(),
+      openWallet: () => void this.openWallet(),
       refreshProfile: () => void this.refreshProfileKarma(),
+      refreshWallet: () => void this.refreshWalletCredits(),
       focus: (id) => this.focus(id),
       refreshThread: (id) => void this.refreshThread(id),
       threadMore: (id) => void this.threadMore(id),
@@ -619,14 +622,14 @@ export class App {
     bar.appendChild(brand);
     bar.appendChild(el('span', 'spacer'));
 
-    // The profile, settings and theme controls. At one column the workspace
-    // carries no theme control — the theme is the settings window's first row
-    // (WEB_INTERFACE → The workspace, → The settings window); the two glyphs are
-    // a person and a gear, inline SVG in currentColor drawn in the house
-    // technique (HOUSE_STYLE → Illustration). At tiling `profile` and `settings`
-    // wear one outlined class — .hdr-word — beside the filled `theme` word; no
-    // avatar and no identity colour (WEB_INTERFACE → The profile window;
-    // HOUSE_STYLE → Identity colour).
+    // The profile, wallet, settings and theme controls. At one column the
+    // workspace carries no theme control — the theme is the settings window's
+    // first row (WEB_INTERFACE → The workspace, → The settings window); the
+    // three glyphs are a person, a wallet and a gear, inline SVG in currentColor
+    // drawn in the house technique (HOUSE_STYLE → Illustration). At tiling
+    // `profile`, `wallet` and `settings` wear one outlined class — .hdr-word —
+    // beside the filled `theme` word; no avatar and no identity colour
+    // (WEB_INTERFACE → The profile window; HOUSE_STYLE → Identity colour).
     const target: Theme = prefs.theme === 'dark' ? 'light' : 'dark';
     if (this.oneColumn) {
       const profile = el('button', 'hdr-glyph');
@@ -634,6 +637,12 @@ export class App {
       profile.appendChild(personGlyph());
       profile.addEventListener('click', () => this.openProfile());
       bar.appendChild(profile);
+
+      const wallet = el('button', 'hdr-glyph');
+      wallet.setAttribute('aria-label', 'open wallet');
+      wallet.appendChild(walletGlyph());
+      wallet.addEventListener('click', () => void this.openWallet());
+      bar.appendChild(wallet);
 
       const settings = el('button', 'hdr-glyph');
       settings.setAttribute('aria-label', 'open settings');
@@ -655,6 +664,11 @@ export class App {
       profile.setAttribute('aria-label', 'open profile');
       profile.addEventListener('click', () => this.openProfile());
       bar.appendChild(profile);
+
+      const wallet = el('button', 'hdr-word', 'wallet');
+      wallet.setAttribute('aria-label', 'open wallet');
+      wallet.addEventListener('click', () => void this.openWallet());
+      bar.appendChild(wallet);
 
       const settings = el('button', 'hdr-word', 'settings');
       settings.setAttribute('aria-label', 'open settings');
@@ -1254,6 +1268,33 @@ export class App {
     this.moveView('@settings');
   }
 
+  private async openWallet(): Promise<void> {
+    const res = openWindow(this.state.workspace, '@wallet', { from: 'feed' });
+    this.saveLayout();
+    if (res.raised) {
+      this.renderRegion(res.column.uid);
+    } else {
+      this.renderPanes();
+      // A fresh open reads /credits so the balance is up-to-date; a raise brings
+      // the existing window forward (WEB_INTERFACE → The wallet window).
+      await this.refreshWalletCredits();
+    }
+    this.moveView('@wallet');
+  }
+
+  /** Re-read /credits and move the balance in place — the wallet window's ↻ and
+   *  the fresh-open read (WEB_INTERFACE → The wallet window). */
+  private async refreshWalletCredits(): Promise<void> {
+    const cur = this.idm.current();
+    if (cur === null) return;
+    try {
+      this.profileCredits = await this.readOwnCredits(cur.pubKeyHex);
+    } catch {
+      return; // a failed read leaves the last-known state; the next ↻ retries
+    }
+    this.renderCreditsRowInPlace();
+  }
+
   private focus(id: string): void {
     const column = focusWindow(this.state.workspace, id);
     if (column) {
@@ -1429,10 +1470,11 @@ export class App {
   private changeFaucet(origin: string): void {
     setFaucet(origin);
     // The @settings row shows the new base; the @profile rep step and the
-    // wallet's $NOTIS step read `prefs.faucet` to decide whether to render
+    // @wallet $NOTIS step both read `prefs.faucet` to decide whether to render
     // "ask the faucet" (WEB_INTERFACE → The faucet step).
     this.renderRegionsFor('@settings');
     this.renderRegionsFor('@profile');
+    this.renderRegionsFor('@wallet');
   }
 
   // -------------------------------------------------------------------------
@@ -2397,7 +2439,7 @@ export class App {
     if (cur === null) return;
     const res = await this.faucetClient.askCredits(cur.pubKeyHex);
     if ('message' in res) {
-      const region = this.regionFocusedOn('@profile');
+      const region = this.regionFocusedOn('@wallet');
       if (region) {
         region.report = faucetLine(res, 'credits');
         this.renderRegion(region.uid);

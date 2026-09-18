@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, it, expect } from 'vitest';
-import { gearGlyph } from '../src/view/glyphs';
+import { gearGlyph, walletGlyph } from '../src/view/glyphs';
 
 // The house technique's rule for a shape carrying a hole: one <path> of
 // M/L/Z only, fill-rule="evenodd" so the inner subpath carves the hole. No
@@ -18,6 +18,20 @@ describe('gearGlyph — one body, evenodd, no curve command', () => {
     expect(d).not.toBe('');
     // Every curve command in the SVG grammar — cubic (C/S), quadratic (Q/T),
     // arc (A), case-insensitive.
+    expect(d).not.toMatch(/[CSQTAcsqta]/);
+  });
+});
+
+describe('walletGlyph — one body (evenodd) plus the flap', () => {
+  it('the svg holds one <path> with fill-rule="evenodd" and one <polygon>; no curve command', () => {
+    const svg = walletGlyph();
+    const paths = svg.querySelectorAll('path');
+    const polys = svg.querySelectorAll('polygon');
+    expect(paths.length).toBe(1);
+    expect(polys.length).toBe(1);
+    expect(paths[0]!.getAttribute('fill-rule')).toBe('evenodd');
+    const d = paths[0]!.getAttribute('d') ?? '';
+    expect(d).not.toBe('');
     expect(d).not.toMatch(/[CSQTAcsqta]/);
   });
 });

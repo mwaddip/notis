@@ -5,7 +5,7 @@ import { newWorkspace, newColumn, type Workspace } from './workspace';
 // `serialise` and `parse` are inverses (WEB_INTERFACE → The workspace).
 
 const HEX64 = /^[0-9a-f]{64}$/i;
-const WINDOW_IDS = new Set<string>(['@profile', '@settings']);
+const WINDOW_IDS = new Set<string>(['@profile', '@settings', '@wallet']);
 // `@author:<64hex>` and `@posts:<64hex>` — the two membership windows
 // (WEB_INTERFACE → The author window). The `:` and `@` cannot collide with a
 // 64-hex post id.
@@ -26,7 +26,7 @@ export function postsWindowId(key: string): string {
 }
 
 /** The kind and 64-hex key an `@author:`/`@posts:` window names, or null for any
- *  other token (a thread id, `@profile`, `@settings`). */
+ *  other token (a thread id, `@profile`, `@settings`, `@wallet`). */
 export function windowSubject(k: string): { kind: 'author' | 'posts'; key: string } | null {
   const m = AT_SUBJECT.exec(k);
   return m ? { kind: m[1]!.toLowerCase() as 'author' | 'posts', key: m[2]!.toLowerCase() } : null;

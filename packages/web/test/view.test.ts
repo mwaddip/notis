@@ -165,7 +165,7 @@ describe('the bar carries the handle where the root row carries a name', () => {
 interface WidthDrive { onWidthClassChange(matches: boolean): void; }
 
 describe('the header at one column', () => {
-  it('the profile and settings controls are SVG glyph buttons; no theme control, no .theme-btn', () => {
+  it('the profile, wallet and settings controls are SVG glyph buttons; no theme control, no .theme-btn', () => {
     const { app, appbar } = mountApp();
     (app as unknown as WidthDrive).onWidthClassChange(true); // cross the breakpoint
 
@@ -176,22 +176,41 @@ describe('the header at one column', () => {
     expect(appbar.querySelectorAll('.theme-btn').length).toBe(0);
     expect(appbar.querySelector('button[aria-label^="switch to "]')).toBeNull();
 
-    // The profile control is a person glyph, the settings control a gear; each
-    // a .hdr-glyph button holding one svg, with the label the word carries.
-    // happy-dom keeps createElementNS svgs queryable (test/mark.test.ts).
+    // The profile control is a person glyph, the wallet control a wallet, the
+    // settings control a gear; each a .hdr-glyph button holding one svg, with
+    // the label the word carries. happy-dom keeps createElementNS svgs
+    // queryable (test/mark.test.ts).
     const profile = appbar.querySelector<HTMLElement>('button[aria-label="open profile"]')!;
+    const wallet = appbar.querySelector<HTMLElement>('button[aria-label="open wallet"]')!;
     const settings = appbar.querySelector<HTMLElement>('button[aria-label="open settings"]')!;
     expect(profile.classList.contains('hdr-glyph')).toBe(true);
+    expect(wallet.classList.contains('hdr-glyph')).toBe(true);
     expect(settings.classList.contains('hdr-glyph')).toBe(true);
     expect(profile.querySelectorAll('svg').length).toBe(1);
+    expect(wallet.querySelectorAll('svg').length).toBe(1);
     expect(settings.querySelectorAll('svg').length).toBe(1);
-    // The two glyphs are the only header controls between the arrows.
-    expect(appbar.querySelectorAll('.hdr-glyph').length).toBe(2);
+    // The three glyphs are the only header controls between the arrows.
+    expect(appbar.querySelectorAll('.hdr-glyph').length).toBe(3);
 
     // An empty workspace has nothing either way, so both arrows carry `none`
     // (the stylesheet makes it absent at one column, space-reserved at tiling).
     const arrows = appbar.querySelectorAll<HTMLElement>('.ctl');
     expect(arrows.length).toBe(2);
     for (const a of arrows) expect(a.classList.contains('none')).toBe(true);
+  });
+
+  it('the tiling header carries three .hdr-word controls — profile, wallet, settings — beside the theme word', () => {
+    const { appbar } = mountApp();
+    // Default happy-dom is wide (1024) so oneColumn is false; the three word
+    // controls stand together beside the filled theme word.
+    const words = [...appbar.querySelectorAll<HTMLElement>('.hdr-word')];
+    expect(words.length).toBe(3);
+    const labels = words.map((w) => w.getAttribute('aria-label'));
+    expect(labels).toEqual(['open profile', 'open wallet', 'open settings']);
+    // The wallet word reads `wallet` and its class is .hdr-word (WEB_INTERFACE
+    // → The profile window → "Three header controls open the three windows — profile, wallet, settings — at the right of the app bar, the theme toggle after them at tiling").
+    expect(words[1]!.textContent).toBe('wallet');
+    // The filled theme word stands after them.
+    expect(appbar.querySelectorAll<HTMLElement>('.theme-btn').length).toBe(1);
   });
 });

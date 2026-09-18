@@ -174,6 +174,7 @@ describe('standalone header', () => {
     // creating, importing, exporting and forgetting an identity are the
     // workspace's; there is no profile, no wallet, no settings here.
     expect(appbar.querySelector('[aria-label="open profile"]')).toBeNull();
+    expect(appbar.querySelector('[aria-label="open wallet"]')).toBeNull();
     expect(appbar.querySelector('[aria-label="open settings"]')).toBeNull();
   });
 
