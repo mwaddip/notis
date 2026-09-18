@@ -1025,7 +1025,8 @@ $NOTIS (→ The wallet), in `gold` (`HOUSE_STYLE → "Gold means credits and not
 a box is locked, one muted line, *N $NOTIS more unlock by block H*, H the latest `lockedUntilBlock` among them.
 With no spendable box: the faucet step when a faucet is set (→ The faucet step), else *no $NOTIS yet.*
 
-**The `send` row**, while a box is spendable: the
+**The `send` row** stands while a box is spendable, and while a send's own line stands — its flight, the pending
+line, *sent* — so a send of the whole balance still reads its ending. The
 send form, a real `<form>` in place: the recipient — a 64-hex key or a handle, the leading `@` optional — on a line
 of its own, and beneath it the amount in $NOTIS beside the boxed `send` on one line — a short field, since an amount is
 never long, and the box the primary action's, green as `new post` is (`HOUSE_STYLE → Interaction`). **An identity input takes a key or a handle, and a handle is resolved at
@@ -1070,7 +1071,8 @@ sign each rep action · don't ask / ask — in the extension only (→ The exten
 (`HOUSE_STYLE → Colour`). **The identity tint shows what it sets**: above the four words stand two sample title
 bars — one focused, one not, two fixed stops of the identity arc (`HOUSE_STYLE → Identity colour`) — wearing the
 chosen tint. They are not controls: no handler, no pointer, hidden from assistive technology; and they follow a
-press with no re-render, since the tint is the root's attribute and custom properties. **The `node` row** holds
+press with no re-render, since the tint is the root's attribute and custom properties — the press moves the four
+words' pressed state in place and rebuilds nothing, so the pressed word keeps the keyboard's focus. **The `node` row** holds
 the effective base: any origin works, blank resets to the build's default, and a change drops everything loaded
 and re-reads it from the new node (→ The client is served from the node's own origin). **The policy row**, *sign
 each rep action: don't ask · ask*, is the background's policy (→ The extension), read through `state` and set
