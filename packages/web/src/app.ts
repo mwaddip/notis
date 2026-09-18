@@ -611,8 +611,9 @@ export class App {
     // on the standalone one, so the width-class rule that hides the workspace
     // wordmark leaves the standalone one alone (WEB_INTERFACE → The workspace
     // → "What differs at one column, and nothing else does", → The standalone
-    // thread → "The header").
-    bar.classList.add('workspace');
+    // thread → "The header"). The name is not `.workspace`: that class owns the
+    // strip scroller (`header` type would lose to it and the bar would grow).
+    bar.classList.add('hdr-workspace');
 
     // ‹ at the left edge scrolls the view one column that way. When no column lies
     // left it carries `none` — space-reserved at tiling, absent at one column
@@ -701,7 +702,7 @@ export class App {
 
   // WEB_INTERFACE → The standalone thread — no arrows, no profile control.
   private renderStandaloneHeader(bar: HTMLElement): void {
-    bar.classList.remove('workspace');
+    bar.classList.remove('hdr-workspace');
     const brand = el('div', 'brand');
     brand.innerHTML = MARK;
     brand.appendChild(el('h1', null, 'Notis'));

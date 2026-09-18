@@ -372,7 +372,7 @@ describe('the way in — tabs', () => {
     expect(stored).toContain(P1);
   });
 
-  it('add to workspace switches a standalone tab in place: the header carries the .workspace class after the switch', async () => {
+  it('add to workspace switches a standalone tab in place: the header carries the .hdr-workspace class after the switch', async () => {
     // One header element serves both bars; the class is set on the workspace
     // render and cleared on the standalone one (WEB_INTERFACE → The workspace,
     // → The standalone thread). At boot the standalone bar carries no class;
@@ -388,11 +388,11 @@ describe('the way in — tabs', () => {
     };
     drive.start(appbar, feed, panes, { kind: 'standalone', id: P1, base: '/' });
     await flush();
-    expect(appbar.classList.contains('workspace')).toBe(false);
+    expect(appbar.classList.contains('hdr-workspace')).toBe(false);
 
     await drive.wayIn();
     await flush();
-    expect(appbar.classList.contains('workspace')).toBe(true);
+    expect(appbar.classList.contains('hdr-workspace')).toBe(true);
   });
 
   it('a popstate with an id after the switch does not overwrite the workspace', async () => {

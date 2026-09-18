@@ -605,10 +605,12 @@ header .spacer { flex: 1 1 auto; }
    so the six controls of the phone header — ‹, the mark, the three glyphs, › —
    still fit at 44px each without a shrink (WEB_INTERFACE → The workspace
    → "What differs at one column, and nothing else does"). The standalone bar
-   carries no .workspace class, so its wordmark stays at every width
-   (→ The standalone thread → "The header"). */
+   carries no .hdr-workspace class, so its wordmark stays at every width
+   (→ The standalone thread → "The header"). The name is .hdr-workspace, not
+   .workspace: the strip scroller already owns .workspace and a class beats the
+   `header` type selector. */
 @media (max-width: 371px) {
-  header.workspace h1 { display: none; }
+  header.hdr-workspace h1 { display: none; }
 }
 
 /* ---------- the extension's prompt window ---------- */

@@ -132,10 +132,21 @@ describe('app.css — the one-column header', () => {
 });
 
 describe('app.css — under 372px the workspace header wordmark yields', () => {
-  it('the max-width: 371px block hides header.workspace h1, so the standalone bar keeps its wordmark', () => {
+  it('the max-width: 371px block hides header.hdr-workspace h1, so the standalone bar keeps its wordmark', () => {
     const under = mediaBlock('@media (max-width: 371px) {');
     expect(under).not.toBe('');
-    expect(under).toMatch(/header\.workspace h1\s*\{[^}]*display: none/);
+    expect(under).toMatch(/header\.hdr-workspace h1\s*\{[^}]*display: none/);
+  });
+  it('the hdr-workspace class name appears in no selector but the 371px rule, so no other rule catches the workspace header', () => {
+    // The strip scroller already owns `.workspace`; a header class that shares
+    // that name would grow the bar and take the scroller's padding and snap.
+    // The hazard is that any second selector targeting .hdr-workspace would
+    // re-open the same collision under a different name. Comments naming the
+    // class are fine — the check is on selectors.
+    const under = mediaBlock('@media (max-width: 371px) {');
+    expect(under).toContain('hdr-workspace');
+    const withoutComments = css.replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(withoutComments.replace(under, '')).not.toContain('hdr-workspace');
   });
 });
 

@@ -1,10 +1,14 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { App } from '../src/app';
 import type { Api } from '../src/api/client';
 import type { FeedResult, ThreadResult, PostJson } from '../src/api/dto';
 import { karmaResult } from './karma-fixture';
 import { contentHashHex } from '../src/integrity';
+
+const appCss = readFileSync(resolve(process.cwd(), 'src/style/app.css'), 'utf8');
 
 // happy-dom computes no layout, so a scroll offset is the rendered proof's to pin.
 // What a unit test can pin is the App's own seam: after an open it calls
@@ -214,14 +218,14 @@ describe('the header at one column', () => {
     expect(appbar.querySelectorAll<HTMLElement>('.theme-btn').length).toBe(1);
   });
 
-  it('the workspace bar carries a .workspace class the standalone bar does not', () => {
+  it('the workspace bar carries a .hdr-workspace class the standalone bar does not', () => {
     // One header element serves both bars, so the class is set by the
     // workspace render and cleared by the standalone one (WEB_INTERFACE → The
     // workspace → "What differs at one column, and nothing else does",
     // → The standalone thread → "The header"). The under-372px stylesheet
     // rule keys on this class to hide the workspace wordmark alone.
     const { appbar } = mountApp();
-    expect(appbar.classList.contains('workspace')).toBe(true);
+    expect(appbar.classList.contains('hdr-workspace')).toBe(true);
 
     document.body.innerHTML = '';
     const ab = document.createElement('header');
@@ -233,6 +237,29 @@ describe('the header at one column', () => {
     const app = new App(fakeApi());
     const P = 'a'.repeat(64);
     app.mount(ab, feed, panes, { kind: 'standalone', id: P, base: '/' });
-    expect(ab.classList.contains('workspace')).toBe(false);
+    expect(ab.classList.contains('hdr-workspace')).toBe(false);
+  });
+
+  it('with the class on the header, getComputedStyle reads the header rule — flex-grow 0 and gap 16px, not the .workspace scroller\'s grow and 24px gap', () => {
+    // A class named `.workspace` on the header would inherit the strip
+    // scroller's rules — flex 1 1 auto (grow), gap 24px, and at one column
+    // overflow-x auto with scroll-snap-type. The hazard fires here as a
+    // rendered-style read (card.test.ts's pattern): with the CSS injected and
+    // the class on the header, the header's own type rule stays in force. The
+    // header rule's padding shorthand uses max() and var(--gutter), which
+    // happy-dom does not resolve — flex-grow and gap are literal values it
+    // does read.
+    const style = document.createElement('style');
+    style.textContent = appCss;
+    document.head.appendChild(style);
+    try {
+      const { appbar } = mountApp();
+      expect(appbar.classList.contains('hdr-workspace')).toBe(true);
+      const s = window.getComputedStyle(appbar);
+      expect(s.flexGrow).toBe('0');
+      expect(s.gap).toBe('16px');
+    } finally {
+      document.head.removeChild(style);
+    }
   });
 });
