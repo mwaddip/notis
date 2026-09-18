@@ -469,10 +469,6 @@ by its ink, not by its em box: the glyph is lifted by a fixed fraction of its si
 makes exact. At every width each child's ink centre lies within one pixel of the axis, and a glyph's ink is centred
 in its own 20px box.
 
-> ⚠ **AHEAD OF CODE (2026-09-18, the header's axis)** — the lockup's baseline is the mark's bottom edge, so the
-> brand sits 6px above the controls at every width; a phone's arrows sit 2.5px below them, and the wallet glyph's ink
-> half a pixel above its box's centre.
-
 **At one column the screens are history.** A tap that changes the screen — an open, a raise, `‹`, `›`, a `✕`
 that shows another member — pushes a history entry naming the screen by its column's focused window, the
 feed as `feed`; the URL does not change, since the arrangement is not in it. A move that lands on the screen
