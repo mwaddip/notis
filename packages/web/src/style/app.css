@@ -51,15 +51,24 @@ header {
 }
 /* The header arrows sit at its edges; updateHeaderArrows toggles `none` from the
    active scroller's position, and at tiling `none` hides the arrow with its space
-   reserved so the header's geometry never shifts (WEB_INTERFACE → The workspace). */
-header .ctl { align-self: center; }
+   reserved so the header's geometry never shifts (WEB_INTERFACE → The workspace).
+   A small padding-bottom in em is the arrows' optical lift, sized so the ink's
+   centre lands on the bar's axis (WEB_INTERFACE → The workspace → "The header's
+   children share one axis"). */
+header .ctl { align-self: center; padding-bottom: .3em; }
 header .ctl.none { visibility: hidden; }
-header h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: .01em; }
+header h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: .01em; display: inline; }
 header .spacer { flex: 1 1 auto; }
-/* The mark + wordmark lockup: a 24px micro-tier mark beside the 15px wordmark.
-   The mark stays inline SVG so --notis-green / --notis-keyline reach it. */
-.brand { display: flex; align-items: center; gap: 8px; }
-.mark { width: 24px; height: 24px; display: block; flex: 0 0 auto; }
+/* The mark + wordmark lockup: the mark sits as an inline box on the wordmark's
+   line inside .brand. .brand's inline formatting context reports the wordmark's
+   text baseline as its own, so header's baseline row aligns the wordmark with
+   .hdr-word text baselines (HOUSE_STYLE → Typography → "Rows mixing mono with
+   proportional type align on the baseline, never centred"). The mark's fixed
+   vertical-align lands its centre on the words' box centre, and the lockup
+   keeps one baseline whether or not the h1 is displayed (WEB_INTERFACE → The
+   workspace → "The header's children share one axis"). */
+.brand { display: inline-block; }
+.mark { width: 24px; height: 24px; display: inline-block; vertical-align: -7px; margin-right: 8px; }
 .theme-btn {
   font-family: var(--sans); font-size: 12.5px; padding: 4px 12px; cursor: pointer;
   border: 1px solid transparent; border-radius: 4px;
@@ -589,8 +598,10 @@ header .spacer { flex: 1 1 auto; }
      8px; the arrows take the strip's glyph — 20px at weight 600 in ink — and never
      shrink, the way back drawn as the way in; a `none` arrow is absent, not
      space-reserved, since the header is per screen here (WEB_INTERFACE → The
-     workspace). */
-  header { gap: 8px; }
+     workspace). Every child is a box here — the arrows, the lockup, the glyphs —
+     so the bar centres them on one axis (WEB_INTERFACE → The workspace → "The
+     header's children share one axis"). */
+  header { gap: 8px; align-items: center; }
   header .ctl { flex: 0 0 44px; font-size: 20px; font-weight: 600; color: var(--ink); }
   header .ctl.none { display: none; }
   /* The profile and theme controls are glyphs at the header's control size — a

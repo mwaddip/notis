@@ -105,6 +105,28 @@ describe('the view moves to the column the reader acted on', () => {
   });
 });
 
+describe('the header carries the lockup as an inline formatting context', () => {
+  it('.brand holds the mark and the h1 in that order — the stylesheet keys on this shape', () => {
+    // The lockup is the mark inside .brand, followed by the wordmark h1 — both
+    // rendered inline so their line box shares a baseline (the h1's text
+    // baseline), the mark hung on it as an inline-block with a fixed
+    // vertical-align (WEB_INTERFACE → The workspace → "The header's children
+    // share one axis"). The App owes this DOM shape wherever it renders the
+    // header — the workspace bar and the standalone one.
+    const { appbar } = mountApp();
+    const brand = appbar.querySelector<HTMLElement>('.brand')!;
+    expect(brand).not.toBeNull();
+    const first = brand.firstElementChild!;
+    const second = brand.lastElementChild!;
+    expect(first.tagName.toLowerCase()).toBe('svg');
+    expect(first.classList.contains('mark')).toBe(true);
+    expect(second.tagName.toLowerCase()).toBe('h1');
+    expect(second.textContent).toBe('Notis');
+    // No extra siblings — the h1 is the last child.
+    expect(brand.children.length).toBe(2);
+  });
+});
+
 describe('the header carries the arrows at every width', () => {
   it('a left and a right arrow, each a .ctl, with their labels and glyphs', () => {
     const { appbar } = mountApp();

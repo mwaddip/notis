@@ -117,6 +117,14 @@ describe('app.css — the one-column header', () => {
     expect(one).toMatch(/\.hdr-glyph \{[^}]*flex: 0 0 44px/); // the glyph button, 44 wide
     expect(one).toMatch(/\.hdr-glyph svg \{[^}]*width: 20px/); // the svg at 20px
   });
+  it('the one-column header centres every child on one axis', () => {
+    // Every child is a box at one column — the arrows, the lockup, the glyphs —
+    // and the bar centres them on one axis (WEB_INTERFACE → The workspace →
+    // "The header's children share one axis"). The base rule at tiling is
+    // align-items: baseline, so this override is the switch to axis-centred.
+    const one = mediaBlock('@media (max-width: 955px) {');
+    expect(one).toMatch(/header \{[^}]*align-items: center/);
+  });
   it('the base header .ctl.none reserves its space at tiling', () => {
     expect(css).toMatch(/header \.ctl\.none \{[^}]*visibility: hidden/);
   });
@@ -128,6 +136,45 @@ describe('app.css — the one-column header', () => {
     expect(base).toBeDefined();
     expect(base!).toContain('color: var(--ink)');
     expect(base!).toContain('border: 1px solid var(--borderStrong)');
+  });
+});
+
+describe('app.css — the mark and wordmark lockup', () => {
+  // The lockup shares its baseline with the header's other words: .brand is an
+  // inline formatting context whose baseline is the h1's text baseline, and the
+  // mark hangs on that line as an inline-block with a fixed vertical-align so
+  // its centre lands on the words' box centre (WEB_INTERFACE → The workspace →
+  // "The header's children share one axis"). The lockup keeps one baseline
+  // whether or not the h1 is displayed — under 372px the h1 hides, the mark
+  // stays and the same inline-block rule still centres it.
+  it('.brand is display: inline-block, so its baseline is the wordmark line box', () => {
+    expect(css).toMatch(/\.brand \{[^}]*display: inline-block/);
+    // No flex or align-items on .brand — the interior is inline formatting.
+    const blocks = css.match(/\.brand \{[^}]*\}/g) ?? [];
+    const base = blocks[0]!;
+    expect(base).not.toContain('display: flex');
+    expect(base).not.toContain('align-items:');
+  });
+  it('.mark is display: inline-block with a fixed vertical-align lift', () => {
+    // The lift is a fixed pixel value (a fraction of the mark's height, not an
+    // em); the self-hosted face makes it exact.
+    expect(css).toMatch(/\.mark \{[^}]*display: inline-block[^}]*vertical-align: -\d+(\.\d+)?px/);
+    expect(css).toMatch(/\.mark \{[^}]*margin-right: 8px/); // the lockup gap
+  });
+  it('the wordmark is display: inline so it shares its line with the mark', () => {
+    expect(css).toMatch(/header h1 \{[^}]*display: inline/);
+  });
+});
+
+describe('app.css — the arrows carry an optical lift, expressed in em', () => {
+  // A typographic arrow is centred by its ink, not by its em box: the glyph is
+  // lifted by a fixed fraction of its size, which the self-hosted face makes
+  // exact (WEB_INTERFACE → The workspace → "The header's children share one
+  // axis"). Padding-bottom on the button shrinks the content-area from the
+  // bottom and, with flex align-items: center, lifts the character in place
+  // without growing the 44 × 36 hit box on a phone or the 24 × 24 one at tiling.
+  it('header .ctl carries padding-bottom in em', () => {
+    expect(css).toMatch(/header \.ctl \{[^}]*padding-bottom: \.\d+em/);
   });
 });
 

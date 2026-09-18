@@ -47,11 +47,11 @@ export function personGlyph(): SVGSVGElement {
 /** An irregular octagon disc with eight short triangular rays. */
 export function sunGlyph(): SVGSVGElement {
   const svg = glyph();
-  svg.appendChild(polygon('10,6.8 12.2,7.7 13.2,10 12.3,12.3 10,13.2 7.7,12.4 6.8,10 7.8,7.7')); // disc
+  svg.appendChild(polygon('10,7.15 12.2,8.05 13.2,10.35 12.3,12.65 10,13.55 7.7,12.75 6.8,10.35 7.8,8.05')); // disc
   for (const ray of [
-    '10,2.1 11.2,5.7 8.8,5.6', '15,5 13.9,7.8 12.1,6.1', '17.1,10 14.3,11.2 14.4,8.8',
-    '14.9,15 12.1,13.9 13.8,12.2', '10,17.2 8.8,14.3 11.2,14.4', '5,14.9 6.2,12.1 7.9,13.8',
-    '2.9,10 5.7,8.8 5.6,11.2', '5.1,5 7.9,6.2 6.1,7.8',
+    '10,2.45 11.2,6.05 8.8,5.95', '15,5.35 13.9,8.15 12.1,6.45', '17.1,10.35 14.3,11.55 14.4,9.15',
+    '14.9,15.35 12.1,14.25 13.8,12.55', '10,17.55 8.8,14.65 11.2,14.75', '5,15.25 6.2,12.45 7.9,14.15',
+    '2.9,10.35 5.7,9.15 5.6,11.55', '5.1,5.35 7.9,6.55 6.1,8.15',
   ]) svg.appendChild(polygon(ray));
   return svg;
 }
@@ -60,7 +60,7 @@ export function sunGlyph(): SVGSVGElement {
  *  the inner edge concave, the horns to the right. No arc, no curve command. */
 export function moonGlyph(): SVGSVGElement {
   const svg = glyph();
-  svg.appendChild(polygon('13,2.8 8,3.4 4.6,6 3.1,10 4.6,14.1 8,16.6 13,17.2 10.2,15.2 8.1,12.2 7.6,10 8.1,7.8 10.2,4.8'));
+  svg.appendChild(polygon('14.95,2.8 9.95,3.4 6.55,6 5.05,10 6.55,14.1 9.95,16.6 14.95,17.2 12.15,15.2 10.05,12.2 9.55,10 10.05,7.8 12.15,4.8'));
   return svg;
 }
 
@@ -83,10 +83,10 @@ export function gearGlyph(): SVGSVGElement {
 export function walletGlyph(): SVGSVGElement {
   const svg = glyph();
   svg.appendChild(path(
-    'M2.2 5.6 L15.6 5.2 L16.4 6.4 L16.5 8.4 L18.0 8.6 L18.1 12.6 L16.5 12.8 L16.4 15.6 L15.4 16.6 L3.2 16.5 L2.1 15.4 Z ' +
-    'M13.2 9.6 L15.6 9.5 L15.7 11.8 L13.3 11.9 Z',
+    'M2.2 6.0 L15.6 5.6 L16.4 6.8 L16.5 8.8 L18.0 9.0 L18.1 13.0 L16.5 13.2 L16.4 16.0 L15.4 17.0 L3.2 16.9 L2.1 15.8 Z ' +
+    'M13.2 10.0 L15.6 9.9 L15.7 12.2 L13.3 12.3 Z',
   ));
-  svg.appendChild(polygon('3.0,3.9 13.9,2.6 15.0,4.2 3.2,4.6')); // the flap
+  svg.appendChild(polygon('3.0,4.3 13.9,3.0 15.0,4.6 3.2,5.0')); // the flap
   return svg;
 }
 
