@@ -328,9 +328,10 @@ export class App {
       moreBonds: () => void this.moreBonds(),
       claimUsername: (name) => void this.claimUsername(name),
       burnUsername: () => void this.burnUsername(),
-      // The $NOTIS row (WEB_INTERFACE → The profile window). resolveRecipient
-      // is the handle → holder read the form runs at the press; send is the
-      // credits transfer flow; askFaucetCredits is the faucet's $NOTIS step.
+      // The wallet's send row (WEB_INTERFACE → The wallet window → "The `send`
+      // row"). resolveRecipient is the handle → holder read the form runs at
+      // the press; send is the credits transfer flow; askFaucetCredits is the
+      // faucet's $NOTIS step (→ The faucet step).
       resolveRecipient: (name) => this.resolveRecipient(name),
       send: (toHex, toName, amount) => void this.send(toHex, toName, amount),
       askFaucetCredits: () => void this.askFaucetCredits(),
@@ -545,8 +546,9 @@ export class App {
       pendingUsername: this.usernameInFlight ?? pendingUsernameEntry(this.ledger.all()),
       canSignClaim: this.canSignWithdraw(), // same predicate — a spendable box
       canAffordBurn: this.canAffordBurn(),
-      // The $NOTIS row (WEB_INTERFACE → The profile window). status carries the
-      // tip the row's spendable-at-height filter reads (WEB_INTERFACE → The wallet).
+      // The wallet's balance row (WEB_INTERFACE → The wallet window → "The
+      // `balance` row"). status carries the tip the row's spendable-at-height
+      // filter reads (WEB_INTERFACE → The wallet).
       status: this.state.status,
       credits: this.walletCredits,
       creditGrant: this.creditGrantView,
@@ -605,6 +607,12 @@ export class App {
       this.renderStandaloneHeader(bar);
       return;
     }
+    // One header element serves both bars — set on the workspace render, cleared
+    // on the standalone one, so the width-class rule that hides the workspace
+    // wordmark leaves the standalone one alone (WEB_INTERFACE → The workspace
+    // → "What differs at one column, and nothing else does", → The standalone
+    // thread → "The header").
+    bar.classList.add('workspace');
 
     // ‹ at the left edge scrolls the view one column that way. When no column lies
     // left it carries `none` — space-reserved at tiling, absent at one column
@@ -693,6 +701,7 @@ export class App {
 
   // WEB_INTERFACE → The standalone thread — no arrows, no profile control.
   private renderStandaloneHeader(bar: HTMLElement): void {
+    bar.classList.remove('workspace');
     const brand = el('div', 'brand');
     brand.innerHTML = MARK;
     brand.appendChild(el('h1', null, 'Notis'));
@@ -2388,7 +2397,7 @@ export class App {
     if (field) renderUsernameRow(field, this.handlers, this.ctx());
   }
 
-  // ---- the $NOTIS row (WEB_INTERFACE → The profile window) ----
+  // ---- the wallet window's send row (WEB_INTERFACE → The wallet window) ----
 
   /** Resolve an @handle to its holder — the row's send form calls this at the
    *  press, the way the composer resolves nothing (a post has no recipient) and
@@ -2405,9 +2414,9 @@ export class App {
   }
 
   /** Submit a credits send: the transient flight is submitting, then the ledger
-   *  entry carries the pending line across a reload (WEB_INTERFACE → The
-   *  profile window). A rejection is the row's flight line; a landing re-reads
-   *  /credits and moves the balance in place. */
+   *  entry carries the pending line across a reload (WEB_INTERFACE → The wallet
+   *  window → "The `send` row"). A rejection is the row's flight line; a
+   *  landing re-reads /credits and moves the balance in place. */
   private async send(toHex: string, toName: string | null, amount: bigint): Promise<void> {
     const cur = this.idm.current();
     if (cur === null) return;
@@ -2760,8 +2769,8 @@ export class App {
    *  payment box (`computeCandidateBoxId`, exact) among their spendable boxes;
    *  on landing re-read the reader's own /credits and record the landed flight
    *  so the row's flight slot reads *sent* on the same render as the balance
-   *  moves in place (WEB_INTERFACE → The profile window). Returns true when
-   *  the balance moved. */
+   *  moves in place (WEB_INTERFACE → The wallet window). Returns true when the
+   *  balance moved. */
   private async reconcileSendEntry(entry: PendingEntry, tip: number, meKey: string): Promise<boolean> {
     const recipient = entry.postId; // a send's subject is the recipient's key
     let recipientBoxes;
@@ -2775,7 +2784,7 @@ export class App {
     this.ledger.remove(entry.txId);
     if (outcome === 'landed') {
       // The row renders *sent* directly from this stage; stageLine has no
-      // `landed` case (WEB_INTERFACE → The profile window).
+      // `landed` case (WEB_INTERFACE → The wallet window → "The `send` row").
       this.sendFlight = { stage: 'landed' };
       // Re-read the reader's own /credits so the row's balance moves in place.
       try {

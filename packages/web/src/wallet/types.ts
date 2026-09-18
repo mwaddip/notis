@@ -25,7 +25,7 @@ export type EntryKind = 'post' | 'like' | 'grant' | 'creditGrant' | 'vouch' | 'u
  *  written form and is never stored — `WEB_INTERFACE → The identity display`),
  *  the amount, and the payment box's id. Persisted with `amount` as a decimal
  *  string, so the flight and the confirm can read the number back after a
- *  reload (WEB_INTERFACE → The profile window). */
+ *  reload (WEB_INTERFACE → The wallet window → "The `send` row"). */
 export interface SendRef {
   toHex: string;
   toName: string | null;

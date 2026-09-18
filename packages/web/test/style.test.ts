@@ -131,6 +131,14 @@ describe('app.css — the one-column header', () => {
   });
 });
 
+describe('app.css — under 372px the workspace header wordmark yields', () => {
+  it('the max-width: 371px block hides header.workspace h1, so the standalone bar keeps its wordmark', () => {
+    const under = mediaBlock('@media (max-width: 371px) {');
+    expect(under).not.toBe('');
+    expect(under).toMatch(/header\.workspace h1\s*\{[^}]*display: none/);
+  });
+});
+
 describe('app.css — scroll-snap-stop inside the one-column block', () => {
   it('scroll-snap-stop: always is inside @media (max-width: 955px) and nowhere outside', () => {
     const one = mediaBlock('@media (max-width: 955px) {');

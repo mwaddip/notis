@@ -372,6 +372,29 @@ describe('the way in — tabs', () => {
     expect(stored).toContain(P1);
   });
 
+  it('add to workspace switches a standalone tab in place: the header carries the .workspace class after the switch', async () => {
+    // One header element serves both bars; the class is set on the workspace
+    // render and cleared on the standalone one (WEB_INTERFACE → The workspace,
+    // → The standalone thread). At boot the standalone bar carries no class;
+    // after wayIn switches in place, the workspace render sets it.
+    const { appbar, feed, panes } = mountShell();
+    const { fakeTabs } = await import('./fake-tabs');
+    const tabs = fakeTabs();
+    tabs.setHeldElsewhere(false);
+    const app = new App(fakeApi(), undefined, undefined, undefined, tabs);
+    const drive = app as unknown as {
+      start(a: HTMLElement, b: HTMLElement, c: HTMLElement, m: { kind: 'standalone'; id: string; base: string }): void;
+      wayIn(): Promise<void>;
+    };
+    drive.start(appbar, feed, panes, { kind: 'standalone', id: P1, base: '/' });
+    await flush();
+    expect(appbar.classList.contains('workspace')).toBe(false);
+
+    await drive.wayIn();
+    await flush();
+    expect(appbar.classList.contains('workspace')).toBe(true);
+  });
+
   it('a popstate with an id after the switch does not overwrite the workspace', async () => {
     const { appbar, feed, panes } = mountShell();
     const { fakeTabs } = await import('./fake-tabs');

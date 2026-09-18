@@ -122,9 +122,9 @@ function fakeIdentity(opts: { withPolicy?: boolean } = {}): AppIdentity {
     backedUp: () => true,
   };
   // The extension arm — the proxy exposes policy/setPolicy; the in-page
-  // module does not (WEB_INTERFACE → The profile window). ctx.confirmInRow
-  // reads on `!this.idm.policy`, so the presence of the method here is what
-  // turns the confirm row off.
+  // module does not (WEB_INTERFACE → The wallet window → "The `send` row").
+  // ctx.confirmInRow reads on `!this.idm.policy`, so the presence of the method
+  // here is what turns the confirm row off.
   if (opts.withPolicy) {
     base.policy = (): 'silent' | 'ask' => 'silent';
     base.setPolicy = async (_p: 'silent' | 'ask'): Promise<void> => {};
@@ -321,7 +321,7 @@ describe('the row after a landed send', () => {
     // The @wallet window is mounted — reach the credits row through the DOM.
     await (h.app as unknown as { openWallet: () => Promise<void> }).openWallet();
     await flush();
-    // The App has rendered the profile window; the credits row's field exists.
+    // The App has rendered the wallet window; the credits row's field exists.
     const field = document.querySelector<HTMLElement>('.credits-field');
     expect(field).not.toBeNull();
     // Submit a send.
@@ -485,7 +485,7 @@ describe('the send flow — the extension arm (confirmInRow: false)', () => {
 // ---------------------------------------------------------------------------
 
 describe('the wallet reads', () => {
-  it('identity load reads no /credits — the wallet owns the read (WEB_INTERFACE → The profile window)', async () => {
+  it('identity load reads no /credits — the wallet owns the read (WEB_INTERFACE → The wallet window)', async () => {
     const h = harness();
     await h.drive.loadFeed();
     await h.drive.loadMembershipState();

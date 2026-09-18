@@ -213,4 +213,26 @@ describe('the header at one column', () => {
     // The filled theme word stands after them.
     expect(appbar.querySelectorAll<HTMLElement>('.theme-btn').length).toBe(1);
   });
+
+  it('the workspace bar carries a .workspace class the standalone bar does not', () => {
+    // One header element serves both bars, so the class is set by the
+    // workspace render and cleared by the standalone one (WEB_INTERFACE → The
+    // workspace → "What differs at one column, and nothing else does",
+    // → The standalone thread → "The header"). The under-372px stylesheet
+    // rule keys on this class to hide the workspace wordmark alone.
+    const { appbar } = mountApp();
+    expect(appbar.classList.contains('workspace')).toBe(true);
+
+    document.body.innerHTML = '';
+    const ab = document.createElement('header');
+    const ws = document.createElement('div'); ws.className = 'workspace';
+    const feed = document.createElement('section'); feed.id = 'feed';
+    const panes = document.createElement('section'); panes.id = 'panes';
+    ws.append(feed, panes);
+    document.body.append(ab, ws);
+    const app = new App(fakeApi());
+    const P = 'a'.repeat(64);
+    app.mount(ab, feed, panes, { kind: 'standalone', id: P, base: '/' });
+    expect(ab.classList.contains('workspace')).toBe(false);
+  });
 });

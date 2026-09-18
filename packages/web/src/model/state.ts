@@ -125,12 +125,13 @@ export interface RenderCtx {
   pendingUsername: { kind: 'claim' | 'burn'; name: string } | null;
   canSignClaim: boolean;
   canAffordBurn: boolean;
-  // The $NOTIS row (WEB_INTERFACE → The profile window). credits is the reader's
-  // own /credits, null before the first read; creditGrant is a faucet transfer
-  // in flight or one that lapsed; sendFlight is the transient ending; pendingSend
-  // is the ledger's own send entry — the durable line that survives a reload.
-  // status is the last /status the App holds — its blockHeight is the tip the
-  // row's spendable-at-height filter reads (WEB_INTERFACE → The wallet).
+  // The wallet window (WEB_INTERFACE → The wallet window). credits is the
+  // reader's own /credits, null before the first read; creditGrant is a faucet
+  // transfer in flight or one that lapsed; sendFlight is the transient ending;
+  // pendingSend is the ledger's own send entry — the durable line that survives
+  // a reload. status is the last /status the App holds — its blockHeight is the
+  // tip the balance row's spendable-at-height filter reads (WEB_INTERFACE → The
+  // wallet).
   status: StatusResult | null;
   credits: CreditsResult | null;
   creditGrant: { state: 'pending' } | { state: 'expired'; atHeight: number } | null;
@@ -211,9 +212,10 @@ export interface Handlers {
   // The username row (WEB_INTERFACE → The username row).
   claimUsername: (name: string) => void;
   burnUsername: () => void;
-  // The $NOTIS row (WEB_INTERFACE → The profile window). resolveRecipient is
-  // the handle → holder read the row's send form runs at the press; send is
-  // the credits transfer; askFaucetCredits is the faucet's $NOTIS step.
+  // The wallet's send row (WEB_INTERFACE → The wallet window → "The `send`
+  // row"). resolveRecipient is the handle → holder read the row's send form
+  // runs at the press; send is the credits transfer; askFaucetCredits is the
+  // faucet's $NOTIS step (→ The faucet step).
   resolveRecipient: (name: string) => Promise<{ key: string; name: string | null } | { refusal: string }>;
   send: (toHex: string, toName: string | null, amount: bigint) => void;
   askFaucetCredits: () => void;
